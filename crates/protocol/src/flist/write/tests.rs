@@ -2468,3 +2468,131 @@ fn write_end_varint_differs_from_nonvarint() {
         "varint and non-varint end markers must differ in wire encoding"
     );
 }
+
+/// Verifies hardlink indices survive a write-read round-trip when directory
+/// entries are interspersed among hardlinked files. This simulates the
+/// `--relative` scenario where implied directories occupy wire NDX positions
+/// between hardlinked files, shifting the follower's index value.
+///
+/// upstream: generator.c - send_implied_dirs() creates FLAG_IMPLIED_DIR entries
+/// that occupy wire positions but are not hardlinked themselves.
+#[test]
+fn hardlink_round_trip_with_interspersed_directories() {
+    use super::super::read::FileListReader;
+    use std::io::Cursor;
+
+    let protocol = ProtocolVersion::try_from(32u8).unwrap();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+    // Wire layout simulating --relative with implied dirs:
+    //   NDX 0: dir "a/"          (implied directory, no hardlink)
+    //   NDX 1: file "a/orig.txt" (hardlink leader)
+    //   NDX 2: dir "b/"          (implied directory, no hardlink)
+    //   NDX 3: file "b/link.txt" (hardlink follower -> leader at NDX 1)
+    let mut dir_a = FileEntry::new_directory("a".into(), 0o755);
+    dir_a.set_mtime(1700000000, 0);
+
+    let mut leader = FileEntry::new_file("a/orig.txt".into(), 256, 0o644);
+    leader.set_mtime(1700000000, 0);
+    leader.set_hardlink_idx(u32::MAX);
+
+    let mut dir_b = FileEntry::new_directory("b".into(), 0o755);
+    dir_b.set_mtime(1700000000, 0);
+
+    let mut follower = FileEntry::new_file("b/link.txt".into(), 256, 0o644);
+    follower.set_mtime(1700000000, 0);
+    follower.set_hardlink_idx(1); // points to leader at wire NDX 1
+
+    writer.write_entry(&mut buf, &dir_a).unwrap();
+    writer.write_entry(&mut buf, &leader).unwrap();
+    writer.write_entry(&mut buf, &dir_b).unwrap();
+    writer.write_entry(&mut buf, &follower).unwrap();
+    writer.write_end(&mut buf, None).unwrap();
+
+    // Read back
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+    let read_dir_a = reader.read_entry(&mut cursor).unwrap().unwrap();
+    let read_leader = reader.read_entry(&mut cursor).unwrap().unwrap();
+    let read_dir_b = reader.read_entry(&mut cursor).unwrap().unwrap();
+    let read_follower = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+    // Directory entries have no hardlink index
+    assert_eq!(read_dir_a.hardlink_idx(), None);
+    assert_eq!(read_dir_b.hardlink_idx(), None);
+
+    // Leader round-trips with u32::MAX
+    assert_eq!(read_leader.name(), "a/orig.txt");
+    assert_eq!(read_leader.hardlink_idx(), Some(u32::MAX));
+
+    // Follower round-trips with the correct wire NDX pointing to the leader
+    assert_eq!(read_follower.name(), "b/link.txt");
+    assert_eq!(read_follower.hardlink_idx(), Some(1));
+}
+
+/// Verifies that multiple hardlink groups with directories interspersed all
+/// resolve correctly. Two separate hardlink groups with implied directories
+/// between them must maintain independent leader/follower relationships.
+#[test]
+fn hardlink_multiple_groups_with_directories() {
+    use super::super::read::FileListReader;
+    use std::io::Cursor;
+
+    let protocol = ProtocolVersion::try_from(32u8).unwrap();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+    // Wire layout:
+    //   NDX 0: dir "d/"            (implied directory)
+    //   NDX 1: file "d/a.txt"      (group A leader)
+    //   NDX 2: file "d/a_link.txt" (group A follower -> NDX 1)
+    //   NDX 3: dir "e/"            (implied directory)
+    //   NDX 4: file "e/b.txt"      (group B leader)
+    //   NDX 5: file "e/b_link.txt" (group B follower -> NDX 4)
+    let mut dir_d = FileEntry::new_directory("d".into(), 0o755);
+    dir_d.set_mtime(1700000000, 0);
+
+    let mut leader_a = FileEntry::new_file("d/a.txt".into(), 100, 0o644);
+    leader_a.set_mtime(1700000000, 0);
+    leader_a.set_hardlink_idx(u32::MAX);
+
+    let mut follower_a = FileEntry::new_file("d/a_link.txt".into(), 100, 0o644);
+    follower_a.set_mtime(1700000000, 0);
+    follower_a.set_hardlink_idx(1);
+
+    let mut dir_e = FileEntry::new_directory("e".into(), 0o755);
+    dir_e.set_mtime(1700000000, 0);
+
+    let mut leader_b = FileEntry::new_file("e/b.txt".into(), 200, 0o644);
+    leader_b.set_mtime(1700000000, 0);
+    leader_b.set_hardlink_idx(u32::MAX);
+
+    let mut follower_b = FileEntry::new_file("e/b_link.txt".into(), 200, 0o644);
+    follower_b.set_mtime(1700000000, 0);
+    follower_b.set_hardlink_idx(4);
+
+    writer.write_entry(&mut buf, &dir_d).unwrap();
+    writer.write_entry(&mut buf, &leader_a).unwrap();
+    writer.write_entry(&mut buf, &follower_a).unwrap();
+    writer.write_entry(&mut buf, &dir_e).unwrap();
+    writer.write_entry(&mut buf, &leader_b).unwrap();
+    writer.write_entry(&mut buf, &follower_b).unwrap();
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+    let _ = reader.read_entry(&mut cursor).unwrap().unwrap(); // dir d
+    let read_la = reader.read_entry(&mut cursor).unwrap().unwrap();
+    let read_fa = reader.read_entry(&mut cursor).unwrap().unwrap();
+    let _ = reader.read_entry(&mut cursor).unwrap().unwrap(); // dir e
+    let read_lb = reader.read_entry(&mut cursor).unwrap().unwrap();
+    let read_fb = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+    assert_eq!(read_la.hardlink_idx(), Some(u32::MAX));
+    assert_eq!(read_fa.hardlink_idx(), Some(1));
+    assert_eq!(read_lb.hardlink_idx(), Some(u32::MAX));
+    assert_eq!(read_fb.hardlink_idx(), Some(4));
+}
