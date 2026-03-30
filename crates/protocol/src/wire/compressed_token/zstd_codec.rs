@@ -24,8 +24,8 @@ use std::io::{self, Read, Write};
 use zstd::stream::raw::{Decoder as ZstdRawDecoder, Encoder as ZstdRawEncoder, Operation};
 
 use super::{
-    CHUNK_SIZE, CompressedToken, DEFLATED_DATA, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL,
-    TOKENRUN_LONG, TOKENRUN_REL, read_deflated_data_length, write_deflated_data_header,
+    read_deflated_data_length, write_deflated_data_header, CompressedToken, CHUNK_SIZE,
+    DEFLATED_DATA, END_FLAG, MAX_DATA_COUNT, TOKENRUN_LONG, TOKENRUN_REL, TOKEN_LONG, TOKEN_REL,
 };
 
 /// Zstd encoder state for sending compressed tokens.
@@ -163,9 +163,8 @@ impl ZstdTokenEncoder {
             }
 
             let mut in_buf = zstd::stream::raw::InBuffer::around(&input[input_pos..]);
-            let mut out_buf = zstd::stream::raw::OutBuffer::around(
-                &mut self.output_buf[self.output_pos..],
-            );
+            let mut out_buf =
+                zstd::stream::raw::OutBuffer::around(&mut self.output_buf[self.output_pos..]);
 
             self.encoder.run(&mut in_buf, &mut out_buf)?;
             input_pos += in_buf.pos();
@@ -181,9 +180,8 @@ impl ZstdTokenEncoder {
         // Flush produces a decompressible boundary. After each flush call,
         // write whatever is in the output buffer (even if not full).
         loop {
-            let mut out_buf = zstd::stream::raw::OutBuffer::around(
-                &mut self.output_buf[self.output_pos..],
-            );
+            let mut out_buf =
+                zstd::stream::raw::OutBuffer::around(&mut self.output_buf[self.output_pos..]);
 
             let remaining = self.encoder.flush(&mut out_buf)?;
             self.output_pos += out_buf.pos();
@@ -364,8 +362,7 @@ impl ZstdTokenDecoder {
                 // upstream: token.c lines 862-863
                 // If input is fully consumed and output buffer not full,
                 // transition back to idle (read next flag).
-                if input_pos >= self.compressed_input_buf.len()
-                    && produced < self.output_buf.len()
+                if input_pos >= self.compressed_input_buf.len() && produced < self.output_buf.len()
                 {
                     break;
                 }
