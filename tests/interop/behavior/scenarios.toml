@@ -477,8 +477,6 @@ echo "content2" > src/file2.txt
 echo "content3" > src/file3.txt
 """
 compare = ["exit_code", "files"]
-skip = true
-known_difference = "oc-rsync does not yet filter by --files-from list; copies all source files"
 
 # ============== Prune Empty Dirs ==============
 
