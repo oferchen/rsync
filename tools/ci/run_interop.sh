@@ -824,6 +824,37 @@ comp_run_scenario() {
       echo "extra2" > "$ddir/extra_two.txt"
       echo "extra3" > "$ddir/extra_three.txt"
       ;;
+    delete-exclude)
+      rm -rf "$ddir"/*; mkdir -p "$ddir/subdir"
+      # Dest-only files: excluded pattern should survive, others deleted
+      echo "dest only log" > "$ddir/destonly.log"
+      echo "dest only txt" > "$ddir/destonly.txt"
+      echo "dest nested log" > "$ddir/subdir/nested.log"
+      echo "dest nested txt" > "$ddir/subdir/extra.txt"
+      ;;
+    delete-excluded)
+      rm -rf "$ddir"/*; mkdir -p "$ddir/subdir"
+      # With --delete-excluded, excluded files on dest SHOULD be deleted
+      echo "dest only log" > "$ddir/destonly.log"
+      echo "dest only txt" > "$ddir/destonly.txt"
+      echo "dest nested log" > "$ddir/subdir/nested.log"
+      ;;
+    delete-filter-protect)
+      rm -rf "$ddir"/*; mkdir -p "$ddir/subdir"
+      # P (protect) modifier prevents deletion of matching dest files
+      echo "dest protected" > "$ddir/keeper.log"
+      echo "dest unprotected" > "$ddir/destonly.txt"
+      echo "dest nested protect" > "$ddir/subdir/nested.log"
+      echo "dest nested unprotect" > "$ddir/subdir/extra.txt"
+      ;;
+    delete-filter-risk)
+      rm -rf "$ddir"/*; mkdir -p "$ddir/subdir"
+      # R (risk) overrides a preceding P (protect) for matching files
+      echo "dest risk log" > "$ddir/risky.log"
+      echo "dest protected sh" > "$ddir/keeper.sh"
+      echo "dest unprotected" > "$ddir/destonly.txt"
+      echo "dest nested risk" > "$ddir/subdir/nested.log"
+      ;;
     inplace)
       rm -rf "$ddir"/*
       mkdir -p "$ddir/subdir/nested"
@@ -1337,6 +1368,83 @@ comp_run_scenario() {
       fi
       if [[ -f "$ddir/temp_one.tmp" || -f "$ddir/subdir/temp_two.tmp" ]]; then
         echo "    --exclude-from: .tmp files were transferred"
+        return 1
+      fi
+      return 0
+      ;;
+    delete-exclude)
+      # Source files must be present
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      # Excluded *.log files on dest should survive --delete
+      for f in destonly.log subdir/nested.log; do
+        if [[ ! -f "$ddir/$f" ]]; then
+          echo "    --delete --exclude: protected file $f was deleted"
+          return 1
+        fi
+      done
+      # Non-excluded dest-only files should be deleted
+      for f in destonly.txt subdir/extra.txt; do
+        if [[ -f "$ddir/$f" ]]; then
+          echo "    --delete --exclude: unprotected file $f survived"
+          return 1
+        fi
+      done
+      return 0
+      ;;
+    delete-excluded)
+      # Source files must be present
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      # --delete-excluded should delete excluded dest-only files too
+      for f in destonly.log subdir/nested.log; do
+        if [[ -f "$ddir/$f" ]]; then
+          echo "    --delete-excluded: excluded file $f survived"
+          return 1
+        fi
+      done
+      # Non-excluded dest-only files should also be deleted (--delete implied)
+      if [[ -f "$ddir/destonly.txt" ]]; then
+        echo "    --delete-excluded: non-excluded dest-only file survived"
+        return 1
+      fi
+      return 0
+      ;;
+    delete-filter-protect)
+      # Source files must be present
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      # P-protected *.log files should survive --delete
+      for f in keeper.log subdir/nested.log; do
+        if [[ ! -f "$ddir/$f" ]]; then
+          echo "    --delete P-filter: protected file $f was deleted"
+          return 1
+        fi
+      done
+      # Non-protected dest-only files should be deleted
+      for f in destonly.txt subdir/extra.txt; do
+        if [[ -f "$ddir/$f" ]]; then
+          echo "    --delete P-filter: unprotected file $f survived"
+          return 1
+        fi
+      done
+      return 0
+      ;;
+    delete-filter-risk)
+      # Source files must be present
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      # R (risk) overrides P (protect): *.log files should be deleted
+      for f in risky.log subdir/nested.log; do
+        if [[ -f "$ddir/$f" ]]; then
+          echo "    --delete R-filter: risk file $f survived despite R modifier"
+          return 1
+        fi
+      done
+      # P-protected *.sh files (not overridden by R) should survive
+      if [[ ! -f "$ddir/keeper.sh" ]]; then
+        echo "    --delete R-filter: P-protected file keeper.sh was deleted"
+        return 1
+      fi
+      # Non-protected, non-risk dest-only files should be deleted
+      if [[ -f "$ddir/destonly.txt" ]]; then
+        echo "    --delete R-filter: unprotected file destonly.txt survived"
         return 1
       fi
       return 0
@@ -2652,6 +2760,10 @@ run_comprehensive_interop_case() {
       "hardlinks-existing|-avH --existing|hardlinks-existing"
       "compress-zstd|-avz --compress-choice=zstd|compress"
       "compress-lz4|-avz --compress-choice=lz4|compress"
+      "delete-exclude|-av --delete --exclude=*.log|delete-exclude"
+      "delete-excluded|-av --delete-excluded --exclude=*.log|delete-excluded"
+      "delete-filter-protect|-av --delete --filter=P_*.log|delete-filter-protect"
+      "delete-filter-risk|-av --delete --filter=P_*.sh --filter=R_*.log|delete-filter-risk"
     )
   fi
 
