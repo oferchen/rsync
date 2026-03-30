@@ -2488,6 +2488,119 @@ test_hardlinks_comprehensive() {
   return 0
 }
 
+# Hardlink daemon push: upstream rsync client pushes to oc-rsync daemon with -H.
+# Verifies that the daemon receiver path correctly preserves hardlink
+# relationships when receiving from an upstream client over the wire.
+test_hardlinks_daemon_push() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local hl_src="${work}/hl-daemon-src"
+  local hl_dest="${work}/hl-daemon-dest"
+  rm -rf "$hl_src" "$hl_dest"
+  mkdir -p "$hl_src/subdir" "$hl_dest"
+
+  # Group 1: three files sharing one inode
+  echo "daemon-group-one" > "$hl_src/group1_a.txt"
+  ln "$hl_src/group1_a.txt" "$hl_src/group1_b.txt"
+  ln "$hl_src/group1_a.txt" "$hl_src/subdir/group1_c.txt"
+
+  # Group 2: two files sharing a different inode
+  echo "daemon-group-two" > "$hl_src/group2_a.txt"
+  ln "$hl_src/group2_a.txt" "$hl_src/group2_b.txt"
+
+  # Standalone file (no hardlinks) as control
+  echo "daemon-standalone" > "$hl_src/standalone.txt"
+
+  # Write daemon config pointing at hl_dest
+  local daemon_conf="${work}/hl-daemon.conf"
+  local daemon_pid="${work}/hl-daemon.pid"
+  local daemon_log="${work}/hl-daemon.log"
+  cat > "$daemon_conf" <<CONF
+pid file = ${daemon_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${hl_dest}
+comment = hardlink daemon push test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$daemon_conf" "$daemon_log" "$upstream_binary" "$daemon_pid" "$oc_port"
+
+  # Upstream rsync client pushes with -avH to oc-rsync daemon
+  if ! timeout "$hard_timeout" "$upstream_binary" -avH --timeout=10 \
+      "${hl_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.hl-daemon-push.out" 2>"${log}.hl-daemon-push.err"; then
+    echo "    upstream -avH push to oc daemon failed (exit=$?)"
+    echo "    stderr: $(head -5 "${log}.hl-daemon-push.err")"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # --- Verify all files exist ---
+  for f in group1_a.txt group1_b.txt subdir/group1_c.txt \
+           group2_a.txt group2_b.txt standalone.txt; do
+    if [[ ! -f "$hl_dest/$f" ]]; then
+      echo "    daemon-push: missing $f"
+      return 1
+    fi
+  done
+
+  # --- Verify content ---
+  for f in group1_a.txt group1_b.txt subdir/group1_c.txt; do
+    if [[ "$(cat "$hl_dest/$f")" != "daemon-group-one" ]]; then
+      echo "    daemon-push: content mismatch in $f"
+      return 1
+    fi
+  done
+  for f in group2_a.txt group2_b.txt; do
+    if [[ "$(cat "$hl_dest/$f")" != "daemon-group-two" ]]; then
+      echo "    daemon-push: content mismatch in $f"
+      return 1
+    fi
+  done
+
+  # --- Verify group 1 inodes match ---
+  local i1a i1b i1c
+  i1a=$(stat -c %i "$hl_dest/group1_a.txt" 2>/dev/null || stat -f %i "$hl_dest/group1_a.txt" 2>/dev/null)
+  i1b=$(stat -c %i "$hl_dest/group1_b.txt" 2>/dev/null || stat -f %i "$hl_dest/group1_b.txt" 2>/dev/null)
+  i1c=$(stat -c %i "$hl_dest/subdir/group1_c.txt" 2>/dev/null || stat -f %i "$hl_dest/subdir/group1_c.txt" 2>/dev/null)
+  if [[ "$i1a" != "$i1b" || "$i1a" != "$i1c" ]]; then
+    echo "    daemon-push: group1 inodes differ ($i1a, $i1b, $i1c)"
+    return 1
+  fi
+
+  # --- Verify group 2 inodes match ---
+  local i2a i2b
+  i2a=$(stat -c %i "$hl_dest/group2_a.txt" 2>/dev/null || stat -f %i "$hl_dest/group2_a.txt" 2>/dev/null)
+  i2b=$(stat -c %i "$hl_dest/group2_b.txt" 2>/dev/null || stat -f %i "$hl_dest/group2_b.txt" 2>/dev/null)
+  if [[ "$i2a" != "$i2b" ]]; then
+    echo "    daemon-push: group2 inodes differ ($i2a, $i2b)"
+    return 1
+  fi
+
+  # --- Groups must have different inodes ---
+  if [[ "$i1a" == "$i2a" ]]; then
+    echo "    daemon-push: group1 and group2 share an inode (unexpected)"
+    return 1
+  fi
+
+  # --- Standalone must have its own inode ---
+  local is
+  is=$(stat -c %i "$hl_dest/standalone.txt" 2>/dev/null || stat -f %i "$hl_dest/standalone.txt" 2>/dev/null)
+  if [[ "$is" == "$i1a" || "$is" == "$i2a" ]]; then
+    echo "    daemon-push: standalone.txt shares inode with a hardlink group"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
