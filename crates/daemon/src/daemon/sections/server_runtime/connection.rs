@@ -32,7 +32,6 @@ fn check_signals_and_maintain(
 ) -> Result<Option<bool>, DaemonError> {
     reap_finished_workers(&mut state.workers)?;
 
-    // Check SIGTERM/SIGINT shutdown flag.
     if state.signal_flags.shutdown.load(Ordering::Relaxed) {
         if let Some(log) = state.log_sink.as_ref() {
             let message =
@@ -43,9 +42,8 @@ fn check_signals_and_maintain(
         return Ok(Some(true));
     }
 
-    // Check SIGUSR1 graceful exit flag.
-    // upstream: main.c - SIGUSR1 causes the daemon to stop accepting
-    // new connections and exit after active transfers drain.
+    // upstream: main.c - SIGUSR1 stops accepting new connections
+    // and exits after active transfers drain.
     if state.signal_flags.graceful_exit.load(Ordering::Relaxed) {
         if let Some(log) = state.log_sink.as_ref() {
             let text = format!(
@@ -65,7 +63,6 @@ fn check_signals_and_maintain(
         return Ok(Some(true));
     }
 
-    // Check SIGHUP config reload flag.
     if state.signal_flags.reload_config.swap(false, Ordering::Relaxed) {
         reload_daemon_config(
             state.config_path.as_deref(),
@@ -77,7 +74,6 @@ fn check_signals_and_maintain(
         );
     }
 
-    // Check SIGUSR2 progress dump flag.
     // upstream: main.c - SIGUSR2 outputs transfer statistics.
     if state.signal_flags.progress_dump.swap(false, Ordering::Relaxed) {
         log_progress_summary(

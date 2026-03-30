@@ -341,74 +341,50 @@ impl FileListWriter {
     ///
     /// See `flist.c:send_file_entry()` lines 470-750 for the complete wire encoding.
     pub fn write_entry<W: Write>(&mut self, writer: &mut W, entry: &FileEntry) -> io::Result<()> {
-        // Step 1: Get name bytes and apply encoding conversion
         let raw_name = entry.name_bytes();
         let name = self.apply_encoding_conversion(raw_name)?;
 
-        // Step 2: Calculate name compression
         let same_len = self.state.calculate_name_prefix_len(&name);
         let suffix_len = name.len() - same_len;
-
-        // Step 3: Calculate xflags
         let xflags = self.calculate_xflags(entry, same_len, suffix_len);
 
-        // Step 4: Write flags
         self.write_flags(writer, xflags, entry.is_dir())?;
-
-        // Step 5: Write name
         self.write_name(writer, &name, same_len, suffix_len, xflags)?;
-
-        // Step 6: Write hardlink index (MUST come immediately after name)
         self.write_hardlink_idx(writer, entry, xflags)?;
 
-        // Step 7+: Write metadata unless this is an abbreviated hardlink follower.
         // Abbreviated followers (leader in same flist segment) have metadata
-        // copied from the leader. Unabbreviated followers (leader in a previous
-        // segment) carry full metadata on the wire.
+        // copied from the leader; unabbreviated followers carry full metadata.
         // upstream: flist.c:send_file_entry() line 572
         let abbreviated = self.is_abbreviated_follower(entry, xflags);
         if !abbreviated {
-            // Step 7: Write metadata (size, mtime, nsec, crtime, mode, atime, uid, gid)
             self.write_metadata(writer, entry, xflags)?;
-
-            // Step 8: Write device numbers (if applicable)
             self.write_rdev(writer, entry, xflags)?;
-
-            // Step 9: Write symlink target (if applicable)
             self.write_symlink_target(writer, entry)?;
-
-            // Step 10: Write hardlink dev/ino for protocol < 30
             self.write_hardlink_dev_ino(writer, entry, xflags)?;
         }
 
-        // Write checksum if always_checksum mode is enabled
         // upstream: always_checksum && (S_ISREG(mode) || protocol_version < 28)
         if !abbreviated {
             self.write_checksum(writer, entry)?;
         }
 
-        // Write ACLs from the wire (after checksum, before xattrs).
-        // upstream: flist.c:send_file_entry() line 654 - send_acl() is called for
+        // upstream: flist.c:send_file_entry() line 654 - send_acl() called for
         // all non-symlink entries, including abbreviated hardlink followers.
         if self.preserve.acls && !entry.is_symlink() {
             let acl = RsyncAcl::from_mode(entry.mode());
             send_acl(writer, &acl, None, entry.is_dir(), &mut self.acl_cache)?;
         }
 
-        // Write xattr index/data (after ACLs).
-        // upstream: flist.c:send_file_entry() line 656 - send_xattr() is called
+        // upstream: flist.c:send_file_entry() line 656 - send_xattr() called
         // for ALL entries including abbreviated hardlink followers.
         if self.preserve.xattrs {
             let empty = XattrList::new();
             send_xattr(writer, &empty, None, self.checksum_seed)?;
         }
 
-        // Update state.
         // upstream: flist.c:send_file_entry() line 676 - at the_end label,
-        // only lastname is updated. The metadata state variables (modtime,
-        // mode, uid, gid) are NOT updated for abbreviated hardlink followers
-        // because the goto skips the metadata writes. The receiver's
-        // compression state only tracks values actually seen on the wire.
+        // metadata state (modtime, mode, uid, gid) is NOT updated for
+        // abbreviated followers because the goto skips the metadata writes.
         if abbreviated {
             self.state.update_name(&name);
         } else {
@@ -421,7 +397,6 @@ impl FileListWriter {
             );
         }
 
-        // Update statistics
         self.update_stats(entry);
 
         Ok(())

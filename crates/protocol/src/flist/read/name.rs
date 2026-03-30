@@ -37,7 +37,6 @@ impl FileListReader {
         reader: &mut R,
         flags: FileFlags,
     ) -> io::Result<Vec<u8>> {
-        // Determine shared prefix length
         let same_len = if flags.same_name() {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
@@ -46,7 +45,6 @@ impl FileListReader {
             0
         };
 
-        // Read suffix length
         let suffix_len = if flags.long_name() {
             read_varint(reader)? as usize
         } else {
@@ -64,7 +62,6 @@ impl FileListReader {
             flags.long_name()
         );
 
-        // Validate lengths
         if same_len > self.state.prev_name().len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -76,7 +73,6 @@ impl FileListReader {
             ));
         }
 
-        // Build full name
         let mut name = Vec::with_capacity(same_len + suffix_len);
         name.extend_from_slice(&self.state.prev_name()[..same_len]);
 
@@ -94,7 +90,6 @@ impl FileListReader {
             &name[..name.len().min(64)]
         );
 
-        // Update state
         self.state.update_name(&name);
 
         Ok(name)

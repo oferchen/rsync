@@ -264,7 +264,6 @@ impl ZstdTokenDecoder {
             self.initialized = true;
         }
 
-        // Return buffered decompressed data
         if self.decompress_pos < self.decompress_buf.len() {
             let remaining = &self.decompress_buf[self.decompress_pos..];
             let chunk_len = remaining.len().min(CHUNK_SIZE);

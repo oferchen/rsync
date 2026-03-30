@@ -46,7 +46,7 @@ impl GeneratorContext {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
 
-        // upstream: flist.c:2513-2514 - skip for INC_RECURSE or numeric_ids
+        // upstream: flist.c:2513-2514
         if inc_recurse || self.config.flags.numeric_ids {
             return Ok(());
         }
@@ -54,15 +54,11 @@ impl GeneratorContext {
         let id0_names = self
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::ID0_NAMES));
-
         let protocol_version = self.protocol.as_u8();
 
-        // upstream: uidlist.c:408 - send_uid_list()
         if self.config.flags.owner {
             self.uid_list.write(writer, id0_names, protocol_version)?;
         }
-
-        // upstream: uidlist.c:412 - send_gid_list()
         if self.config.flags.group {
             self.gid_list.write(writer, id0_names, protocol_version)?;
         }
@@ -80,8 +76,7 @@ impl GeneratorContext {
     /// - `flist.c:2517-2518`: `write_int(f, ignore_errors ? 0 : io_error);`
     pub(super) fn send_io_error_flag<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         if self.protocol.uses_fixed_encoding() {
-            // For protocol < 30, send io_error as 4-byte int
-            // If ignore_errors is set, send 0 instead of actual io_error
+            // upstream: flist.c:2517-2518
             let value = if self.config.deletion.ignore_errors {
                 0
             } else {
