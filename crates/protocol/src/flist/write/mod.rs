@@ -19,8 +19,10 @@ use std::io::{self, Write};
 
 use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
+use crate::acl::{AclCache, RsyncAcl, send_acl};
 use crate::codec::{ProtocolCodecEnum, create_protocol_codec};
 use crate::iconv::FilenameConverter;
+use crate::xattr::{XattrList, send_xattr};
 
 use super::entry::FileEntry;
 use super::state::{FileListCompressionState, FileListStats};
@@ -101,6 +103,12 @@ pub struct FileListWriter {
     /// metadata skipped on wire. Unabbreviated followers carry full metadata.
     /// upstream: flist.c:send_file_entry() line 572
     first_ndx: i32,
+    /// ACL cache for deduplication across entries.
+    /// upstream: acls.c - sender maintains cache of sent ACLs.
+    acl_cache: AclCache,
+    /// Checksum seed for xattr abbreviated value digests.
+    /// upstream: xattrs.c - `sum_init(xattr_sum_nni, checksum_seed)`
+    checksum_seed: i32,
 }
 
 impl FileListWriter {
@@ -119,6 +127,8 @@ impl FileListWriter {
             use_varint_flags: false,
             use_safe_file_list: protocol.safe_file_list_always_enabled(),
             first_ndx: 0,
+            acl_cache: AclCache::new(),
+            checksum_seed: 0,
         }
     }
 
@@ -138,6 +148,8 @@ impl FileListWriter {
             use_safe_file_list: compat_flags.contains(CompatibilityFlags::SAFE_FILE_LIST)
                 || protocol.safe_file_list_always_enabled(),
             first_ndx: 0,
+            acl_cache: AclCache::new(),
+            checksum_seed: 0,
         }
     }
 
@@ -244,6 +256,16 @@ impl FileListWriter {
         self
     }
 
+    /// Sets the checksum seed for xattr abbreviated value digests.
+    ///
+    /// upstream: `xattrs.c` - `sum_init(xattr_sum_nni, checksum_seed)`
+    #[inline]
+    #[must_use]
+    pub const fn with_checksum_seed(mut self, seed: i32) -> Self {
+        self.checksum_seed = seed;
+        self
+    }
+
     /// Sets the filename encoding converter for iconv support.
     #[inline]
     #[must_use]
@@ -318,11 +340,7 @@ impl FileListWriter {
     /// # Upstream Reference
     ///
     /// See `flist.c:send_file_entry()` lines 470-750 for the complete wire encoding.
-    pub fn write_entry<W: Write + ?Sized>(
-        &mut self,
-        writer: &mut W,
-        entry: &FileEntry,
-    ) -> io::Result<()> {
+    pub fn write_entry<W: Write>(&mut self, writer: &mut W, entry: &FileEntry) -> io::Result<()> {
         // Step 1: Get name bytes and apply encoding conversion
         let raw_name = entry.name_bytes();
         let name = self.apply_encoding_conversion(raw_name)?;
@@ -367,6 +385,22 @@ impl FileListWriter {
         // upstream: always_checksum && (S_ISREG(mode) || protocol_version < 28)
         if !abbreviated {
             self.write_checksum(writer, entry)?;
+        }
+
+        // Write ACLs from the wire (after checksum, before xattrs).
+        // upstream: flist.c:send_file_entry() line 654 - send_acl() is called for
+        // all non-symlink entries, including abbreviated hardlink followers.
+        if self.preserve.acls && !entry.is_symlink() {
+            let acl = RsyncAcl::from_mode(entry.mode());
+            send_acl(writer, &acl, None, entry.is_dir(), &mut self.acl_cache)?;
+        }
+
+        // Write xattr index/data (after ACLs).
+        // upstream: flist.c:send_file_entry() line 656 - send_xattr() is called
+        // for ALL entries including abbreviated hardlink followers.
+        if self.preserve.xattrs {
+            let empty = XattrList::new();
+            send_xattr(writer, &empty, None, self.checksum_seed)?;
         }
 
         // Update state.
