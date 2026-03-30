@@ -25,7 +25,7 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 | **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
 | **Compression** | zlib, zstd, lz4 with level control |
 | **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
-| **Incremental recursion** | Push and pull directions |
+| **Incremental recursion** | Pull direction; sender-side disabled pending interop validation |
 | **Batch** | `--write-batch` / `--read-batch` roundtrip |
 | **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
@@ -171,12 +171,13 @@ src/bin/oc-rsync.rs     # Entry point
 crates/cli/             # CLI flags, help, output formatting
 crates/core/            # Orchestration facade, session management, config
 crates/protocol/        # Wire protocol (v28-32), multiplex framing
-crates/transfer/        # Generator (sender), receiver, delta transfer
+crates/transfer/        # Generator, receiver, delta transfer pipeline
 crates/engine/          # Local copy executor, sparse writes, temp-file commit
 crates/daemon/          # Daemon mode, module access control, systemd
 crates/checksums/       # Rolling and strong checksums (MD4, MD5, XXH3, SIMD)
 crates/filters/         # Include/exclude pattern engine, .rsync-filter
 crates/metadata/        # Permissions, uid/gid, mtime, ACLs, xattrs
+crates/platform/        # Platform-specific unsafe code isolation (signals, chroot)
 crates/rsync_io/        # SSH stdio, rsync:// TCP transport, handshake
 crates/fast_io/         # Platform I/O (io_uring, copy_file_range, sendfile)
 crates/compress/        # zstd, lz4, zlib compression codecs
@@ -191,6 +192,7 @@ crates/branding/        # Binary naming and version metadata
 crates/embedding/       # Programmatic entry points for library usage
 crates/apple-fs/        # macOS filesystem operations (clonefile, FSEvents)
 crates/windows-gnu-eh/  # Windows GNU exception handling shims
+crates/test-support/    # Shared test utilities (dev-dependency only)
 ```
 
 See `cargo doc --workspace --no-deps --open` for API documentation.
@@ -198,22 +200,25 @@ See `cargo doc --workspace --no-deps --open` for API documentation.
 ### Architecture
 
 ```text
-cli -> core -> engine, daemon, transport, logging
+cli -> core -> engine, daemon, rsync_io, logging
                 core -> protocol -> checksums, filters, compress, bandwidth -> metadata
+                                                                            -> platform
 ```
 
-Key crates: **cli** (Clap v4), **core** (orchestration facade), **protocol** (wire v28-32, multiplex framing), **transfer** (generator/receiver, delta pipeline), **engine** (local copy, sparse writes, buffer pool), **checksums** (MD4/MD5/XXH3, SIMD), **daemon** (TCP, auth, modules).
+Key crates: **cli** (Clap v4), **core** (orchestration facade), **protocol** (wire v28-32, multiplex framing), **transfer** (generator/receiver, delta pipeline), **engine** (local copy, sparse writes, buffer pool), **checksums** (MD4/MD5/XXH3, SIMD), **daemon** (TCP, auth, modules), **platform** (unsafe code isolation).
 
 ---
 
 ## Security
 
-Protocol parsing crates enforce `#![deny(unsafe_code)]`. Unsafe code is limited to:
+All crates enforce `#![deny(unsafe_code)]`. Unsafe blocks are only permitted in crates that directly wrap platform FFI:
 
-- SIMD-accelerated checksums (with scalar fallbacks)
-- Platform I/O operations (sendfile, io_uring, mmap -- with fallbacks)
-- Metadata/ownership FFI (UID/GID lookup, chroot, setuid/setgid)
-- Windows GNU exception handling
+- **checksums** - SIMD intrinsics (AVX2, SSE2, NEON) with scalar fallbacks
+- **fast_io** - io_uring, `copy_file_range`, sendfile, mmap with standard I/O fallbacks
+- **metadata** - UID/GID lookup, timestamps, ownership, xattrs, ACLs
+- **platform** - Signal handlers, chroot, daemonize, process management
+- **engine** - Buffer pool atomics, deferred fsync, clonefile
+- **windows-gnu-eh** - Windows GNU exception handling shims
 
 Not vulnerable to known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747). OS-level race conditions (TOCTOU) remain possible at filesystem boundaries.
 

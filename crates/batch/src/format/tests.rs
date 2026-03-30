@@ -484,3 +484,143 @@ fn test_batch_header_read_upstream_bytes() {
     assert!(!header.stream_flags.preserve_links);
     assert!(header.stream_flags.always_checksum);
 }
+
+/// Verify protocol 29 header: has bits 7-8 (xfer_dirs, do_compression) but
+/// no compat_flags field.
+///
+/// upstream: batch.c:125-128 - protocol < 29 truncates at flag_ptr[7],
+/// protocol 29 includes bits 7-8 but stops at flag_ptr[9] for protocol < 30.
+#[test]
+fn test_batch_header_upstream_byte_layout_protocol_29() {
+    let mut header = BatchHeader::new(29, 0xDEAD);
+    header.stream_flags = BatchFlags {
+        recurse: true,
+        xfer_dirs: true,      // bit 7 - included for protocol 29
+        do_compression: true, // bit 8 - included for protocol 29
+        preserve_acls: true,  // bit 10 - should be masked out for protocol 29
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // stream_flags: bits 0,7,8 set = 0x0000_0181 (acls bit 10 masked by to_bitmap)
+    let expected_bitmap = 0x0000_0181_i32;
+    assert_eq!(&buf[0..4], &expected_bitmap.to_le_bytes());
+    // protocol_version = 29
+    assert_eq!(&buf[4..8], &29_i32.to_le_bytes());
+    // No compat_flags for protocol < 30
+    // checksum_seed = 0xDEAD
+    assert_eq!(&buf[8..12], &0xDEAD_i32.to_le_bytes());
+    assert_eq!(buf.len(), 12);
+
+    // Verify roundtrip
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchHeader::read_from(&mut cursor).unwrap();
+    assert_eq!(restored.protocol_version, 29);
+    assert!(restored.compat_flags.is_none());
+    assert!(restored.stream_flags.recurse);
+    assert!(restored.stream_flags.xfer_dirs);
+    assert!(restored.stream_flags.do_compression);
+    assert!(!restored.stream_flags.preserve_acls); // masked out
+}
+
+/// Verify header with all 15 stream flag bits set (protocol 30+).
+///
+/// upstream: batch.c:59-76 - all 15 flag_ptr entries active for protocol >= 30.
+#[test]
+fn test_batch_header_all_flags_byte_layout() {
+    let mut header = BatchHeader::new(30, 0);
+    header.compat_flags = Some(0);
+    header.stream_flags = BatchFlags {
+        recurse: true,
+        preserve_uid: true,
+        preserve_gid: true,
+        preserve_links: true,
+        preserve_devices: true,
+        preserve_hard_links: true,
+        always_checksum: true,
+        xfer_dirs: true,
+        do_compression: true,
+        iconv: true,
+        preserve_acls: true,
+        preserve_xattrs: true,
+        inplace: true,
+        append: true,
+        append_verify: true,
+    };
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // All 15 bits set: 0x7FFF
+    let expected_bitmap = 0x7FFF_i32;
+    assert_eq!(&buf[0..4], &expected_bitmap.to_le_bytes());
+}
+
+/// Verify multi-byte varint compat_flags encoding.
+///
+/// upstream: io.c:2448 write_varint(batch_fd, compat_flags) - uses the
+/// same varint encoding as io.c:write_varint() where values >= 0x80 use
+/// multiple bytes.
+#[test]
+fn test_batch_header_multi_byte_compat_flags() {
+    let mut header = BatchHeader::new(31, 42);
+    // 0xFF requires 2 varint bytes (high bit set in first byte)
+    header.compat_flags = Some(0xFF);
+    header.stream_flags = BatchFlags::default();
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // stream_flags = 0 (4 bytes)
+    // protocol = 31 (4 bytes)
+    // compat_flags = 0xFF as varint (2 bytes for rsync varint encoding)
+    // checksum_seed = 42 (4 bytes)
+    // Total: 4 + 4 + 2 + 4 = 14 bytes
+    assert_eq!(buf.len(), 14);
+
+    // Verify roundtrip
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchHeader::read_from(&mut cursor).unwrap();
+    assert_eq!(restored.compat_flags, Some(0xFF));
+    assert_eq!(restored.checksum_seed, 42);
+}
+
+/// Verify that write_to followed by read_from is byte-exact for the
+/// typical upstream rsync 3.4.1 configuration: protocol 32, typical
+/// compat flags, and a realistic checksum seed.
+#[test]
+fn test_batch_header_typical_rsync_341_config() {
+    // Typical rsync 3.4.1 compat flags: CF_INC_RECURSE | CF_SYMLINK_TIMES
+    // | CF_SAFE_FLIST | CF_CHKSUM_SEED_FIX | CF_VARINT_FLIST_FLAGS
+    // = 0x01 | 0x02 | 0x08 | 0x10 | 0x40 = 0x5B
+    let mut header = BatchHeader::new(32, 0x12AB_CD34);
+    header.compat_flags = Some(0x5B);
+    header.stream_flags = BatchFlags {
+        recurse: true,
+        preserve_uid: true,
+        preserve_gid: true,
+        preserve_links: true,
+        ..Default::default()
+    };
+
+    let mut written = Vec::new();
+    header.write_to(&mut written).unwrap();
+
+    let mut cursor = Cursor::new(&written);
+    let restored = BatchHeader::read_from(&mut cursor).unwrap();
+
+    assert_eq!(header.protocol_version, restored.protocol_version);
+    assert_eq!(header.compat_flags, restored.compat_flags);
+    assert_eq!(header.checksum_seed, restored.checksum_seed);
+    assert_eq!(header.stream_flags, restored.stream_flags);
+
+    // Verify exact byte output
+    let mut rewritten = Vec::new();
+    restored.write_to(&mut rewritten).unwrap();
+    assert_eq!(
+        written, rewritten,
+        "write->read->write must be byte-identical"
+    );
+}
