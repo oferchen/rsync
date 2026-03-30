@@ -256,16 +256,21 @@ impl ReceiverContext {
     /// In protocols before 30, hardlinks are identified by matching (dev, ino)
     /// pairs across file list entries. The first entry with a given (dev, ino) is
     /// the leader; subsequent entries are followers that should be hard-linked.
+    ///
+    /// Uses `InodeDeviceMap` to assign ordinal group IDs to unique (dev, ino)
+    /// pairs, then groups entries by ordinal. The first entry per group is the
+    /// leader; the rest are followers linked to the leader's destination path.
+    ///
+    /// upstream: hlink.c:idev_find()
     fn create_hardlinks_pre30<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
         writer: &mut W,
     ) {
-        use std::collections::HashMap;
-        use std::path::PathBuf;
+        let mut idev_map = InodeDeviceMap::new();
 
-        // Map from (dev, ino) -> first file's destination path.
-        let mut dev_ino_map: HashMap<(i64, i64), PathBuf> = HashMap::new();
+        // Collect (group_ordinal, dest_path) for each entry with hardlink dev/ino.
+        let mut grouped: Vec<(u32, std::path::PathBuf)> = Vec::new();
 
         for entry in &self.file_list {
             if !entry.is_file() {
@@ -281,61 +286,169 @@ impl ReceiverContext {
                 None => continue,
             };
 
-            let relative_path = entry.path();
-            let dest_path = dest_dir.join(relative_path);
+            let group = idev_map.get_or_insert(dev, ino);
+            let dest_path = dest_dir.join(entry.path());
+            grouped.push((group, dest_path));
+        }
 
-            match dev_ino_map.entry((dev, ino)) {
-                std::collections::hash_map::Entry::Vacant(e) => {
-                    e.insert(dest_path);
-                }
-                std::collections::hash_map::Entry::Occupied(e) => {
-                    let leader_path = e.get();
+        // Build leader path per group (first entry seen for each ordinal).
+        let mut leaders: std::collections::HashMap<u32, std::path::PathBuf> =
+            std::collections::HashMap::new();
 
-                    // Quick-check: skip if already linked.
-                    if let Ok(link_meta) = fs::symlink_metadata(&dest_path) {
-                        if let Ok(leader_meta) = fs::symlink_metadata(leader_path) {
-                            #[cfg(unix)]
-                            {
-                                use std::os::unix::fs::MetadataExt;
-                                if link_meta.dev() == leader_meta.dev()
-                                    && link_meta.ino() == leader_meta.ino()
-                                {
-                                    let iflags = ItemFlags::from_raw(0);
-                                    let _ = self.emit_itemize(writer, &iflags, entry);
-                                    continue;
-                                }
-                            }
-                            #[cfg(not(unix))]
-                            {
-                                let _ = (link_meta, leader_meta);
-                            }
-                        }
-                        let _ = fs::remove_file(&dest_path);
-                    }
-
-                    if let Some(parent) = dest_path.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-
-                    if let Err(e) = fs::hard_link(leader_path, &dest_path) {
-                        debug_log!(
-                            Recv,
-                            1,
-                            "failed to hard link {} => {}: {}",
-                            dest_path.display(),
-                            leader_path.display(),
-                            e
-                        );
-                    } else {
-                        let iflags = ItemFlags::from_raw(
-                            ItemFlags::ITEM_LOCAL_CHANGE
-                                | ItemFlags::ITEM_XNAME_FOLLOWS
-                                | ItemFlags::ITEM_IS_NEW,
-                        );
-                        let _ = self.emit_itemize(writer, &iflags, entry);
-                    }
-                }
+        // Re-iterate file list entries in parallel with grouped to access entry metadata.
+        let mut group_idx = 0;
+        for entry in &self.file_list {
+            if !entry.is_file() {
+                continue;
             }
+            if entry.hardlink_dev().is_none() || entry.hardlink_ino().is_none() {
+                continue;
+            }
+
+            let (group, ref dest_path) = grouped[group_idx];
+            group_idx += 1;
+
+            if let std::collections::hash_map::Entry::Vacant(e) = leaders.entry(group) {
+                // First entry in this group is the leader.
+                e.insert(dest_path.clone());
+                continue;
+            }
+
+            let leader_path = &leaders[&group];
+
+            // Quick-check: skip if already linked.
+            if let Ok(link_meta) = fs::symlink_metadata(dest_path) {
+                if let Ok(leader_meta) = fs::symlink_metadata(leader_path) {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        if link_meta.dev() == leader_meta.dev()
+                            && link_meta.ino() == leader_meta.ino()
+                        {
+                            let iflags = ItemFlags::from_raw(0);
+                            let _ = self.emit_itemize(writer, &iflags, entry);
+                            continue;
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = (link_meta, leader_meta);
+                    }
+                }
+                let _ = fs::remove_file(dest_path);
+            }
+
+            if let Some(parent) = dest_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+
+            if let Err(e) = fs::hard_link(leader_path, dest_path) {
+                debug_log!(
+                    Recv,
+                    1,
+                    "failed to hard link {} => {}: {}",
+                    dest_path.display(),
+                    leader_path.display(),
+                    e
+                );
+            } else {
+                let iflags = ItemFlags::from_raw(
+                    ItemFlags::ITEM_LOCAL_CHANGE
+                        | ItemFlags::ITEM_XNAME_FOLLOWS
+                        | ItemFlags::ITEM_IS_NEW,
+                );
+                let _ = self.emit_itemize(writer, &iflags, entry);
+            }
+        }
+    }
+}
+
+/// Maps sender-side (device, inode) pairs to local hardlink group ordinals.
+///
+/// For protocol < 30, the sender transmits raw filesystem (dev, ino) pairs.
+/// This mapper assigns sequential group IDs to unique pairs, ensuring
+/// hardlinks sharing the same (dev, ino) are grouped together regardless
+/// of the sender's device numbering.
+///
+/// upstream: hlink.c:idev_find()
+struct InodeDeviceMap {
+    map: rustc_hash::FxHashMap<(i64, i64), u32>,
+    next_group: u32,
+}
+
+impl InodeDeviceMap {
+    /// Creates an empty mapper with no group assignments.
+    fn new() -> Self {
+        Self {
+            map: rustc_hash::FxHashMap::default(),
+            next_group: 0,
+        }
+    }
+
+    /// Returns the group ordinal for this (dev, ino) pair, assigning a new one if first seen.
+    fn get_or_insert(&mut self, dev: i64, ino: i64) -> u32 {
+        let next = &mut self.next_group;
+        *self.map.entry((dev, ino)).or_insert_with(|| {
+            let id = *next;
+            *next += 1;
+            id
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inode_device_map_same_pair_returns_same_group() {
+        let mut map = InodeDeviceMap::new();
+        let g1 = map.get_or_insert(100, 200);
+        let g2 = map.get_or_insert(100, 200);
+        assert_eq!(g1, g2);
+    }
+
+    #[test]
+    fn inode_device_map_different_pairs_return_different_groups() {
+        let mut map = InodeDeviceMap::new();
+        let g1 = map.get_or_insert(1, 1);
+        let g2 = map.get_or_insert(1, 2);
+        let g3 = map.get_or_insert(2, 1);
+        assert_ne!(g1, g2);
+        assert_ne!(g1, g3);
+        assert_ne!(g2, g3);
+    }
+
+    #[test]
+    fn inode_device_map_sequential_group_ids() {
+        let mut map = InodeDeviceMap::new();
+        assert_eq!(map.get_or_insert(10, 20), 0);
+        assert_eq!(map.get_or_insert(30, 40), 1);
+        assert_eq!(map.get_or_insert(50, 60), 2);
+        // Revisiting earlier pair still returns original ordinal.
+        assert_eq!(map.get_or_insert(10, 20), 0);
+    }
+
+    #[test]
+    fn inode_device_map_negative_values() {
+        let mut map = InodeDeviceMap::new();
+        let g1 = map.get_or_insert(-1, -1);
+        let g2 = map.get_or_insert(-1, -1);
+        let g3 = map.get_or_insert(-1, 1);
+        assert_eq!(g1, g2);
+        assert_ne!(g1, g3);
+    }
+
+    #[test]
+    fn inode_device_map_many_groups() {
+        let mut map = InodeDeviceMap::new();
+        for i in 0..1000 {
+            let group = map.get_or_insert(i, i * 2);
+            assert_eq!(group, i as u32);
+        }
+        // All lookups stable.
+        for i in 0..1000 {
+            assert_eq!(map.get_or_insert(i, i * 2), i as u32);
         }
     }
 }
