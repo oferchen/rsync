@@ -1338,6 +1338,8 @@ KNOWN_FAILURES=(
   "oc:xattrs"
   "oc:hardlinks"
   "oc:hardlinks-relative"
+  "oc:compress-zstd"
+  "oc:compress-lz4"
   "oc:itemize"
   "oc:merge-filter"
   # --- upstream→oc (daemon receive) ---
@@ -1349,6 +1351,8 @@ KNOWN_FAILURES=(
   "up:exclude"
   "up:delay-updates"
   "up:merge-filter"
+  "up:compress-zstd"
+  "up:compress-lz4"
   # --- standalone ---
   "standalone:write-batch-read-batch"
   "standalone:write-batch-read-batch-compressed"
@@ -2419,6 +2423,8 @@ run_comprehensive_interop_case() {
       "compare-dest|-av --compare-dest=compare_ref|compare-dest"
       "files-from|-av --files-from=filelist.txt|files-from"
       "hardlinks-relative|-avHR|hardlinks-relative"
+      "compress-zstd|-avz --compress-choice=zstd|compress"
+      "compress-lz4|-avz --compress-choice=lz4|compress"
     )
   fi
 
