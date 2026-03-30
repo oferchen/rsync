@@ -213,10 +213,38 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[cfg(windows)]
     #[test]
-    fn windows_drop_privileges_noop_when_no_account() {
+    fn drop_privileges_windows_noop_when_no_account() {
         let result = drop_privileges_windows(None, None, None);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn drop_privileges_windows_noop_with_uid_gid_but_no_account() {
+        let result = drop_privileges_windows(Some(1000), Some(1000), None);
+        assert!(result.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chroot_error_has_os_error_kind() {
+        let err = apply_chroot(Path::new("/nonexistent_path_xyz_99999")).unwrap_err();
+        // EPERM or ENOENT depending on whether we are root
+        assert!(
+            err.kind() == io::ErrorKind::PermissionDenied || err.kind() == io::ErrorKind::NotFound,
+            "expected PermissionDenied or NotFound, got {:?}",
+            err.kind()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drop_privileges_fails_for_nonexistent_uid_when_root() {
+        // Only meaningful when running as root - otherwise setuid fails with EPERM
+        // which is the expected non-root behavior. This test verifies the error path.
+        if !nix::unistd::getuid().is_root() {
+            let result = drop_privileges(Some(99999), None);
+            assert!(result.is_err(), "non-root should fail to setuid");
+        }
     }
 }

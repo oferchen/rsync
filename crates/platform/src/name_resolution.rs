@@ -99,9 +99,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn non_windows_returns_none() {
-        #[cfg(not(windows))]
+    fn nonexistent_account_returns_none() {
+        assert!(name_to_rid("nonexistent_user_xyz_99999").is_none());
+    }
+
+    #[test]
+    fn empty_name_returns_none() {
+        assert!(name_to_rid("").is_none());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn non_windows_always_returns_none() {
         assert!(name_to_rid("Administrator").is_none());
+        assert!(name_to_rid("root").is_none());
     }
 
     #[cfg(windows)]
@@ -112,11 +123,5 @@ mod tests {
             assert_eq!(rid, 500);
         }
         // May return None on systems where Administrator is renamed/disabled.
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn nonexistent_account_returns_none() {
-        assert!(name_to_rid("nonexistent_user_xyz_99999").is_none());
     }
 }
