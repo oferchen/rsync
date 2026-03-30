@@ -191,9 +191,7 @@ pub fn negotiate_capabilities_with_override(
     let _ = is_daemon_mode; // Exchange happens in all modes when do_negotiation=true
     let _ = is_server; // Both sides behave symmetrically
 
-    // Step 1: SEND our supported algorithm lists (upstream compat.c:541-544)
-    // Uses vstring format (NOT varint) - see write_vstring documentation
-    //
+    // Send our supported algorithm lists. upstream: compat.c:541-544
     // When --checksum-choice overrides the selection, advertise only that
     // algorithm (upstream options.c replaces valid_checksums with the user's
     // choice so negotiate_the_strings sees a single-entry list).
@@ -204,7 +202,6 @@ pub fn negotiate_capabilities_with_override(
     debug_log!(Proto, 2, "sending checksum list: {}", checksum_list);
     write_vstring(stdout, &checksum_list)?;
 
-    // Send compression list only if compression is enabled
     if send_compression {
         let compression_list = supported_compressions().join(" ");
         debug_log!(Proto, 2, "sending compression list: {}", compression_list);
@@ -213,8 +210,7 @@ pub fn negotiate_capabilities_with_override(
 
     stdout.flush()?;
 
-    // Step 2: READ the remote side's algorithm lists (upstream compat.c:546-564)
-    // Uses vstring format (NOT varint) - see read_vstring documentation
+    // Read the remote side's algorithm lists. upstream: compat.c:546-564
     let remote_checksum_list = read_vstring(stdin)?;
     debug_log!(Proto, 2, "received checksum list: {}", remote_checksum_list);
 
@@ -226,8 +222,8 @@ pub fn negotiate_capabilities_with_override(
         None
     };
 
-    // Step 3: Choose algorithms - pick first from REMOTE's list that WE also support
-    // This matches upstream where "the client picks the first name in the server's list
+    // Pick first from remote's list that we also support.
+    // upstream: compat.c - "the client picks the first name in the server's list
     // that is also in the client's list"
     //
     // When the user forced a checksum via --checksum-choice, verify the remote

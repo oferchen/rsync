@@ -335,16 +335,15 @@ pub fn run_server_with_handshake<W: Write>(
     // (already set by @RSYNCD greeting or SSH handshake).
     let buffered_data = std::mem::take(&mut handshake.buffered);
 
-    // Daemon mode: discard buffered data from handshake reader. The vstring
-    // negotiation follows compat flags exchange, so any buffered bytes predate
-    // the client's knowledge of whether to send vstrings.
-    let mut chained_stdin: Box<dyn std::io::Read> =
-        if handshake.client_args.is_some() && !buffered_data.is_empty() {
-            Box::new(stdin)
-        } else {
-            let buffered = std::io::Cursor::new(buffered_data);
-            Box::new(buffered.chain(stdin))
-        };
+    // Chain any buffered data from the handshake BufReader ahead of raw stdin.
+    // In daemon mode, the BufReader used for argument reading may buffer compat
+    // exchange bytes (TCP coalescing). Discarding them breaks protocol negotiation.
+    let mut chained_stdin: Box<dyn std::io::Read> = if buffered_data.is_empty() {
+        Box::new(stdin)
+    } else {
+        let buffered = std::io::Cursor::new(buffered_data);
+        Box::new(buffered.chain(stdin))
+    };
 
     // upstream: main.c:1245 start_server() → setup_protocol(f_out, f_in)
     // Performs compat flags exchange + capability negotiation in RAW mode,

@@ -167,28 +167,19 @@ where
     S: AsRef<OsStr>,
     F: FnOnce(&Path, bool) -> bool,
 {
-    // Check if deletion is enabled
     if !context.delete_enabled {
         return false;
     }
-
-    // Check deletion limit
     if !context.can_delete() {
         return false;
     }
-
-    // Check if entry is extraneous
     if !is_extraneous_entry(entry_name, source_entries) {
         return false;
     }
 
-    // Check filter rules if we have a relative path
     if let Some(relative) = context.relative_path {
-        // Filter evaluation determines if this file can be deleted
-        // based on exclusion rules and --delete-excluded setting
         filter_allows_deletion(relative, false)
     } else {
-        // No filter context, allow deletion
         true
     }
 }

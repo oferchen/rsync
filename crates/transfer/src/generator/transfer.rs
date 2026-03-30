@@ -622,13 +622,9 @@ impl GeneratorContext {
             self.send_file_list(writer)?
         };
 
-        // Step 4: Send ID lists for non-INC_RECURSE protocols
         self.send_id_lists(writer)?;
-
-        // Step 5: Send io_error flag for protocol < 30
         self.send_io_error_flag(writer)?;
 
-        // Step 6: Run main transfer loop
         // INC_RECURSE sub-lists are sent lazily inside the loop via
         // SegmentScheduler, matching upstream sender.c:227,261 cadence.
         let transfer_result = {
@@ -636,12 +632,8 @@ impl GeneratorContext {
             self.run_transfer_loop(reader, writer, &mut progress, &mut itemize)?
         };
 
-        // Step 7: Handle goodbye handshake
-        //
-        // No stats are sent here. Upstream client-sender calls handle_stats(-1)
-        // which is a no-op (main.c:360-384). Stats are only written by the
-        // server-sender (am_server && am_sender) path. The client already has
-        // all stats locally via GeneratorStats.
+        // upstream: client-sender handle_stats(-1) is a no-op (main.c:360-384).
+        // Stats are only written by the server-sender path.
         let mut ndx_read_codec = transfer_result.ndx_read_codec;
         let mut ndx_write_codec = transfer_result.ndx_write_codec;
         self.handle_goodbye(reader, writer, &mut ndx_read_codec, &mut ndx_write_codec)?;
