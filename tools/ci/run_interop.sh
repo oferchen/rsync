@@ -1351,6 +1351,7 @@ KNOWN_FAILURES=(
   "up:merge-filter"
   # --- standalone ---
   "standalone:write-batch-read-batch"
+  "standalone:write-batch-read-batch-compressed"
   "standalone:large-file-2gb"
 )
 
@@ -1534,6 +1535,116 @@ CONF
   # Verify replayed destination matches source
   if ! comp_verify_transfer "$src_dir" "$replay_dest"; then
     echo "    content mismatch after daemon batch replay"
+    return 1
+  fi
+
+  return 0
+}
+
+# #3051: write-batch with compression roundtrip
+# Verifies that --write-batch with -z (compression) produces batch files
+# containing uncompressed data that --read-batch can replay correctly.
+# The fix in PR #3051 tees uncompressed data to the batch recorder
+# instead of compressed data.
+test_write_batch_read_batch_compressed() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local batch_dir="${work}/batch-compress-test"
+  local dest1="${batch_dir}/dest1"
+  local dest2="${batch_dir}/dest2"
+  local batch_file="${batch_dir}/batch-z.rsync"
+  rm -rf "$batch_dir"
+  mkdir -p "$dest1" "$dest2"
+
+  # --- Step 1: oc-rsync writes a batch with -z (default compression) ---
+  if ! timeout "$hard_timeout" "$oc_bin" -av -z \
+      --write-batch="$batch_file" --timeout=10 \
+      "${src_dir}/" "${dest1}/" \
+      >"${log}.write-batch-z.out" 2>"${log}.write-batch-z.err"; then
+    echo "    write-batch with -z failed (exit=$?)"
+    return 1
+  fi
+
+  if [[ ! -f "$batch_file" ]]; then
+    echo "    batch file not created (compressed write)"
+    return 1
+  fi
+
+  # Step 2: oc-rsync reads the batch back to a fresh destination
+  if ! timeout "$hard_timeout" "$oc_bin" -av \
+      --read-batch="$batch_file" --timeout=10 \
+      "${dest2}/" \
+      >"${log}.read-batch-z.out" 2>"${log}.read-batch-z.err"; then
+    echo "    read-batch failed after compressed write (exit=$?)"
+    return 1
+  fi
+
+  if ! comp_verify_transfer "$src_dir" "$dest2"; then
+    echo "    content mismatch after compressed batch roundtrip"
+    return 1
+  fi
+
+  # --- Step 3: higher compression level (--compress-level=6) ---
+  local dest3="${batch_dir}/dest3"
+  local dest4="${batch_dir}/dest4"
+  local batch_file2="${batch_dir}/batch-z6.rsync"
+  mkdir -p "$dest3" "$dest4"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av -z --compress-level=6 \
+      --write-batch="$batch_file2" --timeout=10 \
+      "${src_dir}/" "${dest3}/" \
+      >"${log}.write-batch-z6.out" 2>"${log}.write-batch-z6.err"; then
+    echo "    write-batch with --compress-level=6 failed (exit=$?)"
+    return 1
+  fi
+
+  if [[ ! -f "$batch_file2" ]]; then
+    echo "    batch file not created (compress-level=6)"
+    return 1
+  fi
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av \
+      --read-batch="$batch_file2" --timeout=10 \
+      "${dest4}/" \
+      >"${log}.read-batch-z6.out" 2>"${log}.read-batch-z6.err"; then
+    echo "    read-batch failed after compress-level=6 write (exit=$?)"
+    return 1
+  fi
+
+  if ! comp_verify_transfer "$src_dir" "$dest4"; then
+    echo "    content mismatch after compress-level=6 batch roundtrip"
+    return 1
+  fi
+
+  # --- Step 4: cross-tool - oc-rsync writes compressed batch, upstream reads ---
+  local dest5="${batch_dir}/dest5"
+  local dest6="${batch_dir}/dest6"
+  local batch_file3="${batch_dir}/batch-z-cross.rsync"
+  mkdir -p "$dest5" "$dest6"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av -z \
+      --write-batch="$batch_file3" --timeout=10 \
+      "${src_dir}/" "${dest5}/" \
+      >"${log}.write-batch-z-cross.out" 2>"${log}.write-batch-z-cross.err"; then
+    echo "    write-batch with -z failed (oc-rsync write, exit=$?)"
+    return 1
+  fi
+
+  if [[ ! -f "$batch_file3" ]]; then
+    echo "    batch file 3 not created"
+    return 1
+  fi
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -av \
+      --read-batch="$batch_file3" --timeout=10 \
+      "${dest6}/" \
+      >"${log}.read-batch-z-cross.out" 2>"${log}.read-batch-z-cross.err"; then
+    echo "    read-batch failed (upstream read of compressed-write batch, exit=$?)"
+    return 1
+  fi
+
+  if ! comp_verify_transfer "$src_dir" "$dest6"; then
+    echo "    content mismatch after cross-tool compressed batch roundtrip"
     return 1
   fi
 
@@ -2165,6 +2276,7 @@ run_standalone_interop_tests() {
 
   local test_names=(
     "write-batch-read-batch"
+    "write-batch-read-batch-compressed"
     "info-progress2"
     "large-file-2gb"
     "file-vanished"
@@ -2176,6 +2288,7 @@ run_standalone_interop_tests() {
   )
   local test_funcs=(
     "test_write_batch_read_batch"
+    "test_write_batch_read_batch_compressed"
     "test_info_progress2"
     "test_large_file_2gb"
     "test_file_vanished"

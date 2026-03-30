@@ -849,4 +849,154 @@ mod integration {
         let content = fs::read(dest_dir.join("subdir/hello.txt")).unwrap();
         assert_eq!(content, b"Hello, batch!");
     }
+
+    /// Verifies that batch files with `do_compression=true` flag store raw
+    /// (uncompressed) protocol data and can be read back correctly.
+    ///
+    /// PR #3051 fixed a bug where compression was applied to batch file data.
+    /// Batch files must always contain uncompressed data regardless of the
+    /// `do_compression` flag - that flag only records that the original
+    /// transfer used compression, so --read-batch knows to set the flag
+    /// when replaying. The actual batch file body is a raw tee of the
+    /// uncompressed protocol stream.
+    /// upstream: batch.c - batch file body is always uncompressed
+    #[test]
+    fn test_batch_roundtrip_with_compression_flag() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("compress_flag.batch");
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        )
+        .with_checksum_seed(12345);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_uid: true,
+            preserve_gid: true,
+            do_compression: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        // Write raw protocol data - this must be stored uncompressed
+        let data1 = b"file list data with compression flag set";
+        let data2 = b"delta operations - must be readable without decompression";
+        writer.write_data(data1).unwrap();
+        writer.write_data(data2).unwrap();
+        writer.finalize().unwrap();
+
+        // Read back and verify the compression flag is preserved
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        );
+        let mut reader = BatchReader::new(read_config).unwrap();
+        let read_flags = reader.read_header().unwrap();
+
+        assert!(
+            read_flags.do_compression,
+            "do_compression flag must survive roundtrip"
+        );
+        assert_eq!(read_flags.recurse, flags.recurse);
+        assert_eq!(read_flags.preserve_uid, flags.preserve_uid);
+        assert_eq!(read_flags.preserve_gid, flags.preserve_gid);
+
+        // Verify data reads back verbatim (uncompressed)
+        let mut buf = vec![0u8; 200];
+        let n = reader.read_data(&mut buf).unwrap();
+        assert!(n > 0, "must read data from batch file");
+        assert!(
+            buf[..n].starts_with(data1),
+            "batch data must be readable without decompression"
+        );
+    }
+
+    /// Verifies replay works when the batch header has `do_compression=true`.
+    /// upstream: batch.c - replay ignores the compression flag for data reading
+    /// because batch file body is always an uncompressed protocol stream tee.
+    #[test]
+    fn test_replay_with_compression_flag() {
+        use protocol::flist::{FileEntry, FileListWriter};
+
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("replay_compress.batch");
+        let dest_dir = temp_dir.path().join("dest");
+        fs::create_dir_all(&dest_dir).unwrap();
+
+        let protocol_version = 31;
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_checksum_seed(42);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        let flags = BatchFlags {
+            recurse: true,
+            do_compression: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol);
+
+        // Directory entry
+        let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
+        dir_entry.set_mtime(1_700_000_000, 0);
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // File entry
+        let file_data = b"compressed batch replay test";
+        let mut file_entry = FileEntry::new_file("test.txt".into(), file_data.len() as u64, 0o644);
+        file_entry.set_mtime(1_700_000_001, 0);
+        buf.clear();
+        flist_writer.write_entry(&mut buf, &file_entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // End of flist
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        // Token-format delta: literal data for the file
+        // upstream: token.c token format: count(i32) + data for literals
+        let token_len = file_data.len() as i32;
+        writer.write_data(&token_len.to_le_bytes()).unwrap();
+        writer.write_data(file_data).unwrap();
+
+        // End-of-file token (0)
+        writer.write_data(&0i32.to_le_bytes()).unwrap();
+
+        // Phase marker (-1 index)
+        writer.write_data(&(-1i32).to_le_bytes()).unwrap();
+
+        writer.finalize().unwrap();
+
+        // Replay the batch file to destination
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
+
+        assert_eq!(result.file_count, 2); // 1 dir + 1 file
+        assert!(result.recurse);
+        assert!(dest_dir.join("test.txt").exists());
+
+        let content = fs::read(dest_dir.join("test.txt")).unwrap();
+        assert_eq!(content, file_data);
+    }
 }
