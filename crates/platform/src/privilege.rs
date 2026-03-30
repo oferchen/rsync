@@ -231,8 +231,7 @@ mod tests {
         let err = apply_chroot(Path::new("/nonexistent_path_xyz_99999")).unwrap_err();
         // EPERM or ENOENT depending on whether we are root
         assert!(
-            err.kind() == io::ErrorKind::PermissionDenied
-                || err.kind() == io::ErrorKind::NotFound,
+            err.kind() == io::ErrorKind::PermissionDenied || err.kind() == io::ErrorKind::NotFound,
             "expected PermissionDenied or NotFound, got {:?}",
             err.kind()
         );

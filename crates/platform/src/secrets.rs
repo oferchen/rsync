@@ -154,8 +154,7 @@ mod tests {
     #[cfg(not(unix))]
     #[test]
     fn non_unix_always_succeeds() {
-        let result =
-            check_secrets_file_permissions(Path::new("C:\\nonexistent_secrets_xyz_99999"));
+        let result = check_secrets_file_permissions(Path::new("C:\\nonexistent_secrets_xyz_99999"));
         assert!(result.is_ok());
     }
 }
