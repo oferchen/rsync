@@ -210,4 +210,44 @@ mod tests {
             "swap must reset progress_dump to false"
         );
     }
+
+    #[test]
+    fn signal_flags_arcs_are_independent_clones() {
+        let flags = SignalFlags::new();
+        let shutdown_clone = Arc::clone(&flags.shutdown);
+        shutdown_clone.store(true, Ordering::Relaxed);
+        assert!(
+            flags.shutdown.load(Ordering::Relaxed),
+            "cloned arc must share state with original"
+        );
+        assert!(
+            !flags.reload_config.load(Ordering::Relaxed),
+            "other flags must remain unaffected"
+        );
+    }
+
+    #[test]
+    fn multiple_flags_can_be_set_simultaneously() {
+        let flags = SignalFlags::new();
+        flags.shutdown.store(true, Ordering::Relaxed);
+        flags.graceful_exit.store(true, Ordering::Relaxed);
+        flags.reload_config.store(true, Ordering::Relaxed);
+        flags.progress_dump.store(true, Ordering::Relaxed);
+        assert!(flags.shutdown.load(Ordering::Relaxed));
+        assert!(flags.graceful_exit.load(Ordering::Relaxed));
+        assert!(flags.reload_config.load(Ordering::Relaxed));
+        assert!(flags.progress_dump.load(Ordering::Relaxed));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registered_flags_are_shared_via_arc() {
+        let flags = register_signal_handlers().expect("registration succeeds");
+        let shutdown_clone = Arc::clone(&flags.shutdown);
+        shutdown_clone.store(true, Ordering::Relaxed);
+        assert!(
+            flags.shutdown.load(Ordering::Relaxed),
+            "registered flag arcs must be shared"
+        );
+    }
 }
