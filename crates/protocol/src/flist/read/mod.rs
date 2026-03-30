@@ -459,7 +459,6 @@ impl FileListReader {
         &mut self,
         reader: &mut R,
     ) -> io::Result<Option<FileEntry>> {
-        // Step 1: Read and validate flags
         let flags = match self.read_flags(reader)? {
             FlagsResult::EndOfList => return Ok(None),
             FlagsResult::IoError(code) => {
@@ -471,13 +470,10 @@ impl FileListReader {
             FlagsResult::Flags(f) => f,
         };
 
-        // Step 2: Read name with compression
         let name = self.read_name(reader, flags)?;
 
-        // Step 2b: Reject zero-length filenames.
-        // upstream: flist.c:1873 - sender rejects empty names with "cannot send file
-        // with empty name". We enforce the same invariant on the receiver side as
-        // defense-in-depth against a malicious or buggy sender.
+        // upstream: flist.c:1873 - sender rejects empty names; we enforce the
+        // same invariant as defense-in-depth against a malicious sender.
         if name.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -485,18 +481,12 @@ impl FileListReader {
             ));
         }
 
-        // Step 3: Read hardlink index (MUST come immediately after name)
-        // For hardlink followers, this is the only field read after the name.
-        // Upstream rsync does "goto create_object" after reading the index for followers.
+        // Hardlink index must come immediately after name on wire.
+        // upstream: flist.c:recv_file_entry() "goto create_object" for followers.
         let hardlink_idx = self.read_hardlink_idx(reader, flags)?;
 
-        // Step 4+: Read metadata (unless this is a hardlink follower)
-        // Hardlink followers have their metadata copied from the leader entry,
-        // so we skip reading size, mtime, mode, uid, gid, symlink, and rdev.
-        // Step 4+: Read metadata unless this is an abbreviated hardlink follower.
         // Abbreviated followers (leader in same flist segment) have metadata
-        // copied from the leader. Unabbreviated followers (leader in a previous
-        // segment) carry full metadata on the wire.
+        // copied from the leader; unabbreviated followers carry full metadata.
         // upstream: flist.c:recv_file_entry() line 793
         let (size, metadata, link_target, rdev, hardlink_dev_ino, checksum) =
             if self.is_abbreviated_follower(flags, hardlink_idx) {
@@ -521,22 +511,11 @@ impl FileListReader {
                     None,
                 )
             } else {
-                // Step 4: Read file size
                 let size = self.read_size(reader)?;
-
-                // Step 5: Read metadata fields (mtime, nsec, crtime, mode, atime, uid, gid)
                 let metadata = self.read_metadata(reader, flags)?;
-
-                // Step 6: Read device numbers (if applicable)
                 let rdev = self.read_rdev(reader, metadata.mode, flags)?;
-
-                // Step 7: Read symlink target (if applicable)
                 let link_target = self.read_symlink_target(reader, metadata.mode)?;
-
-                // Step 8: Read hardlink dev/ino for protocol 28-29
                 let hardlink_dev_ino = self.read_hardlink_dev_ino(reader, flags, metadata.mode)?;
-
-                // Step 9: Read checksum if always_checksum mode
                 let checksum = self.read_checksum(reader, metadata.mode)?;
 
                 (
@@ -549,10 +528,8 @@ impl FileListReader {
                 )
             };
 
-        // Step 10: Apply encoding conversion
         let converted_name = self.apply_encoding_conversion(name)?;
 
-        // Clean and validate the filename.
         // upstream: flist.c:756-760 - clean_fname(CFN_REFUSE_DOT_DOT_DIRS)
         // then reject leading '/' when !relative_paths.
         // In --relative mode, leading slashes are stripped instead.
