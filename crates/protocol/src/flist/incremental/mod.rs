@@ -69,7 +69,7 @@ use logging::debug_log;
 
 use super::FileEntry;
 
-pub use ready_entry::{process_ready_entries, process_ready_entry, ReadyEntryAction};
+pub use ready_entry::{ReadyEntryAction, process_ready_entries, process_ready_entry};
 pub use streaming::StreamingFileList;
 
 /// Incremental file list that yields entries as soon as their dependencies are met.

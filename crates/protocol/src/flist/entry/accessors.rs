@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use super::FileEntry;
 use super::core::extract_dirname;
 use super::extras::FileEntryExtras;
 use super::file_type::FileType;
-use super::FileEntry;
 
 impl FileEntry {
     /// Returns a mutable reference to the extras, allocating if needed.

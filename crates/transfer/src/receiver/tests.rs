@@ -1,14 +1,14 @@
+#[cfg(feature = "incremental-flist")]
+use super::PHASE1_CHECKSUM_LENGTH;
 use super::directory::FailedDirectories;
 use super::stats::TransferStats;
 use super::wire::SenderAttrs;
 use super::wire::SumHead;
-#[cfg(feature = "incremental-flist")]
-use super::PHASE1_CHECKSUM_LENGTH;
-use super::{ReceiverContext, REDO_CHECKSUM_LENGTH};
+use super::{REDO_CHECKSUM_LENGTH, ReceiverContext};
 use crate::config::ServerConfig;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::error::{
-    categorize_io_error, DeltaFatalError, DeltaRecoverableError, DeltaTransferError,
+    DeltaFatalError, DeltaRecoverableError, DeltaTransferError, categorize_io_error,
 };
 use crate::flags::ParsedServerFlags;
 use crate::handshake::HandshakeResult;
@@ -277,7 +277,7 @@ fn temp_file_guard_keeps_file_when_marked() {
     {
         let mut guard = TempFileGuard::new(temp_path.clone());
         guard.keep(); // Mark as successful
-                      // Guard goes out of scope here
+        // Guard goes out of scope here
     }
 
     // File should still exist
@@ -692,7 +692,7 @@ fn sender_attrs_read_with_long_xname() {
     // NDX + iflags + xname with extended length (> 127 bytes requires 2-byte length)
     let mut data = vec![0x05u8]; // NDX byte
     data.extend_from_slice(&0x9000u16.to_le_bytes()); // iflags with XNAME_FOLLOWS
-                                                      // Length 300 = 0x80 | (300 / 256) = 0x81, then 300 % 256 = 44
+    // Length 300 = 0x80 | (300 / 256) = 0x81, then 300 % 256 = 44
     data.push(0x81); // High byte: 0x80 flag + 1
     data.push(0x2C); // Low byte: 44 (1*256 + 44 = 300)
     data.extend(vec![b'x'; 300]); // xname content (300 'x' characters)
@@ -723,7 +723,7 @@ fn sender_attrs_constants_match_upstream() {
 
 #[test]
 fn sender_attrs_read_with_codec_protocol_30_delta_encoded() {
-    use protocol::codec::{create_ndx_codec, NdxCodec};
+    use protocol::codec::{NdxCodec, create_ndx_codec};
 
     // Simulate sender encoding NDX 0 for protocol 30+
     // With prev_positive=-1, ndx=0, diff=1, encoded as single byte 0x01
@@ -744,7 +744,7 @@ fn sender_attrs_read_with_codec_protocol_30_delta_encoded() {
 
 #[test]
 fn sender_attrs_read_with_codec_protocol_30_sequential_indices() {
-    use protocol::codec::{create_ndx_codec, NdxCodec};
+    use protocol::codec::{NdxCodec, create_ndx_codec};
 
     // Simulate sender sending sequential indices 0, 1, 2
     let mut sender_codec = create_ndx_codec(31);
@@ -767,7 +767,7 @@ fn sender_attrs_read_with_codec_protocol_30_sequential_indices() {
 
 #[test]
 fn sender_attrs_read_with_codec_legacy_protocol_29() {
-    use protocol::codec::{create_ndx_codec, NdxCodec};
+    use protocol::codec::{NdxCodec, create_ndx_codec};
 
     // Protocol 29 uses 4-byte LE NDX
     let mut sender_codec = create_ndx_codec(29);
@@ -786,7 +786,7 @@ fn sender_attrs_read_with_codec_legacy_protocol_29() {
 
 #[test]
 fn sender_attrs_read_with_codec_protocol_28_no_iflags() {
-    use protocol::codec::{create_ndx_codec, NdxCodec};
+    use protocol::codec::{NdxCodec, create_ndx_codec};
 
     // Protocol 28: 4-byte LE NDX, no iflags
     let mut sender_codec = create_ndx_codec(28);
@@ -805,7 +805,7 @@ fn sender_attrs_read_with_codec_protocol_28_no_iflags() {
 
 #[test]
 fn sender_attrs_read_with_codec_large_index() {
-    use protocol::codec::{create_ndx_codec, NdxCodec};
+    use protocol::codec::{NdxCodec, create_ndx_codec};
 
     // Test with a large index that requires extended encoding in protocol 30+
     let large_index = 50000;
@@ -1999,9 +1999,11 @@ mod incremental_mode_tests {
         // All descendants should be affected
         assert!(failed.failed_ancestor("level1/level2").is_some());
         assert!(failed.failed_ancestor("level1/level2/level3").is_some());
-        assert!(failed
-            .failed_ancestor("level1/level2/level3/file.txt")
-            .is_some());
+        assert!(
+            failed
+                .failed_ancestor("level1/level2/level3/file.txt")
+                .is_some()
+        );
     }
 
     #[test]
@@ -2049,7 +2051,7 @@ mod incremental_mode_tests {
 /// upstream: main.c:875-906 `read_final_goodbye()`
 mod legacy_goodbye_tests {
     use super::*;
-    use protocol::codec::{create_ndx_codec, NdxCodec};
+    use protocol::codec::{NdxCodec, create_ndx_codec};
 
     /// NDX_DONE as 4-byte little-endian (-1 = 0xFFFFFFFF).
     const NDX_DONE_LE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
@@ -3054,7 +3056,7 @@ fn receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContext {
 
 /// Helper to create a hardlink leader entry with appropriate flags.
 fn make_hlink_leader(name: &str, size: u64, gnum: u32) -> FileEntry {
-    use protocol::flist::{XMIT_HLINKED, XMIT_HLINK_FIRST};
+    use protocol::flist::{XMIT_HLINK_FIRST, XMIT_HLINKED};
     let mut entry = FileEntry::new_file(name.into(), size, 0o644);
     entry.flags_mut().extended |= XMIT_HLINKED | XMIT_HLINK_FIRST;
     entry.set_hardlink_idx(gnum);
