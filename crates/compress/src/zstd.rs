@@ -131,8 +131,14 @@ where
     R: Read,
 {
     /// Creates a new decoder that wraps the provided reader.
+    ///
+    /// Uses single-frame mode so the decoder stops after the first complete
+    /// zstd frame instead of probing for a second frame header, which would
+    /// cause `UnexpectedEof` when the underlying reader is multiplex-framed.
     pub fn new(reader: R) -> io::Result<Self> {
-        let decoder = ZstdDecoder::new(reader).map_err(io::Error::other)?;
+        let decoder = ZstdDecoder::new(reader)
+            .map_err(io::Error::other)?
+            .single_frame();
         Ok(Self {
             inner: decoder,
             bytes: 0,

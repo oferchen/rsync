@@ -527,19 +527,34 @@ fn test_choose_checksum_empty_list() {
 
 #[test]
 fn test_choose_compression_first_match_wins_zlib_fallback() {
-    // Remote offers zstd and lz4 first, but we only support zlibx/zlib/none.
-    // The first entry in the remote list that we also support is "zlib".
+    // Remote offers zstd and lz4 first, then zlib.
+    // With all features: zstd is supported, so it wins.
+    // Without zstd/lz4 features: first match we support is "zlib".
     let client_list = "zstd lz4 zlib none";
     let result = choose_compression_algorithm(client_list).unwrap();
-    assert_eq!(result, CompressionAlgorithm::Zlib);
+    if cfg!(feature = "zstd") {
+        assert_eq!(result, CompressionAlgorithm::Zstd);
+    } else if cfg!(feature = "lz4") {
+        assert_eq!(result, CompressionAlgorithm::LZ4);
+    } else {
+        assert_eq!(result, CompressionAlgorithm::Zlib);
+    }
 }
 
 #[test]
 fn test_choose_compression_first_match_wins_zlibx() {
-    // Remote offers zstd, lz4, then zlibx - first match we support is "zlibx".
+    // Remote offers zstd, lz4, then zlibx.
+    // With all features: zstd is supported, so it wins.
+    // Without zstd/lz4 features: first match we support is "zlibx".
     let client_list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(client_list).unwrap();
-    assert_eq!(result, CompressionAlgorithm::ZlibX);
+    if cfg!(feature = "zstd") {
+        assert_eq!(result, CompressionAlgorithm::Zstd);
+    } else if cfg!(feature = "lz4") {
+        assert_eq!(result, CompressionAlgorithm::LZ4);
+    } else {
+        assert_eq!(result, CompressionAlgorithm::ZlibX);
+    }
 }
 
 #[test]
