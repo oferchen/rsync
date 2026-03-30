@@ -59,7 +59,19 @@ fn generate_peer_data(send_compression: bool) -> Vec<u8> {
     let mut data = Vec::new();
     write_vstring(&mut data, "xxh128 xxh3 xxh64 md5 md4 sha1 none").unwrap();
     if send_compression {
-        write_vstring(&mut data, "zlibx zlib none").unwrap();
+        // Build compression list matching the build's feature flags.
+        // When compiled with --all-features, zstd/lz4 are available and
+        // negotiate_capabilities advertises them. The mock peer must
+        // advertise the same algorithms so both sides agree.
+        let mut algos = Vec::new();
+        if cfg!(feature = "zstd") {
+            algos.push("zstd");
+        }
+        if cfg!(feature = "lz4") {
+            algos.push("lz4");
+        }
+        algos.extend_from_slice(&["zlibx", "zlib", "none"]);
+        write_vstring(&mut data, &algos.join(" ")).unwrap();
     }
     data
 }
