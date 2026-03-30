@@ -89,11 +89,12 @@ pub fn redirect_stdio_to_devnull() -> io::Result<()> {
     ))
 }
 
-#[cfg(all(test, unix))]
-#[allow(unsafe_code)]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[allow(unsafe_code)]
     #[test]
     fn redirect_stdio_to_devnull_succeeds_in_subprocess() {
         // Spawn a child process that calls redirect_stdio_to_devnull() and
@@ -125,5 +126,19 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn become_daemon_returns_unsupported_on_non_unix() {
+        let err = become_daemon().unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn redirect_stdio_returns_unsupported_on_non_unix() {
+        let err = redirect_stdio_to_devnull().unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     }
 }
