@@ -853,6 +853,26 @@ mod module_access_tests {
         assert!(!config.flags.info_flags.itemize);
     }
 
+    #[test]
+    fn apply_long_form_args_parses_delay_updates() {
+        let args = vec![
+            "--server".to_owned(),
+            "--delay-updates".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert!(config.write.delay_updates);
+    }
+
+    #[test]
+    fn apply_long_form_args_delay_updates_defaults_to_false() {
+        let args = vec!["--server".to_owned(), ".".to_owned()];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert!(!config.write.delay_updates);
+    }
+
     // Tests for parse_daemon_dont_compress
 
     #[test]
