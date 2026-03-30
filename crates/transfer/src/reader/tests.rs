@@ -786,8 +786,8 @@ fn server_reader_compressed_batch_recorder_captures_decompressed() {
     let recorder: Arc<Mutex<dyn Write + Send>> = recorder_buf.clone();
     compressed_reader.set_batch_recorder(recorder);
 
-    let mut output = Vec::new();
-    compressed_reader.read_to_end(&mut output).unwrap();
+    let mut output = vec![0u8; original.len()];
+    compressed_reader.read_exact(&mut output).unwrap();
     assert_eq!(&output, original);
 
     let recorded = recorder_buf.lock().unwrap();
@@ -832,8 +832,8 @@ fn server_reader_batch_recorder_migrates_on_compression_activation() {
         .activate_compression(CompressionAlgorithm::Zlib)
         .unwrap();
 
-    let mut output = Vec::new();
-    compressed_reader.read_to_end(&mut output).unwrap();
+    let mut output = vec![0u8; original.len()];
+    compressed_reader.read_exact(&mut output).unwrap();
     assert_eq!(&output, original);
 
     let recorded = recorder_buf.lock().unwrap();
@@ -875,8 +875,8 @@ fn batch_recorder_roundtrip_compressed_captures_uncompressed() {
         let mut compressed = CompressedReader::new(mux, CompressionAlgorithm::Zlib).unwrap();
         compressed.batch_recorder = Some(read_recorder.clone());
 
-        let mut output = Vec::new();
-        compressed.read_to_end(&mut output).unwrap();
+        let mut output = vec![0u8; original.len()];
+        compressed.read_exact(&mut output).unwrap();
         assert_eq!(&output, original);
     }
 
@@ -1002,8 +1002,8 @@ fn server_reader_batch_recorder_migrates_on_compression_activation_lz4() {
             .activate_compression(CompressionAlgorithm::Lz4)
             .unwrap();
 
-        let mut output = Vec::new();
-        compressed_reader.read_to_end(&mut output).unwrap();
+        let mut output = vec![0u8; original.len()];
+        compressed_reader.read_exact(&mut output).unwrap();
         assert_eq!(&output, original);
 
         let recorded = recorder_buf.lock().unwrap();
@@ -1047,8 +1047,8 @@ fn server_reader_batch_recorder_migrates_on_compression_activation_zstd() {
             .activate_compression(CompressionAlgorithm::Zstd)
             .unwrap();
 
-        let mut output = Vec::new();
-        compressed_reader.read_to_end(&mut output).unwrap();
+        let mut output = vec![0u8; original.len()];
+        compressed_reader.read_exact(&mut output).unwrap();
         assert_eq!(&output, original);
 
         let recorded = recorder_buf.lock().unwrap();
@@ -1090,8 +1090,8 @@ fn batch_recorder_roundtrip_compressed_lz4_captures_uncompressed() {
             let mut compressed = CompressedReader::new(mux, CompressionAlgorithm::Lz4).unwrap();
             compressed.batch_recorder = Some(read_recorder.clone());
 
-            let mut output = Vec::new();
-            compressed.read_to_end(&mut output).unwrap();
+            let mut output = vec![0u8; original.len()];
+            compressed.read_exact(&mut output).unwrap();
             assert_eq!(&output, original);
         }
 
@@ -1136,8 +1136,8 @@ fn batch_recorder_roundtrip_compressed_zstd_captures_uncompressed() {
             let mut compressed = CompressedReader::new(mux, CompressionAlgorithm::Zstd).unwrap();
             compressed.batch_recorder = Some(read_recorder.clone());
 
-            let mut output = Vec::new();
-            compressed.read_to_end(&mut output).unwrap();
+            let mut output = vec![0u8; original.len()];
+            compressed.read_exact(&mut output).unwrap();
             assert_eq!(&output, original);
         }
 
