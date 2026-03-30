@@ -486,7 +486,8 @@ impl GeneratorContext {
         .with_preserve_atimes(self.config.flags.atimes)
         .with_preserve_crtimes(self.config.flags.crtimes)
         .with_preserve_acls(self.config.flags.acls)
-        .with_preserve_xattrs(self.config.flags.xattrs);
+        .with_preserve_xattrs(self.config.flags.xattrs)
+        .with_checksum_seed(self.checksum_seed);
 
         // upstream: flist.c — always_checksum includes per-file checksums in the file list
         if self.config.flags.checksum {
