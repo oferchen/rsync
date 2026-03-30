@@ -644,3 +644,110 @@ fn match_hard_links(entries: &mut [FileEntry]) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::flist::FileEntry;
+
+    /// Verifies that `match_hard_links` correctly assigns leader/follower flags
+    /// when directory entries are interspersed among hardlinked files, as happens
+    /// with `--relative` implied directories.
+    ///
+    /// After sorting, the first entry in each hardlink group (by sorted position)
+    /// must get `hlink_first = true`. Directory entries that are not part of any
+    /// hardlink group must be unaffected.
+    #[test]
+    fn match_hard_links_with_interspersed_directories() {
+        // Simulate a sorted file list with implied directories from --relative:
+        //   [0] dir  "a/"           (no hardlink)
+        //   [1] file "a/orig.txt"   (group 7 - should become leader)
+        //   [2] dir  "b/"           (no hardlink)
+        //   [3] file "b/link.txt"   (group 7 - should become follower)
+        let dir_a = FileEntry::new_directory("a".into(), 0o755);
+
+        let mut leader = FileEntry::new_file("a/orig.txt".into(), 256, 0o644);
+        leader.set_hardlink_idx(7);
+
+        let dir_b = FileEntry::new_directory("b".into(), 0o755);
+
+        let mut follower = FileEntry::new_file("b/link.txt".into(), 256, 0o644);
+        follower.set_hardlink_idx(7);
+
+        let mut entries = vec![dir_a, leader, dir_b, follower];
+        match_hard_links(&mut entries);
+
+        // Directory entries remain unaffected
+        assert!(!entries[0].flags().hlink_first());
+        assert!(!entries[2].flags().hlink_first());
+
+        // First file in group 7 (sorted position 1) becomes leader
+        assert!(entries[1].flags().hlink_first());
+        // Second file in group 7 (sorted position 3) becomes follower
+        assert!(!entries[3].flags().hlink_first());
+    }
+
+    /// Verifies `match_hard_links` handles multiple hardlink groups interspersed
+    /// with directories. Each group independently assigns its own leader.
+    #[test]
+    fn match_hard_links_multiple_groups_with_directories() {
+        //   [0] dir  "d/"             (no hardlink)
+        //   [1] file "d/a.txt"        (group 1 - leader)
+        //   [2] file "d/a_link.txt"   (group 1 - follower)
+        //   [3] dir  "e/"             (no hardlink)
+        //   [4] file "e/b.txt"        (group 4 - leader)
+        //   [5] file "e/b_link.txt"   (group 4 - follower)
+        let dir_d = FileEntry::new_directory("d".into(), 0o755);
+
+        let mut la = FileEntry::new_file("d/a.txt".into(), 100, 0o644);
+        la.set_hardlink_idx(1);
+
+        let mut fa = FileEntry::new_file("d/a_link.txt".into(), 100, 0o644);
+        fa.set_hardlink_idx(1);
+
+        let dir_e = FileEntry::new_directory("e".into(), 0o755);
+
+        let mut lb = FileEntry::new_file("e/b.txt".into(), 200, 0o644);
+        lb.set_hardlink_idx(4);
+
+        let mut fb = FileEntry::new_file("e/b_link.txt".into(), 200, 0o644);
+        fb.set_hardlink_idx(4);
+
+        let mut entries = vec![dir_d, la, fa, dir_e, lb, fb];
+        match_hard_links(&mut entries);
+
+        // Group 1: position 1 is leader, position 2 is follower
+        assert!(entries[1].flags().hlink_first());
+        assert!(!entries[2].flags().hlink_first());
+
+        // Group 4: position 4 is leader, position 5 is follower
+        assert!(entries[4].flags().hlink_first());
+        assert!(!entries[5].flags().hlink_first());
+    }
+
+    /// Verifies that `match_hard_links` reassigns the leader when the readdir-order
+    /// leader appears after a follower in sorted order. This happens when --relative
+    /// paths cause the sender's first-seen file to sort after another file in the
+    /// same hardlink group.
+    #[test]
+    fn match_hard_links_reassigns_leader_after_sort() {
+        // Sender saw "z/file.txt" first (readdir order), but after sort
+        // "a/file.txt" comes first. Both share hardlink group 5.
+        let mut entry_a = FileEntry::new_file("a/file.txt".into(), 300, 0o644);
+        entry_a.set_hardlink_idx(5);
+        // Sender marked this as follower (not first in readdir order)
+        entry_a.flags_mut().set_hlink_first(false);
+
+        let mut entry_z = FileEntry::new_file("z/file.txt".into(), 300, 0o644);
+        entry_z.set_hardlink_idx(5);
+        // Sender marked this as leader (first in readdir order)
+        entry_z.flags_mut().set_hlink_first(true);
+
+        let mut entries = vec![entry_a, entry_z];
+        match_hard_links(&mut entries);
+
+        // After match_hard_links, sorted position 0 becomes the new leader
+        assert!(entries[0].flags().hlink_first(), "first in sorted order must be leader");
+        assert!(!entries[1].flags().hlink_first(), "second in sorted order must be follower");
+    }
+}
