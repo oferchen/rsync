@@ -1393,8 +1393,6 @@ KNOWN_FAILURES=(
   # --- oc→upstream (client push) ---
   "oc:acls"
   "oc:xattrs"
-  "oc:hardlinks"
-  "oc:hardlinks-relative"
   "oc:hardlinks-delete"
   "oc:hardlinks-numeric"
   "oc:hardlinks-checksum"
