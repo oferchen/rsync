@@ -11,38 +11,39 @@ use super::wire::{read_i32, write_i32};
 /// Stream flags bitmap that affects data stream format.
 ///
 /// These flags must match between write and read to ensure correct
-/// interpretation of the batch file. The flag positions match upstream rsync.
+/// interpretation of the batch file. The bit positions and protocol-version
+/// gating match upstream rsync's `batch.c:59-76 flag_ptr[]` array exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BatchFlags {
-    /// Bit 0: --recurse (-r)
+    /// Bit 0: --recurse (-r) - upstream: batch.c:60 `&recurse`
     pub recurse: bool,
-    /// Bit 1: --owner (-o)
+    /// Bit 1: --owner (-o) - upstream: batch.c:61 `&preserve_uid`
     pub preserve_uid: bool,
-    /// Bit 2: --group (-g)
+    /// Bit 2: --group (-g) - upstream: batch.c:62 `&preserve_gid`
     pub preserve_gid: bool,
-    /// Bit 3: --links (-l)
+    /// Bit 3: --links (-l) - upstream: batch.c:63 `&preserve_links`
     pub preserve_links: bool,
-    /// Bit 4: --devices (-D)
+    /// Bit 4: --devices (-D) - upstream: batch.c:64 `&preserve_devices`
     pub preserve_devices: bool,
-    /// Bit 5: --hard-links (-H)
+    /// Bit 5: --hard-links (-H) - upstream: batch.c:65 `&preserve_hard_links`
     pub preserve_hard_links: bool,
-    /// Bit 6: --checksum (-c)
+    /// Bit 6: --checksum (-c) - upstream: batch.c:66 `&always_checksum`
     pub always_checksum: bool,
-    /// Bit 7: --dirs (-d) [protocol >= 29]
+    /// Bit 7: --dirs (-d) [protocol >= 29] - upstream: batch.c:67 `&xfer_dirs`
     pub xfer_dirs: bool,
-    /// Bit 8: --compress (-z) [protocol >= 29]
+    /// Bit 8: --compress (-z) [protocol >= 29] - upstream: batch.c:68 `&do_compression`
     pub do_compression: bool,
-    /// Bit 9: --iconv [protocol >= 30]
+    /// Bit 9: --iconv [protocol >= 30] - upstream: batch.c:69 `&tweaked_iconv`
     pub iconv: bool,
-    /// Bit 10: --acls (-A) [protocol >= 30]
+    /// Bit 10: --acls (-A) [protocol >= 30] - upstream: batch.c:70 `&preserve_acls`
     pub preserve_acls: bool,
-    /// Bit 11: --xattrs (-X) [protocol >= 30]
+    /// Bit 11: --xattrs (-X) [protocol >= 30] - upstream: batch.c:71 `&preserve_xattrs`
     pub preserve_xattrs: bool,
-    /// Bit 12: --inplace [protocol >= 30]
+    /// Bit 12: --inplace [protocol >= 30] - upstream: batch.c:72 `&inplace`
     pub inplace: bool,
-    /// Bit 13: --append [protocol >= 30]
+    /// Bit 13: --append [protocol >= 30] - upstream: batch.c:73 `&tweaked_append`
     pub append: bool,
-    /// Bit 14: --append-verify [protocol >= 30]
+    /// Bit 14: --append-verify [protocol >= 30] - upstream: batch.c:74 `&tweaked_append_verify`
     pub append_verify: bool,
 }
 
