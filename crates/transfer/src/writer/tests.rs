@@ -896,7 +896,7 @@ fn compressed_writer_batch_recorder_vectored_write_captures_all_chunks() {
             IoSlice::new(b"chunk2 "),
             IoSlice::new(b"chunk3"),
         ];
-        compressed.write_vectored(&bufs).unwrap();
+        let _n = compressed.write_vectored(&bufs).unwrap();
         compressed.finish().unwrap();
     }
 
