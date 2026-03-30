@@ -675,14 +675,19 @@ mod tests {
         let mut encoder = ZstdTokenEncoder::new(1).unwrap();
         let mut encoded = Vec::new();
 
-        // Use incompressible random-like data to force large compressed output
-        let data: Vec<u8> = (0..200_000)
-            .map(|i: u64| {
-                // Simple PRNG-like sequence that doesn't compress well
-                let x = i.wrapping_mul(2654435761u64) >> 16;
-                (x & 0xFF) as u8
-            })
-            .collect();
+        // Use a large dataset so that even with zstd level 1 compression,
+        // the compressed output exceeds MAX_DATA_COUNT (16383 bytes) and
+        // triggers multiple DEFLATED_DATA blocks on the wire.
+        let mut data = Vec::with_capacity(500_000);
+        let mut state: u64 = 0xDEAD_BEEF_CAFE_BABE;
+        for _ in 0..500_000 {
+            // xorshift64 - produces uniformly distributed bytes that
+            // defeat zstd's dictionary and entropy coder.
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            data.push((state & 0xFF) as u8);
+        }
         encoder.send_literal(&mut encoded, &data).unwrap();
         encoder.finish(&mut encoded).unwrap();
 
@@ -724,7 +729,9 @@ mod tests {
         // writes). The final block(s) from the flush phase may be smaller.
         assert!(
             block_sizes.len() > 1,
-            "incompressible 200KB should produce multiple DEFLATED_DATA blocks"
+            "500KB of xorshift64 data should produce multiple DEFLATED_DATA blocks, got {} block(s) totaling {} bytes",
+            block_sizes.len(),
+            block_sizes.iter().sum::<usize>(),
         );
 
         // Verify roundtrip
