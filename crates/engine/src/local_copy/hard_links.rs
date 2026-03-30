@@ -1,12 +1,185 @@
 //! Hard link tracking for local copy operations.
 //!
-//! Uses [`FxHashMap`] for fast lookups with integer-based device/inode keys.
+//! Provides two tracking strategies:
+//!
+//! - [`HardLinkTracker`] - source-side tracking by (device, inode) for local
+//!   copies where the source filesystem exposes inode metadata.
+//! - [`HardlinkApplyTracker`] - receiver-side tracking by `hardlink_idx` (gnum)
+//!   for protocol 30+ transfers where hardlink groups are identified by wire
+//!   index rather than filesystem metadata.
+//!
+//! Uses [`FxHashMap`] for fast lookups with integer keys.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[cfg(unix)]
 use rustc_hash::FxHashMap;
+
+/// Tracks completed hardlink leaders by protocol group index during file apply.
+///
+/// When the receiver commits a leader file to its final destination, it records
+/// the `hardlink_idx` (gnum) and destination path. Subsequent followers with the
+/// same gnum can then be created as hard links to the leader via `std::fs::hard_link`
+/// instead of receiving a separate copy of the data.
+///
+/// Deferred followers whose leader has not yet been committed are collected and
+/// resolved once the leader arrives. This handles out-of-order completion in
+/// pipelined transfers.
+///
+/// # Upstream Reference
+///
+/// - `hlink.c:finish_hard_link()` - walks deferred follower list after leader transfer
+/// - `hlink.c:hard_link_check()` - defers followers when leader is in-progress
+pub struct HardlinkApplyTracker {
+    /// Map from hardlink group index (gnum) to the leader's committed destination path.
+    leaders: FxHashMap<u32, PathBuf>,
+    /// Followers waiting for their leader to be committed.
+    /// Key: leader gnum, Value: list of follower destination paths.
+    deferred: FxHashMap<u32, Vec<PathBuf>>,
+}
+
+/// Result of attempting to apply a hardlink for a follower entry.
+#[derive(Debug, PartialEq, Eq)]
+pub enum HardlinkApplyResult {
+    /// The leader was found and a hard link was created at the follower path.
+    Linked,
+    /// The leader has not been committed yet; the follower is deferred.
+    Deferred,
+}
+
+impl HardlinkApplyTracker {
+    /// Creates a new tracker with no recorded leaders.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            leaders: FxHashMap::default(),
+            deferred: FxHashMap::default(),
+        }
+    }
+
+    /// Records a leader file's committed destination path.
+    ///
+    /// Call this after the leader file has been fully written and renamed to its
+    /// final destination. Any previously deferred followers for this gnum are
+    /// returned so the caller can create hard links for them.
+    ///
+    /// # upstream: hlink.c:finish_hard_link() - creates links for deferred followers
+    pub fn record_leader(&mut self, gnum: u32, dest: PathBuf) -> Vec<PathBuf> {
+        self.leaders.insert(gnum, dest);
+        self.deferred.remove(&gnum).unwrap_or_default()
+    }
+
+    /// Attempts to create a hard link for a follower entry.
+    ///
+    /// If the leader's destination is already known, creates the hard link and
+    /// returns `Linked`. Otherwise, defers the follower and returns `Deferred`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the hard link syscall fails (e.g., cross-device,
+    /// permission denied, destination already exists).
+    ///
+    /// # upstream: hlink.c:hard_link_check() - defers or links depending on leader state
+    pub fn apply_follower(
+        &mut self,
+        gnum: u32,
+        follower_dest: &Path,
+    ) -> std::io::Result<HardlinkApplyResult> {
+        if let Some(leader_path) = self.leaders.get(&gnum) {
+            // Ensure parent directory exists for the follower.
+            if let Some(parent) = follower_dest.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            // Remove existing file at follower path to avoid AlreadyExists.
+            if follower_dest.symlink_metadata().is_ok() {
+                fs::remove_file(follower_dest)?;
+            }
+            fs::hard_link(leader_path, follower_dest)?;
+            Ok(HardlinkApplyResult::Linked)
+        } else {
+            self.deferred
+                .entry(gnum)
+                .or_default()
+                .push(follower_dest.to_path_buf());
+            Ok(HardlinkApplyResult::Deferred)
+        }
+    }
+
+    /// Returns the leader destination path for a given group index, if known.
+    #[must_use]
+    pub fn leader_path(&self, gnum: u32) -> Option<&Path> {
+        self.leaders.get(&gnum).map(PathBuf::as_path)
+    }
+
+    /// Returns the number of deferred followers across all groups.
+    #[must_use]
+    pub fn deferred_count(&self) -> usize {
+        self.deferred.values().map(Vec::len).sum()
+    }
+
+    /// Returns the number of recorded leader groups.
+    #[must_use]
+    pub fn leader_count(&self) -> usize {
+        self.leaders.len()
+    }
+
+    /// Resolves all remaining deferred followers by creating hard links.
+    ///
+    /// Returns the number of hard links successfully created and a list of
+    /// errors for any that failed.
+    ///
+    /// # upstream: hlink.c:finish_hard_link() - final pass for remaining deferred entries
+    pub fn resolve_deferred(&mut self) -> (usize, Vec<(PathBuf, std::io::Error)>) {
+        let mut linked = 0;
+        let mut errors = Vec::new();
+
+        let deferred = std::mem::take(&mut self.deferred);
+        for (gnum, followers) in deferred {
+            let leader_path = match self.leaders.get(&gnum) {
+                Some(p) => p.clone(),
+                None => {
+                    for follower in followers {
+                        errors.push((
+                            follower,
+                            std::io::Error::new(
+                                std::io::ErrorKind::NotFound,
+                                format!("hardlink leader for group {gnum} never committed"),
+                            ),
+                        ));
+                    }
+                    continue;
+                }
+            };
+
+            for follower in followers {
+                if let Some(parent) = follower.parent() {
+                    if let Err(e) = fs::create_dir_all(parent) {
+                        errors.push((follower, e));
+                        continue;
+                    }
+                }
+                if follower.symlink_metadata().is_ok() {
+                    if let Err(e) = fs::remove_file(&follower) {
+                        errors.push((follower, e));
+                        continue;
+                    }
+                }
+                match fs::hard_link(&leader_path, &follower) {
+                    Ok(()) => linked += 1,
+                    Err(e) => errors.push((follower, e)),
+                }
+            }
+        }
+
+        (linked, errors)
+    }
+}
+
+impl Default for HardlinkApplyTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[cfg(unix)]
 #[derive(Default)]
@@ -723,5 +896,321 @@ mod scale_tests {
                 "link {i} should resolve to original destination"
             );
         }
+    }
+}
+
+/// Tests for the protocol-aware `HardlinkApplyTracker`.
+#[cfg(test)]
+mod apply_tracker_tests {
+    use super::*;
+
+    #[test]
+    fn new_tracker_is_empty() {
+        let tracker = HardlinkApplyTracker::new();
+        assert_eq!(tracker.leader_count(), 0);
+        assert_eq!(tracker.deferred_count(), 0);
+    }
+
+    #[test]
+    fn default_creates_empty_tracker() {
+        let tracker = HardlinkApplyTracker::default();
+        assert_eq!(tracker.leader_count(), 0);
+    }
+
+    #[test]
+    fn record_leader_returns_empty_when_no_deferred() {
+        let mut tracker = HardlinkApplyTracker::new();
+        let deferred = tracker.record_leader(42, PathBuf::from("/dest/leader.txt"));
+        assert!(deferred.is_empty());
+        assert_eq!(tracker.leader_count(), 1);
+    }
+
+    #[test]
+    fn leader_path_returns_recorded_path() {
+        let mut tracker = HardlinkApplyTracker::new();
+        tracker.record_leader(7, PathBuf::from("/dest/file.txt"));
+        assert_eq!(tracker.leader_path(7), Some(Path::new("/dest/file.txt")));
+        assert!(tracker.leader_path(99).is_none());
+    }
+
+    #[test]
+    fn follower_linked_when_leader_exists() {
+        let temp = test_support::create_tempdir();
+        let leader_path = temp.path().join("leader.txt");
+        let follower_path = temp.path().join("follower.txt");
+        std::fs::write(&leader_path, "shared content").unwrap();
+
+        let mut tracker = HardlinkApplyTracker::new();
+        tracker.record_leader(10, leader_path.clone());
+
+        let result = tracker.apply_follower(10, &follower_path).unwrap();
+        assert_eq!(result, HardlinkApplyResult::Linked);
+        assert_eq!(
+            std::fs::read_to_string(&follower_path).unwrap(),
+            "shared content"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn follower_shares_inode_with_leader() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = test_support::create_tempdir();
+        let leader_path = temp.path().join("leader.txt");
+        let follower_path = temp.path().join("follower.txt");
+        std::fs::write(&leader_path, "content").unwrap();
+
+        let mut tracker = HardlinkApplyTracker::new();
+        tracker.record_leader(5, leader_path.clone());
+        tracker.apply_follower(5, &follower_path).unwrap();
+
+        let leader_meta = std::fs::metadata(&leader_path).unwrap();
+        let follower_meta = std::fs::metadata(&follower_path).unwrap();
+        assert_eq!(leader_meta.ino(), follower_meta.ino());
+        assert_eq!(leader_meta.dev(), follower_meta.dev());
+        assert!(leader_meta.nlink() >= 2);
+    }
+
+    #[test]
+    fn follower_deferred_when_leader_missing() {
+        let mut tracker = HardlinkApplyTracker::new();
+        let result = tracker
+            .apply_follower(42, Path::new("/dest/follower.txt"))
+            .unwrap();
+        assert_eq!(result, HardlinkApplyResult::Deferred);
+        assert_eq!(tracker.deferred_count(), 1);
+    }
+
+    #[test]
+    fn record_leader_returns_deferred_followers() {
+        let mut tracker = HardlinkApplyTracker::new();
+
+        // Defer two followers
+        tracker
+            .apply_follower(10, Path::new("/dest/f1.txt"))
+            .unwrap();
+        tracker
+            .apply_follower(10, Path::new("/dest/f2.txt"))
+            .unwrap();
+        assert_eq!(tracker.deferred_count(), 2);
+
+        // Record the leader - should return deferred followers
+        let deferred = tracker.record_leader(10, PathBuf::from("/dest/leader.txt"));
+        assert_eq!(deferred.len(), 2);
+        assert_eq!(deferred[0], PathBuf::from("/dest/f1.txt"));
+        assert_eq!(deferred[1], PathBuf::from("/dest/f2.txt"));
+        assert_eq!(tracker.deferred_count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deferred_followers_resolved_after_leader_committed() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = test_support::create_tempdir();
+        let leader_path = temp.path().join("leader.txt");
+        let follower1 = temp.path().join("follower1.txt");
+        let follower2 = temp.path().join("follower2.txt");
+
+        let mut tracker = HardlinkApplyTracker::new();
+
+        // Followers arrive before leader
+        tracker.apply_follower(20, &follower1).unwrap();
+        tracker.apply_follower(20, &follower2).unwrap();
+        assert_eq!(tracker.deferred_count(), 2);
+
+        // Leader committed to disk
+        std::fs::write(&leader_path, "deferred content").unwrap();
+        let deferred = tracker.record_leader(20, leader_path.clone());
+
+        // Caller creates links for deferred followers
+        for follower_dest in &deferred {
+            std::fs::hard_link(&leader_path, follower_dest).unwrap();
+        }
+
+        // Verify all share the same inode
+        let leader_ino = std::fs::metadata(&leader_path).unwrap().ino();
+        assert_eq!(std::fs::metadata(&follower1).unwrap().ino(), leader_ino);
+        assert_eq!(std::fs::metadata(&follower2).unwrap().ino(), leader_ino);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hardlinks_across_directories() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = test_support::create_tempdir();
+        let dir_a = temp.path().join("dir_a");
+        let dir_b = temp.path().join("dir_b");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
+
+        let leader_path = dir_a.join("file.txt");
+        let follower_path = dir_b.join("file.txt");
+        std::fs::write(&leader_path, "cross-dir content").unwrap();
+
+        let mut tracker = HardlinkApplyTracker::new();
+        tracker.record_leader(30, leader_path.clone());
+
+        let result = tracker.apply_follower(30, &follower_path).unwrap();
+        assert_eq!(result, HardlinkApplyResult::Linked);
+
+        let leader_meta = std::fs::metadata(&leader_path).unwrap();
+        let follower_meta = std::fs::metadata(&follower_path).unwrap();
+        assert_eq!(leader_meta.ino(), follower_meta.ino());
+        assert_eq!(
+            std::fs::read_to_string(&follower_path).unwrap(),
+            "cross-dir content"
+        );
+    }
+
+    #[test]
+    fn multiple_independent_groups() {
+        let temp = test_support::create_tempdir();
+        let leader1 = temp.path().join("group1_leader.txt");
+        let leader2 = temp.path().join("group2_leader.txt");
+        let follower1 = temp.path().join("group1_follower.txt");
+        let follower2 = temp.path().join("group2_follower.txt");
+
+        std::fs::write(&leader1, "group1").unwrap();
+        std::fs::write(&leader2, "group2").unwrap();
+
+        let mut tracker = HardlinkApplyTracker::new();
+        tracker.record_leader(100, leader1.clone());
+        tracker.record_leader(200, leader2.clone());
+
+        tracker.apply_follower(100, &follower1).unwrap();
+        tracker.apply_follower(200, &follower2).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&follower1).unwrap(), "group1");
+        assert_eq!(std::fs::read_to_string(&follower2).unwrap(), "group2");
+    }
+
+    #[test]
+    fn follower_replaces_existing_file() {
+        let temp = test_support::create_tempdir();
+        let leader = temp.path().join("leader.txt");
+        let follower = temp.path().join("follower.txt");
+
+        std::fs::write(&leader, "correct content").unwrap();
+        std::fs::write(&follower, "old content").unwrap();
+
+        let mut tracker = HardlinkApplyTracker::new();
+        tracker.record_leader(50, leader.clone());
+
+        let result = tracker.apply_follower(50, &follower).unwrap();
+        assert_eq!(result, HardlinkApplyResult::Linked);
+        assert_eq!(
+            std::fs::read_to_string(&follower).unwrap(),
+            "correct content"
+        );
+    }
+
+    #[test]
+    fn follower_creates_parent_directories() {
+        let temp = test_support::create_tempdir();
+        let leader = temp.path().join("leader.txt");
+        let follower = temp.path().join("deep/nested/dir/follower.txt");
+
+        std::fs::write(&leader, "content").unwrap();
+
+        let mut tracker = HardlinkApplyTracker::new();
+        tracker.record_leader(60, leader.clone());
+
+        let result = tracker.apply_follower(60, &follower).unwrap();
+        assert_eq!(result, HardlinkApplyResult::Linked);
+        assert!(follower.exists());
+        assert_eq!(std::fs::read_to_string(&follower).unwrap(), "content");
+    }
+
+    #[test]
+    fn resolve_deferred_creates_links() {
+        let temp = test_support::create_tempdir();
+        let leader = temp.path().join("leader.txt");
+        let follower1 = temp.path().join("f1.txt");
+        let follower2 = temp.path().join("f2.txt");
+
+        let mut tracker = HardlinkApplyTracker::new();
+
+        // Defer followers
+        tracker.apply_follower(70, &follower1).unwrap();
+        tracker.apply_follower(70, &follower2).unwrap();
+
+        // Write and record leader
+        std::fs::write(&leader, "resolved content").unwrap();
+        // Re-insert deferred into tracker for resolve_deferred to handle
+        let deferred_list = tracker.record_leader(70, leader.clone());
+
+        // Manually re-defer them for the resolve path
+        let mut tracker2 = HardlinkApplyTracker::new();
+        tracker2.record_leader(70, leader.clone());
+        for path in &deferred_list {
+            // Simulate re-deferral by directly adding
+            tracker2.deferred.entry(70).or_default().push(path.clone());
+        }
+
+        let (linked, errors) = tracker2.resolve_deferred();
+        assert_eq!(linked, 2);
+        assert!(errors.is_empty());
+        assert!(follower1.exists());
+        assert!(follower2.exists());
+    }
+
+    #[test]
+    fn resolve_deferred_reports_missing_leader() {
+        let mut tracker = HardlinkApplyTracker::new();
+        // Manually insert a deferred follower for a non-existent leader
+        tracker
+            .deferred
+            .entry(999)
+            .or_default()
+            .push(PathBuf::from("/nonexistent/follower.txt"));
+
+        let (linked, errors) = tracker.resolve_deferred();
+        assert_eq!(linked, 0);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].0, PathBuf::from("/nonexistent/follower.txt"));
+    }
+
+    #[test]
+    fn many_followers_in_one_group() {
+        let temp = test_support::create_tempdir();
+        let leader = temp.path().join("leader.txt");
+        std::fs::write(&leader, "shared").unwrap();
+
+        let mut tracker = HardlinkApplyTracker::new();
+        tracker.record_leader(80, leader.clone());
+
+        for i in 0..50 {
+            let follower = temp.path().join(format!("follower_{i}.txt"));
+            let result = tracker.apply_follower(80, &follower).unwrap();
+            assert_eq!(result, HardlinkApplyResult::Linked);
+            assert_eq!(std::fs::read_to_string(&follower).unwrap(), "shared");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn all_followers_share_single_inode() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = test_support::create_tempdir();
+        let leader = temp.path().join("leader.txt");
+        std::fs::write(&leader, "inode-check").unwrap();
+
+        let mut tracker = HardlinkApplyTracker::new();
+        tracker.record_leader(90, leader.clone());
+
+        let leader_ino = std::fs::metadata(&leader).unwrap().ino();
+
+        for i in 0..10 {
+            let follower = temp.path().join(format!("f{i}.txt"));
+            tracker.apply_follower(90, &follower).unwrap();
+            assert_eq!(std::fs::metadata(&follower).unwrap().ino(), leader_ino);
+        }
+
+        // nlink should be 11 (1 leader + 10 followers)
+        assert_eq!(std::fs::metadata(&leader).unwrap().nlink(), 11);
     }
 }
