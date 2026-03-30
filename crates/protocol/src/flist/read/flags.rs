@@ -72,7 +72,6 @@ impl FileListReader {
             use_varint
         );
 
-        // Check for end-of-list marker
         if flags_value == 0 {
             if use_varint {
                 // In varint mode, error code follows zero flags
