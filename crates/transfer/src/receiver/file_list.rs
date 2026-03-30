@@ -747,7 +747,13 @@ mod tests {
         match_hard_links(&mut entries);
 
         // After match_hard_links, sorted position 0 becomes the new leader
-        assert!(entries[0].flags().hlink_first(), "first in sorted order must be leader");
-        assert!(!entries[1].flags().hlink_first(), "second in sorted order must be follower");
+        assert!(
+            entries[0].flags().hlink_first(),
+            "first in sorted order must be leader"
+        );
+        assert!(
+            !entries[1].flags().hlink_first(),
+            "second in sorted order must be follower"
+        );
     }
 }
