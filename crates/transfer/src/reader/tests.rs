@@ -720,3 +720,171 @@ fn batch_recorder_roundtrip_writer_reader_capture_same_data() {
     );
     assert_eq!(&*write_recorded, b"roundtrip test data");
 }
+
+// =========================================================================
+// Batch recorder + compression tests
+// =========================================================================
+
+#[test]
+fn compressed_reader_batch_recorder_captures_decompressed_data() {
+    // When compression is active, the batch recorder must capture
+    // post-decompression (uncompressed) data so --read-batch can replay
+    // without the compression codec.
+    // upstream: io.c:read_buf() tees decompressed data to batch_fd.
+    use crate::compressed_reader::CompressedReader;
+    use compress::zlib::{CompressionLevel, compress_to_vec};
+
+    let original = b"uncompressed payload for batch";
+    let compressed = compress_to_vec(original, CompressionLevel::Default).unwrap();
+
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut reader =
+        CompressedReader::new(Cursor::new(compressed), CompressionAlgorithm::Zlib).unwrap();
+    reader.batch_recorder = Some(recorder_buf.clone());
+
+    let mut output = Vec::new();
+    reader.read_to_end(&mut output).unwrap();
+    assert_eq!(&output, original);
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(
+        &*recorded, original,
+        "batch recorder must capture decompressed (uncompressed) data"
+    );
+}
+
+#[test]
+fn server_reader_compressed_batch_recorder_captures_decompressed() {
+    // End-to-end: write compressed data through a multiplex writer,
+    // read it back through a compressed server reader with a batch recorder,
+    // verify the recorder captures the original uncompressed data.
+    use crate::compressed_writer::CompressedWriter;
+    use crate::writer::multiplex::MultiplexWriter;
+    use compress::zlib::CompressionLevel;
+
+    let original = b"server reader compressed batch test";
+
+    // Build a compressed+multiplexed wire stream
+    let mut wire = Vec::new();
+    {
+        let mux = MultiplexWriter::new(&mut wire);
+        let mut compressed =
+            CompressedWriter::new(mux, CompressionAlgorithm::Zlib, CompressionLevel::Default)
+                .unwrap();
+        compressed.write_all(original).unwrap();
+        compressed.finish().unwrap();
+    }
+
+    // Read back through ServerReader with compression and batch recorder
+    let reader = ServerReader::new_plain(Cursor::new(wire));
+    let mux_reader = reader.activate_multiplex().unwrap();
+    let mut compressed_reader = mux_reader
+        .activate_compression(CompressionAlgorithm::Zlib)
+        .unwrap();
+
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let recorder: Arc<Mutex<dyn Write + Send>> = recorder_buf.clone();
+    compressed_reader.set_batch_recorder(recorder);
+
+    let mut output = Vec::new();
+    compressed_reader.read_to_end(&mut output).unwrap();
+    assert_eq!(&output, original);
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(
+        &*recorded, original,
+        "batch recorder on compressed reader must capture uncompressed data"
+    );
+}
+
+#[test]
+fn server_reader_batch_recorder_migrates_on_compression_activation() {
+    // Verify that if a batch recorder is set on the MultiplexReader and
+    // then compression is activated, the recorder is moved to the
+    // CompressedReader to capture decompressed data.
+    use crate::compressed_writer::CompressedWriter;
+    use crate::writer::multiplex::MultiplexWriter;
+    use compress::zlib::CompressionLevel;
+
+    let original = b"migrated recorder test data";
+
+    // Build a compressed+multiplexed wire stream
+    let mut wire = Vec::new();
+    {
+        let mux = MultiplexWriter::new(&mut wire);
+        let mut compressed =
+            CompressedWriter::new(mux, CompressionAlgorithm::Zlib, CompressionLevel::Default)
+                .unwrap();
+        compressed.write_all(original).unwrap();
+        compressed.finish().unwrap();
+    }
+
+    // Set batch recorder on multiplex reader, then activate compression
+    let reader = ServerReader::new_plain(Cursor::new(wire));
+    let mut mux_reader = reader.activate_multiplex().unwrap();
+
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let recorder: Arc<Mutex<dyn Write + Send>> = recorder_buf.clone();
+    mux_reader.set_batch_recorder(recorder);
+
+    // Activate compression - recorder should migrate from mux to compressed layer
+    let mut compressed_reader = mux_reader
+        .activate_compression(CompressionAlgorithm::Zlib)
+        .unwrap();
+
+    let mut output = Vec::new();
+    compressed_reader.read_to_end(&mut output).unwrap();
+    assert_eq!(&output, original);
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(
+        &*recorded, original,
+        "recorder migrated to compression layer should capture decompressed data"
+    );
+}
+
+#[test]
+fn batch_recorder_roundtrip_compressed_captures_uncompressed() {
+    // End-to-end: write data through compressed+multiplexed writer with
+    // batch recorder, read back through compressed+multiplexed reader with
+    // batch recorder. Both recorders should capture identical UNCOMPRESSED data.
+    use crate::compressed_writer::CompressedWriter;
+    use crate::writer::multiplex::MultiplexWriter;
+    use compress::zlib::CompressionLevel;
+
+    let original = b"compressed roundtrip batch verification";
+    let mut wire = Vec::new();
+
+    // Writer side: record pre-compression data
+    let write_recorder: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    {
+        let mux = MultiplexWriter::new(&mut wire);
+        let mut compressed =
+            CompressedWriter::new(mux, CompressionAlgorithm::Zlib, CompressionLevel::Default)
+                .unwrap();
+        compressed.batch_recorder = Some(write_recorder.clone());
+        compressed.write_all(original).unwrap();
+        compressed.finish().unwrap();
+    }
+
+    // Reader side: record post-decompression data
+    let read_recorder: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    {
+        use crate::compressed_reader::CompressedReader;
+        let mux = MultiplexReader::new(Cursor::new(wire));
+        let mut compressed = CompressedReader::new(mux, CompressionAlgorithm::Zlib).unwrap();
+        compressed.batch_recorder = Some(read_recorder.clone());
+
+        let mut output = Vec::new();
+        compressed.read_to_end(&mut output).unwrap();
+        assert_eq!(&output, original);
+    }
+
+    let write_recorded = write_recorder.lock().unwrap();
+    let read_recorded = read_recorder.lock().unwrap();
+    assert_eq!(
+        &*write_recorded, &*read_recorded,
+        "writer and reader batch recorders should capture identical uncompressed data"
+    );
+    assert_eq!(&*write_recorded, original);
+}
