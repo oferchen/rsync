@@ -49,7 +49,7 @@ mod write;
 pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
 pub use dir_tree::DirectoryTree;
 pub use entry::{FileEntry, FileType};
-pub use flags::{FileFlags, XMIT_SAME_RDEV_PRE28, XMIT_TOP_DIR};
+pub use flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_SAME_RDEV_PRE28, XMIT_TOP_DIR};
 pub use hardlink::{DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable};
 pub use incremental::{
     FinalizationResult, FinalizationStats, IncrementalFileList, IncrementalFileListBuilder,

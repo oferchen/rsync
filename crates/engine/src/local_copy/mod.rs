@@ -136,6 +136,7 @@ pub use executor::{
 };
 
 pub(crate) use hard_links::HardLinkTracker;
+pub use hard_links::{HardlinkApplyResult, HardlinkApplyTracker};
 
 pub(crate) use metadata_sync::map_metadata_error;
 
