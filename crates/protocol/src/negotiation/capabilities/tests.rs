@@ -2081,16 +2081,26 @@ fn capability_fallback_graceful_checksum_degradation() {
 /// Without feature flags, negotiation degrades gracefully to zlibx.
 #[test]
 fn capability_compression_negotiation_preference() {
-    // Remote offers full modern list - we only support zlibx/zlib/none in
-    // auto-negotiation (zstd/lz4 not yet interop-validated).
+    // Remote offers full modern list - with zstd/lz4 features enabled,
+    // negotiation picks the first mutually supported algorithm.
     let modern_list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(modern_list).unwrap();
-    assert_eq!(result, CompressionAlgorithm::ZlibX);
+    if cfg!(feature = "zstd") {
+        assert_eq!(result, CompressionAlgorithm::Zstd);
+    } else if cfg!(feature = "lz4") {
+        assert_eq!(result, CompressionAlgorithm::LZ4);
+    } else {
+        assert_eq!(result, CompressionAlgorithm::ZlibX);
+    }
 
-    // Remote offers lz4 first without zstd - still falls back to zlibx.
+    // Remote offers lz4 first without zstd.
     let no_zstd_list = "lz4 zlibx zlib none";
     let result = choose_compression_algorithm(no_zstd_list).unwrap();
-    assert_eq!(result, CompressionAlgorithm::ZlibX);
+    if cfg!(feature = "lz4") {
+        assert_eq!(result, CompressionAlgorithm::LZ4);
+    } else {
+        assert_eq!(result, CompressionAlgorithm::ZlibX);
+    }
 
     // Server with only zlib variants
     let zlib_only = "zlibx zlib none";
