@@ -24,8 +24,8 @@ use std::io::{self, Read, Write};
 use zstd::stream::raw::{Decoder as ZstdRawDecoder, Encoder as ZstdRawEncoder, Operation};
 
 use super::{
-    read_deflated_data_length, write_deflated_data_header, CompressedToken, CHUNK_SIZE,
-    DEFLATED_DATA, END_FLAG, MAX_DATA_COUNT, TOKENRUN_LONG, TOKENRUN_REL, TOKEN_LONG, TOKEN_REL,
+    CHUNK_SIZE, CompressedToken, DEFLATED_DATA, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL,
+    TOKENRUN_LONG, TOKENRUN_REL, read_deflated_data_length, write_deflated_data_header,
 };
 
 /// Zstd encoder state for sending compressed tokens.
@@ -677,7 +677,7 @@ mod tests {
 
         // Use incompressible random-like data to force large compressed output
         let data: Vec<u8> = (0..200_000)
-            .map(|i| {
+            .map(|i: u64| {
                 // Simple PRNG-like sequence that doesn't compress well
                 let x = i.wrapping_mul(2654435761u64) >> 16;
                 (x & 0xFF) as u8
