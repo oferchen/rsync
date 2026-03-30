@@ -1336,8 +1336,6 @@ KNOWN_FAILURES=(
   # --- oc→upstream (client push) ---
   "oc:acls"
   "oc:xattrs"
-  "oc:hardlinks"
-  "oc:hardlinks-relative"
   "oc:compress-zstd"
   "oc:compress-lz4"
   "oc:itemize"
