@@ -495,9 +495,9 @@ fn test_batch_header_upstream_byte_layout_protocol_29() {
     let mut header = BatchHeader::new(29, 0xDEAD);
     header.stream_flags = BatchFlags {
         recurse: true,
-        xfer_dirs: true,    // bit 7 - included for protocol 29
+        xfer_dirs: true,      // bit 7 - included for protocol 29
         do_compression: true, // bit 8 - included for protocol 29
-        preserve_acls: true, // bit 10 - should be masked out for protocol 29
+        preserve_acls: true,  // bit 10 - should be masked out for protocol 29
         ..Default::default()
     };
 
@@ -619,5 +619,8 @@ fn test_batch_header_typical_rsync_341_config() {
     // Verify exact byte output
     let mut rewritten = Vec::new();
     restored.write_to(&mut rewritten).unwrap();
-    assert_eq!(written, rewritten, "write->read->write must be byte-identical");
+    assert_eq!(
+        written, rewritten,
+        "write->read->write must be byte-identical"
+    );
 }
