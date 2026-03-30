@@ -34,21 +34,31 @@ impl GeneratorContext {
     pub(in crate::generator) fn assign_hardlink_indices(&mut self) {
         let mut table = HardlinkTable::new();
 
+        // upstream: hlink.c:match_hard_links() stores flist->ndx_start + i
+        // as the leader's gnum. Followers reference this wire NDX value so the
+        // receiver can look up the leader at (received_value - ndx_start).
+        let ndx_start = self
+            .incremental
+            .ndx_segments
+            .first()
+            .map_or(0, |&(_, start)| start) as u32;
+
         for i in 0..self.file_list.len() {
             let entry = &self.file_list[i];
             let (Some(dev), Some(ino)) = (entry.hardlink_dev(), entry.hardlink_ino()) else {
                 continue;
             };
 
+            let wire_ndx = ndx_start + i as u32;
             let dev_ino = DevIno::new(dev as u64, ino as u64);
-            match table.find_or_insert(dev_ino, i as u32) {
+            match table.find_or_insert(dev_ino, wire_ndx) {
                 HardlinkLookup::First(_) => {
                     // Leader: mark with u32::MAX (XMIT_HLINK_FIRST on wire)
                     self.file_list[i].set_hardlink_idx(u32::MAX);
                 }
-                HardlinkLookup::LinkTo(leader_ndx) => {
-                    // Follower: point to leader's sorted index
-                    self.file_list[i].set_hardlink_idx(leader_ndx);
+                HardlinkLookup::LinkTo(leader_wire_ndx) => {
+                    // Follower: point to leader's wire NDX
+                    self.file_list[i].set_hardlink_idx(leader_wire_ndx);
                 }
             }
 
