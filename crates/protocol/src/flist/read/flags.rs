@@ -8,8 +8,8 @@ use std::io::{self, Read};
 
 use logging::debug_log;
 
-use crate::CompatibilityFlags;
 use crate::varint::read_varint;
+use crate::CompatibilityFlags;
 
 use super::FileListReader;
 use crate::flist::flags::{FileFlags, XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST};

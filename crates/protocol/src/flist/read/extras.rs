@@ -7,7 +7,7 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 
 use crate::flist::entry::FileEntry;
-use crate::flist::flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED};
+use crate::flist::flags::{FileFlags, XMIT_HLINKED, XMIT_HLINK_FIRST};
 use crate::varint::{read_varint, read_varint30_int};
 
 use super::FileListReader;

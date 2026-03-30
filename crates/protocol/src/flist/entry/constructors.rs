@@ -2,10 +2,10 @@
 
 use std::path::PathBuf;
 
-use super::FileEntry;
 use super::core::extract_dirname;
 use super::extras::FileEntryExtras;
 use super::file_type::FileType;
+use super::FileEntry;
 
 impl FileEntry {
     /// Core constructor with all parameters - Template Method pattern.

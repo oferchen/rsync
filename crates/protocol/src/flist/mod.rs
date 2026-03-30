@@ -49,27 +49,25 @@ mod write;
 pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
 pub use dir_tree::DirectoryTree;
 pub use entry::{FileEntry, FileType};
-pub use flags::{
-    FileFlags, XMIT_HLINKED, XMIT_HLINK_FIRST, XMIT_SAME_RDEV_PRE28, XMIT_TOP_DIR,
-};
+pub use flags::{FileFlags, XMIT_HLINKED, XMIT_HLINK_FIRST, XMIT_SAME_RDEV_PRE28, XMIT_TOP_DIR};
 pub use hardlink::{DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable};
 pub use incremental::{
-    FinalizationResult, FinalizationStats, IncrementalFileList, IncrementalFileListBuilder,
-    IncrementalFileListIter, OrphanEntry, ReadyEntryAction, StreamingFileList,
-    process_ready_entries, process_ready_entry,
+    process_ready_entries, process_ready_entry, FinalizationResult, FinalizationStats,
+    IncrementalFileList, IncrementalFileListBuilder, IncrementalFileListIter, OrphanEntry,
+    ReadyEntryAction, StreamingFileList,
 };
 pub use intern::PathInterner;
-pub use read::{FileListReader, read_file_entry};
+pub use read::{read_file_entry, FileListReader};
 pub use sort::{
-    CleanResult, compare_file_entries, flist_clean, sort_and_clean_file_list, sort_file_list,
+    compare_file_entries, flist_clean, sort_and_clean_file_list, sort_file_list, CleanResult,
 };
 pub use state::{FileListCompressionState, FileListStats};
 pub use trace::{
-    ProcessRole, output_flist, output_flist_entry, trace_clean_result, trace_file_count_progress,
+    output_flist, output_flist_entry, trace_clean_result, trace_file_count_progress,
     trace_file_list_stats, trace_files_to_consider, trace_flist_eof, trace_flist_expand,
     trace_hardlink, trace_hardlink_dev_ino, trace_read_entry, trace_received_names,
     trace_receiving_flist_for_dir, trace_recv_file_list_done, trace_send_file_list_done,
-    trace_sort_start, trace_struct_sizes, trace_write_entry,
+    trace_sort_start, trace_struct_sizes, trace_write_entry, ProcessRole,
 };
 pub use wire_mode::{from_wire_mode, to_wire_mode};
-pub use write::{FileListWriter, PreserveFlags, write_file_entry};
+pub use write::{write_file_entry, FileListWriter, PreserveFlags};

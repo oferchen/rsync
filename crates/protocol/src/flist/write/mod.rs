@@ -17,12 +17,12 @@ mod tests;
 
 use std::io::{self, Write};
 
+use crate::acl::{send_acl, AclCache, RsyncAcl};
+use crate::codec::{create_protocol_codec, ProtocolCodecEnum};
+use crate::iconv::FilenameConverter;
+use crate::xattr::{send_xattr, XattrList};
 use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
-use crate::acl::{AclCache, RsyncAcl, send_acl};
-use crate::codec::{ProtocolCodecEnum, create_protocol_codec};
-use crate::iconv::FilenameConverter;
-use crate::xattr::{XattrList, send_xattr};
 
 use super::entry::FileEntry;
 use super::state::{FileListCompressionState, FileListStats};

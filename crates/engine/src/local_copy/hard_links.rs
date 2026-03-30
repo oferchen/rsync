@@ -929,10 +929,7 @@ mod apply_tracker_tests {
     fn leader_path_returns_recorded_path() {
         let mut tracker = HardlinkApplyTracker::new();
         tracker.record_leader(7, PathBuf::from("/dest/file.txt"));
-        assert_eq!(
-            tracker.leader_path(7),
-            Some(Path::new("/dest/file.txt"))
-        );
+        assert_eq!(tracker.leader_path(7), Some(Path::new("/dest/file.txt")));
         assert!(tracker.leader_path(99).is_none());
     }
 

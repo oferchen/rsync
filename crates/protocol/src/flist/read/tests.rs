@@ -2,10 +2,10 @@ use super::*;
 use std::io;
 use std::io::Cursor;
 
-use crate::CompatibilityFlags;
-use crate::ProtocolVersion;
 use crate::flist::entry::FileEntry;
 use crate::flist::flags::{XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST};
+use crate::CompatibilityFlags;
+use crate::ProtocolVersion;
 
 fn test_protocol() -> ProtocolVersion {
     ProtocolVersion::try_from(32u8).unwrap()
@@ -250,7 +250,7 @@ fn read_flags_returns_io_error_in_varint_mode() {
 
 #[test]
 fn is_abbreviated_follower_helper() {
-    use crate::flist::flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED};
+    use crate::flist::flags::{FileFlags, XMIT_HLINKED, XMIT_HLINK_FIRST};
 
     let mut reader = FileListReader::new(test_protocol()).with_preserve_hard_links(true);
     reader.set_ndx_start(100);
@@ -1501,7 +1501,7 @@ fn read_write_end_of_list_nonvarint_round_trip_exact_bytes() {
 /// Tests for ACL integration in the flist read path.
 mod acl_integration {
     use super::*;
-    use crate::acl::{AclCache, AclType, RsyncAcl, send_acl, send_rsync_acl};
+    use crate::acl::{send_acl, send_rsync_acl, AclCache, AclType, RsyncAcl};
 
     #[test]
     fn read_entry_with_access_acl() {
@@ -2176,7 +2176,7 @@ mod xattr_integration {
     /// then xattrs, matching upstream wire order.
     #[test]
     fn read_entry_with_acl_and_xattr() {
-        use crate::acl::{AclCache, AclType, RsyncAcl, send_rsync_acl};
+        use crate::acl::{send_rsync_acl, AclCache, AclType, RsyncAcl};
         use crate::flist::write::FileListWriter;
 
         let protocol = test_protocol();
