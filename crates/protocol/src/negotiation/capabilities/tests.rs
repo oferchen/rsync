@@ -2453,22 +2453,60 @@ fn capability_fallback_all_protocol_versions() {
 }
 
 #[test]
-fn supported_compressions_does_not_advertise_zstd_lz4() {
-    // Zstd and lz4 codecs are implemented but NOT advertised in
-    // auto-negotiation until wire-level interop is validated.
+fn supported_compressions_advertises_zstd_lz4_when_enabled() {
+    // Zstd and lz4 are advertised when their feature flags are enabled.
+    // Wire framing is validated: zstd per-token flush fixed (PR #3047),
+    // lz4 is stateless with correct framing.
     let list = supported_compressions();
-    assert!(!list.contains(&"zstd"));
-    assert!(!list.contains(&"lz4"));
+    if cfg!(feature = "zstd") {
+        assert!(list.contains(&"zstd"));
+    } else {
+        assert!(!list.contains(&"zstd"));
+    }
+    if cfg!(feature = "lz4") {
+        assert!(list.contains(&"lz4"));
+    } else {
+        assert!(!list.contains(&"lz4"));
+    }
     assert!(list.contains(&"zlibx"));
     assert!(list.contains(&"zlib"));
     assert!(list.contains(&"none"));
 }
 
 #[test]
-fn negotiate_skips_zstd_lz4_picks_zlibx() {
-    // Even when the remote offers zstd/lz4, we skip them and pick zlibx
-    // because they're not in our supported list yet.
+fn supported_compressions_order_matches_upstream() {
+    // upstream: compat.c - preference order is zstd > lz4 > zlibx > zlib > none
+    let list = supported_compressions();
+    let zlibx_pos = list.iter().position(|&s| s == "zlibx").unwrap();
+    let zlib_pos = list.iter().position(|&s| s == "zlib").unwrap();
+    let none_pos = list.iter().position(|&s| s == "none").unwrap();
+    assert!(zlibx_pos < zlib_pos);
+    assert!(zlib_pos < none_pos);
+    if cfg!(feature = "zstd") {
+        let zstd_pos = list.iter().position(|&s| s == "zstd").unwrap();
+        assert!(zstd_pos < zlibx_pos);
+    }
+    if cfg!(feature = "lz4") {
+        let lz4_pos = list.iter().position(|&s| s == "lz4").unwrap();
+        assert!(lz4_pos < zlibx_pos);
+    }
+    if cfg!(feature = "zstd") && cfg!(feature = "lz4") {
+        let zstd_pos = list.iter().position(|&s| s == "zstd").unwrap();
+        let lz4_pos = list.iter().position(|&s| s == "lz4").unwrap();
+        assert!(zstd_pos < lz4_pos);
+    }
+}
+
+#[test]
+fn negotiate_picks_zstd_when_available() {
+    // When both sides support zstd, it should be preferred.
     let list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(list).unwrap();
-    assert_eq!(result, CompressionAlgorithm::ZlibX);
+    if cfg!(feature = "zstd") {
+        assert_eq!(result, CompressionAlgorithm::Zstd);
+    } else if cfg!(feature = "lz4") {
+        assert_eq!(result, CompressionAlgorithm::LZ4);
+    } else {
+        assert_eq!(result, CompressionAlgorithm::ZlibX);
+    }
 }
