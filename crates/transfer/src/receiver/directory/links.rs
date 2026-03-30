@@ -125,6 +125,12 @@ impl ReceiverContext {
     /// list index in their `hardlink_idx` field and are created as hard links to the
     /// leader's destination path instead of being transferred independently.
     ///
+    /// Uses `HardlinkApplyTracker` when available (protocol 30+) for leader tracking
+    /// and deferred follower resolution. Leaders recorded during pipelined transfer
+    /// commits are already present in the tracker; this method records any remaining
+    /// leaders (e.g., files that matched quick-check and were not transferred) and
+    /// links all followers.
+    ///
     /// For protocol 28-29, hardlinks are identified by (dev, ino) pairs. This method
     /// handles both cases by building a mapping from hardlink identifiers to leader
     /// destination paths.
@@ -135,7 +141,7 @@ impl ReceiverContext {
     /// - `hlink.c:finish_hard_link()` - creates links after leader transfer completes
     /// - `generator.c:1539` - `F_HLINK_NOT_FIRST` check before `hard_link_check()`
     pub(in crate::receiver) fn create_hardlinks<W: crate::writer::MsgInfoSender + ?Sized>(
-        &self,
+        &mut self,
         dest_dir: &Path,
         writer: &mut W,
     ) {
@@ -143,105 +149,129 @@ impl ReceiverContext {
             return;
         }
 
-        // Protocol 30+: use hardlink_idx to map followers to leaders.
-        // Build a map from file list index -> destination path for leaders.
-        let mut leader_paths: std::collections::HashMap<u32, std::path::PathBuf> =
-            std::collections::HashMap::new();
+        // Protocol 30+: use HardlinkApplyTracker for leader/follower resolution.
+        // Take the tracker temporarily to avoid borrow conflicts with self.emit_itemize().
+        if let Some(mut tracker) = self.hardlink_tracker.take() {
+            // First pass: ensure all leaders are recorded in the tracker.
+            // Leaders committed during pipelined transfer are already recorded;
+            // this covers leaders that matched quick-check (not transferred) or
+            // were processed via the sync path.
+            for entry in &self.file_list {
+                if entry.flags().hlink_first() {
+                    let gnum = match entry.hardlink_idx() {
+                        Some(idx) => idx,
+                        None => continue,
+                    };
+                    // Skip if already recorded during pipelined commit.
+                    if tracker.leader_path(gnum).is_some() {
+                        continue;
+                    }
+                    let relative_path = entry.path();
+                    let dest_path = if relative_path.as_os_str() == "." {
+                        dest_dir.to_path_buf()
+                    } else {
+                        dest_dir.join(relative_path)
+                    };
+                    // No deferred followers expected here since we process
+                    // followers in the second pass below.
+                    let _ = tracker.record_leader(gnum, dest_path);
+                }
+            }
 
-        // First pass: record leader paths keyed by their readdir-order wire NDX
-        // (stored in hardlink_idx during receive_file_list before sorting).
-        // upstream: flist.c - F_HL_GNUM stores the readdir-order wire NDX of the leader
-        for entry in &self.file_list {
-            if entry.flags().hlink_first() {
-                let leader_gnum = match entry.hardlink_idx() {
+            // Second pass: link followers to their leaders.
+            for entry in &self.file_list {
+                if !entry.flags().hlinked() || entry.flags().hlink_first() {
+                    continue;
+                }
+                let leader_idx = match entry.hardlink_idx() {
                     Some(idx) => idx,
                     None => continue,
                 };
-                let relative_path = entry.path();
-                let dest_path = if relative_path.as_os_str() == "." {
-                    dest_dir.to_path_buf()
-                } else {
-                    dest_dir.join(relative_path)
+
+                let leader_path = match tracker.leader_path(leader_idx) {
+                    Some(p) => p.to_path_buf(),
+                    None => {
+                        debug_log!(
+                            Recv,
+                            1,
+                            "hardlink follower {} references unknown leader index {}",
+                            entry.name(),
+                            leader_idx
+                        );
+                        continue;
+                    }
                 };
-                leader_paths.insert(leader_gnum, dest_path);
-            }
-        }
 
-        // Second pass: create hard links for followers (hlinked but NOT hlink_first).
-        for entry in &self.file_list {
-            if !entry.flags().hlinked() || entry.flags().hlink_first() {
-                continue;
-            }
-            let leader_idx = match entry.hardlink_idx() {
-                Some(idx) => idx,
-                None => continue,
-            };
+                let relative_path = entry.path();
+                let link_path = dest_dir.join(relative_path);
 
-            let leader_path = match leader_paths.get(&leader_idx) {
-                Some(p) => p,
-                None => {
+                // Quick-check: if destination already hard-links to the leader, skip.
+                if let Ok(link_meta) = fs::symlink_metadata(&link_path) {
+                    if let Ok(leader_meta) = fs::symlink_metadata(&leader_path) {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::MetadataExt;
+                            if link_meta.dev() == leader_meta.dev()
+                                && link_meta.ino() == leader_meta.ino()
+                            {
+                                // upstream: hlink.c - hardlink already correct, metadata only
+                                let iflags = ItemFlags::from_raw(0);
+                                let _ = self.emit_itemize(writer, &iflags, entry);
+                                continue;
+                            }
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            let _ = (link_meta, leader_meta);
+                        }
+                    }
+                    // Remove existing file so we can create the hard link.
+                    let _ = fs::remove_file(&link_path);
+                }
+
+                // Ensure parent directory exists.
+                if let Some(parent) = link_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+
+                // upstream: hlink.c:maybe_hard_link() -> atomic_create() -> do_link()
+                if let Err(e) = fs::hard_link(&leader_path, &link_path) {
                     debug_log!(
                         Recv,
                         1,
-                        "hardlink follower {} references unknown leader index {}",
-                        entry.name(),
-                        leader_idx
+                        "failed to hard link {} => {}: {}",
+                        link_path.display(),
+                        leader_path.display(),
+                        e
                     );
-                    continue;
+                } else {
+                    // upstream: hlink.c:finish_hard_link() - itemize new hardlink
+                    let iflags = ItemFlags::from_raw(
+                        ItemFlags::ITEM_LOCAL_CHANGE
+                            | ItemFlags::ITEM_XNAME_FOLLOWS
+                            | ItemFlags::ITEM_IS_NEW,
+                    );
+                    let _ = self.emit_itemize(writer, &iflags, entry);
                 }
-            };
-
-            let relative_path = entry.path();
-            let link_path = dest_dir.join(relative_path);
-
-            // Quick-check: if destination already hard-links to the leader, skip.
-            if let Ok(link_meta) = fs::symlink_metadata(&link_path) {
-                if let Ok(leader_meta) = fs::symlink_metadata(leader_path) {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::MetadataExt;
-                        if link_meta.dev() == leader_meta.dev()
-                            && link_meta.ino() == leader_meta.ino()
-                        {
-                            // upstream: hlink.c - hardlink already correct, metadata only
-                            let iflags = ItemFlags::from_raw(0);
-                            let _ = self.emit_itemize(writer, &iflags, entry);
-                            continue;
-                        }
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        let _ = (link_meta, leader_meta);
-                    }
-                }
-                // Remove existing file so we can create the hard link.
-                let _ = fs::remove_file(&link_path);
             }
 
-            // Ensure parent directory exists.
-            if let Some(parent) = link_path.parent() {
-                let _ = fs::create_dir_all(parent);
+            // Resolve any remaining deferred followers from incremental commits.
+            // upstream: hlink.c:finish_hard_link() - final pass
+            let (linked, errors) = tracker.resolve_deferred();
+            if linked > 0 {
+                debug_log!(Recv, 2, "resolved {} deferred hardlink followers", linked);
             }
-
-            // upstream: hlink.c:maybe_hard_link() -> atomic_create() -> do_link()
-            if let Err(e) = fs::hard_link(leader_path, &link_path) {
+            for (path, err) in errors {
                 debug_log!(
                     Recv,
                     1,
-                    "failed to hard link {} => {}: {}",
-                    link_path.display(),
-                    leader_path.display(),
-                    e
+                    "failed to resolve deferred hardlink {}: {}",
+                    path.display(),
+                    err
                 );
-            } else {
-                // upstream: hlink.c:finish_hard_link() - itemize new hardlink
-                let iflags = ItemFlags::from_raw(
-                    ItemFlags::ITEM_LOCAL_CHANGE
-                        | ItemFlags::ITEM_XNAME_FOLLOWS
-                        | ItemFlags::ITEM_IS_NEW,
-                );
-                let _ = self.emit_itemize(writer, &iflags, entry);
             }
+
+            self.hardlink_tracker = Some(tracker);
         }
 
         // Protocol 28-29: use (dev, ino) pairs to identify hardlink groups.

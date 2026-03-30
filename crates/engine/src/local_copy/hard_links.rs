@@ -30,6 +30,7 @@ use rustc_hash::FxHashMap;
 ///
 /// - `hlink.c:finish_hard_link()` - walks deferred follower list after leader transfer
 /// - `hlink.c:hard_link_check()` - defers followers when leader is in-progress
+#[derive(Debug)]
 pub struct HardlinkApplyTracker {
     /// Map from hardlink group index (gnum) to the leader's committed destination path.
     leaders: FxHashMap<u32, PathBuf>,
