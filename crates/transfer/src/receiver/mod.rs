@@ -49,6 +49,8 @@ use protocol::flist::{FileEntry, FileListReader};
 use protocol::idlist::IdList;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
+use engine::HardlinkApplyTracker;
+
 use crate::config::ServerConfig;
 use crate::handshake::HandshakeResult;
 use crate::shared::ChecksumFactory;
@@ -139,6 +141,16 @@ pub struct ReceiverContext {
     ///
     /// - `generator.c:delete_in_dir()` - `is_excluded()` check before deletion
     filter_chain: FilterChain,
+    /// Tracker for hardlink leader/follower relationships during file apply.
+    ///
+    /// Records committed leader paths so followers can be hard-linked to them.
+    /// Initialized when `--hard-links` is active; `None` otherwise.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `hlink.c:finish_hard_link()` - links deferred followers after leader commit
+    /// - `hlink.c:hard_link_check()` - defers follower when leader in-progress
+    hardlink_tracker: Option<HardlinkApplyTracker>,
 }
 
 impl ReceiverContext {
@@ -154,6 +166,12 @@ impl ReceiverContext {
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
         let initial_ndx_start = if inc_recurse { 1 } else { 0 };
 
+        let hardlink_tracker = if config.flags.hard_links {
+            Some(HardlinkApplyTracker::new())
+        } else {
+            None
+        };
+
         Self {
             protocol: handshake.protocol,
             config,
@@ -166,6 +184,7 @@ impl ReceiverContext {
             uid_list: IdList::new(),
             gid_list: IdList::new(),
             filter_chain: FilterChain::empty(),
+            hardlink_tracker,
         }
     }
 
