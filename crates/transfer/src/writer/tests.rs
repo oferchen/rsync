@@ -617,3 +617,99 @@ fn server_writer_batch_recorder_captures_through_server_write() {
     let recorded = recorder_buf.lock().unwrap();
     assert_eq!(&*recorded, b"server data");
 }
+
+// =========================================================================
+// Batch recorder + compression tests
+// =========================================================================
+
+#[test]
+fn compressed_writer_batch_recorder_captures_uncompressed_data() {
+    // When compression is active, the batch recorder must capture
+    // pre-compression (uncompressed) data so --read-batch can replay
+    // without the compression codec.
+    // upstream: token.c:send_token() writes to batch_fd before compression.
+    use crate::compressed_writer::CompressedWriter;
+
+    let mut wire = Vec::new();
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+
+    {
+        let mut compressed = CompressedWriter::new(
+            &mut wire,
+            CompressionAlgorithm::Zlib,
+            CompressionLevel::Default,
+        )
+        .unwrap();
+        compressed.batch_recorder = Some(recorder_buf.clone());
+
+        compressed.write_all(b"uncompressed payload").unwrap();
+        compressed.finish().unwrap();
+    }
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(
+        &*recorded, b"uncompressed payload",
+        "batch recorder must capture uncompressed data, not compressed"
+    );
+
+    // Wire should contain compressed data (different from raw input)
+    assert_ne!(
+        &wire[..],
+        b"uncompressed payload",
+        "wire should contain compressed data"
+    );
+}
+
+#[test]
+fn server_writer_compressed_batch_recorder_captures_uncompressed() {
+    // Verify that set_batch_recorder on a Compressed ServerWriter captures
+    // uncompressed data, not the compressed bytes flowing to the mux layer.
+    let mut wire = Vec::new();
+    let mut writer = ServerWriter::new_plain(&mut wire)
+        .activate_multiplex()
+        .unwrap()
+        .activate_compression(CompressionAlgorithm::Zlib, CompressionLevel::Default)
+        .unwrap();
+
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let recorder: Arc<Mutex<dyn Write + Send>> = recorder_buf.clone();
+    writer.set_batch_recorder(recorder).unwrap();
+
+    writer.write_all(b"batch test data").unwrap();
+    writer.flush().unwrap();
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(
+        &*recorded, b"batch test data",
+        "batch recorder on compressed writer must capture uncompressed data"
+    );
+}
+
+#[test]
+fn server_writer_batch_recorder_migrates_on_compression_activation() {
+    // Verify that if a batch recorder is set on the MultiplexWriter
+    // and then compression is activated, the recorder is moved to the
+    // CompressedWriter to capture uncompressed data.
+    let mut wire = Vec::new();
+    let mut writer = ServerWriter::new_plain(&mut wire)
+        .activate_multiplex()
+        .unwrap();
+
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let recorder: Arc<Mutex<dyn Write + Send>> = recorder_buf.clone();
+    writer.set_batch_recorder(recorder).unwrap();
+
+    // Now activate compression - recorder should migrate from mux to compressed layer
+    let mut writer = writer
+        .activate_compression(CompressionAlgorithm::Zlib, CompressionLevel::Default)
+        .unwrap();
+
+    writer.write_all(b"migrated recorder").unwrap();
+    writer.flush().unwrap();
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(
+        &*recorded, b"migrated recorder",
+        "recorder migrated to compression layer should capture uncompressed data"
+    );
+}

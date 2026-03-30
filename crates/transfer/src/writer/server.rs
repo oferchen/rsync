@@ -76,8 +76,13 @@ impl<W: Write> ServerWriter<W> {
         level: CompressionLevel,
     ) -> io::Result<Self> {
         match self {
-            Self::Multiplex(mux) => {
-                let compressed = CompressedWriter::new(mux, algorithm, level)?;
+            Self::Multiplex(mut mux) => {
+                // If a batch recorder was attached to the MultiplexWriter, move it
+                // to the CompressedWriter so it captures uncompressed data instead
+                // of compressed wire bytes.
+                let recorder = mux.batch_recorder.take();
+                let mut compressed = CompressedWriter::new(mux, algorithm, level)?;
+                compressed.batch_recorder = recorder;
                 Ok(Self::Compressed(compressed))
             }
             Self::Plain(_) => Err(io::Error::new(
@@ -197,13 +202,17 @@ impl<W: Write> ServerWriter<W> {
         self.send_message(MessageCode::Redo, &ndx.to_le_bytes())
     }
 
-    /// Attaches a batch recorder to the multiplex writer.
+    /// Attaches a batch recorder for capturing uncompressed protocol data.
     ///
-    /// All data written through the `Write` trait (pre-multiplex framing) is
-    /// copied to the recorder. Must be called after multiplex activation.
+    /// When compression is active, the recorder is attached to the
+    /// `CompressedWriter` so it captures **pre-compression** (uncompressed) data.
+    /// This ensures `--read-batch` can replay without the compression codec.
+    /// When only multiplex is active, the recorder is attached to the
+    /// `MultiplexWriter` to capture pre-mux data.
     ///
-    /// upstream: `io.c` `write_batch_monitor_out` activates the tee inside
-    /// `write_buf()` to record pre-mux data to the batch file.
+    /// upstream: token.c:send_token() writes to batch_fd before compression.
+    /// upstream: io.c:write_batch_monitor_out tees pre-mux data when no
+    /// compression is active.
     pub fn set_batch_recorder(&mut self, recorder: Arc<Mutex<dyn Write + Send>>) -> io::Result<()> {
         match self {
             Self::Multiplex(mux) => {
@@ -211,7 +220,9 @@ impl<W: Write> ServerWriter<W> {
                 Ok(())
             }
             Self::Compressed(compressed) => {
-                compressed.inner_mut().batch_recorder = Some(recorder);
+                // Attach to CompressedWriter so we capture uncompressed data,
+                // not to the inner MultiplexWriter which would see compressed data.
+                compressed.batch_recorder = Some(recorder);
                 Ok(())
             }
             _ => Err(io::Error::new(
