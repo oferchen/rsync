@@ -197,8 +197,9 @@ pub use hardlink::{HardlinkAction, HardlinkGroup, HardlinkKey, HardlinkResolver,
 
 /// Local filesystem copy operations.
 pub use local_copy::{
-    BuilderError, DeleteTiming, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind,
-    LocalCopyOptions, LocalCopyOptionsBuilder, LocalCopyPlan, LocalCopySummary, ReferenceDirectory,
+    BuilderError, DeleteTiming, HardlinkApplyResult, HardlinkApplyTracker,
+    LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions,
+    LocalCopyOptionsBuilder, LocalCopyPlan, LocalCopySummary, ReferenceDirectory,
     ReferenceDirectoryKind, SkipCompressList, SkipCompressParseError, SparseDetector, SparseReader,
     SparseRegion, SparseWriter, compute_backup_path,
 };
