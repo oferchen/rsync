@@ -148,14 +148,11 @@ pub fn categorize_io_error(
     use io::ErrorKind::*;
 
     match err.kind() {
-        // Transient errors - treat as recoverable for now
-        // (future: could implement retry logic)
         WouldBlock | Interrupted => DeltaTransferError::Recoverable(DeltaRecoverableError::Io {
             path: path.to_path_buf(),
             error: err,
         }),
 
-        // Recoverable - skip file
         NotFound => DeltaTransferError::Recoverable(DeltaRecoverableError::FileNotFound {
             path: path.to_path_buf(),
         }),
@@ -166,18 +163,15 @@ pub fn categorize_io_error(
             })
         }
 
-        // Fatal - abort transfer
         StorageFull => DeltaTransferError::Fatal(DeltaFatalError::DiskFull {
             path: path.to_path_buf(),
             bytes_needed: None,
         }),
 
-        // Read-only filesystem is fatal
         ReadOnlyFilesystem => DeltaTransferError::Fatal(DeltaFatalError::ReadOnlyFilesystem {
             path: path.to_path_buf(),
         }),
 
-        // Default to fatal for unknown errors
         _ => DeltaTransferError::Fatal(DeltaFatalError::Io(err)),
     }
 }
