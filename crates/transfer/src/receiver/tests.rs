@@ -3396,13 +3396,30 @@ fn create_hardlinks_populates_tracker() {
     ctx.create_hardlinks(dest, &mut writer);
 
     // Verify follower links were created.
-    assert!(dest.join("a_link.txt").exists(), "follower a_link.txt should exist");
-    assert!(dest.join("b_link.txt").exists(), "follower b_link.txt should exist");
+    assert!(
+        dest.join("a_link.txt").exists(),
+        "follower a_link.txt should exist"
+    );
+    assert!(
+        dest.join("b_link.txt").exists(),
+        "follower b_link.txt should exist"
+    );
 
     // Verify tracker is preserved (not consumed by take()).
-    let tracker = ctx.hardlink_tracker.as_ref().expect("tracker should be restored");
-    assert_eq!(tracker.leader_count(), 2, "tracker should have 2 leaders recorded");
-    assert_eq!(tracker.deferred_count(), 0, "no deferred followers should remain");
+    let tracker = ctx
+        .hardlink_tracker
+        .as_ref()
+        .expect("tracker should be restored");
+    assert_eq!(
+        tracker.leader_count(),
+        2,
+        "tracker should have 2 leaders recorded"
+    );
+    assert_eq!(
+        tracker.deferred_count(),
+        0,
+        "no deferred followers should remain"
+    );
 }
 
 /// Verifies that the tracker correctly tracks leaders across multiple
@@ -3438,7 +3455,10 @@ fn create_hardlinks_tracker_preserves_state_across_calls() {
     assert!(dest.join("follower.txt").exists());
     let leader_ino = std::fs::metadata(dest.join("leader.txt")).unwrap().ino();
     let follower_ino = std::fs::metadata(dest.join("follower.txt")).unwrap().ino();
-    assert_eq!(leader_ino, follower_ino, "follower should share inode with leader");
+    assert_eq!(
+        leader_ino, follower_ino,
+        "follower should share inode with leader"
+    );
 }
 
 /// Verifies that three followers in the same group all share the leader's inode.
@@ -3473,6 +3493,8 @@ fn create_hardlinks_multiple_followers_same_group() {
     }
 
     // Link count should be 4 (1 leader + 3 followers).
-    let nlink = std::fs::metadata(dest.join("original.txt")).unwrap().nlink();
+    let nlink = std::fs::metadata(dest.join("original.txt"))
+        .unwrap()
+        .nlink();
     assert_eq!(nlink, 4, "link count should be 4");
 }
