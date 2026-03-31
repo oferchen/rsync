@@ -150,6 +150,7 @@ fn setup_protocol_below_30_returns_none_for_algorithms_and_compat() {
         is_server: true,
         is_daemon_mode: false,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -187,6 +188,7 @@ fn setup_protocol_skip_compat_exchange_skips_flags() {
         is_server: true,
         is_daemon_mode: false,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -227,6 +229,7 @@ fn setup_protocol_server_writes_compat_flags_and_seed() {
         is_server: true,
         is_daemon_mode: true, // server advertises, client reads
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -280,6 +283,7 @@ fn setup_protocol_client_reads_compat_flags_from_server() {
         is_server: false,  // CLIENT mode
         is_daemon_mode: true,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -321,6 +325,7 @@ fn setup_protocol_server_generates_deterministic_seeds() {
         is_server: true,
         is_daemon_mode: false,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -368,6 +373,7 @@ fn setup_protocol_ssh_mode_bidirectional_exchange() {
         is_server: false, // CLIENT
         is_daemon_mode: false,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -409,6 +415,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -438,6 +445,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -479,6 +487,7 @@ fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -509,6 +518,7 @@ fn protocol_setup_config_builder_new_sets_defaults() {
     assert!(config.client_args.is_none());
     assert!(!config.is_daemon_mode);
     assert!(!config.do_compression);
+    assert!(config.compress_choice.is_none());
     assert!(config.checksum_seed.is_none());
 }
 
@@ -867,6 +877,7 @@ fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -911,6 +922,7 @@ fn setup_protocol_server_v_flag_enables_negotiation() {
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -941,6 +953,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
     };
@@ -958,6 +971,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
     };
@@ -1125,6 +1139,7 @@ fn setup_protocol_with_mock_negotiator_server_mode() {
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -1168,6 +1183,7 @@ fn setup_protocol_with_mock_negotiator_client_mode() {
         is_server: false,
         is_daemon_mode: false,
         do_compression: false,
+        compress_choice: None,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
