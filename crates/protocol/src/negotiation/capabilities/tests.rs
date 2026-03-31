@@ -2472,8 +2472,14 @@ fn supported_compressions_excludes_unvalidated_algorithms() {
     // Zstd and lz4 wire framing is not yet validated against upstream.
     // They must NOT be advertised in auto-negotiation to prevent mismatches.
     let list = supported_compressions();
-    assert!(!list.contains(&"zstd"), "zstd must not be advertised until wire format is validated");
-    assert!(!list.contains(&"lz4"), "lz4 must not be advertised until wire format is validated");
+    assert!(
+        !list.contains(&"zstd"),
+        "zstd must not be advertised until wire format is validated"
+    );
+    assert!(
+        !list.contains(&"lz4"),
+        "lz4 must not be advertised until wire format is validated"
+    );
     assert!(list.contains(&"zlibx"));
     assert!(list.contains(&"zlib"));
     assert!(list.contains(&"none"));
