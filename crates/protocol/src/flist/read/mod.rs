@@ -459,6 +459,29 @@ impl FileListReader {
         &mut self,
         reader: &mut R,
     ) -> io::Result<Option<FileEntry>> {
+        self.read_entry_with_flist(reader, &[])
+    }
+
+    /// Reads the next file entry, using `segment_entries` to resolve abbreviated
+    /// hardlink followers.
+    ///
+    /// When an abbreviated follower is encountered (leader in the same flist
+    /// segment), its metadata is copied from the leader entry and the
+    /// compression state is updated to stay in sync with the sender.
+    ///
+    /// `segment_entries` must contain all entries already read in the current
+    /// flist segment (i.e., entries at indices `0..` corresponding to wire
+    /// NDXes `ndx_start..`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// `flist.c:recv_file_entry()` lines 793-822 - receiver copies metadata
+    /// from leader and updates static compression variables.
+    pub fn read_entry_with_flist<R: Read + ?Sized>(
+        &mut self,
+        reader: &mut R,
+        segment_entries: &[FileEntry],
+    ) -> io::Result<Option<FileEntry>> {
         let flags = match self.read_flags(reader)? {
             FlagsResult::EndOfList => return Ok(None),
             FlagsResult::IoError(code) => {
@@ -487,29 +510,92 @@ impl FileListReader {
 
         // Abbreviated followers (leader in same flist segment) have metadata
         // copied from the leader; unabbreviated followers carry full metadata.
-        // upstream: flist.c:recv_file_entry() line 793
+        // upstream: flist.c:recv_file_entry() lines 793-822
         let (size, metadata, link_target, rdev, hardlink_dev_ino, checksum) =
             if self.is_abbreviated_follower(flags, hardlink_idx) {
-                (
-                    0u64,
-                    MetadataResult {
-                        mtime: 0,
-                        nsec: 0,
-                        mode: 0,
-                        uid: None,
-                        gid: None,
-                        user_name: None,
-                        group_name: None,
-                        atime: None,
-                        atime_nsec: 0,
-                        crtime: None,
-                        content_dir: true,
-                    },
-                    None,
-                    None,
-                    None,
-                    None,
-                )
+                // upstream: flist.c:794 - look up leader in the current segment
+                // and copy its metadata. The sender's static compression variables
+                // (mode, modtime, uid, gid, atime) were already updated from the
+                // leader's data before `goto the_end`, so the receiver must mirror
+                // this by updating its compression state from the leader too.
+                let leader_local_idx = (hardlink_idx.expect("abbreviated follower has hardlink_idx")
+                    as i32
+                    - self.ndx_start) as usize;
+
+                if let Some(leader) = segment_entries.get(leader_local_idx) {
+                    // upstream: flist.c:795-810 - copy fields from leader
+                    let leader_mode = leader.mode();
+                    let leader_mtime = leader.mtime();
+                    let leader_uid = leader.uid();
+                    let leader_gid = leader.gid();
+                    let leader_atime = leader.atime();
+
+                    // Update compression state to match sender's statics
+                    // upstream: sender updates mode/modtime/uid/gid/atime at
+                    // flist.c:430-493 BEFORE goto the_end
+                    self.state.update_mode(leader_mode);
+                    self.state.update_mtime(leader_mtime);
+                    if let Some(uid) = leader_uid {
+                        self.state.update_uid(uid);
+                    }
+                    if let Some(gid) = leader_gid {
+                        self.state.update_gid(gid);
+                    }
+                    if (leader_mode & 0o170000) != 0o040000 {
+                        self.state.update_atime(leader_atime);
+                    }
+
+                    (
+                        leader.size(),
+                        MetadataResult {
+                            mtime: leader_mtime,
+                            nsec: leader.mtime_nsec(),
+                            mode: leader_mode,
+                            uid: leader_uid,
+                            gid: leader_gid,
+                            user_name: None,
+                            group_name: None,
+                            atime: if leader_atime != 0 {
+                                Some(leader_atime)
+                            } else {
+                                None
+                            },
+                            atime_nsec: leader.atime_nsec(),
+                            crtime: None,
+                            content_dir: (leader_mode & 0o170000) == 0o040000,
+                        },
+                        leader.link_target().cloned(),
+                        leader.rdev_major().zip(leader.rdev_minor()),
+                        None,
+                        leader.checksum().map(|s| s.to_vec()),
+                    )
+                } else {
+                    // Leader not available (segment_entries not provided or
+                    // index out of range) - fall back to zero metadata.
+                    // Compression state is NOT updated, which may cause
+                    // subsequent decode errors if the caller didn't pass
+                    // segment_entries.
+                    (
+                        0u64,
+                        MetadataResult {
+                            mtime: 0,
+                            nsec: 0,
+                            mode: 0,
+                            uid: None,
+                            gid: None,
+                            user_name: None,
+                            group_name: None,
+                            atime: None,
+                            atime_nsec: 0,
+                            crtime: None,
+                            content_dir: true,
+                        },
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                }
             } else {
                 let size = self.read_size(reader)?;
                 let metadata = self.read_metadata(reader, flags)?;

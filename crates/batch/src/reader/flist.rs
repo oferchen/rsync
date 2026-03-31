@@ -123,7 +123,7 @@ impl BatchReader {
 
         let mut entries = Vec::new();
         loop {
-            match flist_reader.read_entry(reader) {
+            match flist_reader.read_entry_with_flist(reader, &entries) {
                 Ok(Some(entry)) => entries.push(entry),
                 Ok(None) => break,
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
