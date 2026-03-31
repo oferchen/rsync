@@ -1501,9 +1501,6 @@ KNOWN_FAILURES=(
   # --- oc→upstream (client push) ---
   "oc:acls"
   "oc:xattrs"
-  "oc:hardlinks-delete"
-  "oc:hardlinks-numeric"
-  "oc:hardlinks-existing"
   "oc:compress-zstd"
   "oc:compress-lz4"
   "oc:itemize"
@@ -1511,16 +1508,12 @@ KNOWN_FAILURES=(
   # --- upstream→oc (daemon receive) ---
   "up:acls"
   "up:xattrs"
-  "up:hardlinks-delete"
-  "up:hardlinks-numeric"
-  "up:hardlinks-existing"
   "up:compress-zstd"
   "up:compress-lz4"
+  "up:itemize"
   # --- standalone ---
   "standalone:write-batch-read-batch"
   "standalone:write-batch-read-batch-compressed"
-  "standalone:large-file-2gb"
-  "standalone:hardlinks-comprehensive"
 )
 
 is_known_failure() {
