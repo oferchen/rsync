@@ -354,17 +354,52 @@ pub fn run_server_with_handshake<W: Write>(
     // client reads silently); SSH mode uses bidirectional exchange.
     let is_daemon_mode = config.connection.client_mode || handshake.client_args.is_some();
 
-    // upstream: compat.c — do_compression is set by the -z short option.
-    // Only check compact flag strings (single-dash args like "-avz"), not
-    // long-form args like "--size-only" which contain 'z' but don't mean compression.
-    let do_compression = if config.connection.client_mode {
-        config.flags.compress
+    // upstream: compat.c — do_compression is set by -z (short option) or by
+    // --new-compress, --old-compress, --compress-choice=ALGO (long options).
+    // upstream: options.c:2704 only puts 'z' in argstr for CPRES_ZLIB.
+    // For zlibx, zstd, lz4, upstream sends long options instead.
+    let (do_compression, compress_choice) = if config.connection.client_mode {
+        (config.flags.compress, None)
     } else if let Some(args) = handshake.client_args.as_deref() {
-        args.iter()
-            .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg.contains('z'))
+        // Check compact flag strings for 'z' (CPRES_ZLIB only)
+        let has_z = args
+            .iter()
+            .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg.contains('z'));
+
+        // upstream: options.c:2800-2805 - long options for non-ZLIB compression:
+        //   CPRES_ZLIBX → --new-compress
+        //   CPRES_ZLIB with explicit choice → --old-compress
+        //   other (zstd/lz4) → --compress-choice=ALGO
+        let choice: Option<&str> = args.iter().find_map(|arg| {
+            let s = arg.as_str();
+            if s == "--new-compress" {
+                Some("zlibx")
+            } else if s == "--old-compress" {
+                Some("zlib")
+            } else {
+                s.strip_prefix("--compress-choice=")
+                    .or_else(|| s.strip_prefix("--zc="))
+            }
+        });
+
+        (has_z || choice.is_some(), choice)
     } else {
-        false
+        (false, None)
     };
+
+    // upstream: compat.c:543 - compression vstrings are only exchanged when
+    // do_compression is active AND no explicit compress_choice was given.
+    // When --compress-choice=ALGO is specified, both sides know the algorithm
+    // and skip the vstring negotiation for compression.
+    let compress_choice_algo = compress_choice
+        .map(protocol::CompressionAlgorithm::parse)
+        .transpose()
+        .map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid --compress-choice from client: {e}"),
+            )
+        })?;
 
     // Compute allow_inc_recurse matching upstream compat.c:161-179.
     // Requires recursive mode and not qsort. For receivers, also disallows
@@ -381,6 +416,7 @@ pub fn run_server_with_handshake<W: Write>(
         is_server,
         is_daemon_mode,
         do_compression,
+        compress_choice: compress_choice_algo,
         checksum_seed: config.checksum_seed,
         allow_inc_recurse,
     };
