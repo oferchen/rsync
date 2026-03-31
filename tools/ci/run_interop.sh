@@ -1521,9 +1521,9 @@ KNOWN_FAILURES=(
   "up:hardlinks-numeric"
   "up:hardlinks-checksum"
   "up:hardlinks-existing"
-  "up:merge-filter"
   "up:compress-zstd"
   "up:compress-lz4"
+  "up:merge-filter"
   # --- standalone ---
   "standalone:write-batch-read-batch"
   "standalone:write-batch-read-batch-compressed"
