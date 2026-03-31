@@ -103,7 +103,10 @@ pub fn setup_protocol_with<'a>(
     let (compat_flags, negotiated_algorithms) =
         if config.protocol.uses_binary_negotiation() && !config.skip_compat_exchange {
             let (our_flags, client_info) = build_our_flags(config, negotiator);
-            let send_compression = config.do_compression;
+            // upstream: compat.c:543 - compression vstrings are only exchanged
+            // when do_compression && !compress_choice. When --compress-choice is
+            // specified, both sides already know the algorithm.
+            let send_compression = config.do_compression && config.compress_choice.is_none();
 
             // Compat flags exchange is UNIDIRECTIONAL (upstream compat.c:710-741):
             // Server writes, client reads.
@@ -131,7 +134,7 @@ pub fn setup_protocol_with<'a>(
                 negotiator,
             );
 
-            let algorithms = negotiator.negotiate(
+            let mut algorithms = negotiator.negotiate(
                 config.protocol,
                 stdin,
                 stdout,
@@ -140,6 +143,15 @@ pub fn setup_protocol_with<'a>(
                 config.is_daemon_mode,
                 config.is_server,
             )?;
+
+            // upstream: compat.c:819 parse_compress_choice(1) - when an
+            // explicit compress_choice is set (--compress-choice=ALGO,
+            // --new-compress, --old-compress), override the negotiated
+            // compression with the specified algorithm. The vstring exchange
+            // was skipped, so the negotiation result has compression=None.
+            if let Some(algo) = config.compress_choice {
+                algorithms.compression = algo;
+            }
 
             (Some(compat_flags), Some(algorithms))
         } else {
