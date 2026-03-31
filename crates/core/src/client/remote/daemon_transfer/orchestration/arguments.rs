@@ -148,9 +148,11 @@ pub(super) fn build_full_daemon_args(
 
     // Capability flags for protocol 30+.
     // upstream: options.c:2707-2713 (via maybe_add_e_option appended to argstr)
-    // upstream: compat.c:720 set_allow_inc_recurse()
+    // upstream: compat.c:177-178 - daemon checks client_info for 'i' to set allow_inc_recurse
+    // INC_RECURSE ('i') is only advertised for pull (is_sender=true, daemon sends)
+    // because sender-side INC_RECURSE segment handling is not yet implemented.
     if protocol.as_u8() >= 30 {
-        args.push(build_capability_string(true));
+        args.push(build_capability_string(is_sender));
     }
 
     // --- Long-form arguments (upstream server_options() options.c:2737-2980) ---
