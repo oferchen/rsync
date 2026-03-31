@@ -10,22 +10,25 @@ pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
 
 /// Returns supported compression algorithms in preference order for negotiation.
 ///
-/// Only advertises algorithms whose wire format has been validated against
-/// upstream rsync. Zstd and lz4 codecs are compiled in (feature-gated) but
-/// NOT advertised in auto-negotiation until their per-token wire framing
-/// passes full interop validation against upstream 3.4.1.
+/// Matches upstream rsync 3.4.1's `valid_compressions_items` order:
+/// zstd > lz4 > zlibx > zlib > none. Zstd and lz4 are feature-gated
+/// and only advertised when compiled in.
 ///
 /// Explicit `--compress-choice=zstd|lz4` bypasses this list entirely
 /// (upstream compat.c:543 skips vstring exchange when compress_choice is set).
 ///
 /// # Upstream reference
 ///
-/// upstream: compat.c:534-544 `negotiate_the_strings()` - both sides exchange
-/// their supported algorithm lists and pick the first common entry.
+/// upstream: compat.c:100-112 `valid_compressions_items[]` - preference-ordered
+/// list guarded by `SUPPORT_ZSTD` and `SUPPORT_LZ4` compile flags.
 pub(super) fn supported_compressions() -> Vec<&'static str> {
-    // zstd/lz4 wire format not yet validated for interop - do not advertise.
-    // Re-enable after wire framing is confirmed: tasks #1379 (zstd), #1380 (lz4).
-    vec!["zlibx", "zlib", "none"]
+    let mut v = Vec::with_capacity(5);
+    #[cfg(feature = "zstd")]
+    v.push("zstd");
+    #[cfg(feature = "lz4")]
+    v.push("lz4");
+    v.extend_from_slice(&["zlibx", "zlib", "none"]);
+    v
 }
 
 /// Checksum algorithm negotiated between rsync peers.
