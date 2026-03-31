@@ -1503,7 +1503,6 @@ KNOWN_FAILURES=(
   "oc:xattrs"
   "oc:compress-lz4"
   "oc:itemize"
-  "oc:merge-filter"
   # --- upstream→oc (daemon receive) ---
   "up:acls"
   "up:xattrs"
