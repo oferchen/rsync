@@ -86,7 +86,6 @@ pub fn sync_acls(
     destination: &Path,
     follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
-    // Symbolic links do not support ACLs on Linux/macOS
     if !follow_symlinks {
         return Ok(());
     }
@@ -102,7 +101,6 @@ pub fn sync_acls(
         ));
     }
 
-    // Read the source ACL
     let source_acl = match getfacl(source, None) {
         Ok(acl) => acl,
         Err(e) => {
@@ -119,14 +117,12 @@ pub fn sync_acls(
         }
     };
 
-    // Check if the source is a directory (for default ACLs on Linux/FreeBSD)
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let is_dir = match fs::symlink_metadata(source) {
         Ok(m) => m.is_dir(),
         Err(e) => return Err(MetadataError::new("stat", source, e)),
     };
 
-    // Read default ACL for directories (Linux/FreeBSD only)
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let default_acl = if is_dir {
         match getfacl(source, Some(AclOption::DEFAULT_ACL)) {
@@ -144,7 +140,6 @@ pub fn sync_acls(
         None
     };
 
-    // Apply access ACL to destination
     if !source_acl.is_empty() {
         if let Err(e) = setfacl(&[destination], &source_acl, None) {
             if !is_unsupported_error(&e) {
@@ -156,11 +151,9 @@ pub fn sync_acls(
             }
         }
     } else {
-        // No extended ACL entries - reset to permission bits
         reset_acl_from_mode(destination)?;
     }
 
-    // Apply default ACL to destination directory (Linux/FreeBSD only)
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if is_dir {
         match default_acl {
@@ -176,7 +169,6 @@ pub fn sync_acls(
                 }
             }
             _ => {
-                // Clear default ACL on destination if source has none
                 clear_default_acl(destination)?;
             }
         }
@@ -201,7 +193,6 @@ pub fn sync_acls(
 /// Matches upstream rsync's behavior when the source has no extended
 /// ACL entries — the destination retains only base owner/group/other entries.
 fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
-    // Linux/FreeBSD: convert permission mode to a minimal POSIX ACL
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         let metadata = match fs::symlink_metadata(path) {
@@ -268,7 +259,6 @@ fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
 /// POSIX ACL systems. This is equivalent to `setfacl -k` on the command line.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn clear_default_acl(path: &Path) -> Result<(), MetadataError> {
-    // Setting an empty default ACL clears it
     if let Err(e) = setfacl(&[path], &[], Some(AclOption::DEFAULT_ACL)) {
         if !is_unsupported_error(&e) {
             return Err(MetadataError::new(
@@ -391,7 +381,6 @@ fn rsync_acl_to_entries(acl: &RsyncAcl) -> Vec<AclEntry> {
         }
     }
 
-    // Named user/group entries
     for ida in acl.names.iter() {
         let perms = rsync_perms_to_exacl(ida.permissions() as u8);
         let name = ida.id.to_string();
@@ -441,12 +430,10 @@ pub fn apply_acls_from_cache(
     default_ndx: Option<u32>,
     follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
-    // Symbolic links do not support ACLs
     if !follow_symlinks {
         return Ok(());
     }
 
-    // Apply access ACL
     if let Some(acl) = cache.get_access(access_ndx) {
         let entries = rsync_acl_to_entries(acl);
         if !entries.is_empty() {
@@ -460,12 +447,10 @@ pub fn apply_acls_from_cache(
                 }
             }
         } else {
-            // Empty ACL - reset to permission bits
             reset_acl_from_mode(destination)?;
         }
     }
 
-    // Apply default ACL for directories (Linux/FreeBSD only)
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if let Some(def_ndx) = default_ndx {
         if let Some(def_acl) = cache.get_default(def_ndx) {
@@ -486,7 +471,6 @@ pub fn apply_acls_from_cache(
         }
     }
 
-    // Suppress unused variable warning on macOS where default ACLs are not used
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     let _ = default_ndx;
 

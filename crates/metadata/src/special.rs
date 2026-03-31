@@ -193,7 +193,6 @@ fn create_device_node_inner(
 
 #[cfg(not(unix))]
 fn create_fifo_inner(destination: &Path, _metadata: &fs::Metadata) -> Result<(), MetadataError> {
-    // No-op on non-Unix platforms: FIFOs don't exist on Windows.
     let _ = destination;
     Ok(())
 }
@@ -203,7 +202,6 @@ fn create_device_node_inner(
     destination: &Path,
     _metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    // No-op on non-Unix platforms: device nodes don't exist on Windows.
     let _ = destination;
     Ok(())
 }

@@ -84,7 +84,6 @@ pub(super) fn capture_batch_file_entry(
 
     let entry = build_protocol_file_entry(relative_path, metadata);
 
-    // Encode the entry into a buffer using the protocol wire format
     let mut buf = Vec::with_capacity(128);
     let flist_writer = context
         .batch_flist_writer_mut()
@@ -93,7 +92,6 @@ pub(super) fn capture_batch_file_entry(
         LocalCopyError::io("encode batch flist entry", relative_path.to_path_buf(), e)
     })?;
 
-    // Write the raw protocol bytes to the batch file
     let batch_writer_arc = context.batch_writer().unwrap().clone();
     let mut writer_guard = batch_writer_arc.lock().unwrap();
     writer_guard.write_data(&buf).map_err(|e| {

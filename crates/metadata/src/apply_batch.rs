@@ -86,7 +86,6 @@ impl BatchMetadataContext {
         let desired_uid = if self.options.owner() {
             metadata.uid()
         } else {
-            // Get current UID from cache
             match self.cache.get_or_fetch(destination) {
                 Ok(cached) => cached.uid,
                 Err(_) => return Ok(()), // If we can't stat, skip ownership
@@ -96,14 +95,12 @@ impl BatchMetadataContext {
         let desired_gid = if self.options.group() {
             metadata.gid()
         } else {
-            // Get current GID from cache
             match self.cache.get_or_fetch(destination) {
                 Ok(cached) => cached.gid,
                 Err(_) => return Ok(()), // If we can't stat, skip ownership
             }
         };
 
-        // Check if ownership already matches using cache
         let needs_chown = match self.cache.ownership_matches(destination, desired_uid, desired_gid)
         {
             Ok(matches) => !matches,
@@ -127,7 +124,6 @@ impl BatchMetadataContext {
                 MetadataError::new("preserve ownership", destination, io::Error::from(error))
             })?;
 
-            // Invalidate cache after successful chown
             self.cache.invalidate(destination);
         }
 
@@ -140,7 +136,6 @@ impl BatchMetadataContext {
         _destination: &Path,
         _metadata: &fs::Metadata,
     ) -> Result<(), MetadataError> {
-        // Non-Unix platforms don't support ownership
         Ok(())
     }
 
@@ -157,7 +152,6 @@ impl BatchMetadataContext {
 
         let desired_mode = metadata.permissions().mode();
 
-        // Check if permissions already match using cache
         let needs_chmod = match self.cache.mode_matches(destination, desired_mode) {
             Ok(matches) => !matches,
             Err(_) => true, // If cache check fails, try chmod anyway
@@ -168,7 +162,6 @@ impl BatchMetadataContext {
             fs::set_permissions(destination, permissions)
                 .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
 
-            // Invalidate cache after successful chmod
             self.cache.invalidate(destination);
         }
 

@@ -1,8 +1,6 @@
 use super::*;
 use std::io::Cursor;
 
-// ==== Construction and Basic Methods ====
-
 #[test]
 fn rolling_checksum_new_creates_empty_state() {
     let checksum = RollingChecksum::new();
@@ -70,8 +68,6 @@ fn rolling_checksum_equality() {
     c.update(b"different");
     assert_ne!(a, c);
 }
-
-// ==== update() method ====
 
 #[test]
 fn update_empty_slice_is_noop() {
@@ -156,8 +152,6 @@ fn update_from_block_resets_and_updates() {
     assert_eq!(checksum.value(), fresh.value());
 }
 
-// ==== update_vectored() method ====
-
 #[test]
 fn update_vectored_empty_slices() {
     let mut checksum = RollingChecksum::new();
@@ -234,8 +228,6 @@ fn update_vectored_overflow_scratch() {
     assert_eq!(checksum.len(), 150);
 }
 
-// ==== update_reader() and update_reader_with_buffer() ====
-
 #[test]
 fn empty_reader_buffer_is_rejected() {
     let mut c = RollingChecksum::new();
@@ -311,8 +303,6 @@ fn update_reader_accumulates_with_existing_state() {
     assert_eq!(checksum.value(), full.value());
 }
 
-// ==== roll() method ====
-
 #[test]
 fn roll_on_empty_window_fails() {
     let mut checksum = RollingChecksum::new();
@@ -366,8 +356,6 @@ fn roll_same_byte() {
     checksum.roll(b'A', b'A').unwrap(); // Same byte in and out
     assert_eq!(checksum.value(), value_before);
 }
-
-// ==== roll_many() method ====
 
 #[test]
 fn roll_many_on_empty_window_fails() {
@@ -443,8 +431,6 @@ fn roll_many_equals_repeated_roll() {
     assert_eq!(rolling_many.value(), rolling_single.value());
 }
 
-// ==== value() and digest() methods ====
-
 #[test]
 fn value_format_is_s2_high_s1_low() {
     let mut checksum = RollingChecksum::new();
@@ -470,8 +456,6 @@ fn digest_roundtrip() {
     assert_eq!(original.len(), reconstructed.len());
 }
 
-// ==== From trait implementations ====
-
 #[test]
 fn from_rolling_digest_for_rolling_checksum() {
     let digest = RollingDigest::new(0x1234, 0x5678, 100);
@@ -495,15 +479,11 @@ fn from_rolling_checksum_ref_for_rolling_digest() {
     assert_eq!(digest.len(), checksum.len());
 }
 
-// ==== simd_acceleration_available() ====
-
 #[test]
 fn simd_acceleration_available_returns_bool() {
     // Just verify it doesn't panic and returns a boolean
     let _available = simd_acceleration_available();
 }
-
-// ==== Scalar fallback tests ====
 
 #[test]
 fn scalar_accumulate_empty_chunk() {
@@ -551,8 +531,6 @@ fn scalar_accumulate_with_remainder() {
     assert_eq!(len, 5);
 }
 
-// ==== Saturating increment tests ====
-
 #[test]
 fn saturating_increment_total_normal() {
     let mut total = 100u64;
@@ -566,8 +544,6 @@ fn saturating_increment_total_at_max() {
     RollingChecksum::saturating_increment_total_for_tests(&mut total, 100);
     assert_eq!(total, u64::MAX);
 }
-
-// ==== Edge cases ====
 
 #[test]
 fn deterministic_checksum() {

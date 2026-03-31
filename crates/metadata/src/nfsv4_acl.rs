@@ -1,5 +1,3 @@
-//! crates/metadata/src/nfsv4_acl.rs
-//!
 //! NFSv4 Access Control List support for rsync transfers.
 //!
 //! NFSv4 ACLs differ significantly from POSIX ACLs:

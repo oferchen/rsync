@@ -108,8 +108,7 @@ pub(super) fn apply_timestamps_from_entry(
         mtime
     };
 
-    // Optimization: skip syscall if timestamps already match.
-    // Mirrors upstream's redundant-utimensat avoidance.
+    // upstream: rsync avoids redundant utimensat calls
     let needs_utime = match cached_meta {
         Some(meta) => {
             let current_mtime = FileTime::from_last_modification_time(meta);
