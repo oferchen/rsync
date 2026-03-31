@@ -18,6 +18,11 @@
 //! The producer blocks when the queue is full, applying backpressure to the
 //! generator. Consumers drain items in parallel via `rayon::par_bridge`.
 //!
+//! The [`reorder`] submodule provides [`ReorderBuffer`] - a sequence-based
+//! reorder buffer that restores sequential ordering after parallel dispatch.
+//! Each [`DeltaResult`] carries a `sequence` number assigned before dispatch;
+//! the consumer feeds results into the buffer and drains them in order.
+//!
 //! # Architecture
 //!
 //! ```text
@@ -26,8 +31,12 @@
 //!       v
 //!   DeltaWork --> WorkQueue (bounded) --> select_strategy() --> DeltaStrategy::process() --> DeltaResult
 //!   (file NDX,     backpressure when       (WholeFile or          (literal write or           (bytes written,
-//!    dest path,     queue is full            Delta strategy)         delta apply)               literal/matched,
-//!    basis path)                                                                               success/redo/fail)
+//!    dest path,     queue is full            Delta strategy)         delta apply)               sequence,
+//!    basis path)                                                                               literal/matched,
+//!                                                                                              success/redo/fail)
+//!       --> ReorderBuffer --> consumer (in-order)
+//!            (BTreeMap,        post-processing sees
+//!             capacity bound)  files in submission order
 //! ```
 //!
 //! # See Also
@@ -35,9 +44,11 @@
 //! - [`crate::delta`] for block-matching primitives
 //! - `transfer::pipeline` for the pipelined receiver architecture
 
+pub mod reorder;
 pub mod strategy;
 mod types;
 pub mod work_queue;
 
+pub use reorder::ReorderBuffer;
 pub use strategy::{DeltaStrategy, DeltaTransferStrategy, WholeFileStrategy};
 pub use types::{DeltaResult, DeltaResultStatus, DeltaWork, DeltaWorkKind};

@@ -128,6 +128,12 @@ impl DeltaWork {
 pub struct DeltaResult {
     /// File list index (NDX) - correlates with the originating [`DeltaWork`].
     ndx: u32,
+    /// Pipeline sequence number for reordering results from concurrent workers.
+    ///
+    /// Assigned by the producer before dispatching to the work queue so that
+    /// the consumer can reconstruct the original submission order even when
+    /// workers complete out of order.
+    sequence: u64,
     /// Total bytes written to the output file.
     bytes_written: u64,
     /// Literal bytes received over the wire.
@@ -165,6 +171,7 @@ impl DeltaResult {
     pub fn success(ndx: u32, bytes_written: u64, literal_bytes: u64, matched_bytes: u64) -> Self {
         Self {
             ndx,
+            sequence: 0,
             bytes_written,
             literal_bytes,
             matched_bytes,
@@ -192,10 +199,28 @@ impl DeltaResult {
         }
     }
 
+    /// Sets the pipeline sequence number.
+    ///
+    /// Typically called by the producer before dispatching the work item so
+    /// the consumer can reorder results via [`ReorderBuffer`].
+    ///
+    /// [`ReorderBuffer`]: super::reorder::ReorderBuffer
+    #[must_use]
+    pub const fn with_sequence(mut self, sequence: u64) -> Self {
+        self.sequence = sequence;
+        self
+    }
+
     /// Returns the file list index (NDX).
     #[must_use]
     pub const fn ndx(&self) -> u32 {
         self.ndx
+    }
+
+    /// Returns the pipeline sequence number.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
     }
 
     /// Returns the total bytes written.

@@ -183,7 +183,7 @@ pub use delta::{
 /// Concurrent delta pipeline work-item, result, and strategy types.
 pub use concurrent_delta::{
     DeltaResult, DeltaResultStatus, DeltaStrategy, DeltaTransferStrategy, DeltaWork, DeltaWorkKind,
-    WholeFileStrategy,
+    ReorderBuffer, WholeFileStrategy,
 };
 
 /// Common error types for engine operations.
