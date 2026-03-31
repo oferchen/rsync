@@ -44,9 +44,14 @@ impl ReceiverContext {
         flist_reader.set_ndx_start(initial_ndx_start);
 
         let mut count = 0;
+        let seg_start = self.file_list.len();
 
-        // upstream: flist.c:recv_file_list() - reads entries until end marker
-        while let Some(entry) = flist_reader.read_entry(reader)? {
+        // upstream: flist.c:recv_file_list() - reads entries until end marker.
+        // Pass segment entries so abbreviated hardlink followers can look up
+        // their leader and copy metadata + update compression state.
+        while let Some(entry) =
+            flist_reader.read_entry_with_flist(reader, &self.file_list[seg_start..])?
+        {
             self.file_list.push(entry);
             count += 1;
         }
@@ -153,7 +158,10 @@ impl ReceiverContext {
 
             let mut segment_count = 0;
 
-            while let Some(entry) = flist_reader.read_entry(reader)? {
+            // Pass segment entries so abbreviated followers can resolve leaders.
+            while let Some(entry) =
+                flist_reader.read_entry_with_flist(reader, &self.file_list[flat_start..])?
+            {
                 self.file_list.push(entry);
                 segment_count += 1;
             }
