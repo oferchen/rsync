@@ -1501,14 +1501,12 @@ KNOWN_FAILURES=(
   # --- oc→upstream (client push) ---
   "oc:acls"
   "oc:xattrs"
-  "oc:compress-zstd"
   "oc:compress-lz4"
   "oc:itemize"
   "oc:merge-filter"
   # --- upstream→oc (daemon receive) ---
   "up:acls"
   "up:xattrs"
-  "up:compress-zstd"
   "up:compress-lz4"
   # --- standalone ---
   "standalone:write-batch-read-batch"
