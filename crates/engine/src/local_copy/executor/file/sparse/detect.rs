@@ -75,28 +75,23 @@ impl SparseDetector {
             let zero_run_len = leading_zero_run(remaining);
 
             if zero_run_len >= self.min_hole_size {
-                // Found a significant hole
                 regions.push(SparseRegion::Hole {
                     offset: base_offset + offset as u64,
                     length: zero_run_len as u64,
                 });
                 offset += zero_run_len;
             } else if zero_run_len > 0 {
-                // Small zero run - find the next significant zero run or end
                 let data_start = offset;
                 offset += zero_run_len;
 
-                // Scan for next significant hole or end of buffer
                 while offset < data.len() {
                     let segment = &data[offset..];
                     let next_zeros = leading_zero_run(segment);
 
                     if next_zeros >= self.min_hole_size {
-                        // Found next hole, emit data region
                         break;
                     }
 
-                    // Skip this small zero run and any following non-zero data
                     offset += next_zeros;
                     if offset < data.len() {
                         let non_zeros = segment[next_zeros..]
@@ -107,13 +102,11 @@ impl SparseDetector {
                     }
                 }
 
-                // Emit the data region
                 regions.push(SparseRegion::Data {
                     offset: base_offset + data_start as u64,
                     length: (offset - data_start) as u64,
                 });
             } else {
-                // No zeros at start, find first zero or end
                 let non_zero_len = remaining
                     .iter()
                     .position(|&b| b == 0)

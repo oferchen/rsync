@@ -1,5 +1,3 @@
-//! crates/metadata/src/fake_super.rs
-//!
 //! Fake super-user mode for preserving privileged metadata without root.
 //!
 //! When `--fake-super` is enabled, privileged file attributes (ownership,
@@ -118,7 +116,6 @@ impl FakeSuperStat {
             ));
         }
 
-        // Parse mode (octal)
         let mode = u32::from_str_radix(parts[0], 8).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -126,7 +123,6 @@ impl FakeSuperStat {
             )
         })?;
 
-        // Parse rdev (major,minor)
         let rdev_parts: Vec<&str> = parts[1].split(',').collect();
         if rdev_parts.len() != 2 {
             return Err(io::Error::new(
@@ -149,14 +145,12 @@ impl FakeSuperStat {
             )
         })?;
 
-        // rdev of (0,0) means no device - store as None for non-device files
         let rdev = if major == 0 && minor == 0 {
             None
         } else {
             Some((major, minor))
         };
 
-        // Parse uid:gid (colon-separated)
         let uid_gid: Vec<&str> = parts[2].split(':').collect();
         if uid_gid.len() != 2 {
             return Err(io::Error::new(

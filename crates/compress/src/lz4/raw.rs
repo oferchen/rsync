@@ -451,8 +451,6 @@ mod tests {
         assert_eq!(&decompressed[..decompressed_len], input.as_slice());
     }
 
-    // Additional error variant tests for comprehensive coverage
-
     #[test]
     fn decompress_truncated_input() {
         // Valid header but missing compressed data

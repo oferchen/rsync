@@ -268,14 +268,12 @@ impl FilterChain {
     /// `is_dir` should be `true` when the path refers to a directory.
     #[must_use]
     pub fn allows(&self, path: &Path, is_dir: bool) -> bool {
-        // Check per-directory scopes from innermost to outermost
         for scope in self.scopes.iter().rev() {
             if !scope.filter_set.is_empty() && has_matching_rule(&scope.filter_set, path, is_dir) {
                 return scope.filter_set.allows(path, is_dir);
             }
         }
 
-        // Fall through to global rules
         self.global.allows(path, is_dir)
     }
 
@@ -286,7 +284,6 @@ impl FilterChain {
     /// receiver-side rules and no protect rule matches.
     #[must_use]
     pub fn allows_deletion(&self, path: &Path, is_dir: bool) -> bool {
-        // Check per-directory scopes from innermost to outermost
         for scope in self.scopes.iter().rev() {
             if !scope.filter_set.is_empty() && has_matching_rule(&scope.filter_set, path, is_dir) {
                 return scope.filter_set.allows_deletion(path, is_dir);
@@ -328,15 +325,13 @@ impl FilterChain {
             let config = &self.merge_configs[config_index];
             let merge_path = directory.join(config.filename());
 
-            // Check if merge file exists - missing files are silently skipped
             // upstream: exclude.c:push_local_filters() - parse_filter_file()
-            // returns without error when the file doesn't exist
+            // silently skips missing files
             let content = match fs::read_to_string(&merge_path) {
                 Ok(content) => content,
                 Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                 Err(e) if e.kind() == io::ErrorKind::PermissionDenied => continue,
                 Err(e) => {
-                    // Roll back any scopes pushed in this call
                     self.pop_scopes_at_depth(depth);
                     self.current_depth -= 1;
                     return Err(FilterChainError::Io {
@@ -364,21 +359,16 @@ impl FilterChain {
 
             let config = &self.merge_configs[config_index];
 
-            // Apply config modifiers to each rule
             let mut modified_rules: Vec<FilterRule> = rules
                 .into_iter()
                 .map(|rule| config.apply_modifiers(rule))
                 .collect();
 
-            // If exclude_self is set, add an exclude rule for the merge file itself
             // upstream: exclude.c - FILTRULE_EXCLUDE_SELF handling
             if config.excludes_self() {
                 modified_rules.push(FilterRule::exclude(config.filename().to_owned()));
             }
 
-            // Handle inheritance: if no-inherit, we don't include parent rules
-            // in this scope. If inherit, parent rules stay visible via the
-            // stack evaluation order.
             let filter_set = match FilterSet::from_rules(modified_rules) {
                 Ok(set) => set,
                 Err(e) => {
@@ -470,31 +460,17 @@ impl FilterChain {
 /// is excluded by allow check OR if it differs from default behavior, a rule
 /// matched.
 fn has_matching_rule(filter_set: &FilterSet, path: &Path, is_dir: bool) -> bool {
-    // If the filter set excludes the path, clearly a rule matched
     if !filter_set.allows(path, is_dir) {
         return true;
     }
 
-    // If the filter set has a protect rule that prevents deletion, a rule matched
     if !filter_set.allows_deletion(path, is_dir) {
         return true;
     }
 
-    // For include matches, we check against a fresh default set.
-    // Since FilterSet default allows everything, the only way to know
-    // if an include rule matched is to also check a hypothetical exclude-all.
-    // However, upstream rsync's behavior is simpler: per-directory rules
-    // are simply prepended to the filter list. A "no match" in one scope
-    // falls through to the next.
-    //
-    // The correct approach matching upstream: we don't try to detect "no match"
-    // at the FilterSet level. Instead, per-directory rules are evaluated as
-    // part of the overall chain. The FilterChain flattens all scopes into
-    // evaluation order.
-    //
-    // For now, we return false to fall through - this means per-directory
-    // rules that only contain include rules will fall through to global rules
-    // for paths that don't match, which is the correct behavior.
+    // Include-only scopes cannot be detected as "matched" because the default
+    // is already allow-all. Return false to fall through to the next scope,
+    // matching upstream rsync's per-directory rule prepend semantics.
     false
 }
 
@@ -589,8 +565,6 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    // ==================== DirMergeConfig tests ====================
-
     #[test]
     fn dir_merge_config_defaults() {
         let config = DirMergeConfig::new(".rsync-filter");
@@ -652,8 +626,6 @@ mod tests {
         assert!(cloned.excludes_self());
     }
 
-    // ==================== FilterChain basic tests ====================
-
     #[test]
     fn filter_chain_empty() {
         let chain = FilterChain::empty();
@@ -678,8 +650,6 @@ mod tests {
         assert!(!chain.allows_deletion(Path::new("important"), false));
         assert!(chain.allows_deletion(Path::new("other"), false));
     }
-
-    // ==================== Per-directory scope tests ====================
 
     #[test]
     fn filter_chain_push_scope_override() {
@@ -758,8 +728,6 @@ mod tests {
         assert!(chain.allows(Path::new("file.log"), false));
         assert!(chain.allows(Path::new("file.tmp"), false));
     }
-
-    // ==================== Merge file reading tests ====================
 
     #[test]
     fn filter_chain_enter_directory_reads_merge_file() {
@@ -955,8 +923,6 @@ mod tests {
         chain.leave_directory(guard);
     }
 
-    // ==================== DirFilterGuard tests ====================
-
     #[test]
     fn dir_filter_guard_depth() {
         let global = FilterSet::default();
@@ -974,8 +940,6 @@ mod tests {
         assert_eq!(guard.pushed_count(), 0);
         chain.leave_directory(guard);
     }
-
-    // ==================== FilterChainError tests ====================
 
     #[test]
     fn filter_chain_error_display_io() {
@@ -1013,8 +977,6 @@ mod tests {
         };
         assert!(std::error::Error::source(&err2).is_none());
     }
-
-    // ==================== Property-like tests ====================
 
     #[test]
     fn filter_chain_scope_push_pop_symmetry() {

@@ -50,7 +50,6 @@ pub fn parse_copy_as_spec(spec: &OsStr) -> io::Result<CopyAsIds> {
     let (user_part, group_part) = match spec_str.find(':') {
         Some(pos) => {
             let (u, g) = spec_str.split_at(pos);
-            // Skip the ':' separator
             (u, Some(&g[1..]))
         }
         None => (spec_str.as_ref(), None),
@@ -93,8 +92,6 @@ fn resolve_group(group: &str) -> io::Result<u32> {
 
     resolve_group_by_name(group)
 }
-
-// ==================== Unix Implementation ====================
 
 #[cfg(unix)]
 fn resolve_user_by_name(name: &str) -> io::Result<u32> {
@@ -223,8 +220,6 @@ pub fn switch_effective_ids(ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
         switched_egid,
     })
 }
-
-// ==================== Non-Unix Implementation ====================
 
 /// No-op guard for non-Unix platforms.
 ///

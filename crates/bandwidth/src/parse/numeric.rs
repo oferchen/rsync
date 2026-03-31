@@ -329,8 +329,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ==================== Additional numeric tests ====================
-
     #[test]
     fn parse_decimal_mantissa_only_separator() {
         // Just "." should give (0, 0, 1)

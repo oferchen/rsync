@@ -69,10 +69,6 @@ pub trait FileWriterFactory: Send + Sync {
     fn create_with_size(&self, path: &Path, size: u64) -> io::Result<Self::Writer>;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Standard I/O implementations
-// ─────────────────────────────────────────────────────────────────────────────
-
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Seek, SeekFrom};
 

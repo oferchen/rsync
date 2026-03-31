@@ -60,8 +60,6 @@ fn parse_decimal_with_exponent_rejects_missing_exponent_digits() {
     }
 }
 
-// ==================== Additional coverage tests for numeric parsing ====================
-
 #[test]
 fn pow_u128_handles_base_zero_various_exponents() {
     // 0^0 = 1 (mathematical convention in computing)
@@ -188,8 +186,6 @@ fn parse_decimal_with_exponent_empty_integer_with_comma() {
     assert_eq!(exp, 0);
 }
 
-// ==================== Additional pow_u128 edge cases ====================
-
 #[test]
 fn pow_u128_base_one_any_exponent() {
     // 1^n = 1 for all n
@@ -243,8 +239,6 @@ fn pow_u128_overflow_with_ten() {
     let result = pow_u128(10, 39);
     assert!(result.is_err());
 }
-
-// ==================== parse_decimal_with_exponent comprehensive tests ====================
 
 #[test]
 fn parse_decimal_with_exponent_pure_integer() {
@@ -365,8 +359,6 @@ fn parse_decimal_with_exponent_zero_with_exponent() {
     assert_eq!(frac, 0);
     assert_eq!(exp, 100);
 }
-
-// ==================== Error case coverage ====================
 
 #[test]
 fn parse_decimal_with_exponent_rejects_double_exponent() {
