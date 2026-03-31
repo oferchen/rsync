@@ -94,7 +94,6 @@ pub(crate) fn prefetch_checksums(
     let results: Vec<_> = pairs
         .par_iter()
         .map(|pair| {
-            // Skip if sizes don't match (no need to hash)
             if pair.source_size != pair.destination_size {
                 return (
                     pair.source.clone(),
@@ -105,11 +104,9 @@ pub(crate) fn prefetch_checksums(
                 );
             }
 
-            // Clone the buffer pool Arc for use in nested parallel operations
             let pool_src = Arc::clone(&buffer_pool);
             let pool_dst = Arc::clone(&buffer_pool);
 
-            // Compute checksums in parallel for source and destination
             let (source_checksum, destination_checksum) = rayon::join(
                 || compute_file_checksum(&pair.source, algorithm, &pool_src),
                 || compute_file_checksum(&pair.destination, algorithm, &pool_dst),
@@ -125,7 +122,6 @@ pub(crate) fn prefetch_checksums(
         })
         .collect();
 
-    // Pre-allocate HashMap with exact capacity to avoid rehashing
     let mut map = HashMap::with_capacity(results.len());
     for (path, result) in results {
         map.insert(path, result);
@@ -154,7 +150,6 @@ fn hash_file_contents(
     algorithm: SignatureAlgorithm,
     buffer_pool: &Arc<BufferPool>,
 ) -> io::Result<Vec<u8>> {
-    // Acquire a reusable buffer from the pool instead of allocating
     let mut buffer = BufferPool::acquire_from(Arc::clone(buffer_pool));
 
     let digest = match algorithm {

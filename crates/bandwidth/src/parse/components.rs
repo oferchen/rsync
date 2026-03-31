@@ -535,8 +535,6 @@ mod tests {
         assert!(c.burst_specified());
     }
 
-    // ==================== Additional component tests ====================
-
     #[test]
     fn constrained_by_both_unlimited() {
         let c1 = BandwidthLimitComponents::unlimited();

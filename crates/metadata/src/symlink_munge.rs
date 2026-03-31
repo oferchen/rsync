@@ -35,8 +35,6 @@ pub fn unmunge_symlink(target: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    // --- munge_symlink tests ---
-
     #[test]
     fn munge_prepends_prefix_to_absolute_path() {
         let result = munge_symlink("/etc/passwd");
@@ -66,8 +64,6 @@ mod tests {
         let result = munge_symlink(".");
         assert_eq!(result, "/rsyncd-munged/.");
     }
-
-    // --- unmunge_symlink tests ---
 
     #[test]
     fn unmunge_strips_prefix() {
@@ -104,8 +100,6 @@ mod tests {
         let result = unmunge_symlink("/rsyncd-munged/");
         assert_eq!(result, Some(String::new()));
     }
-
-    // --- roundtrip tests ---
 
     #[test]
     fn roundtrip_absolute_path() {

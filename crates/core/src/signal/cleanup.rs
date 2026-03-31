@@ -48,7 +48,6 @@ impl CleanupManager {
     /// This is the primary entry point for cleanup operations.
     #[must_use]
     pub fn global() -> &'static Self {
-        // Ensure the cleanup manager is initialized
         let _ = CLEANUP_MANAGER.get_or_init(|| Mutex::new(CleanupManagerState::new()));
         &CLEANUP_MANAGER_INSTANCE
     }

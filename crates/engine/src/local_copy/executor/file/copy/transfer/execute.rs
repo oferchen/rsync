@@ -81,7 +81,6 @@ pub(in crate::local_copy) fn execute_transfer(
 
     let file_size = metadata.len();
 
-    // Fast-path: check if destination is already in-sync
     if let Some(existing) = existing_metadata {
         if try_skip_up_to_date(
             context,
@@ -98,12 +97,10 @@ pub(in crate::local_copy) fn execute_transfer(
         }
     }
 
-    // Back up existing destination before overwriting
     if let Some(existing) = existing_metadata {
         context.backup_existing_entry(destination, relative, existing.file_type())?;
     }
 
-    // Non-regular files use the special-file path
     if !file_type.is_file() {
         return super::special::copy_special_as_regular_file(
             context,
@@ -246,7 +243,6 @@ pub(in crate::local_copy) fn execute_transfer(
         // clonefile failed (cross-device, non-APFS, etc.) - fall through to normal copy
     }
 
-    // Open source and determine append mode
     let mut reader = open_source_file(source, context.open_noatime_enabled())
         .map_err(|error| LocalCopyError::io("copy file", source, error))?;
     let append_mode = determine_append_mode(
@@ -308,7 +304,6 @@ pub(in crate::local_copy) fn execute_transfer(
         None
     };
 
-    // Re-open if copying from a reference path (e.g., --copy-dest)
     let (mut reader, copy_source) = if let Some(ref override_path) = copy_source_override {
         let file = open_source_file(override_path, context.open_noatime_enabled())
             .map_err(|error| LocalCopyError::io("copy file", override_path.clone(), error))?;
@@ -322,7 +317,6 @@ pub(in crate::local_copy) fn execute_transfer(
             .map_err(|error| LocalCopyError::io("copy file", copy_source, error))?;
     }
 
-    // Choose write strategy
     let delay_updates_enabled = context.delay_updates_enabled();
     let mut guard = None;
     let mut staging_path: Option<PathBuf> = None;
@@ -360,7 +354,6 @@ pub(in crate::local_copy) fn execute_transfer(
         context.preallocate_enabled(),
     )?;
 
-    // Allocate transfer buffer - pool or direct
     let mut pool_guard = if context.use_buffer_pool() {
         Some(
             super::super::super::super::super::BufferPool::acquire_adaptive_from(
@@ -466,7 +459,6 @@ pub(in crate::local_copy) fn execute_transfer(
         }
     };
 
-    // Record transfer results
     context.register_created_path(
         destination,
         CreatedEntryKind::File,

@@ -136,7 +136,6 @@ impl StatsFormatter {
     pub fn format(&self) -> String {
         let mut output = String::new();
 
-        // Number of files
         writeln!(
             output,
             "Number of files: {}",
@@ -144,7 +143,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // Number of created files
         writeln!(
             output,
             "Number of created files: {}",
@@ -152,7 +150,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // Number of deleted files
         writeln!(
             output,
             "Number of deleted files: {}",
@@ -160,7 +157,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // Number of regular files transferred
         writeln!(
             output,
             "Number of regular files transferred: {}",
@@ -168,7 +164,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // Total file size
         writeln!(
             output,
             "Total file size: {} bytes",
@@ -176,7 +171,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // Total transferred file size
         writeln!(
             output,
             "Total transferred file size: {} bytes",
@@ -184,7 +178,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // Literal data
         writeln!(
             output,
             "Literal data: {} bytes",
@@ -192,7 +185,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // Matched data
         writeln!(
             output,
             "Matched data: {} bytes",
@@ -200,7 +192,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // File list size
         writeln!(
             output,
             "File list size: {}",
@@ -208,7 +199,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // File list generation time
         writeln!(
             output,
             "File list generation time: {:.3} seconds",
@@ -216,7 +206,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // File list transfer time
         writeln!(
             output,
             "File list transfer time: {:.3} seconds",
@@ -224,7 +213,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // Total bytes sent
         writeln!(
             output,
             "Total bytes sent: {}",
@@ -232,7 +220,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // Total bytes received
         writeln!(
             output,
             "Total bytes received: {}",
@@ -240,10 +227,8 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // Empty line before summary
         writeln!(output).unwrap();
 
-        // Summary line: "sent X bytes  received Y bytes  Z bytes/sec"
         let transfer_speed = calculate_transfer_speed(
             self.data.total_bytes_sent,
             self.data.total_bytes_received,
