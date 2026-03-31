@@ -2,7 +2,7 @@
 //!
 //! Contains the result and configuration structs used by `setup_protocol()`.
 
-use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
+use protocol::{CompatibilityFlags, CompressionAlgorithm, NegotiationResult, ProtocolVersion};
 
 /// Result of protocol setup containing negotiated algorithms and compatibility flags.
 #[derive(Debug, Clone)]
@@ -61,12 +61,19 @@ pub struct ProtocolSetupConfig<'a> {
     /// - `false`: SSH mode - bidirectional exchange
     pub is_daemon_mode: bool,
 
-    /// Whether compression algorithm negotiation should happen.
+    /// Whether compression is active for this transfer.
     ///
-    /// Must match on both sides based on whether `-z` flag was passed.
-    /// - `true`: Exchange compression algorithm lists
-    /// - `false`: Skip compression negotiation, use defaults
+    /// Set when the client passes `-z`, `--compress`, `--new-compress`,
+    /// `--old-compress`, or `--compress-choice=ALGO`.
     pub do_compression: bool,
+
+    /// Explicit compression algorithm from `--compress-choice=ALGO`,
+    /// `--new-compress` (zlibx), or `--old-compress` (zlib).
+    ///
+    /// When set, compression vstring negotiation is skipped and this algorithm
+    /// is used directly - matching upstream compat.c:543 which only exchanges
+    /// compression vstrings when `do_compression && !compress_choice`.
+    pub compress_choice: Option<CompressionAlgorithm>,
 
     /// Optional user-specified checksum seed from `--checksum-seed=NUM`.
     ///
@@ -121,6 +128,7 @@ impl<'a> ProtocolSetupConfig<'a> {
             is_server,
             is_daemon_mode: false,
             do_compression: false,
+            compress_choice: None,
             checksum_seed: None,
             allow_inc_recurse: false,
         }
@@ -163,11 +171,11 @@ impl<'a> ProtocolSetupConfig<'a> {
         self
     }
 
-    /// Sets whether compression algorithm negotiation should happen.
+    /// Sets whether compression is active for this transfer.
     ///
-    /// Must match on both sides based on whether `-z` flag was passed.
-    /// - `true`: Exchange compression algorithm lists
-    /// - `false`: Skip compression negotiation, use defaults
+    /// When true and `compress_choice` is None, compression vstrings are
+    /// exchanged during negotiation. When true and `compress_choice` is Some,
+    /// the specified algorithm is used directly without vstring exchange.
     ///
     /// Default: `false`
     #[must_use]
