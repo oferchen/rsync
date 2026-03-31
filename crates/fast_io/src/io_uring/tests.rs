@@ -96,10 +96,6 @@ fn test_convenience_functions_with_fallback() {
     assert_eq!(data, b"test data");
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Tests that run only when io_uring is actually available
-// ─────────────────────────────────────────────────────────────────────────
-
 #[test]
 fn test_io_uring_reader_if_available() {
     if !is_io_uring_available() {

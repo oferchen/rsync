@@ -21,8 +21,6 @@ fn setup_test_files(
     (src, dst)
 }
 
-// --- PlatformCopy trait tests ---
-
 #[test]
 fn copy_result_new_and_accessors() {
     let result = CopyResult::new(1024, CopyMethod::StandardCopy);
@@ -258,8 +256,6 @@ fn parity_default_vs_std_fs_copy() {
     assert_eq!(content1, content, "both must match source");
 }
 
-// --- Standalone ficlone tests ---
-
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn ficlone_returns_unsupported_on_non_linux() {
@@ -342,8 +338,6 @@ fn platform_copy_falls_through_ficlone_failure() {
         result.method
     );
 }
-
-// --- Standalone clonefile/fcopyfile tests ---
 
 #[cfg(not(target_os = "macos"))]
 #[test]

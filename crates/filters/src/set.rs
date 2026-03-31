@@ -111,10 +111,8 @@ impl FilterSet {
                     );
                 }
                 FilterAction::Merge | FilterAction::DirMerge => {
-                    // Merge rules are processed during expansion, not compilation.
-                    // DirMerge rules are processed per-directory during traversal.
-                    // Both are skipped here - use from_rules_with_merge_expansion
-                    // for automatic merge file processing.
+                    // Handled by from_rules_with_merge_expansion (Merge) or
+                    // per-directory traversal (DirMerge).
                 }
             }
         }
@@ -346,8 +344,7 @@ fn expand_merge_rules(
                 expanded.extend(nested_expanded);
             }
             FilterAction::DirMerge => {
-                // DirMerge rules are processed per-directory during traversal,
-                // not expanded at compile time. We skip them here.
+                // Processed per-directory during traversal, not at compile time.
             }
             _ => {
                 expanded.push(rule);

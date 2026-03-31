@@ -23,7 +23,7 @@ impl FilterSetInner {
     /// - `Transfer` checks sender-side include/exclude rules.
     /// - `Deletion` checks receiver-side rules with perishable rules excluded.
     ///
-    /// // upstream: exclude.c:check_filter()
+    // upstream: exclude.c:check_filter()
     pub(crate) fn decision(
         &self,
         path: &Path,

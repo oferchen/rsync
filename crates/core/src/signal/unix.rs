@@ -201,7 +201,6 @@ extern "C" fn handle_sigpipe(_signum: libc::c_int) {
 /// ```
 pub fn install_signal_handlers() -> io::Result<SignalHandler> {
     unsafe {
-        // Install SIGINT handler
         let mut sa_int: libc::sigaction = std::mem::zeroed();
         sa_int.sa_sigaction = handle_sigint as libc::sighandler_t;
         sa_int.sa_flags = libc::SA_RESTART; // Restart interrupted syscalls
@@ -211,7 +210,6 @@ pub fn install_signal_handlers() -> io::Result<SignalHandler> {
             return Err(io::Error::last_os_error());
         }
 
-        // Install SIGTERM handler
         let mut sa_term: libc::sigaction = std::mem::zeroed();
         sa_term.sa_sigaction = handle_sigterm as libc::sighandler_t;
         sa_term.sa_flags = libc::SA_RESTART;
@@ -221,7 +219,6 @@ pub fn install_signal_handlers() -> io::Result<SignalHandler> {
             return Err(io::Error::last_os_error());
         }
 
-        // Install SIGHUP handler
         let mut sa_hup: libc::sigaction = std::mem::zeroed();
         sa_hup.sa_sigaction = handle_sighup as libc::sighandler_t;
         sa_hup.sa_flags = libc::SA_RESTART;
@@ -231,7 +228,6 @@ pub fn install_signal_handlers() -> io::Result<SignalHandler> {
             return Err(io::Error::last_os_error());
         }
 
-        // Install SIGPIPE handler (ignore by catching it)
         let mut sa_pipe: libc::sigaction = std::mem::zeroed();
         sa_pipe.sa_sigaction = handle_sigpipe as libc::sighandler_t;
         sa_pipe.sa_flags = libc::SA_RESTART;

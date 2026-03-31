@@ -198,8 +198,6 @@ mod tests {
         sleep_for(Duration::from_micros(100));
     }
 
-    // ==================== Additional sleep tests ====================
-
     #[test]
     fn limiter_sleep_copy_semantics() {
         let sleep1 = LimiterSleep::new(Duration::from_secs(1), Duration::from_millis(999));

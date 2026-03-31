@@ -92,10 +92,8 @@ impl SparseReader {
         let mut pos = 0u64;
 
         while pos < file_size {
-            // Seek to next data region
             match rustix::fs::seek(fd, RustixSeekFrom::Data(pos as i64)) {
                 Ok(data_start) => {
-                    // If there was a hole before this data, record it
                     if data_start > pos {
                         regions.push(SparseRegion::Hole {
                             offset: pos,
@@ -103,10 +101,8 @@ impl SparseReader {
                         });
                     }
 
-                    // Seek to next hole after this data
                     match rustix::fs::seek(fd, RustixSeekFrom::Hole(data_start as i64)) {
                         Ok(hole_start) => {
-                            // Record the data region
                             if hole_start > data_start {
                                 regions.push(SparseRegion::Data {
                                     offset: data_start,
@@ -117,7 +113,6 @@ impl SparseReader {
                             pos = hole_start;
                         }
                         Err(Errno::NXIO) => {
-                            // No more holes - rest of file is data
                             regions.push(SparseRegion::Data {
                                 offset: data_start,
                                 length: file_size - data_start,
@@ -125,13 +120,11 @@ impl SparseReader {
                             break;
                         }
                         Err(_e) => {
-                            // SEEK_HOLE not supported or other error - fall back
                             return Self::detect_holes_fallback(file);
                         }
                     }
                 }
                 Err(Errno::NXIO) => {
-                    // No more data - rest of file is a hole
                     if pos < file_size {
                         regions.push(SparseRegion::Hole {
                             offset: pos,
@@ -141,7 +134,6 @@ impl SparseReader {
                     break;
                 }
                 Err(_e) => {
-                    // SEEK_DATA not supported or other error - fall back
                     return Self::detect_holes_fallback(file);
                 }
             }

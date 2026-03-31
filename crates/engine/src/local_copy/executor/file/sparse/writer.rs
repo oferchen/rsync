@@ -74,16 +74,14 @@ impl SparseWriter {
         }
 
         if self.sparse_enabled {
-            // For sparse mode, seek and write with sparse handling
             self.file
                 .seek(SeekFrom::Start(offset))
                 .map_err(|e| io::Error::new(e.kind(), format!("seek to offset {offset}: {e}")))?;
 
-            let path = std::path::Path::new(""); // Path only used for error messages
+            let path = std::path::Path::new("");
             write_sparse_chunk(&mut self.file, &mut self.state, data, path)
                 .map_err(io::Error::other)?;
         } else {
-            // Dense write - seek to offset and write
             self.file
                 .seek(SeekFrom::Start(offset))
                 .map_err(|e| io::Error::new(e.kind(), format!("seek to offset {offset}: {e}")))?;

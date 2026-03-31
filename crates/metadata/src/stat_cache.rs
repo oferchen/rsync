@@ -145,7 +145,6 @@ impl Default for MetadataCache {
 /// Falls back to regular stat on other platforms or older kernels.
 #[cfg(unix)]
 fn fetch_metadata_optimized(path: &Path) -> io::Result<CachedMetadata> {
-    // Try statx first on Linux
     #[cfg(target_os = "linux")]
     {
         match try_statx_optimized(path) {
@@ -157,7 +156,6 @@ fn fetch_metadata_optimized(path: &Path) -> io::Result<CachedMetadata> {
         }
     }
 
-    // Fall back to regular stat
     let metadata = fs::metadata(path)?;
     Ok(CachedMetadata {
         mode: metadata.mode(),

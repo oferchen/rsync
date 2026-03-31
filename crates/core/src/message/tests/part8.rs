@@ -1,5 +1,4 @@
-// ============================================================================
-// Upstream rsync error message format verification (task #64)
+// Upstream rsync error message format verification.
 //
 // Upstream rsync uses specific error message formats that tools and scripts
 // may depend on. This file verifies that the Message rendering system
@@ -10,7 +9,6 @@
 //   rsync info: <text> at <file>:<line> [<role>=<version>]
 //
 // Reference: upstream rsync log.c, errcode.h (rsync 3.4.1)
-// ============================================================================
 
 #[test]
 fn error_prefix_matches_upstream_format() {

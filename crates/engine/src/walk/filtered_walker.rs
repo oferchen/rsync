@@ -95,36 +95,26 @@ impl<W: DirectoryWalker> Iterator for FilteredWalker<W> {
 
             match result {
                 Ok(entry) => {
-                    // Get the relative path for filter matching
                     let rel_path = match entry.path().strip_prefix(self.inner.root()) {
                         Ok(p) => p,
-                        Err(_) => {
-                            // Root entry or path outside root - always yield it
-                            return Some(Ok(entry));
-                        }
+                        Err(_) => return Some(Ok(entry)),
                     };
 
-                    // Skip empty relative paths (root)
                     if rel_path.as_os_str().is_empty() {
                         return Some(Ok(entry));
                     }
 
                     let is_dir = entry.is_dir();
 
-                    // Check if the entry is allowed by the filter rules
                     if self.filters.allows(rel_path, is_dir) {
                         return Some(Ok(entry));
                     }
 
-                    // Entry is excluded
                     if is_dir {
-                        // For directories, skip the entire subtree
                         self.inner.skip_current_dir();
                     }
-                    // Continue to next entry (skip this one)
                 }
                 Err(e) => {
-                    // Propagate errors
                     return Some(Err(e));
                 }
             }

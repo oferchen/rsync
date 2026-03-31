@@ -121,14 +121,12 @@ impl VersionMetadata {
 
         writer.write_char('\n')?;
 
-        // Upstream compatibility line
         writeln!(
             writer,
             "Compatible with rsync {} wire protocol",
             self.upstream_version()
         )?;
 
-        // Build information
         writeln!(
             writer,
             "{} for {}",
