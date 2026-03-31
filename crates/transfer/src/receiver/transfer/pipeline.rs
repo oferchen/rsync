@@ -88,8 +88,6 @@ impl ReceiverContext {
 
         let mut pipeline = PipelineState::new(pipeline_config);
         let mut file_iter = files_to_transfer.into_iter();
-        // (file_idx, file_path, file_entry, is_new_file) - is_new_file tracks whether
-        // the destination file existed for itemize direction indicator
         let mut pending_files_info: VecDeque<(usize, PathBuf, &FileEntry, bool)> =
             VecDeque::with_capacity(pipeline.window_size());
         let mut files_transferred = 0usize;
