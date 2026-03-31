@@ -16,7 +16,12 @@
 //!
 //! ```text
 //! Generator ─► WorkQueue (bounded) ─► rayon par_bridge ─► DeltaResult
-//!                 blocks when full       parallel workers
+//!                 blocks when full       parallel workers       |
+//!                                                               v
+//!                                                        ReorderBuffer
+//!                                                               |
+//!                                                               v
+//!                                                     consumer (in-order)
 //! ```
 //!
 //! # Upstream Reference
@@ -415,5 +420,45 @@ mod tests {
 
         producer.join().unwrap();
         assert_eq!(items.len(), total as usize);
+    }
+
+    #[test]
+    fn pipeline_with_reorder_buffer() {
+        use crate::concurrent_delta::reorder::ReorderBuffer;
+        use crate::concurrent_delta::strategy;
+
+        let (tx, rx) = bounded_with_capacity(8);
+        let total = 50u32;
+
+        let producer = thread::spawn(move || {
+            for i in 0..total {
+                let work = DeltaWork::whole_file(i, PathBuf::from("/dst"), 64);
+                tx.send(work).unwrap();
+            }
+        });
+
+        // Parallel workers dispatch and stamp sequence numbers.
+        // In a real pipeline the producer stamps sequences before sending,
+        // but here we use ndx as the sequence for demonstration.
+        let results: Vec<_> = rx
+            .into_iter()
+            .par_bridge()
+            .map(|w| {
+                let seq = u64::from(w.ndx());
+                strategy::dispatch(&w).with_sequence(seq)
+            })
+            .collect();
+        producer.join().unwrap();
+
+        // Feed out-of-order results into the reorder buffer.
+        let mut reorder = ReorderBuffer::new(total as usize);
+        for r in results {
+            reorder.insert(r.sequence(), r).unwrap();
+        }
+
+        // Drain in order and verify sequence.
+        let ordered: Vec<u64> = reorder.drain_ready().map(|r| r.sequence()).collect();
+        let expected: Vec<u64> = (0..u64::from(total)).collect();
+        assert_eq!(ordered, expected);
     }
 }
