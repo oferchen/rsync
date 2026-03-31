@@ -79,7 +79,7 @@ pub const fn align_up(len: usize) -> usize {
 pub const fn aligned_overshoot(offset: u64) -> usize {
     (offset & (ALIGN_BOUNDARY as u64 - 1)) as usize
 }
-//
+
 // These functions use 128-bit integer comparison for fast zero detection,
 // processing 16 bytes at a time. On x86-64, u128 operations are optimized
 // to use SSE/AVX registers, providing SIMD-like performance.
@@ -104,13 +104,11 @@ pub fn leading_zero_count(bytes: &[u8]) -> usize {
         if u128::from_ne_bytes(*chunk) == 0 {
             offset += 16;
         } else {
-            // Found non-zero in this chunk - scan for exact position
             let position = chunk.iter().position(|&b| b != 0).unwrap_or(16);
             return offset + position;
         }
     }
 
-    // Handle remainder (< 16 bytes)
     offset + iter.remainder().iter().take_while(|&&b| b == 0).count()
 }
 
