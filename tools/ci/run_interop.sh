@@ -919,7 +919,7 @@ comp_run_scenario() {
     itemize)
       rm -rf "$ddir"/*
       mkdir -p "$ddir/subdir/nested"
-      echo "old content" > "$ddir/hello.txt"
+      echo "old" > "$ddir/hello.txt"
       echo "old nested" > "$ddir/subdir/file.txt"
       ;;
     include-exclude)
@@ -1510,7 +1510,6 @@ KNOWN_FAILURES=(
   "up:xattrs"
   "up:compress-zstd"
   "up:compress-lz4"
-  "up:itemize"
   # --- standalone ---
   "standalone:write-batch-read-batch"
   "standalone:write-batch-read-batch-compressed"
