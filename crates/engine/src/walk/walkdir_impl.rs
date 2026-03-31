@@ -84,31 +84,21 @@ impl WalkdirWalker {
     pub fn new(root: &Path, config: WalkConfig) -> Self {
         let mut builder = WalkDir::new(root);
 
-        // Use parallel traversal for performance
         builder = builder.parallelism(Parallelism::RayonNewPool(0));
-
-        // Include hidden files/directories (jwalk skips them by default)
         builder = builder.skip_hidden(false);
-
-        // Configure symlink following
         builder = builder.follow_links(config.follow_symlinks);
 
-        // Configure depth limit
         if let Some(max_depth) = config.max_depth {
             builder = builder.max_depth(max_depth.get());
         }
 
-        // Configure root inclusion
         if !config.include_root {
             builder = builder.min_depth(1);
         }
 
-        // Configure sorting - jwalk supports sorted parallel results
         if config.sort_entries {
             builder = builder.sort(true);
         }
-
-        // Get root device for one_file_system check
         #[cfg(unix)]
         let root_dev = if config.one_file_system {
             fs::metadata(root).ok().map(|m| {
@@ -159,16 +149,13 @@ impl Iterator for WalkdirWalker {
                 Ok(dir_entry) => {
                     let depth = dir_entry.depth();
 
-                    // Check if we should skip entries due to skip_current_dir()
                     if let Some(skip_depth) = self.skip_dir_depth {
                         if depth > skip_depth {
                             continue;
                         }
-                        // We've exited the skipped directory
                         self.skip_dir_depth = None;
                     }
 
-                    // Get metadata (symlink_metadata for accurate type info)
                     let metadata = match dir_entry.metadata() {
                         Ok(m) => m,
                         Err(e) => {
@@ -180,7 +167,6 @@ impl Iterator for WalkdirWalker {
                         }
                     };
 
-                    // Check one_file_system constraint
                     if self.should_skip_for_filesystem(&metadata) {
                         if metadata.is_dir() {
                             self.skip_dir_depth = Some(depth);
@@ -190,7 +176,6 @@ impl Iterator for WalkdirWalker {
 
                     let path = dir_entry.path();
 
-                    // Track depth for skip_current_dir()
                     self.last_depth = depth;
 
                     return Some(Ok(WalkEntry::new(path, metadata, depth)));
@@ -213,9 +198,8 @@ impl DirectoryWalker for WalkdirWalker {
     }
 
     fn skip_current_dir(&mut self) {
-        // jwalk doesn't have a direct skip_current_dir, so we track it manually
-        // This will skip all entries at depths greater than the last returned entry
-        // Note: This is approximate since we're using parallel traversal
+        // jwalk lacks native skip_current_dir; approximate by skipping
+        // entries deeper than the last returned depth
         self.skip_dir_depth = Some(self.last_depth);
     }
 }

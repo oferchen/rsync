@@ -38,18 +38,15 @@ use crate::signature::SignatureAlgorithm;
 /// ```
 #[derive(Clone, Debug)]
 pub struct LocalCopyOptionsBuilder {
-    // Deletion options
     pub(super) delete: bool,
     pub(super) delete_timing: DeleteTiming,
     pub(super) delete_excluded: bool,
     pub(super) delete_missing_args: bool,
     pub(super) max_deletions: Option<u64>,
 
-    // Size limits
     pub(super) min_file_size: Option<u64>,
     pub(super) max_file_size: Option<u64>,
 
-    // Transfer options
     pub(super) block_size_override: Option<NonZeroU32>,
     pub(super) remove_source_files: bool,
     pub(super) preallocate: bool,
@@ -57,14 +54,12 @@ pub struct LocalCopyOptionsBuilder {
     pub(super) bandwidth_limit: Option<NonZeroU64>,
     pub(super) bandwidth_burst: Option<NonZeroU64>,
 
-    // Compression options
     pub(super) compress: bool,
     pub(super) compression_algorithm: CompressionAlgorithm,
     pub(super) compression_level_override: Option<CompressionLevel>,
     pub(super) compression_level: CompressionLevel,
     pub(super) skip_compress: SkipCompressList,
 
-    // Path behavior options
     pub(super) open_noatime: bool,
     pub(super) whole_file: Option<bool>,
     pub(super) copy_links: bool,
@@ -75,7 +70,6 @@ pub struct LocalCopyOptionsBuilder {
     pub(super) safe_links: bool,
     pub(super) munge_links: bool,
 
-    // Metadata preservation options
     pub(super) preserve_owner: bool,
     pub(super) preserve_group: bool,
     pub(super) preserve_executability: bool,
@@ -91,11 +85,9 @@ pub struct LocalCopyOptionsBuilder {
     #[cfg(all(unix, feature = "acl"))]
     pub(super) preserve_acls: bool,
 
-    // Filter options
     pub(super) filters: Option<FilterSet>,
     pub(super) filter_program: Option<FilterProgram>,
 
-    // Integrity options
     pub(super) numeric_ids: bool,
     pub(super) sparse: bool,
     pub(super) checksum: bool,
@@ -109,7 +101,6 @@ pub struct LocalCopyOptionsBuilder {
     pub(super) update: bool,
     pub(super) modify_window: Duration,
 
-    // Staging options
     pub(super) partial: bool,
     pub(super) partial_dir: Option<PathBuf>,
     pub(super) temp_dir: Option<PathBuf>,
@@ -119,10 +110,8 @@ pub struct LocalCopyOptionsBuilder {
     pub(super) append_verify: bool,
     pub(super) collect_events: bool,
 
-    // Link options
     pub(super) preserve_hard_links: bool,
 
-    // Path options
     pub(super) relative_paths: bool,
     pub(super) one_file_system: u8,
     pub(super) recursive: bool,
@@ -135,42 +124,33 @@ pub struct LocalCopyOptionsBuilder {
     pub(super) mkpath: bool,
     pub(super) prune_empty_dirs: bool,
 
-    // Timeout options
     pub(super) timeout: Option<Duration>,
     pub(super) contimeout: Option<Duration>,
     pub(super) stop_at: Option<SystemTime>,
 
-    // Extended attributes
     #[cfg(all(unix, feature = "xattr"))]
     pub(super) preserve_xattrs: bool,
     #[cfg(all(unix, feature = "xattr"))]
     pub(super) preserve_nfsv4_acls: bool,
 
-    // Backup options
     pub(super) backup: bool,
     pub(super) backup_dir: Option<PathBuf>,
     pub(super) backup_suffix: OsString,
 
-    // Reference directories
     pub(super) link_dests: Vec<LinkDestEntry>,
     pub(super) reference_directories: Vec<ReferenceDirectory>,
 
-    // Metadata modifiers
     pub(super) chmod: Option<ChmodModifiers>,
     pub(super) user_mapping: Option<UserMapping>,
     pub(super) group_mapping: Option<GroupMapping>,
 
-    // Batch mode
     pub(super) batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 
-    // Super-user mode
     pub(super) super_mode: Option<bool>,
     pub(super) fake_super: bool,
 
-    // Error handling
     pub(super) ignore_errors: bool,
 
-    // Logging options
     pub(super) log_file: Option<PathBuf>,
     pub(super) log_file_format: Option<String>,
 }

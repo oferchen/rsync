@@ -123,20 +123,10 @@ impl RemoteShell {
     /// ```
     pub fn build_command(&self, host: &str, rsync_path: &str, server_args: &[&str]) -> Vec<String> {
         let mut command = Vec::new();
-
-        // Add shell program
         command.push(self.program.clone());
-
-        // Add shell arguments
         command.extend(self.args.iter().cloned());
-
-        // Add host
         command.push(host.to_string());
-
-        // Add rsync path
         command.push(rsync_path.to_string());
-
-        // Add server arguments
         command.extend(server_args.iter().map(|s| s.to_string()));
 
         command

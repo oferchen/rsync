@@ -257,8 +257,7 @@ pub(super) fn apply_ownership_from_entry(
     };
 
     if owner.is_some() || group.is_some() {
-        // Optimization: skip syscall if ownership already matches.
-        // upstream: rsync avoids redundant chown calls.
+        // upstream: rsync avoids redundant chown calls
         let needs_chown = match cached_meta {
             Some(meta) => {
                 let current_uid = meta.uid();

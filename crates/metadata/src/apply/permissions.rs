@@ -294,8 +294,7 @@ pub(super) fn apply_permissions_from_entry(
 
         if options.permissions() {
             let mode = entry.permissions();
-            // Optimization: skip syscall if permissions already match.
-            // upstream: rsync avoids redundant chmod calls.
+            // upstream: rsync avoids redundant chmod calls
             let needs_chmod = match cached_meta {
                 Some(meta) => (meta.permissions().mode() & 0o7777) != (mode & 0o7777),
                 None => true,
