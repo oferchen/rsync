@@ -297,7 +297,6 @@ pub fn run_server_stdio(
     stdout: &mut dyn Write,
     progress: Option<&mut dyn TransferProgressCallback>,
 ) -> ServerResult {
-    // Perform protocol handshake
     let handshake = perform_handshake(stdin, stdout)?;
     run_server_with_handshake(config, handshake, stdin, stdout, progress, None, None)
 }
@@ -557,12 +556,10 @@ pub fn run_server_with_handshake<W: Write>(
             Ok(ServerStats::Receiver(stats))
         }
         ServerRole::Generator => {
-            // Convert OsString args to PathBuf for file walking
             let mut paths = Vec::with_capacity(config.args.len());
             paths.extend(config.args.iter().map(std::path::PathBuf::from));
 
             let mut ctx = GeneratorContext::new(&handshake, config);
-            // Pass reader by value - GeneratorContext::run now takes ownership and activates multiplex internally
             let stats = ctx.run(chained_reader, &mut writer, &paths, progress, itemize)?;
 
             Ok(ServerStats::Generator(stats))

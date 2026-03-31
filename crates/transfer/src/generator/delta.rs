@@ -428,7 +428,6 @@ pub(super) fn write_delta_with_compression<W: Write>(
             encoder.finish(writer)?;
             Ok(())
         }
-        // No compression or unsupported algorithm - use plain format
         None => write_token_stream(writer, ops),
     }
 }
