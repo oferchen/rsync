@@ -307,9 +307,8 @@ pub(super) fn choose_checksum_algorithm(
         // local item with the best (lowest) position in our own list.
         for &local in SUPPORTED_CHECKSUMS {
             if remote_items.iter().any(|&r| r == local) {
-                return ChecksumAlgorithm::parse(local).map_err(|e| {
-                    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
-                });
+                return ChecksumAlgorithm::parse(local)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
             }
         }
     }
@@ -348,9 +347,8 @@ pub(super) fn choose_compression_algorithm(
         // list wins.
         for &local in &supported {
             if remote_items.iter().any(|&r| r == local) {
-                return CompressionAlgorithm::parse(local).map_err(|e| {
-                    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
-                });
+                return CompressionAlgorithm::parse(local)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
             }
         }
     }
