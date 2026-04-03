@@ -504,7 +504,7 @@ fn test_negotiate_ssh_mode_zlib() {
 fn test_choose_checksum_first_match_wins() {
     // When client sends multiple checksums, we pick the first one we support
     let client_list = "xxh128 xxh64 md5 md4";
-    let result = choose_checksum_algorithm(client_list).unwrap();
+    let result = choose_checksum_algorithm(client_list, true).unwrap();
     // xxh128 is first and we support it
     assert_eq!(result, ChecksumAlgorithm::XXH128);
 }
@@ -513,7 +513,7 @@ fn test_choose_checksum_first_match_wins() {
 fn test_choose_checksum_fallback_to_later_match() {
     // If first item is unsupported, pick next supported one
     let client_list = "blake3 sha256 md5 md4";
-    let result = choose_checksum_algorithm(client_list).unwrap();
+    let result = choose_checksum_algorithm(client_list, true).unwrap();
     // blake3 and sha256 are not supported, md5 is
     assert_eq!(result, ChecksumAlgorithm::MD5);
 }
@@ -521,7 +521,7 @@ fn test_choose_checksum_fallback_to_later_match() {
 #[test]
 fn test_choose_checksum_empty_list() {
     // upstream: compat.c:383-406 - empty list is a negotiation failure (hard error)
-    let result = choose_checksum_algorithm("");
+    let result = choose_checksum_algorithm("", true);
     assert!(result.is_err(), "empty list should be a negotiation error");
 }
 
@@ -531,7 +531,7 @@ fn test_choose_compression_first_match_wins_zlib_fallback() {
     // Zstd/lz4 are excluded from auto-negotiation (wire format not validated),
     // so first match we support is "zlib" regardless of feature flags.
     let client_list = "zstd lz4 zlib none";
-    let result = choose_compression_algorithm(client_list).unwrap();
+    let result = choose_compression_algorithm(client_list, true).unwrap();
     assert_eq!(result, CompressionAlgorithm::Zlib);
 }
 
@@ -541,14 +541,14 @@ fn test_choose_compression_first_match_wins_zlibx() {
     // Zstd/lz4 are excluded from auto-negotiation (wire format not validated),
     // so first match we support is "zlibx" regardless of feature flags.
     let client_list = "zstd lz4 zlibx zlib none";
-    let result = choose_compression_algorithm(client_list).unwrap();
+    let result = choose_compression_algorithm(client_list, true).unwrap();
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 }
 
 #[test]
 fn test_choose_compression_empty_list() {
     // Empty list should fall back to None
-    let result = choose_compression_algorithm("").unwrap();
+    let result = choose_compression_algorithm("", true).unwrap();
     assert_eq!(result, CompressionAlgorithm::None);
 }
 
@@ -744,7 +744,7 @@ fn test_upstream_checksum_list_format() {
     // Upstream rsync 3.4.1 sends checksums in this format:
     // "xxh128 xxh3 xxh64 md5 md4 sha1 none"
     let upstream_format = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
-    let result = choose_checksum_algorithm(upstream_format).unwrap();
+    let result = choose_checksum_algorithm(upstream_format, true).unwrap();
     // First match should be xxh128
     assert_eq!(result, ChecksumAlgorithm::XXH128);
 }
@@ -753,7 +753,7 @@ fn test_upstream_checksum_list_format() {
 fn test_legacy_rsync_checksum_list() {
     // Older rsync might only offer md4 and md5
     let legacy_format = "md5 md4";
-    let result = choose_checksum_algorithm(legacy_format).unwrap();
+    let result = choose_checksum_algorithm(legacy_format, true).unwrap();
     assert_eq!(result, ChecksumAlgorithm::MD5);
 }
 
@@ -761,7 +761,7 @@ fn test_legacy_rsync_checksum_list() {
 fn test_minimal_rsync_checksum_list() {
     // Minimal rsync might only offer none
     let minimal_format = "none";
-    let result = choose_checksum_algorithm(minimal_format).unwrap();
+    let result = choose_checksum_algorithm(minimal_format, true).unwrap();
     assert_eq!(result, ChecksumAlgorithm::None);
 }
 
@@ -784,7 +784,7 @@ fn test_compression_case_sensitive() {
 fn test_checksum_with_whitespace() {
     // Lists can have multiple spaces between items
     let list = "md5   md4     sha1";
-    let result = choose_checksum_algorithm(list).unwrap();
+    let result = choose_checksum_algorithm(list, true).unwrap();
     assert_eq!(result, ChecksumAlgorithm::MD5);
 }
 
@@ -792,7 +792,7 @@ fn test_checksum_with_whitespace() {
 fn test_compression_with_leading_trailing_space() {
     // split_whitespace handles leading/trailing spaces
     let list = "  zlib   zlibx  none  ";
-    let result = choose_compression_algorithm(list).unwrap();
+    let result = choose_compression_algorithm(list, true).unwrap();
     assert_eq!(result, CompressionAlgorithm::Zlib);
 }
 
@@ -1672,7 +1672,7 @@ fn phase4_compression_zstd_not_available() {
 fn phase5_negotiate_only_unsupported_checksums() {
     // upstream: compat.c:383-406 - no common algorithm is a hard error
     let list = "blake3 sha256 sha512 xxh256";
-    let result = choose_checksum_algorithm(list);
+    let result = choose_checksum_algorithm(list, true);
     assert!(
         result.is_err(),
         "no common algorithm should be a negotiation error"
@@ -1683,7 +1683,7 @@ fn phase5_negotiate_only_unsupported_checksums() {
 fn phase5_negotiate_only_unsupported_compressions() {
     // If client sends only unsupported compressions, fallback to None
     let list = "bzip2 lzma xz brotli";
-    let result = choose_compression_algorithm(list).unwrap();
+    let result = choose_compression_algorithm(list, true).unwrap();
     assert_eq!(result, CompressionAlgorithm::None);
 }
 
@@ -1691,13 +1691,13 @@ fn phase5_negotiate_only_unsupported_compressions() {
 fn phase5_negotiate_whitespace_only_list() {
     // upstream: compat.c:383-406 - whitespace-only list has no valid algorithms
     let list = "   \t   \n   ";
-    let checksum = choose_checksum_algorithm(list);
+    let checksum = choose_checksum_algorithm(list, true);
     assert!(
         checksum.is_err(),
         "whitespace-only list should be a negotiation error"
     );
 
-    let compression = choose_compression_algorithm(list).unwrap();
+    let compression = choose_compression_algorithm(list, true).unwrap();
     assert_eq!(compression, CompressionAlgorithm::None);
 }
 
@@ -1705,7 +1705,7 @@ fn phase5_negotiate_whitespace_only_list() {
 fn phase5_negotiate_mixed_supported_unsupported() {
     // Mix of supported and unsupported, should pick first supported
     let list = "blake3 unsupported xxh128 md5";
-    let result = choose_checksum_algorithm(list).unwrap();
+    let result = choose_checksum_algorithm(list, true).unwrap();
     assert_eq!(result, ChecksumAlgorithm::XXH128);
 }
 
@@ -1717,15 +1717,15 @@ fn phase5_negotiate_order_preference() {
     let list3 = "sha1 md5 xxh128";
 
     assert_eq!(
-        choose_checksum_algorithm(list1).unwrap(),
+        choose_checksum_algorithm(list1, true).unwrap(),
         ChecksumAlgorithm::XXH128
     );
     assert_eq!(
-        choose_checksum_algorithm(list2).unwrap(),
+        choose_checksum_algorithm(list2, true).unwrap(),
         ChecksumAlgorithm::MD5
     );
     assert_eq!(
-        choose_checksum_algorithm(list3).unwrap(),
+        choose_checksum_algorithm(list3, true).unwrap(),
         ChecksumAlgorithm::SHA1
     );
 }
@@ -1733,14 +1733,14 @@ fn phase5_negotiate_order_preference() {
 #[test]
 fn phase5_negotiate_xxh3_support() {
     let list = "xxh3 xxh128";
-    let result = choose_checksum_algorithm(list).unwrap();
+    let result = choose_checksum_algorithm(list, true).unwrap();
     assert_eq!(result, ChecksumAlgorithm::XXH3);
 }
 
 #[test]
 fn phase5_negotiate_zlibx_vs_zlib() {
     let list = "zlibx zlib";
-    let result = choose_compression_algorithm(list).unwrap();
+    let result = choose_compression_algorithm(list, true).unwrap();
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 }
 
@@ -1890,7 +1890,7 @@ fn phase8_negotiation_result_all_combinations() {
 fn capability_fallback_server_missing_preferred_checksum() {
     // Remote only offers legacy checksums, not modern xxhash variants
     let remote_list = "md5 md4 sha1";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
+    let result = choose_checksum_algorithm(remote_list, true).unwrap();
     // Should fall back to first supported algorithm: md5
     assert_eq!(result, ChecksumAlgorithm::MD5);
 }
@@ -1899,7 +1899,7 @@ fn capability_fallback_server_missing_preferred_checksum() {
 #[test]
 fn capability_fallback_server_only_md4() {
     let remote_list = "md4";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
+    let result = choose_checksum_algorithm(remote_list, true).unwrap();
     assert_eq!(result, ChecksumAlgorithm::MD4);
 }
 
@@ -1907,7 +1907,7 @@ fn capability_fallback_server_only_md4() {
 #[test]
 fn capability_fallback_server_only_none_checksum() {
     let remote_list = "none";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
+    let result = choose_checksum_algorithm(remote_list, true).unwrap();
     assert_eq!(result, ChecksumAlgorithm::None);
 }
 
@@ -1916,7 +1916,7 @@ fn capability_fallback_server_only_none_checksum() {
 fn capability_fallback_server_offers_unavailable_compression() {
     // Server offers brotli (not supported) first, then zlib
     let remote_list = "brotli lzma xz zlib";
-    let result = choose_compression_algorithm(remote_list).unwrap();
+    let result = choose_compression_algorithm(remote_list, true).unwrap();
     // Should skip unsupported and use zlib
     assert_eq!(result, CompressionAlgorithm::Zlib);
 }
@@ -1925,7 +1925,7 @@ fn capability_fallback_server_offers_unavailable_compression() {
 #[test]
 fn capability_fallback_server_only_unavailable_compression() {
     let remote_list = "brotli lzma xz";
-    let result = choose_compression_algorithm(remote_list).unwrap();
+    let result = choose_compression_algorithm(remote_list, true).unwrap();
     // Should fall back to None when nothing matches
     assert_eq!(result, CompressionAlgorithm::None);
 }
@@ -1934,7 +1934,7 @@ fn capability_fallback_server_only_unavailable_compression() {
 #[test]
 fn capability_fallback_server_only_none_compression() {
     let remote_list = "none";
-    let result = choose_compression_algorithm(remote_list).unwrap();
+    let result = choose_compression_algorithm(remote_list, true).unwrap();
     assert_eq!(result, CompressionAlgorithm::None);
 }
 
@@ -1943,7 +1943,7 @@ fn capability_fallback_server_only_none_compression() {
 fn capability_fallback_unknown_checksum_strings() {
     // upstream: compat.c:383-406 - all unknown algorithm names is a hard error
     let remote_list = "blake2b blake3 argon2 scrypt";
-    let result = choose_checksum_algorithm(remote_list);
+    let result = choose_checksum_algorithm(remote_list, true);
     assert!(
         result.is_err(),
         "all unknown algorithms should be a negotiation error"
@@ -1954,7 +1954,7 @@ fn capability_fallback_unknown_checksum_strings() {
 #[test]
 fn capability_fallback_unknown_compression_strings() {
     let remote_list = "snappy lzo lzf brotli";
-    let result = choose_compression_algorithm(remote_list).unwrap();
+    let result = choose_compression_algorithm(remote_list, true).unwrap();
     // Should fall back to None
     assert_eq!(result, CompressionAlgorithm::None);
 }
@@ -1963,7 +1963,7 @@ fn capability_fallback_unknown_compression_strings() {
 #[test]
 fn capability_fallback_mixed_unknown_known_checksum() {
     let remote_list = "blake3 blake2b sha1 md5";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
+    let result = choose_checksum_algorithm(remote_list, true).unwrap();
     // Should skip unknown and pick first known (sha1)
     assert_eq!(result, ChecksumAlgorithm::SHA1);
 }
@@ -1972,7 +1972,7 @@ fn capability_fallback_mixed_unknown_known_checksum() {
 #[test]
 fn capability_fallback_mixed_unknown_known_compression() {
     let remote_list = "snappy lzo zlibx zlib";
-    let result = choose_compression_algorithm(remote_list).unwrap();
+    let result = choose_compression_algorithm(remote_list, true).unwrap();
     // Should skip unknown and pick first known (zlibx)
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 }
@@ -1982,7 +1982,7 @@ fn capability_fallback_mixed_unknown_known_compression() {
 fn capability_fallback_malformed_algorithm_names() {
     // upstream: compat.c:383-406 - malformed names with no valid match is a hard error
     let remote_list = "MD5 Md5 mD5 md-5 md_5 md55 mdv md5!";
-    let result = choose_checksum_algorithm(remote_list);
+    let result = choose_checksum_algorithm(remote_list, true);
     assert!(
         result.is_err(),
         "all malformed algorithms should be a negotiation error"
@@ -1993,7 +1993,7 @@ fn capability_fallback_malformed_algorithm_names() {
 #[test]
 fn capability_fallback_empty_between_spaces() {
     let remote_list = "blake3  sha1"; // Double space
-    let result = choose_checksum_algorithm(remote_list).unwrap();
+    let result = choose_checksum_algorithm(remote_list, true).unwrap();
     // split_whitespace handles this correctly
     assert_eq!(result, ChecksumAlgorithm::SHA1);
 }
@@ -2003,7 +2003,7 @@ fn capability_fallback_empty_between_spaces() {
 fn capability_fallback_numeric_strings() {
     // upstream: compat.c:383-406 - no valid algorithms is a hard error
     let remote_list = "123 456 789";
-    let result = choose_checksum_algorithm(remote_list);
+    let result = choose_checksum_algorithm(remote_list, true);
     assert!(
         result.is_err(),
         "numeric-only list should be a negotiation error"
@@ -2015,7 +2015,7 @@ fn capability_fallback_numeric_strings() {
 fn capability_fallback_special_chars() {
     // upstream: compat.c:383-406 - no valid algorithms is a hard error
     let remote_list = "md5@ sha1# xxh* md5-v2";
-    let result = choose_checksum_algorithm(remote_list);
+    let result = choose_checksum_algorithm(remote_list, true);
     assert!(
         result.is_err(),
         "special-char names should be a negotiation error"
@@ -2027,7 +2027,7 @@ fn capability_fallback_special_chars() {
 fn capability_fallback_long_unknown_names() {
     let long_name = "a".repeat(100);
     let remote_list = format!("{} {}", long_name, "md5");
-    let result = choose_checksum_algorithm(&remote_list).unwrap();
+    let result = choose_checksum_algorithm(&remote_list, true).unwrap();
     // Long name is unknown, should use md5
     assert_eq!(result, ChecksumAlgorithm::MD5);
 }
@@ -2039,7 +2039,7 @@ fn capability_fallback_long_unknown_names() {
 #[test]
 fn capability_fallback_unicode_names() {
     let remote_list = "md5\u{00A0}fake sha1 zlib";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
+    let result = choose_checksum_algorithm(remote_list, true).unwrap();
     // \u{00A0} is Unicode whitespace, so "md5" is a valid token and matches
     assert_eq!(result, ChecksumAlgorithm::MD5);
 }
@@ -2052,28 +2052,28 @@ fn capability_fallback_graceful_checksum_degradation() {
     // Modern server: full support
     let modern_list = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
     assert_eq!(
-        choose_checksum_algorithm(modern_list).unwrap(),
+        choose_checksum_algorithm(modern_list, true).unwrap(),
         ChecksumAlgorithm::XXH128
     );
 
     // Intermediate server: no xxh128, has xxh64
     let intermediate_list = "xxh64 md5 md4 sha1 none";
     assert_eq!(
-        choose_checksum_algorithm(intermediate_list).unwrap(),
+        choose_checksum_algorithm(intermediate_list, true).unwrap(),
         ChecksumAlgorithm::XXH64
     );
 
     // Legacy server: only md5 and md4
     let legacy_list = "md5 md4 none";
     assert_eq!(
-        choose_checksum_algorithm(legacy_list).unwrap(),
+        choose_checksum_algorithm(legacy_list, true).unwrap(),
         ChecksumAlgorithm::MD5
     );
 
     // Very old server: only md4
     let ancient_list = "md4 none";
     assert_eq!(
-        choose_checksum_algorithm(ancient_list).unwrap(),
+        choose_checksum_algorithm(ancient_list, true).unwrap(),
         ChecksumAlgorithm::MD4
     );
 }
@@ -2087,25 +2087,25 @@ fn capability_compression_negotiation_preference() {
     // Remote offers full modern list - we pick zlibx because zstd/lz4
     // are not in our supported list (wire format not validated).
     let modern_list = "zstd lz4 zlibx zlib none";
-    let result = choose_compression_algorithm(modern_list).unwrap();
+    let result = choose_compression_algorithm(modern_list, true).unwrap();
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 
     // Remote offers lz4 first without zstd - still picks zlibx.
     let no_zstd_list = "lz4 zlibx zlib none";
-    let result = choose_compression_algorithm(no_zstd_list).unwrap();
+    let result = choose_compression_algorithm(no_zstd_list, true).unwrap();
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 
     // Server with only zlib variants
     let zlib_only = "zlibx zlib none";
     assert_eq!(
-        choose_compression_algorithm(zlib_only).unwrap(),
+        choose_compression_algorithm(zlib_only, true).unwrap(),
         CompressionAlgorithm::ZlibX
     );
 
     // Server preferring classic zlib
     let classic_zlib = "zlib none";
     assert_eq!(
-        choose_compression_algorithm(classic_zlib).unwrap(),
+        choose_compression_algorithm(classic_zlib, true).unwrap(),
         CompressionAlgorithm::Zlib
     );
 }
@@ -2171,7 +2171,7 @@ fn capability_fallback_no_varint_flist_flags() {
 fn capability_fallback_disagreeing_preference_order() {
     // Remote prefers md4 over md5, but we still respect their order
     let remote_list = "md4 md5 sha1";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
+    let result = choose_checksum_algorithm(remote_list, true).unwrap();
     // We pick first from THEIR list that we support
     assert_eq!(result, ChecksumAlgorithm::MD4);
 }
@@ -2180,7 +2180,7 @@ fn capability_fallback_disagreeing_preference_order() {
 #[test]
 fn capability_fallback_duplicate_algorithms() {
     let remote_list = "md5 md5 md5 sha1 sha1";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
+    let result = choose_checksum_algorithm(remote_list, true).unwrap();
     // Should still work, picks first md5
     assert_eq!(result, ChecksumAlgorithm::MD5);
 }
@@ -2292,7 +2292,7 @@ fn capability_fallback_compression_parse_unknown() {
 fn capability_fallback_xxh_alias_in_list() {
     // "xxh" should be recognized as xxh64
     let remote_list = "xxh md5";
-    let result = choose_checksum_algorithm(remote_list).unwrap();
+    let result = choose_checksum_algorithm(remote_list, true).unwrap();
     // Note: "xxh" parses to XXH64, but SUPPORTED_CHECKSUMS has "xxh64" not "xxh"
     // So this should skip "xxh" and match "md5"
     assert_eq!(result, ChecksumAlgorithm::XXH64);
@@ -2311,7 +2311,7 @@ fn capability_fallback_exact_match_required() {
     ];
 
     for name in invalid_names {
-        let result = choose_checksum_algorithm(name);
+        let result = choose_checksum_algorithm(name, true);
         assert!(
             result.is_err(),
             "'{name}' should not match any supported algorithm"
@@ -2330,7 +2330,7 @@ fn capability_fallback_very_long_list() {
     list.push("md5".to_string());
     let remote_list = list.join(" ");
 
-    let result = choose_checksum_algorithm(&remote_list).unwrap();
+    let result = choose_checksum_algorithm(&remote_list, true).unwrap();
     assert_eq!(result, ChecksumAlgorithm::MD5);
 }
 
@@ -2344,7 +2344,7 @@ fn capability_fallback_whitespace_only_lists_error() {
     let whitespace_only = ["   ", "\t\t\t", "  \t  \n  "];
 
     for list in whitespace_only {
-        let result = choose_checksum_algorithm(list);
+        let result = choose_checksum_algorithm(list, true);
         assert!(
             result.is_err(),
             "whitespace-only list '{}' should produce an error",
@@ -2365,7 +2365,7 @@ fn capability_fallback_whitespace_padded_valid_lists() {
     ];
 
     for (list, expected) in valid_lists {
-        let result = choose_checksum_algorithm(list).unwrap();
+        let result = choose_checksum_algorithm(list, true).unwrap();
         assert_eq!(
             result,
             expected,
@@ -2490,6 +2490,55 @@ fn negotiate_picks_zlibx_as_best_validated_algorithm() {
     // Zstd/lz4 are not advertised in auto-negotiation (wire format unvalidated).
     // Even when remote offers all algorithms, we pick zlibx as best validated.
     let list = "zstd lz4 zlibx zlib none";
-    let result = choose_compression_algorithm(list).unwrap();
+    let result = choose_compression_algorithm(list, true).unwrap();
+    assert_eq!(result, CompressionAlgorithm::ZlibX);
+}
+
+#[test]
+fn test_choose_checksum_server_picks_first_client_match() {
+    // Server iterates remote (client's) list, picks first entry in server's local list.
+    // upstream: compat.c:353 `if (best == 1 || am_server) break;`
+    // Client sends: md5 xxh128 xxh3
+    // Server supports: xxh128 xxh3 xxh64 md5 md4 sha1 none
+    // Server iterates client list: md5 is first match → picks md5
+    let result = choose_checksum_algorithm("md5 xxh128 xxh3", true).unwrap();
+    assert_eq!(result, ChecksumAlgorithm::MD5);
+}
+
+#[test]
+fn test_choose_checksum_client_picks_best_local_preference() {
+    // Client iterates its own local list, picks first item also in server's list.
+    // upstream: compat.c:349-354 — client finds lowest local position among matches.
+    // Server sends: md5 xxh128 xxh3
+    // Client supports: xxh128 xxh3 xxh64 md5 md4 sha1 none
+    // Client iterates local list: xxh128 is first local item in server's list → picks xxh128
+    let result = choose_checksum_algorithm("md5 xxh128 xxh3", false).unwrap();
+    assert_eq!(result, ChecksumAlgorithm::XXH128);
+}
+
+#[test]
+fn test_choose_checksum_server_client_converge_when_same_order() {
+    // When both sides have the same preference order, server and client agree.
+    let list = "xxh128 xxh3 xxh64 md5";
+    let server_result = choose_checksum_algorithm(list, true).unwrap();
+    let client_result = choose_checksum_algorithm(list, false).unwrap();
+    assert_eq!(server_result, client_result);
+    assert_eq!(server_result, ChecksumAlgorithm::XXH128);
+}
+
+#[test]
+fn test_choose_compression_server_picks_first_client_match() {
+    // Server iterates remote (client's) list, picks first entry in server's local list.
+    let result = choose_compression_algorithm("zlib zlibx none", true).unwrap();
+    assert_eq!(result, CompressionAlgorithm::Zlib);
+}
+
+#[test]
+fn test_choose_compression_client_picks_best_local_preference() {
+    // Client iterates its own local list, picks first item also in server's list.
+    // Server sends: zlib zlibx none
+    // Client local list: [zstd, lz4, zlibx, zlib, none] (feature-dependent)
+    // Client iterates local: zlibx appears before zlib → picks zlibx
+    let result = choose_compression_algorithm("zlib zlibx none", false).unwrap();
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 }

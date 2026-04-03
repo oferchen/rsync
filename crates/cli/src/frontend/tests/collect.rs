@@ -11,13 +11,13 @@ fn collect_filter_arguments_merges_shortcuts_with_filters() {
 
     let merged = collect_filter_arguments(&filters, &filter_indices, &rsync_indices);
 
+    // upstream: options.c:1589-1598 - first -F adds dir-merge, second adds exclude
     assert_eq!(
         merged,
         vec![
             OsString::from("dir-merge /.rsync-filter"),
-            OsString::from("exclude .rsync-filter"),
             OsString::from("+ foo"),
-            OsString::from("dir-merge .rsync-filter"),
+            OsString::from("exclude .rsync-filter"),
             OsString::from("- bar"),
         ]
     );
@@ -31,12 +31,12 @@ fn collect_filter_arguments_handles_shortcuts_without_filters() {
     let filter_indices: Vec<usize> = Vec::new();
     let merged = collect_filter_arguments(&filters, &filter_indices, &[2_usize, 4_usize]);
 
+    // upstream: options.c:1589-1598 - first -F adds dir-merge, second adds exclude
     assert_eq!(
         merged,
         vec![
             OsString::from("dir-merge /.rsync-filter"),
             OsString::from("exclude .rsync-filter"),
-            OsString::from("dir-merge .rsync-filter"),
         ]
     );
 }

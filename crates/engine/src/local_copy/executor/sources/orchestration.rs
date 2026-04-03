@@ -108,11 +108,13 @@ pub(crate) fn copy_sources(
                 }
             }
 
-            // Write the flist end-of-list marker to the batch file before
-            // any delta operations or deferred operations flush.
-            // upstream: flist.c:send_file_list() writes the end marker after
-            // all entries.
+            // Write the flist end-of-list marker to the batch file, then
+            // append all buffered per-file delta data (NDX + iflags +
+            // sum_head + tokens + checksum) followed by NDX_DONE markers.
+            // This produces the correct upstream batch ordering: all flist
+            // entries first, then all file data.
             context.finalize_batch_flist()?;
+            context.flush_batch_delta_to_batch()?;
 
             flush_deferred_operations(context)?;
 
