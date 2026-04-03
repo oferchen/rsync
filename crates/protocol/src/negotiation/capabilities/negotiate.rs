@@ -189,7 +189,6 @@ pub fn negotiate_capabilities_with_override(
     // the vstring exchange STILL happens if CF_VARINT_FLIST_FLAGS is negotiated.
     // The greeting is just informational; the actual selection uses vstrings.
     let _ = is_daemon_mode; // Exchange happens in all modes when do_negotiation=true
-    let _ = is_server; // Both sides behave symmetrically
 
     // Send our supported algorithm lists. upstream: compat.c:541-544
     // When --checksum-choice overrides the selection, advertise only that
@@ -222,9 +221,13 @@ pub fn negotiate_capabilities_with_override(
         None
     };
 
-    // Pick first from remote's list that we also support.
-    // upstream: compat.c - "the client picks the first name in the server's list
-    // that is also in the client's list"
+    // upstream: compat.c:528-529 - "Each side sends their list of valid names
+    // to the other side and then both sides pick the first name in the client's
+    // list that is also in the server's list."
+    //
+    // Server iterates client's list (remote), picks first match in local list.
+    // Client iterates local list, picks first item also in server's list (remote).
+    // Both sides converge on the same result: first client item in server's list.
     //
     // When the user forced a checksum via --checksum-choice, verify the remote
     // advertises it and use it unconditionally.
@@ -245,11 +248,11 @@ pub fn negotiate_capabilities_with_override(
                 ));
             }
         }
-        None => choose_checksum_algorithm(&remote_checksum_list)?,
+        None => choose_checksum_algorithm(&remote_checksum_list, is_server)?,
     };
 
     let compression = if let Some(ref list) = remote_compression_list {
-        choose_compression_algorithm(list)?
+        choose_compression_algorithm(list, is_server)?
     } else {
         CompressionAlgorithm::None
     };
@@ -267,18 +270,46 @@ pub fn negotiate_capabilities_with_override(
     })
 }
 
-/// Chooses a checksum algorithm from the remote peer's list.
+/// Chooses a checksum algorithm using upstream rsync's precedence rules.
 ///
-/// Selects the first algorithm in the remote's list that we also support.
+/// upstream: compat.c:332-363 `parse_negotiate_str()` - both sides converge on
+/// the first entry in the client's list that also appears in the server's list.
+///
+/// - Server (`is_server=true`): iterates the remote (client's) list, returns the
+///   first entry that appears in our local list. This is the server-side fast path
+///   where the server breaks on first acceptable client choice.
+/// - Client (`is_server=false`): iterates our local list, returns the first entry
+///   that also appears in the remote (server's) list. This finds the best local
+///   preference among mutually supported algorithms.
+///
 /// Returns an error if no common algorithm is found - upstream rsync treats
 /// this as a hard failure (compat.c:383-406 `recv_negotiate_str`).
-pub(super) fn choose_checksum_algorithm(client_list: &str) -> io::Result<ChecksumAlgorithm> {
-    for algo in client_list.split_whitespace() {
-        // Try to parse each algorithm the client supports
-        if let Ok(checksum) = ChecksumAlgorithm::parse(algo) {
-            // Check if we support it
-            if SUPPORTED_CHECKSUMS.contains(&checksum.as_str()) {
-                return Ok(checksum);
+pub(super) fn choose_checksum_algorithm(
+    remote_list: &str,
+    is_server: bool,
+) -> io::Result<ChecksumAlgorithm> {
+    let remote_items: Vec<&str> = remote_list.split_whitespace().collect();
+
+    if is_server {
+        // Server: iterate client's (remote) list, first match in our list wins.
+        // upstream: compat.c:353 `if (best == 1 || am_server) break;`
+        for algo in &remote_items {
+            if let Ok(checksum) = ChecksumAlgorithm::parse(algo) {
+                if SUPPORTED_CHECKSUMS.contains(&checksum.as_str()) {
+                    return Ok(checksum);
+                }
+            }
+        }
+    } else {
+        // Client: iterate our local list, first item also in server's (remote)
+        // list wins. This gives client preference order priority.
+        // upstream: compat.c:349-354 — client continues iterating to find the
+        // local item with the best (lowest) position in our own list.
+        for &local in SUPPORTED_CHECKSUMS {
+            if remote_items.iter().any(|&r| r == local) {
+                return ChecksumAlgorithm::parse(local).map_err(|e| {
+                    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+                });
             }
         }
     }
@@ -286,21 +317,40 @@ pub(super) fn choose_checksum_algorithm(client_list: &str) -> io::Result<Checksu
     // upstream: compat.c:383-406 — failure to negotiate is a hard error
     Err(io::Error::new(
         io::ErrorKind::InvalidData,
-        format!("failed to negotiate a common checksum algorithm (remote offers: {client_list})"),
+        format!("failed to negotiate a common checksum algorithm (remote offers: {remote_list})"),
     ))
 }
 
-/// Chooses a compression algorithm from the client's list.
+/// Chooses a compression algorithm using upstream rsync's precedence rules.
 ///
-/// Selects the first algorithm in the client's list that we also support.
-pub(super) fn choose_compression_algorithm(client_list: &str) -> io::Result<CompressionAlgorithm> {
+/// Same asymmetric logic as [`choose_checksum_algorithm`] - both sides converge
+/// on the first entry in the client's list that also appears in the server's list.
+///
+/// upstream: compat.c:332-363 `parse_negotiate_str()`
+pub(super) fn choose_compression_algorithm(
+    remote_list: &str,
+    is_server: bool,
+) -> io::Result<CompressionAlgorithm> {
     let supported = supported_compressions();
-    for algo in client_list.split_whitespace() {
-        // Try to parse each algorithm the client supports
-        if let Ok(compression) = CompressionAlgorithm::parse(algo) {
-            // Check if we support it (both parse AND have feature enabled)
-            if supported.contains(&algo) {
-                return Ok(compression);
+    let remote_items: Vec<&str> = remote_list.split_whitespace().collect();
+
+    if is_server {
+        // Server: iterate client's (remote) list, first match in our list wins.
+        for algo in &remote_items {
+            if let Ok(compression) = CompressionAlgorithm::parse(algo) {
+                if supported.contains(algo) {
+                    return Ok(compression);
+                }
+            }
+        }
+    } else {
+        // Client: iterate our local list, first item also in server's (remote)
+        // list wins.
+        for &local in &supported {
+            if remote_items.iter().any(|&r| r == local) {
+                return CompressionAlgorithm::parse(local).map_err(|e| {
+                    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+                });
             }
         }
     }
