@@ -32,6 +32,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+use protocol::codec::{NDX_DONE, NdxCodec, NdxCodecEnum};
+
 use crate::BatchConfig;
 use crate::error::{BatchError, BatchResult};
 use crate::reader::BatchReader;
@@ -351,10 +353,8 @@ pub fn replay(
         ..ReplayResult::default()
     };
 
-    // Phase 1: Create directories and symlinks, collect regular files.
+    // Phase 1: Create directories and symlinks, ensure parent dirs for regular files.
     // Directories must be created before files so that parent paths exist.
-    let mut regular_files = Vec::new();
-
     for entry in &entries {
         let dest_path = dest_root.join(entry.name());
         result.total_size += entry.size();
@@ -410,7 +410,6 @@ pub fn replay(
                         })?;
                     }
                 }
-                regular_files.push(entry);
             }
             // Block devices, char devices, FIFOs, sockets - skip during
             // batch replay (upstream rsync also skips special files in
@@ -420,12 +419,85 @@ pub fn replay(
     }
 
     // Phase 2: Apply delta operations for regular files.
-    // upstream: receiver.c:recv_files() reads per-file delta token streams
-    // from the protocol fd (which for --read-batch is the batch file).
-    // Each file's data is a token stream terminated by write_int(0).
-    for entry in &regular_files {
+    // upstream: receiver.c:recv_files() reads NDX + iflags + sum_head per file,
+    // then delta tokens, then file checksum. NDX_DONE signals phase transitions.
+    let proto = reader.config().protocol_version;
+    let mut ndx_codec = NdxCodecEnum::new(proto as u8);
+    let max_phase = if proto >= 29 { 2 } else { 1 };
+    let mut phase = 1;
+
+    loop {
+        let stream = reader
+            .inner_reader()
+            .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
+
+        let ndx = ndx_codec.read_ndx(stream).map_err(|e| {
+            BatchError::Io(std::io::Error::new(
+                e.kind(),
+                format!("failed to read NDX from batch stream: {e}"),
+            ))
+        })?;
+
+        if ndx == NDX_DONE {
+            phase += 1;
+            if phase > max_phase {
+                break;
+            }
+            continue;
+        }
+
+        if ndx < 0 || ndx as usize >= entries.len() {
+            return Err(BatchError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid NDX {ndx} (flist has {} entries)", entries.len()),
+            )));
+        }
+
+        // upstream: rsync.c:383 - read iflags (u16) for protocol >= 29
+        let iflags = if proto >= 29 {
+            let stream = reader
+                .inner_reader()
+                .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
+            let mut buf = [0u8; 2];
+            stream.read_exact(&mut buf).map_err(|e| {
+                BatchError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to read iflags: {e}"),
+                ))
+            })?;
+            u16::from_le_bytes(buf)
+        } else {
+            // upstream: rsync.c:384 - default to ITEM_TRANSFER | ITEM_MISSING_DATA
+            0x8000 | 0x0400
+        };
+
+        const ITEM_TRANSFER: u16 = 0x8000;
+        if iflags & ITEM_TRANSFER == 0 {
+            // Metadata-only change, no delta data follows
+            continue;
+        }
+
+        let entry = &entries[ndx as usize];
         let dest_path = dest_root.join(entry.name());
 
+        // upstream: receiver.c:273 - read_sum_head() reads 4 x i32
+        let stream = reader
+            .inner_reader()
+            .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
+        let mut sum_buf = [0u8; 16];
+        stream.read_exact(&mut sum_buf).map_err(|e| {
+            BatchError::Io(std::io::Error::new(
+                e.kind(),
+                format!("failed to read sum_head: {e}"),
+            ))
+        })?;
+        let _count = i32::from_le_bytes([sum_buf[0], sum_buf[1], sum_buf[2], sum_buf[3]]);
+        let block_length_wire =
+            i32::from_le_bytes([sum_buf[4], sum_buf[5], sum_buf[6], sum_buf[7]]);
+        let s2length = i32::from_le_bytes([sum_buf[8], sum_buf[9], sum_buf[10], sum_buf[11]]);
+        let _remainder = i32::from_le_bytes([sum_buf[12], sum_buf[13], sum_buf[14], sum_buf[15]]);
+
+        // Read delta tokens for this file
         let delta_ops = reader.read_file_delta_tokens().map_err(|e| {
             BatchError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -433,27 +505,34 @@ pub fn replay(
             ))
         })?;
 
+        // upstream: receiver.c:408 - read file checksum (s2length bytes)
+        if s2length > 0 {
+            let stream = reader
+                .inner_reader()
+                .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
+            let mut checksum_buf = vec![0u8; s2length as usize];
+            stream.read_exact(&mut checksum_buf).map_err(|e| {
+                BatchError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to read file checksum: {e}"),
+                ))
+            })?;
+        }
+
         if verbosity > 0 {
             println!("  {} delta operations", delta_ops.len());
         }
 
-        // If the file does not yet exist at the destination, create it from
-        // pure literal data. If it does exist, it serves as the basis file.
         let basis_exists = dest_path.exists();
-
-        // Upstream rsync calculates block_length dynamically based on file
-        // size (match.c:365, choose_block_size()). The entry carries the
-        // original file size, so we derive the block length using the same
-        // heuristic: sqrt(file_size) clamped to [700, 128*1024].
-        let block_length = choose_block_length(entry.size());
+        let block_length = if block_length_wire > 0 {
+            block_length_wire as usize
+        } else {
+            choose_block_length(entry.size())
+        };
 
         if !basis_exists {
-            // No basis file - write literals directly to the destination.
-            // upstream: receiver.c creates the file and applies literal-only delta.
             write_literals_to_file(&dest_path, &delta_ops)?;
         } else {
-            // Basis file exists - apply delta ops against it.
-            // Use a temp file to avoid self-referencing read/write conflicts.
             let temp_path = dest_path.with_extension("~batch-tmp");
             apply_delta_ops(&dest_path, &temp_path, delta_ops, block_length)?;
             fs::rename(&temp_path, &dest_path).map_err(|e| {
