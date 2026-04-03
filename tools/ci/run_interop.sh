@@ -1498,17 +1498,6 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  # --- oc→upstream (client push) ---
-  "oc:acls"
-  "oc:xattrs"
-  "oc:compress-lz4"
-  # --- upstream→oc (daemon receive) ---
-  "up:acls"
-  "up:xattrs"
-  "up:compress-lz4"
-  # --- standalone ---
-  "standalone:write-batch-read-batch"
-  "standalone:write-batch-read-batch-compressed"
 )
 
 is_known_failure() {

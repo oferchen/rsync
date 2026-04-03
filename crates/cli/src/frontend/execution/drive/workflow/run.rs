@@ -410,18 +410,40 @@ where
 
     let implied_dirs = implied_dirs_option.unwrap_or(true);
 
+    // upstream: compat.c:710-748 - local transfers negotiate compat_flags
+    // between sender and receiver. For protocol 32 with full capability
+    // string (`.LsfxCIvu`), the flags include SAFE_FILE_LIST,
+    // AVOID_XATTR_OPTIMIZATION, CHECKSUM_SEED_FIX, INPLACE_PARTIAL_DIR,
+    // ID0_NAMES, and VARINT_FLIST_FLAGS. INC_RECURSE depends on options.
+    // These flags must be written to the batch header so upstream rsync
+    // can correctly decode the file list and delta stream.
+    let local_batch_compat_flags = {
+        use protocol::CompatibilityFlags;
+        let mut flags = CompatibilityFlags::SAFE_FILE_LIST
+            | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::VARINT_FLIST_FLAGS
+            | CompatibilityFlags::ID0_NAMES;
+        #[cfg(unix)]
+        {
+            flags = flags | CompatibilityFlags::SYMLINK_TIMES;
+        }
+        flags.bits() as i32
+    };
+
     let batch_config = if let Some(ref path) = write_batch {
-        Some(BatchConfig::new(
-            BatchMode::Write,
-            path.to_string_lossy().into_owned(),
-            32, // Default protocol version
-        ))
+        Some(
+            BatchConfig::new(BatchMode::Write, path.to_string_lossy().into_owned(), 32)
+                .with_compat_flags(local_batch_compat_flags),
+        )
     } else if let Some(ref path) = only_write_batch {
-        Some(BatchConfig::new(
-            BatchMode::OnlyWrite,
-            path.to_string_lossy().into_owned(),
-            32, // Default protocol version
-        ))
+        Some(
+            BatchConfig::new(
+                BatchMode::OnlyWrite,
+                path.to_string_lossy().into_owned(),
+                32,
+            )
+            .with_compat_flags(local_batch_compat_flags),
+        )
     } else {
         read_batch.as_ref().map(|path| {
             BatchConfig::new(
