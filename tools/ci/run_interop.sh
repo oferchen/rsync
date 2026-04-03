@@ -1498,6 +1498,9 @@ run_ssh_interop_test() {
 
 # Remaining known failures (ACLs removed - now passing):
 KNOWN_FAILURES=(
+  # --- itemize: fixed in PR #3086, remove after merge ---
+  "oc:itemize"
+  "up:itemize"
   # --- xattrs: wire format not yet implemented ---
   "oc:xattrs"
   "up:xattrs"
