@@ -849,8 +849,7 @@ mod integration {
 
             // Token-format delta: literal data
             let mut delta_buf = Vec::new();
-            protocol::wire::delta::write_token_literal(&mut delta_buf, b"Hello, batch!")
-                .unwrap();
+            protocol::wire::delta::write_token_literal(&mut delta_buf, b"Hello, batch!").unwrap();
             protocol::wire::delta::write_token_end(&mut delta_buf).unwrap();
             writer.write_data(&delta_buf).unwrap();
 
