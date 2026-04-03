@@ -1502,7 +1502,6 @@ KNOWN_FAILURES=(
   "oc:acls"
   "oc:xattrs"
   "oc:compress-lz4"
-  "oc:itemize"
   # --- upstream→oc (daemon receive) ---
   "up:acls"
   "up:xattrs"

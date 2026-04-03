@@ -158,6 +158,13 @@ pub(super) fn build_full_daemon_args(
     // --- Long-form arguments (upstream server_options() options.c:2737-2980) ---
     let we_are_sender = !is_sender;
 
+    // upstream: options.c:2750-2762 - server needs to know about log-format
+    // so it can generate itemize output via MSG_INFO frames.
+    // Only sent when client is sender (push) - matches upstream am_sender guard.
+    if we_are_sender && config.itemize_changes() {
+        args.push("--log-format=%i".to_owned());
+    }
+
     // --compress-level=N
     // upstream: options.c:2737-2740
     if let Some(level) = config.compression_level() {
