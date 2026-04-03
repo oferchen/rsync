@@ -98,6 +98,17 @@ pub struct ConnectionConfig {
     pub iconv: Option<FilenameConverter>,
     /// Optional compression level for zlib compression (0-9).
     pub compression_level: Option<CompressionLevel>,
+    /// Explicit compression algorithm from `--compress-choice`.
+    ///
+    /// When set, bypasses vstring compression negotiation and uses this
+    /// algorithm directly. Both sides must agree (the client sends
+    /// `--compress-choice=ALGO` to the server, which sets the same field).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c:543`: compression vstrings skipped when compress_choice is set
+    /// - `options.c:2800-2805`: `--compress-choice=ALGO` sent as long-form arg
+    pub compress_choice: Option<protocol::CompressionAlgorithm>,
     /// Pre-read `--files-from` data for forwarding to a remote daemon.
     ///
     /// When the client has `--files-from` pointing to stdin or a local file,

@@ -165,6 +165,16 @@ pub(super) fn build_full_daemon_args(
         args.push("--log-format=%i".to_owned());
     }
 
+    // --compress-choice=ALGO (non-default compression algorithm)
+    // upstream: options.c:2800-2805 - sent when compress_choice is set to a
+    // non-default algorithm. Mirrors the SSH invocation builder logic.
+    {
+        let algo = config.compression_algorithm();
+        if algo != compress::algorithm::CompressionAlgorithm::default_algorithm() {
+            args.push(format!("--compress-choice={}", algo.name()));
+        }
+    }
+
     // --compress-level=N
     // upstream: options.c:2737-2740
     if let Some(level) = config.compression_level() {
