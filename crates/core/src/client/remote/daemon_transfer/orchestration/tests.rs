@@ -342,6 +342,33 @@ mod server_config_reference_dirs {
             "remote files-from uses NUL-separated wire format"
         );
     }
+
+    #[test]
+    fn generator_config_propagates_itemize_flag() {
+        // upstream: options.c:2750-2762 - the local ServerConfig must have
+        // info_flags.itemize set so the generator's maybe_emit_itemize()
+        // produces client-side output via the callback.
+        let config = ClientConfig::builder().itemize_changes(true).build();
+        let server_config =
+            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+
+        assert!(
+            server_config.flags.info_flags.itemize,
+            "itemize_changes should propagate to server config info_flags"
+        );
+    }
+
+    #[test]
+    fn generator_config_itemize_default_false() {
+        let config = ClientConfig::default();
+        let server_config =
+            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+
+        assert!(
+            !server_config.flags.info_flags.itemize,
+            "itemize should be false by default"
+        );
+    }
 }
 
 mod dry_run_remote_close_tests {
