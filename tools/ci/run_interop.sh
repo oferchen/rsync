@@ -1496,17 +1496,11 @@ run_ssh_interop_test() {
   return 0
 }
 
-# Remaining known failures (ACLs removed - now passing):
+# Remaining known failures:
 KNOWN_FAILURES=(
-  # --- itemize: fixed in PR #3086, remove after merge ---
-  "oc:itemize"
-  "up:itemize"
   # --- xattrs: wire format not yet implemented ---
   "oc:xattrs"
   "up:xattrs"
-  # --- batch: write/read roundtrip ---
-  "standalone:write-batch-read-batch"
-  "standalone:write-batch-read-batch-compressed"
 )
 
 is_known_failure() {

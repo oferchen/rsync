@@ -360,10 +360,7 @@ pub fn run_server_with_handshake<W: Write>(
     let (do_compression, compress_choice) = if config.connection.client_mode {
         // upstream: compat.c - client knows its own compress_choice from CLI args.
         // When --compress-choice is set, map it to its wire name; otherwise None.
-        let choice = config
-            .connection
-            .compress_choice
-            .map(|algo| algo.as_str());
+        let choice = config.connection.compress_choice.map(|algo| algo.as_str());
         (config.flags.compress || choice.is_some(), choice)
     } else if let Some(args) = handshake.client_args.as_deref() {
         // Check compact flag strings for 'z' (CPRES_ZLIB only)

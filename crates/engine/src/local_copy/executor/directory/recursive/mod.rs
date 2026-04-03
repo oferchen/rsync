@@ -24,6 +24,7 @@ use crate::local_copy::{
     LocalCopyRecord,
 };
 
+pub(crate) use batch::capture_batch_file_entry;
 pub(crate) use checksum::prefetch_directory_checksums;
 use deletion::{handle_empty_directory_pruning, handle_post_transfer_deletions};
 use destination::{DestinationState, check_destination_state, record_skipped_missing_destination};
