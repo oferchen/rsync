@@ -80,15 +80,22 @@ pub(crate) fn write_batch_header(
     #[cfg(not(all(unix, feature = "xattr")))]
     let preserve_xattrs = false;
 
+    #[cfg(all(unix, feature = "acl"))]
+    let preserve_acls = config.preserve_acls();
+    #[cfg(not(all(unix, feature = "acl")))]
+    let preserve_acls = false;
+
     let batch_flags = engine::batch::BatchFlags {
         recurse: config.recursive(),
         preserve_uid: config.preserve_owner(),
         preserve_gid: config.preserve_group(),
         preserve_links: config.links(),
+        preserve_devices: config.preserve_devices(),
         preserve_hard_links: config.preserve_hard_links(),
         always_checksum: config.checksum(),
         xfer_dirs: config.dirs(),
         do_compression: config.compress(),
+        preserve_acls,
         preserve_xattrs,
         inplace: config.inplace(),
         append: config.append(),

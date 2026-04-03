@@ -66,6 +66,12 @@ pub(super) fn process_planned_entry(
             root_device,
         ),
         EntryAction::CopyFile | EntryAction::CopyDeviceAsFile => {
+            // Write NDX + iflags + sum_head preamble to the batch delta
+            // buffer before file token data. This produces the correct
+            // upstream batch format: flist entries first (already written
+            // by capture_batch_file_entry above), then NDX-framed per-file
+            // delta data (buffered separately and appended after flist end).
+            context.begin_batch_file_delta()?;
             copy_file(context, source, &target_path, entry_metadata, relative)
         }
         EntryAction::CopySymlink => {
