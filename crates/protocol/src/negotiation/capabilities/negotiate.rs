@@ -306,7 +306,7 @@ pub(super) fn choose_checksum_algorithm(
         // upstream: compat.c:349-354 — client continues iterating to find the
         // local item with the best (lowest) position in our own list.
         for &local in SUPPORTED_CHECKSUMS {
-            if remote_items.iter().any(|&r| r == local) {
+            if remote_items.contains(&local) {
                 return ChecksumAlgorithm::parse(local)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
             }
@@ -346,7 +346,7 @@ pub(super) fn choose_compression_algorithm(
         // Client: iterate our local list, first item also in server's (remote)
         // list wins.
         for &local in &supported {
-            if remote_items.iter().any(|&r| r == local) {
+            if remote_items.contains(&local) {
                 return CompressionAlgorithm::parse(local)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
             }
