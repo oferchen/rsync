@@ -102,5 +102,10 @@ pub(super) fn capture_batch_file_entry(
         )
     })?;
 
+    // Increment the flist index counter. This assigns each captured entry
+    // a sequential index matching upstream's flist numbering. Regular files
+    // use (batch_flist_index - 1) as their NDX in the delta stream.
+    context.increment_batch_flist_index();
+
     Ok(())
 }

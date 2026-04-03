@@ -824,11 +824,45 @@ mod integration {
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
 
-        // Token-format delta data for the one regular file (whole-file literal)
-        let mut delta_buf = Vec::new();
-        protocol::wire::delta::write_token_literal(&mut delta_buf, b"Hello, batch!").unwrap();
-        protocol::wire::delta::write_token_end(&mut delta_buf).unwrap();
-        writer.write_data(&delta_buf).unwrap();
+        // NDX-framed delta data for the one regular file (whole-file literal)
+        // upstream: receiver.c:recv_files() reads NDX + iflags + sum_head
+        // + delta tokens + file checksum per file, with NDX_DONE for phases.
+        {
+            use protocol::codec::{NdxCodec, NdxCodecEnum};
+
+            let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
+            let mut ndx_buf = Vec::new();
+
+            // NDX for file entry (index 1 - the file, after the directory at 0)
+            ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            // iflags: ITEM_TRANSFER (0x8000) - protocol >= 29
+            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
+
+            // sum_head: count=0, blength=0, s2length=0, remainder=0
+            // (whole-file transfer with no basis, no file checksum)
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+
+            // Token-format delta: literal data
+            let mut delta_buf = Vec::new();
+            protocol::wire::delta::write_token_literal(&mut delta_buf, b"Hello, batch!").unwrap();
+            protocol::wire::delta::write_token_end(&mut delta_buf).unwrap();
+            writer.write_data(&delta_buf).unwrap();
+
+            // NDX_DONE for phase 1 -> phase 2 transition
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            // NDX_DONE for phase 2 -> end
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+        }
 
         writer.finalize().unwrap();
 
@@ -969,17 +1003,49 @@ mod integration {
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
 
-        // Token-format delta: literal data for the file
-        // upstream: token.c token format: count(i32) + data for literals
-        let token_len = file_data.len() as i32;
-        writer.write_data(&token_len.to_le_bytes()).unwrap();
-        writer.write_data(file_data).unwrap();
+        // NDX-framed delta data for the file (upstream batch format)
+        // upstream: receiver.c:recv_files() reads NDX + iflags + sum_head
+        // + delta tokens + file checksum per file, with NDX_DONE for phases.
+        {
+            use protocol::codec::{NdxCodec, NdxCodecEnum};
 
-        // End-of-file token (0)
-        writer.write_data(&0i32.to_le_bytes()).unwrap();
+            let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
+            let mut ndx_buf = Vec::new();
 
-        // Phase marker (-1 index)
-        writer.write_data(&(-1i32).to_le_bytes()).unwrap();
+            // NDX for file entry (index 1 - the file, after the directory at 0)
+            ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            // iflags: ITEM_TRANSFER (0x8000) - protocol >= 29
+            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
+
+            // sum_head: count=0, blength=0, s2length=16, remainder=0
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+            writer.write_data(&16i32.to_le_bytes()).unwrap();
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+
+            // Token-format delta: literal data
+            let token_len = file_data.len() as i32;
+            writer.write_data(&token_len.to_le_bytes()).unwrap();
+            writer.write_data(file_data).unwrap();
+
+            // End-of-file token (0)
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+
+            // File checksum (16 zero bytes, matching s2length=16)
+            writer.write_data(&[0u8; 16]).unwrap();
+
+            // NDX_DONE for phase 1 -> phase 2 transition
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            // NDX_DONE for phase 2 -> end
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+        }
 
         writer.finalize().unwrap();
 

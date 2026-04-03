@@ -41,6 +41,21 @@ impl<'a> CopyContext<'a> {
             DeferredSync::new(SyncStrategy::None)
         };
 
+        // When batch mode is active, create a temp file to buffer per-file
+        // delta data. The flist entries go directly to the batch writer during
+        // the walk, but file data (NDX + iflags + sum_head + tokens + checksum)
+        // must come AFTER the flist end marker in the batch stream.
+        let batch_delta_buf = options
+            .get_batch_writer()
+            .map(|_| std::io::Cursor::new(Vec::new()));
+
+        let batch_ndx_codec = options.get_batch_writer().map(|batch_writer_arc| {
+            let guard = batch_writer_arc.lock().unwrap();
+            let proto_version = guard.config().protocol_version;
+            drop(guard);
+            protocol::codec::NdxCodecEnum::new(proto_version as u8)
+        });
+
         let batch_flist_writer = options.get_batch_writer().map(|batch_writer_arc| {
             let guard = batch_writer_arc.lock().unwrap();
             let proto_version = guard.config().protocol_version;
@@ -100,6 +115,9 @@ impl<'a> CopyContext<'a> {
             io_errors_occurred: false,
             verified_parents: HashSet::new(),
             batch_flist_writer,
+            batch_delta_buf,
+            batch_flist_index: 0,
+            batch_ndx_codec,
         }
     }
 
