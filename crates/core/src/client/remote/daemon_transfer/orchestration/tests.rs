@@ -173,6 +173,51 @@ mod protect_args_daemon_tests {
             "pull mode should not send reference dir args to daemon: {args:?}"
         );
     }
+
+    #[test]
+    fn build_full_args_includes_log_format_for_itemize_push() {
+        // upstream: options.c:2750-2762 - --log-format=%i sent when am_sender
+        // (client is sender / push mode) so daemon receiver emits itemize via MSG_INFO.
+        let config = ClientConfig::builder().itemize_changes(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        // is_sender=false means daemon is NOT sender, i.e., client IS sender (push)
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.iter().any(|a| a == "--log-format=%i"),
+            "push with itemize should include --log-format=%i: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_omits_log_format_for_itemize_pull() {
+        // upstream: options.c:2752 - --log-format only sent when am_sender.
+        // In pull mode (daemon is sender), client handles itemize locally.
+        let config = ClientConfig::builder().itemize_changes(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        // is_sender=true means daemon IS sender (pull)
+        let args = build_full_daemon_args(&config, &request, protocol, true);
+
+        assert!(
+            !args.iter().any(|a| a == "--log-format=%i"),
+            "pull with itemize should not include --log-format=%i: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_omits_log_format_without_itemize() {
+        let config = ClientConfig::default();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            !args.iter().any(|a| a.starts_with("--log-format")),
+            "should not include --log-format without itemize: {args:?}"
+        );
+    }
 }
 
 mod server_config_reference_dirs {
