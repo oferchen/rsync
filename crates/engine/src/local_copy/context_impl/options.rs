@@ -581,19 +581,99 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
-    /// Writes a token-format end marker to the batch file for the current file.
+    /// Writes the NDX + iflags + sum_head preamble for a file's delta data
+    /// to the batch delta buffer.
     ///
-    /// Each file's delta data in the batch stream is terminated by write_int(0),
-    /// matching upstream `token.c:simple_send_token()` with token=-1. Without this
-    /// marker, the batch replay reader cannot determine where one file's data ends
-    /// and the next begins.
+    /// Must be called before any token writes for this file (before
+    /// `capture_batch_whole_file` or inline delta token writes).
     ///
-    /// Call this after `copy_file_contents` completes for each regular file.
-    pub(crate) fn finalize_batch_file_delta(
-        &self,
+    /// upstream: sender.c:send_files() writes write_ndx_and_attrs() then
+    /// write_sum_head() before delta tokens for each file.
+    pub(crate) fn begin_batch_file_delta(
+        &mut self,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
-        let batch_writer_arc = match self.options.get_batch_writer() {
-            Some(w) => w.clone(),
+        use std::io::Write;
+
+        let delta_file = match self.batch_delta_buf.as_mut() {
+            Some(f) => f,
+            None => return Ok(()),
+        };
+
+        // The NDX is the flist index of the most recently captured entry.
+        // capture_batch_file_entry() increments batch_flist_index after
+        // encoding, so the current file's index is (batch_flist_index - 1).
+        let ndx = self.batch_flist_index - 1;
+
+        // Write NDX via the protocol-versioned codec.
+        let codec = self
+            .batch_ndx_codec
+            .as_mut()
+            .expect("batch_ndx_codec must exist when batch_delta_buf is set");
+        protocol::codec::NdxCodec::write_ndx(codec, delta_file, ndx).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch NDX",
+                std::path::PathBuf::new(),
+                e,
+            )
+        })?;
+
+        // upstream: rsync.c:383 - write iflags (u16 LE) for protocol >= 29.
+        // ITEM_TRANSFER (0x8000) indicates delta data follows.
+        let batch_writer_arc = self.options.get_batch_writer().unwrap().clone();
+        let proto = batch_writer_arc.lock().unwrap().config().protocol_version;
+        if proto >= 29 {
+            const ITEM_TRANSFER: u16 = 0x8000;
+            delta_file
+                .write_all(&ITEM_TRANSFER.to_le_bytes())
+                .map_err(|e| {
+                    crate::local_copy::LocalCopyError::io(
+                        "write batch iflags",
+                        std::path::PathBuf::new(),
+                        e,
+                    )
+                })?;
+        }
+
+        // upstream: io.c:read_sum_head() / sender.c - write sum_head (4 x i32 LE).
+        // For local copy whole-file transfers: count=0, blength=0, s2length=16
+        // (MD5 checksum length), remainder=0.
+        const FILE_SUM_LENGTH: i32 = 16;
+        let count: i32 = 0;
+        let blength: i32 = 0;
+        let s2length: i32 = FILE_SUM_LENGTH;
+        let remainder: i32 = 0;
+
+        let mut sum_buf = [0u8; 16];
+        sum_buf[0..4].copy_from_slice(&count.to_le_bytes());
+        sum_buf[4..8].copy_from_slice(&blength.to_le_bytes());
+        sum_buf[8..12].copy_from_slice(&s2length.to_le_bytes());
+        sum_buf[12..16].copy_from_slice(&remainder.to_le_bytes());
+        delta_file.write_all(&sum_buf).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch sum_head",
+                std::path::PathBuf::new(),
+                e,
+            )
+        })?;
+
+        Ok(())
+    }
+
+    /// Writes a token-format end marker and file checksum to the batch delta
+    /// buffer for the current file.
+    ///
+    /// Each file's delta data is terminated by write_int(0), matching upstream
+    /// `token.c:simple_send_token()` with token=-1. After the token end, a
+    /// file-level checksum of `s2length` bytes (16 for MD5) is written.
+    ///
+    /// upstream: receiver.c:408 - read_buf(f_in, sender_file_sum, xfer_sum_len)
+    pub(crate) fn finalize_batch_file_delta(
+        &mut self,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        use std::io::Write;
+
+        let delta_file = match self.batch_delta_buf.as_mut() {
+            Some(f) => f,
             None => return Ok(()),
         };
 
@@ -606,38 +686,48 @@ impl<'a> CopyContext<'a> {
                 e,
             )
         })?;
-
-        let mut writer_guard = batch_writer_arc.lock().unwrap();
-        writer_guard.write_data(&buf).map_err(|e| {
+        delta_file.write_all(&buf).map_err(|e| {
             crate::local_copy::LocalCopyError::io(
                 "write batch token end marker",
                 std::path::PathBuf::new(),
-                std::io::Error::other(e),
+                e,
+            )
+        })?;
+
+        // upstream: receiver.c:408 - file checksum (s2length=16 bytes).
+        // Write zeros since we don't verify checksums during batch replay.
+        const FILE_SUM_LENGTH: usize = 16;
+        delta_file.write_all(&[0u8; FILE_SUM_LENGTH]).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch file checksum",
+                std::path::PathBuf::new(),
+                e,
             )
         })?;
 
         Ok(())
     }
 
-    /// Captures whole-file content to the batch file as token-format literals.
+    /// Captures whole-file content to the batch delta buffer as token-format
+    /// literals.
     ///
     /// When batch mode is active and the transfer does not use delta encoding
     /// (new file, whole-file mode, or no basis), the entire file content must
-    /// still be captured to the batch file so that replay can reconstruct it.
+    /// still be captured so that replay can reconstruct it.
     ///
-    /// upstream: match.c:match_sums() writes literals + end marker for whole-file
-    /// transfers via the batch monitor.
+    /// upstream: match.c:match_sums() writes literals for whole-file transfers.
     pub(crate) fn capture_batch_whole_file(
-        &self,
+        &mut self,
         source: &std::path::Path,
         file_size: u64,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
-        let batch_writer_arc = match self.options.get_batch_writer() {
-            Some(w) => w.clone(),
+        use std::io::Write;
+
+        let delta_file = match self.batch_delta_buf.as_mut() {
+            Some(_) => self.batch_delta_buf.as_mut().unwrap(),
             None => return Ok(()),
         };
 
-        // Read the source file and write it as token-format literals.
         let mut reader = std::fs::File::open(source).map_err(|e| {
             crate::local_copy::LocalCopyError::io(
                 "open source for batch capture",
@@ -673,16 +763,105 @@ impl<'a> CopyContext<'a> {
                 )
             })?;
 
-            let mut writer_guard = batch_writer_arc.lock().unwrap();
-            writer_guard.write_data(&encoded).map_err(|e| {
+            delta_file.write_all(&encoded).map_err(|e| {
                 crate::local_copy::LocalCopyError::io(
                     "write batch literal token",
                     source.to_path_buf(),
+                    e,
+                )
+            })?;
+        }
+
+        Ok(())
+    }
+
+    /// Flushes all buffered delta data from the temp file to the batch writer,
+    /// then writes NDX_DONE phase-transition markers.
+    ///
+    /// Must be called after `finalize_batch_flist()` to produce the correct
+    /// upstream batch ordering: flist entries + end marker, then NDX-framed
+    /// per-file delta data, then NDX_DONE markers for phase transitions.
+    ///
+    /// upstream: sender.c:send_files() writes NDX_DONE after all files in
+    /// phase 1, then again after phase 2 redo (protocol >= 29).
+    pub(crate) fn flush_batch_delta_to_batch(
+        &mut self,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        let delta_buf = match self.batch_delta_buf.as_ref() {
+            Some(c) => c.get_ref(),
+            None => return Ok(()),
+        };
+
+        if delta_buf.is_empty() {
+            // No delta data buffered - still need NDX_DONE markers below.
+        } else {
+            let batch_writer_arc = match self.options.get_batch_writer() {
+                Some(w) => w.clone(),
+                None => return Ok(()),
+            };
+
+            let mut writer_guard = batch_writer_arc.lock().unwrap();
+            writer_guard.write_data(delta_buf).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch delta data",
+                    std::path::PathBuf::new(),
+                    std::io::Error::other(e),
+                )
+            })?;
+        }
+
+        let batch_writer_arc = match self.options.get_batch_writer() {
+            Some(w) => w.clone(),
+            None => return Ok(()),
+        };
+
+        // Write NDX_DONE markers for phase transitions.
+        // upstream: sender.c - NDX_DONE ends phase 1, second NDX_DONE ends
+        // phase 2 (protocol >= 29), signaling completion.
+        let proto = batch_writer_arc.lock().unwrap().config().protocol_version;
+        let max_phase = if proto >= 29 { 2 } else { 1 };
+
+        let codec = self
+            .batch_ndx_codec
+            .as_mut()
+            .expect("batch_ndx_codec must exist when batch_delta_buf is set");
+
+        for _ in 0..max_phase {
+            let mut done_buf = Vec::with_capacity(4);
+            protocol::codec::NdxCodec::write_ndx_done(codec, &mut done_buf).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch NDX_DONE",
+                    std::path::PathBuf::new(),
+                    e,
+                )
+            })?;
+            let mut writer_guard = batch_writer_arc.lock().unwrap();
+            writer_guard.write_data(&done_buf).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch NDX_DONE",
+                    std::path::PathBuf::new(),
                     std::io::Error::other(e),
                 )
             })?;
         }
 
         Ok(())
+    }
+
+    /// Returns a mutable reference to the batch delta buffer file.
+    ///
+    /// Used by `flush_literal_chunk` and `copy_matched_block` to redirect
+    /// token writes to the delta buffer instead of the batch writer.
+    pub(super) fn batch_delta_writer(
+        &mut self,
+    ) -> Option<&mut io::Cursor<Vec<u8>>> {
+        self.batch_delta_buf.as_mut()
+    }
+
+    /// Increments the batch flist index counter.
+    ///
+    /// Called after each flist entry is captured to the batch file.
+    pub(super) fn increment_batch_flist_index(&mut self) {
+        self.batch_flist_index += 1;
     }
 }

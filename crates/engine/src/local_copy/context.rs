@@ -127,6 +127,22 @@ pub(crate) struct CopyContext<'a> {
     /// upstream rsync's raw stream tee. The writer maintains cross-entry
     /// compression state (name prefix sharing, same-mode flags, etc.).
     batch_flist_writer: Option<FileListWriter>,
+    /// Temp file buffering per-file delta data (NDX + iflags + sum_head +
+    /// tokens + checksum) during the directory walk. Written to the batch
+    /// file after the flist end marker, producing the correct upstream batch
+    /// ordering: all flist entries first, then all file data.
+    ///
+    /// upstream: batch files are a tee of the protocol stream which naturally
+    /// has flist before file data. Our local copy path has no protocol stream,
+    /// so we buffer delta data here and append after flist finalization.
+    batch_delta_buf: Option<io::Cursor<Vec<u8>>>,
+    /// Zero-based file-list index counter for batch NDX framing.
+    /// Incremented in `capture_batch_file_entry()` for every entry (dirs,
+    /// files, symlinks, etc.) to match the upstream flist numbering.
+    batch_flist_index: i32,
+    /// NDX codec for writing file indices to the batch delta stream.
+    /// Persists across files to maintain delta-encoding state (proto >= 30).
+    batch_ndx_codec: Option<protocol::codec::NdxCodecEnum>,
 }
 
 /// Path and type context for metadata finalization.
