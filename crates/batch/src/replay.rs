@@ -32,7 +32,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use protocol::codec::{NDX_DONE, NdxCodec, NdxCodecEnum};
+use protocol::codec::{
+    NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum,
+};
 
 use crate::BatchConfig;
 use crate::error::{BatchError, BatchResult};
@@ -443,6 +445,34 @@ pub fn replay(
             if phase > max_phase {
                 break;
             }
+            continue;
+        }
+
+        // upstream: receiver.c - NDX_FLIST_EOF signals end of incremental file
+        // lists (INC_RECURSE). Skip it during replay since all entries are
+        // already decoded from the batch file list.
+        if ndx == NDX_FLIST_EOF {
+            continue;
+        }
+
+        // upstream: main.c:read_final_goodbye() - NDX_DEL_STATS carries 5
+        // varints of deletion statistics. Consume and discard during replay.
+        if ndx == NDX_DEL_STATS {
+            let stream = reader
+                .inner_reader()
+                .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
+            let _del_stats = protocol::stats::DeleteStats::read_from(stream).map_err(|e| {
+                BatchError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to read delete stats from batch stream: {e}"),
+                ))
+            })?;
+            continue;
+        }
+
+        // upstream: io.c - NDX_FLIST_OFFSET-based values are incremental file
+        // list directory indices (INC_RECURSE sub-lists). Skip during replay.
+        if ndx <= NDX_FLIST_OFFSET {
             continue;
         }
 

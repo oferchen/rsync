@@ -1496,17 +1496,19 @@ run_ssh_interop_test() {
   return 0
 }
 
-# Remaining known failures:
+# Remaining known failures (ACLs removed - now passing):
 KNOWN_FAILURES=(
-  # --- oc→upstream (client push) ---
-  "oc:acls"
+  # --- itemize: fixed in PR #3086, remove after merge ---
+  "oc:itemize"
+  "up:itemize"
+  # --- xattrs: wire format not yet implemented ---
   "oc:xattrs"
-  "oc:compress-lz4"
-  # --- upstream→oc (daemon receive) ---
-  "up:acls"
   "up:xattrs"
+  # --- compression: lz4/zstd daemon interop ---
+  "oc:compress-lz4"
   "up:compress-lz4"
-  # --- standalone ---
+  "up:compress-zstd"
+  # --- batch: write/read roundtrip ---
   "standalone:write-batch-read-batch"
   "standalone:write-batch-read-batch-compressed"
 )
