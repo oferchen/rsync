@@ -184,7 +184,7 @@ pub(crate) fn build_wire_format_rules(
 ///
 /// Sets the fields that are shared across both SSH and daemon transfer paths
 /// for both receiver and generator roles: `trust_sender`, `qsort`, `inplace`,
-/// `min_file_size`, `max_file_size`, `do_stats`, and `late_delete`.
+/// `min_file_size`, `max_file_size`, `do_stats`, `late_delete`, and `itemize`.
 pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &mut ServerConfig) {
     server_config.trust_sender = config.trust_sender();
     server_config.qsort = config.qsort();
@@ -200,6 +200,10 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // upstream: options.c:2881-2885 - copy_unsafe_links and safe_links are long-form only
     server_config.flags.copy_unsafe_links = config.copy_unsafe_links();
     server_config.flags.safe_links = config.safe_links();
+    // upstream: options.c:2750-2762 - itemize_changes is forwarded to the remote
+    // as --log-format=%i, but the local ServerConfig also needs the flag set so
+    // the generator's maybe_emit_itemize() produces client-side output via callback.
+    server_config.flags.info_flags.itemize = config.itemize_changes();
 }
 
 #[cfg(test)]
@@ -240,6 +244,22 @@ mod tests {
             !flags.contains(".i"),
             "itemize should not appear as compact flag: {flags}"
         );
+    }
+
+    #[test]
+    fn apply_common_server_flags_sets_itemize() {
+        let config = ClientConfig::builder().itemize_changes(true).build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(server_config.flags.info_flags.itemize);
+    }
+
+    #[test]
+    fn apply_common_server_flags_itemize_default_false() {
+        let config = ClientConfig::default();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(!server_config.flags.info_flags.itemize);
     }
 
     #[test]
