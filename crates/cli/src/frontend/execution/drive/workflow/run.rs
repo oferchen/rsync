@@ -425,7 +425,7 @@ where
             | CompatibilityFlags::ID0_NAMES;
         #[cfg(unix)]
         {
-            flags = flags | CompatibilityFlags::SYMLINK_TIMES;
+            flags |= CompatibilityFlags::SYMLINK_TIMES;
         }
         flags.bits() as i32
     };
