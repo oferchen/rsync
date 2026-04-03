@@ -262,10 +262,10 @@ impl<'a> CopyContext<'a> {
         }
         self.enforce_timeout()?;
 
-        // Capture LITERAL operation to batch file if batch mode is active.
+        // Capture LITERAL operation to the batch delta buffer if active.
         // upstream: token.c:simple_send_token() - literals are written as
         // write_int(length) + raw bytes, chunked to CHUNK_SIZE (32KB).
-        if let Some(batch_writer_arc) = self.batch_writer() {
+        if let Some(delta_writer) = self.batch_delta_writer() {
             let mut encoded = Vec::new();
             protocol::wire::delta::write_token_literal(&mut encoded, chunk).map_err(|e| {
                 LocalCopyError::io(
@@ -275,13 +275,8 @@ impl<'a> CopyContext<'a> {
                 )
             })?;
 
-            let mut writer_guard = batch_writer_arc.lock().unwrap();
-            writer_guard.write_data(&encoded).map_err(|e| {
-                LocalCopyError::io(
-                    "write batch literal token",
-                    destination.to_path_buf(),
-                    std::io::Error::other(e),
-                )
+            delta_writer.write_all(&encoded).map_err(|e| {
+                LocalCopyError::io("write batch literal token", destination.to_path_buf(), e)
             })?;
         }
 
@@ -321,9 +316,9 @@ impl<'a> CopyContext<'a> {
         let offset = matched.offset();
         let block_length = matched.descriptor().len();
 
-        // Capture COPY (block match) operation to batch file if batch mode is active.
+        // Capture COPY (block match) operation to the batch delta buffer.
         // upstream: token.c:simple_send_token() - block match is write_int(-(token+1)).
-        if let Some(batch_writer_arc) = self.batch_writer() {
+        if let Some(delta_writer) = self.batch_delta_writer() {
             let block_index = matched.descriptor().index();
 
             let mut encoded = Vec::new();
@@ -336,12 +331,11 @@ impl<'a> CopyContext<'a> {
                     )
                 })?;
 
-            let mut writer_guard = batch_writer_arc.lock().unwrap();
-            writer_guard.write_data(&encoded).map_err(|e| {
+            delta_writer.write_all(&encoded).map_err(|e| {
                 LocalCopyError::io(
                     "write batch block match token",
                     destination.to_path_buf(),
-                    std::io::Error::other(e),
+                    e,
                 )
             })?;
         }
