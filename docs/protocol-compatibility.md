@@ -180,11 +180,11 @@ and are not treated as CI regressions.
 |-------------------------------|------------------|-------------|
 | `oc:acls`                     | oc -> upstream   | Upstream daemon may reject ACL capabilities if built without `--enable-acl-support`. |
 | `oc:xattrs`                   | oc -> upstream   | Upstream daemon may reject xattr capabilities if built without `--enable-xattr-support`. |
-| `oc:itemize`                  | oc -> upstream   | MSG_INFO forwarding not yet wired for daemon transfers. |
+| `oc:itemize`                  | oc -> upstream   | Fixed: client-side itemize callback emits `<f` lines for push transfers. |
 | `up:protocol-31`              | upstream -> oc   | rsync 3.0.9 does not support protocol 31 (expected). |
 | `up:acls`                     | upstream -> oc   | Upstream daemon builds may not have ACL support enabled. |
 | `up:xattrs`                   | upstream -> oc   | Upstream daemon builds may not have xattr support enabled. |
-| `up:itemize`                  | upstream -> oc   | Fixed: daemon parses `--log-format=%i` and emits MSG_INFO itemize frames. |
+| `up:itemize`                  | upstream -> oc   | Fixed: daemon parses `--log-format=%i` and emits MSG_INFO itemize frames; test regex accepts both directions. |
 | `standalone:write-batch-read-batch` | both       | Batch file format interop incomplete. |
 | `standalone:info-progress2`   | oc-rsync         | `--info=progress2` output format incomplete. |
 | `standalone:large-file-2gb`   | upstream -> oc   | 2GB+ file transfer via daemon not yet validated. |
