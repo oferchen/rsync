@@ -49,12 +49,13 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.recursive() {
         flags.push('r');
     }
-    // upstream: options.c:2704 - 'z' is only sent for CPRES_ZLIB in the
-    // compact flag string. For all other algorithms (zlibx, zstd, lz4),
-    // the 'z' flag is omitted and --compress-choice=ALGO or --new-compress
-    // is sent as a long-form arg instead.
+    // upstream: options.c:2704 - 'z' is only sent when the compression
+    // algorithm is the default (no explicit --compress-choice). For
+    // explicitly chosen algorithms (lz4, zstd), the 'z' flag is omitted
+    // and --compress-choice=ALGO is sent as a long-form arg instead.
     if config.compress()
-        && config.compression_algorithm() == compress::algorithm::CompressionAlgorithm::Zlib
+        && config.compression_algorithm()
+            == compress::algorithm::CompressionAlgorithm::default_algorithm()
     {
         flags.push('z');
     }
@@ -241,33 +242,23 @@ mod tests {
     }
 
     #[test]
-    fn server_flag_string_includes_z_for_zlib_only() {
-        // upstream: options.c:2704 - 'z' is only sent for CPRES_ZLIB.
+    fn server_flag_string_includes_z_for_default_algorithm() {
+        // upstream: options.c:2704 - 'z' is sent for the default compression
+        // algorithm (no explicit --compress-choice).
         let config = ClientConfig::builder()
             .compress(true)
-            .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zlib)
+            .compression_algorithm(
+                compress::algorithm::CompressionAlgorithm::default_algorithm(),
+            )
             .build();
         let flags = build_server_flag_string(&config);
-        assert!(flags.contains('z'), "expected 'z' for zlib: {flags}");
-    }
-
-    #[cfg(feature = "zstd")]
-    #[test]
-    fn server_flag_string_omits_z_for_zstd() {
-        // upstream: options.c:2704 - 'z' NOT sent for non-ZLIB algorithms.
-        // Zstd uses --compress-choice=zstd as a long-form arg instead.
-        let config = ClientConfig::builder()
-            .compress(true)
-            .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zstd)
-            .build();
-        let flags = build_server_flag_string(&config);
-        assert!(!flags.contains('z'), "should not send 'z' for zstd: {flags}");
+        assert!(flags.contains('z'), "expected 'z' for default algorithm: {flags}");
     }
 
     #[cfg(feature = "lz4")]
     #[test]
     fn server_flag_string_omits_z_for_lz4() {
-        // upstream: options.c:2704 - 'z' NOT sent for non-ZLIB algorithms.
+        // upstream: options.c:2704 - 'z' NOT sent for non-default algorithms.
         // LZ4 uses --compress-choice=lz4 as a long-form arg instead.
         let config = ClientConfig::builder()
             .compress(true)
