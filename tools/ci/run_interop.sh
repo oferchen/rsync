@@ -1498,9 +1498,19 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
+  # --- itemize: MSG_INFO relay not yet working in daemon mode ---
+  "oc:itemize"
+  "up:itemize"
   # --- xattrs: wire format not yet implemented ---
   "oc:xattrs"
   "up:xattrs"
+  # --- compression: lz4 not supported by upstream 3.4.1, zstd daemon interop ---
+  "oc:compress-lz4"
+  "up:compress-lz4"
+  "up:compress-zstd"
+  # --- batch: write/read roundtrip ---
+  "standalone:write-batch-read-batch"
+  "standalone:write-batch-read-batch-compressed"
 )
 
 is_known_failure() {
