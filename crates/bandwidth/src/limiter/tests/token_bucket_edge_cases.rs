@@ -109,9 +109,16 @@ fn rate_limiting_accuracy_simple_doubling() {
 
     session.clear();
 
-    // Write 2000 bytes - should sleep 2 seconds
+    // Write 2000 bytes - should sleep ~2 seconds.
+    // Allow 1ms tolerance: integer division truncation in microsecond
+    // arithmetic can lose up to 1 byte of credit per register() call,
+    // which at 1000 bytes/sec maps to 1ms of sleep shortfall.
     let sleep2 = limiter.register(2000);
-    assert_eq!(sleep2.requested(), Duration::from_secs(2));
+    let requested = sleep2.requested();
+    assert!(
+        requested >= Duration::from_millis(1999) && requested <= Duration::from_secs(2),
+        "expected ~2s sleep, got {requested:?}"
+    );
 }
 
 #[test]
