@@ -7,7 +7,7 @@ use crate::error::{BatchError, BatchResult};
 use crate::format::FileEntry;
 use protocol::CompatibilityFlags;
 use protocol::ProtocolVersion;
-use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
+use protocol::codec::NdxCodecEnum;
 use protocol::flist::FileListReader;
 use protocol::idlist::IdList;
 use std::io;
@@ -189,82 +189,85 @@ impl BatchReader {
             }
         }
 
-        // With INC_RECURSE, the initial flist typically contains just "." (the
-        // root directory). Additional flist segments follow, each preceded by an
-        // NDX value of (NDX_FLIST_OFFSET - dir_ndx). We read these until
-        // NDX_FLIST_EOF signals all file lists are complete.
-        // upstream: flist.c:recv_additional_file_list() + main.c:do_recv()
+        // With INC_RECURSE, the batch stream interleaves flist sub-list
+        // segments with delta operations (the batch file is a raw tee of the
+        // protocol stream). We cannot read all sub-lists here because delta
+        // NDX values appear between them. Instead, store the flist reader and
+        // NDX codec so sub-lists can be read on-demand during delta replay.
+        // upstream: main.c:do_recv() interleaves recv_additional_file_list()
+        // with recv_files() in an event loop.
         if inc_recurse {
-            let mut ndx_codec = NdxCodecEnum::new(protocol_version.as_u8());
-            let mut next_ndx_start = entries.len() as i32;
-
-            loop {
-                let ndx = ndx_codec.read_ndx(reader).map_err(|e| {
-                    BatchError::Io(io::Error::new(
-                        e.kind(),
-                        format!("Failed to read incremental flist NDX: {e}"),
-                    ))
-                })?;
-
-                if ndx == NDX_FLIST_EOF {
-                    break;
-                }
-
-                // NDX_FLIST_OFFSET-based values signal a new sub-list for the
-                // directory at index (NDX_FLIST_OFFSET - ndx).
-                if ndx > NDX_FLIST_OFFSET {
-                    continue;
-                }
-
-                let dir_ndx = NDX_FLIST_OFFSET - ndx;
-
-                // Look up the parent directory name to prefix sub-list entries.
-                let parent_dir = if (dir_ndx as usize) < entries.len() {
-                    Some(entries[dir_ndx as usize].name().to_owned())
-                } else {
-                    None
-                };
-
-                // Reset compression state for the new segment.
-                // upstream: recv_file_list() starts with fresh static state.
-                flist_reader.reset_for_new_segment(next_ndx_start);
-
-                // Read entries for this sub-list segment.
-                let segment_start = entries.len();
-                loop {
-                    // Pass only this segment's entries for hardlink abbreviation.
-                    let segment_entries = &entries[segment_start..];
-                    match flist_reader.read_entry_with_flist(reader, segment_entries) {
-                        Ok(Some(mut entry)) => {
-                            // Sub-list entries have paths relative to their parent
-                            // directory. Prepend the parent path to get the full
-                            // relative path.
-                            // upstream: flist.c:f_name() reconstructs full path
-                            if let Some(ref parent) = parent_dir {
-                                entry.prepend_dir(Path::new(parent));
-                            }
-                            entries.push(entry);
-                        }
-                        Ok(None) => break,
-                        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-                        Err(e) => {
-                            return Err(BatchError::Io(io::Error::new(
-                                e.kind(),
-                                format!("Failed to read incremental flist entry: {e}"),
-                            )));
-                        }
-                    }
-                }
-
-                self.io_error |= flist_reader.io_error();
-                next_ndx_start = entries.len() as i32;
-            }
-
-            // Store the NDX codec for continued use during delta replay.
-            self.ndx_codec = Some(ndx_codec);
+            self.ndx_codec = Some(NdxCodecEnum::new(protocol_version.as_u8()));
+            self.flist_next_ndx_start = entries.len() as i32;
+            self.flist_reader = Some(flist_reader);
         }
 
         Ok(entries)
+    }
+
+    /// Read one incremental flist sub-list segment from the batch stream.
+    ///
+    /// Called during delta replay when an NDX_FLIST_OFFSET value is encountered.
+    /// Reads entries for one directory's sub-list and appends them to `entries`.
+    ///
+    /// The `dir_ndx` identifies the parent directory (`NDX_FLIST_OFFSET - ndx`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:recv_additional_file_list()` - reads one sub-list segment
+    pub fn read_incremental_flist_segment(
+        &mut self,
+        dir_ndx: i32,
+        entries: &mut Vec<protocol::flist::FileEntry>,
+    ) -> BatchResult<()> {
+        let flist_reader = self
+            .flist_reader
+            .as_mut()
+            .ok_or_else(|| BatchError::Io(io::Error::other("no flist reader for INC_RECURSE")))?;
+
+        let reader = self
+            .batch_file
+            .as_mut()
+            .ok_or_else(|| BatchError::Io(io::Error::other("Batch file not open")))?;
+
+        // Look up the parent directory name to prefix sub-list entries.
+        let parent_dir = if (dir_ndx as usize) < entries.len() {
+            Some(entries[dir_ndx as usize].name().to_owned())
+        } else {
+            None
+        };
+
+        // Reset compression state for the new segment.
+        // upstream: recv_file_list() starts with fresh static state.
+        flist_reader.reset_for_new_segment(self.flist_next_ndx_start);
+
+        // Read entries for this sub-list segment.
+        let segment_start = entries.len();
+        loop {
+            let segment_entries = &entries[segment_start..];
+            match flist_reader.read_entry_with_flist(reader, segment_entries) {
+                Ok(Some(mut entry)) => {
+                    // upstream: flist.c:f_name() reconstructs full path
+                    if let Some(ref parent) = parent_dir {
+                        entry.prepend_dir(Path::new(parent));
+                    }
+                    entries.push(entry);
+                }
+                Ok(None) => break,
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => {
+                    return Err(BatchError::Io(io::Error::new(
+                        e.kind(),
+                        format!("Failed to read incremental flist entry: {e}"),
+                    )));
+                }
+            }
+        }
+
+        self.io_error |= flist_reader.io_error();
+        self.flist_next_ndx_start = entries.len() as i32;
+
+        Ok(())
     }
 }
 
