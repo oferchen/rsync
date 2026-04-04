@@ -230,12 +230,13 @@ impl GeneratorContext {
 
         // When INC_RECURSE, only send initial segment entries; the rest
         // are sent via the SegmentScheduler during the transfer loop.
-        let entries_to_send = if let Some(count) = self.incremental.initial_segment_count {
-            &self.file_list[..count]
-        } else {
-            &self.file_list
-        };
-        for entry in entries_to_send {
+        let count = self
+            .incremental
+            .initial_segment_count
+            .unwrap_or(self.file_list.len());
+        for i in 0..count {
+            let entry = &self.file_list[i];
+            self.prepare_pending_acl(entry, i, &mut flist_writer);
             flist_writer.write_entry(writer, entry)?;
         }
 
@@ -303,7 +304,9 @@ impl GeneratorContext {
 
         // Write file entries from the reordered file_list.
         let end = segment.flist_start + segment.count;
-        for entry in &self.file_list[segment.flist_start..end] {
+        for i in segment.flist_start..end {
+            let entry = &self.file_list[i];
+            self.prepare_pending_acl(entry, i, flist_writer);
             flist_writer.write_entry(writer, entry)?;
         }
 
@@ -320,6 +323,43 @@ impl GeneratorContext {
         );
 
         Ok(())
+    }
+
+    /// Reads filesystem ACLs and sets them on the writer for the next entry.
+    ///
+    /// When `--acls` is enabled and the entry is not a symlink, reads the
+    /// real access ACL (and default ACL for directories) from the filesystem
+    /// and passes them to the writer via `set_pending_acl`. The writer will
+    /// strip base permission entries before sending.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `flist.c:1627-1656` where `get_acl()` reads filesystem ACLs
+    /// and `send_acl()` strips and sends them.
+    fn prepare_pending_acl(
+        &self,
+        entry: &protocol::flist::FileEntry,
+        index: usize,
+        flist_writer: &mut protocol::flist::FileListWriter,
+    ) {
+        if !self.config.flags.acls || entry.is_symlink() {
+            return;
+        }
+
+        let full_path = &self.full_paths[index];
+        let mode = entry.mode();
+
+        // upstream: acls.c:560-561 - read access ACL
+        let access_acl = metadata::get_rsync_acl(full_path, mode, false);
+
+        // upstream: acls.c:566-569 - read default ACL for directories
+        let default_acl = if entry.is_dir() {
+            Some(metadata::get_rsync_acl(full_path, mode, true))
+        } else {
+            None
+        };
+
+        flist_writer.set_pending_acl(access_acl, default_acl);
     }
 
     /// Sends `NDX_FLIST_EOF` and flushes, marking incremental sending as complete.

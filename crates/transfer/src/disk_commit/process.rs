@@ -319,6 +319,7 @@ fn apply_metadata_acls_and_xattrs(
                 access_ndx,
                 entry.def_acl_ndx(),
                 follow,
+                Some(entry.mode()),
             ) {
                 return Some((file_path.to_path_buf(), e.to_string()));
             }

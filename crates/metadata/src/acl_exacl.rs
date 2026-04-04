@@ -56,8 +56,8 @@ use std::path::Path;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use exacl::AclOption;
-use exacl::{AclEntry, Perm, getfacl, setfacl};
-use protocol::acl::{AclCache, NAME_IS_USER, RsyncAcl};
+use exacl::{AclEntry, AclEntryKind, Perm, getfacl, setfacl};
+use protocol::acl::{AclCache, IdAccess, NAME_IS_USER, NO_ENTRY, RsyncAcl};
 
 use crate::MetadataError;
 
@@ -175,6 +175,137 @@ pub fn sync_acls(
     }
 
     Ok(())
+}
+
+/// Converts [`exacl::Perm`] flags to rsync 3-bit rwx permission bits.
+fn exacl_perms_to_rsync(perms: Perm) -> u8 {
+    let mut bits: u8 = 0;
+    if perms.contains(Perm::READ) {
+        bits |= 0x04;
+    }
+    if perms.contains(Perm::WRITE) {
+        bits |= 0x02;
+    }
+    if perms.contains(Perm::EXECUTE) {
+        bits |= 0x01;
+    }
+    bits
+}
+
+/// Reads the filesystem ACL for `path` and converts it to an [`RsyncAcl`].
+///
+/// Returns a populated `RsyncAcl` with base entries (user_obj, group_obj,
+/// mask_obj, other_obj) and any named user/group entries. When the filesystem
+/// does not support ACLs or the path does not exist, returns a fake ACL
+/// derived from `mode` (matching upstream's fallback behavior).
+///
+/// # Arguments
+///
+/// * `path` - File or directory to read ACLs from
+/// * `mode` - File mode bits used as fallback when no ACL is available
+/// * `is_default` - If true, reads the default ACL (for directories only)
+///
+/// # Upstream Reference
+///
+/// Mirrors `get_rsync_acl()` in `acls.c` lines 472-536.
+pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    let option = if is_default {
+        Some(AclOption::DEFAULT_ACL)
+    } else {
+        Some(AclOption::ACCESS_ACL)
+    };
+    #[cfg(target_os = "macos")]
+    let option = {
+        let _ = is_default;
+        None
+    };
+
+    let entries = match getfacl(path, option) {
+        Ok(e) => e,
+        Err(e) => {
+            if is_unsupported_error(&e) {
+                // upstream: acls.c:525-528 - fake ACL from mode when unsupported
+                return if !is_default {
+                    RsyncAcl::from_mode(mode)
+                } else {
+                    RsyncAcl::new()
+                };
+            }
+            // On error, return mode-based fallback
+            return if !is_default {
+                RsyncAcl::from_mode(mode)
+            } else {
+                RsyncAcl::new()
+            };
+        }
+    };
+
+    if entries.is_empty() {
+        return if !is_default {
+            RsyncAcl::from_mode(mode)
+        } else {
+            RsyncAcl::new()
+        };
+    }
+
+    let mut acl = RsyncAcl::new();
+
+    for entry in &entries {
+        let perms = exacl_perms_to_rsync(entry.perms);
+        match entry.kind {
+            AclEntryKind::User if entry.name.is_empty() => {
+                // user_obj (owner)
+                if acl.user_obj == NO_ENTRY {
+                    acl.user_obj = perms;
+                }
+            }
+            AclEntryKind::Group if entry.name.is_empty() => {
+                // group_obj (owning group)
+                if acl.group_obj == NO_ENTRY {
+                    acl.group_obj = perms;
+                }
+            }
+            // Mask and Other are POSIX ACL entries (Linux/FreeBSD only)
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            AclEntryKind::Mask => {
+                if acl.mask_obj == NO_ENTRY {
+                    acl.mask_obj = perms;
+                }
+            }
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            AclEntryKind::Other => {
+                if acl.other_obj == NO_ENTRY {
+                    acl.other_obj = perms;
+                }
+            }
+            AclEntryKind::User => {
+                // Named user entry
+                let uid: u32 = entry.name.parse().unwrap_or(0);
+                acl.names.push(IdAccess::user(uid, u32::from(perms)));
+            }
+            AclEntryKind::Group => {
+                // Named group entry
+                let gid: u32 = entry.name.parse().unwrap_or(0);
+                acl.names.push(IdAccess::group(gid, u32::from(perms)));
+            }
+            _ => {}
+        }
+    }
+
+    // Ensure base entries are populated from mode when not in ACL
+    // upstream: acls.c:493-501 - fill NO_ENTRY base entries from mode
+    if acl.user_obj == NO_ENTRY {
+        acl.user_obj = ((mode >> 6) & 7) as u8;
+    }
+    if acl.group_obj == NO_ENTRY {
+        acl.group_obj = ((mode >> 3) & 7) as u8;
+    }
+    if acl.other_obj == NO_ENTRY {
+        acl.other_obj = (mode & 7) as u8;
+    }
+
+    acl
 }
 
 /// Resets the access ACL to match the file's permission bits.
@@ -333,6 +464,44 @@ fn rsync_perms_to_exacl(bits: u8) -> Perm {
     perms
 }
 
+/// Reconstructs a full ACL from stripped wire data and the file mode.
+///
+/// The sender strips base permission entries (user_obj, group_obj, other_obj)
+/// that can be inferred from the file mode. The receiver must reconstruct
+/// them before applying the ACL to the destination filesystem.
+///
+/// # Upstream Reference
+///
+/// Mirrors `change_sacl_perms()` in `acls.c` lines 857-933 which fills
+/// base entries from the file mode when the ACL was received stripped.
+fn reconstruct_acl(acl: &RsyncAcl, mode: Option<u32>) -> RsyncAcl {
+    let mode = match mode {
+        Some(m) => m,
+        None => return acl.clone(),
+    };
+
+    let mut result = acl.clone();
+
+    // upstream: acls.c:892 - user_obj from mode bits 8-6
+    if result.user_obj == NO_ENTRY {
+        result.user_obj = ((mode >> 6) & 7) as u8;
+    }
+    // upstream: acls.c:898 - group_obj from mode bits 5-3
+    if result.group_obj == NO_ENTRY {
+        result.group_obj = ((mode >> 3) & 7) as u8;
+    }
+    // upstream: acls.c:911 - other_obj from mode bits 2-0
+    if result.other_obj == NO_ENTRY {
+        result.other_obj = (mode & 7) as u8;
+    }
+    // upstream: acls.c:900-908 - mask from mode bits 5-3 when needed
+    if !result.names.is_empty() && result.mask_obj == NO_ENTRY {
+        result.mask_obj = ((mode >> 3) & 7) as u8;
+    }
+
+    result
+}
+
 /// Converts a [`RsyncAcl`] from the wire protocol into a list of [`AclEntry`]
 /// values suitable for [`exacl::setfacl`].
 ///
@@ -429,13 +598,17 @@ pub fn apply_acls_from_cache(
     access_ndx: u32,
     default_ndx: Option<u32>,
     follow_symlinks: bool,
+    mode: Option<u32>,
 ) -> Result<(), MetadataError> {
     if !follow_symlinks {
         return Ok(());
     }
 
     if let Some(acl) = cache.get_access(access_ndx) {
-        let entries = rsync_acl_to_entries(acl);
+        // Reconstruct stripped base entries from file mode.
+        // upstream: acls.c:change_sacl_perms() fills base entries from mode
+        let reconstructed = reconstruct_acl(acl, mode);
+        let entries = rsync_acl_to_entries(&reconstructed);
         if !entries.is_empty() {
             if let Err(e) = setfacl(&[destination], &entries, None) {
                 if !is_unsupported_error(&e) {
@@ -644,7 +817,7 @@ mod tests {
         File::create(&file).expect("create file");
 
         let cache = AclCache::new();
-        let result = apply_acls_from_cache(&file, &cache, 0, None, false);
+        let result = apply_acls_from_cache(&file, &cache, 0, None, false, None);
         assert!(result.is_ok());
     }
 
@@ -658,7 +831,7 @@ mod tests {
         let acl = RsyncAcl::from_mode(0o644);
         let ndx = cache.store_access(acl);
 
-        let result = apply_acls_from_cache(&file, &cache, ndx, None, true);
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
         assert!(result.is_ok());
     }
 
@@ -672,7 +845,7 @@ mod tests {
         let acl = RsyncAcl::new();
         let ndx = cache.store_access(acl);
 
-        let result = apply_acls_from_cache(&file, &cache, ndx, None, true);
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
         assert!(result.is_ok());
     }
 
@@ -689,7 +862,14 @@ mod tests {
         let access_ndx = cache.store_access(access);
         let default_ndx = cache.store_default(default);
 
-        let result = apply_acls_from_cache(&subdir, &cache, access_ndx, Some(default_ndx), true);
+        let result = apply_acls_from_cache(
+            &subdir,
+            &cache,
+            access_ndx,
+            Some(default_ndx),
+            true,
+            Some(0o755),
+        );
         assert!(result.is_ok());
     }
 
@@ -701,7 +881,7 @@ mod tests {
 
         let cache = AclCache::new();
         // Index 99 does not exist - should be a no-op, not an error
-        let result = apply_acls_from_cache(&file, &cache, 99, None, true);
+        let result = apply_acls_from_cache(&file, &cache, 99, None, true, Some(0o644));
         assert!(result.is_ok());
     }
 }
