@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::xattr::XattrList;
+
 /// Rarely-used metadata fields for file entries.
 ///
 /// These fields are only populated when specific flags are active (e.g.
@@ -42,4 +44,13 @@ pub(super) struct FileEntryExtras {
     pub(super) def_acl_ndx: Option<u32>,
     /// Extended attribute index for --xattrs mode (index into xattr list).
     pub(super) xattr_ndx: Option<u32>,
+    /// Sender-side xattr data read from the filesystem.
+    ///
+    /// Populated by the generator when `--xattrs` is active. Names are in
+    /// wire format (translated via `local_to_wire()`). The writer sends this
+    /// data on the wire and does not need to know the filesystem path.
+    ///
+    /// On the receiver side this field is unused - the receiver uses
+    /// `xattr_ndx` to look up data in the `XattrCache`.
+    pub(super) xattr_list: Option<XattrList>,
 }

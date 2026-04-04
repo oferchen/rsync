@@ -35,7 +35,7 @@ impl XattrState {
 }
 
 /// A single extended attribute with name, value, and transfer state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct XattrEntry {
     /// Attribute name (e.g., "user.mime_type", "security.selinux").
     name: Vec<u8>,

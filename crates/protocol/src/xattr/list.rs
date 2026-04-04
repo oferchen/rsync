@@ -7,7 +7,7 @@ use crate::xattr::{XattrEntry, XattrState};
 /// Manages the xattr entries and their transfer states during the wire
 /// protocol exchange. Supports the abbreviation protocol where large
 /// values are transmitted as checksums and requested on-demand.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct XattrList {
     /// The xattr entries.
     entries: Vec<XattrEntry>,
