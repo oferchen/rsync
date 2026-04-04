@@ -49,11 +49,10 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.recursive() {
         flags.push('r');
     }
-    // upstream: options.c:2704 - 'z' is only sent for CPRES_ZLIB in the
-    // compact flag string. When --compress-choice selects a non-default
-    // algorithm (lz4), the 'z' flag is omitted and --compress-choice=ALGO
-    // is sent as a long-form arg instead.
-    // The default_algorithm() represents "-z without --compress-choice".
+    // upstream: options.c:2704 - 'z' is only sent when the compression
+    // algorithm is the default (no explicit --compress-choice). For
+    // explicitly chosen algorithms (lz4, zstd), the 'z' flag is omitted
+    // and --compress-choice=ALGO is sent as a long-form arg instead.
     if config.compress()
         && config.compression_algorithm()
             == compress::algorithm::CompressionAlgorithm::default_algorithm()
@@ -240,6 +239,34 @@ mod tests {
         assert!(flags.contains('p'), "expected 'p' in flags: {flags}");
         assert!(flags.contains('o'), "expected 'o' in flags: {flags}");
         assert!(flags.contains('g'), "expected 'g' in flags: {flags}");
+    }
+
+    #[test]
+    fn server_flag_string_includes_z_for_default_algorithm() {
+        // upstream: options.c:2704 - 'z' is sent for the default compression
+        // algorithm (no explicit --compress-choice).
+        let config = ClientConfig::builder()
+            .compress(true)
+            .compression_algorithm(compress::algorithm::CompressionAlgorithm::default_algorithm())
+            .build();
+        let flags = build_server_flag_string(&config);
+        assert!(
+            flags.contains('z'),
+            "expected 'z' for default algorithm: {flags}"
+        );
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn server_flag_string_omits_z_for_lz4() {
+        // upstream: options.c:2704 - 'z' NOT sent for non-default algorithms.
+        // LZ4 uses --compress-choice=lz4 as a long-form arg instead.
+        let config = ClientConfig::builder()
+            .compress(true)
+            .compression_algorithm(compress::algorithm::CompressionAlgorithm::Lz4)
+            .build();
+        let flags = build_server_flag_string(&config);
+        assert!(!flags.contains('z'), "should not send 'z' for lz4: {flags}");
     }
 
     #[test]
