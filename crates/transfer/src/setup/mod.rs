@@ -190,18 +190,26 @@ fn build_our_flags<'a>(
         let flags = negotiator.build_flags_from_client_info(&client_info, config.allow_inc_recurse);
         (flags, Some(client_info))
     } else {
-        // SSH/client mode: platform-based defaults
-        #[cfg(unix)]
-        let mut flags =
-            CompatibilityFlags::CHECKSUM_SEED_FIX | CompatibilityFlags::VARINT_FLIST_FLAGS;
-        #[cfg(not(unix))]
-        let mut flags =
-            CompatibilityFlags::CHECKSUM_SEED_FIX | CompatibilityFlags::VARINT_FLIST_FLAGS;
+        // SSH/client mode: set all flags we support, matching upstream
+        // compat.c:712-732 which sets flags based on compile-time features
+        // and the capability string advertised to the peer.
+        let mut flags = CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::VARINT_FLIST_FLAGS
+            | CompatibilityFlags::SAFE_FILE_LIST
+            | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
+            | CompatibilityFlags::INPLACE_PARTIAL_DIR
+            | CompatibilityFlags::ID0_NAMES;
 
         // upstream: CAN_SET_SYMLINK_TIMES at compat.c:713-714
         #[cfg(unix)]
         {
             flags |= CompatibilityFlags::SYMLINK_TIMES;
+        }
+
+        // upstream: ICONV_OPTION at compat.c:715-716
+        #[cfg(unix)]
+        {
+            flags |= CompatibilityFlags::SYMLINK_ICONV;
         }
 
         if config.allow_inc_recurse {
