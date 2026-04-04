@@ -4,7 +4,7 @@
 ))]
 
 use crate::MetadataError;
-use protocol::acl::AclCache;
+use protocol::acl::{AclCache, RsyncAcl};
 use std::path::Path;
 use std::sync::Once;
 
@@ -64,6 +64,19 @@ pub fn sync_acls(
     Ok(())
 }
 
+/// Reads the filesystem ACL for `path` and converts it to an [`RsyncAcl`].
+///
+/// On iOS/tvOS/watchOS, returns a fake ACL derived from mode.
+#[allow(clippy::module_name_repetitions)]
+pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
+    let _ = path;
+    if is_default {
+        RsyncAcl::new()
+    } else {
+        RsyncAcl::from_mode(mode)
+    }
+}
+
 /// Applies parsed ACLs from an [`AclCache`] to a destination file.
 ///
 /// On iOS/tvOS/watchOS platforms without ACL support, emits a one-time
@@ -75,8 +88,16 @@ pub fn apply_acls_from_cache(
     access_ndx: u32,
     default_ndx: Option<u32>,
     follow_symlinks: bool,
+    mode: Option<u32>,
 ) -> Result<(), MetadataError> {
-    let _ = (destination, cache, access_ndx, default_ndx, follow_symlinks);
+    let _ = (
+        destination,
+        cache,
+        access_ndx,
+        default_ndx,
+        follow_symlinks,
+        mode,
+    );
     warn_acl_unsupported();
     Ok(())
 }
