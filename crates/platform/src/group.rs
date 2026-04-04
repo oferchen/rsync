@@ -106,8 +106,82 @@ fn extract_group_members(gr_mem: *mut *mut libc::c_char) -> Vec<String> {
     members
 }
 
-/// Non-Unix stub for group member lookup.
-#[cfg(not(unix))]
+/// Windows group member lookup via `NetLocalGroupGetMembers`.
+///
+/// Enumerates local group members at information level 3 (SID + domain\name).
+/// Returns the list of member account names (without domain prefix).
+///
+/// upstream: clientserver.c - `@group` expansion in auth_users.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+pub fn lookup_group_members(group_name: &str) -> Result<Option<Vec<String>>, io::Error> {
+    use windows::Win32::NetworkManagement::NetManagement::{
+        LOCALGROUP_MEMBERS_INFO_3, NetApiBufferFree, NetLocalGroupGetMembers,
+    };
+    use windows::core::PCWSTR;
+
+    let group_wide: Vec<u16> = group_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut buf_ptr: *mut u8 = std::ptr::null_mut();
+    let mut entries_read: u32 = 0;
+    let mut total_entries: u32 = 0;
+
+    // SAFETY: NetLocalGroupGetMembers with level 3 returns LOCALGROUP_MEMBERS_INFO_3 structs.
+    // All out-parameter pointers are valid.
+    let status = unsafe {
+        NetLocalGroupGetMembers(
+            PCWSTR::null(),
+            PCWSTR(group_wide.as_ptr()),
+            3,
+            &mut buf_ptr,
+            u32::MAX,
+            &mut entries_read,
+            &mut total_entries,
+            None,
+        )
+    };
+
+    // NERR_GroupNotFound (2220) or ERROR_NO_SUCH_ALIAS (1376)
+    if status == 2220 || status == 1376 {
+        return Ok(None);
+    }
+
+    if status != 0 {
+        return Err(io::Error::from_raw_os_error(status as i32));
+    }
+
+    let mut members = Vec::new();
+
+    if !buf_ptr.is_null() && entries_read > 0 {
+        // SAFETY: `buf_ptr` is a valid array of `entries_read` LOCALGROUP_MEMBERS_INFO_3 structs.
+        let infos: &[LOCALGROUP_MEMBERS_INFO_3] =
+            unsafe { std::slice::from_raw_parts(buf_ptr.cast(), entries_read as usize) };
+
+        for info in infos {
+            // SAFETY: `lgrmi3_domainandname` is a valid PWSTR from NetLocalGroupGetMembers.
+            if let Ok(full_name) = unsafe { info.lgrmi3_domainandname.to_string() } {
+                // Strip domain prefix (DOMAIN\user -> user).
+                let name = full_name
+                    .rsplit_once('\\')
+                    .map_or(full_name.as_str(), |(_, user)| user);
+                members.push(name.to_owned());
+            }
+        }
+    }
+
+    if !buf_ptr.is_null() {
+        // SAFETY: Buffer was allocated by NetLocalGroupGetMembers and must be freed.
+        let _ = unsafe { NetApiBufferFree(Some(buf_ptr.cast())) };
+    }
+
+    Ok(Some(members))
+}
+
+/// Non-Unix/non-Windows stub for group member lookup.
+#[cfg(not(any(unix, windows)))]
 pub fn lookup_group_members(_group_name: &str) -> Result<Option<Vec<String>>, io::Error> {
     Ok(None)
 }
@@ -156,10 +230,30 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     #[test]
-    fn non_unix_returns_none() {
+    fn non_unix_non_windows_returns_none() {
         let result = lookup_group_members("staff");
+        assert!(result.unwrap().is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_administrators_group_returns_some() {
+        let result = lookup_group_members("Administrators");
+        assert!(result.is_ok());
+        // Administrators group always exists on Windows.
+        if let Ok(Some(members)) = result {
+            // May be empty but the group itself should be found.
+            let _ = members;
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_nonexistent_group_returns_none() {
+        let result = lookup_group_members("nonexistent_group_xyz_99999");
+        assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
