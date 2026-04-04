@@ -432,7 +432,7 @@ impl FileListWriter {
             send_xattr(writer, &list, cached_index, self.checksum_seed)?;
             if cached_index.is_none() {
                 // upstream: xattrs.c:538 - rsync_xal_store() adds to cache
-                self.xattr_cache.store(list);
+                let _ = self.xattr_cache.store(list);
             }
         }
 
