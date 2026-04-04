@@ -1282,7 +1282,7 @@ comp_run_scenario() {
         echo "    --itemize-changes: no itemize output found"
         return 1
       fi
-      if ! grep -qE '^\>f' "$item_out"; then
+      if ! grep -qE '^[<>]f' "$item_out"; then
         echo "    --itemize-changes: no file transfer itemize lines"
         return 1
       fi
@@ -1498,9 +1498,6 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  # --- itemize: MSG_INFO relay not yet working in daemon mode ---
-  "oc:itemize"
-  "up:itemize"
   # --- xattrs: wire format not yet implemented ---
   "oc:xattrs"
   "up:xattrs"
