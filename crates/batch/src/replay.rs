@@ -424,7 +424,12 @@ pub fn replay(
     // upstream: receiver.c:recv_files() reads NDX + iflags + sum_head per file,
     // then delta tokens, then file checksum. NDX_DONE signals phase transitions.
     let proto = reader.config().protocol_version;
-    let mut ndx_codec = NdxCodecEnum::new(proto as u8);
+    // Reuse the NDX codec from flist reading if available (INC_RECURSE mode).
+    // The codec carries delta-encoding state from reading incremental flist
+    // segment NDX values; creating a fresh codec would desync.
+    let mut ndx_codec = reader
+        .take_ndx_codec()
+        .unwrap_or_else(|| NdxCodecEnum::new(proto as u8));
     let max_phase = if proto >= 29 { 2 } else { 1 };
     let mut phase = 1;
 
