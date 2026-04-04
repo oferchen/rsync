@@ -415,9 +415,36 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                     i += 1;
                 }
             }
+            // upstream: options.c:2800-2805 - --compress-choice, --new-compress, --old-compress
+            "--new-compress" => {
+                config.flags.compress = true;
+                if config.connection.compression_level.is_none() {
+                    config.connection.compression_level =
+                        Some(compress::zlib::CompressionLevel::Default);
+                }
+            }
+            "--old-compress" => {
+                config.flags.compress = true;
+                if config.connection.compression_level.is_none() {
+                    config.connection.compression_level =
+                        Some(compress::zlib::CompressionLevel::Default);
+                }
+            }
             _ => {
+                // upstream: options.c:2800-2805 - --compress-choice=ALGO
+                if let Some(_choice) = arg
+                    .strip_prefix("--compress-choice=")
+                    .or_else(|| arg.strip_prefix("--zc="))
+                {
+                    // Mark compression as active. The actual algorithm is parsed
+                    // later from client_args in run_server_with_handshake().
+                    config.flags.compress = true;
+                    if config.connection.compression_level.is_none() {
+                        config.connection.compression_level =
+                            Some(compress::zlib::CompressionLevel::Default);
+                    }
                 // upstream: options.c:2737-2740
-                if let Some(level_str) = arg.strip_prefix("--compress-level=") {
+                } else if let Some(level_str) = arg.strip_prefix("--compress-level=") {
                     if let Ok(level) = level_str.parse::<u32>() {
                         if let Ok(cl) = compress::zlib::CompressionLevel::from_numeric(level) {
                             config.connection.compression_level = Some(cl);
