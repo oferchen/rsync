@@ -140,6 +140,38 @@ impl GeneratorContext {
             entry.set_hardlink_ino(metadata.ino() as i64);
         }
 
+        // upstream: flist.c:make_file() -> get_xattr() reads xattrs for -X mode
+        #[cfg(unix)]
+        if self.config.flags.xattrs {
+            // upstream: xattrs.c:303-334 - get_xattr() only reads for regular files,
+            // dirs, symlinks (if preserve_links), specials (if preserve_specials),
+            // and devices (if preserve_devices).
+            let should_read = file_type.is_file()
+                || file_type.is_dir()
+                || (file_type.is_symlink() && self.config.flags.links);
+
+            if should_read {
+                // Follow symlinks only for non-symlink entries (lgetxattr for symlinks)
+                let follow = !file_type.is_symlink();
+                match metadata::read_xattrs_for_wire(
+                    full_path,
+                    follow,
+                    false, // am_root: sender on Linux non-root reads user.* only
+                    self.checksum_seed,
+                ) {
+                    Ok(list) => {
+                        if !list.is_empty() {
+                            entry.set_xattr_list(list);
+                        }
+                    }
+                    Err(_) => {
+                        // Non-fatal: silently skip, matching upstream behavior
+                        // where xattr read failures don't abort the transfer
+                    }
+                }
+            }
+        }
+
         Ok(entry)
     }
 }
