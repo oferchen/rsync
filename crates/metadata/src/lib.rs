@@ -193,10 +193,10 @@ pub use options::{AttrsFlags, MetadataOptions};
 pub use special::{create_device_node, create_fifo};
 
 #[cfg(all(unix, feature = "xattr"))]
-pub use xattr::{apply_xattrs_from_list, sync_xattrs};
+pub use xattr::{apply_xattrs_from_list, read_xattrs_for_wire, sync_xattrs};
 
 #[cfg(not(all(unix, feature = "xattr")))]
-pub use xattr_stub::{apply_xattrs_from_list, sync_xattrs};
+pub use xattr_stub::{apply_xattrs_from_list, read_xattrs_for_wire, sync_xattrs};
 
 pub use copy_as::{CopyAsGuard, CopyAsIds, parse_copy_as_spec, switch_effective_ids};
 

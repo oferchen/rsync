@@ -34,6 +34,18 @@ pub fn sync_xattrs(
     Ok(())
 }
 
+/// Reads xattr data from a file and returns it as a wire-format `XattrList`.
+///
+/// On platforms without xattr support, returns an empty list.
+pub fn read_xattrs_for_wire(
+    _path: &Path,
+    _follow_symlinks: bool,
+    _am_root: bool,
+    _checksum_seed: i32,
+) -> Result<XattrList, MetadataError> {
+    Ok(XattrList::new())
+}
+
 /// Applies parsed xattrs from a wire protocol [`XattrList`] to a destination file.
 ///
 /// On platforms without xattr support, emits a one-time warning and
