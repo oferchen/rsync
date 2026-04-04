@@ -19,6 +19,7 @@ use crate::BatchConfig;
 use crate::error::{BatchError, BatchResult};
 use crate::format::{BatchFlags, BatchHeader};
 use protocol::codec::NdxCodecEnum;
+use protocol::flist::FileListReader;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 
@@ -45,6 +46,18 @@ pub struct BatchReader {
     /// segment headers, then continues with the same state for delta NDX values.
     /// upstream: sender and receiver share one continuous `read_ndx()` state.
     ndx_codec: Option<NdxCodecEnum>,
+    /// File list reader preserved for incremental sub-list reading.
+    ///
+    /// With INC_RECURSE, the batch stream interleaves flist sub-list segments
+    /// with delta operations. The flist reader must persist across calls so
+    /// sub-lists can be decoded on-the-fly during delta replay.
+    /// upstream: flist.c state persists across `recv_additional_file_list()` calls.
+    flist_reader: Option<FileListReader>,
+    /// Next NDX start for incremental flist segments.
+    ///
+    /// Tracks the starting index for the next sub-list segment, incremented
+    /// as entries are appended during INC_RECURSE replay.
+    flist_next_ndx_start: i32,
 }
 
 impl BatchReader {
@@ -69,6 +82,8 @@ impl BatchReader {
             header: None,
             io_error: 0,
             ndx_codec: None,
+            flist_reader: None,
+            flist_next_ndx_start: 0,
         })
     }
 

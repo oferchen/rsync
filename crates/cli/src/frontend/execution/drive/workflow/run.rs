@@ -420,11 +420,13 @@ where
     let local_batch_compat_flags = {
         use protocol::CompatibilityFlags;
         let flags = CompatibilityFlags::SAFE_FILE_LIST
+            | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
             | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::INPLACE_PARTIAL_DIR
             | CompatibilityFlags::VARINT_FLIST_FLAGS
             | CompatibilityFlags::ID0_NAMES;
         #[cfg(unix)]
-        let flags = flags | CompatibilityFlags::SYMLINK_TIMES;
+        let flags = flags | CompatibilityFlags::SYMLINK_TIMES | CompatibilityFlags::SYMLINK_ICONV;
         flags.bits() as i32
     };
 

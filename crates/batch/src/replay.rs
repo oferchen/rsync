@@ -347,7 +347,7 @@ pub fn replay(
     // This replaces the previous custom FileEntry::read_from() approach
     // and produces protocol::flist::FileEntry values that are compatible
     // with upstream rsync's batch file wire format.
-    let entries = reader.read_protocol_flist()?;
+    let mut entries = reader.read_protocol_flist()?;
 
     let mut result = ReplayResult {
         file_count: entries.len() as u64,
@@ -475,9 +475,39 @@ pub fn replay(
             continue;
         }
 
-        // upstream: io.c - NDX_FLIST_OFFSET-based values are incremental file
-        // list directory indices (INC_RECURSE sub-lists). Skip during replay.
+        // upstream: flist.c:recv_additional_file_list() - NDX_FLIST_OFFSET-based
+        // values signal a new incremental sub-list (INC_RECURSE). Read the flist
+        // segment entries on-the-fly to grow the entries vec, then create any new
+        // directories so files in the sub-list have parent paths.
         if ndx <= NDX_FLIST_OFFSET {
+            let dir_ndx = NDX_FLIST_OFFSET - ndx;
+            let prev_len = entries.len();
+            reader.read_incremental_flist_segment(dir_ndx, &mut entries)?;
+
+            // Create directories and symlinks for newly discovered entries.
+            for entry in &entries[prev_len..] {
+                let dest_path = dest_root.join(entry.name());
+                if entry.is_dir() {
+                    if let Some(parent) = dest_path.parent() {
+                        fs::create_dir_all(parent).ok();
+                    }
+                    fs::create_dir_all(&dest_path).ok();
+                } else if entry.is_symlink() {
+                    if let Some(_target) = entry.link_target() {
+                        if let Some(parent) = dest_path.parent() {
+                            fs::create_dir_all(parent).ok();
+                        }
+                        #[cfg(unix)]
+                        {
+                            let _ = std::os::unix::fs::symlink(_target, &dest_path);
+                        }
+                    }
+                } else if let Some(parent) = dest_path.parent() {
+                    fs::create_dir_all(parent).ok();
+                }
+            }
+
+            result.file_count = entries.len() as u64;
             continue;
         }
 

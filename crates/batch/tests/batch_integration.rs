@@ -2051,6 +2051,15 @@ mod protocol_flist_round_trip {
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
 
+        // Write empty uid and gid ID lists (preserve_uid/gid are set).
+        // upstream: uidlist.c:recv_id_list() reads until id=0 terminator.
+        let mut id_buf = Vec::new();
+        protocol::idlist::IdList::new()
+            .write(&mut id_buf, false, protocol_version as u8)
+            .unwrap();
+        writer.write_data(&id_buf).unwrap(); // uid list
+        writer.write_data(&id_buf).unwrap(); // gid list
+
         writer.finalize().unwrap();
         path_str
     }
