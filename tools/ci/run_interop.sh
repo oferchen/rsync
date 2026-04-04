@@ -1498,9 +1498,6 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  # --- xattrs: wire format not yet implemented ---
-  "oc:xattrs"
-  "up:xattrs"
   # --- compression: lz4 not supported by upstream 3.4.1, zstd daemon interop ---
   "oc:compress-lz4"
   "up:compress-lz4"

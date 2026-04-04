@@ -56,9 +56,11 @@ pub fn send_xattr<W: Write>(
             let name = entry.name();
             let datum_len = entry.datum_len();
 
-            write_varint(writer, name.len() as i32)?;
+            // upstream: name_len includes NUL terminator on the wire
+            write_varint(writer, (name.len() + 1) as i32)?;
             write_varint(writer, datum_len as i32)?;
             writer.write_all(name)?;
+            writer.write_all(&[0u8])?;
 
             if datum_len > MAX_FULL_DATUM {
                 // upstream: sum_init(xattr_sum_nni, checksum_seed)
