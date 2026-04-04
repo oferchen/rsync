@@ -247,12 +247,13 @@ mod tests {
         // algorithm (no explicit --compress-choice).
         let config = ClientConfig::builder()
             .compress(true)
-            .compression_algorithm(
-                compress::algorithm::CompressionAlgorithm::default_algorithm(),
-            )
+            .compression_algorithm(compress::algorithm::CompressionAlgorithm::default_algorithm())
             .build();
         let flags = build_server_flag_string(&config);
-        assert!(flags.contains('z'), "expected 'z' for default algorithm: {flags}");
+        assert!(
+            flags.contains('z'),
+            "expected 'z' for default algorithm: {flags}"
+        );
     }
 
     #[cfg(feature = "lz4")]
