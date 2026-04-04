@@ -862,7 +862,7 @@ mod inc_recurse_flist_tests {
     }
 
     #[test]
-    fn read_inc_recurse_flist_reads_all_segments() {
+    fn read_inc_recurse_flist_reads_initial_segment_only() {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("inc_recurse.batch");
         build_inc_recurse_batch(&batch_path);
@@ -876,21 +876,40 @@ mod inc_recurse_flist_tests {
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
 
-        let entries = reader.read_protocol_flist().unwrap();
+        // With INC_RECURSE, read_protocol_flist() only reads the initial
+        // segment. Sub-lists are read on-demand via read_incremental_flist_segment().
+        let mut entries = reader.read_protocol_flist().unwrap();
 
-        // Should have 3 entries: "." directory + "file1.txt" + "file2.txt"
+        // Initial segment has only the "." directory.
+        assert_eq!(
+            entries.len(),
+            1,
+            "Expected 1 initial entry, got {}",
+            entries.len()
+        );
+        assert_eq!(entries[0].name(), ".");
+
+        // NDX codec is available for reading sub-list NDX values.
+        let mut ndx_codec = reader.take_ndx_codec().expect("NDX codec should be set");
+
+        // Read the sub-list NDX from the stream.
+        let batch_reader = reader.inner_reader().unwrap();
+        let ndx = ndx_codec.read_ndx(batch_reader).unwrap();
+        assert_eq!(ndx, NDX_FLIST_OFFSET, "Expected NDX_FLIST_OFFSET");
+
+        // Read the sub-list segment for directory at index 0.
+        let dir_ndx = NDX_FLIST_OFFSET - ndx;
+        reader.read_incremental_flist_segment(dir_ndx, &mut entries).unwrap();
+
+        // Now we have all 3 entries.
         assert_eq!(
             entries.len(),
             3,
-            "Expected 3 entries, got {}",
+            "Expected 3 entries after sub-list, got {}",
             entries.len()
         );
 
-        // First entry is the root directory "."
-        assert_eq!(entries[0].name(), ".");
-
-        // Sub-list entries should have their parent directory prepended.
-        // Since parent is ".", paths become "./file1.txt" and "./file2.txt".
+        // Sub-list entries have parent directory prepended.
         let name1 = entries[1].name();
         let name2 = entries[2].name();
         assert!(
@@ -901,6 +920,11 @@ mod inc_recurse_flist_tests {
             name2.contains("file2.txt"),
             "Expected file2.txt in name, got: {name2}"
         );
+
+        // Read the NDX_FLIST_EOF to confirm stream is fully consumed.
+        let batch_reader = reader.inner_reader().unwrap();
+        let eof_ndx = ndx_codec.read_ndx(batch_reader).unwrap();
+        assert_eq!(eof_ndx, NDX_FLIST_EOF, "Expected NDX_FLIST_EOF");
     }
 
     #[test]
