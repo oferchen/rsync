@@ -489,5 +489,6 @@ fn apply_acls_from_receiver_cache(
         access_ndx,
         entry.def_acl_ndx(),
         follow_symlinks,
+        Some(entry.mode()),
     )
 }
