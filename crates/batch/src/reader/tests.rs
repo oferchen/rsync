@@ -899,7 +899,9 @@ mod inc_recurse_flist_tests {
 
         // Read the sub-list segment for directory at index 0.
         let dir_ndx = NDX_FLIST_OFFSET - ndx;
-        reader.read_incremental_flist_segment(dir_ndx, &mut entries).unwrap();
+        reader
+            .read_incremental_flist_segment(dir_ndx, &mut entries)
+            .unwrap();
 
         // Now we have all 3 entries.
         assert_eq!(
