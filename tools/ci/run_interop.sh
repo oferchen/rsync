@@ -2952,11 +2952,26 @@ run_comprehensive_interop_case() {
       "hardlinks-numeric|-avH --numeric-ids|hardlinks-numeric"
       "hardlinks-checksum|-avHc|hardlinks-checksum"
       "hardlinks-existing|-avH --existing|hardlinks-existing"
-      "compress-zstd|-avz --compress-choice=zstd|compress"
-      "compress-lz4|-avz --compress-choice=lz4|compress"
       "inc-recursive-delete|-av --inc-recursive --delete|delete"
       "inc-recursive-symlinks|-rlptv --inc-recursive|symlinks"
     )
+
+    # compress-choice scenarios gated on upstream binary support.
+    # Upstream rsync 3.4.1 may or may not have SUPPORT_LZ4/SUPPORT_ZSTD
+    # compiled in, depending on whether liblz4-dev/libzstd-dev were present
+    # at configure time (Debian package vs source build).
+    local up_version_output
+    up_version_output=$("$upstream_binary" --version 2>&1 || true)
+    if echo "$up_version_output" | grep -qi "zstd"; then
+      scenarios+=("compress-zstd|-avz --compress-choice=zstd|compress")
+    else
+      echo "  [info] upstream ${version} lacks zstd support, skipping compress-zstd"
+    fi
+    if echo "$up_version_output" | grep -qi "lz4"; then
+      scenarios+=("compress-lz4|-avz --compress-choice=lz4|compress")
+    else
+      echo "  [info] upstream ${version} lacks lz4 support, skipping compress-lz4"
+    fi
   fi
 
   # Protocol-31 requires upstream rsync >= 3.1.0 (protocol 31 support).
