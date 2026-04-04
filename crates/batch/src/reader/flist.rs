@@ -9,6 +9,7 @@ use protocol::CompatibilityFlags;
 use protocol::ProtocolVersion;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
 use protocol::flist::FileListReader;
+use protocol::idlist::IdList;
 use std::io;
 use std::path::Path;
 
@@ -158,6 +159,35 @@ impl BatchReader {
         // upstream: flist.c:recv_file_list() does `io_error |= err` when the
         // sender reports errors, then breaks the loop without aborting.
         self.io_error = flist_reader.io_error();
+
+        // upstream: flist.c:2726-2728 - recv_id_list(f, flist) when !inc_recurse
+        // The batch stream contains uid/gid name mapping lists after the flist
+        // entries. We must consume them to keep the stream position correct for
+        // delta replay. Batch files don't record numeric_ids, but if the original
+        // transfer used --numeric-ids, no ID lists were sent and none are in the
+        // stream. Since the interop test default does NOT use --numeric-ids, we
+        // consume them when preserve_uid/gid is set.
+        if !inc_recurse {
+            let id0_names = header
+                .compat_flags
+                .map(|cf| {
+                    CompatibilityFlags::from_bits(cf as u32).contains(CompatibilityFlags::ID0_NAMES)
+                })
+                .unwrap_or(false);
+            let proto_ver = protocol_version.as_u8();
+
+            // upstream: uidlist.c:465 - (preserve_uid || preserve_acls) && numeric_ids <= 0
+            if flags.preserve_uid || flags.preserve_acls {
+                let mut uid_list = IdList::new();
+                uid_list.read(reader, id0_names, proto_ver, |_| None)?;
+            }
+
+            // upstream: uidlist.c:473 - (preserve_gid || preserve_acls) && numeric_ids <= 0
+            if flags.preserve_gid || flags.preserve_acls {
+                let mut gid_list = IdList::new();
+                gid_list.read(reader, id0_names, proto_ver, |_| None)?;
+            }
+        }
 
         // With INC_RECURSE, the initial flist typically contains just "." (the
         // root directory). Additional flist segments follow, each preceded by an

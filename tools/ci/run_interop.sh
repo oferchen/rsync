@@ -1499,9 +1499,6 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  # --- batch: read-batch roundtrip not yet fully working ---
-  "standalone:write-batch-read-batch"
-  "standalone:write-batch-read-batch-compressed"
 )
 
 is_known_failure() {
@@ -1649,7 +1646,6 @@ use chroot = false
 path = ${daemon_dest}
 comment = batch daemon test
 read only = false
-numeric ids = yes
 CONF
 
   start_oc_daemon "$daemon_conf" "$daemon_log" "$upstream_binary" "$daemon_pid" "$oc_port"
