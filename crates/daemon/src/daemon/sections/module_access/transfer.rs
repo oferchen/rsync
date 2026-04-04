@@ -409,6 +409,12 @@ fn process_approved_module(
         None
     };
 
+    // Windows: install a Win32 API-based name converter. No subprocess needed
+    // since Windows doesn't use chroot; name resolution uses LookupAccountNameW
+    // and NetUserEnum directly from the platform crate.
+    #[cfg(windows)]
+    let _name_converter_guard = Some(install_windows_name_converter());
+
     // After chroot the server must use "/" as the module root
     let effective_module;
     let config_module = if module.use_chroot {

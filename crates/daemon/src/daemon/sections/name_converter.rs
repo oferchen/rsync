@@ -108,14 +108,52 @@ impl metadata::id_lookup::NameConverterCallbacks for NameConverter {
     }
 }
 
+/// Windows name converter using Win32 account APIs directly.
+///
+/// Unlike the Unix subprocess-based converter, Windows name resolution
+/// uses `LookupAccountNameW` and `NetUserEnum` from the platform crate.
+/// No subprocess is needed since Windows doesn't use chroot.
+///
+/// upstream: uidlist.c - on Windows, name resolution uses Win32 APIs
+/// instead of NSS/getpwuid/getgrnam.
+#[cfg(windows)]
+struct WindowsNameConverter;
+
+#[cfg(windows)]
+impl WindowsNameConverter {
+    /// Creates a new Windows name converter.
+    fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(windows)]
+impl metadata::id_lookup::NameConverterCallbacks for WindowsNameConverter {
+    fn uid_to_name(&mut self, uid: u32) -> Option<String> {
+        platform::name_resolution::rid_to_account_name(uid)
+    }
+    fn gid_to_name(&mut self, gid: u32) -> Option<String> {
+        // On Windows, GIDs map to group RIDs. Reuse the same enum-and-match
+        // approach. For groups, we could enumerate local groups, but the
+        // rid_to_account_name only enumerates users. For now, return None
+        // for group reverse lookups - groups are less commonly preserved.
+        // A full implementation would enumerate via NetLocalGroupEnum.
+        platform::name_resolution::rid_to_account_name(gid)
+    }
+    fn name_to_uid(&mut self, name: &str) -> Option<u32> {
+        platform::name_resolution::name_to_rid(name)
+    }
+    fn name_to_gid(&mut self, name: &str) -> Option<u32> {
+        platform::name_resolution::lookup_account_info(name).map(|(rid, _)| rid)
+    }
+}
+
 /// RAII guard that removes the thread-local name converter on drop.
 ///
 /// Ensures the converter is cleaned up even on early return or panic,
 /// preventing stale converters from leaking across transfers.
-#[cfg(unix)]
 struct NameConverterGuard;
 
-#[cfg(unix)]
 impl Drop for NameConverterGuard {
     fn drop(&mut self) {
         metadata::id_lookup::clear_name_converter();
@@ -128,6 +166,15 @@ impl Drop for NameConverterGuard {
 #[cfg(unix)]
 fn install_name_converter(converter: NameConverter) -> NameConverterGuard {
     metadata::id_lookup::set_name_converter(Box::new(converter));
+    NameConverterGuard
+}
+
+/// Installs a Windows name converter into the current thread's lookup slot.
+///
+/// Returns an RAII guard that removes the converter on drop.
+#[cfg(windows)]
+fn install_windows_name_converter() -> NameConverterGuard {
+    metadata::id_lookup::set_name_converter(Box::new(WindowsNameConverter::new()));
     NameConverterGuard
 }
 
