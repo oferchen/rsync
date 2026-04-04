@@ -2902,12 +2902,15 @@ run_comprehensive_interop_case() {
     "permissions|-rlpv|perms"
     "itemize|-avi|itemize"
     "acls|-avA|acls"
-    "xattrs|-avX|xattrs"
   )
 
   # Extended scenarios only for the newest upstream version (3.4.1).
+  # xattrs requires protocol >= 30 (upstream compat.c), so it only works
+  # against 3.4.1 (protocol 32), not 3.0.9 (protocol 28) or 3.1.3 (protocol 31
+  # but may lack --enable-xattr-support).
   if [[ "${version}" == "3.4.1" ]]; then
     scenarios+=(
+      "xattrs|-avX|xattrs"
       "one-file-system|-avx|basic"
       "whole-file-replace|-avW|whole-file-replace"
       "delay-updates|-av --delay-updates|basic"
