@@ -783,3 +783,185 @@ mod token_delta_tests {
         assert!(result.is_err());
     }
 }
+
+mod inc_recurse_flist_tests {
+    use super::*;
+    use protocol::CompatibilityFlags;
+    use protocol::ProtocolVersion;
+    use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
+    use protocol::flist::{FileEntry, FileListWriter};
+    use std::io::Write;
+
+    /// Build a synthetic batch file with INC_RECURSE incremental flist segments.
+    ///
+    /// Layout:
+    /// 1. Batch header (stream_flags + proto_version + compat_flags + checksum_seed)
+    /// 2. Initial flist segment: just "." (root directory)
+    /// 3. NDX for sub-list of dir at index 0 (NDX_FLIST_OFFSET - 0)
+    /// 4. Sub-flist segment: "file1.txt" and "file2.txt" (relative to ".")
+    /// 5. NDX_FLIST_EOF
+    fn build_inc_recurse_batch(path: &Path) {
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        // INC_RECURSE + VARINT_FLIST_FLAGS + SAFE_FILE_LIST
+        let compat_flags = CompatibilityFlags::INC_RECURSE
+            | CompatibilityFlags::VARINT_FLIST_FLAGS
+            | CompatibilityFlags::SAFE_FILE_LIST;
+
+        let mut file = std::fs::File::create(path).unwrap();
+
+        // --- Batch header ---
+        let header = crate::format::BatchHeader {
+            stream_flags: BatchFlags {
+                recurse: true,
+                ..BatchFlags::default()
+            },
+            protocol_version: 32,
+            compat_flags: Some(compat_flags.bits() as i32),
+            checksum_seed: 42,
+        };
+        header.write_to(&mut file).unwrap();
+
+        // --- Initial flist segment: "." directory ---
+        let mut flist_writer = FileListWriter::with_compat_flags(protocol, compat_flags);
+        let dot_dir = FileEntry::new_directory(".".into(), 0o755);
+        flist_writer.write_entry(&mut file, &dot_dir).unwrap();
+        flist_writer.write_end(&mut file, None).unwrap();
+
+        // --- NDX for sub-list: directory index 0 ---
+        let mut ndx_codec = NdxCodecEnum::new(32);
+        let sub_list_ndx = NDX_FLIST_OFFSET; // dir at index 0
+        ndx_codec.write_ndx(&mut file, sub_list_ndx).unwrap();
+
+        // --- Sub-flist segment: entries relative to "." ---
+        let mut sub_writer = FileListWriter::with_compat_flags(protocol, compat_flags);
+        let entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
+        let entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
+        sub_writer.write_entry(&mut file, &entry1).unwrap();
+        sub_writer.write_entry(&mut file, &entry2).unwrap();
+        sub_writer.write_end(&mut file, None).unwrap();
+
+        // --- NDX_FLIST_EOF ---
+        ndx_codec.write_ndx(&mut file, NDX_FLIST_EOF).unwrap();
+
+        file.flush().unwrap();
+    }
+
+    #[test]
+    fn read_inc_recurse_flist_reads_all_segments() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("inc_recurse.batch");
+        build_inc_recurse_batch(&batch_path);
+
+        let config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            32,
+        );
+
+        let mut reader = BatchReader::new(config).unwrap();
+        reader.read_header().unwrap();
+
+        let entries = reader.read_protocol_flist().unwrap();
+
+        // Should have 3 entries: "." directory + "file1.txt" + "file2.txt"
+        assert_eq!(
+            entries.len(),
+            3,
+            "Expected 3 entries, got {}",
+            entries.len()
+        );
+
+        // First entry is the root directory "."
+        assert_eq!(entries[0].name(), ".");
+
+        // Sub-list entries should have their parent directory prepended.
+        // Since parent is ".", paths become "./file1.txt" and "./file2.txt".
+        let name1 = entries[1].name();
+        let name2 = entries[2].name();
+        assert!(
+            name1.contains("file1.txt"),
+            "Expected file1.txt in name, got: {name1}"
+        );
+        assert!(
+            name2.contains("file2.txt"),
+            "Expected file2.txt in name, got: {name2}"
+        );
+    }
+
+    #[test]
+    fn read_inc_recurse_flist_preserves_ndx_codec_for_replay() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("inc_recurse_codec.batch");
+        build_inc_recurse_batch(&batch_path);
+
+        let config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            32,
+        );
+
+        let mut reader = BatchReader::new(config).unwrap();
+        reader.read_header().unwrap();
+        let _entries = reader.read_protocol_flist().unwrap();
+
+        // The NDX codec should be available for the delta replay phase.
+        let codec = reader.take_ndx_codec();
+        assert!(
+            codec.is_some(),
+            "NDX codec should be preserved after INC_RECURSE flist reading"
+        );
+    }
+
+    #[test]
+    fn read_non_inc_recurse_flist_has_no_ndx_codec() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("no_inc_recurse.batch");
+
+        // Build a batch file WITHOUT INC_RECURSE
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let compat_flags =
+            CompatibilityFlags::VARINT_FLIST_FLAGS | CompatibilityFlags::SAFE_FILE_LIST;
+
+        let mut file = std::fs::File::create(&batch_path).unwrap();
+
+        let header = crate::format::BatchHeader {
+            stream_flags: BatchFlags {
+                recurse: true,
+                ..BatchFlags::default()
+            },
+            protocol_version: 32,
+            compat_flags: Some(compat_flags.bits() as i32),
+            checksum_seed: 42,
+        };
+        header.write_to(&mut file).unwrap();
+
+        // Write a single flist with all entries (no INC_RECURSE)
+        let mut flist_writer = FileListWriter::with_compat_flags(protocol, compat_flags);
+        let dir_entry = FileEntry::new_directory(".".into(), 0o755);
+        let file1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
+        flist_writer.write_entry(&mut file, &dir_entry).unwrap();
+        flist_writer.write_entry(&mut file, &file1).unwrap();
+        flist_writer.write_end(&mut file, None).unwrap();
+        file.flush().unwrap();
+        drop(file);
+
+        let config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            32,
+        );
+
+        let mut reader = BatchReader::new(config).unwrap();
+        reader.read_header().unwrap();
+
+        let entries = reader.read_protocol_flist().unwrap();
+        assert_eq!(entries.len(), 2);
+
+        // No NDX codec should be stored for non-INC_RECURSE mode.
+        let codec = reader.take_ndx_codec();
+        assert!(
+            codec.is_none(),
+            "NDX codec should not be set for non-INC_RECURSE batch"
+        );
+    }
+}

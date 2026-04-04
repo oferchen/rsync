@@ -1508,7 +1508,7 @@ KNOWN_FAILURES=(
   "oc:compress-lz4"
   "up:compress-lz4"
   "up:compress-zstd"
-  # --- batch: write/read roundtrip ---
+  # --- batch: read-batch roundtrip not yet fully working ---
   "standalone:write-batch-read-batch"
   "standalone:write-batch-read-batch-compressed"
 )

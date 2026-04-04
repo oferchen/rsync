@@ -18,6 +18,7 @@ mod tests;
 use crate::BatchConfig;
 use crate::error::{BatchError, BatchResult};
 use crate::format::{BatchFlags, BatchHeader};
+use protocol::codec::NdxCodecEnum;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 
@@ -38,6 +39,12 @@ pub struct BatchReader {
     /// Upstream `flist.c:recv_file_list()` accumulates `io_error |= err` when
     /// the sender reports errors during file list generation.
     io_error: i32,
+    /// NDX codec initialized during flist reading and reused for delta replay.
+    ///
+    /// With INC_RECURSE, the NDX codec is first used to read incremental flist
+    /// segment headers, then continues with the same state for delta NDX values.
+    /// upstream: sender and receiver share one continuous `read_ndx()` state.
+    ndx_codec: Option<NdxCodecEnum>,
 }
 
 impl BatchReader {
@@ -61,6 +68,7 @@ impl BatchReader {
             batch_file: Some(BufReader::new(file)),
             header: None,
             io_error: 0,
+            ndx_codec: None,
         })
     }
 
@@ -174,5 +182,16 @@ impl BatchReader {
     /// Returns `None` if the batch file has not been opened or has been closed.
     pub fn inner_reader(&mut self) -> Option<&mut BufReader<File>> {
         self.batch_file.as_mut()
+    }
+
+    /// Returns the NDX codec initialized during flist reading.
+    ///
+    /// The codec carries state from reading incremental flist segment NDX
+    /// values (INC_RECURSE). The delta replay loop must continue with this
+    /// same codec to correctly decode subsequent NDX values.
+    ///
+    /// Returns `None` if `read_protocol_flist()` has not been called yet.
+    pub fn take_ndx_codec(&mut self) -> Option<NdxCodecEnum> {
+        self.ndx_codec.take()
     }
 }
