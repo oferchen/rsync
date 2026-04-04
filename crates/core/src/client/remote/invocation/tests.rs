@@ -1301,6 +1301,20 @@ fn omits_compress_choice_for_default_algorithm() {
     );
 }
 
+#[cfg(feature = "lz4")]
+#[test]
+fn includes_compress_choice_for_lz4() {
+    let config = ClientConfig::builder()
+        .compression_algorithm(CompressionAlgorithm::Lz4)
+        .build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter()
+            .any(|a| a.starts_with("--compress-choice=") && a.contains("lz4")),
+        "expected --compress-choice=lz4 in args: {args:?}"
+    );
+}
+
 #[test]
 fn includes_block_size_long_arg() {
     use std::num::NonZeroU32;
