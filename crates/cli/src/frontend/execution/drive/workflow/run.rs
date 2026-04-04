@@ -419,14 +419,12 @@ where
     // can correctly decode the file list and delta stream.
     let local_batch_compat_flags = {
         use protocol::CompatibilityFlags;
-        let mut flags = CompatibilityFlags::SAFE_FILE_LIST
+        let flags = CompatibilityFlags::SAFE_FILE_LIST
             | CompatibilityFlags::CHECKSUM_SEED_FIX
             | CompatibilityFlags::VARINT_FLIST_FLAGS
             | CompatibilityFlags::ID0_NAMES;
         #[cfg(unix)]
-        {
-            flags |= CompatibilityFlags::SYMLINK_TIMES;
-        }
+        let flags = flags | CompatibilityFlags::SYMLINK_TIMES;
         flags.bits() as i32
     };
 

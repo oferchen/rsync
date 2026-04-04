@@ -351,8 +351,9 @@ impl SshCommand {
     /// Checks whether the configured program appears to be an SSH client.
     fn is_ssh_program(&self) -> bool {
         let program = self.program.to_string_lossy();
-        let basename = program.rsplit('/').next().unwrap_or(&program);
-        basename == "ssh"
+        // Handle both forward slash (Unix) and backslash (Windows) path separators.
+        let basename = program.rsplit(['/', '\\']).next().unwrap_or(&program);
+        basename == "ssh" || basename == "ssh.exe"
     }
 
     /// Checks whether any existing option already specifies the `-c` cipher flag.
