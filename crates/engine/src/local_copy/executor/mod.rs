@@ -10,7 +10,9 @@ mod util;
 
 pub(crate) use cleanup::{delete_extraneous_entries, remove_source_entry_if_requested};
 pub(crate) use directory::ChecksumCache;
-pub(crate) use directory::{copy_directory_recursive, is_device, is_fifo};
+pub(crate) use directory::{
+    capture_batch_file_entry, copy_directory_recursive, is_device, is_fifo,
+};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use file::take_fsync_call_count;

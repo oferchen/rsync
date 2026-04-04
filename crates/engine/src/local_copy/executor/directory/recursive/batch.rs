@@ -73,7 +73,7 @@ fn build_protocol_file_entry(
 /// The `FileListWriter` in the context maintains cross-entry compression
 /// state (name prefix sharing, same-mode/same-time flags) matching the
 /// upstream flist encoding in `flist.c:send_file_entry()`.
-pub(super) fn capture_batch_file_entry(
+pub(crate) fn capture_batch_file_entry(
     context: &mut CopyContext,
     relative_path: &Path,
     metadata: &fs::Metadata,

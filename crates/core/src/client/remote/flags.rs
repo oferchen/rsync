@@ -49,7 +49,15 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.recursive() {
         flags.push('r');
     }
-    if config.compress() {
+    // upstream: options.c:2704 - 'z' is only sent for CPRES_ZLIB in the
+    // compact flag string. When --compress-choice selects a non-default
+    // algorithm (lz4), the 'z' flag is omitted and --compress-choice=ALGO
+    // is sent as a long-form arg instead.
+    // The default_algorithm() represents "-z without --compress-choice".
+    if config.compress()
+        && config.compression_algorithm()
+            == compress::algorithm::CompressionAlgorithm::default_algorithm()
+    {
         flags.push('z');
     }
     if config.checksum() {

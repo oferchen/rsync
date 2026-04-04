@@ -97,6 +97,17 @@ fn apply_common_daemon_config(
     server_config.write.io_uring_policy = config.io_uring_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
     server_config.connection.compression_level = config.compression_level();
+
+    // upstream: compat.c:543,819 - when --compress-choice is set, bypass vstring
+    // negotiation and use the explicit algorithm. Convert from compress crate enum
+    // to protocol crate enum via the canonical wire name.
+    let algo = config.compression_algorithm();
+    if algo != compress::algorithm::CompressionAlgorithm::default_algorithm() {
+        if let Ok(proto_algo) = protocol::CompressionAlgorithm::parse(algo.name()) {
+            server_config.connection.compress_choice = Some(proto_algo);
+        }
+    }
+
     // upstream: options.c:2737-2740 - compress_level defaults to 6 when -z is set.
     if server_config.flags.compress && server_config.connection.compression_level.is_none() {
         server_config.connection.compression_level =

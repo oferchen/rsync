@@ -13,7 +13,8 @@ use crate::local_copy::{is_device, is_fifo};
 use ::metadata::MetadataOptions;
 
 use super::super::{
-    copy_device, copy_directory_recursive, copy_fifo, copy_file, copy_symlink, non_empty_path,
+    capture_batch_file_entry, copy_device, copy_directory_recursive, copy_fifo, copy_file,
+    copy_symlink, non_empty_path,
 };
 use super::destination::{compute_special_target_path, compute_target_path};
 use super::metadata::resolve_effective_metadata;
@@ -94,6 +95,11 @@ pub(super) fn handle_directory_contents_copy(
     // so no extra prefix in the relative path.
     context.set_safety_depth_offset(0);
 
+    // upstream: flist.c:send_file_list() - a trailing-slash source becomes
+    // "." (DOTDIR_NAME) as the first flist entry. Capture this root entry
+    // so the batch file matches upstream's wire format.
+    capture_batch_file_entry(context, Path::new("."), metadata)?;
+
     copy_directory_recursive(
         context,
         source_path,
@@ -157,6 +163,11 @@ pub(super) fn handle_directory_copy(
     // directory name, which inflates the depth seen by safe-links checks.
     // Record an offset of 1 so that safety-relative paths exclude it.
     context.set_safety_depth_offset(1);
+
+    // upstream: flist.c:send_file_list() - the source directory is sent as
+    // the first flist entry with FLAG_TOP_DIR | FLAG_CONTENT_DIR. Capture
+    // it so the batch file matches upstream's wire format.
+    capture_batch_file_entry(context, &relative, metadata)?;
 
     copy_directory_recursive(
         context,
@@ -335,6 +346,12 @@ pub(super) fn handle_non_directory_source(
     let metadata_options = context.metadata_options();
 
     if effective_type.is_file() {
+        // upstream: batch.c - single-file transfers emit flist entry + delta
+        // data just like recursive directory transfers.
+        if let Some(rel) = record_path {
+            capture_batch_file_entry(context, rel, &effective_metadata)?;
+        }
+        context.begin_batch_file_delta()?;
         let target = compute_target_path(
             proc_ctx.destination_path,
             &proc_ctx.destination_base,
