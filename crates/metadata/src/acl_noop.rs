@@ -6,7 +6,7 @@
 //! implementation (e.g., Windows, Android).
 
 use crate::MetadataError;
-use protocol::acl::AclCache;
+use protocol::acl::{AclCache, RsyncAcl};
 use std::path::Path;
 use std::sync::Once;
 
@@ -37,6 +37,17 @@ pub fn sync_acls(
     Ok(())
 }
 
+/// Reads the filesystem ACL for `path` and converts it to an [`RsyncAcl`].
+///
+/// On platforms without ACL support, returns a fake ACL derived from mode.
+pub fn get_rsync_acl(_path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
+    if is_default {
+        RsyncAcl::new()
+    } else {
+        RsyncAcl::from_mode(mode)
+    }
+}
+
 /// Applies parsed ACLs from an [`AclCache`] to a destination file.
 ///
 /// On platforms without ACL support, emits a one-time warning and
@@ -48,6 +59,7 @@ pub fn apply_acls_from_cache(
     _access_ndx: u32,
     _default_ndx: Option<u32>,
     _follow_symlinks: bool,
+    _mode: Option<u32>,
 ) -> Result<(), MetadataError> {
     warn_acl_unsupported();
     Ok(())

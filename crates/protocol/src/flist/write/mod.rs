@@ -106,6 +106,14 @@ pub struct FileListWriter {
     /// ACL cache for deduplication across entries.
     /// upstream: acls.c - sender maintains cache of sent ACLs.
     acl_cache: AclCache,
+    /// ACL data pending for the next `write_entry` call.
+    ///
+    /// When set, `write_entry` uses this instead of faking ACL from mode.
+    /// The caller (generator) reads real filesystem ACLs and sets this
+    /// before each `write_entry`. Reset to `None` after use.
+    ///
+    /// Tuple: (access_acl, optional_default_acl_for_dirs).
+    pending_acl: Option<(RsyncAcl, Option<RsyncAcl>)>,
     /// Checksum seed for xattr abbreviated value digests.
     /// upstream: xattrs.c - `sum_init(xattr_sum_nni, checksum_seed)`
     checksum_seed: i32,
@@ -128,6 +136,7 @@ impl FileListWriter {
             use_safe_file_list: protocol.safe_file_list_always_enabled(),
             first_ndx: 0,
             acl_cache: AclCache::new(),
+            pending_acl: None,
             checksum_seed: 0,
         }
     }
@@ -149,6 +158,7 @@ impl FileListWriter {
                 || protocol.safe_file_list_always_enabled(),
             first_ndx: 0,
             acl_cache: AclCache::new(),
+            pending_acl: None,
             checksum_seed: 0,
         }
     }
@@ -224,13 +234,30 @@ impl FileListWriter {
 
     /// Sets whether ACLs should be written to the wire.
     ///
-    /// When enabled, ACL indices are written after other metadata.
-    /// Note: ACL data itself is sent in a separate exchange.
+    /// When enabled, ACL data is written after the checksum for each entry.
     #[inline]
     #[must_use]
     pub const fn with_preserve_acls(mut self, preserve: bool) -> Self {
         self.preserve.acls = preserve;
         self
+    }
+
+    /// Sets the ACL data for the next `write_entry` call.
+    ///
+    /// The caller reads real filesystem ACLs and provides them here. The writer
+    /// strips base permission entries before sending (matching upstream's
+    /// `rsync_acl_strip_perms`). The pending ACL is consumed by the next
+    /// `write_entry` call and reset to `None`.
+    ///
+    /// When not set, `write_entry` falls back to `RsyncAcl::from_mode()` for
+    /// backward compatibility.
+    ///
+    /// # Arguments
+    ///
+    /// * `access_acl` - The file's access ACL
+    /// * `default_acl` - The directory's default ACL (pass `None` for non-directories)
+    pub fn set_pending_acl(&mut self, access_acl: RsyncAcl, default_acl: Option<RsyncAcl>) {
+        self.pending_acl = Some((access_acl, default_acl));
     }
 
     /// Sets whether extended attributes should be written to the wire.
@@ -371,8 +398,24 @@ impl FileListWriter {
         // upstream: flist.c:send_file_entry() line 654 - send_acl() called for
         // all non-symlink entries, including abbreviated hardlink followers.
         if self.preserve.acls && !entry.is_symlink() {
-            let acl = RsyncAcl::from_mode(entry.mode());
-            send_acl(writer, &acl, None, entry.is_dir(), &mut self.acl_cache)?;
+            let (mut access_acl, default_acl) = self
+                .pending_acl
+                .take()
+                .unwrap_or_else(|| (RsyncAcl::from_mode(entry.mode()), None));
+
+            // upstream: acls.c:657-658 - strip base entries derivable from mode
+            access_acl.strip_perms_for_send(entry.mode());
+
+            send_acl(
+                writer,
+                &access_acl,
+                default_acl.as_ref(),
+                entry.is_dir(),
+                &mut self.acl_cache,
+            )?;
+        } else {
+            // Discard unused pending ACL
+            self.pending_acl = None;
         }
 
         // upstream: flist.c:send_file_entry() line 656 - send_xattr() called

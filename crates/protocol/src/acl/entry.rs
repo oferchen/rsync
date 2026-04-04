@@ -366,18 +366,54 @@ impl RsyncAcl {
     /// If the ACL had a mask_obj, the group_obj is replaced with the
     /// mask value (since POSIX.1e stores effective group perms in mask
     /// when extended entries exist).
-    ///
-    /// # Upstream Reference
-    ///
-    /// Mirrors `rsync_acl_strip_perms()` in `acls.c` lines 172-190.
     pub fn strip_perms(&mut self) {
-        // upstream: acls.c:176-178 - when mask is present, group permissions
-        // in the mode come from the mask, not group_obj
         if self.has_mask_obj() {
             self.group_obj = self.mask_obj;
             self.mask_obj = NO_ENTRY;
         }
         self.names.clear();
+    }
+
+    /// Removes permission entries that can be inferred from the file mode.
+    ///
+    /// Called before sending ACLs on the wire. The receiver reconstructs
+    /// stripped entries from the file mode transmitted in the file list.
+    /// This reduces wire traffic by omitting redundant data.
+    ///
+    /// The stripping rules:
+    /// - `user_obj` is always stripped (derivable from mode bits 8-6)
+    /// - `other_obj` is always stripped (derivable from mode bits 2-0)
+    /// - When no mask is present, `group_obj` is stripped (derivable from bits 5-3)
+    /// - When mask is present and `group_obj` matches the group bits from mode,
+    ///   `group_obj` is stripped
+    /// - When mask is present, named entries exist, and mask matches the group
+    ///   bits from mode, `mask_obj` is stripped
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `rsync_acl_strip_perms()` in `acls.c` lines 138-155.
+    pub fn strip_perms_for_send(&mut self, mode: u32) {
+        // upstream: acls.c:142 - user_obj always stripped
+        self.user_obj = NO_ENTRY;
+
+        if self.mask_obj == NO_ENTRY {
+            // upstream: acls.c:143-144 - no mask means group_obj is redundant
+            self.group_obj = NO_ENTRY;
+        } else {
+            let group_perms = ((mode >> 3) & 7) as u8;
+            // upstream: acls.c:147-148
+            if self.group_obj == group_perms {
+                self.group_obj = NO_ENTRY;
+            }
+            // upstream: acls.c:150-151 - mask stripped when it matches group perms
+            // and named entries exist
+            if !self.names.is_empty() && self.mask_obj == group_perms {
+                self.mask_obj = NO_ENTRY;
+            }
+        }
+
+        // upstream: acls.c:154 - other_obj always stripped
+        self.other_obj = NO_ENTRY;
     }
 
     /// Compares two ACLs for semantic equivalence.

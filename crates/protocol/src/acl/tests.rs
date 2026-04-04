@@ -1607,3 +1607,170 @@ mod acl_tag_type_tests {
         assert_ne!(AclTagType::MaskObj, AclTagType::OtherObj);
     }
 }
+
+/// Tests for `strip_perms_for_send` - sender-side permission stripping.
+mod strip_perms_for_send_tests {
+    use super::*;
+
+    /// Basic file without extended ACLs: all base entries stripped.
+    /// upstream: acls.c:142-154 - user_obj, group_obj (no mask), other_obj all set to NO_ENTRY
+    #[test]
+    fn basic_file_all_stripped() {
+        let mut acl = RsyncAcl::from_mode(0o644);
+        assert_eq!(acl.user_obj, 0x06);
+        assert_eq!(acl.group_obj, 0x04);
+        assert_eq!(acl.other_obj, 0x04);
+
+        acl.strip_perms_for_send(0o644);
+
+        assert_eq!(acl.user_obj, NO_ENTRY);
+        assert_eq!(acl.group_obj, NO_ENTRY);
+        assert_eq!(acl.other_obj, NO_ENTRY);
+        assert_eq!(acl.mask_obj, NO_ENTRY);
+        assert!(acl.is_empty());
+    }
+
+    /// Different mode: stripped result is always empty for basic ACLs.
+    #[test]
+    fn mode_755_all_stripped() {
+        let mut acl = RsyncAcl::from_mode(0o755);
+        acl.strip_perms_for_send(0o755);
+
+        assert_eq!(acl.user_obj, NO_ENTRY);
+        assert_eq!(acl.group_obj, NO_ENTRY);
+        assert_eq!(acl.other_obj, NO_ENTRY);
+        assert!(acl.is_empty());
+    }
+
+    /// With mask and group matching mode group bits: both stripped.
+    #[test]
+    fn mask_matching_group_bits_both_stripped() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x05;
+        acl.mask_obj = 0x05;
+        acl.other_obj = 0x04;
+        acl.names.push(IdAccess::user(1000, 0x07));
+
+        // mode 0o754: group bits = (0o754 >> 3) & 7 = 5
+        acl.strip_perms_for_send(0o754);
+
+        assert_eq!(acl.user_obj, NO_ENTRY);
+        assert_eq!(acl.group_obj, NO_ENTRY); // matches group perms from mode
+        assert_eq!(acl.mask_obj, NO_ENTRY); // matches group perms + has named entries
+        assert_eq!(acl.other_obj, NO_ENTRY);
+        assert_eq!(acl.names.len(), 1); // named entries preserved
+    }
+
+    /// With mask not matching group bits: mask preserved.
+    #[test]
+    fn mask_not_matching_group_bits_preserved() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x03;
+        acl.mask_obj = 0x07;
+        acl.other_obj = 0x04;
+        acl.names.push(IdAccess::user(1000, 0x07));
+
+        // mode 0o774: group bits = 7
+        acl.strip_perms_for_send(0o774);
+
+        assert_eq!(acl.user_obj, NO_ENTRY);
+        assert_eq!(acl.group_obj, NO_ENTRY); // 3 != 7, but upstream strips when matching
+        assert_eq!(acl.mask_obj, NO_ENTRY); // 7 == 7, stripped
+        assert_eq!(acl.other_obj, NO_ENTRY);
+    }
+
+    /// With mask but group_obj different from mode group bits: group preserved.
+    #[test]
+    fn group_not_matching_mode_preserved() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x03;
+        acl.mask_obj = 0x07;
+        acl.other_obj = 0x04;
+        acl.names.push(IdAccess::user(1000, 0x07));
+
+        // mode 0o754: group bits = 5
+        acl.strip_perms_for_send(0o754);
+
+        assert_eq!(acl.user_obj, NO_ENTRY);
+        assert_eq!(acl.group_obj, 0x03); // 3 != 5, NOT stripped
+        assert_eq!(acl.mask_obj, 0x07); // 7 != 5, NOT stripped (doesn't match group bits)
+        assert_eq!(acl.other_obj, NO_ENTRY);
+    }
+
+    /// With mask but no named entries: mask not stripped (only stripped when names exist).
+    #[test]
+    fn mask_without_names_not_stripped() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x05;
+        acl.mask_obj = 0x05;
+        acl.other_obj = 0x04;
+
+        // mode 0o754: group bits = 5
+        acl.strip_perms_for_send(0o754);
+
+        assert_eq!(acl.user_obj, NO_ENTRY);
+        assert_eq!(acl.group_obj, NO_ENTRY); // matches group perms
+        assert_eq!(acl.mask_obj, 0x05); // no named entries, so mask NOT stripped
+        assert_eq!(acl.other_obj, NO_ENTRY);
+    }
+
+    /// Stripped ACL roundtrips correctly through wire encode/decode.
+    #[test]
+    fn stripped_acl_wire_roundtrip() {
+        let mut acl = RsyncAcl::from_mode(0o644);
+        acl.strip_perms_for_send(0o644);
+
+        let mut buf = Vec::new();
+        let mut cache = AclCache::new();
+        send_rsync_acl(&mut buf, &acl, wire::AclType::Access, &mut cache, false).unwrap();
+
+        let mut reader = Cursor::new(&buf);
+        let result = recv_rsync_acl(&mut reader).unwrap();
+
+        match result {
+            RecvAclResult::Literal(received) => {
+                assert_eq!(received.user_obj, NO_ENTRY);
+                assert_eq!(received.group_obj, NO_ENTRY);
+                assert_eq!(received.mask_obj, NO_ENTRY);
+                assert_eq!(received.other_obj, NO_ENTRY);
+                assert!(received.names.is_empty());
+            }
+            RecvAclResult::CacheHit(_) => panic!("expected literal, got cache hit"),
+        }
+    }
+
+    /// ACL with named entries roundtrips correctly after stripping.
+    #[test]
+    fn acl_with_names_roundtrip_after_strip() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x05;
+        acl.mask_obj = 0x07;
+        acl.other_obj = 0x04;
+        acl.names.push(IdAccess::user(1000, 0x07));
+        acl.names.push(IdAccess::group(100, 0x05));
+
+        // mode 0o774: group bits = 7
+        acl.strip_perms_for_send(0o774);
+
+        let mut buf = Vec::new();
+        let mut cache = AclCache::new();
+        send_rsync_acl(&mut buf, &acl, wire::AclType::Access, &mut cache, false).unwrap();
+
+        let mut reader = Cursor::new(&buf);
+        let result = recv_rsync_acl(&mut reader).unwrap();
+
+        match result {
+            RecvAclResult::Literal(received) => {
+                assert_eq!(received.user_obj, NO_ENTRY);
+                assert_eq!(received.other_obj, NO_ENTRY);
+                assert_eq!(received.names.len(), 2);
+            }
+            RecvAclResult::CacheHit(_) => panic!("expected literal, got cache hit"),
+        }
+    }
+}
