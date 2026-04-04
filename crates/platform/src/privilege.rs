@@ -31,8 +31,14 @@ pub fn apply_chroot(path: &Path) -> io::Result<()> {
 }
 
 /// No-op chroot on non-Unix platforms.
+///
+/// Windows does not support chroot. Logs a warning via stderr so daemon
+/// operators know the `use chroot` directive has no effect.
+///
+/// upstream: clientserver.c - chroot is Unix-only; Windows daemon skips it.
 #[cfg(not(unix))]
 pub fn apply_chroot(_path: &Path) -> io::Result<()> {
+    eprintln!("WARNING: chroot is not supported on this platform - skipping");
     Ok(())
 }
 
