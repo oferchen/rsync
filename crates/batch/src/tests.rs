@@ -501,6 +501,15 @@ mod integration {
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
 
+        // Write empty uid and gid ID lists (required by upstream protocol).
+        // upstream: uidlist.c:recv_id_list() reads until id=0 terminator.
+        // An empty list is a single varint30 zero (one 0x00 byte for proto >= 30).
+        use protocol::idlist::IdList;
+        let mut id_buf = Vec::new();
+        IdList::new().write(&mut id_buf, false, protocol_version as u8).unwrap();
+        writer.write_data(&id_buf).unwrap(); // uid list
+        writer.write_data(&id_buf).unwrap(); // gid list
+
         writer.finalize().unwrap();
 
         // -- Read phase --
@@ -699,6 +708,14 @@ mod integration {
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
+
+        // Write empty uid ID list (preserve_uid is set).
+        // upstream: uidlist.c:recv_id_list() reads until id=0 terminator.
+        use protocol::idlist::IdList;
+        let mut id_buf = Vec::new();
+        IdList::new().write(&mut id_buf, false, protocol_version as u8).unwrap();
+        writer.write_data(&id_buf).unwrap();
+
         writer.finalize().unwrap();
 
         // Read phase
