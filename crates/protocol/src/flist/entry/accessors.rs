@@ -417,6 +417,23 @@ impl FileEntry {
         self.extras_mut().xattr_ndx = Some(ndx);
     }
 
+    /// Returns the sender-side xattr list if set (for --xattrs mode).
+    ///
+    /// Populated by the generator from filesystem xattr data.
+    /// Names are in wire format.
+    #[inline]
+    pub fn xattr_list(&self) -> Option<&crate::xattr::XattrList> {
+        self.extras.as_ref().and_then(|e| e.xattr_list.as_ref())
+    }
+
+    /// Sets the sender-side xattr list (for --xattrs mode).
+    ///
+    /// The list should contain entries with wire-format names
+    /// (translated via `local_to_wire()`).
+    pub fn set_xattr_list(&mut self, list: crate::xattr::XattrList) {
+        self.extras_mut().xattr_list = Some(list);
+    }
+
     /// Returns true if this entry is a block or character device.
     ///
     /// Checks for S_ISBLK (0o060000) or S_ISCHR (0o020000) mode bits.

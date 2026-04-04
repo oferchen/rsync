@@ -95,6 +95,57 @@ fn remove_attribute(
     result.map_err(|error| map_xattr_error("remove extended attribute", path, error))
 }
 
+/// Reads xattr data from a file and returns it as a wire-format `XattrList`.
+///
+/// Names are translated to wire format via `local_to_wire()`. Entries are
+/// sorted alphabetically by wire name, matching upstream rsync's
+/// `rsync_xal_get()` which sorts by name after collection. All values are
+/// stored as full data - abbreviation (checksum substitution for large values)
+/// is handled by the wire encoder at send time.
+///
+/// # Upstream Reference
+///
+/// - `xattrs.c:rsync_xal_get()` - reads xattrs, sorts by name, assigns nums
+/// - `xattrs.c:get_xattr()` - entry point called from `make_file()`
+pub fn read_xattrs_for_wire(
+    path: &Path,
+    follow_symlinks: bool,
+    am_root: bool,
+    _checksum_seed: i32,
+) -> Result<XattrList, MetadataError> {
+    use protocol::xattr::{XattrEntry, local_to_wire};
+
+    let attrs = list_attributes(path, follow_symlinks)?;
+    let mut entries = Vec::with_capacity(attrs.len());
+
+    for name in &attrs {
+        let local_name = name.as_bytes();
+        // upstream: xattrs.c:509-528 - translate local name to wire format
+        let wire_name = match local_to_wire(local_name, am_root) {
+            Some(n) => n,
+            None => continue, // Filtered out (rsync internal, namespace issue)
+        };
+
+        let value = match read_attribute(path, name, follow_symlinks)? {
+            Some(v) => v,
+            None => continue,
+        };
+
+        entries.push(XattrEntry::new(wire_name, value));
+    }
+
+    // upstream: xattrs.c:296-297 - qsort by name
+    entries.sort_unstable_by(|a, b| a.name().cmp(b.name()));
+
+    // upstream: xattrs.c:298-299 - assign 1-based num in reverse order
+    let count = entries.len();
+    for (i, entry) in entries.iter_mut().enumerate() {
+        entry.set_num((count - i) as u32);
+    }
+
+    Ok(XattrList::with_entries(entries))
+}
+
 /// Synchronises the extended attributes from `source` to `destination`.
 pub fn sync_xattrs(
     source: &Path,
