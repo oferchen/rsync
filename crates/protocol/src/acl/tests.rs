@@ -1676,7 +1676,7 @@ mod strip_perms_for_send_tests {
         acl.strip_perms_for_send(0o774);
 
         assert_eq!(acl.user_obj, NO_ENTRY);
-        assert_eq!(acl.group_obj, NO_ENTRY); // 3 != 7, but upstream strips when matching
+        assert_eq!(acl.group_obj, 0x03); // 3 != 7, NOT stripped
         assert_eq!(acl.mask_obj, NO_ENTRY); // 7 == 7, stripped
         assert_eq!(acl.other_obj, NO_ENTRY);
     }
