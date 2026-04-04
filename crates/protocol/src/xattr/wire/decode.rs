@@ -120,8 +120,12 @@ pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
         let name_len = read_varint(reader)? as usize;
         let datum_len = read_varint(reader)? as usize;
 
+        // upstream: name_len includes a trailing NUL terminator on the wire
         let mut name = vec![0u8; name_len];
         reader.read_exact(&mut name)?;
+        if name.last() == Some(&0) {
+            name.pop();
+        }
 
         if datum_len > MAX_FULL_DATUM {
             let mut checksum = vec![0u8; MAX_XATTR_DIGEST_LEN];

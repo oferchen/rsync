@@ -2653,9 +2653,7 @@ fn xattr_cache_deduplicates_identical_sets() {
     // portion should be smaller than the first (which included literal data)
     assert!(
         second_len < first_len,
-        "cache hit should be smaller: {} vs {}",
-        second_len,
-        first_len
+        "cache hit should be smaller: {second_len} vs {first_len}",
     );
 }
 
