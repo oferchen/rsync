@@ -7,8 +7,10 @@ use crate::error::{BatchError, BatchResult};
 use crate::format::FileEntry;
 use protocol::CompatibilityFlags;
 use protocol::ProtocolVersion;
+use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
 use protocol::flist::FileListReader;
 use std::io;
+use std::path::Path;
 
 use super::BatchReader;
 
@@ -58,13 +60,21 @@ impl BatchReader {
     /// flags from the batch header, plus the stream flags (preserve_uid, etc.)
     /// that were recorded when the batch was written.
     ///
+    /// When INC_RECURSE is enabled (CF_INC_RECURSE in compat_flags), the batch
+    /// stream contains multiple flist segments: an initial segment (just ".")
+    /// followed by NDX-prefixed sub-list segments for each directory. This
+    /// method reads all segments and returns a flat list of all entries.
+    ///
     /// Returns all decoded file entries. After this call, the batch file reader
-    /// is positioned at the start of the delta operations section.
+    /// is positioned at the start of the delta operations section. The NDX codec
+    /// state is preserved for the delta replay phase.
     ///
     /// # Upstream Reference
     ///
     /// - `batch.c` - batch file body is a raw protocol stream tee
     /// - `flist.c:recv_file_entry()` - wire format decoded by `FileListReader`
+    /// - `flist.c:recv_file_list()` - reads one flist segment
+    /// - `flist.c:recv_additional_file_list()` - reads incremental sub-lists
     pub fn read_protocol_flist(&mut self) -> BatchResult<Vec<protocol::flist::FileEntry>> {
         if self.header.is_none() {
             return Err(BatchError::Io(io::Error::other(
@@ -82,6 +92,13 @@ impl BatchReader {
                     header.protocol_version,
                 ))
             })?;
+
+        let inc_recurse = header
+            .compat_flags
+            .map(|cf| {
+                CompatibilityFlags::from_bits(cf as u32).contains(CompatibilityFlags::INC_RECURSE)
+            })
+            .unwrap_or(false);
 
         // Build the flist reader, configuring preserve flags to match the
         // options that were active when the batch was written.
@@ -121,6 +138,7 @@ impl BatchReader {
             .as_mut()
             .ok_or_else(|| BatchError::Io(io::Error::other("Batch file not open")))?;
 
+        // Read the initial flist segment.
         let mut entries = Vec::new();
         loop {
             match flist_reader.read_entry_with_flist(reader, &entries) {
@@ -140,6 +158,81 @@ impl BatchReader {
         // upstream: flist.c:recv_file_list() does `io_error |= err` when the
         // sender reports errors, then breaks the loop without aborting.
         self.io_error = flist_reader.io_error();
+
+        // With INC_RECURSE, the initial flist typically contains just "." (the
+        // root directory). Additional flist segments follow, each preceded by an
+        // NDX value of (NDX_FLIST_OFFSET - dir_ndx). We read these until
+        // NDX_FLIST_EOF signals all file lists are complete.
+        // upstream: flist.c:recv_additional_file_list() + main.c:do_recv()
+        if inc_recurse {
+            let mut ndx_codec = NdxCodecEnum::new(protocol_version.as_u8());
+            let mut next_ndx_start = entries.len() as i32;
+
+            loop {
+                let ndx = ndx_codec.read_ndx(reader).map_err(|e| {
+                    BatchError::Io(io::Error::new(
+                        e.kind(),
+                        format!("Failed to read incremental flist NDX: {e}"),
+                    ))
+                })?;
+
+                if ndx == NDX_FLIST_EOF {
+                    break;
+                }
+
+                // NDX_FLIST_OFFSET-based values signal a new sub-list for the
+                // directory at index (NDX_FLIST_OFFSET - ndx).
+                if ndx > NDX_FLIST_OFFSET {
+                    continue;
+                }
+
+                let dir_ndx = NDX_FLIST_OFFSET - ndx;
+
+                // Look up the parent directory name to prefix sub-list entries.
+                let parent_dir = if (dir_ndx as usize) < entries.len() {
+                    Some(entries[dir_ndx as usize].name().to_owned())
+                } else {
+                    None
+                };
+
+                // Reset compression state for the new segment.
+                // upstream: recv_file_list() starts with fresh static state.
+                flist_reader.reset_for_new_segment(next_ndx_start);
+
+                // Read entries for this sub-list segment.
+                let segment_start = entries.len();
+                loop {
+                    // Pass only this segment's entries for hardlink abbreviation.
+                    let segment_entries = &entries[segment_start..];
+                    match flist_reader.read_entry_with_flist(reader, segment_entries) {
+                        Ok(Some(mut entry)) => {
+                            // Sub-list entries have paths relative to their parent
+                            // directory. Prepend the parent path to get the full
+                            // relative path.
+                            // upstream: flist.c:f_name() reconstructs full path
+                            if let Some(ref parent) = parent_dir {
+                                entry.prepend_dir(Path::new(parent));
+                            }
+                            entries.push(entry);
+                        }
+                        Ok(None) => break,
+                        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                        Err(e) => {
+                            return Err(BatchError::Io(io::Error::new(
+                                e.kind(),
+                                format!("Failed to read incremental flist entry: {e}"),
+                            )));
+                        }
+                    }
+                }
+
+                self.io_error |= flist_reader.io_error();
+                next_ndx_start = entries.len() as i32;
+            }
+
+            // Store the NDX codec for continued use during delta replay.
+            self.ndx_codec = Some(ndx_codec);
+        }
 
         Ok(entries)
     }

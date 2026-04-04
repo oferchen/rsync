@@ -411,6 +411,17 @@ impl FileListReader {
         self.ndx_start = ndx_start;
     }
 
+    /// Resets compression state for reading a new flist segment.
+    ///
+    /// Each incremental file list segment (INC_RECURSE sub-list) starts with
+    /// fresh compression state. This mirrors upstream `flist.c:recv_file_list()`
+    /// where the static variables in `recv_file_entry()` are reset at the start
+    /// of each new `recv_file_list()` call.
+    pub fn reset_for_new_segment(&mut self, ndx_start: i32) {
+        self.state.reset();
+        self.ndx_start = ndx_start;
+    }
+
     /// Returns true if this is an abbreviated hardlink follower whose metadata
     /// was skipped on the wire (leader is in the same flist segment).
     ///
