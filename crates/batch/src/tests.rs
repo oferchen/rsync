@@ -506,7 +506,9 @@ mod integration {
         // An empty list is a single varint30 zero (one 0x00 byte for proto >= 30).
         use protocol::idlist::IdList;
         let mut id_buf = Vec::new();
-        IdList::new().write(&mut id_buf, false, protocol_version as u8).unwrap();
+        IdList::new()
+            .write(&mut id_buf, false, protocol_version as u8)
+            .unwrap();
         writer.write_data(&id_buf).unwrap(); // uid list
         writer.write_data(&id_buf).unwrap(); // gid list
 
@@ -713,7 +715,9 @@ mod integration {
         // upstream: uidlist.c:recv_id_list() reads until id=0 terminator.
         use protocol::idlist::IdList;
         let mut id_buf = Vec::new();
-        IdList::new().write(&mut id_buf, false, protocol_version as u8).unwrap();
+        IdList::new()
+            .write(&mut id_buf, false, protocol_version as u8)
+            .unwrap();
         writer.write_data(&id_buf).unwrap();
 
         writer.finalize().unwrap();
