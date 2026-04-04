@@ -1465,6 +1465,7 @@ comp_run_scenario() {
 # - oc:delete, oc:numeric-ids, oc:exclude (correct compact flag semantics + long-form args)
 # - up:compress, oc:compress (TokenReader integration in run_sync path)
 # - up:size-only (do_compression check matched 'z' in --size-only long-form arg)
+# - up:compress-zstd (daemon --compress-choice parsing, zstd token codec, server flag fixes)
 #
 # SSH interop test: oc-rsync client transfers to localhost via SSH.
 run_ssh_interop_test() {
@@ -1498,10 +1499,9 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  # --- compression: lz4 not supported by upstream 3.4.1, zstd daemon interop ---
+  # --- compression: lz4 not supported by upstream 3.4.1 ---
   "oc:compress-lz4"
   "up:compress-lz4"
-  "up:compress-zstd"
   # --- batch: read-batch roundtrip not yet fully working ---
   "standalone:write-batch-read-batch"
   "standalone:write-batch-read-batch-compressed"
