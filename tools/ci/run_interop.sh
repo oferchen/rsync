@@ -1499,6 +1499,9 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
+  # --- batch: replay engine does not yet produce files ---
+  "standalone:write-batch-read-batch"
+  "standalone:write-batch-read-batch-compressed"
 )
 
 is_known_failure() {

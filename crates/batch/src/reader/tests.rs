@@ -505,6 +505,21 @@ mod flist_deserialization_tests {
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
+
+        // Write empty uid and gid ID lists (terminator-only).
+        // upstream: uidlist.c:send_id_lists() sends these after the flist
+        // when preserve_uid/gid is set and !inc_recurse.
+        let uid_list = protocol::idlist::IdList::new();
+        let gid_list = protocol::idlist::IdList::new();
+        let mut id_buf = Vec::new();
+        uid_list
+            .write(&mut id_buf, false, protocol_version as u8)
+            .unwrap();
+        gid_list
+            .write(&mut id_buf, false, protocol_version as u8)
+            .unwrap();
+        writer.write_data(&id_buf).unwrap();
+
         writer.finalize().unwrap();
 
         // Read phase
