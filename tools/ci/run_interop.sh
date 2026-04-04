@@ -1499,9 +1499,6 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  # --- compression: lz4 not supported by upstream 3.4.1 ---
-  "oc:compress-lz4"
-  "up:compress-lz4"
   # --- batch: read-batch roundtrip not yet fully working ---
   "standalone:write-batch-read-batch"
   "standalone:write-batch-read-batch-compressed"

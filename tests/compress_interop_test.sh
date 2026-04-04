@@ -263,15 +263,15 @@ check_upstream_compress_support() {
 }
 
 # Check if oc-rsync supports a given compression algorithm for interop.
-# Zstd/lz4 codecs are compiled in but their wire format is not yet validated
-# against upstream, so explicit --compress-choice=zstd|lz4 is not interop-ready.
-# Auto-negotiation (plain -z) correctly excludes these algorithms.
+# LZ4 per-token wire format has been validated against upstream token.c.
+# Zstd wire format is not yet validated - skip zstd interop tests.
+# Auto-negotiation (plain -z) correctly excludes non-validated algorithms.
 check_oc_compress_interop_ready() {
     local algo=$1
     case "$algo" in
-        zstd|lz4)
-            # Wire format not validated - skip interop tests for these codecs.
-            # Re-enable after tasks #1379 (zstd) and #1380 (lz4) are completed.
+        zstd)
+            # Wire format not validated - skip interop tests for zstd.
+            # Re-enable after task #1379 (zstd) is completed.
             return 1
             ;;
         *)
