@@ -475,9 +475,7 @@ impl FileListWriter {
                     continue;
                 }
                 let all_match = cached.iter().zip(list.iter()).all(|(a, b)| {
-                    a.name() == b.name()
-                        && a.datum_len() == b.datum_len()
-                        && a.datum() == b.datum()
+                    a.name() == b.name() && a.datum_len() == b.datum_len() && a.datum() == b.datum()
                 });
                 if all_match {
                     return Some(i as u32);

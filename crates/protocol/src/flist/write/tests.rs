@@ -2602,8 +2602,7 @@ fn xattr_write_entry_sends_literal_data() {
     use crate::xattr::{XattrEntry, XattrList};
 
     let mut buf = Vec::new();
-    let mut writer = FileListWriter::new(test_protocol())
-        .with_preserve_xattrs(true);
+    let mut writer = FileListWriter::new(test_protocol()).with_preserve_xattrs(true);
 
     let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
     let mut xattr_list = XattrList::new();
@@ -2617,8 +2616,7 @@ fn xattr_write_entry_sends_literal_data() {
 #[test]
 fn xattr_write_empty_list_succeeds() {
     let mut buf = Vec::new();
-    let mut writer = FileListWriter::new(test_protocol())
-        .with_preserve_xattrs(true);
+    let mut writer = FileListWriter::new(test_protocol()).with_preserve_xattrs(true);
 
     // Entry without xattr_list - should send empty literal set
     let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
@@ -2631,8 +2629,7 @@ fn xattr_cache_deduplicates_identical_sets() {
     use crate::xattr::{XattrEntry, XattrList};
 
     let mut buf = Vec::new();
-    let mut writer = FileListWriter::new(test_protocol())
-        .with_preserve_xattrs(true);
+    let mut writer = FileListWriter::new(test_protocol()).with_preserve_xattrs(true);
 
     let make_list = || {
         let mut list = XattrList::new();
@@ -2654,7 +2651,12 @@ fn xattr_cache_deduplicates_identical_sets() {
 
     // Cache hit sends only a varint index, so the second entry's xattr
     // portion should be smaller than the first (which included literal data)
-    assert!(second_len < first_len, "cache hit should be smaller: {} vs {}", second_len, first_len);
+    assert!(
+        second_len < first_len,
+        "cache hit should be smaller: {} vs {}",
+        second_len,
+        first_len
+    );
 }
 
 #[test]
@@ -2662,8 +2664,7 @@ fn xattr_write_roundtrip_with_reader() {
     use crate::xattr::{XattrEntry, XattrList};
 
     let mut buf = Vec::new();
-    let mut writer = FileListWriter::new(test_protocol())
-        .with_preserve_xattrs(true);
+    let mut writer = FileListWriter::new(test_protocol()).with_preserve_xattrs(true);
 
     let mut entry = FileEntry::new_file("roundtrip.txt".into(), 42, 0o644);
     let mut xattr_list = XattrList::new();
@@ -2675,13 +2676,16 @@ fn xattr_write_roundtrip_with_reader() {
 
     // Read back and verify xattr data was stored in cache
     let mut cursor = std::io::Cursor::new(&buf);
-    let mut reader = super::super::read::FileListReader::new(test_protocol())
-        .with_preserve_xattrs(true);
+    let mut reader =
+        super::super::read::FileListReader::new(test_protocol()).with_preserve_xattrs(true);
     let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
 
     assert_eq!(read_entry.name(), "roundtrip.txt");
     // The entry should have an xattr_ndx assigned by the reader
-    assert!(read_entry.xattr_ndx().is_some(), "xattr_ndx should be set after reading");
+    assert!(
+        read_entry.xattr_ndx().is_some(),
+        "xattr_ndx should be set after reading"
+    );
     // The reader's xattr cache should have the entry
     let xattr_cache = reader.xattr_cache();
     let cached = xattr_cache.get(read_entry.xattr_ndx().unwrap() as usize);
