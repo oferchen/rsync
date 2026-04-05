@@ -172,7 +172,7 @@ pub(in crate::local_copy) fn execute_transfer(
 
             // Batch capture for whole-file clones
             context.capture_batch_whole_file(source, file_size)?;
-            context.finalize_batch_file_delta()?;
+            context.finalize_batch_file_delta(source)?;
 
             context.register_created_path(
                 destination,
@@ -443,7 +443,7 @@ pub(in crate::local_copy) fn execute_transfer(
 
             // Write the token end marker to the batch file for this file.
             // upstream: token.c:simple_send_token() with token=-1 writes 0.
-            context.finalize_batch_file_delta()?;
+            context.finalize_batch_file_delta(source)?;
 
             outcome
         }
