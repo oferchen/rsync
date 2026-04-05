@@ -23,7 +23,7 @@ use crate::pipeline::PendingTransfer;
 use crate::reader::ServerReader;
 use crate::temp_guard::open_tmpfile;
 use crate::token_buffer::TokenBuffer;
-use crate::token_reader::{DeltaToken, LiteralData};
+use crate::token_reader::{DeltaToken, LiteralData, TokenReader};
 
 use super::{ResponseContext, read_response_header};
 
@@ -44,6 +44,10 @@ use super::{ResponseContext, read_response_header};
 /// * `ctx` - Response processing context
 /// * `checksum_verifier` - Reusable checksum verifier (reset per call)
 /// * `token_buffer` - Reusable token buffer for cross-frame literal tokens
+/// * `token_reader` - Reusable token reader, shared across files in a session.
+///   For zstd, the decompression context must be preserved across files because
+///   upstream rsync uses a single continuous zstd stream for the entire session.
+///   The caller must call `token_reader.reset()` between files.
 ///
 /// # Returns
 ///
@@ -61,6 +65,7 @@ pub fn process_file_response<R: Read>(
     ctx: &ResponseContext<'_>,
     checksum_verifier: &mut ChecksumVerifier,
     token_buffer: &mut TokenBuffer,
+    token_reader: &mut TokenReader,
 ) -> io::Result<u64> {
     let header = read_response_header(reader, ndx_codec, pending, ctx)?;
     let file_path = header.file_path;
@@ -112,10 +117,10 @@ pub fn process_file_response<R: Read>(
         None
     };
 
-    // Read and apply delta tokens.
-    // TokenReader handles both plain (4-byte LE) and compressed (flag-byte)
-    // token formats transparently, matching upstream token.c:recv_token().
-    let mut token_reader = ctx.config.token_reader();
+    // upstream: token.c:807-810 - reset per-file token state. For zstd the
+    // decompression context is preserved (single continuous stream across all
+    // files); for zlib it reinitializes the inflate context (per-file streams).
+    token_reader.reset();
 
     loop {
         match token_reader.read_token(reader)? {
