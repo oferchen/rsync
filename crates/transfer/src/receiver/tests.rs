@@ -3533,7 +3533,10 @@ fn daemon_filter_set_built_from_config_rules() {
     let ctx = ReceiverContext::new(&handshake, config);
 
     let filters = ctx.daemon_filter_set();
-    assert!(filters.is_some(), "daemon filter set should be built from rules");
+    assert!(
+        filters.is_some(),
+        "daemon filter set should be built from rules"
+    );
 
     let filters = filters.unwrap();
     // *.tmp should be excluded
