@@ -127,15 +127,23 @@ pub(crate) struct CopyContext<'a> {
     /// upstream rsync's raw stream tee. The writer maintains cross-entry
     /// compression state (name prefix sharing, same-mode flags, etc.).
     batch_flist_writer: Option<FileListWriter>,
-    /// Temp file buffering per-file delta data (NDX + iflags + sum_head +
-    /// tokens + checksum) during the directory walk. Written to the batch
-    /// file after the flist end marker, producing the correct upstream batch
-    /// ordering: all flist entries first, then all file data.
+    /// Per-file delta data accumulator for the current file being captured.
+    /// Reset at each `begin_batch_file_delta()`, contents moved to
+    /// `batch_delta_entries` at `finalize_batch_file_delta()`.
     ///
-    /// upstream: batch files are a tee of the protocol stream which naturally
-    /// has flist before file data. Our local copy path has no protocol stream,
-    /// so we buffer delta data here and append after flist finalization.
+    /// Contains iflags + sum_head + tokens + checksum (but NOT the NDX,
+    /// which is written at flush time after sort-order mapping).
     batch_delta_buf: Option<io::Cursor<Vec<u8>>>,
+    /// Completed per-file delta entries: (traversal_index, data).
+    /// Data contains iflags + sum_head + tokens + checksum without NDX.
+    /// NDX is computed from sort-order mapping at flush time.
+    batch_delta_entries: Vec<(i32, Vec<u8>)>,
+    /// Sort metadata for each flist entry in traversal order: (name_bytes, is_dir).
+    /// Used to compute the traversal→sorted index mapping that upstream's
+    /// `flist_sort_and_clean()` produces after reading the batch flist.
+    batch_entry_sort_data: Vec<(Vec<u8>, bool)>,
+    /// Traversal index of the current file being delta-captured.
+    batch_current_delta_idx: i32,
     /// Zero-based file-list index counter for batch NDX framing.
     /// Incremented in `capture_batch_file_entry()` for every entry (dirs,
     /// files, symlinks, etc.) to match the upstream flist numbering.

@@ -632,8 +632,13 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
-    /// Writes the NDX + iflags + sum_head preamble for a file's delta data
-    /// to the batch delta buffer.
+    /// Writes the iflags + sum_head preamble for a file's delta data
+    /// to the per-file batch delta buffer.
+    ///
+    /// The NDX is NOT written here - it is deferred to flush time so that
+    /// the correct sorted-order index can be used. upstream sorts the flist
+    /// after reading it from the batch file, so NDX values must reference
+    /// sorted positions, not traversal order.
     ///
     /// Must be called before any token writes for this file (before
     /// `capture_batch_whole_file` or inline delta token writes).
@@ -650,25 +655,13 @@ impl<'a> CopyContext<'a> {
             None => return Ok(()),
         };
 
-        // upstream: sender.c:send_files() - NDX values are 0-based file
-        // indices without INC_RECURSE (ndx_start=0).
-        // capture_batch_file_entry() increments batch_flist_index after
-        // encoding each entry, so batch_flist_index equals flist_position + 1.
-        // NDX = flist_position = batch_flist_index - 1.
-        let ndx = self.batch_flist_index - 1;
+        // Reset per-file buffer for the new file.
+        delta_file.get_mut().clear();
+        delta_file.set_position(0);
 
-        // Write NDX via the protocol-versioned codec.
-        let codec = self
-            .batch_ndx_codec
-            .as_mut()
-            .expect("batch_ndx_codec must exist when batch_delta_buf is set");
-        protocol::codec::NdxCodec::write_ndx(codec, delta_file, ndx).map_err(|e| {
-            crate::local_copy::LocalCopyError::io(
-                "write batch NDX",
-                std::path::PathBuf::new(),
-                e,
-            )
-        })?;
+        // Record traversal index for this file. NDX will be remapped to
+        // sorted order at flush time.
+        self.batch_current_delta_idx = self.batch_flist_index - 1;
 
         // upstream: rsync.c:383 - write iflags (u16 LE) for protocol >= 29.
         // ITEM_TRANSFER (0x8000) indicates delta data follows.
@@ -713,7 +706,8 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Writes a token-format end marker and file checksum to the batch delta
-    /// buffer for the current file.
+    /// buffer for the current file, then moves the completed per-file data
+    /// to `batch_delta_entries`.
     ///
     /// Each file's delta data is terminated by write_int(0), matching upstream
     /// `token.c:simple_send_token()` with token=-1. After the token end, a
@@ -789,6 +783,13 @@ impl<'a> CopyContext<'a> {
             )
         })?;
 
+        // Move the completed per-file data to batch_delta_entries.
+        // The NDX will be written at flush time using the sort-order mapping.
+        let data = std::mem::take(delta_file.get_mut());
+        delta_file.set_position(0);
+        let idx = self.batch_current_delta_idx;
+        self.batch_delta_entries.push((idx, data));
+
         Ok(())
     }
 
@@ -859,33 +860,71 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
-    /// Flushes all buffered delta data from the temp file to the batch writer,
-    /// then writes NDX_DONE phase-transition markers.
+    /// Flushes all per-file delta entries to the batch writer with
+    /// sort-order-corrected NDX values, then writes NDX_DONE phase markers.
+    ///
+    /// upstream sorts the flist after reading it from the batch file
+    /// (`flist_sort_and_clean()`), so NDX values in the delta stream must
+    /// reference sorted positions, not traversal order. This method builds
+    /// the traversal-to-sorted mapping from `batch_entry_sort_data` and
+    /// writes each file's NDX using its sorted position.
     ///
     /// Must be called after `finalize_batch_flist()` to produce the correct
-    /// upstream batch ordering: flist entries + end marker, then NDX-framed
-    /// per-file delta data, then NDX_DONE markers for phase transitions.
+    /// upstream batch ordering: all flist entries first, then all file data.
     ///
     /// upstream: sender.c:send_files() writes NDX_DONE after all files in
     /// phase 1, then again after phase 2 redo (protocol >= 29).
     pub(crate) fn flush_batch_delta_to_batch(
         &mut self,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
-        let delta_buf = match self.batch_delta_buf.as_ref() {
-            Some(c) => c.get_ref(),
+        if self.batch_delta_buf.is_none() {
+            return Ok(());
+        }
+
+        let batch_writer_arc = match self.options.get_batch_writer() {
+            Some(w) => w.clone(),
             None => return Ok(()),
         };
 
-        if delta_buf.is_empty() {
-            // No delta data buffered - still need NDX_DONE markers below.
-        } else {
-            let batch_writer_arc = match self.options.get_batch_writer() {
-                Some(w) => w.clone(),
-                None => return Ok(()),
-            };
+        // Build traversal-index to sorted-index mapping.
+        // upstream: flist.c:flist_sort_and_clean() sorts after recv_file_list().
+        // We replicate the same sort on our entry names to determine where each
+        // traversal-order entry ends up in the sorted flist.
+        let traversal_to_sorted = self.build_batch_sort_mapping();
 
+        // Write each file's delta data with the correct sorted NDX.
+        let codec = self
+            .batch_ndx_codec
+            .as_mut()
+            .expect("batch_ndx_codec must exist when batch_delta_buf is set");
+
+        let entries = std::mem::take(&mut self.batch_delta_entries);
+        for (traversal_idx, data) in &entries {
+            let sorted_idx = traversal_to_sorted
+                .get(*traversal_idx as usize)
+                .copied()
+                .unwrap_or(*traversal_idx);
+
+            // Write NDX via the protocol-versioned codec.
+            let mut ndx_buf = Vec::with_capacity(4);
+            protocol::codec::NdxCodec::write_ndx(codec, &mut ndx_buf, sorted_idx).map_err(
+                |e| {
+                    crate::local_copy::LocalCopyError::io(
+                        "write batch NDX",
+                        std::path::PathBuf::new(),
+                        e,
+                    )
+                },
+            )?;
             let mut writer_guard = batch_writer_arc.lock().unwrap();
-            writer_guard.write_data(delta_buf).map_err(|e| {
+            writer_guard.write_data(&ndx_buf).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch NDX",
+                    std::path::PathBuf::new(),
+                    std::io::Error::other(e),
+                )
+            })?;
+            writer_guard.write_data(data).map_err(|e| {
                 crate::local_copy::LocalCopyError::io(
                     "write batch delta data",
                     std::path::PathBuf::new(),
@@ -894,26 +933,16 @@ impl<'a> CopyContext<'a> {
             })?;
         }
 
-        let batch_writer_arc = match self.options.get_batch_writer() {
-            Some(w) => w.clone(),
-            None => return Ok(()),
-        };
-
         // Write NDX_DONE markers for phase transitions.
         //
         // upstream: receiver.c:recv_files() reads NDX_DONEs to transition
         // phases. With INC_RECURSE (protocol >= 30), the first NDX_DONE
         // frees the flist and falls through to phase increment. For
         // protocol >= 29, max_phase=2, so recv_files needs 3 NDX_DONEs
-        // to break (phase 0→1→2→3, breaks when phase > max_phase).
+        // to break (phase 0->1->2->3, breaks when phase > max_phase).
         // For protocol < 29, max_phase=1, needs 2 NDX_DONEs.
         let proto = batch_writer_arc.lock().unwrap().config().protocol_version;
         let ndx_done_count = if proto >= 29 { 3 } else { 2 };
-
-        let codec = self
-            .batch_ndx_codec
-            .as_mut()
-            .expect("batch_ndx_codec must exist when batch_delta_buf is set");
 
         for _ in 0..ndx_done_count {
             let mut done_buf = Vec::with_capacity(4);
@@ -937,6 +966,36 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Builds a mapping from traversal-order index to sorted-order index.
+    ///
+    /// Replicates upstream's `flist_sort_and_clean()` sort order on the
+    /// entry names collected during traversal. Returns a Vec where
+    /// `result[traversal_index] = sorted_index`.
+    fn build_batch_sort_mapping(&self) -> Vec<i32> {
+        let n = self.batch_entry_sort_data.len();
+        if n == 0 {
+            return Vec::new();
+        }
+
+        // Build sort keys matching protocol::flist::sort logic.
+        // Each key: (index, name_bytes, is_dir)
+        let mut indices: Vec<usize> = (0..n).collect();
+        indices.sort_by(|&a, &b| {
+            let (ref name_a, is_dir_a) = self.batch_entry_sort_data[a];
+            let (ref name_b, is_dir_b) = self.batch_entry_sort_data[b];
+            batch_entry_compare(name_a, is_dir_a, name_b, is_dir_b)
+        });
+
+        // indices[sorted_pos] = traversal_index
+        // We need the inverse: traversal_to_sorted[traversal_index] = sorted_pos
+        let mut traversal_to_sorted = vec![0i32; n];
+        for (sorted_pos, &traversal_idx) in indices.iter().enumerate() {
+            traversal_to_sorted[traversal_idx] = sorted_pos as i32;
+        }
+
+        traversal_to_sorted
+    }
+
     /// Returns a mutable reference to the batch delta buffer file.
     ///
     /// Used by `flush_literal_chunk` and `copy_matched_block` to redirect
@@ -954,9 +1013,96 @@ impl<'a> CopyContext<'a> {
         self.batch_flist_index += 1;
     }
 
+    /// Records sort metadata for a batch flist entry.
+    ///
+    /// Stores the entry name and directory flag in traversal order so that
+    /// `flush_batch_delta_to_batch` can compute the same sort order that
+    /// upstream's `flist_sort_and_clean()` produces after reading the batch.
+    pub(super) fn record_batch_entry_sort_data(&mut self, name: &[u8], is_dir: bool) {
+        self.batch_entry_sort_data.push((name.to_vec(), is_dir));
+    }
+
     /// Returns whether `--numeric-ids` is enabled.
     #[cfg(unix)]
     pub(super) const fn numeric_ids_enabled(&self) -> bool {
         self.options.numeric_ids_enabled()
+    }
+}
+
+/// Compares two batch flist entries for sorting, matching upstream's
+/// `flist.c:f_name_cmp()` semantics.
+///
+/// Rules:
+/// 1. "." always sorts first (root directory marker)
+/// 2. Files sort before directories at the same level
+/// 3. Directories are compared as if they have a trailing '/'
+/// 4. Within the same type, sort by unsigned byte comparison
+fn batch_entry_compare(
+    name_a: &[u8],
+    is_dir_a: bool,
+    name_b: &[u8],
+    is_dir_b: bool,
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    // "." always comes first
+    match (name_a == b".", name_b == b".") {
+        (true, true) => return Ordering::Equal,
+        (true, false) => return Ordering::Less,
+        (false, true) => return Ordering::Greater,
+        (false, false) => {}
+    }
+
+    let last_slash_a = name_a.iter().rposition(|&b| b == b'/').unwrap_or(usize::MAX);
+    let last_slash_b = name_b.iter().rposition(|&b| b == b'/').unwrap_or(usize::MAX);
+
+    let mut i = 0;
+    loop {
+        let ch_a = if i < name_a.len() {
+            name_a[i]
+        } else if i == name_a.len() && is_dir_a {
+            b'/'
+        } else {
+            0
+        };
+
+        let ch_b = if i < name_b.len() {
+            name_b[i]
+        } else if i == name_b.len() && is_dir_b {
+            b'/'
+        } else {
+            0
+        };
+
+        let a_done = i > name_a.len() || (i == name_a.len() && !is_dir_a);
+        let b_done = i > name_b.len() || (i == name_b.len() && !is_dir_b);
+
+        if a_done && b_done {
+            return Ordering::Equal;
+        }
+        if a_done {
+            return Ordering::Less;
+        }
+        if b_done {
+            return Ordering::Greater;
+        }
+
+        if ch_a != ch_b {
+            let a_has_sep = last_slash_a != usize::MAX && last_slash_a >= i;
+            let b_has_sep = last_slash_b != usize::MAX && last_slash_b >= i;
+
+            let a_is_dir_here = a_has_sep || is_dir_a;
+            let b_is_dir_here = b_has_sep || is_dir_b;
+
+            match (a_is_dir_here, b_is_dir_here) {
+                (true, false) => return Ordering::Greater,
+                (false, true) => return Ordering::Less,
+                _ => {}
+            }
+
+            return ch_a.cmp(&ch_b);
+        }
+
+        i += 1;
     }
 }

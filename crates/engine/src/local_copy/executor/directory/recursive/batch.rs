@@ -163,6 +163,12 @@ pub(crate) fn capture_batch_file_entry(
         )
     })?;
 
+    // Record sort metadata for this entry so flush_batch_delta_to_batch()
+    // can compute the traversal-to-sorted index mapping that upstream's
+    // flist_sort_and_clean() produces after reading the batch flist.
+    let name_bytes = relative_path.as_os_str().as_encoded_bytes();
+    context.record_batch_entry_sort_data(name_bytes, metadata.is_dir());
+
     // Increment the flist index counter. This assigns each captured entry
     // a sequential index matching upstream's flist numbering. Regular files
     // use (batch_flist_index - 1) as their NDX in the delta stream.
