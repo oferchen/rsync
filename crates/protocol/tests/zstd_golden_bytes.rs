@@ -790,30 +790,46 @@ fn golden_zstd_complex_roundtrip() {
     assert_eq!(blocks, vec![0, 1, 2, 100]);
 }
 
-/// Verify encoder reset between files produces independent streams.
-/// Each file's stream must be self-contained - no cross-file state leaks.
+/// Verify continuous zstd stream across multiple files.
 ///
-/// upstream: token.c:send_zstd_token() - ZSTD_CCtx_reset on new file
+/// Upstream rsync uses a single persistent ZSTD_CCtx/DCtx across all files
+/// in a transfer session. The compression context is never reset between
+/// files - only the token run-encoding state resets.
+///
+/// upstream: token.c:688 (CCtx created once), token.c:700-703 (only run
+/// state resets), token.c:789 (DCtx created once)
 #[test]
-fn golden_zstd_reset_produces_independent_streams() {
+fn golden_zstd_continuous_stream_across_files() {
     let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut decoder = CompressedTokenDecoder::new_zstd().unwrap();
+    let mut shared_buf = Vec::new();
 
+    // Encode three files into a single continuous stream
     for i in 0u8..3 {
-        let mut output = Vec::new();
         let data = [b'A' + i; 32];
-        encoder.send_literal(&mut output, &data).unwrap();
-        encoder.send_block_match(&mut output, i as u32).unwrap();
-        encoder.finish(&mut output).unwrap();
+        encoder.send_literal(&mut shared_buf, &data).unwrap();
+        encoder.send_block_match(&mut shared_buf, i as u32).unwrap();
+        encoder.finish(&mut shared_buf).unwrap();
+    }
 
-        // Each stream must be independently decodable
-        let (literals, blocks) = zstd_decode_all(&output);
-        assert_eq!(literals, data);
+    // Decode all three files from the single stream with one persistent decoder
+    let mut cursor = Cursor::new(&shared_buf);
+    for i in 0u8..3 {
+        let expected = [b'A' + i; 32];
+        let mut literals = Vec::new();
+        let mut blocks = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::Literal(d) => literals.extend_from_slice(&d),
+                CompressedToken::BlockMatch(idx) => blocks.push(idx),
+                CompressedToken::End => break,
+            }
+        }
+
+        assert_eq!(literals, expected);
         assert_eq!(blocks, vec![i as u32]);
-
-        // Verify wire structure
-        let (sequence, _) = parse_wire_structure(&output);
-        assert_eq!(sequence[0], "DEFLATED_DATA");
-        assert_eq!(*sequence.last().unwrap(), "END");
+        decoder.reset();
     }
 }
 

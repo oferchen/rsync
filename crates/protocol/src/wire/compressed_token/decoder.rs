@@ -91,13 +91,17 @@ impl CompressedTokenDecoder {
     }
 
     /// Resets the decoder for a new file.
+    ///
+    /// For zlib/lz4, reinitializes the decompression context (per-file streams).
+    /// For zstd, only resets token index and buffer state - the decompression
+    /// context is preserved across files (one continuous stream).
+    ///
+    /// upstream: token.c:807-810 (zstd r_init), token.c:496 (zlib inflateReset)
     pub fn reset(&mut self) {
         match &mut self.inner {
             DecoderInner::Zlib(dec) => dec.reset(),
             #[cfg(feature = "zstd")]
-            DecoderInner::Zstd(dec) => {
-                let _ = dec.reset();
-            }
+            DecoderInner::Zstd(dec) => dec.reset(),
             #[cfg(feature = "lz4")]
             DecoderInner::Lz4(dec) => dec.reset(),
         }
