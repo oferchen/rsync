@@ -90,11 +90,7 @@ impl Lz4TokenEncoder {
     /// would have sent incrementally.
     ///
     /// upstream: token.c line 927 - `available_in = MIN(nb, MAX_DATA_COUNT)`
-    pub(super) fn send_literal<W: Write>(
-        &mut self,
-        writer: &mut W,
-        data: &[u8],
-    ) -> io::Result<()> {
+    pub(super) fn send_literal<W: Write>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<()> {
         self.literal_buf.extend_from_slice(data);
         // upstream: token.c lines 923-947 - compress in MAX_DATA_COUNT chunks
         while self.literal_buf.len() >= MAX_DATA_COUNT {
