@@ -898,9 +898,7 @@ mod inc_recurse_flist_tests {
         assert_eq!(ndx, NDX_FLIST_OFFSET, "Expected NDX_FLIST_OFFSET");
 
         // Read the sub-list segment.
-        reader
-            .read_incremental_flist_segment(&mut entries)
-            .unwrap();
+        reader.read_incremental_flist_segment(&mut entries).unwrap();
 
         // Now we have all 3 entries.
         assert_eq!(

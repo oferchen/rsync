@@ -3,6 +3,7 @@
 //! Provides methods for reading file list entries from batch files using
 //! both the protocol wire format (upstream-compatible) and a local encoding.
 
+use super::BatchReader;
 use crate::error::{BatchError, BatchResult};
 use crate::format::FileEntry;
 use protocol::CompatibilityFlags;
@@ -11,7 +12,6 @@ use protocol::codec::NdxCodecEnum;
 use protocol::flist::FileListReader;
 use protocol::idlist::IdList;
 use std::io;
-use super::BatchReader;
 
 impl BatchReader {
     /// Read a file entry from the batch file using local encoding.
