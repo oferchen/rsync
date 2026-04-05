@@ -1,8 +1,9 @@
 //! Symlink and hardlink creation from the received file list.
 //!
-//! Handles symbolic link creation (Unix-only with `--links`), protocol 30+
-//! hardlink creation (leader/follower via `hardlink_idx`), and pre-30 hardlink
-//! creation via `(dev, ino)` pairs.
+//! Handles symbolic link creation (Unix-only with `--links`) and hardlink
+//! creation (leader/follower via `hardlink_idx`). Protocol 28-29 entries are
+//! normalized to use `hardlink_idx` and `hlink_first` during file list
+//! reception, so this module handles both protocol versions uniformly.
 
 use std::fs;
 use std::path::Path;
@@ -119,21 +120,21 @@ impl ReceiverContext {
 
     /// Creates hard links for hardlink follower entries after the leader has been transferred.
     ///
-    /// In the rsync protocol (30+), hardlinked files are grouped by a shared index.
-    /// The first file in each group (the "leader", `hardlink_idx == u32::MAX`) is
-    /// transferred normally. Subsequent files ("followers") carry the leader's file
-    /// list index in their `hardlink_idx` field and are created as hard links to the
-    /// leader's destination path instead of being transferred independently.
+    /// Hardlinked files are grouped by a shared `hardlink_idx`. The first file in
+    /// each group (the "leader", with `hlink_first = true`) is transferred normally.
+    /// Subsequent files ("followers") are created as hard links to the leader's
+    /// destination path instead of being transferred independently.
     ///
-    /// Uses `HardlinkApplyTracker` when available (protocol 30+) for leader tracking
-    /// and deferred follower resolution. Leaders recorded during pipelined transfer
-    /// commits are already present in the tracker; this method records any remaining
-    /// leaders (e.g., files that matched quick-check and were not transferred) and
-    /// links all followers.
+    /// This method works uniformly for both protocol versions:
+    /// - Protocol 30+: `hardlink_idx` and `hlink_first` come from the wire encoding
+    /// - Protocol 28-29: `normalize_pre30_hardlinks()` assigns synthetic
+    ///   `hardlink_idx` and `hlink_first` from (dev, ino) pairs during file list
+    ///   reception, so both versions use the same leader/follower logic here.
     ///
-    /// For protocol 28-29, hardlinks are identified by (dev, ino) pairs. This method
-    /// handles both cases by building a mapping from hardlink identifiers to leader
-    /// destination paths.
+    /// Uses `HardlinkApplyTracker` for leader path tracking and deferred follower
+    /// resolution. Leaders committed during pipelined transfer are already recorded
+    /// in the tracker; this method records any remaining leaders (e.g., files that
+    /// matched quick-check and were not transferred) and links all followers.
     ///
     /// # Upstream Reference
     ///
@@ -274,211 +275,8 @@ impl ReceiverContext {
             self.hardlink_tracker = Some(tracker);
         }
 
-        // Protocol 28-29: use (dev, ino) pairs to identify hardlink groups.
-        // Build groups from entries that have hardlink_dev/ino set but no hardlink_idx.
-        if self.protocol.as_u8() < 30 {
-            self.create_hardlinks_pre30(dest_dir, writer);
-        }
-    }
-
-    /// Creates hard links for protocol 28-29 using (dev, ino) pairs.
-    ///
-    /// In protocols before 30, hardlinks are identified by matching (dev, ino)
-    /// pairs across file list entries. The first entry with a given (dev, ino) is
-    /// the leader; subsequent entries are followers that should be hard-linked.
-    ///
-    /// Uses `InodeDeviceMap` to assign ordinal group IDs to unique (dev, ino)
-    /// pairs, then groups entries by ordinal. The first entry per group is the
-    /// leader; the rest are followers linked to the leader's destination path.
-    ///
-    /// upstream: hlink.c:idev_find()
-    fn create_hardlinks_pre30<W: crate::writer::MsgInfoSender + ?Sized>(
-        &self,
-        dest_dir: &Path,
-        writer: &mut W,
-    ) {
-        let mut idev_map = InodeDeviceMap::new();
-
-        // Collect (group_ordinal, dest_path) for each entry with hardlink dev/ino.
-        let mut grouped: Vec<(u32, std::path::PathBuf)> = Vec::new();
-
-        for entry in &self.file_list {
-            if !entry.is_file() {
-                continue;
-            }
-
-            let dev = match entry.hardlink_dev() {
-                Some(d) => d,
-                None => continue,
-            };
-            let ino = match entry.hardlink_ino() {
-                Some(i) => i,
-                None => continue,
-            };
-
-            let group = idev_map.get_or_insert(dev, ino);
-            let dest_path = dest_dir.join(entry.path());
-            grouped.push((group, dest_path));
-        }
-
-        // Build leader path per group (first entry seen for each ordinal).
-        let mut leaders: std::collections::HashMap<u32, std::path::PathBuf> =
-            std::collections::HashMap::new();
-
-        // Re-iterate file list entries in parallel with grouped to access entry metadata.
-        let mut group_idx = 0;
-        for entry in &self.file_list {
-            if !entry.is_file() {
-                continue;
-            }
-            if entry.hardlink_dev().is_none() || entry.hardlink_ino().is_none() {
-                continue;
-            }
-
-            let (group, ref dest_path) = grouped[group_idx];
-            group_idx += 1;
-
-            if let std::collections::hash_map::Entry::Vacant(e) = leaders.entry(group) {
-                // First entry in this group is the leader.
-                e.insert(dest_path.clone());
-                continue;
-            }
-
-            let leader_path = &leaders[&group];
-
-            // Quick-check: skip if already linked.
-            if let Ok(link_meta) = fs::symlink_metadata(dest_path) {
-                if let Ok(leader_meta) = fs::symlink_metadata(leader_path) {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::MetadataExt;
-                        if link_meta.dev() == leader_meta.dev()
-                            && link_meta.ino() == leader_meta.ino()
-                        {
-                            let iflags = ItemFlags::from_raw(0);
-                            let _ = self.emit_itemize(writer, &iflags, entry);
-                            continue;
-                        }
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        let _ = (link_meta, leader_meta);
-                    }
-                }
-                let _ = fs::remove_file(dest_path);
-            }
-
-            if let Some(parent) = dest_path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-
-            if let Err(e) = fs::hard_link(leader_path, dest_path) {
-                debug_log!(
-                    Recv,
-                    1,
-                    "failed to hard link {} => {}: {}",
-                    dest_path.display(),
-                    leader_path.display(),
-                    e
-                );
-            } else {
-                let iflags = ItemFlags::from_raw(
-                    ItemFlags::ITEM_LOCAL_CHANGE
-                        | ItemFlags::ITEM_XNAME_FOLLOWS
-                        | ItemFlags::ITEM_IS_NEW,
-                );
-                let _ = self.emit_itemize(writer, &iflags, entry);
-            }
-        }
-    }
-}
-
-/// Maps sender-side (device, inode) pairs to local hardlink group ordinals.
-///
-/// For protocol < 30, the sender transmits raw filesystem (dev, ino) pairs.
-/// This mapper assigns sequential group IDs to unique pairs, ensuring
-/// hardlinks sharing the same (dev, ino) are grouped together regardless
-/// of the sender's device numbering.
-///
-/// upstream: hlink.c:idev_find()
-struct InodeDeviceMap {
-    map: rustc_hash::FxHashMap<(i64, i64), u32>,
-    next_group: u32,
-}
-
-impl InodeDeviceMap {
-    /// Creates an empty mapper with no group assignments.
-    fn new() -> Self {
-        Self {
-            map: rustc_hash::FxHashMap::default(),
-            next_group: 0,
-        }
-    }
-
-    /// Returns the group ordinal for this (dev, ino) pair, assigning a new one if first seen.
-    fn get_or_insert(&mut self, dev: i64, ino: i64) -> u32 {
-        let next = &mut self.next_group;
-        *self.map.entry((dev, ino)).or_insert_with(|| {
-            let id = *next;
-            *next += 1;
-            id
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn inode_device_map_same_pair_returns_same_group() {
-        let mut map = InodeDeviceMap::new();
-        let g1 = map.get_or_insert(100, 200);
-        let g2 = map.get_or_insert(100, 200);
-        assert_eq!(g1, g2);
-    }
-
-    #[test]
-    fn inode_device_map_different_pairs_return_different_groups() {
-        let mut map = InodeDeviceMap::new();
-        let g1 = map.get_or_insert(1, 1);
-        let g2 = map.get_or_insert(1, 2);
-        let g3 = map.get_or_insert(2, 1);
-        assert_ne!(g1, g2);
-        assert_ne!(g1, g3);
-        assert_ne!(g2, g3);
-    }
-
-    #[test]
-    fn inode_device_map_sequential_group_ids() {
-        let mut map = InodeDeviceMap::new();
-        assert_eq!(map.get_or_insert(10, 20), 0);
-        assert_eq!(map.get_or_insert(30, 40), 1);
-        assert_eq!(map.get_or_insert(50, 60), 2);
-        // Revisiting earlier pair still returns original ordinal.
-        assert_eq!(map.get_or_insert(10, 20), 0);
-    }
-
-    #[test]
-    fn inode_device_map_negative_values() {
-        let mut map = InodeDeviceMap::new();
-        let g1 = map.get_or_insert(-1, -1);
-        let g2 = map.get_or_insert(-1, -1);
-        let g3 = map.get_or_insert(-1, 1);
-        assert_eq!(g1, g2);
-        assert_ne!(g1, g3);
-    }
-
-    #[test]
-    fn inode_device_map_many_groups() {
-        let mut map = InodeDeviceMap::new();
-        for i in 0..1000 {
-            let group = map.get_or_insert(i, i * 2);
-            assert_eq!(group, i as u32);
-        }
-        // All lookups stable.
-        for i in 0..1000 {
-            assert_eq!(map.get_or_insert(i, i * 2), i as u32);
-        }
+        // Protocol 28-29 hardlinks are normalized to hardlink_idx/hlink_first
+        // during file list reception (normalize_pre30_hardlinks), so the
+        // protocol 30+ path above handles both versions uniformly.
     }
 }

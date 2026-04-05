@@ -83,6 +83,15 @@ impl ReceiverContext {
         sort_file_list(&mut self.file_list, self.config.qsort);
         match_hard_links(&mut self.file_list);
 
+        // For protocol < 30, normalize (dev, ino) pairs into hardlink_idx and
+        // hlink_first flags so the rest of the code handles both protocol versions
+        // uniformly. Must run after sort and after match_hard_links (which is a
+        // no-op for pre-30 entries that lack hardlink_idx).
+        // upstream: hlink.c:init_hard_links() builds the idev table from dev/ino
+        if self.protocol.as_u8() < 30 && self.config.flags.hard_links {
+            normalize_pre30_hardlinks(&mut self.file_list);
+        }
+
         // upstream: flist.c:recv_file_entry() uses static variables that persist
         // across recv_file_list() calls - cache the reader to preserve that state.
         self.flist_reader_cache = Some(flist_reader);
@@ -180,6 +189,11 @@ impl ReceiverContext {
             // independently. Unstable sort (true) is safe - entries have unique paths.
             sort_file_list(&mut self.file_list[flat_start..], true);
             match_hard_links(&mut self.file_list[flat_start..]);
+
+            // Normalize pre-30 hardlinks in this segment.
+            if self.protocol.as_u8() < 30 && self.config.flags.hard_links {
+                normalize_pre30_hardlinks(&mut self.file_list[flat_start..]);
+            }
 
             // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
             self.ndx_segments.push((flat_start, seg_ndx_start));
@@ -653,6 +667,60 @@ fn match_hard_links(entries: &mut [FileEntry]) {
     }
 }
 
+/// Normalizes protocol 28-29 hardlink entries to use `hardlink_idx` and
+/// `hlink_first` flags, matching the protocol 30+ representation.
+///
+/// For protocol < 30, the sender transmits raw (dev, ino) pairs instead of
+/// hardlink group indices. This function groups entries by (dev, ino),
+/// assigns a synthetic `hardlink_idx` to each group member, and sets
+/// `hlink_first` on the first entry in sorted order. Entries with only one
+/// occurrence of a (dev, ino) pair are left untouched - they are not part of
+/// a hardlink group (nlink == 1 on the source).
+///
+/// After this normalization, `is_hardlink_follower()` and `create_hardlinks()`
+/// work identically for both protocol versions.
+///
+/// # Upstream Reference
+///
+/// - `hlink.c:init_hard_links()` - builds hardlink table from (dev, ino) pairs
+/// - `hlink.c:match_hard_links()` - assigns leader/follower after sorting
+fn normalize_pre30_hardlinks(entries: &mut [FileEntry]) {
+    // Group entries by (dev, ino) pairs. Key: (dev, ino), Value: list of indices.
+    let mut groups: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+
+    for (i, entry) in entries.iter().enumerate() {
+        if !entry.is_file() {
+            continue;
+        }
+        let dev = match entry.hardlink_dev() {
+            Some(d) => d,
+            None => continue,
+        };
+        let ino = match entry.hardlink_ino() {
+            Some(n) => n,
+            None => continue,
+        };
+        groups.entry((dev, ino)).or_default().push(i);
+    }
+
+    // Assign synthetic hardlink_idx and hlink_first flags.
+    // Only process groups with 2+ members (actual hardlinks).
+    // Use the first entry's position as the group key to avoid collisions
+    // with protocol 30+ gnum values.
+    for indices in groups.values() {
+        if indices.len() < 2 {
+            continue;
+        }
+        // Use the first entry's sorted position as the group's gnum.
+        let gnum = indices[0] as u32;
+        for (pos, &idx) in indices.iter().enumerate() {
+            entries[idx].set_hardlink_idx(gnum);
+            entries[idx].flags_mut().set_hlinked(true);
+            entries[idx].flags_mut().set_hlink_first(pos == 0);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -731,6 +799,126 @@ mod tests {
         // Group 4: position 4 is leader, position 5 is follower
         assert!(entries[4].flags().hlink_first());
         assert!(!entries[5].flags().hlink_first());
+    }
+
+    /// Verifies `normalize_pre30_hardlinks` assigns synthetic hardlink_idx and
+    /// hlink_first from (dev, ino) pairs for a simple two-file group.
+    #[test]
+    fn normalize_pre30_two_file_group() {
+        let mut a = FileEntry::new_file("a.txt".into(), 100, 0o644);
+        a.set_hardlink_dev(1);
+        a.set_hardlink_ino(42);
+
+        let mut b = FileEntry::new_file("b.txt".into(), 100, 0o644);
+        b.set_hardlink_dev(1);
+        b.set_hardlink_ino(42);
+
+        let mut entries = vec![a, b];
+        normalize_pre30_hardlinks(&mut entries);
+
+        // Both entries get the same hardlink_idx
+        assert_eq!(entries[0].hardlink_idx(), entries[1].hardlink_idx());
+        // First entry is leader
+        assert!(entries[0].flags().hlinked());
+        assert!(entries[0].flags().hlink_first());
+        // Second entry is follower
+        assert!(entries[1].flags().hlinked());
+        assert!(!entries[1].flags().hlink_first());
+    }
+
+    /// Verifies `normalize_pre30_hardlinks` leaves single-entry (dev, ino) pairs
+    /// untouched - they are not part of a hardlink group.
+    #[test]
+    fn normalize_pre30_single_entry_not_grouped() {
+        let mut a = FileEntry::new_file("only.txt".into(), 50, 0o644);
+        a.set_hardlink_dev(99);
+        a.set_hardlink_ino(1);
+
+        let mut entries = vec![a];
+        normalize_pre30_hardlinks(&mut entries);
+
+        assert!(entries[0].hardlink_idx().is_none());
+        assert!(!entries[0].flags().hlinked());
+        assert!(!entries[0].flags().hlink_first());
+    }
+
+    /// Verifies `normalize_pre30_hardlinks` handles multiple independent groups.
+    #[test]
+    fn normalize_pre30_multiple_groups() {
+        let mut a1 = FileEntry::new_file("a1.txt".into(), 100, 0o644);
+        a1.set_hardlink_dev(1);
+        a1.set_hardlink_ino(10);
+
+        let mut a2 = FileEntry::new_file("a2.txt".into(), 100, 0o644);
+        a2.set_hardlink_dev(1);
+        a2.set_hardlink_ino(10);
+
+        let mut b1 = FileEntry::new_file("b1.txt".into(), 200, 0o644);
+        b1.set_hardlink_dev(2);
+        b1.set_hardlink_ino(20);
+
+        let mut b2 = FileEntry::new_file("b2.txt".into(), 200, 0o644);
+        b2.set_hardlink_dev(2);
+        b2.set_hardlink_ino(20);
+
+        let mut entries = vec![a1, a2, b1, b2];
+        normalize_pre30_hardlinks(&mut entries);
+
+        // Group A: entries 0, 1
+        let idx_a = entries[0].hardlink_idx().unwrap();
+        assert_eq!(entries[1].hardlink_idx().unwrap(), idx_a);
+        assert!(entries[0].flags().hlink_first());
+        assert!(!entries[1].flags().hlink_first());
+
+        // Group B: entries 2, 3
+        let idx_b = entries[2].hardlink_idx().unwrap();
+        assert_eq!(entries[3].hardlink_idx().unwrap(), idx_b);
+        assert!(entries[2].flags().hlink_first());
+        assert!(!entries[3].flags().hlink_first());
+
+        // Different groups have different indices
+        assert_ne!(idx_a, idx_b);
+    }
+
+    /// Verifies `normalize_pre30_hardlinks` skips directories (only files are hardlinked).
+    #[test]
+    fn normalize_pre30_skips_directories() {
+        let dir = FileEntry::new_directory("dir".into(), 0o755);
+
+        let mut f1 = FileEntry::new_file("f1.txt".into(), 100, 0o644);
+        f1.set_hardlink_dev(1);
+        f1.set_hardlink_ino(5);
+
+        let mut f2 = FileEntry::new_file("f2.txt".into(), 100, 0o644);
+        f2.set_hardlink_dev(1);
+        f2.set_hardlink_ino(5);
+
+        let mut entries = vec![dir, f1, f2];
+        normalize_pre30_hardlinks(&mut entries);
+
+        // Directory is untouched
+        assert!(entries[0].hardlink_idx().is_none());
+        // Files are grouped
+        assert_eq!(entries[1].hardlink_idx(), entries[2].hardlink_idx());
+        assert!(entries[1].flags().hlink_first());
+        assert!(!entries[2].flags().hlink_first());
+    }
+
+    /// Verifies `normalize_pre30_hardlinks` skips entries without dev/ino.
+    #[test]
+    fn normalize_pre30_skips_entries_without_dev_ino() {
+        let plain = FileEntry::new_file("plain.txt".into(), 100, 0o644);
+
+        let mut linked = FileEntry::new_file("linked.txt".into(), 100, 0o644);
+        linked.set_hardlink_dev(1);
+        linked.set_hardlink_ino(5);
+
+        let mut entries = vec![plain, linked];
+        normalize_pre30_hardlinks(&mut entries);
+
+        // Neither entry forms a group of 2+, so no normalization
+        assert!(entries[0].hardlink_idx().is_none());
+        assert!(entries[1].hardlink_idx().is_none());
     }
 
     /// Verifies that `match_hard_links` reassigns the leader when the readdir-order
