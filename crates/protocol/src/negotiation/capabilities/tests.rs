@@ -2080,19 +2080,26 @@ fn capability_fallback_graceful_checksum_degradation() {
 
 /// Tests compression negotiation with modern and legacy peers.
 ///
-/// Zstd/lz4 are not advertised in auto-negotiation (wire format unvalidated),
-/// so negotiation always picks zlibx as the best validated algorithm.
+/// When zstd/lz4 features are enabled, negotiation picks the best available
+/// algorithm matching upstream rsync's preference order (zstd > lz4 > zlibx).
 #[test]
 fn capability_compression_negotiation_preference() {
-    // Remote offers full modern list - we pick zlibx because zstd/lz4
-    // are not in our supported list (wire format not validated).
+    // Remote offers full modern list - we pick the best mutually supported.
     let modern_list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(modern_list, true).unwrap();
+    #[cfg(feature = "zstd")]
+    assert_eq!(result, CompressionAlgorithm::Zstd);
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 
-    // Remote offers lz4 first without zstd - still picks zlibx.
+    // Remote offers lz4 first without zstd.
     let no_zstd_list = "lz4 zlibx zlib none";
     let result = choose_compression_algorithm(no_zstd_list, true).unwrap();
+    #[cfg(feature = "lz4")]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(not(feature = "lz4"))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 
     // Server with only zlib variants
@@ -2456,17 +2463,27 @@ fn capability_fallback_all_protocol_versions() {
 }
 
 #[test]
-fn supported_compressions_excludes_unvalidated_algorithms() {
-    // Zstd and lz4 wire framing is not yet validated against upstream.
-    // They must NOT be advertised in auto-negotiation to prevent mismatches.
+fn supported_compressions_includes_feature_gated_algorithms() {
     let list = supported_compressions();
+    #[cfg(feature = "zstd")]
+    assert!(
+        list.contains(&"zstd"),
+        "zstd must be advertised when feature is enabled"
+    );
+    #[cfg(not(feature = "zstd"))]
     assert!(
         !list.contains(&"zstd"),
-        "zstd must not be advertised until wire format is validated"
+        "zstd must not be advertised when feature is disabled"
     );
+    #[cfg(feature = "lz4")]
+    assert!(
+        list.contains(&"lz4"),
+        "lz4 must be advertised when feature is enabled"
+    );
+    #[cfg(not(feature = "lz4"))]
     assert!(
         !list.contains(&"lz4"),
-        "lz4 must not be advertised until wire format is validated"
+        "lz4 must not be advertised when feature is disabled"
     );
     assert!(list.contains(&"zlibx"));
     assert!(list.contains(&"zlib"));
@@ -2475,22 +2492,42 @@ fn supported_compressions_excludes_unvalidated_algorithms() {
 
 #[test]
 fn supported_compressions_order_matches_upstream() {
-    // upstream: compat.c - preference order is zlibx > zlib > none
-    // (zstd > lz4 will be re-added after wire format validation)
+    // upstream: compat.c:100-112 - preference order is zstd > lz4 > zlibx > zlib > none
     let list = supported_compressions();
     let zlibx_pos = list.iter().position(|&s| s == "zlibx").unwrap();
     let zlib_pos = list.iter().position(|&s| s == "zlib").unwrap();
     let none_pos = list.iter().position(|&s| s == "none").unwrap();
+    #[cfg(feature = "zstd")]
+    {
+        let zstd_pos = list.iter().position(|&s| s == "zstd").unwrap();
+        assert!(zstd_pos < zlibx_pos, "zstd must precede zlibx");
+    }
+    #[cfg(feature = "lz4")]
+    {
+        let lz4_pos = list.iter().position(|&s| s == "lz4").unwrap();
+        assert!(lz4_pos < zlibx_pos, "lz4 must precede zlibx");
+    }
+    #[cfg(all(feature = "zstd", feature = "lz4"))]
+    {
+        let zstd_pos = list.iter().position(|&s| s == "zstd").unwrap();
+        let lz4_pos = list.iter().position(|&s| s == "lz4").unwrap();
+        assert!(zstd_pos < lz4_pos, "zstd must precede lz4");
+    }
     assert!(zlibx_pos < zlib_pos);
     assert!(zlib_pos < none_pos);
 }
 
 #[test]
-fn negotiate_picks_zlibx_as_best_validated_algorithm() {
-    // Zstd/lz4 are not advertised in auto-negotiation (wire format unvalidated).
-    // Even when remote offers all algorithms, we pick zlibx as best validated.
+fn negotiate_picks_best_available_compression() {
+    // When remote offers all algorithms, we pick the best one we support.
+    // upstream: compat.c:100-112 - zstd > lz4 > zlibx > zlib > none
     let list = "zstd lz4 zlibx zlib none";
     let result = choose_compression_algorithm(list, true).unwrap();
+    #[cfg(feature = "zstd")]
+    assert_eq!(result, CompressionAlgorithm::Zstd);
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    assert_eq!(result, CompressionAlgorithm::LZ4);
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 }
 
