@@ -874,6 +874,10 @@ mod integration {
             protocol::wire::delta::write_token_end(&mut delta_buf).unwrap();
             writer.write_data(&delta_buf).unwrap();
 
+            // File-level checksum (16 bytes) - upstream always writes this after delta stream
+            // upstream: receiver.c - sender writes xfer_sum_len bytes of file checksum
+            writer.write_data(&[0u8; 16]).unwrap();
+
             // NDX_DONE for phase 1 -> phase 2 transition
             ndx_buf.clear();
             ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
