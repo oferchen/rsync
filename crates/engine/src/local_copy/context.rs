@@ -45,6 +45,7 @@ use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use filters::FilterRule;
 use protocol::flist::FileListWriter;
+use protocol::idlist::IdList;
 
 /// Aggregated result of a local copy operation, containing the transfer
 /// summary, optional per-file event records, and the destination root path.
@@ -143,6 +144,12 @@ pub(crate) struct CopyContext<'a> {
     /// NDX codec for writing file indices to the batch delta stream.
     /// Persists across files to maintain delta-encoding state (proto >= 30).
     batch_ndx_codec: Option<protocol::codec::NdxCodecEnum>,
+    /// UID name mappings collected during batch flist capture.
+    /// Written after the flist end marker for upstream compatibility.
+    /// upstream: uidlist.c - send_id_lists() writes uid then gid lists.
+    batch_uid_list: IdList,
+    /// GID name mappings collected during batch flist capture.
+    batch_gid_list: IdList,
 }
 
 /// Path and type context for metadata finalization.

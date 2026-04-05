@@ -430,10 +430,24 @@ where
         flags.bits() as i32
     };
 
+    // upstream: compat.c:750 - checksum_seed = (int32)time(NULL) ^ (getpid() << 6)
+    // Batch files record the seed so the receiver can verify checksums during
+    // replay. Without a proper seed, upstream's --read-batch rejects the file.
+    let batch_checksum_seed = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i32;
+        let pid = std::process::id() as i32;
+        timestamp ^ (pid << 6)
+    };
+
     let batch_config = if let Some(ref path) = write_batch {
         Some(
             BatchConfig::new(BatchMode::Write, path.to_string_lossy().into_owned(), 32)
-                .with_compat_flags(local_batch_compat_flags),
+                .with_compat_flags(local_batch_compat_flags)
+                .with_checksum_seed(batch_checksum_seed),
         )
     } else if let Some(ref path) = only_write_batch {
         Some(
@@ -442,7 +456,8 @@ where
                 path.to_string_lossy().into_owned(),
                 32,
             )
-            .with_compat_flags(local_batch_compat_flags),
+            .with_compat_flags(local_batch_compat_flags)
+            .with_checksum_seed(batch_checksum_seed),
         )
     } else {
         read_batch.as_ref().map(|path| {
