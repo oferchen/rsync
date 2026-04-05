@@ -114,6 +114,7 @@ pub(crate) fn copy_sources(
             // This produces the correct upstream batch ordering: all flist
             // entries first, then all file data.
             context.finalize_batch_flist()?;
+            context.write_batch_id_lists()?;
             context.flush_batch_delta_to_batch()?;
 
             flush_deferred_operations(context)?;
