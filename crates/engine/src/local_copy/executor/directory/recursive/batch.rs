@@ -29,6 +29,8 @@ fn build_protocol_file_entry(
 ) -> protocol::flist::FileEntry {
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
+    #[cfg(not(unix))]
+    let _ = numeric_ids;
 
     #[cfg(unix)]
     let mode = metadata.mode();
