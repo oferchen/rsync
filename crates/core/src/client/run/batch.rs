@@ -170,7 +170,11 @@ pub(crate) fn finalize_batch(
         // goodbye after stats. read_final_goodbye() (main.c:875-906) reads
         // this from the batch file. For protocol >= 30, NDX_DONE = 0x00
         // (single byte). For protocol < 30, NDX_DONE = 0xFFFFFFFF (4 bytes).
-        let goodbye_bytes: &[u8] = if proto >= 30 { &[0x00] } else { &[0xFF, 0xFF, 0xFF, 0xFF] };
+        let goodbye_bytes: &[u8] = if proto >= 30 {
+            &[0x00]
+        } else {
+            &[0xFF, 0xFF, 0xFF, 0xFF]
+        };
         if let Err(e) = writer.write_data(goodbye_bytes) {
             let msg = format!("failed to write batch goodbye NDX_DONE: {e}");
             return Err(ClientError::new(

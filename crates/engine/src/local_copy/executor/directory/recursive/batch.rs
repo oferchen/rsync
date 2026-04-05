@@ -135,7 +135,13 @@ pub(crate) fn capture_batch_file_entry(
     #[cfg(not(unix))]
     let numeric_ids = true;
 
-    let entry = build_protocol_file_entry(source_path, relative_path, metadata, is_top_dir, numeric_ids);
+    let entry = build_protocol_file_entry(
+        source_path,
+        relative_path,
+        metadata,
+        is_top_dir,
+        numeric_ids,
+    );
 
     let mut buf = Vec::with_capacity(128);
     let flist_writer = context
