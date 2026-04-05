@@ -1499,9 +1499,6 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  # Flaky under CI load - connection reset by peer during zstd compressed
-  # daemon transfer. Not reproducible locally.
-  "up:compress-zstd"
 )
 
 is_known_failure() {
