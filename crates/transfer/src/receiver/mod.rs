@@ -43,8 +43,9 @@ use std::num::NonZeroU8;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use filters::FilterChain;
+use filters::{FilterChain, FilterSet};
 use protocol::acl::AclCache;
+use protocol::filters::FilterRuleWireFormat;
 use protocol::flist::{FileEntry, FileListReader};
 use protocol::idlist::IdList;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
@@ -131,6 +132,19 @@ pub struct ReceiverContext {
     uid_list: IdList,
     /// GID mappings from remote to local IDs.
     gid_list: IdList,
+    /// Compiled daemon-side filter rules from rsyncd.conf module configuration.
+    ///
+    /// Built from `ServerConfig::daemon_filter_rules` at construction time.
+    /// Used to reject daemon-excluded files before accepting transfers and
+    /// to prepend server-side rules to the client filter chain for deletion.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:599-604` - `check_filter(&daemon_filter_list, ...)` rejects
+    ///   excluded files before accepting transfer data
+    /// - `flist.c:254-272` - `path_is_daemon_excluded()` checks each path
+    ///   component against the daemon filter list
+    daemon_filter_set: Option<FilterSet>,
     /// Per-directory scoped filter chain for deletion protection.
     ///
     /// Used by `delete_extraneous_files()` to check `allows_deletion()` before
@@ -157,6 +171,8 @@ impl ReceiverContext {
     /// Creates a new receiver context from a completed handshake and server config.
     ///
     /// Initializes protocol state, INC_RECURSE NDX offset, and empty file list.
+    /// Compiles daemon filter rules from `ServerConfig::daemon_filter_rules` into
+    /// a `FilterSet` for per-file exclusion checking during transfer.
     /// Execute the transfer via [`run`](Self::run).
     #[must_use]
     pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
@@ -172,6 +188,10 @@ impl ReceiverContext {
             None
         };
 
+        // upstream: clientserver.c:874-893 - daemon_filter_list is built from
+        // module filter/exclude/include directives and used by all roles.
+        let daemon_filter_set = compile_daemon_filter_set(&config.daemon_filter_rules);
+
         Self {
             protocol: handshake.protocol,
             config,
@@ -183,6 +203,7 @@ impl ReceiverContext {
             flist_reader_cache: None,
             uid_list: IdList::new(),
             gid_list: IdList::new(),
+            daemon_filter_set,
             filter_chain: FilterChain::empty(),
             hardlink_tracker,
         }
@@ -393,6 +414,15 @@ impl ReceiverContext {
         &self.filter_chain
     }
 
+    /// Returns the compiled daemon filter set, if any rules were configured.
+    ///
+    /// Used by `build_files_to_transfer()` to reject daemon-excluded files
+    /// before accepting transfer data.
+    #[must_use]
+    pub fn daemon_filter_set(&self) -> Option<&FilterSet> {
+        self.daemon_filter_set.as_ref()
+    }
+
     /// Returns whether itemize emission should be active.
     ///
     /// MSG_INFO itemize frames are only emitted when:
@@ -491,4 +521,56 @@ fn apply_acls_from_receiver_cache(
         follow_symlinks,
         Some(entry.mode()),
     )
+}
+
+/// Compiles daemon filter rules from wire format into a `FilterSet`.
+///
+/// Returns `Some(filter_set)` when rules are present, `None` when empty.
+/// Used by the receiver to reject daemon-excluded files before accepting
+/// transfer data, mirroring upstream `check_filter(&daemon_filter_list, ...)`
+/// in `receiver.c:599-604`.
+///
+/// # Upstream Reference
+///
+/// - `clientserver.c:874-893` - daemon filter list is built from module
+///   filter/exclude/include/exclude_from/include_from directives
+/// - `receiver.c:599-604` - per-file check against daemon_filter_list
+fn compile_daemon_filter_set(rules: &[FilterRuleWireFormat]) -> Option<FilterSet> {
+    use filters::FilterRule;
+    use protocol::filters::RuleType;
+
+    if rules.is_empty() {
+        return None;
+    }
+
+    let filter_rules: Vec<FilterRule> = rules
+        .iter()
+        .filter_map(|wire_rule| {
+            let mut rule = match wire_rule.rule_type {
+                RuleType::Include => FilterRule::include(&wire_rule.pattern),
+                RuleType::Exclude => FilterRule::exclude(&wire_rule.pattern),
+                RuleType::Protect => FilterRule::protect(&wire_rule.pattern),
+                RuleType::Risk => FilterRule::risk(&wire_rule.pattern),
+                RuleType::Clear | RuleType::DirMerge | RuleType::Merge => return None,
+            };
+
+            if wire_rule.sender_side || wire_rule.receiver_side {
+                rule = rule.with_sides(wire_rule.sender_side, wire_rule.receiver_side);
+            }
+            if wire_rule.perishable {
+                rule = rule.with_perishable(true);
+            }
+            if wire_rule.anchored {
+                rule = rule.anchor_to_root();
+            }
+
+            Some(rule)
+        })
+        .collect();
+
+    if filter_rules.is_empty() {
+        return None;
+    }
+
+    FilterSet::from_rules(filter_rules).ok()
 }

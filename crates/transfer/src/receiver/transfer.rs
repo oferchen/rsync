@@ -800,10 +800,24 @@ impl ReceiverContext {
                     ),
                 )
             })?;
-            // Build a FilterChain from the received rules for deletion filtering.
+
+            // upstream: clientserver.c:rsync_module() - daemon_filter_list is applied
+            // on top of client filters. Daemon rules take precedence (prepended).
+            let daemon_rules = &self.config.daemon_filter_rules;
+            let combined = if daemon_rules.is_empty() {
+                wire_rules
+            } else if wire_rules.is_empty() {
+                daemon_rules.clone()
+            } else {
+                let mut combined = daemon_rules.clone();
+                combined.extend(wire_rules);
+                combined
+            };
+
+            // Build a FilterChain from the combined rules for deletion filtering.
             // upstream: generator.c:delete_in_dir() - is_excluded() before deletion
-            if !wire_rules.is_empty() {
-                let (filter_set, merge_configs) = parse_wire_filters_for_receiver(&wire_rules)
+            if !combined.is_empty() {
+                let (filter_set, merge_configs) = parse_wire_filters_for_receiver(&combined)
                     .map_err(|e| {
                         io::Error::new(
                             e.kind(),

@@ -43,11 +43,23 @@ impl ReceiverContext {
             return Ok(Vec::new());
         }
 
+        // upstream: generator.c:1261-1262 - check_filter(&daemon_filter_list, ...)
+        // skips daemon-excluded directories before creation.
+        let daemon_filters = self.daemon_filter_set();
         let dir_entries: Vec<(usize, PathBuf)> = self
             .file_list
             .iter()
             .enumerate()
             .filter(|(_, e)| e.is_dir())
+            .filter(|(_, e)| {
+                if let Some(filters) = daemon_filters {
+                    let name = e.name();
+                    if name != "." && !name.is_empty() {
+                        return filters.allows(Path::new(name), true);
+                    }
+                }
+                true
+            })
             .map(|(idx, entry)| {
                 let relative_path = entry.path();
                 let dir_path = if relative_path.as_os_str() == "." {
