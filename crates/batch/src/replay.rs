@@ -39,6 +39,7 @@ use protocol::codec::{
 use crate::BatchConfig;
 use crate::error::{BatchError, BatchResult};
 use crate::reader::BatchReader;
+use protocol::flist::sort_file_list;
 
 /// Result of a batch replay operation.
 ///
@@ -349,6 +350,20 @@ pub fn replay(
     // with upstream rsync's batch file wire format.
     let mut entries = reader.read_protocol_flist()?;
 
+    // upstream: flist.c:2736 - flist_sort_and_clean() after recv_file_list().
+    // NDX values from the generator reference sorted positions, not wire order.
+    sort_file_list(&mut entries, false);
+
+    // upstream: flist.c:2679 - dir_flist tracks directory entries separately.
+    // NDX_FLIST_OFFSET-based dir_ndx values index into dir_flist, not the main
+    // entries array. Build a mapping from dir_ndx to entries index.
+    let mut dir_ndx_to_entry: Vec<usize> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.is_dir())
+        .map(|(i, _)| i)
+        .collect();
+
     let mut result = ReplayResult {
         file_count: entries.len() as u64,
         recurse: flags.recurse,
@@ -424,6 +439,22 @@ pub fn replay(
     // upstream: receiver.c:recv_files() reads NDX + iflags + sum_head per file,
     // then delta tokens, then file checksum. NDX_DONE signals phase transitions.
     let proto = reader.config().protocol_version;
+
+    // upstream: flist.c:2923 - with INC_RECURSE, the first flist has ndx_start=1,
+    // meaning global NDX values are offset by 1 from local entry indices. The
+    // generator sends global indices (i + ndx_start), so we must subtract
+    // ndx_start when indexing into entries[].
+    let header = reader
+        .header()
+        .ok_or_else(|| BatchError::Io(std::io::Error::other("batch header not read")))?;
+    let inc_recurse = header
+        .compat_flags
+        .map(|cf| {
+            protocol::CompatibilityFlags::from_bits(cf as u32)
+                .contains(protocol::CompatibilityFlags::INC_RECURSE)
+        })
+        .unwrap_or(false);
+    let ndx_start: i32 = if inc_recurse { 1 } else { 0 };
     // Reuse the NDX codec from flist reading if available (INC_RECURSE mode).
     // The codec carries delta-encoding state from reading incremental flist
     // segment NDX values; creating a fresh codec would desync.
@@ -481,8 +512,27 @@ pub fn replay(
         // directories so files in the sub-list have parent paths.
         if ndx <= NDX_FLIST_OFFSET {
             let dir_ndx = NDX_FLIST_OFFSET - ndx;
+
+            // upstream: dir_ndx indexes into dir_flist (directories only),
+            // not the main entries array. Map to the actual entries index.
+            let entries_idx = if (dir_ndx as usize) < dir_ndx_to_entry.len() {
+                dir_ndx_to_entry[dir_ndx as usize]
+            } else {
+                dir_ndx as usize
+            };
+
             let prev_len = entries.len();
-            reader.read_incremental_flist_segment(dir_ndx, &mut entries)?;
+            reader.read_incremental_flist_segment(entries_idx as i32, &mut entries)?;
+
+            // upstream: flist.c:2736 - sort each sub-list segment after receiving.
+            sort_file_list(&mut entries[prev_len..], false);
+
+            // Track new directory entries in dir_ndx_to_entry for nested sub-lists.
+            for (i, entry) in entries.iter().enumerate().skip(prev_len) {
+                if entry.is_dir() {
+                    dir_ndx_to_entry.push(i);
+                }
+            }
 
             // Create directories and symlinks for newly discovered entries.
             for entry in &entries[prev_len..] {
@@ -511,14 +561,10 @@ pub fn replay(
             continue;
         }
 
-        if ndx < 0 || ndx as usize >= entries.len() {
-            return Err(BatchError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("invalid NDX {ndx} (flist has {} entries)", entries.len()),
-            )));
-        }
-
-        // upstream: rsync.c:383 - read iflags (u16) for protocol >= 29
+        // upstream: rsync.c:383 - read iflags (u16) for protocol >= 29.
+        // iflags MUST be read before the entry lookup because the stream
+        // contains iflags for every positive NDX, including directory
+        // metadata updates where NDX < ndx_start (INC_RECURSE).
         let iflags = if proto >= 29 {
             let stream = reader
                 .inner_reader()
@@ -536,13 +582,88 @@ pub fn replay(
             0x8000 | 0x0400
         };
 
+        // upstream: rsync.c:403-418 - consume optional trailing fields after iflags.
+        // ITEM_BASIS_TYPE_FOLLOWS (0x0800): 1 byte fnamecmp_type.
+        // ITEM_XNAME_FOLLOWS (0x1000): vstring (1-2 byte length + data).
+        const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11;
+        const ITEM_XNAME_FOLLOWS: u16 = 1 << 12;
+
+        if iflags & ITEM_BASIS_TYPE_FOLLOWS != 0 {
+            let stream = reader
+                .inner_reader()
+                .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
+            let mut byte = [0u8; 1];
+            stream.read_exact(&mut byte).map_err(|e| {
+                BatchError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to read fnamecmp_type: {e}"),
+                ))
+            })?;
+        }
+
+        if iflags & ITEM_XNAME_FOLLOWS != 0 {
+            let stream = reader
+                .inner_reader()
+                .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
+            // upstream: io.c:read_vstring() - 1-byte length, or 2-byte if high bit set
+            let mut len_byte = [0u8; 1];
+            stream.read_exact(&mut len_byte).map_err(|e| {
+                BatchError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to read xname length: {e}"),
+                ))
+            })?;
+            let mut xname_len = len_byte[0] as usize;
+            if xname_len & 0x80 != 0 {
+                let mut hi = [0u8; 1];
+                stream.read_exact(&mut hi).map_err(|e| {
+                    BatchError::Io(std::io::Error::new(
+                        e.kind(),
+                        format!("failed to read xname extended length: {e}"),
+                    ))
+                })?;
+                xname_len = (xname_len & !0x80) * 0x100 + hi[0] as usize;
+            }
+            if xname_len > 0 {
+                let mut xname_buf = vec![0u8; xname_len];
+                stream.read_exact(&mut xname_buf).map_err(|e| {
+                    BatchError::Io(std::io::Error::new(
+                        e.kind(),
+                        format!("failed to read xname data: {e}"),
+                    ))
+                })?;
+            }
+        }
+
         const ITEM_TRANSFER: u16 = 0x8000;
         if iflags & ITEM_TRANSFER == 0 {
             // Metadata-only change, no delta data follows
             continue;
         }
 
-        let entry = &entries[ndx as usize];
+        // upstream: flist.c:2923 - convert global NDX to local entry index
+        let local_ndx = ndx - ndx_start;
+
+        // upstream: receiver.c:590-593 - with INC_RECURSE, NDX < ndx_start
+        // refers to a parent directory entry. The generator sends these for
+        // directory metadata updates (permissions, timestamps). Since we
+        // already created directories above and ITEM_TRANSFER would not be
+        // set for directories, this is a safety guard.
+        if local_ndx < 0 {
+            continue;
+        }
+
+        if local_ndx as usize >= entries.len() {
+            return Err(BatchError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "invalid NDX {ndx} (local={local_ndx}, ndx_start={ndx_start}, flist has {} entries)",
+                    entries.len()
+                ),
+            )));
+        }
+
+        let entry = &entries[local_ndx as usize];
         let dest_path = dest_root.join(entry.name());
 
         // upstream: receiver.c:273 - read_sum_head() reads 4 x i32
@@ -559,9 +680,8 @@ pub fn replay(
         let _count = i32::from_le_bytes([sum_buf[0], sum_buf[1], sum_buf[2], sum_buf[3]]);
         let block_length_wire =
             i32::from_le_bytes([sum_buf[4], sum_buf[5], sum_buf[6], sum_buf[7]]);
-        let s2length = i32::from_le_bytes([sum_buf[8], sum_buf[9], sum_buf[10], sum_buf[11]]);
+        let _s2length = i32::from_le_bytes([sum_buf[8], sum_buf[9], sum_buf[10], sum_buf[11]]);
         let _remainder = i32::from_le_bytes([sum_buf[12], sum_buf[13], sum_buf[14], sum_buf[15]]);
-
         // Read delta tokens for this file
         let delta_ops = reader.read_file_delta_tokens().map_err(|e| {
             BatchError::Io(std::io::Error::new(
@@ -570,16 +690,21 @@ pub fn replay(
             ))
         })?;
 
-        // upstream: receiver.c:408 - read file checksum (s2length bytes)
-        if s2length > 0 {
+        // upstream: receiver.c:408 - read_buf(f_in, sender_file_sum, xfer_sum_len)
+        // The sender ALWAYS writes xfer_sum_len bytes of file checksum after
+        // the delta stream, regardless of sum_head.s2length. For protocol 32
+        // the default xfer checksum is XXH3-128 or MD5 - both 16 bytes. For
+        // protocol 28-31 it is MD4 or MD5 - also 16 bytes.
+        {
+            let xfer_sum_len = default_xfer_sum_len(proto);
             let stream = reader
                 .inner_reader()
                 .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
-            let mut checksum_buf = vec![0u8; s2length as usize];
+            let mut checksum_buf = vec![0u8; xfer_sum_len];
             stream.read_exact(&mut checksum_buf).map_err(|e| {
                 BatchError::Io(std::io::Error::new(
                     e.kind(),
-                    format!("failed to read file checksum: {e}"),
+                    format!("failed to read file checksum ({xfer_sum_len} bytes): {e}"),
                 ))
             })?;
         }
@@ -657,6 +782,17 @@ pub fn replay(
 /// MAX_BLOCK_SIZE (128 * 1024)]`. For batch replay the exact same
 /// derivation ensures copy-token offsets align with the blocks that the
 /// sender used during the original transfer.
+/// Returns the default xfer checksum length for batch replay.
+///
+/// upstream: `checksum.c:188` - `xfer_sum_len = csum_len_for_type(xfer_sum_nni->num, 0)`.
+/// Batch files don't record the negotiated checksum algorithm. For all
+/// supported protocols (28-32), the default xfer checksum is MD4, MD5, or
+/// XXH3-128 - all produce 16-byte digests.
+fn default_xfer_sum_len(protocol_version: i32) -> usize {
+    let _ = protocol_version;
+    16
+}
+
 fn choose_block_length(file_size: u64) -> usize {
     const MIN_BLOCK: usize = 700;
     const MAX_BLOCK: usize = 128 * 1024;
