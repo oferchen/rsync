@@ -25,7 +25,7 @@ use crate::pipeline::{PipelineConfig, PipelineState};
 use crate::receiver::basis::find_basis_file_with_config;
 use crate::receiver::{PARALLEL_STAT_THRESHOLD, PipelineSetup, ReceiverContext};
 use crate::transfer_ops::{
-    RequestConfig, ResponseContext, TokenReader, process_file_response_streaming, send_file_request,
+    RequestConfig, ResponseContext, process_file_response_streaming, send_file_request,
 };
 
 impl ReceiverContext {

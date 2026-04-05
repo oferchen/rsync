@@ -169,7 +169,7 @@ pub fn process_file_response_streaming<R: Read>(
                 &mut basis_map,
                 total_bytes,
                 Some(next_delta),
-                &mut token_reader,
+                token_reader,
             )
         }
         first_delta => {
@@ -187,7 +187,7 @@ pub fn process_file_response_streaming<R: Read>(
                 &mut basis_map,
                 total_bytes,
                 Some(first_delta),
-                &mut token_reader,
+                token_reader,
             )
         }
     }
