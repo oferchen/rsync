@@ -898,7 +898,15 @@ impl<'a> CopyContext<'a> {
             .as_mut()
             .expect("batch_ndx_codec must exist when batch_delta_buf is set");
 
-        let entries = std::mem::take(&mut self.batch_delta_entries);
+        let mut entries = std::mem::take(&mut self.batch_delta_entries);
+        // Sort entries by their post-sort NDX so the delta stream is in
+        // ascending NDX order, matching what upstream's recv_files() expects.
+        entries.sort_by_key(|(traversal_idx, _)| {
+            traversal_to_sorted
+                .get(*traversal_idx as usize)
+                .copied()
+                .unwrap_or(*traversal_idx)
+        });
         for (traversal_idx, data) in &entries {
             let sorted_idx = traversal_to_sorted
                 .get(*traversal_idx as usize)
