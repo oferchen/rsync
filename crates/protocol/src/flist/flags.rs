@@ -309,6 +309,19 @@ impl FileFlags {
         self.extended & XMIT_HLINK_FIRST != 0
     }
 
+    /// Sets or clears the hardlink flag.
+    ///
+    /// Called by `normalize_pre30_hardlinks()` to mark entries that belong to
+    /// a hardlink group after (dev, ino) grouping for protocol 28-29.
+    #[inline]
+    pub fn set_hlinked(&mut self, hlinked: bool) {
+        if hlinked {
+            self.extended |= XMIT_HLINKED;
+        } else {
+            self.extended &= !XMIT_HLINKED;
+        }
+    }
+
     /// Sets or clears the hardlink-first flag.
     ///
     /// Called by `match_hard_links()` after sorting to reassign leader/follower
