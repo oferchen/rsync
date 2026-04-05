@@ -24,6 +24,12 @@ use crate::server::ServerConfig;
 pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     let mut flags = String::from("-");
 
+    // upstream: options.c:2169-2173 - --files-from disables recursion and
+    // enables xfer_dirs. options.c:2188 - --files-from implies --relative.
+    let files_from_active = config.files_from().is_active();
+    let effective_recursive = config.recursive() && !files_from_active;
+    let effective_relative = config.relative_paths() || files_from_active;
+
     // Order matches upstream server_options().
     if config.links() {
         flags.push('l');
@@ -46,7 +52,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_permissions() {
         flags.push('p');
     }
-    if config.recursive() {
+    if effective_recursive {
         flags.push('r');
     }
     // upstream: options.c:2704 - 'z' is only sent when the compression
@@ -83,7 +89,9 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     }
     // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
     // delete variants are always sent as long-form --delete-* (options.c:2818-2827).
-    if config.dirs() && !config.recursive() {
+    // upstream: options.c:2620 - xfer_dirs=1 when files_from is active.
+    let effective_dirs = config.dirs() || files_from_active;
+    if effective_dirs && !effective_recursive {
         flags.push('d');
     }
     // upstream: options.c:2622 — whole_file, but not when --append is active
@@ -97,7 +105,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     for _ in 0..config.one_file_system_level() {
         flags.push('x');
     }
-    if config.relative_paths() {
+    if effective_relative {
         flags.push('R');
     }
     if config.partial() {
@@ -443,5 +451,39 @@ mod tests {
         assert!(rules[0].no_inherit); // inherit(false) -> no_inherit(true)
         assert!(rules[0].exclude_from_merge); // exclude_filter_file(true)
         assert!(rules[0].word_split); // use_whitespace()
+    }
+
+    #[test]
+    fn server_flag_string_files_from_suppresses_r_adds_d_and_r_upper() {
+        // upstream: options.c:2169-2188 - --files-from sets recurse=0,
+        // xfer_dirs=1, relative_paths=1.
+        use crate::client::config::FilesFromSource;
+
+        let config = ClientConfig::builder()
+            .recursive(true)
+            .times(true)
+            .files_from(FilesFromSource::LocalFile("/tmp/list.txt".into()))
+            .build();
+        let flags = build_server_flag_string(&config);
+        assert!(
+            !flags.contains('r'),
+            "should suppress 'r' with --files-from: {flags}"
+        );
+        assert!(
+            flags.contains('d'),
+            "should add 'd' (xfer_dirs) with --files-from: {flags}"
+        );
+        assert!(
+            flags.contains('R'),
+            "should add 'R' (relative) with --files-from: {flags}"
+        );
+    }
+
+    #[test]
+    fn server_flag_string_no_files_from_keeps_r() {
+        let config = ClientConfig::builder().recursive(true).build();
+        let flags = build_server_flag_string(&config);
+        assert!(flags.contains('r'), "should keep 'r' without files-from: {flags}");
+        assert!(!flags.contains('d'), "should not add 'd' without files-from: {flags}");
     }
 }
