@@ -864,4 +864,115 @@ impl<'a> CopyContext<'a> {
     pub(super) fn increment_batch_flist_index(&mut self) {
         self.batch_flist_index += 1;
     }
+
+    /// Returns whether `--numeric-ids` is enabled.
+    #[cfg(unix)]
+    pub(super) const fn numeric_ids_enabled(&self) -> bool {
+        self.options.numeric_ids_enabled()
+    }
+
+    /// Returns whether `--owner` / `-o` is enabled.
+    #[cfg(unix)]
+    pub(super) const fn preserve_owner_enabled(&self) -> bool {
+        self.options.preserve_owner()
+    }
+
+    /// Returns whether `--group` / `-g` is enabled.
+    #[cfg(unix)]
+    pub(super) const fn preserve_group_enabled(&self) -> bool {
+        self.options.preserve_group()
+    }
+
+    /// Returns a reference to the batch UID name list.
+    #[cfg(unix)]
+    pub(super) const fn batch_uid_list(&self) -> &IdList {
+        &self.batch_uid_list
+    }
+
+    /// Returns a mutable reference to the batch UID name list.
+    #[cfg(unix)]
+    pub(super) fn batch_uid_list_mut(&mut self) -> &mut IdList {
+        &mut self.batch_uid_list
+    }
+
+    /// Returns a reference to the batch GID name list.
+    #[cfg(unix)]
+    pub(super) const fn batch_gid_list(&self) -> &IdList {
+        &self.batch_gid_list
+    }
+
+    /// Returns a mutable reference to the batch GID name list.
+    #[cfg(unix)]
+    pub(super) fn batch_gid_list_mut(&mut self) -> &mut IdList {
+        &mut self.batch_gid_list
+    }
+
+    /// Writes the uid/gid ID name lists to the batch file.
+    ///
+    /// After the flist end marker, upstream rsync writes uid and gid name
+    /// mapping lists so the receiver can map numeric IDs to local users/groups.
+    /// This is skipped when INC_RECURSE is active (names sent per-segment) or
+    /// when `--numeric-ids` is set.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2726-2728` - `recv_id_list(f, flist)` when `!inc_recurse`
+    /// - `uidlist.c:465-473` - conditional on `preserve_uid`/`preserve_gid`
+    pub(crate) fn write_batch_id_lists(
+        &self,
+    ) -> Result<(), crate::local_copy::LocalCopyError> {
+        let batch_writer_arc = match self.options.get_batch_writer() {
+            Some(w) => w.clone(),
+            None => return Ok(()),
+        };
+
+        // upstream: uidlist.c - send_id_lists() is skipped for numeric_ids
+        if self.options.numeric_ids_enabled() {
+            return Ok(());
+        }
+
+        let proto = batch_writer_arc.lock().unwrap().config().protocol_version;
+        let id0_names = proto >= 30;
+
+        let mut buf = Vec::with_capacity(64);
+
+        // upstream: uidlist.c:465 - (preserve_uid || preserve_acls) && numeric_ids <= 0
+        if self.options.preserve_owner() {
+            self.batch_uid_list
+                .write(&mut buf, id0_names, proto as u8)
+                .map_err(|e| {
+                    crate::local_copy::LocalCopyError::io(
+                        "write batch uid list",
+                        std::path::PathBuf::new(),
+                        e,
+                    )
+                })?;
+        }
+
+        // upstream: uidlist.c:473 - (preserve_gid || preserve_acls) && numeric_ids <= 0
+        if self.options.preserve_group() {
+            self.batch_gid_list
+                .write(&mut buf, id0_names, proto as u8)
+                .map_err(|e| {
+                    crate::local_copy::LocalCopyError::io(
+                        "write batch gid list",
+                        std::path::PathBuf::new(),
+                        e,
+                    )
+                })?;
+        }
+
+        if !buf.is_empty() {
+            let mut writer_guard = batch_writer_arc.lock().unwrap();
+            writer_guard.write_data(&buf).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch id lists",
+                    std::path::PathBuf::new(),
+                    std::io::Error::other(e),
+                )
+            })?;
+        }
+
+        Ok(())
+    }
 }

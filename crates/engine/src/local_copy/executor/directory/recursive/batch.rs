@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use crate::local_copy::{CopyContext, LocalCopyError};
+#[cfg(unix)]
+use metadata::id_lookup::{lookup_group_name, lookup_user_name};
 
 /// Builds a protocol [`FileEntry`](protocol::flist::FileEntry) from filesystem metadata.
 ///
@@ -83,6 +85,28 @@ pub(crate) fn capture_batch_file_entry(
     }
 
     let entry = build_protocol_file_entry(relative_path, metadata);
+
+    // upstream: uidlist.c - collect uid/gid name mappings for the ID lists
+    // that are written after the flist end marker. Skip when --numeric-ids
+    // is set (upstream sends no name lists in that case).
+    #[cfg(unix)]
+    if !context.numeric_ids_enabled() {
+        use std::os::unix::fs::MetadataExt;
+        if context.preserve_owner_enabled() {
+            let uid = metadata.uid();
+            if !context.batch_uid_list().contains(uid) {
+                let name = lookup_user_name(uid).ok().flatten();
+                context.batch_uid_list_mut().add_id(uid, name);
+            }
+        }
+        if context.preserve_group_enabled() {
+            let gid = metadata.gid();
+            if !context.batch_gid_list().contains(gid) {
+                let name = lookup_group_name(gid).ok().flatten();
+                context.batch_gid_list_mut().add_id(gid, name);
+            }
+        }
+    }
 
     let mut buf = Vec::with_capacity(128);
     let flist_writer = context
