@@ -485,6 +485,10 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                     config.temp_dir = Some(std::path::PathBuf::from(dir));
                 } else if let Some(path) = arg.strip_prefix("--files-from=") {
                     config.file_selection.files_from_path = Some(path.to_owned());
+                } else if arg == "--from0" {
+                    // upstream: options.c:940 - --from0 sets NUL-delimited mode
+                    // for --files-from content read from the protocol stream.
+                    config.file_selection.from0 = true;
                 // upstream: options.c:773,963 - --log-format is the deprecated
                 // alias for --out-format. The server parses it to set
                 // stdout_format_has_i (options.c:2327-2331) which drives itemize
