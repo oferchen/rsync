@@ -18,6 +18,7 @@ use metadata::id_lookup::{lookup_group_name, lookup_user_name};
 /// `FileEntry` type, which can then be encoded using the protocol wire format
 /// for upstream-compatible batch files.
 fn build_protocol_file_entry(
+    source_path: &Path,
     relative_path: &Path,
     metadata: &fs::Metadata,
 ) -> protocol::flist::FileEntry {
@@ -43,8 +44,10 @@ fn build_protocol_file_entry(
     let mut entry = if file_type.is_dir() {
         protocol::flist::FileEntry::new_directory(name, permissions)
     } else if file_type.is_symlink() {
-        // Read symlink target for the protocol entry
-        protocol::flist::FileEntry::new_symlink(name, PathBuf::new())
+        // upstream: flist.c:send_file_entry() - symlink target is read and
+        // included in the flist entry so batch replay can recreate symlinks.
+        let link_target = fs::read_link(source_path).unwrap_or_default();
+        protocol::flist::FileEntry::new_symlink(name, link_target)
     } else {
         protocol::flist::FileEntry::new_file(name, metadata.len(), permissions)
     };
@@ -77,6 +80,7 @@ fn build_protocol_file_entry(
 /// upstream flist encoding in `flist.c:send_file_entry()`.
 pub(crate) fn capture_batch_file_entry(
     context: &mut CopyContext,
+    source_path: &Path,
     relative_path: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), LocalCopyError> {
@@ -84,7 +88,7 @@ pub(crate) fn capture_batch_file_entry(
         return Ok(());
     }
 
-    let entry = build_protocol_file_entry(relative_path, metadata);
+    let entry = build_protocol_file_entry(source_path, relative_path, metadata);
 
     // upstream: uidlist.c - collect uid/gid name mappings for the ID lists
     // that are written after the flist end marker. Skip when --numeric-ids
