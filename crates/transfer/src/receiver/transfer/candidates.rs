@@ -50,6 +50,7 @@ impl ReceiverContext {
         }
 
         // Phase A: Filter candidates (cheap, in-memory checks only).
+        let daemon_filters = self.daemon_filter_set();
         let candidates: Vec<(usize, &FileEntry)> = self
             .file_list
             .iter()
@@ -69,6 +70,15 @@ impl ReceiverContext {
                         .is_none_or(|m| sz <= m)
             })
             .filter(|(_, e)| {
+                // upstream: receiver.c:599-604 - check_filter(&daemon_filter_list, ...)
+                // rejects daemon-excluded files before accepting transfer data.
+                if let Some(filters) = daemon_filters {
+                    let name = e.name();
+                    if name != "." && !filters.allows(Path::new(name), false) {
+                        stats.files_skipped += 1;
+                        return false;
+                    }
+                }
                 if let Some(fd) = failed_dirs {
                     if let Some(failed_parent) = fd.failed_ancestor(e.name()) {
                         if self.config.flags.verbose && self.config.connection.client_mode {
