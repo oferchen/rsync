@@ -108,14 +108,17 @@ pub(crate) fn copy_sources(
                 }
             }
 
-            // Write the flist end-of-list marker to the batch file, then
-            // append all buffered per-file delta data (NDX + iflags +
-            // sum_head + tokens + checksum) followed by NDX_DONE markers.
-            // This produces the correct upstream batch ordering: all flist
-            // entries first, then all file data.
+            // Write the flist end-of-list marker, ID lists, then delta data.
+            // upstream: flist.c:2513-2514 - without INC_RECURSE, send_id_lists()
+            // writes uid/gid name mappings after the flist end marker.
+            // Since names are already embedded inline via XMIT_USER_NAME_FOLLOWS,
+            // the ID lists are empty (just varint30(0) terminators), but they
+            // must be present for upstream's recv_id_list() to consume.
             context.finalize_batch_flist()?;
             context.write_batch_id_lists()?;
             context.flush_batch_delta_to_batch()?;
+            // Stats are written by core::client::run::batch::finalize_batch()
+            // after the engine returns, using actual transfer byte counts.
 
             flush_deferred_operations(context)?;
 
