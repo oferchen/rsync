@@ -897,11 +897,8 @@ mod inc_recurse_flist_tests {
         let ndx = ndx_codec.read_ndx(batch_reader).unwrap();
         assert_eq!(ndx, NDX_FLIST_OFFSET, "Expected NDX_FLIST_OFFSET");
 
-        // Read the sub-list segment for directory at index 0.
-        let dir_ndx = NDX_FLIST_OFFSET - ndx;
-        reader
-            .read_incremental_flist_segment(dir_ndx, &mut entries)
-            .unwrap();
+        // Read the sub-list segment.
+        reader.read_incremental_flist_segment(&mut entries).unwrap();
 
         // Now we have all 3 entries.
         assert_eq!(
