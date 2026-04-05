@@ -354,16 +354,6 @@ pub fn replay(
     // NDX values from the generator reference sorted positions, not wire order.
     sort_file_list(&mut entries, false);
 
-    // upstream: flist.c:2679 - dir_flist tracks directory entries separately.
-    // NDX_FLIST_OFFSET-based dir_ndx values index into dir_flist, not the main
-    // entries array. Build a mapping from dir_ndx to entries index.
-    let mut dir_ndx_to_entry: Vec<usize> = entries
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| e.is_dir())
-        .map(|(i, _)| i)
-        .collect();
-
     let mut result = ReplayResult {
         file_count: entries.len() as u64,
         recurse: flags.recurse,
@@ -440,10 +430,11 @@ pub fn replay(
     // then delta tokens, then file checksum. NDX_DONE signals phase transitions.
     let proto = reader.config().protocol_version;
 
-    // upstream: flist.c:2923 - with INC_RECURSE, the first flist has ndx_start=1,
-    // meaning global NDX values are offset by 1 from local entry indices. The
-    // generator sends global indices (i + ndx_start), so we must subtract
-    // ndx_start when indexing into entries[].
+    // upstream: flist.c:2923 - with INC_RECURSE, the first flist has ndx_start=1.
+    // Subsequent sub-lists have ndx_start = prev->ndx_start + prev->used + 1
+    // (flist.c:2931), creating a +1 gap between segments in NDX space.
+    // We track per-segment (ndx_start, entries_offset, count) to map global
+    // NDX values to flat Vec indices, mirroring upstream's flist_for_ndx().
     let header = reader
         .header()
         .ok_or_else(|| BatchError::Io(std::io::Error::other("batch header not read")))?;
@@ -454,7 +445,11 @@ pub fn replay(
                 .contains(protocol::CompatibilityFlags::INC_RECURSE)
         })
         .unwrap_or(false);
-    let ndx_start: i32 = if inc_recurse { 1 } else { 0 };
+    let initial_ndx_start: i32 = if inc_recurse { 1 } else { 0 };
+
+    // Each tuple: (ndx_start, entries_offset, count)
+    let mut flist_segments: Vec<(i32, usize, usize)> =
+        vec![(initial_ndx_start, 0, entries.len())];
     // Reuse the NDX codec from flist reading if available (INC_RECURSE mode).
     // The codec carries delta-encoding state from reading incremental flist
     // segment NDX values; creating a fresh codec would desync.
@@ -511,28 +506,21 @@ pub fn replay(
         // segment entries on-the-fly to grow the entries vec, then create any new
         // directories so files in the sub-list have parent paths.
         if ndx <= NDX_FLIST_OFFSET {
-            let dir_ndx = NDX_FLIST_OFFSET - ndx;
-
-            // upstream: dir_ndx indexes into dir_flist (directories only),
-            // not the main entries array. Map to the actual entries index.
-            let entries_idx = if (dir_ndx as usize) < dir_ndx_to_entry.len() {
-                dir_ndx_to_entry[dir_ndx as usize]
-            } else {
-                dir_ndx as usize
-            };
-
             let prev_len = entries.len();
-            reader.read_incremental_flist_segment(entries_idx as i32, &mut entries)?;
+
+            // Compute this segment's ndx_start using upstream's formula
+            // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
+            let prev_seg = flist_segments.last().expect("at least initial segment");
+            let seg_ndx_start = prev_seg.0 + prev_seg.2 as i32 + 1;
+
+            reader.read_incremental_flist_segment(&mut entries)?;
 
             // upstream: flist.c:2736 - sort each sub-list segment after receiving.
             sort_file_list(&mut entries[prev_len..], false);
 
-            // Track new directory entries in dir_ndx_to_entry for nested sub-lists.
-            for (i, entry) in entries.iter().enumerate().skip(prev_len) {
-                if entry.is_dir() {
-                    dir_ndx_to_entry.push(i);
-                }
-            }
+            // Record this segment's NDX range for global-to-flat index mapping.
+            let seg_count = entries.len() - prev_len;
+            flist_segments.push((seg_ndx_start, prev_len, seg_count));
 
             // Create directories and symlinks for newly discovered entries.
             for entry in &entries[prev_len..] {
@@ -641,29 +629,39 @@ pub fn replay(
             continue;
         }
 
-        // upstream: flist.c:2923 - convert global NDX to local entry index
-        let local_ndx = ndx - ndx_start;
+        // upstream: rsync.c:flist_for_ndx() + receiver.c:590 - map global NDX
+        // to the flat entries Vec index by finding the segment it belongs to.
+        // Each segment has (ndx_start, entries_offset, count) with +1 gaps
+        // between segments (upstream flist.c:2931).
+        let flat_index = flist_segments.iter().find_map(|&(seg_start, offset, count)| {
+            if ndx >= seg_start && ndx < seg_start + count as i32 {
+                Some(offset + (ndx - seg_start) as usize)
+            } else {
+                None
+            }
+        });
 
-        // upstream: receiver.c:590-593 - with INC_RECURSE, NDX < ndx_start
-        // refers to a parent directory entry. The generator sends these for
-        // directory metadata updates (permissions, timestamps). Since we
-        // already created directories above and ITEM_TRANSFER would not be
-        // set for directories, this is a safety guard.
-        if local_ndx < 0 {
-            continue;
-        }
+        let flat_index = match flat_index {
+            Some(idx) => idx,
+            None => {
+                // upstream: receiver.c:590-593 - NDX < first segment's ndx_start
+                // refers to a parent directory entry (INC_RECURSE metadata update).
+                // Skip these - directories are already created.
+                if ndx < flist_segments.first().map_or(0, |s| s.0) {
+                    continue;
+                }
+                return Err(BatchError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid NDX {ndx} (flist has {} entries across {} segments)",
+                        entries.len(),
+                        flist_segments.len()
+                    ),
+                )));
+            }
+        };
 
-        if local_ndx as usize >= entries.len() {
-            return Err(BatchError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "invalid NDX {ndx} (local={local_ndx}, ndx_start={ndx_start}, flist has {} entries)",
-                    entries.len()
-                ),
-            )));
-        }
-
-        let entry = &entries[local_ndx as usize];
+        let entry = &entries[flat_index];
         let dest_path = dest_root.join(entry.name());
 
         // upstream: receiver.c:273 - read_sum_head() reads 4 x i32
