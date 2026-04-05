@@ -49,11 +49,10 @@ pub(super) fn process_planned_entry(
 
     // All copy actions share: ensure parent directory exists + capture to batch
     ensure_directory(context)?;
-    if let Some(rel_path) = record_relative {
-        capture_batch_file_entry(context, rel_path, entry_metadata)?;
-    }
-
     let source = planned.entry.path.as_path();
+    if let Some(rel_path) = record_relative {
+        capture_batch_file_entry(context, source, rel_path, entry_metadata)?;
+    }
     let relative = Some(planned.relative.as_path());
 
     match planned.action {

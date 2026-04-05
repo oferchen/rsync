@@ -98,7 +98,7 @@ pub(super) fn handle_directory_contents_copy(
     // upstream: flist.c:send_file_list() - a trailing-slash source becomes
     // "." (DOTDIR_NAME) as the first flist entry. Capture this root entry
     // so the batch file matches upstream's wire format.
-    capture_batch_file_entry(context, Path::new("."), metadata)?;
+    capture_batch_file_entry(context, source_path, Path::new("."), metadata)?;
 
     copy_directory_recursive(
         context,
@@ -167,7 +167,7 @@ pub(super) fn handle_directory_copy(
     // upstream: flist.c:send_file_list() - the source directory is sent as
     // the first flist entry with FLAG_TOP_DIR | FLAG_CONTENT_DIR. Capture
     // it so the batch file matches upstream's wire format.
-    capture_batch_file_entry(context, &relative, metadata)?;
+    capture_batch_file_entry(context, source_path, &relative, metadata)?;
 
     copy_directory_recursive(
         context,
@@ -349,7 +349,7 @@ pub(super) fn handle_non_directory_source(
         // upstream: batch.c - single-file transfers emit flist entry + delta
         // data just like recursive directory transfers.
         if let Some(rel) = record_path {
-            capture_batch_file_entry(context, rel, &effective_metadata)?;
+            capture_batch_file_entry(context, source_path, rel, &effective_metadata)?;
         }
         context.begin_batch_file_delta()?;
         let target = compute_target_path(
