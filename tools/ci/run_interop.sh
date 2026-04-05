@@ -1465,7 +1465,7 @@ comp_run_scenario() {
 # - oc:delete, oc:numeric-ids, oc:exclude (correct compact flag semantics + long-form args)
 # - up:compress, oc:compress (TokenReader integration in run_sync path)
 # - up:size-only (do_compression check matched 'z' in --size-only long-form arg)
-# - up:compress-zstd (daemon --compress-choice parsing, zstd token codec, server flag fixes)
+# - up:compress-zstd (daemon --compress-choice parsing, zstd token codec, session-scoped TokenReader)
 #
 # SSH interop test: oc-rsync client transfers to localhost via SSH.
 run_ssh_interop_test() {
@@ -1498,9 +1498,8 @@ run_ssh_interop_test() {
 }
 
 # Remaining known failures:
-# up:compress-zstd - daemon-side zstd receive codec not yet implemented
+# (none - all interop tests passing)
 KNOWN_FAILURES=(
-  "up:compress-zstd"
 )
 
 is_known_failure() {
