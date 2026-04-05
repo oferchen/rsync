@@ -483,7 +483,13 @@ mod tests {
     fn server_flag_string_no_files_from_keeps_r() {
         let config = ClientConfig::builder().recursive(true).build();
         let flags = build_server_flag_string(&config);
-        assert!(flags.contains('r'), "should keep 'r' without files-from: {flags}");
-        assert!(!flags.contains('d'), "should not add 'd' without files-from: {flags}");
+        assert!(
+            flags.contains('r'),
+            "should keep 'r' without files-from: {flags}"
+        );
+        assert!(
+            !flags.contains('d'),
+            "should not add 'd' without files-from: {flags}"
+        );
     }
 }
