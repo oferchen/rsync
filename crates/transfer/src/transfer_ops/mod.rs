@@ -49,11 +49,11 @@ use protocol::ProtocolVersion;
 
 use crate::reader::ServerReader;
 use crate::receiver::{SenderAttrs, SumHead};
-use crate::token_reader::TokenReader;
 
 pub use self::request::send_file_request;
 pub use self::response::process_file_response;
 pub use self::streaming::{StreamingResult, process_file_response_streaming};
+pub use crate::token_reader::TokenReader;
 
 /// Configuration for sending file transfer requests and processing responses.
 ///
@@ -118,12 +118,18 @@ impl RequestConfig<'_> {
     /// Creates a [`TokenReader`] matching the negotiated compression algorithm.
     ///
     /// Returns a compressed token reader when the negotiated algorithms include
-    /// Zlib or ZlibX compression, otherwise a plain 4-byte LE token reader.
+    /// a supported compression algorithm, otherwise a plain 4-byte LE token reader.
+    ///
+    /// The returned reader must be reused across all files in a transfer session.
+    /// For zstd, upstream rsync uses a single continuous stream - the decompression
+    /// context must persist across file boundaries. Call [`TokenReader::reset()`]
+    /// between files to reset per-file state while preserving the stream context.
     ///
     /// # Upstream Reference
     ///
     /// - `token.c:271` - `recv_token()` selects plain or compressed based on `-z`
-    fn token_reader(&self) -> TokenReader {
+    /// - `token.c:807-810` - zstd `r_init` only resets `rx_token`, not the DCtx
+    pub fn create_token_reader(&self) -> TokenReader {
         let compression = self.negotiated_algorithms.map(|n| n.compression);
         TokenReader::new(compression)
     }

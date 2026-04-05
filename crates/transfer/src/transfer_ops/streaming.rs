@@ -19,7 +19,7 @@ use crate::pipeline::PendingTransfer;
 use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::pipeline::spsc;
 use crate::reader::ServerReader;
-use crate::token_reader::DeltaToken;
+use crate::token_reader::{DeltaToken, TokenReader};
 
 use super::token_loop::{literal_to_buf, process_remaining_tokens};
 use super::{ResponseContext, read_response_header};
@@ -56,6 +56,10 @@ pub struct StreamingResult {
 /// * `file_entry_index` - Index into the file list for metadata application
 /// * `is_device_target` - Whether the target is a device file
 /// * `xattr_list` - Optional extended attribute list for metadata application
+/// * `token_reader` - Reusable token reader, shared across files in a session.
+///   For zstd, the decompression context must be preserved across files because
+///   upstream rsync uses a single continuous zstd stream for the entire session.
+///   The caller must call `token_reader.reset()` between files.
 #[allow(clippy::too_many_arguments)]
 pub fn process_file_response_streaming<R: Read>(
     reader: &mut ServerReader<R>,
@@ -68,6 +72,7 @@ pub fn process_file_response_streaming<R: Read>(
     file_entry_index: usize,
     is_device_target: bool,
     xattr_list: Option<protocol::xattr::XattrList>,
+    token_reader: &mut TokenReader,
 ) -> io::Result<StreamingResult> {
     let header = read_response_header(reader, ndx_codec, pending, ctx)?;
 
@@ -99,7 +104,11 @@ pub fn process_file_response_streaming<R: Read>(
     };
 
     let mut total_bytes: u64 = 0;
-    let mut token_reader = ctx.config.token_reader();
+
+    // upstream: token.c:807-810 - reset per-file token state. For zstd the
+    // decompression context is preserved (single continuous stream across all
+    // files); for zlib it reinitializes the inflate context (per-file streams).
+    token_reader.reset();
 
     // Read the first token to determine if this is a single-chunk file.
     let first_delta = token_reader.read_token(reader)?;
@@ -160,7 +169,7 @@ pub fn process_file_response_streaming<R: Read>(
                 &mut basis_map,
                 total_bytes,
                 Some(next_delta),
-                &mut token_reader,
+                token_reader,
             )
         }
         first_delta => {
@@ -178,7 +187,7 @@ pub fn process_file_response_streaming<R: Read>(
                 &mut basis_map,
                 total_bytes,
                 Some(first_delta),
-                &mut token_reader,
+                token_reader,
             )
         }
     }
