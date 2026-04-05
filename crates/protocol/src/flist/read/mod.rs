@@ -411,14 +411,14 @@ impl FileListReader {
         self.ndx_start = ndx_start;
     }
 
-    /// Resets compression state for reading a new flist segment.
+    /// Prepares the reader for a new incremental flist segment.
     ///
-    /// Each incremental file list segment (INC_RECURSE sub-list) starts with
-    /// fresh compression state. This mirrors upstream `flist.c:recv_file_list()`
-    /// where the static variables in `recv_file_entry()` are reset at the start
-    /// of each new `recv_file_list()` call.
+    /// Updates ndx_start for the new segment but preserves compression state.
+    /// upstream: `recv_file_entry()` uses static variables for name compression,
+    /// uid, gid, etc. These statics persist across `recv_file_list()` calls -
+    /// sub-list entries can reference names from previous segments via the
+    /// `XMIT_SAME_NAME` flag. Only the segment index base changes.
     pub fn reset_for_new_segment(&mut self, ndx_start: i32) {
-        self.state.reset();
         self.ndx_start = ndx_start;
     }
 
