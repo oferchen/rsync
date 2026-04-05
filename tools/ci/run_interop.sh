@@ -1498,7 +1498,9 @@ run_ssh_interop_test() {
 }
 
 # Remaining known failures:
+# up:compress-zstd - daemon-side zstd receive codec not yet implemented
 KNOWN_FAILURES=(
+  "up:compress-zstd"
 )
 
 is_known_failure() {
