@@ -11,8 +11,6 @@ use protocol::codec::NdxCodecEnum;
 use protocol::flist::FileListReader;
 use protocol::idlist::IdList;
 use std::io;
-use std::path::Path;
-
 use super::BatchReader;
 
 impl BatchReader {
@@ -198,7 +196,10 @@ impl BatchReader {
         // with recv_files() in an event loop.
         if inc_recurse {
             self.ndx_codec = Some(NdxCodecEnum::new(protocol_version.as_u8()));
-            self.flist_next_ndx_start = entries.len() as i32;
+            // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
+            // The initial flist has ndx_start=1, so the next sub-list starts at
+            // 1 + entries.len() + 1 (the +1 gap between segments).
+            self.flist_next_ndx_start = 1 + entries.len() as i32 + 1;
             self.flist_reader = Some(flist_reader);
         }
 
@@ -209,15 +210,14 @@ impl BatchReader {
     ///
     /// Called during delta replay when an NDX_FLIST_OFFSET value is encountered.
     /// Reads entries for one directory's sub-list and appends them to `entries`.
-    ///
-    /// The `dir_ndx` identifies the parent directory (`NDX_FLIST_OFFSET - ndx`).
+    /// The wire format already encodes full relative paths (dirname + basename)
+    /// for each entry, so no parent directory prefix is needed.
     ///
     /// # Upstream Reference
     ///
     /// - `flist.c:recv_additional_file_list()` - reads one sub-list segment
     pub fn read_incremental_flist_segment(
         &mut self,
-        dir_ndx: i32,
         entries: &mut Vec<protocol::flist::FileEntry>,
     ) -> BatchResult<()> {
         let flist_reader = self
@@ -230,27 +230,19 @@ impl BatchReader {
             .as_mut()
             .ok_or_else(|| BatchError::Io(io::Error::other("Batch file not open")))?;
 
-        // Look up the parent directory name to prefix sub-list entries.
-        let parent_dir = if (dir_ndx as usize) < entries.len() {
-            Some(entries[dir_ndx as usize].name().to_owned())
-        } else {
-            None
-        };
-
         // Reset compression state for the new segment.
         // upstream: recv_file_list() starts with fresh static state.
         flist_reader.reset_for_new_segment(self.flist_next_ndx_start);
 
         // Read entries for this sub-list segment.
+        // upstream: flist.c:recv_file_entry() encodes dirname as part of each
+        // entry's wire format. Sub-list entries already have full relative paths
+        // (e.g., "subdir/f2.dat"), so no prepend_dir() is needed.
         let segment_start = entries.len();
         loop {
             let segment_entries = &entries[segment_start..];
             match flist_reader.read_entry_with_flist(reader, segment_entries) {
-                Ok(Some(mut entry)) => {
-                    // upstream: flist.c:f_name() reconstructs full path
-                    if let Some(ref parent) = parent_dir {
-                        entry.prepend_dir(Path::new(parent));
-                    }
+                Ok(Some(entry)) => {
                     entries.push(entry);
                 }
                 Ok(None) => break,
@@ -265,7 +257,12 @@ impl BatchReader {
         }
 
         self.io_error |= flist_reader.io_error();
-        self.flist_next_ndx_start = entries.len() as i32;
+        // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
+        // The current segment started at flist_next_ndx_start (set before
+        // reset_for_new_segment). The next segment's ndx_start accounts for
+        // the entries in this segment plus the +1 gap.
+        let segment_count = entries.len() - segment_start;
+        self.flist_next_ndx_start += segment_count as i32 + 1;
 
         Ok(())
     }
