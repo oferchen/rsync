@@ -25,7 +25,8 @@ use crate::pipeline::{PipelineConfig, PipelineState};
 use crate::receiver::basis::find_basis_file_with_config;
 use crate::receiver::{PARALLEL_STAT_THRESHOLD, PipelineSetup, ReceiverContext};
 use crate::transfer_ops::{
-    RequestConfig, ResponseContext, process_file_response_streaming, send_file_request,
+    RequestConfig, ResponseContext, TokenReader, process_file_response_streaming,
+    send_file_request,
 };
 
 impl ReceiverContext {
@@ -85,6 +86,11 @@ impl ReceiverContext {
             inplace_partial: self.config.write.inplace_partial,
             io_uring_policy: self.config.write.io_uring_policy,
         };
+
+        // Create the token reader once for the entire transfer session.
+        // upstream: token.c uses a single compression context across all files.
+        // For zstd, the DCtx must persist across file boundaries (continuous stream).
+        let mut token_reader = request_config.create_token_reader();
 
         let mut pipeline = PipelineState::new(pipeline_config);
         let mut file_iter = files_to_transfer.into_iter();
@@ -273,6 +279,7 @@ impl ReceiverContext {
                     file_idx,
                     is_device_target,
                     xattr_list,
+                    &mut token_reader,
                 )?;
 
                 pipelined_receiver.note_commit_sent(
