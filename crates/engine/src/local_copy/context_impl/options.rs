@@ -581,6 +581,57 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    /// Writes empty uid/gid ID lists to the batch file.
+    ///
+    /// upstream: uidlist.c:send_id_lists() - without INC_RECURSE, ID lists
+    /// are written between the flist end marker and the delta data. Since
+    /// user/group names are already embedded inline via XMIT_USER_NAME_FOLLOWS,
+    /// the post-flist ID lists are empty (just varint30(0) terminators).
+    ///
+    /// Must be called after `finalize_batch_flist()` and before
+    /// `flush_batch_delta_to_batch()`.
+    pub(crate) fn write_batch_id_lists(&mut self) -> Result<(), crate::local_copy::LocalCopyError> {
+        let batch_writer_arc = match self.options.get_batch_writer() {
+            Some(w) => w.clone(),
+            None => return Ok(()),
+        };
+
+        let proto = batch_writer_arc.lock().unwrap().config().protocol_version;
+
+        // upstream: uidlist.c:recv_id_list() reads uid list then gid list.
+        // Each list: loop reading varint30 until 0 (no entries), then done.
+        // Without xmit_id0_names (ID0_NAMES not in compat_flags), the
+        // terminator is just varint30(0) for each list.
+        let mut buf = Vec::with_capacity(2);
+        // uid list terminator
+        protocol::write_varint30_int(&mut buf, 0, proto as u8).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch uid list terminator",
+                std::path::PathBuf::new(),
+                e,
+            )
+        })?;
+        // gid list terminator
+        protocol::write_varint30_int(&mut buf, 0, proto as u8).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch gid list terminator",
+                std::path::PathBuf::new(),
+                e,
+            )
+        })?;
+
+        let mut writer_guard = batch_writer_arc.lock().unwrap();
+        writer_guard.write_data(&buf).map_err(|e| {
+            crate::local_copy::LocalCopyError::io(
+                "write batch id lists",
+                std::path::PathBuf::new(),
+                std::io::Error::other(e),
+            )
+        })?;
+
+        Ok(())
+    }
+
     /// Writes the NDX + iflags + sum_head preamble for a file's delta data
     /// to the batch delta buffer.
     ///
@@ -599,9 +650,11 @@ impl<'a> CopyContext<'a> {
             None => return Ok(()),
         };
 
-        // The NDX is the flist index of the most recently captured entry.
+        // upstream: sender.c:send_files() - NDX values are 0-based file
+        // indices without INC_RECURSE (ndx_start=0).
         // capture_batch_file_entry() increments batch_flist_index after
-        // encoding, so the current file's index is (batch_flist_index - 1).
+        // encoding each entry, so batch_flist_index equals flist_position + 1.
+        // NDX = flist_position = batch_flist_index - 1.
         let ndx = self.batch_flist_index - 1;
 
         // Write NDX via the protocol-versioned codec.
@@ -847,17 +900,22 @@ impl<'a> CopyContext<'a> {
         };
 
         // Write NDX_DONE markers for phase transitions.
-        // upstream: sender.c - NDX_DONE ends phase 1, second NDX_DONE ends
-        // phase 2 (protocol >= 29), signaling completion.
+        //
+        // upstream: receiver.c:recv_files() reads NDX_DONEs to transition
+        // phases. With INC_RECURSE (protocol >= 30), the first NDX_DONE
+        // frees the flist and falls through to phase increment. For
+        // protocol >= 29, max_phase=2, so recv_files needs 3 NDX_DONEs
+        // to break (phase 0→1→2→3, breaks when phase > max_phase).
+        // For protocol < 29, max_phase=1, needs 2 NDX_DONEs.
         let proto = batch_writer_arc.lock().unwrap().config().protocol_version;
-        let max_phase = if proto >= 29 { 2 } else { 1 };
+        let ndx_done_count = if proto >= 29 { 3 } else { 2 };
 
         let codec = self
             .batch_ndx_codec
             .as_mut()
             .expect("batch_ndx_codec must exist when batch_delta_buf is set");
 
-        for _ in 0..max_phase {
+        for _ in 0..ndx_done_count {
             let mut done_buf = Vec::with_capacity(4);
             protocol::codec::NdxCodec::write_ndx_done(codec, &mut done_buf).map_err(|e| {
                 crate::local_copy::LocalCopyError::io(
@@ -900,110 +958,5 @@ impl<'a> CopyContext<'a> {
     #[cfg(unix)]
     pub(super) const fn numeric_ids_enabled(&self) -> bool {
         self.options.numeric_ids_enabled()
-    }
-
-    /// Returns whether `--owner` / `-o` is enabled.
-    #[cfg(unix)]
-    pub(super) const fn preserve_owner_enabled(&self) -> bool {
-        self.options.preserve_owner()
-    }
-
-    /// Returns whether `--group` / `-g` is enabled.
-    #[cfg(unix)]
-    pub(super) const fn preserve_group_enabled(&self) -> bool {
-        self.options.preserve_group()
-    }
-
-    /// Returns a reference to the batch UID name list.
-    #[cfg(unix)]
-    pub(super) const fn batch_uid_list(&self) -> &IdList {
-        &self.batch_uid_list
-    }
-
-    /// Returns a mutable reference to the batch UID name list.
-    #[cfg(unix)]
-    pub(super) fn batch_uid_list_mut(&mut self) -> &mut IdList {
-        &mut self.batch_uid_list
-    }
-
-    /// Returns a reference to the batch GID name list.
-    #[cfg(unix)]
-    pub(super) const fn batch_gid_list(&self) -> &IdList {
-        &self.batch_gid_list
-    }
-
-    /// Returns a mutable reference to the batch GID name list.
-    #[cfg(unix)]
-    pub(super) fn batch_gid_list_mut(&mut self) -> &mut IdList {
-        &mut self.batch_gid_list
-    }
-
-    /// Writes the uid/gid ID name lists to the batch file.
-    ///
-    /// After the flist end marker, upstream rsync writes uid and gid name
-    /// mapping lists so the receiver can map numeric IDs to local users/groups.
-    /// This is skipped when INC_RECURSE is active (names sent per-segment) or
-    /// when `--numeric-ids` is set.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `flist.c:2726-2728` - `recv_id_list(f, flist)` when `!inc_recurse`
-    /// - `uidlist.c:465-473` - conditional on `preserve_uid`/`preserve_gid`
-    pub(crate) fn write_batch_id_lists(
-        &self,
-    ) -> Result<(), crate::local_copy::LocalCopyError> {
-        let batch_writer_arc = match self.options.get_batch_writer() {
-            Some(w) => w.clone(),
-            None => return Ok(()),
-        };
-
-        // upstream: uidlist.c - send_id_lists() is skipped for numeric_ids
-        if self.options.numeric_ids_enabled() {
-            return Ok(());
-        }
-
-        let proto = batch_writer_arc.lock().unwrap().config().protocol_version;
-        let id0_names = proto >= 30;
-
-        let mut buf = Vec::with_capacity(64);
-
-        // upstream: uidlist.c:465 - (preserve_uid || preserve_acls) && numeric_ids <= 0
-        if self.options.preserve_owner() {
-            self.batch_uid_list
-                .write(&mut buf, id0_names, proto as u8)
-                .map_err(|e| {
-                    crate::local_copy::LocalCopyError::io(
-                        "write batch uid list",
-                        std::path::PathBuf::new(),
-                        e,
-                    )
-                })?;
-        }
-
-        // upstream: uidlist.c:473 - (preserve_gid || preserve_acls) && numeric_ids <= 0
-        if self.options.preserve_group() {
-            self.batch_gid_list
-                .write(&mut buf, id0_names, proto as u8)
-                .map_err(|e| {
-                    crate::local_copy::LocalCopyError::io(
-                        "write batch gid list",
-                        std::path::PathBuf::new(),
-                        e,
-                    )
-                })?;
-        }
-
-        if !buf.is_empty() {
-            let mut writer_guard = batch_writer_arc.lock().unwrap();
-            writer_guard.write_data(&buf).map_err(|e| {
-                crate::local_copy::LocalCopyError::io(
-                    "write batch id lists",
-                    std::path::PathBuf::new(),
-                    std::io::Error::other(e),
-                )
-            })?;
-        }
-
-        Ok(())
     }
 }

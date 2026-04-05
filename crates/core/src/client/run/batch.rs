@@ -94,7 +94,11 @@ pub(crate) fn write_batch_header(
         preserve_hard_links: config.preserve_hard_links(),
         always_checksum: config.checksum(),
         xfer_dirs: config.dirs(),
-        do_compression: config.compress(),
+        // upstream: batch token data is a verbatim tee of the compressed
+        // wire stream, so do_compression controls recv_token() dispatch
+        // during replay. Our batch delta buffer captures uncompressed
+        // tokens, so we must report false to avoid decompression mismatch.
+        do_compression: false,
         preserve_acls,
         preserve_xattrs,
         inplace: config.inplace(),
@@ -156,6 +160,19 @@ pub(crate) fn finalize_batch(
         };
         if let Err(e) = writer.write_stats(&stats) {
             let msg = format!("failed to write batch stats: {e}");
+            return Err(ClientError::new(
+                1,
+                rsync_error!(1, "{}", msg).with_role(Role::Client),
+            ));
+        }
+
+        // upstream: main.c:1119-1122 - write_ndx(f_out, NDX_DONE) as final
+        // goodbye after stats. read_final_goodbye() (main.c:875-906) reads
+        // this from the batch file. For protocol >= 30, NDX_DONE = 0x00
+        // (single byte). For protocol < 30, NDX_DONE = 0xFFFFFFFF (4 bytes).
+        let goodbye_bytes: &[u8] = if proto >= 30 { &[0x00] } else { &[0xFF, 0xFF, 0xFF, 0xFF] };
+        if let Err(e) = writer.write_data(goodbye_bytes) {
+            let msg = format!("failed to write batch goodbye NDX_DONE: {e}");
             return Err(ClientError::new(
                 1,
                 rsync_error!(1, "{}", msg).with_role(Role::Client),

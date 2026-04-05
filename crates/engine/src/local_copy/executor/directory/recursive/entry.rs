@@ -51,7 +51,7 @@ pub(super) fn process_planned_entry(
     ensure_directory(context)?;
     let source = planned.entry.path.as_path();
     if let Some(rel_path) = record_relative {
-        capture_batch_file_entry(context, source, rel_path, entry_metadata)?;
+        capture_batch_file_entry(context, source, rel_path, entry_metadata, false)?;
     }
     let relative = Some(planned.relative.as_path());
 

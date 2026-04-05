@@ -17,10 +17,15 @@ use metadata::id_lookup::{lookup_group_name, lookup_user_name};
 /// Converts the local `fs::Metadata` and relative path into the protocol crate's
 /// `FileEntry` type, which can then be encoded using the protocol wire format
 /// for upstream-compatible batch files.
+///
+/// When `is_top_dir` is true, sets `XMIT_TOP_DIR` on the entry flags to match
+/// upstream `flist.c:send_file_entry()` behavior for root source entries.
 fn build_protocol_file_entry(
     source_path: &Path,
     relative_path: &Path,
     metadata: &fs::Metadata,
+    is_top_dir: bool,
+    numeric_ids: bool,
 ) -> protocol::flist::FileEntry {
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
@@ -42,7 +47,11 @@ fn build_protocol_file_entry(
     let name = PathBuf::from(relative_path);
 
     let mut entry = if file_type.is_dir() {
-        protocol::flist::FileEntry::new_directory(name, permissions)
+        let mut dir_entry = protocol::flist::FileEntry::new_directory(name, permissions);
+        // upstream: flist.c:send_file_entry() - directory entries include the
+        // actual stat.st_size, not zero.
+        dir_entry.set_size(metadata.len());
+        dir_entry
     } else if file_type.is_symlink() {
         // upstream: flist.c:send_file_entry() - symlink target is read and
         // included in the flist entry so batch replay can recreate symlinks.
@@ -52,17 +61,49 @@ fn build_protocol_file_entry(
         protocol::flist::FileEntry::new_file(name, metadata.len(), permissions)
     };
 
+    // upstream: flist.c:send_file_entry() - mtime includes nanoseconds when
+    // the protocol supports it (XMIT_MOD_NSEC flag).
+    #[cfg(unix)]
+    let mtime_nsec = metadata.mtime_nsec().max(0) as u32;
+    #[cfg(not(unix))]
+    let mtime_nsec = 0u32;
+
     let mtime = metadata
         .modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |d| d.as_secs() as i64);
-    entry.set_mtime(mtime, 0);
+    entry.set_mtime(mtime, mtime_nsec);
 
     #[cfg(unix)]
     {
-        entry.set_uid(metadata.uid());
-        entry.set_gid(metadata.gid());
+        let uid = metadata.uid();
+        let gid = metadata.gid();
+        entry.set_uid(uid);
+        entry.set_gid(gid);
+
+        // upstream: flist.c:send_file_entry() - inline user/group names are
+        // written when XMIT_USER_NAME_FOLLOWS / XMIT_GROUP_NAME_FOLLOWS flags
+        // are set. The FileListWriter xflags computation checks whether the
+        // entry has a name set via these accessors.
+        if !numeric_ids {
+            if let Some(name) = lookup_user_name(uid).ok().flatten() {
+                if let Ok(s) = String::from_utf8(name) {
+                    entry.set_user_name(s);
+                }
+            }
+            if let Some(name) = lookup_group_name(gid).ok().flatten() {
+                if let Ok(s) = String::from_utf8(name) {
+                    entry.set_group_name(s);
+                }
+            }
+        }
+    }
+
+    // upstream: flist.c:send_file_entry() - FLAG_TOP_DIR marks root source
+    // entries so --delete knows which directories are transfer roots.
+    if is_top_dir && file_type.is_dir() {
+        entry.flags_mut().primary |= protocol::flist::XMIT_TOP_DIR;
     }
 
     entry
@@ -83,34 +124,18 @@ pub(crate) fn capture_batch_file_entry(
     source_path: &Path,
     relative_path: &Path,
     metadata: &fs::Metadata,
+    is_top_dir: bool,
 ) -> Result<(), LocalCopyError> {
     if context.batch_writer().is_none() {
         return Ok(());
     }
 
-    let entry = build_protocol_file_entry(source_path, relative_path, metadata);
-
-    // upstream: uidlist.c - collect uid/gid name mappings for the ID lists
-    // that are written after the flist end marker. Skip when --numeric-ids
-    // is set (upstream sends no name lists in that case).
     #[cfg(unix)]
-    if !context.numeric_ids_enabled() {
-        use std::os::unix::fs::MetadataExt;
-        if context.preserve_owner_enabled() {
-            let uid = metadata.uid();
-            if !context.batch_uid_list().contains(uid) {
-                let name = lookup_user_name(uid).ok().flatten();
-                context.batch_uid_list_mut().add_id(uid, name);
-            }
-        }
-        if context.preserve_group_enabled() {
-            let gid = metadata.gid();
-            if !context.batch_gid_list().contains(gid) {
-                let name = lookup_group_name(gid).ok().flatten();
-                context.batch_gid_list_mut().add_id(gid, name);
-            }
-        }
-    }
+    let numeric_ids = context.numeric_ids_enabled();
+    #[cfg(not(unix))]
+    let numeric_ids = true;
+
+    let entry = build_protocol_file_entry(source_path, relative_path, metadata, is_top_dir, numeric_ids);
 
     let mut buf = Vec::with_capacity(128);
     let flist_writer = context

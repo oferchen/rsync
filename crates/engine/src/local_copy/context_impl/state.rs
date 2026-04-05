@@ -118,8 +118,6 @@ impl<'a> CopyContext<'a> {
             batch_delta_buf,
             batch_flist_index: 0,
             batch_ndx_codec,
-            batch_uid_list: IdList::new(),
-            batch_gid_list: IdList::new(),
         }
     }
 
