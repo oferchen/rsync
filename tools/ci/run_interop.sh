@@ -1499,8 +1499,6 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  "standalone:write-batch-read-batch"
-  "standalone:write-batch-read-batch-compressed"
   # Flaky under CI load - connection reset by peer during zstd compressed
   # daemon transfer. Not reproducible locally.
   "up:compress-zstd"
