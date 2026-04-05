@@ -30,16 +30,22 @@ use super::{
 
 /// Zstd encoder state for sending compressed tokens.
 ///
-/// Maintains a persistent `ZSTD_CCtx` across tokens for a file transfer.
-/// Uses `ZSTD_e_flush` at token boundaries to produce decompressible output.
-/// No sync marker stripping (unlike zlib).
+/// Maintains a single persistent `ZSTD_CCtx` across the **entire transfer
+/// session** (all files). Upstream rsync never resets or reinitializes the
+/// zstd context between files - the session is one continuous zstd stream
+/// with `ZSTD_e_flush` sync points at token boundaries.
+///
+/// Between files, only the token run-encoding state (last_token, run_start,
+/// last_run_end, flush_pending) is reset, matching upstream token.c:700-703.
+/// The compression context preserves cross-file dictionary/history.
 ///
 /// Compressed output is accumulated in a `MAX_DATA_COUNT`-sized buffer.
 /// A DEFLATED_DATA block is written only when the buffer is full (during
 /// `ZSTD_e_continue`) or after each `ZSTD_e_flush` call, matching upstream's
 /// output pattern in token.c:send_zstd_token().
 ///
-/// Reference: upstream token.c:send_zstd_token()
+/// upstream: token.c:send_zstd_token() - CCtx created once (line 688),
+/// never reset between files (line 700-703 only resets run state)
 pub(super) struct ZstdTokenEncoder {
     /// Persistent zstd compression context.
     encoder: ZstdRawEncoder<'static>,
@@ -78,15 +84,22 @@ impl ZstdTokenEncoder {
         })
     }
 
-    pub(super) fn reset(&mut self) -> io::Result<()> {
-        self.encoder.reinit()?;
+    /// Resets token run-encoding state for a new file.
+    ///
+    /// Only resets the run-encoding variables (last_token, run_start,
+    /// last_run_end, flush_pending) and pending literal data. The zstd
+    /// compression context is NOT reinitialized - upstream rsync uses a
+    /// single continuous stream across all files in the session.
+    ///
+    /// upstream: token.c:700-703 - only resets last_run_end, run_start,
+    /// flush_pending when last_token == -1 (new file boundary)
+    pub(super) fn reset(&mut self) {
         self.literal_buf.clear();
         self.output_pos = 0;
         self.last_token = -1;
         self.run_start = 0;
         self.last_run_end = 0;
         self.flush_pending = false;
-        Ok(())
     }
 
     pub(super) fn send_literal<W: Write>(
@@ -120,13 +133,25 @@ impl ZstdTokenEncoder {
         Ok(())
     }
 
+    /// Signals end of the current file's token stream.
+    ///
+    /// Flushes pending literals and run-encoding, writes the END_FLAG byte,
+    /// then resets only the run-encoding state for the next file. The zstd
+    /// compression context is preserved - upstream rsync maintains one
+    /// continuous stream across all files.
+    ///
+    /// upstream: token.c:772-775 - writes END_FLAG, does NOT reset CCtx
     pub(super) fn finish<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         if self.last_token >= 0 {
             self.write_token_run(writer)?;
         }
         self.compress_and_flush(writer)?;
         writer.write_all(&[END_FLAG])?;
-        self.reset()?;
+        // upstream: token.c:700-703 - only run state resets between files
+        self.last_token = -1;
+        self.run_start = 0;
+        self.last_run_end = 0;
+        self.flush_pending = false;
         Ok(())
     }
 
@@ -240,16 +265,20 @@ impl ZstdTokenEncoder {
 
 /// Zstd decoder state for receiving compressed tokens.
 ///
-/// Maintains a persistent `ZSTD_DCtx` across tokens for a file transfer.
-/// Each DEFLATED_DATA block is fed to `ZSTD_decompressStream`. No sync
-/// marker restoration (unlike zlib).
+/// Maintains a single persistent `ZSTD_DCtx` across the **entire transfer
+/// session** (all files). Upstream rsync never resets the decompression
+/// context between files - the session is one continuous zstd stream.
+///
+/// Between files, only the token index (rx_token) resets to 0, matching
+/// upstream token.c:807-810 (r_init state just resets rx_token).
 ///
 /// The decoder processes one DEFLATED_DATA block at a time, matching
 /// upstream's state machine (r_idle -> r_inflating -> r_idle). When all
 /// compressed input is consumed and the output buffer is not full, the
 /// decoder returns to idle to read the next wire flag.
 ///
-/// Reference: upstream token.c:recv_zstd_token()
+/// upstream: token.c:recv_zstd_token() - DCtx created once (line 789),
+/// never reset between files (line 807-810 only resets rx_token)
 pub(super) struct ZstdTokenDecoder {
     /// Persistent zstd decompression context.
     decoder: ZstdRawDecoder<'static>,
@@ -286,15 +315,20 @@ impl ZstdTokenDecoder {
         })
     }
 
-    pub(super) fn reset(&mut self) -> io::Result<()> {
-        self.decoder.reinit()?;
+    /// Resets decoder state for a new file.
+    ///
+    /// Only resets the token index and buffering state. The zstd decompression
+    /// context is NOT reinitialized - upstream rsync uses a single continuous
+    /// stream across all files in the session.
+    ///
+    /// upstream: token.c:807-810 - r_init only resets rx_token to 0
+    pub(super) fn reset(&mut self) {
         self.decompress_buf.clear();
         self.decompress_pos = 0;
         self.compressed_input_buf.clear();
         self.rx_token = 0;
         self.rx_run = 0;
-        self.initialized = false;
-        Ok(())
+        // Keep initialized=true - the DCtx is still valid from the same stream
     }
 
     /// Receives the next token from a zstd-compressed stream.
@@ -750,20 +784,32 @@ mod tests {
         assert_eq!(result, data);
     }
 
-    /// Verifies multiple file reset and re-encode works correctly.
+    /// Verifies continuous stream across multiple files.
+    ///
+    /// Upstream rsync uses a single zstd stream for the entire session.
+    /// The encoder and decoder contexts persist across file boundaries -
+    /// only token run-encoding state resets between files.
+    ///
+    /// upstream: token.c:688 (CCtx created once), token.c:700-703 (only
+    /// run state resets), token.c:789 (DCtx created once)
     #[test]
-    fn zstd_reset_between_files() {
+    fn zstd_continuous_stream_across_files() {
         let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut decoder = ZstdTokenDecoder::new().unwrap();
+        let mut encoded = Vec::new();
 
+        // Encode three files into a single continuous stream
         for i in 0..3 {
-            let mut encoded = Vec::new();
             let data = format!("file {i} content with some data to compress");
             encoder.send_literal(&mut encoded, data.as_bytes()).unwrap();
             encoder.send_block_match(&mut encoded, i as u32).unwrap();
             encoder.finish(&mut encoded).unwrap();
+        }
 
-            let mut decoder = ZstdTokenDecoder::new().unwrap();
-            let mut cursor = Cursor::new(&encoded);
+        // Decode all three files from the single stream
+        let mut cursor = Cursor::new(&encoded);
+        for i in 0..3 {
+            let expected = format!("file {i} content with some data to compress");
             let mut literals = Vec::new();
             let mut blocks = Vec::new();
 
@@ -775,8 +821,9 @@ mod tests {
                 }
             }
 
-            assert_eq!(literals, data.as_bytes());
+            assert_eq!(literals, expected.as_bytes());
             assert_eq!(blocks, vec![i as u32]);
+            decoder.reset();
         }
     }
 

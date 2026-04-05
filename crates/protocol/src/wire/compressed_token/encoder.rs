@@ -83,13 +83,17 @@ impl CompressedTokenEncoder {
     }
 
     /// Resets the encoder for a new file.
+    ///
+    /// For zlib/lz4, reinitializes the compression context (per-file streams).
+    /// For zstd, only resets token run-encoding state - the compression
+    /// context is preserved across files (one continuous stream).
+    ///
+    /// upstream: token.c:700-703 (zstd), token.c:378 (zlib deflateReset)
     pub fn reset(&mut self) {
         match &mut self.inner {
             EncoderInner::Zlib(enc) => enc.reset(),
             #[cfg(feature = "zstd")]
-            EncoderInner::Zstd(enc) => {
-                let _ = enc.reset();
-            }
+            EncoderInner::Zstd(enc) => enc.reset(),
             #[cfg(feature = "lz4")]
             EncoderInner::Lz4(enc) => enc.reset(),
         }
