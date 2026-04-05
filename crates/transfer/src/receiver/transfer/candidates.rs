@@ -57,18 +57,6 @@ impl ReceiverContext {
             .enumerate()
             .filter(|(_, e)| e.is_file())
             .filter(|(_, e)| !is_hardlink_follower(e))
-            // upstream: receiver.c:599-604 - check_filter(&daemon_filter_list, ...)
-            // rejects daemon-excluded files before accepting transfer data.
-            .filter(|(_, e)| {
-                if let Some(filters) = daemon_filters {
-                    let name = e.name();
-                    if name != "." && !filters.allows(Path::new(name), false) {
-                        stats.files_skipped += 1;
-                        return false;
-                    }
-                }
-                true
-            })
             .filter(|(_, e)| {
                 let sz = e.size();
                 self.config
@@ -82,6 +70,15 @@ impl ReceiverContext {
                         .is_none_or(|m| sz <= m)
             })
             .filter(|(_, e)| {
+                // upstream: receiver.c:599-604 - check_filter(&daemon_filter_list, ...)
+                // rejects daemon-excluded files before accepting transfer data.
+                if let Some(filters) = daemon_filters {
+                    let name = e.name();
+                    if name != "." && !filters.allows(Path::new(name), false) {
+                        stats.files_skipped += 1;
+                        return false;
+                    }
+                }
                 if let Some(fd) = failed_dirs {
                     if let Some(failed_parent) = fd.failed_ancestor(e.name()) {
                         if self.config.flags.verbose && self.config.connection.client_mode {
