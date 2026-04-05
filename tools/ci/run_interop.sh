@@ -1499,10 +1499,6 @@ run_ssh_interop_test() {
 
 # Remaining known failures:
 KNOWN_FAILURES=(
-  # --- batch: uid/gid name lists and checksum_seed added but content
-  # --- verification still fails (file content mismatch after replay) ---
-  "standalone:write-batch-read-batch"
-  "standalone:write-batch-read-batch-compressed"
 )
 
 is_known_failure() {

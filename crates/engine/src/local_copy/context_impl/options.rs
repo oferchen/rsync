@@ -664,13 +664,20 @@ impl<'a> CopyContext<'a> {
     ///
     /// Each file's delta data is terminated by write_int(0), matching upstream
     /// `token.c:simple_send_token()` with token=-1. After the token end, a
-    /// file-level checksum of `s2length` bytes (16 for MD5) is written.
+    /// file-level MD5 checksum of `s2length` bytes (16) is written, computed
+    /// over the source file contents.
+    ///
+    /// upstream: match.c:370 sum_init(xfer_sum_nni, checksum_seed) then
+    /// sum_update on file content then sum_end(sender_file_sum). For MD5
+    /// (protocol >= 30), sum_init ignores the seed - the checksum is plain
+    /// MD5 of the file bytes.
     ///
     /// upstream: receiver.c:408 - read_buf(f_in, sender_file_sum, xfer_sum_len)
     pub(crate) fn finalize_batch_file_delta(
         &mut self,
+        source: &std::path::Path,
     ) -> Result<(), crate::local_copy::LocalCopyError> {
-        use std::io::Write;
+        use std::io::{Read, Write};
 
         let delta_file = match self.batch_delta_buf.as_mut() {
             Some(f) => f,
@@ -694,10 +701,34 @@ impl<'a> CopyContext<'a> {
             )
         })?;
 
-        // upstream: receiver.c:408 - file checksum (s2length=16 bytes).
-        // Write zeros since we don't verify checksums during batch replay.
-        const FILE_SUM_LENGTH: usize = 16;
-        delta_file.write_all(&[0u8; FILE_SUM_LENGTH]).map_err(|e| {
+        // upstream: match.c:370-411 - compute MD5 of source file content.
+        // For MD5 (protocol >= 30), sum_init() ignores checksum_seed.
+        let file_sum = {
+            let mut reader = std::fs::File::open(source).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "open source for batch checksum",
+                    source.to_path_buf(),
+                    e,
+                )
+            })?;
+            let mut hasher = checksums::strong::Md5::new();
+            let mut chunk = [0u8; 32 * 1024];
+            loop {
+                let n = reader.read(&mut chunk).map_err(|e| {
+                    crate::local_copy::LocalCopyError::io(
+                        "read source for batch checksum",
+                        source.to_path_buf(),
+                        e,
+                    )
+                })?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&chunk[..n]);
+            }
+            hasher.finalize()
+        };
+        delta_file.write_all(&file_sum).map_err(|e| {
             crate::local_copy::LocalCopyError::io(
                 "write batch file checksum",
                 std::path::PathBuf::new(),
