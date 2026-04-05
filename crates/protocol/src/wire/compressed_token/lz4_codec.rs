@@ -13,10 +13,12 @@
 //! `[prev_token_run] [DEFLATED_DATA...] [next_token_run] ...`, matching the
 //! receiver's state machine expectation.
 //!
-//! Literal data is buffered in `send_literal()` and only compressed when a
-//! token boundary arrives (`send_block_match()` or `finish()`), mirroring
-//! upstream's single-call `send_compressed_token(f, token, buf, offset, nb)`
-//! which processes literals and tokens together.
+//! Literal data is buffered in `send_literal()` and compressed eagerly when
+//! the buffer reaches `MAX_DATA_COUNT` bytes. Any remaining tail is flushed
+//! at the next token boundary (`send_block_match()` or `finish()`). This
+//! matches upstream's per-call compression pattern where each invocation of
+//! `send_compressed_token(f, token, buf, offset, nb)` compresses its literal
+//! payload in `MIN(nb, MAX_DATA_COUNT)`-sized input chunks immediately.
 //!
 //! - upstream: token.c:send_compressed_token() (SUPPORT_LZ4 variant) lines 881-954
 //! - upstream: token.c:recv_compressed_token() (SUPPORT_LZ4 variant) lines 956-1027
@@ -35,9 +37,10 @@ use super::{
 /// Each literal chunk is compressed independently via `LZ4_compress_default`.
 /// No persistent compression context is maintained across chunks.
 ///
-/// Literal data is buffered and only compressed at token boundaries
-/// (block match or finish), matching upstream's wire ordering where the
-/// previous token run is emitted before the literal data.
+/// Literal data is compressed eagerly in `MAX_DATA_COUNT`-sized chunks as it
+/// accumulates. Any remaining tail is flushed at token boundaries (block match
+/// or finish). This matches upstream's wire framing where each call to
+/// `send_compressed_token` compresses its literals immediately.
 ///
 /// Reference: upstream token.c:send_compressed_token() (SUPPORT_LZ4)
 pub(super) struct Lz4TokenEncoder {
@@ -73,22 +76,30 @@ impl Lz4TokenEncoder {
         self.last_run_end = 0;
     }
 
-    /// Buffers literal data for compression at the next token boundary.
+    /// Buffers literal data and eagerly compresses full chunks.
     ///
-    /// Unlike the zstd/zlib codecs which have streaming compressors, LZ4 is
-    /// stateless - each chunk is compressed independently. Literal data is
-    /// accumulated here and compressed in `compress_and_emit()` when a token
-    /// boundary arrives, matching upstream's single-call pattern where
-    /// `send_compressed_token(f, token, buf, offset, nb)` receives both the
-    /// literal data and the token together.
+    /// Upstream rsync compresses literal data within each call to
+    /// `send_compressed_token()` in `MAX_DATA_COUNT`-sized input chunks
+    /// (token.c lines 923-947). To match this wire framing, we compress
+    /// and emit each `MAX_DATA_COUNT` input chunk as soon as it accumulates
+    /// rather than deferring all compression to token boundaries.
     ///
-    /// upstream: token.c line 883 - nb parameter carries literal byte count
+    /// Without eager flushing, whole-file transfers would buffer all literal
+    /// data in memory and only emit compressed output at `finish()`, causing
+    /// the receiver to stall waiting for DEFLATED_DATA blocks that upstream
+    /// would have sent incrementally.
+    ///
+    /// upstream: token.c line 927 - `available_in = MIN(nb, MAX_DATA_COUNT)`
     pub(super) fn send_literal<W: Write>(
         &mut self,
-        _writer: &mut W,
+        writer: &mut W,
         data: &[u8],
     ) -> io::Result<()> {
         self.literal_buf.extend_from_slice(data);
+        // upstream: token.c lines 923-947 - compress in MAX_DATA_COUNT chunks
+        while self.literal_buf.len() >= MAX_DATA_COUNT {
+            self.compress_one_chunk(writer)?;
+        }
         Ok(())
     }
 
@@ -144,50 +155,61 @@ impl Lz4TokenEncoder {
         Ok(())
     }
 
-    /// Compresses and emits buffered literal data as DEFLATED_DATA blocks.
+    /// Compresses and emits all remaining buffered literal data.
+    ///
+    /// Called at token boundaries (`send_block_match` / `finish`) to flush
+    /// any leftover data that did not reach a full `MAX_DATA_COUNT` chunk
+    /// during `send_literal`. Most data will already have been emitted
+    /// eagerly; this handles the tail.
+    ///
+    /// upstream: token.c lines 919-948 - LZ4_compress_default with halving retry
+    fn compress_and_emit<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        while !self.literal_buf.is_empty() {
+            self.compress_one_chunk(writer)?;
+        }
+        Ok(())
+    }
+
+    /// Compresses one `MAX_DATA_COUNT`-capped chunk from the front of `literal_buf`.
     ///
     /// Each chunk is compressed independently via `LZ4_compress_default`.
     /// If the compressed output exceeds `MAX_DATA_COUNT`, the input is halved
     /// and retried, matching upstream's retry loop.
     ///
-    /// upstream: token.c lines 919-948 - LZ4_compress_default with halving retry
-    fn compress_and_emit<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        if self.literal_buf.is_empty() {
+    /// upstream: token.c lines 923-946 - compress, retry with halved input
+    fn compress_one_chunk<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        let total = self.literal_buf.len();
+        if total == 0 {
             return Ok(());
         }
 
-        let data = std::mem::take(&mut self.literal_buf);
-        let mut offset = 0;
-        while offset < data.len() {
-            let mut available_in = (data.len() - offset).min(MAX_DATA_COUNT);
+        let mut available_in = total.min(MAX_DATA_COUNT);
 
-            // upstream: token.c lines 923-946 - compress, retry with halved input
-            loop {
-                let input = &data[offset..offset + available_in];
-                match block::compress_into(input, &mut self.output_buf) {
-                    Ok(compressed_len) if compressed_len <= MAX_DATA_COUNT => {
-                        write_deflated_data_header(writer, compressed_len)?;
-                        writer.write_all(&self.output_buf[..compressed_len])?;
-                        offset += available_in;
-                        break;
+        loop {
+            let input = &self.literal_buf[..available_in];
+            match block::compress_into(input, &mut self.output_buf) {
+                Ok(compressed_len) if compressed_len <= MAX_DATA_COUNT => {
+                    // upstream: token.c lines 938-941
+                    write_deflated_data_header(writer, compressed_len)?;
+                    writer.write_all(&self.output_buf[..compressed_len])?;
+                    self.literal_buf.drain(..available_in);
+                    return Ok(());
+                }
+                Ok(_) => {
+                    // Compressed output too large, halve input and retry
+                    // upstream: token.c line 930
+                    available_in /= 2;
+                    if available_in == 0 {
+                        return Err(io::Error::other(
+                            "LZ4 compression failed: output exceeds limit",
+                        ));
                     }
-                    Ok(_) => {
-                        // Compressed output too large, halve input and retry
-                        // upstream: token.c line 930
-                        available_in /= 2;
-                        if available_in == 0 {
-                            return Err(io::Error::other(
-                                "LZ4 compression failed: output exceeds limit",
-                            ));
-                        }
-                    }
-                    Err(e) => {
-                        return Err(io::Error::other(e.to_string()));
-                    }
+                }
+                Err(e) => {
+                    return Err(io::Error::other(e.to_string()));
                 }
             }
         }
-        Ok(())
     }
 
     fn write_token_run<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
@@ -825,5 +847,97 @@ mod tests {
             total_compressed_len <= MAX_DATA_COUNT,
             "single block should not exceed MAX_DATA_COUNT"
         );
+    }
+
+    /// Verifies that send_literal eagerly emits DEFLATED_DATA blocks when
+    /// the buffer exceeds MAX_DATA_COUNT, matching upstream's per-call
+    /// compression behavior.
+    ///
+    /// upstream: token.c line 927 - `available_in = MIN(nb, MAX_DATA_COUNT)`
+    /// Upstream compresses literals within each send_compressed_token() call.
+    /// Without eager flushing, the receiver would stall waiting for blocks.
+    #[test]
+    fn lz4_send_literal_eagerly_emits_deflated_data() {
+        let mut encoder = Lz4TokenEncoder::new();
+        let mut encoded = Vec::new();
+
+        // Feed data exceeding MAX_DATA_COUNT so eager flush triggers
+        let data = vec![b'A'; MAX_DATA_COUNT + 100];
+        encoder.send_literal(&mut encoded, &data).unwrap();
+
+        // Before finish(), output should already contain DEFLATED_DATA
+        // blocks from the eager flush during send_literal.
+        assert!(
+            !encoded.is_empty(),
+            "send_literal must eagerly emit DEFLATED_DATA for data exceeding MAX_DATA_COUNT"
+        );
+
+        // Verify at least one valid DEFLATED_DATA header was written
+        assert_eq!(
+            encoded[0] & 0xC0,
+            DEFLATED_DATA,
+            "first byte should have DEFLATED_DATA flag"
+        );
+
+        // Complete the stream and verify roundtrip
+        encoder.finish(&mut encoded).unwrap();
+
+        let mut decoder = Lz4TokenDecoder::new();
+        let mut cursor = Cursor::new(&encoded);
+        let mut result = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::Literal(d) => result.extend_from_slice(&d),
+                CompressedToken::End => break,
+                CompressedToken::BlockMatch(_) => panic!("unexpected block match"),
+            }
+        }
+
+        assert_eq!(result, data);
+    }
+
+    /// Verifies that large whole-file literals produce incremental
+    /// DEFLATED_DATA blocks during send_literal, not deferred to finish.
+    ///
+    /// This simulates a whole-file transfer where send_literal is called
+    /// multiple times with large chunks. The receiver must see DEFLATED_DATA
+    /// blocks incrementally for interop with upstream rsync.
+    #[test]
+    fn lz4_incremental_literal_flush_for_whole_file_transfer() {
+        let mut encoder = Lz4TokenEncoder::new();
+        let mut encoded = Vec::new();
+
+        // Simulate whole-file transfer: multiple large literal writes
+        let chunk = vec![b'X'; 65536]; // 64KB per write
+        for _ in 0..4 {
+            encoder.send_literal(&mut encoded, &chunk).unwrap();
+        }
+
+        // After 256KB of literals, output should already contain many
+        // DEFLATED_DATA blocks (not waiting for finish).
+        let pre_finish_len = encoded.len();
+        assert!(
+            pre_finish_len > 0,
+            "256KB of literals must produce DEFLATED_DATA output during send_literal"
+        );
+
+        encoder.finish(&mut encoded).unwrap();
+
+        // Verify roundtrip
+        let expected: Vec<u8> = vec![b'X'; 65536 * 4];
+        let mut decoder = Lz4TokenDecoder::new();
+        let mut cursor = Cursor::new(&encoded);
+        let mut result = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::Literal(d) => result.extend_from_slice(&d),
+                CompressedToken::End => break,
+                CompressedToken::BlockMatch(_) => panic!("unexpected block match"),
+            }
+        }
+
+        assert_eq!(result, expected);
     }
 }
