@@ -2709,7 +2709,7 @@ test_inc_recurse_comprehensive() {
   # The output should show no file transfers (only directory listings).
   # Count lines matching actual file transfer indicators (>f pattern).
   local retransfer_count
-  retransfer_count=$(grep -cE '^>f' "${log}.ir-resync.out" 2>/dev/null || echo "0")
+  retransfer_count=$(grep -cE '^>f' "${log}.ir-resync.out" 2>/dev/null) || retransfer_count=0
   if [[ "$retransfer_count" -gt 0 ]]; then
     echo "    incremental re-sync transferred ${retransfer_count} files unnecessarily"
     return 1
