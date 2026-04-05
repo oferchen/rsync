@@ -448,8 +448,7 @@ pub fn replay(
     let initial_ndx_start: i32 = if inc_recurse { 1 } else { 0 };
 
     // Each tuple: (ndx_start, entries_offset, count)
-    let mut flist_segments: Vec<(i32, usize, usize)> =
-        vec![(initial_ndx_start, 0, entries.len())];
+    let mut flist_segments: Vec<(i32, usize, usize)> = vec![(initial_ndx_start, 0, entries.len())];
     // Reuse the NDX codec from flist reading if available (INC_RECURSE mode).
     // The codec carries delta-encoding state from reading incremental flist
     // segment NDX values; creating a fresh codec would desync.
@@ -633,13 +632,15 @@ pub fn replay(
         // to the flat entries Vec index by finding the segment it belongs to.
         // Each segment has (ndx_start, entries_offset, count) with +1 gaps
         // between segments (upstream flist.c:2931).
-        let flat_index = flist_segments.iter().find_map(|&(seg_start, offset, count)| {
-            if ndx >= seg_start && ndx < seg_start + count as i32 {
-                Some(offset + (ndx - seg_start) as usize)
-            } else {
-                None
-            }
-        });
+        let flat_index = flist_segments
+            .iter()
+            .find_map(|&(seg_start, offset, count)| {
+                if ndx >= seg_start && ndx < seg_start + count as i32 {
+                    Some(offset + (ndx - seg_start) as usize)
+                } else {
+                    None
+                }
+            });
 
         let flat_index = match flat_index {
             Some(idx) => idx,
