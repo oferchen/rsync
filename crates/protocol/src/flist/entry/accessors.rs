@@ -134,6 +134,12 @@ impl FileEntry {
         self.size
     }
 
+    /// Sets the file size in bytes.
+    #[inline]
+    pub fn set_size(&mut self, size: u64) {
+        self.size = size;
+    }
+
     /// Returns the Unix mode bits (type + permissions).
     #[inline]
     #[must_use]
