@@ -2578,10 +2578,11 @@ test_hardlinks_comprehensive() {
 }
 
 # Comprehensive INC_RECURSE interop test against upstream rsync 3.4.1.
-# Creates a deep nested directory structure (5+ levels, 50+ dirs) with mixed
-# file sizes, transfers with -avH --inc-recursive, verifies correctness, then
-# tests incremental re-sync produces no unnecessary transfers.
-# Both oc-rsync and upstream rsync are tested as baseline comparison.
+# Creates a deep nested directory structure (5 levels, 4 branches, 100+ files)
+# with mixed sizes, transfers with --inc-recursive, then verifies correctness.
+# Tests: (1) local oc-rsync transfer, (2) incremental re-sync (no re-transfer),
+# (3) upstream baseline comparison, (4) daemon push (upstream -> oc-rsync),
+# (5) daemon pull (oc-rsync -> upstream), (6) --delete with --inc-recursive.
 test_inc_recurse_comprehensive() {
   local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
         oc_port=$6 upstream_port=$7
@@ -2590,12 +2591,12 @@ test_inc_recurse_comprehensive() {
   local ir_dest="${work}/inc-recurse-dest"
   rm -rf "$ir_src" "$ir_dest"
 
-  # Build a deep directory tree: 5 levels, 10+ dirs per level, 50+ total dirs.
+  # Build a deep directory tree: 5 levels, 4 branches per level, 100+ files.
   # Files at every level with mixed sizes (empty, small, large).
   local level depth=5
   for level in $(seq 1 $depth); do
     local branch
-    for branch in a b c; do
+    for branch in a b c d; do
       local dir_path="${ir_src}"
       local d
       for d in $(seq 1 $level); do
@@ -2605,16 +2606,21 @@ test_inc_recurse_comprehensive() {
 
       # Empty file
       touch "$dir_path/empty_${level}_${branch}.txt"
-      # Small file
+      # Small file with unique content
       echo "content at depth ${level} branch ${branch}" > "$dir_path/small_${level}_${branch}.txt"
-      # Larger file (only at deeper levels to keep total size reasonable)
+      # Extra numbered files to push total count above 100
+      local n
+      for n in $(seq 1 3); do
+        echo "extra file ${n} at depth ${level} branch ${branch}" > "$dir_path/extra_${n}.txt"
+      done
+      # Larger file at deeper levels to exercise data transfer
       if [[ $level -ge 3 ]]; then
         dd if=/dev/urandom of="$dir_path/large_${level}_${branch}.dat" bs=1K count=32 2>/dev/null
       fi
     done
   done
 
-  # Add some files at the root level
+  # Add files at the root level
   echo "root file" > "$ir_src/root.txt"
   dd if=/dev/urandom of="$ir_src/root_binary.dat" bs=1K count=64 2>/dev/null
 
@@ -2777,12 +2783,130 @@ CONF
   local daemon_file_count
   daemon_file_count=$(find "$daemon_dest" -type f | wc -l)
   if [[ "$daemon_file_count" -lt "$src_file_count" ]]; then
-    echo "    daemon file count: expected >= ${src_file_count}, got ${daemon_file_count}"
+    echo "    daemon push file count: expected >= ${src_file_count}, got ${daemon_file_count}"
     return 1
   fi
 
   if ! cmp -s "$ir_src/root.txt" "$daemon_dest/root.txt"; then
-    echo "    daemon root.txt content mismatch"
+    echo "    daemon push root.txt content mismatch"
+    return 1
+  fi
+
+  # --- Test 5: pull direction - oc-rsync client pulling from upstream daemon ---
+  local pull_dest="${work}/inc-recurse-pull-dest"
+  rm -rf "$pull_dest"; mkdir -p "$pull_dest"
+
+  local up_ir_conf="${work}/inc-recurse-up.conf"
+  local up_ir_pid="${work}/inc-recurse-up.pid"
+  local up_ir_log="${work}/inc-recurse-up-daemon.log"
+  cat > "$up_ir_conf" <<CONF
+pid file = ${up_ir_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${ir_src}
+    comment = inc-recurse pull source
+    read only = true
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$up_ir_conf" "$up_ir_log" "$up_ir_pid"
+
+  # oc-rsync client pulling from upstream daemon with --inc-recursive
+  if ! timeout "$hard_timeout" "$oc_bin" -avH --inc-recursive --timeout=10 \
+      "rsync://127.0.0.1:${upstream_port}/interop/" "${pull_dest}/" \
+      >"${log}.ir-pull.out" 2>"${log}.ir-pull.err"; then
+    echo "    oc client <- upstream daemon --inc-recursive pull failed (exit=$?)"
+    echo "    stderr: $(head -5 "${log}.ir-pull.err")"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # Verify pull destination
+  local pull_file_count
+  pull_file_count=$(find "$pull_dest" -type f | wc -l)
+  if [[ "$pull_file_count" -lt "$src_file_count" ]]; then
+    echo "    pull file count: expected >= ${src_file_count}, got ${pull_file_count}"
+    return 1
+  fi
+
+  if ! cmp -s "$ir_src/root.txt" "$pull_dest/root.txt"; then
+    echo "    pull root.txt content mismatch"
+    return 1
+  fi
+  if ! cmp -s "$ir_src/root_binary.dat" "$pull_dest/root_binary.dat"; then
+    echo "    pull root_binary.dat content mismatch"
+    return 1
+  fi
+
+  # Verify deep file content matches after pull
+  local check_file="${ir_src}/level1_a/level2_a/level3_a/small_3_a.txt"
+  local check_dest="${pull_dest}/level1_a/level2_a/level3_a/small_3_a.txt"
+  if [[ -f "$check_file" ]] && ! cmp -s "$check_file" "$check_dest"; then
+    echo "    pull deep file content mismatch (level3_a)"
+    return 1
+  fi
+
+  # --- Test 6: --delete with --inc-recursive (daemon push) ---
+  # Pre-populate destination with extra files that should be deleted.
+  local del_dest="${work}/inc-recurse-del-dest"
+  rm -rf "$del_dest"; mkdir -p "$del_dest"
+
+  # Seed destination with files that do not exist in source
+  mkdir -p "$del_dest/stale_dir/nested"
+  echo "stale" > "$del_dest/stale_file.txt"
+  echo "stale nested" > "$del_dest/stale_dir/nested/old.txt"
+  # Also copy a real file so quick-check has something to skip
+  mkdir -p "$del_dest"
+  cp "$ir_src/root.txt" "$del_dest/root.txt"
+
+  local del_conf="${work}/inc-recurse-del.conf"
+  local del_pid="${work}/inc-recurse-del.pid"
+  local del_log="${work}/inc-recurse-del-daemon.log"
+  cat > "$del_conf" <<CONF
+pid file = ${del_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${del_dest}
+comment = inc-recurse delete test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$del_conf" "$del_log" "$upstream_binary" "$del_pid" "$oc_port"
+
+  # upstream client pushing with --inc-recursive --delete to oc-rsync daemon
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --inc-recursive --delete --timeout=10 \
+      "${ir_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.ir-delete.out" 2>"${log}.ir-delete.err"; then
+    echo "    upstream -> oc daemon --inc-recursive --delete failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$del_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify stale files were deleted
+  if [[ -f "$del_dest/stale_file.txt" ]]; then
+    echo "    --delete failed: stale_file.txt still exists"
+    return 1
+  fi
+  if [[ -d "$del_dest/stale_dir" ]]; then
+    echo "    --delete failed: stale_dir/ still exists"
+    return 1
+  fi
+
+  # Verify source files are present
+  local del_file_count
+  del_file_count=$(find "$del_dest" -type f | wc -l)
+  if [[ "$del_file_count" -lt "$src_file_count" ]]; then
+    echo "    delete dest file count: expected >= ${src_file_count}, got ${del_file_count}"
     return 1
   fi
 
@@ -2809,6 +2933,7 @@ run_standalone_interop_tests() {
     "wrong-password-auth"
     "iconv"
     "hardlinks-comprehensive"
+    "inc-recurse-comprehensive"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -2822,6 +2947,7 @@ run_standalone_interop_tests() {
     "test_wrong_password_auth"
     "test_iconv"
     "test_hardlinks_comprehensive"
+    "test_inc_recurse_comprehensive"
   )
 
   for i in "${!test_names[@]}"; do
@@ -2849,6 +2975,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       hardlinks-comprehensive)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      inc-recurse-comprehensive)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
