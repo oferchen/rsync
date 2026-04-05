@@ -866,36 +866,43 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Returns whether `--numeric-ids` is enabled.
+    #[cfg(unix)]
     pub(super) const fn numeric_ids_enabled(&self) -> bool {
         self.options.numeric_ids_enabled()
     }
 
     /// Returns whether `--owner` / `-o` is enabled.
+    #[cfg(unix)]
     pub(super) const fn preserve_owner_enabled(&self) -> bool {
         self.options.preserve_owner()
     }
 
     /// Returns whether `--group` / `-g` is enabled.
+    #[cfg(unix)]
     pub(super) const fn preserve_group_enabled(&self) -> bool {
         self.options.preserve_group()
     }
 
     /// Returns a reference to the batch UID name list.
+    #[cfg(unix)]
     pub(super) const fn batch_uid_list(&self) -> &IdList {
         &self.batch_uid_list
     }
 
     /// Returns a mutable reference to the batch UID name list.
+    #[cfg(unix)]
     pub(super) fn batch_uid_list_mut(&mut self) -> &mut IdList {
         &mut self.batch_uid_list
     }
 
     /// Returns a reference to the batch GID name list.
+    #[cfg(unix)]
     pub(super) const fn batch_gid_list(&self) -> &IdList {
         &self.batch_gid_list
     }
 
     /// Returns a mutable reference to the batch GID name list.
+    #[cfg(unix)]
     pub(super) fn batch_gid_list_mut(&mut self) -> &mut IdList {
         &mut self.batch_gid_list
     }
