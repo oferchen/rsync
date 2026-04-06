@@ -88,14 +88,26 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF##*/}"
 
-          # Wait for the release to exist (created by release-cross workflow)
-          for i in 1 2 3 4 5; do
-            CURRENT_BODY=$(gh release view "$TAG" --json body -q .body 2>/dev/null || echo "")
-            if [ -n "$CURRENT_BODY" ] || [ "$i" -eq 5 ]; then
+          # Wait for the release to exist (created by release-cross workflow).
+          # The release-cross workflow may take 20+ minutes to build all
+          # platform artifacts before creating the GitHub release.
+          MAX_WAIT=1800  # 30 minutes
+          INTERVAL=30
+          ELAPSED=0
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release $TAG found after ${ELAPSED}s"
               break
             fi
-            sleep 10
+            echo "Waiting for release $TAG... (${ELAPSED}s/${MAX_WAIT}s)"
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
           done
+          if [ $ELAPSED -ge $MAX_WAIT ]; then
+            echo "::error::Release $TAG not created after ${MAX_WAIT}s"
+            exit 1
+          fi
+          CURRENT_BODY=$(gh release view "$TAG" --json body -q .body 2>/dev/null || echo "")
 
           # Avoid duplicate sections on re-runs
           if echo "$CURRENT_BODY" | grep -q "Criterion Microbenchmarks"; then
@@ -125,7 +137,7 @@ jobs:
           )
           NEW_BODY=$(echo "$NEW_BODY" | sed 's/^          //')
 
-          gh release edit "$TAG" --notes "$NEW_BODY" || echo "Could not update release notes"
+          gh release edit "$TAG" --notes "$NEW_BODY"
 
       - name: Upload criterion results to release
         if: startsWith(github.ref, 'refs/tags/')
@@ -133,5 +145,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF##*/}"
-          gh release upload "$TAG" criterion_output.txt --clobber \
-            || echo "Could not upload criterion results to release"
+          gh release upload "$TAG" criterion_output.txt --clobber
