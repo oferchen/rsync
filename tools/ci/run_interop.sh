@@ -2911,6 +2911,87 @@ CONF
   return 0
 }
 
+# Standalone: upstream rsync pushes with --delete-after to oc-rsync daemon.
+# Verifies that source files arrive and extra destination files are removed.
+test_delete_after() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local da_src="${work}/delete-after-src"
+  local da_dest="${work}/delete-after-dest"
+  rm -rf "$da_src" "$da_dest"
+  mkdir -p "$da_src" "$da_dest"
+
+  # Create source files
+  echo "file-one" > "$da_src/file1.txt"
+  echo "file-two" > "$da_src/file2.txt"
+  mkdir -p "$da_src/subdir"
+  echo "nested" > "$da_src/subdir/nested.txt"
+
+  # Pre-populate destination with extra files that should be deleted
+  echo "extra-one" > "$da_dest/extra1.txt"
+  echo "extra-two" > "$da_dest/extra2.txt"
+  mkdir -p "$da_dest/olddir"
+  echo "stale" > "$da_dest/olddir/stale.txt"
+
+  # Start oc-rsync daemon
+  local da_conf="${work}/delete-after-oc.conf"
+  local da_pid="${work}/delete-after-oc.pid"
+  local da_log="${work}/delete-after-oc.log"
+  cat > "$da_conf" <<CONF
+pid file = ${da_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${da_dest}
+comment = delete-after test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$da_conf" "$da_log" "$upstream_binary" "$da_pid" "$oc_port"
+
+  # Push from upstream rsync with --delete-after
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --delete-after --timeout=10 \
+      "${da_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.delete-after.out" 2>"${log}.delete-after.err"; then
+    echo "    transfer failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify source files arrived
+  for f in file1.txt file2.txt subdir/nested.txt; do
+    if [[ ! -f "$da_dest/$f" ]]; then
+      echo "    missing source file: $f"
+      return 1
+    fi
+    if ! cmp -s "$da_src/$f" "$da_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify extra files were deleted
+  for f in extra1.txt extra2.txt olddir/stale.txt; do
+    if [[ -f "$da_dest/$f" ]]; then
+      echo "    extra file not deleted: $f"
+      return 1
+    fi
+  done
+
+  # Verify extra directory was removed
+  if [[ -d "$da_dest/olddir" ]]; then
+    echo "    extra directory not deleted: olddir"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -2932,6 +3013,7 @@ run_standalone_interop_tests() {
     "iconv"
     "hardlinks-comprehensive"
     "inc-recurse-comprehensive"
+    "delete-after"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -2946,6 +3028,7 @@ run_standalone_interop_tests() {
     "test_iconv"
     "test_hardlinks_comprehensive"
     "test_inc_recurse_comprehensive"
+    "test_delete_after"
   )
 
   for i in "${!test_names[@]}"; do
@@ -2976,6 +3059,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       inc-recurse-comprehensive)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      delete-after)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
