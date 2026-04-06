@@ -4,7 +4,7 @@
 // applying chroot and privilege restrictions, spawning the name converter,
 // running pre/post-xfer exec hooks, and invoking the Rust transfer engine.
 //
-// upstream: clientserver.c - after `rsync_module()` completes authentication
+// upstream: `clientserver.c` - after `rsync_module()` completes authentication
 // and argument parsing, it calls `chdir(lp_path())`, `chroot(".")`,
 // `setgid()`/`setuid()`, and then enters the transfer pipeline.
 
@@ -218,7 +218,6 @@ fn process_approved_module(
     options: &[String],
     negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<()> {
-    // Acquire connection slot
     let _connection_guard = match module.try_acquire_connection() {
         Ok(guard) => guard,
         Err(ModuleConnectionError::Limit(limit)) => {
@@ -233,7 +232,6 @@ fn process_approved_module(
         log_module_request(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
     }
 
-    // Check for refused options
     if let Some(refused) = refused_option(module, options) {
         return handle_refused_option(ctx, refused);
     }
@@ -265,7 +263,6 @@ fn process_approved_module(
 
     apply_module_timeout(ctx.reader.get_mut(), module)?;
 
-    // Handle authentication
     let auth_user = match handle_authentication(ctx, module, negotiated_protocol)? {
         Some(user) => user,
         None => return Ok(()),
@@ -331,7 +328,6 @@ fn process_approved_module(
         }
     }
 
-    // Read client arguments
     let client_args = match read_and_log_client_args(ctx, negotiated_protocol)? {
         Some(args) => args,
         None => return Ok(()),
@@ -354,7 +350,6 @@ fn process_approved_module(
         return Ok(());
     }
 
-    // Validate module path before chroot (path must be accessible pre-chroot)
     if !validate_module_path(ctx, module)? {
         return Ok(());
     }
@@ -409,13 +404,9 @@ fn process_approved_module(
         None
     };
 
-    // Windows: install a Win32 API-based name converter. No subprocess needed
-    // since Windows doesn't use chroot; name resolution uses LookupAccountNameW
-    // and NetUserEnum directly from the platform crate.
     #[cfg(windows)]
     let _name_converter_guard = Some(install_windows_name_converter());
 
-    // After chroot the server must use "/" as the module root
     let effective_module;
     let config_module = if module.use_chroot {
         let mut adjusted = module.definition.clone();
@@ -426,7 +417,6 @@ fn process_approved_module(
         module
     };
 
-    // Build server configuration with the effective (post-chroot) path
     let mut config = match build_server_config(ctx, &client_args, config_module)? {
         Some(cfg) => cfg,
         None => return Ok(()),
@@ -444,13 +434,11 @@ fn process_approved_module(
         }
     }
 
-    // Setup transfer streams
     let (mut read_stream, mut write_stream) = match setup_transfer_streams(ctx)? {
         Some(streams) => streams,
         None => return Ok(()),
     };
 
-    // Build XferExecContext for pre/post-xfer exec commands
     let xfer_ctx = XferExecContext {
         module_name: &module.name,
         module_path: &module.path,
@@ -524,7 +512,6 @@ fn process_approved_module(
         }
     }
 
-    // Build handshake and execute transfer
     let handshake = build_handshake_result(ctx.reader, negotiated_protocol, client_args, module);
     let final_protocol = handshake.protocol;
 
