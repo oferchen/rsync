@@ -8,6 +8,8 @@ use std::io::{self, Read, Write};
 
 use engine::signature::FileSignature;
 use protocol::codec::NdxCodec;
+use protocol::varint::read_varint;
+use protocol::xattr::XattrList;
 
 /// Signature header for delta transfer.
 ///
@@ -110,11 +112,14 @@ impl SumHead {
 ///
 /// After the receiver sends NDX + iflags + sum_head, the sender echoes back
 /// its own NDX + iflags, potentially with additional fields based on flags.
+/// When `ITEM_REPORT_XATTR` is set, xattr abbreviation data follows the
+/// standard fields.
 ///
 /// # Upstream Reference
 ///
 /// - `sender.c:180` - `write_ndx_and_attrs()` sends these
 /// - `rsync.c:383` - `read_ndx_and_attrs()` reads them
+/// - `xattrs.c:623` - `send_xattr_request()` writes abbreviated xattr values
 #[derive(Debug, Clone, Default)]
 pub struct SenderAttrs {
     /// Item flags indicating transfer mode.
@@ -126,6 +131,17 @@ pub struct SenderAttrs {
     pub fnamecmp_type: Option<protocol::FnameCmpType>,
     /// Optional alternate basis name (if `ITEM_XNAME_FOLLOWS` set).
     pub xname: Option<Vec<u8>>,
+    /// Abbreviated xattr values received from the sender.
+    ///
+    /// When `ITEM_REPORT_XATTR` is set in iflags, the sender transmits full
+    /// values for previously abbreviated xattr entries. Each entry is a
+    /// (1-based entry num, value) pair. The receiver uses these to replace
+    /// checksum-only entries in the xattr cache.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `xattrs.c:681` - `recv_xattr_request()` reads these on the receiver side
+    pub xattr_values: Vec<(i32, Vec<u8>)>,
 }
 
 impl SenderAttrs {
@@ -135,6 +151,10 @@ impl SenderAttrs {
     pub const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11; // 0x0800
     /// Item flag indicating alternate name follows.
     pub const ITEM_XNAME_FOLLOWS: u16 = 1 << 12; // 0x1000
+    /// Item flag indicating xattr data follows.
+    pub const ITEM_REPORT_XATTR: u16 = 1 << 8; // 0x0100
+    /// Item flag indicating local change (e.g., hardlink with no transfer).
+    pub const ITEM_LOCAL_CHANGE: u16 = 1 << 14; // 0x4000
 
     /// Reads sender attributes from the wire using an NDX codec.
     ///
@@ -142,25 +162,42 @@ impl SenderAttrs {
     /// Protocol 30+ uses variable-length delta-encoded NDX values, which
     /// require the codec to maintain state across calls.
     ///
+    /// When `preserve_xattrs` is true and the sender sets `ITEM_REPORT_XATTR`,
+    /// this also reads abbreviated xattr values from the wire. The
+    /// `want_xattr_optim` flag mirrors upstream's `CF_AVOID_XATTR_OPTIM`
+    /// capability - when active, xattr exchange is skipped for local-change
+    /// hardlinks.
+    ///
     /// # Arguments
     ///
     /// * `reader` - The input stream to read from
-    /// * `ndx_codec` - The NDX codec for protocol-aware decoding (must match sender's state)
-    ///
-    /// # Protocol Details
-    ///
-    /// - Protocol >= 30: Uses delta-encoded NDX (1-5 bytes depending on value)
-    /// - Protocol < 30: Uses 4-byte little-endian NDX
-    /// - Protocol >= 29: Reads 2-byte iflags after NDX
-    /// - Protocol < 29: Uses default ITEM_TRANSFER flags
+    /// * `ndx_codec` - The NDX codec for protocol-aware decoding
+    /// * `preserve_xattrs` - Whether xattr preservation is active
+    /// * `want_xattr_optim` - Whether xattr hardlink optimization is active
     ///
     /// # Upstream Reference
     ///
     /// - `io.c:2289-2318` - `read_ndx()` for NDX decoding
     /// - `rsync.c:383` - `read_ndx_and_attrs()` reads NDX + iflags
+    /// - `receiver.c:609-611` - receiver reads xattr data when ITEM_REPORT_XATTR set
+    /// - `xattrs.c:681` - `recv_xattr_request()` reads abbreviated values
     pub fn read_with_codec<R: Read>(
         reader: &mut R,
         ndx_codec: &mut impl NdxCodec,
+    ) -> io::Result<(i32, Self)> {
+        Self::read_with_codec_xattr(reader, ndx_codec, false, false)
+    }
+
+    /// Reads sender attributes with xattr support.
+    ///
+    /// See [`read_with_codec`](Self::read_with_codec) for basic usage. This
+    /// variant adds xattr abbreviation data reading when the sender includes
+    /// `ITEM_REPORT_XATTR` in iflags.
+    pub fn read_with_codec_xattr<R: Read>(
+        reader: &mut R,
+        ndx_codec: &mut impl NdxCodec,
+        preserve_xattrs: bool,
+        want_xattr_optim: bool,
     ) -> io::Result<(i32, Self)> {
         // Read NDX using protocol-aware codec (handles delta encoding for protocol 30+)
         let ndx = ndx_codec.read_ndx(reader)?;
@@ -230,12 +267,27 @@ impl SenderAttrs {
             None
         };
 
+        // upstream: receiver.c:609-611 - read xattr data when ITEM_REPORT_XATTR is set
+        // Condition mirrors upstream: preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers
+        // && !(want_xattr_optim && BITS_SET(iflags, ITEM_XNAME_FOLLOWS|ITEM_LOCAL_CHANGE))
+        let xattr_values = if preserve_xattrs
+            && (iflags & Self::ITEM_REPORT_XATTR != 0)
+            && !(want_xattr_optim
+                && (iflags & Self::ITEM_XNAME_FOLLOWS != 0)
+                && (iflags & Self::ITEM_LOCAL_CHANGE != 0))
+        {
+            read_xattr_abbreviation_data(reader)?
+        } else {
+            Vec::new()
+        };
+
         Ok((
             ndx,
             Self {
                 iflags,
                 fnamecmp_type,
                 xname,
+                xattr_values,
             },
         ))
     }
@@ -318,6 +370,7 @@ impl SenderAttrs {
             iflags,
             fnamecmp_type,
             xname,
+            xattr_values: Vec::new(),
         })
     }
 }
@@ -347,4 +400,126 @@ pub fn write_signature_blocks<W: Write + ?Sized>(
         writer.write_all(&sum_buf)?;
     }
     Ok(())
+}
+
+/// Reads abbreviated xattr values from the sender.
+///
+/// The sender transmits 1-based entry numbers (delta-encoded) followed by
+/// full value data for each entry. A zero terminates the list.
+///
+/// Returns `(num, value)` pairs where `num` is the 1-based entry number
+/// from the original xattr list.
+///
+/// # Wire Format
+///
+/// ```text
+/// For each entry:
+///   relative_num : varint  // num - prior_req (1-based, delta-encoded)
+///   length       : varint  // value byte count
+///   value        : bytes[length]
+/// terminator     : varint  // 0 signals end of list
+/// ```
+///
+/// # Upstream Reference
+///
+/// - `xattrs.c:681-757` - `recv_xattr_request()` called by receiver (!am_sender)
+fn read_xattr_abbreviation_data<R: Read>(reader: &mut R) -> io::Result<Vec<(i32, Vec<u8>)>> {
+    let mut values = Vec::new();
+    let mut prior_req = 0i32;
+
+    loop {
+        let rel_pos = read_varint(reader)?;
+        if rel_pos == 0 {
+            break;
+        }
+        // upstream: num += rel_pos (delta-encoded 1-based entry numbers)
+        let num = prior_req + rel_pos;
+        prior_req = num;
+
+        // upstream: rxa->datum_len = read_varint(f_in); read_buf(f_in, rxa->datum, rxa->datum_len)
+        let datum_len = read_varint(reader)? as usize;
+        let mut value = vec![0u8; datum_len];
+        reader.read_exact(&mut value)?;
+
+        values.push((num, value));
+    }
+
+    Ok(values)
+}
+
+/// Writes the generator-side xattr abbreviation request.
+///
+/// The generator sends 1-based entry numbers (delta-encoded) for the
+/// abbreviated xattr values it needs. No value data is included - only the
+/// entry numbers. A zero terminates the list.
+///
+/// # Wire Format
+///
+/// ```text
+/// For each needed entry:
+///   relative_num : varint  // num - prior_req (1-based, delta-encoded)
+/// terminator     : varint  // 0 signals end of list
+/// ```
+///
+/// # Upstream Reference
+///
+/// - `xattrs.c:623-675` - `send_xattr_request()` called by generator (fname=NULL)
+pub fn write_xattr_request<W: Write + ?Sized>(
+    writer: &mut W,
+    xattr_list: &XattrList,
+) -> io::Result<()> {
+    use protocol::varint::write_varint;
+    use protocol::xattr::{MAX_FULL_DATUM, XattrState};
+
+    let mut prior_req = 0i32;
+
+    for entry in xattr_list.iter() {
+        if entry.datum_len() <= MAX_FULL_DATUM {
+            continue;
+        }
+        match entry.state() {
+            // upstream: XSTATE_ABBREV entries matched sender's checksum - skip
+            XattrState::Abbrev => continue,
+            // upstream: XSTATE_TODO entries need full data from sender
+            XattrState::Todo => {}
+            // upstream: default - skip
+            XattrState::Done => continue,
+        }
+
+        let num = entry.num() as i32;
+        write_varint(writer, num - prior_req)?;
+        prior_req = num;
+    }
+
+    // upstream: write_byte(f_out, 0) - terminate the request list
+    write_varint(writer, 0)?;
+
+    Ok(())
+}
+
+/// Applies received abbreviated xattr values to the xattr cache.
+///
+/// After the receiver reads abbreviated xattr values from the sender via
+/// `read_xattr_abbreviation_data`, this function updates the corresponding
+/// entries in the xattr cache with full values.
+///
+/// # Arguments
+///
+/// * `xattr_list` - The xattr list to update (from the xattr cache)
+/// * `values` - The (1-based num, value) pairs from the sender
+///
+/// # Upstream Reference
+///
+/// - `xattrs.c:744-755` - receiver stores full values in place of checksums
+pub fn apply_xattr_abbreviation_values(xattr_list: &mut XattrList, values: &[(i32, Vec<u8>)]) {
+    for (num, value) in values {
+        // Find the entry by its 1-based num. Upstream scans forward with wrap.
+        if let Some(entry) = xattr_list
+            .entries_mut()
+            .iter_mut()
+            .find(|e| e.num() as i32 == *num)
+        {
+            entry.set_full_value(value.clone());
+        }
+    }
 }

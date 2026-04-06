@@ -201,8 +201,14 @@ impl ReceiverContext {
             }
             writer.flush()?;
 
-            let (echoed_ndx, _sender_attrs) =
-                SenderAttrs::read_with_codec(reader, &mut ndx_read_codec)?;
+            let (echoed_ndx, _sender_attrs) = SenderAttrs::read_with_codec_xattr(
+                reader,
+                &mut ndx_read_codec,
+                self.config.flags.xattrs,
+                self.compat_flags.is_some_and(|f| {
+                    f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
+                }),
+            )?;
 
             debug_assert_eq!(
                 echoed_ndx, ndx,

@@ -14,15 +14,20 @@ use std::path::PathBuf;
 
 use engine::signature::FileSignature;
 use protocol::codec::NdxCodec;
+use protocol::xattr::XattrList;
 
 use crate::pipeline::PendingTransfer;
-use crate::receiver::{SenderAttrs, SumHead, write_signature_blocks};
+use crate::receiver::{SenderAttrs, SumHead, write_signature_blocks, write_xattr_request};
 
 use super::RequestConfig;
 
 /// Sends a file transfer request to the sender.
 ///
 /// Writes NDX + iflags + sum_head + signature blocks to the wire.
+/// When `xattr_list` is provided and contains entries needing full values,
+/// `ITEM_REPORT_XATTR` is included in iflags and the xattr request is
+/// written after the standard fields.
+///
 /// Returns a `PendingTransfer` to track this request for response processing.
 ///
 /// # Arguments
@@ -45,6 +50,7 @@ use super::RequestConfig;
 /// - `generator.c:recv_generator()` sends NDX, iflags, sum_head
 /// - `match.c:write_sum_head()` sends signature header
 /// - `match.c:395` sends signature blocks
+/// - `xattrs.c:623` - `send_xattr_request()` writes abbreviated xattr request
 #[allow(clippy::too_many_arguments)]
 pub fn send_file_request<W: Write + ?Sized>(
     writer: &mut W,
@@ -56,13 +62,64 @@ pub fn send_file_request<W: Write + ?Sized>(
     target_size: u64,
     config: &RequestConfig<'_>,
 ) -> io::Result<PendingTransfer> {
+    send_file_request_xattr(
+        writer,
+        ndx_codec,
+        ndx,
+        file_path,
+        signature,
+        basis_path,
+        target_size,
+        config,
+        None,
+    )
+}
+
+/// Sends a file transfer request with optional xattr abbreviation request.
+///
+/// See [`send_file_request`] for details. When `xattr_list` is provided and
+/// has entries in `XSTATE_TODO` state, `ITEM_REPORT_XATTR` is set in iflags
+/// and the xattr request is written after the standard fields.
+///
+/// # Upstream Reference
+///
+/// - `sender.c:193-196` - sender reads xattr request when ITEM_REPORT_XATTR set
+/// - `xattrs.c:623-675` - `send_xattr_request()` writes request from generator
+#[allow(clippy::too_many_arguments)]
+pub fn send_file_request_xattr<W: Write + ?Sized>(
+    writer: &mut W,
+    ndx_codec: &mut impl NdxCodec,
+    ndx: i32,
+    file_path: PathBuf,
+    signature: Option<FileSignature>,
+    basis_path: Option<PathBuf>,
+    target_size: u64,
+    config: &RequestConfig<'_>,
+    xattr_list: Option<&XattrList>,
+) -> io::Result<PendingTransfer> {
     // Send file index using NDX encoding
     ndx_codec.write_ndx(writer, ndx)?;
 
     // For protocol >= 29, sender expects iflags after NDX
     // ITEM_TRANSFER (0x8000) tells sender to read sum_head and send delta
+    // upstream: generator.c - ITEM_REPORT_XATTR set when xattr_diff() detects changes
     if config.write_iflags {
-        writer.write_all(&SenderAttrs::ITEM_TRANSFER.to_le_bytes())?;
+        let has_xattr_request = xattr_list.is_some_and(|list| {
+            list.iter()
+                .any(|e| e.state().needs_send() || e.state().needs_request())
+        });
+        let mut iflags = SenderAttrs::ITEM_TRANSFER;
+        if has_xattr_request && config.preserve_xattrs {
+            iflags |= SenderAttrs::ITEM_REPORT_XATTR;
+        }
+        writer.write_all(&iflags.to_le_bytes())?;
+
+        // upstream: sender.c:193-196 - write xattr request data after iflags
+        if has_xattr_request && config.preserve_xattrs {
+            if let Some(list) = xattr_list {
+                write_xattr_request(writer, list)?;
+            }
+        }
     }
 
     // Send sum_head (signature header)

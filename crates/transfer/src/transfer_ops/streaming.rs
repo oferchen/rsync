@@ -76,6 +76,15 @@ pub fn process_file_response_streaming<R: Read>(
 ) -> io::Result<StreamingResult> {
     let header = read_response_header(reader, ndx_codec, pending, ctx)?;
 
+    // upstream: xattrs.c:744-755 - apply abbreviated values from sender to xattr list
+    let xattr_list = if !header.xattr_values.is_empty() {
+        let mut list = xattr_list.unwrap_or_default();
+        crate::receiver::apply_xattr_abbreviation_values(&mut list, &header.xattr_values);
+        Some(list)
+    } else {
+        xattr_list
+    };
+
     // Move the checksum verifier to the disk thread so hashing overlaps with
     // I/O and the network thread can focus solely on reading the wire.
     let algo = checksum_verifier.algorithm();
