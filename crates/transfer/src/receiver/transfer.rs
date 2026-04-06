@@ -116,6 +116,12 @@ impl ReceiverContext {
         );
         let mut token_buffer = TokenBuffer::with_default_capacity();
 
+        // Create token reader once for the entire transfer session.
+        // upstream: token.c uses a single compression context across all files.
+        // For zstd, the DCtx must persist across file boundaries (continuous stream).
+        let compression = self.negotiated_algorithms.map(|n| n.compression);
+        let mut token_reader = TokenReader::new(compression);
+
         let deadline = crate::shared::TransferDeadline::from_system_time(self.config.stop_at);
 
         for (file_idx, file_entry) in self.file_list.iter().enumerate() {
@@ -239,8 +245,7 @@ impl ReceiverContext {
                 None
             };
 
-            let compression = self.negotiated_algorithms.map(|n| n.compression);
-            let mut token_reader = TokenReader::new(compression);
+            token_reader.reset();
 
             loop {
                 match token_reader.read_token(reader)? {
