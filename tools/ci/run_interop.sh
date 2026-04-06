@@ -2575,6 +2575,124 @@ test_hardlinks_comprehensive() {
   return 0
 }
 
+# Hardlinks daemon push interop test.
+# Upstream rsync pushes files with --hard-links to an oc-rsync daemon and
+# verifies that all files arrive with correct content and that hardlink
+# relationships are preserved (shared inodes in the destination).
+test_hardlinks() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local hl_src="${work}/hl-daemon-src"
+  local hl_dest="${work}/hl-daemon-dest"
+  rm -rf "$hl_src" "$hl_dest"
+  mkdir -p "$hl_src/subdir" "$hl_dest"
+
+  # Group 1: three files sharing one inode (including cross-directory)
+  echo "alpha-content" > "$hl_src/alpha.txt"
+  ln "$hl_src/alpha.txt" "$hl_src/alpha_link.txt"
+  ln "$hl_src/alpha.txt" "$hl_src/subdir/alpha_sub.txt"
+
+  # Group 2: two files sharing a different inode
+  echo "beta-content" > "$hl_src/beta.txt"
+  ln "$hl_src/beta.txt" "$hl_src/beta_link.txt"
+
+  # Standalone file (no hardlinks) as control
+  echo "gamma-content" > "$hl_src/gamma.txt"
+
+  # --- Start oc-rsync daemon ---
+  local hl_conf="${work}/hl-daemon-oc.conf"
+  local hl_pid="${work}/hl-daemon-oc.pid"
+  local hl_log="${work}/hl-daemon-oc.log"
+  cat > "$hl_conf" <<CONF
+pid file = ${hl_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${hl_dest}
+comment = hardlinks test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$hl_conf" "$hl_log" "$upstream_binary" "$hl_pid" "$oc_port"
+
+  # --- Push from upstream rsync to oc-rsync daemon with --hard-links ---
+  local rc=0
+  timeout "$hard_timeout" "$upstream_binary" --hard-links -av --timeout=10 \
+      "${hl_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.hl-daemon.out" 2>"${log}.hl-daemon.err" || rc=$?
+
+  stop_oc_daemon
+
+  if [[ $rc -ne 0 ]]; then
+    echo "    upstream push with --hard-links to oc daemon failed (exit=$rc)"
+    echo "    stderr: $(head -5 "${log}.hl-daemon.err")"
+    return 1
+  fi
+
+  # --- Verify all files arrived with correct content ---
+  for f in alpha.txt alpha_link.txt subdir/alpha_sub.txt \
+           beta.txt beta_link.txt gamma.txt; do
+    if [[ ! -f "$hl_dest/$f" ]]; then
+      echo "    missing file: $f"
+      return 1
+    fi
+  done
+
+  for f in alpha.txt alpha_link.txt subdir/alpha_sub.txt; do
+    if [[ "$(cat "$hl_dest/$f")" != "alpha-content" ]]; then
+      echo "    content mismatch in $f"
+      return 1
+    fi
+  done
+  for f in beta.txt beta_link.txt; do
+    if [[ "$(cat "$hl_dest/$f")" != "beta-content" ]]; then
+      echo "    content mismatch in $f"
+      return 1
+    fi
+  done
+  if [[ "$(cat "$hl_dest/gamma.txt")" != "gamma-content" ]]; then
+    echo "    content mismatch in gamma.txt"
+    return 1
+  fi
+
+  # --- Verify hardlink preservation ---
+  local ia ia_link ia_sub
+  ia=$(stat -c %i "$hl_dest/alpha.txt" 2>/dev/null || stat -f %i "$hl_dest/alpha.txt" 2>/dev/null)
+  ia_link=$(stat -c %i "$hl_dest/alpha_link.txt" 2>/dev/null || stat -f %i "$hl_dest/alpha_link.txt" 2>/dev/null)
+  ia_sub=$(stat -c %i "$hl_dest/subdir/alpha_sub.txt" 2>/dev/null || stat -f %i "$hl_dest/subdir/alpha_sub.txt" 2>/dev/null)
+  if [[ "$ia" != "$ia_link" || "$ia" != "$ia_sub" ]]; then
+    echo "    alpha group inodes differ ($ia, $ia_link, $ia_sub)"
+    return 1
+  fi
+
+  local ib ib_link
+  ib=$(stat -c %i "$hl_dest/beta.txt" 2>/dev/null || stat -f %i "$hl_dest/beta.txt" 2>/dev/null)
+  ib_link=$(stat -c %i "$hl_dest/beta_link.txt" 2>/dev/null || stat -f %i "$hl_dest/beta_link.txt" 2>/dev/null)
+  if [[ "$ib" != "$ib_link" ]]; then
+    echo "    beta group inodes differ ($ib, $ib_link)"
+    return 1
+  fi
+
+  # Groups must have different inodes
+  if [[ "$ia" == "$ib" ]]; then
+    echo "    alpha and beta groups share an inode (unexpected)"
+    return 1
+  fi
+
+  # Standalone file must have its own inode
+  local ig
+  ig=$(stat -c %i "$hl_dest/gamma.txt" 2>/dev/null || stat -f %i "$hl_dest/gamma.txt" 2>/dev/null)
+  if [[ "$ig" == "$ia" || "$ig" == "$ib" ]]; then
+    echo "    gamma.txt shares inode with a hardlink group"
+    return 1
+  fi
+
+  return 0
+}
+
 # Comprehensive INC_RECURSE interop test against upstream rsync 3.4.1.
 # Creates a deep nested directory structure (5 levels, 4 branches, 100+ files)
 # with mixed sizes, transfers with --inc-recursive, then verifies correctness.
@@ -2931,6 +3049,7 @@ run_standalone_interop_tests() {
     "wrong-password-auth"
     "iconv"
     "hardlinks-comprehensive"
+    "hardlinks"
     "inc-recurse-comprehensive"
   )
   local test_funcs=(
@@ -2945,6 +3064,7 @@ run_standalone_interop_tests() {
     "test_wrong_password_auth"
     "test_iconv"
     "test_hardlinks_comprehensive"
+    "test_hardlinks"
     "test_inc_recurse_comprehensive"
   )
 
@@ -2973,6 +3093,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       hardlinks-comprehensive)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      hardlinks)
         test_args+=("$oc_port" "$upstream_port")
         ;;
       inc-recurse-comprehensive)
