@@ -258,11 +258,11 @@ mod tests {
             "/repo/crates/core/src/transfer.rs",
             42,
             "sender",
-            "0.5.9",
+            "0.6.0",
         );
         assert_eq!(
             result,
-            "rsync error: some files/attrs were not transferred (code 23) at crates/core/src/transfer.rs:42 [sender=0.5.9]"
+            "rsync error: some files/attrs were not transferred (code 23) at crates/core/src/transfer.rs:42 [sender=0.6.0]"
         );
     }
 
@@ -275,11 +275,11 @@ mod tests {
             "/repo/crates/engine/src/delta.rs",
             100,
             "receiver",
-            "0.5.9",
+            "0.6.0",
         );
         assert_eq!(
             result,
-            "rsync error: read errors (code 11) at crates/engine/src/delta.rs:100 [receiver=0.5.9]"
+            "rsync error: read errors (code 11) at crates/engine/src/delta.rs:100 [receiver=0.6.0]"
         );
     }
 
@@ -292,10 +292,10 @@ mod tests {
             "/repo/crates/core/src/daemon.rs",
             7,
             "daemon",
-            "0.5.9",
+            "0.6.0",
         );
         assert!(result.starts_with("rsync error: auth failed (code 5)"));
-        assert!(result.ends_with("[daemon=0.5.9]"));
+        assert!(result.ends_with("[daemon=0.6.0]"));
     }
 
     #[test]
@@ -324,11 +324,11 @@ mod tests {
             "/repo/crates/core/src/transfer.rs",
             55,
             "sender",
-            "0.5.9",
+            "0.6.0",
         );
         assert_eq!(
             result,
-            "rsync warning: some files vanished before they could be transferred (code 24) at crates/core/src/transfer.rs:55 [sender=0.5.9]"
+            "rsync warning: some files vanished before they could be transferred (code 24) at crates/core/src/transfer.rs:55 [sender=0.6.0]"
         );
     }
 
@@ -341,7 +341,7 @@ mod tests {
             "/repo/crates/logging/src/lib.rs",
             10,
             "server",
-            "0.5.9",
+            "0.6.0",
         );
         assert!(result.starts_with("rsync warning: "));
         assert!(!result.starts_with("rsync error: "));

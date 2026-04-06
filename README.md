@@ -12,7 +12,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.5.9 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.1 (protocols 28-32).
+**Release:** 0.6.0 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.1 (protocols 28-32).
 
 All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
 
@@ -34,7 +34,7 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 | **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
 | **Platforms** | Linux, macOS (full); Windows (partial - no ACLs/xattrs) |
 
-### What's New (v0.5.9)
+### What's New (v0.6.0)
 
 **Performance**
 - Adaptive I/O buffers (8KB-1MB) scaled to file size
