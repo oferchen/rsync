@@ -7,12 +7,12 @@ class OcRsyncATBeta < Formula
   on_macos do
     on_intel do
       url "https://github.com/oferchen/rsync/releases/download/v0.6.0/oc-rsync-0.6.0-darwin-x86_64-beta.tar.gz"
-      sha256 "4058603b978325a8bcbb9b2e73c2e4ef36162e2fc2b9fdbc83711991e31f5300"
+      sha256 "6590e802fc544cff5d8f2b22e8e6ae9530bc1b3842a5b4d64c9487a71b2ac8db"
     end
 
     on_arm do
       url "https://github.com/oferchen/rsync/releases/download/v0.6.0/oc-rsync-0.6.0-darwin-aarch64-beta.tar.gz"
-      sha256 "119b1e5c4a8daa1bec73d8fd52a8d66eff5dd130b6e279c3b22772856d64154e"
+      sha256 "843b019189eedcc4e64edc0e432cd0eb7a900c7532c9ae439ceba66ba275003f"
     end
   end
 
