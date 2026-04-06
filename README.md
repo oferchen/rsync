@@ -23,7 +23,7 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 | **Metadata** | Permissions, timestamps, ownership, ACLs (`-A`), xattrs (`-X`) |
 | **File handling** | Sparse, hardlinks, symlinks, devices, FIFOs |
 | **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
-| **Compression** | zlib, zstd, lz4 with level control |
+| **Compression** | zlib, zstd, lz4 with level control and auto-negotiation |
 | **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
 | **Incremental recursion** | Pull direction; sender-side disabled pending interop validation |
 | **Batch** | `--write-batch` / `--read-batch` roundtrip |
@@ -36,28 +36,37 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 
 ### What's New (v0.6.0)
 
+**Compression**
+- Zstd auto-negotiation - peers exchange supported codecs, first mutual match wins
+- Continuous zstd/lz4 stream across files matching upstream session-level codec context
+- Per-token compression flush alignment for zlib, zstd, and lz4
+
+**Metadata**
+- ACL wire format (`-A`) interop with upstream rsync 3.4.1
+- Xattr wire format (`-X`) with abbreviation encoding for repeated namespace prefixes
+- Hardlink receiver-side inode/device mapping for daemon push transfers
+
 **Performance**
 - Adaptive I/O buffers (8KB-1MB) scaled to file size
-- Buffer pool passed to `copy_file_range` fallback path
 - `FileEntry` memory reduced via `Box<FileEntryExtras>` for rarely-used fields
+- Lock-free buffer pool (`crossbeam::ArrayQueue`) replaces `Mutex<Vec>`
 - Shared file list via `Arc` eliminates per-file clone overhead
 - Precomputed sort keys remove per-comparison `memrchr` calls
 - Parallel basis file signature computation in pipeline fill
-- Batched receiver flush syscalls with path reuse
+- Work-stealing deque replaces `par_bridge()` for delta dispatch
 - Rayon-based parallel stat replaces `tokio::spawn_blocking`
-- Upstream-matching compression negotiation precedence
 
-**Features**
-- io_uring wired into sender/generator for large file reads
-- Protocol version guards for legacy flist read path (proto < 30)
-- Batch file encoding replaced with protocol stream format
-- Transfer statistics written to batch files
+**Batch mode**
+- Full batch roundtrip with upstream rsync (write + read in both directions)
+- INC_RECURSE interleaving, uid/gid name lists, checksum seed in batch header
+- Protocol stream format replaces custom encoding
 
 **Fixes**
 - SSH transfer deadlocks and protocol compatibility resolved
-- Client-mode multiplex activation matches upstream behavior
+- Daemon filter rules applied on receiver side for push transfers
 - INC_RECURSE capability direction corrected for daemon push
-- 6 interop known failures resolved (dry-run, files-from, relative paths)
+- `--files-from` daemon flag compatibility with upstream
+- 10+ interop known failures resolved across batch, compression, filters, and paths
 
 ### Interop Testing
 
