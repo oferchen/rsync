@@ -140,16 +140,24 @@ jobs:
           TAG="${GITHUB_REF##*/}"
 
           # Wait for the release to exist (created by release-cross workflow)
-          for i in 1 2 3 4 5; do
-            CURRENT_BODY=$(gh release view "$TAG" --json body -q .body 2>/dev/null || echo "")
-            if [ -n "$CURRENT_BODY" ] || [ "$i" -eq 5 ]; then
+          MAX_ATTEMPTS=60  # 30 minutes at 30-second intervals
+          for i in $(seq 1 "$MAX_ATTEMPTS"); do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release $TAG found after $((i * 30 - 30)) seconds."
               break
             fi
-            sleep 10
+            if [ "$i" -eq "$MAX_ATTEMPTS" ]; then
+              echo "::error::Release $TAG not found after 30 minutes. Failing."
+              exit 1
+            fi
+            echo "Waiting for release $TAG to be created... (attempt $i/$MAX_ATTEMPTS)"
+            sleep 30
           done
 
+          CURRENT_BODY=$(gh release view "$TAG" --json body -q .body)
+
           # Avoid duplicate sections on re-runs
-          if echo "$CURRENT_BODY" | grep -q "Performance Benchmark"; then
+          if echo "${CURRENT_BODY:-}" | grep -q "Performance Benchmark"; then
             echo "Performance benchmark section already present in release notes, skipping."
             exit 0
           fi
@@ -167,7 +175,7 @@ jobs:
           # Strip leading whitespace from heredoc indentation
           NEW_BODY=$(echo "$NEW_BODY" | sed 's/^          //')
 
-          gh release edit "$TAG" --notes "$NEW_BODY" || echo "Could not update release notes"
+          gh release edit "$TAG" --notes "$NEW_BODY"
 
       - name: Upload benchmark assets to release
         if: startsWith(github.ref, 'refs/tags/')
@@ -175,5 +183,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF##*/}"
-          gh release upload "$TAG" benchmark.png benchmark_results.json benchmark_report.md --clobber \
-            || echo "Could not upload benchmark assets to release"
+          gh release upload "$TAG" benchmark.png benchmark_results.json benchmark_report.md --clobber
