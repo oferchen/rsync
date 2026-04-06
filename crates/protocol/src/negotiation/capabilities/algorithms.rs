@@ -11,24 +11,32 @@ pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
 /// Returns supported compression algorithms in preference order for negotiation.
 ///
 /// This list controls which algorithms are advertised during vstring
-/// negotiation (upstream compat.c:541-544). Only algorithms whose per-token
-/// wire format has been validated against upstream rsync are included.
+/// negotiation (upstream compat.c:541-544). The order matches upstream's
+/// `valid_compressions_items[]` preference: zstd > lz4 > zlibx > zlib > none.
 ///
-/// Zstd and lz4 codecs are compiled in and usable via explicit
-/// `--compress-choice=zstd|lz4` (which bypasses vstring exchange per
-/// upstream compat.c:543), but are NOT advertised in auto-negotiation
-/// until their per-token read codec is interop-validated against upstream.
-/// See tasks #1379 (zstd) and #1380 (lz4).
+/// Zstd is included when the `zstd` feature is enabled - its per-token wire
+/// framing has been validated against upstream rsync (PR #3081). Lz4 is still
+/// excluded from auto-negotiation until its wire format is interop-validated
+/// (task #1380). Explicit `--compress-choice=lz4` still works (bypasses this
+/// list per upstream compat.c:543).
 ///
 /// # Upstream reference
 ///
 /// upstream: compat.c:100-112 `valid_compressions_items[]` - preference-ordered
 /// list guarded by `SUPPORT_ZSTD` and `SUPPORT_LZ4` compile flags.
 pub(super) fn supported_compressions() -> Vec<&'static str> {
-    // NOTE: zstd and lz4 are intentionally omitted from auto-negotiation.
-    // Their per-token wire framing is not yet interop-validated with upstream.
-    // Explicit --compress-choice=zstd|lz4 still works (bypasses this list).
-    vec!["zlibx", "zlib", "none"]
+    let mut list = Vec::with_capacity(5);
+
+    // upstream: compat.c:101-102 - zstd is first when SUPPORT_ZSTD is defined
+    #[cfg(feature = "zstd")]
+    list.push("zstd");
+
+    // NOTE: lz4 is intentionally omitted from auto-negotiation.
+    // Its per-token wire framing is not yet interop-validated with upstream.
+    // Explicit --compress-choice=lz4 still works (bypasses this list).
+
+    list.extend_from_slice(&["zlibx", "zlib", "none"]);
+    list
 }
 
 /// Checksum algorithm negotiated between rsync peers.

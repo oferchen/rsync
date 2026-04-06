@@ -20,7 +20,7 @@ use protocol::codec::{
 use protocol::stats::DeleteStats;
 
 use super::delta::{
-    compute_file_checksum, script_to_wire_delta, stream_whole_file_transfer,
+    compute_file_checksum, create_token_encoder, script_to_wire_delta, stream_whole_file_transfer,
     write_delta_with_compression,
 };
 use super::item_flags::ItemFlags;
@@ -67,6 +67,15 @@ impl GeneratorContext {
         let mut bytes_sent = 0u64;
         // upstream: io.c IO_BUFFER_SIZE (32KB)
         let mut stream_buf = Vec::with_capacity(32 * 1024);
+
+        // upstream: token.c creates a single compression context for the entire
+        // transfer session. For zstd, the CCtx must persist across file boundaries
+        // (one continuous stream). Create once here, reuse across all files.
+        let negotiated_compression = self.negotiated_algorithms.map(|n| n.compression);
+        let mut token_encoder = negotiated_compression
+            .map(create_token_encoder)
+            .transpose()?
+            .flatten();
 
         // upstream: io.c:2244-2245 - separate read/write NDX state
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
@@ -270,8 +279,22 @@ impl GeneratorContext {
                 )?;
                 let delta_total_bytes = delta_script.total_bytes();
                 let wire_ops = script_to_wire_delta(delta_script);
-                let compression = self.file_compression(source_path);
-                write_delta_with_compression(&mut *writer, &wire_ops, compression, source_path)?;
+                let use_compression = self.file_compression(source_path).is_some();
+                let is_zlib = matches!(
+                    negotiated_compression,
+                    Some(protocol::CompressionAlgorithm::Zlib)
+                );
+                write_delta_with_compression(
+                    &mut *writer,
+                    &wire_ops,
+                    if use_compression {
+                        token_encoder.as_mut()
+                    } else {
+                        None
+                    },
+                    is_zlib,
+                    source_path,
+                )?;
                 writer.write_all(&checksum_buf[..checksum_len])?;
                 bytes_sent += delta_total_bytes;
             } else {
@@ -293,13 +316,17 @@ impl GeneratorContext {
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
-                let compression = self.file_compression(source_path);
+                let use_compression = self.file_compression(source_path).is_some();
                 let result = stream_whole_file_transfer(
                     &mut *writer,
                     source,
                     file_size,
                     checksum_algorithm,
-                    compression,
+                    if use_compression {
+                        token_encoder.as_mut()
+                    } else {
+                        None
+                    },
                     &mut stream_buf,
                 )?;
                 writer.write_all(&result.checksum_buf[..result.checksum_len])?;

@@ -31,8 +31,14 @@ use crate::role_trailer::error_location;
 /// Creates a `CompressedTokenEncoder` for the given compression algorithm.
 ///
 /// Returns `None` for algorithms that don't use per-token compression.
+/// The encoder should be created once per transfer session and reused across
+/// files - upstream rsync uses a single compression context for the entire
+/// session. Call `encoder.reset()` is handled internally by `finish()`.
+///
 /// upstream: token.c dispatches on `do_compression` to select the codec.
-fn create_token_encoder(algo: CompressionAlgorithm) -> io::Result<Option<CompressedTokenEncoder>> {
+pub(super) fn create_token_encoder(
+    algo: CompressionAlgorithm,
+) -> io::Result<Option<CompressedTokenEncoder>> {
     match algo {
         CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX => {
             let mut enc = CompressedTokenEncoder::default();
@@ -195,7 +201,7 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     mut source: R,
     file_size: u64,
     checksum_algorithm: ChecksumAlgorithm,
-    compression: Option<CompressionAlgorithm>,
+    encoder: Option<&mut CompressedTokenEncoder>,
     buf: &mut Vec<u8>,
 ) -> io::Result<StreamResult> {
     if file_size > LARGE_FILE_WARNING_THRESHOLD {
@@ -210,8 +216,6 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
 
     let mut verifier = ChecksumVerifier::for_algorithm(checksum_algorithm);
 
-    let mut encoder = compression.map(create_token_encoder).transpose()?.flatten();
-
     // Read buffer sized for fewer syscalls (up to 256KB per read).
     // Buffer is reused across files — no allocation after the first large file.
     const MAX_READ_SIZE: usize = 256 * 1024;
@@ -220,7 +224,7 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     let mut total_bytes: u64 = 0;
     let mut remaining = file_size;
 
-    if let Some(ref mut encoder) = encoder {
+    if let Some(encoder) = encoder {
         buf.resize(read_size, 0);
         while remaining > 0 {
             let to_read = buf.len().min(remaining as usize);
@@ -374,15 +378,12 @@ pub(super) fn script_to_wire_delta(script: DeltaScript) -> Vec<DeltaOp> {
 pub(super) fn write_delta_with_compression<W: Write>(
     writer: &mut W,
     ops: &[DeltaOp],
-    compression: Option<CompressionAlgorithm>,
+    encoder: Option<&mut CompressedTokenEncoder>,
+    is_zlib: bool,
     source_path: &Path,
 ) -> io::Result<()> {
-    let encoder = compression.map(create_token_encoder).transpose()?.flatten();
-
     match encoder {
-        Some(mut encoder) => {
-            let is_zlib = matches!(compression, Some(CompressionAlgorithm::Zlib));
-
+        Some(encoder) => {
             // For CPRES_ZLIB dictionary sync we need to re-read matched block
             // data from the source file. Track the cumulative offset as we
             // process tokens sequentially (they describe the source file in
