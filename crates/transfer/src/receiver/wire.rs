@@ -8,7 +8,7 @@ use std::io::{self, Read, Write};
 
 use engine::signature::FileSignature;
 use protocol::codec::NdxCodec;
-use protocol::varint::read_varint;
+use protocol::read_varint;
 use protocol::xattr::XattrList;
 
 /// Signature header for delta transfer.
@@ -468,7 +468,7 @@ pub fn write_xattr_request<W: Write + ?Sized>(
     writer: &mut W,
     xattr_list: &XattrList,
 ) -> io::Result<()> {
-    use protocol::varint::write_varint;
+    use protocol::write_varint;
     use protocol::xattr::{MAX_FULL_DATUM, XattrState};
 
     let mut prior_req = 0i32;
