@@ -1,12 +1,12 @@
-// Module request handling - context, error responses, and main entry point.
-//
-// When the client sends a module name (anything other than `#list`), the
-// daemon looks up the module definition, checks host-based access control,
-// acquires a connection slot, authenticates the user (if required), reads
-// client arguments, and delegates to the transfer engine.
-//
-// upstream: clientserver.c - `rsync_module()` is the dispatcher that handles
-// module lookup, access control, authentication, and transfer setup.
+//! Module request handling - context, error responses, and main entry point.
+//!
+//! When the client sends a module name (anything other than `#list`), the
+//! daemon looks up the module definition, checks host-based access control,
+//! acquires a connection slot, authenticates the user (if required), reads
+//! client arguments, and delegates to the transfer engine.
+//!
+//! upstream: `clientserver.c` - `rsync_module()` is the dispatcher that handles
+//! module lookup, access control, authentication, and transfer setup.
 
 /// Context for module request handling, passed to helper functions.
 ///
@@ -255,7 +255,6 @@ fn respond_with_module_request(
         );
     };
 
-    // Apply module bandwidth limit
     let change = apply_module_bandwidth_limit(
         limiter,
         module.bandwidth_limit(),
@@ -265,12 +264,10 @@ fn respond_with_module_request(
         module.bandwidth_burst_specified(),
     );
 
-    // Resolve module-specific peer hostname
     let mut hostname_cache: Option<Option<String>> = None;
     let module_peer_host =
         module_peer_hostname(module, &mut hostname_cache, peer_ip, reverse_lookup);
 
-    // Log bandwidth change if applicable
     if change != LimiterChange::Unchanged {
         if let Some(log) = log_sink {
             log_module_bandwidth_change(
@@ -284,7 +281,6 @@ fn respond_with_module_request(
         }
     }
 
-    // Create context for helper functions
     let mut ctx = ModuleRequestContext {
         reader,
         limiter,
@@ -297,7 +293,6 @@ fn respond_with_module_request(
         early_input_data,
     };
 
-    // Check access permission
     if !module.permits(peer_ip, module_peer_host) {
         return handle_module_denied(&mut ctx, module);
     }
