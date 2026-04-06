@@ -14,7 +14,7 @@ use crate::handshake::HandshakeResult;
 use crate::receiver::SumHead;
 use engine::delta::{DeltaScript, DeltaToken};
 use protocol::filters::FilterRuleWireFormat;
-use protocol::wire::DeltaOp;
+use protocol::wire::{CompressedTokenEncoder, DeltaOp};
 use protocol::{ChecksumAlgorithm, CompressionAlgorithm, NegotiationResult, ProtocolVersion};
 use std::ffi::OsString;
 use std::fs;
@@ -1573,10 +1573,12 @@ fn write_delta_with_compression_zlib_dict_sync() {
 
     // Encode with Zlib compression (dictionary sync enabled)
     let mut encoded = Vec::new();
+    let mut encoder = CompressedTokenEncoder::default();
     write_delta_with_compression(
         &mut encoded,
         &ops,
-        Some(CompressionAlgorithm::Zlib),
+        Some(&mut encoder),
+        true,
         source_file.path(),
     )
     .unwrap();
@@ -1646,10 +1648,13 @@ fn write_delta_with_compression_zlibx_no_dict_sync() {
     ];
 
     let mut encoded = Vec::new();
+    let mut encoder = CompressedTokenEncoder::default();
+    encoder.set_zlibx(true);
     write_delta_with_compression(
         &mut encoded,
         &ops,
-        Some(CompressionAlgorithm::ZlibX),
+        Some(&mut encoder),
+        false,
         source_file.path(),
     )
     .unwrap();
@@ -1688,7 +1693,14 @@ fn write_delta_with_compression_plain_fallback() {
 
     let mut encoded = Vec::new();
     // Pass a non-existent path since plain mode should not open the file
-    write_delta_with_compression(&mut encoded, &ops, None, Path::new("/nonexistent/path")).unwrap();
+    write_delta_with_compression(
+        &mut encoded,
+        &ops,
+        None,
+        false,
+        Path::new("/nonexistent/path"),
+    )
+    .unwrap();
 
     assert!(!encoded.is_empty());
 }
