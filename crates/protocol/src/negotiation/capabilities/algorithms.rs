@@ -23,6 +23,7 @@ pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
 /// upstream: compat.c:100-112 `valid_compressions_items[]` - preference-ordered
 /// list guarded by `SUPPORT_ZSTD` and `SUPPORT_LZ4` compile flags.
 pub(super) fn supported_compressions() -> Vec<&'static str> {
+    #[allow(clippy::vec_init_then_push)]
     let mut list = Vec::with_capacity(5);
     // upstream: compat.c:100-112 - zstd first, then lz4, then zlibx/zlib/none
     #[cfg(feature = "zstd")]
