@@ -2911,6 +2911,274 @@ CONF
   return 0
 }
 
+# Unicode filename interop
+# Verifies that filenames with Chinese characters, emoji, accented characters,
+# and nested unicode directory names transfer correctly via daemon push.
+test_unicode_names() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local uni_src="${work}/unicode-src"
+  local uni_dest="${work}/unicode-dest"
+  rm -rf "$uni_src" "$uni_dest"
+  mkdir -p "$uni_src"
+
+  # Chinese characters
+  echo "chinese content" > "${uni_src}/文件.txt"
+  echo "test data" > "${uni_src}/测试.dat"
+
+  # Emoji
+  echo "emoji content" > "${uni_src}/🎯test.txt"
+
+  # Accented characters
+  echo "café content" > "${uni_src}/café.txt"
+  echo "nordic content" > "${uni_src}/Åse_Ørsted.txt"
+
+  # Nested unicode directories
+  mkdir -p "${uni_src}/目录/子目录"
+  echo "nested content" > "${uni_src}/目录/子目录/data.txt"
+
+  # Push from upstream rsync to oc-rsync daemon
+  mkdir -p "$uni_dest"
+  local uni_conf="${work}/unicode-oc.conf"
+  local uni_pid="${work}/unicode-oc.pid"
+  local uni_log="${work}/unicode-oc.log"
+  cat > "$uni_conf" <<CONF
+pid file = ${uni_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${uni_dest}
+comment = unicode names test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$uni_conf" "$uni_log" "$upstream_binary" "$uni_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${uni_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.unicode.out" 2>"${log}.unicode.err"; then
+    echo "    upstream -> oc daemon unicode transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$uni_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify all files arrived with correct content
+  for fname in "文件.txt" "测试.dat" "🎯test.txt" "café.txt" "Åse_Ørsted.txt"; do
+    if [[ ! -f "${uni_dest}/${fname}" ]]; then
+      echo "    ${fname} missing after unicode transfer"
+      return 1
+    fi
+    if ! cmp -s "${uni_src}/${fname}" "${uni_dest}/${fname}"; then
+      echo "    ${fname} content mismatch"
+      return 1
+    fi
+  done
+
+  # Verify nested unicode directory
+  if [[ ! -f "${uni_dest}/目录/子目录/data.txt" ]]; then
+    echo "    目录/子目录/data.txt missing after unicode transfer"
+    return 1
+  fi
+  if ! cmp -s "${uni_src}/目录/子目录/data.txt" "${uni_dest}/目录/子目录/data.txt"; then
+    echo "    目录/子目录/data.txt content mismatch"
+    return 1
+  fi
+
+  return 0
+}
+
+# Special characters in filenames interop
+# Verifies that filenames containing spaces, quotes, brackets, hash, dollar,
+# ampersand, equals, plus, and at-sign transfer correctly via daemon push.
+test_special_chars() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local sc_src="${work}/special-chars-src"
+  local sc_dest="${work}/special-chars-dest"
+  rm -rf "$sc_src" "$sc_dest"
+  mkdir -p "$sc_src"
+
+  # Files with special characters
+  echo "spaces" > "${sc_src}/file with spaces.txt"
+  echo "quotes" > "${sc_src}/file'quote.txt"
+  echo "double" > "${sc_src}/file\"double.txt"
+  echo "brackets" > "${sc_src}/file[bracket].txt"
+  echo "hash" > "${sc_src}/file#hash.txt"
+  echo "dollar" > "${sc_src}/file\$dollar.txt"
+  echo "ampersand" > "${sc_src}/file&ampersand.txt"
+  echo "equals" > "${sc_src}/file=equals.txt"
+  echo "plus" > "${sc_src}/file+plus.txt"
+  echo "at" > "${sc_src}/file@at.txt"
+
+  # Directories with special characters
+  mkdir -p "${sc_src}/dir [special]"
+  echo "in special dir" > "${sc_src}/dir [special]/inner.txt"
+  mkdir -p "${sc_src}/dir (with) spaces"
+  echo "in parens dir" > "${sc_src}/dir (with) spaces/inner.txt"
+
+  # Push from upstream rsync to oc-rsync daemon
+  mkdir -p "$sc_dest"
+  local sc_conf="${work}/special-chars-oc.conf"
+  local sc_pid="${work}/special-chars-oc.pid"
+  local sc_log="${work}/special-chars-oc.log"
+  cat > "$sc_conf" <<CONF
+pid file = ${sc_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${sc_dest}
+comment = special chars test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$sc_conf" "$sc_log" "$upstream_binary" "$sc_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${sc_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.special-chars.out" 2>"${log}.special-chars.err"; then
+    echo "    upstream -> oc daemon special chars transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$sc_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify all files arrived
+  local -a expected_files=(
+    "file with spaces.txt"
+    "file'quote.txt"
+    "file\"double.txt"
+    "file[bracket].txt"
+    "file#hash.txt"
+    "file\$dollar.txt"
+    "file&ampersand.txt"
+    "file=equals.txt"
+    "file+plus.txt"
+    "file@at.txt"
+  )
+  for fname in "${expected_files[@]}"; do
+    if [[ ! -f "${sc_dest}/${fname}" ]]; then
+      echo "    ${fname} missing after special chars transfer"
+      return 1
+    fi
+  done
+
+  # Verify special-char directories
+  if [[ ! -f "${sc_dest}/dir [special]/inner.txt" ]]; then
+    echo "    dir [special]/inner.txt missing"
+    return 1
+  fi
+  if [[ ! -f "${sc_dest}/dir (with) spaces/inner.txt" ]]; then
+    echo "    dir (with) spaces/inner.txt missing"
+    return 1
+  fi
+
+  return 0
+}
+
+# Empty directory interop
+# Verifies that empty directory trees at various nesting levels are preserved
+# during daemon push, mixed with non-empty directories.
+test_empty_dir() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ed_src="${work}/empty-dir-src"
+  local ed_dest="${work}/empty-dir-dest"
+  rm -rf "$ed_src" "$ed_dest"
+  mkdir -p "$ed_src"
+
+  # Empty directories at various nesting levels
+  mkdir -p "${ed_src}/empty_top"
+  mkdir -p "${ed_src}/nested/empty_mid"
+  mkdir -p "${ed_src}/nested/deep/empty_bottom"
+  mkdir -p "${ed_src}/sibling_empty_a"
+  mkdir -p "${ed_src}/sibling_empty_b"
+
+  # Non-empty directories for mixed testing
+  mkdir -p "${ed_src}/has_files"
+  echo "content a" > "${ed_src}/has_files/a.txt"
+  echo "content b" > "${ed_src}/has_files/b.txt"
+  mkdir -p "${ed_src}/nested/has_data"
+  echo "nested data" > "${ed_src}/nested/has_data/data.txt"
+
+  # A file at root level
+  echo "root file" > "${ed_src}/root.txt"
+
+  # Push from upstream rsync to oc-rsync daemon
+  mkdir -p "$ed_dest"
+  local ed_conf="${work}/empty-dir-oc.conf"
+  local ed_pid="${work}/empty-dir-oc.pid"
+  local ed_log="${work}/empty-dir-oc.log"
+  cat > "$ed_conf" <<CONF
+pid file = ${ed_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${ed_dest}
+comment = empty dir test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$ed_conf" "$ed_log" "$upstream_binary" "$ed_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -avr --timeout=10 \
+      "${ed_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.empty-dir.out" 2>"${log}.empty-dir.err"; then
+    echo "    upstream -> oc daemon empty dir transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$ed_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify empty directories exist
+  for dname in "empty_top" "nested/empty_mid" "nested/deep/empty_bottom" \
+               "sibling_empty_a" "sibling_empty_b"; do
+    if [[ ! -d "${ed_dest}/${dname}" ]]; then
+      echo "    empty dir ${dname} missing after transfer"
+      return 1
+    fi
+  done
+
+  # Verify non-empty directories and files transferred
+  if [[ ! -f "${ed_dest}/has_files/a.txt" ]]; then
+    echo "    has_files/a.txt missing"
+    return 1
+  fi
+  if ! cmp -s "${ed_src}/has_files/a.txt" "${ed_dest}/has_files/a.txt"; then
+    echo "    has_files/a.txt content mismatch"
+    return 1
+  fi
+  if [[ ! -f "${ed_dest}/nested/has_data/data.txt" ]]; then
+    echo "    nested/has_data/data.txt missing"
+    return 1
+  fi
+  if [[ ! -f "${ed_dest}/root.txt" ]]; then
+    echo "    root.txt missing"
+    return 1
+  fi
+  if ! cmp -s "${ed_src}/root.txt" "${ed_dest}/root.txt"; then
+    echo "    root.txt content mismatch"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -2932,6 +3200,9 @@ run_standalone_interop_tests() {
     "iconv"
     "hardlinks-comprehensive"
     "inc-recurse-comprehensive"
+    "unicode-names"
+    "special-chars"
+    "empty-dir"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -2946,6 +3217,9 @@ run_standalone_interop_tests() {
     "test_iconv"
     "test_hardlinks_comprehensive"
     "test_inc_recurse_comprehensive"
+    "test_unicode_names"
+    "test_special_chars"
+    "test_empty_dir"
   )
 
   for i in "${!test_names[@]}"; do
@@ -2976,6 +3250,15 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       inc-recurse-comprehensive)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      unicode-names)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      special-chars)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      empty-dir)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
