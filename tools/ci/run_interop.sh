@@ -2911,6 +2911,166 @@ CONF
   return 0
 }
 
+# Test pushing 1000+ small files from upstream rsync to oc-rsync daemon.
+# Exercises file-list handling, pipeline throughput, and content fidelity at scale.
+test_many_files() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local mf_src="${work}/many-files-src"
+  local mf_dest="${work}/many-files-dest"
+  rm -rf "$mf_src" "$mf_dest"
+  mkdir -p "$mf_src" "$mf_dest"
+
+  # Create 1000 small files with varied sizes (1-4096 bytes) across subdirectories.
+  # Distribute into 10 subdirectories of 100 files each for realistic structure.
+  local dir_idx file_idx
+  for dir_idx in $(seq 0 9); do
+    local subdir="${mf_src}/dir_${dir_idx}"
+    mkdir -p "$subdir"
+    for file_idx in $(seq 0 99); do
+      local global_idx=$(( dir_idx * 100 + file_idx ))
+      # Vary file size: 1 + (index * 37 % 4096) bytes - deterministic, varied
+      local size=$(( 1 + (global_idx * 37) % 4096 ))
+      dd if=/dev/urandom of="${subdir}/file_${file_idx}.dat" bs=1 count="$size" 2>/dev/null
+    done
+  done
+
+  # Add a few root-level files
+  echo "many-files root marker" > "$mf_src/marker.txt"
+  dd if=/dev/urandom of="$mf_src/root_binary.dat" bs=1K count=4 2>/dev/null
+
+  # Count source files
+  local src_file_count
+  src_file_count=$(find "$mf_src" -type f | wc -l | tr -d ' ')
+
+  # Compute aggregate checksum of all source files for verification.
+  # Sort find output for deterministic ordering across platforms.
+  local src_checksum
+  if command -v md5sum >/dev/null 2>&1; then
+    src_checksum=$(find "$mf_src" -type f | sort | xargs md5sum | md5sum | awk '{print $1}')
+  elif command -v md5 >/dev/null 2>&1; then
+    src_checksum=$(find "$mf_src" -type f | sort | xargs md5 -r | md5 -q)
+  else
+    echo "    no md5sum or md5 command available"
+    return 1
+  fi
+
+  # --- Test 1: upstream rsync pushing 1000+ files to oc-rsync daemon ---
+  local mf_conf="${work}/many-files.conf"
+  local mf_pid="${work}/many-files.pid"
+  local mf_log="${work}/many-files-daemon.log"
+  cat > "$mf_conf" <<CONF
+pid file = ${mf_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${mf_dest}
+comment = many files test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$mf_conf" "$mf_log" "$upstream_binary" "$mf_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=30 \
+      "${mf_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.many-files-push.out" 2>"${log}.many-files-push.err"; then
+    echo "    upstream -> oc daemon many-files push failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$mf_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify all files arrived
+  local dest_file_count
+  dest_file_count=$(find "$mf_dest" -type f | wc -l | tr -d ' ')
+  if [[ "$dest_file_count" -ne "$src_file_count" ]]; then
+    echo "    file count mismatch: src=${src_file_count} dest=${dest_file_count}"
+    return 1
+  fi
+
+  # Verify content integrity via aggregate checksum
+  local dest_checksum
+  if command -v md5sum >/dev/null 2>&1; then
+    dest_checksum=$(find "$mf_dest" -type f | sort | xargs md5sum | md5sum | awk '{print $1}')
+  elif command -v md5 >/dev/null 2>&1; then
+    dest_checksum=$(find "$mf_dest" -type f | sort | xargs md5 -r | md5 -q)
+  fi
+
+  if [[ "$src_checksum" != "$dest_checksum" ]]; then
+    echo "    aggregate checksum mismatch: src=${src_checksum} dest=${dest_checksum}"
+    # Find first differing file for diagnostics
+    local f
+    while IFS= read -r f; do
+      local rel="${f#${mf_src}/}"
+      if [[ -f "$mf_dest/$rel" ]] && ! cmp -s "$f" "$mf_dest/$rel"; then
+        echo "    first mismatch: $rel"
+        break
+      elif [[ ! -f "$mf_dest/$rel" ]]; then
+        echo "    missing: $rel"
+        break
+      fi
+    done < <(find "$mf_src" -type f | sort)
+    return 1
+  fi
+
+  # Verify a sample of individual files with byte-level comparison
+  local sample_ok=true
+  for dir_idx in 0 3 7 9; do
+    for file_idx in 0 25 50 99; do
+      local rel="dir_${dir_idx}/file_${file_idx}.dat"
+      if ! cmp -s "$mf_src/$rel" "$mf_dest/$rel"; then
+        echo "    sample file mismatch: $rel"
+        sample_ok=false
+        break 2
+      fi
+    done
+  done
+  if [[ "$sample_ok" != "true" ]]; then
+    return 1
+  fi
+
+  # --- Test 2: re-sync should transfer nothing ---
+  rm -rf "$mf_dest"; mkdir -p "$mf_dest"
+
+  # Re-create daemon for second push
+  start_oc_daemon "$mf_conf" "$mf_log" "$upstream_binary" "$mf_pid" "$oc_port"
+
+  # First push to populate destination
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=30 \
+      "${mf_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.many-files-pop.out" 2>"${log}.many-files-pop.err"; then
+    echo "    re-populate push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  # Second push - nothing should transfer
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=30 \
+      "${mf_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.many-files-resync.out" 2>"${log}.many-files-resync.err"; then
+    echo "    re-sync push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Count actual file transfers (lines matching >f pattern)
+  local retransfer_count
+  retransfer_count=$(grep -cE '^>f' "${log}.many-files-resync.out" 2>/dev/null) || retransfer_count=0
+  if [[ "$retransfer_count" -gt 0 ]]; then
+    echo "    re-sync transferred ${retransfer_count} files unnecessarily"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -2932,6 +3092,7 @@ run_standalone_interop_tests() {
     "iconv"
     "hardlinks-comprehensive"
     "inc-recurse-comprehensive"
+    "many-files"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -2946,6 +3107,7 @@ run_standalone_interop_tests() {
     "test_iconv"
     "test_hardlinks_comprehensive"
     "test_inc_recurse_comprehensive"
+    "test_many_files"
   )
 
   for i in "${!test_names[@]}"; do
@@ -2976,6 +3138,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       inc-recurse-comprehensive)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      many-files)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
