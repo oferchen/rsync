@@ -50,7 +50,7 @@ use protocol::ProtocolVersion;
 use crate::reader::ServerReader;
 use crate::receiver::{SenderAttrs, SumHead};
 
-pub use self::request::send_file_request;
+pub use self::request::{send_file_request, send_file_request_xattr};
 pub use self::response::process_file_response;
 pub use self::streaming::{StreamingResult, process_file_response_streaming};
 pub use crate::token_reader::TokenReader;
@@ -112,6 +112,20 @@ pub struct RequestConfig<'a> {
     pub inplace_partial: bool,
     /// Policy controlling io_uring usage for file I/O (`--io-uring` / `--no-io-uring`).
     pub io_uring_policy: fast_io::IoUringPolicy,
+    /// Whether xattr preservation is active (`-X` / `--xattrs`).
+    ///
+    /// When true, the sender may include `ITEM_REPORT_XATTR` in iflags with
+    /// abbreviated xattr value data following the standard attributes.
+    pub preserve_xattrs: bool,
+    /// Whether xattr hardlink optimization is active (`CF_AVOID_XATTR_OPTIM`).
+    ///
+    /// When true and the item has both `ITEM_XNAME_FOLLOWS` and
+    /// `ITEM_LOCAL_CHANGE`, the xattr exchange is skipped for that item.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c` - `want_xattr_optim` set from capability negotiation
+    pub want_xattr_optim: bool,
 }
 
 impl RequestConfig<'_> {
@@ -161,8 +175,13 @@ fn read_response_header<R: Read>(
 ) -> io::Result<ResponseHeader> {
     let expected_ndx = pending.ndx();
 
-    // Read sender attributes (echoed NDX + iflags)
-    let (echoed_ndx, sender_attrs) = SenderAttrs::read_with_codec(reader, ndx_codec)?;
+    // Read sender attributes (echoed NDX + iflags + optional xattr data)
+    let (echoed_ndx, sender_attrs) = SenderAttrs::read_with_codec_xattr(
+        reader,
+        ndx_codec,
+        ctx.config.preserve_xattrs,
+        ctx.config.want_xattr_optim,
+    )?;
 
     // Verify NDX matches - protocol requires in-order responses
     if echoed_ndx != expected_ndx {
@@ -191,6 +210,7 @@ fn read_response_header<R: Read>(
         signature,
         target_size,
         use_inplace,
+        xattr_values: sender_attrs.xattr_values,
     })
 }
 
@@ -206,6 +226,10 @@ struct ResponseHeader {
     target_size: u64,
     /// Whether to write directly to the destination (inplace mode).
     use_inplace: bool,
+    /// Abbreviated xattr values from the sender (1-based num, value pairs).
+    ///
+    /// Non-empty only when the sender included `ITEM_REPORT_XATTR` in iflags.
+    xattr_values: Vec<(i32, Vec<u8>)>,
 }
 
 #[cfg(test)]
@@ -231,6 +255,8 @@ mod tests {
             inplace: false,
             inplace_partial: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
+            preserve_xattrs: false,
+            want_xattr_optim: false,
         };
         let debug_str = format!("{config:?}");
         assert!(debug_str.contains("RequestConfig"));
