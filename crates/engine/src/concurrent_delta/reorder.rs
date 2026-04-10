@@ -362,4 +362,98 @@ mod tests {
         assert_eq!(drained, vec![3, 4]);
         assert!(buf.is_empty());
     }
+
+    #[test]
+    fn duplicate_sequence_overwrites_previous() {
+        // BTreeMap::insert replaces the value for an existing key.
+        // This is graceful - no panic, no error - but the original item is lost.
+        let mut buf = ReorderBuffer::new(4);
+        buf.insert(0, "first").unwrap();
+        buf.insert(0, "replaced").unwrap();
+        assert_eq!(buf.next_in_order(), Some("replaced"));
+        assert_eq!(buf.next_in_order(), None);
+        // Duplicate consumed one capacity slot (same key), count stays 0 after drain.
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn single_item() {
+        let mut buf = ReorderBuffer::new(1);
+        buf.insert(0, 42).unwrap();
+        assert_eq!(buf.buffered_count(), 1);
+        assert!(!buf.is_empty());
+        assert_eq!(buf.next_in_order(), Some(42));
+        assert!(buf.is_empty());
+        assert_eq!(buf.next_expected(), 1);
+    }
+
+    #[test]
+    fn large_gap_many_buffered() {
+        let mut buf = ReorderBuffer::new(128);
+        // Insert sequences 1..=100, leaving gap at 0.
+        for i in 1..=100 {
+            buf.insert(i, i).unwrap();
+        }
+        assert_eq!(buf.buffered_count(), 100);
+        // Nothing drains - all waiting for seq 0.
+        assert_eq!(buf.next_in_order(), None);
+
+        // Fill the gap.
+        buf.insert(0, 0).unwrap();
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained.len(), 101);
+        assert_eq!(drained[0], 0);
+        assert_eq!(drained[100], 100);
+        assert!(buf.is_empty());
+        assert_eq!(buf.next_expected(), 101);
+    }
+
+    #[test]
+    fn reverse_order_insertion() {
+        let mut buf = ReorderBuffer::new(8);
+        // Insert in reverse: 4, 3, 2, 1, 0
+        for i in (0..5).rev() {
+            buf.insert(i, i).unwrap();
+        }
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained, vec![0, 1, 2, 3, 4]);
+    }
+
+    /// Validates `ReorderBuffer` with the actual `DeltaResult` type to ensure
+    /// the pipeline integration works end-to-end.
+    ///
+    /// Mirrors upstream `recv_files()` in `receiver.c` where results must be
+    /// processed in file-list order regardless of worker completion order.
+    #[test]
+    fn delta_result_integration() {
+        use crate::concurrent_delta::types::DeltaResult;
+
+        let mut buf: ReorderBuffer<DeltaResult> = ReorderBuffer::new(16);
+
+        // Simulate three workers completing out of order: seq 2, 0, 1
+        let r2 = DeltaResult::success(20, 2000, 500, 1500).with_sequence(2);
+        let r0 = DeltaResult::success(10, 1000, 300, 700).with_sequence(0);
+        let r1 = DeltaResult::needs_redo(15, "checksum mismatch".to_string()).with_sequence(1);
+
+        buf.insert(r2.sequence(), r2).unwrap();
+        buf.insert(r0.sequence(), r0).unwrap();
+        buf.insert(r1.sequence(), r1).unwrap();
+
+        let drained: Vec<DeltaResult> = buf.drain_ready().collect();
+        assert_eq!(drained.len(), 3);
+
+        // Verify ordering by sequence.
+        assert_eq!(drained[0].sequence(), 0);
+        assert_eq!(drained[0].ndx(), 10);
+        assert!(drained[0].is_success());
+
+        assert_eq!(drained[1].sequence(), 1);
+        assert_eq!(drained[1].ndx(), 15);
+        assert!(drained[1].needs_retry());
+
+        assert_eq!(drained[2].sequence(), 2);
+        assert_eq!(drained[2].ndx(), 20);
+        assert!(drained[2].is_success());
+        assert_eq!(drained[2].bytes_written(), 2000);
+    }
 }
