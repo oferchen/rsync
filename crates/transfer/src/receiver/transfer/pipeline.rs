@@ -88,6 +88,7 @@ impl ReceiverContext {
             want_xattr_optim: self.compat_flags.is_some_and(|f| {
                 f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
             }),
+            append: self.config.flags.append,
         };
 
         // Create the token reader once for the entire transfer session.

@@ -66,6 +66,27 @@ impl SumHead {
         }
     }
 
+    /// Computes the total file length described by this sum_head.
+    ///
+    /// Used in append mode to determine the offset at which to start writing
+    /// new data (the sender only sends bytes beyond this length).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:289-291` - `sum.flength = count * blength; if (remainder) flength -= blength - remainder`
+    #[must_use]
+    pub const fn flength(&self) -> u64 {
+        if self.count == 0 {
+            return 0;
+        }
+        let total = self.count as u64 * self.blength as u64;
+        if self.remainder > 0 {
+            total - self.blength as u64 + self.remainder as u64
+        } else {
+            total
+        }
+    }
+
     /// Creates a `SumHead` from a file signature.
     #[must_use]
     pub const fn from_signature(signature: &FileSignature) -> Self {
