@@ -178,6 +178,7 @@ fn multiple_files_sequential() {
                 checksum_verifier: None,
                 is_device_target: false,
                 is_inplace: false,
+                append_offset: 0,
                 xattr_list: None,
             })))
             .unwrap();
@@ -299,6 +300,7 @@ fn whole_file_coalesced() {
                 checksum_verifier: None,
                 is_device_target: false,
                 is_inplace: false,
+                append_offset: 0,
                 xattr_list: None,
             }),
             data: b"whole dat".to_vec(),
