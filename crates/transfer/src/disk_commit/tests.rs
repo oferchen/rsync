@@ -102,6 +102,7 @@ fn write_and_commit_file() {
             checksum_verifier: None,
             is_device_target: false,
             is_inplace: false,
+            append_offset: 0,
             xattr_list: None,
         })))
         .unwrap();
@@ -137,6 +138,7 @@ fn abort_cleans_up_temp_file() {
             checksum_verifier: None,
             is_device_target: false,
             is_inplace: false,
+            append_offset: 0,
             xattr_list: None,
         })))
         .unwrap();
@@ -222,6 +224,7 @@ fn multi_chunk_file() {
             checksum_verifier: None,
             is_device_target: false,
             is_inplace: false,
+            append_offset: 0,
             xattr_list: None,
         })))
         .unwrap();
@@ -254,6 +257,7 @@ fn buffer_recycling() {
             checksum_verifier: None,
             is_device_target: false,
             is_inplace: false,
+            append_offset: 0,
             xattr_list: None,
         })))
         .unwrap();

@@ -204,16 +204,27 @@ fn read_response_header<R: Read>(
         ));
     }
 
-    // Read echoed sum_head (we don't use it, but must consume it)
-    let _echoed_sum_head = SumHead::read(reader)?;
+    // Read echoed sum_head - needed for append mode offset calculation.
+    let echoed_sum_head = SumHead::read(reader)?;
 
     // Decompose pending transfer
     let (file_path, basis_path, signature, target_size) = pending.into_parts();
 
     // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
+    // upstream: receiver.c:855 - append mode implies inplace (write directly to destination,
+    // preserving existing content; sender only sends data beyond the existing length)
     let use_inplace = ctx.config.inplace
+        || ctx.config.append
         || (ctx.config.inplace_partial
             && sender_attrs.fnamecmp_type == Some(protocol::FnameCmpType::PartialDir));
+
+    // upstream: receiver.c:287-307 - in append mode, seek output fd to existing file length
+    // (derived from echoed sum_head) before writing new data
+    let append_offset = if ctx.config.append {
+        echoed_sum_head.flength()
+    } else {
+        0
+    };
 
     Ok(ResponseHeader {
         file_path,
@@ -221,6 +232,7 @@ fn read_response_header<R: Read>(
         signature,
         target_size,
         use_inplace,
+        append_offset,
         xattr_values: sender_attrs.xattr_values,
     })
 }
@@ -237,6 +249,15 @@ struct ResponseHeader {
     target_size: u64,
     /// Whether to write directly to the destination (inplace mode).
     use_inplace: bool,
+    /// Byte offset at which to start writing in append mode.
+    ///
+    /// Derived from the echoed sum_head: existing file length that the sender
+    /// skipped. Zero when not in append mode.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:307-308` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
+    append_offset: u64,
     /// Abbreviated xattr values from the sender (1-based num, value pairs).
     ///
     /// Non-empty only when the sender included `ITEM_REPORT_XATTR` in iflags.
