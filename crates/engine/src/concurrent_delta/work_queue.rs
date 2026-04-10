@@ -227,18 +227,18 @@ mod tests {
             }
         });
 
-        let mut results: Vec<u32> = rayon::scope(|s| {
-            let results = Mutex::new(Vec::new());
+        let results = Mutex::new(Vec::new());
+        rayon::scope(|s| {
             for w in rx.into_iter() {
                 let results = &results;
                 s.spawn(move |_| {
                     results.lock().unwrap().push(w.ndx());
                 });
             }
-            results.into_inner().unwrap()
         });
         producer.join().unwrap();
 
+        let mut results = results.into_inner().unwrap();
         results.sort_unstable();
         assert_eq!(results, (0..count).collect::<Vec<u32>>());
     }
@@ -296,8 +296,8 @@ mod tests {
         let active_ref = Arc::clone(&active);
         let max_active_ref = Arc::clone(&max_active);
 
-        let results: Vec<u32> = rayon::scope(|s| {
-            let collected = Mutex::new(Vec::new());
+        let collected = Mutex::new(Vec::new());
+        rayon::scope(|s| {
             for w in rx.into_iter() {
                 let active_ref = Arc::clone(&active_ref);
                 let max_active_ref = Arc::clone(&max_active_ref);
@@ -312,8 +312,8 @@ mod tests {
                     collected.lock().unwrap().push(w.ndx());
                 });
             }
-            collected.into_inner().unwrap()
         });
+        let results = collected.into_inner().unwrap();
 
         producer.join().unwrap();
         assert_eq!(results.len(), total_items as usize);
@@ -378,16 +378,16 @@ mod tests {
             }
         });
 
-        let count = rayon::scope(|s| {
-            let counter = AtomicUsize::new(0);
+        let counter = AtomicUsize::new(0);
+        rayon::scope(|s| {
             for _ in rx.into_iter() {
                 let counter = &counter;
                 s.spawn(move |_| {
                     counter.fetch_add(1, Ordering::Relaxed);
                 });
             }
-            counter.load(Ordering::Relaxed)
         });
+        let count = counter.load(Ordering::Relaxed);
         producer.join().unwrap();
         assert_eq!(count, total as usize);
     }
@@ -470,8 +470,8 @@ mod tests {
         // Parallel workers dispatch and stamp sequence numbers.
         // In a real pipeline the producer stamps sequences before sending,
         // but here we use ndx as the sequence for demonstration.
-        let results: Vec<_> = rayon::scope(|s| {
-            let collected = Mutex::new(Vec::new());
+        let collected = Mutex::new(Vec::new());
+        rayon::scope(|s| {
             for w in rx.into_iter() {
                 let collected = &collected;
                 s.spawn(move |_| {
@@ -480,8 +480,8 @@ mod tests {
                     collected.lock().unwrap().push(result);
                 });
             }
-            collected.into_inner().unwrap()
         });
+        let results: Vec<_> = collected.into_inner().unwrap();
         producer.join().unwrap();
 
         // Feed out-of-order results into the reorder buffer.
