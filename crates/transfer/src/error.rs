@@ -38,11 +38,7 @@ pub enum DeltaTransferError {
 /// Fatal errors that require aborting the entire transfer.
 #[derive(Debug, Error)]
 pub enum DeltaFatalError {
-    /// Disk full - abort to prevent data loss.
-    ///
-    /// When the filesystem runs out of space, continuing the transfer
-    /// risks partial file writes and data corruption. The transfer must
-    /// abort immediately.
+    /// Disk full - abort to prevent partial writes and data corruption.
     #[error("Disk full at {}{}", path.display(), bytes_needed.map(|b| format!(" ({b} bytes needed)")).unwrap_or_default())]
     DiskFull {
         /// Path where disk full was detected.
@@ -51,29 +47,21 @@ pub enum DeltaFatalError {
         bytes_needed: Option<u64>,
     },
 
-    /// Read-only filesystem.
-    ///
-    /// Cannot write to a read-only filesystem. This is fatal because
-    /// it affects all subsequent file operations.
+    /// Read-only filesystem - fatal because it affects all subsequent writes.
     #[error("Read-only filesystem at {}", path.display())]
     ReadOnlyFilesystem {
         /// Path where read-only filesystem was detected.
         path: PathBuf,
     },
 
-    /// Wire protocol error.
-    ///
-    /// Protocol violations indicate a fundamental communication problem
-    /// that cannot be recovered from.
+    /// Wire protocol error indicating a fundamental communication failure.
     #[error("Protocol error: {message}")]
     ProtocolError {
         /// Description of the protocol error.
         message: String,
     },
 
-    /// Other fatal I/O error.
-    ///
-    /// Catch-all for I/O errors that should abort the transfer.
+    /// Other fatal I/O error that should abort the transfer.
     #[error("I/O error: {0}")]
     Io(#[source] io::Error),
 }
@@ -81,20 +69,14 @@ pub enum DeltaFatalError {
 /// Recoverable errors that allow skipping the current file.
 #[derive(Debug, Error)]
 pub enum DeltaRecoverableError {
-    /// File not found (disappeared during transfer).
-    ///
-    /// If a file is deleted between the file list being generated and
-    /// the actual transfer, we can safely skip it.
+    /// File disappeared between file-list generation and transfer.
     #[error("File not found: {}", path.display())]
     FileNotFound {
         /// Path to the missing file.
         path: PathBuf,
     },
 
-    /// Permission denied (insufficient privileges).
-    ///
-    /// Permission errors on individual files can be skipped. The user
-    /// will see a warning but the transfer continues.
+    /// Permission denied on an individual file - skip and continue.
     #[error("Permission denied for {operation} on {}", path.display())]
     PermissionDenied {
         /// Path where permission was denied.
@@ -103,9 +85,7 @@ pub enum DeltaRecoverableError {
         operation: String,
     },
 
-    /// Other I/O error that allows continuing.
-    ///
-    /// Catch-all for I/O errors that affect only the current file.
+    /// Other I/O error affecting only the current file.
     #[error("I/O error on {}: {error}", path.display())]
     Io {
         /// Path where the error occurred.

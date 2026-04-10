@@ -68,7 +68,6 @@ pub fn perform_handshake(
 
     let remote_version = read_client_version(stdin)?;
 
-    // Negotiate: pick the highest mutually supported version
     let negotiated = select_highest_mutual([remote_version]).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -96,7 +95,6 @@ fn read_client_version(stdin: &mut dyn Read) -> io::Result<ProtocolVersion> {
     let mut buf = [0u8; 4];
     stdin.read_exact(&mut buf)?;
 
-    // The first byte is the protocol version
     let version_byte = buf[0];
     if version_byte == 0 {
         return Err(io::Error::new(
@@ -134,8 +132,6 @@ pub fn perform_legacy_handshake(
     let mut line = String::new();
     reader.read_line(&mut line)?;
 
-    // Parse the legacy greeting line
-    // Format: @RSYNCD: <version>\n
     let trimmed = line.trim();
     if !trimmed.starts_with("@RSYNCD:") {
         return Err(io::Error::new(
@@ -161,7 +157,6 @@ pub fn perform_legacy_handshake(
             )
         })?;
 
-    // Parse version (may include sub-version like "32.0")
     let version_number: u8 = version_str
         .split('.')
         .next()
@@ -188,7 +183,6 @@ pub fn perform_legacy_handshake(
         )
     })?;
 
-    // Respond with our version in legacy format
     let response = format!("@RSYNCD: {}.0\n", negotiated.as_u8());
     stdout.write_all(response.as_bytes())?;
     stdout.flush()?;
