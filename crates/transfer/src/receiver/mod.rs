@@ -39,6 +39,7 @@ mod tests;
 mod transfer;
 mod wire;
 
+use std::collections::HashMap;
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -168,6 +169,17 @@ pub struct ReceiverContext {
     /// - `hlink.c:finish_hard_link()` - links deferred followers after leader commit
     /// - `hlink.c:hard_link_check()` - defers follower when leader in-progress
     hardlink_tracker: Option<HardlinkApplyTracker>,
+    /// Persistent hardlink group state across INC_RECURSE segments.
+    ///
+    /// Maps gnum (hardlink group number) to whether it has been seen. Populated
+    /// during `receive_file_list` and carried across `receive_extra_file_lists`
+    /// so that cross-directory hardlink followers are not incorrectly promoted
+    /// to leaders when their leader was received in a previous segment.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `hlink.c:match_gnums()` - `prior_hlinks` hashtable persists across segments
+    prior_hlinks: HashMap<u32, bool>,
 }
 
 impl ReceiverContext {
@@ -209,6 +221,7 @@ impl ReceiverContext {
             daemon_filter_set,
             filter_chain: FilterChain::empty(),
             hardlink_tracker,
+            prior_hlinks: HashMap::new(),
         }
     }
 
