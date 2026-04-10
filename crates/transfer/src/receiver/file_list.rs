@@ -81,7 +81,7 @@ impl ReceiverContext {
 
         // upstream: flist.c:2736 - flist_sort_and_clean() after recv_id_list()
         sort_file_list(&mut self.file_list, self.config.qsort);
-        match_hard_links(&mut self.file_list);
+        match_hard_links(&mut self.file_list, &mut self.prior_hlinks);
 
         // For protocol < 30, normalize (dev, ino) pairs into hardlink_idx and
         // hlink_first flags so the rest of the code handles both protocol versions
@@ -188,7 +188,7 @@ impl ReceiverContext {
             // upstream: flist.c:2155,2736 - both sides call flist_sort_and_clean()
             // independently. Unstable sort (true) is safe - entries have unique paths.
             sort_file_list(&mut self.file_list[flat_start..], true);
-            match_hard_links(&mut self.file_list[flat_start..]);
+            match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);
 
             // Normalize pre-30 hardlinks in this segment.
             if self.protocol.as_u8() < 30 && self.config.flags.hard_links {
@@ -603,7 +603,8 @@ impl<R: Read> IncrementalFileListReceiver<R> {
 
         // upstream: flist.c:2736 - sort to match sender's order for NDX indexing
         sort_file_list(&mut entries, self.use_qsort);
-        match_hard_links(&mut entries);
+        let mut prior_hlinks = HashMap::new();
+        match_hard_links(&mut entries, &mut prior_hlinks);
 
         Ok(entries)
     }
@@ -635,9 +636,14 @@ impl<R: Read> Iterator for IncrementalFileListReceiver<R> {
 /// leader, especially when `--relative` introduces deep path components that change
 /// the sort order.
 ///
-/// This function mirrors upstream `hlink.c:match_hard_links()`: it groups entries by
-/// `hardlink_idx` and assigns `XMIT_HLINK_FIRST` to the first entry in each group
-/// in sorted (positional) order, clearing it on all others.
+/// This function mirrors upstream `hlink.c:match_gnums()`: it groups entries by
+/// `hardlink_idx` (gnum) and assigns `XMIT_HLINK_FIRST` to the first entry in each
+/// group in sorted (positional) order, clearing it on all others.
+///
+/// The `prior_hlinks` map persists across INC_RECURSE segments so that a follower
+/// whose leader was received in a previous segment is correctly identified as a
+/// follower rather than being promoted to leader (which would happen if only the
+/// current segment's entries were considered).
 ///
 /// Must be called after `sort_file_list()` and before any code that inspects
 /// `hlink_first()` to decide leader vs follower (transfer, quick-check, hardlink
@@ -645,10 +651,11 @@ impl<R: Read> Iterator for IncrementalFileListReceiver<R> {
 ///
 /// # Upstream Reference
 ///
-/// - `hlink.c:match_hard_links()` - post-sort leader/follower assignment
+/// - `hlink.c:match_gnums()` - post-sort leader/follower assignment with
+///   `prior_hlinks` hashtable for cross-segment state
 /// - `hlink.c:idev_find()` - two-level (dev, ino) hashtable lookup
-fn match_hard_links(entries: &mut [FileEntry]) {
-    // Collect the first sorted position for each hardlink group.
+fn match_hard_links(entries: &mut [FileEntry], prior_hlinks: &mut HashMap<u32, bool>) {
+    // Collect the first sorted position for each hardlink group within this segment.
     // Key: hardlink_idx (gnum), Value: index into entries slice.
     let mut first_in_group: HashMap<u32, usize> = HashMap::new();
 
@@ -658,11 +665,25 @@ fn match_hard_links(entries: &mut [FileEntry]) {
         }
     }
 
-    // Reassign flags: first in sorted order gets HLINK_FIRST, others lose it.
+    // Reassign flags: the leader is the first entry in sorted order, but only
+    // if this gnum was not already seen in a prior INC_RECURSE segment.
+    // upstream: hlink.c:match_gnums() - `node->data == data_when_new` check
     for (i, entry) in entries.iter_mut().enumerate() {
-        if let Some(idx) = entry.hardlink_idx() {
-            let is_leader = first_in_group.get(&idx) == Some(&i);
-            entry.flags_mut().set_hlink_first(is_leader);
+        if let Some(gnum) = entry.hardlink_idx() {
+            let is_first_in_segment = first_in_group.get(&gnum) == Some(&i);
+            let seen_before = prior_hlinks.contains_key(&gnum);
+
+            if is_first_in_segment && !seen_before {
+                // First occurrence of this gnum across all segments - this is the leader.
+                entry.flags_mut().set_hlink_first(true);
+                prior_hlinks.insert(gnum, true);
+            } else {
+                // Either not first in segment, or gnum was seen in a prior segment.
+                entry.flags_mut().set_hlink_first(false);
+                // Record the gnum even if it was already present, so future
+                // segments know about it.
+                prior_hlinks.entry(gnum).or_insert(true);
+            }
         }
     }
 }
@@ -751,7 +772,8 @@ mod tests {
         follower.set_hardlink_idx(7);
 
         let mut entries = vec![dir_a, leader, dir_b, follower];
-        match_hard_links(&mut entries);
+        let mut prior_hlinks = HashMap::new();
+        match_hard_links(&mut entries, &mut prior_hlinks);
 
         // Directory entries remain unaffected
         assert!(!entries[0].flags().hlink_first());
@@ -790,7 +812,8 @@ mod tests {
         fb.set_hardlink_idx(4);
 
         let mut entries = vec![dir_d, la, fa, dir_e, lb, fb];
-        match_hard_links(&mut entries);
+        let mut prior_hlinks = HashMap::new();
+        match_hard_links(&mut entries, &mut prior_hlinks);
 
         // Group 1: position 1 is leader, position 2 is follower
         assert!(entries[1].flags().hlink_first());
@@ -940,7 +963,8 @@ mod tests {
         entry_z.flags_mut().set_hlink_first(true);
 
         let mut entries = vec![entry_a, entry_z];
-        match_hard_links(&mut entries);
+        let mut prior_hlinks = HashMap::new();
+        match_hard_links(&mut entries, &mut prior_hlinks);
 
         // After match_hard_links, sorted position 0 becomes the new leader
         assert!(
@@ -951,5 +975,90 @@ mod tests {
             !entries[1].flags().hlink_first(),
             "second in sorted order must be follower"
         );
+    }
+
+    /// Verifies that cross-segment hardlink followers are not promoted to leaders.
+    ///
+    /// When INC_RECURSE delivers entries in multiple segments, a follower whose
+    /// leader was in a previous segment must remain a follower. Before the fix,
+    /// `match_hard_links` only saw the current segment and would incorrectly
+    /// promote such followers to leaders.
+    ///
+    /// upstream: hlink.c:match_gnums() - `prior_hlinks` hashtable persists across
+    /// segments so cross-segment followers are correctly identified.
+    #[test]
+    fn cross_segment_follower_not_promoted_to_leader() {
+        // Segment 1: contains the leader for gnum 42
+        let mut leader = FileEntry::new_file("a/original.txt".into(), 512, 0o644);
+        leader.set_hardlink_idx(42);
+
+        let mut seg1 = vec![leader];
+        let mut prior_hlinks = HashMap::new();
+        match_hard_links(&mut seg1, &mut prior_hlinks);
+
+        // Leader in segment 1 should be marked as leader
+        assert!(
+            seg1[0].flags().hlink_first(),
+            "first occurrence of gnum 42 must be leader"
+        );
+        // prior_hlinks should now contain gnum 42
+        assert!(prior_hlinks.contains_key(&42));
+
+        // Segment 2: contains a follower for gnum 42 (cross-directory hardlink)
+        let mut follower = FileEntry::new_file("b/link.txt".into(), 512, 0o644);
+        follower.set_hardlink_idx(42);
+
+        let mut seg2 = vec![follower];
+        match_hard_links(&mut seg2, &mut prior_hlinks);
+
+        // Follower in segment 2 must NOT be promoted to leader - its leader is
+        // in segment 1.
+        assert!(
+            !seg2[0].flags().hlink_first(),
+            "cross-segment follower must not be promoted to leader"
+        );
+    }
+
+    /// Verifies that multiple segments with mixed gnums correctly identify
+    /// leaders and followers across segment boundaries.
+    #[test]
+    fn cross_segment_mixed_groups() {
+        let mut prior_hlinks = HashMap::new();
+
+        // Segment 1: leader for gnum 10, follower for gnum 10, leader for gnum 20
+        let mut a = FileEntry::new_file("a/file1.txt".into(), 100, 0o644);
+        a.set_hardlink_idx(10);
+        let mut b = FileEntry::new_file("a/file2.txt".into(), 100, 0o644);
+        b.set_hardlink_idx(10);
+        let mut c = FileEntry::new_file("a/file3.txt".into(), 200, 0o644);
+        c.set_hardlink_idx(20);
+
+        let mut seg1 = vec![a, b, c];
+        match_hard_links(&mut seg1, &mut prior_hlinks);
+
+        assert!(seg1[0].flags().hlink_first(), "gnum 10 leader in seg1");
+        assert!(!seg1[1].flags().hlink_first(), "gnum 10 follower in seg1");
+        assert!(seg1[2].flags().hlink_first(), "gnum 20 leader in seg1");
+
+        // Segment 2: follower for gnum 10, follower for gnum 20, leader for gnum 30
+        let mut d = FileEntry::new_file("b/link1.txt".into(), 100, 0o644);
+        d.set_hardlink_idx(10);
+        let mut e = FileEntry::new_file("b/link3.txt".into(), 200, 0o644);
+        e.set_hardlink_idx(20);
+        let mut f = FileEntry::new_file("b/new.txt".into(), 300, 0o644);
+        f.set_hardlink_idx(30);
+
+        let mut seg2 = vec![d, e, f];
+        match_hard_links(&mut seg2, &mut prior_hlinks);
+
+        assert!(
+            !seg2[0].flags().hlink_first(),
+            "gnum 10 cross-segment follower"
+        );
+        assert!(
+            !seg2[1].flags().hlink_first(),
+            "gnum 20 cross-segment follower"
+        );
+        assert!(seg2[2].flags().hlink_first(), "gnum 30 new leader in seg2");
     }
 }
