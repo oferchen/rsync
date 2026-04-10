@@ -311,13 +311,9 @@ mod tests {
 
     #[test]
     fn dispatch_propagates_sequence_delta() {
-        let work = DeltaWork::delta(
-            2,
-            PathBuf::from("/dest/b"),
-            PathBuf::from("/basis/b"),
-            512,
-        )
-        .with_sequence(99);
+        let work =
+            DeltaWork::delta(2, PathBuf::from("/dest/b"), PathBuf::from("/basis/b"), 512)
+                .with_sequence(99);
         let result = dispatch(&work);
         assert_eq!(result.sequence(), 99);
         assert!(result.is_success());

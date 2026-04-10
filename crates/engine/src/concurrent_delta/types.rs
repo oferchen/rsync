@@ -456,25 +456,17 @@ mod tests {
 
     #[test]
     fn work_sequence_preserved_on_clone() {
-        let work = DeltaWork::delta(
-            1,
-            PathBuf::from("/dest"),
-            PathBuf::from("/basis"),
-            200,
-        )
-        .with_sequence(99);
+        let work =
+            DeltaWork::delta(1, PathBuf::from("/dest"), PathBuf::from("/basis"), 200)
+                .with_sequence(99);
         let cloned = work.clone();
         assert_eq!(cloned.sequence(), 99);
     }
 
     #[test]
     fn delta_work_default_sequence_is_zero() {
-        let work = DeltaWork::delta(
-            5,
-            PathBuf::from("/dest"),
-            PathBuf::from("/basis"),
-            1024,
-        );
+        let work =
+            DeltaWork::delta(5, PathBuf::from("/dest"), PathBuf::from("/basis"), 1024);
         assert_eq!(work.sequence(), 0);
     }
 
