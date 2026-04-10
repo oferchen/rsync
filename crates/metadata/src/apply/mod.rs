@@ -275,11 +275,8 @@ pub fn apply_metadata_with_attrs_flags(
         timestamps::apply_timestamps_from_entry(destination, entry, options, cached_meta.as_ref())?;
     }
 
-    // When both times() and atimes() are set and SKIP_MTIME is active but not SKIP_ATIME,
-    // we still need to apply atime. The `apply_timestamps_from_entry` handles both mtime
-    // and atime together, so when SKIP_MTIME is set but atimes should still be preserved,
-    // we apply atime-only here.
-    // upstream: rsync.c:604 - `if (!(flags & ATTRS_SKIP_ATIME))`
+    // upstream: rsync.c:604 - atime applied independently when SKIP_MTIME is set
+    // but SKIP_ATIME is not, since apply_timestamps_from_entry handles both together
     if options.atimes() && attrs_flags.skip_mtime() && !attrs_flags.skip_atime() {
         timestamps::apply_atime_only_from_entry(destination, entry, cached_meta.as_ref())?;
     }
