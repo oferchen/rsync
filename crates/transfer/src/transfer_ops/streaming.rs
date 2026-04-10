@@ -100,6 +100,7 @@ pub fn process_file_response_streaming<R: Read>(
         is_device_target,
         // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
         is_inplace: header.use_inplace,
+        append_offset: header.append_offset,
         xattr_list,
     });
 

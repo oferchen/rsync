@@ -76,6 +76,15 @@ pub struct BeginMessage {
     /// (created if absent) and truncated to target size after delta
     /// application. Preserves the destination inode.
     pub is_inplace: bool,
+    /// Byte offset at which to start writing in append mode.
+    ///
+    /// When non-zero, the output file is seeked to this offset before writing
+    /// delta data. The sender only sends bytes beyond this offset.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:307-308` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
+    pub append_offset: u64,
     /// Xattr list resolved from the wire protocol cache for this file.
     ///
     /// When `Some`, the disk thread applies these xattrs after metadata

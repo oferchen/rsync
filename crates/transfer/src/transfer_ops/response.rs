@@ -10,7 +10,7 @@
 //! - `receiver.c:receive_data()` applies delta tokens
 
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 
 use fast_io::FileWriter;
 
@@ -75,7 +75,7 @@ pub fn process_file_response<R: Read>(
     let use_inplace = header.use_inplace;
 
     // Inplace: write directly to destination. Otherwise temp+rename for atomicity.
-    let (file, mut cleanup_guard, needs_rename) = if use_inplace {
+    let (mut file, mut cleanup_guard, needs_rename) = if use_inplace {
         // upstream: receiver.c:855 - do_open(fname, O_WRONLY|O_CREAT, 0600)
         let f = fs::OpenOptions::new()
             .write(true)
@@ -91,6 +91,13 @@ pub fn process_file_response<R: Read>(
         let (f, guard) = open_tmpfile(&file_path, ctx.config.temp_dir)?;
         (f, guard, true)
     };
+
+    // upstream: receiver.c:307-308 - in append mode, seek past existing content
+    // so new data is written at the end of the file
+    let append_offset = header.append_offset;
+    if append_offset > 0 {
+        file.seek(io::SeekFrom::Start(append_offset))?;
+    }
 
     // Use io_uring when available (Linux 5.6+), falling back to BufWriter.
     // Buffer capacity is adaptive based on file size:
@@ -273,8 +280,15 @@ pub fn process_file_response<R: Read>(
     } else if ctx.config.inplace {
         // Inplace: truncate to final size.
         // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))
+        // In append mode, total_bytes only counts newly received data -
+        // the full file size includes the existing content we seeked past.
+        let final_size = if append_offset > 0 {
+            target_size
+        } else {
+            total_bytes
+        };
         let file = fs::OpenOptions::new().write(true).open(&file_path)?;
-        file.set_len(total_bytes)?;
+        file.set_len(final_size)?;
     }
     cleanup_guard.keep();
 
