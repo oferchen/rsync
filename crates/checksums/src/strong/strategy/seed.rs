@@ -4,7 +4,6 @@ use crate::strong::Md5Seed;
 
 /// Configuration for MD5 seed handling in the strategy pattern.
 ///
-/// Wraps the `Md5Seed` options for use with `SeedConfig`.
 /// See `Md5Seed` for details on seed ordering semantics.
 #[derive(Clone, Copy, Debug)]
 pub enum Md5SeedConfig {
