@@ -3179,6 +3179,164 @@ CONF
   return 0
 }
 
+# No-change interop (upstream rsync -> oc-rsync daemon)
+# Pushes files twice - second push should transfer zero files because
+# quick-check (mtime+size) matches and nothing changed.
+test_no_change_upstream() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local nc_src="${work}/no-change-up-src"
+  local nc_dest="${work}/no-change-up-dest"
+  rm -rf "$nc_src" "$nc_dest"
+  mkdir -p "$nc_src/subdir_a" "$nc_src/subdir_b" "$nc_dest"
+
+  # Create 10 files of varied sizes across 2 subdirectories
+  echo "small file one" > "$nc_src/file1.txt"
+  dd if=/dev/urandom of="$nc_src/file2.bin" bs=1K count=8 2>/dev/null
+  echo "another small" > "$nc_src/file3.txt"
+  dd if=/dev/urandom of="$nc_src/subdir_a/data1.dat" bs=1K count=16 2>/dev/null
+  echo "subdir_a content" > "$nc_src/subdir_a/info.txt"
+  dd if=/dev/urandom of="$nc_src/subdir_a/big.dat" bs=1K count=64 2>/dev/null
+  echo "subdir_b content one" > "$nc_src/subdir_b/note1.txt"
+  echo "subdir_b content two" > "$nc_src/subdir_b/note2.txt"
+  dd if=/dev/urandom of="$nc_src/subdir_b/payload.bin" bs=1K count=32 2>/dev/null
+  echo "root level file" > "$nc_src/root.txt"
+
+  local nc_conf="${work}/no-change-up-oc.conf"
+  local nc_pid="${work}/no-change-up-oc.pid"
+  local nc_log="${work}/no-change-up-oc.log"
+  cat > "$nc_conf" <<CONF
+pid file = ${nc_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${nc_dest}
+comment = no-change upstream test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$nc_conf" "$nc_log" "$upstream_binary" "$nc_pid" "$oc_port"
+
+  # First push - populates destination
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      --log-format=%i \
+      "${nc_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.no-change-up-1.out" 2>"${log}.no-change-up-1.err"; then
+    echo "    upstream -> oc daemon first push failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$nc_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  # Second push - nothing changed, should transfer zero files
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      --log-format=%i \
+      "${nc_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.no-change-up-2.out" 2>"${log}.no-change-up-2.err"; then
+    echo "    upstream -> oc daemon second push failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$nc_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Count file transfers in second push output
+  local retransfer_count
+  retransfer_count=$(grep -cE '^>f' "${log}.no-change-up-2.out") || retransfer_count=0
+
+  if [[ "$retransfer_count" -ne 0 ]]; then
+    echo "    second push transferred ${retransfer_count} files (expected 0)"
+    echo "    second push output:"
+    cat "${log}.no-change-up-2.out"
+    return 1
+  fi
+
+  return 0
+}
+
+# No-change interop (oc-rsync client -> upstream rsync daemon)
+# Pushes files twice - second push should transfer zero files because
+# quick-check (mtime+size) matches and nothing changed.
+test_no_change_oc() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local nc_src="${work}/no-change-oc-src"
+  local nc_dest="${work}/no-change-oc-dest"
+  rm -rf "$nc_src" "$nc_dest"
+  mkdir -p "$nc_src/subdir_a" "$nc_src/subdir_b" "$nc_dest"
+
+  # Create 10 files of varied sizes across 2 subdirectories
+  echo "small file one" > "$nc_src/file1.txt"
+  dd if=/dev/urandom of="$nc_src/file2.bin" bs=1K count=8 2>/dev/null
+  echo "another small" > "$nc_src/file3.txt"
+  dd if=/dev/urandom of="$nc_src/subdir_a/data1.dat" bs=1K count=16 2>/dev/null
+  echo "subdir_a content" > "$nc_src/subdir_a/info.txt"
+  dd if=/dev/urandom of="$nc_src/subdir_a/big.dat" bs=1K count=64 2>/dev/null
+  echo "subdir_b content one" > "$nc_src/subdir_b/note1.txt"
+  echo "subdir_b content two" > "$nc_src/subdir_b/note2.txt"
+  dd if=/dev/urandom of="$nc_src/subdir_b/payload.bin" bs=1K count=32 2>/dev/null
+  echo "root level file" > "$nc_src/root.txt"
+
+  local nc_conf="${work}/no-change-oc-up.conf"
+  local nc_pid="${work}/no-change-oc-up.pid"
+  local nc_log="${work}/no-change-oc-up.log"
+  cat > "$nc_conf" <<CONF
+pid file = ${nc_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${nc_dest}
+    comment = no-change oc test
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$nc_conf" "$nc_log" "$nc_pid"
+
+  # First push - populates destination
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      --log-format=%i \
+      "${nc_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.no-change-oc-1.out" 2>"${log}.no-change-oc-1.err"; then
+    echo "    oc-rsync -> upstream daemon first push failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$nc_log" 2>/dev/null)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  # Second push - nothing changed, should transfer zero files
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      --log-format=%i \
+      "${nc_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.no-change-oc-2.out" 2>"${log}.no-change-oc-2.err"; then
+    echo "    oc-rsync -> upstream daemon second push failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$nc_log" 2>/dev/null)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # Count file transfers in second push output
+  local retransfer_count
+  retransfer_count=$(grep -cE '^>f' "${log}.no-change-oc-2.out") || retransfer_count=0
+
+  if [[ "$retransfer_count" -ne 0 ]]; then
+    echo "    second push transferred ${retransfer_count} files (expected 0)"
+    echo "    second push output:"
+    cat "${log}.no-change-oc-2.out"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -3203,6 +3361,8 @@ run_standalone_interop_tests() {
     "unicode-names"
     "special-chars"
     "empty-dir"
+    "up:no-change"
+    "oc:no-change"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -3220,6 +3380,8 @@ run_standalone_interop_tests() {
     "test_unicode_names"
     "test_special_chars"
     "test_empty_dir"
+    "test_no_change_upstream"
+    "test_no_change_oc"
   )
 
   for i in "${!test_names[@]}"; do
@@ -3259,6 +3421,12 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       empty-dir)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      up:no-change)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      oc:no-change)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
