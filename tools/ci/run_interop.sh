@@ -4368,6 +4368,360 @@ CONF
   return 0
 }
 
+# Trust-sender daemon push interop test.
+# Upstream rsync pushes files to oc-rsync daemon with --trust-sender flag.
+# Verifies the flag is accepted and files transfer correctly.
+test_trust_sender() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ts_src="${work}/trust-sender-src"
+  local ts_dest="${work}/trust-sender-dest"
+  rm -rf "$ts_src" "$ts_dest"
+  mkdir -p "$ts_src" "$ts_dest"
+
+  # Create source files
+  echo "trust-sender-alpha" > "$ts_src/alpha.txt"
+  echo "trust-sender-beta" > "$ts_src/beta.txt"
+  mkdir -p "$ts_src/sub"
+  echo "trust-sender-nested" > "$ts_src/sub/nested.txt"
+  dd if=/dev/urandom of="$ts_src/data.bin" bs=1K count=16 2>/dev/null
+
+  # Start oc-rsync daemon
+  local ts_conf="${work}/trust-sender-oc.conf"
+  local ts_pid="${work}/trust-sender-oc.pid"
+  local ts_log="${work}/trust-sender-oc.log"
+  cat > "$ts_conf" <<CONF
+pid file = ${ts_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${ts_dest}
+comment = trust-sender test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$ts_conf" "$ts_log" "$upstream_binary" "$ts_pid" "$oc_port"
+
+  # Push with --trust-sender
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --trust-sender --timeout=10 \
+      "${ts_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.trust-sender.out" 2>"${log}.trust-sender.err"; then
+    echo "    trust-sender push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify all files transferred correctly
+  for f in alpha.txt beta.txt sub/nested.txt data.bin; do
+    if [[ ! -f "$ts_dest/$f" ]]; then
+      echo "    missing file: $f"
+      return 1
+    fi
+    if ! cmp -s "$ts_src/$f" "$ts_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# Partial-dir daemon push interop test.
+# Upstream rsync pushes a large file with --partial-dir=.rsync-partial.
+# Verifies the file transferred correctly and no .rsync-partial dir remains.
+test_partial_dir() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local pd_src="${work}/partial-dir-src"
+  local pd_dest="${work}/partial-dir-dest"
+  rm -rf "$pd_src" "$pd_dest"
+  mkdir -p "$pd_src" "$pd_dest"
+
+  # Create a 64K file to exercise partial transfer
+  dd if=/dev/urandom of="$pd_src/large.bin" bs=1K count=64 2>/dev/null
+  echo "partial-dir-text" > "$pd_src/readme.txt"
+
+  # Start oc-rsync daemon
+  local pd_conf="${work}/partial-dir-oc.conf"
+  local pd_pid="${work}/partial-dir-oc.pid"
+  local pd_log="${work}/partial-dir-oc.log"
+  cat > "$pd_conf" <<CONF
+pid file = ${pd_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${pd_dest}
+comment = partial-dir test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$pd_conf" "$pd_log" "$upstream_binary" "$pd_pid" "$oc_port"
+
+  # Push with --partial-dir
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --partial-dir=.rsync-partial --timeout=10 \
+      "${pd_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.partial-dir.out" 2>"${log}.partial-dir.err"; then
+    echo "    partial-dir push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify files transferred correctly
+  for f in large.bin readme.txt; do
+    if [[ ! -f "$pd_dest/$f" ]]; then
+      echo "    missing file: $f"
+      return 1
+    fi
+    if ! cmp -s "$pd_src/$f" "$pd_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify no .rsync-partial directory remains after successful transfer
+  if [[ -d "$pd_dest/.rsync-partial" ]]; then
+    echo "    .rsync-partial dir should not remain after successful transfer"
+    return 1
+  fi
+
+  return 0
+}
+
+# Deep-nesting daemon push interop test.
+# Upstream rsync pushes a deeply nested directory structure (10+ levels).
+# Verifies the deeply nested file exists at the destination.
+test_deep_nesting() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local dn_src="${work}/deep-nesting-src"
+  local dn_dest="${work}/deep-nesting-dest"
+  rm -rf "$dn_src" "$dn_dest"
+  mkdir -p "$dn_src" "$dn_dest"
+
+  # Create 10 levels of directory nesting
+  local deep_path="a/b/c/d/e/f/g/h/i/j"
+  mkdir -p "$dn_src/$deep_path"
+  echo "deeply-nested-content" > "$dn_src/$deep_path/file.txt"
+  echo "top-level-content" > "$dn_src/top.txt"
+
+  # Start oc-rsync daemon
+  local dn_conf="${work}/deep-nesting-oc.conf"
+  local dn_pid="${work}/deep-nesting-oc.pid"
+  local dn_log="${work}/deep-nesting-oc.log"
+  cat > "$dn_conf" <<CONF
+pid file = ${dn_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${dn_dest}
+comment = deep-nesting test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$dn_conf" "$dn_log" "$upstream_binary" "$dn_pid" "$oc_port"
+
+  # Push deeply nested structure
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${dn_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.deep-nesting.out" 2>"${log}.deep-nesting.err"; then
+    echo "    deep-nesting push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify top-level file
+  if [[ ! -f "$dn_dest/top.txt" ]]; then
+    echo "    missing top-level file"
+    return 1
+  fi
+  if ! cmp -s "$dn_src/top.txt" "$dn_dest/top.txt"; then
+    echo "    top.txt content mismatch"
+    return 1
+  fi
+
+  # Verify deeply nested file
+  if [[ ! -f "$dn_dest/$deep_path/file.txt" ]]; then
+    echo "    missing deeply nested file: $deep_path/file.txt"
+    return 1
+  fi
+  if ! cmp -s "$dn_src/$deep_path/file.txt" "$dn_dest/$deep_path/file.txt"; then
+    echo "    deeply nested file content mismatch"
+    return 1
+  fi
+
+  return 0
+}
+
+# Modify-window daemon push interop test.
+# Upstream rsync pushes files, then pushes again with --modify-window=1.
+# Verifies the flag is accepted and the second transfer completes.
+test_modify_window() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local mw_src="${work}/modify-window-src"
+  local mw_dest="${work}/modify-window-dest"
+  rm -rf "$mw_src" "$mw_dest"
+  mkdir -p "$mw_src" "$mw_dest"
+
+  # Create source files
+  echo "modify-window-alpha" > "$mw_src/alpha.txt"
+  echo "modify-window-beta" > "$mw_src/beta.txt"
+  mkdir -p "$mw_src/sub"
+  echo "modify-window-nested" > "$mw_src/sub/nested.txt"
+
+  # Start oc-rsync daemon
+  local mw_conf="${work}/modify-window-oc.conf"
+  local mw_pid="${work}/modify-window-oc.pid"
+  local mw_log="${work}/modify-window-oc.log"
+  cat > "$mw_conf" <<CONF
+pid file = ${mw_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${mw_dest}
+comment = modify-window test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$mw_conf" "$mw_log" "$upstream_binary" "$mw_pid" "$oc_port"
+
+  # Initial push
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${mw_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.modify-window-1.out" 2>"${log}.modify-window-1.err"; then
+    echo "    initial push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  # Second push with --modify-window=1
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --modify-window=1 --timeout=10 \
+      "${mw_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.modify-window-2.out" 2>"${log}.modify-window-2.err"; then
+    echo "    modify-window push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify all files present and correct
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$mw_dest/$f" ]]; then
+      echo "    missing file: $f"
+      return 1
+    fi
+    if ! cmp -s "$mw_src/$f" "$mw_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# Delete-excluded daemon push interop test.
+# Upstream rsync pushes files with --delete-excluded --exclude='*.bak'.
+# Verifies .bak files were deleted from destination and source files arrived.
+test_delete_excluded() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local de_src="${work}/delete-excluded-src"
+  local de_dest="${work}/delete-excluded-dest"
+  rm -rf "$de_src" "$de_dest"
+  mkdir -p "$de_src" "$de_dest"
+
+  # Create source files (no .bak files in source)
+  echo "keep-alpha" > "$de_src/alpha.txt"
+  echo "keep-beta" > "$de_src/beta.txt"
+  mkdir -p "$de_src/sub"
+  echo "keep-nested" > "$de_src/sub/nested.txt"
+
+  # Pre-populate destination with .bak files that should be deleted
+  echo "stale-backup-1" > "$de_dest/old.bak"
+  echo "stale-backup-2" > "$de_dest/archive.bak"
+  mkdir -p "$de_dest/sub"
+  echo "stale-nested-backup" > "$de_dest/sub/temp.bak"
+  # Also add a non-.bak extra file (should be deleted by --delete)
+  echo "extra-file" > "$de_dest/extra.txt"
+
+  # Start oc-rsync daemon
+  local de_conf="${work}/delete-excluded-oc.conf"
+  local de_pid="${work}/delete-excluded-oc.pid"
+  local de_log="${work}/delete-excluded-oc.log"
+  cat > "$de_conf" <<CONF
+pid file = ${de_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${de_dest}
+comment = delete-excluded test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$de_conf" "$de_log" "$upstream_binary" "$de_pid" "$oc_port"
+
+  # Push with --delete-excluded --exclude='*.bak'
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --delete-excluded --exclude='*.bak' --timeout=10 \
+      "${de_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.delete-excluded.out" 2>"${log}.delete-excluded.err"; then
+    echo "    delete-excluded push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify source files arrived
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$de_dest/$f" ]]; then
+      echo "    missing source file: $f"
+      return 1
+    fi
+    if ! cmp -s "$de_src/$f" "$de_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify .bak files were deleted
+  for f in old.bak archive.bak sub/temp.bak; do
+    if [[ -f "$de_dest/$f" ]]; then
+      echo "    excluded file not deleted: $f"
+      return 1
+    fi
+  done
+
+  # Verify non-excluded extra file was also deleted (--delete-excluded implies --delete)
+  if [[ -f "$de_dest/extra.txt" ]]; then
+    echo "    extra file not deleted: extra.txt"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -4406,6 +4760,11 @@ run_standalone_interop_tests() {
     "delay-updates"
     "compress-level"
     "files-from"
+    "trust-sender"
+    "partial-dir"
+    "deep-nesting"
+    "modify-window"
+    "delete-excluded"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -4437,6 +4796,11 @@ run_standalone_interop_tests() {
     "test_delay_updates"
     "test_compress_level"
     "test_files_from"
+    "test_trust_sender"
+    "test_partial_dir"
+    "test_deep_nesting"
+    "test_modify_window"
+    "test_delete_excluded"
   )
 
   for i in "${!test_names[@]}"; do
@@ -4518,6 +4882,21 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       files-from)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      trust-sender)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      partial-dir)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      deep-nesting)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      modify-window)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      delete-excluded)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
