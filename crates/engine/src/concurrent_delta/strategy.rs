@@ -336,7 +336,7 @@ mod tests {
             })
             .collect();
 
-        let results: Vec<DeltaResult> = items.iter().map(|w| dispatch(w)).collect();
+        let results: Vec<DeltaResult> = items.iter().map(dispatch).collect();
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.sequence(), i as u64);
             assert_eq!(r.ndx(), i as u32);
