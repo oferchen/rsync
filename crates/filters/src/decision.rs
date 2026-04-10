@@ -93,9 +93,6 @@ impl FilterSetInner {
             match rule.action {
                 FilterAction::Protect => decision.protect(),
                 FilterAction::Risk => decision.unprotect(),
-                // Include/Exclude/Clear/Merge/DirMerge are not protection actions.
-                // Merge and DirMerge are expanded before compilation, so they
-                // should never appear in compiled rules.
                 FilterAction::Include
                 | FilterAction::Exclude
                 | FilterAction::Clear
