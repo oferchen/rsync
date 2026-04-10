@@ -219,7 +219,7 @@ pub(super) fn apply_ownership_from_entry(
         None
     };
 
-    // If fake-super mode is enabled, store ownership in xattr instead of applying directly
+    // upstream: rsync.c:set_file_attrs() - fake-super stores ownership in xattr
     if options.fake_super_enabled() {
         return apply_ownership_via_fake_super(destination, entry, raw_uid, raw_gid);
     }
@@ -257,7 +257,7 @@ pub(super) fn apply_ownership_from_entry(
     };
 
     if owner.is_some() || group.is_some() {
-        // upstream: rsync avoids redundant chown calls
+        // upstream: rsync.c:set_file_attrs() - skips chown when uid/gid already match
         let needs_chown = match cached_meta {
             Some(meta) => {
                 let current_uid = meta.uid();

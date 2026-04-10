@@ -180,7 +180,6 @@ impl BatchMetadataContext {
 
         let desired_readonly = metadata.permissions().readonly();
 
-        // For non-Unix, we need to fetch current state
         match fs::metadata(destination) {
             Ok(current_meta) => {
                 if current_meta.permissions().readonly() != desired_readonly {

@@ -150,7 +150,7 @@ fn fetch_metadata_optimized(path: &Path) -> io::Result<CachedMetadata> {
         match try_statx_optimized(path) {
             Ok(meta) => return Ok(meta),
             Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {
-                // statx not available, fall through to regular stat
+                // statx unavailable (kernel < 4.11), fall through to stat(2)
             }
             Err(e) => return Err(e),
         }

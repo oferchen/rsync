@@ -51,7 +51,7 @@ impl FakeSuperStat {
         let uid = metadata.uid();
         let gid = metadata.gid();
 
-        // Extract rdev for device files
+        // upstream: xattrs.c:set_stat_xattr() - includes rdev for device files
         let rdev = if is_device_file(mode) {
             let rdev = metadata.rdev();
             Some((major(rdev), minor(rdev)))

@@ -90,9 +90,8 @@ pub fn sync_acls(
         return Ok(());
     }
 
-    // Verify source exists before reading ACLs — an ENOENT from getfacl
-    // would otherwise be masked by is_unsupported_error() which treats
-    // NotFound as "filesystem lacks ACL support".
+    // Pre-check existence - ENOENT from getfacl would be masked by
+    // is_unsupported_error() which treats NotFound as "no ACL support".
     if !source.exists() {
         return Err(MetadataError::new(
             "read ACL",
@@ -104,7 +103,7 @@ pub fn sync_acls(
     let source_acl = match getfacl(source, None) {
         Ok(acl) => acl,
         Err(e) => {
-            // Treat unsupported filesystems as "no ACL"
+            // upstream: acls.c - unsupported fs treated as empty ACL
             if is_unsupported_error(&e) {
                 Vec::new()
             } else {
@@ -232,7 +231,7 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
                     RsyncAcl::new()
                 };
             }
-            // On error, return mode-based fallback
+            // upstream: acls.c:525-528 - mode-based fallback on error
             return if !is_default {
                 RsyncAcl::from_mode(mode)
             } else {
@@ -255,18 +254,18 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
         let perms = exacl_perms_to_rsync(entry.perms);
         match entry.kind {
             AclEntryKind::User if entry.name.is_empty() => {
-                // user_obj (owner)
+                // upstream: acls.c:481 - user_obj from unnamed User entry
                 if acl.user_obj == NO_ENTRY {
                     acl.user_obj = perms;
                 }
             }
             AclEntryKind::Group if entry.name.is_empty() => {
-                // group_obj (owning group)
+                // upstream: acls.c:484 - group_obj from unnamed Group entry
                 if acl.group_obj == NO_ENTRY {
                     acl.group_obj = perms;
                 }
             }
-            // Mask and Other are POSIX ACL entries (Linux/FreeBSD only)
+            // upstream: acls.c:487-490 - mask and other POSIX entries
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             AclEntryKind::Mask => {
                 if acl.mask_obj == NO_ENTRY {
@@ -280,12 +279,12 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
                 }
             }
             AclEntryKind::User => {
-                // Named user entry
+                // upstream: acls.c:497-501 - named user ACE
                 let uid: u32 = entry.name.parse().unwrap_or(0);
                 acl.names.push(IdAccess::user(uid, u32::from(perms)));
             }
             AclEntryKind::Group => {
-                // Named group entry
+                // upstream: acls.c:502-506 - named group ACE
                 let gid: u32 = entry.name.parse().unwrap_or(0);
                 acl.names.push(IdAccess::group(gid, u32::from(perms)));
             }
@@ -293,7 +292,6 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
         }
     }
 
-    // Ensure base entries are populated from mode when not in ACL
     // upstream: acls.c:493-501 - fill NO_ENTRY base entries from mode
     if acl.user_obj == NO_ENTRY {
         acl.user_obj = ((mode >> 6) & 7) as u8;
@@ -349,9 +347,8 @@ fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
         }
     }
 
-    // macOS: clear extended ACL entries by setting an empty list.
-    // macOS does not have exacl::from_mode; the permission bits are
-    // managed separately from the extended ACL.
+    // macOS lacks exacl::from_mode - clear extended entries with empty list.
+    // Permission bits are managed separately from the extended ACL.
     #[cfg(target_os = "macos")]
     {
         if let Err(e) = setfacl(&[path], &[], None) {
@@ -428,17 +425,14 @@ fn clear_default_acl(path: &Path) -> Result<(), MetadataError> {
 /// Matches upstream rsync's `no_acl_syscall_error()` behavior where errors
 /// from filesystems that don't support ACLs are silently ignored.
 fn is_unsupported_error(e: &io::Error) -> bool {
-    // Check by error kind first
     matches!(
         e.kind(),
         io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput | io::ErrorKind::NotFound
     ) || {
-        // Fall back to raw OS error codes
         match e.raw_os_error() {
             Some(libc::ENOTSUP) | Some(libc::ENOENT) | Some(libc::EINVAL) | Some(libc::ENODATA)
             | Some(libc::EPERM) => true,
             _ => {
-                // Check error message as last resort
                 let msg = e.to_string().to_lowercase();
                 msg.contains("not supported")
                     || msg.contains("no such file")
@@ -517,9 +511,8 @@ fn reconstruct_acl(acl: &RsyncAcl, mode: Option<u32>) -> RsyncAcl {
 fn rsync_acl_to_entries(acl: &RsyncAcl) -> Vec<AclEntry> {
     let mut entries = Vec::new();
 
-    // Base entries (user_obj, group_obj, other_obj, mask_obj) are only
-    // used on Linux/FreeBSD where POSIX ACLs include these. On macOS,
-    // the base mode bits are managed separately.
+    // upstream: acls.c:866-878 - base entries for POSIX ACLs only (Linux/FreeBSD).
+    // macOS manages base mode bits separately from extended ACL entries.
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         if acl.has_user_obj() {
@@ -605,8 +598,7 @@ pub fn apply_acls_from_cache(
     }
 
     if let Some(acl) = cache.get_access(access_ndx) {
-        // Reconstruct stripped base entries from file mode.
-        // upstream: acls.c:change_sacl_perms() fills base entries from mode
+        // upstream: acls.c:change_sacl_perms() - reconstruct base entries from mode
         let reconstructed = reconstruct_acl(acl, mode);
         let entries = rsync_acl_to_entries(&reconstructed);
         if !entries.is_empty() {
