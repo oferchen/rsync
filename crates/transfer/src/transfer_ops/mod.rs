@@ -126,6 +126,17 @@ pub struct RequestConfig<'a> {
     ///
     /// - `compat.c` - `want_xattr_optim` set from capability negotiation
     pub want_xattr_optim: bool,
+    /// Whether append mode is active (`--append`).
+    ///
+    /// When true, signature blocks are NOT written after sum_head. The sender
+    /// uses sum_head fields to calculate existing file length and only sends
+    /// data appended beyond that point.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:775-776` - generator skips writing signature blocks in append mode
+    /// - `sender.c:87-92` - `receive_sums()` returns early without reading blocks
+    pub append: bool,
 }
 
 impl RequestConfig<'_> {
@@ -257,6 +268,7 @@ mod tests {
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             preserve_xattrs: false,
             want_xattr_optim: false,
+            append: false,
         };
         let debug_str = format!("{config:?}");
         assert!(debug_str.contains("RequestConfig"));

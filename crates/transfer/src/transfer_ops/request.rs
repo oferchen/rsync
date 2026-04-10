@@ -129,9 +129,14 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     };
     sum_head.write(writer)?;
 
-    // Write signature blocks if we have a signature
-    if let Some(ref sig) = signature {
-        write_signature_blocks(writer, sig, sum_head.s2length)?;
+    // Write signature blocks if we have a signature.
+    // upstream: generator.c:775-776 - in append mode, generator skips writing
+    // signature blocks after sum_head. The sender's receive_sums() (sender.c:87-92)
+    // returns early without reading blocks, using sum_head to calculate existing length.
+    if !config.append {
+        if let Some(ref sig) = signature {
+            write_signature_blocks(writer, sig, sum_head.s2length)?;
+        }
     }
     // No flush here - the pipeline loop flushes before blocking on response
     // reads. Per-file flushes defeat buffer batching, causing 1 sendto per

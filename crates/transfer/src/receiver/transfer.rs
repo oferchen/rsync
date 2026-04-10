@@ -202,8 +202,11 @@ impl ReceiverContext {
             };
             sum_head.write(&mut *writer)?;
 
-            if let Some(ref signature) = signature_opt {
-                write_signature_blocks(&mut *writer, signature, sum_head.s2length)?;
+            // upstream: generator.c:775-776 - skip signature blocks in append mode
+            if !self.config.flags.append {
+                if let Some(ref signature) = signature_opt {
+                    write_signature_blocks(&mut *writer, signature, sum_head.s2length)?;
+                }
             }
             writer.flush()?;
 
