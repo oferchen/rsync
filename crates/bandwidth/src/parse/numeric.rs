@@ -7,6 +7,7 @@
 use super::BandwidthParseError;
 use memchr::memchr2;
 
+// upstream: options.c:parse_size_arg() - atof() for decimal mantissa
 pub(crate) fn parse_decimal_with_exponent(
     text: &str,
 ) -> Result<(u128, u128, u128, i32), BandwidthParseError> {
@@ -37,6 +38,8 @@ pub(crate) fn parse_decimal_with_exponent(
     Ok((integer, fraction, denominator, exponent))
 }
 
+/// Checked exponentiation for suffix multiplier calculation.
+// upstream: options.c:parse_size_arg() - `while (reps--) size *= mult`
 pub(crate) fn pow_u128(base: u32, exponent: u32) -> Result<u128, BandwidthParseError> {
     let mut result = 1u128;
     let mut factor = u128::from(base);
