@@ -3,7 +3,8 @@
 //! Prevents OOM by limiting the number of in-flight [`DeltaWork`] items.
 //! The producer side blocks when the queue is full, applying backpressure
 //! to the generator/receiver that feeds work items. The consumer side
-//! drains items in parallel via [`rayon::iter::ParallelBridge`].
+//! drains items in parallel via [`rayon::scope`], spawning one task per
+//! item for lock-free work-stealing across the rayon thread pool.
 //!
 //! # Capacity
 //!
@@ -15,8 +16,8 @@
 //! # Architecture
 //!
 //! ```text
-//! Generator ─► WorkQueue (bounded) ─► rayon par_bridge ─► DeltaResult
-//!                 blocks when full       parallel workers       |
+//! Generator ─► WorkQueue (bounded) ─► rayon::scope tasks ─► DeltaResult
+//!                 blocks when full       work-stealing          |
 //!                                                               v
 //!                                                        ReorderBuffer
 //!                                                               |
@@ -47,15 +48,15 @@ const CAPACITY_MULTIPLIER: usize = 2;
 ///
 /// The [`WorkQueueSender`] is `Send` (but not `Clone` - single producer).
 /// The [`WorkQueueReceiver`] is `Send` and implements [`Iterator`] for use
-/// with [`rayon::iter::ParallelBridge`].
+/// with [`rayon::scope`] based consumption loops.
 ///
 /// # Example
 ///
 /// ```rust,no_run
 /// use engine::concurrent_delta::work_queue;
 /// use engine::concurrent_delta::DeltaWork;
-/// use rayon::prelude::*;
 /// use std::path::PathBuf;
+/// use std::sync::Mutex;
 ///
 /// let (tx, rx) = work_queue::bounded();
 ///
@@ -67,8 +68,17 @@ const CAPACITY_MULTIPLIER: usize = 2;
 ///     }
 /// });
 ///
-/// // Parallel consumers via rayon
-/// let results: Vec<u32> = rx.into_iter().par_bridge().map(|w| w.ndx()).collect();
+/// // Parallel consumers via rayon::scope
+/// let results: Vec<u32> = rayon::scope(|s| {
+///     let results = Mutex::new(Vec::new());
+///     for w in rx.into_iter() {
+///         let results = &results;
+///         s.spawn(move |_| {
+///             results.lock().unwrap().push(w.ndx());
+///         });
+///     }
+///     results.into_inner().unwrap()
+/// });
 /// ```
 pub struct WorkQueueSender {
     tx: SyncSender<DeltaWork>,
@@ -76,8 +86,8 @@ pub struct WorkQueueSender {
 
 /// Receiving half of the bounded work queue.
 ///
-/// Implements [`Iterator`] so it can be used directly with
-/// [`rayon::iter::ParallelBridge::par_bridge`] for parallel consumption.
+/// Implements [`Iterator`] so it can be consumed in a `rayon::scope` loop
+/// that spawns one task per item for parallel processing.
 pub struct WorkQueueReceiver {
     rx: Receiver<DeltaWork>,
 }
@@ -107,7 +117,7 @@ impl IntoIterator for WorkQueueReceiver {
     type Item = DeltaWork;
     type IntoIter = WorkQueueIter;
 
-    /// Converts the receiver into an iterator suitable for `par_bridge()`.
+    /// Converts the receiver into an iterator for `rayon::scope` consumption.
     ///
     /// The returned iterator yields items until the sender is dropped and the
     /// queue is drained.
@@ -119,7 +129,7 @@ impl IntoIterator for WorkQueueReceiver {
 /// Iterator adapter over the work queue receiver.
 ///
 /// Yields [`DeltaWork`] items until the sender drops and the queue drains.
-/// Designed for use with [`rayon::iter::ParallelBridge`].
+/// Designed for use with `rayon::scope` based consumption.
 pub struct WorkQueueIter {
     rx: Receiver<DeltaWork>,
 }
@@ -166,12 +176,10 @@ pub fn default_capacity() -> usize {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
-
-    use rayon::prelude::*;
 
     use super::*;
     use crate::concurrent_delta::DeltaWork;
@@ -208,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn par_bridge_processes_all_items() {
+    fn scope_processes_all_items() {
         let (tx, rx) = bounded_with_capacity(8);
         let count = 200;
 
@@ -219,12 +227,20 @@ mod tests {
             }
         });
 
-        let results: Vec<u32> = rx.into_iter().par_bridge().map(|w| w.ndx()).collect();
+        let results = Mutex::new(Vec::new());
+        rayon::scope(|s| {
+            for w in rx.into_iter() {
+                let results = &results;
+                s.spawn(move |_| {
+                    results.lock().unwrap().push(w.ndx());
+                });
+            }
+        });
         producer.join().unwrap();
 
-        let mut sorted = results;
-        sorted.sort_unstable();
-        assert_eq!(sorted, (0..count).collect::<Vec<u32>>());
+        let mut results = results.into_inner().unwrap();
+        results.sort_unstable();
+        assert_eq!(results, (0..count).collect::<Vec<u32>>());
     }
 
     #[test]
@@ -265,7 +281,7 @@ mod tests {
         // by tracking active worker count.
         let capacity = 4;
         let (tx, rx) = bounded_with_capacity(capacity);
-        let total_items = 50;
+        let total_items = 50u32;
 
         let active = Arc::new(AtomicUsize::new(0));
         let max_active = Arc::new(AtomicUsize::new(0));
@@ -277,22 +293,27 @@ mod tests {
             }
         });
 
-        let active_clone = Arc::clone(&active);
-        let max_active_clone = Arc::clone(&max_active);
+        let active_ref = Arc::clone(&active);
+        let max_active_ref = Arc::clone(&max_active);
 
-        let results: Vec<u32> = rx
-            .into_iter()
-            .par_bridge()
-            .map(|w| {
-                let current = active_clone.fetch_add(1, Ordering::SeqCst) + 1;
-                // Update max observed concurrency.
-                max_active_clone.fetch_max(current, Ordering::SeqCst);
-                // Simulate work to increase chance of overlapping.
-                thread::sleep(Duration::from_micros(100));
-                active_clone.fetch_sub(1, Ordering::SeqCst);
-                w.ndx()
-            })
-            .collect();
+        let collected = Mutex::new(Vec::new());
+        rayon::scope(|s| {
+            for w in rx.into_iter() {
+                let active_ref = Arc::clone(&active_ref);
+                let max_active_ref = Arc::clone(&max_active_ref);
+                let collected = &collected;
+                s.spawn(move |_| {
+                    let current = active_ref.fetch_add(1, Ordering::SeqCst) + 1;
+                    // Update max observed concurrency.
+                    max_active_ref.fetch_max(current, Ordering::SeqCst);
+                    // Simulate work to increase chance of overlapping.
+                    thread::sleep(Duration::from_micros(100));
+                    active_ref.fetch_sub(1, Ordering::SeqCst);
+                    collected.lock().unwrap().push(w.ndx());
+                });
+            }
+        });
+        let results = collected.into_inner().unwrap();
 
         producer.join().unwrap();
         assert_eq!(results.len(), total_items as usize);
@@ -357,7 +378,16 @@ mod tests {
             }
         });
 
-        let count: usize = rx.into_iter().par_bridge().map(|_| 1).sum();
+        let counter = AtomicUsize::new(0);
+        rayon::scope(|s| {
+            for _ in rx.into_iter() {
+                let counter = &counter;
+                s.spawn(move |_| {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                });
+            }
+        });
+        let count = counter.load(Ordering::Relaxed);
         producer.join().unwrap();
         assert_eq!(count, total as usize);
     }
@@ -440,14 +470,18 @@ mod tests {
         // Parallel workers dispatch and stamp sequence numbers.
         // In a real pipeline the producer stamps sequences before sending,
         // but here we use ndx as the sequence for demonstration.
-        let results: Vec<_> = rx
-            .into_iter()
-            .par_bridge()
-            .map(|w| {
-                let seq = u64::from(w.ndx());
-                strategy::dispatch(&w).with_sequence(seq)
-            })
-            .collect();
+        let collected = Mutex::new(Vec::new());
+        rayon::scope(|s| {
+            for w in rx.into_iter() {
+                let collected = &collected;
+                s.spawn(move |_| {
+                    let seq = u64::from(w.ndx());
+                    let result = strategy::dispatch(&w).with_sequence(seq);
+                    collected.lock().unwrap().push(result);
+                });
+            }
+        });
+        let results: Vec<_> = collected.into_inner().unwrap();
         producer.join().unwrap();
 
         // Feed out-of-order results into the reorder buffer.

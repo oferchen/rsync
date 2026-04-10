@@ -16,7 +16,7 @@
 //! The [`work_queue`] submodule provides a bounded channel that limits
 //! in-flight work items to prevent OOM when transferring millions of files.
 //! The producer blocks when the queue is full, applying backpressure to the
-//! generator. Consumers drain items in parallel via `rayon::par_bridge`.
+//! generator. Consumers drain items in parallel via `rayon::scope`.
 //!
 //! The [`reorder`] submodule provides [`ReorderBuffer`] - a sequence-based
 //! reorder buffer that restores sequential ordering after parallel dispatch.
