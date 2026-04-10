@@ -1,3 +1,5 @@
+//! Magic byte signatures for compressed file format detection.
+
 use super::FileCategory;
 
 /// Magic byte signature for detecting compressed file formats.
