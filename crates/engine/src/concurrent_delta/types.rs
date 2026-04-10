@@ -25,6 +25,13 @@ use std::path::PathBuf;
 pub struct DeltaWork {
     /// File list index (NDX) - stable position in the sorted file list.
     ndx: u32,
+    /// Pipeline sequence number for reordering after parallel dispatch.
+    ///
+    /// Assigned by the producer before sending into the work queue so that
+    /// the consumer can reconstruct the original submission order via
+    /// [`ReorderBuffer`](super::reorder::ReorderBuffer). Defaults to 0;
+    /// the producer stamps monotonically increasing values.
+    sequence: u64,
     /// Destination path where the reconstructed file will be placed.
     dest_path: PathBuf,
     /// Path to the basis file for delta transfer, `None` for whole-file transfer.
@@ -50,6 +57,7 @@ impl DeltaWork {
     pub fn whole_file(ndx: u32, dest_path: PathBuf, target_size: u64) -> Self {
         Self {
             ndx,
+            sequence: 0,
             dest_path,
             basis_path: None,
             target_size,
@@ -62,6 +70,7 @@ impl DeltaWork {
     pub fn delta(ndx: u32, dest_path: PathBuf, basis_path: PathBuf, target_size: u64) -> Self {
         Self {
             ndx,
+            sequence: 0,
             dest_path,
             basis_path: Some(basis_path),
             target_size,
@@ -103,6 +112,31 @@ impl DeltaWork {
     #[must_use]
     pub const fn is_delta(&self) -> bool {
         matches!(self.kind, DeltaWorkKind::Delta)
+    }
+
+    /// Returns the pipeline sequence number.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Sets the pipeline sequence number.
+    ///
+    /// Called by the producer before dispatching to the work queue so that
+    /// the consumer can reconstruct the original submission order via
+    /// [`ReorderBuffer`](super::reorder::ReorderBuffer).
+    pub fn set_sequence(&mut self, seq: u64) {
+        self.sequence = seq;
+    }
+
+    /// Sets the pipeline sequence number (builder-style).
+    ///
+    /// Returns `self` for chaining. Equivalent to calling
+    /// [`set_sequence`](Self::set_sequence) but consumes and returns the item.
+    #[must_use]
+    pub const fn with_sequence(mut self, seq: u64) -> Self {
+        self.sequence = seq;
+        self
     }
 
     /// Consumes the work item and returns its components.
@@ -397,5 +431,85 @@ mod tests {
     #[test]
     fn result_status_default_is_success() {
         assert_eq!(DeltaResultStatus::default(), DeltaResultStatus::Success);
+    }
+
+    // ==================== DeltaWork sequence tests ====================
+
+    #[test]
+    fn work_default_sequence_is_zero() {
+        let work = DeltaWork::whole_file(0, PathBuf::from("/dest"), 100);
+        assert_eq!(work.sequence(), 0);
+    }
+
+    #[test]
+    fn work_set_sequence() {
+        let mut work = DeltaWork::whole_file(0, PathBuf::from("/dest"), 100);
+        work.set_sequence(42);
+        assert_eq!(work.sequence(), 42);
+    }
+
+    #[test]
+    fn work_with_sequence_builder() {
+        let work = DeltaWork::whole_file(0, PathBuf::from("/dest"), 100).with_sequence(7);
+        assert_eq!(work.sequence(), 7);
+    }
+
+    #[test]
+    fn work_sequence_preserved_on_clone() {
+        let work = DeltaWork::delta(
+            1,
+            PathBuf::from("/dest"),
+            PathBuf::from("/basis"),
+            200,
+        )
+        .with_sequence(99);
+        let cloned = work.clone();
+        assert_eq!(cloned.sequence(), 99);
+    }
+
+    #[test]
+    fn delta_work_default_sequence_is_zero() {
+        let work = DeltaWork::delta(
+            5,
+            PathBuf::from("/dest"),
+            PathBuf::from("/basis"),
+            1024,
+        );
+        assert_eq!(work.sequence(), 0);
+    }
+
+    // ==================== DeltaResult sequence tests ====================
+
+    #[test]
+    fn result_default_sequence_is_zero() {
+        let result = DeltaResult::default();
+        assert_eq!(result.sequence(), 0);
+    }
+
+    #[test]
+    fn result_with_sequence() {
+        let result = DeltaResult::success(1, 100, 50, 50).with_sequence(10);
+        assert_eq!(result.sequence(), 10);
+        assert_eq!(result.ndx(), 1);
+    }
+
+    #[test]
+    fn result_sequence_preserved_on_clone() {
+        let result = DeltaResult::success(0, 0, 0, 0).with_sequence(55);
+        let cloned = result.clone();
+        assert_eq!(cloned.sequence(), 55);
+    }
+
+    #[test]
+    fn result_needs_redo_default_sequence() {
+        let result = DeltaResult::needs_redo(3, "mismatch".to_string());
+        assert_eq!(result.sequence(), 0);
+    }
+
+    #[test]
+    fn result_failed_with_sequence() {
+        let result = DeltaResult::failed(7, "I/O error".to_string()).with_sequence(42);
+        assert_eq!(result.sequence(), 42);
+        assert!(!result.is_success());
     }
 }
