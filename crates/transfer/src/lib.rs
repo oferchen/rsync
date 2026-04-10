@@ -145,6 +145,9 @@ mod writer;
 /// Bounded-concurrency parallel I/O using tokio `spawn_blocking` + `Semaphore`.
 mod parallel_io;
 
+/// Pluggable delta dispatch pipeline for the receiver.
+pub mod delta_pipeline;
+
 /// Batched acknowledgments for reduced network overhead.
 pub mod ack_batcher;
 /// Adaptive buffer sizing based on file size.
@@ -192,6 +195,7 @@ pub use pipeline::{
     DEFAULT_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW, MIN_PIPELINE_WINDOW, PendingTransfer,
     PipelineConfig, PipelineState,
 };
+pub use delta_pipeline::{ReceiverDeltaPipeline, SequentialDeltaPipeline};
 pub use progress::{ItemizeCallback, TransferProgressCallback, TransferProgressEvent};
 
 /// Batch recording configuration for protocol stream teeing.
