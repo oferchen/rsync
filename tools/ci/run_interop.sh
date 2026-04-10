@@ -3179,6 +3179,164 @@ CONF
   return 0
 }
 
+# Sparse file transfer interop
+# Verifies that upstream rsync can push files with --sparse to oc-rsync daemon
+# and that file content arrives intact (allocation is filesystem-dependent).
+test_sparse() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local sp_src="${work}/sparse-src"
+  local sp_dest="${work}/sparse-dest"
+  rm -rf "$sp_src" "$sp_dest"
+  mkdir -p "$sp_src"
+
+  # Create a file with large zero runs
+  dd if=/dev/zero of="${sp_src}/sparse.dat" bs=1M count=2 2>/dev/null
+  # Create a regular file with non-zero content
+  echo "regular file content for sparse test" > "${sp_src}/regular.txt"
+
+  # Push from upstream rsync to oc-rsync daemon with --sparse
+  mkdir -p "$sp_dest"
+  local sp_conf="${work}/sparse-oc.conf"
+  local sp_pid="${work}/sparse-oc.pid"
+  local sp_log="${work}/sparse-oc.log"
+  cat > "$sp_conf" <<CONF
+pid file = ${sp_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${sp_dest}
+comment = sparse test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$sp_conf" "$sp_log" "$upstream_binary" "$sp_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" --sparse -av --timeout=10 \
+      "${sp_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.sparse.out" 2>"${log}.sparse.err"; then
+    echo "    upstream -> oc daemon sparse transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$sp_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify content integrity (not allocation - that is filesystem-dependent)
+  for fname in "sparse.dat" "regular.txt"; do
+    if [[ ! -f "${sp_dest}/${fname}" ]]; then
+      echo "    ${fname} missing after sparse transfer"
+      return 1
+    fi
+    if ! cmp -s "${sp_src}/${fname}" "${sp_dest}/${fname}"; then
+      echo "    ${fname} content mismatch"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# Whole-file transfer interop
+# Verifies that upstream rsync can push with --whole-file (skip delta) to
+# oc-rsync daemon. Populates files first, modifies one, then re-pushes with
+# --whole-file and verifies the modified content arrives.
+test_whole_file() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local wf_src="${work}/whole-file-src"
+  local wf_dest="${work}/whole-file-dest"
+  rm -rf "$wf_src" "$wf_dest"
+  mkdir -p "$wf_src"
+
+  # Create source files
+  echo "alpha original" > "${wf_src}/alpha.txt"
+  echo "beta content" > "${wf_src}/beta.txt"
+  echo "gamma content" > "${wf_src}/gamma.txt"
+
+  # Push initial files to populate destination
+  mkdir -p "$wf_dest"
+  local wf_conf="${work}/whole-file-oc.conf"
+  local wf_pid="${work}/whole-file-oc.pid"
+  local wf_log="${work}/whole-file-oc.log"
+  cat > "$wf_conf" <<CONF
+pid file = ${wf_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${wf_dest}
+comment = whole-file test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$wf_conf" "$wf_log" "$upstream_binary" "$wf_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${wf_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.whole-file-init.out" 2>"${log}.whole-file-init.err"; then
+    echo "    upstream -> oc daemon whole-file initial transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$wf_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify initial transfer
+  for fname in "alpha.txt" "beta.txt" "gamma.txt"; do
+    if [[ ! -f "${wf_dest}/${fname}" ]]; then
+      echo "    ${fname} missing after initial transfer"
+      return 1
+    fi
+  done
+
+  # Modify one source file
+  echo "alpha MODIFIED" > "${wf_src}/alpha.txt"
+
+  # Re-push with --whole-file
+  start_oc_daemon "$wf_conf" "$wf_log" "$upstream_binary" "$wf_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" --whole-file -av --timeout=10 \
+      "${wf_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.whole-file-update.out" 2>"${log}.whole-file-update.err"; then
+    echo "    upstream -> oc daemon whole-file update transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$wf_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify modified file has new content
+  if [[ ! -f "${wf_dest}/alpha.txt" ]]; then
+    echo "    alpha.txt missing after whole-file update"
+    return 1
+  fi
+  local actual
+  actual=$(cat "${wf_dest}/alpha.txt")
+  if [[ "$actual" != "alpha MODIFIED" ]]; then
+    echo "    alpha.txt content not updated (got: ${actual})"
+    return 1
+  fi
+
+  # Verify other files still intact
+  for fname in "beta.txt" "gamma.txt"; do
+    if ! cmp -s "${wf_src}/${fname}" "${wf_dest}/${fname}"; then
+      echo "    ${fname} content mismatch after whole-file update"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -3203,6 +3361,8 @@ run_standalone_interop_tests() {
     "unicode-names"
     "special-chars"
     "empty-dir"
+    "sparse"
+    "whole-file"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -3220,6 +3380,8 @@ run_standalone_interop_tests() {
     "test_unicode_names"
     "test_special_chars"
     "test_empty_dir"
+    "test_sparse"
+    "test_whole_file"
   )
 
   for i in "${!test_names[@]}"; do
@@ -3259,6 +3421,12 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       empty-dir)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      sparse)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      whole-file)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
