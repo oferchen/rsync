@@ -33,14 +33,6 @@ pub struct MultiplexReader<R> {
 
 impl<R: Read> MultiplexReader<R> {
     /// Creates a new multiplexing reader wrapping the given input stream.
-    ///
-    /// # Arguments
-    ///
-    /// * `inner` - The underlying reader to wrap with multiplex demultiplexing
-    ///
-    /// # Returns
-    ///
-    /// A new `MultiplexReader` with an empty buffer, ready to receive multiplexed messages.
     pub fn new(inner: R) -> Self {
         Self {
             inner,
@@ -50,11 +42,6 @@ impl<R: Read> MultiplexReader<R> {
     }
 
     /// Consumes this wrapper and returns the underlying reader.
-    ///
-    /// # Returns
-    ///
-    /// The wrapped reader, allowing access to the raw stream after multiplex operations
-    /// are complete.
     pub fn into_inner(self) -> R {
         self.inner
     }
@@ -63,35 +50,16 @@ impl<R: Read> MultiplexReader<R> {
 impl<R: Read> Read for MultiplexReader<R> {
     /// Reads demultiplexed data from the underlying stream.
     ///
-    /// This implementation automatically handles the rsync multiplex protocol by:
-    /// 1. Serving any buffered data from previous messages first
-    /// 2. Reading new multiplexed messages from the underlying stream
-    /// 3. Filtering out non-data messages (logging them to stderr)
-    /// 4. Returning only MSG_DATA payloads to the caller
-    ///
-    /// # Arguments
-    ///
-    /// * `buf` - The buffer to fill with demultiplexed data
-    ///
-    /// # Returns
-    ///
-    /// The number of bytes read into `buf`, or an I/O error if the underlying read fails.
-    ///
-    /// # Protocol Details
-    ///
-    /// The function loops reading messages until it receives a MSG_DATA frame. Messages
-    /// with codes INFO, WARNING, ERROR, etc. are printed to stderr and discarded. This
-    /// ensures the caller only sees actual protocol data while still surfacing diagnostic
-    /// messages from the remote daemon.
+    /// Loops reading multiplexed messages until a MSG_DATA frame arrives.
+    /// Non-data messages (INFO, WARNING, ERROR) are printed to stdout/stderr
+    /// and discarded so the caller only sees protocol data.
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // If we have buffered data, copy it out first
         if self.pos < self.buffer.len() {
             let available = self.buffer.len() - self.pos;
             let to_copy = available.min(buf.len());
             buf[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
             self.pos += to_copy;
 
-            // If buffer is exhausted, reset for next message
             if self.pos >= self.buffer.len() {
                 self.buffer.clear();
                 self.pos = 0;
@@ -100,18 +68,14 @@ impl<R: Read> Read for MultiplexReader<R> {
             return Ok(to_copy);
         }
 
-        // Loop until we get a MSG_DATA message
-        // Other message types (INFO, ERROR, etc.) are logged and we continue reading
         loop {
             self.buffer.clear();
             self.pos = 0;
 
             let code = protocol::recv_msg_into(&mut self.inner, &mut self.buffer)?;
 
-            // Dispatch based on message type
             match code {
                 protocol::MessageCode::Data => {
-                    // MSG_DATA: return payload for protocol processing
                     let to_copy = self.buffer.len().min(buf.len());
                     buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
                     self.pos = to_copy;
@@ -185,52 +149,21 @@ pub struct MultiplexWriter<W> {
 
 impl<W: Write> MultiplexWriter<W> {
     /// Creates a new multiplexing writer wrapping the given output stream.
-    ///
-    /// # Arguments
-    ///
-    /// * `inner` - The underlying writer to wrap with multiplex framing
-    ///
-    /// # Returns
-    ///
-    /// A new `MultiplexWriter` ready to send MSG_DATA frames.
     pub fn new(inner: W) -> Self {
         Self { inner }
     }
 
     /// Consumes this wrapper and returns the underlying writer.
-    ///
-    /// # Returns
-    ///
-    /// The wrapped writer, allowing access to the raw stream after multiplex operations
-    /// are complete.
     pub fn into_inner(self) -> W {
         self.inner
     }
 }
 
 impl<W: Write> Write for MultiplexWriter<W> {
-    /// Writes data by wrapping it in a MSG_DATA multiplex frame.
+    /// Writes data by wrapping it in a single MSG_DATA multiplex frame.
     ///
-    /// The entire buffer is sent as a single MSG_DATA message. The protocol layer
-    /// handles validation of the payload length against the 24-bit limit (16MB max).
-    ///
-    /// # Arguments
-    ///
-    /// * `buf` - The data to write as a MSG_DATA payload
-    ///
-    /// # Returns
-    ///
-    /// The number of bytes written (always `buf.len()` on success), or an I/O error
-    /// if the underlying write fails or the payload exceeds the maximum size.
-    ///
-    /// # Protocol Details
-    ///
-    /// Each write() call produces exactly one MSG_DATA frame with a 4-byte header
-    /// followed by the payload. The message code is always 0 (MSG_DATA). Payload
-    /// lengths are validated by `protocol::send_msg` to ensure compliance with the
-    /// upstream rsync implementation's 24-bit length field.
+    /// Payload length is validated by `protocol::send_msg` against the 24-bit limit.
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // Send as MSG_DATA (code 0)
         let code = protocol::MessageCode::try_from(0u8).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -242,11 +175,6 @@ impl<W: Write> Write for MultiplexWriter<W> {
         Ok(buf.len())
     }
 
-    /// Flushes the underlying writer.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if the flush succeeds, or an I/O error from the underlying stream.
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
     }
