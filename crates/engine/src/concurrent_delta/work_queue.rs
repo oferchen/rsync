@@ -3,8 +3,9 @@
 //! Prevents OOM by limiting the number of in-flight [`DeltaWork`] items.
 //! The producer side blocks when the queue is full, applying backpressure
 //! to the generator/receiver that feeds work items. The consumer side
-//! drains items in parallel via [`rayon::scope`], spawning one task per
-//! item for lock-free work-stealing across the rayon thread pool.
+//! drains items in parallel via [`WorkQueueReceiver::drain_parallel`],
+//! which internally uses [`rayon::scope`] to spawn one task per item for
+//! lock-free work-stealing across the rayon thread pool.
 //!
 //! # Capacity
 //!
@@ -16,13 +17,35 @@
 //! # Architecture
 //!
 //! ```text
-//! Generator ─► WorkQueue (bounded) ─► rayon::scope tasks ─► DeltaResult
-//!                 blocks when full       work-stealing          |
-//!                                                               v
+//! Generator ─► WorkQueue (bounded) ─► drain_parallel(f) ─► Vec<R>
+//!                 blocks when full       rayon::scope          |
+//!                                        work-stealing        v
 //!                                                        ReorderBuffer
-//!                                                               |
-//!                                                               v
-//!                                                     consumer (in-order)
+//!                                                             |
+//!                                                             v
+//!                                                   consumer (in-order)
+//! ```
+//!
+//! # Usage
+//!
+//! ```rust,no_run
+//! use engine::concurrent_delta::work_queue;
+//! use engine::concurrent_delta::DeltaWork;
+//! use std::path::PathBuf;
+//!
+//! let (tx, rx) = work_queue::bounded();
+//!
+//! // Producer thread
+//! std::thread::spawn(move || {
+//!     for i in 0..100 {
+//!         let work = DeltaWork::whole_file(i, PathBuf::from("/dest"), 1024);
+//!         tx.send(work).unwrap();
+//!     }
+//! });
+//!
+//! // Parallel consumers via drain_parallel
+//! let ndx_list: Vec<u32> = rx.drain_parallel(|w| w.ndx());
+//! assert_eq!(ndx_list.len(), 100);
 //! ```
 //!
 //! # Upstream Reference
@@ -56,7 +79,6 @@ const CAPACITY_MULTIPLIER: usize = 2;
 /// use engine::concurrent_delta::work_queue;
 /// use engine::concurrent_delta::DeltaWork;
 /// use std::path::PathBuf;
-/// use std::sync::Mutex;
 ///
 /// let (tx, rx) = work_queue::bounded();
 ///
@@ -68,17 +90,8 @@ const CAPACITY_MULTIPLIER: usize = 2;
 ///     }
 /// });
 ///
-/// // Parallel consumers via rayon::scope
-/// let results: Vec<u32> = rayon::scope(|s| {
-///     let results = Mutex::new(Vec::new());
-///     for w in rx.into_iter() {
-///         let results = &results;
-///         s.spawn(move |_| {
-///             results.lock().unwrap().push(w.ndx());
-///         });
-///     }
-///     results.into_inner().unwrap()
-/// });
+/// // Parallel consumers via drain_parallel
+/// let results: Vec<u32> = rx.drain_parallel(|w| w.ndx());
 /// ```
 pub struct WorkQueueSender {
     tx: SyncSender<DeltaWork>,
@@ -87,9 +100,66 @@ pub struct WorkQueueSender {
 /// Receiving half of the bounded work queue.
 ///
 /// Implements [`Iterator`] so it can be consumed in a `rayon::scope` loop
-/// that spawns one task per item for parallel processing.
+/// that spawns one task per item for parallel processing. For convenience,
+/// [`drain_parallel`](Self::drain_parallel) encapsulates the `rayon::scope`
+/// pattern into a single method call.
 pub struct WorkQueueReceiver {
     rx: Receiver<DeltaWork>,
+}
+
+impl WorkQueueReceiver {
+    /// Drains the queue in parallel, applying `f` to each item via `rayon::scope`.
+    ///
+    /// Spawns one rayon task per [`DeltaWork`] item, allowing the rayon thread
+    /// pool to work-steal across all items. The bounded queue provides natural
+    /// backpressure - the iterator blocks when the queue is empty and the
+    /// producer blocks when the queue is full.
+    ///
+    /// Results are collected in arbitrary order (determined by worker completion
+    /// timing). Use [`ReorderBuffer`] on the returned `Vec` if sequential
+    /// ordering is required.
+    ///
+    /// This method consumes the receiver. It returns once the sender is dropped
+    /// and all queued items have been processed.
+    ///
+    /// [`ReorderBuffer`]: super::reorder::ReorderBuffer
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use engine::concurrent_delta::work_queue;
+    /// use engine::concurrent_delta::DeltaWork;
+    /// use std::path::PathBuf;
+    ///
+    /// let (tx, rx) = work_queue::bounded();
+    ///
+    /// std::thread::spawn(move || {
+    ///     for i in 0..10 {
+    ///         tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 64)).unwrap();
+    ///     }
+    /// });
+    ///
+    /// let indices: Vec<u32> = rx.drain_parallel(|w| w.ndx());
+    /// assert_eq!(indices.len(), 10);
+    /// ```
+    pub fn drain_parallel<F, R>(self, f: F) -> Vec<R>
+    where
+        F: Fn(DeltaWork) -> R + Send + Sync,
+        R: Send,
+    {
+        let results = std::sync::Mutex::new(Vec::new());
+        rayon::scope(|s| {
+            for work in self.into_iter() {
+                let f = &f;
+                let results = &results;
+                s.spawn(move |_| {
+                    let result = f(work);
+                    results.lock().unwrap().push(result);
+                });
+            }
+        });
+        results.into_inner().unwrap()
+    }
 }
 
 /// Error returned when the receiver has been dropped and the queue is closed.
@@ -494,5 +564,154 @@ mod tests {
         let ordered: Vec<u64> = reorder.drain_ready().map(|r| r.sequence()).collect();
         let expected: Vec<u64> = (0..u64::from(total)).collect();
         assert_eq!(ordered, expected);
+    }
+
+    // ==================== drain_parallel tests ====================
+
+    #[test]
+    fn drain_parallel_collects_all_items() {
+        let (tx, rx) = bounded_with_capacity(8);
+        let count = 200u32;
+
+        let producer = thread::spawn(move || {
+            for i in 0..count {
+                tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 64))
+                    .unwrap();
+            }
+        });
+
+        let mut results = rx.drain_parallel(|w| w.ndx());
+        producer.join().unwrap();
+
+        results.sort_unstable();
+        assert_eq!(results, (0..count).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn drain_parallel_empty_queue() {
+        let (tx, rx) = bounded_with_capacity(4);
+        drop(tx); // close immediately - no items sent
+        let results: Vec<u32> = rx.drain_parallel(|w| w.ndx());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn drain_parallel_backpressure() {
+        // Capacity of 2: producer must block after filling the queue,
+        // but drain_parallel still processes all items without deadlock.
+        let (tx, rx) = bounded_with_capacity(2);
+        let sent_count = Arc::new(AtomicUsize::new(0));
+        let sent_clone = Arc::clone(&sent_count);
+        let total = 50u32;
+
+        let producer = thread::spawn(move || {
+            for i in 0..total {
+                tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+                    .unwrap();
+                sent_clone.fetch_add(1, Ordering::Release);
+            }
+        });
+
+        let results = rx.drain_parallel(|w| w.ndx());
+        producer.join().unwrap();
+
+        assert_eq!(results.len(), total as usize);
+        let mut sorted = results;
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..total).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn drain_parallel_error_propagation() {
+        // Closure returns Result - errors are collected alongside successes.
+        let (tx, rx) = bounded_with_capacity(8);
+        let total = 20u32;
+
+        let producer = thread::spawn(move || {
+            for i in 0..total {
+                tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+                    .unwrap();
+            }
+        });
+
+        let results: Vec<Result<u32, String>> = rx.drain_parallel(|w| {
+            let ndx = w.ndx();
+            if ndx % 5 == 0 {
+                Err(format!("failed on ndx {ndx}"))
+            } else {
+                Ok(ndx)
+            }
+        });
+        producer.join().unwrap();
+
+        assert_eq!(results.len(), total as usize);
+        let errors: Vec<_> = results.iter().filter(|r| r.is_err()).collect();
+        let successes: Vec<_> = results.iter().filter(|r| r.is_ok()).collect();
+        // ndx 0, 5, 10, 15 fail => 4 errors, 16 successes
+        assert_eq!(errors.len(), 4);
+        assert_eq!(successes.len(), 16);
+    }
+
+    #[test]
+    fn drain_parallel_single_item() {
+        let (tx, rx) = bounded_with_capacity(4);
+        tx.send(DeltaWork::whole_file(42, PathBuf::from("/dst"), 128))
+            .unwrap();
+        drop(tx);
+
+        let results = rx.drain_parallel(|w| (w.ndx(), w.target_size()));
+        assert_eq!(results, vec![(42, 128)]);
+    }
+
+    #[test]
+    fn drain_parallel_with_reorder_buffer() {
+        use crate::concurrent_delta::reorder::ReorderBuffer;
+        use crate::concurrent_delta::strategy;
+
+        let (tx, rx) = bounded_with_capacity(8);
+        let total = 100u32;
+
+        let producer = thread::spawn(move || {
+            for i in 0..total {
+                tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 64))
+                    .unwrap();
+            }
+        });
+
+        let results = rx.drain_parallel(|w| {
+            let seq = u64::from(w.ndx());
+            strategy::dispatch(&w).with_sequence(seq)
+        });
+        producer.join().unwrap();
+
+        // Feed into reorder buffer and verify sequential output.
+        let mut reorder = ReorderBuffer::new(total as usize);
+        for r in results {
+            reorder.insert(r.sequence(), r).unwrap();
+        }
+        let ordered: Vec<u64> = reorder.drain_ready().map(|r| r.sequence()).collect();
+        assert_eq!(ordered, (0..u64::from(total)).collect::<Vec<u64>>());
+    }
+
+    #[test]
+    fn drain_parallel_closure_captures_state() {
+        let (tx, rx) = bounded_with_capacity(8);
+        let total = 30u32;
+        let multiplier = 10u32;
+
+        let producer = thread::spawn(move || {
+            for i in 0..total {
+                tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+                    .unwrap();
+            }
+        });
+
+        let results = rx.drain_parallel(|w| w.ndx() * multiplier);
+        producer.join().unwrap();
+
+        let mut sorted = results;
+        sorted.sort_unstable();
+        let expected: Vec<u32> = (0..total).map(|i| i * multiplier).collect();
+        assert_eq!(sorted, expected);
     }
 }
