@@ -107,23 +107,15 @@ mod compressed_reader;
 mod compressed_writer;
 /// Server configuration derived from the compact `--server` flag string.
 pub mod config;
-/// Delta application for file transfer.
-///
-/// Encapsulates the logic for applying delta data received from a sender.
-/// Mirrors upstream rsync's `receive_data()` function from `receiver.c:240`.
+/// Delta application mirroring upstream `receiver.c:receive_data()`.
 pub mod delta_apply;
-/// Delta generator configuration parameter object.
-///
-/// Provides `DeltaGeneratorConfig` struct for encapsulating delta generation parameters.
+/// Delta generator configuration parameters.
 pub mod delta_config;
-/// Delta transfer implementation guide and documentation.
-///
-/// **Start here** for comprehensive documentation on how the delta transfer algorithm works,
-/// including signature generation, delta creation, delta application, and metadata preservation.
+/// Delta transfer algorithm documentation and implementation guide.
 pub mod delta_transfer;
-/// Error categorization for delta transfer operations.
+/// Error categorization and retry utilities for delta transfer operations.
 pub mod error;
-/// Parser for the compact server flag string.
+/// Compact server flag string parser (`-logDtpre.iLsfxC`).
 pub mod flags;
 /// Server-side Generator role implementation.
 pub mod generator;
@@ -135,9 +127,7 @@ mod reader;
 pub mod receiver;
 /// Enumerations describing the role executed by the server process.
 pub mod role;
-/// Role trailer formatting for error and warning messages.
-///
-/// Upstream rsync appends `[role=VERSION]` suffixes to diagnostic output.
+/// Role trailer formatting (`[sender=VERSION]`) for diagnostic output.
 pub(crate) mod role_trailer;
 /// Path sanitization mirroring upstream `util1.c:sanitize_path()`.
 pub mod sanitize_path;
