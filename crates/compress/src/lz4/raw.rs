@@ -26,10 +26,12 @@ use std::io::{self, Read, Write};
 
 use lz4_flex::block::{compress_into, decompress_into, get_maximum_output_size};
 
-/// Flag byte indicating compressed data follows (upstream token.c DEFLATED_DATA).
+// upstream: token.c:DEFLATED_DATA
+/// Flag byte indicating compressed data follows.
 pub const DEFLATED_DATA: u8 = 0x40;
 
-/// Maximum compressed block size in bytes (14-bit field, upstream MAX_DATA_COUNT).
+// upstream: token.c:MAX_DATA_COUNT
+/// Maximum compressed block size in bytes (14-bit field).
 pub const MAX_BLOCK_SIZE: usize = 16383;
 
 /// Maximum decompressed size to prevent memory exhaustion attacks.
@@ -37,6 +39,7 @@ pub const MAX_BLOCK_SIZE: usize = 16383;
 /// Upstream rsync uses 128KB blocks max, but we allow for larger custom configs.
 pub const MAX_DECOMPRESSED_SIZE: usize = 64 * 1024 * 1024;
 
+// upstream: token.c - 2-byte header encodes DEFLATED_DATA flag + 14-bit size
 /// Minimum header size for a compressed block.
 pub const HEADER_SIZE: usize = 2;
 

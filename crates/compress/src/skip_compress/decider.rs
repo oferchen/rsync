@@ -1,3 +1,16 @@
+//! Compression decision engine.
+//!
+//! Implements the three-pronged approach for deciding whether to compress a
+//! file: extension lookup, magic byte detection, and sample-based auto-detection.
+//! The extension-based skip list mirrors upstream rsync's `--skip-compress` option
+//! and `lp_dont_compress()` default list.
+//!
+//! # Upstream Reference
+//!
+//! See `token.c:set_compression()` and `token.c:init_set_compression()` for the
+//! upstream suffix tree and wildcard matching that drives per-file compression
+//! level selection.
+
 use std::collections::HashSet;
 use std::io::{self, Write};
 use std::path::Path;

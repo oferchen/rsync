@@ -2,6 +2,9 @@
 //!
 //! These lists mirror upstream rsync's built-in set of file extensions that
 //! typically don't benefit from compression during transfer.
+//!
+//! upstream: `loadparm.c:lp_dont_compress()` provides the default suffix list
+//! that `token.c:init_set_compression()` loads into the suffix tree.
 
 use std::collections::HashSet;
 
