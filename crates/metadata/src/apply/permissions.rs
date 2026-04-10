@@ -294,7 +294,7 @@ pub(super) fn apply_permissions_from_entry(
 
         if options.permissions() {
             let mode = entry.permissions();
-            // upstream: rsync avoids redundant chmod calls
+            // upstream: rsync.c:set_file_attrs() - skips chmod when mode already matches
             let needs_chmod = match cached_meta {
                 Some(meta) => (meta.permissions().mode() & 0o7777) != (mode & 0o7777),
                 None => true,
@@ -309,8 +309,7 @@ pub(super) fn apply_permissions_from_entry(
         }
 
         if let Some(chmod) = options.chmod() {
-            // Get current permissions - use cached metadata if available,
-            // otherwise fall back to a fresh stat (chmod may have changed them above).
+            // upstream: rsync.c:set_file_attrs() - read current mode before applying chmod modifiers
             let fresh_meta;
             let current_meta = if options.permissions() {
                 fresh_meta = fs::metadata(destination)

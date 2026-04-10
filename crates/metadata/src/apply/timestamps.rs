@@ -100,15 +100,14 @@ pub(super) fn apply_timestamps_from_entry(
 ) -> Result<(), MetadataError> {
     let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
-    // upstream: rsync preserves the source atime when --atimes is set;
-    // otherwise it uses mtime for both atime and mtime (the default).
+    // upstream: rsync.c:600-603 - preserves source atime with --atimes, else mtime for both
     let atime = if options.atimes() && entry.atime() != 0 {
         FileTime::from_unix_time(entry.atime(), 0)
     } else {
         mtime
     };
 
-    // upstream: rsync avoids redundant utimensat calls
+    // upstream: rsync.c:set_file_attrs() - skips utimensat when timestamps match
     let needs_utime = match cached_meta {
         Some(meta) => {
             let current_mtime = FileTime::from_last_modification_time(meta);
