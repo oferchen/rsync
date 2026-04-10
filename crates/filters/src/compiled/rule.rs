@@ -38,8 +38,7 @@ impl CompiledRule {
     pub(crate) fn matches(&self, path: &Path, is_dir: bool) -> bool {
         let pattern_matched = self.pattern_matches_impl(path, is_dir);
 
-        // Upstream rsync: ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1;
-        // When negated, invert the match result
+        // upstream: exclude.c:906 - ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1
         if self.negate {
             debug_log!(
                 Filter,

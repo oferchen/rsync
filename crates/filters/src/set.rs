@@ -110,10 +110,7 @@ impl FilterSet {
                         rule.applies_to_receiver,
                     );
                 }
-                FilterAction::Merge | FilterAction::DirMerge => {
-                    // Handled by from_rules_with_merge_expansion (Merge) or
-                    // per-directory traversal (DirMerge).
-                }
+                FilterAction::Merge | FilterAction::DirMerge => {}
             }
         }
 
