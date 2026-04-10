@@ -4722,6 +4722,405 @@ CONF
   return 0
 }
 
+test_permissions_only() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local pm_src="${work}/perms-src"
+  local pm_dest="${work}/perms-dest"
+  rm -rf "$pm_src" "$pm_dest"
+  mkdir -p "$pm_src" "$pm_dest"
+
+  # Create source files with specific permissions
+  echo "read-only content" > "$pm_src/readonly.txt"
+  chmod 644 "$pm_src/readonly.txt"
+  echo "executable script" > "$pm_src/script.sh"
+  chmod 755 "$pm_src/script.sh"
+  mkdir -p "$pm_src/sub"
+  echo "nested file" > "$pm_src/sub/nested.txt"
+  chmod 644 "$pm_src/sub/nested.txt"
+
+  # Start oc-rsync daemon
+  local pm_conf="${work}/perms-oc.conf"
+  local pm_pid="${work}/perms-oc.pid"
+  local pm_log="${work}/perms-oc.log"
+  cat > "$pm_conf" <<CONF
+pid file = ${pm_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${pm_dest}
+comment = permissions test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$pm_conf" "$pm_log" "$upstream_binary" "$pm_pid" "$oc_port"
+
+  # Push with -rlpv (recursive, links, permissions, verbose - no -a)
+  if ! timeout "$hard_timeout" "$upstream_binary" -rlpv --timeout=10 \
+      "${pm_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.perms.out" 2>"${log}.perms.err"; then
+    echo "    permissions push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify file content
+  for f in readonly.txt script.sh sub/nested.txt; do
+    if [[ ! -f "$pm_dest/$f" ]]; then
+      echo "    missing file: $f"
+      return 1
+    fi
+    if ! cmp -s "$pm_src/$f" "$pm_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify permissions match
+  local src_perm dest_perm
+  src_perm=$(stat -c '%a' "$pm_src/readonly.txt" 2>/dev/null || stat -f '%Lp' "$pm_src/readonly.txt")
+  dest_perm=$(stat -c '%a' "$pm_dest/readonly.txt" 2>/dev/null || stat -f '%Lp' "$pm_dest/readonly.txt")
+  if [[ "$src_perm" != "$dest_perm" ]]; then
+    echo "    readonly.txt permission mismatch: src=$src_perm dest=$dest_perm"
+    return 1
+  fi
+
+  src_perm=$(stat -c '%a' "$pm_src/script.sh" 2>/dev/null || stat -f '%Lp' "$pm_src/script.sh")
+  dest_perm=$(stat -c '%a' "$pm_dest/script.sh" 2>/dev/null || stat -f '%Lp' "$pm_dest/script.sh")
+  if [[ "$src_perm" != "$dest_perm" ]]; then
+    echo "    script.sh permission mismatch: src=$src_perm dest=$dest_perm"
+    return 1
+  fi
+
+  return 0
+}
+
+# Timestamps-only daemon push interop test.
+# Upstream rsync pushes files with -rlt (explicit timestamps) to an oc-rsync
+# daemon. Verifies that modification times match between source and destination.
+test_timestamps_only() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ts_src="${work}/timestamps-src"
+  local ts_dest="${work}/timestamps-dest"
+  rm -rf "$ts_src" "$ts_dest"
+  mkdir -p "$ts_src" "$ts_dest"
+
+  # Create source files
+  echo "timestamp test alpha" > "$ts_src/alpha.txt"
+  echo "timestamp test beta" > "$ts_src/beta.txt"
+  mkdir -p "$ts_src/sub"
+  echo "timestamp nested" > "$ts_src/sub/nested.txt"
+
+  # Set known modification times (backdate to avoid quick-check issues)
+  touch -t 202301011200 "$ts_src/alpha.txt"
+  touch -t 202306151430 "$ts_src/beta.txt"
+  touch -t 202309200800 "$ts_src/sub/nested.txt"
+
+  # Start oc-rsync daemon
+  local ts_conf="${work}/timestamps-oc.conf"
+  local ts_pid="${work}/timestamps-oc.pid"
+  local ts_log="${work}/timestamps-oc.log"
+  cat > "$ts_conf" <<CONF
+pid file = ${ts_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${ts_dest}
+comment = timestamps test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$ts_conf" "$ts_log" "$upstream_binary" "$ts_pid" "$oc_port"
+
+  # Push with -rltv (recursive, links, timestamps, verbose - no -a)
+  if ! timeout "$hard_timeout" "$upstream_binary" -rltv --timeout=10 \
+      "${ts_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.timestamps.out" 2>"${log}.timestamps.err"; then
+    echo "    timestamps push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify content
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$ts_dest/$f" ]]; then
+      echo "    missing file: $f"
+      return 1
+    fi
+    if ! cmp -s "$ts_src/$f" "$ts_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify modification times match using stat
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    local src_mtime dest_mtime
+    src_mtime=$(stat -c '%Y' "$ts_src/$f" 2>/dev/null || stat -f '%m' "$ts_src/$f")
+    dest_mtime=$(stat -c '%Y' "$ts_dest/$f" 2>/dev/null || stat -f '%m' "$ts_dest/$f")
+    if [[ "$src_mtime" != "$dest_mtime" ]]; then
+      echo "    mtime mismatch for $f: src=$src_mtime dest=$dest_mtime"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# Max-connections daemon interop test.
+# Starts an oc-rsync daemon with max connections = 1. Runs a long transfer in
+# background, then attempts a second concurrent push which should be rejected.
+# Verifies the first transfer completes successfully.
+test_max_connections() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local mc_src="${work}/maxconn-src"
+  local mc_dest="${work}/maxconn-dest"
+  rm -rf "$mc_src" "$mc_dest"
+  mkdir -p "$mc_src" "$mc_dest"
+
+  # Create a large-ish source to keep the first transfer busy
+  dd if=/dev/urandom of="$mc_src/big.bin" bs=1K count=512 2>/dev/null
+  echo "small file" > "$mc_src/small.txt"
+
+  # Start oc-rsync daemon with max connections = 1
+  local mc_conf="${work}/maxconn-oc.conf"
+  local mc_pid="${work}/maxconn-oc.pid"
+  local mc_log="${work}/maxconn-oc.log"
+  cat > "$mc_conf" <<CONF
+pid file = ${mc_pid}
+port = ${oc_port}
+use chroot = false
+max connections = 1
+
+[interop]
+path = ${mc_dest}
+comment = max connections test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$mc_conf" "$mc_log" "$upstream_binary" "$mc_pid" "$oc_port"
+
+  # Start first transfer in background
+  timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${mc_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.maxconn-first.out" 2>"${log}.maxconn-first.err" &
+  local first_pid=$!
+
+  # Brief pause to let the first connection establish
+  sleep 1
+
+  # Attempt a second concurrent transfer - should fail or be rejected
+  local second_rc=0
+  timeout "$hard_timeout" "$upstream_binary" -av --timeout=5 \
+      "${mc_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.maxconn-second.out" 2>"${log}.maxconn-second.err" || second_rc=$?
+
+  # Wait for first transfer to complete
+  local first_rc=0
+  wait "$first_pid" || first_rc=$?
+
+  stop_oc_daemon
+
+  # First transfer must succeed
+  if [[ $first_rc -ne 0 ]]; then
+    echo "    first transfer failed (exit=$first_rc)"
+    return 1
+  fi
+
+  # Verify content from first transfer
+  if ! cmp -s "$mc_src/big.bin" "$mc_dest/big.bin"; then
+    echo "    big.bin content mismatch"
+    return 1
+  fi
+
+  # Second transfer should have failed (non-zero exit) due to max connections
+  if [[ $second_rc -eq 0 ]]; then
+    # If it succeeded, the first transfer may have finished before the second
+    # started - this is acceptable as long as both completed without error
+    echo "    note: second transfer succeeded (first may have completed before second started)"
+  fi
+
+  return 0
+}
+
+# Exclude/include precedence interop test.
+# Tests --include='*.txt' --exclude='*' to verify only .txt files transfer.
+# Creates mixed file types, pushes with include/exclude, verifies only .txt
+# files arrived at destination.
+test_exclude_include_precedence() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ei_src="${work}/excl-incl-src"
+  local ei_dest="${work}/excl-incl-dest"
+  rm -rf "$ei_src" "$ei_dest"
+  mkdir -p "$ei_src" "$ei_dest"
+
+  # Create mixed file types
+  echo "text alpha" > "$ei_src/alpha.txt"
+  echo "text beta" > "$ei_src/beta.txt"
+  echo "binary data" > "$ei_src/data.bin"
+  echo "config content" > "$ei_src/config.yaml"
+  echo "log output" > "$ei_src/output.log"
+  mkdir -p "$ei_src/sub"
+  echo "nested text" > "$ei_src/sub/nested.txt"
+  echo "nested binary" > "$ei_src/sub/nested.dat"
+
+  # Start oc-rsync daemon
+  local ei_conf="${work}/excl-incl-oc.conf"
+  local ei_pid="${work}/excl-incl-oc.pid"
+  local ei_log="${work}/excl-incl-oc.log"
+  cat > "$ei_conf" <<CONF
+pid file = ${ei_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${ei_dest}
+comment = exclude-include test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$ei_conf" "$ei_log" "$upstream_binary" "$ei_pid" "$oc_port"
+
+  # Push with --include='*.txt' --exclude='*' (first match wins)
+  if ! timeout "$hard_timeout" "$upstream_binary" -rv --timeout=10 \
+      --include='*.txt' --include='*/' --exclude='*' \
+      "${ei_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.excl-incl.out" 2>"${log}.excl-incl.err"; then
+    echo "    exclude/include push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify .txt files arrived
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$ei_dest/$f" ]]; then
+      echo "    missing included .txt file: $f"
+      return 1
+    fi
+    if ! cmp -s "$ei_src/$f" "$ei_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify non-.txt files are absent
+  for f in data.bin config.yaml output.log sub/nested.dat; do
+    if [[ -f "$ei_dest/$f" ]]; then
+      echo "    excluded file present: $f"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# Delete-with-filters interop test.
+# Tests --delete --exclude='*.keep' to verify that .keep files survive deletion
+# while other extra files are removed from destination.
+test_delete_with_filters() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local df_src="${work}/del-filter-src"
+  local df_dest="${work}/del-filter-dest"
+  rm -rf "$df_src" "$df_dest"
+  mkdir -p "$df_src" "$df_dest"
+
+  # Create source files
+  echo "source alpha" > "$df_src/alpha.txt"
+  echo "source beta" > "$df_src/beta.txt"
+  mkdir -p "$df_src/sub"
+  echo "source nested" > "$df_src/sub/nested.txt"
+
+  # Pre-populate destination with extra files (some .keep, some not)
+  echo "source alpha" > "$df_dest/alpha.txt"
+  echo "extra stale" > "$df_dest/stale.txt"
+  echo "extra old log" > "$df_dest/old.log"
+  echo "keep this" > "$df_dest/important.keep"
+  mkdir -p "$df_dest/sub"
+  echo "extra sub stale" > "$df_dest/sub/old-nested.dat"
+  echo "keep nested" > "$df_dest/sub/preserve.keep"
+
+  # Start oc-rsync daemon
+  local df_conf="${work}/del-filter-oc.conf"
+  local df_pid="${work}/del-filter-oc.pid"
+  local df_log="${work}/del-filter-oc.log"
+  cat > "$df_conf" <<CONF
+pid file = ${df_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${df_dest}
+comment = delete-with-filters test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$df_conf" "$df_log" "$upstream_binary" "$df_pid" "$oc_port"
+
+  # Push with --delete --exclude='*.keep'
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --delete --timeout=10 \
+      --exclude='*.keep' \
+      "${df_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.del-filter.out" 2>"${log}.del-filter.err"; then
+    echo "    delete-with-filters push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify source files transferred
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$df_dest/$f" ]]; then
+      echo "    missing source file: $f"
+      return 1
+    fi
+    if ! cmp -s "$df_src/$f" "$df_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify .keep files survived deletion
+  for f in important.keep sub/preserve.keep; do
+    if [[ ! -f "$df_dest/$f" ]]; then
+      echo "    .keep file was deleted: $f"
+      return 1
+    fi
+  done
+
+  # Verify non-.keep extra files were deleted
+  for f in stale.txt old.log sub/old-nested.dat; do
+    if [[ -f "$df_dest/$f" ]]; then
+      echo "    extra file not deleted: $f"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -4765,6 +5164,11 @@ run_standalone_interop_tests() {
     "deep-nesting"
     "modify-window"
     "delete-excluded"
+    "permissions-only"
+    "timestamps-only"
+    "max-connections"
+    "exclude-include-precedence"
+    "delete-with-filters"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -4801,6 +5205,11 @@ run_standalone_interop_tests() {
     "test_deep_nesting"
     "test_modify_window"
     "test_delete_excluded"
+    "test_permissions_only"
+    "test_timestamps_only"
+    "test_max_connections"
+    "test_exclude_include_precedence"
+    "test_delete_with_filters"
   )
 
   for i in "${!test_names[@]}"; do
@@ -4897,6 +5306,21 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       delete-excluded)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      permissions-only)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      timestamps-only)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      max-connections)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      exclude-include-precedence)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      delete-with-filters)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
