@@ -3179,6 +3179,133 @@ CONF
   return 0
 }
 
+# Dry-run: upstream rsync pushes with -n to oc-rsync daemon, nothing transferred
+test_dry_run() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local dr_src="${work}/dryrun-src"
+  local dr_dest="${work}/dryrun-dest"
+  rm -rf "$dr_src" "$dr_dest"
+  mkdir -p "$dr_src" "$dr_dest"
+
+  # Create source files
+  echo "alpha" > "${dr_src}/alpha.txt"
+  echo "bravo" > "${dr_src}/bravo.txt"
+  mkdir -p "${dr_src}/subdir"
+  echo "charlie" > "${dr_src}/subdir/charlie.txt"
+
+  # Set up oc-rsync daemon
+  local dr_conf="${work}/dryrun-oc.conf"
+  local dr_pid="${work}/dryrun-oc.pid"
+  local dr_log="${work}/dryrun-oc.log"
+  cat > "$dr_conf" <<CONF
+pid file = ${dr_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${dr_dest}
+comment = dry run test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$dr_conf" "$dr_log" "$upstream_binary" "$dr_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -avn --timeout=10 \
+      "${dr_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.dryrun.out" 2>"${log}.dryrun.err"; then
+    echo "    upstream -> oc daemon dry-run transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$dr_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify destination is still empty - no files should have been transferred
+  local file_count
+  file_count=$(find "$dr_dest" -type f | wc -l)
+  if [[ "$file_count" -ne 0 ]]; then
+    echo "    dry-run transferred ${file_count} file(s) - expected 0"
+    find "$dr_dest" -type f
+    return 1
+  fi
+
+  return 0
+}
+
+# Filter rules: upstream rsync pushes with --filter to oc-rsync daemon
+test_filter_rules() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local fr_src="${work}/filter-src"
+  local fr_dest="${work}/filter-dest"
+  rm -rf "$fr_src" "$fr_dest"
+  mkdir -p "$fr_src/data" "$fr_src/temp" "$fr_dest"
+
+  # Create source files - mix of included and excluded
+  echo "included" > "${fr_src}/include.txt"
+  echo "excluded" > "${fr_src}/exclude.log"
+  echo "keep" > "${fr_src}/data/keep.txt"
+  echo "skip" > "${fr_src}/data/skip.log"
+  echo "junk" > "${fr_src}/temp/junk.tmp"
+
+  # Set up oc-rsync daemon
+  local fr_conf="${work}/filter-oc.conf"
+  local fr_pid="${work}/filter-oc.pid"
+  local fr_log="${work}/filter-oc.log"
+  cat > "$fr_conf" <<CONF
+pid file = ${fr_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${fr_dest}
+comment = filter rules test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$fr_conf" "$fr_log" "$upstream_binary" "$fr_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -avr --timeout=10 \
+      --filter='- *.log' --filter='- *.tmp' \
+      "${fr_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.filter.out" 2>"${log}.filter.err"; then
+    echo "    upstream -> oc daemon filter transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$fr_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify .txt files arrived
+  for fname in "include.txt" "data/keep.txt"; do
+    if [[ ! -f "${fr_dest}/${fname}" ]]; then
+      echo "    ${fname} missing after filter transfer"
+      return 1
+    fi
+    if ! cmp -s "${fr_src}/${fname}" "${fr_dest}/${fname}"; then
+      echo "    ${fname} content mismatch"
+      return 1
+    fi
+  done
+
+  # Verify .log and .tmp files were excluded
+  for fname in "exclude.log" "data/skip.log" "temp/junk.tmp"; do
+    if [[ -f "${fr_dest}/${fname}" ]]; then
+      echo "    ${fname} should have been excluded by filter but exists"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -3203,6 +3330,8 @@ run_standalone_interop_tests() {
     "unicode-names"
     "special-chars"
     "empty-dir"
+    "dry-run"
+    "filter-rules"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -3220,6 +3349,8 @@ run_standalone_interop_tests() {
     "test_unicode_names"
     "test_special_chars"
     "test_empty_dir"
+    "test_dry_run"
+    "test_filter_rules"
   )
 
   for i in "${!test_names[@]}"; do
@@ -3259,6 +3390,12 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       empty-dir)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      dry-run)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      filter-rules)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
