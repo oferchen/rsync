@@ -34,14 +34,14 @@ pub enum BandwidthParseError {
 }
 
 /// Parses a `--bwlimit` style argument into an optional byte-per-second limit.
-// upstream: util2.c:parse_size_arg()
-#[doc(alias = "--bwlimit")]
 ///
 /// The function mirrors upstream rsync's behaviour. Inputs must match the
 /// syntax accepted by `parse_size_arg()` which rejects embedded or surrounding
 /// whitespace. `Ok(None)` denotes an unlimited transfer rate (users may specify
 /// `0` for this effect). Successful parses return the rounded byte-per-second
 /// limit as [`NonZeroU64`].
+// upstream: options.c:parse_size_arg() - suffix/multiplier/adjust parsing
+#[doc(alias = "--bwlimit")]
 pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, BandwidthParseError> {
     if text.as_bytes().iter().all(u8::is_ascii_whitespace) {
         return Err(BandwidthParseError::Invalid);

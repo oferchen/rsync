@@ -12,6 +12,7 @@ use std::mem;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
+/// Returns the global buffer where test sleep durations are accumulated.
 pub(crate) fn recorded_sleeps() -> &'static Mutex<Vec<Duration>> {
     static RECORDED_SLEEPS: OnceLock<Mutex<Vec<Duration>>> = OnceLock::new();
     RECORDED_SLEEPS.get_or_init(|| Mutex::new(Vec::new()))
@@ -22,6 +23,7 @@ fn recorded_sleep_session_lock() -> &'static Mutex<()> {
     SESSION_LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// Appends the given sleep chunks to the global recorded buffer.
 pub(crate) fn append_recorded_sleeps(chunks: Vec<Duration>) {
     lock_recorded_sleeps().extend(chunks);
 }

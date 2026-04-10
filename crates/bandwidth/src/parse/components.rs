@@ -3,7 +3,7 @@
 //! [`BandwidthLimitComponents`] stores the result of parsing a bandwidth
 //! argument and records whether each field was explicitly supplied. This
 //! distinction lets daemon modules apply upstream rsync's precedence rules
-//! in `clientserver.c` - the strictest byte-per-second rate wins while
+//! in `options.c:server_options()` - the strictest byte-per-second rate wins while
 //! explicit burst overrides take effect.
 
 use std::num::NonZeroU64;

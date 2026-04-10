@@ -48,6 +48,7 @@ impl LimiterSleep {
     }
 }
 
+/// Converts a microsecond count to a [`Duration`], saturating to `Duration::MAX` on overflow.
 pub(crate) const fn duration_from_microseconds(us: u128) -> Duration {
     if us == 0 {
         return Duration::ZERO;
@@ -63,6 +64,8 @@ pub(crate) const fn duration_from_microseconds(us: u128) -> Duration {
     Duration::new(seconds, micros.saturating_mul(1_000))
 }
 
+/// Sleeps for the given duration, chunking into `MAX_SLEEP_DURATION` segments.
+// upstream: io.c:sleep_for_bwlimit() - uses select() for the actual sleep
 pub(crate) fn sleep_for(duration: Duration) {
     let mut remaining = duration;
 

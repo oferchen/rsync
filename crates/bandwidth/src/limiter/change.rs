@@ -2,7 +2,7 @@
 //!
 //! [`apply_effective_limit`] merges daemon-imposed caps with an existing
 //! limiter, mirroring upstream rsync's precedence rules in
-//! `clientserver.c:start_daemon()`. The returned [`LimiterChange`] describes
+//! `options.c:server_options()`. The returned [`LimiterChange`] describes
 //! the transition so callers can log or skip follow-up work.
 
 use super::core::BandwidthLimiter;
@@ -95,7 +95,7 @@ impl FromIterator<LimiterChange> for LimiterChange {
 
 /// Applies a module-specific bandwidth cap to an optional limiter, mirroring upstream precedence rules.
 ///
-// upstream: clientserver.c - daemon module bwlimit override logic
+// upstream: options.c:2374 - daemon_bwlimit override: strictest rate wins
 pub fn apply_effective_limit(
     limiter: &mut Option<BandwidthLimiter>,
     limit: Option<NonZeroU64>,
