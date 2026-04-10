@@ -91,26 +91,24 @@ jobs:
           # Wait for the release to exist (created by release-cross workflow).
           # The release-cross workflow may take 20+ minutes to build all
           # platform artifacts before creating the GitHub release.
-          MAX_WAIT=1800  # 30 minutes
-          INTERVAL=30
-          ELAPSED=0
-          while [ $ELAPSED -lt $MAX_WAIT ]; do
+          MAX_ATTEMPTS=60  # 30 minutes at 30-second intervals
+          for i in $(seq 1 "$MAX_ATTEMPTS"); do
             if gh release view "$TAG" >/dev/null 2>&1; then
-              echo "Release $TAG found after ${ELAPSED}s"
+              echo "Release $TAG found after $((i * 30 - 30)) seconds."
               break
             fi
-            echo "Waiting for release $TAG... (${ELAPSED}s/${MAX_WAIT}s)"
-            sleep $INTERVAL
-            ELAPSED=$((ELAPSED + INTERVAL))
+            if [ "$i" -eq "$MAX_ATTEMPTS" ]; then
+              echo "::error::Release $TAG not found after 30 minutes. Failing."
+              exit 1
+            fi
+            echo "Waiting for release $TAG to be created... (attempt $i/$MAX_ATTEMPTS)"
+            sleep 30
           done
-          if [ $ELAPSED -ge $MAX_WAIT ]; then
-            echo "::error::Release $TAG not created after ${MAX_WAIT}s"
-            exit 1
-          fi
-          CURRENT_BODY=$(gh release view "$TAG" --json body -q .body 2>/dev/null || echo "")
+
+          CURRENT_BODY=$(gh release view "$TAG" --json body -q .body)
 
           # Avoid duplicate sections on re-runs
-          if echo "$CURRENT_BODY" | grep -q "Criterion Microbenchmarks"; then
+          if echo "${CURRENT_BODY:-}" | grep -q "Criterion Microbenchmarks"; then
             echo "Criterion section already present in release notes, skipping."
             exit 0
           fi
