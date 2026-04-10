@@ -63,9 +63,9 @@ pub struct FilterRule {
     pub(crate) perishable: bool,
     pub(crate) xattr_only: bool,
     pub(crate) negate: bool,
-    /// Exclude-only flag (`e` modifier) - forces rule to act as exclude.
+    // `e` modifier - forces rule to act as exclude
     pub(crate) exclude_only: bool,
-    /// No-inherit flag (`n` modifier) - for merge rules, don't inherit parent rules.
+    // `n` modifier - for merge rules, don't inherit parent rules
     pub(crate) no_inherit: bool,
 }
 
