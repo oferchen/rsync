@@ -391,6 +391,7 @@ mod tests {
                 checksum_verifier: None,
                 is_device_target: false,
                 is_inplace: false,
+                append_offset: 0,
                 xattr_list: None,
             })))
             .unwrap();
@@ -599,6 +600,7 @@ mod tests {
                     checksum_verifier: None,
                     is_device_target: false,
                     is_inplace: false,
+                    append_offset: 0,
                     xattr_list: None,
                 }),
                 data: b"test data".to_vec(),

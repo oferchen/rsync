@@ -3996,6 +3996,378 @@ CONF
   return 0
 }
 
+# Inplace daemon push interop test.
+# Upstream rsync pushes files with --inplace to an oc-rsync daemon. The
+# destination is pre-populated with smaller versions of the same files so
+# delta transfer exercises the in-place write path.
+test_inplace() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ip_src="${work}/inplace-src"
+  local ip_dest="${work}/inplace-dest"
+  rm -rf "$ip_src" "$ip_dest"
+  mkdir -p "$ip_src" "$ip_dest"
+
+  # Create source files with known content
+  dd if=/dev/urandom of="$ip_src/data.bin" bs=1K count=64 2>/dev/null
+  echo "inplace test alpha content full version" > "$ip_src/alpha.txt"
+  mkdir -p "$ip_src/sub"
+  echo "inplace nested content full" > "$ip_src/sub/nested.txt"
+
+  # Pre-populate dest with smaller versions to exercise delta inplace write
+  echo "small" > "$ip_dest/data.bin"
+  echo "short" > "$ip_dest/alpha.txt"
+  mkdir -p "$ip_dest/sub"
+  echo "tiny" > "$ip_dest/sub/nested.txt"
+
+  # Start oc-rsync daemon
+  local ip_conf="${work}/inplace-oc.conf"
+  local ip_pid="${work}/inplace-oc.pid"
+  local ip_log="${work}/inplace-oc.log"
+  cat > "$ip_conf" <<CONF
+pid file = ${ip_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${ip_dest}
+comment = inplace test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$ip_conf" "$ip_log" "$upstream_binary" "$ip_pid" "$oc_port"
+
+  # Push with --inplace
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --inplace --timeout=10 \
+      "${ip_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.inplace.out" 2>"${log}.inplace.err"; then
+    echo "    inplace push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify content integrity
+  if ! cmp -s "$ip_src/data.bin" "$ip_dest/data.bin"; then
+    echo "    data.bin content mismatch"
+    return 1
+  fi
+  if ! cmp -s "$ip_src/alpha.txt" "$ip_dest/alpha.txt"; then
+    echo "    alpha.txt content mismatch"
+    return 1
+  fi
+  if ! cmp -s "$ip_src/sub/nested.txt" "$ip_dest/sub/nested.txt"; then
+    echo "    sub/nested.txt content mismatch"
+    return 1
+  fi
+
+  return 0
+}
+
+# Append daemon push interop test.
+# Upstream rsync pushes a file, then extends it and pushes again with --append.
+# Verifies the destination file contains the original content plus appended data.
+test_append() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ap_src="${work}/append-src"
+  local ap_dest="${work}/append-dest"
+  rm -rf "$ap_src" "$ap_dest"
+  mkdir -p "$ap_src" "$ap_dest"
+
+  # Create initial file
+  echo "original-line-1" > "$ap_src/logfile.txt"
+  echo "original-line-2" >> "$ap_src/logfile.txt"
+
+  # Start oc-rsync daemon
+  local ap_conf="${work}/append-oc.conf"
+  local ap_pid="${work}/append-oc.pid"
+  local ap_log="${work}/append-oc.log"
+  cat > "$ap_conf" <<CONF
+pid file = ${ap_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${ap_dest}
+comment = append test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$ap_conf" "$ap_log" "$upstream_binary" "$ap_pid" "$oc_port"
+
+  # First push - populate destination with initial content
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${ap_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.append-init.out" 2>"${log}.append-init.err"; then
+    echo "    initial append push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  # Extend the source file with more data
+  echo "appended-line-3" >> "$ap_src/logfile.txt"
+  echo "appended-line-4" >> "$ap_src/logfile.txt"
+
+  # Second push with --append
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --append --timeout=10 \
+      "${ap_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.append-update.out" 2>"${log}.append-update.err"; then
+    echo "    append push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify dest file has all content (original + appended)
+  if ! cmp -s "$ap_src/logfile.txt" "$ap_dest/logfile.txt"; then
+    echo "    logfile.txt content mismatch after append"
+    echo "    expected:"
+    cat "$ap_src/logfile.txt" 2>/dev/null | head -5
+    echo "    got:"
+    cat "$ap_dest/logfile.txt" 2>/dev/null | head -5
+    return 1
+  fi
+
+  return 0
+}
+
+# Delay-updates daemon push interop test.
+# Upstream rsync pushes files with --delay-updates to an oc-rsync daemon,
+# verifying atomic file placement works correctly.
+test_delay_updates() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local du_src="${work}/delay-updates-src"
+  local du_dest="${work}/delay-updates-dest"
+  rm -rf "$du_src" "$du_dest"
+  mkdir -p "$du_src" "$du_dest"
+
+  # Create source files
+  echo "delay-alpha-content" > "$du_src/alpha.txt"
+  echo "delay-beta-content" > "$du_src/beta.txt"
+  mkdir -p "$du_src/sub"
+  echo "delay-nested-content" > "$du_src/sub/nested.txt"
+  dd if=/dev/urandom of="$du_src/binary.dat" bs=1K count=32 2>/dev/null
+
+  # Start oc-rsync daemon
+  local du_conf="${work}/delay-updates-oc.conf"
+  local du_pid="${work}/delay-updates-oc.pid"
+  local du_log="${work}/delay-updates-oc.log"
+  cat > "$du_conf" <<CONF
+pid file = ${du_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${du_dest}
+comment = delay-updates test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$du_conf" "$du_log" "$upstream_binary" "$du_pid" "$oc_port"
+
+  # Push with --delay-updates
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --delay-updates --timeout=10 \
+      "${du_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.delay-updates.out" 2>"${log}.delay-updates.err"; then
+    echo "    delay-updates push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify all files transferred correctly
+  for f in alpha.txt beta.txt sub/nested.txt binary.dat; do
+    if [[ ! -f "$du_dest/$f" ]]; then
+      echo "    missing file: $f"
+      return 1
+    fi
+    if ! cmp -s "$du_src/$f" "$du_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# Compress-level daemon push interop test.
+# Upstream rsync pushes compressible data with -z --compress-level=1 and
+# then --compress-level=9 to verify compression with explicit levels.
+test_compress_level() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local cl_src="${work}/compress-level-src"
+  local cl_dest="${work}/compress-level-dest"
+  rm -rf "$cl_src" "$cl_dest"
+  mkdir -p "$cl_src" "$cl_dest"
+
+  # Create compressible data (repeated patterns)
+  local i
+  for i in $(seq 1 200); do
+    echo "This is a highly compressible repeated line number ${i} with padding data" >> "$cl_src/compressible.txt"
+  done
+  echo "compress-level small file" > "$cl_src/small.txt"
+
+  # Start oc-rsync daemon
+  local cl_conf="${work}/compress-level-oc.conf"
+  local cl_pid="${work}/compress-level-oc.pid"
+  local cl_log="${work}/compress-level-oc.log"
+  cat > "$cl_conf" <<CONF
+pid file = ${cl_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${cl_dest}
+comment = compress-level test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$cl_conf" "$cl_log" "$upstream_binary" "$cl_pid" "$oc_port"
+
+  # Push with --compress-level=1
+  if ! timeout "$hard_timeout" "$upstream_binary" -avz --compress-level=1 --timeout=10 \
+      "${cl_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.compress-level-1.out" 2>"${log}.compress-level-1.err"; then
+    echo "    compress-level=1 push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  # Verify files match after level 1
+  if ! cmp -s "$cl_src/compressible.txt" "$cl_dest/compressible.txt"; then
+    echo "    compressible.txt mismatch after level 1"
+    stop_oc_daemon
+    return 1
+  fi
+  if ! cmp -s "$cl_src/small.txt" "$cl_dest/small.txt"; then
+    echo "    small.txt mismatch after level 1"
+    stop_oc_daemon
+    return 1
+  fi
+
+  # Clean dest for second run
+  rm -rf "$cl_dest"/*
+
+  # Push with --compress-level=9
+  if ! timeout "$hard_timeout" "$upstream_binary" -avz --compress-level=9 --timeout=10 \
+      "${cl_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.compress-level-9.out" 2>"${log}.compress-level-9.err"; then
+    echo "    compress-level=9 push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify files match after level 9
+  if ! cmp -s "$cl_src/compressible.txt" "$cl_dest/compressible.txt"; then
+    echo "    compressible.txt mismatch after level 9"
+    return 1
+  fi
+  if ! cmp -s "$cl_src/small.txt" "$cl_dest/small.txt"; then
+    echo "    small.txt mismatch after level 9"
+    return 1
+  fi
+
+  return 0
+}
+
+# Files-from daemon push interop test.
+# Upstream rsync pushes with --files-from to an oc-rsync daemon, verifying
+# only the listed files are transferred (not the full source directory).
+test_files_from() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ff_src="${work}/files-from-src"
+  local ff_dest="${work}/files-from-dest"
+  rm -rf "$ff_src" "$ff_dest"
+  mkdir -p "$ff_src" "$ff_dest"
+
+  # Create source files - some will be listed, some will not
+  echo "included-alpha" > "$ff_src/alpha.txt"
+  echo "included-beta" > "$ff_src/beta.txt"
+  echo "excluded-gamma" > "$ff_src/gamma.txt"
+  echo "excluded-delta" > "$ff_src/delta.txt"
+  mkdir -p "$ff_src/sub"
+  echo "included-nested" > "$ff_src/sub/nested.txt"
+  echo "excluded-other" > "$ff_src/sub/other.txt"
+
+  # Create the files-from list (only a subset)
+  local ff_list="${work}/files-from-list.txt"
+  cat > "$ff_list" <<FLIST
+alpha.txt
+beta.txt
+sub/nested.txt
+FLIST
+
+  # Start oc-rsync daemon
+  local ff_conf="${work}/files-from-oc.conf"
+  local ff_pid="${work}/files-from-oc.pid"
+  local ff_log="${work}/files-from-oc.log"
+  cat > "$ff_conf" <<CONF
+pid file = ${ff_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${ff_dest}
+comment = files-from test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$ff_conf" "$ff_log" "$upstream_binary" "$ff_pid" "$oc_port"
+
+  # Push with --files-from
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      --files-from="$ff_list" \
+      "${ff_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.files-from.out" 2>"${log}.files-from.err"; then
+    echo "    files-from push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify included files arrived
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$ff_dest/$f" ]]; then
+      echo "    missing included file: $f"
+      return 1
+    fi
+    if ! cmp -s "$ff_src/$f" "$ff_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify excluded files are absent
+  for f in gamma.txt delta.txt sub/other.txt; do
+    if [[ -f "$ff_dest/$f" ]]; then
+      echo "    excluded file present: $f"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -4029,6 +4401,11 @@ run_standalone_interop_tests() {
     "filter-rules"
     "up:no-change"
     "oc:no-change"
+    "inplace"
+    "append"
+    "delay-updates"
+    "compress-level"
+    "files-from"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -4055,6 +4432,11 @@ run_standalone_interop_tests() {
     "test_filter_rules"
     "test_no_change_upstream"
     "test_no_change_oc"
+    "test_inplace"
+    "test_append"
+    "test_delay_updates"
+    "test_compress_level"
+    "test_files_from"
   )
 
   for i in "${!test_names[@]}"; do
@@ -4121,6 +4503,21 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       oc:no-change)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      inplace)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      append)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      delay-updates)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      compress-level)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      files-from)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac

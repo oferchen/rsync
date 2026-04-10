@@ -205,11 +205,16 @@ fn open_output_file(
         Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
     } else if begin.is_inplace {
         // upstream: receiver.c:855 - do_open(fname, O_WRONLY|O_CREAT, 0600)
-        let file = fs::OpenOptions::new()
+        let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(false)
             .open(&begin.file_path)?;
+        // upstream: receiver.c:307-308 - in append mode, seek past existing content
+        if begin.append_offset > 0 {
+            use std::io::Seek;
+            file.seek(io::SeekFrom::Start(begin.append_offset))?;
+        }
         Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
     } else {
         let (file, guard) = open_tmpfile(&begin.file_path, config.temp_dir.as_deref())?;
@@ -251,8 +256,15 @@ fn commit_file(
         fs::rename(cleanup_guard.path(), &begin.file_path)?;
     } else if begin.is_inplace {
         // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))
+        // In append mode, bytes_written only counts newly received data -
+        // the full file size includes the existing content we seeked past.
+        let final_size = if begin.append_offset > 0 {
+            begin.target_size
+        } else {
+            bytes_written
+        };
         let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
-        file.set_len(bytes_written)?;
+        file.set_len(final_size)?;
     }
     cleanup_guard.keep();
     Ok(())
