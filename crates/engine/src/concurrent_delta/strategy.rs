@@ -151,11 +151,15 @@ pub fn select_strategy(work: &DeltaWork) -> &'static dyn DeltaStrategy {
 /// Dispatches a work item through the appropriate strategy.
 ///
 /// Convenience function that selects the strategy for the work item's kind
-/// and immediately processes it. Equivalent to calling
-/// `select_strategy(work).process(work)`.
+/// and immediately processes it. Propagates the work item's sequence number
+/// onto the result so the consumer can reorder via [`ReorderBuffer`].
+///
+/// [`ReorderBuffer`]: super::reorder::ReorderBuffer
 #[must_use]
 pub fn dispatch(work: &DeltaWork) -> DeltaResult {
-    select_strategy(work).process(work)
+    select_strategy(work)
+        .process(work)
+        .with_sequence(work.sequence())
 }
 
 #[cfg(test)]
@@ -293,5 +297,49 @@ mod tests {
     fn delta_transfer_strategy_default() {
         let strategy = DeltaTransferStrategy;
         assert_eq!(strategy.kind(), DeltaWorkKind::Delta);
+    }
+
+    // ==================== Sequence propagation tests ====================
+
+    #[test]
+    fn dispatch_propagates_sequence_whole_file() {
+        let work = DeltaWork::whole_file(0, PathBuf::from("/dest/a"), 256).with_sequence(17);
+        let result = dispatch(&work);
+        assert_eq!(result.sequence(), 17);
+        assert!(result.is_success());
+    }
+
+    #[test]
+    fn dispatch_propagates_sequence_delta() {
+        let work = DeltaWork::delta(2, PathBuf::from("/dest/b"), PathBuf::from("/basis/b"), 512)
+            .with_sequence(99);
+        let result = dispatch(&work);
+        assert_eq!(result.sequence(), 99);
+        assert!(result.is_success());
+    }
+
+    #[test]
+    fn dispatch_default_sequence_is_zero() {
+        let work = DeltaWork::whole_file(0, PathBuf::from("/dest"), 100);
+        let result = dispatch(&work);
+        assert_eq!(result.sequence(), 0);
+    }
+
+    #[test]
+    fn dispatch_sequence_survives_pipeline() {
+        // Simulate a producer stamping sequential IDs and verify they survive
+        // through dispatch back to the consumer.
+        let items: Vec<DeltaWork> = (0..5)
+            .map(|i| {
+                DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 64)
+                    .with_sequence(u64::from(i))
+            })
+            .collect();
+
+        let results: Vec<DeltaResult> = items.iter().map(dispatch).collect();
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.sequence(), i as u64);
+            assert_eq!(r.ndx(), i as u32);
+        }
     }
 }
