@@ -220,6 +220,8 @@ pub const fn default_algorithm() -> CompressionAlgorithm {
     CompressionAlgorithm::Zstd
 }
 
+// upstream: token.c:init_compression_level() - ZSTD_CLEVEL_DEFAULT is 3,
+// ZSTD_minCLevel() is the minimum, ZSTD_maxCLevel() is the maximum.
 fn zstd_level(level: CompressionLevel) -> i32 {
     match level {
         CompressionLevel::None => 0,

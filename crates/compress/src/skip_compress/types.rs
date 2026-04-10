@@ -1,3 +1,5 @@
+//! Core types for compression skip-list decisions and file categorisation.
+
 use std::fmt;
 use std::hash::{Hash, Hasher};
 

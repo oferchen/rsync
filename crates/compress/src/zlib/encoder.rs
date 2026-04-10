@@ -8,6 +8,8 @@ use flate2::write::DeflateEncoder as FlateEncoder;
 use super::CompressionLevel;
 use crate::common::{CountingSink, CountingWriter};
 
+// upstream: token.c:send_deflated_token() - deflateInit2(..., -15, 8, Z_DEFAULT_STRATEGY)
+// uses raw deflate (negative windowBits) without zlib header/trailer.
 /// Streaming encoder that records the number of compressed bytes produced.
 ///
 /// The encoder implements [`std::io::Write`], enabling integration with APIs
