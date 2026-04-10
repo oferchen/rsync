@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
 
 //! crates/signature/src/lib.rs
 //!
@@ -95,8 +96,10 @@ pub mod block_size;
 /// Pipelined signature generation with double-buffered I/O.
 pub mod pipelined_gen;
 
+/// Parallel signature generation using rayon for multi-core throughput.
 pub mod parallel;
 
+/// Asynchronous signature pre-computation for overlapping CPU work with network I/O.
 pub mod async_gen;
 
 pub use algorithm::{DigestBuf, SignatureAlgorithm};
