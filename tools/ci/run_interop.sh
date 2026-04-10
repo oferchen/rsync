@@ -3544,6 +3544,418 @@ CONF
   return 0
 }
 
+# Sparse file daemon push interop test.
+# Upstream rsync pushes a 2MB zero-filled file and a regular file with --sparse
+# to an oc-rsync daemon, then verifies content integrity (not allocation).
+test_sparse() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local sp_src="${work}/sparse-src"
+  local sp_dest="${work}/sparse-dest"
+  rm -rf "$sp_src" "$sp_dest"
+  mkdir -p "$sp_src" "$sp_dest"
+
+  # Create a 2MB zero-filled file (ideal sparse candidate)
+  dd if=/dev/zero of="$sp_src/zeros.bin" bs=1M count=2 2>/dev/null
+  # Create a regular file with content
+  echo "sparse test regular content" > "$sp_src/regular.txt"
+
+  # Start oc-rsync daemon
+  local sp_conf="${work}/sparse-oc.conf"
+  local sp_pid="${work}/sparse-oc.pid"
+  local sp_log="${work}/sparse-oc.log"
+  cat > "$sp_conf" <<CONF
+pid file = ${sp_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${sp_dest}
+comment = sparse test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$sp_conf" "$sp_log" "$upstream_binary" "$sp_pid" "$oc_port"
+
+  # Push with --sparse
+  if ! timeout "$hard_timeout" "$upstream_binary" --sparse -av --timeout=10 \
+      "${sp_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.sparse.out" 2>"${log}.sparse.err"; then
+    echo "    sparse push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify content integrity
+  if ! cmp -s "$sp_src/zeros.bin" "$sp_dest/zeros.bin"; then
+    echo "    zeros.bin content mismatch"
+    return 1
+  fi
+  if ! cmp -s "$sp_src/regular.txt" "$sp_dest/regular.txt"; then
+    echo "    regular.txt content mismatch"
+    return 1
+  fi
+
+  return 0
+}
+
+# Whole-file (skip delta) daemon push interop test.
+# Upstream rsync pushes files with --whole-file to an oc-rsync daemon,
+# modifies one file, re-pushes, and verifies the modified content arrives.
+test_whole_file() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local wf_src="${work}/whole-file-src"
+  local wf_dest="${work}/whole-file-dest"
+  rm -rf "$wf_src" "$wf_dest"
+  mkdir -p "$wf_src" "$wf_dest"
+
+  # Create source files
+  echo "file-alpha" > "$wf_src/alpha.txt"
+  echo "file-beta" > "$wf_src/beta.txt"
+  mkdir -p "$wf_src/sub"
+  echo "nested-content" > "$wf_src/sub/nested.txt"
+
+  # Start oc-rsync daemon
+  local wf_conf="${work}/whole-file-oc.conf"
+  local wf_pid="${work}/whole-file-oc.pid"
+  local wf_log="${work}/whole-file-oc.log"
+  cat > "$wf_conf" <<CONF
+pid file = ${wf_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${wf_dest}
+comment = whole-file test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$wf_conf" "$wf_log" "$upstream_binary" "$wf_pid" "$oc_port"
+
+  # Initial push with --whole-file
+  if ! timeout "$hard_timeout" "$upstream_binary" --whole-file -av --timeout=10 \
+      "${wf_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.whole-file-init.out" 2>"${log}.whole-file-init.err"; then
+    echo "    initial whole-file push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  # Modify one file
+  echo "modified-beta-content" > "$wf_src/beta.txt"
+
+  # Re-push with --whole-file
+  if ! timeout "$hard_timeout" "$upstream_binary" --whole-file -av --timeout=10 \
+      "${wf_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.whole-file-mod.out" 2>"${log}.whole-file-mod.err"; then
+    echo "    modified whole-file push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify modified content arrived
+  if ! cmp -s "$wf_src/beta.txt" "$wf_dest/beta.txt"; then
+    echo "    beta.txt content mismatch after modification"
+    return 1
+  fi
+  # Verify other files still correct
+  if ! cmp -s "$wf_src/alpha.txt" "$wf_dest/alpha.txt"; then
+    echo "    alpha.txt content mismatch"
+    return 1
+  fi
+  if ! cmp -s "$wf_src/sub/nested.txt" "$wf_dest/sub/nested.txt"; then
+    echo "    sub/nested.txt content mismatch"
+    return 1
+  fi
+
+  return 0
+}
+
+# Dry-run daemon push interop test.
+# Upstream rsync pushes with -n (dry-run) to an oc-rsync daemon and verifies
+# that the destination remains empty (zero files transferred).
+test_dry_run() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local dr_src="${work}/dry-run-src"
+  local dr_dest="${work}/dry-run-dest"
+  rm -rf "$dr_src" "$dr_dest"
+  mkdir -p "$dr_src" "$dr_dest"
+
+  # Create source files
+  echo "dry-run-file-one" > "$dr_src/file1.txt"
+  echo "dry-run-file-two" > "$dr_src/file2.txt"
+  mkdir -p "$dr_src/subdir"
+  echo "dry-run-nested" > "$dr_src/subdir/nested.txt"
+
+  # Start oc-rsync daemon
+  local dr_conf="${work}/dry-run-oc.conf"
+  local dr_pid="${work}/dry-run-oc.pid"
+  local dr_log="${work}/dry-run-oc.log"
+  cat > "$dr_conf" <<CONF
+pid file = ${dr_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${dr_dest}
+comment = dry-run test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$dr_conf" "$dr_log" "$upstream_binary" "$dr_pid" "$oc_port"
+
+  # Push with -n (dry-run)
+  if ! timeout "$hard_timeout" "$upstream_binary" -avn --timeout=10 \
+      "${dr_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.dry-run.out" 2>"${log}.dry-run.err"; then
+    echo "    dry-run push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify destination is empty (no files transferred)
+  local dest_count
+  dest_count=$(find "$dr_dest" -type f | wc -l | tr -d ' ')
+  if [[ "$dest_count" -ne 0 ]]; then
+    echo "    dry-run transferred ${dest_count} files (expected 0)"
+    return 1
+  fi
+
+  return 0
+}
+
+# Filter rules daemon push interop test.
+# Upstream rsync pushes with --filter rules to an oc-rsync daemon and verifies
+# that only matching files arrive and excluded files are absent.
+test_filter_rules() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local fr_src="${work}/filter-rules-src"
+  local fr_dest="${work}/filter-rules-dest"
+  rm -rf "$fr_src" "$fr_dest"
+  mkdir -p "$fr_src" "$fr_dest"
+
+  # Create a mix of .txt, .log, and .tmp files
+  echo "keep-this" > "$fr_src/readme.txt"
+  echo "keep-this-too" > "$fr_src/notes.txt"
+  echo "exclude-log" > "$fr_src/debug.log"
+  echo "exclude-log-2" > "$fr_src/error.log"
+  echo "exclude-tmp" > "$fr_src/scratch.tmp"
+  mkdir -p "$fr_src/subdir"
+  echo "nested-txt" > "$fr_src/subdir/data.txt"
+  echo "nested-log" > "$fr_src/subdir/app.log"
+  echo "nested-tmp" > "$fr_src/subdir/temp.tmp"
+
+  # Start oc-rsync daemon
+  local fr_conf="${work}/filter-rules-oc.conf"
+  local fr_pid="${work}/filter-rules-oc.pid"
+  local fr_log="${work}/filter-rules-oc.log"
+  cat > "$fr_conf" <<CONF
+pid file = ${fr_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${fr_dest}
+comment = filter-rules test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$fr_conf" "$fr_log" "$upstream_binary" "$fr_pid" "$oc_port"
+
+  # Push with filter rules excluding .log and .tmp files
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      --filter='- *.log' --filter='- *.tmp' \
+      "${fr_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.filter-rules.out" 2>"${log}.filter-rules.err"; then
+    echo "    filter-rules push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify .txt files arrived
+  for f in readme.txt notes.txt subdir/data.txt; do
+    if [[ ! -f "$fr_dest/$f" ]]; then
+      echo "    missing included file: $f"
+      return 1
+    fi
+    if ! cmp -s "$fr_src/$f" "$fr_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify excluded files are absent
+  for f in debug.log error.log scratch.tmp subdir/app.log subdir/temp.tmp; do
+    if [[ -f "$fr_dest/$f" ]]; then
+      echo "    excluded file present: $f"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# No-change upstream push interop test.
+# Upstream rsync pushes to an oc-rsync daemon twice - the second push should
+# transfer zero files since nothing changed.
+test_no_change_upstream() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local nc_src="${work}/no-change-up-src"
+  local nc_dest="${work}/no-change-up-dest"
+  rm -rf "$nc_src" "$nc_dest"
+  mkdir -p "$nc_src" "$nc_dest"
+
+  # Create 10 files across subdirectories
+  local i
+  for i in $(seq 1 5); do
+    echo "root-file-${i}" > "$nc_src/file${i}.txt"
+  done
+  mkdir -p "$nc_src/sub"
+  for i in $(seq 1 5); do
+    echo "sub-file-${i}" > "$nc_src/sub/file${i}.txt"
+  done
+
+  # Start oc-rsync daemon
+  local nc_conf="${work}/no-change-up-oc.conf"
+  local nc_pid="${work}/no-change-up-oc.pid"
+  local nc_log="${work}/no-change-up-oc.log"
+  cat > "$nc_conf" <<CONF
+pid file = ${nc_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${nc_dest}
+comment = no-change upstream test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$nc_conf" "$nc_log" "$upstream_binary" "$nc_pid" "$oc_port"
+
+  # First push - populate destination
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${nc_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.no-change-up-1.out" 2>"${log}.no-change-up-1.err"; then
+    echo "    first push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  # Second push - nothing should transfer
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --log-format=%i --timeout=10 \
+      "${nc_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.no-change-up-2.out" 2>"${log}.no-change-up-2.err"; then
+    echo "    second push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Count file transfer lines (>f pattern) in second push output
+  local retransfer_count
+  retransfer_count=$(grep -cE '^>f' "${log}.no-change-up-2.out" 2>/dev/null) || retransfer_count=0
+  if [[ "$retransfer_count" -gt 0 ]]; then
+    echo "    second push transferred ${retransfer_count} files (expected 0)"
+    return 1
+  fi
+
+  return 0
+}
+
+# No-change oc-rsync push interop test.
+# oc-rsync pushes to an upstream daemon twice - the second push should
+# transfer zero files since nothing changed.
+test_no_change_oc() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local nc_src="${work}/no-change-oc-src"
+  local nc_dest="${work}/no-change-oc-dest"
+  rm -rf "$nc_src" "$nc_dest"
+  mkdir -p "$nc_src" "$nc_dest"
+
+  # Create 10 files across subdirectories
+  local i
+  for i in $(seq 1 5); do
+    echo "root-file-${i}" > "$nc_src/file${i}.txt"
+  done
+  mkdir -p "$nc_src/sub"
+  for i in $(seq 1 5); do
+    echo "sub-file-${i}" > "$nc_src/sub/file${i}.txt"
+  done
+
+  # Start upstream daemon
+  local nc_conf="${work}/no-change-oc-up.conf"
+  local nc_pid="${work}/no-change-oc-up.pid"
+  local nc_log="${work}/no-change-oc-up.log"
+  cat > "$nc_conf" <<CONF
+pid file = ${nc_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${nc_dest}
+    comment = no-change oc test
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$nc_conf" "$nc_log" "$nc_pid"
+
+  # First push - populate destination
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      "${nc_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.no-change-oc-1.out" 2>"${log}.no-change-oc-1.err"; then
+    echo "    first push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  # Second push - nothing should transfer
+  if ! timeout "$hard_timeout" "$oc_bin" -av --log-format=%i --timeout=10 \
+      "${nc_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.no-change-oc-2.out" 2>"${log}.no-change-oc-2.err"; then
+    echo "    second push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # Count file transfer lines (>f pattern) in second push output
+  local retransfer_count
+  retransfer_count=$(grep -cE '^>f' "${log}.no-change-oc-2.out" 2>/dev/null) || retransfer_count=0
+  if [[ "$retransfer_count" -gt 0 ]]; then
+    echo "    second push transferred ${retransfer_count} files (expected 0)"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -3571,6 +3983,12 @@ run_standalone_interop_tests() {
     "delete-after"
     "hardlinks"
     "many-files"
+    "sparse"
+    "whole-file"
+    "dry-run"
+    "filter-rules"
+    "up:no-change"
+    "oc:no-change"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -3591,6 +4009,12 @@ run_standalone_interop_tests() {
     "test_delete_after"
     "test_hardlinks"
     "test_many_files"
+    "test_sparse"
+    "test_whole_file"
+    "test_dry_run"
+    "test_filter_rules"
+    "test_no_change_upstream"
+    "test_no_change_oc"
   )
 
   for i in "${!test_names[@]}"; do
@@ -3639,6 +4063,24 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       many-files)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      sparse)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      whole-file)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      dry-run)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      filter-rules)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      up:no-change)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      oc:no-change)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
