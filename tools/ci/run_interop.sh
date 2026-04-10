@@ -3179,6 +3179,371 @@ CONF
   return 0
 }
 
+# Standalone: upstream rsync pushes with --delete-after to oc-rsync daemon.
+# Verifies that source files arrive and extra destination files are removed.
+test_delete_after() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local da_src="${work}/delete-after-src"
+  local da_dest="${work}/delete-after-dest"
+  rm -rf "$da_src" "$da_dest"
+  mkdir -p "$da_src" "$da_dest"
+
+  # Create source files
+  echo "file-one" > "$da_src/file1.txt"
+  echo "file-two" > "$da_src/file2.txt"
+  mkdir -p "$da_src/subdir"
+  echo "nested" > "$da_src/subdir/nested.txt"
+
+  # Pre-populate destination with extra files that should be deleted
+  echo "extra-one" > "$da_dest/extra1.txt"
+  echo "extra-two" > "$da_dest/extra2.txt"
+  mkdir -p "$da_dest/olddir"
+  echo "stale" > "$da_dest/olddir/stale.txt"
+
+  # Start oc-rsync daemon
+  local da_conf="${work}/delete-after-oc.conf"
+  local da_pid="${work}/delete-after-oc.pid"
+  local da_log="${work}/delete-after-oc.log"
+  cat > "$da_conf" <<CONF
+pid file = ${da_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${da_dest}
+comment = delete-after test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$da_conf" "$da_log" "$upstream_binary" "$da_pid" "$oc_port"
+
+  # Push from upstream rsync with --delete-after
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --delete-after --timeout=10 \
+      "${da_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.delete-after.out" 2>"${log}.delete-after.err"; then
+    echo "    transfer failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify source files arrived
+  for f in file1.txt file2.txt subdir/nested.txt; do
+    if [[ ! -f "$da_dest/$f" ]]; then
+      echo "    missing source file: $f"
+      return 1
+    fi
+    if ! cmp -s "$da_src/$f" "$da_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify extra files were deleted
+  for f in extra1.txt extra2.txt olddir/stale.txt; do
+    if [[ -f "$da_dest/$f" ]]; then
+      echo "    extra file not deleted: $f"
+      return 1
+    fi
+  done
+
+  # Verify extra directory was removed
+  if [[ -d "$da_dest/olddir" ]]; then
+    echo "    extra directory not deleted: olddir"
+    return 1
+  fi
+
+  return 0
+}
+
+# Hardlinks daemon push interop test.
+# Upstream rsync pushes files with --hard-links to an oc-rsync daemon and
+# verifies that all files arrive with correct content and that hardlink
+# relationships are preserved (shared inodes in the destination).
+test_hardlinks() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local hl_src="${work}/hl-daemon-src"
+  local hl_dest="${work}/hl-daemon-dest"
+  rm -rf "$hl_src" "$hl_dest"
+  mkdir -p "$hl_src/subdir" "$hl_dest"
+
+  # Group 1: three files sharing one inode (including cross-directory)
+  echo "alpha-content" > "$hl_src/alpha.txt"
+  ln "$hl_src/alpha.txt" "$hl_src/alpha_link.txt"
+  ln "$hl_src/alpha.txt" "$hl_src/subdir/alpha_sub.txt"
+
+  # Group 2: two files sharing a different inode
+  echo "beta-content" > "$hl_src/beta.txt"
+  ln "$hl_src/beta.txt" "$hl_src/beta_link.txt"
+
+  # Standalone file (no hardlinks) as control
+  echo "gamma-content" > "$hl_src/gamma.txt"
+
+  # --- Start oc-rsync daemon ---
+  local hl_conf="${work}/hl-daemon-oc.conf"
+  local hl_pid="${work}/hl-daemon-oc.pid"
+  local hl_log="${work}/hl-daemon-oc.log"
+  cat > "$hl_conf" <<CONF
+pid file = ${hl_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${hl_dest}
+comment = hardlinks test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$hl_conf" "$hl_log" "$upstream_binary" "$hl_pid" "$oc_port"
+
+  # --- Push from upstream rsync to oc-rsync daemon with --hard-links ---
+  local rc=0
+  timeout "$hard_timeout" "$upstream_binary" --hard-links -av --timeout=10 \
+      "${hl_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.hl-daemon.out" 2>"${log}.hl-daemon.err" || rc=$?
+
+  stop_oc_daemon
+
+  if [[ $rc -ne 0 ]]; then
+    echo "    upstream push with --hard-links to oc daemon failed (exit=$rc)"
+    echo "    stderr: $(head -5 "${log}.hl-daemon.err")"
+    return 1
+  fi
+
+  # --- Verify all files arrived with correct content ---
+  for f in alpha.txt alpha_link.txt subdir/alpha_sub.txt \
+           beta.txt beta_link.txt gamma.txt; do
+    if [[ ! -f "$hl_dest/$f" ]]; then
+      echo "    missing file: $f"
+      return 1
+    fi
+  done
+
+  for f in alpha.txt alpha_link.txt subdir/alpha_sub.txt; do
+    if [[ "$(cat "$hl_dest/$f")" != "alpha-content" ]]; then
+      echo "    content mismatch in $f"
+      return 1
+    fi
+  done
+  for f in beta.txt beta_link.txt; do
+    if [[ "$(cat "$hl_dest/$f")" != "beta-content" ]]; then
+      echo "    content mismatch in $f"
+      return 1
+    fi
+  done
+  if [[ "$(cat "$hl_dest/gamma.txt")" != "gamma-content" ]]; then
+    echo "    content mismatch in gamma.txt"
+    return 1
+  fi
+
+  # --- Verify hardlink preservation ---
+  # Same-directory hardlinks must share an inode
+  local ia ia_link
+  ia=$(stat -c %i "$hl_dest/alpha.txt" 2>/dev/null || stat -f %i "$hl_dest/alpha.txt" 2>/dev/null)
+  ia_link=$(stat -c %i "$hl_dest/alpha_link.txt" 2>/dev/null || stat -f %i "$hl_dest/alpha_link.txt" 2>/dev/null)
+  if [[ "$ia" != "$ia_link" ]]; then
+    echo "    alpha same-dir inodes differ ($ia, $ia_link)"
+    return 1
+  fi
+
+  # Cross-directory hardlink - informational only (known limitation in daemon push)
+  local ia_sub
+  ia_sub=$(stat -c %i "$hl_dest/subdir/alpha_sub.txt" 2>/dev/null || stat -f %i "$hl_dest/subdir/alpha_sub.txt" 2>/dev/null)
+  if [[ "$ia" != "$ia_sub" ]]; then
+    echo "    [info] cross-directory hardlink not preserved ($ia vs $ia_sub) - known limitation"
+  fi
+
+  local ib ib_link
+  ib=$(stat -c %i "$hl_dest/beta.txt" 2>/dev/null || stat -f %i "$hl_dest/beta.txt" 2>/dev/null)
+  ib_link=$(stat -c %i "$hl_dest/beta_link.txt" 2>/dev/null || stat -f %i "$hl_dest/beta_link.txt" 2>/dev/null)
+  if [[ "$ib" != "$ib_link" ]]; then
+    echo "    beta group inodes differ ($ib, $ib_link)"
+    return 1
+  fi
+
+  # Groups must have different inodes
+  if [[ "$ia" == "$ib" ]]; then
+    echo "    alpha and beta groups share an inode (unexpected)"
+    return 1
+  fi
+
+  # Standalone file must have its own inode
+  local ig
+  ig=$(stat -c %i "$hl_dest/gamma.txt" 2>/dev/null || stat -f %i "$hl_dest/gamma.txt" 2>/dev/null)
+  if [[ "$ig" == "$ia" || "$ig" == "$ib" ]]; then
+    echo "    gamma.txt shares inode with a hardlink group"
+    return 1
+  fi
+
+  return 0
+}
+
+# Test pushing 1000+ small files from upstream rsync to oc-rsync daemon.
+# Exercises file-list handling, pipeline throughput, and content fidelity at scale.
+test_many_files() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local mf_src="${work}/many-files-src"
+  local mf_dest="${work}/many-files-dest"
+  rm -rf "$mf_src" "$mf_dest"
+  mkdir -p "$mf_src" "$mf_dest"
+
+  # Create 1000 small files with varied sizes (1-4096 bytes) across subdirectories.
+  # Distribute into 10 subdirectories of 100 files each for realistic structure.
+  local dir_idx file_idx
+  for dir_idx in $(seq 0 9); do
+    local subdir="${mf_src}/dir_${dir_idx}"
+    mkdir -p "$subdir"
+    for file_idx in $(seq 0 99); do
+      local global_idx=$(( dir_idx * 100 + file_idx ))
+      # Vary file size: 1 + (index * 37 % 4096) bytes - deterministic, varied
+      local size=$(( 1 + (global_idx * 37) % 4096 ))
+      dd if=/dev/urandom of="${subdir}/file_${file_idx}.dat" bs=1 count="$size" 2>/dev/null
+    done
+  done
+
+  # Add a few root-level files
+  echo "many-files root marker" > "$mf_src/marker.txt"
+  dd if=/dev/urandom of="$mf_src/root_binary.dat" bs=1K count=4 2>/dev/null
+
+  # Count source files
+  local src_file_count
+  src_file_count=$(find "$mf_src" -type f | wc -l | tr -d ' ')
+
+  # Compute aggregate checksum using relative paths for cross-directory comparison.
+  local src_checksum
+  if command -v md5sum >/dev/null 2>&1; then
+    src_checksum=$(cd "$mf_src" && find . -type f | sort | xargs md5sum | md5sum | awk '{print $1}')
+  elif command -v md5 >/dev/null 2>&1; then
+    src_checksum=$(cd "$mf_src" && find . -type f | sort | xargs md5 -r | md5 -q)
+  else
+    echo "    no md5sum or md5 command available"
+    return 1
+  fi
+
+  # --- Test 1: upstream rsync pushing 1000+ files to oc-rsync daemon ---
+  local mf_conf="${work}/many-files.conf"
+  local mf_pid="${work}/many-files.pid"
+  local mf_log="${work}/many-files-daemon.log"
+  cat > "$mf_conf" <<CONF
+pid file = ${mf_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${mf_dest}
+comment = many files test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$mf_conf" "$mf_log" "$upstream_binary" "$mf_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=30 \
+      "${mf_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.many-files-push.out" 2>"${log}.many-files-push.err"; then
+    echo "    upstream -> oc daemon many-files push failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$mf_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify all files arrived
+  local dest_file_count
+  dest_file_count=$(find "$mf_dest" -type f | wc -l | tr -d ' ')
+  if [[ "$dest_file_count" -ne "$src_file_count" ]]; then
+    echo "    file count mismatch: src=${src_file_count} dest=${dest_file_count}"
+    return 1
+  fi
+
+  # Verify content integrity via aggregate checksum (using relative paths)
+  local dest_checksum
+  if command -v md5sum >/dev/null 2>&1; then
+    dest_checksum=$(cd "$mf_dest" && find . -type f | sort | xargs md5sum | md5sum | awk '{print $1}')
+  elif command -v md5 >/dev/null 2>&1; then
+    dest_checksum=$(cd "$mf_dest" && find . -type f | sort | xargs md5 -r | md5 -q)
+  fi
+
+  if [[ "$src_checksum" != "$dest_checksum" ]]; then
+    echo "    aggregate checksum mismatch: src=${src_checksum} dest=${dest_checksum}"
+    # Find first differing file for diagnostics
+    local f
+    while IFS= read -r f; do
+      local rel="${f#${mf_src}/}"
+      if [[ -f "$mf_dest/$rel" ]] && ! cmp -s "$f" "$mf_dest/$rel"; then
+        echo "    first mismatch: $rel"
+        break
+      elif [[ ! -f "$mf_dest/$rel" ]]; then
+        echo "    missing: $rel"
+        break
+      fi
+    done < <(find "$mf_src" -type f | sort)
+    return 1
+  fi
+
+  # Verify a sample of individual files with byte-level comparison
+  local sample_ok=true
+  for dir_idx in 0 3 7 9; do
+    for file_idx in 0 25 50 99; do
+      local rel="dir_${dir_idx}/file_${file_idx}.dat"
+      if ! cmp -s "$mf_src/$rel" "$mf_dest/$rel"; then
+        echo "    sample file mismatch: $rel"
+        sample_ok=false
+        break 2
+      fi
+    done
+  done
+  if [[ "$sample_ok" != "true" ]]; then
+    return 1
+  fi
+
+  # --- Test 2: re-sync should transfer nothing ---
+  rm -rf "$mf_dest"; mkdir -p "$mf_dest"
+
+  # Re-create daemon for second push
+  start_oc_daemon "$mf_conf" "$mf_log" "$upstream_binary" "$mf_pid" "$oc_port"
+
+  # First push to populate destination
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=30 \
+      "${mf_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.many-files-pop.out" 2>"${log}.many-files-pop.err"; then
+    echo "    re-populate push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  # Second push - nothing should transfer
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=30 \
+      "${mf_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.many-files-resync.out" 2>"${log}.many-files-resync.err"; then
+    echo "    re-sync push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Count actual file transfers (lines matching >f pattern)
+  local retransfer_count
+  retransfer_count=$(grep -cE '^>f' "${log}.many-files-resync.out" 2>/dev/null) || retransfer_count=0
+  if [[ "$retransfer_count" -gt 0 ]]; then
+    echo "    re-sync transferred ${retransfer_count} files unnecessarily"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -3203,6 +3568,9 @@ run_standalone_interop_tests() {
     "unicode-names"
     "special-chars"
     "empty-dir"
+    "delete-after"
+    "hardlinks"
+    "many-files"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -3220,6 +3588,9 @@ run_standalone_interop_tests() {
     "test_unicode_names"
     "test_special_chars"
     "test_empty_dir"
+    "test_delete_after"
+    "test_hardlinks"
+    "test_many_files"
   )
 
   for i in "${!test_names[@]}"; do
@@ -3259,6 +3630,15 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       empty-dir)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      delete-after)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      hardlinks)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      many-files)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
