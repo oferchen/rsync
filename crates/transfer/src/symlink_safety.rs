@@ -48,13 +48,8 @@ pub fn is_unsafe_symlink(target: &OsStr, link_path: &std::path::Path) -> bool {
         return true;
     }
 
-    // Compute depth budget from the link's position in the transfer tree.
-    // upstream: walks src path counting directory components, resetting on ".."
+    // upstream: util1.c:1356-1383
     let depth = compute_link_depth(link_path);
-
-    // Walk the target, checking if ".." ever escapes the tree.
-    // upstream: walks dest path, decrementing depth on "..", incrementing on
-    // normal components, returns depth < 0
     !is_target_within_depth(&target_bytes, depth)
 }
 

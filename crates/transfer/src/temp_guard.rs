@@ -57,25 +57,19 @@ fn get_tmpname(dest: &Path, temp_dir: Option<&Path>) -> io::Result<PathBuf> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "rsync".to_owned());
 
-    // Build temp filename: ".filename.XXXXXX"
-    // For dotfiles, skip the leading dot to avoid double-dot (upstream macOS compat).
-    // When using --temp-dir, no leading dot is added (file is already hidden in temp dir).
+    // upstream: receiver.c:get_tmpname() - ".filename.XXXXXX" convention.
+    // No leading dot when using --temp-dir. Dotfiles consume original dot.
     let temp_name = if temp_dir.is_some() {
-        // No leading dot when using temp_dir (mirrors upstream)
         format!("{file_name}.XXXXXX")
     } else {
         let name = if let Some(stripped) = file_name.strip_prefix('.') {
-            // Dotfile: consume original dot, add our own → ".bashrc.XXXXXX"
             stripped
         } else {
-            // Regular file: add leading dot → ".file.txt.XXXXXX"
             &file_name
         };
         format!(".{name}.XXXXXX")
     };
 
-    // Truncate if the temp name exceeds NAME_MAX.
-    // Reserve space for the suffix (.XXXXXX = 7 bytes) + leading dot (1 byte).
     let max_name_len = NAME_MAX;
     let truncated = if temp_name.len() > max_name_len {
         truncate_utf8_safe(&temp_name, max_name_len)
@@ -83,7 +77,6 @@ fn get_tmpname(dest: &Path, temp_dir: Option<&Path>) -> io::Result<PathBuf> {
         temp_name
     };
 
-    // Place in temp_dir or same directory as destination
     let dir = temp_dir.unwrap_or_else(|| dest.parent().unwrap_or(Path::new(".")));
     Ok(dir.join(truncated))
 }
@@ -97,19 +90,14 @@ fn truncate_utf8_safe(s: &str, max_len: usize) -> String {
         return s.to_owned();
     }
 
-    // We need to keep the last TMPNAME_SUFFIX_LEN bytes (".XXXXXX")
-    // and truncate the middle (the original filename part).
     let suffix = &s[s.len() - TMPNAME_SUFFIX_LEN..];
     let prefix_budget = max_len - TMPNAME_SUFFIX_LEN;
-
-    // Find the largest UTF-8-safe prefix
     let prefix = &s[..s.len() - TMPNAME_SUFFIX_LEN];
     let mut safe_end = prefix_budget.min(prefix.len());
     while safe_end > 0 && !prefix.is_char_boundary(safe_end) {
         safe_end -= 1;
     }
 
-    // Trim trailing dot to avoid double-dot before suffix (mirrors upstream)
     let trimmed = prefix[..safe_end].trim_end_matches('.');
 
     format!("{trimmed}{suffix}")
@@ -135,7 +123,6 @@ pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::Fil
     let template = get_tmpname(dest, temp_dir)?;
     let template_str = template.to_string_lossy().into_owned();
 
-    // Replace XXXXXX with random chars, retry on collision (mirrors mkstemp behavior)
     for _ in 0..MAX_OPEN_ATTEMPTS {
         let concrete = fill_random_suffix(&template_str);
         let concrete_path = PathBuf::from(&concrete);
@@ -180,11 +167,9 @@ pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::Fil
 /// Replaces the trailing `XXXXXX` in a template string with random alphanumeric
 /// characters using `getrandom` for entropy.
 fn fill_random_suffix(template: &str) -> String {
-    // Generate 6 random bytes
     let mut random_bytes = [0u8; 6];
     getrandom::fill(&mut random_bytes).expect("getrandom failed");
 
-    // Build suffix from random bytes
     let suffix: String = random_bytes
         .iter()
         .map(|&b| RAND_CHARS[(b as usize) % RAND_CHARS.len()] as char)

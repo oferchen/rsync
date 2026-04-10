@@ -16,9 +16,7 @@ use super::role::ServerRole;
 /// Reference directory types for remote transfers.
 pub use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 
-/// File write behavior configuration.
-///
-/// Controls how the receiver writes transferred data to disk.
+/// File write behavior configuration for the receiver.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct WriteConfig {
     /// Call fsync() after writing each file (`--fsync`).
@@ -127,10 +125,7 @@ pub struct ConnectionConfig {
     pub files_from_data: Option<Vec<u8>>,
 }
 
-/// File selection and filtering options.
-///
-/// Controls which files are candidates for transfer based on size,
-/// existence at destination, and external file lists.
+/// File selection and filtering options for transfer candidates.
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct FileSelectionConfig {
     /// Minimum file size in bytes. Files smaller than this are skipped.
