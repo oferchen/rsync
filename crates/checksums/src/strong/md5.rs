@@ -211,7 +211,7 @@ impl Default for Md5Seed {
 #[derive(Clone)]
 pub struct Md5 {
     inner: Md5Backend,
-    /// Seed to hash AFTER data (when proper_order is false).
+    /// Deferred seed for legacy (pre-CHECKSUM_SEED_FIX) ordering.
     pending_seed: Option<i32>,
 }
 
@@ -331,7 +331,7 @@ impl Md5 {
     /// ```
     #[must_use]
     pub fn finalize(mut self) -> [u8; 16] {
-        // If we have a pending seed (legacy order), hash it AFTER the data
+        // upstream: checksum.c:get_checksum2() - legacy seed ordering
         if let Some(seed) = self.pending_seed {
             self.update(&seed.to_le_bytes());
         }
@@ -384,10 +384,10 @@ impl StrongDigest for Md5 {
 
         if let Some(value) = seed.value {
             if seed.proper_order {
-                // Hash seed BEFORE data (proper order, protocol 30+ with CHECKSUM_SEED_FIX)
+                // upstream: checksum.c:get_checksum2() - CHECKSUM_SEED_FIX (protocol 30+)
                 md5.update(&value.to_le_bytes());
             } else {
-                // Store seed to hash AFTER data (legacy order)
+                // upstream: checksum.c:get_checksum2() - pre-CHECKSUM_SEED_FIX ordering
                 md5.pending_seed = Some(value);
             }
         }
@@ -400,12 +400,11 @@ impl StrongDigest for Md5 {
     }
 
     fn finalize(mut self) -> Self::Digest {
-        // If we have a pending seed (legacy order), hash it AFTER the data
+        // upstream: checksum.c:get_checksum2() - legacy seed ordering
         if let Some(seed) = self.pending_seed {
             self.update(&seed.to_le_bytes());
         }
 
-        // Now finalize the hash
         match self.inner {
             #[cfg(feature = "openssl")]
             Md5Backend::OpenSsl(mut hasher) => {
