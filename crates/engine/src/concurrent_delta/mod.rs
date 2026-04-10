@@ -1,43 +1,52 @@
-//! Concurrent delta pipeline types and coordination.
+//! Concurrent delta computation pipeline for parallel file processing.
 //!
-//! This module provides the core data types for dispatching delta computations
-//! across threads. [`DeltaWork`] represents a unit of work (one file to
-//! transfer), and [`DeltaResult`] captures the outcome including transfer
-//! statistics and retry disposition.
+//! Parallelizes the per-file receive loop that upstream rsync executes
+//! sequentially in `receiver.c:recv_files()`. Each file becomes a [`DeltaWork`]
+//! item dispatched through a bounded [`work_queue`] to rayon worker threads,
+//! producing a [`DeltaResult`] that is reordered for in-sequence delivery.
 //!
-//! # Strategy Pattern
+//! # Components
 //!
-//! The [`strategy`] submodule applies the Strategy design pattern to work
-//! dispatching. [`DeltaStrategy`] is the trait, with [`WholeFileStrategy`] and
-//! [`DeltaTransferStrategy`] as concrete implementations. Use
-//! [`strategy::select_strategy`] to obtain the correct strategy for a work
-//! item, or [`strategy::dispatch`] as a one-call convenience.
+//! | Submodule | Type | Role |
+//! |-----------|------|------|
+//! | `types` | [`DeltaWork`], [`DeltaResult`] | Per-file work item (NDX, paths, size) and outcome (stats, redo/fail status) |
+//! | [`work_queue`] | `WorkQueueSender` / `WorkQueueReceiver` | Bounded `sync_channel` (2x thread count) with backpressure |
+//! | [`strategy`] | [`DeltaStrategy`] trait | Dispatches to [`WholeFileStrategy`] or [`DeltaTransferStrategy`] based on [`DeltaWorkKind`] |
+//! | [`reorder`] | [`ReorderBuffer`] | `BTreeMap`-backed buffer that yields results in submission order |
 //!
-//! The [`work_queue`] submodule provides a bounded channel that limits
-//! in-flight work items to prevent OOM when transferring millions of files.
-//! The producer blocks when the queue is full, applying backpressure to the
-//! generator. Consumers drain items in parallel via `rayon::scope`.
-//!
-//! The [`reorder`] submodule provides [`ReorderBuffer`] - a sequence-based
-//! reorder buffer that restores sequential ordering after parallel dispatch.
-//! Each [`DeltaResult`] carries a `sequence` number assigned before dispatch;
-//! the consumer feeds results into the buffer and drains them in order.
-//!
-//! # Architecture
+//! # Production Pipeline
 //!
 //! ```text
-//! Generator/Receiver
-//!       |
-//!       v
-//!   DeltaWork --> WorkQueue (bounded) --> select_strategy() --> DeltaStrategy::process() --> DeltaResult
-//!   (file NDX,     backpressure when       (WholeFile or          (literal write or           (bytes written,
-//!    dest path,     queue is full            Delta strategy)         delta apply)               sequence,
-//!    basis path)                                                                               literal/matched,
-//!                                                                                              success/redo/fail)
-//!       --> ReorderBuffer --> consumer (in-order)
-//!            (BTreeMap,        post-processing sees
-//!             capacity bound)  files in submission order
+//! Receiver (producer thread)
+//!   |  assigns monotonic sequence number
+//!   |  creates DeltaWork (whole-file or delta)
+//!   v
+//! WorkQueue ──bounded channel──► rayon::scope workers
+//!   blocks when full               |
+//!   (backpressure to receiver)      |  select_strategy(&work)
+//!                                   |  strategy.process(&work)
+//!                                   v
+//!                              DeltaResult (with sequence stamp)
+//!                                   |
+//!                                   v
+//!                              ReorderBuffer
+//!                                   |  drain_ready() yields contiguous run
+//!                                   v
+//!                              Consumer (in file-list order)
+//!                                   - checksum verification
+//!                                   - temp-file commit / rename
+//!                                   - metadata application
+//!                                   - redo collection for phase 2
 //! ```
+//!
+//! The bounded queue caps in-flight items at `2 * rayon::current_num_threads()`,
+//! preventing OOM for million-file transfers. The reorder buffer ensures
+//! post-processing sees files in the same order as upstream's sequential loop.
+//!
+//! # Upstream Reference
+//!
+//! - `receiver.c:recv_files()` - sequential per-file loop this module parallelizes
+//! - `receiver.c:receive_data()` - literal vs delta data path (`fd2 == -1` selects whole-file)
 //!
 //! # See Also
 //!
