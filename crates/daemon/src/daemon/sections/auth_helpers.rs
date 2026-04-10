@@ -142,7 +142,6 @@ fn log_module_auth_success(log: &SharedLogSink, host: Option<&str>, peer_ip: IpA
     log_message(log, &message);
 }
 
-
 fn log_module_denied(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, module: &str) {
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);

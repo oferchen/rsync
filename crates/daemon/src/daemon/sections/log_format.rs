@@ -119,12 +119,10 @@ fn expand_log_format(format: &str, ctx: &LogFormatContext<'_>) -> String {
             Some('i') => result.push_str(ctx.itemize_string),
             Some('%') => result.push('%'),
             Some(other) => {
-                // Unknown escape: pass through verbatim
                 result.push('%');
                 result.push(other);
             }
             None => {
-                // Trailing percent with no escape character
                 result.push('%');
             }
         }

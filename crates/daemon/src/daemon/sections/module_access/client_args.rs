@@ -27,20 +27,17 @@ fn read_client_arguments<R: BufRead>(
 
     loop {
         if use_nulls {
-            // Protocol 30+: read null-terminated arguments
             let mut buf = Vec::new();
             let bytes_read = reader.read_until(b'\0', &mut buf)?;
 
             if bytes_read == 0 {
-                break; // EOF
+                break;
             }
 
-            // Remove the null terminator
             if buf.last() == Some(&b'\0') {
                 buf.pop();
             }
 
-            // Empty argument signals end
             if buf.is_empty() {
                 break;
             }
@@ -48,13 +45,11 @@ fn read_client_arguments<R: BufRead>(
             let arg = String::from_utf8_lossy(&buf).into_owned();
             arguments.push(arg);
         } else {
-            // Protocol < 30: read newline-terminated arguments
             let line = match read_trimmed_line(reader)? {
                 Some(line) => line,
-                None => break, // EOF
+                None => break,
             };
 
-            // Empty line signals end
             if line.is_empty() {
                 break;
             }

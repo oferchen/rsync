@@ -57,7 +57,6 @@ where
     Out: Write,
     Err: Write,
 {
-    // 1) handle help/version fast-paths
     if parsed.show_help {
         let help = render_help(parsed.program_name);
         if stdout.write_all(help.as_bytes()).is_err() {
@@ -76,7 +75,6 @@ where
         return 0;
     }
 
-    // 2) run native daemon mode
     let config = DaemonConfig::builder()
         .brand(parsed.program_name.brand())
         .arguments(parsed.remainder)
