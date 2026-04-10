@@ -189,7 +189,7 @@ pub fn switch_effective_ids(ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
 
     let mut switched_egid = false;
 
-    // Switch group first while we still have root privileges
+    // upstream: rsync.c:do_as_root() - egid first while still root
     if let Some(gid) = ids.gid {
         // SAFETY: `setegid` is a standard POSIX call. The gid_t value comes from
         // a resolved group specification and is validated by the kernel.
@@ -200,12 +200,12 @@ pub fn switch_effective_ids(ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
         switched_egid = true;
     }
 
-    // Switch user (this may drop root privileges)
+    // upstream: rsync.c:do_as_root() - euid last (may drop root)
     // SAFETY: `seteuid` is a standard POSIX call. The uid_t value comes from
     // a resolved user specification and is validated by the kernel.
     let ret = unsafe { libc::seteuid(ids.uid) };
     if ret != 0 {
-        // Restore egid if we changed it before failing
+        // upstream: rsync.c:do_as_root() - restore egid on euid failure
         if switched_egid {
             unsafe {
                 libc::setegid(original_egid);
