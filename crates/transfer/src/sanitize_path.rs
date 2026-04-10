@@ -59,17 +59,15 @@ fn sanitize_path_with_depth(path: &str, mut depth: i32, keep_dot_dirs: bool) -> 
     let bytes = path.as_bytes();
     let mut p = 0usize;
 
-    // upstream: strip leading slash (absolute -> relative)
+    // upstream: util1.c:1051 - strip leading slash (absolute -> relative)
     if p < bytes.len() && bytes[p] == b'/' {
         p += 1;
-        // depth is forced to 0 for absolute paths in upstream
     }
 
-    // upstream: drop leading "./" unless SP_KEEP_DOT_DIRS
+    // upstream: util1.c:1061 - drop leading "./" unless SP_KEEP_DOT_DIRS
     if !keep_dot_dirs {
         while p + 1 < bytes.len() && bytes[p] == b'.' && bytes[p + 1] == b'/' {
             p += 2;
-            // skip extra slashes
             while p < bytes.len() && bytes[p] == b'/' {
                 p += 1;
             }
@@ -77,25 +75,20 @@ fn sanitize_path_with_depth(path: &str, mut depth: i32, keep_dot_dirs: bool) -> 
     }
 
     let mut result = Vec::with_capacity(bytes.len());
-    // `start` tracks the virtual beginning - segments before it are committed
-    // leading `..` components that were within the depth budget.
+    // Segments before `start` are committed leading `..` within the depth budget.
     let mut start = 0usize;
 
-    // Iterate over path components
     while p < bytes.len() {
-        // Skip leading/extra slashes
         if bytes[p] == b'/' {
             p += 1;
             continue;
         }
 
-        // Check for "." component
         if !keep_dot_dirs && bytes[p] == b'.' && (p + 1 >= bytes.len() || bytes[p + 1] == b'/') {
             p += 1;
             continue;
         }
 
-        // Check for ".." component
         if bytes[p] == b'.'
             && p + 1 < bytes.len()
             && bytes[p + 1] == b'.'
@@ -104,7 +97,6 @@ fn sanitize_path_with_depth(path: &str, mut depth: i32, keep_dot_dirs: bool) -> 
             if depth <= 0 || result.len() > start {
                 p += 2;
                 if result.len() > start {
-                    // Back up one level: remove trailing slash then last component
                     if result.last() == Some(&b'/') {
                         result.pop();
                     }
@@ -114,9 +106,7 @@ fn sanitize_path_with_depth(path: &str, mut depth: i32, keep_dot_dirs: bool) -> 
                 }
                 continue;
             }
-            // Allow this ".." - within depth budget at the start
             depth -= 1;
-            // Copy ".." and advance start past it
             result.extend_from_slice(b"..");
             if p + 2 < bytes.len() {
                 result.push(b'/');
@@ -126,7 +116,6 @@ fn sanitize_path_with_depth(path: &str, mut depth: i32, keep_dot_dirs: bool) -> 
             continue;
         }
 
-        // Copy one component through next slash
         while p < bytes.len() && bytes[p] != b'/' {
             result.push(bytes[p]);
             p += 1;
@@ -137,7 +126,6 @@ fn sanitize_path_with_depth(path: &str, mut depth: i32, keep_dot_dirs: bool) -> 
         }
     }
 
-    // Remove trailing slash
     if result.len() > 1 && result.last() == Some(&b'/') {
         result.pop();
     }

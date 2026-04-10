@@ -437,21 +437,3 @@
 //! - **Engine documentation**: [`engine::delta`]
 //! - **Wire format**: [`protocol::wire`]
 //! - **Metadata**: `metadata::apply`
-//!
-//! # Implementation Status
-//!
-//! **Complete** (as of 2025-12-09):
-//! - ✅ Signature generation from basis files
-//! - ✅ Delta generation with block matching
-//! - ✅ Delta application with atomic file operations
-//! - ✅ Metadata preservation (permissions, timestamps, ownership)
-//! - ✅ Wire protocol integration (protocol 32)
-//! - ✅ SIMD acceleration (AVX2/NEON)
-//! - ✅ Comprehensive test coverage (3,228 tests)
-//!
-//! **Deferred**:
-//! - ⏳ Advanced error handling (ENOSPC, permission errors, cleanup)
-//! - ⏳ Protocol version compatibility testing (28-31)
-//! - ⏳ Performance profiling and optimization
-//! - ⏳ Sparse file detection and handling
-//! - ⏳ Progress reporting callbacks

@@ -18,12 +18,8 @@ use compress::zstd::CountingZstdEncoder;
 
 /// Wraps a writer with compression, buffering compressed output.
 ///
-/// Mirrors upstream rsync's io.c:io_start_buffering_out() behavior where
-/// compression is applied on top of the multiplexed stream.
-///
-/// The writer compresses input data and buffers the compressed output before
-/// writing to the underlying writer. This matches upstream's buffering strategy
-/// where compressed data is accumulated before being sent through the multiplex layer.
+/// Mirrors upstream `io.c:io_start_buffering_out()` where compression is
+/// applied on top of the multiplexed stream.
 pub struct CompressedWriter<W: Write> {
     /// The underlying writer (typically MultiplexWriter)
     inner: W,
@@ -39,9 +35,7 @@ pub struct CompressedWriter<W: Write> {
     pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
 }
 
-/// Enum wrapper around different compression encoder types.
-///
-/// Each variant holds an encoder configured to write to a Vec<u8> sink.
+/// Compression encoder dispatch for supported algorithms.
 #[allow(clippy::large_enum_variant)]
 enum EncoderVariant {
     /// zlib encoder writing to Vec<u8>
@@ -57,19 +51,9 @@ enum EncoderVariant {
 impl<W: Write> CompressedWriter<W> {
     /// Creates a new compressed writer wrapping the given writer.
     ///
-    /// The compressor is initialized based on the negotiated algorithm and writes
-    /// compressed data to an internal buffer before flushing to the underlying writer.
-    ///
-    /// # Arguments
-    ///
-    /// * `inner` - The underlying writer (typically `MultiplexWriter`)
-    /// * `algorithm` - Negotiated compression algorithm
-    /// * `level` - Compression level to use
-    ///
     /// # Errors
     ///
-    /// Returns an error if the compression algorithm is not supported in this build
-    /// (e.g., LZ4 or Zstd without the corresponding feature flag).
+    /// Returns an error if the compression algorithm is not supported in this build.
     pub fn new(
         inner: W,
         algorithm: CompressionAlgorithm,
@@ -114,11 +98,8 @@ impl<W: Write> CompressedWriter<W> {
         })
     }
 
-    /// Drains the encoder's internal sink to the underlying writer.
-    ///
-    /// This writes accumulated compressed bytes from the encoder's Vec sink
-    /// to the underlying writer without triggering a compressor-level flush.
-    /// Used by `write()` for threshold-based buffer draining.
+    /// Drains the encoder's internal sink to the underlying writer without
+    /// triggering a compressor-level flush.
     fn drain_sink(&mut self) -> io::Result<()> {
         match &mut self.encoder {
             EncoderVariant::Zlib(encoder) => {
@@ -150,15 +131,11 @@ impl<W: Write> CompressedWriter<W> {
 
     /// Performs a sync flush on the encoder and drains all output.
     ///
-    /// Calls `Z_SYNC_FLUSH` (or equivalent) on the compressor to materialize
-    /// all pending compressed data, then drains the encoder's sink to the
-    /// underlying writer. This ensures the receiver can decompress all data
-    /// written so far without waiting for more input.
+    /// Calls `Z_SYNC_FLUSH` (or equivalent) on the compressor so the receiver
+    /// can decompress all data written so far without waiting for more input.
     ///
-    /// Upstream rsync uses `Z_SYNC_FLUSH` at token boundaries
-    /// (token.c:send_deflated_token lines 433-434) so each token is
-    /// independently decompressible. This method provides the same guarantee
-    /// at the stream-compression layer.
+    /// upstream: `token.c:send_deflated_token()` lines 433-434 uses
+    /// `Z_SYNC_FLUSH` at token boundaries for independent decompressibility.
     fn flush_compressed(&mut self) -> io::Result<()> {
         // First, sync-flush the encoder so all pending data in the deflate
         // state is materialized into the encoder's Vec sink.
@@ -232,15 +209,8 @@ impl<W: Write> CompressedWriter<W> {
 
     /// Provides mutable access to the underlying writer.
     ///
-    /// This is used for sending control messages through the multiplex layer
-    /// without compressing them (matching upstream rsync behavior where control
-    /// messages bypass the compression buffer).
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure that any writes to the underlying writer don't corrupt
-    /// the compression stream. This should only be used for multiplex control
-    /// messages that are handled at a different protocol layer.
+    /// Used for sending multiplex control messages that bypass the compression
+    /// buffer, matching upstream behavior where control messages are uncompressed.
     pub const fn inner_mut(&mut self) -> &mut W {
         &mut self.inner
     }
@@ -284,10 +254,8 @@ impl<W: Write> Write for CompressedWriter<W> {
         Ok(buf.len())
     }
 
-    /// Writes multiple buffers using vectored I/O.
-    ///
-    /// For compression, vectored writes are processed sequentially through the
-    /// encoder since compression state must be maintained across buffers.
+    /// Writes multiple buffers sequentially through the encoder since
+    /// compression state must be maintained across buffers.
     fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
         let mut total_written = 0;
         for buf in bufs {

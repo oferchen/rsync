@@ -18,12 +18,8 @@ use compress::zstd::CountingZstdDecoder;
 
 /// Wraps a reader with decompression, reading compressed input.
 ///
-/// Mirrors upstream rsync's io.c:io_start_buffering_in() behavior where
-/// decompression is applied on top of the multiplexed stream.
-///
-/// The reader decompresses input data from the underlying reader, matching
-/// upstream's buffering strategy where compressed data is received through
-/// the multiplex layer and decompressed before being consumed.
+/// Mirrors upstream `io.c:io_start_buffering_in()` where decompression is
+/// applied on top of the multiplexed stream.
 pub struct CompressedReader<R: Read> {
     /// Active decompression decoder variant
     /// The decoder owns the underlying reader
@@ -37,9 +33,7 @@ pub struct CompressedReader<R: Read> {
     pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
 }
 
-/// Enum wrapper around different compression decoder types.
-///
-/// Each variant holds a decoder configured to read from the underlying stream.
+/// Compression decoder dispatch for supported algorithms.
 #[allow(clippy::large_enum_variant)]
 enum DecoderVariant<R: Read> {
     /// zlib decoder
@@ -55,18 +49,9 @@ enum DecoderVariant<R: Read> {
 impl<R: Read> CompressedReader<R> {
     /// Creates a new compressed reader wrapping the given reader.
     ///
-    /// The decompressor is initialized based on the negotiated algorithm and reads
-    /// compressed data from the underlying reader.
-    ///
-    /// # Arguments
-    ///
-    /// * `inner` - The underlying reader (typically `MultiplexReader`)
-    /// * `algorithm` - Negotiated compression algorithm
-    ///
     /// # Errors
     ///
-    /// Returns an error if the compression algorithm is not supported in this build
-    /// (e.g., LZ4 or Zstd without the corresponding feature flag).
+    /// Returns an error if the compression algorithm is not supported in this build.
     pub fn new(inner: R, algorithm: CompressionAlgorithm) -> io::Result<Self> {
         let decoder = match algorithm {
             CompressionAlgorithm::Zlib => DecoderVariant::Zlib(CountingZlibDecoder::new(inner)),
@@ -93,9 +78,6 @@ impl<R: Read> CompressedReader<R> {
     }
 
     /// Returns a mutable reference to the underlying reader.
-    ///
-    /// This is used to access the `MultiplexReader`'s `take_io_error()` method
-    /// when the compressed reader wraps a multiplex stream.
     pub fn get_mut(&mut self) -> &mut R {
         match &mut self.decoder {
             DecoderVariant::Zlib(decoder) => decoder.get_mut(),
