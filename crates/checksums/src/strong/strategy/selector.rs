@@ -24,7 +24,7 @@ pub struct ChecksumStrategySelector;
 impl ChecksumStrategySelector {
     /// Selects the default algorithm for a given protocol version.
     ///
-    /// # Protocol Defaults
+    /// Mirrors upstream `checksum.c` algorithm selection:
     ///
     /// - Protocol < 30: MD4
     /// - Protocol >= 30: MD5

@@ -148,8 +148,9 @@ impl RollingChecksum {
 
     /// Updates the checksum with a single byte.
     ///
-    /// This is an optimized path for single-byte updates that avoids slice overhead.
-    /// Useful when building up the initial window in delta generation.
+    /// Optimized single-byte path matching the inner loop of upstream
+    /// `checksum.c:get_checksum1()`. Avoids slice overhead when building
+    /// up the initial window in delta generation.
     ///
     /// # Examples
     ///
@@ -278,8 +279,8 @@ impl RollingChecksum {
 
     /// Rolls the checksum by removing one byte and adding another.
     ///
-    /// This enables O(1) sliding window updates for delta detection.
-    /// The window size remains constant after rolling.
+    /// Implements the O(1) sliding window update from upstream
+    /// `match.c:hash_search()`. The window size remains constant after rolling.
     ///
     /// # Examples
     ///
@@ -422,7 +423,7 @@ impl RollingChecksum {
 
     /// Returns the rolling checksum value in rsync's packed 32-bit representation.
     ///
-    /// The format is `(s2 << 16) | s1`, matching upstream rsync's wire format.
+    /// The format is `(s2 << 16) | s1`, matching upstream `checksum.c:get_checksum1()`.
     /// Use this value for hash table lookups during delta detection.
     ///
     /// # Examples
@@ -486,9 +487,10 @@ impl From<RollingDigest> for RollingChecksum {
 
 impl_from_owned_and_ref!(RollingChecksum => RollingDigest, digest);
 
-/// Architecture-neutral dispatcher:
-/// 1. try arch-accelerated implementation,
-/// 2. fall back to scalar.
+/// Architecture-neutral dispatcher for rolling checksum accumulation.
+///
+/// Mirrors upstream `checksum.c:get_checksum1()` with SIMD fast paths:
+/// tries the arch-accelerated implementation first, falls back to scalar.
 #[inline]
 fn accumulate_chunk_dispatch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> (u32, u32, usize) {
     if chunk.is_empty() {
@@ -502,9 +504,7 @@ fn accumulate_chunk_dispatch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> (u32
     mask_result(accumulate_chunk_scalar_raw(s1, s2, len, chunk))
 }
 
-/// Arch-specific strategy: returns `Some(...)` if this arch has a fast path,
-/// otherwise `None`. This keeps the top-level dispatcher linear and avoids
-/// unreachable-code patterns.
+/// NEON fast path for aarch64 - delegates to vectorised accumulation.
 #[cfg(target_arch = "aarch64")]
 #[inline]
 fn accumulate_chunk_arch(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> Option<(u32, u32, usize)> {
@@ -533,6 +533,7 @@ const fn mask_result((s1, s2, len): (u32, u32, usize)) -> (u32, u32, usize) {
     (s1 & 0xffff, s2 & 0xffff, len)
 }
 
+/// Scalar fallback matching upstream `checksum.c:get_checksum1()` byte loop.
 #[inline]
 fn accumulate_chunk_scalar_raw(
     mut s1: u32,
@@ -570,15 +571,7 @@ fn accumulate_chunk_scalar_raw(
 /// Flushes accumulated bytes from the scratch buffer into the checksum state.
 ///
 /// During vectored I/O processing, small chunks are collected into a stack-allocated
-/// scratch buffer to improve cache locality. This function processes the buffered
-/// bytes when the buffer is full or at the end of processing.
-///
-/// # Arguments
-///
-/// * `s1`, `s2` - Rolling checksum accumulators (modified in place)
-/// * `len` - Total bytes processed counter (modified in place)
-/// * `scratch` - Stack buffer holding pending bytes
-/// * `scratch_len` - Number of valid bytes in scratch (reset to 0 after flush)
+/// scratch buffer to improve cache locality before dispatching to SIMD.
 #[inline]
 fn flush_vectored_scratch(
     s1: &mut u32,

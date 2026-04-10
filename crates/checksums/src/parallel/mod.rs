@@ -32,8 +32,6 @@ mod blocks;
 mod files;
 mod types;
 
-// Re-export all public items to preserve the existing API.
-
 pub use blocks::{
     compute_block_signatures_auto, compute_block_signatures_parallel, compute_digests_auto,
     compute_digests_parallel, compute_digests_with_seed_parallel,

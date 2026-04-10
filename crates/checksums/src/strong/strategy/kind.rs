@@ -76,9 +76,10 @@ impl ChecksumAlgorithmKind {
         )
     }
 
-    /// Parses an algorithm from a string name.
+    /// Parses an algorithm from a string name used in upstream negotiation.
     ///
     /// Accepts canonical names and common aliases (case-insensitive).
+    /// See upstream `compat.c` for the negotiation protocol.
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "md4" => Some(Self::Md4),

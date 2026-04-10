@@ -1,9 +1,9 @@
-//! Strategy trait for checksum computation.
+//! Strategy trait for runtime checksum algorithm dispatch.
 
 use super::digest::ChecksumDigest;
 use super::kind::ChecksumAlgorithmKind;
 
-/// Strategy trait for checksum computation.
+/// Trait for runtime-dispatched checksum computation.
 ///
 /// Implementations provide algorithm-specific checksum computation while
 /// exposing a uniform interface for callers.
