@@ -530,17 +530,20 @@ s.close()
 
 # Wait for a TCP port to become reachable, with timeout.
 # Returns non-zero on failure - callers must handle this as a hard error.
+# Checks every 0.5s up to max_wait seconds (default 15).
 wait_for_port() {
   local port=$1
-  local max_wait=${2:-10}
-  local elapsed=0
+  local max_wait=${2:-15}
+  local interval=0.5
+  local checks=$(( max_wait * 2 ))
+  local i=0
 
-  while [ $elapsed -lt $max_wait ]; do
+  while [ $i -lt $checks ]; do
     if (echo >/dev/tcp/127.0.0.1/"$port") 2>/dev/null; then
       return 0
     fi
-    sleep 0.5
-    elapsed=$((elapsed + 1))
+    sleep "$interval"
+    i=$((i + 1))
   done
   echo "ERROR: port $port not ready after ${max_wait}s" >&2
   return 1
@@ -564,6 +567,66 @@ wait_for_port_free() {
   return 0
 }
 
+# Check that a port is available before starting a daemon.
+# If the port is occupied, attempt to kill the owning process.
+# Returns 0 if the port is now available, 1 if still occupied.
+check_port_available() {
+  local port=$1
+
+  # Quick check - if nothing is listening, we're good
+  if ! (echo >/dev/tcp/127.0.0.1/"$port") 2>/dev/null; then
+    return 0
+  fi
+
+  echo "Warning: port $port is already in use, attempting cleanup" >&2
+
+  # Try to find and kill the process holding the port.
+  # Use lsof (available on macOS and most Linux) as primary, ss as fallback.
+  local pids=""
+  if command -v lsof >/dev/null 2>&1; then
+    pids=$(lsof -ti :"$port" 2>/dev/null || true)
+  elif command -v ss >/dev/null 2>&1; then
+    pids=$(ss -tlnp "sport = :$port" 2>/dev/null \
+      | grep -oP 'pid=\K[0-9]+' || true)
+  elif command -v netstat >/dev/null 2>&1; then
+    pids=$(netstat -tlnp 2>/dev/null \
+      | awk -v p=":$port" '$4 ~ p {split($NF,a,"/"); print a[1]}' || true)
+  fi
+
+  if [[ -z "$pids" ]]; then
+    echo "Warning: could not identify process on port $port" >&2
+    return 1
+  fi
+
+  for pid in $pids; do
+    echo "  Killing stale process $pid on port $port" >&2
+    kill "$pid" 2>/dev/null || true
+  done
+
+  # Wait briefly for port to be released
+  local i=0
+  while [ $i -lt 10 ]; do
+    if ! (echo >/dev/tcp/127.0.0.1/"$port") 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.5
+    i=$((i + 1))
+  done
+
+  # Force kill as last resort
+  for pid in $pids; do
+    kill -9 "$pid" 2>/dev/null || true
+  done
+  sleep 1
+
+  if ! (echo >/dev/tcp/127.0.0.1/"$port") 2>/dev/null; then
+    return 0
+  fi
+
+  echo "ERROR: port $port still occupied after cleanup attempts" >&2
+  return 1
+}
+
 # IMPORTANT: oc-rsync --daemon needs the port on CLI, otherwise it binds to 873 (privileged)
 # NOTE: Daemon defaults to delegating to system rsync. Set OC_RSYNC_DAEMON_FALLBACK=0
 # to force native handling (required for interop testing).
@@ -578,6 +641,11 @@ start_oc_daemon() {
 
   oc_pid_file_current="$pid_file"
   oc_port_current="$port"
+
+  if ! check_port_available "$port"; then
+    echo "FATAL: port $port still occupied, cannot start oc-rsync daemon" >&2
+    return 1
+  fi
 
   RUST_BACKTRACE=1 \
   OC_RSYNC_DAEMON_FALLBACK=0 \
