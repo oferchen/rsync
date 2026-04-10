@@ -52,21 +52,14 @@ use crate::{FilterError, FilterRule, FilterSet};
 /// ```
 #[derive(Clone, Debug)]
 pub struct DirMergeConfig {
-    /// Filename to look for in each directory.
     filename: String,
-    /// Whether rules from parent directories are inherited by children.
-    /// upstream: exclude.c - FILTRULE_NO_INHERIT flag
+    // upstream: exclude.c - FILTRULE_NO_INHERIT flag
     inherit: bool,
-    /// Whether the merge file itself should be excluded from transfer.
-    /// upstream: exclude.c - `e` modifier on dir-merge rules
+    // upstream: exclude.c - `e` modifier on dir-merge rules
     exclude_self: bool,
-    /// Restrict rules to sender side only.
     sender_only: bool,
-    /// Restrict rules to receiver side only.
     receiver_only: bool,
-    /// Anchor patterns to the directory root.
     anchor_root: bool,
-    /// Mark rules as perishable.
     perishable: bool,
 }
 
@@ -183,9 +176,7 @@ impl DirMergeConfig {
 /// are stacked during traversal and popped when leaving directories.
 #[derive(Clone, Debug)]
 struct DirScope {
-    /// The directory depth at which this scope was pushed.
     depth: usize,
-    /// Compiled filter set for this directory's rules.
     filter_set: FilterSet,
 }
 
@@ -219,13 +210,10 @@ struct DirScope {
 /// ```
 #[derive(Clone, Debug)]
 pub struct FilterChain {
-    /// Global (base) filter rules from command-line options.
     global: FilterSet,
-    /// Per-directory merge file configurations.
     merge_configs: Vec<DirMergeConfig>,
-    /// Stack of per-directory filter scopes, ordered from outermost to innermost.
+    /// Ordered from outermost to innermost; evaluation iterates in reverse.
     scopes: Vec<DirScope>,
-    /// Current directory depth for tracking scope lifetimes.
     current_depth: usize,
 }
 
