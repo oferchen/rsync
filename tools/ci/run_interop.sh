@@ -701,6 +701,9 @@ setup_comprehensive_src() {
   touch "$dir/empty.txt"
   ln -sf hello.txt "$dir/link.txt"
   ln "$dir/hello.txt" "$dir/hardlink.txt"
+  # Cross-directory hardlink: subdir/crossdir_link.txt shares inode with hello.txt
+  # This exercises INC_RECURSE cross-segment hardlink leader assignment.
+  ln "$dir/hello.txt" "$dir/subdir/crossdir_link.txt"
   printf '#!/bin/sh\necho test\n' > "$dir/script.sh"
   chmod 755 "$dir/script.sh"
   echo "should be excluded" > "$dir/excluded.log"
@@ -761,6 +764,39 @@ comp_verify_hardlink() {
   fi
   if [[ "$i1" != "$i2" ]]; then
     echo "    Hardlinks not preserved ($i1 vs $i2)"
+    return 1
+  fi
+  return 0
+}
+
+# Verify cross-directory hardlinks are preserved (same inode across directories).
+# Tests that hardlink.txt and subdir/crossdir_link.txt share an inode with hello.txt.
+# This catches the INC_RECURSE cross-segment leader assignment bug where followers
+# in later directory segments get incorrectly promoted to leaders.
+comp_verify_crossdir_hardlink() {
+  local d=$1
+  for f in hello.txt hardlink.txt subdir/crossdir_link.txt; do
+    if [[ ! -f "$d/$f" ]]; then
+      echo "    Cross-dir hardlink: $f missing"
+      return 1
+    fi
+  done
+  local i1 i2 i3
+  if stat --version >/dev/null 2>&1; then
+    i1=$(stat -c %i "$d/hello.txt")
+    i2=$(stat -c %i "$d/hardlink.txt")
+    i3=$(stat -c %i "$d/subdir/crossdir_link.txt")
+  else
+    i1=$(stat -f %i "$d/hello.txt")
+    i2=$(stat -f %i "$d/hardlink.txt")
+    i3=$(stat -f %i "$d/subdir/crossdir_link.txt")
+  fi
+  if [[ "$i1" != "$i2" ]]; then
+    echo "    Same-dir hardlinks not preserved ($i1 vs $i2)"
+    return 1
+  fi
+  if [[ "$i1" != "$i3" ]]; then
+    echo "    Cross-dir hardlink not preserved: hello.txt=$i1, subdir/crossdir_link.txt=$i3"
     return 1
   fi
   return 0
@@ -1035,6 +1071,9 @@ comp_run_scenario() {
       ;;
     hardlinks)
       comp_verify_transfer "$sdir" "$ddir" && comp_verify_hardlink "$ddir"
+      ;;
+    hardlinks-crossdir)
+      comp_verify_transfer "$sdir" "$ddir" && comp_verify_crossdir_hardlink "$ddir"
       ;;
     delete)
       comp_verify_transfer "$sdir" "$ddir" || return 1
@@ -3353,11 +3392,12 @@ CONF
     return 1
   fi
 
-  # Cross-directory hardlink - informational only (known limitation in daemon push)
+  # Cross-directory hardlink must share inode with same-group files
   local ia_sub
   ia_sub=$(stat -c %i "$hl_dest/subdir/alpha_sub.txt" 2>/dev/null || stat -f %i "$hl_dest/subdir/alpha_sub.txt" 2>/dev/null)
   if [[ "$ia" != "$ia_sub" ]]; then
-    echo "    [info] cross-directory hardlink not preserved ($ia vs $ia_sub) - known limitation"
+    echo "    cross-directory hardlink not preserved ($ia vs $ia_sub)"
+    return 1
   fi
 
   local ib ib_link
@@ -3746,6 +3786,7 @@ run_comprehensive_interop_case() {
       "hardlinks-existing|-avH --existing|hardlinks-existing"
       "inc-recursive-delete|-av --inc-recursive --delete|delete"
       "inc-recursive-symlinks|-rlptv --inc-recursive|symlinks"
+      "hardlinks-inc-recursive|-avH --inc-recursive|hardlinks-crossdir"
     )
 
     # compress-choice scenarios gated on upstream binary support.
