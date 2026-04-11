@@ -5907,6 +5907,174 @@ CONF
   return 0
 }
 
+# Symlink transfer interop test - upstream rsync pushes symlinks to oc-rsync daemon.
+test_symlinks_upstream() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local sl_src="${work}/symlinks-up-src"
+  local sl_dest="${work}/symlinks-up-dest"
+  rm -rf "$sl_src" "$sl_dest"
+  mkdir -p "$sl_src" "$sl_dest"
+
+  # Create test content: regular file, relative symlink, dangling symlink
+  echo "symlink-test-content" > "$sl_src/target.txt"
+  ln -s target.txt "$sl_src/relative.lnk"
+  ln -s nonexistent.txt "$sl_src/dangling.lnk"
+
+  # Start oc-rsync daemon
+  local sl_conf="${work}/symlinks-up-oc.conf"
+  local sl_pid="${work}/symlinks-up-oc.pid"
+  local sl_log="${work}/symlinks-up-oc.log"
+  cat > "$sl_conf" <<CONF
+pid file = ${sl_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${sl_dest}
+comment = symlinks upstream test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$sl_conf" "$sl_log" "$upstream_binary" "$sl_pid" "$oc_port"
+
+  # Push from upstream rsync to oc-rsync daemon with -l (symlinks)
+  local rc=0
+  timeout "$hard_timeout" "$upstream_binary" -rlptv --timeout=10 \
+      "${sl_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.symlinks-up.out" 2>"${log}.symlinks-up.err" || rc=$?
+
+  stop_oc_daemon
+
+  if [[ $rc -ne 0 ]]; then
+    echo "    upstream symlink push failed (exit=$rc)"
+    echo "    stderr: $(head -5 "${log}.symlinks-up.err")"
+    return 1
+  fi
+
+  # Verify regular file transferred correctly
+  if [[ ! -f "$sl_dest/target.txt" ]]; then
+    echo "    missing regular file: target.txt"
+    return 1
+  fi
+  if ! cmp -s "$sl_src/target.txt" "$sl_dest/target.txt"; then
+    echo "    content mismatch: target.txt"
+    return 1
+  fi
+
+  # Verify relative symlink is a symlink with correct target
+  if [[ ! -L "$sl_dest/relative.lnk" ]]; then
+    echo "    relative.lnk is not a symlink"
+    return 1
+  fi
+  local rel_target
+  rel_target=$(readlink "$sl_dest/relative.lnk")
+  if [[ "$rel_target" != "target.txt" ]]; then
+    echo "    relative.lnk target mismatch: got '$rel_target', expected 'target.txt'"
+    return 1
+  fi
+
+  # Verify dangling symlink is a symlink with correct target
+  if [[ ! -L "$sl_dest/dangling.lnk" ]]; then
+    echo "    dangling.lnk is not a symlink"
+    return 1
+  fi
+  local dang_target
+  dang_target=$(readlink "$sl_dest/dangling.lnk")
+  if [[ "$dang_target" != "nonexistent.txt" ]]; then
+    echo "    dangling.lnk target mismatch: got '$dang_target', expected 'nonexistent.txt'"
+    return 1
+  fi
+
+  return 0
+}
+
+# Symlink transfer interop test - oc-rsync pushes symlinks to upstream rsync daemon.
+test_symlinks_oc() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local sl_src="${work}/symlinks-oc-src"
+  local sl_dest="${work}/symlinks-oc-dest"
+  rm -rf "$sl_src" "$sl_dest"
+  mkdir -p "$sl_src" "$sl_dest"
+
+  # Create test content: regular file, relative symlink, dangling symlink
+  echo "symlink-test-content" > "$sl_src/target.txt"
+  ln -s target.txt "$sl_src/relative.lnk"
+  ln -s nonexistent.txt "$sl_src/dangling.lnk"
+
+  # Start upstream daemon with munge symlinks disabled
+  local sl_conf="${work}/symlinks-oc-up.conf"
+  local sl_pid="${work}/symlinks-oc-up.pid"
+  local sl_log="${work}/symlinks-oc-up.log"
+  cat > "$sl_conf" <<CONF
+pid file = ${sl_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${sl_dest}
+    comment = symlinks oc test
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$sl_conf" "$sl_log" "$sl_pid"
+
+  # Push from oc-rsync to upstream daemon with -l (symlinks)
+  local rc=0
+  timeout "$hard_timeout" "$oc_bin" -rlptv --timeout=10 \
+      "${sl_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.symlinks-oc.out" 2>"${log}.symlinks-oc.err" || rc=$?
+
+  stop_upstream_daemon
+
+  if [[ $rc -ne 0 ]]; then
+    echo "    oc-rsync symlink push failed (exit=$rc)"
+    echo "    stderr: $(head -5 "${log}.symlinks-oc.err")"
+    return 1
+  fi
+
+  # Verify regular file transferred correctly
+  if [[ ! -f "$sl_dest/target.txt" ]]; then
+    echo "    missing regular file: target.txt"
+    return 1
+  fi
+  if ! cmp -s "$sl_src/target.txt" "$sl_dest/target.txt"; then
+    echo "    content mismatch: target.txt"
+    return 1
+  fi
+
+  # Verify relative symlink is a symlink with correct target
+  if [[ ! -L "$sl_dest/relative.lnk" ]]; then
+    echo "    relative.lnk is not a symlink"
+    return 1
+  fi
+  local rel_target
+  rel_target=$(readlink "$sl_dest/relative.lnk")
+  if [[ "$rel_target" != "target.txt" ]]; then
+    echo "    relative.lnk target mismatch: got '$rel_target', expected 'target.txt'"
+    return 1
+  fi
+
+  # Verify dangling symlink is a symlink with correct target
+  if [[ ! -L "$sl_dest/dangling.lnk" ]]; then
+    echo "    dangling.lnk is not a symlink"
+    return 1
+  fi
+  local dang_target
+  dang_target=$(readlink "$sl_dest/dangling.lnk")
+  if [[ "$dang_target" != "nonexistent.txt" ]]; then
+    echo "    dangling.lnk target mismatch: got '$dang_target', expected 'nonexistent.txt'"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -5960,6 +6128,8 @@ run_standalone_interop_tests() {
     "delete-with-filters"
     "acl-xattr-graceful-degradation-309"
     "log-format-daemon"
+    "up:symlinks"
+    "oc:symlinks"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -6006,6 +6176,8 @@ run_standalone_interop_tests() {
     "test_delete_with_filters"
     "test_acl_xattr_graceful_degradation_309"
     "test_log_format_daemon"
+    "test_symlinks_upstream"
+    "test_symlinks_oc"
   )
 
   for i in "${!test_names[@]}"; do
@@ -6126,6 +6298,12 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       log-format-daemon)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      up:symlinks)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      oc:symlinks)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
