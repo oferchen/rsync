@@ -16,8 +16,8 @@
 //! while enabling concurrent I/O across multiple files.
 
 use engine::concurrent_delta::reorder::ReorderBuffer;
-use engine::concurrent_delta::types::{DeltaResult, DeltaWork};
 use engine::concurrent_delta::work_queue::{self, SendError, WorkQueueSender};
+use engine::concurrent_delta::{DeltaResult, DeltaWork};
 
 use std::sync::Arc;
 use std::thread;
@@ -195,8 +195,9 @@ impl ParallelDeltaPipeline {
         let (tx, rx) = work_queue::bounded_with_capacity(config.queue_capacity);
 
         // Shared ring buffer for results. Workers push; main thread pops.
-        let result_queue =
-            Arc::new(crossbeam_queue::ArrayQueue::new(config.result_buffer_capacity));
+        let result_queue = Arc::new(crossbeam_queue::ArrayQueue::new(
+            config.result_buffer_capacity,
+        ));
         let worker_result_queue = Arc::clone(&result_queue);
 
         let worker_handle = thread::spawn(move || {
@@ -302,7 +303,6 @@ impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::concurrent_delta::types::{DeltaResult, DeltaWork};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -310,9 +310,8 @@ mod tests {
 
     #[test]
     fn sequential_submit_and_poll() {
-        let mut pipeline = SequentialDeltaPipeline::new(|w| {
-            DeltaResult::success(w.ndx(), w.target_size(), 0, 0)
-        });
+        let mut pipeline =
+            SequentialDeltaPipeline::new(|w| DeltaResult::success(w.ndx(), w.target_size(), 0, 0));
 
         pipeline
             .submit_work(DeltaWork::whole_file(1, PathBuf::from("/a"), 100))
@@ -336,9 +335,8 @@ mod tests {
 
     #[test]
     fn sequential_flush_returns_remaining() {
-        let mut pipeline = SequentialDeltaPipeline::new(|w| {
-            DeltaResult::success(w.ndx(), w.target_size(), 0, 0)
-        });
+        let mut pipeline =
+            SequentialDeltaPipeline::new(|w| DeltaResult::success(w.ndx(), w.target_size(), 0, 0));
 
         pipeline
             .submit_work(DeltaWork::whole_file(10, PathBuf::from("/x"), 500))
@@ -355,24 +353,20 @@ mod tests {
 
     #[test]
     fn sequential_empty_poll_returns_none() {
-        let mut pipeline =
-            SequentialDeltaPipeline::new(|_| DeltaResult::success(0, 0, 0, 0));
+        let mut pipeline = SequentialDeltaPipeline::new(|_| DeltaResult::success(0, 0, 0, 0));
         assert!(pipeline.poll_result().is_none());
     }
 
     #[test]
     fn sequential_flush_empty_returns_empty_vec() {
-        let mut pipeline =
-            SequentialDeltaPipeline::new(|_| DeltaResult::success(0, 0, 0, 0));
+        let mut pipeline = SequentialDeltaPipeline::new(|_| DeltaResult::success(0, 0, 0, 0));
         let results = pipeline.flush().unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn sequential_sequences_are_monotonic() {
-        let mut pipeline = SequentialDeltaPipeline::new(|w| {
-            DeltaResult::success(w.ndx(), 0, 0, 0)
-        });
+        let mut pipeline = SequentialDeltaPipeline::new(|w| DeltaResult::success(w.ndx(), 0, 0, 0));
 
         for i in 0..10 {
             pipeline
@@ -421,9 +415,8 @@ mod tests {
 
     #[test]
     fn parallel_submit_and_poll_single() {
-        let mut pipeline = ParallelDeltaPipeline::new(|w| {
-            DeltaResult::success(w.ndx(), w.target_size(), 0, 0)
-        });
+        let mut pipeline =
+            ParallelDeltaPipeline::new(|w| DeltaResult::success(w.ndx(), w.target_size(), 0, 0));
 
         pipeline
             .submit_work(DeltaWork::whole_file(1, PathBuf::from("/a"), 100))
@@ -505,10 +498,8 @@ mod tests {
             reorder_capacity: 32,
             result_buffer_capacity: 32,
         };
-        let mut pipeline = ParallelDeltaPipeline::with_config(
-            |w| DeltaResult::success(w.ndx(), 0, 0, 0),
-            config,
-        );
+        let mut pipeline =
+            ParallelDeltaPipeline::with_config(|w| DeltaResult::success(w.ndx(), 0, 0, 0), config);
 
         // Submit a small batch and poll for results.
         for i in 0..4u32 {
@@ -573,8 +564,7 @@ mod tests {
 
     #[test]
     fn parallel_submit_after_flush_returns_error() {
-        let mut pipeline =
-            ParallelDeltaPipeline::new(|w| DeltaResult::success(w.ndx(), 0, 0, 0));
+        let mut pipeline = ParallelDeltaPipeline::new(|w| DeltaResult::success(w.ndx(), 0, 0, 0));
 
         pipeline.flush().unwrap();
 
@@ -585,8 +575,7 @@ mod tests {
 
     #[test]
     fn parallel_empty_flush_returns_empty_vec() {
-        let mut pipeline =
-            ParallelDeltaPipeline::new(|w| DeltaResult::success(w.ndx(), 0, 0, 0));
+        let mut pipeline = ParallelDeltaPipeline::new(|w| DeltaResult::success(w.ndx(), 0, 0, 0));
 
         let results = pipeline.flush().unwrap();
         assert!(results.is_empty());
@@ -659,10 +648,8 @@ mod tests {
             reorder_capacity: 16,
             result_buffer_capacity: 16,
         };
-        let mut pipeline = ParallelDeltaPipeline::with_config(
-            |w| DeltaResult::success(w.ndx(), 0, 0, 0),
-            config,
-        );
+        let mut pipeline =
+            ParallelDeltaPipeline::with_config(|w| DeltaResult::success(w.ndx(), 0, 0, 0), config);
 
         // Small queue capacity still works under backpressure.
         for i in 0..30u32 {
