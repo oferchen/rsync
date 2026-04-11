@@ -432,7 +432,10 @@ fn macos_dispatch_uses_fcopyfile_when_clonefile_fails() {
 
     // Should use fcopyfile (Copyfile) or StandardCopy - not Clonefile
     assert!(
-        matches!(result.method, CopyMethod::Copyfile | CopyMethod::StandardCopy),
+        matches!(
+            result.method,
+            CopyMethod::Copyfile | CopyMethod::StandardCopy
+        ),
         "expected Copyfile or StandardCopy after clonefile failure, got {:?}",
         result.method
     );
