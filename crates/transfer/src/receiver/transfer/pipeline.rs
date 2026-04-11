@@ -23,7 +23,7 @@ use protocol::flist::FileEntry;
 use crate::delta_apply::ChecksumVerifier;
 use crate::pipeline::{PipelineConfig, PipelineState};
 use crate::receiver::basis::{BasisFileConfig, find_basis_file_with_config};
-use crate::receiver::{PARALLEL_STAT_THRESHOLD, PipelineSetup, ReceiverContext};
+use crate::receiver::{PipelineSetup, ReceiverContext};
 use crate::transfer_ops::{
     RequestConfig, ResponseContext, process_file_response_streaming, send_file_request,
 };
@@ -32,7 +32,7 @@ impl ReceiverContext {
     /// Pipelined transfer loop with decoupled network/disk I/O.
     ///
     /// Fills a sliding window of file requests, computes signatures in parallel
-    /// when the batch exceeds `PARALLEL_STAT_THRESHOLD`, then processes responses
+    /// when the batch exceeds the configured signature threshold, then processes responses
     /// with a background disk commit thread. Returns `(files_transferred, bytes, redo_indices)`.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::receiver) fn run_pipeline_loop_decoupled<
@@ -172,9 +172,10 @@ impl ReceiverContext {
                         let dest_dir = &setup.dest_dir;
                         let checksum_length = setup.checksum_length;
                         let checksum_algorithm = setup.checksum_algorithm;
+                        let sig_threshold = self.parallel_thresholds.signature;
 
                         // Compute signatures - parallel when batch is large enough.
-                        let sig_results: Vec<_> = if batch.len() >= PARALLEL_STAT_THRESHOLD {
+                        let sig_results: Vec<_> = if batch.len() >= sig_threshold {
                             batch
                                 .par_iter()
                                 .map(|(_, file_entry, file_path)| {
