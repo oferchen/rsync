@@ -92,6 +92,33 @@ impl SshConnection {
         }
     }
 
+    /// Waits for the subprocess to exit and returns the collected stderr output.
+    ///
+    /// This combines [`wait`](Self::wait) and [`stderr_output`](Self::stderr_output)
+    /// into a single call, ensuring the drain thread is joined and all stderr is
+    /// captured before the connection is consumed. This is the preferred method
+    /// when callers need to surface SSH error messages to the user on failure.
+    pub fn wait_with_stderr(mut self) -> io::Result<(ExitStatus, Vec<u8>)> {
+        let _ = self.close_stdin();
+        match self.child.take() {
+            Some(mut child) => {
+                let status = child.wait();
+                if let Some(ref mut drain) = self.stderr_drain {
+                    drain.join();
+                }
+                let stderr = self
+                    .stderr_drain
+                    .as_ref()
+                    .map_or_else(Vec::new, StderrDrain::collected);
+                status.map(|s| (s, stderr))
+            }
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "child process already taken",
+            )),
+        }
+    }
+
     /// Attempts to retrieve the subprocess exit status without blocking.
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         match self.child.as_mut() {
