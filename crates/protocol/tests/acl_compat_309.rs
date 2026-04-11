@@ -59,9 +59,7 @@ fn flist_writer_skips_acl_data_when_disabled() {
     // Write without ACLs (simulates remote without SUPPORT_ACLS).
     let mut buf_no_acl = Vec::new();
     let mut writer_no_acl = FileListWriter::with_compat_flags(protocol, compat);
-    writer_no_acl
-        .write_entry(&mut buf_no_acl, &entry)
-        .unwrap();
+    writer_no_acl.write_entry(&mut buf_no_acl, &entry).unwrap();
 
     // Write with ACLs enabled.
     let mut buf_with_acl = Vec::new();
@@ -117,14 +115,12 @@ fn flist_writer_reader_roundtrip_with_acls() {
 
     // Write with ACLs.
     let mut buf = Vec::new();
-    let mut writer =
-        FileListWriter::with_compat_flags(protocol, compat).with_preserve_acls(true);
+    let mut writer = FileListWriter::with_compat_flags(protocol, compat).with_preserve_acls(true);
     writer.write_entry(&mut buf, &entry).unwrap();
 
     // Read with ACLs.
     let mut cursor = Cursor::new(&buf);
-    let mut reader =
-        FileListReader::with_compat_flags(protocol, compat).with_preserve_acls(true);
+    let mut reader = FileListReader::with_compat_flags(protocol, compat).with_preserve_acls(true);
     let read_entry = reader.read_entry(&mut cursor).unwrap();
     assert!(read_entry.is_some(), "reader must parse ACL-bearing entry");
 
@@ -154,8 +150,7 @@ fn reader_with_acls_fails_on_stream_without_acl_data() {
 
     // Try to read WITH ACLs enabled - wire format mismatch.
     let mut cursor = Cursor::new(&buf);
-    let mut reader =
-        FileListReader::with_compat_flags(protocol, compat).with_preserve_acls(true);
+    let mut reader = FileListReader::with_compat_flags(protocol, compat).with_preserve_acls(true);
     let result = reader.read_entry(&mut cursor);
 
     // The result is either an error or a mangled entry. Either outcome proves
@@ -182,10 +177,7 @@ fn reader_with_acls_fails_on_stream_without_acl_data() {
 fn symlink_entries_skip_acl_data() {
     let (protocol, compat) = proto30_setup();
 
-    let mut symlink = FileEntry::new_symlink(
-        PathBuf::from("link"),
-        PathBuf::from("/target"),
-    );
+    let mut symlink = FileEntry::new_symlink(PathBuf::from("link"), PathBuf::from("/target"));
     symlink.set_mtime(1_700_000_000, 0);
 
     // Write with ACLs enabled.
@@ -218,10 +210,7 @@ fn symlink_entries_skip_acl_data() {
 fn symlink_roundtrip_no_acl_indices() {
     let (protocol, compat) = proto30_setup();
 
-    let mut symlink = FileEntry::new_symlink(
-        PathBuf::from("link"),
-        PathBuf::from("/target"),
-    );
+    let mut symlink = FileEntry::new_symlink(PathBuf::from("link"), PathBuf::from("/target"));
     symlink.set_mtime(1_700_000_000, 0);
 
     let mut buf = Vec::new();
@@ -290,14 +279,7 @@ fn directory_acl_includes_default() {
 
     let mut buf_dir = Vec::new();
     let mut cache_dir = AclCache::new();
-    send_acl(
-        &mut buf_dir,
-        &access,
-        Some(&default),
-        true,
-        &mut cache_dir,
-    )
-    .unwrap();
+    send_acl(&mut buf_dir, &access, Some(&default), true, &mut cache_dir).unwrap();
     assert_eq!(cache_dir.access_count(), 1);
     assert_eq!(cache_dir.default_count(), 1);
 
@@ -370,12 +352,7 @@ fn multiple_entries_no_acl_data() {
     for expected in &entries {
         let read = reader.read_entry(&mut cursor).unwrap().unwrap();
         assert_eq!(read.name(), expected.name());
-        assert_eq!(
-            read.acl_ndx(),
-            None,
-            "no ACL index for {}",
-            read.name()
-        );
+        assert_eq!(read.acl_ndx(), None, "no ACL index for {}", read.name());
     }
 }
 
@@ -397,16 +374,14 @@ fn multiple_entries_with_acl_data() {
 
     // Write with ACLs.
     let mut buf = Vec::new();
-    let mut writer =
-        FileListWriter::with_compat_flags(protocol, compat).with_preserve_acls(true);
+    let mut writer = FileListWriter::with_compat_flags(protocol, compat).with_preserve_acls(true);
     for entry in &entries {
         writer.write_entry(&mut buf, entry).unwrap();
     }
 
     // Read with ACLs.
     let mut cursor = Cursor::new(&buf);
-    let mut reader =
-        FileListReader::with_compat_flags(protocol, compat).with_preserve_acls(true);
+    let mut reader = FileListReader::with_compat_flags(protocol, compat).with_preserve_acls(true);
     for expected in &entries {
         let read = reader.read_entry(&mut cursor).unwrap().unwrap();
         assert_eq!(read.name(), expected.name());
@@ -432,14 +407,12 @@ fn acl_roundtrip_protocol_32() {
 
     // Write with ACLs at protocol 32.
     let mut buf = Vec::new();
-    let mut writer =
-        FileListWriter::with_compat_flags(protocol, compat).with_preserve_acls(true);
+    let mut writer = FileListWriter::with_compat_flags(protocol, compat).with_preserve_acls(true);
     writer.write_entry(&mut buf, &entry).unwrap();
 
     // Read with ACLs at protocol 32.
     let mut cursor = Cursor::new(&buf);
-    let mut reader =
-        FileListReader::with_compat_flags(protocol, compat).with_preserve_acls(true);
+    let mut reader = FileListReader::with_compat_flags(protocol, compat).with_preserve_acls(true);
     let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
     assert!(
         read_entry.acl_ndx().is_some(),
