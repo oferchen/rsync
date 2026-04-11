@@ -4878,6 +4878,115 @@ CONF
   return 0
 }
 
+# Zstd compression auto-negotiation interop test (PR #3081).
+# Validates that --compress-choice=zstd works in both daemon push directions
+# when both sides support zstd (rsync 3.4.1). Tests the negotiation path
+# where the client requests zstd and the daemon accepts it.
+test_zstd_negotiation() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  # Gate on upstream zstd support - upstream may be compiled without libzstd.
+  local up_ver
+  up_ver=$("$upstream_binary" --version 2>&1 || true)
+  if ! echo "$up_ver" | grep -qi "zstd"; then
+    echo "    upstream lacks zstd support, skipping"
+    return 0
+  fi
+
+  local zstd_src="${work}/zstd-negotiation-src"
+  local zstd_dest="${work}/zstd-negotiation-dest"
+  rm -rf "$zstd_src" "$zstd_dest"
+  mkdir -p "$zstd_src/subdir" "$zstd_dest"
+
+  # Create compressible test data with variety
+  local i
+  for i in $(seq 1 300); do
+    echo "Compressible repeated line ${i} with padding to exercise zstd codec" >> "$zstd_src/compressible.txt"
+  done
+  echo "small zstd test file" > "$zstd_src/small.txt"
+  dd if=/dev/urandom of="$zstd_src/binary.dat" bs=1K count=64 2>/dev/null
+  echo "nested file for zstd" > "$zstd_src/subdir/nested.txt"
+
+  # --- Direction 1: upstream client -> oc-rsync daemon ---
+  local zstd_oc_conf="${work}/zstd-negotiation-oc.conf"
+  local zstd_oc_pid="${work}/zstd-negotiation-oc.pid"
+  local zstd_oc_log="${work}/zstd-negotiation-oc.log"
+  cat > "$zstd_oc_conf" <<CONF
+pid file = ${zstd_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${zstd_dest}
+comment = zstd negotiation test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$zstd_oc_conf" "$zstd_oc_log" "$upstream_binary" "$zstd_oc_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -avz --compress-choice=zstd --timeout=10 \
+      "${zstd_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.zstd-up-to-oc.out" 2>"${log}.zstd-up-to-oc.err"; then
+    echo "    upstream->oc zstd push failed (exit=$?)"
+    cat "${log}.zstd-up-to-oc.err" >> "$log"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify all files match via checksum comparison
+  for f in compressible.txt small.txt binary.dat subdir/nested.txt; do
+    if ! cmp -s "$zstd_src/$f" "$zstd_dest/$f"; then
+      echo "    $f mismatch after upstream->oc zstd transfer"
+      return 1
+    fi
+  done
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  rm -rf "$zstd_dest"/*
+
+  local zstd_up_conf="${work}/zstd-negotiation-up.conf"
+  local zstd_up_pid="${work}/zstd-negotiation-up.pid"
+  local zstd_up_log="${work}/zstd-negotiation-up.log"
+  cat > "$zstd_up_conf" <<CONF
+pid file = ${zstd_up_pid}
+port = ${upstream_port}
+use chroot = false
+
+[interop]
+path = ${zstd_dest}
+comment = zstd negotiation test
+read only = false
+numeric ids = yes
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$zstd_up_conf" "$zstd_up_log" "$zstd_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -avz --compress-choice=zstd --timeout=10 \
+      "${zstd_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.zstd-oc-to-up.out" 2>"${log}.zstd-oc-to-up.err"; then
+    echo "    oc->upstream zstd push failed (exit=$?)"
+    cat "${log}.zstd-oc-to-up.err" >> "$log"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # Verify all files match via checksum comparison
+  for f in compressible.txt small.txt binary.dat subdir/nested.txt; do
+    if ! cmp -s "$zstd_src/$f" "$zstd_dest/$f"; then
+      echo "    $f mismatch after oc->upstream zstd transfer"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 # Files-from daemon push interop test.
 # Upstream rsync pushes with --files-from to an oc-rsync daemon, verifying
 # only the listed files are transferred (not the full source directory).
@@ -5947,6 +6056,7 @@ run_standalone_interop_tests() {
     "append"
     "delay-updates"
     "compress-level"
+    "zstd-negotiation"
     "files-from"
     "trust-sender"
     "partial-dir"
@@ -5993,6 +6103,7 @@ run_standalone_interop_tests() {
     "test_append"
     "test_delay_updates"
     "test_compress_level"
+    "test_zstd_negotiation"
     "test_files_from"
     "test_trust_sender"
     "test_partial_dir"
@@ -6087,6 +6198,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       compress-level)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      zstd-negotiation)
         test_args+=("$oc_port" "$upstream_port")
         ;;
       files-from)
