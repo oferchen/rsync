@@ -253,6 +253,7 @@ impl ReceiverContext {
     /// Used internally by the transfer loop to consume the pipeline. Panics
     /// if called when no pipeline is set (should never happen in normal use
     /// since `new()` always installs a default).
+    #[allow(dead_code)]
     fn take_delta_pipeline(&mut self) -> Box<dyn ReceiverDeltaPipeline> {
         self.delta_pipeline
             .take()
