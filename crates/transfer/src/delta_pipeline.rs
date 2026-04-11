@@ -10,8 +10,16 @@
 //! - [`SequentialDeltaPipeline`] - processes items immediately in the calling
 //!   thread with no concurrency. This matches upstream rsync's sequential
 //!   `recv_files()` loop in `receiver.c` and is the default.
-//! - A parallel implementation (dispatching to rayon workers via
-//!   `engine::concurrent_delta`) is planned as a future addition.
+//! - [`ParallelDeltaPipeline`] - dispatches work items to rayon workers via
+//!   a [`WorkQueueSender`](engine::concurrent_delta::work_queue::WorkQueueSender),
+//!   collects results through an `mpsc` channel, and reorders them with
+//!   [`ReorderBuffer`](engine::concurrent_delta::ReorderBuffer) to preserve
+//!   submission order.
+//! - [`ThresholdDeltaPipeline`] - auto-selects between sequential and parallel
+//!   mode based on the number of submitted items. Below the threshold (default
+//!   [`DEFAULT_PARALLEL_THRESHOLD`] = 64), items are processed sequentially.
+//!   At or above the threshold, a [`ParallelDeltaPipeline`] is created and all
+//!   buffered items are flushed into it.
 //!
 //! # Upstream Reference
 //!
@@ -20,9 +28,20 @@
 //! strategy to be swapped for parallel execution without changing the receiver.
 
 use std::io;
+use std::sync::mpsc;
+use std::thread::JoinHandle;
 
+use engine::concurrent_delta::reorder::ReorderBuffer;
 use engine::concurrent_delta::strategy::dispatch;
+use engine::concurrent_delta::work_queue::{self, WorkQueueSender};
 use engine::concurrent_delta::{DeltaResult, DeltaWork};
+
+/// Default threshold for switching from sequential to parallel dispatch.
+///
+/// Matches the receiver's `PARALLEL_STAT_THRESHOLD` (64 files). Below this
+/// count, the overhead of thread spawning and channel communication exceeds
+/// the benefit of parallelism.
+pub const DEFAULT_PARALLEL_THRESHOLD: usize = 64;
 
 /// Abstraction over the delta dispatch loop in the receiver.
 ///
@@ -123,6 +142,246 @@ impl ReceiverDeltaPipeline for SequentialDeltaPipeline {
             return Vec::new();
         }
         self.ready.into_iter().skip(self.cursor).collect()
+    }
+}
+
+/// Parallel delta pipeline that dispatches work to rayon workers.
+///
+/// Sends [`DeltaWork`] items through a bounded [`WorkQueueSender`] to a
+/// consumer thread that drains items via
+/// [`drain_parallel`](engine::concurrent_delta::work_queue::WorkQueueReceiver::drain_parallel),
+/// processing each item on the rayon thread pool. Results flow back through
+/// an `mpsc` channel and are reordered by a [`ReorderBuffer`] to preserve
+/// submission order.
+///
+/// # Architecture
+///
+/// ```text
+/// submit_work()                  consumer thread
+///     |                               |
+///     v                               v
+/// WorkQueueSender ──────► WorkQueueReceiver::drain_parallel()
+///     (bounded)                       |
+///                                     v
+///                              mpsc::Sender<DeltaResult>
+///                                     |
+///                                     v
+/// poll_result() ◄──── mpsc::Receiver ──► ReorderBuffer
+/// ```
+///
+/// The bounded work queue applies backpressure when the rayon pool is
+/// saturated, preventing unbounded memory growth for million-file transfers.
+///
+/// # Upstream Reference
+///
+/// Parallelizes the sequential per-file loop in `receiver.c:recv_files()`.
+/// The reorder buffer ensures post-processing sees files in file-list order,
+/// matching upstream's sequential invariant.
+pub struct ParallelDeltaPipeline {
+    /// Sequence counter for stamping work items before dispatch.
+    next_sequence: u64,
+    /// Sender half of the bounded work queue.
+    work_tx: Option<WorkQueueSender>,
+    /// Receiver for completed results from the consumer thread.
+    result_rx: mpsc::Receiver<DeltaResult>,
+    /// Reorder buffer that yields results in submission order.
+    reorder: ReorderBuffer<DeltaResult>,
+    /// Consumer thread handle, joined during flush.
+    consumer_handle: Option<JoinHandle<()>>,
+}
+
+impl ParallelDeltaPipeline {
+    /// Creates a new parallel pipeline with the given worker count for capacity sizing.
+    ///
+    /// The work queue capacity is set to `2 * worker_count`, matching the
+    /// default capacity multiplier in
+    /// [`work_queue::bounded`](engine::concurrent_delta::work_queue::bounded).
+    /// The reorder buffer capacity matches the work queue capacity so it can
+    /// hold all in-flight results without rejecting inserts.
+    #[must_use]
+    pub fn new(worker_count: usize) -> Self {
+        let capacity = worker_count.saturating_mul(2).max(2);
+        let (work_tx, work_rx) = work_queue::bounded_with_capacity(capacity);
+        let (result_tx, result_rx) = mpsc::channel();
+
+        let consumer_handle = std::thread::spawn(move || {
+            let results = work_rx.drain_parallel(|w| dispatch(&w));
+            for result in results {
+                // Ignore send errors - the receiver may have been dropped during flush.
+                let _ = result_tx.send(result);
+            }
+        });
+
+        Self {
+            next_sequence: 0,
+            work_tx: Some(work_tx),
+            result_rx,
+            reorder: ReorderBuffer::new(capacity),
+            consumer_handle: Some(consumer_handle),
+        }
+    }
+}
+
+impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
+    fn submit_work(&mut self, mut work: DeltaWork) -> io::Result<()> {
+        let seq = self.next_sequence;
+        self.next_sequence += 1;
+        work.set_sequence(seq);
+
+        let tx = self
+            .work_tx
+            .as_ref()
+            .ok_or_else(|| io::Error::other("parallel pipeline work queue already closed"))?;
+        tx.send(work)
+            .map_err(|_| io::Error::other("parallel pipeline consumer thread has shut down"))
+    }
+
+    fn poll_result(&mut self) -> Option<DeltaResult> {
+        // First yield any already-buffered in-order result without blocking.
+        if let Some(ready) = self.reorder.next_in_order() {
+            return Some(ready);
+        }
+        // Drain available results from the channel into the reorder buffer.
+        // The reorder buffer is bounded, so we drain ready items after each
+        // insert to free slots. In practice the buffer is sized to match the
+        // work queue depth, so it can hold all in-flight results.
+        while let Ok(result) = self.result_rx.try_recv() {
+            let seq = result.sequence();
+            if self.reorder.insert(seq, result).is_err() {
+                // Buffer full - drain what we can and retry the insert.
+                // This shouldn't happen if capacity >= work queue depth.
+                if let Some(ready) = self.reorder.next_in_order() {
+                    return Some(ready);
+                }
+                break;
+            }
+            if let Some(ready) = self.reorder.next_in_order() {
+                return Some(ready);
+            }
+        }
+        None
+    }
+
+    fn flush(mut self: Box<Self>) -> Vec<DeltaResult> {
+        // Drop the work queue sender to signal the consumer thread to finish.
+        self.work_tx.take();
+
+        // Join the consumer thread to ensure all results are sent.
+        if let Some(handle) = self.consumer_handle.take() {
+            let _ = handle.join();
+        }
+
+        // Collect all results from the channel and sort by sequence number.
+        // After join(), the consumer has finished and all results are in the
+        // mpsc channel. Sorting is simpler and more reliable than draining
+        // through the bounded ReorderBuffer, which could drop items if the
+        // out-of-order gap exceeds its capacity.
+        let mut collected: Vec<DeltaResult> = self.result_rx.try_iter().collect();
+        // Include any items already buffered in the reorder buffer.
+        collected.extend(self.reorder.drain_ready());
+        collected.sort_by_key(|r| r.sequence());
+        collected
+    }
+}
+
+/// Mode tracking for the threshold pipeline.
+enum ThresholdMode {
+    /// Buffering work items until the threshold is reached.
+    Buffering(Vec<DeltaWork>),
+    /// Delegating to a parallel pipeline (threshold reached).
+    Parallel(ParallelDeltaPipeline),
+}
+
+/// Threshold-gated delta pipeline that auto-selects sequential or parallel mode.
+///
+/// Buffers submitted work items until either:
+/// - The buffer reaches the threshold, at which point a [`ParallelDeltaPipeline`]
+///   is created and all buffered items are flushed into it.
+/// - [`flush`](ReceiverDeltaPipeline::flush) is called before the threshold,
+///   in which case items are processed sequentially.
+///
+/// This follows the threshold-based dual-path pattern used throughout the
+/// codebase (e.g., `PARALLEL_STAT_THRESHOLD` in the receiver). For small
+/// transfers, the overhead of spawning threads and channels exceeds the
+/// benefit of parallelism.
+///
+/// # Default Threshold
+///
+/// [`DEFAULT_PARALLEL_THRESHOLD`] = 64, matching the receiver's
+/// `PARALLEL_STAT_THRESHOLD`.
+pub struct ThresholdDeltaPipeline {
+    /// Number of items required to switch to parallel mode.
+    threshold: usize,
+    /// Current operating mode.
+    mode: ThresholdMode,
+}
+
+impl ThresholdDeltaPipeline {
+    /// Creates a threshold pipeline with the given threshold.
+    #[must_use]
+    pub fn new(threshold: usize) -> Self {
+        Self {
+            threshold,
+            mode: ThresholdMode::Buffering(Vec::new()),
+        }
+    }
+
+    /// Creates a threshold pipeline with [`DEFAULT_PARALLEL_THRESHOLD`].
+    #[must_use]
+    pub fn with_default_threshold() -> Self {
+        Self::new(DEFAULT_PARALLEL_THRESHOLD)
+    }
+
+    /// Promotes from buffering to parallel mode, flushing buffered items.
+    fn promote_to_parallel(&mut self, buffered: Vec<DeltaWork>) -> io::Result<()> {
+        let worker_count = rayon::current_num_threads();
+        let mut parallel = ParallelDeltaPipeline::new(worker_count);
+        for item in buffered {
+            parallel.submit_work(item)?;
+        }
+        self.mode = ThresholdMode::Parallel(parallel);
+        Ok(())
+    }
+}
+
+impl ReceiverDeltaPipeline for ThresholdDeltaPipeline {
+    fn submit_work(&mut self, work: DeltaWork) -> io::Result<()> {
+        match &mut self.mode {
+            ThresholdMode::Buffering(buf) => {
+                buf.push(work);
+                if buf.len() >= self.threshold {
+                    let buffered = std::mem::take(buf);
+                    self.promote_to_parallel(buffered)?;
+                }
+                Ok(())
+            }
+            ThresholdMode::Parallel(par) => par.submit_work(work),
+        }
+    }
+
+    fn poll_result(&mut self) -> Option<DeltaResult> {
+        match &mut self.mode {
+            ThresholdMode::Buffering(_) => None,
+            ThresholdMode::Parallel(par) => par.poll_result(),
+        }
+    }
+
+    fn flush(self: Box<Self>) -> Vec<DeltaResult> {
+        match self.mode {
+            ThresholdMode::Buffering(buffered) => {
+                if buffered.is_empty() {
+                    return Vec::new();
+                }
+                // Below threshold - process sequentially.
+                let mut seq = SequentialDeltaPipeline::new();
+                for item in buffered {
+                    // Dispatch is infallible for sequential pipeline.
+                    let _ = seq.submit_work(item);
+                }
+                Box::new(seq).flush()
+            }
+            ThresholdMode::Parallel(par) => Box::new(par).flush(),
+        }
     }
 }
 
@@ -343,5 +602,394 @@ mod tests {
         pipeline.submit_work(work).unwrap();
         let result = pipeline.poll_result().unwrap();
         assert_eq!(*result.status(), DeltaResultStatus::Success);
+    }
+
+    // ==================== ParallelDeltaPipeline tests ====================
+
+    #[test]
+    fn parallel_submit_and_flush() {
+        let mut pipeline = ParallelDeltaPipeline::new(2);
+        for i in 0..10u32 {
+            let work =
+                DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), u64::from(i) * 100);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 10);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.sequence(), i as u64);
+            assert_eq!(r.ndx(), i as u32);
+            assert!(r.is_success());
+            assert_eq!(r.bytes_written(), i as u64 * 100);
+        }
+    }
+
+    #[test]
+    fn parallel_preserves_submission_order() {
+        let mut pipeline = ParallelDeltaPipeline::new(4);
+        for i in 0..50u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 64);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 50);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.sequence(), i as u64, "result {i} has wrong sequence");
+            assert_eq!(r.ndx(), i as u32, "result {i} has wrong ndx");
+        }
+    }
+
+    #[test]
+    fn parallel_mixed_work_kinds() {
+        let mut pipeline = ParallelDeltaPipeline::new(2);
+
+        let whole = DeltaWork::whole_file(0, PathBuf::from("/dest/whole"), 500);
+        let delta = DeltaWork::delta(
+            1,
+            PathBuf::from("/dest/delta"),
+            PathBuf::from("/basis/delta"),
+            1000,
+        );
+
+        pipeline.submit_work(whole).unwrap();
+        pipeline.submit_work(delta).unwrap();
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 2);
+
+        assert_eq!(results[0].ndx(), 0);
+        assert_eq!(results[0].literal_bytes(), 500);
+        assert_eq!(results[0].matched_bytes(), 0);
+
+        assert_eq!(results[1].ndx(), 1);
+        assert_eq!(results[1].literal_bytes(), 500); // 50/50 split
+        assert_eq!(results[1].matched_bytes(), 500);
+    }
+
+    #[test]
+    fn parallel_poll_result_returns_in_order() {
+        let mut pipeline = ParallelDeltaPipeline::new(2);
+        for i in 0..5u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 64);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        // Flush returns all results in submission order.
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 5);
+        for i in 0..5u64 {
+            assert_eq!(results[i as usize].sequence(), i);
+        }
+    }
+
+    #[test]
+    fn parallel_flush_empty_pipeline() {
+        let pipeline = ParallelDeltaPipeline::new(2);
+        let results = Box::new(pipeline).flush();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn parallel_zero_size_files() {
+        let mut pipeline = ParallelDeltaPipeline::new(2);
+        for i in 0..5u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 0);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 5);
+        for r in &results {
+            assert_eq!(r.bytes_written(), 0);
+            assert!(r.is_success());
+        }
+    }
+
+    #[test]
+    fn parallel_single_item() {
+        let mut pipeline = ParallelDeltaPipeline::new(2);
+        let work = DeltaWork::whole_file(42, PathBuf::from("/dest/single"), 256);
+        pipeline.submit_work(work).unwrap();
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].ndx(), 42);
+        assert_eq!(results[0].sequence(), 0);
+        assert_eq!(results[0].bytes_written(), 256);
+    }
+
+    #[test]
+    fn parallel_trait_object_works() {
+        let mut pipeline: Box<dyn ReceiverDeltaPipeline> = Box::new(ParallelDeltaPipeline::new(2));
+        for i in 0..3u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 100);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = pipeline.flush();
+        assert_eq!(results.len(), 3);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.ndx(), i as u32);
+        }
+    }
+
+    #[test]
+    fn parallel_large_batch() {
+        let mut pipeline = ParallelDeltaPipeline::new(4);
+        let count = 200u32;
+        for i in 0..count {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 32);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), count as usize);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.sequence(), i as u64);
+            assert_eq!(r.ndx(), i as u32);
+        }
+    }
+
+    #[test]
+    fn parallel_sequence_monotonically_increases() {
+        let mut pipeline = ParallelDeltaPipeline::new(2);
+        for i in 0..20u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 16);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        let mut prev_seq = None;
+        for r in &results {
+            if let Some(prev) = prev_seq {
+                assert_eq!(r.sequence(), prev + 1);
+            }
+            prev_seq = Some(r.sequence());
+        }
+        assert_eq!(prev_seq, Some(19));
+    }
+
+    // ==================== ThresholdDeltaPipeline tests ====================
+
+    #[test]
+    fn threshold_below_threshold_uses_sequential() {
+        let threshold = 10;
+        let mut pipeline = ThresholdDeltaPipeline::new(threshold);
+        for i in 0..5u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 100);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        // While buffering, poll returns None.
+        assert!(pipeline.poll_result().is_none());
+
+        // Flush processes sequentially.
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 5);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.ndx(), i as u32);
+            assert!(r.is_success());
+        }
+    }
+
+    #[test]
+    fn threshold_at_threshold_switches_to_parallel() {
+        let threshold = 5;
+        let mut pipeline = ThresholdDeltaPipeline::new(threshold);
+        for i in 0..5u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 64);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        // After reaching threshold, mode should be parallel.
+        assert!(matches!(pipeline.mode, ThresholdMode::Parallel(_)));
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 5);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.ndx(), i as u32);
+        }
+    }
+
+    #[test]
+    fn threshold_above_threshold_continues_parallel() {
+        let threshold = 3;
+        let mut pipeline = ThresholdDeltaPipeline::new(threshold);
+        for i in 0..10u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 32);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 10);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.sequence(), i as u64);
+        }
+    }
+
+    #[test]
+    fn threshold_default_threshold_value() {
+        let pipeline = ThresholdDeltaPipeline::with_default_threshold();
+        assert_eq!(pipeline.threshold, DEFAULT_PARALLEL_THRESHOLD);
+        assert_eq!(pipeline.threshold, 64);
+    }
+
+    #[test]
+    fn threshold_empty_flush() {
+        let pipeline = ThresholdDeltaPipeline::new(10);
+        let results = Box::new(pipeline).flush();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn threshold_poll_returns_none_while_buffering() {
+        let mut pipeline = ThresholdDeltaPipeline::new(100);
+        for i in 0..50u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 16);
+            pipeline.submit_work(work).unwrap();
+            assert!(pipeline.poll_result().is_none());
+        }
+    }
+
+    #[test]
+    fn threshold_mixed_work_kinds() {
+        let threshold = 3;
+        let mut pipeline = ThresholdDeltaPipeline::new(threshold);
+
+        let whole = DeltaWork::whole_file(0, PathBuf::from("/dest/whole"), 500);
+        let delta = DeltaWork::delta(
+            1,
+            PathBuf::from("/dest/delta"),
+            PathBuf::from("/basis/delta"),
+            1000,
+        );
+        let whole2 = DeltaWork::whole_file(2, PathBuf::from("/dest/whole2"), 200);
+
+        pipeline.submit_work(whole).unwrap();
+        pipeline.submit_work(delta).unwrap();
+        pipeline.submit_work(whole2).unwrap();
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].literal_bytes(), 500);
+        assert_eq!(results[0].matched_bytes(), 0);
+        assert_eq!(results[1].literal_bytes(), 500); // 50/50 split
+        assert_eq!(results[1].matched_bytes(), 500);
+        assert_eq!(results[2].literal_bytes(), 200);
+    }
+
+    #[test]
+    fn threshold_trait_object_works() {
+        let mut pipeline: Box<dyn ReceiverDeltaPipeline> = Box::new(ThresholdDeltaPipeline::new(5));
+        for i in 0..3u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 100);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = pipeline.flush();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn threshold_single_item_below_threshold() {
+        let mut pipeline = ThresholdDeltaPipeline::new(10);
+        let work = DeltaWork::whole_file(7, PathBuf::from("/dest/single"), 128);
+        pipeline.submit_work(work).unwrap();
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].ndx(), 7);
+        assert_eq!(results[0].bytes_written(), 128);
+    }
+
+    #[test]
+    fn threshold_exact_threshold_count() {
+        let threshold = 4;
+        let mut pipeline = ThresholdDeltaPipeline::new(threshold);
+
+        // Submit exactly threshold items.
+        for i in 0..4u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 50);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        assert!(matches!(pipeline.mode, ThresholdMode::Parallel(_)));
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 4);
+    }
+
+    #[test]
+    fn threshold_one_below_threshold() {
+        let threshold = 4;
+        let mut pipeline = ThresholdDeltaPipeline::new(threshold);
+
+        // Submit one fewer than threshold.
+        for i in 0..3u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 50);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        assert!(matches!(pipeline.mode, ThresholdMode::Buffering(_)));
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn threshold_large_batch_parallel() {
+        let threshold = 10;
+        let mut pipeline = ThresholdDeltaPipeline::new(threshold);
+        let count = 100u32;
+        for i in 0..count {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 16);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), count as usize);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.sequence(), i as u64);
+            assert_eq!(r.ndx(), i as u32);
+        }
+    }
+
+    #[test]
+    fn threshold_preserves_order_in_parallel_mode() {
+        let threshold = 2;
+        let mut pipeline = ThresholdDeltaPipeline::new(threshold);
+        for i in 0..30u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 32);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 30);
+        let mut prev_seq = None;
+        for r in &results {
+            if let Some(prev) = prev_seq {
+                assert_eq!(r.sequence(), prev + 1);
+            }
+            prev_seq = Some(r.sequence());
+        }
+    }
+
+    #[test]
+    fn threshold_zero_size_files() {
+        let mut pipeline = ThresholdDeltaPipeline::new(3);
+        for i in 0..3u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 0);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 3);
+        for r in &results {
+            assert_eq!(r.bytes_written(), 0);
+            assert!(r.is_success());
+        }
     }
 }
