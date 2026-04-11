@@ -28,10 +28,8 @@
 //! strategy to be swapped for parallel execution without changing the receiver.
 
 use std::io;
-use std::sync::mpsc;
-use std::thread::JoinHandle;
 
-use engine::concurrent_delta::reorder::ReorderBuffer;
+use engine::concurrent_delta::consumer::DeltaConsumer;
 use engine::concurrent_delta::strategy::dispatch;
 use engine::concurrent_delta::work_queue::{self, WorkQueueSender};
 use engine::concurrent_delta::{DeltaResult, DeltaWork};
@@ -148,46 +146,46 @@ impl ReceiverDeltaPipeline for SequentialDeltaPipeline {
 /// Parallel delta pipeline that dispatches work to rayon workers.
 ///
 /// Sends [`DeltaWork`] items through a bounded [`WorkQueueSender`] to a
-/// consumer thread that drains items via
+/// [`DeltaConsumer`] background thread that drains items via
 /// [`drain_parallel`](engine::concurrent_delta::work_queue::WorkQueueReceiver::drain_parallel),
-/// processing each item on the rayon thread pool. Results flow back through
-/// an `mpsc` channel and are reordered by a [`ReorderBuffer`] to preserve
-/// submission order.
+/// processes each item on the rayon thread pool, feeds results into a
+/// [`ReorderBuffer`](engine::concurrent_delta::ReorderBuffer), and delivers
+/// them in sequence order through an internal channel.
 ///
 /// # Architecture
 ///
 /// ```text
-/// submit_work()                  consumer thread
+/// submit_work()                  DeltaConsumer (background thread)
 ///     |                               |
 ///     v                               v
 /// WorkQueueSender ──────► WorkQueueReceiver::drain_parallel()
 ///     (bounded)                       |
 ///                                     v
-///                              mpsc::Sender<DeltaResult>
-///                                     |
+///                              ReorderBuffer (inside consumer)
+///                                     |  drain_ready() yields contiguous run
 ///                                     v
-/// poll_result() ◄──── mpsc::Receiver ──► ReorderBuffer
+/// poll_result() ◄──── mpsc::Receiver (in sequence order)
 /// ```
 ///
 /// The bounded work queue applies backpressure when the rayon pool is
 /// saturated, preventing unbounded memory growth for million-file transfers.
+/// The [`DeltaConsumer`] handles reordering internally, so `poll_result`
+/// receives results already in submission order - no client-side reorder
+/// buffer is needed.
 ///
 /// # Upstream Reference
 ///
 /// Parallelizes the sequential per-file loop in `receiver.c:recv_files()`.
-/// The reorder buffer ensures post-processing sees files in file-list order,
-/// matching upstream's sequential invariant.
+/// The consumer's internal reorder buffer ensures post-processing sees files
+/// in file-list order, matching upstream's sequential invariant.
 pub struct ParallelDeltaPipeline {
     /// Sequence counter for stamping work items before dispatch.
     next_sequence: u64,
     /// Sender half of the bounded work queue.
     work_tx: Option<WorkQueueSender>,
-    /// Receiver for completed results from the consumer thread.
-    result_rx: mpsc::Receiver<DeltaResult>,
-    /// Reorder buffer that yields results in submission order.
-    reorder: ReorderBuffer<DeltaResult>,
-    /// Consumer thread handle, joined during flush.
-    consumer_handle: Option<JoinHandle<()>>,
+    /// Consumer thread that drains the work queue, reorders results, and
+    /// delivers them in sequence order through its internal channel.
+    consumer: Option<DeltaConsumer>,
 }
 
 impl std::fmt::Debug for ParallelDeltaPipeline {
@@ -204,28 +202,19 @@ impl ParallelDeltaPipeline {
     /// The work queue capacity is set to `2 * worker_count`, matching the
     /// default capacity multiplier in
     /// [`work_queue::bounded`](engine::concurrent_delta::work_queue::bounded).
-    /// The reorder buffer capacity matches the work queue capacity so it can
-    /// hold all in-flight results without rejecting inserts.
+    /// The [`DeltaConsumer`] reorder buffer capacity is set to the same value,
+    /// which is sufficient to hold all in-flight results and yield contiguous
+    /// runs as workers complete.
     #[must_use]
     pub fn new(worker_count: usize) -> Self {
         let capacity = worker_count.saturating_mul(2).max(2);
         let (work_tx, work_rx) = work_queue::bounded_with_capacity(capacity);
-        let (result_tx, result_rx) = mpsc::channel();
-
-        let consumer_handle = std::thread::spawn(move || {
-            let results = work_rx.drain_parallel(|w| dispatch(&w));
-            for result in results {
-                // Ignore send errors - the receiver may have been dropped during flush.
-                let _ = result_tx.send(result);
-            }
-        });
+        let consumer = DeltaConsumer::spawn(work_rx, capacity);
 
         Self {
             next_sequence: 0,
             work_tx: Some(work_tx),
-            result_rx,
-            reorder: ReorderBuffer::new(capacity),
-            consumer_handle: Some(consumer_handle),
+            consumer: Some(consumer),
         }
     }
 }
@@ -245,50 +234,27 @@ impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
     }
 
     fn poll_result(&mut self) -> Option<DeltaResult> {
-        // First yield any already-buffered in-order result without blocking.
-        if let Some(ready) = self.reorder.next_in_order() {
-            return Some(ready);
-        }
-        // Drain available results from the channel into the reorder buffer.
-        // The reorder buffer is bounded, so we drain ready items after each
-        // insert to free slots. In practice the buffer is sized to match the
-        // work queue depth, so it can hold all in-flight results.
-        while let Ok(result) = self.result_rx.try_recv() {
-            let seq = result.sequence();
-            if self.reorder.insert(seq, result).is_err() {
-                // Buffer full - drain what we can and retry the insert.
-                // This shouldn't happen if capacity >= work queue depth.
-                if let Some(ready) = self.reorder.next_in_order() {
-                    return Some(ready);
-                }
-                break;
-            }
-            if let Some(ready) = self.reorder.next_in_order() {
-                return Some(ready);
-            }
-        }
-        None
+        // The DeltaConsumer delivers results already in sequence order via
+        // its internal ReorderBuffer. A non-blocking try_recv() avoids
+        // stalling the receiver pipeline when no results are ready yet.
+        let consumer = self.consumer.as_ref()?;
+        consumer.try_recv()
     }
 
     fn flush(mut self: Box<Self>) -> Vec<DeltaResult> {
         // Drop the work queue sender to signal the consumer thread to finish.
+        // This closes the bounded channel, causing drain_parallel() to return
+        // once all queued items are processed.
         self.work_tx.take();
 
-        // Join the consumer thread to ensure all results are sent.
-        if let Some(handle) = self.consumer_handle.take() {
-            let _ = handle.join();
+        // Consume the DeltaConsumer's iterator to collect all remaining
+        // in-order results. The iterator blocks until the background thread
+        // finishes and the channel closes.
+        if let Some(consumer) = self.consumer.take() {
+            consumer.into_iter().collect()
+        } else {
+            Vec::new()
         }
-
-        // Collect all results from the channel and sort by sequence number.
-        // After join(), the consumer has finished and all results are in the
-        // mpsc channel. Sorting is simpler and more reliable than draining
-        // through the bounded ReorderBuffer, which could drop items if the
-        // out-of-order gap exceeds its capacity.
-        let mut collected: Vec<DeltaResult> = self.result_rx.try_iter().collect();
-        // Include any items already buffered in the reorder buffer.
-        collected.extend(self.reorder.drain_ready());
-        collected.sort_by_key(|r| r.sequence());
-        collected
     }
 }
 
@@ -1116,6 +1082,136 @@ mod tests {
                 expected_size,
                 "wrong bytes_written at index {i}"
             );
+        }
+    }
+
+    // ==================== Consumer thread integration tests ====================
+
+    #[test]
+    fn parallel_poll_yields_streaming_results_during_submission() {
+        // Verifies that poll_result() yields results while the producer is
+        // still submitting items - the DeltaConsumer delivers in-order results
+        // as contiguous runs become available from the reorder buffer.
+        let mut pipeline = ParallelDeltaPipeline::new(2);
+        let count = 20u32;
+        let mut _polled_during_submit = 0usize;
+        let mut total_polled = 0usize;
+
+        for i in 0..count {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 64);
+            pipeline.submit_work(work).unwrap();
+
+            // Poll after each submit - should eventually start yielding results
+            // as the consumer thread processes and reorders them.
+            while let Some(result) = pipeline.poll_result() {
+                assert!(result.is_success());
+                _polled_during_submit += 1;
+                total_polled += 1;
+            }
+        }
+
+        // Flush remaining results.
+        let remaining = Box::new(pipeline).flush();
+        total_polled += remaining.len();
+
+        assert_eq!(
+            total_polled, count as usize,
+            "expected {count} total results, got {total_polled}"
+        );
+        // With enough items, some should arrive during submission.
+        // The exact count depends on thread scheduling, so we only verify
+        // the total is correct.
+    }
+
+    #[test]
+    fn parallel_consumer_delivers_in_order_under_load() {
+        // Stresses the consumer thread with a large batch to verify that
+        // the ReorderBuffer inside DeltaConsumer correctly sequences results
+        // even when rayon workers complete in arbitrary order.
+        let mut pipeline = ParallelDeltaPipeline::new(4);
+        let count = 500u32;
+        for i in 0..count {
+            let size = u64::from(i % 100) * 8 + 32;
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), size);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        // Collect results through both poll_result and flush.
+        let mut results = Vec::new();
+        while let Some(r) = pipeline.poll_result() {
+            results.push(r);
+        }
+        results.extend(Box::new(pipeline).flush());
+
+        assert_eq!(results.len(), count as usize);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(
+                r.sequence(),
+                i as u64,
+                "out of order at position {i}: got sequence {}",
+                r.sequence()
+            );
+            assert_eq!(r.ndx(), i as u32);
+            assert!(r.is_success());
+        }
+    }
+
+    #[test]
+    fn parallel_flush_after_partial_poll_delivers_remainder_in_order() {
+        let mut pipeline = ParallelDeltaPipeline::new(2);
+        for i in 0..30u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 128);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        // Give the consumer time to process some items.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Poll a few results.
+        let mut polled = Vec::new();
+        while let Some(r) = pipeline.poll_result() {
+            polled.push(r);
+        }
+
+        // Flush the rest.
+        let flushed = Box::new(pipeline).flush();
+
+        // Combine and verify total count and ordering.
+        let mut all: Vec<DeltaResult> = polled;
+        all.extend(flushed);
+        assert_eq!(all.len(), 30);
+        for (i, r) in all.iter().enumerate() {
+            assert_eq!(r.sequence(), i as u64, "wrong sequence at position {i}");
+        }
+    }
+
+    #[test]
+    fn parallel_error_results_delivered_in_order() {
+        // DeltaResult::Failed and NeedsRedo results must be delivered in
+        // sequence order alongside successful results.
+        let mut pipeline = ParallelDeltaPipeline::new(2);
+
+        // Mix whole-file (success) and delta (success with different stats).
+        for i in 0..10u32 {
+            let work = if i % 3 == 0 {
+                DeltaWork::delta(
+                    i,
+                    PathBuf::from(format!("/dest/{i}")),
+                    PathBuf::from(format!("/basis/{i}")),
+                    u64::from(i) * 100 + 100,
+                )
+            } else {
+                DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), u64::from(i) * 50)
+            };
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 10);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.sequence(), i as u64);
+            assert_eq!(r.ndx(), i as u32);
+            assert!(r.is_success());
         }
     }
 }

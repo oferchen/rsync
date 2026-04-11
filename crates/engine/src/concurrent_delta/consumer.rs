@@ -154,6 +154,18 @@ impl DeltaConsumer {
         }
     }
 
+    /// Tries to receive the next in-order result without blocking.
+    ///
+    /// Returns `Some(result)` if a result is immediately available in the
+    /// channel, or `None` if no results are ready yet. Unlike
+    /// [`iter`](Self::iter), this method never blocks the caller.
+    ///
+    /// Useful for polling from a pipeline loop where blocking would stall
+    /// the producer.
+    pub fn try_recv(&self) -> Option<DeltaResult> {
+        self.result_rx.try_recv().ok()
+    }
+
     /// Returns an iterator that yields results in sequence order.
     ///
     /// The iterator blocks waiting for the next result and terminates when
@@ -475,5 +487,74 @@ mod tests {
         assert_eq!(results[2].ndx(), 7);
         assert_eq!(results[3].ndx(), 999);
         assert_eq!(results[4].ndx(), 0);
+    }
+
+    // ==================== try_recv tests ====================
+
+    #[test]
+    fn try_recv_returns_none_when_no_results_ready() {
+        let (tx, rx) = work_queue::bounded_with_capacity(8);
+        let consumer = DeltaConsumer::spawn(rx, 16);
+
+        // No items sent yet - try_recv should return None.
+        assert!(consumer.try_recv().is_none());
+
+        // Send items so the consumer thread can finish.
+        send_items(&tx, 3);
+        drop(tx);
+
+        // Eventually all results arrive via blocking iter.
+        let results: Vec<DeltaResult> = consumer.iter().collect();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn try_recv_returns_results_when_available() {
+        let (tx, rx) = work_queue::bounded_with_capacity(8);
+
+        // Send all items and close the channel before spawning the consumer.
+        send_items(&tx, 5);
+        drop(tx);
+
+        let consumer = DeltaConsumer::spawn(rx, 16);
+
+        // Collect all results using try_recv with a polling loop.
+        let mut results = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match consumer.try_recv() {
+                Some(r) => results.push(r),
+                None => {
+                    if results.len() == 5 {
+                        break;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "timed out waiting for results"
+                    );
+                    std::thread::yield_now();
+                }
+            }
+        }
+
+        assert_eq!(results.len(), 5);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.sequence(), i as u64);
+        }
+    }
+
+    #[test]
+    fn try_recv_on_empty_queue_returns_none() {
+        let (tx, rx) = work_queue::bounded_with_capacity(4);
+        drop(tx); // Close immediately.
+
+        let consumer = DeltaConsumer::spawn(rx, 8);
+
+        // Give the consumer thread a moment to finish.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // No items were sent, so try_recv should always return None.
+        assert!(consumer.try_recv().is_none());
+        consumer.join().unwrap();
     }
 }
