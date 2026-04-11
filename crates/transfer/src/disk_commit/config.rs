@@ -70,6 +70,14 @@ pub struct DiskCommitConfig {
     ///
     /// Defaults to [`DEFAULT_CHANNEL_CAPACITY`] (128).
     pub channel_capacity: usize,
+    /// Policy controlling io_uring usage for disk writes.
+    ///
+    /// When `Auto` (default), the disk thread attempts to create an
+    /// `IoUringDiskBatch` for batched writes. On Linux 5.6+ with the
+    /// `io_uring` feature enabled, this reduces syscall overhead by
+    /// batching multiple writes into a single `io_uring_enter` call.
+    /// Falls back to standard buffered I/O on non-Linux or older kernels.
+    pub io_uring_policy: fast_io::IoUringPolicy,
 }
 
 impl Default for DiskCommitConfig {
@@ -83,6 +91,7 @@ impl Default for DiskCommitConfig {
             backup: None,
             acl_cache: None,
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
+            io_uring_policy: fast_io::IoUringPolicy::Auto,
         }
     }
 }

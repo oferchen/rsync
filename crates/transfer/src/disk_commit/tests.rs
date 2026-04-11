@@ -16,6 +16,64 @@ fn default_config() {
         config.channel_capacity,
         super::config::DEFAULT_CHANNEL_CAPACITY
     );
+    assert_eq!(config.io_uring_policy, fast_io::IoUringPolicy::Auto);
+}
+
+#[test]
+fn config_io_uring_policy_disabled() {
+    let config = DiskCommitConfig {
+        io_uring_policy: fast_io::IoUringPolicy::Disabled,
+        ..DiskCommitConfig::default()
+    };
+    assert_eq!(config.io_uring_policy, fast_io::IoUringPolicy::Disabled);
+}
+
+#[test]
+fn spawn_with_io_uring_disabled() {
+    let config = DiskCommitConfig {
+        io_uring_policy: fast_io::IoUringPolicy::Disabled,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+#[test]
+fn write_file_with_io_uring_auto_policy() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("io_uring_auto.dat");
+
+    let config = DiskCommitConfig {
+        io_uring_policy: fast_io::IoUringPolicy::Auto,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 5,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"uring".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 5);
+    assert_eq!(fs::read(&file_path).unwrap(), b"uring");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
 }
 
 #[test]

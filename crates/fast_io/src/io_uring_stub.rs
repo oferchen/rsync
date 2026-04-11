@@ -186,6 +186,90 @@ pub mod registered_buffers {
 
 pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot};
 
+/// Stub batched io_uring disk writer (not available on this platform).
+///
+/// On non-Linux platforms, [`try_new`](Self::try_new) always returns `None`
+/// and [`new`](Self::new) always returns `Unsupported`.
+pub struct IoUringDiskBatch {
+    _private: (),
+}
+
+impl IoUringDiskBatch {
+    /// Always returns an `Unsupported` error on this platform.
+    pub fn new(_config: &IoUringConfig) -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "io_uring batched disk writer is not available on this platform",
+        ))
+    }
+
+    /// Always returns `None` on this platform.
+    #[must_use]
+    pub fn try_new(_config: &IoUringConfig) -> Option<Self> {
+        None
+    }
+
+    /// Begins a new file for writing (always fails on this platform).
+    pub fn begin_file(&mut self, _file: std::fs::File) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "io_uring is not available on this platform",
+        ))
+    }
+
+    /// Writes data to the current file (always fails on this platform).
+    pub fn write_data(&mut self, _data: &[u8]) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "io_uring is not available on this platform",
+        ))
+    }
+
+    /// Flushes buffered data (always fails on this platform).
+    pub fn flush(&mut self) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "io_uring is not available on this platform",
+        ))
+    }
+
+    /// Commits the current file (always fails on this platform).
+    pub fn commit_file(&mut self, _do_fsync: bool) -> io::Result<(std::fs::File, u64)> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "io_uring is not available on this platform",
+        ))
+    }
+
+    /// Returns bytes written (always 0 on this platform).
+    #[must_use]
+    pub fn bytes_written(&self) -> u64 {
+        0
+    }
+
+    /// Returns bytes written including pending buffer (always 0 on this platform).
+    #[must_use]
+    pub fn bytes_written_with_pending(&self) -> u64 {
+        0
+    }
+}
+
+impl Write for IoUringDiskBatch {
+    fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "io_uring is not available on this platform",
+        ))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "io_uring is not available on this platform",
+        ))
+    }
+}
+
 /// Stub io_uring reader (not available on this platform).
 ///
 /// Opening always fails with `Unsupported`.
@@ -815,6 +899,31 @@ mod tests {
         let result = RegisteredBufferGroup::new(&(), 4096, 4);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // IoUringDiskBatch stubs
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn disk_batch_try_new_returns_none() {
+        let config = IoUringConfig::default();
+        assert!(IoUringDiskBatch::try_new(&config).is_none());
+    }
+
+    #[test]
+    fn disk_batch_new_returns_unsupported() {
+        let config = IoUringConfig::default();
+        let result = IoUringDiskBatch::new(&config);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn disk_batch_bytes_written_is_zero() {
+        // Cannot construct one on stub platform, but verify the trait.
+        let config = IoUringConfig::default();
+        assert!(IoUringDiskBatch::try_new(&config).is_none());
     }
 
     #[test]
