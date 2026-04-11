@@ -1094,7 +1094,7 @@ mod tests {
         // as contiguous runs become available from the reorder buffer.
         let mut pipeline = ParallelDeltaPipeline::new(2);
         let count = 20u32;
-        let mut polled_during_submit = 0usize;
+        let mut _polled_during_submit = 0usize;
         let mut total_polled = 0usize;
 
         for i in 0..count {
@@ -1105,7 +1105,7 @@ mod tests {
             // as the consumer thread processes and reorders them.
             while let Some(result) = pipeline.poll_result() {
                 assert!(result.is_success());
-                polled_during_submit += 1;
+                _polled_during_submit += 1;
                 total_polled += 1;
             }
         }
