@@ -264,7 +264,7 @@ impl GeneratorContext {
         // default: lstat (fs::symlink_metadata)
         // --copy-unsafe-links needs post-batch fixup for unsafe symlinks
         let follow = self.config.flags.copy_links;
-        let stat_results = batch_stat_dir_entries(child_paths, follow);
+        let stat_results = batch_stat_dir_entries(child_paths, follow, &self.parallel_thresholds);
 
         // Phase 3: process each (path, metadata) pair
         for result in stat_results {
