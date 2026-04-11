@@ -33,6 +33,45 @@ use protocol::wire::{
     CompressedToken, CompressedTokenDecoder, CompressedTokenEncoder, DEFLATED_DATA, END_FLAG,
     MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG, TOKENRUN_REL,
 };
+use zstd::stream::raw::{Decoder as ZstdRawDecoder, Operation};
+
+/// Decompresses a raw zstd payload using the incremental raw decoder.
+///
+/// Upstream rsync uses `ZSTD_e_flush` (not `ZSTD_e_end`) at token boundaries,
+/// so concatenated DEFLATED_DATA payloads form a flush-point-terminated stream
+/// without a frame-end marker. The streaming `zstd::stream::read::Decoder`
+/// reports "incomplete frame" on EOF without a frame end, but the raw decoder
+/// handles flush-point streams correctly - matching upstream's incremental
+/// `ZSTD_decompressStream` usage (token.c:850).
+fn decompress_raw_zstd(data: &[u8]) -> Vec<u8> {
+    let mut decoder = ZstdRawDecoder::new().unwrap();
+    let mut result = Vec::new();
+    let mut out_buf_storage = vec![0u8; 64 * 1024];
+
+    let mut in_buf = zstd::stream::raw::InBuffer::around(data);
+    while in_buf.pos() < in_buf.src.len() {
+        let mut out_buf = zstd::stream::raw::OutBuffer::around(&mut out_buf_storage);
+        decoder.run(&mut in_buf, &mut out_buf).unwrap();
+        let produced = out_buf.pos();
+        result.extend_from_slice(&out_buf_storage[..produced]);
+    }
+
+    // Drain any remaining output after all input consumed
+    loop {
+        let mut out_buf = zstd::stream::raw::OutBuffer::around(&mut out_buf_storage);
+        decoder.run(
+            &mut zstd::stream::raw::InBuffer::around(&[]),
+            &mut out_buf,
+        ).unwrap();
+        let produced = out_buf.pos();
+        if produced == 0 {
+            break;
+        }
+        result.extend_from_slice(&out_buf_storage[..produced]);
+    }
+
+    result
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -169,10 +208,10 @@ fn interop_raw_payload_decompressible_by_standalone_zstd() {
     // Concatenate all payloads - they form one continuous zstd stream
     let raw_zstd: Vec<u8> = payloads.into_iter().flatten().collect();
 
-    // Decompress using the standalone zstd crate (not our wire decoder)
-    let mut decoder = zstd::stream::read::Decoder::new(&raw_zstd[..]).unwrap();
-    let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed).unwrap();
+    // Decompress using the raw zstd decoder (not our wire decoder).
+    // upstream uses ZSTD_e_flush (not ZSTD_e_end) so there is no frame-end
+    // marker - the streaming read::Decoder would report "incomplete frame".
+    let decompressed = decompress_raw_zstd(&raw_zstd);
 
     assert_eq!(
         decompressed, input,
@@ -197,9 +236,7 @@ fn interop_raw_payload_medium_repetitive_data() {
     let (payloads, _) = extract_deflated_payloads(&encoded);
 
     let raw_zstd: Vec<u8> = payloads.into_iter().flatten().collect();
-    let mut decoder = zstd::stream::read::Decoder::new(&raw_zstd[..]).unwrap();
-    let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed).unwrap();
+    let decompressed = decompress_raw_zstd(&raw_zstd);
 
     assert_eq!(decompressed, input);
 }
@@ -224,9 +261,7 @@ fn interop_raw_payload_incompressible_data() {
     let (payloads, _) = extract_deflated_payloads(&encoded);
 
     let raw_zstd: Vec<u8> = payloads.into_iter().flatten().collect();
-    let mut decoder = zstd::stream::read::Decoder::new(&raw_zstd[..]).unwrap();
-    let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed).unwrap();
+    let decompressed = decompress_raw_zstd(&raw_zstd);
 
     assert_eq!(decompressed, input);
 }
@@ -273,9 +308,7 @@ fn interop_flush_boundary_literal_then_block() {
 
     // The payload must be independently decompressible
     let raw_zstd: Vec<u8> = payloads.into_iter().flatten().collect();
-    let mut decoder = zstd::stream::read::Decoder::new(&raw_zstd[..]).unwrap();
-    let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed).unwrap();
+    let decompressed = decompress_raw_zstd(&raw_zstd);
     assert_eq!(decompressed, literal);
 }
 
@@ -311,9 +344,7 @@ fn interop_flush_boundary_interleaved_pattern() {
     );
 
     let raw_zstd: Vec<u8> = payloads.into_iter().flatten().collect();
-    let mut decoder = zstd::stream::read::Decoder::new(&raw_zstd[..]).unwrap();
-    let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed).unwrap();
+    let decompressed = decompress_raw_zstd(&raw_zstd);
     assert_eq!(decompressed, b"segment-one\nsegment-two\nsegment-three\n");
 }
 
@@ -343,9 +374,7 @@ fn interop_flush_at_eof_produces_complete_stream() {
     );
 
     let raw_zstd: Vec<u8> = payloads.into_iter().flatten().collect();
-    let mut decoder = zstd::stream::read::Decoder::new(&raw_zstd[..]).unwrap();
-    let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed).unwrap();
+    let decompressed = decompress_raw_zstd(&raw_zstd);
     assert_eq!(decompressed, input);
 }
 
@@ -854,9 +883,7 @@ fn interop_compression_levels_all_produce_valid_output() {
         // Verify raw payload decompressible by standalone zstd
         let (payloads, _) = extract_deflated_payloads(&encoded);
         let raw: Vec<u8> = payloads.into_iter().flatten().collect();
-        let mut dec = zstd::stream::read::Decoder::new(&raw[..]).unwrap();
-        let mut out = Vec::new();
-        dec.read_to_end(&mut out).unwrap();
+        let out = decompress_raw_zstd(&raw);
         assert_eq!(out, input, "standalone zstd decode failed at level {level}");
     }
 }
