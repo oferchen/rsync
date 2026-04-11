@@ -1676,9 +1676,7 @@ run_ssh_interop_test() {
 # Remaining known failures:
 # (none - all interop tests passing)
 KNOWN_FAILURES=(
-  # upstream-written compressed batch files use a token format that oc-rsync's
-  # batch reader does not yet parse correctly (literal length read as garbage).
-  "standalone:compressed-batch-recording"
+  # (none - all interop tests passing)
 )
 
 is_known_failure() {
@@ -1990,27 +1988,27 @@ test_write_batch_read_batch_compressed() {
   return 0
 }
 
-# #1397: compressed batch recording interop test
-# Verifies that batch files created during compressed transfers (-z) are
-# interoperable between oc-rsync and upstream rsync. Compression is transparent
-# to batch recording - batch files contain uncompressed tokens per upstream
-# batch.c behavior.
-test_compressed_batch_recording() {
+# #1557: upstream writes compressed batch, oc-rsync reads
+# Verifies that a batch file created by upstream rsync with -z (compression)
+# can be read by oc-rsync. Compression is transparent to batch recording -
+# batch files contain uncompressed tokens per upstream batch.c behavior.
+# PR #3182 added compressed token stream handling in batch replay.
+test_upstream_compressed_batch_oc_reads() {
   local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
 
-  local batch_dir="${work}/batch-compress-interop"
+  local batch_dir="${work}/batch-compress-up-writes"
   rm -rf "$batch_dir"
 
-  # --- Direction 1: upstream writes batch with -z, oc-rsync reads ---
   local dest1="${batch_dir}/up-write-dest"
   local dest2="${batch_dir}/oc-read-dest"
   local batch_up="${batch_dir}/batch-up-z.rsync"
   mkdir -p "$dest1" "$dest2"
 
+  # Step 1: upstream rsync writes a batch file with compression
   if ! timeout "$hard_timeout" "$upstream_binary" -av -z \
       --write-batch="$batch_up" --timeout=10 \
       "${src_dir}/" "${dest1}/" \
-      >"${log}.compress-interop-up-write.out" 2>"${log}.compress-interop-up-write.err"; then
+      >"${log}.compress-up-write.out" 2>"${log}.compress-up-write.err"; then
     echo "    write-batch with -z failed (upstream write, exit=$?)"
     return 1
   fi
@@ -2020,32 +2018,48 @@ test_compressed_batch_recording() {
     return 1
   fi
 
+  # Step 2: oc-rsync reads the batch file
   local rc1=0
   timeout "$hard_timeout" "$oc_bin" -av \
       --read-batch="$batch_up" --timeout=10 \
       "${dest2}/" \
-      >"${log}.compress-interop-oc-read.out" 2>"${log}.compress-interop-oc-read.err" || rc1=$?
+      >"${log}.compress-oc-read.out" 2>"${log}.compress-oc-read.err" || rc1=$?
   if [[ $rc1 -ne 0 ]]; then
     echo "    read-batch failed (oc-rsync reading upstream compressed batch, exit=$rc1)"
-    head -5 "${log}.compress-interop-oc-read.err" 2>/dev/null | sed 's/^/    stderr: /'
+    head -5 "${log}.compress-oc-read.err" 2>/dev/null | sed 's/^/    stderr: /'
     return 1
   fi
 
+  # Step 3: verify destination files match source
   if ! comp_verify_transfer "$src_dir" "$dest2"; then
     echo "    content mismatch after oc-rsync read of upstream compressed batch"
     return 1
   fi
 
-  # --- Direction 2: oc-rsync writes batch with -z, upstream reads ---
-  local dest3="${batch_dir}/oc-write-dest"
-  local dest4="${batch_dir}/up-read-dest"
-  local batch_oc="${batch_dir}/batch-oc-z.rsync"
-  mkdir -p "$dest3" "$dest4"
+  return 0
+}
 
+# #1559: oc-rsync writes compressed batch, upstream reads
+# Verifies that a batch file created by oc-rsync with -z (compression)
+# can be read by upstream rsync. Compression is transparent to batch
+# recording - batch files contain uncompressed tokens per upstream
+# batch.c behavior.
+test_oc_compressed_batch_upstream_reads() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local batch_dir="${work}/batch-compress-oc-writes"
+  rm -rf "$batch_dir"
+
+  local dest1="${batch_dir}/oc-write-dest"
+  local dest2="${batch_dir}/up-read-dest"
+  local batch_oc="${batch_dir}/batch-oc-z.rsync"
+  mkdir -p "$dest1" "$dest2"
+
+  # Step 1: oc-rsync writes a batch file with compression
   if ! timeout "$hard_timeout" "$oc_bin" -av -z \
       --write-batch="$batch_oc" --timeout=10 \
-      "${src_dir}/" "${dest3}/" \
-      >"${log}.compress-interop-oc-write.out" 2>"${log}.compress-interop-oc-write.err"; then
+      "${src_dir}/" "${dest1}/" \
+      >"${log}.compress-oc-write.out" 2>"${log}.compress-oc-write.err"; then
     echo "    write-batch with -z failed (oc-rsync write, exit=$?)"
     return 1
   fi
@@ -2055,18 +2069,20 @@ test_compressed_batch_recording() {
     return 1
   fi
 
-  local rc2=0
+  # Step 2: upstream rsync reads the batch file
+  local rc1=0
   timeout "$hard_timeout" "$upstream_binary" -av \
       --read-batch="$batch_oc" --timeout=10 \
-      "${dest4}/" \
-      >"${log}.compress-interop-up-read.out" 2>"${log}.compress-interop-up-read.err" || rc2=$?
-  if [[ $rc2 -ne 0 ]]; then
-    echo "    read-batch failed (upstream reading oc-rsync compressed batch, exit=$rc2)"
-    head -5 "${log}.compress-interop-up-read.err" 2>/dev/null | sed 's/^/    stderr: /'
+      "${dest2}/" \
+      >"${log}.compress-up-read.out" 2>"${log}.compress-up-read.err" || rc1=$?
+  if [[ $rc1 -ne 0 ]]; then
+    echo "    read-batch failed (upstream reading oc-rsync compressed batch, exit=$rc1)"
+    head -5 "${log}.compress-up-read.err" 2>/dev/null | sed 's/^/    stderr: /'
     return 1
   fi
 
-  if ! comp_verify_transfer "$src_dir" "$dest4"; then
+  # Step 3: verify destination files match source
+  if ! comp_verify_transfer "$src_dir" "$dest2"; then
     echo "    content mismatch after upstream read of oc-rsync compressed batch"
     return 1
   fi
@@ -6340,7 +6356,8 @@ run_standalone_interop_tests() {
   local test_names=(
     "write-batch-read-batch"
     "write-batch-read-batch-compressed"
-    "compressed-batch-recording"
+    "upstream-compressed-batch-oc-reads"
+    "oc-compressed-batch-upstream-reads"
     "batch-framing-multifile"
     "info-progress2"
     "large-file-2gb"
@@ -6390,7 +6407,8 @@ run_standalone_interop_tests() {
   local test_funcs=(
     "test_write_batch_read_batch"
     "test_write_batch_read_batch_compressed"
-    "test_compressed_batch_recording"
+    "test_upstream_compressed_batch_oc_reads"
+    "test_oc_compressed_batch_upstream_reads"
     "test_batch_framing_multifile"
     "test_info_progress2"
     "test_large_file_2gb"
