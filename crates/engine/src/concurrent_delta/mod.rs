@@ -13,6 +13,7 @@
 //! | [`work_queue`] | `WorkQueueSender` / `WorkQueueReceiver` | Bounded `sync_channel` (2x thread count) with backpressure |
 //! | [`strategy`] | [`DeltaStrategy`] trait | Dispatches to [`WholeFileStrategy`] or [`DeltaTransferStrategy`] based on [`DeltaWorkKind`] |
 //! | [`reorder`] | [`ReorderBuffer`] | `BTreeMap`-backed buffer that yields results in submission order |
+//! | [`consumer`] | [`DeltaConsumer`] | Background thread that drains `WorkQueue` via `drain_parallel` into `ReorderBuffer` for in-order delivery |
 //!
 //! # Production Pipeline
 //!
@@ -53,11 +54,13 @@
 //! - [`crate::delta`] for block-matching primitives
 //! - `transfer::pipeline` for the pipelined receiver architecture
 
+pub mod consumer;
 pub mod reorder;
 pub mod strategy;
 mod types;
 pub mod work_queue;
 
+pub use consumer::DeltaConsumer;
 pub use reorder::ReorderBuffer;
 pub use strategy::{DeltaStrategy, DeltaTransferStrategy, WholeFileStrategy};
 pub use types::{DeltaResult, DeltaResultStatus, DeltaWork, DeltaWorkKind};
