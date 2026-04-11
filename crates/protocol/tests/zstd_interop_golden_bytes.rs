@@ -553,14 +553,14 @@ fn interop_deflated_header_small_payload() {
     let byte1 = encoded[1];
 
     // For small payload, n < 256, so n >> 8 == 0
-    assert_eq!(
-        byte0 & 0xC0, DEFLATED_DATA,
-        "must have DEFLATED_DATA flag"
-    );
+    assert_eq!(byte0 & 0xC0, DEFLATED_DATA, "must have DEFLATED_DATA flag");
 
     let declared_len = ((byte0 & 0x3F) as usize) << 8 | byte1 as usize;
     assert!(declared_len > 0, "payload must not be empty");
-    assert!(declared_len <= MAX_DATA_COUNT, "payload must fit in 14 bits");
+    assert!(
+        declared_len <= MAX_DATA_COUNT,
+        "payload must fit in 14 bits"
+    );
 
     // Verify the declared length matches actual payload
     let actual_payload = &encoded[2..2 + declared_len];
@@ -700,11 +700,15 @@ fn interop_cross_file_dictionary_improves_compression() {
     let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
     let mut session_wire = Vec::new();
 
-    encoder.send_literal(&mut session_wire, shared_line).unwrap();
+    encoder
+        .send_literal(&mut session_wire, shared_line)
+        .unwrap();
     encoder.finish(&mut session_wire).unwrap();
     let file1_end = session_wire.len();
 
-    encoder.send_literal(&mut session_wire, shared_line).unwrap();
+    encoder
+        .send_literal(&mut session_wire, shared_line)
+        .unwrap();
     encoder.finish(&mut session_wire).unwrap();
     let file2_session_len = session_wire.len() - file1_end;
 
@@ -738,10 +742,7 @@ fn interop_zstd_frame_magic_in_first_payload() {
     assert!(!payloads.is_empty());
 
     let first_payload = &payloads[0];
-    assert!(
-        first_payload.len() >= 4,
-        "payload too short for zstd magic"
-    );
+    assert!(first_payload.len() >= 4, "payload too short for zstd magic");
 
     let magic = u32::from_le_bytes([
         first_payload[0],
@@ -845,10 +846,7 @@ fn interop_compression_levels_all_produce_valid_output() {
 
         // Verify round-trip through our decoder
         let (literals, blocks) = decode_all_zstd(&encoded);
-        assert_eq!(
-            literals, input,
-            "round-trip failed at level {level}"
-        );
+        assert_eq!(literals, input, "round-trip failed at level {level}");
         assert!(blocks.is_empty());
 
         // Verify raw payload decompressible by standalone zstd
@@ -943,7 +941,11 @@ fn interop_roundtrip_empty_file() {
     let mut wire = Vec::new();
     encoder.finish(&mut wire).unwrap();
 
-    assert_eq!(wire, vec![END_FLAG], "empty file should produce only END_FLAG");
+    assert_eq!(
+        wire,
+        vec![END_FLAG],
+        "empty file should produce only END_FLAG"
+    );
 
     let (literals, blocks) = decode_all_zstd(&wire);
     assert!(literals.is_empty());
