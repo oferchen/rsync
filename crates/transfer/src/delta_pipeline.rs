@@ -55,7 +55,7 @@ pub const DEFAULT_PARALLEL_THRESHOLD: usize = 64;
 ///
 /// [`submit_work`]: ReceiverDeltaPipeline::submit_work
 /// [`poll_result`]: ReceiverDeltaPipeline::poll_result
-pub trait ReceiverDeltaPipeline: Send {
+pub trait ReceiverDeltaPipeline: Send + std::fmt::Debug {
     /// Submits a file for delta processing.
     ///
     /// The implementation may process the work item immediately (sequential)
@@ -190,6 +190,14 @@ pub struct ParallelDeltaPipeline {
     consumer_handle: Option<JoinHandle<()>>,
 }
 
+impl std::fmt::Debug for ParallelDeltaPipeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParallelDeltaPipeline")
+            .field("next_sequence", &self.next_sequence)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ParallelDeltaPipeline {
     /// Creates a new parallel pipeline with the given worker count for capacity sizing.
     ///
@@ -314,6 +322,19 @@ pub struct ThresholdDeltaPipeline {
     threshold: usize,
     /// Current operating mode.
     mode: ThresholdMode,
+}
+
+impl std::fmt::Debug for ThresholdDeltaPipeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mode_label = match &self.mode {
+            ThresholdMode::Buffering(buf) => format!("Buffering({})", buf.len()),
+            ThresholdMode::Parallel(_) => "Parallel".to_string(),
+        };
+        f.debug_struct("ThresholdDeltaPipeline")
+            .field("threshold", &self.threshold)
+            .field("mode", &mode_label)
+            .finish()
+    }
 }
 
 impl ThresholdDeltaPipeline {
