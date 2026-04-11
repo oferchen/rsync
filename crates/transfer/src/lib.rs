@@ -142,7 +142,7 @@ pub mod temp_guard;
 /// Writer abstraction supporting plain and multiplex modes.
 mod writer;
 
-/// Bounded-concurrency parallel I/O using tokio `spawn_blocking` + `Semaphore`.
+/// Bounded-concurrency parallel I/O using rayon for work-stealing parallelism.
 mod parallel_io;
 
 /// Pluggable delta dispatch pipeline for the receiver.
@@ -194,6 +194,10 @@ pub use ack_batcher::{
 pub use delta_pipeline::{
     DEFAULT_PARALLEL_THRESHOLD, ParallelDeltaPipeline, ReceiverDeltaPipeline,
     SequentialDeltaPipeline, ThresholdDeltaPipeline,
+};
+pub use parallel_io::{
+    DEFAULT_DELETION_THRESHOLD, DEFAULT_METADATA_THRESHOLD, DEFAULT_SIGNATURE_THRESHOLD,
+    DEFAULT_STAT_THRESHOLD, ParallelThresholds,
 };
 pub use pipeline::{
     DEFAULT_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW, MIN_PIPELINE_WINDOW, PendingTransfer,

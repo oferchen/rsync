@@ -16,7 +16,7 @@ use protocol::flist::FileEntry;
 use protocol::xattr::XattrList;
 
 use super::FailedDirectories;
-use crate::receiver::{PARALLEL_STAT_THRESHOLD, ReceiverContext, apply_acls_from_receiver_cache};
+use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
 
 impl ReceiverContext {
     /// Creates directories from the file list, applying metadata in parallel.
@@ -121,7 +121,7 @@ impl ReceiverContext {
         let acl_cache_clone = acl_cache.cloned();
         let results = crate::parallel_io::map_blocking(
             entry_snapshots,
-            PARALLEL_STAT_THRESHOLD,
+            self.parallel_thresholds.metadata,
             move |(dir_path, entry, xattr_list)| {
                 if let Err(e) =
                     apply_metadata_from_file_entry(&dir_path, &entry, &metadata_opts_clone)

@@ -1,7 +1,7 @@
 //! Batched metadata resolution for directory entries.
 //!
 //! Parallelizes `stat()` / `lstat()` syscalls across directory children using
-//! rayon when the entry count exceeds [`PARALLEL_STAT_THRESHOLD`]. For small
+//! rayon when the entry count exceeds the configured stat threshold. For small
 //! directories the overhead of thread-pool dispatch is avoided by falling back
 //! to sequential iteration.
 //!
@@ -12,14 +12,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::parallel_io::map_blocking;
-
-/// Minimum number of directory entries required before parallel stat is used.
-///
-/// Below this threshold, sequential stat is faster because it avoids rayon
-/// thread-pool dispatch overhead. Value matches the receiver's threshold
-/// in `crate::receiver::PARALLEL_STAT_THRESHOLD`.
-pub(in crate::generator) const PARALLEL_STAT_THRESHOLD: usize = 64;
+use crate::parallel_io::{ParallelThresholds, map_blocking};
 
 /// Result of batched metadata resolution for a single directory entry.
 ///
@@ -40,13 +33,14 @@ pub(in crate::generator) struct StatResult {
 /// after receiving the raw metadata.
 ///
 /// Uses [`map_blocking`] which dispatches to rayon's work-stealing pool when
-/// the entry count meets [`PARALLEL_STAT_THRESHOLD`], otherwise falls back to
-/// sequential iteration.
+/// the entry count meets the configured stat threshold from [`ParallelThresholds`],
+/// otherwise falls back to sequential iteration.
 pub(in crate::generator) fn batch_stat_dir_entries(
     paths: Vec<PathBuf>,
     follow_symlinks: bool,
+    thresholds: &ParallelThresholds,
 ) -> Vec<StatResult> {
-    map_blocking(paths, PARALLEL_STAT_THRESHOLD, move |path| {
+    map_blocking(paths, thresholds.stat, move |path| {
         let metadata = if follow_symlinks {
             fs::metadata(&path)
         } else {
@@ -75,7 +69,7 @@ mod tests {
             paths.push(p);
         }
 
-        let results = batch_stat_dir_entries(paths, false);
+        let results = batch_stat_dir_entries(paths, false, &ParallelThresholds::default());
         assert_eq!(results.len(), 5);
         for r in &results {
             assert!(
@@ -92,7 +86,7 @@ mod tests {
         let root = dir.path();
 
         // Create enough files to exceed the parallel threshold
-        let count = PARALLEL_STAT_THRESHOLD + 10;
+        let count = ParallelThresholds::default().stat + 10;
         let mut paths = Vec::new();
         for i in 0..count {
             let p = root.join(format!("file{i}.txt"));
@@ -100,7 +94,7 @@ mod tests {
             paths.push(p);
         }
 
-        let results = batch_stat_dir_entries(paths, false);
+        let results = batch_stat_dir_entries(paths, false, &ParallelThresholds::default());
         assert_eq!(results.len(), count);
         for r in &results {
             assert!(
@@ -116,7 +110,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let root = dir.path();
 
-        let count = PARALLEL_STAT_THRESHOLD + 20;
+        let count = ParallelThresholds::default().stat + 20;
         let mut paths = Vec::new();
         for i in 0..count {
             let p = root.join(format!("entry_{i:04}.dat"));
@@ -125,7 +119,7 @@ mod tests {
         }
 
         let original_paths: Vec<PathBuf> = paths.clone();
-        let results = batch_stat_dir_entries(paths, false);
+        let results = batch_stat_dir_entries(paths, false, &ParallelThresholds::default());
 
         // Results must be in the same order as input
         for (i, r) in results.iter().enumerate() {
@@ -136,7 +130,7 @@ mod tests {
     #[test]
     fn batch_stat_nonexistent_returns_error() {
         let paths = vec![PathBuf::from("/nonexistent/path/abc123")];
-        let results = batch_stat_dir_entries(paths, false);
+        let results = batch_stat_dir_entries(paths, false, &ParallelThresholds::default());
         assert_eq!(results.len(), 1);
         assert!(results[0].metadata.is_err());
     }
@@ -150,17 +144,18 @@ mod tests {
         File::create(&p).unwrap();
 
         // With follow_symlinks=true, uses fs::metadata (follows symlinks)
-        let results_follow = batch_stat_dir_entries(vec![p.clone()], true);
+        let results_follow =
+            batch_stat_dir_entries(vec![p.clone()], true, &ParallelThresholds::default());
         assert!(results_follow[0].metadata.is_ok());
 
         // With follow_symlinks=false, uses fs::symlink_metadata (lstat)
-        let results_lstat = batch_stat_dir_entries(vec![p], false);
+        let results_lstat = batch_stat_dir_entries(vec![p], false, &ParallelThresholds::default());
         assert!(results_lstat[0].metadata.is_ok());
     }
 
     #[test]
     fn batch_stat_empty_input() {
-        let results = batch_stat_dir_entries(Vec::new(), false);
+        let results = batch_stat_dir_entries(Vec::new(), false, &ParallelThresholds::default());
         assert!(results.is_empty());
     }
 
@@ -190,7 +185,7 @@ mod tests {
             .collect();
 
         // Batched
-        let batched_results = batch_stat_dir_entries(paths, false);
+        let batched_results = batch_stat_dir_entries(paths, false, &ParallelThresholds::default());
         let batched: Vec<(PathBuf, bool, u64)> = batched_results
             .into_iter()
             .map(|r| {
