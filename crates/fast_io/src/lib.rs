@@ -14,7 +14,7 @@
 //! ## Invariants that unsafe code in this crate must uphold
 //!
 //! - **Valid file descriptors** - every raw fd passed to FFI (`sendfile`,
-//!   `copy_file_range`, `utimensat`, io_uring submission) must be open and owned
+//!   `splice`, `copy_file_range`, `utimensat`, io_uring submission) must be open and owned
 //!   or borrowed for the duration of the call.
 //! - **Proper lifetimes** - buffers handed to the kernel (io_uring SQEs, mmap
 //!   regions) must outlive the I/O operation. No use-after-free on async completion.
@@ -37,6 +37,7 @@
 //! - **Memory-mapped I/O** for large files with runtime fallback to buffered I/O
 //! - **Zero-copy file transfer** using `copy_file_range` for file-to-file copies
 //! - **Zero-copy socket send** using `sendfile` for file-to-socket transfers
+//! - **Zero-copy socket receive** using `splice` for socket-to-file transfers (Linux)
 //! - **Windows optimized copy** using `CopyFileExW` with optional no-buffering
 //! - **ReFS detection** for Windows reflink via `FSCTL_DUPLICATE_EXTENTS_TO_FILE`
 //! - **io_uring** for batched syscalls on Linux (optional, `io_uring` feature)
@@ -56,7 +57,9 @@
 //! 3. **`copy_file_range`** - Linux 4.5+ for same-filesystem, 5.3+ for
 //!    cross-filesystem. Zero-copy file-to-file transfer in kernel space.
 //! 4. **`sendfile`** - Linux. Zero-copy file-to-socket transfer.
-//! 5. **Standard buffered I/O** - All platforms. Uses `BufReader`/`BufWriter`
+//! 5. **`splice`** - Linux 2.6.17+. Zero-copy socket-to-file transfer via
+//!    pipe intermediary. Used for network receive paths.
+//! 6. **Standard buffered I/O** - All platforms. Uses `BufReader`/`BufWriter`
 //!    with 64 KB default buffers.
 //!
 //! Each mechanism independently falls back to standard I/O on failure (e.g.,
@@ -83,6 +86,7 @@ pub mod o_tmpfile;
 pub mod platform_copy;
 pub mod refs_detect;
 pub mod sendfile;
+pub mod splice;
 pub mod syscall_batch;
 
 #[cfg(unix)]
@@ -115,6 +119,7 @@ pub use platform_copy::{
 pub use traits::{FileReader, FileWriter};
 
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
+pub use splice::{is_splice_available, try_splice_to_file};
 
 pub use mmap_reader::MmapReader;
 pub use o_tmpfile::{
