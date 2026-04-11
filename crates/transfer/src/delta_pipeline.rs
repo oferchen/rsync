@@ -992,4 +992,109 @@ mod tests {
             assert!(r.is_success());
         }
     }
+
+    // ==================== Integration tests ====================
+
+    #[test]
+    fn parallel_1000_small_files_all_ordered_and_successful() {
+        let mut pipeline = ParallelDeltaPipeline::new(4);
+        let count = 1000u32;
+        for i in 0..count {
+            let size = u64::from(i % 50) * 32 + 64;
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/file_{i}")), size);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), count as usize);
+        for (i, r) in results.iter().enumerate() {
+            let i_u32 = i as u32;
+            let expected_size = u64::from(i_u32 % 50) * 32 + 64;
+            assert_eq!(r.sequence(), i as u64, "wrong sequence at index {i}");
+            assert_eq!(r.ndx(), i_u32, "wrong ndx at index {i}");
+            assert!(r.is_success(), "not successful at index {i}");
+            assert_eq!(
+                r.bytes_written(),
+                expected_size,
+                "wrong bytes_written at index {i}"
+            );
+            assert_eq!(
+                r.literal_bytes(),
+                expected_size,
+                "wrong literal_bytes at index {i}"
+            );
+            assert_eq!(r.matched_bytes(), 0, "wrong matched_bytes at index {i}");
+        }
+    }
+
+    #[test]
+    fn threshold_sequential_fallback_for_small_transfers() {
+        let mut pipeline = ThresholdDeltaPipeline::with_default_threshold();
+        let count = 30u32;
+        for i in 0..count {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/small_{i}")), 256);
+            pipeline.submit_work(work).unwrap();
+            // While below threshold, poll always returns None (items are buffered).
+            assert!(
+                pipeline.poll_result().is_none(),
+                "poll should return None while buffering at item {i}"
+            );
+        }
+
+        // Mode must still be Buffering since 30 < 64.
+        assert!(
+            matches!(pipeline.mode, ThresholdMode::Buffering(_)),
+            "expected Buffering mode for {count} items (threshold 64)"
+        );
+
+        // Flush processes via SequentialDeltaPipeline path.
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), count as usize);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.sequence(), i as u64, "wrong sequence at index {i}");
+            assert_eq!(r.ndx(), i as u32, "wrong ndx at index {i}");
+            assert!(r.is_success(), "not successful at index {i}");
+            assert_eq!(r.bytes_written(), 256, "wrong bytes_written at index {i}");
+        }
+    }
+
+    #[test]
+    fn threshold_mixed_waves_below_then_above() {
+        let threshold = 64;
+        let mut pipeline = ThresholdDeltaPipeline::new(threshold);
+
+        // Wave 1: 30 items - stays below threshold.
+        for i in 0..30u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/w1_{i}")), 128);
+            pipeline.submit_work(work).unwrap();
+        }
+        assert!(
+            matches!(pipeline.mode, ThresholdMode::Buffering(_)),
+            "expected Buffering after 30 items"
+        );
+
+        // Wave 2: 40 more items - pushes past threshold at item 64.
+        for i in 30..70u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/w2_{i}")), 256);
+            pipeline.submit_work(work).unwrap();
+        }
+        assert!(
+            matches!(pipeline.mode, ThresholdMode::Parallel(_)),
+            "expected Parallel after 70 items (threshold 64)"
+        );
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 70);
+        for (i, r) in results.iter().enumerate() {
+            let expected_size = if i < 30 { 128u64 } else { 256u64 };
+            assert_eq!(r.sequence(), i as u64, "wrong sequence at index {i}");
+            assert_eq!(r.ndx(), i as u32, "wrong ndx at index {i}");
+            assert!(r.is_success(), "not successful at index {i}");
+            assert_eq!(
+                r.bytes_written(),
+                expected_size,
+                "wrong bytes_written at index {i}"
+            );
+        }
+    }
 }
