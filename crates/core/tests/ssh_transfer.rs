@@ -379,6 +379,69 @@ fn ssh_connection_failure_exit_code() {
     });
 }
 
+/// Verify that SSH stderr output is included in the error message on connection failure.
+///
+/// When SSH fails to connect, its stderr (e.g., "Connection refused") should be
+/// captured and surfaced in the error message so users can diagnose the problem.
+/// This mirrors upstream rsync's behavior where the SSH process stderr is visible
+/// to the user on failure.
+#[test]
+fn ssh_stderr_visible_on_connection_failure() {
+    run_with_timeout(SSH_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let src_dir = temp.path().join("src");
+        fs::create_dir_all(&src_dir).expect("create src dir");
+
+        touch(&src_dir.join("data.txt"), b"data");
+
+        // Connect to port 1 on localhost - guaranteed to be refused on any
+        // normal system. SSH will write "Connection refused" (or similar) to
+        // stderr before exiting with code 255.
+        let src_arg = format!("{}/", src_dir.display());
+        let dst_arg = "localhost:/nonexistent/path/".to_string();
+
+        let result = run_client(
+            ClientConfig::builder()
+                .transfer_args([OsString::from(&src_arg), OsString::from(&dst_arg)])
+                .set_remote_shell(vec![
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=2",
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    "-p",
+                    "1", // port 1 - connection will be refused
+                ])
+                .build(),
+        );
+
+        let err = result.expect_err("transfer to unreachable port should fail");
+        let error_message = err.to_string();
+
+        // The error message should contain the SSH stderr output.
+        // SSH writes diagnostic information to stderr when it fails to connect.
+        // We check for "SSH stderr:" prefix which is added by format_stderr_context().
+        assert!(
+            error_message.contains("SSH stderr:"),
+            "error message should include SSH stderr output, but got: {error_message}"
+        );
+
+        // The stderr content should include connection-related diagnostic text.
+        // Different SSH implementations may phrase the error differently, but
+        // common messages include "Connection refused", "connection refused",
+        // or "port 1" references.
+        let lower = error_message.to_lowercase();
+        assert!(
+            lower.contains("connection refused")
+                || lower.contains("connect to host")
+                || lower.contains("port 1"),
+            "SSH stderr should contain connection failure details, but got: {error_message}"
+        );
+    });
+}
+
 /// Verify that the --rsync-path override works over SSH.
 ///
 /// Points --rsync-path at a nonexistent binary on the remote side. The remote
