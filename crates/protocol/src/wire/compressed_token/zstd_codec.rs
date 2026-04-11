@@ -402,6 +402,24 @@ impl ZstdTokenDecoder {
                 }
             }
 
+            // Drain any remaining buffered output from the zstd decoder.
+            // After all compressed input is consumed, the decoder may still
+            // hold decompressed data internally when the output buffer was
+            // full on the last iteration. Flush by feeding empty input.
+            // upstream: token.c lines 846-863 - inflate loop continues until
+            // output buffer is not full, indicating decoder is drained.
+            loop {
+                let mut in_buf = zstd::stream::raw::InBuffer::around(&[]);
+                let mut out_buf = zstd::stream::raw::OutBuffer::around(&mut self.output_buf);
+                self.decoder.run(&mut in_buf, &mut out_buf)?;
+                let produced = out_buf.pos();
+                if produced == 0 {
+                    break;
+                }
+                self.decompress_buf
+                    .extend_from_slice(&self.output_buf[..produced]);
+            }
+
             self.decompress_pos = 0;
 
             if !self.decompress_buf.is_empty() {
