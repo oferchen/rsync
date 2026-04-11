@@ -195,7 +195,11 @@ fn golden_zstd_daemon_recv_deflated_header_encodes_length() {
     );
 
     // Rest should be just END_FLAG for literal-only stream
-    assert_eq!(rest, &[END_FLAG], "literal-only stream must end with END_FLAG");
+    assert_eq!(
+        rest,
+        &[END_FLAG],
+        "literal-only stream must end with END_FLAG"
+    );
 
     // Payload must be valid zstd data (starts with magic 0xFD2FB528 LE)
     assert!(
@@ -384,16 +388,12 @@ fn golden_zstd_daemon_recv_multi_file_session() {
     encoder.finish(&mut wire).unwrap();
 
     // File 2: module content with block match
-    encoder
-        .send_literal(&mut wire, b"module data\n")
-        .unwrap();
+    encoder.send_literal(&mut wire, b"module data\n").unwrap();
     encoder.send_block_match(&mut wire, 0).unwrap();
     encoder.finish(&mut wire).unwrap();
 
     // File 3: another module file with repetitive content
-    encoder
-        .send_literal(&mut wire, b"module data\n")
-        .unwrap();
+    encoder.send_literal(&mut wire, b"module data\n").unwrap();
     encoder.finish(&mut wire).unwrap();
 
     // Decode all three files with a single persistent decoder
@@ -452,13 +452,17 @@ fn golden_zstd_daemon_recv_cross_file_dictionary_benefit() {
     let shared_content = b"drwxr-xr-x  2 root root 4096 shared_data.txt\n";
 
     // File 1: same content
-    encoder.send_literal(&mut session_wire, shared_content).unwrap();
+    encoder
+        .send_literal(&mut session_wire, shared_content)
+        .unwrap();
     encoder.finish(&mut session_wire).unwrap();
 
     let file1_end = session_wire.len();
 
     // File 2: same content again (benefits from file 1's dictionary)
-    encoder.send_literal(&mut session_wire, shared_content).unwrap();
+    encoder
+        .send_literal(&mut session_wire, shared_content)
+        .unwrap();
     encoder.finish(&mut session_wire).unwrap();
 
     let file2_wire_len = session_wire.len() - file1_end;
