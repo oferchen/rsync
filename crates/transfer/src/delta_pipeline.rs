@@ -237,14 +237,20 @@ impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
     }
 
     fn poll_result(&mut self) -> Option<DeltaResult> {
-        // Drain all available results from the channel into the reorder buffer.
+        // First yield any already-buffered in-order result without blocking.
+        if let Some(ready) = self.reorder.next_in_order() {
+            return Some(ready);
+        }
+        // Drain available results from the channel into the reorder buffer.
         while let Ok(result) = self.result_rx.try_recv() {
             let seq = result.sequence();
-            // Ignore capacity errors - the reorder buffer is sized to match
-            // the work queue capacity so this should not happen in practice.
             let _ = self.reorder.insert(seq, result);
+            // Check if we can yield after each insert to keep buffer bounded.
+            if let Some(ready) = self.reorder.next_in_order() {
+                return Some(ready);
+            }
         }
-        self.reorder.next_in_order()
+        None
     }
 
     fn flush(mut self: Box<Self>) -> Vec<DeltaResult> {
@@ -256,14 +262,22 @@ impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
             let _ = handle.join();
         }
 
-        // Drain remaining results from the channel into the reorder buffer.
+        // Drain results iteratively: insert a batch from the channel, yield
+        // in-order items to free reorder buffer slots, then repeat. This keeps
+        // the reorder buffer bounded even when the total result count exceeds
+        // its capacity.
+        let mut collected = Vec::new();
         while let Ok(result) = self.result_rx.try_recv() {
             let seq = result.sequence();
             let _ = self.reorder.insert(seq, result);
+            // Yield any contiguous results that are now ready.
+            while let Some(ready) = self.reorder.next_in_order() {
+                collected.push(ready);
+            }
         }
-
-        // Collect all in-order results.
-        self.reorder.drain_ready().collect()
+        // Drain any remaining in-order items.
+        collected.extend(self.reorder.drain_ready());
+        collected
     }
 }
 
@@ -659,24 +673,12 @@ mod tests {
             pipeline.submit_work(work).unwrap();
         }
 
-        // Drop the sender to let the consumer finish.
-        pipeline.work_tx.take();
-        if let Some(handle) = pipeline.consumer_handle.take() {
-            let _ = handle.join();
-        }
-
-        // Drain all results from channel into reorder buffer.
-        while let Ok(result) = pipeline.result_rx.try_recv() {
-            let seq = result.sequence();
-            let _ = pipeline.reorder.insert(seq, result);
-        }
-
-        // Now poll in order.
+        // Flush returns all results in submission order.
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 5);
         for i in 0..5u64 {
-            let r = pipeline.reorder.next_in_order().unwrap();
-            assert_eq!(r.sequence(), i);
+            assert_eq!(results[i as usize].sequence(), i);
         }
-        assert!(pipeline.reorder.next_in_order().is_none());
     }
 
     #[test]
