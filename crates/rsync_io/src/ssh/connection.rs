@@ -11,6 +11,8 @@ use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, ExitStatus};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
+use logging::debug_log;
+
 /// Maximum bytes retained in the stderr capture buffer.
 ///
 /// When the buffer exceeds this limit, the oldest bytes are discarded to keep
@@ -209,9 +211,11 @@ impl SshWriter {
 /// When an SSH child writes more than the OS pipe buffer capacity (typically
 /// 64 KB) to stderr, it blocks until the buffer is drained. If nothing reads
 /// stderr, the child stalls and the transfer deadlocks. This thread reads
-/// stderr line-by-line, forwards each line to the process stderr via
-/// `eprintln!` (matching upstream rsync's behavior of surfacing remote errors),
-/// and collects the output into a bounded buffer for programmatic retrieval.
+/// stderr line-by-line using raw byte reads (tolerant of non-UTF-8 output),
+/// forwards each line to the process stderr in real time (matching upstream
+/// rsync's behavior of surfacing remote errors immediately), and collects
+/// the output into a bounded buffer for programmatic retrieval via
+/// [`SshConnection::stderr_output`] or [`SshChildHandle::stderr_output`].
 struct StderrDrain {
     handle: Option<JoinHandle<()>>,
     buffer: Arc<Mutex<Vec<u8>>>,
@@ -238,18 +242,29 @@ impl StderrDrain {
 
     /// Reads stderr line-by-line, forwards to process stderr, and collects
     /// into the shared buffer (bounded to [`STDERR_BUFFER_CAP`]).
+    ///
+    /// Uses `read_until(b'\n')` instead of `lines()` to handle non-UTF-8
+    /// output without prematurely terminating the drain. SSH or the remote
+    /// process may emit binary data on stderr (e.g., locale-encoded error
+    /// messages); dropping such lines would leave the pipe un-drained and
+    /// risk the deadlock this thread exists to prevent.
     fn drain_loop(stderr: ChildStderr, buffer: &Mutex<Vec<u8>>) {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            match line {
-                Ok(text) => {
-                    eprintln!("{text}");
-                    // Collect the line with its newline into the bounded buffer.
-                    let mut bytes = text.into_bytes();
-                    bytes.push(b'\n');
-                    Self::append_bounded(buffer, &bytes);
+        let mut reader = BufReader::new(stderr);
+        let mut line_buf = Vec::new();
+        loop {
+            line_buf.clear();
+            match reader.read_until(b'\n', &mut line_buf) {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    // Forward the line to the local process stderr so the user
+                    // sees SSH errors in real time - matching upstream rsync's
+                    // behavior of surfacing remote errors immediately.
+                    let text = String::from_utf8_lossy(&line_buf);
+                    eprint!("{text}");
+                    debug_log!(Connect, 3, "ssh stderr: {}", text.trim_end());
+                    Self::append_bounded(buffer, &line_buf);
                 }
-                // EOF or broken pipe - child exited, stop draining.
+                // I/O error (broken pipe, etc.) - child exited, stop draining.
                 Err(_) => break,
             }
         }
