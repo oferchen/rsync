@@ -365,12 +365,7 @@ mod tests {
             // Create a socket pair - one end writes, the other is the "socket" for splice.
             let mut socket_fds = [0i32; 2];
             let result = unsafe {
-                libc::socketpair(
-                    libc::AF_UNIX,
-                    libc::SOCK_STREAM,
-                    0,
-                    socket_fds.as_mut_ptr(),
-                )
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
             };
             assert_eq!(result, 0, "Failed to create socketpair");
 
@@ -392,8 +387,7 @@ mod tests {
 
             // Splice from recv_fd into the file.
             use std::os::fd::AsRawFd;
-            let spliced =
-                try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), content.len());
+            let spliced = try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), content.len());
 
             unsafe { libc::close(recv_fd) };
 
@@ -419,12 +413,7 @@ mod tests {
 
             let mut socket_fds = [0i32; 2];
             let result = unsafe {
-                libc::socketpair(
-                    libc::AF_UNIX,
-                    libc::SOCK_STREAM,
-                    0,
-                    socket_fds.as_mut_ptr(),
-                )
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
             };
             assert_eq!(result, 0, "Failed to create socketpair");
 
@@ -450,8 +439,7 @@ mod tests {
             });
 
             use std::os::fd::AsRawFd;
-            let spliced =
-                try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), size).unwrap();
+            let spliced = try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), size).unwrap();
 
             unsafe { libc::close(recv_fd) };
             writer_thread.join().expect("writer thread should succeed");
@@ -475,12 +463,7 @@ mod tests {
 
             let mut socket_fds = [0i32; 2];
             let result = unsafe {
-                libc::socketpair(
-                    libc::AF_UNIX,
-                    libc::SOCK_STREAM,
-                    0,
-                    socket_fds.as_mut_ptr(),
-                )
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
             };
             assert_eq!(result, 0);
 
@@ -491,8 +474,7 @@ mod tests {
             unsafe { libc::close(send_fd) };
 
             use std::os::fd::AsRawFd;
-            let spliced =
-                try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), 1024).unwrap();
+            let spliced = try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), 1024).unwrap();
 
             unsafe { libc::close(recv_fd) };
 
@@ -528,12 +510,7 @@ mod tests {
 
             let mut socket_fds = [0i32; 2];
             let result = unsafe {
-                libc::socketpair(
-                    libc::AF_UNIX,
-                    libc::SOCK_STREAM,
-                    0,
-                    socket_fds.as_mut_ptr(),
-                )
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
             };
             assert_eq!(result, 0);
 
@@ -558,8 +535,7 @@ mod tests {
             });
 
             use std::os::fd::AsRawFd;
-            let spliced =
-                try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), size).unwrap();
+            let spliced = try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), size).unwrap();
 
             unsafe { libc::close(recv_fd) };
             writer_thread.join().expect("writer thread should succeed");
