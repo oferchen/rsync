@@ -54,6 +54,7 @@ use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 use engine::HardlinkApplyTracker;
 
 use crate::config::ServerConfig;
+use crate::delta_pipeline::{ReceiverDeltaPipeline, SequentialDeltaPipeline};
 use crate::handshake::HandshakeResult;
 use crate::shared::ChecksumFactory;
 
@@ -180,6 +181,12 @@ pub struct ReceiverContext {
     ///
     /// - `hlink.c:match_gnums()` - `prior_hlinks` hashtable persists across segments
     prior_hlinks: HashMap<u32, bool>,
+    /// Pluggable delta dispatch pipeline for file processing.
+    ///
+    /// Defaults to [`SequentialDeltaPipeline`] which matches upstream rsync's
+    /// sequential `recv_files()` loop. Can be swapped to a parallel or
+    /// threshold-based pipeline via [`set_delta_pipeline`](Self::set_delta_pipeline).
+    delta_pipeline: Option<Box<dyn ReceiverDeltaPipeline>>,
 }
 
 impl ReceiverContext {
@@ -222,7 +229,34 @@ impl ReceiverContext {
             filter_chain: FilterChain::empty(),
             hardlink_tracker,
             prior_hlinks: HashMap::new(),
+            delta_pipeline: Some(Box::new(SequentialDeltaPipeline::new())),
         }
+    }
+
+    /// Replaces the delta dispatch pipeline.
+    ///
+    /// The default is [`SequentialDeltaPipeline`], which processes files one at
+    /// a time matching upstream rsync. Pass a [`ThresholdDeltaPipeline`] or
+    /// [`ParallelDeltaPipeline`] to enable concurrent delta processing.
+    ///
+    /// Must be called before [`run`](Self::run) - the pipeline is consumed
+    /// during the transfer loop.
+    ///
+    /// [`ThresholdDeltaPipeline`]: crate::delta_pipeline::ThresholdDeltaPipeline
+    /// [`ParallelDeltaPipeline`]: crate::delta_pipeline::ParallelDeltaPipeline
+    pub fn set_delta_pipeline(&mut self, pipeline: Box<dyn ReceiverDeltaPipeline>) {
+        self.delta_pipeline = Some(pipeline);
+    }
+
+    /// Takes the delta pipeline, leaving `None` in its place.
+    ///
+    /// Used internally by the transfer loop to consume the pipeline. Panics
+    /// if called when no pipeline is set (should never happen in normal use
+    /// since `new()` always installs a default).
+    fn take_delta_pipeline(&mut self) -> Box<dyn ReceiverDeltaPipeline> {
+        self.delta_pipeline
+            .take()
+            .expect("delta pipeline already consumed")
     }
 
     /// Converts a flat file list array index to a wire NDX value.
