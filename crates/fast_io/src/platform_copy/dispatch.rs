@@ -98,18 +98,28 @@ pub(super) fn platform_copy_impl(
 
 /// Windows: check for ReFS reflink support, then try `CopyFileExW`, fall back to `std::fs::copy`.
 ///
-/// On ReFS volumes, logs that reflink is available. The actual
-/// `FSCTL_DUPLICATE_EXTENTS_TO_FILE` call is not yet implemented - this
-/// dispatch prepares the detection infrastructure so the reflink path
-/// can be added without changing the dispatch chain again.
+/// On ReFS volumes, attempts `FSCTL_DUPLICATE_EXTENTS_TO_FILE` for instant
+/// copy-on-write block cloning before falling back to `CopyFileExW`. The
+/// reflink path is O(1) regardless of file size when both files reside on
+/// the same ReFS volume.
 #[cfg(target_os = "windows")]
 pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::Result<CopyResult> {
     /// Threshold above which `COPY_FILE_NO_BUFFERING` is used (4MB).
     const NO_BUFFERING_THRESHOLD: u64 = 4 * 1024 * 1024;
 
-    // Check if destination is on ReFS (future: attempt FSCTL_DUPLICATE_EXTENTS)
-    let _is_refs =
+    // Check if destination is on ReFS and attempt reflink if so
+    let is_refs =
         crate::refs_detect::is_refs_filesystem(dst.parent().unwrap_or(dst)).unwrap_or(false);
+
+    if is_refs {
+        match try_refs_reflink_impl(src, dst) {
+            Ok(()) => return Ok(CopyResult::new(0, CopyMethod::ReFsReflink)),
+            Err(_) => {
+                // Reflink failed (cross-volume, alignment issue, etc.) - fall through
+                let _ = std::fs::remove_file(dst);
+            }
+        }
+    }
 
     let use_no_buffering = size_hint > NO_BUFFERING_THRESHOLD;
 
@@ -257,6 +267,222 @@ pub(super) fn try_copy_file_ex(src: &Path, dst: &Path, use_no_buffering: bool) -
     }
 }
 
+/// Windows ReFS `FSCTL_DUPLICATE_EXTENTS_TO_FILE` reflink wrapper.
+///
+/// Creates a copy-on-write block clone on ReFS volumes. Both source and
+/// destination must reside on the same ReFS volume. The ioctl requires
+/// cluster-aligned offsets and byte count, so this function queries the
+/// cluster size via `GetDiskFreeSpaceW` and rounds the file size up to
+/// the nearest cluster boundary.
+///
+/// # Constraints
+///
+/// - Both files must be on the same ReFS volume.
+/// - ReFS cluster size is queried at runtime (typically 4KB or 64KB).
+/// - The destination file is created and pre-sized to match the source.
+/// - On failure, the caller is responsible for cleaning up the destination.
+///
+/// # References
+///
+/// - upstream: ReFS block cloning is an oc-rsync optimization (no upstream equivalent).
+/// - Microsoft docs: `FSCTL_DUPLICATE_EXTENTS_TO_FILE` control code.
+#[cfg(target_os = "windows")]
+#[allow(unsafe_code)]
+pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, GetDiskFreeSpaceW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GENERIC_READ,
+        GENERIC_WRITE, OPEN_EXISTING,
+    };
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+
+    /// `FSCTL_DUPLICATE_EXTENTS_TO_FILE` control code.
+    /// CTL_CODE(FILE_DEVICE_FILE_SYSTEM, 0xD1, METHOD_BUFFERED, FILE_WRITE_ACCESS)
+    const FSCTL_DUPLICATE_EXTENTS_TO_FILE: u32 = 0x0009_8344;
+
+    /// Input structure for `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
+    /// All offset and byte_count fields must be cluster-aligned.
+    #[repr(C)]
+    struct DuplicateExtentsData {
+        file_handle: isize,
+        source_file_offset: i64,
+        target_file_offset: i64,
+        byte_count: i64,
+    }
+
+    // Query cluster size for alignment via GetDiskFreeSpaceW on the volume root.
+    let volume_root = dst.ancestors().last().unwrap_or(dst);
+    let root_wide: Vec<u16> = volume_root
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut sectors_per_cluster: u32 = 0;
+    let mut bytes_per_sector: u32 = 0;
+    let mut free_clusters: u32 = 0;
+    let mut total_clusters: u32 = 0;
+
+    // SAFETY: root_wide is a valid null-terminated UTF-16 string.
+    // Output pointers are valid stack-allocated u32 variables.
+    let disk_result = unsafe {
+        GetDiskFreeSpaceW(
+            root_wide.as_ptr(),
+            &mut sectors_per_cluster,
+            &mut bytes_per_sector,
+            &mut free_clusters,
+            &mut total_clusters,
+        )
+    };
+
+    if disk_result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let cluster_size = u64::from(sectors_per_cluster) * u64::from(bytes_per_sector);
+    if cluster_size == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "cluster size is zero",
+        ));
+    }
+
+    // Get source file size
+    let file_size = std::fs::metadata(src)?.len();
+
+    if file_size == 0 {
+        // Empty file - just create the destination
+        std::fs::File::create(dst)?;
+        return Ok(());
+    }
+
+    // Round up to cluster boundary for the ioctl
+    let aligned_size = ((file_size + cluster_size - 1) / cluster_size) * cluster_size;
+
+    let src_wide: Vec<u16> = src
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // Open source for reading.
+    // SAFETY: src_wide is a valid null-terminated UTF-16 path.
+    // GENERIC_READ and FILE_SHARE_READ allow concurrent readers.
+    // OPEN_EXISTING fails if the file does not exist.
+    let src_handle = unsafe {
+        CreateFileW(
+            src_wide.as_ptr(),
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        )
+    };
+
+    if src_handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+
+    let dst_wide: Vec<u16> = dst
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // Open/create destination for writing.
+    // CREATE_ALWAYS (2) creates new or overwrites existing.
+    // SAFETY: dst_wide is a valid null-terminated UTF-16 path.
+    // GENERIC_READ | GENERIC_WRITE grants the access required by the ioctl.
+    let dst_raw_handle = unsafe {
+        CreateFileW(
+            dst_wide.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            0, // Exclusive access while setting up the clone
+            std::ptr::null(),
+            2, // CREATE_ALWAYS
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        )
+    };
+
+    if dst_raw_handle == INVALID_HANDLE_VALUE {
+        let err = io::Error::last_os_error();
+        // SAFETY: src_handle is a valid open handle.
+        unsafe { CloseHandle(src_handle) };
+        return Err(err);
+    }
+
+    // Wrap the destination handle in a File for RAII cleanup and set_len().
+    // SAFETY: dst_raw_handle is a valid handle just returned by CreateFileW.
+    // Ownership transfers to the File; it will call CloseHandle on drop.
+    let dst_file =
+        unsafe { std::fs::File::from_raw_handle(dst_raw_handle as *mut std::ffi::c_void) };
+
+    // Pre-size destination to the cluster-aligned size required by the ioctl.
+    if let Err(e) = dst_file.set_len(aligned_size) {
+        // SAFETY: src_handle is a valid open handle.
+        unsafe { CloseHandle(src_handle) };
+        return Err(e);
+    }
+
+    let dst_handle = dst_file.as_raw_handle() as isize;
+
+    let dup_data = DuplicateExtentsData {
+        file_handle: src_handle,
+        source_file_offset: 0,
+        target_file_offset: 0,
+        byte_count: aligned_size as i64,
+    };
+
+    let mut bytes_returned: u32 = 0;
+
+    // SAFETY: dst_handle is a valid open file handle with read/write access.
+    // src_handle (inside dup_data.file_handle) is a valid open handle with read access.
+    // dup_data is a properly initialized DuplicateExtentsData struct with
+    // cluster-aligned offsets. bytes_returned is a valid output pointer.
+    let ioctl_result = unsafe {
+        DeviceIoControl(
+            dst_handle,
+            FSCTL_DUPLICATE_EXTENTS_TO_FILE,
+            &dup_data as *const DuplicateExtentsData as *const std::ffi::c_void,
+            std::mem::size_of::<DuplicateExtentsData>() as u32,
+            std::ptr::null_mut(),
+            0,
+            &mut bytes_returned,
+            std::ptr::null_mut(),
+        )
+    };
+
+    // Close source handle. dst_file will close dst_handle on drop.
+    // SAFETY: src_handle is a valid open handle.
+    unsafe { CloseHandle(src_handle) };
+
+    if ioctl_result == 0 {
+        let err = io::Error::last_os_error();
+        drop(dst_file);
+        return Err(err);
+    }
+
+    // Truncate destination to the actual file size (ioctl used cluster-aligned size).
+    dst_file.set_len(file_size)?;
+
+    Ok(())
+}
+
+/// Non-Windows stub for ReFS reflink.
+#[cfg(not(target_os = "windows"))]
+pub(super) fn try_refs_reflink_impl(_src: &Path, _dst: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "ReFS reflink is only available on Windows",
+    ))
+}
+
 /// Linux `FICLONE` ioctl wrapper using `rustix::fs::ioctl_ficlone`.
 ///
 /// Creates the destination file, then attempts a reflink clone from the source.
@@ -300,10 +526,16 @@ pub(super) fn platform_supports_reflink() -> bool {
 }
 
 /// Windows supports reflink via `FSCTL_DUPLICATE_EXTENTS_TO_FILE` on ReFS only.
-/// Returns `false` since reflink support depends on the destination volume's
-/// filesystem type and cannot be determined without a path. The per-path check
-/// is done in `platform_copy_impl` via `is_refs_filesystem`.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+/// Returns `true` as a capability indicator - individual clone operations will
+/// only be attempted when `is_refs_filesystem` returns true for the destination
+/// path, and may still fail on NTFS or cross-volume scenarios.
+#[cfg(target_os = "windows")]
+pub(super) fn platform_supports_reflink() -> bool {
+    true
+}
+
+/// Other platforms do not support reflink.
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 pub(super) fn platform_supports_reflink() -> bool {
     false
 }
@@ -326,6 +558,11 @@ pub(super) fn platform_preferred_method(_size: u64) -> CopyMethod {
 }
 
 /// Windows: prefer `CopyFileExW` with no-buffering for large files.
+///
+/// On ReFS volumes, the dispatch chain attempts `FSCTL_DUPLICATE_EXTENTS_TO_FILE`
+/// first (instant CoW clone). This advisory method cannot determine the filesystem
+/// type without a path, so it reports the non-reflink preference. The actual
+/// method selection happens at runtime in `platform_copy_impl`.
 #[cfg(target_os = "windows")]
 pub(super) fn platform_preferred_method(size: u64) -> CopyMethod {
     if size > 4 * 1024 * 1024 {
