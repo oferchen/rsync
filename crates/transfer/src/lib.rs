@@ -191,7 +191,10 @@ pub use ack_batcher::{
     AckBatcher, AckBatcherConfig, AckBatcherStats, AckEntry, AckStatus, DEFAULT_BATCH_SIZE,
     DEFAULT_BATCH_TIMEOUT_MS, MAX_BATCH_SIZE, MAX_BATCH_TIMEOUT_MS, MIN_BATCH_SIZE,
 };
-pub use delta_pipeline::{ReceiverDeltaPipeline, SequentialDeltaPipeline};
+pub use delta_pipeline::{
+    DEFAULT_PARALLEL_THRESHOLD, ParallelDeltaPipeline, ReceiverDeltaPipeline,
+    SequentialDeltaPipeline, ThresholdDeltaPipeline,
+};
 pub use pipeline::{
     DEFAULT_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW, MIN_PIPELINE_WINDOW, PendingTransfer,
     PipelineConfig, PipelineState,
