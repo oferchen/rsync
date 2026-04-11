@@ -1039,3 +1039,75 @@ fn stderr_drain_with_no_stderr_output() {
     let status = child_handle.wait().expect("wait");
     assert!(status.success());
 }
+
+#[cfg(unix)]
+#[test]
+fn connection_wait_with_stderr_captures_error_on_failure() {
+    // Verifies that when an SSH-like subprocess fails (non-zero exit), the
+    // stderr message is captured and returned to the caller via
+    // `SshConnection::wait_with_stderr()`. This is the primary path for
+    // surfacing SSH connection errors (e.g., "Permission denied") to the user.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option(
+        "printf 'ssh: connect to host unreachable port 22: Connection refused\\n' >&2; exit 255",
+    );
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (status, stderr) = connection.wait_with_stderr().expect("wait");
+
+    assert!(!status.success(), "child should exit with non-zero status");
+    assert_eq!(
+        status.code(),
+        Some(255),
+        "exit code should be 255 (SSH connection failure)"
+    );
+
+    let text = String::from_utf8_lossy(&stderr);
+    assert!(
+        text.contains("Connection refused"),
+        "stderr should contain the SSH error message, got: {text}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn connection_wait_with_stderr_empty_on_success() {
+    // Verifies that wait_with_stderr returns empty stderr on successful exit.
+    let connection = spawn_echo_process();
+    let (status, stderr) = connection.wait_with_stderr().expect("wait");
+
+    assert!(status.success());
+    assert!(
+        stderr.is_empty(),
+        "expected empty stderr on success, got: {stderr:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn child_handle_wait_with_stderr_surfaces_error_after_split() {
+    // Verifies the split() path also captures stderr on connection failure.
+    // This covers the path used by ssh_transfer.rs and remote_to_remote.rs.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("printf 'Permission denied (publickey).\\n' >&2; exit 255");
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, child_handle) = connection.split().expect("split");
+
+    let (status, stderr) = child_handle.wait_with_stderr().expect("wait");
+
+    assert!(!status.success());
+    let text = String::from_utf8_lossy(&stderr);
+    assert!(
+        text.contains("Permission denied"),
+        "stderr should contain the SSH error message, got: {text}"
+    );
+}
