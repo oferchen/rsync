@@ -294,8 +294,8 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
 
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, GetDiskFreeSpaceW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GENERIC_READ,
-        GENERIC_WRITE, OPEN_EXISTING,
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GENERIC_READ, GENERIC_WRITE,
+        GetDiskFreeSpaceW, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::IO::DeviceIoControl;
 
