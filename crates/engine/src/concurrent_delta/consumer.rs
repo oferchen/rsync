@@ -236,8 +236,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::concurrent_delta::work_queue;
     use crate::concurrent_delta::DeltaWork;
+    use crate::concurrent_delta::work_queue;
 
     /// Helper: sends `count` whole-file work items with sequential sequence numbers.
     fn spawn_producer(count: u32) -> (work_queue::WorkQueueSender, work_queue::WorkQueueReceiver) {
@@ -345,8 +345,8 @@ mod tests {
 
         let producer = std::thread::spawn(move || {
             for i in 0..count {
-                let work = DeltaWork::whole_file(i, PathBuf::from("/dst"), 64)
-                    .with_sequence(u64::from(i));
+                let work =
+                    DeltaWork::whole_file(i, PathBuf::from("/dst"), 64).with_sequence(u64::from(i));
                 tx.send(work).unwrap();
             }
         });
@@ -372,19 +372,15 @@ mod tests {
 
         let producer = std::thread::spawn(move || {
             // Mix of whole-file and delta items.
-            tx.send(
-                DeltaWork::whole_file(0, PathBuf::from("/dst/a"), 1024).with_sequence(0),
-            )
-            .unwrap();
+            tx.send(DeltaWork::whole_file(0, PathBuf::from("/dst/a"), 1024).with_sequence(0))
+                .unwrap();
             tx.send(
                 DeltaWork::delta(1, PathBuf::from("/dst/b"), PathBuf::from("/basis/b"), 2048)
                     .with_sequence(1),
             )
             .unwrap();
-            tx.send(
-                DeltaWork::whole_file(2, PathBuf::from("/dst/c"), 512).with_sequence(2),
-            )
-            .unwrap();
+            tx.send(DeltaWork::whole_file(2, PathBuf::from("/dst/c"), 512).with_sequence(2))
+                .unwrap();
         });
 
         let consumer = DeltaConsumer::spawn(rx, 8);
@@ -418,8 +414,8 @@ mod tests {
 
         let producer = std::thread::spawn(move || {
             for i in 0..count {
-                let work = DeltaWork::whole_file(i, PathBuf::from("/dst"), 64)
-                    .with_sequence(u64::from(i));
+                let work =
+                    DeltaWork::whole_file(i, PathBuf::from("/dst"), 64).with_sequence(u64::from(i));
                 tx.send(work).unwrap();
             }
         });
@@ -440,8 +436,8 @@ mod tests {
 
         let producer = std::thread::spawn(move || {
             for i in 0..5u32 {
-                let work = DeltaWork::whole_file(i, PathBuf::from("/dst"), 64)
-                    .with_sequence(u64::from(i));
+                let work =
+                    DeltaWork::whole_file(i, PathBuf::from("/dst"), 64).with_sequence(u64::from(i));
                 // Send may fail if consumer is dropped - that's ok.
                 let _ = tx.send(work);
             }
