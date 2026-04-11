@@ -22,7 +22,7 @@ use protocol::flist::FileEntry;
 
 use crate::delta_apply::ChecksumVerifier;
 use crate::pipeline::{PipelineConfig, PipelineState};
-use crate::receiver::basis::find_basis_file_with_config;
+use crate::receiver::basis::{BasisFileConfig, find_basis_file_with_config};
 use crate::receiver::{PARALLEL_STAT_THRESHOLD, PipelineSetup, ReceiverContext};
 use crate::transfer_ops::{
     RequestConfig, ResponseContext, process_file_response_streaming, send_file_request,
@@ -162,19 +162,33 @@ impl ReceiverContext {
                         .collect();
 
                     if !batch.is_empty() && !is_redo_pass {
+                        // Extract basis config fields for the closure so it doesn't
+                        // capture &self (which is not Sync due to delta_pipeline).
+                        let fuzzy_level = self.config.flags.fuzzy_level;
+                        let ref_dirs = &self.config.reference_directories;
+                        let protocol = self.protocol;
+                        let whole_file = self.config.flags.whole_file;
+                        let dest_dir = &setup.dest_dir;
+                        let checksum_length = setup.checksum_length;
+                        let checksum_algorithm = setup.checksum_algorithm;
+
                         // Compute signatures - parallel when batch is large enough.
                         let sig_results: Vec<_> = if batch.len() >= PARALLEL_STAT_THRESHOLD {
                             batch
                                 .par_iter()
                                 .map(|(_, file_entry, file_path)| {
-                                    let basis_config = self.build_basis_file_config(
+                                    let basis_config = BasisFileConfig {
                                         file_path,
-                                        &setup.dest_dir,
-                                        file_entry.path(),
-                                        file_entry.size(),
-                                        setup.checksum_length,
-                                        setup.checksum_algorithm,
-                                    );
+                                        dest_dir,
+                                        relative_path: file_entry.path(),
+                                        target_size: file_entry.size(),
+                                        fuzzy_level,
+                                        reference_directories: ref_dirs,
+                                        protocol,
+                                        checksum_length,
+                                        checksum_algorithm,
+                                        whole_file,
+                                    };
                                     find_basis_file_with_config(&basis_config)
                                 })
                                 .collect()
@@ -182,14 +196,18 @@ impl ReceiverContext {
                             batch
                                 .iter()
                                 .map(|(_, file_entry, file_path)| {
-                                    let basis_config = self.build_basis_file_config(
+                                    let basis_config = BasisFileConfig {
                                         file_path,
-                                        &setup.dest_dir,
-                                        file_entry.path(),
-                                        file_entry.size(),
-                                        setup.checksum_length,
-                                        setup.checksum_algorithm,
-                                    );
+                                        dest_dir,
+                                        relative_path: file_entry.path(),
+                                        target_size: file_entry.size(),
+                                        fuzzy_level,
+                                        reference_directories: ref_dirs,
+                                        protocol,
+                                        checksum_length,
+                                        checksum_algorithm,
+                                        whole_file,
+                                    };
                                     find_basis_file_with_config(&basis_config)
                                 })
                                 .collect()
