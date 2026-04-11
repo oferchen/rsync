@@ -54,11 +54,12 @@ pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::
     Ok(CopyResult::new(bytes, CopyMethod::StandardCopy))
 }
 
-/// macOS: try `clonefile` (CoW) first, then fall back to `std::fs::copy`.
+/// macOS: try `clonefile` (CoW), then `fcopyfile` (kernel-accelerated), then `std::fs::copy`.
 ///
-/// On APFS, `clonefile` creates an instant copy-on-write clone sharing storage
-/// blocks until modified. Falls back to `std::fs::copy` which uses `copyfile()`
-/// under the hood on Darwin, handling metadata and resource forks natively.
+/// The dispatch chain prioritizes zero-data-copy methods:
+/// 1. `clonefile` - instant CoW on APFS (fails on cross-device, HFS+, etc.)
+/// 2. `fcopyfile` - kernel-accelerated data copy via file descriptors
+/// 3. `std::fs::copy` - portable buffered fallback
 #[cfg(target_os = "macos")]
 pub(super) fn platform_copy_impl(
     src: &Path,
@@ -77,9 +78,22 @@ pub(super) fn platform_copy_impl(
         }
     }
 
-    // Fall back to std::fs::copy (uses Darwin copyfile() internally)
+    // Try fcopyfile - kernel-accelerated data-only copy via file descriptors.
+    // Faster than userspace buffered copy on all macOS filesystems.
+    match fcopyfile_impl(src, dst) {
+        Ok(()) => {
+            let metadata = std::fs::metadata(dst)?;
+            return Ok(CopyResult::new(metadata.len(), CopyMethod::Copyfile));
+        }
+        Err(_) => {
+            // fcopyfile failed - clean up and fall through to standard copy
+            let _ = std::fs::remove_file(dst);
+        }
+    }
+
+    // Final fallback to standard buffered copy
     let bytes = std::fs::copy(src, dst)?;
-    Ok(CopyResult::new(bytes, CopyMethod::Copyfile))
+    Ok(CopyResult::new(bytes, CopyMethod::StandardCopy))
 }
 
 /// Windows: check for ReFS reflink support, then try `CopyFileExW`, fall back to `std::fs::copy`.
@@ -304,6 +318,8 @@ pub(super) fn platform_preferred_method(_size: u64) -> CopyMethod {
 }
 
 /// macOS: prefer `clonefile` regardless of size (instant CoW).
+///
+/// Runtime fallback chain: `clonefile` -> `fcopyfile` -> `std::fs::copy`.
 #[cfg(target_os = "macos")]
 pub(super) fn platform_preferred_method(_size: u64) -> CopyMethod {
     CopyMethod::Clonefile

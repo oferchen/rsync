@@ -10,7 +10,7 @@
 //! | Platform | Primary | Secondary | Fallback |
 //! |----------|---------|-----------|----------|
 //! | Linux | `FICLONE` (CoW reflink, Btrfs/XFS) | `copy_file_range` (zero-copy) | `std::fs::copy` |
-//! | macOS | `clonefile` (CoW, APFS) | `copyfile` | `std::fs::copy` |
+//! | macOS | `clonefile` (CoW, APFS) | `fcopyfile` (kernel-accelerated) | `std::fs::copy` |
 //! | Windows | ReFS `FSCTL_DUPLICATE_EXTENTS` (planned) | `CopyFileExW` (no-buffering) | `std::fs::copy` |
 //!
 //! # Design
@@ -61,7 +61,7 @@ pub use types::{CopyMethod, CopyResult, PlatformCopy};
 /// Selects the best available copy mechanism for the current platform:
 ///
 /// - **Linux**: `FICLONE` (CoW reflink) then `copy_file_range` then `std::fs::copy`
-/// - **macOS**: `clonefile` (CoW) with `std::fs::copy` fallback
+/// - **macOS**: `clonefile` (CoW) then `fcopyfile` (kernel-accelerated) then `std::fs::copy`
 /// - **Windows**: ReFS detection (planned reflink), then `CopyFileExW` with no-buffering for files > 4MB
 ///
 /// All paths automatically fall back to standard copy on failure.
