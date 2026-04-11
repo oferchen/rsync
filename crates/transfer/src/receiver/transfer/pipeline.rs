@@ -127,6 +127,7 @@ impl ReceiverContext {
             metadata_opts: Some(setup.metadata_opts.clone()),
             backup,
             acl_cache: setup.acl_cache.clone(),
+            io_uring_policy: self.config.write.io_uring_policy,
             ..DiskCommitConfig::default()
         };
         let mut pipelined_receiver = PipelinedReceiver::new(disk_config);
