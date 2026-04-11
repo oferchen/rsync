@@ -551,8 +551,22 @@ fn run_server_over_ssh_connection(
         build_batch_recording(ctx, is_sender)
     });
 
-    let handshake = crate::server::perform_handshake(&mut reader, &mut writer)
-        .map_err(|e| invalid_argument_error(&format!("handshake failed: {e}"), 5))?;
+    let handshake = match crate::server::perform_handshake(&mut reader, &mut writer) {
+        Ok(h) => h,
+        Err(e) => {
+            // Capture SSH stderr before returning - the remote process likely wrote
+            // diagnostic output (e.g., "Connection refused") that explains the failure.
+            drop(writer);
+            let stderr_text = match child_handle.wait_with_stderr() {
+                Ok((_, stderr_bytes)) => format_stderr_context(&stderr_bytes),
+                Err(_) => String::new(),
+            };
+            return Err(invalid_argument_error(
+                &format!("handshake failed: {e}{stderr_text}"),
+                5,
+            ));
+        }
+    };
     let transfer_result = crate::server::run_server_with_handshake(
         config,
         handshake,
