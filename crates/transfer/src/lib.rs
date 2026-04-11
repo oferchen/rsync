@@ -166,6 +166,9 @@ pub mod token_reader;
 /// Transfer operation helpers for pipelined requests.
 pub mod transfer_ops;
 
+/// Delta pipeline trait and implementations for parallel/sequential file processing.
+pub mod delta_pipeline;
+
 pub use self::adaptive_buffer::{
     AdaptiveTokenBuffer, HUGE_BUFFER_SIZE, HUGE_FILE_THRESHOLD, LARGE_BUFFER_SIZE,
     MEDIUM_BUFFER_SIZE, MEDIUM_FILE_THRESHOLD, SMALL_BUFFER_SIZE, SMALL_FILE_THRESHOLD,
@@ -193,6 +196,10 @@ pub use pipeline::{
     PipelineConfig, PipelineState,
 };
 pub use progress::{ItemizeCallback, TransferProgressCallback, TransferProgressEvent};
+
+pub use delta_pipeline::{
+    ParallelDeltaPipeline, ParallelPipelineConfig, ReceiverDeltaPipeline, SequentialDeltaPipeline,
+};
 
 /// Batch recording configuration for protocol stream teeing.
 ///
