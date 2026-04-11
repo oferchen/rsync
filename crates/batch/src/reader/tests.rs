@@ -1003,3 +1003,152 @@ mod inc_recurse_flist_tests {
         );
     }
 }
+
+mod compressed_delta_tests {
+    use super::*;
+    use protocol::wire::{CompressedTokenDecoder, CompressedTokenEncoder};
+
+    /// Creates a batch file whose delta body uses compressed token encoding.
+    ///
+    /// This simulates what upstream rsync writes when `--write-batch -z` is
+    /// used: the stream flags have `do_compression = true` and the delta
+    /// tokens are encoded with DEFLATED_DATA headers.
+    fn create_compressed_batch(path: &Path, literal_data: &[u8]) {
+        let config = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 32)
+            .with_checksum_seed(12345);
+
+        let mut writer = BatchWriter::new(config).unwrap();
+        let flags = BatchFlags {
+            recurse: true,
+            do_compression: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        // Encode literal data with CompressedTokenEncoder (zlibx mode)
+        let mut encoded = Vec::new();
+        let mut encoder = CompressedTokenEncoder::default();
+        encoder.set_zlibx(true);
+        encoder.send_literal(&mut encoded, literal_data).unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        writer.write_data(&encoded).unwrap();
+        writer.finalize().unwrap();
+    }
+
+    #[test]
+    fn read_compressed_delta_tokens_literal_only() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("compressed.batch");
+        let literal = b"Hello compressed batch world!";
+        create_compressed_batch(&batch_path, literal);
+
+        let config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            32,
+        );
+        let mut reader = BatchReader::new(config).unwrap();
+        let flags = reader.read_header().unwrap();
+        assert!(
+            flags.do_compression,
+            "batch flags should indicate compression"
+        );
+
+        let mut decoder = CompressedTokenDecoder::new();
+        decoder.set_zlibx(true);
+
+        let ops = reader.read_compressed_delta_tokens(&mut decoder).unwrap();
+
+        // Collect all literal data
+        let mut reconstructed = Vec::new();
+        for op in &ops {
+            if let protocol::wire::DeltaOp::Literal(data) = op {
+                reconstructed.extend_from_slice(data);
+            }
+        }
+        assert_eq!(
+            reconstructed, literal,
+            "decompressed literals should match original data"
+        );
+    }
+
+    #[test]
+    fn read_compressed_delta_tokens_with_block_match() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("compressed_block.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            32,
+        )
+        .with_checksum_seed(42);
+
+        let mut writer = BatchWriter::new(config).unwrap();
+        let flags = BatchFlags {
+            recurse: true,
+            do_compression: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        // Encode: literal + block match + literal + end
+        let mut encoded = Vec::new();
+        let mut encoder = CompressedTokenEncoder::default();
+        encoder.set_zlibx(true);
+        encoder.send_literal(&mut encoded, b"prefix").unwrap();
+        encoder.send_block_match(&mut encoded, 5).unwrap();
+        encoder.send_literal(&mut encoded, b"suffix").unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        writer.write_data(&encoded).unwrap();
+        writer.finalize().unwrap();
+
+        // Read back
+        let config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            32,
+        );
+        let mut reader = BatchReader::new(config).unwrap();
+        reader.read_header().unwrap();
+
+        let mut decoder = CompressedTokenDecoder::new();
+        decoder.set_zlibx(true);
+
+        let ops = reader.read_compressed_delta_tokens(&mut decoder).unwrap();
+
+        let mut literals = Vec::new();
+        let mut block_refs = Vec::new();
+        for op in &ops {
+            match op {
+                protocol::wire::DeltaOp::Literal(data) => literals.extend_from_slice(data),
+                protocol::wire::DeltaOp::Copy { block_index, .. } => {
+                    block_refs.push(*block_index);
+                }
+            }
+        }
+
+        assert_eq!(literals, b"prefixsuffix");
+        assert_eq!(block_refs, vec![5]);
+    }
+
+    #[test]
+    fn read_compressed_delta_tokens_requires_header() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("no_header.batch");
+        create_compressed_batch(&batch_path, b"data");
+
+        let config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            32,
+        );
+        let mut reader = BatchReader::new(config).unwrap();
+        // Don't read header
+        let mut decoder = CompressedTokenDecoder::new();
+        let result = reader.read_compressed_delta_tokens(&mut decoder);
+        assert!(result.is_err(), "should fail without header");
+    }
+}
