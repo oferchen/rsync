@@ -55,7 +55,7 @@ default = ["zstd", "lz4", "xattr", "lazy-metadata"]
 # ============================================================================
 # Compression Features
 # ============================================================================
-zstd = ["compress/zstd", "protocol/zstd"]
+zstd = ["compress/zstd", "protocol/zstd", "batch/zstd"]
 lz4 = ["compress/lz4", "protocol/lz4"]
 zlib-ng = ["compress/zlib-ng", "protocol/zlib-ng"]
 
