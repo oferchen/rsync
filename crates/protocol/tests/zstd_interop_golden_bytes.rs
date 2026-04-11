@@ -59,10 +59,9 @@ fn decompress_raw_zstd(data: &[u8]) -> Vec<u8> {
     // Drain any remaining output after all input consumed
     loop {
         let mut out_buf = zstd::stream::raw::OutBuffer::around(&mut out_buf_storage);
-        decoder.run(
-            &mut zstd::stream::raw::InBuffer::around(&[]),
-            &mut out_buf,
-        ).unwrap();
+        decoder
+            .run(&mut zstd::stream::raw::InBuffer::around(&[]), &mut out_buf)
+            .unwrap();
         let produced = out_buf.pos();
         if produced == 0 {
             break;
