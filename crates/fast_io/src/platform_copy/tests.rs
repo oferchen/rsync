@@ -411,6 +411,38 @@ fn clonefile_fails_on_missing_source() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn macos_dispatch_uses_fcopyfile_when_clonefile_fails() {
+    // When destination already exists, clonefile will fail. The dispatch
+    // chain should then succeed via fcopyfile (reporting CopyMethod::Copyfile).
+    let temp = TempDir::new().expect("create temp dir");
+    let content = b"dispatch chain test";
+    let src = setup_source(temp.path(), "dispatch_src.txt", content);
+    let dst = temp.path().join("dispatch_dst.txt");
+
+    // Pre-create destination so clonefile fails (it cannot overwrite)
+    std::fs::write(&dst, b"existing").expect("write existing dst");
+
+    let copier = DefaultPlatformCopy::new();
+    let result = copier
+        .copy_file(&src, &dst, content.len() as u64)
+        .expect("dispatch chain should succeed");
+
+    let dst_content = std::fs::read(&dst).expect("read destination");
+    assert_eq!(dst_content, content);
+
+    // Should use fcopyfile (Copyfile) or StandardCopy - not Clonefile
+    assert!(
+        matches!(
+            result.method,
+            CopyMethod::Copyfile | CopyMethod::StandardCopy
+        ),
+        "expected Copyfile or StandardCopy after clonefile failure, got {:?}",
+        result.method
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn fcopyfile_copies_data() {
     let temp = TempDir::new().expect("create temp dir");
     let content = b"hello from fcopyfile";
