@@ -443,4 +443,129 @@ mod tests {
         let flags = ParsedServerFlags::parse("-r").unwrap();
         assert!(!flags.backup);
     }
+
+    // ==================== clear_unsupported_features tests ====================
+
+    /// When neither ACLs nor xattrs are requested, clearing unsupported features
+    /// returns an empty list and leaves all flags unchanged.
+    #[test]
+    fn clear_unsupported_features_noop_when_not_requested() {
+        let mut flags = ParsedServerFlags::parse("-r").unwrap();
+        assert!(!flags.acls);
+        assert!(!flags.xattrs);
+        let cleared = flags.clear_unsupported_features();
+        assert!(cleared.is_empty());
+        assert!(!flags.acls);
+        assert!(!flags.xattrs);
+    }
+
+    /// When ACLs are requested and the `acl` feature is compiled in (Unix),
+    /// no clearing occurs. When the feature is absent, the flag is cleared
+    /// and the feature name is returned.
+    ///
+    /// upstream: options.c:1842-1857 - SUPPORT_ACLS guard
+    #[test]
+    fn clear_unsupported_features_handles_acls() {
+        let mut flags = ParsedServerFlags::parse("-A").unwrap();
+        assert!(flags.acls);
+        let cleared = flags.clear_unsupported_features();
+
+        #[cfg(all(unix, feature = "acl"))]
+        {
+            assert!(cleared.is_empty());
+            assert!(flags.acls);
+        }
+
+        #[cfg(not(all(unix, feature = "acl")))]
+        {
+            assert_eq!(cleared, vec!["ACLs"]);
+            assert!(!flags.acls);
+        }
+    }
+
+    /// When xattrs are requested and the `xattr` feature is compiled in (Unix),
+    /// no clearing occurs. When the feature is absent, the flag is cleared
+    /// and the feature name is returned.
+    ///
+    /// upstream: options.c:1859-1868 - SUPPORT_XATTRS guard
+    #[test]
+    fn clear_unsupported_features_handles_xattrs() {
+        let mut flags = ParsedServerFlags::parse("-X").unwrap();
+        assert!(flags.xattrs);
+        let cleared = flags.clear_unsupported_features();
+
+        #[cfg(all(unix, feature = "xattr"))]
+        {
+            assert!(cleared.is_empty());
+            assert!(flags.xattrs);
+        }
+
+        #[cfg(not(all(unix, feature = "xattr")))]
+        {
+            assert_eq!(cleared, vec!["xattrs"]);
+            assert!(!flags.xattrs);
+        }
+    }
+
+    /// When both ACLs and xattrs are requested but the platform lacks support,
+    /// both are cleared and reported.
+    ///
+    /// upstream: options.c:1842-1868 - both guards apply independently
+    #[test]
+    fn clear_unsupported_features_handles_both_acl_and_xattr() {
+        let mut flags = ParsedServerFlags::parse("-AX").unwrap();
+        assert!(flags.acls);
+        assert!(flags.xattrs);
+        let cleared = flags.clear_unsupported_features();
+
+        // On a platform without both features, both are cleared.
+        // On a platform with both, neither is cleared.
+        // On a platform with only one, only the missing one is cleared.
+        // The exact result depends on the build, but the function must not panic.
+        for name in &cleared {
+            assert!(
+                *name == "ACLs" || *name == "xattrs",
+                "unexpected cleared feature: {name}"
+            );
+        }
+
+        // After clearing, the flag matches whether the feature is available.
+        #[cfg(all(unix, feature = "acl"))]
+        assert!(flags.acls, "ACLs should remain when feature is available");
+        #[cfg(not(all(unix, feature = "acl")))]
+        assert!(!flags.acls, "ACLs should be cleared when feature is absent");
+
+        #[cfg(all(unix, feature = "xattr"))]
+        assert!(
+            flags.xattrs,
+            "xattrs should remain when feature is available"
+        );
+        #[cfg(not(all(unix, feature = "xattr")))]
+        assert!(
+            !flags.xattrs,
+            "xattrs should be cleared when feature is absent"
+        );
+    }
+
+    /// Clearing unsupported features is idempotent - calling it twice
+    /// produces an empty result on the second call.
+    #[test]
+    fn clear_unsupported_features_idempotent() {
+        let mut flags = ParsedServerFlags::parse("-AX").unwrap();
+        let _ = flags.clear_unsupported_features();
+        let second = flags.clear_unsupported_features();
+        assert!(
+            second.is_empty(),
+            "second call should return empty: {second:?}"
+        );
+    }
+
+    /// Other transfer flags are not affected by clear_unsupported_features.
+    #[test]
+    fn clear_unsupported_features_preserves_other_flags() {
+        let mut flags = ParsedServerFlags::parse("-rAXz").unwrap();
+        let _ = flags.clear_unsupported_features();
+        assert!(flags.recursive, "recursive should be preserved");
+        assert!(flags.compress, "compress should be preserved");
+    }
 }
