@@ -281,10 +281,7 @@ impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
         // Wait for the worker thread to finish processing all items.
         if let Some(handle) = self.worker_handle.take() {
             handle.join().map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "parallel pipeline worker thread panicked",
-                )
+                std::io::Error::other("parallel pipeline worker thread panicked")
             })?;
         }
 
