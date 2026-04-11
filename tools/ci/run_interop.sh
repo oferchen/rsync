@@ -5997,60 +5997,25 @@ echo "=== Parallel version tests complete ==="
 
 # =====================================================================
 # Protocol version forcing tests: all 5 protocols via upstream 3.4.1
-# Run in parallel - each protocol uses unique ports and temp dirs.
+# Run sequentially to avoid port contention under CI load.
 # =====================================================================
 newest_binary="${upstream_install_root}/3.4.1/bin/rsync"
 if [[ -x "$newest_binary" ]]; then
-  proto_pids=()
   protos=(28 29 30 31 32)
-  for proto in "${protos[@]}"; do
-    (
-      oc_pid=""
-      up_pid=""
-      oc_pid_file_current=""
-      up_pid_file_current=""
-      oc_port_current=""
-      up_port_current=""
-
-      oc_port=$(allocate_ephemeral_port)
-      up_port=$(allocate_ephemeral_port)
-      echo ""
-      echo "=== Protocol ${proto} (forced via --protocol=${proto}) (ports: oc=${oc_port} up=${up_port}) ==="
-      proto_failed=false
-      if ! run_comprehensive_interop_case "3.4.1" "$newest_binary" \
-          "$oc_port" "$up_port" "--protocol=${proto}"; then
-        proto_failed=true
-      fi
-
-      stop_oc_daemon
-      stop_upstream_daemon
-
-      if [[ "$proto_failed" == "true" ]]; then
-        echo "proto${proto}" > "${result_dir}/proto${proto}.failures"
-      fi
-    ) &
-    proto_pids+=("$!")
-    echo "Launched protocol ${proto} tests (PID: ${proto_pids[-1]})"
-  done
-
-  echo ""
-  echo "=== Waiting for ${#proto_pids[@]} parallel protocol tests ==="
-
   fp_warnings=()
-  for i in "${!protos[@]}"; do
-    proto="${protos[$i]}"
-    pid="${proto_pids[$i]}"
-    if ! wait "$pid"; then
-      fp_warnings+=("proto${proto}-subshell-error")
-    fi
-  done
 
   for proto in "${protos[@]}"; do
-    if [[ -f "${result_dir}/proto${proto}.failures" ]]; then
-      while IFS= read -r failure; do
-        fp_warnings+=("$failure")
-      done < "${result_dir}/proto${proto}.failures"
+    oc_port=$(allocate_ephemeral_port)
+    up_port=$(allocate_ephemeral_port)
+    echo ""
+    echo "=== Protocol ${proto} (forced via --protocol=${proto}) (ports: oc=${oc_port} up=${up_port}) ==="
+    if ! run_comprehensive_interop_case "3.4.1" "$newest_binary" \
+        "$oc_port" "$up_port" "--protocol=${proto}"; then
+      fp_warnings+=("proto${proto}")
     fi
+
+    stop_oc_daemon
+    stop_upstream_daemon
   done
 
   if (( ${#fp_warnings[@]} > 0 )); then
@@ -6059,7 +6024,7 @@ if [[ -x "$newest_binary" ]]; then
     echo "  These failures are typically caused by daemon connection flakiness under CI load."
   fi
 
-  echo "=== Parallel protocol tests complete ==="
+  echo "=== Sequential protocol tests complete ==="
 else
   echo "Skipping protocol forcing tests (3.4.1 binary unavailable)"
 fi
