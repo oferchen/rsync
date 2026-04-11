@@ -312,7 +312,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     mod linux_tests {
         use super::*;
-        use std::io::{Read, Seek, SeekFrom, Write};
+        use std::io::{Read, Seek, SeekFrom};
         use tempfile::NamedTempFile;
 
         #[test]
