@@ -494,6 +494,76 @@ fn ssh_rsync_path_not_found() {
     });
 }
 
+/// Verify that SSH stderr output is captured and included in the error message
+/// when a connection fails.
+///
+/// This validates the fix from PR #3183: when `perform_handshake()` fails because
+/// the SSH process exited (e.g., "Connection refused"), the stderr from the SSH
+/// child must be captured via `wait_with_stderr()` and surfaced in the error
+/// message. Previously, stderr was lost because the error returned before the
+/// child was waited on.
+///
+/// The test uses a shell script as a fake SSH program that writes a known error
+/// to stderr and exits with code 255, simulating a connection-refused scenario.
+/// This avoids dependency on a running SSH server while exercising the full
+/// stderr capture pipeline through `run_server_over_ssh_connection`.
+#[test]
+fn ssh_stderr_visible_on_connection_failure() {
+    run_with_timeout(SSH_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let src_dir = temp.path().join("src");
+        let dst_dir = temp.path().join("dst");
+        fs::create_dir_all(&src_dir).expect("create src dir");
+        fs::create_dir_all(&dst_dir).expect("create dst dir");
+
+        touch(&src_dir.join("data.txt"), b"data");
+
+        // Create a fake SSH script that writes a known message to stderr
+        // and exits with 255 (the standard SSH connection-failure exit code).
+        // upstream: ssh exits 255 on connection failure, which rsync maps to
+        // RERR_CMD_FAILED in wait_process_with_flush().
+        let fake_ssh = temp.path().join("fake_ssh.sh");
+        fs::write(
+            &fake_ssh,
+            "#!/bin/sh\nprintf 'ssh: connect to host 127.0.0.1 port 1: Connection refused\\n' >&2\nexit 255\n",
+        )
+        .expect("write fake ssh script");
+
+        // Make the script executable.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&fake_ssh, fs::Permissions::from_mode(0o755))
+                .expect("chmod fake ssh");
+        }
+
+        let src_arg = format!("{}/", src_dir.display());
+        let dst_arg = format!("localhost:{}/", dst_dir.display());
+        let fake_ssh_path = fake_ssh.to_string_lossy().to_string();
+
+        let result = run_client(
+            ClientConfig::builder()
+                .transfer_args([OsString::from(&src_arg), OsString::from(&dst_arg)])
+                .set_remote_shell(vec![&fake_ssh_path])
+                .build(),
+        );
+
+        let err = result.expect_err("connection with fake SSH should fail");
+        let err_msg = err.to_string();
+
+        // The error message must contain the SSH stderr output so the user
+        // knows why the connection failed.
+        assert!(
+            err_msg.contains("Connection refused"),
+            "error message should contain SSH stderr 'Connection refused', got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("SSH stderr:"),
+            "error message should contain 'SSH stderr:' prefix, got: {err_msg}"
+        );
+    });
+}
+
 /// Verify the retry helper retries transient failures without looping forever.
 #[test]
 fn retry_logic_stops_on_persistent_failure() {
