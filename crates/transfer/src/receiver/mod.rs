@@ -85,10 +85,7 @@ const PHASE1_CHECKSUM_LENGTH: NonZeroU8 =
 const REDO_CHECKSUM_LENGTH: NonZeroU8 =
     NonZeroU8::new(signature::block_size::MAX_SUM_LENGTH).unwrap();
 
-/// Minimum candidate count to justify parallel I/O overhead for
-/// stat() calls in the quick-check phase. Below this threshold,
-/// sequential iteration is faster.
-const PARALLEL_STAT_THRESHOLD: usize = 64;
+pub(crate) use crate::parallel_io::ParallelThresholds;
 
 use signature;
 
@@ -187,6 +184,11 @@ pub struct ReceiverContext {
     /// sequential `recv_files()` loop. Can be swapped to a parallel or
     /// threshold-based pipeline via [`set_delta_pipeline`](Self::set_delta_pipeline).
     delta_pipeline: Option<Box<dyn ReceiverDeltaPipeline>>,
+    /// Per-operation thresholds for switching between sequential and parallel execution.
+    ///
+    /// Different operations have different overhead profiles: CPU-bound signature
+    /// computation benefits from parallelism at lower counts than I/O-bound stat calls.
+    parallel_thresholds: ParallelThresholds,
 }
 
 impl ReceiverContext {
@@ -230,6 +232,7 @@ impl ReceiverContext {
             hardlink_tracker,
             prior_hlinks: HashMap::new(),
             delta_pipeline: Some(Box::new(SequentialDeltaPipeline::new())),
+            parallel_thresholds: ParallelThresholds::default(),
         }
     }
 

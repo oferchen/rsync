@@ -23,7 +23,7 @@ use crate::receiver::quick_check::{
     dest_mtime_newer, is_hardlink_follower, quick_check_matches, try_reference_dest,
 };
 use crate::receiver::stats::TransferStats;
-use crate::receiver::{PARALLEL_STAT_THRESHOLD, ReceiverContext, apply_acls_from_receiver_cache};
+use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
 
 impl ReceiverContext {
     /// Builds the list of files that need transfer, applying quick-check to skip
@@ -119,7 +119,7 @@ impl ReceiverContext {
         let stat_results: Vec<(usize, PathBuf, Option<fs::Metadata>)> =
             crate::parallel_io::map_blocking(
                 stat_paths,
-                PARALLEL_STAT_THRESHOLD,
+                self.parallel_thresholds.stat,
                 move |(idx, file_path)| {
                     let meta = fs::metadata(&file_path).ok();
                     (idx, file_path, meta)

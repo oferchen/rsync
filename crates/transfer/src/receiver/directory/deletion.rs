@@ -14,7 +14,7 @@ use logging::{debug_log, info_log};
 use protocol::stats::DeleteStats;
 
 use super::normalize_filename_for_compare;
-use crate::receiver::{PARALLEL_STAT_THRESHOLD, ReceiverContext};
+use crate::receiver::ReceiverContext;
 
 impl ReceiverContext {
     /// Deletes extraneous files at the destination that are not in the received file list.
@@ -98,7 +98,7 @@ impl ReceiverContext {
         // after parallel deletion completes.
         let per_dir_results: Vec<(DeleteStats, Vec<PathBuf>)> = crate::parallel_io::map_blocking(
             dirs_to_scan,
-            PARALLEL_STAT_THRESHOLD,
+            self.parallel_thresholds.deletion,
             move |dir_relative| {
                 let dest_path = if dir_relative.as_os_str() == "." {
                     dest_dir_owned.clone()
