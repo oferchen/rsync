@@ -2074,6 +2074,139 @@ test_compressed_batch_recording() {
   return 0
 }
 
+# #3084: batch framing interop with multi-file varying-size transfers
+# Validates that the NDX-driven batch framing produces correct upstream-compatible
+# batch files when transferring many files with varying sizes. PR #3084 fixed the
+# batch write path to buffer per-file delta data and emit it after the flist end
+# marker with proper NDX framing, matching upstream receiver.c:recv_files() format.
+# This test uses a custom source tree with files ranging from 0 bytes to 512 KB
+# across nested directories to stress the framing boundary conditions.
+test_batch_framing_multifile() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local batch_dir="${work}/batch-framing-test"
+  rm -rf "$batch_dir"
+
+  # Build a custom source tree with varying file sizes to exercise framing.
+  # The key scenario: many files with different sizes produce multiple NDX +
+  # iflags + sum_head + delta token sequences that must be correctly ordered
+  # after the flist end marker.
+  local framing_src="${batch_dir}/src"
+  mkdir -p "$framing_src/subdir/nested"
+
+  # Empty file - zero-length delta
+  touch "$framing_src/empty.dat"
+  # 1-byte file - minimal literal token
+  printf 'x' > "$framing_src/tiny.dat"
+  # Small files with known content
+  echo "hello batch framing" > "$framing_src/small1.txt"
+  printf 'line1\nline2\nline3\nline4\n' > "$framing_src/small2.txt"
+  # Medium files - multiple token blocks
+  dd if=/dev/urandom of="$framing_src/medium1.dat" bs=1K count=32 2>/dev/null
+  dd if=/dev/urandom of="$framing_src/medium2.dat" bs=1K count=64 2>/dev/null
+  # Large file - many token blocks, exercises chunked framing
+  dd if=/dev/urandom of="$framing_src/large.dat" bs=1K count=512 2>/dev/null
+  # Nested directory files - tests NDX ordering across directory boundaries
+  echo "nested file one" > "$framing_src/subdir/nested1.txt"
+  dd if=/dev/urandom of="$framing_src/subdir/nested2.dat" bs=1K count=16 2>/dev/null
+  echo "deep file" > "$framing_src/subdir/nested/deep.txt"
+  dd if=/dev/urandom of="$framing_src/subdir/nested/deep.dat" bs=1K count=128 2>/dev/null
+
+  # Helper to verify all files in the framing source tree
+  batch_framing_verify() {
+    local s=$1 d=$2
+    for f in empty.dat tiny.dat small1.txt small2.txt medium1.dat medium2.dat \
+             large.dat subdir/nested1.txt subdir/nested2.dat \
+             subdir/nested/deep.txt subdir/nested/deep.dat; do
+      if [[ ! -f "$d/$f" ]]; then
+        echo "    Missing: $f"
+        return 1
+      fi
+      if ! cmp -s "$s/$f" "$d/$f"; then
+        echo "    Content mismatch: $f (src=$(wc -c < "$s/$f") dst=$(wc -c < "$d/$f") bytes)"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # --- Direction 1: oc-rsync writes batch, upstream reads ---
+  # This is the primary scenario fixed by PR #3084: oc-rsync must produce
+  # a batch stream with flist entries first, then NDX-framed delta data.
+  local oc_write_dest="${batch_dir}/oc-write-dest"
+  local up_read_dest="${batch_dir}/up-read-dest"
+  local batch_oc="${batch_dir}/batch-oc.rsync"
+  mkdir -p "$oc_write_dest" "$up_read_dest"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av \
+      --write-batch="$batch_oc" --timeout=10 \
+      "${framing_src}/" "${oc_write_dest}/" \
+      >"${log}.batch-framing-oc-write.out" 2>"${log}.batch-framing-oc-write.err"; then
+    echo "    write-batch failed (oc-rsync write, exit=$?)"
+    return 1
+  fi
+
+  if [[ ! -f "$batch_oc" ]]; then
+    echo "    batch file not created (oc-rsync write)"
+    return 1
+  fi
+
+  local rc1=0
+  timeout "$hard_timeout" "$upstream_binary" -av \
+      --read-batch="$batch_oc" --timeout=10 \
+      "${up_read_dest}/" \
+      >"${log}.batch-framing-up-read.out" 2>"${log}.batch-framing-up-read.err" || rc1=$?
+  if [[ $rc1 -ne 0 ]]; then
+    echo "    read-batch failed (upstream reading oc-rsync batch, exit=$rc1)"
+    head -5 "${log}.batch-framing-up-read.err" 2>/dev/null | sed 's/^/    stderr: /'
+    return 1
+  fi
+
+  if ! batch_framing_verify "$framing_src" "$up_read_dest"; then
+    echo "    content mismatch after upstream read of oc-rsync multi-file batch"
+    return 1
+  fi
+
+  # --- Direction 2: upstream writes batch, oc-rsync reads ---
+  # Validates oc-rsync's NDX-driven replay loop correctly parses upstream's
+  # batch framing for multi-file transfers with varying sizes.
+  local up_write_dest="${batch_dir}/up-write-dest"
+  local oc_read_dest="${batch_dir}/oc-read-dest"
+  local batch_up="${batch_dir}/batch-up.rsync"
+  mkdir -p "$up_write_dest" "$oc_read_dest"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -av \
+      --write-batch="$batch_up" --timeout=10 \
+      "${framing_src}/" "${up_write_dest}/" \
+      >"${log}.batch-framing-up-write.out" 2>"${log}.batch-framing-up-write.err"; then
+    echo "    write-batch failed (upstream write, exit=$?)"
+    return 1
+  fi
+
+  if [[ ! -f "$batch_up" ]]; then
+    echo "    batch file not created (upstream write)"
+    return 1
+  fi
+
+  local rc2=0
+  timeout "$hard_timeout" "$oc_bin" -av \
+      --read-batch="$batch_up" --timeout=10 \
+      "${oc_read_dest}/" \
+      >"${log}.batch-framing-oc-read.out" 2>"${log}.batch-framing-oc-read.err" || rc2=$?
+  if [[ $rc2 -ne 0 ]]; then
+    echo "    read-batch failed (oc-rsync reading upstream batch, exit=$rc2)"
+    head -5 "${log}.batch-framing-oc-read.err" 2>/dev/null | sed 's/^/    stderr: /'
+    return 1
+  fi
+
+  if ! batch_framing_verify "$framing_src" "$oc_read_dest"; then
+    echo "    content mismatch after oc-rsync read of upstream multi-file batch"
+    return 1
+  fi
+
+  return 0
+}
+
 # #877: --info=progress2 output
 # Verifies that --info=progress2 produces whole-transfer progress output.
 test_info_progress2() {
@@ -5707,6 +5840,7 @@ run_standalone_interop_tests() {
     "write-batch-read-batch"
     "write-batch-read-batch-compressed"
     "compressed-batch-recording"
+    "batch-framing-multifile"
     "info-progress2"
     "large-file-2gb"
     "file-vanished"
@@ -5751,6 +5885,7 @@ run_standalone_interop_tests() {
     "test_write_batch_read_batch"
     "test_write_batch_read_batch_compressed"
     "test_compressed_batch_recording"
+    "test_batch_framing_multifile"
     "test_info_progress2"
     "test_large_file_2gb"
     "test_file_vanished"
