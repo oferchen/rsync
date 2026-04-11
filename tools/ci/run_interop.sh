@@ -3018,6 +3018,241 @@ CONF
   return 0
 }
 
+# INC_RECURSE sender-side interop: oc-rsync client pushes to upstream daemon.
+# Creates a deep directory tree (4 levels, 3 branches, 50+ files) with mixed
+# sizes, pushes with --inc-recursive to an upstream rsync daemon, then verifies
+# all files and directory structure arrive correctly.
+test_inc_recurse_sender_push() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local irs_src="${work}/ir-sender-src"
+  local irs_dest="${work}/ir-sender-dest"
+  rm -rf "$irs_src" "$irs_dest"
+  mkdir -p "$irs_dest"
+
+  # Build a deep directory tree: 4 levels, 3 branches per level, 50+ files.
+  # Files at every level with mixed sizes (empty, small, large).
+  local level depth=4
+  for level in $(seq 1 $depth); do
+    local branch
+    for branch in x y z; do
+      local dir_path="${irs_src}"
+      local d
+      for d in $(seq 1 $level); do
+        dir_path="${dir_path}/lv${d}_${branch}"
+      done
+      mkdir -p "$dir_path"
+
+      # Empty file
+      touch "$dir_path/empty_${level}_${branch}.txt"
+      # Small file with unique content
+      echo "sender push depth ${level} branch ${branch}" > "$dir_path/small_${level}_${branch}.txt"
+      # Extra numbered files to push total above 50
+      local n
+      for n in $(seq 1 4); do
+        echo "extra sender ${n} at depth ${level} branch ${branch}" > "$dir_path/extra_${n}.txt"
+      done
+      # Larger file at deeper levels to exercise data transfer
+      if [[ $level -ge 3 ]]; then
+        dd if=/dev/urandom of="$dir_path/large_${level}_${branch}.dat" bs=1K count=16 2>/dev/null
+      fi
+    done
+  done
+
+  # Root-level files
+  echo "sender root file" > "$irs_src/root.txt"
+  dd if=/dev/urandom of="$irs_src/root_binary.dat" bs=1K count=32 2>/dev/null
+
+  # Symlinks at various levels
+  ln -sf root.txt "$irs_src/root_link.txt"
+  ln -sf small_2_x.txt "$irs_src/lv1_x/lv2_x/link_to_small.txt"
+
+  # Count source files for verification
+  local src_file_count
+  src_file_count=$(find "$irs_src" -type f | wc -l)
+  local src_dir_count
+  src_dir_count=$(find "$irs_src" -type d | wc -l)
+
+  # --- Test 1: oc-rsync sender pushing to upstream daemon ---
+  local up_irs_conf="${work}/ir-sender-up.conf"
+  local up_irs_pid="${work}/ir-sender-up.pid"
+  local up_irs_log="${work}/ir-sender-up-daemon.log"
+  cat > "$up_irs_conf" <<CONF
+pid file = ${up_irs_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${irs_dest}
+    comment = inc-recurse sender push target
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$up_irs_conf" "$up_irs_log" "$up_irs_pid"
+
+  # oc-rsync client pushing to upstream daemon with --inc-recursive
+  if ! timeout "$hard_timeout" "$oc_bin" -avH --inc-recursive --timeout=10 \
+      "${irs_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.ir-sender.out" 2>"${log}.ir-sender.err"; then
+    echo "    oc-rsync -> upstream daemon --inc-recursive push failed (exit=$?)"
+    echo "    stderr: $(head -5 "${log}.ir-sender.err")"
+    echo "    daemon log: $(tail -5 "$up_irs_log" 2>/dev/null)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # Verify all files transferred
+  local dest_file_count
+  dest_file_count=$(find "$irs_dest" -type f | wc -l)
+  if [[ "$dest_file_count" -lt "$src_file_count" ]]; then
+    echo "    file count mismatch: src=${src_file_count} dest=${dest_file_count}"
+    return 1
+  fi
+
+  # Verify directory structure preserved
+  local dest_dir_count
+  dest_dir_count=$(find "$irs_dest" -type d | wc -l)
+  if [[ "$dest_dir_count" -lt "$src_dir_count" ]]; then
+    echo "    dir count mismatch: src=${src_dir_count} dest=${dest_dir_count}"
+    return 1
+  fi
+
+  # Verify file content at each level
+  for level in $(seq 1 $depth); do
+    for branch in x y z; do
+      local dir_path=""
+      local d
+      for d in $(seq 1 $level); do
+        dir_path="${dir_path}/lv${d}_${branch}"
+      done
+      local src_file="${irs_src}${dir_path}/small_${level}_${branch}.txt"
+      local dst_file="${irs_dest}${dir_path}/small_${level}_${branch}.txt"
+      if [[ -f "$src_file" ]] && ! cmp -s "$src_file" "$dst_file"; then
+        echo "    content mismatch at depth ${level} branch ${branch}"
+        return 1
+      fi
+    done
+  done
+
+  # Verify root files
+  if ! cmp -s "$irs_src/root.txt" "$irs_dest/root.txt"; then
+    echo "    root.txt content mismatch"
+    return 1
+  fi
+  if ! cmp -s "$irs_src/root_binary.dat" "$irs_dest/root_binary.dat"; then
+    echo "    root_binary.dat content mismatch"
+    return 1
+  fi
+
+  # Verify symlinks preserved
+  if [[ ! -L "$irs_dest/root_link.txt" ]]; then
+    echo "    root_link.txt symlink not preserved"
+    return 1
+  fi
+  local st dt
+  st=$(readlink "$irs_src/root_link.txt")
+  dt=$(readlink "$irs_dest/root_link.txt")
+  if [[ "$st" != "$dt" ]]; then
+    echo "    root_link.txt symlink target: $st vs $dt"
+    return 1
+  fi
+
+  # Verify large files at deeper levels
+  for branch in x y z; do
+    local deep_src="${irs_src}/lv1_${branch}/lv2_${branch}/lv3_${branch}/large_3_${branch}.dat"
+    local deep_dst="${irs_dest}/lv1_${branch}/lv2_${branch}/lv3_${branch}/large_3_${branch}.dat"
+    if [[ -f "$deep_src" ]] && ! cmp -s "$deep_src" "$deep_dst"; then
+      echo "    large file mismatch at depth 3 branch ${branch}"
+      return 1
+    fi
+  done
+
+  # --- Test 2: incremental re-push (no unnecessary transfers) ---
+  # Restart upstream daemon for re-push test
+  start_upstream_daemon "$upstream_binary" "$up_irs_conf" "$up_irs_log" "$up_irs_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -avH --inc-recursive --timeout=10 \
+      "${irs_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.ir-sender-resync.out" 2>"${log}.ir-sender-resync.err"; then
+    echo "    oc-rsync -> upstream daemon incremental re-push failed (exit=$?)"
+    echo "    stderr: $(head -5 "${log}.ir-sender-resync.err")"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # No files should have been re-transferred
+  local retransfer_count
+  retransfer_count=$(grep -cE '^>f' "${log}.ir-sender-resync.out" 2>/dev/null) || retransfer_count=0
+  if [[ "$retransfer_count" -gt 0 ]]; then
+    echo "    incremental re-push transferred ${retransfer_count} files unnecessarily"
+    return 1
+  fi
+
+  # --- Test 3: push with --delete to upstream daemon ---
+  # Pre-populate destination with stale files that should be removed
+  local del_dest="${work}/ir-sender-del-dest"
+  rm -rf "$del_dest"; mkdir -p "$del_dest"
+  mkdir -p "$del_dest/stale_dir/nested"
+  echo "stale" > "$del_dest/stale_file.txt"
+  echo "stale nested" > "$del_dest/stale_dir/nested/old.txt"
+  cp "$irs_src/root.txt" "$del_dest/root.txt"
+
+  local del_conf="${work}/ir-sender-del.conf"
+  local del_pid="${work}/ir-sender-del.pid"
+  local del_log="${work}/ir-sender-del-daemon.log"
+  cat > "$del_conf" <<CONF
+pid file = ${del_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${del_dest}
+    comment = inc-recurse sender delete target
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$del_conf" "$del_log" "$del_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --inc-recursive --delete --timeout=10 \
+      "${irs_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.ir-sender-del.out" 2>"${log}.ir-sender-del.err"; then
+    echo "    oc-rsync -> upstream daemon --inc-recursive --delete failed (exit=$?)"
+    echo "    stderr: $(head -5 "${log}.ir-sender-del.err")"
+    echo "    daemon log: $(tail -5 "$del_log" 2>/dev/null)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # Verify stale files were deleted
+  if [[ -f "$del_dest/stale_file.txt" ]]; then
+    echo "    --delete failed: stale_file.txt still exists"
+    return 1
+  fi
+  if [[ -d "$del_dest/stale_dir" ]]; then
+    echo "    --delete failed: stale_dir/ still exists"
+    return 1
+  fi
+
+  # Verify source files are present
+  local del_file_count
+  del_file_count=$(find "$del_dest" -type f | wc -l)
+  if [[ "$del_file_count" -lt "$src_file_count" ]]; then
+    echo "    delete dest file count: expected >= ${src_file_count}, got ${del_file_count}"
+    return 1
+  fi
+
+  return 0
+}
+
 # Unicode filename interop
 # Verifies that filenames with Chinese characters, emoji, accented characters,
 # and nested unicode directory names transfer correctly via daemon push.
@@ -5210,6 +5445,7 @@ run_standalone_interop_tests() {
     "iconv"
     "hardlinks-comprehensive"
     "inc-recurse-comprehensive"
+    "inc-recurse-sender-push"
     "unicode-names"
     "special-chars"
     "empty-dir"
@@ -5251,6 +5487,7 @@ run_standalone_interop_tests() {
     "test_iconv"
     "test_hardlinks_comprehensive"
     "test_inc_recurse_comprehensive"
+    "test_inc_recurse_sender_push"
     "test_unicode_names"
     "test_special_chars"
     "test_empty_dir"
@@ -5308,6 +5545,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       inc-recurse-comprehensive)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      inc-recurse-sender-push)
         test_args+=("$oc_port" "$upstream_port")
         ;;
       unicode-names)
