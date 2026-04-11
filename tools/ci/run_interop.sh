@@ -5424,6 +5424,121 @@ CONF
   return 0
 }
 
+# ACL/xattr graceful degradation test against rsync 3.0.9.
+# rsync 3.0.9 does not support ACLs or xattrs (protocol 28, no -A/-X capability).
+# Verify that transfers with --acls or --xattrs succeed or fail gracefully
+# when the remote side is 3.0.9.
+# upstream: compat.c:655-668 - ACLs/xattrs require protocol >= 30.
+test_acl_xattr_graceful_degradation_309() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local rsync_309="${upstream_install_root}/3.0.9/bin/rsync"
+  if [[ ! -x "$rsync_309" ]]; then
+    echo "    SKIP (rsync 3.0.9 binary not available)"
+    return 0
+  fi
+
+  local dest_dir="${work}/acl-xattr-309"
+  rm -rf "$dest_dir"
+  mkdir -p "$dest_dir"
+
+  # --- Test 1: upstream 3.0.9 pushing with --acls to oc-rsync daemon ---
+  # 3.0.9 does not understand -A, so it will either ignore it or the
+  # transfer proceeds without ACL support. Should not crash.
+  local oc_conf="${work}/acl-xattr-oc.conf"
+  local oc_pid_f="${work}/acl-xattr-oc.pid"
+  local oc_log_f="${work}/acl-xattr-oc.log"
+  cat > "$oc_conf" <<CONF
+pid file = ${oc_pid_f}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${dest_dir}
+comment = acl-xattr test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$oc_conf" "$oc_log_f" "$rsync_309" "$oc_pid_f" "$oc_port"
+
+  # 3.0.9 with --acls (may reject the flag entirely or proceed without ACLs)
+  timeout "$hard_timeout" "$rsync_309" -av --acls --timeout=10 \
+      "${src_dir}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.acl-309-push.out" 2>"${log}.acl-309-push.err"
+  local rc=$?
+  # Accept success (0) or graceful error (non-crash exit codes <= 23)
+  if [[ $rc -gt 23 ]]; then
+    echo "    FAIL: 3.0.9 --acls push to oc-rsync crashed (exit=$rc)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  # 3.0.9 with --xattrs
+  rm -rf "$dest_dir"/*
+  timeout "$hard_timeout" "$rsync_309" -av --xattrs --timeout=10 \
+      "${src_dir}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.xattr-309-push.out" 2>"${log}.xattr-309-push.err"
+  rc=$?
+  if [[ $rc -gt 23 ]]; then
+    echo "    FAIL: 3.0.9 --xattrs push to oc-rsync crashed (exit=$rc)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # --- Test 2: oc-rsync pushing with --acls to upstream 3.0.9 daemon ---
+  local up_dest="${work}/acl-xattr-up-dest"
+  rm -rf "$up_dest"
+  mkdir -p "$up_dest"
+
+  local up_conf="${work}/acl-xattr-up.conf"
+  local up_pid_f="${work}/acl-xattr-up.pid"
+  local up_log_f="${work}/acl-xattr-up.log"
+  cat > "$up_conf" <<CONF
+pid file = ${up_pid_f}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${up_dest}
+    comment = acl-xattr upstream 309
+    read only = false
+CONF
+
+  start_upstream_daemon "$rsync_309" "$up_conf" "$up_log_f" "$up_pid_f"
+
+  # oc-rsync with --acls to 3.0.9 daemon - should degrade gracefully
+  timeout "$hard_timeout" "$oc_bin" -av --acls --timeout=10 \
+      "${src_dir}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.acl-oc-push-309.out" 2>"${log}.acl-oc-push-309.err"
+  rc=$?
+  # Accept success (0) or graceful protocol error (exit codes <= 23)
+  if [[ $rc -gt 23 ]]; then
+    echo "    FAIL: oc-rsync --acls push to 3.0.9 daemon crashed (exit=$rc)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  # oc-rsync with --xattrs to 3.0.9 daemon
+  rm -rf "$up_dest"/*
+  timeout "$hard_timeout" "$oc_bin" -av --xattrs --timeout=10 \
+      "${src_dir}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.xattr-oc-push-309.out" 2>"${log}.xattr-oc-push-309.err"
+  rc=$?
+  if [[ $rc -gt 23 ]]; then
+    echo "    FAIL: oc-rsync --xattrs push to 3.0.9 daemon crashed (exit=$rc)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -5473,6 +5588,7 @@ run_standalone_interop_tests() {
     "max-connections"
     "exclude-include-precedence"
     "delete-with-filters"
+    "acl-xattr-graceful-degradation-309"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -5515,6 +5631,7 @@ run_standalone_interop_tests() {
     "test_max_connections"
     "test_exclude_include_precedence"
     "test_delete_with_filters"
+    "test_acl_xattr_graceful_degradation_309"
   )
 
   for i in "${!test_names[@]}"; do
@@ -5629,6 +5746,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       delete-with-filters)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      acl-xattr-graceful-degradation-309)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
