@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn batch_stat_empty_input() {
-        let results = batch_stat_dir_entries(Vec::new(), false);
+        let results = batch_stat_dir_entries(Vec::new(), false, &ParallelThresholds::default());
         assert!(results.is_empty());
     }
 
@@ -185,7 +185,7 @@ mod tests {
             .collect();
 
         // Batched
-        let batched_results = batch_stat_dir_entries(paths, false);
+        let batched_results = batch_stat_dir_entries(paths, false, &ParallelThresholds::default());
         let batched: Vec<(PathBuf, bool, u64)> = batched_results
             .into_iter()
             .map(|r| {
