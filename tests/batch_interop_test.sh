@@ -291,6 +291,58 @@ test_upstream_to_oc() {
     fi
 }
 
+# =========================================================================
+# Compressed batch test: upstream writes compressed, oc-rsync reads
+# =========================================================================
+
+test_upstream_compressed_to_oc() {
+    local upstream_rsync="$1"
+    local version="$2"
+    local test_name="upstream $version -z -> oc-rsync (compressed batch)"
+
+    log_test "$test_name"
+    TESTS_RUN=$((TESTS_RUN + 1))
+
+    local work_dir="$TEST_DIR/${version//./_}_z_to_oc"
+    mkdir -p "$work_dir"/{src,dest,basis,final}
+
+    setup_test_data_with_basis "$work_dir/src" "$work_dir/dest" "$work_dir/basis"
+
+    log_info "Creating compressed batch with upstream rsync $version..."
+    if ! "$upstream_rsync" -av -z --no-whole-file --ignore-times \
+        --write-batch="$work_dir/mybatch" \
+        "$work_dir/src/" "$work_dir/dest/" > "$work_dir/write.log" 2>&1; then
+        log_warn "$test_name: upstream rsync --write-batch -z failed"
+        cat "$work_dir/write.log" >&2
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 0
+    fi
+
+    if [ ! -f "$work_dir/mybatch" ]; then
+        log_warn "$test_name: Batch file not created"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 0
+    fi
+
+    cp "$work_dir/basis/testfile.bin" "$work_dir/final/testfile.bin"
+
+    log_info "Replaying compressed batch with oc-rsync..."
+    if ! "$OC_RSYNC" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
+        log_warn "$test_name: oc-rsync --read-batch failed"
+        cat "$work_dir/read.log" >&2
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        return 0
+    fi
+
+    if verify_files_match "$work_dir/src/testfile.bin" "$work_dir/final/testfile.bin" "$test_name"; then
+        log_info "$test_name: PASS"
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+    else
+        log_warn "$test_name: FAIL"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+}
+
 main() {
     log_info "Starting Batch Mode Interoperability Tests"
     log_info "oc-rsync: $OC_RSYNC"
@@ -315,7 +367,7 @@ main() {
     test_oc_roundtrip
 
     # =====================================================================
-    # Cross-tool tests
+    # Cross-tool tests (uncompressed and compressed)
     # =====================================================================
     log_info ""
     log_info "=== Cross-tool Compatibility Tests ==="
@@ -327,7 +379,7 @@ main() {
             available_versions+=("$version")
         else
             log_warn "Upstream rsync $version not found at $binary, skipping"
-            TESTS_SKIPPED=$((TESTS_SKIPPED + 2))
+            TESTS_SKIPPED=$((TESTS_SKIPPED + 3))
         fi
     done
 
@@ -337,6 +389,9 @@ main() {
         done
         for version in "${available_versions[@]}"; do
             test_upstream_to_oc "$UPSTREAM_INSTALL_ROOT/$version/bin/rsync" "$version"
+        done
+        for version in "${available_versions[@]}"; do
+            test_upstream_compressed_to_oc "$UPSTREAM_INSTALL_ROOT/$version/bin/rsync" "$version"
         done
     else
         log_warn "No upstream rsync versions available, skipping cross-tool tests"

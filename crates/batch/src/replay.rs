@@ -456,9 +456,13 @@ pub fn replay(
                     .to_owned(),
             ));
         }
-        let mut decoder = CompressedTokenDecoder::new();
-        decoder.set_zlibx(true);
-        Some(decoder)
+        // upstream: compat.c - protocol 31 always uses zlib in CPRES_ZLIBX mode.
+        // Protocol >= 32 negotiates the compression algorithm via vstrings,
+        // defaulting to zstd when both sides support it. The batch header does
+        // not record which algorithm was negotiated, so we infer from the
+        // protocol version: 31 = zlib, >= 32 = zstd (falling through to zlib
+        // when the zstd feature is not compiled in).
+        Some(create_compressed_decoder(proto)?)
     } else {
         None
     };
@@ -844,6 +848,39 @@ fn default_xfer_sum_len(protocol_version: i32) -> usize {
     16
 }
 
+/// Creates the appropriate `CompressedTokenDecoder` for the batch protocol version.
+///
+/// Protocol 31 always uses zlib in CPRES_ZLIBX mode (upstream rsync 3.4.1 default).
+/// Protocol >= 32 defaults to zstd when the feature is compiled in, since oc-rsync
+/// (and future upstream versions) negotiate zstd as the preferred algorithm. The
+/// batch header does not record the negotiated compression algorithm, so the
+/// protocol version is the only disambiguation signal.
+///
+/// upstream: compat.c - protocol 31 hardcodes CPRES_ZLIBX; protocol 32+ uses
+/// vstring negotiation where zstd wins if both sides support it.
+fn create_compressed_decoder(proto: i32) -> BatchResult<CompressedTokenDecoder> {
+    // Protocol 32+ defaults to zstd when the feature is compiled in.
+    if proto >= 32 {
+        #[cfg(feature = "zstd")]
+        {
+            return CompressedTokenDecoder::new_zstd().map_err(|e| {
+                BatchError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("failed to create zstd decoder for batch replay: {e}"),
+                ))
+            });
+        }
+    }
+
+    // Suppress unused variable warning when zstd feature is disabled.
+    let _ = proto;
+
+    // Protocol 31 or zstd not available: use zlib in CPRES_ZLIBX mode.
+    let mut decoder = CompressedTokenDecoder::new();
+    decoder.set_zlibx(true);
+    Ok(decoder)
+}
+
 fn choose_block_length(file_size: u64) -> usize {
     const MIN_BLOCK: usize = 700;
     const MAX_BLOCK: usize = 128 * 1024;
@@ -991,32 +1028,22 @@ mod tests {
     }
 
     #[test]
-    fn compressed_decoder_created_for_do_compression_flag() {
-        // Verify that CompressedTokenDecoder is created when do_compression
-        // flag is set. This is a unit test for the decoder creation logic in
-        // replay() - not a full replay test.
-        let flags = crate::format::BatchFlags {
-            do_compression: true,
-            ..Default::default()
-        };
-        let proto = 32;
-
-        // Mirrors the logic in replay()
-        let decoder = if flags.do_compression {
-            if proto < 31 {
-                None // CPRES_ZLIB unsupported
-            } else {
-                let mut d = CompressedTokenDecoder::new();
-                d.set_zlibx(true);
-                Some(d)
-            }
-        } else {
-            None
-        };
-
+    fn compressed_decoder_created_for_proto_31() {
+        // Protocol 31 creates a zlib/zlibx decoder.
+        let decoder = create_compressed_decoder(31).unwrap();
         assert!(
-            decoder.is_some(),
-            "compressed decoder should be created for do_compression=true, proto>=31"
+            !decoder.initialized(),
+            "fresh decoder should not be initialized"
+        );
+    }
+
+    #[test]
+    fn compressed_decoder_created_for_proto_32() {
+        // Protocol 32 creates a zstd decoder (when feature enabled) or zlib fallback.
+        let decoder = create_compressed_decoder(32).unwrap();
+        assert!(
+            !decoder.initialized(),
+            "fresh decoder should not be initialized"
         );
     }
 

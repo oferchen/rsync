@@ -2090,6 +2090,85 @@ test_oc_compressed_batch_upstream_reads() {
   return 0
 }
 
+# #3085: compressed batch delta interop - upstream writes compressed batch with
+# delta transfers (basis files present), oc-rsync reads it.
+# This exercises the compressed token decoder with actual copy+literal delta
+# operations, not just whole-file literals. The destination is pre-seeded with
+# slightly different versions of the source files so rsync produces delta tokens.
+test_compressed_batch_delta_interop() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local batch_dir="${work}/batch-compress-delta"
+  rm -rf "$batch_dir"
+
+  # Build a custom source tree with files large enough to produce block matches.
+  local delta_src="${batch_dir}/src"
+  local delta_basis="${batch_dir}/basis"
+  local delta_write_dest="${batch_dir}/write-dest"
+  local delta_read_dest="${batch_dir}/read-dest"
+  local batch_file="${batch_dir}/batch-z-delta.rsync"
+  mkdir -p "$delta_src" "$delta_basis" "$delta_write_dest" "$delta_read_dest"
+
+  # Create source files with enough data for rsync to use delta encoding.
+  # 100 KB file with known pattern - large enough that rsync picks block matches.
+  dd if=/dev/zero bs=1K count=100 2>/dev/null | tr '\0' 'A' > "$delta_src/large.dat"
+  # Modify a small section so the delta has both copy and literal tokens.
+  printf 'MODIFIED_SECTION_HERE' | dd of="$delta_src/large.dat" bs=1 seek=50000 conv=notrunc 2>/dev/null
+
+  # A second file with repeated pattern.
+  for i in $(seq 1 200); do
+    printf 'line %04d: some repeated content for delta testing\n' "$i"
+  done > "$delta_src/repeated.txt"
+
+  # Pre-seed the write destination with slightly different versions (basis files).
+  # This causes rsync to generate delta tokens with block matches.
+  dd if=/dev/zero bs=1K count=100 2>/dev/null | tr '\0' 'A' > "$delta_write_dest/large.dat"
+  for i in $(seq 1 200); do
+    printf 'line %04d: original content before modification here\n' "$i"
+  done > "$delta_write_dest/repeated.txt"
+
+  # Copy basis to the read destination so replay can apply deltas against it.
+  cp "$delta_write_dest/large.dat" "$delta_read_dest/large.dat"
+  cp "$delta_write_dest/repeated.txt" "$delta_read_dest/repeated.txt"
+
+  # Step 1: upstream rsync writes a compressed batch with delta transfers.
+  # --no-whole-file forces delta mode even for local transfers.
+  if ! timeout "$hard_timeout" "$upstream_binary" -av -z --no-whole-file \
+      --write-batch="$batch_file" --timeout=10 \
+      "${delta_src}/" "${delta_write_dest}/" \
+      >"${log}.compress-delta-write.out" 2>"${log}.compress-delta-write.err"; then
+    echo "    write-batch with -z --no-whole-file failed (upstream, exit=$?)"
+    return 1
+  fi
+
+  if [[ ! -f "$batch_file" ]]; then
+    echo "    compressed delta batch file not created"
+    return 1
+  fi
+
+  # Step 2: oc-rsync reads the compressed delta batch.
+  local rc1=0
+  timeout "$hard_timeout" "$oc_bin" -av \
+      --read-batch="$batch_file" --timeout=10 \
+      "${delta_read_dest}/" \
+      >"${log}.compress-delta-read.out" 2>"${log}.compress-delta-read.err" || rc1=$?
+  if [[ $rc1 -ne 0 ]]; then
+    echo "    read-batch failed (oc-rsync reading upstream compressed delta batch, exit=$rc1)"
+    head -5 "${log}.compress-delta-read.err" 2>/dev/null | sed 's/^/    stderr: /'
+    return 1
+  fi
+
+  # Step 3: verify destination files match source byte-for-byte.
+  for f in large.dat repeated.txt; do
+    if ! cmp -s "${delta_src}/${f}" "${delta_read_dest}/${f}"; then
+      echo "    content mismatch for ${f} after compressed delta batch replay"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 # #3084: batch framing interop with multi-file varying-size transfers
 # Validates that the NDX-driven batch framing produces correct upstream-compatible
 # batch files when transferring many files with varying sizes. PR #3084 fixed the
@@ -6358,6 +6437,7 @@ run_standalone_interop_tests() {
     "write-batch-read-batch-compressed"
     "upstream-compressed-batch-oc-reads"
     "oc-compressed-batch-upstream-reads"
+    "compressed-batch-delta-interop"
     "batch-framing-multifile"
     "info-progress2"
     "large-file-2gb"
@@ -6409,6 +6489,7 @@ run_standalone_interop_tests() {
     "test_write_batch_read_batch_compressed"
     "test_upstream_compressed_batch_oc_reads"
     "test_oc_compressed_batch_upstream_reads"
+    "test_compressed_batch_delta_interop"
     "test_batch_framing_multifile"
     "test_info_progress2"
     "test_large_file_2gb"
