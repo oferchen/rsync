@@ -123,9 +123,9 @@ pub use o_tmpfile::{
 };
 
 pub use io_uring::{
-    IoUringConfig, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory,
-    IoUringWriter, IoUringWriterFactory, RegisteredBufferGroup, RegisteredBufferSlot,
-    is_io_uring_available, reader_from_path, writer_from_file,
+    IoUringConfig, IoUringDiskBatch, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader,
+    IoUringReaderFactory, IoUringWriter, IoUringWriterFactory, RegisteredBufferGroup,
+    RegisteredBufferSlot, is_io_uring_available, reader_from_path, writer_from_file,
 };
 
 #[cfg(unix)]

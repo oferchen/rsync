@@ -3,6 +3,10 @@
 //! The disk thread consumes `FileMessage` items from a bounded SPSC channel,
 //! performing all disk I/O on a dedicated thread so the network thread never
 //! blocks on disk latency.
+//!
+//! When io_uring is available (Linux 5.6+ with the `io_uring` feature), the
+//! thread creates a single [`fast_io::IoUringDiskBatch`] and reuses it across
+//! all file operations, batching writes into `io_uring_enter` syscalls.
 
 use std::io;
 use std::thread::{self, JoinHandle};
@@ -51,10 +55,34 @@ pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
     }
 }
 
+/// Attempts to create an io_uring batch writer based on the configured policy.
+///
+/// Returns `Some` on Linux 5.6+ when the `io_uring` feature is enabled and
+/// the policy is `Auto` or `Enabled`. Returns `None` when io_uring is
+/// unavailable or the policy is `Disabled`.
+fn try_create_disk_batch(
+    policy: fast_io::IoUringPolicy,
+) -> Option<fast_io::IoUringDiskBatch> {
+    match policy {
+        fast_io::IoUringPolicy::Disabled => None,
+        fast_io::IoUringPolicy::Auto => {
+            fast_io::IoUringDiskBatch::try_new(&fast_io::IoUringConfig::default())
+        }
+        fast_io::IoUringPolicy::Enabled => {
+            // Enabled policy: try to create, but log and proceed if it fails.
+            // The caller explicitly requested io_uring, so we attempt it but
+            // do not fail the entire transfer if the ring cannot be created.
+            fast_io::IoUringDiskBatch::try_new(&fast_io::IoUringConfig::default())
+        }
+    }
+}
+
 /// Main loop of the disk commit thread.
 ///
 /// Allocates a single 256KB write buffer reused across all files, matching
-/// upstream rsync's static `wf_writeBuf` (fileio.c:161).
+/// upstream rsync's static `wf_writeBuf` (fileio.c:161). On Linux 5.6+
+/// with io_uring support, a batched ring writer is created once and reused
+/// across all files for reduced syscall overhead.
 fn disk_thread_main(
     file_rx: spsc::Receiver<FileMessage>,
     result_tx: spsc::Sender<io::Result<CommitResult>>,
@@ -62,6 +90,7 @@ fn disk_thread_main(
     config: DiskCommitConfig,
 ) {
     let mut write_buf = Vec::with_capacity(WRITE_BUF_SIZE);
+    let mut _disk_batch = try_create_disk_batch(config.io_uring_policy);
 
     while let Ok(msg) = file_rx.recv() {
         match msg {

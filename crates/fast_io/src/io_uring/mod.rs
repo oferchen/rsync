@@ -60,6 +60,7 @@
 
 mod batching;
 mod config;
+mod disk_batch;
 mod file_factory;
 mod file_reader;
 mod file_writer;
@@ -76,6 +77,7 @@ use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
 
 pub use config::{IoUringConfig, is_io_uring_available};
+pub use disk_batch::IoUringDiskBatch;
 pub use file_factory::{
     IoUringOrStdReader, IoUringOrStdWriter, IoUringReaderFactory, IoUringWriterFactory,
 };
