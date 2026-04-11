@@ -5580,6 +5580,151 @@ CONF
   return 0
 }
 
+# -FF filter shortcut interop test.
+# Tests that -FF (double -F) correctly reads .rsync-filter files in both
+# the source root and subdirectories, excluding matching files from transfer.
+# Tests both directions: upstream pushing to oc-rsync, oc-rsync pushing to upstream.
+# upstream: options.c - -F maps to --filter='dir-merge /.rsync-filter',
+# -FF adds --filter='exclude .rsync-filter' so the filter file itself is excluded.
+test_ff_filter_shortcut() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ff_src="${work}/ff-filter-src"
+  local ff_dest_oc="${work}/ff-filter-dest-oc"
+  local ff_dest_up="${work}/ff-filter-dest-up"
+  rm -rf "$ff_src" "$ff_dest_oc" "$ff_dest_up"
+  mkdir -p "$ff_src/subdir" "$ff_dest_oc" "$ff_dest_up"
+
+  # Create source files with .rsync-filter in root and subdirectory
+  echo "keep-root" > "$ff_src/keep.txt"
+  echo "keep-data" > "$ff_src/data.csv"
+  echo "exclude-me" > "$ff_src/build.log"
+  echo "exclude-tmp" > "$ff_src/temp.tmp"
+  echo "keep-sub" > "$ff_src/subdir/readme.txt"
+  echo "exclude-sub-cache" > "$ff_src/subdir/output.cache"
+  echo "keep-sub-data" > "$ff_src/subdir/values.csv"
+
+  # Root .rsync-filter excludes *.log and *.tmp
+  printf 'exclude *.log\nexclude *.tmp\n' > "$ff_src/.rsync-filter"
+  # Subdirectory .rsync-filter excludes *.cache
+  printf 'exclude *.cache\n' > "$ff_src/subdir/.rsync-filter"
+
+  # --- Direction 1: upstream rsync pushes to oc-rsync daemon ---
+  local ff_conf_oc="${work}/ff-filter-oc.conf"
+  local ff_pid_oc="${work}/ff-filter-oc.pid"
+  local ff_log_oc="${work}/ff-filter-oc.log"
+  cat > "$ff_conf_oc" <<CONF
+pid file = ${ff_pid_oc}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${ff_dest_oc}
+comment = ff-filter-shortcut test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$ff_conf_oc" "$ff_log_oc" "$upstream_binary" "$ff_pid_oc" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -av -FF --timeout=10 \
+      "${ff_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.ff-filter-up2oc.out" 2>"${log}.ff-filter-up2oc.err"; then
+    echo "    up->oc: -FF push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify included files arrived (direction 1)
+  for f in keep.txt data.csv subdir/readme.txt subdir/values.csv; do
+    if [[ ! -f "$ff_dest_oc/$f" ]]; then
+      echo "    up->oc: expected file $f missing"
+      return 1
+    fi
+    if ! cmp -s "$ff_src/$f" "$ff_dest_oc/$f"; then
+      echo "    up->oc: content mismatch for $f"
+      return 1
+    fi
+  done
+
+  # Verify excluded files are absent (direction 1)
+  for f in build.log temp.tmp subdir/output.cache; do
+    if [[ -f "$ff_dest_oc/$f" ]]; then
+      echo "    up->oc: excluded file transferred: $f"
+      return 1
+    fi
+  done
+
+  # Verify .rsync-filter files themselves are excluded (-FF behavior)
+  for f in .rsync-filter subdir/.rsync-filter; do
+    if [[ -f "$ff_dest_oc/$f" ]]; then
+      echo "    up->oc: .rsync-filter file transferred despite -FF: $f"
+      return 1
+    fi
+  done
+
+  # --- Direction 2: oc-rsync pushes to upstream rsync daemon ---
+  local ff_conf_up="${work}/ff-filter-up.conf"
+  local ff_pid_up="${work}/ff-filter-up.pid"
+  local ff_log_up="${work}/ff-filter-up.log"
+  cat > "$ff_conf_up" <<CONF
+pid file = ${ff_pid_up}
+port = ${upstream_port}
+use chroot = false
+
+[interop]
+path = ${ff_dest_up}
+comment = ff-filter-shortcut test
+read only = false
+numeric ids = yes
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$ff_conf_up" "$ff_log_up" "$ff_pid_up"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av -FF --timeout=10 \
+      "${ff_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.ff-filter-oc2up.out" 2>"${log}.ff-filter-oc2up.err"; then
+    echo "    oc->up: -FF push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # Verify included files arrived (direction 2)
+  for f in keep.txt data.csv subdir/readme.txt subdir/values.csv; do
+    if [[ ! -f "$ff_dest_up/$f" ]]; then
+      echo "    oc->up: expected file $f missing"
+      return 1
+    fi
+    if ! cmp -s "$ff_src/$f" "$ff_dest_up/$f"; then
+      echo "    oc->up: content mismatch for $f"
+      return 1
+    fi
+  done
+
+  # Verify excluded files are absent (direction 2)
+  for f in build.log temp.tmp subdir/output.cache; do
+    if [[ -f "$ff_dest_up/$f" ]]; then
+      echo "    oc->up: excluded file transferred: $f"
+      return 1
+    fi
+  done
+
+  # Verify .rsync-filter files themselves are excluded (-FF behavior)
+  for f in .rsync-filter subdir/.rsync-filter; do
+    if [[ -f "$ff_dest_up/$f" ]]; then
+      echo "    oc->up: .rsync-filter file transferred despite -FF: $f"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 # ACL/xattr graceful degradation test against rsync 3.0.9.
 # rsync 3.0.9 does not support ACLs or xattrs (protocol 28, no -A/-X capability).
 # Verify that transfers with --acls or --xattrs succeed or fail gracefully
@@ -5745,6 +5890,7 @@ run_standalone_interop_tests() {
     "max-connections"
     "exclude-include-precedence"
     "delete-with-filters"
+    "ff-filter-shortcut"
     "acl-xattr-graceful-degradation-309"
   )
   local test_funcs=(
@@ -5789,6 +5935,7 @@ run_standalone_interop_tests() {
     "test_max_connections"
     "test_exclude_include_precedence"
     "test_delete_with_filters"
+    "test_ff_filter_shortcut"
     "test_acl_xattr_graceful_degradation_309"
   )
 
@@ -5904,6 +6051,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       delete-with-filters)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      ff-filter-shortcut)
         test_args+=("$oc_port" "$upstream_port")
         ;;
       acl-xattr-graceful-degradation-309)
