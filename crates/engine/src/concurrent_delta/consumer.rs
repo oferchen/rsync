@@ -458,8 +458,8 @@ mod tests {
             // Use non-sequential NDX values to verify they survive the pipeline.
             let ndx_values = [100, 42, 7, 999, 0];
             for (seq, &ndx) in ndx_values.iter().enumerate() {
-                let work = DeltaWork::whole_file(ndx, PathBuf::from("/dst"), 64)
-                    .with_sequence(seq as u64);
+                let work =
+                    DeltaWork::whole_file(ndx, PathBuf::from("/dst"), 64).with_sequence(seq as u64);
                 tx.send(work).unwrap();
             }
         });
