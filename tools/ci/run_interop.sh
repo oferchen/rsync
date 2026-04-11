@@ -5695,6 +5695,178 @@ CONF
   return 0
 }
 
+# Upstream rsync pushes symlinks to oc-rsync daemon with -l (--links).
+# Verifies symlinks are transferred as symlinks (not dereferenced), targets
+# are preserved, and dangling symlinks survive the transfer.
+test_symlinks_upstream() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local sl_src="${work}/symlinks-up-src"
+  local sl_dest="${work}/symlinks-up-dest"
+  rm -rf "$sl_src" "$sl_dest"
+  mkdir -p "$sl_src" "$sl_dest"
+
+  # Regular file
+  echo "hello symlink test" > "${sl_src}/regular.txt"
+
+  # Relative symlink pointing to the regular file
+  ln -sf regular.txt "${sl_src}/link_to_regular.txt"
+
+  # Dangling symlink pointing to non-existent target
+  ln -sf nonexistent_target.txt "${sl_src}/dangling_link.txt"
+
+  # Start oc-rsync daemon
+  local sl_conf="${work}/symlinks-up-oc.conf"
+  local sl_pid="${work}/symlinks-up-oc.pid"
+  local sl_log="${work}/symlinks-up-oc.log"
+  cat > "$sl_conf" <<CONF
+pid file = ${sl_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${sl_dest}
+comment = symlinks upstream test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$sl_conf" "$sl_log" "$upstream_binary" "$sl_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -rlptv --timeout=10 \
+      "${sl_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.symlinks-up.out" 2>"${log}.symlinks-up.err"; then
+    echo "    upstream -> oc daemon symlink transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$sl_log" 2>/dev/null)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify regular file transferred
+  if [[ ! -f "${sl_dest}/regular.txt" ]]; then
+    echo "    regular.txt missing"
+    return 1
+  fi
+  if ! cmp -s "${sl_src}/regular.txt" "${sl_dest}/regular.txt"; then
+    echo "    regular.txt content mismatch"
+    return 1
+  fi
+
+  # Verify relative symlink is a symlink (not dereferenced)
+  if [[ ! -L "${sl_dest}/link_to_regular.txt" ]]; then
+    echo "    link_to_regular.txt is not a symlink"
+    return 1
+  fi
+  local target
+  target=$(readlink "${sl_dest}/link_to_regular.txt")
+  if [[ "$target" != "regular.txt" ]]; then
+    echo "    link_to_regular.txt target is '${target}', expected 'regular.txt'"
+    return 1
+  fi
+
+  # Verify dangling symlink was transferred as a symlink
+  if [[ ! -L "${sl_dest}/dangling_link.txt" ]]; then
+    echo "    dangling_link.txt is not a symlink"
+    return 1
+  fi
+  target=$(readlink "${sl_dest}/dangling_link.txt")
+  if [[ "$target" != "nonexistent_target.txt" ]]; then
+    echo "    dangling_link.txt target is '${target}', expected 'nonexistent_target.txt'"
+    return 1
+  fi
+
+  return 0
+}
+
+# oc-rsync pushes symlinks to upstream rsync daemon with -l (--links).
+# Verifies symlinks are transferred as symlinks (not dereferenced), targets
+# are preserved, and dangling symlinks survive the transfer.
+test_symlinks_oc() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local sl_src="${work}/symlinks-oc-src"
+  local sl_dest="${work}/symlinks-oc-dest"
+  rm -rf "$sl_src" "$sl_dest"
+  mkdir -p "$sl_src" "$sl_dest"
+
+  # Regular file
+  echo "hello symlink test" > "${sl_src}/regular.txt"
+
+  # Relative symlink pointing to the regular file
+  ln -sf regular.txt "${sl_src}/link_to_regular.txt"
+
+  # Dangling symlink pointing to non-existent target
+  ln -sf nonexistent_target.txt "${sl_src}/dangling_link.txt"
+
+  # Start upstream daemon
+  local sl_conf="${work}/symlinks-oc-up.conf"
+  local sl_pid="${work}/symlinks-oc-up.pid"
+  local sl_log="${work}/symlinks-oc-up.log"
+  cat > "$sl_conf" <<CONF
+pid file = ${sl_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${sl_dest}
+    comment = symlinks oc test
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$sl_conf" "$sl_log" "$sl_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -rlptv --timeout=10 \
+      "${sl_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.symlinks-oc.out" 2>"${log}.symlinks-oc.err"; then
+    echo "    oc -> upstream daemon symlink transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$sl_log" 2>/dev/null)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # Verify regular file transferred
+  if [[ ! -f "${sl_dest}/regular.txt" ]]; then
+    echo "    regular.txt missing"
+    return 1
+  fi
+  if ! cmp -s "${sl_src}/regular.txt" "${sl_dest}/regular.txt"; then
+    echo "    regular.txt content mismatch"
+    return 1
+  fi
+
+  # Verify relative symlink is a symlink (not dereferenced)
+  if [[ ! -L "${sl_dest}/link_to_regular.txt" ]]; then
+    echo "    link_to_regular.txt is not a symlink"
+    return 1
+  fi
+  local target
+  target=$(readlink "${sl_dest}/link_to_regular.txt")
+  if [[ "$target" != "regular.txt" ]]; then
+    echo "    link_to_regular.txt target is '${target}', expected 'regular.txt'"
+    return 1
+  fi
+
+  # Verify dangling symlink was transferred as a symlink
+  if [[ ! -L "${sl_dest}/dangling_link.txt" ]]; then
+    echo "    dangling_link.txt is not a symlink"
+    return 1
+  fi
+  target=$(readlink "${sl_dest}/dangling_link.txt")
+  if [[ "$target" != "nonexistent_target.txt" ]]; then
+    echo "    dangling_link.txt target is '${target}', expected 'nonexistent_target.txt'"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -5746,6 +5918,8 @@ run_standalone_interop_tests() {
     "exclude-include-precedence"
     "delete-with-filters"
     "acl-xattr-graceful-degradation-309"
+    "up:symlinks"
+    "oc:symlinks"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -5790,6 +5964,8 @@ run_standalone_interop_tests() {
     "test_exclude_include_precedence"
     "test_delete_with_filters"
     "test_acl_xattr_graceful_degradation_309"
+    "test_symlinks_upstream"
+    "test_symlinks_oc"
   )
 
   for i in "${!test_names[@]}"; do
@@ -5907,6 +6083,12 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       acl-xattr-graceful-degradation-309)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      up:symlinks)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      oc:symlinks)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
