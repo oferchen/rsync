@@ -271,8 +271,6 @@ impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
 enum ThresholdMode {
     /// Buffering work items until the threshold is reached.
     Buffering(Vec<DeltaWork>),
-    /// Delegating to a sequential pipeline (threshold not reached at flush time).
-    Sequential(SequentialDeltaPipeline),
     /// Delegating to a parallel pipeline (threshold reached).
     Parallel(ParallelDeltaPipeline),
 }
@@ -340,7 +338,6 @@ impl ReceiverDeltaPipeline for ThresholdDeltaPipeline {
                 }
                 Ok(())
             }
-            ThresholdMode::Sequential(seq) => seq.submit_work(work),
             ThresholdMode::Parallel(par) => par.submit_work(work),
         }
     }
@@ -348,7 +345,6 @@ impl ReceiverDeltaPipeline for ThresholdDeltaPipeline {
     fn poll_result(&mut self) -> Option<DeltaResult> {
         match &mut self.mode {
             ThresholdMode::Buffering(_) => None,
-            ThresholdMode::Sequential(seq) => seq.poll_result(),
             ThresholdMode::Parallel(par) => par.poll_result(),
         }
     }
@@ -367,7 +363,6 @@ impl ReceiverDeltaPipeline for ThresholdDeltaPipeline {
                 }
                 Box::new(seq).flush()
             }
-            ThresholdMode::Sequential(seq) => Box::new(seq).flush(),
             ThresholdMode::Parallel(par) => Box::new(par).flush(),
         }
     }
