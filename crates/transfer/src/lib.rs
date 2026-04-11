@@ -463,6 +463,23 @@ pub fn run_server_with_handshake<W: Write>(
         // "refuse options" mechanism instead of compat-flag detection.
     }
 
+    // upstream: options.c:1842-1868 - when compiled without SUPPORT_ACLS or
+    // SUPPORT_XATTRS, the server rejects -A/-X from the client. We mirror this
+    // by clearing feature-gated flags and warning instead of hard-failing, so
+    // the transfer proceeds without the unsupported metadata type.
+    let cleared = config.flags.clear_unsupported_features();
+    for feature in &cleared {
+        let role_suffix = match config.role {
+            ServerRole::Receiver => role_trailer::receiver(),
+            ServerRole::Generator => role_trailer::generator(),
+        };
+        eprintln!(
+            "WARNING: {feature} are not supported on this host - disabling preservation {}{}",
+            role_trailer::error_location!(),
+            role_suffix
+        );
+    }
+
     // Flush raw-mode data before wrapping in multiplexed writer.
     stdout.flush()?;
 

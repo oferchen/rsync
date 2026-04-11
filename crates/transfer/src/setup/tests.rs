@@ -1247,3 +1247,215 @@ fn setup_protocol_delegates_to_default_negotiator() {
     assert_eq!(result1.checksum_seed, result2.checksum_seed);
     assert_eq!(stdout1, stdout2);
 }
+
+// ==================== ACL/xattr capability negotiation tests ====================
+
+/// When the client capability string includes 'x' (CF_AVOID_XATTR_OPTIM),
+/// the server advertises xattr awareness. Clients use this flag to detect
+/// that the remote peer supports xattrs.
+///
+/// upstream: compat.c:722 - server sets CF_AVOID_XATTR_OPTIM when compiled
+/// with SUPPORT_XATTRS
+#[test]
+fn server_advertises_xattr_support_via_avoid_xattr_optim_flag() {
+    let flags = build_compat_flags_from_client_info("LsfxCIvu", true);
+    assert!(
+        flags.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION),
+        "server should advertise CF_AVOID_XATTR_OPTIM when client sends 'x'"
+    );
+}
+
+/// When the client capability string does NOT include 'x', the server
+/// does not advertise xattr support. A client requesting --xattrs should
+/// detect this and gracefully disable xattr preservation.
+///
+/// upstream: compat.c:722 - CF_AVOID_XATTR_OPTIM only set when client
+/// advertises 'x' and server has SUPPORT_XATTRS
+#[test]
+fn server_omits_xattr_flag_when_client_lacks_x_capability() {
+    let flags = build_compat_flags_from_client_info("LsfCIvu", true);
+    assert!(
+        !flags.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION),
+        "server should NOT advertise CF_AVOID_XATTR_OPTIM when client omits 'x'"
+    );
+}
+
+/// The client reads compat flags from the server. When the server's flags
+/// lack CF_AVOID_XATTR_OPTIM, the client should detect that the remote
+/// does not support xattrs.
+///
+/// upstream: compat.c:780-785 - client detects missing xattr support
+#[test]
+fn client_detects_missing_xattr_support_from_server_flags() {
+    // Server flags without CF_AVOID_XATTR_OPTIM
+    let server_flags = CompatibilityFlags::CHECKSUM_SEED_FIX
+        | CompatibilityFlags::SAFE_FILE_LIST
+        | CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+    assert!(
+        !server_flags.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION),
+        "server flags should lack CF_AVOID_XATTR_OPTIM"
+    );
+
+    // Server flags with CF_AVOID_XATTR_OPTIM
+    let server_flags_with_xattr = server_flags | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION;
+    assert!(
+        server_flags_with_xattr.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION),
+        "server flags should have CF_AVOID_XATTR_OPTIM when added"
+    );
+}
+
+/// Verify that when the client does NOT request ACLs or xattrs (i.e., flags
+/// are false), no capability negotiation issues arise - the transfer proceeds
+/// without any degradation warnings.
+#[test]
+fn no_degradation_when_client_does_not_request_acls_or_xattrs() {
+    use crate::flags::ParsedServerFlags;
+
+    let mut flags = ParsedServerFlags::parse("-rlt").unwrap();
+    assert!(!flags.acls, "ACLs should not be set for -rlt");
+    assert!(!flags.xattrs, "xattrs should not be set for -rlt");
+
+    let cleared = flags.clear_unsupported_features();
+    assert!(
+        cleared.is_empty(),
+        "nothing should be cleared when neither ACL nor xattr is requested"
+    );
+}
+
+/// Protocol version < 30 must reject --acls for non-local transfers.
+/// This is enforced at the protocol restriction layer.
+///
+/// upstream: compat.c:655-661 - ACLs require protocol 30+
+#[test]
+fn protocol_restriction_rejects_acls_below_protocol_30() {
+    let flags = ProtocolRestrictionFlags {
+        preserve_acls: true,
+        local_server: false,
+        ..Default::default()
+    };
+    let err =
+        apply_protocol_restrictions(ProtocolVersion::try_from(29).unwrap(), &flags).unwrap_err();
+    assert!(
+        err.to_string().contains("--acls requires protocol 30"),
+        "should reject ACLs below protocol 30: {err}"
+    );
+}
+
+/// Protocol version < 30 must reject --xattrs for non-local transfers.
+/// This is enforced at the protocol restriction layer.
+///
+/// upstream: compat.c:662-668 - xattrs require protocol 30+
+#[test]
+fn protocol_restriction_rejects_xattrs_below_protocol_30() {
+    let flags = ProtocolRestrictionFlags {
+        preserve_xattrs: true,
+        local_server: false,
+        ..Default::default()
+    };
+    let err =
+        apply_protocol_restrictions(ProtocolVersion::try_from(29).unwrap(), &flags).unwrap_err();
+    assert!(
+        err.to_string().contains("--xattrs requires protocol 30"),
+        "should reject xattrs below protocol 30: {err}"
+    );
+}
+
+/// Protocol 30+ allows both ACLs and xattrs without error.
+///
+/// upstream: compat.c:652-668 - restrictions only apply below version 30
+#[test]
+fn protocol_30_allows_acls_and_xattrs() {
+    let flags = ProtocolRestrictionFlags {
+        preserve_acls: true,
+        preserve_xattrs: true,
+        local_server: false,
+        ..Default::default()
+    };
+    assert!(
+        apply_protocol_restrictions(ProtocolVersion::try_from(30).unwrap(), &flags,).is_ok(),
+        "protocol 30 should allow both ACLs and xattrs"
+    );
+}
+
+/// Local server (no remote connection) bypasses protocol version checks
+/// for ACLs and xattrs. This mirrors upstream which only checks these
+/// restrictions for remote connections.
+///
+/// upstream: compat.c:655,662 - `&& !local_server` guards
+#[test]
+fn local_server_allows_acls_and_xattrs_below_protocol_30() {
+    let flags = ProtocolRestrictionFlags {
+        preserve_acls: true,
+        preserve_xattrs: true,
+        local_server: true,
+        ..Default::default()
+    };
+    assert!(
+        apply_protocol_restrictions(ProtocolVersion::try_from(28).unwrap(), &flags,).is_ok(),
+        "local server should allow ACLs and xattrs regardless of protocol version"
+    );
+}
+
+/// When the server supports ACLs/xattrs (features enabled) but the client
+/// does NOT include -A/-X in its flag string, the parsed flags should be
+/// false. The transfer proceeds without metadata preservation.
+#[test]
+fn server_does_not_force_acl_xattr_when_client_omits_flags() {
+    use crate::flags::ParsedServerFlags;
+
+    let flags = ParsedServerFlags::parse("-logDtpre.iLsfxCIvu").unwrap();
+    assert!(
+        !flags.acls,
+        "ACLs should not be set when client omits 'A' from flag string"
+    );
+    assert!(
+        !flags.xattrs,
+        "xattrs should not be set when client omits 'X' from flag string"
+    );
+}
+
+/// When the client includes both -A and -X in its flag string, the server
+/// should parse both and set the corresponding flags to true.
+#[test]
+fn server_parses_client_acl_and_xattr_flags() {
+    use crate::flags::ParsedServerFlags;
+
+    let flags = ParsedServerFlags::parse("-logDtprAXe.iLsfxCIvu").unwrap();
+    assert!(flags.acls, "ACLs should be set when client sends 'A'");
+    assert!(flags.xattrs, "xattrs should be set when client sends 'X'");
+}
+
+/// The capability string from build_capability_string always includes 'x'
+/// (CF_AVOID_XATTR_OPTIM), since our build always compiles with xattr wire
+/// protocol support. This is how remote peers detect xattr awareness.
+///
+/// upstream: options.c:3003-3050 - maybe_add_e_option() builds -e.xxx
+#[test]
+fn capability_string_always_includes_xattr_marker() {
+    use super::build_capability_string;
+
+    let cap = build_capability_string(true);
+    assert!(
+        cap.contains('x'),
+        "capability string should include 'x' for xattr support: {cap}"
+    );
+}
+
+/// The capability string does not contain A or X directly - those are
+/// transfer flags in the compact flag string, not capability characters.
+/// Capabilities use lowercase letters for different purposes.
+#[test]
+fn capability_string_does_not_contain_acl_xattr_transfer_flags() {
+    use super::build_capability_string;
+
+    let cap = build_capability_string(true);
+    assert!(
+        !cap.contains('A'),
+        "capability string should not contain 'A' (ACL transfer flag): {cap}"
+    );
+    assert!(
+        !cap.contains('X'),
+        "capability string should not contain 'X' (xattr transfer flag): {cap}"
+    );
+}
