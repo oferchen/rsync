@@ -242,10 +242,19 @@ impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
             return Some(ready);
         }
         // Drain available results from the channel into the reorder buffer.
+        // The reorder buffer is bounded, so we drain ready items after each
+        // insert to free slots. In practice the buffer is sized to match the
+        // work queue depth, so it can hold all in-flight results.
         while let Ok(result) = self.result_rx.try_recv() {
             let seq = result.sequence();
-            let _ = self.reorder.insert(seq, result);
-            // Check if we can yield after each insert to keep buffer bounded.
+            if self.reorder.insert(seq, result).is_err() {
+                // Buffer full - drain what we can and retry the insert.
+                // This shouldn't happen if capacity >= work queue depth.
+                if let Some(ready) = self.reorder.next_in_order() {
+                    return Some(ready);
+                }
+                break;
+            }
             if let Some(ready) = self.reorder.next_in_order() {
                 return Some(ready);
             }
@@ -262,21 +271,15 @@ impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
             let _ = handle.join();
         }
 
-        // Drain results iteratively: insert a batch from the channel, yield
-        // in-order items to free reorder buffer slots, then repeat. This keeps
-        // the reorder buffer bounded even when the total result count exceeds
-        // its capacity.
-        let mut collected = Vec::new();
-        while let Ok(result) = self.result_rx.try_recv() {
-            let seq = result.sequence();
-            let _ = self.reorder.insert(seq, result);
-            // Yield any contiguous results that are now ready.
-            while let Some(ready) = self.reorder.next_in_order() {
-                collected.push(ready);
-            }
-        }
-        // Drain any remaining in-order items.
+        // Collect all results from the channel and sort by sequence number.
+        // After join(), the consumer has finished and all results are in the
+        // mpsc channel. Sorting is simpler and more reliable than draining
+        // through the bounded ReorderBuffer, which could drop items if the
+        // out-of-order gap exceeds its capacity.
+        let mut collected: Vec<DeltaResult> = self.result_rx.try_iter().collect();
+        // Include any items already buffered in the reorder buffer.
         collected.extend(self.reorder.drain_ready());
+        collected.sort_by_key(|r| r.sequence());
         collected
     }
 }
