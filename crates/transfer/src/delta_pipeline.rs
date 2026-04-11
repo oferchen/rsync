@@ -155,7 +155,11 @@ mod tests {
     fn sequential_submit_multiple_preserves_order() {
         let mut pipeline = SequentialDeltaPipeline::new();
         for i in 0..5 {
-            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), u64::from(i) * 100);
+            let work = DeltaWork::whole_file(
+                i,
+                PathBuf::from(format!("/dest/{i}")),
+                u64::from(i) * 100,
+            );
             pipeline.submit_work(work).unwrap();
         }
 
