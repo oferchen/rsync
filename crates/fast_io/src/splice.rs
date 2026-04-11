@@ -235,11 +235,7 @@ pub fn try_splice_to_file(
 
 /// Stub for non-Linux platforms - always returns `Unsupported`.
 #[cfg(not(target_os = "linux"))]
-pub fn try_splice_to_file(
-    _socket_fd: i32,
-    _file_fd: i32,
-    _len: usize,
-) -> std::io::Result<usize> {
+pub fn try_splice_to_file(_socket_fd: i32, _file_fd: i32, _len: usize) -> std::io::Result<usize> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "splice is only available on Linux",
@@ -310,10 +306,7 @@ mod tests {
 
         let result = try_splice_to_file(0, 0, 1024);
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().kind(),
-            std::io::ErrorKind::Unsupported
-        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
     }
 
     #[cfg(target_os = "linux")]
