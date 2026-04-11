@@ -5695,6 +5695,85 @@ CONF
   return 0
 }
 
+# Log-format daemon push interop test.
+# Upstream rsync pushes files to an oc-rsync daemon whose module has
+# "log format = %i" configured, then verifies exit 0 and that itemize
+# output lines appear in the client stdout.
+# upstream: options.c:2750-2762 - --log-format=%i sent when am_sender
+test_log_format_daemon() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local lf_src="${work}/log-format-src"
+  local lf_dest="${work}/log-format-dest"
+  rm -rf "$lf_src" "$lf_dest"
+  mkdir -p "$lf_src/subdir" "$lf_dest"
+
+  # Create test files - use different sizes to avoid quick-check skips
+  echo "log-format test file alpha" > "$lf_src/alpha.txt"
+  dd if=/dev/zero of="$lf_src/data.bin" bs=1024 count=8 2>/dev/null
+  echo "nested file" > "$lf_src/subdir/nested.txt"
+
+  # Start oc-rsync daemon with log format = %i in module config
+  local lf_conf="${work}/log-format-oc.conf"
+  local lf_pid="${work}/log-format-oc.pid"
+  local lf_log="${work}/log-format-oc.log"
+  cat > "$lf_conf" <<CONF
+pid file = ${lf_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${lf_dest}
+comment = log-format daemon test
+read only = false
+numeric ids = yes
+log format = %i
+CONF
+
+  start_oc_daemon "$lf_conf" "$lf_log" "$upstream_binary" "$lf_pid" "$oc_port"
+
+  # Push from upstream rsync to oc-rsync daemon with -i (itemize-changes)
+  local rc=0
+  timeout "$hard_timeout" "$upstream_binary" -avi --timeout=10 \
+      "${lf_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.log-format.out" 2>"${log}.log-format.err" || rc=$?
+
+  stop_oc_daemon
+
+  if [[ $rc -ne 0 ]]; then
+    echo "    upstream push with -i to log-format daemon failed (exit=$rc)"
+    echo "    stderr: $(head -5 "${log}.log-format.err")"
+    return 1
+  fi
+
+  # Verify all files arrived with correct content
+  for f in alpha.txt data.bin subdir/nested.txt; do
+    if [[ ! -f "$lf_dest/$f" ]]; then
+      echo "    missing file: $f"
+      return 1
+    fi
+    if ! cmp -s "$lf_src/$f" "$lf_dest/$f"; then
+      echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify itemize output is present - expect file transfer lines (>f pattern)
+  if ! grep -qE '^[<>ch.][fdLDS]' "${log}.log-format.out"; then
+    echo "    no itemize output found in client stdout"
+    echo "    stdout: $(cat "${log}.log-format.out")"
+    return 1
+  fi
+  if ! grep -qE '^[<>]f' "${log}.log-format.out"; then
+    echo "    no file transfer itemize lines found"
+    echo "    stdout: $(cat "${log}.log-format.out")"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -5746,6 +5825,7 @@ run_standalone_interop_tests() {
     "exclude-include-precedence"
     "delete-with-filters"
     "acl-xattr-graceful-degradation-309"
+    "log-format-daemon"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -5790,6 +5870,7 @@ run_standalone_interop_tests() {
     "test_exclude_include_precedence"
     "test_delete_with_filters"
     "test_acl_xattr_graceful_degradation_309"
+    "test_log_format_daemon"
   )
 
   for i in "${!test_names[@]}"; do
@@ -5907,6 +5988,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       acl-xattr-graceful-degradation-309)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      log-format-daemon)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
