@@ -373,8 +373,7 @@ fn interop_decode_handcrafted_deflated_data_block() {
     let input = b"handcrafted upstream wire bytes";
 
     // Compress with standalone zstd to get raw payload (simulating upstream encoder)
-    let mut raw_encoder =
-        zstd::stream::write::Encoder::new(Vec::new(), 3).unwrap();
+    let mut raw_encoder = zstd::stream::write::Encoder::new(Vec::new(), 3).unwrap();
     std::io::Write::write_all(&mut raw_encoder, input).unwrap();
     std::io::Write::flush(&mut raw_encoder).unwrap();
     let compressed = raw_encoder.finish().unwrap();
@@ -405,8 +404,7 @@ fn interop_decode_handcrafted_literal_then_block_match() {
     let input = b"literal data before block";
 
     // Compress with standalone zstd (simulating upstream's ZSTD_compressStream2)
-    let mut raw_encoder =
-        zstd::stream::write::Encoder::new(Vec::new(), 3).unwrap();
+    let mut raw_encoder = zstd::stream::write::Encoder::new(Vec::new(), 3).unwrap();
     std::io::Write::write_all(&mut raw_encoder, input).unwrap();
     std::io::Write::flush(&mut raw_encoder).unwrap();
     let compressed = raw_encoder.finish().unwrap();
@@ -433,8 +431,7 @@ fn interop_decode_handcrafted_literal_then_block_match() {
 fn interop_decode_handcrafted_token_long_block() {
     // TOKEN_LONG + 4-byte LE index (1000) + END_FLAG
     let wire = [
-        TOKEN_LONG,
-        0xE8, 0x03, 0x00, 0x00, // 1000 in LE
+        TOKEN_LONG, 0xE8, 0x03, 0x00, 0x00, // 1000 in LE
         END_FLAG,
     ];
 
@@ -452,7 +449,8 @@ fn interop_decode_handcrafted_tokenrun_rel() {
     // TOKENRUN_REL|5, count=9 (LE16) -> blocks 5,6,7,8,9,10,11,12,13,14
     let wire = [
         TOKENRUN_REL | 5,
-        9, 0, // n=9 (LE16)
+        9,
+        0, // n=9 (LE16)
         END_FLAG,
     ];
 
@@ -471,8 +469,12 @@ fn interop_decode_handcrafted_tokenrun_long() {
     // TOKENRUN_LONG, run_start=500 (LE32), n=3 (LE16) -> blocks 500,501,502,503
     let wire = [
         TOKENRUN_LONG,
-        0xF4, 0x01, 0x00, 0x00, // run_start=500
-        3, 0,                     // n=3
+        0xF4,
+        0x01,
+        0x00,
+        0x00, // run_start=500
+        3,
+        0, // n=3
         END_FLAG,
     ];
 
