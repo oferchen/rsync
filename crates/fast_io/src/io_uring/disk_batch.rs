@@ -105,7 +105,8 @@ impl IoUringDiskBatch {
         self.flush_current()?;
         self.finalize_current_file();
 
-        let fixed_fd_slot = try_register_fd(&self.ring, file.as_raw_fd(), self.config.register_files);
+        let fixed_fd_slot =
+            try_register_fd(&self.ring, file.as_raw_fd(), self.config.register_files);
         self.current_file = Some(ActiveFile {
             file,
             bytes_written: 0,
@@ -191,9 +192,7 @@ impl IoUringDiskBatch {
     /// Returns the number of bytes written to the current file (flushed only).
     #[must_use]
     pub fn bytes_written(&self) -> u64 {
-        self.current_file
-            .as_ref()
-            .map_or(0, |f| f.bytes_written)
+        self.current_file.as_ref().map_or(0, |f| f.bytes_written)
     }
 
     /// Returns the total bytes including unflushed buffer content.

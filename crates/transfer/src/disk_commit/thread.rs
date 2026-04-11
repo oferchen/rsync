@@ -60,9 +60,7 @@ pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
 /// Returns `Some` on Linux 5.6+ when the `io_uring` feature is enabled and
 /// the policy is `Auto` or `Enabled`. Returns `None` when io_uring is
 /// unavailable or the policy is `Disabled`.
-fn try_create_disk_batch(
-    policy: fast_io::IoUringPolicy,
-) -> Option<fast_io::IoUringDiskBatch> {
+fn try_create_disk_batch(policy: fast_io::IoUringPolicy) -> Option<fast_io::IoUringDiskBatch> {
     match policy {
         fast_io::IoUringPolicy::Disabled => None,
         fast_io::IoUringPolicy::Auto => {
