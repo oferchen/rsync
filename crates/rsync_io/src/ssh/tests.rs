@@ -826,6 +826,114 @@ fn keepalive_with_bind_address_and_batch_mode() {
     );
 }
 
+// --- SSH stderr drain thread tests ---
+
+#[cfg(unix)]
+#[test]
+fn stderr_drain_handles_non_utf8_output() {
+    // Non-UTF-8 bytes on stderr must not terminate the drain thread prematurely.
+    // This verifies the drain continues to collect all output even when
+    // individual lines contain invalid UTF-8 sequences.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    // Emit a valid line, then raw 0xFF bytes (invalid UTF-8), then another valid line.
+    command.push_option(
+        "printf 'before-binary\\n' >&2; printf '\\xff\\xfe\\n' >&2; printf 'after-binary\\n' >&2",
+    );
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, child_handle) = connection.split().expect("split");
+
+    let (status, stderr) = child_handle.wait_with_stderr().expect("wait");
+    assert!(status.success());
+
+    // Both the pre-binary and post-binary lines must be present,
+    // proving the drain thread survived the non-UTF-8 bytes.
+    let text = String::from_utf8_lossy(&stderr);
+    assert!(
+        text.contains("before-binary"),
+        "expected 'before-binary' in stderr, got: {text}"
+    );
+    assert!(
+        text.contains("after-binary"),
+        "expected 'after-binary' after non-UTF-8 bytes, got: {text}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn stderr_drain_forwards_multiline_errors() {
+    // Verifies that multiple stderr lines are collected and forwarded,
+    // simulating an SSH error like "Permission denied" followed by additional
+    // context lines from the remote host.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option(
+        "printf 'Permission denied (publickey).\\n' >&2; printf 'Connection closed by remote host\\n' >&2",
+    );
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, child_handle) = connection.split().expect("split");
+
+    let (status, stderr) = child_handle.wait_with_stderr().expect("wait");
+    assert!(status.success());
+
+    let text = String::from_utf8_lossy(&stderr);
+    assert!(
+        text.contains("Permission denied"),
+        "expected 'Permission denied' in stderr, got: {text}"
+    );
+    assert!(
+        text.contains("Connection closed"),
+        "expected 'Connection closed' in stderr, got: {text}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn stderr_output_available_on_connection_before_split() {
+    // Verifies that stderr_output() works on the SshConnection itself
+    // (not just SshChildHandle), since the drain thread starts at spawn time.
+    use std::time::{Duration, Instant};
+
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("printf 'conn-level-msg\\n' >&2; cat");
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+
+    // Poll stderr_output() on the connection (before split).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let output = connection.stderr_output();
+        if !output.is_empty() {
+            let text = String::from_utf8_lossy(&output);
+            assert!(
+                text.contains("conn-level-msg"),
+                "expected 'conn-level-msg', got: {text}"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for stderr output on connection"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let status = connection.wait().expect("wait");
+    assert!(status.success());
+}
+
 #[test]
 fn skips_keepalive_when_interval_embedded_in_compound_option() {
     // User passes keepalive as part of a compound `-o` value.
