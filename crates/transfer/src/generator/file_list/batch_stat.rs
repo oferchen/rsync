@@ -144,7 +144,8 @@ mod tests {
         File::create(&p).unwrap();
 
         // With follow_symlinks=true, uses fs::metadata (follows symlinks)
-        let results_follow = batch_stat_dir_entries(vec![p.clone()], true, &ParallelThresholds::default());
+        let results_follow =
+            batch_stat_dir_entries(vec![p.clone()], true, &ParallelThresholds::default());
         assert!(results_follow[0].metadata.is_ok());
 
         // With follow_symlinks=false, uses fs::symlink_metadata (lstat)

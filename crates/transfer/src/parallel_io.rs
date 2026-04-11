@@ -200,9 +200,7 @@ mod tests {
 
     #[test]
     fn test_parallel_thresholds_zero_thresholds() {
-        let t = ParallelThresholds::default()
-            .with_stat(0)
-            .with_signature(0);
+        let t = ParallelThresholds::default().with_stat(0).with_signature(0);
         assert_eq!(t.stat, 0);
         assert_eq!(t.signature, 0);
         // Always uses parallel path when threshold is 0
