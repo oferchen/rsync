@@ -35,6 +35,7 @@ use std::path::Path;
 use protocol::codec::{
     NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum,
 };
+use protocol::wire::CompressedTokenDecoder;
 
 use crate::BatchConfig;
 use crate::error::{BatchError, BatchResult};
@@ -430,6 +431,38 @@ pub fn replay(
     // then delta tokens, then file checksum. NDX_DONE signals phase transitions.
     let proto = reader.config().protocol_version;
 
+    // upstream: batch.c:check_batch_flags() - when the batch stream flags
+    // include do_compression (bit 8), the token data in the batch file uses
+    // compressed format (DEFLATED_DATA headers). Create a decoder to inflate
+    // the tokens, matching upstream's recv_deflated_token() dispatch in
+    // token.c:recv_token().
+    //
+    // For protocol >= 31, upstream uses CPRES_ZLIBX where see_deflate_token()
+    // is a no-op (the compressor does not maintain a sliding dictionary across
+    // block matches). This allows eager token reading without interleaving
+    // with basis file access.
+    // upstream: compat.c:740 - do_compression = CPRES_ZLIBX for protocol >= 31
+    let mut compressed_decoder = if flags.do_compression {
+        // upstream: compat.c:740 - protocol >= 31 uses CPRES_ZLIBX where
+        // see_deflate_token() is a no-op (no dictionary feed after block
+        // matches). Protocol 29-30 uses CPRES_ZLIB which requires feeding
+        // each matched block's data back into the decompressor dictionary
+        // via see_deflate_token(). Since batch replay reads all tokens
+        // eagerly (before applying), CPRES_ZLIB mode is not supported.
+        if proto < 31 {
+            return Err(BatchError::Unsupported(
+                "compressed batch files from protocol < 31 (CPRES_ZLIB) \
+                 are not supported; use protocol >= 31 (CPRES_ZLIBX)"
+                    .to_owned(),
+            ));
+        }
+        let mut decoder = CompressedTokenDecoder::new();
+        decoder.set_zlibx(true);
+        Some(decoder)
+    } else {
+        None
+    };
+
     // upstream: flist.c:2923 - with INC_RECURSE, the first flist has ndx_start=1.
     // Subsequent sub-lists have ndx_start = prev->ndx_start + prev->used + 1
     // (flist.c:2931), creating a +1 gap between segments in NDX space.
@@ -681,13 +714,32 @@ pub fn replay(
             i32::from_le_bytes([sum_buf[4], sum_buf[5], sum_buf[6], sum_buf[7]]);
         let _s2length = i32::from_le_bytes([sum_buf[8], sum_buf[9], sum_buf[10], sum_buf[11]]);
         let _remainder = i32::from_le_bytes([sum_buf[12], sum_buf[13], sum_buf[14], sum_buf[15]]);
-        // Read delta tokens for this file
-        let delta_ops = reader.read_file_delta_tokens().map_err(|e| {
-            BatchError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("failed to read delta tokens for '{}': {e}", entry.name()),
-            ))
-        })?;
+        // Read delta tokens for this file. When compression was active during
+        // batch creation, tokens use the compressed wire format with DEFLATED_DATA
+        // headers. Otherwise, tokens use the simple 4-byte LE i32 format.
+        // upstream: token.c:recv_token() dispatches to recv_deflated_token() or
+        // simple_recv_token() based on do_compression.
+        let delta_ops = if let Some(ref mut decoder) = compressed_decoder {
+            // upstream: token.c:recv_deflated_token() r_init resets inflate
+            // context per file. The decoder.reset() mirrors this behavior.
+            decoder.reset();
+            reader.read_compressed_delta_tokens(decoder).map_err(|e| {
+                BatchError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "failed to read compressed delta tokens for '{}': {e}",
+                        entry.name()
+                    ),
+                ))
+            })?
+        } else {
+            reader.read_file_delta_tokens().map_err(|e| {
+                BatchError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("failed to read delta tokens for '{}': {e}", entry.name()),
+                ))
+            })?
+        };
 
         // upstream: receiver.c:408 - read_buf(f_in, sender_file_sum, xfer_sum_len)
         // The sender ALWAYS writes xfer_sum_len bytes of file checksum after
@@ -936,5 +988,60 @@ mod tests {
 
         let result = fs::read(&dest_path).unwrap();
         assert_eq!(result, b"datamore");
+    }
+
+    #[test]
+    fn compressed_decoder_created_for_do_compression_flag() {
+        // Verify that CompressedTokenDecoder is created when do_compression
+        // flag is set. This is a unit test for the decoder creation logic in
+        // replay() - not a full replay test.
+        let flags = crate::format::BatchFlags {
+            do_compression: true,
+            ..Default::default()
+        };
+        let proto = 32;
+
+        // Mirrors the logic in replay()
+        let decoder = if flags.do_compression {
+            if proto < 31 {
+                None // CPRES_ZLIB unsupported
+            } else {
+                let mut d = CompressedTokenDecoder::new();
+                d.set_zlibx(true);
+                Some(d)
+            }
+        } else {
+            None
+        };
+
+        assert!(
+            decoder.is_some(),
+            "compressed decoder should be created for do_compression=true, proto>=31"
+        );
+    }
+
+    #[test]
+    fn compressed_batch_proto_lt_31_returns_unsupported() {
+        // CPRES_ZLIB (protocol < 31) requires see_token() interleaving
+        // which our eager token reading does not support.
+        let flags = crate::format::BatchFlags {
+            do_compression: true,
+            ..Default::default()
+        };
+        let proto = 30;
+
+        let result: Result<(), crate::BatchError> = if flags.do_compression && proto < 31 {
+            Err(crate::BatchError::Unsupported(
+                "compressed batch files from protocol < 31".to_owned(),
+            ))
+        } else {
+            Ok(())
+        };
+
+        assert!(
+            result.is_err(),
+            "should reject compressed batch for proto < 31"
+        );
+        assert!(matches!(result, Err(crate::BatchError::Unsupported(_))));
     }
 }

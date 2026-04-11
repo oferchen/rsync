@@ -977,11 +977,12 @@ mod integration {
     }
 
     /// Verifies replay works when the batch header has `do_compression=true`.
-    /// upstream: batch.c - replay ignores the compression flag for data reading
-    /// because batch file body is always an uncompressed protocol stream tee.
+    /// upstream: batch.c - when do_compression is set, delta tokens use
+    /// compressed (DEFLATED_DATA) encoding in the batch file body.
     #[test]
     fn test_replay_with_compression_flag() {
         use protocol::flist::{FileEntry, FileListWriter};
+        use protocol::wire::CompressedTokenEncoder;
 
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("replay_compress.batch");
@@ -1050,13 +1051,13 @@ mod integration {
             writer.write_data(&16i32.to_le_bytes()).unwrap();
             writer.write_data(&0i32.to_le_bytes()).unwrap();
 
-            // Token-format delta: literal data
-            let token_len = file_data.len() as i32;
-            writer.write_data(&token_len.to_le_bytes()).unwrap();
-            writer.write_data(file_data).unwrap();
-
-            // End-of-file token (0)
-            writer.write_data(&0i32.to_le_bytes()).unwrap();
+            // Compressed token-format delta: literal data (zlibx mode)
+            let mut token_buf = Vec::new();
+            let mut encoder = CompressedTokenEncoder::default();
+            encoder.set_zlibx(true);
+            encoder.send_literal(&mut token_buf, file_data).unwrap();
+            encoder.finish(&mut token_buf).unwrap();
+            writer.write_data(&token_buf).unwrap();
 
             // File checksum (16 zero bytes, matching s2length=16)
             writer.write_data(&[0u8; 16]).unwrap();
