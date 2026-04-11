@@ -684,6 +684,75 @@ start_upstream_daemon() {
   fi
 }
 
+# Retry wrapper for start_oc_daemon with exponential backoff.
+# Tries up to 3 times with 1s, 2s, 4s delays between attempts.
+# Kills stale processes before each retry.
+start_oc_daemon_with_retry() {
+  local config=$1
+  local log_file=$2
+  local fallback_client=$3
+  local pid_file=$4
+  local port=$5
+
+  local max_attempts=3
+  local delay=1
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    if start_oc_daemon "$config" "$log_file" "$fallback_client" "$pid_file" "$port"; then
+      if [[ "$attempt" -gt 1 ]]; then
+        echo "  oc-rsync daemon started on port $port (attempt $attempt/$max_attempts)"
+      fi
+      return 0
+    fi
+
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      echo "  oc-rsync daemon failed to start on port $port (attempt $attempt/$max_attempts), retrying in ${delay}s..." >&2
+      stop_oc_daemon
+      sleep "$delay"
+      delay=$((delay * 2))
+    fi
+  done
+
+  echo "FATAL: oc-rsync daemon failed to start on port $port after $max_attempts attempts" >&2
+  return 1
+}
+
+# Retry wrapper for start_upstream_daemon with exponential backoff.
+# Tries up to 3 times with 1s, 2s, 4s delays between attempts.
+# Kills stale processes before each retry.
+start_upstream_daemon_with_retry() {
+  local binary=$1
+  local config=$2
+  local log_file=$3
+  local pid_file=$4
+
+  local max_attempts=3
+  local delay=1
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    if start_upstream_daemon "$binary" "$config" "$log_file" "$pid_file"; then
+      if [[ "$attempt" -gt 1 ]]; then
+        local port
+        port=$(grep -oP 'port\s*=\s*\K\d+' "$config" 2>/dev/null || echo "unknown")
+        echo "  upstream daemon started on port $port (attempt $attempt/$max_attempts)"
+      fi
+      return 0
+    fi
+
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      local port
+      port=$(grep -oP 'port\s*=\s*\K\d+' "$config" 2>/dev/null || echo "unknown")
+      echo "  upstream daemon failed to start on port $port (attempt $attempt/$max_attempts), retrying in ${delay}s..." >&2
+      stop_upstream_daemon
+      sleep "$delay"
+      delay=$((delay * 2))
+    fi
+  done
+
+  echo "FATAL: upstream daemon failed to start after $max_attempts attempts" >&2
+  return 1
+}
+
 run_interop_case() {
   local version=$1
   local upstream_binary=$2
@@ -707,7 +776,7 @@ run_interop_case() {
   write_upstream_conf "$up_conf" "$up_pid_file" "$upstream_port" "$up_dest" "upstream interop target (${version})" "$up_identity"
 
   echo "Testing upstream rsync ${version} client -> oc-rsync --daemon"
-  start_oc_daemon "$oc_conf" "$oc_log" "$upstream_binary" "$oc_pid_file" "$oc_port"
+  start_oc_daemon_with_retry "$oc_conf" "$oc_log" "$upstream_binary" "$oc_pid_file" "$oc_port"
 
   if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${oc_port}/interop" >/dev/null 2>>"$oc_log"; then
     echo "FAIL: upstream rsync ${version} -> oc-rsync --daemon"
@@ -728,7 +797,7 @@ run_interop_case() {
   stop_oc_daemon
 
   echo "Testing oc-rsync client -> upstream rsync ${version} daemon"
-  start_upstream_daemon "$upstream_binary" "$up_conf" "$up_log" "$up_pid_file"
+  start_upstream_daemon_with_retry "$upstream_binary" "$up_conf" "$up_log" "$up_pid_file"
 
   if ! timeout "$hard_timeout" "$oc_client" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${upstream_port}/interop" >/dev/null 2>>"$up_log"; then
     echo "FAIL: oc-rsync -> upstream rsync ${version} daemon"
@@ -5536,7 +5605,7 @@ run_comprehensive_interop_case() {
   local total=0 passed=0 known=0 unexpected=0
 
   # Direction 1: upstream client -> oc-rsync daemon
-  start_oc_daemon "$ocf" "$olf" "$upstream_binary" "$opf" "$oc_port"
+  start_oc_daemon_with_retry "$ocf" "$olf" "$upstream_binary" "$opf" "$oc_port"
 
   for spec in "${scenarios[@]}"; do
     IFS='|' read -r name flags vtype <<< "$spec"
@@ -5561,7 +5630,7 @@ run_comprehensive_interop_case() {
   stop_oc_daemon
 
   # Direction 2: oc-rsync client -> upstream daemon
-  start_upstream_daemon "$upstream_binary" "$ucf" "$ulf" "$upf"
+  start_upstream_daemon_with_retry "$upstream_binary" "$ucf" "$ulf" "$upf"
 
   for spec in "${scenarios[@]}"; do
     IFS='|' read -r name flags vtype <<< "$spec"
