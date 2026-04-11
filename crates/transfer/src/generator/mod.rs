@@ -356,6 +356,8 @@ pub struct GeneratorContext {
     /// Accumulated deletion statistics received via NDX_DEL_STATS messages.
     /// (upstream: main.c:238-247 `read_del_stats()`)
     delete_stats: DeleteStats,
+    /// Per-operation thresholds for parallel vs sequential execution.
+    parallel_thresholds: crate::parallel_io::ParallelThresholds,
 }
 
 impl GeneratorContext {
@@ -387,6 +389,7 @@ impl GeneratorContext {
             io_error: 0,
             incremental: IncrementalState::new(initial_ndx_start),
             delete_stats: DeleteStats::new(),
+            parallel_thresholds: crate::parallel_io::ParallelThresholds::default(),
         }
     }
 
@@ -649,7 +652,7 @@ impl GeneratorContext {
     /// the overhead of creating an io_uring ring per file.
     ///
     /// This threshold-based dual-path mirrors the existing pattern used for
-    /// parallel stat (PARALLEL_STAT_THRESHOLD) and adaptive buffer sizing.
+    /// parallel stat (`ParallelThresholds::stat`) and adaptive buffer sizing.
     fn open_source_reader(
         &self,
         path: &std::path::Path,

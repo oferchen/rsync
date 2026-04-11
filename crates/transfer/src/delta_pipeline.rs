@@ -38,10 +38,10 @@ use engine::concurrent_delta::{DeltaResult, DeltaWork};
 
 /// Default threshold for switching from sequential to parallel dispatch.
 ///
-/// Matches the receiver's `PARALLEL_STAT_THRESHOLD` (64 files). Below this
-/// count, the overhead of thread spawning and channel communication exceeds
-/// the benefit of parallelism.
-pub const DEFAULT_PARALLEL_THRESHOLD: usize = 64;
+/// Matches the default stat threshold from [`ParallelThresholds`](crate::parallel_io::ParallelThresholds).
+/// Below this count, the overhead of thread spawning and channel communication
+/// exceeds the benefit of parallelism.
+pub const DEFAULT_PARALLEL_THRESHOLD: usize = crate::parallel_io::DEFAULT_STAT_THRESHOLD;
 
 /// Abstraction over the delta dispatch loop in the receiver.
 ///
@@ -301,14 +301,13 @@ enum ThresholdMode {
 ///   in which case items are processed sequentially.
 ///
 /// This follows the threshold-based dual-path pattern used throughout the
-/// codebase (e.g., `PARALLEL_STAT_THRESHOLD` in the receiver). For small
-/// transfers, the overhead of spawning threads and channels exceeds the
-/// benefit of parallelism.
+/// codebase (see [`ParallelThresholds`](crate::parallel_io::ParallelThresholds)
+/// for per-operation thresholds). For small transfers, the overhead of spawning
+/// threads and channels exceeds the benefit of parallelism.
 ///
 /// # Default Threshold
 ///
-/// [`DEFAULT_PARALLEL_THRESHOLD`] = 64, matching the receiver's
-/// `PARALLEL_STAT_THRESHOLD`.
+/// [`DEFAULT_PARALLEL_THRESHOLD`] = 64, matching the default stat threshold.
 pub struct ThresholdDeltaPipeline {
     /// Number of items required to switch to parallel mode.
     threshold: usize,

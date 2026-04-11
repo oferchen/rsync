@@ -84,10 +84,11 @@ const PHASE1_CHECKSUM_LENGTH: NonZeroU8 =
 const REDO_CHECKSUM_LENGTH: NonZeroU8 =
     NonZeroU8::new(signature::block_size::MAX_SUM_LENGTH).unwrap();
 
-/// Minimum candidate count to justify parallel I/O overhead for
-/// stat() calls in the quick-check phase. Below this threshold,
-/// sequential iteration is faster.
-const PARALLEL_STAT_THRESHOLD: usize = 64;
+/// Per-operation parallel thresholds for the receiver.
+///
+/// Provides tunable thresholds for stat, signature, metadata, and deletion
+/// operations. Stored in `ReceiverContext` and propagated to each call site.
+pub(crate) use crate::parallel_io::ParallelThresholds;
 
 use signature;
 
@@ -180,6 +181,11 @@ pub struct ReceiverContext {
     ///
     /// - `hlink.c:match_gnums()` - `prior_hlinks` hashtable persists across segments
     prior_hlinks: HashMap<u32, bool>,
+    /// Per-operation thresholds for parallel vs sequential execution.
+    ///
+    /// Different operations benefit from parallelism at different item counts.
+    /// CPU-bound signature computation benefits earlier than I/O-bound stat calls.
+    parallel_thresholds: ParallelThresholds,
 }
 
 impl ReceiverContext {
@@ -222,6 +228,7 @@ impl ReceiverContext {
             filter_chain: FilterChain::empty(),
             hardlink_tracker,
             prior_hlinks: HashMap::new(),
+            parallel_thresholds: ParallelThresholds::default(),
         }
     }
 
