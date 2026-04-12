@@ -244,7 +244,15 @@ pub(super) fn try_copy_file_ex(src: &Path, dst: &Path, use_no_buffering: bool) -
         .chain(std::iter::once(0))
         .collect();
 
-    let flags: u32 = if use_no_buffering { 0x0000_0008 } else { 0 };
+    /// `COPY_FILE_NO_BUFFERING` flag for `CopyFileExW` - bypasses system cache
+    /// for large file copies, reducing memory pressure.
+    const COPY_FILE_NO_BUFFERING: u32 = 0x0000_0008;
+
+    let flags: u32 = if use_no_buffering {
+        COPY_FILE_NO_BUFFERING
+    } else {
+        0
+    };
 
     // SAFETY: src_wide and dst_wide are null-terminated UTF-16 slices.
     // Progress callback, data, and cancel pointers are null (unused).
@@ -294,7 +302,8 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
 
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GetDiskFreeSpaceW, OPEN_EXISTING,
+        CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GetDiskFreeSpaceW,
+        OPEN_EXISTING,
     };
     use windows_sys::Win32::System::IO::DeviceIoControl;
 
@@ -409,7 +418,7 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
             GENERIC_READ | GENERIC_WRITE,
             0, // Exclusive access while setting up the clone
             std::ptr::null(),
-            2, // CREATE_ALWAYS
+            CREATE_ALWAYS,
             FILE_ATTRIBUTE_NORMAL,
             std::ptr::null_mut(),
         )
@@ -569,7 +578,10 @@ pub(super) fn platform_preferred_method(_size: u64) -> CopyMethod {
 /// method selection happens at runtime in `platform_copy_impl`.
 #[cfg(target_os = "windows")]
 pub(super) fn platform_preferred_method(size: u64) -> CopyMethod {
-    if size > 4 * 1024 * 1024 {
+    /// Threshold above which `COPY_FILE_NO_BUFFERING` is used (4MB).
+    const NO_BUFFERING_THRESHOLD: u64 = 4 * 1024 * 1024;
+
+    if size > NO_BUFFERING_THRESHOLD {
         CopyMethod::CopyFileEx
     } else {
         CopyMethod::StandardCopy

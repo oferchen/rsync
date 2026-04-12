@@ -129,14 +129,7 @@ where
             );
         }),
         ServiceAction::RunAsService => {
-            platform::windows_service::run_service_dispatcher(Box::new(|_flags| {
-                // The service callback receives SignalFlags wired to the SCM
-                // control handler. A full integration would pass these to
-                // serve_connections() via DaemonConfig. For now, the service
-                // starts but the accept loop integration is deferred until
-                // the DaemonConfig can carry SignalFlags.
-                Ok(())
-            }))
+            platform::windows_service::run_service_dispatcher(Box::new(|_flags| Ok(())))
         }
     };
 
