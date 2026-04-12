@@ -61,7 +61,7 @@ mod windows_impl {
         SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS, SetServiceStatus,
         StartServiceCtrlDispatcherW,
     };
-    use windows::core::PCWSTR;
+    use windows::core::{PCWSTR, PWSTR};
 
     use super::{SERVICE_DISPLAY_NAME, SERVICE_NAME, ServiceMainCallback, ServiceStatusHandle};
     use crate::signal::SignalFlags;
@@ -130,12 +130,12 @@ mod windows_impl {
 
         let service_table = [
             SERVICE_TABLE_ENTRYW {
-                lpServiceName: PCWSTR(service_name.as_ptr()),
+                lpServiceName: PWSTR(service_name.as_ptr() as *mut u16),
                 lpServiceProc: Some(service_main_entry),
             },
             // Null terminator entry.
             SERVICE_TABLE_ENTRYW {
-                lpServiceName: PCWSTR(std::ptr::null()),
+                lpServiceName: PWSTR(std::ptr::null_mut()),
                 lpServiceProc: None,
             },
         ];
