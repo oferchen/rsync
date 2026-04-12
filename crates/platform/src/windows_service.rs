@@ -68,6 +68,10 @@ mod windows_impl {
     };
     use crate::signal::SignalFlags;
 
+    /// Win32 error code indicating a service-specific exit code is present
+    /// in `dwServiceSpecificExitCode`.
+    const ERROR_SERVICE_SPECIFIC_ERROR: u32 = 1066;
+
     // Global state shared between the service dispatcher callback and the
     // control handler. OnceLock ensures one-time initialization.
     static SERVICE_FLAGS: OnceLock<SignalFlags> = OnceLock::new();
@@ -173,22 +177,16 @@ mod windows_impl {
         // Report SERVICE_RUNNING.
         let _ = report_status_raw(status_handle, SERVICE_RUNNING, 0, 0);
 
-        // Run the user callback.
-        let exit_code = if let Some(mutex) = SERVICE_CALLBACK.get() {
-            if let Ok(mut guard) = mutex.lock() {
-                if let Some(cb) = guard.take() {
-                    match cb(flags) {
-                        Ok(()) => 0,
-                        Err(_) => 1,
-                    }
-                } else {
-                    1
-                }
-            } else {
-                1
-            }
-        } else {
-            1
+        // Run the user callback. Extract it from the OnceLock<Mutex<Option>>
+        // with a flat chain of and_then to avoid deep nesting.
+        let callback = SERVICE_CALLBACK
+            .get()
+            .and_then(|mutex| mutex.lock().ok())
+            .and_then(|mut guard| guard.take());
+
+        let exit_code = match callback {
+            Some(cb) => cb(flags).map_or(1, |()| 0),
+            None => 1,
         };
 
         // Report SERVICE_STOPPED.
@@ -247,7 +245,11 @@ mod windows_impl {
             dwServiceType: SERVICE_WIN32_OWN_PROCESS,
             dwCurrentState: windows::Win32::System::Services::SERVICE_STATUS_CURRENT_STATE(state),
             dwControlsAccepted: accepted,
-            dwWin32ExitCode: if exit_code == 0 { 0 } else { 1066 }, // ERROR_SERVICE_SPECIFIC_ERROR
+            dwWin32ExitCode: if exit_code == 0 {
+                0
+            } else {
+                ERROR_SERVICE_SPECIFIC_ERROR
+            },
             dwServiceSpecificExitCode: exit_code,
             dwCheckPoint: 0,
             dwWaitHint: wait_hint,
