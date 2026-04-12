@@ -239,8 +239,6 @@ mod tests {
         SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts())
     }
 
-    // ==== from_binary_components tests ====
-
     #[test]
     fn from_binary_components_creates_binary_variant() {
         let parts = create_binary_parts();
@@ -355,8 +353,6 @@ mod tests {
         }
     }
 
-    // ==== from_legacy_components tests ====
-
     #[test]
     fn from_legacy_components_creates_legacy_variant() {
         let parts = create_legacy_parts();
@@ -416,8 +412,6 @@ mod tests {
         }
     }
 
-    // ==== Clone and Debug tests ====
-
     #[test]
     fn session_handshake_parts_clone_binary() {
         let parts = create_binary_parts();
@@ -445,8 +439,6 @@ mod tests {
         let debug = format!("{parts:?}");
         assert!(debug.contains("Legacy"));
     }
-
-    // ==== Type alias tests ====
 
     #[test]
     fn binary_handshake_components_tuple_accessible() {

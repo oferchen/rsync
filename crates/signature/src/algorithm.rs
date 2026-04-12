@@ -1,5 +1,3 @@
-//! crates/signature/src/algorithm.rs
-//!
 //! Strong checksum algorithm definitions for signature generation.
 
 use std::fmt;

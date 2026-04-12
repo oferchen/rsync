@@ -345,10 +345,6 @@ pub fn replay(
 
     let flags = reader.read_header()?;
 
-    // Decode the file list using the protocol flist decoder.
-    // This replaces the previous custom FileEntry::read_from() approach
-    // and produces protocol::flist::FileEntry values that are compatible
-    // with upstream rsync's batch file wire format.
     let mut entries = reader.read_protocol_flist()?;
 
     // upstream: flist.c:2736 - flist_sort_and_clean() after recv_file_list().

@@ -1,5 +1,3 @@
-//! crates/signature/src/generation.rs
-//!
 //! File signature generation from input data.
 
 use std::io::{self, Read};

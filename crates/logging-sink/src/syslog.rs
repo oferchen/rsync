@@ -1,13 +1,13 @@
-// Syslog backend for daemon-mode logging.
-//
-// Uses libc `openlog`/`syslog`/`closelog` directly rather than pulling in a
-// dedicated syslog crate, keeping the dependency graph minimal. The
-// implementation mirrors upstream rsync's `log.c` behaviour: when daemon mode
-// is active, diagnostics are routed to syslog(3) with the configured facility
-// and tag.
-//
-// upstream: log.c — `logit()` calls `syslog(priority, "%s", buf)` when
-// `logfile_was_closed` is false and the daemon is running.
+//! Syslog backend for daemon-mode logging.
+//!
+//! Uses libc `openlog`/`syslog`/`closelog` directly rather than pulling in a
+//! dedicated syslog crate, keeping the dependency graph minimal. The
+//! implementation mirrors upstream rsync's `log.c` behaviour: when daemon mode
+//! is active, diagnostics are routed to syslog(3) with the configured facility
+//! and tag.
+//!
+//! upstream: log.c - `logit()` calls `syslog(priority, "%s", buf)` when
+//! `logfile_was_closed` is false and the daemon is running.
 
 use std::ffi::CString;
 use std::fmt;
@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 /// The daemon configuration maps string names (e.g., `"daemon"`, `"local0"`)
 /// to these constants via [`SyslogFacility::from_name`].
 ///
-/// upstream: `loadparm.c` — `lp_syslog_facility()` returns an integer facility
+/// upstream: `loadparm.c` - `lp_syslog_facility()` returns an integer facility
 /// code parsed from the `syslog facility` configuration directive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
@@ -30,7 +30,7 @@ pub enum SyslogFacility {
     User = libc::LOG_USER,
     /// Mail system (LOG_MAIL).
     Mail = libc::LOG_MAIL,
-    /// System daemons (LOG_DAEMON) — the default for rsync daemon mode.
+    /// System daemons (LOG_DAEMON) - the default for rsync daemon mode.
     Daemon = libc::LOG_DAEMON,
     /// Security/authorization messages (LOG_AUTH).
     Auth = libc::LOG_AUTH,
@@ -97,7 +97,7 @@ impl SyslogFacility {
     /// # }
     /// ```
     pub fn from_name(name: &str) -> Option<Self> {
-        // upstream: loadparm.c — facility_names[] lookup table
+        // upstream: loadparm.c - facility_names[] lookup table
         match name.to_ascii_lowercase().as_str() {
             "kern" => Some(Self::Kern),
             "user" => Some(Self::User),
@@ -232,7 +232,7 @@ impl SyslogConfig {
             })
         });
 
-        // upstream: log.c — openlog(tag, LOG_PID, facility)
+        // upstream: log.c - openlog(tag, LOG_PID, facility)
         // LOG_PID includes the PID in each message, matching upstream behaviour.
         //
         // SAFETY: openlog is called once at daemon startup before worker threads
@@ -291,7 +291,7 @@ pub enum SyslogPriority {
 pub fn syslog_message(priority: SyslogPriority, message: &str) {
     // syslog(3) interprets `%` as a format specifier. Using `%s` with the
     // message as an argument avoids accidental format string injection.
-    // upstream: log.c — `syslog(priority, "%s", buf)`
+    // upstream: log.c - `syslog(priority, "%s", buf)`
     let c_message = match CString::new(message) {
         Ok(s) => s,
         Err(_) => return,
@@ -351,8 +351,6 @@ impl Drop for SyslogGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // --- SyslogFacility tests ---
 
     #[test]
     fn default_facility_is_daemon() {
@@ -470,8 +468,6 @@ mod tests {
         assert_eq!(SyslogFacility::Local7 as i32, libc::LOG_LOCAL7);
     }
 
-    // --- SyslogConfig tests ---
-
     #[test]
     fn config_default_uses_daemon_facility_and_default_tag() {
         let config = SyslogConfig::default();
@@ -529,8 +525,6 @@ mod tests {
         let _guard = config.open();
     }
 
-    // --- SyslogPriority tests ---
-
     #[test]
     fn priority_values_match_libc_constants() {
         assert_eq!(SyslogPriority::Emergency as i32, libc::LOG_EMERG);
@@ -542,8 +536,6 @@ mod tests {
         assert_eq!(SyslogPriority::Info as i32, libc::LOG_INFO);
         assert_eq!(SyslogPriority::Debug as i32, libc::LOG_DEBUG);
     }
-
-    // --- syslog_message tests ---
 
     #[test]
     fn syslog_message_does_not_panic_after_open() {
@@ -576,8 +568,6 @@ mod tests {
         // CString::new will fail on embedded NUL, syslog_message returns early
         syslog_message(SyslogPriority::Info, "before\0after");
     }
-
-    // --- SyslogGuard tests ---
 
     #[test]
     fn guard_debug_format() {

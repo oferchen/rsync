@@ -1,5 +1,3 @@
-//! crates/batch/src/error.rs
-//!
 //! Error types for batch operations.
 
 use std::io;

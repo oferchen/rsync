@@ -1,3 +1,9 @@
+//! Info verbosity flags and per-flag level storage.
+//!
+//! This module defines [`InfoFlag`] and [`InfoLevels`], mirroring upstream
+//! rsync's `INFO_*` constants and `info_levels[]` array
+//! (upstream: rsync.h, options.c:228).
+
 /// Info flags for user-visible diagnostic categories.
 ///
 /// These flags control output that end users see - file names, statistics,

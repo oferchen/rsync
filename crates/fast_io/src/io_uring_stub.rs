@@ -875,18 +875,10 @@ mod tests {
     use std::io::{Read, Write};
     use tempfile::{NamedTempFile, tempdir};
 
-    // ─────────────────────────────────────────────────────────────────────
-    // IoUringPolicy fallback tests (non-Linux / feature-disabled platform)
-    // ─────────────────────────────────────────────────────────────────────
-
     #[test]
     fn io_uring_unavailable_on_stub_platform() {
         assert!(!is_io_uring_available());
     }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // Registered buffer stubs
-    // ─────────────────────────────────────────────────────────────────────
 
     #[test]
     fn registered_buffer_group_try_new_returns_none() {
@@ -900,10 +892,6 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
     }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // IoUringDiskBatch stubs
-    // ─────────────────────────────────────────────────────────────────────
 
     #[test]
     fn disk_batch_try_new_returns_none() {

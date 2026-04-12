@@ -5,8 +5,6 @@ use crate::session::parts::SessionHandshakeParts;
 
 use super::helpers::{create_binary_handshake, create_legacy_handshake};
 
-// ==== into_parts / from_parts tests ====
-
 #[test]
 fn into_parts_binary() {
     let binary = create_binary_handshake();
@@ -74,8 +72,6 @@ fn from_stream_parts_legacy() {
     let rebuilt = SessionHandshake::from_stream_parts(parts);
     assert!(rebuilt.is_legacy());
 }
-
-// ==== From/Into SessionHandshakeParts tests ====
 
 #[test]
 fn parts_into_session_binary() {

@@ -1,5 +1,3 @@
-//! crates/batch/src/writer.rs
-//!
 //! Batch file writer for recording transfers.
 
 use crate::BatchConfig;

@@ -570,8 +570,6 @@ fn omits_bind_address_when_none() {
     );
 }
 
-// --- SSH keepalive injection tests ---
-
 #[test]
 fn injects_keepalive_options_by_default() {
     let command = SshCommand::new("example.com");
@@ -825,8 +823,6 @@ fn keepalive_with_bind_address_and_batch_mode() {
         "keepalive at {keepalive_pos} should precede target at {target_pos}"
     );
 }
-
-// --- SSH stderr drain thread tests ---
 
 #[cfg(unix)]
 #[test]

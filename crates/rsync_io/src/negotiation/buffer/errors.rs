@@ -141,8 +141,6 @@ impl From<BufferedCopyTooSmall> for io::Error {
 mod tests {
     use super::*;
 
-    // ==== CopyToSliceError tests ====
-
     #[test]
     fn copy_to_slice_error_new_stores_values() {
         let err = CopyToSliceError::new(100, 50);
@@ -210,8 +208,6 @@ mod tests {
         assert_ne!(a, c);
     }
 
-    // ==== BufferedCopyTooSmall tests ====
-
     #[test]
     fn buffered_copy_too_small_new_stores_values() {
         let err = BufferedCopyTooSmall::new(200, 100);
@@ -278,8 +274,6 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
-
-    // ==== Edge cases ====
 
     #[test]
     fn errors_handle_zero_values() {

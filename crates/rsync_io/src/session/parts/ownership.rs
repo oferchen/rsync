@@ -274,8 +274,6 @@ mod tests {
         SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts())
     }
 
-    // ==== into_stream_parts tests ====
-
     #[test]
     fn into_stream_parts_extracts_stream_for_binary() {
         let parts = create_binary_parts();
@@ -289,8 +287,6 @@ mod tests {
         let stream_parts = parts.into_stream_parts();
         assert!(stream_parts.buffered().starts_with(b"@RSYNCD:"));
     }
-
-    // ==== into_stream tests ====
 
     #[test]
     fn into_stream_reconstructs_negotiated_stream_for_binary() {
@@ -306,8 +302,6 @@ mod tests {
         let stream = parts.into_stream();
         assert!(stream.buffered_len() > 0);
     }
-
-    // ==== map_stream_inner tests ====
 
     #[test]
     fn map_stream_inner_transforms_binary_variant() {
@@ -335,8 +329,6 @@ mod tests {
         let mapped = legacy.map_stream_inner(Box::new);
         assert!(mapped.is_legacy());
     }
-
-    // ==== try_map_stream_inner tests ====
 
     #[test]
     fn try_map_stream_inner_success_for_binary() {
@@ -373,8 +365,6 @@ mod tests {
         assert!(err.into_original().is_legacy());
     }
 
-    // ==== into_binary tests ====
-
     #[test]
     fn into_binary_succeeds_for_binary_variant() {
         let parts = create_binary_parts();
@@ -396,8 +386,6 @@ mod tests {
         assert!(result.unwrap_err().is_legacy());
     }
 
-    // ==== into_binary_parts tests ====
-
     #[test]
     fn into_binary_parts_succeeds_for_binary_variant() {
         let parts = create_binary_parts();
@@ -411,8 +399,6 @@ mod tests {
         let result = parts.into_binary_parts();
         assert!(result.is_err());
     }
-
-    // ==== into_legacy tests ====
 
     #[test]
     fn into_legacy_succeeds_for_legacy_variant() {
@@ -432,8 +418,6 @@ mod tests {
         assert!(result.unwrap_err().is_binary());
     }
 
-    // ==== into_legacy_parts tests ====
-
     #[test]
     fn into_legacy_parts_succeeds_for_legacy_variant() {
         let parts = create_legacy_parts();
@@ -447,8 +431,6 @@ mod tests {
         let result = parts.into_legacy_parts();
         assert!(result.is_err());
     }
-
-    // ==== remote_protocol_was_clamped tests ====
 
     #[test]
     fn remote_protocol_was_clamped_false_for_supported_binary() {
@@ -480,8 +462,6 @@ mod tests {
         assert!(parts.remote_protocol_was_clamped());
     }
 
-    // ==== local_protocol_was_capped tests ====
-
     #[test]
     fn local_protocol_was_capped_false_when_equal() {
         let parts = create_binary_parts();
@@ -506,8 +486,6 @@ mod tests {
         assert!(parts.local_protocol_was_capped());
     }
 
-    // ==== into_handshake tests ====
-
     #[test]
     fn into_handshake_rebuilds_binary_handshake() {
         let parts = create_binary_parts();
@@ -529,8 +507,6 @@ mod tests {
         let handshake = parts.into_handshake();
         assert_eq!(handshake.negotiated_protocol(), negotiated);
     }
-
-    // ==== into_inner tests ====
 
     #[test]
     fn into_inner_extracts_transport_for_binary() {

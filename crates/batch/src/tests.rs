@@ -1,5 +1,3 @@
-//! crates/batch/src/tests.rs
-//!
 //! Integration tests for batch mode.
 
 #[cfg(test)]

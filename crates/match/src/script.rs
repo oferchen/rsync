@@ -1,5 +1,3 @@
-//! crates/match/src/script.rs
-//!
 //! Delta script representation and application.
 
 use std::cmp::min;

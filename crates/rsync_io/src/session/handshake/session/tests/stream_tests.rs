@@ -7,8 +7,6 @@ use protocol::NegotiationPrologue;
 
 use super::helpers::{create_binary_handshake, create_legacy_handshake};
 
-// ==== stream() tests ====
-
 #[test]
 fn stream_returns_reference_binary() {
     let binary = create_binary_handshake();
@@ -24,8 +22,6 @@ fn stream_returns_reference_legacy() {
     let stream = session.stream();
     assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
 }
-
-// ==== stream_mut() tests ====
 
 #[test]
 fn stream_mut_returns_mutable_reference_binary() {
@@ -43,8 +39,6 @@ fn stream_mut_returns_mutable_reference_legacy() {
     assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
 }
 
-// ==== into_stream() tests ====
-
 #[test]
 fn into_stream_binary() {
     let binary = create_binary_handshake();
@@ -60,8 +54,6 @@ fn into_stream_legacy() {
     let stream = session.into_stream();
     assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
 }
-
-// ==== as_binary() / as_binary_mut() tests ====
 
 #[test]
 fn as_binary_returns_some_for_binary() {
@@ -91,8 +83,6 @@ fn as_binary_mut_returns_none_for_legacy() {
     assert!(session.as_binary_mut().is_none());
 }
 
-// ==== as_legacy() / as_legacy_mut() tests ====
-
 #[test]
 fn as_legacy_returns_some_for_legacy() {
     let legacy = create_legacy_handshake();
@@ -120,8 +110,6 @@ fn as_legacy_mut_returns_none_for_binary() {
     let mut session = SessionHandshake::Binary(binary);
     assert!(session.as_legacy_mut().is_none());
 }
-
-// ==== into_binary() / into_legacy() tests ====
 
 #[test]
 fn into_binary_ok_for_binary() {
@@ -151,8 +139,6 @@ fn into_legacy_err_for_binary() {
     assert!(session.into_legacy().is_err());
 }
 
-// ==== From implementations tests ====
-
 #[test]
 fn from_binary_handshake() {
     let binary = create_binary_handshake();
@@ -166,8 +152,6 @@ fn from_legacy_handshake() {
     let session: SessionHandshake<_> = legacy.into();
     assert!(session.is_legacy());
 }
-
-// ==== TryFrom implementations tests ====
 
 #[test]
 fn try_from_session_to_binary_ok() {
@@ -201,8 +185,6 @@ fn try_from_session_to_legacy_err() {
     assert!(result.is_err());
 }
 
-// ==== map_stream_inner tests ====
-
 #[test]
 fn map_stream_inner_binary() {
     let binary = create_binary_handshake();
@@ -222,8 +204,6 @@ fn map_stream_inner_legacy() {
     });
     assert!(mapped.is_legacy());
 }
-
-// ==== into_inner tests ====
 
 #[test]
 fn into_inner_binary() {

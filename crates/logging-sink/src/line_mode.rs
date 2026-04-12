@@ -1,3 +1,9 @@
+//! Newline behaviour control for message rendering.
+//!
+//! The [`LineMode`] enum determines whether a [`MessageSink`](crate::MessageSink)
+//! appends a trailing newline after each rendered message, matching upstream
+//! rsync's default of printing each diagnostic on its own line.
+
 /// Controls whether a [`MessageSink`](crate::MessageSink) appends a trailing newline when writing messages.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum LineMode {

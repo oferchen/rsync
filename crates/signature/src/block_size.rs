@@ -38,8 +38,6 @@
 //! assert!(checksum_len >= 2);
 //! ```
 
-// NonZeroU32 is used in doc comments but not in the actual implementation
-
 /// Default block length used by rsync for small files.
 ///
 /// Files smaller than `DEFAULT_BLOCK_SIZE * DEFAULT_BLOCK_SIZE` (490,000 bytes)

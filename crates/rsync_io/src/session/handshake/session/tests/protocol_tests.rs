@@ -6,8 +6,6 @@ use protocol::NegotiationPrologue;
 
 use super::helpers::{create_binary_handshake, create_legacy_handshake};
 
-// ==== decision() tests ====
-
 #[test]
 fn decision_returns_binary_for_binary_variant() {
     let binary = create_binary_handshake();
@@ -21,8 +19,6 @@ fn decision_returns_legacy_for_legacy_variant() {
     let session = SessionHandshake::Legacy(legacy);
     assert_eq!(session.decision(), NegotiationPrologue::LegacyAscii);
 }
-
-// ==== is_binary() / is_legacy() tests ====
 
 #[test]
 fn is_binary_true_for_binary_variant() {
@@ -40,8 +36,6 @@ fn is_legacy_true_for_legacy_variant() {
     assert!(!session.is_binary());
 }
 
-// ==== negotiated_protocol() tests ====
-
 #[test]
 fn negotiated_protocol_binary() {
     let binary = create_binary_handshake();
@@ -55,8 +49,6 @@ fn negotiated_protocol_legacy() {
     let session = SessionHandshake::Legacy(legacy);
     assert_eq!(session.negotiated_protocol().as_u8(), 31);
 }
-
-// ==== remote_protocol() tests ====
 
 #[test]
 fn remote_protocol_binary() {
@@ -72,8 +64,6 @@ fn remote_protocol_legacy() {
     assert_eq!(session.remote_protocol().as_u8(), 31);
 }
 
-// ==== remote_advertised_protocol() tests ====
-
 #[test]
 fn remote_advertised_protocol_binary() {
     let binary = create_binary_handshake();
@@ -87,8 +77,6 @@ fn remote_advertised_protocol_legacy() {
     let session = SessionHandshake::Legacy(legacy);
     assert_eq!(session.remote_advertised_protocol(), 31);
 }
-
-// ==== local_advertised_protocol() tests ====
 
 #[test]
 fn local_advertised_protocol_binary() {
@@ -104,8 +92,6 @@ fn local_advertised_protocol_legacy() {
     assert_eq!(session.local_advertised_protocol().as_u8(), 31);
 }
 
-// ==== server_greeting() tests ====
-
 #[test]
 fn server_greeting_none_for_binary() {
     let binary = create_binary_handshake();
@@ -119,8 +105,6 @@ fn server_greeting_some_for_legacy() {
     let session = SessionHandshake::Legacy(legacy);
     assert!(session.server_greeting().is_some());
 }
-
-// ==== remote_advertisement tests ====
 
 #[test]
 fn remote_advertisement_binary() {
@@ -138,8 +122,6 @@ fn remote_advertisement_legacy() {
     assert!(matches!(adv, RemoteProtocolAdvertisement::Supported(_)));
 }
 
-// ==== remote_protocol_was_clamped tests ====
-
 #[test]
 fn remote_protocol_was_clamped_binary() {
     let binary = create_binary_handshake();
@@ -156,8 +138,6 @@ fn remote_protocol_was_clamped_legacy() {
     assert!(!session.remote_protocol_was_clamped());
 }
 
-// ==== local_protocol_was_capped tests ====
-
 #[test]
 fn local_protocol_was_capped_binary() {
     let binary = create_binary_handshake();
@@ -173,8 +153,6 @@ fn local_protocol_was_capped_legacy() {
     // Our test handshake uses the same protocol for desired and negotiated
     assert!(!session.local_protocol_was_capped());
 }
-
-// ==== Clone / Debug tests ====
 
 #[test]
 fn clone_binary() {
