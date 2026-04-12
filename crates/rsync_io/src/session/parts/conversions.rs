@@ -110,8 +110,6 @@ mod tests {
         SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts())
     }
 
-    // ==== From<BinaryHandshake> tests ====
-
     #[test]
     fn from_binary_handshake_creates_binary_parts() {
         let handshake = create_binary_handshake();
@@ -127,8 +125,6 @@ mod tests {
         assert_eq!(parts.negotiated_protocol(), negotiated);
     }
 
-    // ==== From<LegacyDaemonHandshake> tests ====
-
     #[test]
     fn from_legacy_handshake_creates_legacy_parts() {
         let handshake = create_legacy_handshake();
@@ -143,8 +139,6 @@ mod tests {
         let parts: SessionHandshakeParts<_> = handshake.into();
         assert_eq!(parts.negotiated_protocol(), negotiated);
     }
-
-    // ==== TryFrom<SessionHandshakeParts> for BinaryHandshake tests ====
 
     #[test]
     fn try_from_parts_to_binary_handshake_succeeds_for_binary() {
@@ -169,8 +163,6 @@ mod tests {
         assert_eq!(handshake.negotiated_protocol(), negotiated);
     }
 
-    // ==== TryFrom<SessionHandshakeParts> for LegacyDaemonHandshake tests ====
-
     #[test]
     fn try_from_parts_to_legacy_handshake_succeeds_for_legacy() {
         let parts = create_legacy_parts();
@@ -194,8 +186,6 @@ mod tests {
         assert_eq!(handshake.negotiated_protocol(), negotiated);
     }
 
-    // ==== TryFrom<SessionHandshakeParts> for BinaryHandshakeParts tests ====
-
     #[test]
     fn try_from_parts_to_binary_parts_succeeds_for_binary() {
         let parts = create_binary_parts();
@@ -210,8 +200,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ==== TryFrom<SessionHandshakeParts> for LegacyDaemonHandshakeParts tests ====
-
     #[test]
     fn try_from_parts_to_legacy_parts_succeeds_for_legacy() {
         let parts = create_legacy_parts();
@@ -225,8 +213,6 @@ mod tests {
         let result: Result<LegacyDaemonHandshakeParts<_>, _> = parts.try_into();
         assert!(result.is_err());
     }
-
-    // ==== Round-trip tests ====
 
     #[test]
     fn binary_handshake_round_trip_preserves_data() {

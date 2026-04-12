@@ -1,5 +1,3 @@
-//! crates/match/src/generator.rs
-//!
 //! Delta token generation pipeline.
 //!
 //! # DEBUG_DELTASUM Tracing Levels

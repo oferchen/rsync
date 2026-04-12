@@ -450,14 +450,6 @@ mod tests {
             output.stderr().iter().any(|b| *b != 0),
             "stderr should contain non-empty diagnostics"
         );
-        // Server may write protocol bytes to stdout before failing
-        // The important thing is that error diagnostics go to stderr
-        // assert!(
-        //     output.stdout().is_empty(),
-        //     "server misuse should not write anything to stdout, got: {:?}",
-        //     String::from_utf8_lossy(output.stdout())
-        // );
-
         // Stream-based embedding: same semantics as above.
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -468,11 +460,6 @@ mod tests {
             0,
             "server should fail with non-zero exit"
         );
-        // Server may write protocol bytes to stdout before failing
-        // assert!(
-        //     stdout.is_empty(),
-        //     "server misuse should not write anything to stdout"
-        // );
         assert!(
             !stderr.is_empty(),
             "stderr should contain diagnostics in stream-based embedding"

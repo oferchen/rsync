@@ -188,8 +188,6 @@ pub mod writer;
 #[cfg(test)]
 mod tests;
 
-// Re-exports for convenient access to commonly used types
-
 /// Error type for batch operations.
 ///
 /// See [`error::BatchError`] for detailed error variants.

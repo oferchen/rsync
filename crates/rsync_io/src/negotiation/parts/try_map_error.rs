@@ -350,8 +350,6 @@ mod tests {
     use super::*;
     use std::io;
 
-    // ==== Construction ====
-
     #[test]
     fn new_stores_error_and_original() {
         let err = TryMapInnerError::new("error message", 42);
@@ -365,8 +363,6 @@ mod tests {
         assert_eq!(err.error(), &"error");
         assert_eq!(err.original(), &100);
     }
-
-    // ==== Accessors ====
 
     #[test]
     fn error_returns_shared_reference() {
@@ -394,8 +390,6 @@ mod tests {
         assert_eq!(err.original(), &vec![1, 2, 3, 4]);
     }
 
-    // ==== as_ref and as_mut ====
-
     #[test]
     fn as_ref_returns_both_references() {
         let err = TryMapInnerError::new("the error", "the original");
@@ -416,8 +410,6 @@ mod tests {
         assert_eq!(err.original(), "orig_changed");
     }
 
-    // ==== into_* methods ====
-
     #[test]
     fn into_parts_returns_both_owned() {
         let err = TryMapInnerError::new("my error", 99);
@@ -437,8 +429,6 @@ mod tests {
         let err = TryMapInnerError::new("will be gone", "kept original");
         assert_eq!(err.into_original(), "kept original");
     }
-
-    // ==== Mapping methods ====
 
     #[test]
     fn map_original_transforms_original() {
@@ -471,8 +461,6 @@ mod tests {
         assert_eq!(mapped.original(), "42");
     }
 
-    // ==== From/Into conversions ====
-
     #[test]
     fn into_tuple_from_error() {
         let err = TryMapInnerError::new("err", 123);
@@ -481,8 +469,6 @@ mod tests {
         assert_eq!(o, 123);
     }
 
-    // ==== Clone ====
-
     #[test]
     fn clone_produces_independent_copy() {
         let err = TryMapInnerError::new(String::from("err"), vec![1, 2, 3]);
@@ -490,8 +476,6 @@ mod tests {
         assert_eq!(err.error(), cloned.error());
         assert_eq!(err.original(), cloned.original());
     }
-
-    // ==== Debug ====
 
     #[test]
     fn debug_contains_error_and_type() {
@@ -509,8 +493,6 @@ mod tests {
         assert!(debug.contains("into_original"));
     }
 
-    // ==== Display ====
-
     #[test]
     fn display_contains_error_message() {
         let err = TryMapInnerError::new("display test error", 0i32);
@@ -526,8 +508,6 @@ mod tests {
         assert!(display.contains("recover via into_original"));
     }
 
-    // ==== Error trait ====
-
     #[test]
     fn error_source_returns_inner_error() {
         let inner = io::Error::new(io::ErrorKind::NotFound, "file not found");
@@ -536,8 +516,6 @@ mod tests {
         let downcasted = source.downcast_ref::<io::Error>().unwrap();
         assert_eq!(downcasted.kind(), io::ErrorKind::NotFound);
     }
-
-    // ==== Edge cases ====
 
     #[test]
     fn works_with_unit_types() {

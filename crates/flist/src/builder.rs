@@ -109,7 +109,6 @@ mod tests {
     #[test]
     fn new_creates_builder() {
         let builder = FileListBuilder::new("/some/path");
-        // Just verify construction doesn't panic
         let _ = format!("{builder:?}");
     }
 

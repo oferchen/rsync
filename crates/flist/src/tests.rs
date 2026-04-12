@@ -672,7 +672,7 @@ fn error_display_includes_path_and_message() {
     assert!(display.contains("io error"));
 }
 
-// ==================== copy_links tests ====================
+
 
 #[cfg(unix)]
 #[test]
@@ -858,8 +858,6 @@ fn copy_links_multiple_symlinks_all_resolved() {
     // 2 real files + 2 resolved symlinks = 4 regular files
     assert_eq!(file_count, 4, "all entries should appear as regular files");
 }
-
-// ==================== safe-links filtering tests ====================
 
 #[cfg(unix)]
 #[test]

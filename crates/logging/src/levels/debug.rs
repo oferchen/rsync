@@ -1,3 +1,9 @@
+//! Debug verbosity flags and per-flag level storage.
+//!
+//! This module defines [`DebugFlag`] and [`DebugLevels`], mirroring upstream
+//! rsync's `DEBUG_*` constants and `debug_levels[]` array
+//! (upstream: rsync.h, options.c:237).
+
 /// Debug flags for developer-oriented diagnostic categories.
 ///
 /// These flags control detailed internal output - protocol negotiation,

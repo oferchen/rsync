@@ -1,5 +1,3 @@
-//! crates/batch/src/script.rs
-//!
 //! Shell script generation for batch replay.
 //!
 //! Creates a .sh script that can be used to replay a batch file,

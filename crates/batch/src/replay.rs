@@ -345,10 +345,6 @@ pub fn replay(
 
     let flags = reader.read_header()?;
 
-    // Decode the file list using the protocol flist decoder.
-    // This replaces the previous custom FileEntry::read_from() approach
-    // and produces protocol::flist::FileEntry values that are compatible
-    // with upstream rsync's batch file wire format.
     let mut entries = reader.read_protocol_flist()?;
 
     // upstream: flist.c:2736 - flist_sort_and_clean() after recv_file_list().
@@ -891,6 +887,17 @@ fn choose_block_length(file_size: u64) -> usize {
 
     let sqrt = (file_size as f64).sqrt() as usize;
     sqrt.clamp(MIN_BLOCK, MAX_BLOCK)
+}
+
+/// Returns the default xfer checksum length for batch replay.
+///
+/// upstream: `checksum.c:188` - `xfer_sum_len = csum_len_for_type(xfer_sum_nni->num, 0)`.
+/// Batch files don't record the negotiated checksum algorithm. For all
+/// supported protocols (28-32), the default xfer checksum is MD4, MD5, or
+/// XXH3-128 - all produce 16-byte digests.
+fn default_xfer_sum_len(protocol_version: i32) -> usize {
+    let _ = protocol_version;
+    16
 }
 
 #[cfg(test)]
