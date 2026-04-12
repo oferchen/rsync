@@ -379,7 +379,6 @@ fn ssh_connection_failure_exit_code() {
     });
 }
 
-/// Verify that SSH stderr output is included in the error message on connection failure.
 /// Verify that the --rsync-path override works over SSH.
 ///
 /// Points --rsync-path at a nonexistent binary on the remote side. The remote

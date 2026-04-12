@@ -179,7 +179,10 @@ fn supports_reflink_platform_specific() {
     #[cfg(target_os = "linux")]
     assert!(supports, "Linux should report reflink support (FICLONE)");
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    assert!(supports, "Windows should report reflink support (ReFS)");
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     assert!(
         !supports,
         "other platforms should not report reflink support"
@@ -536,4 +539,71 @@ fn parity_fcopyfile_vs_std_copy() {
         "fcopyfile and std::fs::copy must produce identical output"
     );
     assert_eq!(result_fcopy, content);
+}
+
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn refs_reflink_returns_unsupported_on_non_windows() {
+    let temp = TempDir::new().expect("create temp dir");
+    let (src, dst) = setup_test_files(temp.path(), "refs_stub", b"data");
+
+    let err = try_refs_reflink(&src, &dst).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn refs_reflink_fails_gracefully_on_ntfs() {
+    // Standard Windows CI runners use NTFS, not ReFS.
+    // The reflink attempt should fail with a clean error, not panic.
+    let temp = TempDir::new().expect("create temp dir");
+    let content = b"reflink test data on NTFS";
+    let (src, dst) = setup_test_files(temp.path(), "refs_ntfs", content);
+
+    let result = try_refs_reflink(&src, &dst);
+    // NTFS does not support FSCTL_DUPLICATE_EXTENTS - expect an error
+    assert!(
+        result.is_err(),
+        "reflink should fail on NTFS (CI uses NTFS)"
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn refs_reflink_fails_on_missing_source() {
+    let temp = TempDir::new().expect("create temp dir");
+    let src = temp.path().join("nonexistent.txt");
+    let dst = temp.path().join("dst.txt");
+
+    let result = try_refs_reflink(&src, &dst);
+    assert!(result.is_err());
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn dispatch_falls_back_from_reflink_on_ntfs() {
+    // When is_refs returns false (NTFS), the dispatch chain should skip
+    // reflink and proceed to CopyFileExW or standard copy.
+    let temp = TempDir::new().expect("create temp dir");
+    let content = b"fallback test content";
+    let src = setup_source(temp.path(), "refs_fallback_src.txt", content);
+    let dst = temp.path().join("refs_fallback_dst.txt");
+
+    let copier = DefaultPlatformCopy::new();
+    let result = copier
+        .copy_file(&src, &dst, content.len() as u64)
+        .expect("copy should succeed via CopyFileExW fallback");
+
+    let dst_content = std::fs::read(&dst).expect("read destination");
+    assert_eq!(dst_content, content);
+
+    // On NTFS, should use CopyFileEx or StandardCopy (not ReFsReflink)
+    assert!(
+        matches!(
+            result.method,
+            CopyMethod::CopyFileEx | CopyMethod::StandardCopy
+        ),
+        "expected CopyFileEx or StandardCopy on NTFS, got {:?}",
+        result.method
+    );
 }
