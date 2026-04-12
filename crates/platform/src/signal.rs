@@ -44,7 +44,7 @@ pub struct SignalFlags {
 
 impl SignalFlags {
     /// Creates a new set of signal flags with all flags initially unset.
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             reload_config: Arc::new(AtomicBool::new(false)),
             shutdown: Arc::new(AtomicBool::new(false)),

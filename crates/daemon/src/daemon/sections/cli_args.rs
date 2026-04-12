@@ -32,6 +32,20 @@ fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
     }
 }
 
+/// Windows Service action requested via CLI flags.
+///
+/// These flags are available on all platforms but only functional on Windows.
+/// On non-Windows platforms they return a graceful error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ServiceAction {
+    /// Run as a Windows Service (SCM-managed lifecycle).
+    RunAsService,
+    /// Register the service with the Windows SCM and exit.
+    Install,
+    /// Remove the service from the Windows SCM and exit.
+    Uninstall,
+}
+
 /// Result of parsing the top-level daemon CLI arguments.
 ///
 /// `show_help` and `show_version` are handled before the daemon loop starts.
@@ -40,6 +54,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) program_name: ProgramName,
     pub(crate) show_help: bool,
     pub(crate) show_version: bool,
+    pub(crate) service_action: Option<ServiceAction>,
     pub(crate) remainder: Vec<OsString>,
 }
 
@@ -63,6 +78,24 @@ pub(crate) fn clap_command(program_name: &'static str) -> Command {
                 .long("version")
                 .short('V')
                 .help("Output version information and exit.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("windows-service")
+                .long("windows-service")
+                .help("Run as a Windows Service (SCM-managed lifecycle).")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("install-service")
+                .long("install-service")
+                .help("Register the daemon as a Windows Service and exit.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("uninstall-service")
+                .long("uninstall-service")
+                .help("Remove the daemon Windows Service registration and exit.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -100,15 +133,29 @@ where
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
+    let windows_service = matches.get_flag("windows-service");
+    let install_service = matches.get_flag("install-service");
+    let uninstall_service = matches.get_flag("uninstall-service");
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
         .unwrap_or_default();
 
+    let service_action = if install_service {
+        Some(ServiceAction::Install)
+    } else if uninstall_service {
+        Some(ServiceAction::Uninstall)
+    } else if windows_service {
+        Some(ServiceAction::RunAsService)
+    } else {
+        None
+    };
+
     Ok(ParsedArgs {
         program_name,
         show_help,
         show_version,
+        service_action,
         remainder,
     })
 }
