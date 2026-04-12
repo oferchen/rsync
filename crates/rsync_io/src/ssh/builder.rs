@@ -336,14 +336,16 @@ impl SshCommand {
 
     /// Determines whether AES-GCM cipher arguments should be injected.
     ///
-    /// Returns `true` only when `prefer_aes_gcm` is `Some(true)`, the program
-    /// looks like an SSH client, and no existing option already specifies `-c`.
+    /// Returns `true` only when `prefer_aes_gcm` is `Some(true)`, the CPU has
+    /// hardware AES acceleration, the program looks like an SSH client, and no
+    /// existing option already specifies `-c`.
     ///
-    /// Returns `false` when `prefer_aes_gcm` is `None` (default — no change),
-    /// `Some(false)` (explicitly disabled), when custom options contain `-c`,
-    /// or when the program is not `ssh`.
+    /// Returns `false` when `prefer_aes_gcm` is `None` (default - no change),
+    /// `Some(false)` (explicitly disabled), when the CPU lacks hardware AES,
+    /// when custom options contain `-c`, or when the program is not `ssh`.
     fn should_inject_aes_gcm_ciphers(&self) -> bool {
         matches!(self.prefer_aes_gcm, Some(true))
+            && has_hardware_aes()
             && self.is_ssh_program()
             && !self.options_contain_cipher_flag()
     }
@@ -383,6 +385,29 @@ impl SshCommand {
     pub(crate) fn command_parts_for_testing(&self) -> (OsString, Vec<OsString>) {
         self.command_parts()
     }
+}
+
+/// Returns `true` when the CPU has hardware AES acceleration.
+///
+/// Caches the result in a `OnceLock` to avoid repeated feature detection
+/// syscalls on platforms that probe `/proc/cpuinfo` or issue `mrs` instructions.
+/// Returns `false` on architectures where detection is unavailable.
+pub(super) fn has_hardware_aes() -> bool {
+    static HAS_AES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *HAS_AES.get_or_init(|| {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            std::arch::is_x86_feature_detected!("aes")
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            std::arch::is_aarch64_feature_detected!("aes")
+        }
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            false
+        }
+    })
 }
 
 fn host_needs_ipv6_brackets(host: &OsStr) -> bool {
