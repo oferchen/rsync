@@ -11,7 +11,7 @@
 //! |----------|---------|-----------|----------|
 //! | Linux | `FICLONE` (CoW reflink, Btrfs/XFS) | `copy_file_range` (zero-copy) | `std::fs::copy` |
 //! | macOS | `clonefile` (CoW, APFS) | `fcopyfile` (kernel-accelerated) | `std::fs::copy` |
-//! | Windows | ReFS `FSCTL_DUPLICATE_EXTENTS` (planned) | `CopyFileExW` (no-buffering) | `std::fs::copy` |
+//! | Windows | ReFS `FSCTL_DUPLICATE_EXTENTS` (CoW) | `CopyFileExW` (no-buffering) | `std::fs::copy` |
 //!
 //! # Design
 //!
@@ -62,7 +62,7 @@ pub use types::{CopyMethod, CopyResult, PlatformCopy};
 ///
 /// - **Linux**: `FICLONE` (CoW reflink) then `copy_file_range` then `std::fs::copy`
 /// - **macOS**: `clonefile` (CoW) then `fcopyfile` (kernel-accelerated) then `std::fs::copy`
-/// - **Windows**: ReFS detection (planned reflink), then `CopyFileExW` with no-buffering for files > 4MB
+/// - **Windows**: ReFS `FSCTL_DUPLICATE_EXTENTS` reflink, then `CopyFileExW` with no-buffering for files > 4MB
 ///
 /// All paths automatically fall back to standard copy on failure.
 #[derive(Debug, Clone, Copy, Default)]
@@ -88,6 +88,41 @@ impl PlatformCopy for DefaultPlatformCopy {
     fn preferred_method(&self, size: u64) -> CopyMethod {
         dispatch::platform_preferred_method(size)
     }
+}
+
+/// Attempts a copy-on-write block clone using Windows ReFS `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
+///
+/// On ReFS volumes, creates an instant reflink where source and destination share
+/// storage blocks until either file is modified. The operation is O(1) regardless
+/// of file size when both files are on the same ReFS volume.
+///
+/// The ioctl requires cluster-aligned offsets and byte count. This function
+/// queries the cluster size at runtime via `GetDiskFreeSpaceW`, rounds the file
+/// size up to the nearest cluster boundary for the ioctl, then truncates the
+/// destination to the actual file size afterward.
+///
+/// # Constraints
+///
+/// - Source and destination must be on the same ReFS volume.
+/// - The volume must be formatted as ReFS (NTFS does not support block cloning).
+/// - Windows Server 2016+ or Windows 10+ with a ReFS-formatted volume.
+///
+/// # Platform Support
+///
+/// - **Windows**: Calls `DeviceIoControl` with `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
+/// - **Other platforms**: Returns `ErrorKind::Unsupported`.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The platform does not support ReFS reflink (non-Windows)
+/// - The filesystem is not ReFS (NTFS, FAT32, exFAT)
+/// - Cross-volume (source and destination on different volumes)
+/// - Source does not exist or is not readable
+/// - Cluster size query fails
+/// - The ioctl itself fails
+pub fn try_refs_reflink(src: &Path, dst: &Path) -> io::Result<()> {
+    dispatch::try_refs_reflink_impl(src, dst)
 }
 
 /// Attempts a copy-on-write clone using Linux `FICLONE` ioctl.

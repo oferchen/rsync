@@ -39,7 +39,7 @@
 //! - **Zero-copy socket send** using `sendfile` for file-to-socket transfers
 //! - **Zero-copy socket receive** using `splice` for socket-to-file transfers (Linux)
 //! - **Windows optimized copy** using `CopyFileExW` with optional no-buffering
-//! - **ReFS detection** for Windows reflink via `FSCTL_DUPLICATE_EXTENTS_TO_FILE`
+//! - **ReFS reflink** via `FSCTL_DUPLICATE_EXTENTS_TO_FILE` for instant CoW on Windows
 //! - **io_uring** for batched syscalls on Linux (optional, `io_uring` feature)
 //! - **Platform copy trait** abstracting `copy_file_range`, `clonefile`, `CopyFileExW`
 //! - **Cached sorting** with Schwartzian transform
@@ -114,7 +114,7 @@ pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use platform_copy::{
     CopyMethod, CopyResult, DefaultPlatformCopy, PlatformCopy, try_clonefile, try_fcopyfile,
-    try_ficlone,
+    try_ficlone, try_refs_reflink,
 };
 pub use traits::{FileReader, FileWriter};
 

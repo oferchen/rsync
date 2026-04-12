@@ -155,8 +155,8 @@ pub trait PlatformCopy: Send + Sync {
     ///
     /// - **macOS**: Returns `true` (APFS supports clonefile; HFS+ does not but
     ///   filesystem detection is deferred to the actual clone call)
-    /// - **Linux**: Returns `false` (reflink via `FICLONE` ioctl is not yet implemented)
-    /// - **Windows**: Returns `false` (block cloning requires ReFS and is not yet implemented)
+    /// - **Linux**: Returns `true` (reflink via `FICLONE` ioctl on Btrfs/XFS/bcachefs)
+    /// - **Windows**: Returns `true` (block cloning via `FSCTL_DUPLICATE_EXTENTS` on ReFS)
     fn supports_reflink(&self) -> bool;
 
     /// Returns the preferred [`CopyMethod`] for a file of the given size.
