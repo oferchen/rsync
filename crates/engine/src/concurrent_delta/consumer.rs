@@ -243,7 +243,7 @@ impl Iterator for DeltaConsumerIntoIter {
     }
 }
 
-#[cfg(all(test, feature = "parallel"))]
+#[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
