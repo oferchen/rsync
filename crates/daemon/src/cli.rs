@@ -80,7 +80,7 @@ where
 
     // Handle Windows Service management actions before entering the daemon loop.
     if let Some(action) = parsed.service_action {
-        return execute_service_action(action, stdout, stderr);
+        return execute_service_action(action, &parsed, stdout, stderr);
     }
 
     let config = DaemonConfig::builder()
@@ -106,6 +106,7 @@ where
 /// they delegate to `platform::windows_service` for SCM integration.
 fn execute_service_action<Out, Err>(
     action: ServiceAction,
+    parsed: &ParsedArgs,
     stdout: &mut Out,
     stderr: &mut MessageSink<Err>,
 ) -> i32
@@ -129,7 +130,18 @@ where
             );
         }),
         ServiceAction::RunAsService => {
-            platform::windows_service::run_service_dispatcher(Box::new(|_flags| Ok(())))
+            let remainder = parsed.remainder.clone();
+            let brand = parsed.program_name.brand();
+            platform::windows_service::run_service_dispatcher(Box::new(move |flags| {
+                let config = DaemonConfig::builder()
+                    .brand(brand)
+                    .arguments(remainder)
+                    .signal_flags(flags)
+                    .build();
+                run_daemon(config).map_err(|error| {
+                    std::io::Error::new(std::io::ErrorKind::Other, error.message().to_string())
+                })
+            }))
         }
     };
 
