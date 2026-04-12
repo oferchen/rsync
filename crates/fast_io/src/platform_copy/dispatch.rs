@@ -292,12 +292,17 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
 
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GENERIC_READ, GENERIC_WRITE,
-        GetDiskFreeSpaceW, OPEN_EXISTING,
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GetDiskFreeSpaceW, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::IO::DeviceIoControl;
+
+    /// Generic read access right. Defined locally because `windows-sys` 0.59
+    /// removed these from `Win32::Storage::FileSystem`.
+    const GENERIC_READ: u32 = 0x8000_0000;
+    /// Generic write access right.
+    const GENERIC_WRITE: u32 = 0x4000_0000;
 
     /// `FSCTL_DUPLICATE_EXTENTS_TO_FILE` control code.
     /// CTL_CODE(FILE_DEVICE_FILE_SYSTEM, 0xD1, METHOD_BUFFERED, FILE_WRITE_ACCESS)
@@ -420,8 +425,7 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
     // Wrap the destination handle in a File for RAII cleanup and set_len().
     // SAFETY: dst_raw_handle is a valid handle just returned by CreateFileW.
     // Ownership transfers to the File; it will call CloseHandle on drop.
-    let dst_file =
-        unsafe { std::fs::File::from_raw_handle(dst_raw_handle as *mut std::ffi::c_void) };
+    let dst_file = unsafe { std::fs::File::from_raw_handle(dst_raw_handle) };
 
     // Pre-size destination to the cluster-aligned size required by the ioctl.
     if let Err(e) = dst_file.set_len(aligned_size) {
@@ -430,10 +434,10 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
         return Err(e);
     }
 
-    let dst_handle = dst_file.as_raw_handle() as isize;
+    let dst_handle = dst_file.as_raw_handle();
 
     let dup_data = DuplicateExtentsData {
-        file_handle: src_handle,
+        file_handle: src_handle as isize,
         source_file_offset: 0,
         target_file_offset: 0,
         byte_count: aligned_size as i64,
@@ -447,7 +451,7 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
     // cluster-aligned offsets. bytes_returned is a valid output pointer.
     let ioctl_result = unsafe {
         DeviceIoControl(
-            dst_handle,
+            dst_handle as HANDLE,
             FSCTL_DUPLICATE_EXTENTS_TO_FILE,
             &dup_data as *const DuplicateExtentsData as *const std::ffi::c_void,
             std::mem::size_of::<DuplicateExtentsData>() as u32,
