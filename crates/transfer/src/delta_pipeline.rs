@@ -372,7 +372,7 @@ impl ReceiverDeltaPipeline for ThresholdDeltaPipeline {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "parallel"))]
 mod tests {
     use std::path::PathBuf;
 
