@@ -184,7 +184,6 @@ pub fn sanitize_revision(input: &str) -> String {
 mod tests {
     use super::*;
 
-    // Non-empty validation
     #[test]
     fn validate_non_empty_accepts_content() {
         assert!(validate_non_empty("hello").is_ok());
@@ -200,7 +199,6 @@ mod tests {
         assert_eq!(validate_non_empty("   "), Err(ValidationError::Empty));
     }
 
-    // Binary name validation
     #[test]
     fn validate_binary_name_accepts_simple() {
         assert!(validate_binary_name("oc-rsync").is_ok());
@@ -227,7 +225,6 @@ mod tests {
         ));
     }
 
-    // Absolute path validation
     #[test]
     fn validate_absolute_path_accepts_unix() {
         assert!(validate_absolute_path("/etc/rsyncd.conf").is_ok());
@@ -241,7 +238,6 @@ mod tests {
         ));
     }
 
-    // File name validation
     #[test]
     fn validate_has_file_name_accepts_file() {
         assert!(validate_has_file_name("/etc/rsyncd.conf").is_ok());
@@ -255,7 +251,6 @@ mod tests {
         ));
     }
 
-    // Path under dir validation
     #[test]
     fn validate_path_under_dir_accepts_child() {
         assert!(validate_path_under_dir("/etc/oc-rsync/config", "/etc/oc-rsync").is_ok());
@@ -277,7 +272,6 @@ mod tests {
         ));
     }
 
-    // Version validation
     #[test]
     fn validate_version_parses_simple() {
         let v = validate_version("3.4.1").unwrap();

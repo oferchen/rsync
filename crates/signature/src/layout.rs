@@ -1,5 +1,3 @@
-//! crates/signature/src/layout.rs
-//!
 //! Block sizing heuristics that mirror upstream rsync's `generator.c:sum_sizes_sqroot()`.
 
 use core::num::{NonZeroU8, NonZeroU32};

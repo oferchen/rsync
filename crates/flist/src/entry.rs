@@ -81,7 +81,6 @@ mod tests {
 
     #[test]
     fn entry_debug_format() {
-        // Create a temporary directory for testing
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
         let mut walker = FileListBuilder::new(root).build().unwrap();

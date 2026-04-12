@@ -451,8 +451,6 @@ mod tests {
         assert_eq!(buf.as_slice(), &[3]);
     }
 
-    // ==== Capacity Edge Case Tests ====
-
     #[test]
     fn capacity_one_buffer() {
         // Edge case: buffer with capacity 1

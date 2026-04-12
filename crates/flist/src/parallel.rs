@@ -1,5 +1,3 @@
-//! crates/flist/src/parallel.rs
-//!
 //! Parallel file list processing utilities using rayon.
 //!
 //! This module provides parallel versions of file list operations,

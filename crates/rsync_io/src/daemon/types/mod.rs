@@ -1,3 +1,5 @@
+//! Legacy daemon handshake types for `@RSYNCD:` protocol negotiation.
+
 mod handshake;
 mod parts;
 

@@ -192,8 +192,6 @@ impl Iterator for FileListWalker {
 
                 if let Some(name) = state.next_name() {
                     let full_path = state.fs_path.join(&name);
-                    // Use join() which is equivalent to clone()+push() but clearer.
-                    // When relative_prefix is empty, join() with name creates PathBuf from name.
                     let relative_path = state.relative_prefix.join(&name);
                     (full_path, relative_path, state.depth + 1)
                 } else {
@@ -254,8 +252,6 @@ impl DirectoryState {
     /// Returns the next entry name, taking ownership to avoid cloning.
     fn next_name(&mut self) -> Option<OsString> {
         if self.index < self.entries.len() {
-            // Take ownership of the entry to avoid cloning.
-            // We replace with empty OsString which is cheap (no allocation).
             let name = std::mem::take(&mut self.entries[self.index]);
             self.index += 1;
             Some(name)
@@ -278,8 +274,6 @@ fn absolutize(path: PathBuf) -> Result<PathBuf, FileListError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ==================== absolutize tests ====================
 
     #[test]
     fn absolutize_returns_absolute_path_unchanged() {
@@ -324,8 +318,6 @@ mod tests {
         let abs = result.unwrap();
         assert!(abs.is_absolute());
     }
-
-    // ==================== DirectoryState::next_name tests ====================
 
     #[test]
     fn directory_state_next_name_returns_none_when_empty() {
@@ -416,8 +408,6 @@ mod tests {
         assert!(debug.contains("/test"));
     }
 
-    // ==================== FileListWalker tests with filesystem ====================
-
     #[test]
     fn file_list_walker_walks_temp_directory() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -469,8 +459,6 @@ mod tests {
         assert!(entry.is_root);
         assert_eq!(entry.full_path, file_path);
     }
-
-    // ==================== DirectoryState sorting tests ====================
 
     /// Verifies that DirectoryState sorts entries correctly when the
     /// filesystem returns them in reverse order.

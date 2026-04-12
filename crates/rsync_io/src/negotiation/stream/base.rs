@@ -27,6 +27,8 @@ pub struct NegotiatedStream<R> {
     buffer: NegotiationBuffer,
 }
 
+/// Error message used when the connection closes before the negotiation
+/// prologue (binary or legacy `@RSYNCD:`) could be determined.
 pub const NEGOTIATION_PROLOGUE_UNDETERMINED_MSG: &str =
     "connection closed before rsync negotiation prologue was determined";
 
