@@ -138,8 +138,6 @@ mod tests {
         SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts())
     }
 
-    // ==== decision tests ====
-
     #[test]
     fn decision_returns_binary_for_binary_variant() {
         let parts = create_binary_parts();
@@ -151,8 +149,6 @@ mod tests {
         let parts = create_legacy_parts();
         assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
     }
-
-    // ==== is_binary tests ====
 
     #[test]
     fn is_binary_true_for_binary_variant() {
@@ -166,8 +162,6 @@ mod tests {
         assert!(!parts.is_binary());
     }
 
-    // ==== is_legacy tests ====
-
     #[test]
     fn is_legacy_true_for_legacy_variant() {
         let parts = create_legacy_parts();
@@ -179,8 +173,6 @@ mod tests {
         let parts = create_binary_parts();
         assert!(!parts.is_legacy());
     }
-
-    // ==== negotiated_protocol tests ====
 
     #[test]
     fn negotiated_protocol_returns_correct_value_for_binary() {
@@ -211,8 +203,6 @@ mod tests {
         assert_eq!(parts.negotiated_protocol().as_u8(), 30);
     }
 
-    // ==== remote_protocol tests ====
-
     #[test]
     fn remote_protocol_returns_clamped_value_for_binary() {
         let parts = create_binary_parts();
@@ -224,8 +214,6 @@ mod tests {
         let parts = create_legacy_parts();
         assert_eq!(parts.remote_protocol().as_u8(), 31);
     }
-
-    // ==== remote_advertised_protocol tests ====
 
     #[test]
     fn remote_advertised_protocol_returns_raw_value_for_binary() {
@@ -248,8 +236,6 @@ mod tests {
         let parts = create_legacy_parts();
         assert_eq!(parts.remote_advertised_protocol(), 31);
     }
-
-    // ==== local_advertised_protocol tests ====
 
     #[test]
     fn local_advertised_protocol_returns_value_for_binary() {
@@ -275,8 +261,6 @@ mod tests {
         assert_eq!(parts.local_advertised_protocol().as_u8(), 31);
     }
 
-    // ==== remote_advertisement tests ====
-
     #[test]
     fn remote_advertisement_returns_classification_for_binary() {
         let parts = create_binary_parts();
@@ -294,8 +278,6 @@ mod tests {
         assert!(adv.supported().is_some());
         assert_eq!(adv.supported().unwrap().as_u8(), 31);
     }
-
-    // ==== server_greeting tests ====
 
     #[test]
     fn server_greeting_none_for_binary() {
@@ -317,8 +299,6 @@ mod tests {
         // Subprotocol is a u32 (0 in our test case)
         assert_eq!(greeting.subprotocol(), 0);
     }
-
-    // ==== stream tests ====
 
     #[test]
     fn stream_returns_reference_for_binary() {
@@ -342,8 +322,6 @@ mod tests {
         let legacy = create_legacy_parts();
         assert_eq!(legacy.stream().decision(), legacy.decision());
     }
-
-    // ==== stream_mut tests ====
 
     #[test]
     fn stream_mut_returns_mutable_reference_for_binary() {

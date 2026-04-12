@@ -1,5 +1,3 @@
-//! crates/signature/src/file.rs
-//!
 //! Aggregated file signature container.
 
 use crate::block::SignatureBlock;

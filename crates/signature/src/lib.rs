@@ -1,8 +1,6 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 
-//! crates/signature/src/lib.rs
-//!
 //! File signature layout and generation for the Rust rsync implementation.
 //!
 //! This crate provides the core types and functions for computing rsync-compatible

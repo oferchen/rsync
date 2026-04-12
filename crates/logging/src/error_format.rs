@@ -194,8 +194,6 @@ macro_rules! rsync_warning_fmt {
 mod tests {
     use super::*;
 
-    // -- strip_repo_prefix tests --
-
     #[test]
     fn strips_prefix_when_crates_present() {
         let manifest = "/home/user/project/crates/logging";
@@ -246,8 +244,6 @@ mod tests {
             "crates/logging/src/lib.rs"
         );
     }
-
-    // -- format_rsync_error tests --
 
     #[test]
     fn error_format_matches_upstream() {
@@ -313,8 +309,6 @@ mod tests {
         assert!(result.contains("[client=1.0.0]"));
     }
 
-    // -- format_rsync_warning tests --
-
     #[test]
     fn warning_format_matches_upstream() {
         let result = format_rsync_warning(
@@ -346,8 +340,6 @@ mod tests {
         assert!(result.starts_with("rsync warning: "));
         assert!(!result.starts_with("rsync error: "));
     }
-
-    // -- macro integration tests --
 
     #[test]
     fn rsync_error_fmt_macro_captures_location() {

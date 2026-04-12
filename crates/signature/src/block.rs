@@ -1,5 +1,3 @@
-//! crates/signature/src/block.rs
-//!
 //! Individual signature block representation.
 
 use checksums::RollingDigest;

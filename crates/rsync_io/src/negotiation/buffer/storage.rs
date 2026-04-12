@@ -377,8 +377,6 @@ mod tests {
     use super::*;
     use std::io::IoSliceMut;
 
-    // ==== Construction and clamping ====
-
     #[test]
     fn new_stores_values() {
         let data = vec![1, 2, 3, 4, 5];
@@ -411,8 +409,6 @@ mod tests {
         assert_eq!(buf.buffered_consumed(), 0);
         assert!(buf.buffered().is_empty());
     }
-
-    // ==== Accessor methods ====
 
     #[test]
     fn sniffed_prefix_returns_correct_slice() {
@@ -486,8 +482,6 @@ mod tests {
         assert_eq!(buf.sniffed_prefix_remaining(), 0);
     }
 
-    // ==== copy_into ====
-
     #[test]
     fn copy_into_copies_and_advances_position() {
         let data = vec![1, 2, 3, 4, 5];
@@ -525,8 +519,6 @@ mod tests {
         assert_eq!(buf.copy_into(&mut dest), 0);
     }
 
-    // ==== consume ====
-
     #[test]
     fn consume_advances_position() {
         let data = vec![1, 2, 3, 4, 5];
@@ -552,8 +544,6 @@ mod tests {
         let leftover = buf.consume(10);
         assert_eq!(leftover, 10);
     }
-
-    // ==== copy methods ====
 
     #[test]
     fn copy_into_vec_copies_all_buffered() {
@@ -625,8 +615,6 @@ mod tests {
         assert_eq!(target, vec![4, 5]);
     }
 
-    // ==== vectored copy ====
-
     #[test]
     fn copy_into_vectored_spans_multiple_slices() {
         let data = vec![1, 2, 3, 4, 5, 6];
@@ -657,8 +645,6 @@ mod tests {
         assert_eq!(err.provided(), 2);
     }
 
-    // ==== into_raw_parts ====
-
     #[test]
     fn into_raw_parts_returns_components() {
         let data = vec![1, 2, 3, 4, 5];
@@ -668,8 +654,6 @@ mod tests {
         assert_eq!(pos, 2);
         assert_eq!(buffer, data);
     }
-
-    // ==== buffered_split ====
 
     #[test]
     fn buffered_split_returns_prefix_and_remainder() {
@@ -690,8 +674,6 @@ mod tests {
         assert_eq!(remainder, &[4, 5]);
     }
 
-    // ==== legacy prefix complete ====
-
     #[test]
     fn legacy_prefix_complete_true_when_enough() {
         let data = vec![0u8; 20];
@@ -705,8 +687,6 @@ mod tests {
         let buf = NegotiationBuffer::new(3, 0, data);
         assert!(!buf.legacy_prefix_complete());
     }
-
-    // ==== Clone and Debug ====
 
     #[test]
     fn clone_produces_independent_copy() {
@@ -723,8 +703,6 @@ mod tests {
         let debug = format!("{buf:?}");
         assert!(debug.contains("NegotiationBuffer"));
     }
-
-    // ==== Edge cases ====
 
     #[test]
     fn extend_remaining_into_vec_with_partial_consumption() {

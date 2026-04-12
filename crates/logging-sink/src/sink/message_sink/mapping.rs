@@ -56,7 +56,7 @@ impl<W> MessageSink<W> {
     ///
     /// The previous writer is returned to the caller so buffered diagnostics can be inspected or
     /// flushed before it is dropped. This avoids rebuilding the entire [`MessageSink`] when the
-    /// destination changes—for example, when switching from standard output to a log file mid-run.
+    /// destination changes -for example, when switching from standard output to a log file mid-run.
     /// The method performs an in-place swap, keeping the existing [`core::message::MessageScratch`] zeroed and
     /// reusing it for subsequent writes.
     #[must_use = "the returned writer contains diagnostics produced before the replacement"]

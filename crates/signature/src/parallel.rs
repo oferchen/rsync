@@ -1,5 +1,3 @@
-//! crates/signature/src/parallel.rs
-//!
 //! Parallel file signature generation using rayon.
 //!
 //! This module provides a parallel version of signature generation that

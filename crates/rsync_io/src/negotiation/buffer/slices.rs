@@ -337,8 +337,6 @@ impl<'a> IntoIterator for NegotiationBufferedSlices<'a> {
 mod tests {
     use super::*;
 
-    // ==== Construction ====
-
     #[test]
     fn new_with_both_slices() {
         let prefix = b"@RSYNCD:";
@@ -371,8 +369,6 @@ mod tests {
         assert_eq!(slices.len(), 0);
         assert!(slices.is_empty());
     }
-
-    // ==== Accessors ====
 
     #[test]
     fn as_slices_returns_populated_segments() {
@@ -417,8 +413,6 @@ mod tests {
         assert_eq!(slices3.segment_count(), 0);
     }
 
-    // ==== Iterator ====
-
     #[test]
     fn iter_yields_all_segments() {
         let prefix = b"abc";
@@ -449,8 +443,6 @@ mod tests {
         assert_eq!(collected, vec![b"ab".to_vec(), b"cd".to_vec()]);
     }
 
-    // ==== extend_vec ====
-
     #[test]
     fn extend_vec_appends_all_data() {
         let prefix = b"hello";
@@ -480,8 +472,6 @@ mod tests {
         assert_eq!(buffer, vec![1, 2, 3]); // unchanged
     }
 
-    // ==== to_vec ====
-
     #[test]
     fn to_vec_returns_all_data() {
         let prefix = b"@RSYNCD:";
@@ -497,8 +487,6 @@ mod tests {
         let vec = slices.to_vec().unwrap();
         assert!(vec.is_empty());
     }
-
-    // ==== copy_to_slice ====
 
     #[test]
     fn copy_to_slice_succeeds_with_sufficient_buffer() {
@@ -529,8 +517,6 @@ mod tests {
         assert_eq!(copied, 0);
     }
 
-    // ==== write_to ====
-
     #[test]
     fn write_to_writes_all_data() {
         let prefix = b"prefix";
@@ -557,16 +543,12 @@ mod tests {
         assert!(output.is_empty());
     }
 
-    // ==== AsRef ====
-
     #[test]
     fn as_ref_returns_io_slices() {
         let slices = NegotiationBufferedSlices::new(b"a", b"b");
         let io_slices: &[IoSlice<'_>] = slices.as_ref();
         assert_eq!(io_slices.len(), 2);
     }
-
-    // ==== Clone and Debug ====
 
     #[test]
     fn clone_produces_equivalent_copy() {
@@ -584,8 +566,6 @@ mod tests {
         let debug = format!("{slices:?}");
         assert!(debug.contains("NegotiationBufferedSlices"));
     }
-
-    // ==== Edge cases ====
 
     #[test]
     fn handles_large_segments() {
