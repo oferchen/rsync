@@ -138,9 +138,8 @@ where
                     .arguments(remainder)
                     .signal_flags(flags)
                     .build();
-                run_daemon(config).map_err(|error| {
-                    std::io::Error::new(std::io::ErrorKind::Other, error.message().to_string())
-                })
+                run_daemon(config)
+                    .map_err(|error| std::io::Error::other(error.message().to_string()))
             }))
         }
     };
