@@ -50,34 +50,49 @@ mod windows_impl {
     use std::os::windows::ffi::OsStrExt;
     use std::sync::Arc;
     use std::sync::OnceLock;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::Ordering;
 
     use windows::Win32::System::Services::{
         CloseServiceHandle, CreateServiceW, DeleteService, OpenSCManagerW, OpenServiceW,
         RegisterServiceCtrlHandlerW, SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS, SERVICE_AUTO_START,
         SERVICE_CONTROL_PARAMCHANGE, SERVICE_CONTROL_PRESHUTDOWN, SERVICE_CONTROL_SHUTDOWN,
         SERVICE_CONTROL_STOP, SERVICE_ERROR_NORMAL, SERVICE_RUNNING, SERVICE_START_PENDING,
-        SERVICE_STATUS, SERVICE_STOP_PENDING, SERVICE_STOPPED, SERVICE_TABLE_ENTRYW,
-        SERVICE_WIN32_OWN_PROCESS, SetServiceStatus, StartServiceCtrlDispatcherW,
+        SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE, SERVICE_STOP_PENDING, SERVICE_STOPPED,
+        SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS, SetServiceStatus,
+        StartServiceCtrlDispatcherW,
     };
-    use windows::core::{PCWSTR, w};
+    use windows::core::{PCWSTR, PWSTR};
 
-    use super::{
-        SERVICE_DESCRIPTION, SERVICE_DISPLAY_NAME, SERVICE_NAME, ServiceMainCallback,
-        ServiceStatusHandle,
-    };
+    use super::{SERVICE_DISPLAY_NAME, SERVICE_NAME, ServiceMainCallback, ServiceStatusHandle};
     use crate::signal::SignalFlags;
 
     /// Win32 error code indicating a service-specific exit code is present
     /// in `dwServiceSpecificExitCode`.
     const ERROR_SERVICE_SPECIFIC_ERROR: u32 = 1066;
 
+    /// Wrapper for `SERVICE_STATUS_HANDLE` that implements Send + Sync.
+    ///
+    /// `SERVICE_STATUS_HANDLE` is an opaque `*mut c_void` that Windows
+    /// guarantees valid for the process lifetime once obtained from
+    /// `RegisterServiceCtrlHandlerW`. The SCM dispatches control events
+    /// from arbitrary threads, so the handle must be shareable.
+    #[derive(Clone, Copy)]
+    struct SendSyncHandle(windows::Win32::System::Services::SERVICE_STATUS_HANDLE);
+
+    // SAFETY: SERVICE_STATUS_HANDLE is a Windows kernel handle (opaque
+    // *mut c_void). It is set once during RegisterServiceCtrlHandlerW and
+    // remains valid for the process lifetime. The SCM itself calls the
+    // control handler from different threads, so the handle is thread-safe
+    // by design.
+    #[allow(unsafe_code)]
+    unsafe impl Send for SendSyncHandle {}
+    #[allow(unsafe_code)]
+    unsafe impl Sync for SendSyncHandle {}
+
     // Global state shared between the service dispatcher callback and the
     // control handler. OnceLock ensures one-time initialization.
     static SERVICE_FLAGS: OnceLock<SignalFlags> = OnceLock::new();
-    static SERVICE_STATUS_HANDLE: OnceLock<
-        windows::Win32::System::Services::SERVICE_STATUS_HANDLE,
-    > = OnceLock::new();
+    static SERVICE_STATUS_HANDLE: OnceLock<SendSyncHandle> = OnceLock::new();
     static SERVICE_CALLBACK: OnceLock<std::sync::Mutex<Option<ServiceMainCallback>>> =
         OnceLock::new();
 
@@ -115,12 +130,12 @@ mod windows_impl {
 
         let service_table = [
             SERVICE_TABLE_ENTRYW {
-                lpServiceName: PCWSTR(service_name.as_ptr()),
+                lpServiceName: PWSTR(service_name.as_ptr() as *mut u16),
                 lpServiceProc: Some(service_main_entry),
             },
             // Null terminator entry.
             SERVICE_TABLE_ENTRYW {
-                lpServiceName: PCWSTR(std::ptr::null()),
+                lpServiceName: PWSTR(std::ptr::null_mut()),
                 lpServiceProc: None,
             },
         ];
@@ -160,7 +175,7 @@ mod windows_impl {
             Err(_) => return,
         };
 
-        let _ = SERVICE_STATUS_HANDLE.set(status_handle);
+        let _ = SERVICE_STATUS_HANDLE.set(SendSyncHandle(status_handle));
 
         // Create signal flags and store them globally for the control handler.
         let flags = SignalFlags::new();
@@ -205,17 +220,17 @@ mod windows_impl {
     unsafe extern "system" fn service_control_handler(control: u32) {
         if let Some(flags) = SERVICE_FLAGS.get() {
             match control {
-                x if x == SERVICE_CONTROL_STOP.0 || x == SERVICE_CONTROL_SHUTDOWN.0 => {
+                x if x == SERVICE_CONTROL_STOP || x == SERVICE_CONTROL_SHUTDOWN => {
                     flags.shutdown.store(true, Ordering::Relaxed);
                     // Report stop pending so SCM knows we're shutting down.
-                    if let Some(&handle) = SERVICE_STATUS_HANDLE.get() {
-                        let _ = report_status_raw(handle, SERVICE_STOP_PENDING, 0, 5000);
+                    if let Some(handle) = SERVICE_STATUS_HANDLE.get() {
+                        let _ = report_status_raw(handle.0, SERVICE_STOP_PENDING, 0, 5000);
                     }
                 }
-                x if x == SERVICE_CONTROL_PARAMCHANGE.0 => {
+                x if x == SERVICE_CONTROL_PARAMCHANGE => {
                     flags.reload_config.store(true, Ordering::Relaxed);
                 }
-                x if x == SERVICE_CONTROL_PRESHUTDOWN.0 => {
+                x if x == SERVICE_CONTROL_PRESHUTDOWN => {
                     flags.graceful_exit.store(true, Ordering::Relaxed);
                 }
                 _ => {}
@@ -227,7 +242,7 @@ mod windows_impl {
     #[allow(unsafe_code)]
     fn report_status_raw(
         handle: windows::Win32::System::Services::SERVICE_STATUS_HANDLE,
-        state: u32,
+        state: SERVICE_STATUS_CURRENT_STATE,
         exit_code: u32,
         wait_hint: u32,
     ) -> Result<(), io::Error> {
@@ -238,12 +253,12 @@ mod windows_impl {
 
         // When stopped or stop-pending, don't accept any controls.
         if state == SERVICE_STOPPED || state == SERVICE_STOP_PENDING {
-            accepted = windows::Win32::System::Services::SERVICE_ACCEPTED_CONTROLS(0);
+            accepted = 0;
         }
 
         let status = SERVICE_STATUS {
             dwServiceType: SERVICE_WIN32_OWN_PROCESS,
-            dwCurrentState: windows::Win32::System::Services::SERVICE_STATUS_CURRENT_STATE(state),
+            dwCurrentState: state,
             dwControlsAccepted: accepted,
             dwWin32ExitCode: if exit_code == 0 {
                 0
@@ -419,7 +434,7 @@ mod windows_impl {
         pub fn from_global() -> Option<Self> {
             SERVICE_STATUS_HANDLE
                 .get()
-                .map(|&handle| Self { inner: handle })
+                .map(|wrapper| Self { inner: wrapper.0 })
         }
 
         /// Reports `SERVICE_RUNNING` to the SCM.
