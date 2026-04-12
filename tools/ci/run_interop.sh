@@ -1673,35 +1673,12 @@ run_ssh_interop_test() {
   return 0
 }
 
-# Remaining known failures:
-# All up:* forced-protocol-28 tests fail with protocol incompatibility (code 2).
-# This is a pre-existing regression masked by master CI failing on a different
-# check (duplicate test function). Needs investigation in a separate PR.
-KNOWN_FAILURES=(
-  # (none outside protocol-specific handling below)
-)
+# Source shared known failure definitions.
+# shellcheck source=tools/ci/known_failures.conf
+source "$(dirname "${BASH_SOURCE[0]}")/known_failures.conf"
 
 is_known_failure() {
-  local direction=$1 name=$2 forced_proto=$3
-  local key="${direction}:${name}"
-  for kf in "${KNOWN_FAILURES[@]}"; do
-    [[ "$kf" == "$key" ]] && return 0
-  done
-  # Protocol-specific known failures: features that upstream rsync itself
-  # rejects when forced to a lower protocol version.
-  if [[ -n "$forced_proto" && "$forced_proto" -le 29 ]]; then
-    # ACLs and xattrs require protocol >= 30 (upstream compat.c:655-668).
-    # compress-choice (zstd/lz4) requires negotiation which needs protocol >= 30.
-    case "$name" in
-      acls|xattrs|compress-zstd|compress-lz4) return 0 ;;
-    esac
-  fi
-  # All upstream-to-oc forced-protocol-28 tests fail with protocol
-  # incompatibility (code 2 at rsync.c:427). Pre-existing regression.
-  if [[ "$direction" == "up" && -n "$forced_proto" && "$forced_proto" -eq 28 ]]; then
-    return 0
-  fi
-  return 1
+  is_known_failure_from_conf "$@"
 }
 
 # ============================================================================
