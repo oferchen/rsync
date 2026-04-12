@@ -40,21 +40,10 @@ find_upstream_binary() {
 echo "Ensuring upstream rsync versions are available..."
 bash "$interop_script" build-only 2>/dev/null || true
 
-# Known failures - mirrors KNOWN_FAILURES from run_interop.sh
-# Format: direction:name|description|test_method
-# test_method: "daemon" for scenario-based, "standalone" for standalone tests
-ENTRIES=(
-  "oc:acls|ACLs push to upstream daemon|daemon"
-  "oc:xattrs|xattrs push to upstream daemon|daemon"
-  "up:protocol-31|protocol-31 pull from upstream 3.0.9|daemon"
-  "up:acls|ACLs pull from upstream daemon|daemon"
-  "up:xattrs|xattrs pull from upstream daemon|daemon"
-  "standalone:write-batch-read-batch|batch file roundtrip|standalone"
-  "standalone:info-progress2|progress2 output|standalone"
-  "standalone:large-file-2gb|large file transfer|standalone"
-  "standalone:file-vanished|vanished file handling|standalone"
-  "standalone:iconv|iconv charset conversion|standalone"
-)
+# Source shared known failure definitions.
+# shellcheck source=tools/ci/known_failures.conf
+source "$(dirname "${BASH_SOURCE[0]}")/known_failures.conf"
+ENTRIES=("${DASHBOARD_ENTRIES[@]}")
 
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
@@ -352,7 +341,7 @@ output_markdown() {
   echo "**Summary:** ${fixed} fixed, ${failing} still failing, ${skipped} skipped out of ${total} tracked failures"
   echo ""
   if [[ $fixed -gt 0 ]]; then
-    echo "> **Action needed:** ${fixed} known failure(s) are now passing. Consider removing them from \`KNOWN_FAILURES\` in \`tools/ci/run_interop.sh\`."
+    echo "> **Action needed:** ${fixed} known failure(s) are now passing. Consider removing them from \`tools/ci/known_failures.conf\`."
   fi
 }
 
