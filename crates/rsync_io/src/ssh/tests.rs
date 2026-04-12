@@ -474,14 +474,21 @@ fn drop_child_handle_kills_running_process() {
 
 #[test]
 fn forces_aes_gcm_ciphers_when_explicitly_enabled() {
+    use super::builder::has_hardware_aes;
+
     let mut command = SshCommand::new("example.com");
     command.set_prefer_aes_gcm(Some(true));
 
     let (_, args) = command.command_parts_for_testing();
     let rendered = args_to_strings(&args);
 
-    assert!(rendered.contains(&"-c".to_owned()));
-    assert!(rendered.contains(&"aes128-gcm@openssh.com,aes256-gcm@openssh.com".to_owned()));
+    if has_hardware_aes() {
+        assert!(rendered.contains(&"-c".to_owned()));
+        assert!(rendered.contains(&"aes128-gcm@openssh.com,aes256-gcm@openssh.com".to_owned()));
+    } else {
+        // Without hardware AES, cipher injection is skipped even when preferred.
+        assert!(!rendered.contains(&"-c".to_owned()));
+    }
 }
 
 #[test]
@@ -1213,5 +1220,35 @@ fn child_handle_wait_with_stderr_surfaces_error_after_split() {
     assert!(
         text.contains("Permission denied"),
         "stderr should contain the SSH error message, got: {text}"
+    );
+}
+
+#[test]
+fn has_hardware_aes_is_consistent() {
+    use super::builder::has_hardware_aes;
+
+    let first = has_hardware_aes();
+    let second = has_hardware_aes();
+    assert_eq!(first, second, "cached result must be stable across calls");
+}
+
+#[test]
+fn aes_gcm_injection_requires_hardware_aes() {
+    use super::builder::has_hardware_aes;
+
+    // When hardware AES is absent, cipher injection must be skipped even
+    // with `prefer_aes_gcm = Some(true)`. On CI hosts with hardware AES,
+    // this test verifies that injection proceeds as expected.
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(true));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    let has_cipher_flag = rendered.contains(&"-c".to_owned());
+
+    assert_eq!(
+        has_cipher_flag,
+        has_hardware_aes(),
+        "cipher injection should match hardware AES availability"
     );
 }
