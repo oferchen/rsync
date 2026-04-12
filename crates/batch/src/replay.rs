@@ -889,17 +889,6 @@ fn choose_block_length(file_size: u64) -> usize {
     sqrt.clamp(MIN_BLOCK, MAX_BLOCK)
 }
 
-/// Returns the default xfer checksum length for batch replay.
-///
-/// upstream: `checksum.c:188` - `xfer_sum_len = csum_len_for_type(xfer_sum_nni->num, 0)`.
-/// Batch files don't record the negotiated checksum algorithm. For all
-/// supported protocols (28-32), the default xfer checksum is MD4, MD5, or
-/// XXH3-128 - all produce 16-byte digests.
-fn default_xfer_sum_len(protocol_version: i32) -> usize {
-    let _ = protocol_version;
-    16
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

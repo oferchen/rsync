@@ -672,8 +672,6 @@ fn error_display_includes_path_and_message() {
     assert!(display.contains("io error"));
 }
 
-
-
 #[cfg(unix)]
 #[test]
 fn copy_links_resolves_file_symlink_to_regular_file() {
