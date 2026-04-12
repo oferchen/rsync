@@ -27,6 +27,7 @@ use std::sync::atomic::AtomicBool;
 ///
 /// upstream: main.c - signal handler setup for SIGPIPE, SIGHUP, SIGTERM,
 /// SIGUSR1, SIGUSR2.
+#[derive(Clone, Debug)]
 pub struct SignalFlags {
     /// Reload configuration (SIGHUP on Unix).
     pub reload_config: Arc<AtomicBool>,

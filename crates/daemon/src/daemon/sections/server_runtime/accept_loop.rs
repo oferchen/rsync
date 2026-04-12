@@ -8,20 +8,27 @@
 ///
 /// See `docs/DAEMON_PROCESS_MODEL.md` for details on the thread-vs-fork
 /// trade-offs.
-fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
-    // Register signal handlers before entering the accept loop so SIGPIPE is
+fn serve_connections(
+    options: RuntimeOptions,
+    external_signal_flags: Option<platform::signal::SignalFlags>,
+) -> Result<(), DaemonError> {
+    // Use externally injected signal flags (from the Windows Service dispatcher)
+    // when available, otherwise register platform signal handlers so SIGPIPE is
     // ignored and SIGHUP/SIGTERM/SIGINT flags are captured from the start.
     // upstream: main.c SIGACT(SIGPIPE, SIG_IGN) and rsync_panic_handler setup.
-    let signal_flags = register_signal_handlers().map_err(|error| {
-        DaemonError::new(
-            FEATURE_UNAVAILABLE_EXIT_CODE,
-            rsync_error!(
+    let signal_flags = match external_signal_flags {
+        Some(flags) => SignalFlags::from(flags),
+        None => register_signal_handlers().map_err(|error| {
+            DaemonError::new(
                 FEATURE_UNAVAILABLE_EXIT_CODE,
-                format!("failed to register signal handlers: {error}")
+                rsync_error!(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    format!("failed to register signal handlers: {error}")
+                )
+                .with_role(Role::Daemon),
             )
-            .with_role(Role::Daemon),
-        )
-    })?;
+        })?,
+    };
 
     let manifest = manifest();
     let version = manifest.rust_version();
