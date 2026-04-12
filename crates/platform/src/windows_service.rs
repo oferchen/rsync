@@ -63,9 +63,7 @@ mod windows_impl {
     };
     use windows::core::PCWSTR;
 
-    use super::{
-        SERVICE_DISPLAY_NAME, SERVICE_NAME, ServiceMainCallback, ServiceStatusHandle,
-    };
+    use super::{SERVICE_DISPLAY_NAME, SERVICE_NAME, ServiceMainCallback, ServiceStatusHandle};
     use crate::signal::SignalFlags;
 
     /// Win32 error code indicating a service-specific exit code is present
