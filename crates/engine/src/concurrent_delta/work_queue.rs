@@ -155,8 +155,9 @@ impl WorkQueueReceiver {
         R: Send,
     {
         let num_threads = rayon::current_num_threads();
-        let shards: Vec<std::sync::Mutex<Vec<R>>> =
-            (0..num_threads).map(|_| std::sync::Mutex::new(Vec::new())).collect();
+        let shards: Vec<std::sync::Mutex<Vec<R>>> = (0..num_threads)
+            .map(|_| std::sync::Mutex::new(Vec::new()))
+            .collect();
 
         rayon::scope(|s| {
             for work in self.into_iter() {
