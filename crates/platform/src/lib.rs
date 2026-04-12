@@ -32,3 +32,4 @@ pub mod name_resolution;
 pub mod privilege;
 pub mod secrets;
 pub mod signal;
+pub mod windows_service;

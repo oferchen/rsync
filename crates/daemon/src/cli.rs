@@ -22,7 +22,10 @@ use logging_sink::MessageSink;
 
 use crate::{
     config::DaemonConfig,
-    daemon::{MAX_EXIT_CODE, ParsedArgs, parse_args, render_help, run_daemon, write_message},
+    daemon::{
+        MAX_EXIT_CODE, ParsedArgs, ServiceAction, parse_args, render_help, run_daemon,
+        write_message,
+    },
 };
 
 /// Runs the daemon CLI using the provided argument iterator and output handles.
@@ -75,6 +78,11 @@ where
         return 0;
     }
 
+    // Handle Windows Service management actions before entering the daemon loop.
+    if let Some(action) = parsed.service_action {
+        return execute_service_action(action, stdout, stderr);
+    }
+
     let config = DaemonConfig::builder()
         .brand(parsed.program_name.brand())
         .arguments(parsed.remainder)
@@ -88,6 +96,58 @@ where
                 let _ = writeln!(stderr.writer_mut(), "{message}");
             }
             error.exit_code()
+        }
+    }
+}
+
+/// Executes a Windows Service management action (install, uninstall, or run as service).
+///
+/// On non-Windows platforms, these actions return a descriptive error. On Windows,
+/// they delegate to `platform::windows_service` for SCM integration.
+fn execute_service_action<Out, Err>(
+    action: ServiceAction,
+    stdout: &mut Out,
+    stderr: &mut MessageSink<Err>,
+) -> i32
+where
+    Out: Write,
+    Err: Write,
+{
+    let result = match action {
+        ServiceAction::Install => platform::windows_service::install_service().map(|()| {
+            let _ = writeln!(
+                stdout,
+                "Service '{}' installed successfully.",
+                platform::windows_service::SERVICE_NAME
+            );
+        }),
+        ServiceAction::Uninstall => platform::windows_service::uninstall_service().map(|()| {
+            let _ = writeln!(
+                stdout,
+                "Service '{}' removed successfully.",
+                platform::windows_service::SERVICE_NAME
+            );
+        }),
+        ServiceAction::RunAsService => {
+            platform::windows_service::run_service_dispatcher(Box::new(|_flags| {
+                // The service callback receives SignalFlags wired to the SCM
+                // control handler. A full integration would pass these to
+                // serve_connections() via DaemonConfig. For now, the service
+                // starts but the accept loop integration is deferred until
+                // the DaemonConfig can carry SignalFlags.
+                Ok(())
+            }))
+        }
+    };
+
+    match result {
+        Ok(()) => 0,
+        Err(error) => {
+            let message = rsync_error!(1, "{error}").with_role(Role::Daemon);
+            if write_message(&message, stderr).is_err() {
+                let _ = writeln!(stderr.writer_mut(), "{error}");
+            }
+            1
         }
     }
 }
@@ -139,5 +199,64 @@ mod tests {
         let result = run(["oc-rsyncd", "--version"], &mut stdout, &mut stderr);
         assert_eq!(result, 0);
         assert!(!stdout.is_empty());
+    }
+
+    #[test]
+    fn parse_args_windows_service_flag() {
+        use crate::daemon::{ServiceAction, parse_args};
+        let parsed = parse_args(["oc-rsyncd", "--windows-service"]).unwrap();
+        assert_eq!(parsed.service_action, Some(ServiceAction::RunAsService));
+    }
+
+    #[test]
+    fn parse_args_install_service_flag() {
+        use crate::daemon::{ServiceAction, parse_args};
+        let parsed = parse_args(["oc-rsyncd", "--install-service"]).unwrap();
+        assert_eq!(parsed.service_action, Some(ServiceAction::Install));
+    }
+
+    #[test]
+    fn parse_args_uninstall_service_flag() {
+        use crate::daemon::{ServiceAction, parse_args};
+        let parsed = parse_args(["oc-rsyncd", "--uninstall-service"]).unwrap();
+        assert_eq!(parsed.service_action, Some(ServiceAction::Uninstall));
+    }
+
+    #[test]
+    fn parse_args_no_service_flag() {
+        use crate::daemon::parse_args;
+        let parsed = parse_args(["oc-rsyncd"]).unwrap();
+        assert_eq!(parsed.service_action, None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn install_service_returns_error_on_non_windows() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run(["oc-rsyncd", "--install-service"], &mut stdout, &mut stderr);
+        assert_eq!(result, 1);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn uninstall_service_returns_error_on_non_windows() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run(
+            ["oc-rsyncd", "--uninstall-service"],
+            &mut stdout,
+            &mut stderr,
+        );
+        assert_eq!(result, 1);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn windows_service_returns_error_on_non_windows() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run(["oc-rsyncd", "--windows-service"], &mut stdout, &mut stderr);
+        assert_eq!(result, 1);
     }
 }
