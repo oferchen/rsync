@@ -11,14 +11,31 @@
 use std::ffi::OsString;
 
 use core::branding::Brand;
+use platform::signal::SignalFlags;
 
 /// Configuration describing the requested daemon operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct DaemonConfig {
     brand: Brand,
     arguments: Vec<OsString>,
     load_default_paths: bool,
+    /// External signal flags injected by the Windows Service dispatcher.
+    ///
+    /// When running as a Windows service, the SCM control handler sets these
+    /// flags in response to stop/shutdown/paramchange events. When `None`,
+    /// the daemon registers its own platform signal handlers on startup.
+    signal_flags: Option<SignalFlags>,
 }
+
+impl PartialEq for DaemonConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.brand == other.brand
+            && self.arguments == other.arguments
+            && self.load_default_paths == other.load_default_paths
+    }
+}
+
+impl Eq for DaemonConfig {}
 
 impl DaemonConfig {
     /// Creates a new [`DaemonConfigBuilder`].
@@ -46,6 +63,16 @@ impl DaemonConfig {
         self.load_default_paths
     }
 
+    /// Returns externally injected signal flags, if present.
+    ///
+    /// When running as a Windows service, the SCM control handler writes to
+    /// these flags. The daemon accept loop uses them instead of registering
+    /// its own platform signal handlers.
+    #[must_use]
+    pub fn take_signal_flags(&mut self) -> Option<SignalFlags> {
+        self.signal_flags.take()
+    }
+
     /// Reports whether any daemon-specific arguments were provided.
     #[must_use]
     pub const fn has_runtime_request(&self) -> bool {
@@ -54,12 +81,23 @@ impl DaemonConfig {
 }
 
 /// Builder used to assemble a [`DaemonConfig`].
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct DaemonConfigBuilder {
     brand: Brand,
     arguments: Vec<OsString>,
     load_default_paths: bool,
+    signal_flags: Option<SignalFlags>,
 }
+
+impl PartialEq for DaemonConfigBuilder {
+    fn eq(&self, other: &Self) -> bool {
+        self.brand == other.brand
+            && self.arguments == other.arguments
+            && self.load_default_paths == other.load_default_paths
+    }
+}
+
+impl Eq for DaemonConfigBuilder {}
 
 impl Default for DaemonConfigBuilder {
     fn default() -> Self {
@@ -67,6 +105,7 @@ impl Default for DaemonConfigBuilder {
             brand: Brand::Oc,
             arguments: Vec::new(),
             load_default_paths: true,
+            signal_flags: None,
         }
     }
 }
@@ -97,6 +136,17 @@ impl DaemonConfigBuilder {
         self
     }
 
+    /// Injects external signal flags from the Windows Service dispatcher.
+    ///
+    /// When set, the daemon accept loop uses these flags instead of
+    /// registering its own platform signal handlers. The SCM control handler
+    /// writes to these flags in response to stop/shutdown/paramchange events.
+    #[must_use]
+    pub fn signal_flags(mut self, flags: SignalFlags) -> Self {
+        self.signal_flags = Some(flags);
+        self
+    }
+
     /// Finalises the builder and constructs the [`DaemonConfig`].
     #[must_use]
     pub fn build(self) -> DaemonConfig {
@@ -104,6 +154,7 @@ impl DaemonConfigBuilder {
             brand: self.brand,
             arguments: self.arguments,
             load_default_paths: self.load_default_paths,
+            signal_flags: self.signal_flags,
         }
     }
 }
@@ -185,6 +236,39 @@ mod tests {
             assert!(debug.contains("DaemonConfig"));
             assert!(debug.contains("brand"));
         }
+
+        #[test]
+        fn builder_default_has_no_signal_flags() {
+            let mut config = DaemonConfig::builder().build();
+            assert!(config.take_signal_flags().is_none());
+        }
+
+        #[test]
+        fn builder_with_signal_flags() {
+            let flags = SignalFlags::new();
+            let mut config = DaemonConfig::builder().signal_flags(flags).build();
+            let taken = config.take_signal_flags();
+            assert!(taken.is_some());
+        }
+
+        #[test]
+        fn take_signal_flags_returns_none_on_second_call() {
+            let flags = SignalFlags::new();
+            let mut config = DaemonConfig::builder().signal_flags(flags).build();
+            assert!(config.take_signal_flags().is_some());
+            assert!(config.take_signal_flags().is_none());
+        }
+
+        #[test]
+        fn signal_flags_share_atomics_with_original() {
+            use std::sync::atomic::Ordering;
+            let flags = SignalFlags::new();
+            let shutdown = flags.shutdown.clone();
+            let mut config = DaemonConfig::builder().signal_flags(flags).build();
+            let taken = config.take_signal_flags().unwrap();
+            shutdown.store(true, Ordering::Relaxed);
+            assert!(taken.shutdown.load(Ordering::Relaxed));
+        }
     }
 
     mod daemon_config_builder_tests {
@@ -230,6 +314,20 @@ mod tests {
 
             assert_eq!(config.arguments().len(), 1);
             assert_eq!(config.arguments()[0], "--once");
+        }
+
+        #[test]
+        fn signal_flags_chained_with_other_options() {
+            let flags = SignalFlags::new();
+            let mut config = DaemonConfig::builder()
+                .brand(Brand::Upstream)
+                .arguments(["--port", "8873"])
+                .signal_flags(flags)
+                .build();
+
+            assert_eq!(config.brand(), Brand::Upstream);
+            assert_eq!(config.arguments().len(), 2);
+            assert!(config.take_signal_flags().is_some());
         }
     }
 }

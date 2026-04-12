@@ -168,13 +168,14 @@ include!("daemon/sections/group_expansion.rs");
 /// Returns a `DaemonError` if option parsing, config loading, or socket
 /// binding fails.
 #[cfg_attr(feature = "tracing", instrument(skip(config), name = "daemon_run"))]
-pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
+pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
+    let external_signal_flags = config.take_signal_flags();
     let options = RuntimeOptions::parse_with_brand(
         config.arguments(),
         config.brand(),
         config.load_default_paths(),
     )?;
-    serve_connections(options)
+    serve_connections(options, external_signal_flags)
 }
 
 include!("daemon/sections/cli_args.rs");
