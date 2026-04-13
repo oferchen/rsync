@@ -24,6 +24,7 @@ fn assembles_minimal_command_with_batch_mode() {
             "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
             "example.com".to_owned(),
         ]
     );
@@ -50,6 +51,7 @@ fn assembles_command_with_user_port_and_remote_args() {
             "2222".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
             "-vvv".to_owned(),
             "backup@rsync.example.com".to_owned(),
             "rsync".to_owned(),
@@ -70,6 +72,7 @@ fn disables_batch_mode_when_requested() {
         vec![
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
             "example.com".to_owned(),
         ]
     );
@@ -86,6 +89,7 @@ fn wraps_ipv6_hosts_in_brackets() {
             "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
             "[2001:db8::1]".to_owned(),
         ]
     );
@@ -104,6 +108,7 @@ fn wraps_ipv6_hosts_with_usernames() {
             "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
             "backup@[2001:db8::1]".to_owned(),
         ]
     );
@@ -122,6 +127,7 @@ fn preserves_explicit_bracketed_ipv6_literals() {
             "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
             "backup@[2001:db8::1]".to_owned(),
         ]
     );
@@ -140,6 +146,7 @@ fn command_parts_skip_target_when_host_and_user_missing() {
             "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
             "rsync".to_owned(),
         ]
     );
@@ -159,6 +166,7 @@ fn target_override_supersedes_computed_target() {
             "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
             "custom-target".to_owned(),
         ]
     );
@@ -178,6 +186,7 @@ fn empty_target_override_suppresses_target_argument() {
             "-oBatchMode=yes".to_owned(),
             "-oServerAliveInterval=20".to_owned(),
             "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
             "rsync".to_owned(),
         ]
     );
@@ -1250,5 +1259,127 @@ fn aes_gcm_injection_requires_hardware_aes() {
         has_cipher_flag,
         has_hardware_aes(),
         "cipher injection should match hardware AES availability"
+    );
+}
+
+// --- ConnectTimeout injection tests ---
+
+#[test]
+fn connect_timeout_injected_by_default() {
+    let command = SshCommand::new("example.com");
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    assert!(
+        rendered.contains(&"-oConnectTimeout=30".to_owned()),
+        "default 30s connect timeout should be injected: {rendered:?}"
+    );
+}
+
+#[test]
+fn connect_timeout_custom_value() {
+    let mut command = SshCommand::new("example.com");
+    command.set_connect_timeout(Some(std::time::Duration::from_secs(60)));
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    assert!(
+        rendered.contains(&"-oConnectTimeout=60".to_owned()),
+        "custom 60s connect timeout should be injected: {rendered:?}"
+    );
+}
+
+#[test]
+fn connect_timeout_disabled_when_none() {
+    let mut command = SshCommand::new("example.com");
+    command.set_connect_timeout(None);
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    assert!(
+        !rendered.iter().any(|a| a.contains("ConnectTimeout")),
+        "no ConnectTimeout when disabled: {rendered:?}"
+    );
+}
+
+#[test]
+fn connect_timeout_not_injected_for_non_ssh_program() {
+    let mut command = SshCommand::new("example.com");
+    command.set_program("rsh");
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    assert!(
+        !rendered.iter().any(|a| a.contains("ConnectTimeout")),
+        "ConnectTimeout should not be injected for non-SSH program: {rendered:?}"
+    );
+}
+
+#[test]
+fn connect_timeout_not_injected_when_user_specified() {
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-oConnectTimeout=10");
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    let count = rendered
+        .iter()
+        .filter(|a| a.contains("ConnectTimeout"))
+        .count();
+    assert_eq!(
+        count, 1,
+        "user-specified ConnectTimeout should not be duplicated: {rendered:?}"
+    );
+    assert!(
+        rendered.contains(&"-oConnectTimeout=10".to_owned()),
+        "user value should be preserved: {rendered:?}"
+    );
+}
+
+#[test]
+fn connect_timeout_not_injected_when_user_specified_case_insensitive() {
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-o connecttimeout=15");
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    let count = rendered
+        .iter()
+        .filter(|a| a.to_ascii_lowercase().contains("connecttimeout"))
+        .count();
+    assert_eq!(
+        count, 1,
+        "case-insensitive match should prevent duplicate: {rendered:?}"
+    );
+}
+
+#[test]
+fn connect_timeout_rounds_up_subsecond_durations() {
+    let mut command = SshCommand::new("example.com");
+    // 10.1 seconds should round up to 11
+    command.set_connect_timeout(Some(std::time::Duration::from_millis(10_100)));
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    assert!(
+        rendered.contains(&"-oConnectTimeout=11".to_owned()),
+        "10.1s should round up to 11: {rendered:?}"
+    );
+}
+
+#[test]
+fn connect_timeout_exact_seconds_not_rounded() {
+    let mut command = SshCommand::new("example.com");
+    command.set_connect_timeout(Some(std::time::Duration::from_secs(45)));
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    assert!(
+        rendered.contains(&"-oConnectTimeout=45".to_owned()),
+        "exact 45s should not round up: {rendered:?}"
+    );
+}
+
+#[test]
+fn connect_timeout_zero_duration() {
+    let mut command = SshCommand::new("example.com");
+    command.set_connect_timeout(Some(std::time::Duration::from_secs(0)));
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    assert!(
+        rendered.contains(&"-oConnectTimeout=0".to_owned()),
+        "zero duration should produce ConnectTimeout=0: {rendered:?}"
     );
 }
