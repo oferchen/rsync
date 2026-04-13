@@ -48,7 +48,6 @@ mod windows_impl {
     use std::ffi::OsString;
     use std::io;
     use std::os::windows::ffi::OsStrExt;
-    use std::sync::Arc;
     use std::sync::OnceLock;
     use std::sync::atomic::Ordering;
 
@@ -179,12 +178,7 @@ mod windows_impl {
 
         // Create signal flags and store them globally for the control handler.
         let flags = SignalFlags::new();
-        let _ = SERVICE_FLAGS.set(SignalFlags {
-            reload_config: Arc::clone(&flags.reload_config),
-            shutdown: Arc::clone(&flags.shutdown),
-            graceful_exit: Arc::clone(&flags.graceful_exit),
-            progress_dump: Arc::clone(&flags.progress_dump),
-        });
+        let _ = SERVICE_FLAGS.set(flags.clone());
 
         // Report SERVICE_START_PENDING.
         let _ = report_status_raw(status_handle, SERVICE_START_PENDING, 0, 3000);
