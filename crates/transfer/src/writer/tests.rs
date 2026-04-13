@@ -649,8 +649,7 @@ fn server_writer_compressed_batch_recorder_captures_compressed() {
     let recorded = recorder_buf.lock().unwrap();
     // The recorded data is compressed, so it differs from the original.
     assert_ne!(
-        &*recorded,
-        b"batch test data payload here",
+        &*recorded, b"batch test data payload here",
         "batch recorder on compressed writer must capture compressed wire bytes"
     );
     assert!(
@@ -684,8 +683,7 @@ fn server_writer_batch_recorder_stays_on_mux_after_compression_activation() {
     let recorded = recorder_buf.lock().unwrap();
     // Recorded data is compressed wire bytes
     assert_ne!(
-        &*recorded,
-        b"stays on mux test data",
+        &*recorded, b"stays on mux test data",
         "recorder on mux layer should capture compressed wire bytes"
     );
     assert!(!recorded.is_empty());
