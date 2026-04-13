@@ -289,12 +289,8 @@ mod tests {
     fn write_batch_header_never_sets_do_compression() {
         let temp = tempfile::TempDir::new().unwrap();
         let path = temp.path().join("test.batch");
-        let batch_cfg = BatchConfig::new(
-            BatchMode::Write,
-            path.to_string_lossy().to_string(),
-            31,
-        )
-        .with_checksum_seed(1);
+        let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
+            .with_checksum_seed(1);
 
         let writer_arc = create_batch_writer(&batch_cfg).unwrap();
 
@@ -303,11 +299,7 @@ mod tests {
         write_batch_header(&writer_arc, &config).unwrap();
 
         // Read back and verify
-        let read_cfg = BatchConfig::new(
-            BatchMode::Read,
-            path.to_string_lossy().to_string(),
-            31,
-        );
+        let read_cfg = BatchConfig::new(BatchMode::Read, path.to_string_lossy().to_string(), 31);
         let mut reader = engine::batch::BatchReader::new(read_cfg).unwrap();
         let flags = reader.read_header().unwrap();
         assert!(
