@@ -300,29 +300,101 @@ fn read_patterns_from_file(path: &Path) -> Result<Vec<String>, io::Error> {
 
 /// Parses a single daemon filter token in filter rule syntax.
 ///
-/// Supports short-form prefixes: `+` (include), `-` (exclude).
-/// The pattern follows the prefix after optional whitespace.
+/// Supports both short-form prefixes (`+`, `-`) and long-form keyword
+/// prefixes (`include`, `exclude`, `hide`, `show`, `protect`, `risk`,
+/// `clear`, `dir-merge`, `merge`). The pattern follows the prefix after
+/// optional whitespace.
+///
 /// Returns `None` for unrecognised tokens (silently skipped, matching
 /// upstream's lenient parsing of daemon filter strings).
+///
+/// # Upstream Reference
+///
+/// - `exclude.c:1134-1178` - long-form keyword to short-form char mapping
 fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
+    // Short-form prefixes: +, -
     if let Some(pattern) = token.strip_prefix("+ ").or_else(|| token.strip_prefix('+')) {
-        let pattern = pattern.trim();
-        if pattern.is_empty() {
-            return None;
+        return non_empty_pattern_rule(pattern, true);
+    }
+    if let Some(pattern) = token.strip_prefix("- ").or_else(|| token.strip_prefix('-')) {
+        return non_empty_pattern_rule(pattern, false);
+    }
+
+    // upstream: exclude.c:1134-1178 - keyword-to-short-form mapping.
+    // (keyword, is_include, sender_side, receiver_side)
+    const KEYWORDS: &[(&str, bool, bool, bool)] = &[
+        ("exclude", false, false, false),
+        ("include", true, false, false),
+        ("hide", false, true, false),  // sender-side exclude
+        ("show", true, true, false),   // sender-side include
+        ("protect", false, false, true), // receiver-side exclude
+        ("risk", true, false, true),   // receiver-side include
+    ];
+
+    for &(keyword, is_include, sender, receiver) in KEYWORDS {
+        if let Some(pattern) = strip_keyword_prefix(token, keyword) {
+            let pattern = pattern.trim();
+            if pattern.is_empty() {
+                return None;
+            }
+            let mut rule = build_pattern_rule(pattern, is_include);
+            rule.sender_side = sender;
+            rule.receiver_side = receiver;
+            return Some(rule);
         }
-        Some(build_pattern_rule(pattern, true))
-    } else if let Some(pattern) = token.strip_prefix("- ").or_else(|| token.strip_prefix('-')) {
-        let pattern = pattern.trim();
-        if pattern.is_empty() {
-            return None;
-        }
-        Some(build_pattern_rule(pattern, false))
+    }
+
+    if strip_keyword_prefix(token, "clear").is_some() {
+        return Some(FilterRuleWireFormat {
+            rule_type: protocol::filters::RuleType::Clear,
+            pattern: String::new(),
+            anchored: false,
+            directory_only: false,
+            no_inherit: false,
+            cvs_exclude: false,
+            word_split: false,
+            exclude_from_merge: false,
+            xattr_only: false,
+            sender_side: false,
+            receiver_side: false,
+            perishable: false,
+            negate: false,
+        });
+    }
+
+    // Bare pattern defaults to exclude (upstream behaviour)
+    if token.is_empty() {
+        return None;
+    }
+    Some(build_pattern_rule(token, false))
+}
+
+/// Returns a rule if the trimmed pattern is non-empty, `None` otherwise.
+fn non_empty_pattern_rule(pattern: &str, is_include: bool) -> Option<FilterRuleWireFormat> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return None;
+    }
+    Some(build_pattern_rule(pattern, is_include))
+}
+
+/// Strips a keyword prefix from a token, returning the remainder.
+///
+/// The keyword must be followed by whitespace or a comma separator.
+/// Returns `None` if the token doesn't start with the keyword.
+///
+/// upstream: exclude.c:1134 - RULE_STRCMP advances past the keyword and
+/// any following separator (space, comma).
+fn strip_keyword_prefix<'a>(token: &'a str, keyword: &str) -> Option<&'a str> {
+    let rest = token.strip_prefix(keyword)?;
+    if rest.is_empty() {
+        return Some(rest);
+    }
+    let first = rest.as_bytes()[0];
+    if first == b' ' || first == b',' {
+        Some(rest[1..].trim_start())
     } else {
-        // Bare pattern defaults to exclude (upstream behaviour)
-        if token.is_empty() {
-            return None;
-        }
-        Some(build_pattern_rule(token, false))
+        None
     }
 }
 
