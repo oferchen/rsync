@@ -89,6 +89,13 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
 /// Maps CTRL_C/CTRL_CLOSE to `shutdown` and CTRL_BREAK to `graceful_exit`.
 /// Broken pipes surface as I/O errors natively on Windows (no SIGPIPE).
 /// Config reload requires a named event (not yet implemented).
+///
+/// # One-shot constraint
+///
+/// Internally stores flag references in `OnceLock` statics so the
+/// `extern "system"` callback can reach them. This means the function
+/// can only succeed once per process - subsequent calls return
+/// `io::ErrorKind::Other` with "signal handlers already registered".
 #[cfg(windows)]
 #[allow(unsafe_code)]
 pub fn register_signal_handlers() -> io::Result<SignalFlags> {
