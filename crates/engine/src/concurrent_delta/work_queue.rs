@@ -764,7 +764,10 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         producer.join().unwrap();
         drain_handle.join().unwrap();
-        assert!(Instant::now() < deadline, "drain_parallel_into hung after receiver drop");
+        assert!(
+            Instant::now() < deadline,
+            "drain_parallel_into hung after receiver drop"
+        );
     }
 
     #[test]
