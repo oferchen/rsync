@@ -44,7 +44,10 @@ pub(crate) fn build_batch_context(
         preserve_hard_links: config.preserve_hard_links(),
         always_checksum: config.checksum(),
         xfer_dirs: config.dirs(),
-        do_compression: config.compress(),
+        // upstream tees raw (compressed) wire bytes to the batch file,
+        // but oc-rsync captures post-decompression data. Always false
+        // so replay reads uncompressed tokens correctly.
+        do_compression: false,
         preserve_acls,
         preserve_xattrs,
         inplace: config.inplace(),
@@ -123,5 +126,32 @@ impl std::io::Write for BatchWriteAdapter {
             .map_err(|_| std::io::Error::other("batch writer lock poisoned"))?;
         bw.flush()
             .map_err(|e| std::io::Error::other(format!("batch flush failed: {e}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies that `build_batch_context` always sets `do_compression=false`,
+    /// even when the client configuration has compression enabled. oc-rsync
+    /// captures post-decompression data, so the batch file body is always
+    /// uncompressed.
+    #[test]
+    fn batch_context_never_sets_do_compression() {
+        let config = ClientConfig::builder().compress(true).build();
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("test.batch");
+        let batch_cfg = engine::batch::BatchConfig::new(
+            engine::batch::BatchMode::Write,
+            path.to_string_lossy().to_string(),
+            31,
+        );
+        let writer = Arc::new(Mutex::new(BatchWriter::new(batch_cfg).unwrap()));
+        let ctx = build_batch_context(&config, writer);
+        assert!(
+            !ctx.flags.do_compression,
+            "do_compression must be false - oc-rsync captures uncompressed data"
+        );
     }
 }
