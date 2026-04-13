@@ -706,6 +706,9 @@ NEON) are used where available, with automatic scalar fallbacks.
 
 **--write-batch**=*PREFIX*
 :   Store updated data in batch files named *PREFIX* for later replay.
+    Compression (**--compress**) is not supported with batch mode at protocol 28
+    (rsync 2.x servers) because the zlib streaming state cannot be serialized
+    into the batch file at that protocol version.
 
 **--only-write-batch**=*PREFIX*
 :   Write batch files named *PREFIX* without applying the updates locally.
