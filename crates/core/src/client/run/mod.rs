@@ -187,10 +187,6 @@ fn run_client_internal(
         if let Some(result) = batch::handle_batch_read(batch_cfg, &config) {
             return result;
         }
-        // upstream: batch + compress is unreliable at protocol <= 29 because the
-        // batch file contains raw compressed wire tokens that cannot be replayed
-        // without matching compression state.
-        batch::validate_batch_compress(batch_cfg, &config)?;
         Some(batch::create_batch_writer(batch_cfg)?)
     } else {
         None
