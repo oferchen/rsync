@@ -388,6 +388,9 @@ pub(super) fn submit_read_fixed_batch(
         let n_sqes = remaining.div_ceil(chunk_size).min(slots.len());
         let mut submitted = 0u32;
 
+        // Track how many bytes each SQE requested for short-read detection.
+        let mut requested_per_sqe: Vec<usize> = Vec::with_capacity(n_sqes);
+
         for (i, slot) in slots.iter().enumerate().take(n_sqes) {
             let offset_in_output = total_read + i * chunk_size;
             let want = chunk_size.min(total - offset_in_output);
@@ -406,6 +409,7 @@ pub(super) fn submit_read_fixed_batch(
                     .push(&entry)
                     .map_err(|_| io::Error::other("submission queue full"))?;
             }
+            requested_per_sqe.push(want);
             submitted += 1;
         }
 
@@ -414,6 +418,9 @@ pub(super) fn submit_read_fixed_batch(
         }
 
         ring.submit_and_wait(submitted as usize)?;
+
+        // Collect actual bytes read per SQE index. CQEs may arrive out of order.
+        let mut actual_per_sqe = vec![0usize; submitted as usize];
 
         let mut completed = 0u32;
         while completed < submitted {
@@ -430,6 +437,8 @@ pub(super) fn submit_read_fixed_batch(
             }
 
             let bytes = result as usize;
+            actual_per_sqe[idx] = bytes;
+
             let out_start = total_read + idx * chunk_size;
             let out_end = (out_start + bytes).min(total);
             let copy_len = out_end - out_start;
@@ -447,15 +456,22 @@ pub(super) fn submit_read_fixed_batch(
             completed += 1;
         }
 
-        // Advance by what we requested (not what was read - short reads are fine,
-        // the next round will pick up remaining bytes).
-        let batch_requested: usize = (0..submitted as usize)
-            .map(|i| {
-                let offset_in_output = total_read + i * chunk_size;
-                chunk_size.min(total - offset_in_output)
-            })
-            .sum();
-        total_read += batch_requested;
+        // Advance by the contiguous prefix of fully-read SQEs. If SQE `i`
+        // returned fewer bytes than requested (short read - common on NFS,
+        // FUSE, and slow block devices), we stop at that point so the outer
+        // loop retries from the correct offset.
+        let mut batch_advance = 0usize;
+        for i in 0..submitted as usize {
+            batch_advance += actual_per_sqe[i];
+            if actual_per_sqe[i] < requested_per_sqe[i] {
+                break;
+            }
+        }
+
+        if batch_advance == 0 {
+            break; // EOF or zero-length read - avoid infinite loop.
+        }
+        total_read += batch_advance;
     }
 
     Ok(total_read.min(total))
@@ -765,6 +781,124 @@ mod tests {
 
         let written_data = std::fs::read(&write_path).unwrap();
         assert_eq!(written_data, test_data);
+
+        drop(checked_out);
+        let _ = group.unregister(&ring_rw);
+    }
+
+    /// Reads with an output buffer larger than the file to trigger a natural
+    /// short read (EOF before buffer is full). Before the fix, the function
+    /// would advance past unread bytes, returning `total` even though the
+    /// file was smaller - silently zero-filling the tail.
+    #[test]
+    fn read_fixed_batch_short_read_at_eof() {
+        let ring = match RawIoUring::new(64) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 4) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("short_read.bin");
+
+        // File is 5000 bytes but we ask to read 16384 (4 * 4096).
+        let test_data: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &test_data).unwrap();
+
+        let mut checked_out: Vec<_> = (0..4).filter_map(|_| group.checkout()).collect();
+        let slot_infos: Vec<RegisteredBufferSlotInfo> = checked_out
+            .iter_mut()
+            .map(|s| RegisteredBufferSlotInfo {
+                ptr: s.as_mut_ptr(),
+                buf_index: s.buf_index(),
+                buffer_size: s.buffer_size(),
+            })
+            .collect();
+
+        let file = std::fs::File::open(&path).unwrap();
+        let raw_fd = {
+            use std::os::unix::io::AsRawFd;
+            file.as_raw_fd()
+        };
+        let fd = io_uring::types::Fd(raw_fd);
+
+        // Request more bytes than the file contains.
+        let request_size = 4 * 4096;
+        let mut read_buf = vec![0xFFu8; request_size];
+        let mut ring_rw = ring;
+        let bytes_read = submit_read_fixed_batch(
+            &mut ring_rw,
+            fd,
+            &mut read_buf,
+            0,
+            &slot_infos,
+            super::super::batching::NO_FIXED_FD,
+        )
+        .unwrap();
+
+        // Must return exactly the file size, not the request size.
+        assert_eq!(bytes_read, test_data.len());
+        assert_eq!(&read_buf[..bytes_read], &test_data[..]);
+
+        drop(checked_out);
+        let _ = group.unregister(&ring_rw);
+    }
+
+    /// Reads a file that is smaller than a single registered buffer chunk.
+    /// The first SQE returns a short read (file size < chunk size), and the
+    /// function must report only the actual bytes read.
+    #[test]
+    fn read_fixed_batch_file_smaller_than_chunk() {
+        let ring = match RawIoUring::new(64) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 2) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tiny.bin");
+
+        let test_data = b"small file content";
+        std::fs::write(&path, test_data).unwrap();
+
+        let mut checked_out: Vec<_> = (0..2).filter_map(|_| group.checkout()).collect();
+        let slot_infos: Vec<RegisteredBufferSlotInfo> = checked_out
+            .iter_mut()
+            .map(|s| RegisteredBufferSlotInfo {
+                ptr: s.as_mut_ptr(),
+                buf_index: s.buf_index(),
+                buffer_size: s.buffer_size(),
+            })
+            .collect();
+
+        let file = std::fs::File::open(&path).unwrap();
+        let raw_fd = {
+            use std::os::unix::io::AsRawFd;
+            file.as_raw_fd()
+        };
+        let fd = io_uring::types::Fd(raw_fd);
+
+        // Request 8192 bytes (2 chunks) but file is only 18 bytes.
+        let mut read_buf = vec![0xFFu8; 8192];
+        let mut ring_rw = ring;
+        let bytes_read = submit_read_fixed_batch(
+            &mut ring_rw,
+            fd,
+            &mut read_buf,
+            0,
+            &slot_infos,
+            super::super::batching::NO_FIXED_FD,
+        )
+        .unwrap();
+
+        assert_eq!(bytes_read, test_data.len());
+        assert_eq!(&read_buf[..bytes_read], &test_data[..]);
 
         drop(checked_out);
         let _ = group.unregister(&ring_rw);
