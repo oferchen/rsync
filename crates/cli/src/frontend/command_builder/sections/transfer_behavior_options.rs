@@ -37,7 +37,9 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                 Arg::new("write-batch")
                     .long("write-batch")
                     .value_name("PREFIX")
-                    .help("Store updated data in batch files named PREFIX for later replay.")
+                    .help("Store updated data in batch files named PREFIX for later replay. \
+                           Compression (--compress) is not supported with batch mode at protocol 28 \
+                           (rsync 2.x servers).")
                     .value_parser(OsStringValueParser::new())
                     .conflicts_with_all(["read-batch", "only-write-batch"]),
             )
