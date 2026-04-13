@@ -269,6 +269,7 @@ done
 2. **No compression of batch file**: The batch file itself is not compressed (matches upstream)
 3. **Protocol version must match**: Reading a batch requires the same protocol version it was written with
 4. **File list replay**: When reading a batch, the source directory is not accessed (file list comes from batch)
+5. **No compression at protocol 28**: `--compress` combined with `--write-batch` is not supported at protocol 28 (rsync 2.x servers) because the zlib streaming state cannot be serialized into the batch file. At protocol 30+, compression flags are stored in stream_flags and work correctly.
 
 ## Future Enhancements
 
