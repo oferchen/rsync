@@ -2,6 +2,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::net::IpAddr;
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use super::connection::SshConnection;
 use super::parse::{RemoteShellParseError, parse_remote_shell};
@@ -26,6 +27,14 @@ const DEFAULT_SERVER_ALIVE_INTERVAL: u32 = 20;
 /// many consecutive keepalive messages, SSH terminates the connection.
 const DEFAULT_SERVER_ALIVE_COUNT_MAX: u32 = 3;
 
+/// Default SSH connection establishment timeout in seconds.
+///
+/// When no explicit connect timeout is provided, SSH's TCP handshake is
+/// capped at this value. This prevents indefinite hangs when the remote
+/// host is unreachable or firewalled. Mirrors upstream rsync's default
+/// `--contimeout` behavior.
+const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
+
 /// Builder used to configure and spawn an SSH subprocess.
 #[derive(Clone, Debug)]
 pub struct SshCommand {
@@ -37,6 +46,7 @@ pub struct SshCommand {
     bind_address: Option<IpAddr>,
     keepalive: bool,
     options: Vec<OsString>,
+    connect_timeout: Option<Duration>,
     remote_command: Vec<OsString>,
     envs: Vec<(OsString, OsString)>,
     target_override: Option<OsString>,
@@ -55,6 +65,7 @@ impl SshCommand {
             batch_mode: true,
             bind_address: None,
             keepalive: true,
+            connect_timeout: Some(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS)),
             options: Vec::new(),
             remote_command: Vec::new(),
             envs: Vec::new(),
@@ -114,6 +125,23 @@ impl SshCommand {
     /// - Keepalive is explicitly disabled via `set_keepalive(false)`.
     pub const fn set_keepalive(&mut self, enabled: bool) -> &mut Self {
         self.keepalive = enabled;
+        self
+    }
+
+    /// Sets the SSH connection establishment timeout.
+    ///
+    /// When `Some(duration)`, `-o ConnectTimeout=N` is injected into the SSH
+    /// command line (where N is the duration in whole seconds, rounded up).
+    /// This prevents indefinite hangs when the remote host is unreachable or
+    /// firewalled. The option is only injected when the program is `ssh` and
+    /// the user has not already specified `ConnectTimeout` via `-o` options.
+    ///
+    /// When `None`, no connect timeout is injected and SSH uses its own
+    /// default (which typically falls through to the OS TCP timeout).
+    ///
+    /// The default is `Some(Duration::from_secs(30))`.
+    pub const fn set_connect_timeout(&mut self, timeout: Option<Duration>) -> &mut Self {
+        self.connect_timeout = timeout;
         self
     }
 
@@ -285,6 +313,15 @@ impl SshCommand {
             )));
         }
 
+        // Inject SSH connect timeout to prevent indefinite hangs when the
+        // remote host is unreachable. Skipped when the user already specifies
+        // ConnectTimeout or uses a non-SSH program.
+        if let Some(seconds) = self.connect_timeout_seconds() {
+            if self.should_inject_connect_timeout() {
+                args.push(OsString::from(format!("-oConnectTimeout={seconds}")));
+            }
+        }
+
         args.extend(self.options.iter().cloned());
 
         // Inject AES-GCM ciphers when requested and safe to do so.
@@ -379,6 +416,29 @@ impl SshCommand {
             let upper = s.to_ascii_uppercase();
             upper.contains("SERVERALIVEINTERVAL") || upper.contains("SERVERALIVECOUNTMAX")
         })
+    }
+
+    /// Determines whether the SSH connect timeout option should be injected.
+    ///
+    /// Returns `true` only when the program looks like an SSH client and no
+    /// existing option already specifies `ConnectTimeout`.
+    fn should_inject_connect_timeout(&self) -> bool {
+        self.is_ssh_program() && !self.options_contain_connect_timeout()
+    }
+
+    /// Checks whether any existing option already specifies `ConnectTimeout`.
+    fn options_contain_connect_timeout(&self) -> bool {
+        self.options.iter().any(|opt| {
+            let s = opt.to_string_lossy();
+            s.to_ascii_uppercase().contains("CONNECTTIMEOUT")
+        })
+    }
+
+    /// Returns the connect timeout as whole seconds (rounded up), or `None`
+    /// if no timeout is configured.
+    fn connect_timeout_seconds(&self) -> Option<u64> {
+        self.connect_timeout
+            .map(|d| d.as_secs() + if d.subsec_nanos() > 0 { 1 } else { 0 })
     }
 
     #[cfg(test)]
