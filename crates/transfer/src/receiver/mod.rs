@@ -178,6 +178,12 @@ pub struct ReceiverContext {
     ///
     /// - `hlink.c:match_gnums()` - `prior_hlinks` hashtable persists across segments
     prior_hlinks: HashMap<u32, bool>,
+    /// Accumulated I/O error flags from the sender's file list for protocol < 30.
+    ///
+    /// For protocol < 30, the sender writes a 4-byte LE io_error flag after the
+    /// id lists (upstream: flist.c:2517-2518). Protocol >= 30 uses MSG_IO_ERROR
+    /// or SAFE_FILE_LIST instead.
+    flist_io_error: i32,
     /// Pluggable delta dispatch pipeline for file processing.
     ///
     /// Defaults to [`SequentialDeltaPipeline`] which matches upstream rsync's
@@ -231,6 +237,7 @@ impl ReceiverContext {
             filter_chain: FilterChain::empty(),
             hardlink_tracker,
             prior_hlinks: HashMap::new(),
+            flist_io_error: 0,
             delta_pipeline: Some(Box::new(SequentialDeltaPipeline::new())),
             parallel_thresholds: ParallelThresholds::default(),
         }

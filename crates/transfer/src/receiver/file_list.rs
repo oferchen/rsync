@@ -64,6 +64,18 @@ impl ReceiverContext {
             self.receive_id_lists(reader)?;
         }
 
+        // upstream: flist.c:2738-2742 - read io_error flag for protocol < 30.
+        // The sender writes write_int(f, io_error) as a 4-byte LE integer after
+        // the id lists. Protocol >= 30 uses MSG_IO_ERROR or SAFE_FILE_LIST instead.
+        if self.protocol.uses_fixed_encoding() {
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf)?;
+            let err = i32::from_le_bytes(buf);
+            if err != 0 && !self.config.deletion.ignore_errors {
+                self.flist_io_error |= err;
+            }
+        }
+
         // upstream: flist.c:1646 - send_file_entry() is called with flist->used
         // (readdir-order position) BEFORE flist_sort_and_clean(). Leader GNUM values
         // (F_HL_GNUM) are readdir-order wire NDXes. Replace the u32::MAX sentinel
