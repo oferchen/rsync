@@ -1113,6 +1113,7 @@ mod module_access_tests {
     #[test]
     fn build_daemon_filter_rules_mixed_directives_with_keywords() {
         // Simulates: exclude = *.tmp, exclude = *.log, filter = exclude *.bak
+        // Upstream order: filter first, then include, then exclude.
         let module = ModuleRuntime::from(ModuleDefinition {
             exclude: vec!["*.tmp".to_string(), "*.log".to_string()],
             filter: vec!["exclude *.bak".to_string()],
@@ -1120,9 +1121,11 @@ mod module_access_tests {
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
         assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern, "*.tmp");
-        assert_eq!(rules[1].pattern, "*.log");
-        assert_eq!(rules[2].pattern, "*.bak");
+        // filter rules are processed first (upstream: clientserver.c:874)
+        assert_eq!(rules[0].pattern, "*.bak");
+        // then excludes (upstream: clientserver.c:891)
+        assert_eq!(rules[1].pattern, "*.tmp");
+        assert_eq!(rules[2].pattern, "*.log");
         // All should be excludes
         for rule in &rules {
             assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
