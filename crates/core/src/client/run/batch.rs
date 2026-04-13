@@ -297,6 +297,7 @@ mod tests {
         // Even when compress=true, the header must say do_compression=false
         let config = config_with_compress(true);
         write_batch_header(&writer_arc, &config).unwrap();
+        drop(writer_arc);
 
         // Read back and verify
         let read_cfg = BatchConfig::new(BatchMode::Read, path.to_string_lossy().to_string(), 31);
