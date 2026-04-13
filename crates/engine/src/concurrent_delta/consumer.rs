@@ -11,22 +11,31 @@
 //! ```text
 //! WorkQueueReceiver
 //!     |
-//!     v  drain_parallel(dispatch)
+//!     v  drain_parallel_into(dispatch, stream_tx)
 //! rayon workers (parallel)
 //!     |
-//!     v  DeltaResult (arbitrary order)
-//! ReorderBuffer
+//!     v  SyncSender<DeltaResult> (streaming, bounded)
+//! delta-reorder thread
 //!     |
-//!     v  crossbeam channel (in sequence order)
+//!     v  ReorderBuffer (incremental insert + drain)
+//!     |
+//!     v  mpsc channel (in sequence order)
 //! DeltaConsumer::iter()
 //!     |
 //!     v  consumer (receiver pipeline)
 //! ```
 //!
-//! The consumer thread collects all results from `drain_parallel`, inserts
-//! them into the reorder buffer, and forwards the contiguous in-order run
-//! through a crossbeam channel. The main thread reads from this channel
-//! via the [`DeltaConsumerIter`] iterator.
+//! Two background threads provide pipeline overlap:
+//! - **delta-drain**: Runs `drain_parallel_into` inside `rayon::scope`,
+//!   streaming each completed result through a bounded channel.
+//! - **delta-reorder**: Receives streamed results incrementally, inserts
+//!   them into the reorder buffer, and forwards contiguous in-order runs
+//!   to the output channel.
+//!
+//! This architecture allows delta computation and disk writes to overlap -
+//! the reorder thread processes results while workers continue computing
+//! deltas for remaining files. The bounded stream channel provides
+//! backpressure when the reorder thread falls behind.
 //!
 //! # Upstream Reference
 //!
@@ -93,13 +102,21 @@ pub struct DeltaConsumer {
 }
 
 impl DeltaConsumer {
-    /// Spawns a background thread that drains the work queue in parallel
-    /// and delivers results in sequence order.
+    /// Spawns background threads that drain the work queue in parallel
+    /// and deliver results in sequence order with pipeline overlap.
     ///
-    /// The background thread uses [`WorkQueueReceiver::drain_parallel`] to
-    /// process all work items via the rayon thread pool, then inserts each
-    /// result into a [`ReorderBuffer`] and forwards the contiguous in-order
-    /// run through an internal channel.
+    /// Two threads are spawned:
+    /// - **delta-drain**: Runs [`WorkQueueReceiver::drain_parallel_into`] to
+    ///   process work items via the rayon thread pool, streaming each result
+    ///   through an internal channel as soon as its worker completes.
+    /// - **delta-reorder**: Receives streamed results, inserts them into a
+    ///   [`ReorderBuffer`], and forwards the contiguous in-order run to the
+    ///   consumer's output channel.
+    ///
+    /// This architecture enables pipeline overlap: delta computation continues
+    /// while previously completed results are reordered and written to disk.
+    /// The bounded stream channel provides backpressure - if reordering falls
+    /// behind, delta workers block rather than accumulating unbounded results.
     ///
     /// `reorder_capacity` sets the maximum number of out-of-order results
     /// the reorder buffer will hold. A good default is the total number of
@@ -112,37 +129,45 @@ impl DeltaConsumer {
     pub fn spawn(rx: WorkQueueReceiver, reorder_capacity: usize) -> Self {
         let (result_tx, result_rx) = mpsc::channel();
 
-        let handle = thread::Builder::new()
-            .name("delta-consumer".to_string())
-            .spawn(move || {
-                // Drain the work queue in parallel via rayon, collecting all results.
-                let results = rx.drain_parallel(|work| strategy::dispatch(&work));
+        // Bounded channel between drain and reorder threads. Capacity matches
+        // reorder buffer so workers can stay ahead without unbounded buffering.
+        let stream_capacity = reorder_capacity.max(rayon::current_num_threads() * 2);
+        let (stream_tx, stream_rx) = mpsc::sync_channel::<DeltaResult>(stream_capacity);
 
-                // Feed results into the reorder buffer and forward in sequence order.
+        // Thread 1: runs rayon::scope, streaming results as workers complete.
+        let drain_handle = thread::Builder::new()
+            .name("delta-drain".to_string())
+            .spawn(move || {
+                rx.drain_parallel_into(|work| strategy::dispatch(&work), stream_tx);
+            })
+            .expect("failed to spawn delta-drain thread");
+
+        // Thread 2: receives streamed results, reorders, forwards in sequence order.
+        let handle = thread::Builder::new()
+            .name("delta-reorder".to_string())
+            .spawn(move || {
                 let mut reorder = ReorderBuffer::new(reorder_capacity);
-                for result in results {
-                    // Insert may fail if buffer is at capacity. Since we have all
-                    // results collected, drain ready items first to free space.
+
+                for result in stream_rx {
+                    // Insert may fail if buffer is at capacity. Drain ready
+                    // items first to free space before retrying.
                     while reorder.insert(result.sequence(), result.clone()).is_err() {
                         let mut drained_any = false;
                         for ready in reorder.drain_ready() {
                             drained_any = true;
                             if result_tx.send(ready).is_err() {
-                                return; // Receiver dropped - stop processing.
+                                return;
                             }
                         }
                         if !drained_any {
-                            // Buffer is full but next_expected is not buffered,
-                            // so drain_ready cannot free space. Force the insert
-                            // to break the deadlock. This temporarily exceeds
-                            // capacity, which is safe since drain_parallel already
-                            // collected all results in memory.
+                            // Buffer full but next_expected is not buffered.
+                            // Force insert to break the deadlock.
                             reorder.force_insert(result.sequence(), result.clone());
                             break;
                         }
                     }
 
-                    // After each insert, forward any newly available contiguous run.
+                    // Forward any newly available contiguous run.
                     for ready in reorder.drain_ready() {
                         if result_tx.send(ready).is_err() {
                             return;
@@ -150,14 +175,17 @@ impl DeltaConsumer {
                     }
                 }
 
-                // Drain any remaining items (handles the tail of the sequence).
+                // Drain remaining items after the stream closes.
                 for ready in reorder.drain_ready() {
                     if result_tx.send(ready).is_err() {
                         return;
                     }
                 }
+
+                // Wait for drain thread to finish (propagates panics).
+                let _ = drain_handle.join();
             })
-            .expect("failed to spawn delta-consumer thread");
+            .expect("failed to spawn delta-reorder thread");
 
         Self {
             result_rx,

@@ -27,6 +27,20 @@
 //!                                                   consumer (in-order)
 //! ```
 //!
+//! For streaming pipelines, [`drain_parallel_into`] sends results through a
+//! channel as workers complete, enabling incremental consumption without
+//! waiting for all items to finish:
+//!
+//! ```text
+//! Generator ─► WorkQueue ─► drain_parallel_into(f, tx) ─► SyncSender<R>
+//!                              rayon::scope                    |
+//!                              work-stealing                   v
+//!                                                     ReorderBuffer (live)
+//!                                                             |
+//!                                                             v
+//!                                                   consumer (incremental)
+//! ```
+//!
 //! # Usage
 //!
 //! ```rust,no_run
@@ -120,11 +134,13 @@ impl WorkQueueReceiver {
     /// timing). Use [`ReorderBuffer`] on the returned `Vec` if sequential
     /// ordering is required.
     ///
-    /// Internally, each rayon worker thread accumulates results in its own
-    /// thread-local `Vec`, indexed by [`rayon::current_thread_index`]. This
-    /// eliminates the lock contention that a single shared `Mutex<Vec<R>>`
-    /// would cause at scale (10K+ items). After all tasks complete, the
-    /// per-thread buffers are flattened into a single `Vec`.
+    /// Internally, results are sharded across `N` mutex-guarded `Vec`s (one per
+    /// rayon thread). Each worker indexes its shard via [`rayon::current_thread_index`],
+    /// distributing contention across shards instead of concentrating it in a
+    /// single `Mutex<Vec<R>>`. Threads outside the rayon pool fall back to a
+    /// thread-ID hash to avoid the degenerate case of all mapping to shard 0.
+    /// After all tasks complete, the per-shard buffers are flattened into a
+    /// single `Vec`.
     ///
     /// This method consumes the receiver. It returns once the sender is dropped
     /// and all queued items have been processed.
@@ -154,8 +170,8 @@ impl WorkQueueReceiver {
         F: Fn(DeltaWork) -> R + Send + Sync,
         R: Send,
     {
-        let num_threads = rayon::current_num_threads();
-        let shards: Vec<std::sync::Mutex<Vec<R>>> = (0..num_threads)
+        let num_shards = rayon::current_num_threads();
+        let shards: Vec<std::sync::Mutex<Vec<R>>> = (0..num_shards)
             .map(|_| std::sync::Mutex::new(Vec::new()))
             .collect();
 
@@ -165,8 +181,15 @@ impl WorkQueueReceiver {
                 let shards = &shards;
                 s.spawn(move |_| {
                     let result = f(work);
-                    let idx = rayon::current_thread_index().unwrap_or(0);
-                    shards[idx % shards.len()].lock().unwrap().push(result);
+                    let idx = rayon::current_thread_index().unwrap_or_else(|| {
+                        // Outside rayon pool: hash thread ID to distribute
+                        // across shards instead of collapsing to shard 0.
+                        let id = std::thread::current().id();
+                        let mut hasher = std::hash::DefaultHasher::new();
+                        std::hash::Hash::hash(&id, &mut hasher);
+                        std::hash::Hasher::finish(&hasher) as usize
+                    });
+                    shards[idx % num_shards].lock().unwrap().push(result);
                 });
             }
         });
@@ -175,6 +198,72 @@ impl WorkQueueReceiver {
             .into_iter()
             .flat_map(|shard| shard.into_inner().unwrap())
             .collect()
+    }
+
+    /// Streams results through a channel as workers complete, enabling
+    /// incremental consumption without waiting for all items to finish.
+    ///
+    /// Unlike [`drain_parallel`](Self::drain_parallel) which collects all
+    /// results into a `Vec`, this method sends each result through `tx` as
+    /// soon as its worker finishes. This enables pipeline overlap - the
+    /// consumer can process results (e.g., reorder and write to disk) while
+    /// delta computation continues for remaining items.
+    ///
+    /// The `SyncSender` provides backpressure: if the consumer falls behind,
+    /// workers block on `tx.send()` rather than accumulating unbounded results
+    /// in memory.
+    ///
+    /// This method blocks until the sender is dropped and all queued items
+    /// have been processed. The `tx` channel is dropped when this method
+    /// returns, signaling completion to the receiver.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use engine::concurrent_delta::work_queue;
+    /// use engine::concurrent_delta::DeltaWork;
+    /// use std::path::PathBuf;
+    /// use std::sync::mpsc;
+    ///
+    /// let (work_tx, work_rx) = work_queue::bounded();
+    /// let (result_tx, result_rx) = mpsc::sync_channel(16);
+    ///
+    /// // Producer thread
+    /// std::thread::spawn(move || {
+    ///     for i in 0..100 {
+    ///         work_tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 64)).unwrap();
+    ///     }
+    /// });
+    ///
+    /// // Drain thread - sends results as workers complete
+    /// std::thread::spawn(move || {
+    ///     work_rx.drain_parallel_into(|w| w.ndx(), result_tx);
+    /// });
+    ///
+    /// // Consumer thread - processes results incrementally
+    /// for ndx in result_rx {
+    ///     // Process each result as it arrives
+    /// }
+    /// ```
+    pub fn drain_parallel_into<F, R>(self, f: F, tx: SyncSender<R>)
+    where
+        F: Fn(DeltaWork) -> R + Send + Sync,
+        R: Send,
+    {
+        rayon::scope(|s| {
+            for work in self.into_iter() {
+                let f = &f;
+                let tx = tx.clone();
+                s.spawn(move |_| {
+                    let result = f(work);
+                    // If the receiver is dropped, silently stop - the consumer
+                    // has decided it doesn't need more results.
+                    let _ = tx.send(result);
+                });
+            }
+        });
+        // `tx` (the original, not clones) is dropped here, closing the channel
+        // after all rayon tasks complete.
     }
 }
 
@@ -580,6 +669,121 @@ mod tests {
         let ordered: Vec<u64> = reorder.drain_ready().map(|r| r.sequence()).collect();
         let expected: Vec<u64> = (0..u64::from(total)).collect();
         assert_eq!(ordered, expected);
+    }
+
+    // ==================== drain_parallel_into tests ====================
+
+    #[test]
+    fn drain_parallel_into_streams_all_items() {
+        let (tx, rx) = bounded_with_capacity(8);
+        let count = 200u32;
+
+        let producer = thread::spawn(move || {
+            for i in 0..count {
+                tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 64))
+                    .unwrap();
+            }
+        });
+
+        let (result_tx, result_rx) = mpsc::sync_channel(16);
+        thread::spawn(move || {
+            rx.drain_parallel_into(|w| w.ndx(), result_tx);
+        });
+
+        let mut results: Vec<u32> = result_rx.iter().collect();
+        producer.join().unwrap();
+
+        results.sort_unstable();
+        assert_eq!(results, (0..count).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn drain_parallel_into_empty_queue() {
+        let (tx, rx) = bounded_with_capacity(4);
+        drop(tx);
+
+        let (result_tx, result_rx) = mpsc::sync_channel(4);
+        thread::spawn(move || {
+            rx.drain_parallel_into(|w| w.ndx(), result_tx);
+        });
+
+        let results: Vec<u32> = result_rx.iter().collect();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn drain_parallel_into_backpressure() {
+        // Bounded result channel with capacity 2: workers block when consumer
+        // is slow, preventing unbounded memory growth.
+        let (tx, rx) = bounded_with_capacity(4);
+        let total = 50u32;
+
+        let producer = thread::spawn(move || {
+            for i in 0..total {
+                tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+                    .unwrap();
+            }
+        });
+
+        let (result_tx, result_rx) = mpsc::sync_channel(2);
+        thread::spawn(move || {
+            rx.drain_parallel_into(|w| w.ndx(), result_tx);
+        });
+
+        let mut results = Vec::new();
+        for r in result_rx {
+            results.push(r);
+        }
+        producer.join().unwrap();
+
+        results.sort_unstable();
+        assert_eq!(results, (0..total).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn drain_parallel_into_receiver_drop_stops_workers() {
+        let (tx, rx) = bounded_with_capacity(8);
+        let total = 100u32;
+
+        let producer = thread::spawn(move || {
+            for i in 0..total {
+                let _ = tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0));
+            }
+        });
+
+        let (result_tx, result_rx) = mpsc::sync_channel(4);
+        let drain_handle = thread::spawn(move || {
+            rx.drain_parallel_into(|w| w.ndx(), result_tx);
+        });
+
+        // Take a few results then drop the receiver.
+        let _ = result_rx.recv();
+        drop(result_rx);
+
+        // Drain thread should complete without hanging.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        producer.join().unwrap();
+        drain_handle.join().unwrap();
+        assert!(
+            Instant::now() < deadline,
+            "drain_parallel_into hung after receiver drop"
+        );
+    }
+
+    #[test]
+    fn drain_parallel_into_single_item() {
+        let (tx, rx) = bounded_with_capacity(4);
+        tx.send(DeltaWork::whole_file(42, PathBuf::from("/dst"), 128))
+            .unwrap();
+        drop(tx);
+
+        let (result_tx, result_rx) = mpsc::sync_channel(4);
+        thread::spawn(move || {
+            rx.drain_parallel_into(|w| (w.ndx(), w.target_size()), result_tx);
+        });
+
+        let results: Vec<_> = result_rx.iter().collect();
+        assert_eq!(results, vec![(42, 128)]);
     }
 
     // ==================== drain_parallel tests ====================
