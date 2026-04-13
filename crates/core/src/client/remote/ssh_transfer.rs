@@ -291,6 +291,12 @@ fn build_ssh_connection(
 
     ssh.set_prefer_aes_gcm(config.prefer_aes_gcm());
 
+    // Wire --contimeout to SSH's -o ConnectTimeout.
+    // upstream: options.c — contimeout is forwarded as ConnectTimeout when
+    // spawning the remote shell.
+    let connect_timeout = config.connect_timeout().effective(Duration::from_secs(30));
+    ssh.set_connect_timeout(connect_timeout);
+
     // Set the remote command (rsync --server ...)
     ssh.set_remote_command(invocation_args);
 
