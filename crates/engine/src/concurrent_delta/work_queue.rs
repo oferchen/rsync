@@ -4,8 +4,9 @@
 //! The producer side blocks when the queue is full, applying backpressure
 //! to the generator/receiver that feeds work items. The consumer side
 //! drains items in parallel via [`WorkQueueReceiver::drain_parallel`],
-//! which internally uses [`rayon::scope`] to spawn one task per item for
-//! lock-free work-stealing across the rayon thread pool.
+//! which internally uses [`rayon::scope`] to spawn one task per item with
+//! per-thread result buffers for contention-free collection across the
+//! rayon thread pool.
 //!
 //! # Capacity
 //!
@@ -119,6 +120,12 @@ impl WorkQueueReceiver {
     /// timing). Use [`ReorderBuffer`] on the returned `Vec` if sequential
     /// ordering is required.
     ///
+    /// Internally, each rayon worker thread accumulates results in its own
+    /// thread-local `Vec`, indexed by [`rayon::current_thread_index`]. This
+    /// eliminates the lock contention that a single shared `Mutex<Vec<R>>`
+    /// would cause at scale (10K+ items). After all tasks complete, the
+    /// per-thread buffers are flattened into a single `Vec`.
+    ///
     /// This method consumes the receiver. It returns once the sender is dropped
     /// and all queued items have been processed.
     ///
@@ -147,18 +154,27 @@ impl WorkQueueReceiver {
         F: Fn(DeltaWork) -> R + Send + Sync,
         R: Send,
     {
-        let results = std::sync::Mutex::new(Vec::new());
+        let num_threads = rayon::current_num_threads();
+        let shards: Vec<std::sync::Mutex<Vec<R>>> = (0..num_threads)
+            .map(|_| std::sync::Mutex::new(Vec::new()))
+            .collect();
+
         rayon::scope(|s| {
             for work in self.into_iter() {
                 let f = &f;
-                let results = &results;
+                let shards = &shards;
                 s.spawn(move |_| {
                     let result = f(work);
-                    results.lock().unwrap().push(result);
+                    let idx = rayon::current_thread_index().unwrap_or(0);
+                    shards[idx % shards.len()].lock().unwrap().push(result);
                 });
             }
         });
-        results.into_inner().unwrap()
+
+        shards
+            .into_iter()
+            .flat_map(|shard| shard.into_inner().unwrap())
+            .collect()
     }
 }
 
