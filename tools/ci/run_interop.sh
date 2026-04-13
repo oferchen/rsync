@@ -6408,6 +6408,143 @@ CONF
   return 0
 }
 
+# Daemon server-side filter rules interop test.
+# Configures oc-rsync daemon with server-side exclude rules in rsyncd.conf.
+# Upstream rsync client pulls from the daemon and verifies excluded files
+# are not transferred. Tests both 'exclude' and 'filter' directives.
+# upstream: loadparm.c - server-side exclude/filter rules sent to client.
+test_daemon_server_side_filter() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local sf_src="${work}/server-filter-src"
+  local sf_dest_pull="${work}/server-filter-dest-pull"
+  local sf_dest_push="${work}/server-filter-dest-push"
+  rm -rf "$sf_src" "$sf_dest_pull" "$sf_dest_push"
+  mkdir -p "$sf_src" "$sf_dest_pull" "$sf_dest_push"
+
+  # Create source files - mix of allowed and excluded types
+  echo "allowed-alpha" > "$sf_src/alpha.txt"
+  echo "allowed-beta" > "$sf_src/beta.dat"
+  mkdir -p "$sf_src/sub"
+  echo "allowed-nested" > "$sf_src/sub/nested.txt"
+  # Files that should be excluded by server-side rules
+  echo "excluded-temp" > "$sf_src/build.tmp"
+  echo "excluded-log" > "$sf_src/server.log"
+  echo "excluded-nested-tmp" > "$sf_src/sub/cache.tmp"
+  echo "excluded-nested-log" > "$sf_src/sub/debug.log"
+  # Backup files excluded by filter directive
+  echo "excluded-backup" > "$sf_src/old.bak"
+  echo "excluded-nested-bak" > "$sf_src/sub/save.bak"
+
+  # Start oc-rsync daemon with server-side filter rules
+  local sf_conf="${work}/server-filter-oc.conf"
+  local sf_pid="${work}/server-filter-oc.pid"
+  local sf_log="${work}/server-filter-oc.log"
+  cat > "$sf_conf" <<CONF
+pid file = ${sf_pid}
+port = ${oc_port}
+use chroot = false
+
+[filtered]
+path = ${sf_src}
+comment = server-side filter test
+read only = true
+numeric ids = yes
+exclude = *.tmp
+exclude = *.log
+filter = exclude *.bak
+CONF
+
+  start_oc_daemon "$sf_conf" "$sf_log" "$upstream_binary" "$sf_pid" "$oc_port"
+
+  # Pull from oc-rsync daemon - server-side rules should exclude .tmp, .log, .bak
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/filtered/" "${sf_dest_pull}/" \
+      >"${log}.server-filter-pull.out" 2>"${log}.server-filter-pull.err"; then
+    echo "    server-filter pull failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify allowed files were transferred
+  for f in alpha.txt beta.dat sub/nested.txt; do
+    if [[ ! -f "$sf_dest_pull/$f" ]]; then
+      echo "    pull: missing allowed file: $f"
+      return 1
+    fi
+    if ! cmp -s "$sf_src/$f" "$sf_dest_pull/$f"; then
+      echo "    pull: content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify excluded files were NOT transferred
+  for f in build.tmp server.log sub/cache.tmp sub/debug.log old.bak sub/save.bak; do
+    if [[ -f "$sf_dest_pull/$f" ]]; then
+      echo "    pull: excluded file transferred: $f"
+      return 1
+    fi
+  done
+
+  # Test push direction: upstream pushes to oc-rsync daemon with server-side filters.
+  # Server-side excludes should prevent excluded files from being written.
+  local sf_push_conf="${work}/server-filter-push-oc.conf"
+  local sf_push_pid="${work}/server-filter-push-oc.pid"
+  local sf_push_log="${work}/server-filter-push-oc.log"
+  cat > "$sf_push_conf" <<CONF
+pid file = ${sf_push_pid}
+port = ${oc_port}
+use chroot = false
+
+[filtered]
+path = ${sf_dest_push}
+comment = server-side filter push test
+read only = false
+numeric ids = yes
+exclude = *.tmp
+exclude = *.log
+filter = exclude *.bak
+CONF
+
+  start_oc_daemon "$sf_push_conf" "$sf_push_log" "$upstream_binary" "$sf_push_pid" "$oc_port"
+
+  # Push from upstream to oc-rsync daemon
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${sf_src}/" "rsync://127.0.0.1:${oc_port}/filtered" \
+      >"${log}.server-filter-push.out" 2>"${log}.server-filter-push.err"; then
+    echo "    server-filter push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify allowed files were transferred
+  for f in alpha.txt beta.dat sub/nested.txt; do
+    if [[ ! -f "$sf_dest_push/$f" ]]; then
+      echo "    push: missing allowed file: $f"
+      return 1
+    fi
+    if ! cmp -s "$sf_src/$f" "$sf_dest_push/$f"; then
+      echo "    push: content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify excluded files were NOT transferred
+  for f in build.tmp server.log sub/cache.tmp sub/debug.log old.bak sub/save.bak; do
+    if [[ -f "$sf_dest_push/$f" ]]; then
+      echo "    push: excluded file transferred: $f"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -6467,6 +6604,7 @@ run_standalone_interop_tests() {
     "log-format-daemon"
     "up:symlinks"
     "oc:symlinks"
+    "daemon-server-side-filter"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -6519,6 +6657,7 @@ run_standalone_interop_tests() {
     "test_log_format_daemon"
     "test_symlinks_upstream"
     "test_symlinks_oc"
+    "test_daemon_server_side_filter"
   )
 
   for i in "${!test_names[@]}"; do
@@ -6651,6 +6790,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       oc:symlinks)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-server-side-filter)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
