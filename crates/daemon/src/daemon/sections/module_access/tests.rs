@@ -1098,6 +1098,41 @@ mod module_access_tests {
     }
 
     #[test]
+    fn build_daemon_filter_rules_filter_directive_with_keyword() {
+        // This is the exact case from the interop test: filter = exclude *.bak
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["exclude *.bak".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[0].pattern, "*.bak");
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_mixed_directives_with_keywords() {
+        // Simulates: exclude = *.tmp, exclude = *.log, filter = exclude *.bak
+        // Upstream order: filter first, then include, then exclude.
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude: vec!["*.tmp".to_string(), "*.log".to_string()],
+            filter: vec!["exclude *.bak".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 3);
+        // filter rules are processed first (upstream: clientserver.c:874)
+        assert_eq!(rules[0].pattern, "*.bak");
+        // then excludes (upstream: clientserver.c:891)
+        assert_eq!(rules[1].pattern, "*.tmp");
+        assert_eq!(rules[2].pattern, "*.log");
+        // All should be excludes
+        for rule in &rules {
+            assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        }
+    }
+
+    #[test]
     fn build_daemon_filter_rules_from_file_skips_comments_and_blanks() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("patterns.txt");
@@ -1189,6 +1224,119 @@ mod module_access_tests {
     fn parse_daemon_filter_token_prefix_only_returns_none() {
         assert!(parse_daemon_filter_token("-").is_none());
         assert!(parse_daemon_filter_token("+").is_none());
+    }
+
+    // ==================== keyword prefix tests (upstream exclude.c:1134-1178) ====================
+
+    #[test]
+    fn parse_daemon_filter_token_exclude_keyword() {
+        let rule = parse_daemon_filter_token("exclude *.bak").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "*.bak");
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_exclude_keyword_comma_sep() {
+        // upstream: RULE_STRCMP accepts comma as separator
+        let rule = parse_daemon_filter_token("exclude,*.bak").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "*.bak");
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_include_keyword() {
+        let rule = parse_daemon_filter_token("include *.rs").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rule.pattern, "*.rs");
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_hide_keyword() {
+        // upstream: hide -> sender-side exclude
+        let rule = parse_daemon_filter_token("hide *.secret").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "*.secret");
+        assert!(rule.sender_side);
+        assert!(!rule.receiver_side);
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_show_keyword() {
+        // upstream: show -> sender-side include
+        let rule = parse_daemon_filter_token("show *.pub").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rule.pattern, "*.pub");
+        assert!(rule.sender_side);
+        assert!(!rule.receiver_side);
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_protect_keyword() {
+        // upstream: protect -> receiver-side exclude
+        let rule = parse_daemon_filter_token("protect *.conf").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "*.conf");
+        assert!(!rule.sender_side);
+        assert!(rule.receiver_side);
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_risk_keyword() {
+        // upstream: risk -> receiver-side include
+        let rule = parse_daemon_filter_token("risk *.tmp").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rule.pattern, "*.tmp");
+        assert!(!rule.sender_side);
+        assert!(rule.receiver_side);
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_clear_keyword() {
+        let rule = parse_daemon_filter_token("clear").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
+        assert!(rule.pattern.is_empty());
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_keyword_not_partial_match() {
+        // "excluder" should NOT match "exclude" keyword - treated as bare pattern
+        let rule = parse_daemon_filter_token("excluder *.tmp").unwrap();
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "excluder *.tmp");
+    }
+
+    #[test]
+    fn parse_daemon_filter_token_keyword_empty_pattern_returns_none() {
+        assert!(parse_daemon_filter_token("exclude").is_none());
+        assert!(parse_daemon_filter_token("include ").is_none());
+    }
+
+    // ==================== strip_keyword_prefix tests ====================
+
+    #[test]
+    fn strip_keyword_prefix_space_separator() {
+        assert_eq!(strip_keyword_prefix("exclude *.tmp", "exclude"), Some("*.tmp"));
+    }
+
+    #[test]
+    fn strip_keyword_prefix_comma_separator() {
+        assert_eq!(strip_keyword_prefix("exclude,*.tmp", "exclude"), Some("*.tmp"));
+    }
+
+    #[test]
+    fn strip_keyword_prefix_no_separator() {
+        // "excluder" should not match "exclude"
+        assert_eq!(strip_keyword_prefix("excluder *.tmp", "exclude"), None);
+    }
+
+    #[test]
+    fn strip_keyword_prefix_exact_keyword_no_pattern() {
+        assert_eq!(strip_keyword_prefix("exclude", "exclude"), Some(""));
+    }
+
+    #[test]
+    fn strip_keyword_prefix_no_match() {
+        assert_eq!(strip_keyword_prefix("include *.tmp", "exclude"), None);
     }
 
     // ==================== read_patterns_from_file tests ====================
