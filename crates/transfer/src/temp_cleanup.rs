@@ -29,6 +29,10 @@ const SUFFIX_LEN: usize = 6;
 /// alphanumeric characters from `RAND_CHARS` (`A-Za-z0-9`). For dotfiles
 /// the original leading dot is consumed, so `.bashrc.XXXXXX` is also valid.
 ///
+/// Note: when `--temp-dir` is active, temp files use `{name}.XXXXXX` (no
+/// leading dot) and are placed in a separate directory. This function only
+/// covers the default in-destination pattern.
+///
 /// Matching rules:
 /// - Must start with `.`
 /// - Must contain a second `.` separating the basename from the random suffix
@@ -111,20 +115,27 @@ pub fn cleanup_stale_temp_files(dest_dir: &Path, max_age: Option<Duration>) -> i
             continue;
         }
 
-        // Only remove regular files, not directories or symlinks
-        let metadata = match entry.metadata() {
-            Ok(m) => m,
+        // Only remove regular files, not directories or symlinks.
+        // Use file_type() (lstat-equivalent) to avoid following symlinks.
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
             Err(_) => continue, // Skip if we cannot stat
         };
-        if !metadata.is_file() {
+        if !file_type.is_file() {
             continue;
         }
 
-        // Check age via mtime
+        // Check age via mtime - metadata() follows symlinks but we already
+        // filtered to regular files above so this is safe.
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
         let mtime = match metadata.modified() {
             Ok(t) => t,
             Err(_) => continue, // Platform does not support mtime - skip
         };
+        // Future-dated files (clock skew) treated as age zero - safe to keep.
         let age = now.duration_since(mtime).unwrap_or(Duration::ZERO);
         if age < threshold {
             continue;
