@@ -404,10 +404,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         // algorithm was used, so upstream rsync (which defaults to zlib)
         // cannot decode zstd/lz4 batch data. Force zlib to match upstream.
         // upstream: batch.c tees compressed wire bytes using zlib by default.
-        let algorithm = if config
-            .batch_config()
-            .is_some_and(|bc| bc.is_write_mode())
-        {
+        let algorithm = if config.batch_config().is_some_and(|bc| bc.is_write_mode()) {
             compress::algorithm::CompressionAlgorithm::Zlib
         } else {
             config.compression_algorithm()
