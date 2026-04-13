@@ -137,6 +137,8 @@ pub mod setup;
 pub mod shared;
 /// Symlink target safety analysis mirroring upstream `util1.c:unsafe_symlink()`.
 pub mod symlink_safety;
+/// Startup cleanup for stale temporary files left by interrupted transfers.
+pub mod temp_cleanup;
 /// RAII guard for temporary file cleanup.
 pub mod temp_guard;
 /// Writer abstraction supporting plain and multiplex modes.
@@ -186,6 +188,7 @@ pub use self::handshake::{HandshakeResult, perform_handshake, perform_legacy_han
 pub use self::receiver::{ReceiverContext, SumHead, TransferStats};
 pub use self::role::ServerRole;
 pub use self::shared::{ChecksumFactory, TransferDeadline};
+pub use self::temp_cleanup::cleanup_stale_temp_files;
 pub use self::writer::{CountingWriter, MsgInfoSender};
 pub use ack_batcher::{
     AckBatcher, AckBatcherConfig, AckBatcherStats, AckEntry, AckStatus, DEFAULT_BATCH_SIZE,
