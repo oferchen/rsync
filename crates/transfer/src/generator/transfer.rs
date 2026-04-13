@@ -14,6 +14,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use logging::{PhaseTimer, debug_log};
+use protocol::TransferStats;
 use protocol::codec::{
     NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec,
 };
@@ -595,6 +596,38 @@ impl GeneratorContext {
         self.delete_stats.specials = self.delete_stats.specials.saturating_add(stats.specials);
     }
 
+    /// Sends transfer statistics to the client after the transfer loop completes.
+    ///
+    /// Only called in server mode (daemon sender). Writes total_read,
+    /// total_written, total_size as varlong30 values, plus flist_buildtime
+    /// and flist_xfertime for protocol >= 29.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:347-357` - `handle_stats()` server-sender write path
+    /// - `main.c:960-962` - `do_server_sender()` calls `handle_stats(f_out)`
+    fn send_stats<W: Write>(
+        &self,
+        writer: &mut W,
+        transfer_result: &TransferLoopResult,
+        flist_buildtime_ms: u64,
+        flist_xfertime_ms: u64,
+    ) -> io::Result<()> {
+        // upstream: stats.total_size is the sum of all file sizes in the transfer
+        let total_size: u64 = self.file_list.iter().map(|e| e.size()).sum();
+
+        let stats = TransferStats::with_bytes(
+            self.timing.total_bytes_read,
+            transfer_result.bytes_sent,
+            total_size,
+        )
+        .with_flist_times(flist_buildtime_ms, flist_xfertime_ms);
+
+        stats.write_to(writer, self.protocol)?;
+        writer.flush()?;
+        Ok(())
+    }
+
     /// Runs the generator role to completion.
     ///
     /// Orchestrates the full send operation: build file list, send it, process
@@ -659,8 +692,17 @@ impl GeneratorContext {
             self.run_transfer_loop(reader, writer, &mut progress, &mut itemize)?
         };
 
-        // upstream: client-sender handle_stats(-1) is a no-op (main.c:360-384).
-        // Stats are only written by the server-sender path.
+        // upstream: main.c:960-962 - do_server_sender() calls io_flush then handle_stats
+        // before read_final_goodbye. Server-sender writes transfer stats; client-sender
+        // handle_stats(-1) is a no-op (main.c:339-345).
+        if !self.config.connection.client_mode {
+            let flist_buildtime =
+                calculate_duration_ms(self.timing.flist_build_start, self.timing.flist_build_end);
+            let flist_xfertime =
+                calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
+            self.send_stats(writer, &transfer_result, flist_buildtime, flist_xfertime)?;
+        }
+
         let mut ndx_read_codec = transfer_result.ndx_read_codec;
         let mut ndx_write_codec = transfer_result.ndx_write_codec;
         self.handle_goodbye(reader, writer, &mut ndx_read_codec, &mut ndx_write_codec)?;
