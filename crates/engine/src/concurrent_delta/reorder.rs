@@ -149,6 +149,17 @@ impl<T> ReorderBuffer<T> {
     pub const fn capacity(&self) -> usize {
         self.capacity
     }
+
+    /// Inserts an item regardless of the capacity bound.
+    ///
+    /// Used by the consumer loop to break deadlocks when the buffer is full
+    /// and [`drain_ready`](Self::drain_ready) cannot make progress because
+    /// `next_expected` is not yet buffered. Temporarily exceeding capacity is
+    /// safe when all items are already in memory (e.g., collected by
+    /// `drain_parallel`).
+    pub fn force_insert(&mut self, sequence: u64, item: T) {
+        self.pending.insert(sequence, item);
+    }
 }
 
 /// Iterator that drains contiguous in-order items from a [`ReorderBuffer`].
@@ -417,6 +428,21 @@ mod tests {
         }
         let drained: Vec<u64> = buf.drain_ready().collect();
         assert_eq!(drained, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn force_insert_bypasses_capacity() {
+        let mut buf = ReorderBuffer::new(2);
+        buf.insert(1, "a").unwrap();
+        buf.insert(2, "b").unwrap();
+        // Normal insert fails at capacity.
+        assert_eq!(buf.insert(0, "c"), Err(CapacityExceeded));
+        // force_insert succeeds despite being over capacity.
+        buf.force_insert(0, "c");
+        assert_eq!(buf.buffered_count(), 3);
+        // drain_ready yields all three in order.
+        let drained: Vec<&str> = buf.drain_ready().collect();
+        assert_eq!(drained, vec!["c", "a", "b"]);
     }
 
     /// Validates `ReorderBuffer` with the actual `DeltaResult` type to ensure
