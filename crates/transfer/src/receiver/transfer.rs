@@ -478,7 +478,8 @@ impl ReceiverContext {
             bytes_sent: 0,
             total_source_bytes,
             metadata_errors,
-            io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error()),
+            io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
+                | self.flist_io_error,
             error_count: 0,
             entries_received: 0,
             directories_created: 0,
@@ -533,7 +534,8 @@ impl ReceiverContext {
         let mut stats = TransferStats {
             files_listed: file_count,
             entries_received: file_count as u64,
-            io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error()),
+            io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
+                | self.flist_io_error,
             ..Default::default()
         };
         let files_to_transfer = self.build_files_to_transfer(
@@ -655,7 +657,8 @@ impl ReceiverContext {
         let mut stats = TransferStats {
             files_listed: file_count,
             entries_received: file_count as u64,
-            io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error()),
+            io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
+                | self.flist_io_error,
             ..Default::default()
         };
         let mut failed_dirs = super::directory::FailedDirectories::new();
