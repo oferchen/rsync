@@ -312,81 +312,39 @@ fn read_patterns_from_file(path: &Path) -> Result<Vec<String>, io::Error> {
 ///
 /// - `exclude.c:1134-1178` - long-form keyword to short-form char mapping
 fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
-    // Try short-form prefixes first: +, -
+    // Short-form prefixes: +, -
     if let Some(pattern) = token.strip_prefix("+ ").or_else(|| token.strip_prefix('+')) {
-        let pattern = pattern.trim();
-        if pattern.is_empty() {
-            return None;
-        }
-        return Some(build_pattern_rule(pattern, true));
+        return non_empty_pattern_rule(pattern, true);
     }
     if let Some(pattern) = token.strip_prefix("- ").or_else(|| token.strip_prefix('-')) {
-        let pattern = pattern.trim();
-        if pattern.is_empty() {
-            return None;
-        }
-        return Some(build_pattern_rule(pattern, false));
+        return non_empty_pattern_rule(pattern, false);
     }
 
-    // upstream: exclude.c:1134-1178 - long-form keyword prefixes.
-    // Each keyword maps to a short-form char: exclude->'-', include->'+',
-    // hide->'H', show->'S', protect->'P', risk->'R', clear->'!'.
-    if let Some(pattern) = strip_keyword_prefix(token, "exclude") {
-        let pattern = pattern.trim();
-        if pattern.is_empty() {
-            return None;
+    // upstream: exclude.c:1134-1178 - keyword-to-short-form mapping.
+    // (keyword, is_include, sender_side, receiver_side)
+    const KEYWORDS: &[(&str, bool, bool, bool)] = &[
+        ("exclude", false, false, false),
+        ("include", true, false, false),
+        ("hide", false, true, false),  // sender-side exclude
+        ("show", true, true, false),   // sender-side include
+        ("protect", false, false, true), // receiver-side exclude
+        ("risk", true, false, true),   // receiver-side include
+    ];
+
+    for &(keyword, is_include, sender, receiver) in KEYWORDS {
+        if let Some(pattern) = strip_keyword_prefix(token, keyword) {
+            let pattern = pattern.trim();
+            if pattern.is_empty() {
+                return None;
+            }
+            let mut rule = build_pattern_rule(pattern, is_include);
+            rule.sender_side = sender;
+            rule.receiver_side = receiver;
+            return Some(rule);
         }
-        return Some(build_pattern_rule(pattern, false));
     }
-    if let Some(pattern) = strip_keyword_prefix(token, "include") {
-        let pattern = pattern.trim();
-        if pattern.is_empty() {
-            return None;
-        }
-        return Some(build_pattern_rule(pattern, true));
-    }
-    if let Some(pattern) = strip_keyword_prefix(token, "hide") {
-        let pattern = pattern.trim();
-        if pattern.is_empty() {
-            return None;
-        }
-        // upstream: 'H' maps to sender-side exclude
-        let mut rule = build_pattern_rule(pattern, false);
-        rule.sender_side = true;
-        return Some(rule);
-    }
-    if let Some(pattern) = strip_keyword_prefix(token, "show") {
-        let pattern = pattern.trim();
-        if pattern.is_empty() {
-            return None;
-        }
-        // upstream: 'S' maps to sender-side include
-        let mut rule = build_pattern_rule(pattern, true);
-        rule.sender_side = true;
-        return Some(rule);
-    }
-    if let Some(pattern) = strip_keyword_prefix(token, "protect") {
-        let pattern = pattern.trim();
-        if pattern.is_empty() {
-            return None;
-        }
-        // upstream: 'P' maps to receiver-side exclude
-        let mut rule = build_pattern_rule(pattern, false);
-        rule.receiver_side = true;
-        return Some(rule);
-    }
-    if let Some(pattern) = strip_keyword_prefix(token, "risk") {
-        let pattern = pattern.trim();
-        if pattern.is_empty() {
-            return None;
-        }
-        // upstream: 'R' maps to receiver-side include
-        let mut rule = build_pattern_rule(pattern, true);
-        rule.receiver_side = true;
-        return Some(rule);
-    }
+
     if strip_keyword_prefix(token, "clear").is_some() {
-        // upstream: '!' clears the filter list
         return Some(FilterRuleWireFormat {
             rule_type: protocol::filters::RuleType::Clear,
             pattern: String::new(),
@@ -409,6 +367,15 @@ fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
         return None;
     }
     Some(build_pattern_rule(token, false))
+}
+
+/// Returns a rule if the trimmed pattern is non-empty, `None` otherwise.
+fn non_empty_pattern_rule(pattern: &str, is_include: bool) -> Option<FilterRuleWireFormat> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return None;
+    }
+    Some(build_pattern_rule(pattern, is_include))
 }
 
 /// Strips a keyword prefix from a token, returning the remainder.
