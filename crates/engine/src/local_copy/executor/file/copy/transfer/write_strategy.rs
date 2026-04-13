@@ -49,11 +49,13 @@ pub(in crate::local_copy) enum WriteStrategy {
 ///
 /// 1. **Append** - `append_offset > 0`: resume writing at end of existing file.
 /// 2. **Inplace** - `--inplace`: write directly, truncating only when no delta.
-/// 3. **Direct** - no existing destination AND none of `--partial`,
-///    `--delay-updates`, `--temp-dir`: create file directly.
-/// 4. **AnonymousTempFile** - Linux with `O_TMPFILE` support, no `--partial`
+/// 3. **AnonymousTempFile** - Linux with `O_TMPFILE` support, no `--partial`
 ///    (partial files need a visible staging path for resume), no `--temp-dir`
-///    (cross-device linkat would fail): anonymous inode + `linkat(2)`.
+///    (cross-device linkat would fail): anonymous inode + `linkat(2)`. Preferred
+///    over both Direct and TempFileRename because the kernel auto-cleans the
+///    anonymous inode on crash - no orphaned temp files or partial writes.
+/// 4. **Direct** - no existing destination AND none of `--partial`,
+///    `--delay-updates`, `--temp-dir`: create file directly.
 /// 5. **TempFileRename** - all other cases: temp file + atomic rename.
 pub(in crate::local_copy) fn select_write_strategy(
     append_offset: u64,
@@ -68,14 +70,17 @@ pub(in crate::local_copy) fn select_write_strategy(
         WriteStrategy::Append
     } else if inplace_enabled {
         WriteStrategy::Inplace
+    } else if !partial_enabled && !has_temp_directory && can_use_anonymous_tmpfile(destination) {
+        // O_TMPFILE preferred on Linux: atomic appearance via linkat(2) with
+        // kernel auto-cleanup on crash. Avoids orphaned temp files (vs
+        // TempFileRename) and partial writes visible to readers (vs Direct).
+        WriteStrategy::AnonymousTempFile
     } else if !has_existing_destination
         && !partial_enabled
         && !delay_updates_enabled
         && !has_temp_directory
     {
         WriteStrategy::Direct
-    } else if !partial_enabled && !has_temp_directory && can_use_anonymous_tmpfile(destination) {
-        WriteStrategy::AnonymousTempFile
     } else {
         WriteStrategy::TempFileRename
     }
@@ -439,6 +444,23 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn anonymous_preferred_over_direct_for_new_files() {
+        // When O_TMPFILE is available, it should be preferred even for new files
+        // where Direct would otherwise be selected. O_TMPFILE provides atomic
+        // appearance and kernel auto-cleanup on crash.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("new_file.txt");
+        if !can_use_anonymous_tmpfile(&dest) {
+            return;
+        }
+        // No existing dest, no partial, no delay, no temp-dir - would be Direct
+        // without O_TMPFILE, but AnonymousTempFile is preferred when available.
+        let result = select_write_strategy(0, false, false, false, false, false, &dest);
+        assert_eq!(result, WriteStrategy::AnonymousTempFile);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn anonymous_with_delay_updates() {
         let dir = tempfile::tempdir().expect("tempdir");
         let dest = dir.path().join("file.txt");
@@ -448,6 +470,30 @@ mod tests {
         // delay_updates alone should still allow anonymous.
         let result = select_write_strategy(0, false, false, true, true, false, &dest);
         assert_eq!(result, WriteStrategy::AnonymousTempFile);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn anonymous_preferred_over_temp_file_rename() {
+        // When O_TMPFILE is available and no partial/temp-dir flags, anonymous
+        // should be chosen instead of TempFileRename for existing destinations.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("existing.txt");
+        if !can_use_anonymous_tmpfile(&dest) {
+            return;
+        }
+        let result = select_write_strategy(0, false, false, false, true, false, &dest);
+        assert_eq!(result, WriteStrategy::AnonymousTempFile);
+    }
+
+    #[test]
+    fn direct_used_when_o_tmpfile_unavailable_and_no_existing_dest() {
+        // Fallback: when O_TMPFILE is not available, Direct is used for new
+        // files with no special flags.
+        assert_eq!(
+            strategy(0, false, false, false, false, false),
+            WriteStrategy::Direct
+        );
     }
 
     #[test]
