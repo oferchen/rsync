@@ -6459,10 +6459,12 @@ CONF
   start_oc_daemon "$sf_conf" "$sf_log" "$upstream_binary" "$sf_pid" "$oc_port"
 
   # Pull from oc-rsync daemon - server-side rules should exclude .tmp, .log, .bak
-  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+  local pull_exit=0
+  timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
       "rsync://127.0.0.1:${oc_port}/filtered/" "${sf_dest_pull}/" \
-      >"${log}.server-filter-pull.out" 2>"${log}.server-filter-pull.err"; then
-    echo "    server-filter pull failed (exit=$?)"
+      >"${log}.server-filter-pull.out" 2>"${log}.server-filter-pull.err" || pull_exit=$?
+  if [[ "$pull_exit" -ne 0 ]]; then
+    echo "    server-filter pull failed (exit=$pull_exit)"
     stop_oc_daemon
     return 1
   fi
@@ -6512,10 +6514,12 @@ CONF
   start_oc_daemon "$sf_push_conf" "$sf_push_log" "$upstream_binary" "$sf_push_pid" "$oc_port"
 
   # Push from upstream to oc-rsync daemon
-  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+  local push_exit=0
+  timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
       "${sf_src}/" "rsync://127.0.0.1:${oc_port}/filtered" \
-      >"${log}.server-filter-push.out" 2>"${log}.server-filter-push.err"; then
-    echo "    server-filter push failed (exit=$?)"
+      >"${log}.server-filter-push.out" 2>"${log}.server-filter-push.err" || push_exit=$?
+  if [[ "$push_exit" -ne 0 ]]; then
+    echo "    server-filter push failed (exit=$push_exit)"
     stop_oc_daemon
     return 1
   fi
