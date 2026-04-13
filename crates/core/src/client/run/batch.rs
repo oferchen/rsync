@@ -17,44 +17,6 @@ use super::super::error::ClientError;
 use super::super::remote;
 use super::super::summary::ClientSummary;
 
-/// Validates that `--write-batch` with compression is not used at protocol <= 29.
-///
-/// Upstream rsync since protocol 30 stores batch tokens uncompressed in the
-/// batch file (it tees the uncompressed stream). For protocol 28-29, the batch
-/// file contains the raw compressed wire stream, and reading it back requires
-/// knowing the compression state - which can produce corrupt replays.
-///
-/// # Errors
-///
-/// Returns `Err(ClientError)` with exit code 1 (RERR_SYNTAX) if write-batch
-/// mode is active, compression is enabled, and the protocol version is <= 29.
-// upstream: options.c - batch + compress validation
-pub(crate) fn validate_batch_compress(
-    batch_cfg: &BatchConfig,
-    config: &ClientConfig,
-) -> Result<(), ClientError> {
-    if !batch_cfg.is_write_mode() {
-        return Ok(());
-    }
-    if !config.compress() {
-        return Ok(());
-    }
-    let proto = batch_cfg.protocol_version;
-    if proto < 30 {
-        return Err(ClientError::new(
-            super::super::FEATURE_UNAVAILABLE_EXIT_CODE,
-            rsync_error!(
-                super::super::FEATURE_UNAVAILABLE_EXIT_CODE,
-                "cannot combine --write-batch with compression at protocol {} \
-                 (requires protocol >= 30)",
-                proto
-            )
-            .with_role(Role::Client),
-        ));
-    }
-    Ok(())
-}
-
 /// Validates that `--read-batch` is not combined with remote destinations
 /// and dispatches to [`replay_batch`] when in read mode.
 ///
@@ -132,11 +94,10 @@ pub(crate) fn write_batch_header(
         preserve_hard_links: config.preserve_hard_links(),
         always_checksum: config.checksum(),
         xfer_dirs: config.dirs(),
-        // upstream: batch token data is a verbatim tee of the compressed
-        // wire stream, so do_compression controls recv_token() dispatch
-        // during replay. Our batch delta buffer captures uncompressed
-        // tokens, so we must report false to avoid decompression mismatch.
-        do_compression: false,
+        // upstream: batch.c:68 - do_compression is bit 8 in stream flags.
+        // write_stream_flags() stores the compression state so that
+        // check_batch_flags() can restore it on replay.
+        do_compression: config.compress(),
         preserve_acls,
         preserve_xattrs,
         inplace: config.inplace(),
@@ -286,10 +247,6 @@ mod tests {
     use super::*;
     use engine::batch::BatchMode;
 
-    fn write_batch_config(proto: i32) -> BatchConfig {
-        BatchConfig::new(BatchMode::Write, "test_batch".to_owned(), proto)
-    }
-
     fn read_batch_config(proto: i32) -> BatchConfig {
         BatchConfig::new(BatchMode::Read, "test_batch".to_owned(), proto)
     }
@@ -299,62 +256,21 @@ mod tests {
     }
 
     #[test]
-    fn batch_compress_rejected_at_protocol_28() {
-        let batch_cfg = write_batch_config(28);
-        let config = config_with_compress(true);
-        let err = validate_batch_compress(&batch_cfg, &config).unwrap_err();
-        assert_eq!(
-            err.exit_code(),
-            super::super::super::FEATURE_UNAVAILABLE_EXIT_CODE
-        );
-        assert!(
-            err.to_string()
-                .contains("cannot combine --write-batch with compression"),
-            "unexpected error: {err}"
-        );
+    fn read_batch_rejects_remote_destination() {
+        let batch_cfg = read_batch_config(30);
+        let config = ClientConfig::builder()
+            .compress(false)
+            .transfer_args(["rsync://host/mod/dest"])
+            .build();
+        let result = handle_batch_read(&batch_cfg, &config);
+        assert!(result.is_some());
+        assert!(result.unwrap().is_err());
     }
 
     #[test]
-    fn batch_compress_rejected_at_protocol_29() {
-        let batch_cfg = write_batch_config(29);
-        let config = config_with_compress(true);
-        let err = validate_batch_compress(&batch_cfg, &config).unwrap_err();
-        assert_eq!(
-            err.exit_code(),
-            super::super::super::FEATURE_UNAVAILABLE_EXIT_CODE
-        );
-    }
-
-    #[test]
-    fn batch_compress_allowed_at_protocol_30() {
-        let batch_cfg = write_batch_config(30);
-        let config = config_with_compress(true);
-        assert!(validate_batch_compress(&batch_cfg, &config).is_ok());
-    }
-
-    #[test]
-    fn batch_compress_allowed_at_protocol_31() {
-        let batch_cfg = write_batch_config(31);
-        let config = config_with_compress(true);
-        assert!(validate_batch_compress(&batch_cfg, &config).is_ok());
-    }
-
-    #[test]
-    fn batch_no_compress_allowed_at_any_protocol() {
-        for proto in [28, 29, 30, 31, 32] {
-            let batch_cfg = write_batch_config(proto);
-            let config = config_with_compress(false);
-            assert!(
-                validate_batch_compress(&batch_cfg, &config).is_ok(),
-                "should allow write-batch without compress at protocol {proto}"
-            );
-        }
-    }
-
-    #[test]
-    fn read_batch_skips_validation() {
-        let batch_cfg = read_batch_config(28);
-        let config = config_with_compress(true);
-        assert!(validate_batch_compress(&batch_cfg, &config).is_ok());
+    fn write_batch_skips_read_handling() {
+        let batch_cfg = BatchConfig::new(BatchMode::Write, "test_batch".to_owned(), 30);
+        let config = config_with_compress(false);
+        assert!(handle_batch_read(&batch_cfg, &config).is_none());
     }
 }
