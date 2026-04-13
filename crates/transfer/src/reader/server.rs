@@ -41,27 +41,28 @@ impl<R: Read> ServerReader<R> {
         }
     }
 
-    /// Registers a batch recorder for capturing uncompressed protocol data.
+    /// Registers a batch recorder for capturing compressed protocol data.
     ///
-    /// When compression is active, the recorder is attached to the
-    /// `CompressedReader` so it captures **post-decompression** (uncompressed) data.
-    /// This ensures `--read-batch` can replay without the compression codec.
-    /// When only multiplex is active, the recorder is attached to the
-    /// `MultiplexReader` to capture post-demux data.
-    /// If neither is active yet, the recorder is stored until `activate_multiplex`.
+    /// The recorder is always attached to the `MultiplexReader` so it captures
+    /// data at the same level as upstream rsync's `read_buf()` tee to `batch_fd`.
+    /// When compression is active, this means capturing **pre-decompression**
+    /// (compressed) wire bytes. The batch header records `do_compression: true`
+    /// so replay knows to decompress the tokens.
     ///
-    /// upstream: token.c:send_token() writes to batch_fd before compression.
-    /// upstream: io.c:read_buf() tees data after decompression when compression
-    /// is active.
+    /// If neither multiplex nor compression is active yet, the recorder is
+    /// stored until `activate_multiplex`.
+    ///
+    /// upstream: io.c:read_buf() tees data to batch_fd before decompression.
     pub fn set_batch_recorder(&mut self, recorder: Arc<Mutex<dyn Write + Send>>) {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => {
                 mux.batch_recorder = Some(recorder);
             }
             ServerReaderInner::Compressed(compressed) => {
-                // Attach to CompressedReader so we capture decompressed data,
-                // not to the inner MultiplexReader which would see compressed data.
-                compressed.batch_recorder = Some(recorder);
+                // upstream: io.c:read_buf() tees at the read_buf level, which
+                // is the MultiplexReader's output (compressed data). Attach to
+                // the inner MultiplexReader to capture compressed wire bytes.
+                compressed.get_mut().batch_recorder = Some(recorder);
             }
             ServerReaderInner::Plain(_) => {
                 self.pending_batch_recorder = Some(recorder);
@@ -109,13 +110,14 @@ impl<R: Read> ServerReader<R> {
     /// - The compression algorithm is not supported in this build
     pub fn activate_compression(self, algorithm: CompressionAlgorithm) -> io::Result<Self> {
         match self.inner {
-            ServerReaderInner::Multiplex(mut mux) => {
-                // If a batch recorder was attached to the MultiplexReader, move it
-                // to the CompressedReader so it captures decompressed (uncompressed)
-                // data instead of compressed wire bytes.
-                let recorder = mux.batch_recorder.take();
-                let mut compressed = CompressedReader::new(mux, algorithm)?;
-                compressed.batch_recorder = recorder;
+            ServerReaderInner::Multiplex(mux) => {
+                // upstream: io.c:read_buf() tees data to batch_fd at the
+                // read_buf level, which is BEFORE decompression. Keep the
+                // batch recorder on MultiplexReader so it captures the
+                // compressed wire bytes, matching upstream behavior. The
+                // batch header records do_compression=true so replay knows
+                // to decompress.
+                let compressed = CompressedReader::new(mux, algorithm)?;
                 Ok(Self {
                     inner: ServerReaderInner::Compressed(compressed),
                     pending_batch_recorder: None,

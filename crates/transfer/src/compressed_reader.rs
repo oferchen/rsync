@@ -4,8 +4,7 @@
 //! mirroring upstream rsync's io.c:io_start_buffering_in() behavior where decompression
 //! is applied after multiplex framing.
 
-use std::io::{self, Read, Write};
-use std::sync::{Arc, Mutex};
+use std::io::{self, Read};
 
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CountingZlibDecoder;
@@ -20,17 +19,15 @@ use compress::zstd::CountingZstdDecoder;
 ///
 /// Mirrors upstream `io.c:io_start_buffering_in()` where decompression is
 /// applied on top of the multiplexed stream.
+///
+/// Batch recording is handled by the inner `MultiplexReader`, not here.
+/// upstream: `io.c:read_buf()` tees compressed wire bytes to `batch_fd`
+/// before decompression. The batch header stores `do_compression: true`
+/// so replay decompresses the tokens.
 pub struct CompressedReader<R: Read> {
     /// Active decompression decoder variant
     /// The decoder owns the underlying reader
     decoder: DecoderVariant<R>,
-    /// Optional recorder for batch mode - captures post-decompression (uncompressed) data.
-    ///
-    /// When `--write-batch` is used with compression, the batch file must contain
-    /// uncompressed tokens so `--read-batch` can replay without the compression codec.
-    /// upstream: io.c:read_buf() tees data to batch_fd; when compression is active,
-    /// upstream records the decompressed data, not the compressed wire bytes.
-    pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
 }
 
 /// Compression decoder dispatch for supported algorithms.
@@ -71,10 +68,7 @@ impl<R: Read> CompressedReader<R> {
             }
         };
 
-        Ok(Self {
-            decoder,
-            batch_recorder: None,
-        })
+        Ok(Self { decoder })
     }
 
     /// Returns a mutable reference to the underlying reader.
@@ -104,27 +98,17 @@ impl<R: Read> CompressedReader<R> {
 
 impl<R: Read> Read for CompressedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // Decompress data from underlying reader
-        let n = match &mut self.decoder {
-            DecoderVariant::Zlib(decoder) => decoder.read(buf)?,
+        // Decompress data from underlying reader.
+        // Batch recording happens at the MultiplexReader level (compressed
+        // wire bytes), not here. upstream: io.c:read_buf() tees before
+        // decompression.
+        match &mut self.decoder {
+            DecoderVariant::Zlib(decoder) => decoder.read(buf),
             #[cfg(feature = "lz4")]
-            DecoderVariant::Lz4(decoder) => decoder.read(buf)?,
+            DecoderVariant::Lz4(decoder) => decoder.read(buf),
             #[cfg(feature = "zstd")]
-            DecoderVariant::Zstd(decoder) => decoder.read(buf)?,
-        };
-
-        // upstream: io.c:read_buf() tees data to batch_fd AFTER decompression.
-        // Record uncompressed data so --read-batch can replay without the codec.
-        if n > 0 {
-            if let Some(ref recorder) = self.batch_recorder {
-                recorder
-                    .lock()
-                    .map_err(|_| io::Error::other("batch recorder lock poisoned"))?
-                    .write_all(&buf[..n])?;
-            }
+            DecoderVariant::Zstd(decoder) => decoder.read(buf),
         }
-
-        Ok(n)
     }
 }
 

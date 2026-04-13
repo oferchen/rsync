@@ -5,7 +5,6 @@
 //! is applied after multiplex framing.
 
 use std::io::{self, IoSlice, Write};
-use std::sync::{Arc, Mutex};
 
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::{CompressionLevel, CountingZlibEncoder};
@@ -20,6 +19,11 @@ use compress::zstd::CountingZstdEncoder;
 ///
 /// Mirrors upstream `io.c:io_start_buffering_out()` where compression is
 /// applied on top of the multiplexed stream.
+///
+/// Batch recording is handled by the inner `MultiplexWriter`, not here.
+/// upstream: `io.c:write_buf()` tees compressed wire bytes to `batch_fd`
+/// after compression. The batch header stores `do_compression: true`
+/// so replay decompresses the tokens.
 pub struct CompressedWriter<W: Write> {
     /// The underlying writer (typically MultiplexWriter)
     inner: W,
@@ -27,12 +31,6 @@ pub struct CompressedWriter<W: Write> {
     encoder: EncoderVariant,
     /// Flush threshold - flush when buffer exceeds this size
     flush_threshold: usize,
-    /// Optional recorder for batch mode - captures pre-compression (uncompressed) data.
-    ///
-    /// When `--write-batch` is used with compression, the batch file must contain
-    /// uncompressed tokens so `--read-batch` can replay without the compression codec.
-    /// upstream: token.c:send_token() writes to batch_fd before send_deflated_token().
-    pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
 }
 
 /// Compression encoder dispatch for supported algorithms.
@@ -94,7 +92,6 @@ impl<W: Write> CompressedWriter<W> {
             inner,
             encoder,
             flush_threshold: BUFFER_SIZE,
-            batch_recorder: None,
         })
     }
 
@@ -218,15 +215,9 @@ impl<W: Write> CompressedWriter<W> {
 
 impl<W: Write> Write for CompressedWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // upstream: token.c:send_token() writes to batch_fd BEFORE compression.
-        // Tee uncompressed data to batch recorder so --read-batch can replay
-        // without the compression codec.
-        if let Some(ref recorder) = self.batch_recorder {
-            recorder
-                .lock()
-                .map_err(|_| io::Error::other("batch recorder lock poisoned"))?
-                .write_all(buf)?;
-        }
+        // Batch recording happens at the MultiplexWriter level (compressed
+        // wire bytes), not here. upstream: io.c:write_buf() tees after
+        // compression.
 
         // Compress input data - this writes to the encoder's internal Vec<u8> sink
         match &mut self.encoder {
