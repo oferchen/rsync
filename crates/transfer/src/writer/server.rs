@@ -76,13 +76,14 @@ impl<W: Write> ServerWriter<W> {
         level: CompressionLevel,
     ) -> io::Result<Self> {
         match self {
-            Self::Multiplex(mut mux) => {
-                // If a batch recorder was attached to the MultiplexWriter, move it
-                // to the CompressedWriter so it captures uncompressed data instead
-                // of compressed wire bytes.
-                let recorder = mux.batch_recorder.take();
-                let mut compressed = CompressedWriter::new(mux, algorithm, level)?;
-                compressed.batch_recorder = recorder;
+            Self::Multiplex(mux) => {
+                // upstream: io.c:write_buf() tees data to batch_fd at the
+                // write_buf level, which is AFTER compression. Keep the
+                // batch recorder on MultiplexWriter so it captures the
+                // compressed wire bytes, matching upstream behavior. The
+                // batch header records do_compression=true so replay knows
+                // to decompress.
+                let compressed = CompressedWriter::new(mux, algorithm, level)?;
                 Ok(Self::Compressed(compressed))
             }
             Self::Plain(_) => Err(io::Error::new(
@@ -202,17 +203,16 @@ impl<W: Write> ServerWriter<W> {
         self.send_message(MessageCode::Redo, &ndx.to_le_bytes())
     }
 
-    /// Attaches a batch recorder for capturing uncompressed protocol data.
+    /// Attaches a batch recorder for capturing compressed protocol data.
     ///
-    /// When compression is active, the recorder is attached to the
-    /// `CompressedWriter` so it captures **pre-compression** (uncompressed) data.
-    /// This ensures `--read-batch` can replay without the compression codec.
-    /// When only multiplex is active, the recorder is attached to the
-    /// `MultiplexWriter` to capture pre-mux data.
+    /// The recorder is always attached to the `MultiplexWriter` so it captures
+    /// data at the same level as upstream rsync's `write_buf()` tee to `batch_fd`.
+    /// When compression is active, this means capturing **post-compression**
+    /// (compressed) wire bytes. The batch header records `do_compression: true`
+    /// so replay knows to decompress the tokens.
     ///
-    /// upstream: token.c:send_token() writes to batch_fd before compression.
-    /// upstream: io.c:write_batch_monitor_out tees pre-mux data when no
-    /// compression is active.
+    /// upstream: io.c:write_buf() tees to batch_fd after compression but before
+    /// multiplex framing.
     pub fn set_batch_recorder(&mut self, recorder: Arc<Mutex<dyn Write + Send>>) -> io::Result<()> {
         match self {
             Self::Multiplex(mux) => {
@@ -220,9 +220,10 @@ impl<W: Write> ServerWriter<W> {
                 Ok(())
             }
             Self::Compressed(compressed) => {
-                // Attach to CompressedWriter so we capture uncompressed data,
-                // not to the inner MultiplexWriter which would see compressed data.
-                compressed.batch_recorder = Some(recorder);
+                // upstream: io.c:write_buf() tees at the write_buf level, which
+                // is the MultiplexWriter's input (compressed data). Attach to the
+                // inner MultiplexWriter to capture compressed wire bytes.
+                compressed.inner_mut().batch_recorder = Some(recorder);
                 Ok(())
             }
             _ => Err(io::Error::new(
