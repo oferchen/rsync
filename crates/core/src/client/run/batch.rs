@@ -95,9 +95,16 @@ pub(crate) fn write_batch_header(
         always_checksum: config.checksum(),
         xfer_dirs: config.dirs(),
         // upstream: batch.c:68 - do_compression is bit 8 in stream flags.
-        // write_stream_flags() stores the compression state so that
-        // check_batch_flags() can restore it on replay.
-        do_compression: config.compress(),
+        // Upstream tees the raw (pre-decompression) wire bytes to
+        // batch_fd via write_batch_monitor_in in io.c:read_buf(),
+        // so its batch files contain compressed tokens and the header
+        // says do_compression=true.
+        // oc-rsync captures post-decompression (uncompressed) data at
+        // the CompressedReader layer, so the batch body is always
+        // uncompressed. Setting do_compression=false ensures that both
+        // oc-rsync and upstream rsync replay the file without trying to
+        // decompress already-uncompressed tokens.
+        do_compression: false,
         preserve_acls,
         preserve_xattrs,
         inplace: config.inplace(),
@@ -272,5 +279,33 @@ mod tests {
         let batch_cfg = BatchConfig::new(BatchMode::Write, "test_batch".to_owned(), 30);
         let config = config_with_compress(false);
         assert!(handle_batch_read(&batch_cfg, &config).is_none());
+    }
+
+    /// Batch header must always have do_compression=false because oc-rsync
+    /// captures post-decompression (uncompressed) data in the batch file.
+    /// upstream tees pre-decompression data and sets do_compression=true,
+    /// but our approach avoids that complexity.
+    #[test]
+    fn write_batch_header_never_sets_do_compression() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("test.batch");
+        let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
+            .with_checksum_seed(1);
+
+        let writer_arc = create_batch_writer(&batch_cfg).unwrap();
+
+        // Even when compress=true, the header must say do_compression=false
+        let config = config_with_compress(true);
+        write_batch_header(&writer_arc, &config).unwrap();
+        drop(writer_arc);
+
+        // Read back and verify
+        let read_cfg = BatchConfig::new(BatchMode::Read, path.to_string_lossy().to_string(), 31);
+        let mut reader = engine::batch::BatchReader::new(read_cfg).unwrap();
+        let flags = reader.read_header().unwrap();
+        assert!(
+            !flags.do_compression,
+            "do_compression must be false - oc-rsync captures uncompressed data"
+        );
     }
 }
