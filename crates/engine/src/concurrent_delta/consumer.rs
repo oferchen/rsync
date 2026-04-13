@@ -124,10 +124,21 @@ impl DeltaConsumer {
                     // Insert may fail if buffer is at capacity. Since we have all
                     // results collected, drain ready items first to free space.
                     while reorder.insert(result.sequence(), result.clone()).is_err() {
+                        let mut drained_any = false;
                         for ready in reorder.drain_ready() {
+                            drained_any = true;
                             if result_tx.send(ready).is_err() {
                                 return; // Receiver dropped - stop processing.
                             }
+                        }
+                        if !drained_any {
+                            // Buffer is full but next_expected is not buffered,
+                            // so drain_ready cannot free space. Force the insert
+                            // to break the deadlock. This temporarily exceeds
+                            // capacity, which is safe since drain_parallel already
+                            // collected all results in memory.
+                            reorder.force_insert(result.sequence(), result.clone());
+                            break;
                         }
                     }
 
