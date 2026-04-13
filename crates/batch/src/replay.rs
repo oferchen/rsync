@@ -844,34 +844,22 @@ fn default_xfer_sum_len(protocol_version: i32) -> usize {
     16
 }
 
-/// Creates the appropriate `CompressedTokenDecoder` for the batch protocol version.
+/// Creates a `CompressedTokenDecoder` for batch replay.
 ///
-/// Protocol 31 always uses zlib in CPRES_ZLIBX mode (upstream rsync 3.4.1 default).
-/// Protocol >= 32 defaults to zstd when the feature is compiled in, since oc-rsync
-/// (and future upstream versions) negotiate zstd as the preferred algorithm. The
-/// batch header does not record the negotiated compression algorithm, so the
-/// protocol version is the only disambiguation signal.
+/// Batch files do not record which compression algorithm was negotiated
+/// during the original transfer. When upstream's `check_batch_flags()`
+/// restores `do_compression` from the stream flags bitmap, the value is
+/// just 1 (truthy). `parse_compress_choice()` then maps that to
+/// `CPRES_ZLIB` (upstream compat.c:194-195), regardless of protocol
+/// version. So upstream batch files **always** contain CPRES_ZLIB
+/// compressed tokens, even at protocol 32+.
 ///
-/// upstream: compat.c - protocol 31 hardcodes CPRES_ZLIBX; protocol 32+ uses
-/// vstring negotiation where zstd wins if both sides support it.
-fn create_compressed_decoder(proto: i32) -> BatchResult<CompressedTokenDecoder> {
-    // Protocol 32+ defaults to zstd when the feature is compiled in.
-    if proto >= 32 {
-        #[cfg(feature = "zstd")]
-        {
-            return CompressedTokenDecoder::new_zstd().map_err(|e| {
-                BatchError::Io(std::io::Error::new(
-                    e.kind(),
-                    format!("failed to create zstd decoder for batch replay: {e}"),
-                ))
-            });
-        }
-    }
-
-    // Suppress unused variable warning when zstd feature is disabled.
-    let _ = proto;
-
-    // Protocol 31 or zstd not available: use zlib in CPRES_ZLIBX mode.
+/// We mirror that behavior: always create a zlib decoder in CPRES_ZLIBX
+/// mode (ZLIBX is the no-dictionary variant used for protocol >= 31).
+///
+/// upstream: compat.c:194 - `else if (do_compression) do_compression = CPRES_ZLIB;`
+/// upstream: token.c:recv_deflated_token() - decodes CPRES_ZLIB/CPRES_ZLIBX
+fn create_compressed_decoder(_proto: i32) -> BatchResult<CompressedTokenDecoder> {
     let mut decoder = CompressedTokenDecoder::new();
     decoder.set_zlibx(true);
     Ok(decoder)
@@ -1035,7 +1023,9 @@ mod tests {
 
     #[test]
     fn compressed_decoder_created_for_proto_32() {
-        // Protocol 32 creates a zstd decoder (when feature enabled) or zlib fallback.
+        // Protocol 32 also uses zlib for batch replay - batch files don't
+        // record the negotiated algorithm, and upstream always falls back
+        // to CPRES_ZLIB via parse_compress_choice().
         let decoder = create_compressed_decoder(32).unwrap();
         assert!(
             !decoder.initialized(),
