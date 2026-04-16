@@ -111,6 +111,13 @@ impl GeneratorContext {
                     )?;
                     segments_sent += 1;
                 }
+
+                // upstream: flist.c:2534-2545 - send NDX_FLIST_EOF when all sub-lists
+                // have been dispatched. Must happen inside the loop (not after) because
+                // the receiver waits for NDX_FLIST_EOF before sending NDX_DONE.
+                if !self.incremental.flist_eof_sent && scheduler.is_exhausted() {
+                    self.send_flist_eof(&mut *writer, &mut flist_ndx_codec, segments_sent)?;
+                }
             }
 
             // upstream: io.c perform_io() flushes buffered output while waiting
@@ -132,12 +139,8 @@ impl GeneratorContext {
             if ndx < 0 {
                 match ndx {
                     NDX_DONE => {
-                        // Phase transition
-                        phase += 1;
-                        if phase > max_phase {
-                            break;
-                        }
-                        // upstream: sender.c:250 - echo NDX_DONE back to receiver.
+                        // Phase transition: echo NDX_DONE before checking break.
+                        // upstream: sender.c:250 - always echo NDX_DONE, then check phase.
                         // During dry-run the daemon may close the pipe before we
                         // finish echoing - treat write failures as end-of-transfer.
                         if let Err(e) = ndx_write_codec
@@ -148,6 +151,10 @@ impl GeneratorContext {
                                 break;
                             }
                             return Err(e);
+                        }
+                        phase += 1;
+                        if phase > max_phase {
+                            break;
                         }
                         continue;
                     }
@@ -393,18 +400,10 @@ impl GeneratorContext {
         // Cache flist_writer back for potential reuse (e.g., phase 2).
         self.incremental.flist_writer_cache = Some(flist_writer);
 
-        // Send final NDX_DONE.
-        // During dry-run the upstream daemon may have already closed the connection,
-        // making the write fail with BrokenPipe or WouldBlock.
-        // upstream: sender.c - dry-run never enters the data-transfer phase.
-        if let Err(e) = ndx_write_codec
-            .write_ndx_done(&mut *writer)
-            .and_then(|()| writer.flush())
-        {
-            if !(tolerant && is_early_close_error(&e)) {
-                return Err(e);
-            }
-        }
+        // upstream: sender.c does NOT send an NDX_DONE after the transfer loop.
+        // The phase-transition NDX_DONEs were already exchanged inside the loop.
+        // Sending an extra one here causes "Invalid packet at end of run" in the
+        // upstream client's read_final_goodbye() (main.c:875-906).
 
         Ok(TransferLoopResult {
             files_transferred,
