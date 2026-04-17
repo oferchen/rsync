@@ -14,8 +14,8 @@ use std::io::{self, Read};
 
 use logging::debug_log;
 
+use crate::codec::ProtocolCodec;
 use crate::flist::flags::FileFlags;
-use crate::varint::read_varint;
 
 use super::FileListReader;
 
@@ -29,7 +29,7 @@ impl FileListReader {
     /// # Wire Format
     ///
     /// - If `XMIT_SAME_NAME`: read u8 as `same_len`
-    /// - If `XMIT_LONG_NAME`: read varint as `suffix_len`, else read u8
+    /// - If `XMIT_LONG_NAME`: read via codec (4-byte LE for proto < 30, varint for >= 30)
     /// - Read `suffix_len` bytes as the name suffix
     /// - Concatenate: `prev_name[..same_len] + suffix`
     pub(super) fn read_name<R: Read + ?Sized>(
@@ -45,8 +45,11 @@ impl FileListReader {
             0
         };
 
+        // upstream: flist.c:719-722 - XMIT_LONG_NAME uses read_varint30()
+        // which dispatches to read_int (4-byte LE) for protocol < 30,
+        // read_varint for protocol >= 30
         let suffix_len = if flags.long_name() {
-            read_varint(reader)? as usize
+            self.codec.read_long_name_len(reader)?
         } else {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
