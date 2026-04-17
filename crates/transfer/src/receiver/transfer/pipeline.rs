@@ -318,6 +318,12 @@ impl ReceiverContext {
                 bytes_received += disk_bytes;
                 metadata_errors.extend(disk_meta_errors);
 
+                // Route accumulated warnings through the multiplexed writer
+                // instead of eprintln (which deadlocks in daemon handler threads).
+                for warning in pipelined_receiver.drain_warnings() {
+                    let _ = writer.send_msg_info(warning.as_bytes());
+                }
+
                 bytes_received += result.total_bytes;
                 files_transferred += 1;
 
@@ -350,6 +356,11 @@ impl ReceiverContext {
             let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_all_results()?;
             bytes_received += disk_bytes;
             metadata_errors.extend(disk_meta_errors);
+
+            // Route accumulated warnings through the multiplexed writer.
+            for warning in pipelined_receiver.drain_warnings() {
+                let _ = writer.send_msg_info(warning.as_bytes());
+            }
 
             let redo_indices = pipelined_receiver.take_redo_indices();
 

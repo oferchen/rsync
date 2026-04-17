@@ -30,11 +30,21 @@ pub enum ChecksumVerifier {
 
 impl ChecksumVerifier {
     /// Creates a verifier based on negotiated parameters.
+    ///
+    /// For protocol < 30 (no binary negotiation), the verifier uses MD4 with
+    /// the checksum seed prepended as the first 4 bytes of input - matching
+    /// upstream's `CSUM_MD4_OLD` behaviour in `checksum.c:605-612`.
+    /// Protocol 30+ uses MD5 (no seed) or negotiated algorithms.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `checksum.c:559-620` - `sum_init()` seeds legacy MD4 variants
+    /// - `checksum.c:125-126` - protocol 27-29 uses `CSUM_MD4_OLD`
     #[must_use]
     pub fn new(
         negotiated: Option<&NegotiationResult>,
         protocol: ProtocolVersion,
-        _seed: i32,
+        seed: i32,
         _compat_flags: Option<&CompatibilityFlags>,
     ) -> Self {
         negotiated
@@ -43,9 +53,32 @@ impl ChecksumVerifier {
                 if protocol.uses_varint_encoding() {
                     Self::Md5(Md5::new())
                 } else {
-                    Self::Md4(Md4::new())
+                    // upstream: checksum.c:125 - protocol >= 27 uses CSUM_MD4_OLD
+                    // which prepends the 4-byte seed before file data.
+                    let mut verifier = Self::Md4(Md4::new());
+                    verifier.update(&seed.to_le_bytes());
+                    verifier
                 }
             })
+    }
+
+    /// Creates a verifier for a specific algorithm with seed prepended.
+    ///
+    /// For legacy MD4 (protocol < 30), the seed must be prepended to match
+    /// upstream `CSUM_MD4_OLD`. For all other algorithms, the seed is not
+    /// prepended - matching upstream `sum_init()` which only seeds the
+    /// legacy MD4 variants.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `checksum.c:605-612` - only `CSUM_MD4_OLD`/`BUSTED`/`ARCHAIC` prepend seed
+    #[must_use]
+    pub fn for_algorithm_seeded(algorithm: ChecksumAlgorithm, seed: i32) -> Self {
+        let mut verifier = Self::for_algorithm(algorithm);
+        if algorithm == ChecksumAlgorithm::MD4 {
+            verifier.update(&seed.to_le_bytes());
+        }
+        verifier
     }
 
     /// Creates a verifier for a specific algorithm.

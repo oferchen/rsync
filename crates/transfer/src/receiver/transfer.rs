@@ -264,9 +264,10 @@ impl ReceiverContext {
                         reader.read_exact(&mut expected_buf[..checksum_len])?;
 
                         let algo = checksum_verifier.algorithm();
+                        // upstream: checksum.c:sum_init() prepends seed for legacy MD4.
                         let old_verifier = std::mem::replace(
                             &mut checksum_verifier,
-                            ChecksumVerifier::for_algorithm(algo),
+                            ChecksumVerifier::for_algorithm_seeded(algo, self.checksum_seed),
                         );
                         let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
                         let computed_len = old_verifier.finalize_into(&mut computed);
