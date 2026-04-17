@@ -776,8 +776,10 @@ pub fn replay(
                     match token {
                         CompressedToken::End => break,
                         CompressedToken::Literal(data) => {
-                            // upstream: receiver.c - see_token(buf, len) after literal
-                            decoder.see_token(&data).map_err(BatchError::Io)?;
+                            // Literals already pass through inflate in recv_token(),
+                            // which updates the decompressor dictionary. Do NOT call
+                            // see_token() here - upstream receiver.c only calls
+                            // see_token() for block matches, not literals.
                             ops.push(protocol::wire::DeltaOp::Literal(data));
                         }
                         CompressedToken::BlockMatch(block_index) => {
