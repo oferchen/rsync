@@ -742,10 +742,7 @@ mod tests {
     /// upstream: flist.c:3223 - `t_path = t_ITEM` at protocol < 29.
     #[test]
     fn pre29_no_files_before_dirs() {
-        let mut entries = vec![
-            make_file("zebra.txt"),
-            make_dir("aardvark"),
-        ];
+        let mut entries = vec![make_file("zebra.txt"), make_dir("aardvark")];
         sort_file_list(&mut entries, false, true);
         let names: Vec<&str> = entries.iter().map(|e| e.name()).collect();
         // At proto < 29: pure alphabetical, 'a' < 'z', so dir "aardvark" first
@@ -757,8 +754,14 @@ mod tests {
     fn pre29_dot_first() {
         let dot = make_dir(".");
         let file = make_file("abc.txt");
-        assert_eq!(compare_with_keys_pre29(dot.name_bytes(), file.name_bytes()), Ordering::Less);
-        assert_eq!(compare_with_keys_pre29(file.name_bytes(), dot.name_bytes()), Ordering::Greater);
+        assert_eq!(
+            compare_with_keys_pre29(dot.name_bytes(), file.name_bytes()),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_with_keys_pre29(file.name_bytes(), dot.name_bytes()),
+            Ordering::Greater
+        );
     }
 
     /// Protocol < 29: mixed files and dirs sort in pure alphabetical order.
@@ -805,7 +808,9 @@ mod tests {
         // File "a" and dir "a" have same name - stable sort keeps file first.
         assert_eq!(
             names,
-            vec![".", "a", "a", "a/file.txt", "ab", "ab.txt", "b", "b.txt", "z"]
+            vec![
+                ".", "a", "a", "a/file.txt", "ab", "ab.txt", "b", "b.txt", "z"
+            ]
         );
     }
 }
