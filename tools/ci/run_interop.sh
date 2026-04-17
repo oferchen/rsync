@@ -2156,6 +2156,111 @@ test_compressed_batch_delta_interop() {
   return 0
 }
 
+# #1705: upstream self-roundtrip compressed delta batch verification.
+# Validates that upstream rsync can read its own compressed batch files with
+# delta transfers. This documents an upstream limitation: when upstream rsync
+# is built with zstd support and writes a batch with -z (auto-negotiating
+# zstd for local transfers), the read-batch path forces CPRES_ZLIB
+# (compat.c:194-195) which cannot inflate zstd-compressed data. The batch
+# file format does not record which compression algorithm was used - only
+# that compression was active (bit 8 in stream flags).
+#
+# This test uses --compress-choice=zlib to ensure the roundtrip works.
+# Without it, upstream may fail reading its own batch on zstd-enabled builds.
+#
+# Key upstream source references:
+#   batch.c:59-76     - stream flags bitmap (bit 8 = do_compression)
+#   compat.c:181-220  - parse_compress_choice(): batch read -> CPRES_ZLIB
+#   compat.c:194-195  - fallback: "else if (do_compression) do_compression = CPRES_ZLIB"
+#   io.c:1903,2208    - write_batch_monitor tees raw wire bytes to batch_fd
+#
+# oc-rsync avoids this issue entirely by recording uncompressed data in
+# batch files (do_compression=false in stream flags), so oc-rsync batch
+# files are always readable regardless of the compression algorithm used
+# during the original transfer.
+test_upstream_compressed_batch_self_roundtrip() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local batch_dir="${work}/batch-upstream-self-z-delta"
+  rm -rf "$batch_dir"
+
+  local delta_src="${batch_dir}/src"
+  local delta_basis="${batch_dir}/basis"
+  local delta_write_dest="${batch_dir}/write-dest"
+  local delta_read_dest="${batch_dir}/read-dest"
+  local batch_file="${batch_dir}/batch-up-self-z.rsync"
+  mkdir -p "$delta_src" "$delta_basis" "$delta_write_dest" "$delta_read_dest"
+
+  # Create source files large enough to produce block matches with delta.
+  dd if=/dev/zero bs=1K count=100 2>/dev/null | tr '\0' 'B' > "$delta_src/data.bin"
+  printf 'CHANGED_DATA_HERE' | dd of="$delta_src/data.bin" bs=1 seek=40000 conv=notrunc 2>/dev/null
+
+  # Pre-seed write destination with slightly different version (basis for delta).
+  dd if=/dev/zero bs=1K count=100 2>/dev/null | tr '\0' 'B' > "$delta_write_dest/data.bin"
+
+  # Copy same basis to read destination so replay has it.
+  cp "$delta_write_dest/data.bin" "$delta_read_dest/data.bin"
+
+  # Step 1: upstream writes compressed delta batch with --compress-choice=zlib.
+  # Without --compress-choice=zlib, upstream builds with zstd support may
+  # auto-negotiate zstd for local transfers, producing a batch file that
+  # upstream itself cannot read back (CPRES_ZLIB decoder vs zstd data).
+  if ! timeout "$hard_timeout" "$upstream_binary" -avI -z --no-whole-file \
+      --compress-choice=zlib --write-batch="$batch_file" --timeout=10 \
+      "${delta_src}/" "${delta_write_dest}/" \
+      >"${log}.up-self-z-write.out" 2>"${log}.up-self-z-write.err"; then
+    echo "    upstream --write-batch -z --no-whole-file failed (exit=$?)"
+    return 1
+  fi
+
+  if [[ ! -f "$batch_file" ]]; then
+    echo "    batch file not created"
+    return 1
+  fi
+
+  # Step 2: upstream reads its own compressed delta batch.
+  local rc1=0
+  timeout "$hard_timeout" "$upstream_binary" -av \
+      --read-batch="$batch_file" --timeout=10 \
+      "${delta_read_dest}/" \
+      >"${log}.up-self-z-read.out" 2>"${log}.up-self-z-read.err" || rc1=$?
+  if [[ $rc1 -ne 0 ]]; then
+    echo "    upstream failed reading its own compressed delta batch (exit=$rc1)"
+    head -5 "${log}.up-self-z-read.err" 2>/dev/null | sed 's/^/    stderr: /'
+    return 1
+  fi
+
+  # Step 3: verify upstream self-roundtrip.
+  if ! cmp -s "${delta_src}/data.bin" "${delta_read_dest}/data.bin"; then
+    echo "    content mismatch after upstream self-roundtrip of compressed delta batch"
+    return 1
+  fi
+
+  # Step 4: verify oc-rsync can also read the same batch.
+  local oc_read_dest="${batch_dir}/oc-read-dest"
+  mkdir -p "$oc_read_dest"
+  # Re-seed basis for oc-rsync read.
+  dd if=/dev/zero bs=1K count=100 2>/dev/null | tr '\0' 'B' > "$oc_read_dest/data.bin"
+
+  local rc2=0
+  timeout "$hard_timeout" "$oc_bin" -av \
+      --read-batch="$batch_file" --timeout=10 \
+      "${oc_read_dest}/" \
+      >"${log}.up-self-z-oc-read.out" 2>"${log}.up-self-z-oc-read.err" || rc2=$?
+  if [[ $rc2 -ne 0 ]]; then
+    echo "    oc-rsync failed reading upstream compressed delta batch (exit=$rc2)"
+    head -5 "${log}.up-self-z-oc-read.err" 2>/dev/null | sed 's/^/    stderr: /'
+    return 1
+  fi
+
+  if ! cmp -s "${delta_src}/data.bin" "${oc_read_dest}/data.bin"; then
+    echo "    content mismatch after oc-rsync read of upstream compressed delta batch"
+    return 1
+  fi
+
+  return 0
+}
+
 # #3084: batch framing interop with multi-file varying-size transfers
 # Validates that the NDX-driven batch framing produces correct upstream-compatible
 # batch files when transferring many files with varying sizes. PR #3084 fixed the
@@ -6566,6 +6671,7 @@ run_standalone_interop_tests() {
     "upstream-compressed-batch-oc-reads"
     "oc-compressed-batch-upstream-reads"
     "compressed-batch-delta-interop"
+    "upstream-compressed-batch-self-roundtrip"
     "batch-framing-multifile"
     "info-progress2"
     "large-file-2gb"
@@ -6619,6 +6725,7 @@ run_standalone_interop_tests() {
     "test_upstream_compressed_batch_oc_reads"
     "test_oc_compressed_batch_upstream_reads"
     "test_compressed_batch_delta_interop"
+    "test_upstream_compressed_batch_self_roundtrip"
     "test_batch_framing_multifile"
     "test_info_progress2"
     "test_large_file_2gb"

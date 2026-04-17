@@ -44,9 +44,18 @@ pub(crate) fn build_batch_context(
         preserve_hard_links: config.preserve_hard_links(),
         always_checksum: config.checksum(),
         xfer_dirs: config.dirs(),
-        // upstream tees raw (compressed) wire bytes to the batch file,
-        // but oc-rsync captures post-decompression data. Always false
-        // so replay reads uncompressed tokens correctly.
+        // upstream tees raw (compressed) wire bytes to the batch file
+        // and sets do_compression=true in stream flags. On read-batch,
+        // upstream's parse_compress_choice() (compat.c:194-195) maps
+        // do_compression=1 to CPRES_ZLIB regardless of the actual
+        // algorithm used during write. This causes upstream to fail
+        // reading its own batch files when the original transfer
+        // auto-negotiated zstd (rsync 3.4.1 with SUPPORT_ZSTD).
+        //
+        // oc-rsync avoids this upstream limitation by capturing
+        // post-decompression data. Always false so replay reads
+        // uncompressed tokens correctly and batch files are portable
+        // across all compression backends.
         do_compression: false,
         preserve_acls,
         preserve_xattrs,
@@ -136,7 +145,9 @@ mod tests {
     /// Verifies that `build_batch_context` always sets `do_compression=false`,
     /// even when the client configuration has compression enabled. oc-rsync
     /// captures post-decompression data, so the batch file body is always
-    /// uncompressed.
+    /// uncompressed. This avoids an upstream rsync 3.4.1 limitation where
+    /// batch files written with zstd compression are unreadable because
+    /// read-batch forces CPRES_ZLIB (upstream compat.c:194-195).
     #[test]
     fn batch_context_never_sets_do_compression() {
         let config = ClientConfig::builder().compress(true).build();
@@ -153,5 +164,32 @@ mod tests {
             !ctx.flags.do_compression,
             "do_compression must be false - oc-rsync captures uncompressed data"
         );
+    }
+
+    /// Verifies do_compression is false for all compression-related configs.
+    ///
+    /// This documents that oc-rsync's batch design avoids the upstream rsync
+    /// 3.4.1 limitation where the batch format does not record which
+    /// compression algorithm was used. Upstream's read-batch always assumes
+    /// CPRES_ZLIB (compat.c:194-195), but the write-batch may have used
+    /// zstd, lz4, or zlibx - causing unreadable batch files.
+    #[test]
+    fn batch_context_do_compression_false_regardless_of_compress_config() {
+        for compress_enabled in [true, false] {
+            let config = ClientConfig::builder().compress(compress_enabled).build();
+            let temp = tempfile::TempDir::new().unwrap();
+            let path = temp.path().join("test.batch");
+            let batch_cfg = engine::batch::BatchConfig::new(
+                engine::batch::BatchMode::Write,
+                path.to_string_lossy().to_string(),
+                32,
+            );
+            let writer = Arc::new(Mutex::new(BatchWriter::new(batch_cfg).unwrap()));
+            let ctx = build_batch_context(&config, writer);
+            assert!(
+                !ctx.flags.do_compression,
+                "do_compression must always be false (compress={compress_enabled})"
+            );
+        }
     }
 }
