@@ -32,6 +32,12 @@ pub struct BatchFlags {
     /// Bit 7: --dirs (-d) [protocol >= 29] - upstream: batch.c:67 `&xfer_dirs`
     pub xfer_dirs: bool,
     /// Bit 8: --compress (-z) [protocol >= 29] - upstream: batch.c:68 `&do_compression`
+    ///
+    /// When true, the batch body contains compressed token data and the
+    /// reader must decompress using CPRES_ZLIB (upstream compat.c:194-195).
+    /// oc-rsync always writes `false` here because it records uncompressed
+    /// data, avoiding the upstream limitation where the batch format does
+    /// not record the actual compression algorithm.
     pub do_compression: bool,
     /// Bit 9: --iconv [protocol >= 30] - upstream: batch.c:69 `&tweaked_iconv`
     pub iconv: bool,
