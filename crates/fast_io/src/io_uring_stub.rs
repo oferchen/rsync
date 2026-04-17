@@ -190,6 +190,7 @@ pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot};
 ///
 /// On non-Linux platforms, [`try_new`](Self::try_new) always returns `None`
 /// and [`new`](Self::new) always returns `Unsupported`.
+#[derive(Debug)]
 pub struct IoUringDiskBatch {
     _private: (),
 }

@@ -124,24 +124,13 @@ fn execute_transfer(
         log_message(log, &message);
     }
 
-    // On Unix, wrap socket fds in io_uring RECV/SEND for batched syscalls.
-    // Auto policy: uses io_uring on Linux 5.6+, falls back to standard I/O elsewhere.
-    #[cfg(unix)]
-    let result = {
-        use std::os::unix::io::AsRawFd;
-        let policy = fast_io::IoUringPolicy::Auto;
-        let reader_res =
-            fast_io::socket_reader_from_fd(read_stream.as_raw_fd(), 64 * 1024, policy);
-        let writer_res =
-            fast_io::socket_writer_from_fd(write_stream.as_raw_fd(), 64 * 1024, policy);
-        if let (Ok(mut reader), Ok(mut writer)) = (reader_res, writer_res) {
-            run_server_with_handshake(config, handshake, &mut reader, &mut writer, None, None, None)
-        } else {
-            run_server_with_handshake(config, handshake, read_stream, write_stream, None, None, None)
-        }
-    };
-    #[cfg(not(unix))]
-    let result = run_server_with_handshake(config, handshake, read_stream, write_stream, None, None, None);
+    // Use standard buffered I/O for daemon socket communication.
+    // io_uring SEND blocks in submit_and_wait() during bidirectional protocol
+    // exchanges (NDX_DONE, stats, goodbye) when TCP backpressure occurs,
+    // causing 10-second hangs. Standard I/O handles partial writes correctly,
+    // matching upstream rsync's socket I/O model.
+    let result =
+        run_server_with_handshake(config, handshake, read_stream, write_stream, None, None, None);
 
     match result {
         Ok(_server_stats) => {
@@ -525,6 +514,14 @@ fn process_approved_module(
         final_protocol,
         module,
     );
+
+    // Ensure clean TCP shutdown: send FIN before dropping streams.
+    // Without explicit shutdown, close() on cloned TcpStreams with unread
+    // receive buffer data causes the kernel to send RST, which the client
+    // interprets as "connection unexpectedly closed" (exit code 12).
+    // upstream: daemon child exits via exit_cleanup() which lets the kernel
+    // perform clean socket shutdown with proper FIN/ACK sequence.
+    let _ = write_stream.shutdown(std::net::Shutdown::Write);
 
     // Run post-xfer exec if configured
     // upstream: clientserver.c - post_exec() runs after the transfer, regardless of outcome

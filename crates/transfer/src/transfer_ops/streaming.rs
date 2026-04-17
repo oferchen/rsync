@@ -88,7 +88,12 @@ pub fn process_file_response_streaming<R: Read>(
     // Move the checksum verifier to the disk thread so hashing overlaps with
     // I/O and the network thread can focus solely on reading the wire.
     let algo = checksum_verifier.algorithm();
-    let disk_verifier = std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
+    // upstream: checksum.c:sum_init() prepends seed for legacy MD4 (proto < 30).
+    // The replacement verifier must also be seeded for the next file.
+    let disk_verifier = std::mem::replace(
+        checksum_verifier,
+        ChecksumVerifier::for_algorithm_seeded(algo, ctx.config.checksum_seed),
+    );
 
     // Defer sending Begin - allows coalescing single-chunk files into a
     // single WholeFile message (3 channel sends -> 1, reducing futex overhead).

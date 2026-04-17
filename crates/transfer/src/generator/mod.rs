@@ -243,6 +243,11 @@ impl SegmentScheduler {
     fn remaining(&self) -> &[PendingSegment] {
         &self.segments[self.cursor..]
     }
+
+    /// Returns `true` when all segments have been dispatched.
+    fn is_exhausted(&self) -> bool {
+        self.cursor >= self.segments.len()
+    }
 }
 
 /// Mutable state for INC_RECURSE segmented file list sending.

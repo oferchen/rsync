@@ -140,8 +140,11 @@ pub fn process_file_response<R: Read>(
                 reader.read_exact(&mut expected[..checksum_len])?;
 
                 let algo = checksum_verifier.algorithm();
-                let old_verifier =
-                    std::mem::replace(checksum_verifier, ChecksumVerifier::for_algorithm(algo));
+                // upstream: checksum.c:sum_init() prepends seed for legacy MD4.
+                let old_verifier = std::mem::replace(
+                    checksum_verifier,
+                    ChecksumVerifier::for_algorithm_seeded(algo, ctx.config.checksum_seed),
+                );
                 let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
                 let computed_len = old_verifier.finalize_into(&mut computed);
                 if computed_len != checksum_len {

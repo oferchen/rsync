@@ -14,6 +14,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use logging::{PhaseTimer, debug_log};
+use protocol::TransferStats;
 use protocol::codec::{
     NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec,
 };
@@ -93,6 +94,12 @@ impl GeneratorContext {
             .unwrap_or_else(|| self.build_flist_writer());
         let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
         let mut segments_sent: usize = 0;
+        // upstream: sender.c:242-250 - tracks remaining flist-free NDX_DONEs.
+        // With INC_RECURSE, the client sends one NDX_DONE per completed flist
+        // (initial + sub-lists). The sender echoes these without phase change
+        // until all flists are freed, then falls through to the normal phase
+        // transition. This counter tracks how many flist-free echoes remain.
+        let mut flist_done_remaining: usize = 0;
 
         // upstream: sender.c - dry-run skips data transfer; daemon may close early
         let tolerant = self.config.flags.dry_run;
@@ -109,6 +116,14 @@ impl GeneratorContext {
                         &mut flist_ndx_codec,
                     )?;
                     segments_sent += 1;
+                    flist_done_remaining += 1;
+                }
+
+                // upstream: flist.c:2534-2545 - send NDX_FLIST_EOF when all sub-lists
+                // have been dispatched. Must happen inside the loop (not after) because
+                // the receiver waits for NDX_FLIST_EOF before sending NDX_DONE.
+                if !self.incremental.flist_eof_sent && scheduler.is_exhausted() {
+                    self.send_flist_eof(&mut *writer, &mut flist_ndx_codec, segments_sent)?;
                 }
             }
 
@@ -131,14 +146,31 @@ impl GeneratorContext {
             if ndx < 0 {
                 match ndx {
                     NDX_DONE => {
-                        // Phase transition
+                        // upstream: sender.c:242-257 - INC_RECURSE flist-free path.
+                        // With INC_RECURSE, the client sends one NDX_DONE per
+                        // completed sub-file-list before the actual phase transitions.
+                        // Echo these without incrementing phase, matching upstream's
+                        // flist_free(first_flist) loop.
+                        if inc_recurse && flist_done_remaining > 0 {
+                            flist_done_remaining -= 1;
+                            if let Err(e) = ndx_write_codec
+                                .write_ndx_done(&mut *writer)
+                                .and_then(|()| writer.flush())
+                            {
+                                if tolerant && is_early_close_error(&e) {
+                                    break;
+                                }
+                                return Err(e);
+                            }
+                            continue;
+                        }
+
+                        // upstream: sender.c:252-257 - phase transition.
+                        // Increment phase first, break without echo if past max_phase.
                         phase += 1;
                         if phase > max_phase {
                             break;
                         }
-                        // upstream: sender.c:250 - echo NDX_DONE back to receiver.
-                        // During dry-run the daemon may close the pipe before we
-                        // finish echoing - treat write failures as end-of-transfer.
                         if let Err(e) = ndx_write_codec
                             .write_ndx_done(&mut *writer)
                             .and_then(|()| writer.flush())
@@ -359,6 +391,7 @@ impl GeneratorContext {
                         &mut flist_ndx_codec,
                     )?;
                     segments_sent += 1;
+                    flist_done_remaining += 1;
                 }
             }
 
@@ -385,6 +418,7 @@ impl GeneratorContext {
                     &mut flist_ndx_codec,
                 )?;
                 segments_sent += 1;
+                flist_done_remaining += 1;
             }
             self.send_flist_eof(&mut *writer, &mut flist_ndx_codec, segments_sent)?;
         }
@@ -392,10 +426,10 @@ impl GeneratorContext {
         // Cache flist_writer back for potential reuse (e.g., phase 2).
         self.incremental.flist_writer_cache = Some(flist_writer);
 
-        // Send final NDX_DONE.
-        // During dry-run the upstream daemon may have already closed the connection,
-        // making the write fail with BrokenPipe or WouldBlock.
-        // upstream: sender.c - dry-run never enters the data-transfer phase.
+        // upstream: sender.c:454-462 - after the transfer loop exits, the sender
+        // sends io_error (if changed) and a final NDX_DONE. This NDX_DONE is the
+        // "goodbye" that tells the client's generator to proceed with its own
+        // goodbye handshake. Without it, the client hangs waiting for this marker.
         if let Err(e) = ndx_write_codec
             .write_ndx_done(&mut *writer)
             .and_then(|()| writer.flush())
@@ -595,6 +629,38 @@ impl GeneratorContext {
         self.delete_stats.specials = self.delete_stats.specials.saturating_add(stats.specials);
     }
 
+    /// Sends transfer statistics to the client after the transfer loop completes.
+    ///
+    /// Only called in server mode (daemon sender). Writes total_read,
+    /// total_written, total_size as varlong30 values, plus flist_buildtime
+    /// and flist_xfertime for protocol >= 29.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:347-357` - `handle_stats()` server-sender write path
+    /// - `main.c:960-962` - `do_server_sender()` calls `handle_stats(f_out)`
+    fn send_stats<W: Write>(
+        &self,
+        writer: &mut W,
+        transfer_result: &TransferLoopResult,
+        flist_buildtime_ms: u64,
+        flist_xfertime_ms: u64,
+    ) -> io::Result<()> {
+        // upstream: stats.total_size is the sum of all file sizes in the transfer
+        let total_size: u64 = self.file_list.iter().map(|e| e.size()).sum();
+
+        let stats = TransferStats::with_bytes(
+            self.timing.total_bytes_read,
+            transfer_result.bytes_sent,
+            total_size,
+        )
+        .with_flist_times(flist_buildtime_ms, flist_xfertime_ms);
+
+        stats.write_to(writer, self.protocol)?;
+        writer.flush()?;
+        Ok(())
+    }
+
     /// Runs the generator role to completion.
     ///
     /// Orchestrates the full send operation: build file list, send it, process
@@ -659,8 +725,17 @@ impl GeneratorContext {
             self.run_transfer_loop(reader, writer, &mut progress, &mut itemize)?
         };
 
-        // upstream: client-sender handle_stats(-1) is a no-op (main.c:360-384).
-        // Stats are only written by the server-sender path.
+        // upstream: main.c:960-962 - do_server_sender() calls io_flush then handle_stats
+        // before read_final_goodbye. Server-sender writes transfer stats; client-sender
+        // handle_stats(-1) is a no-op (main.c:339-345).
+        if !self.config.connection.client_mode {
+            let flist_buildtime =
+                calculate_duration_ms(self.timing.flist_build_start, self.timing.flist_build_end);
+            let flist_xfertime =
+                calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
+            self.send_stats(writer, &transfer_result, flist_buildtime, flist_xfertime)?;
+        }
+
         let mut ndx_read_codec = transfer_result.ndx_read_codec;
         let mut ndx_write_codec = transfer_result.ndx_write_codec;
         self.handle_goodbye(reader, writer, &mut ndx_read_codec, &mut ndx_write_codec)?;
