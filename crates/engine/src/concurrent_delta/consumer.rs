@@ -426,8 +426,15 @@ mod tests {
             tx.send(DeltaWork::whole_file(0, PathBuf::from("/dst/a"), 1024).with_sequence(0))
                 .unwrap();
             tx.send(
-                DeltaWork::delta(1, PathBuf::from("/dst/b"), PathBuf::from("/basis/b"), 2048)
-                    .with_sequence(1),
+                DeltaWork::delta(
+                    1,
+                    PathBuf::from("/dst/b"),
+                    PathBuf::from("/basis/b"),
+                    2048,
+                    800,
+                    1248,
+                )
+                .with_sequence(1),
             )
             .unwrap();
             tx.send(DeltaWork::whole_file(2, PathBuf::from("/dst/c"), 512).with_sequence(2))

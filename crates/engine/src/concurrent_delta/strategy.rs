@@ -107,11 +107,11 @@ impl DeltaTransferStrategy {
 impl DeltaStrategy for DeltaTransferStrategy {
     fn process(&self, work: &DeltaWork) -> DeltaResult {
         let target_size = work.target_size();
-        // Delta transfer: estimate a 50/50 split as a baseline.
-        // Real implementations will compute actual literal vs matched ratios
-        // from the delta token stream during block-matching.
-        let matched = target_size / 2;
-        let literal = target_size - matched;
+        // Delta transfer: use actual literal/matched byte counts accumulated
+        // during delta token stream processing.
+        // upstream: receiver.c:receive_data() tracks these via data/match_sum.
+        let literal = work.literal_bytes();
+        let matched = work.matched_bytes();
         DeltaResult::success(work.ndx(), target_size, literal, matched)
     }
 
@@ -187,20 +187,22 @@ mod tests {
     }
 
     #[test]
-    fn delta_strategy_returns_mixed_stats() {
+    fn delta_strategy_returns_actual_stats() {
         let strategy = DeltaTransferStrategy::new();
         let work = DeltaWork::delta(
             5,
             PathBuf::from("/dest/b.txt"),
             PathBuf::from("/basis/b.txt"),
             4096,
+            1200,
+            2896,
         );
         let result = strategy.process(&work);
         assert!(result.is_success());
         assert_eq!(result.ndx(), 5);
         assert_eq!(result.bytes_written(), 4096);
-        assert_eq!(result.matched_bytes(), 2048);
-        assert_eq!(result.literal_bytes(), 2048);
+        assert_eq!(result.matched_bytes(), 2896);
+        assert_eq!(result.literal_bytes(), 1200);
     }
 
     #[test]
@@ -218,7 +220,14 @@ mod tests {
 
     #[test]
     fn select_strategy_delta() {
-        let work = DeltaWork::delta(0, PathBuf::from("/dest"), PathBuf::from("/basis"), 100);
+        let work = DeltaWork::delta(
+            0,
+            PathBuf::from("/dest"),
+            PathBuf::from("/basis"),
+            100,
+            40,
+            60,
+        );
         let strategy = select_strategy(&work);
         assert_eq!(strategy.kind(), DeltaWorkKind::Delta);
     }
@@ -240,14 +249,15 @@ mod tests {
             PathBuf::from("/dest/d.txt"),
             PathBuf::from("/basis/d.txt"),
             1000,
+            350,
+            650,
         );
         let result = dispatch(&work);
         assert!(result.is_success());
         assert_eq!(result.ndx(), 7);
         assert_eq!(result.bytes_written(), 1000);
-        // Delta splits: 500 matched, 500 literal
-        assert_eq!(result.matched_bytes(), 500);
-        assert_eq!(result.literal_bytes(), 500);
+        assert_eq!(result.matched_bytes(), 650);
+        assert_eq!(result.literal_bytes(), 350);
     }
 
     #[test]
@@ -266,6 +276,8 @@ mod tests {
             0,
             PathBuf::from("/dest/empty"),
             PathBuf::from("/basis/empty"),
+            0,
+            0,
             0,
         );
         let result = dispatch(&work);
@@ -311,8 +323,15 @@ mod tests {
 
     #[test]
     fn dispatch_propagates_sequence_delta() {
-        let work = DeltaWork::delta(2, PathBuf::from("/dest/b"), PathBuf::from("/basis/b"), 512)
-            .with_sequence(99);
+        let work = DeltaWork::delta(
+            2,
+            PathBuf::from("/dest/b"),
+            PathBuf::from("/basis/b"),
+            512,
+            200,
+            312,
+        )
+        .with_sequence(99);
         let result = dispatch(&work);
         assert_eq!(result.sequence(), 99);
         assert!(result.is_success());

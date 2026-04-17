@@ -575,6 +575,8 @@ mod tests {
             PathBuf::from("/dest/file.txt"),
             PathBuf::from("/basis/file.txt"),
             2048,
+            700,
+            1348,
         );
         tx.send(work).unwrap();
         drop(tx);
