@@ -980,6 +980,26 @@ comp_run_scenario() {
       echo "old hello" > "$ddir/hello.txt"
       echo "old multiline" > "$ddir/multiline.txt"
       ;;
+    backup-dir)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      echo "old hello" > "$ddir/hello.txt"
+      echo "old multiline" > "$ddir/multiline.txt"
+      ;;
+    checksum-content)
+      rm -rf "$ddir"/*; mkdir -p "$ddir"
+      # Create dest files with SAME size but DIFFERENT content than source.
+      # Copy source then flip bytes so size is identical. Match mtime so
+      # quick-check (size+mtime) would skip them - only -c (checksum) detects
+      # the content difference and forces the update.
+      cp -a "$sdir/hello.txt" "$ddir/hello.txt"
+      cp -a "$sdir/multiline.txt" "$ddir/multiline.txt"
+      # Overwrite first bytes with different content, preserving file size
+      printf 'XXXXXXXX' | dd of="$ddir/hello.txt" bs=1 count=8 conv=notrunc 2>/dev/null
+      printf 'YYYYYYYY' | dd of="$ddir/multiline.txt" bs=1 count=8 conv=notrunc 2>/dev/null
+      # Restore mtime from source so quick-check sees no mtime difference
+      touch -r "$sdir/hello.txt" "$ddir/hello.txt"
+      touch -r "$sdir/multiline.txt" "$ddir/multiline.txt"
+      ;;
     update)
       rm -rf "$ddir"/*; mkdir -p "$ddir"
       cp -r "$sdir"/* "$ddir"/
@@ -1303,6 +1323,53 @@ comp_run_scenario() {
       actual_hello=$(cat "$ddir/hello.txt~")
       if [[ "$actual_hello" != "$expected_hello" ]]; then
         echo "    --backup: hello.txt~ content wrong"
+        return 1
+      fi
+      return 0
+      ;;
+    backup-dir)
+      comp_verify_transfer "$sdir" "$ddir" || return 1
+      # --backup-dir=.backups should place backup copies in .backups/ subdir
+      if [[ ! -d "$ddir/.backups" ]]; then
+        echo "    --backup-dir: .backups directory not created"
+        return 1
+      fi
+      if [[ ! -f "$ddir/.backups/hello.txt" ]]; then
+        echo "    --backup-dir: .backups/hello.txt backup not created"
+        return 1
+      fi
+      if [[ ! -f "$ddir/.backups/multiline.txt" ]]; then
+        echo "    --backup-dir: .backups/multiline.txt backup not created"
+        return 1
+      fi
+      # Verify backup content is the old pre-transfer data
+      local expected_bd_hello="old hello"
+      local actual_bd_hello
+      actual_bd_hello=$(cat "$ddir/.backups/hello.txt")
+      if [[ "$actual_bd_hello" != "$expected_bd_hello" ]]; then
+        echo "    --backup-dir: .backups/hello.txt content wrong (got: $actual_bd_hello)"
+        return 1
+      fi
+      # Verify no tilde-suffixed backups in main dir (--backup-dir overrides default)
+      if [[ -f "$ddir/hello.txt~" ]]; then
+        echo "    --backup-dir: tilde backup in main dir (should be in .backups/)"
+        return 1
+      fi
+      return 0
+      ;;
+    checksum-content)
+      # With -c, rsync compares checksums instead of size+mtime. Files with
+      # matching size and mtime but different content should be updated.
+      if [[ ! -f "$ddir/hello.txt" ]]; then
+        echo "    --checksum content: hello.txt missing"
+        return 1
+      fi
+      if ! cmp -s "$sdir/hello.txt" "$ddir/hello.txt"; then
+        echo "    --checksum content: hello.txt not updated despite content diff"
+        return 1
+      fi
+      if ! cmp -s "$sdir/multiline.txt" "$ddir/multiline.txt"; then
+        echo "    --checksum content: multiline.txt not updated despite content diff"
         return 1
       fi
       return 0
@@ -6987,10 +7054,12 @@ run_comprehensive_interop_case() {
       "size-only|-av --size-only|size-only"
       "ignore-times|-av --ignore-times|basic"
       "checksum-skip|-avc|checksum-skip"
+      "checksum-content|-avc|checksum-content"
       "copy-links|-avL|copy-links"
       "safe-links|-rlptv --safe-links|safe-links"
       "existing|-av --existing|existing"
       "backup|-av --backup|backup"
+      "backup-dir|-av --backup --backup-dir=.backups|backup-dir"
       "link-dest|-av --link-dest=link_ref|link-dest"
       "max-delete|-av --delete --max-delete=1|max-delete"
       "update|-av --update|update"
