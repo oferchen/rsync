@@ -18,7 +18,7 @@
 use std::io::Cursor;
 
 use protocol::flist::{
-    FileEntry, FileListReader, FileListWriter, compare_file_entries, sort_file_list,
+    compare_file_entries, sort_file_list, FileEntry, FileListReader, FileListWriter,
 };
 use protocol::ProtocolVersion;
 
@@ -55,7 +55,11 @@ fn golden_v28_sort_plain_lexicographic() {
     sort_file_list(&mut entries, false, true); // protocol_pre29 = true
 
     assert_eq!(entries[0].name(), "a", "plain lexicographic: a first");
-    assert_eq!(entries[1].name(), "b", "plain lexicographic: b (dir) second");
+    assert_eq!(
+        entries[1].name(),
+        "b",
+        "plain lexicographic: b (dir) second"
+    );
     assert_eq!(entries[2].name(), "c", "plain lexicographic: c third");
 }
 
@@ -78,8 +82,14 @@ fn golden_v28_sort_differs_from_v29() {
 
     // Protocol < 29: file "b" and dir "b" are equal in plain lexicographic.
     // The stable sort preserves input order for equal elements.
-    assert!(entries_pre29[0].is_dir(), "pre29: input order preserved for ties");
-    assert!(entries_pre29[1].is_file(), "pre29: input order preserved for ties");
+    assert!(
+        entries_pre29[0].is_dir(),
+        "pre29: input order preserved for ties"
+    );
+    assert!(
+        entries_pre29[1].is_file(),
+        "pre29: input order preserved for ties"
+    );
 }
 
 /// Protocol 28 sort does not add implicit trailing '/' to directories.
