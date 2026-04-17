@@ -43,7 +43,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use ::filters::FilterChain;
-use protocol::codec::NdxCodecEnum;
+use protocol::codec::{MonotonicNdxWriter, NdxCodecEnum};
 use protocol::flist::FileEntry;
 use protocol::idlist::IdList;
 use protocol::stats::DeleteStats;
@@ -726,7 +726,8 @@ struct TransferLoopResult {
     /// NDX read codec state carried over for the goodbye handshake.
     ndx_read_codec: NdxCodecEnum,
     /// NDX write codec state carried over for the goodbye handshake.
-    ndx_write_codec: NdxCodecEnum,
+    /// Uses `MonotonicNdxWriter` to assert strictly increasing file indices.
+    ndx_write_codec: MonotonicNdxWriter,
 }
 
 /// Statistics from a generator (sender) transfer operation.
