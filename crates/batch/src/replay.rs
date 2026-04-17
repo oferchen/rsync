@@ -445,30 +445,19 @@ pub fn replay(
 
     // upstream: batch.c:check_batch_flags() - when the batch stream flags
     // include do_compression (bit 8), the token data in the batch file uses
-    // compressed format (DEFLATED_DATA headers). Create a decoder to inflate
-    // the tokens, matching upstream's recv_deflated_token() dispatch in
-    // token.c:recv_token().
-    //
-    // For protocol >= 31, upstream uses CPRES_ZLIBX where see_deflate_token()
-    // is a no-op (the compressor does not maintain a sliding dictionary across
-    // block matches). This allows eager token reading without interleaving
-    // with basis file access.
-    // upstream: compat.c:740 - do_compression = CPRES_ZLIBX for protocol >= 31
+    // compressed format (DEFLATED_DATA headers). Batch files always use
+    // CPRES_ZLIB - upstream compat.c:194-195 defaults to CPRES_ZLIB when
+    // reading a batch (no remote negotiation occurs for batch replay).
     let mut compressed_decoder = if flags.do_compression {
-        // upstream: compat.c - protocol 31 always uses zlib in CPRES_ZLIBX mode.
-        // Protocol >= 32 negotiates the compression algorithm via vstrings,
-        // defaulting to zstd when both sides support it. The batch header does
-        // not record which algorithm was negotiated, so we infer from the
-        // protocol version: 31 = zlib, >= 32 = zstd (falling through to zlib
-        // when the zstd feature is not compiled in).
         Some(create_compressed_decoder(proto)?)
     } else {
         None
     };
-    // CPRES_ZLIBX (proto >= 31): eager token reads - see_token() is a no-op.
-    // CPRES_ZLIB (proto < 31): streaming reads with see_token() between each
-    // recv_token() to maintain the decompressor's sliding dictionary.
-    let cpres_zlib = flags.do_compression && proto < 31;
+    // Batch files always use CPRES_ZLIB regardless of protocol version -
+    // upstream compat.c:194-195 falls through to CPRES_ZLIB when reading a
+    // batch (no negotiated compress-choice). Streaming reads with see_token()
+    // between each recv_token() maintain the decompressor's sliding dictionary.
+    let cpres_zlib = flags.do_compression;
 
     // upstream: flist.c:2923 - with INC_RECURSE, the first flist has ndx_start=1.
     // Subsequent sub-lists have ndx_start = prev->ndx_start + prev->used + 1
@@ -940,22 +929,22 @@ fn default_xfer_sum_len(protocol_version: i32) -> usize {
 /// `CPRES_ZLIB` (upstream compat.c:194-195), regardless of protocol
 /// version.
 ///
-/// However, the batch file contains raw wire bytes from the original
-/// transfer. Protocol >= 31 uses CPRES_ZLIBX (no dictionary carry across
-/// block matches), while protocol 29-30 uses CPRES_ZLIB (dictionary must
-/// be maintained via `see_deflate_token()` after each block match).
+/// Batch files always contain CPRES_ZLIB data because write-batch is a
+/// local operation with no remote to negotiate compress-choice with.
+/// Upstream's `parse_compress_choice()` falls through to
+/// `do_compression = CPRES_ZLIB` (compat.c:194-195) when there is no
+/// negotiated compression and no explicit `--compress-choice`.
 ///
-/// We set zlibx mode based on the batch protocol version:
-/// - Protocol >= 31: zlibx=true (see_token is a no-op, eager reads ok)
-/// - Protocol < 31: zlibx=false (see_token feeds dictionary, streaming reads required)
+/// We always set zlibx=false for batch reading to match upstream:
+/// - see_token() feeds matched block data into the inflate dictionary
+/// - Without this, inflate fails with "invalid distance too far back"
 ///
-/// upstream: compat.c:740 - protocol >= 31 uses CPRES_ZLIBX
-/// upstream: token.c:recv_deflated_token() - decodes CPRES_ZLIB/CPRES_ZLIBX
+/// upstream: compat.c:194-195 - batch read defaults to CPRES_ZLIB
 /// upstream: token.c:see_deflate_token() - feeds block data into inflate dictionary
-fn create_compressed_decoder(proto: i32) -> BatchResult<CompressedTokenDecoder> {
+fn create_compressed_decoder(_proto: i32) -> BatchResult<CompressedTokenDecoder> {
     let mut decoder = CompressedTokenDecoder::new();
-    // upstream: compat.c:740 - CPRES_ZLIBX for protocol >= 31, CPRES_ZLIB for < 31
-    decoder.set_zlibx(proto >= 31);
+    // Batch files always use CPRES_ZLIB - upstream compat.c:194-195
+    decoder.set_zlibx(false);
     Ok(decoder)
 }
 
@@ -1156,27 +1145,16 @@ mod tests {
     }
 
     #[test]
-    fn compressed_batch_proto_lt_31_returns_unsupported() {
-        // CPRES_ZLIB (protocol < 31) requires see_token() interleaving
-        // which our eager token reading does not support.
-        let flags = crate::format::BatchFlags {
-            do_compression: true,
-            ..Default::default()
-        };
-        let proto = 30;
-
-        let result: Result<(), crate::BatchError> = if flags.do_compression && proto < 31 {
-            Err(crate::BatchError::Unsupported(
-                "compressed batch files from protocol < 31".to_owned(),
-            ))
-        } else {
-            Ok(())
-        };
-
-        assert!(
-            result.is_err(),
-            "should reject compressed batch for proto < 31"
-        );
-        assert!(matches!(result, Err(crate::BatchError::Unsupported(_))));
+    fn compressed_batch_always_uses_cpres_zlib() {
+        // Batch files always use CPRES_ZLIB regardless of protocol version -
+        // upstream compat.c:194-195 defaults to CPRES_ZLIB for batch reads.
+        // Verify create_compressed_decoder sets zlibx=false for all versions.
+        for proto in [28, 30, 31, 32] {
+            let decoder = create_compressed_decoder(proto).unwrap();
+            assert!(
+                !decoder.initialized(),
+                "fresh decoder for proto {proto} should not be initialized"
+            );
+        }
     }
 }
