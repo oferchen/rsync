@@ -626,9 +626,9 @@ fn stress_comparison_stability_10k() {
     let mut sorted2 = entries.clone();
     let mut sorted3 = entries.clone();
 
-    sort_file_list(&mut sorted1, false);
-    sort_file_list(&mut sorted2, false);
-    sort_file_list(&mut sorted3, false);
+    sort_file_list(&mut sorted1, false, false);
+    sort_file_list(&mut sorted2, false, false);
+    sort_file_list(&mut sorted3, false, false);
 
     // All sorts should produce identical results
     for i in 0..sorted1.len() {
