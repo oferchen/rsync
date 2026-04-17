@@ -2117,8 +2117,11 @@ test_compressed_batch_delta_interop() {
 
   # Step 1: upstream rsync writes a compressed batch with delta transfers.
   # --no-whole-file forces delta mode even for local transfers.
-  if ! timeout "$hard_timeout" "$upstream_binary" -av -z --no-whole-file \
-      --write-batch="$batch_file" --timeout=10 \
+  # --compress-choice=zlib avoids an upstream bug where rsync 3.4.1 with zstd
+  # support negotiates zstd for local transfers, but --read-batch forces
+  # CPRES_ZLIB decoder (compat.c:194), which can't inflate zstd-compressed data.
+  if ! timeout "$hard_timeout" "$upstream_binary" -avI -z --no-whole-file \
+      --compress-choice=zlib --write-batch="$batch_file" --timeout=10 \
       "${delta_src}/" "${delta_write_dest}/" \
       >"${log}.compress-delta-write.out" 2>"${log}.compress-delta-write.err"; then
     echo "    write-batch with -z --no-whole-file failed (upstream, exit=$?)"

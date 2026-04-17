@@ -35,7 +35,7 @@ use std::path::Path;
 use protocol::codec::{
     NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum,
 };
-use protocol::wire::CompressedTokenDecoder;
+use protocol::wire::{CompressedToken, CompressedTokenDecoder};
 
 use crate::BatchConfig;
 use crate::error::{BatchError, BatchResult};
@@ -129,11 +129,22 @@ fn write_literals_to_file(
 ///
 /// Returns [`BatchError::Io`] if the basis file cannot be opened, the output
 /// file cannot be created, or any read/write/seek operation fails.
+/// Applies delta operations to reconstruct a file from a basis file.
+///
+/// `block_count` is the number of blocks in the basis file's signature.
+/// `remainder` is the size of the last block (which may be shorter than
+/// `block_length`). For the last block (index == block_count - 1), the copy
+/// uses `remainder` bytes instead of `block_length`.
+///
+/// upstream: receiver.c:recv_files() / match.c - block_length for all blocks
+/// except the last, which uses remainder.
 pub fn apply_delta_ops(
     basis_path: &Path,
     dest_path: &Path,
     delta_ops: Vec<protocol::wire::DeltaOp>,
     block_length: usize,
+    block_count: u32,
+    remainder: usize,
 ) -> BatchResult<()> {
     let basis_file = File::open(basis_path).map_err(|e| {
         BatchError::Io(std::io::Error::new(
@@ -190,11 +201,15 @@ pub fn apply_delta_ops(
 
                 // Token-format block matches encode length=0 because the
                 // receiver derives block size from the signature. Use
-                // block_length when the explicit length is zero.
-                let effective_length = if length == 0 {
-                    block_length
-                } else {
+                // block_length for all blocks except the last, which uses
+                // remainder (the last block is typically shorter).
+                // upstream: receiver.c - block size for last block is remainder.
+                let effective_length = if length > 0 {
                     length as usize
+                } else if block_count > 0 && block_index == block_count - 1 {
+                    remainder
+                } else {
+                    block_length
                 };
                 let mut remaining = effective_length;
                 while remaining > 0 {
@@ -440,19 +455,6 @@ pub fn replay(
     // with basis file access.
     // upstream: compat.c:740 - do_compression = CPRES_ZLIBX for protocol >= 31
     let mut compressed_decoder = if flags.do_compression {
-        // upstream: compat.c:740 - protocol >= 31 uses CPRES_ZLIBX where
-        // see_deflate_token() is a no-op (no dictionary feed after block
-        // matches). Protocol 29-30 uses CPRES_ZLIB which requires feeding
-        // each matched block's data back into the decompressor dictionary
-        // via see_deflate_token(). Since batch replay reads all tokens
-        // eagerly (before applying), CPRES_ZLIB mode is not supported.
-        if proto < 31 {
-            return Err(BatchError::Unsupported(
-                "compressed batch files from protocol < 31 (CPRES_ZLIB) \
-                 are not supported; use protocol >= 31 (CPRES_ZLIBX)"
-                    .to_owned(),
-            ));
-        }
         // upstream: compat.c - protocol 31 always uses zlib in CPRES_ZLIBX mode.
         // Protocol >= 32 negotiates the compression algorithm via vstrings,
         // defaulting to zstd when both sides support it. The batch header does
@@ -463,6 +465,10 @@ pub fn replay(
     } else {
         None
     };
+    // CPRES_ZLIBX (proto >= 31): eager token reads - see_token() is a no-op.
+    // CPRES_ZLIB (proto < 31): streaming reads with see_token() between each
+    // recv_token() to maintain the decompressor's sliding dictionary.
+    let cpres_zlib = flags.do_compression && proto < 31;
 
     // upstream: flist.c:2923 - with INC_RECURSE, the first flist has ndx_start=1.
     // Subsequent sub-lists have ndx_start = prev->ndx_start + prev->used + 1
@@ -711,11 +717,26 @@ pub fn replay(
                 format!("failed to read sum_head: {e}"),
             ))
         })?;
-        let _count = i32::from_le_bytes([sum_buf[0], sum_buf[1], sum_buf[2], sum_buf[3]]);
+        let block_count = i32::from_le_bytes([sum_buf[0], sum_buf[1], sum_buf[2], sum_buf[3]]);
         let block_length_wire =
             i32::from_le_bytes([sum_buf[4], sum_buf[5], sum_buf[6], sum_buf[7]]);
         let _s2length = i32::from_le_bytes([sum_buf[8], sum_buf[9], sum_buf[10], sum_buf[11]]);
-        let _remainder = i32::from_le_bytes([sum_buf[12], sum_buf[13], sum_buf[14], sum_buf[15]]);
+        let remainder_wire =
+            i32::from_le_bytes([sum_buf[12], sum_buf[13], sum_buf[14], sum_buf[15]]);
+        // Compute block geometry before token reading - needed for CPRES_ZLIB
+        // see_token() calls which reference basis blocks by index.
+        let basis_exists = dest_path.exists();
+        let block_length = if block_length_wire > 0 {
+            block_length_wire as usize
+        } else {
+            choose_block_length(entry.size())
+        };
+        let remainder = if remainder_wire > 0 {
+            remainder_wire as usize
+        } else {
+            block_length
+        };
+
         // Read delta tokens for this file. When compression was active during
         // batch creation, tokens use the compressed wire format with DEFLATED_DATA
         // headers. Otherwise, tokens use the simple 4-byte LE i32 format.
@@ -725,15 +746,78 @@ pub fn replay(
             // upstream: token.c:recv_deflated_token() r_init resets inflate
             // context per file. The decoder.reset() mirrors this behavior.
             decoder.reset();
-            reader.read_compressed_delta_tokens(decoder).map_err(|e| {
-                BatchError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "failed to read compressed delta tokens for '{}': {e}",
-                        entry.name()
-                    ),
-                ))
-            })?
+            if cpres_zlib && basis_exists {
+                // CPRES_ZLIB: streaming read with dictionary synchronization.
+                // After each token, see_token() feeds the data into the
+                // decompressor dictionary so subsequent tokens can reference
+                // it via back-references. Without this, inflate fails with
+                // "invalid distance too far back".
+                // upstream: receiver.c:receive_data() + token.c:see_deflate_token()
+                let basis_data = fs::read(&dest_path).map_err(|e| {
+                    BatchError::Io(std::io::Error::new(
+                        e.kind(),
+                        format!(
+                            "failed to read basis file '{}': {e}",
+                            dest_path.display()
+                        ),
+                    ))
+                })?;
+                let stream = reader.inner_reader().ok_or_else(|| {
+                    BatchError::Io(std::io::Error::other("batch file not open"))
+                })?;
+                let mut ops = Vec::new();
+                loop {
+                    let token = decoder.recv_token(stream).map_err(|e| {
+                        BatchError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!(
+                                "failed to read compressed delta token for '{}': {e}",
+                                entry.name()
+                            ),
+                        ))
+                    })?;
+                    match token {
+                        CompressedToken::End => break,
+                        CompressedToken::Literal(data) => {
+                            // upstream: receiver.c - see_token(buf, len) after literal
+                            decoder.see_token(&data).map_err(BatchError::Io)?;
+                            ops.push(protocol::wire::DeltaOp::Literal(data));
+                        }
+                        CompressedToken::BlockMatch(block_index) => {
+                            // Feed matched block's basis data into dictionary.
+                            // upstream: receiver.c - see_token(map, len) after block match
+                            let offset = block_index as usize * block_length;
+                            let len = if block_index == block_count as u32 - 1 {
+                                remainder
+                            } else {
+                                block_length
+                            };
+                            let end = (offset + len).min(basis_data.len());
+                            if offset < basis_data.len() {
+                                decoder
+                                    .see_token(&basis_data[offset..end])
+                                    .map_err(BatchError::Io)?;
+                            }
+                            ops.push(protocol::wire::DeltaOp::Copy {
+                                block_index,
+                                length: 0,
+                            });
+                        }
+                    }
+                }
+                ops
+            } else {
+                // CPRES_ZLIBX or no basis: eager read - see_token() is a no-op.
+                reader.read_compressed_delta_tokens(decoder).map_err(|e| {
+                    BatchError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "failed to read compressed delta tokens for '{}': {e}",
+                            entry.name()
+                        ),
+                    ))
+                })?
+            }
         } else {
             reader.read_file_delta_tokens().map_err(|e| {
                 BatchError::Io(std::io::Error::new(
@@ -766,18 +850,18 @@ pub fn replay(
             println!("  {} delta operations", delta_ops.len());
         }
 
-        let basis_exists = dest_path.exists();
-        let block_length = if block_length_wire > 0 {
-            block_length_wire as usize
-        } else {
-            choose_block_length(entry.size())
-        };
-
         if !basis_exists {
             write_literals_to_file(&dest_path, &delta_ops)?;
         } else {
             let temp_path = dest_path.with_extension("~batch-tmp");
-            apply_delta_ops(&dest_path, &temp_path, delta_ops, block_length)?;
+            apply_delta_ops(
+                &dest_path,
+                &temp_path,
+                delta_ops,
+                block_length,
+                block_count as u32,
+                remainder,
+            )?;
             fs::rename(&temp_path, &dest_path).map_err(|e| {
                 BatchError::Io(std::io::Error::new(
                     e.kind(),
@@ -848,22 +932,31 @@ fn default_xfer_sum_len(protocol_version: i32) -> usize {
 
 /// Creates a `CompressedTokenDecoder` for batch replay.
 ///
+/// Creates a compressed token decoder for batch replay.
+///
 /// Batch files do not record which compression algorithm was negotiated
 /// during the original transfer. When upstream's `check_batch_flags()`
 /// restores `do_compression` from the stream flags bitmap, the value is
 /// just 1 (truthy). `parse_compress_choice()` then maps that to
 /// `CPRES_ZLIB` (upstream compat.c:194-195), regardless of protocol
-/// version. So upstream batch files **always** contain CPRES_ZLIB
-/// compressed tokens, even at protocol 32+.
+/// version.
 ///
-/// We mirror that behavior: always create a zlib decoder in CPRES_ZLIBX
-/// mode (ZLIBX is the no-dictionary variant used for protocol >= 31).
+/// However, the batch file contains raw wire bytes from the original
+/// transfer. Protocol >= 31 uses CPRES_ZLIBX (no dictionary carry across
+/// block matches), while protocol 29-30 uses CPRES_ZLIB (dictionary must
+/// be maintained via `see_deflate_token()` after each block match).
 ///
-/// upstream: compat.c:194 - `else if (do_compression) do_compression = CPRES_ZLIB;`
+/// We set zlibx mode based on the batch protocol version:
+/// - Protocol >= 31: zlibx=true (see_token is a no-op, eager reads ok)
+/// - Protocol < 31: zlibx=false (see_token feeds dictionary, streaming reads required)
+///
+/// upstream: compat.c:740 - protocol >= 31 uses CPRES_ZLIBX
 /// upstream: token.c:recv_deflated_token() - decodes CPRES_ZLIB/CPRES_ZLIBX
-fn create_compressed_decoder(_proto: i32) -> BatchResult<CompressedTokenDecoder> {
+/// upstream: token.c:see_deflate_token() - feeds block data into inflate dictionary
+fn create_compressed_decoder(proto: i32) -> BatchResult<CompressedTokenDecoder> {
     let mut decoder = CompressedTokenDecoder::new();
-    decoder.set_zlibx(true);
+    // upstream: compat.c:740 - CPRES_ZLIBX for protocol >= 31, CPRES_ZLIB for < 31
+    decoder.set_zlibx(proto >= 31);
     Ok(decoder)
 }
 
@@ -916,7 +1009,7 @@ mod tests {
         fs::write(&basis_path, b"").unwrap();
 
         let ops = vec![protocol::wire::DeltaOp::Literal(b"hello world".to_vec())];
-        apply_delta_ops(&basis_path, &dest_path, ops, 700).unwrap();
+        apply_delta_ops(&basis_path, &dest_path, ops, 700, 0, 700).unwrap();
 
         let result = fs::read(&dest_path).unwrap();
         assert_eq!(result, b"hello world");
@@ -935,7 +1028,7 @@ mod tests {
             block_index: 0,
             length: 10,
         }];
-        apply_delta_ops(&basis_path, &dest_path, ops, 10).unwrap();
+        apply_delta_ops(&basis_path, &dest_path, ops, 10, 1, 10).unwrap();
 
         let result = fs::read(&dest_path).unwrap();
         assert_eq!(result, b"0123456789");
@@ -958,7 +1051,7 @@ mod tests {
             },
             protocol::wire::DeltaOp::Literal(b"<<".to_vec()),
         ];
-        apply_delta_ops(&basis_path, &dest_path, ops, 5).unwrap();
+        apply_delta_ops(&basis_path, &dest_path, ops, 5, 1, 5).unwrap();
 
         let result = fs::read(&dest_path).unwrap();
         assert_eq!(result, b">>ABCDE<<");
@@ -974,8 +1067,36 @@ mod tests {
             block_index: 0,
             length: 10,
         }];
-        let result = apply_delta_ops(&basis_path, &dest_path, ops, 10);
+        let result = apply_delta_ops(&basis_path, &dest_path, ops, 10, 1, 10);
         assert!(result.is_err());
+    }
+
+    /// Validates that the last block uses `remainder` bytes instead of `block_length`.
+    ///
+    /// upstream: receiver.c - when applying deltas, the last block in the basis
+    /// file is shorter than `block_length`. The sum_head's `remainder` field
+    /// specifies the actual size.
+    #[test]
+    fn apply_delta_last_block_uses_remainder() {
+        let temp = TempDir::new().unwrap();
+        // Basis: 15 bytes, block_length=10, so block 0 = 10 bytes, block 1 = 5 bytes (remainder).
+        let basis_path = temp.path().join("basis.dat");
+        fs::write(&basis_path, b"AAAAAAAAAA12345").unwrap();
+        let dest_path = temp.path().join("output.dat");
+
+        // Delta: copy block 1 (the last block, 5 bytes remainder), then literal.
+        let ops = vec![
+            protocol::wire::DeltaOp::Copy {
+                block_index: 1,
+                length: 0, // Token format: length=0 means derive from block_length/remainder
+            },
+            protocol::wire::DeltaOp::Literal(b"END".to_vec()),
+        ];
+        apply_delta_ops(&basis_path, &dest_path, ops, 10, 2, 5).unwrap();
+
+        let result = fs::read(&dest_path).unwrap();
+        // Should copy 5 bytes from block 1 ("12345"), not 10 bytes (which would overread).
+        assert_eq!(result, b"12345END");
     }
 
     #[test]
