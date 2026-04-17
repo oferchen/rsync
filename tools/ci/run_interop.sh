@@ -6456,11 +6456,8 @@ exclude = *.log
 filter = exclude *.bak
 CONF
 
-  start_oc_daemon "$sf_conf" "$sf_log" "$upstream_binary" "$sf_pid" "$oc_port"
+  start_oc_daemon_with_retry "$sf_conf" "$sf_log" "$upstream_binary" "$sf_pid" "$oc_port"
 
-  # Pull from oc-rsync daemon - server-side rules should exclude .tmp, .log, .bak
-  # Use 60s timeout (2x hard_timeout) - this test starts/stops daemon twice
-  # and can be slow under CI load.
   local filter_timeout=$((hard_timeout * 2))
   local pull_exit=0
   timeout "$filter_timeout" "$upstream_binary" -av --timeout=10 \
@@ -6514,7 +6511,7 @@ exclude = *.log
 filter = exclude *.bak
 CONF
 
-  start_oc_daemon "$sf_push_conf" "$sf_push_log" "$upstream_binary" "$sf_push_pid" "$oc_port"
+  start_oc_daemon_with_retry "$sf_push_conf" "$sf_push_log" "$upstream_binary" "$sf_push_pid" "$oc_port"
 
   # Push from upstream to oc-rsync daemon
   local push_exit=0
