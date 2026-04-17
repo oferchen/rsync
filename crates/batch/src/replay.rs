@@ -349,7 +349,8 @@ pub fn replay(
 
     // upstream: flist.c:2736 - flist_sort_and_clean() after recv_file_list().
     // NDX values from the generator reference sorted positions, not wire order.
-    sort_file_list(&mut entries, false);
+    let pre29 = reader.config().protocol_version < 29;
+    sort_file_list(&mut entries, false, pre29);
 
     let mut result = ReplayResult {
         file_count: entries.len() as u64,
@@ -548,7 +549,8 @@ pub fn replay(
             reader.read_incremental_flist_segment(&mut entries)?;
 
             // upstream: flist.c:2736 - sort each sub-list segment after receiving.
-            sort_file_list(&mut entries[prev_len..], false);
+            // INC_RECURSE batches require protocol >= 30, so pre29 is always false.
+            sort_file_list(&mut entries[prev_len..], false, false);
 
             // Record this segment's NDX range for global-to-flat index mapping.
             let seg_count = entries.len() - prev_len;
