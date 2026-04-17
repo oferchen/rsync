@@ -21,9 +21,12 @@ use compress::zstd::CountingZstdEncoder;
 /// applied on top of the multiplexed stream.
 ///
 /// Batch recording is handled by the inner `MultiplexWriter`, not here.
-/// upstream: `io.c:write_buf()` tees compressed wire bytes to `batch_fd`
-/// after compression. The batch header stores `do_compression: true`
-/// so replay decompresses the tokens.
+/// Unlike upstream (which tees compressed wire bytes via `io.c:write_buf()`),
+/// oc-rsync records data at the pre-compression level and sets
+/// `do_compression: false` in the batch stream flags. This avoids an
+/// upstream rsync 3.4.1 limitation where the batch format does not record
+/// the compression algorithm, causing read-batch to force CPRES_ZLIB
+/// (compat.c:194-195) even when the original write used zstd.
 pub struct CompressedWriter<W: Write> {
     /// The underlying writer (typically MultiplexWriter)
     inner: W,

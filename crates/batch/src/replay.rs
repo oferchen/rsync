@@ -920,8 +920,6 @@ fn default_xfer_sum_len(protocol_version: i32) -> usize {
 
 /// Creates a `CompressedTokenDecoder` for batch replay.
 ///
-/// Creates a compressed token decoder for batch replay.
-///
 /// Batch files do not record which compression algorithm was negotiated
 /// during the original transfer. When upstream's `check_batch_flags()`
 /// restores `do_compression` from the stream flags bitmap, the value is
@@ -929,11 +927,17 @@ fn default_xfer_sum_len(protocol_version: i32) -> usize {
 /// `CPRES_ZLIB` (upstream compat.c:194-195), regardless of protocol
 /// version.
 ///
-/// Batch files always contain CPRES_ZLIB data because write-batch is a
-/// local operation with no remote to negotiate compress-choice with.
-/// Upstream's `parse_compress_choice()` falls through to
-/// `do_compression = CPRES_ZLIB` (compat.c:194-195) when there is no
-/// negotiated compression and no explicit `--compress-choice`.
+/// This creates a known upstream limitation: if the original write-batch
+/// transfer auto-negotiated zstd (rsync 3.4.1 with SUPPORT_ZSTD), the
+/// batch file contains zstd-compressed tokens, but read-batch assumes
+/// CPRES_ZLIB. This causes upstream rsync to fail reading its own batch
+/// files with "WARNING: failed verification" on delta transfers. The
+/// workaround is `--compress-choice=zlib` during write-batch.
+///
+/// oc-rsync avoids this issue entirely by recording uncompressed data
+/// in batch files (do_compression=false in stream flags). When reading
+/// upstream-written batch files, oc-rsync uses CPRES_ZLIB to match
+/// upstream's read-batch behavior.
 ///
 /// We always set zlibx=false for batch reading to match upstream:
 /// - see_token() feeds matched block data into the inflate dictionary
