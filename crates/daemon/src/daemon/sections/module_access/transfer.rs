@@ -515,6 +515,14 @@ fn process_approved_module(
         module,
     );
 
+    // Ensure clean TCP shutdown: send FIN before dropping streams.
+    // Without explicit shutdown, close() on cloned TcpStreams with unread
+    // receive buffer data causes the kernel to send RST, which the client
+    // interprets as "connection unexpectedly closed" (exit code 12).
+    // upstream: daemon child exits via exit_cleanup() which lets the kernel
+    // perform clean socket shutdown with proper FIN/ACK sequence.
+    let _ = write_stream.shutdown(std::net::Shutdown::Write);
+
     // Run post-xfer exec if configured
     // upstream: clientserver.c - post_exec() runs after the transfer, regardless of outcome
     if let Some(command) = module.post_xfer_exec.as_deref().filter(|_| xfer_exec_enabled()) {
