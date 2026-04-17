@@ -367,7 +367,7 @@ fn golden_v28_long_name_roundtrip() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol);
 
-    let long_name = "a/".repeat(150); // 300 bytes
+    let long_name = "a/".repeat(150); // 300 bytes, trailing slash
     let mut entry = FileEntry::new_file(long_name.clone().into(), 42, 0o644);
     entry.set_mtime(1_700_000_000, 0);
 
@@ -378,7 +378,14 @@ fn golden_v28_long_name_roundtrip() {
     let mut reader = FileListReader::new(protocol);
 
     let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
-    assert_eq!(read_entry.name(), long_name, "long name must round-trip");
+    // upstream: flist.c:757 clean_fname() strips trailing slashes
+    // (CFN_KEEP_TRAILING_SLASH is NOT set in recv_file_entry)
+    let expected_name = long_name.trim_end_matches('/');
+    assert_eq!(
+        read_entry.name(),
+        expected_name,
+        "long name round-trips with trailing slash stripped"
+    );
     assert_eq!(read_entry.size(), 42);
 }
 
