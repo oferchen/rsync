@@ -964,6 +964,10 @@ comp_verify_perms() {
 comp_run_scenario() {
   local label=$1 client=$2 flags=$3 sdir=$4 url=$5 ddir=$6 log=$7 vtype=$8
 
+  # Clean hidden files/dirs left by previous scenarios (e.g. .backups/ from
+  # backup-dir). Bash glob * does not match dotfiles, so explicit cleanup.
+  rm -rf "$ddir"/.[!.]* "$ddir"/..?* 2>/dev/null || true
+
   # Prepare destination per scenario requirements
   case "$vtype" in
     delete)
