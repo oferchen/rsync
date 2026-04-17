@@ -65,6 +65,12 @@ pub struct PipelinedReceiver {
     /// Count of files skipped due to permission-denied errors during disk commit.
     /// Used to accumulate `IOERR_GENERAL` for exit code 23.
     permission_error_count: u32,
+    /// Accumulated warning/error messages from checksum verification and
+    /// permission failures. Collected here instead of using `eprintln!` to
+    /// avoid deadlocking on the global stderr mutex in daemon handler threads.
+    /// The caller retrieves these via [`Self::drain_warnings`] and routes
+    /// them through the multiplexed protocol writer.
+    warnings: Vec<String>,
 }
 
 impl PipelinedReceiver {
@@ -81,6 +87,7 @@ impl PipelinedReceiver {
             redo_indices: Vec::new(),
             redo_enabled: true,
             permission_error_count: 0,
+            warnings: Vec::new(),
         }
     }
 
@@ -152,12 +159,12 @@ impl PipelinedReceiver {
                     let pending = self.expected_checksums.pop_front();
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
-                        eprintln!(
+                        self.warnings.push(format!(
                             "rsync: send_files failed to open {:?}: Permission denied (13) {}{}",
                             path.display(),
                             crate::role_trailer::error_location!(),
                             crate::role_trailer::receiver(),
-                        );
+                        ));
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
                     } else {
@@ -210,12 +217,12 @@ impl PipelinedReceiver {
                     let pending = self.expected_checksums.pop_front();
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
-                        eprintln!(
+                        self.warnings.push(format!(
                             "rsync: send_files failed to open {:?}: Permission denied (13) {}{}",
                             path.display(),
                             crate::role_trailer::error_location!(),
                             crate::role_trailer::receiver(),
-                        );
+                        ));
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
                     } else {
@@ -257,7 +264,7 @@ impl PipelinedReceiver {
     fn verify_checksum(&mut self, result: &CommitResult) -> io::Result<()> {
         let pending = match self.expected_checksums.pop_front() {
             Some(p) => p,
-            None => return Ok(()), // No expected checksum (legacy/test path).
+            None => return Ok(()),
         };
 
         if let Some(ref computed) = result.computed_checksum {
@@ -265,23 +272,23 @@ impl PipelinedReceiver {
                 || computed.bytes[..computed.len] != pending.expected[..pending.len]
             {
                 if self.redo_enabled {
-                    // upstream: receiver.c:960-968 — WARNING, will try again
-                    eprintln!(
+                    // upstream: receiver.c:960-968 - WARNING, will try again
+                    self.warnings.push(format!(
                         "WARNING: {:?} failed verification -- update discarded (will try again). {}{}",
                         pending.file_path,
                         crate::role_trailer::error_location!(),
                         crate::role_trailer::receiver(),
-                    );
+                    ));
                     self.redo_indices.push(pending.file_index);
                     return Ok(());
                 }
-                // upstream: receiver.c:957-959 — ERROR in phase 2 (redoing)
-                eprintln!(
+                // upstream: receiver.c:957-959 - ERROR in phase 2 (redoing)
+                self.warnings.push(format!(
                     "ERROR: {:?} failed verification -- update discarded. {}{}",
                     pending.file_path,
                     crate::role_trailer::error_location!(),
                     crate::role_trailer::receiver(),
-                );
+                ));
                 // In phase 2, upstream logs the error but continues the transfer.
                 return Ok(());
             }
@@ -325,10 +332,21 @@ impl PipelinedReceiver {
     ///
     /// Implicitly drains remaining results. Returns the final accumulated
     /// (bytes_written, metadata_errors).
+    /// Drains accumulated warning messages from checksum verification and
+    /// permission failures. Returns them so the caller can route them through
+    /// the multiplexed protocol writer.
+    pub fn drain_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
+    }
+
+    /// Sends `Shutdown` and joins the disk thread.
+    ///
+    /// Implicitly drains remaining results. Returns the final accumulated
+    /// (bytes_written, metadata_errors).
     pub fn shutdown(mut self) -> io::Result<(u64, Vec<(PathBuf, String)>)> {
         let result = self.drain_all_results();
 
-        // Send shutdown — ignore error (thread may have already exited).
+        // Send shutdown - ignore error (thread may have already exited).
         let _ = self.file_tx.send(FileMessage::Shutdown);
 
         if let Some(handle) = self.disk_thread.take() {

@@ -125,11 +125,32 @@ impl GeneratorContext {
         // upstream: flist.c:make_file() - set uid/gid
         #[cfg(unix)]
         if self.config.flags.owner {
-            entry.set_uid(metadata.uid());
+            let uid = metadata.uid();
+            entry.set_uid(uid);
+            // upstream: flist.c:466-470 - add_uid() looks up name for inline
+            // sending via XMIT_USER_NAME_FOLLOWS when INC_RECURSE is active.
+            // Without names, the receiver can't map uid->name on the remote.
+            if !self.config.flags.numeric_ids {
+                if let Ok(Some(name_bytes)) = metadata::id_lookup::lookup_user_name(uid) {
+                    if let Ok(name) = String::from_utf8(name_bytes) {
+                        entry.set_user_name(name);
+                    }
+                }
+            }
         }
         #[cfg(unix)]
         if self.config.flags.group {
-            entry.set_gid(metadata.gid());
+            let gid = metadata.gid();
+            entry.set_gid(gid);
+            // upstream: flist.c:476-480 - add_gid() looks up name for inline
+            // sending via XMIT_GROUP_NAME_FOLLOWS when INC_RECURSE is active.
+            if !self.config.flags.numeric_ids {
+                if let Ok(Some(name_bytes)) = metadata::id_lookup::lookup_group_name(gid) {
+                    if let Ok(name) = String::from_utf8(name_bytes) {
+                        entry.set_group_name(name);
+                    }
+                }
+            }
         }
 
         // Store dev/ino for hardlink detection (post-sort assignment).
