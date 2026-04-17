@@ -139,6 +139,57 @@ pub use io_uring::{
     socket_reader_from_fd, socket_writer_from_fd,
 };
 
+/// Returns the platform I/O capabilities available on this system.
+///
+/// Each entry is a human-readable label describing an available fast I/O path.
+/// Compile-time capabilities (determined by target OS) are always included when
+/// applicable. Runtime-probed capabilities (io_uring, splice) are included only
+/// when the probe succeeds.
+///
+/// # Platform-specific entries
+///
+/// - **Linux**: `copy_file_range`, `sendfile`, `splice` (runtime-probed),
+///   `FICLONE`, `O_TMPFILE`, `io_uring` (runtime-probed)
+/// - **macOS**: `clonefile`, `fcopyfile`
+/// - **Windows**: `CopyFileEx`
+#[must_use]
+pub fn platform_io_capabilities() -> Vec<&'static str> {
+    let mut caps = Vec::new();
+
+    // Linux compile-time capabilities
+    #[cfg(target_os = "linux")]
+    {
+        caps.push("copy_file_range");
+        caps.push("sendfile");
+
+        if is_splice_available() {
+            caps.push("splice");
+        }
+
+        caps.push("FICLONE");
+        caps.push("O_TMPFILE");
+
+        if is_io_uring_available() {
+            caps.push("io_uring");
+        }
+    }
+
+    // macOS compile-time capabilities
+    #[cfg(target_os = "macos")]
+    {
+        caps.push("clonefile");
+        caps.push("fcopyfile");
+    }
+
+    // Windows compile-time capabilities
+    #[cfg(target_os = "windows")]
+    {
+        caps.push("CopyFileEx");
+    }
+
+    caps
+}
+
 /// Policy controlling io_uring usage for file and socket I/O.
 ///
 /// This enum allows callers to explicitly enable, disable, or auto-detect
@@ -189,4 +240,42 @@ pub enum IoUringPolicy {
     ///
     /// Useful for benchmarking or diagnosing io_uring-related issues.
     Disabled,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_io_capabilities_returns_expected_entries() {
+        let caps = platform_io_capabilities();
+
+        #[cfg(target_os = "linux")]
+        {
+            assert!(caps.contains(&"copy_file_range"));
+            assert!(caps.contains(&"sendfile"));
+            assert!(caps.contains(&"FICLONE"));
+            assert!(caps.contains(&"O_TMPFILE"));
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            assert!(caps.contains(&"clonefile"));
+            assert!(caps.contains(&"fcopyfile"));
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            assert!(caps.contains(&"CopyFileEx"));
+        }
+    }
+
+    #[test]
+    fn platform_io_capabilities_has_no_duplicates() {
+        let caps = platform_io_capabilities();
+        let mut seen = std::collections::HashSet::new();
+        for cap in &caps {
+            assert!(seen.insert(cap), "duplicate capability: {cap}");
+        }
+    }
 }

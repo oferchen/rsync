@@ -3,6 +3,7 @@ use crate::branding::Brand;
 use crate::version::report::{
     default_checksum_algorithms, default_compress_algorithms, default_daemon_auth_algorithms,
 };
+use fast_io::platform_io_capabilities;
 use libc::{ino_t, off_t};
 use std::mem;
 
@@ -74,7 +75,35 @@ fn version_info_report_renders_default_report() {
     assert!(actual.contains(&format!(
         "Daemon auth list:\n    {daemon_auth_algorithms}\n"
     )));
+    let platform_caps = platform_io_capabilities();
+    if !platform_caps.is_empty() {
+        assert!(actual.contains("Platform I/O:"));
+        for cap in &platform_caps {
+            assert!(
+                actual.contains(cap),
+                "missing Platform I/O capability: {cap}"
+            );
+        }
+    }
+
     assert!(actual.ends_with(&gpl_footer(PROGRAM_NAME)));
+}
+
+#[test]
+fn version_info_report_contains_platform_io_section() {
+    let report = VersionInfoReport::new(VersionInfoConfig::default());
+    let rendered = report.human_readable();
+    let platform_caps = platform_io_capabilities();
+
+    if platform_caps.is_empty() {
+        assert!(!rendered.contains("Platform I/O:"));
+    } else {
+        let expected_line = format!("Platform I/O: {}", platform_caps.join(", "));
+        assert!(
+            rendered.contains(&expected_line),
+            "expected Platform I/O line:\n  {expected_line}\nin:\n{rendered}"
+        );
+    }
 }
 
 #[test]

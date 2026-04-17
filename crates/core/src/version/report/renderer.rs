@@ -186,12 +186,30 @@ impl VersionInfoReport {
     pub fn write_human_readable<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
         self.metadata.write_standard_banner(writer)?;
         self.write_info_sections(writer)?;
+        self.write_platform_io(writer)?;
         self.write_named_list(writer, "Checksum list", &self.checksum_algorithms)?;
         self.write_named_list(writer, "Compress list", &self.compress_algorithms)?;
         self.write_named_list(writer, "Daemon auth list", &self.daemon_auth_algorithms)?;
         writer.write_char('\n')?;
 
         self.write_gpl_footer(writer)
+    }
+
+    /// Writes the "Platform I/O" section listing runtime-detected fast I/O paths.
+    fn write_platform_io<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
+        let caps = fast_io::platform_io_capabilities();
+        if caps.is_empty() {
+            return Ok(());
+        }
+        write!(writer, "Platform I/O:")?;
+        for (i, cap) in caps.iter().enumerate() {
+            if i > 0 {
+                writer.write_char(',')?;
+            }
+            writer.write_char(' ')?;
+            writer.write_str(cap)?;
+        }
+        writer.write_char('\n')
     }
 
     /// Internal helper for the GPL footer. Single fmt call, no allocations.
@@ -509,6 +527,18 @@ mod tests {
         let report = VersionInfoReport::default();
         let output = report.human_readable();
         assert!(output.contains("Optimizations:"));
+    }
+
+    #[test]
+    fn human_readable_contains_platform_io_on_supported_platforms() {
+        let report = VersionInfoReport::default();
+        let output = report.human_readable();
+        let caps = fast_io::platform_io_capabilities();
+        if caps.is_empty() {
+            assert!(!output.contains("Platform I/O:"));
+        } else {
+            assert!(output.contains("Platform I/O:"));
+        }
     }
 
     #[test]
