@@ -203,7 +203,13 @@ fn compare_with_keys(bytes_a: &[u8], key_a: &SortKey, bytes_b: &[u8], key_b: &So
 ///   and `recv_file_list()` to sort entries.
 /// - `flist.c:2991` - `if (use_qsort) qsort(...); else merge_sort(...);`
 pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool, protocol_pre29: bool) {
-    debug_log!(Flist, 2, "sorting {} entries (pre29={})", file_list.len(), protocol_pre29);
+    debug_log!(
+        Flist,
+        2,
+        "sorting {} entries (pre29={})",
+        file_list.len(),
+        protocol_pre29
+    );
     let n = file_list.len();
     if n <= 1 {
         return;
@@ -809,7 +815,15 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                ".", "a", "a", "a/file.txt", "ab", "ab.txt", "b", "b.txt", "z"
+                ".",
+                "a",
+                "a",
+                "a/file.txt",
+                "ab",
+                "ab.txt",
+                "b",
+                "b.txt",
+                "z"
             ]
         );
     }
