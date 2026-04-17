@@ -92,7 +92,8 @@ impl ReceiverContext {
         }
 
         // upstream: flist.c:2736 - flist_sort_and_clean() after recv_id_list()
-        sort_file_list(&mut self.file_list, self.config.qsort);
+        let pre29 = self.protocol.as_u8() < 29;
+        sort_file_list(&mut self.file_list, self.config.qsort, pre29);
         match_hard_links(&mut self.file_list, &mut self.prior_hlinks);
 
         // For protocol < 30, normalize (dev, ino) pairs into hardlink_idx and
@@ -199,7 +200,8 @@ impl ReceiverContext {
 
             // upstream: flist.c:2155,2736 - both sides call flist_sort_and_clean()
             // independently. Unstable sort (true) is safe - entries have unique paths.
-            sort_file_list(&mut self.file_list[flat_start..], true);
+            // INC_RECURSE requires protocol >= 30, so pre29 is always false here.
+            sort_file_list(&mut self.file_list[flat_start..], true, false);
             match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);
 
             // Normalize pre-30 hardlinks in this segment.
@@ -614,7 +616,8 @@ impl<R: Read> IncrementalFileListReceiver<R> {
         entries.extend(self.incremental.drain_ready());
 
         // upstream: flist.c:2736 - sort to match sender's order for NDX indexing
-        sort_file_list(&mut entries, self.use_qsort);
+        // IncrementalFileListReceiver is only used for INC_RECURSE (protocol >= 30).
+        sort_file_list(&mut entries, self.use_qsort, false);
         let mut prior_hlinks = HashMap::new();
         match_hard_links(&mut entries, &mut prior_hlinks);
 
