@@ -403,6 +403,16 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                     i += 1;
                 }
             }
+            // upstream: options.c:2791-2793 - suffix as separate args
+            // When --backup-dir is specified without explicit --suffix,
+            // upstream changes the default suffix from "~" to "" and sends
+            // --suffix as a two-arg form (not --suffix=VALUE).
+            "--suffix" | "--backup-suffix" => {
+                if let Some(suffix) = client_args.get(i + 1) {
+                    config.backup_suffix = Some(suffix.to_owned());
+                    i += 1;
+                }
+            }
             // upstream: options.c:2907-2909 - temp-dir as separate args
             "--temp-dir" => {
                 if let Some(dir) = client_args.get(i + 1) {
