@@ -756,15 +756,12 @@ pub fn replay(
                 let basis_data = fs::read(&dest_path).map_err(|e| {
                     BatchError::Io(std::io::Error::new(
                         e.kind(),
-                        format!(
-                            "failed to read basis file '{}': {e}",
-                            dest_path.display()
-                        ),
+                        format!("failed to read basis file '{}': {e}", dest_path.display()),
                     ))
                 })?;
-                let stream = reader.inner_reader().ok_or_else(|| {
-                    BatchError::Io(std::io::Error::other("batch file not open"))
-                })?;
+                let stream = reader
+                    .inner_reader()
+                    .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
                 let mut ops = Vec::new();
                 loop {
                     let token = decoder.recv_token(stream).map_err(|e| {
