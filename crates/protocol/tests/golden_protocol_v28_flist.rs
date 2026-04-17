@@ -17,10 +17,10 @@
 
 use std::io::Cursor;
 
-use protocol::flist::{
-    compare_file_entries, sort_file_list, FileEntry, FileListReader, FileListWriter,
-};
 use protocol::ProtocolVersion;
+use protocol::flist::{
+    FileEntry, FileListReader, FileListWriter, compare_file_entries, sort_file_list,
+};
 
 fn proto28() -> ProtocolVersion {
     ProtocolVersion::try_from(28u8).unwrap()
