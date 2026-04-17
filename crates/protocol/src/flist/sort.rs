@@ -9,11 +9,15 @@
 //! - `flist.c:flist_sort_and_clean()` - Sorts file list after build/receive
 //! - `flist.c:f_name_cmp()` - File entry comparison function
 //!
-//! The sorting algorithm follows these rules:
+//! The sorting algorithm follows these rules (protocol 29+):
 //! 1. "." (root directory marker) always comes first
 //! 2. Files sort before directories at the same level
 //! 3. Within each category (files or directories), sort alphabetically
 //! 4. Directory contents immediately follow the directory entry
+//!
+//! At protocol < 29, upstream uses plain lexicographic byte comparison
+//! without file-before-directory distinction or implicit trailing '/'.
+//! upstream: flist.c:3223 - `protocol_version >= 29 ? t_PATH : t_ITEM`
 
 use std::cmp::Ordering;
 
@@ -82,6 +86,27 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
     let key_a = SortKey::new(0, a);
     let key_b = SortKey::new(0, b);
     compare_with_keys(a.name_bytes(), &key_a, b.name_bytes(), &key_b)
+}
+
+/// Protocol < 29 comparison: plain byte-for-byte comparison without
+/// file-before-directory distinction or implicit trailing '/'.
+///
+/// At protocol < 29, upstream `f_name_cmp()` uses `t_path = t_ITEM`,
+/// meaning directories are NOT treated specially - no implicit trailing
+/// slash, no files-before-dirs. This is a simple lexicographic sort.
+/// upstream: flist.c:3223 - `protocol_version >= 29 ? t_PATH : t_ITEM`
+fn compare_with_keys_pre29(bytes_a: &[u8], bytes_b: &[u8]) -> Ordering {
+    // "." always comes first (even at protocol < 29)
+    match (bytes_a == b".", bytes_b == b".") {
+        (true, true) => return Ordering::Equal,
+        (true, false) => return Ordering::Less,
+        (false, true) => return Ordering::Greater,
+        (false, false) => {}
+    }
+
+    // Plain byte comparison - no file-before-dir, no implicit trailing '/'.
+    // upstream: f_name_cmp() with t_path = t_ITEM treats all entries identically.
+    bytes_a.cmp(bytes_b)
 }
 
 /// Inner comparison using precomputed sort keys.
@@ -177,8 +202,8 @@ fn compare_with_keys(bytes_a: &[u8], key_a: &SortKey, bytes_b: &[u8], key_b: &So
 /// - `flist.c:flist_sort_and_clean()` - Called after `send_file_list()`
 ///   and `recv_file_list()` to sort entries.
 /// - `flist.c:2991` - `if (use_qsort) qsort(...); else merge_sort(...);`
-pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool) {
-    debug_log!(Flist, 2, "sorting {} entries", file_list.len());
+pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool, protocol_pre29: bool) {
+    debug_log!(Flist, 2, "sorting {} entries (pre29={})", file_list.len(), protocol_pre29);
     let n = file_list.len();
     if n <= 1 {
         return;
@@ -192,18 +217,34 @@ pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool) {
         .map(|(i, e)| SortKey::new(i, e))
         .collect();
 
-    let cmp = |a: &SortKey, b: &SortKey| {
-        compare_with_keys(
-            file_list[a.index as usize].name_bytes(),
-            a,
-            file_list[b.index as usize].name_bytes(),
-            b,
-        )
-    };
-    if use_qsort {
-        keys.sort_unstable_by(cmp);
+    if protocol_pre29 {
+        // Protocol < 29: plain lexicographic sort, no file-before-dir.
+        // upstream: flist.c:3223 - t_path = t_ITEM at protocol < 29.
+        let cmp = |a: &SortKey, b: &SortKey| {
+            compare_with_keys_pre29(
+                file_list[a.index as usize].name_bytes(),
+                file_list[b.index as usize].name_bytes(),
+            )
+        };
+        if use_qsort {
+            keys.sort_unstable_by(cmp);
+        } else {
+            keys.sort_by(cmp);
+        }
     } else {
-        keys.sort_by(cmp);
+        let cmp = |a: &SortKey, b: &SortKey| {
+            compare_with_keys(
+                file_list[a.index as usize].name_bytes(),
+                a,
+                file_list[b.index as usize].name_bytes(),
+                b,
+            )
+        };
+        if use_qsort {
+            keys.sort_unstable_by(cmp);
+        } else {
+            keys.sort_by(cmp);
+        }
     }
 
     // Apply the permutation in-place using cycle chasing.
@@ -351,8 +392,9 @@ pub fn flist_clean(mut file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResul
 pub fn sort_and_clean_file_list(
     mut file_list: Vec<FileEntry>,
     use_qsort: bool,
+    protocol_pre29: bool,
 ) -> (Vec<FileEntry>, CleanResult) {
-    sort_file_list(&mut file_list, use_qsort);
+    sort_file_list(&mut file_list, use_qsort, protocol_pre29);
     flist_clean(file_list)
 }
 
@@ -424,7 +466,7 @@ mod tests {
             make_dir("."),
         ];
 
-        sort_file_list(&mut entries, false);
+        sort_file_list(&mut entries, false, false);
 
         let mut names = Vec::with_capacity(entries.len());
         names.extend(entries.iter().map(|e| e.name()));
@@ -438,7 +480,7 @@ mod tests {
     fn sort_files_at_root_before_nested() {
         let mut entries = vec![make_file("z.txt"), make_file("a/nested.txt"), make_dir("a")];
 
-        sort_file_list(&mut entries, false);
+        sort_file_list(&mut entries, false, false);
 
         let mut names = Vec::with_capacity(entries.len());
         names.extend(entries.iter().map(|e| e.name()));
@@ -533,7 +575,7 @@ mod tests {
             make_file("a.txt"),
             make_file("a.txt"), // duplicate
         ];
-        let (cleaned, stats) = sort_and_clean_file_list(entries, false);
+        let (cleaned, stats) = sort_and_clean_file_list(entries, false, false);
         assert_eq!(stats.duplicates_removed, 1);
         let mut names = Vec::with_capacity(cleaned.len());
         names.extend(cleaned.iter().map(|e| e.name()));
@@ -583,7 +625,7 @@ mod tests {
             make_dir("x"),
         ];
 
-        sort_file_list(&mut entries, false);
+        sort_file_list(&mut entries, false, false);
 
         let names: Vec<&str> = entries.iter().map(|e| e.name()).collect();
         assert_eq!(
@@ -667,10 +709,10 @@ mod tests {
         ];
 
         let mut stable_entries = entries.clone();
-        sort_file_list(&mut stable_entries, false);
+        sort_file_list(&mut stable_entries, false, false);
 
         let mut qsort_entries = entries;
-        sort_file_list(&mut qsort_entries, true);
+        sort_file_list(&mut qsort_entries, true, false);
 
         // With no duplicate keys, both algorithms must produce the same result
         let stable_names: Vec<&str> = stable_entries.iter().map(|e| e.name()).collect();
@@ -687,9 +729,83 @@ mod tests {
             make_file("a.txt"),
             make_file("a.txt"), // duplicate
         ];
-        let (cleaned, stats) = sort_and_clean_file_list(entries, true);
+        let (cleaned, stats) = sort_and_clean_file_list(entries, true, false);
         assert_eq!(stats.duplicates_removed, 1);
         let names: Vec<&str> = cleaned.iter().map(|e| e.name()).collect();
         assert_eq!(names, vec!["a.txt", "z.txt", "a"]);
+    }
+
+    // Protocol < 29 sort tests
+
+    /// Protocol < 29: directories do NOT sort after files at the same level.
+    /// Plain lexicographic byte comparison, no implicit trailing '/'.
+    /// upstream: flist.c:3223 - `t_path = t_ITEM` at protocol < 29.
+    #[test]
+    fn pre29_no_files_before_dirs() {
+        let mut entries = vec![
+            make_file("zebra.txt"),
+            make_dir("aardvark"),
+        ];
+        sort_file_list(&mut entries, false, true);
+        let names: Vec<&str> = entries.iter().map(|e| e.name()).collect();
+        // At proto < 29: pure alphabetical, 'a' < 'z', so dir "aardvark" first
+        assert_eq!(names, vec!["aardvark", "zebra.txt"]);
+    }
+
+    /// Protocol < 29: "." still comes first.
+    #[test]
+    fn pre29_dot_first() {
+        let dot = make_dir(".");
+        let file = make_file("abc.txt");
+        assert_eq!(compare_with_keys_pre29(dot.name_bytes(), file.name_bytes()), Ordering::Less);
+        assert_eq!(compare_with_keys_pre29(file.name_bytes(), dot.name_bytes()), Ordering::Greater);
+    }
+
+    /// Protocol < 29: mixed files and dirs sort in pure alphabetical order.
+    #[test]
+    fn pre29_sort_mixed_entries() {
+        let mut entries = vec![
+            make_file("test.txt"),
+            make_dir("subdir"),
+            make_file("subdir/file.txt"),
+            make_file("another.txt"),
+            make_dir("."),
+        ];
+
+        sort_file_list(&mut entries, false, true);
+
+        let names: Vec<&str> = entries.iter().map(|e| e.name()).collect();
+        // Proto < 29: "." first, then pure byte order
+        assert_eq!(
+            names,
+            vec![".", "another.txt", "subdir", "subdir/file.txt", "test.txt"]
+        );
+    }
+
+    /// Protocol < 29 golden test matching the comprehensive scenario.
+    /// At proto < 29, dirs and files interleave alphabetically.
+    #[test]
+    fn pre29_sort_order_golden() {
+        let mut entries = vec![
+            make_file("a"),
+            make_file("b.txt"),
+            make_file("z"),
+            make_dir("a"),
+            make_dir("ab"),
+            make_dir("b"),
+            make_file("ab.txt"),
+            make_file("a/file.txt"),
+            make_dir("."),
+        ];
+
+        sort_file_list(&mut entries, false, true);
+
+        let names: Vec<&str> = entries.iter().map(|e| e.name()).collect();
+        // Pure lexicographic: "." first, then byte order.
+        // File "a" and dir "a" have same name - stable sort keeps file first.
+        assert_eq!(
+            names,
+            vec![".", "a", "a", "a/file.txt", "ab", "ab.txt", "b", "b.txt", "z"]
+        );
     }
 }
