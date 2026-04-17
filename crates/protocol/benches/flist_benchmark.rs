@@ -213,7 +213,7 @@ fn bench_flist_sorting(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("sort", count), &entries, |b, entries| {
             b.iter(|| {
                 let mut list = entries.clone();
-                sort_file_list(&mut list, false);
+                sort_file_list(&mut list, false, false);
                 black_box(list)
             });
         });
