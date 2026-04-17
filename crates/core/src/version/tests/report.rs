@@ -79,7 +79,10 @@ fn version_info_report_renders_default_report() {
     if !platform_caps.is_empty() {
         assert!(actual.contains("Platform I/O:"));
         for cap in &platform_caps {
-            assert!(actual.contains(cap), "missing Platform I/O capability: {cap}");
+            assert!(
+                actual.contains(cap),
+                "missing Platform I/O capability: {cap}"
+            );
         }
     }
 
@@ -95,10 +98,7 @@ fn version_info_report_contains_platform_io_section() {
     if platform_caps.is_empty() {
         assert!(!rendered.contains("Platform I/O:"));
     } else {
-        let expected_line = format!(
-            "Platform I/O: {}",
-            platform_caps.join(", ")
-        );
+        let expected_line = format!("Platform I/O: {}", platform_caps.join(", "));
         assert!(
             rendered.contains(&expected_line),
             "expected Platform I/O line:\n  {expected_line}\nin:\n{rendered}"
