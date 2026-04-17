@@ -293,6 +293,17 @@ test_upstream_to_oc() {
 
 # =========================================================================
 # Compressed batch test: upstream writes compressed, oc-rsync reads
+#
+# Note: upstream rsync 3.4.1 has a limitation where the batch file format
+# does not record which compression algorithm was used (only that
+# compression was active via bit 8 in stream flags). On read-batch,
+# upstream's parse_compress_choice() (compat.c:194-195) always assumes
+# CPRES_ZLIB. If the original write-batch auto-negotiated zstd (builds
+# with SUPPORT_ZSTD), the batch file contains zstd data but the reader
+# uses a zlib decoder, causing "WARNING: failed verification" errors.
+#
+# The workaround is --compress-choice=zlib during --write-batch.
+# oc-rsync avoids this issue by recording uncompressed data in batch files.
 # =========================================================================
 
 test_upstream_compressed_to_oc() {
