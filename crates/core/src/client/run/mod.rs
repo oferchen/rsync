@@ -399,8 +399,18 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         options: LocalCopyOptions,
         config: &ClientConfig,
     ) -> LocalCopyOptions {
+        // When writing batch files, force zlib compression for cross-tool
+        // interop. The batch header records do_compression but not which
+        // algorithm was used, so upstream rsync (which defaults to zlib)
+        // cannot decode zstd/lz4 batch data. Force zlib to match upstream.
+        // upstream: batch.c tees compressed wire bytes using zlib by default.
+        let algorithm = if config.batch_config().is_some_and(|bc| bc.is_write_mode()) {
+            compress::algorithm::CompressionAlgorithm::Zlib
+        } else {
+            config.compression_algorithm()
+        };
         options
-            .with_compression_algorithm(config.compression_algorithm())
+            .with_compression_algorithm(algorithm)
             .with_default_compression_level(config.compression_setting().level_or_default())
             .with_skip_compress(config.skip_compress().clone())
             .compress(config.compress())

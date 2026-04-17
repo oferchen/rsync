@@ -6459,8 +6459,11 @@ CONF
   start_oc_daemon "$sf_conf" "$sf_log" "$upstream_binary" "$sf_pid" "$oc_port"
 
   # Pull from oc-rsync daemon - server-side rules should exclude .tmp, .log, .bak
+  # Use 60s timeout (2x hard_timeout) - this test starts/stops daemon twice
+  # and can be slow under CI load.
+  local filter_timeout=$((hard_timeout * 2))
   local pull_exit=0
-  timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+  timeout "$filter_timeout" "$upstream_binary" -av --timeout=10 \
       "rsync://127.0.0.1:${oc_port}/filtered/" "${sf_dest_pull}/" \
       >"${log}.server-filter-pull.out" 2>"${log}.server-filter-pull.err" || pull_exit=$?
   if [[ "$pull_exit" -ne 0 ]]; then
@@ -6515,7 +6518,7 @@ CONF
 
   # Push from upstream to oc-rsync daemon
   local push_exit=0
-  timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+  timeout "$filter_timeout" "$upstream_binary" -av --timeout=10 \
       "${sf_src}/" "rsync://127.0.0.1:${oc_port}/filtered" \
       >"${log}.server-filter-push.out" 2>"${log}.server-filter-push.err" || push_exit=$?
   if [[ "$push_exit" -ne 0 ]]; then
