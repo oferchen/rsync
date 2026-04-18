@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use logging::{PhaseTimer, info_log};
-use protocol::codec::{NdxCodec, create_ndx_codec};
+use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
 use protocol::flist::FileEntry;
 use protocol::stats::DeleteStats;
 
@@ -105,7 +105,7 @@ impl ReceiverContext {
             self.create_directories(&dest_dir, &metadata_opts, acl_cache.as_deref())?;
         self.create_symlinks(&dest_dir, writer);
 
-        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
         let mut checksum_verifier = ChecksumVerifier::new(
