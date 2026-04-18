@@ -187,6 +187,7 @@ impl VersionInfoReport {
         self.metadata.write_standard_banner(writer)?;
         self.write_info_sections(writer)?;
         self.write_platform_io(writer)?;
+        self.write_io_uring_detail(writer)?;
         self.write_named_list(writer, "Checksum list", &self.checksum_algorithms)?;
         self.write_named_list(writer, "Compress list", &self.compress_algorithms)?;
         self.write_named_list(writer, "Daemon auth list", &self.daemon_auth_algorithms)?;
@@ -210,6 +211,12 @@ impl VersionInfoReport {
             writer.write_str(cap)?;
         }
         writer.write_char('\n')
+    }
+
+    /// Writes the io_uring availability detail line.
+    fn write_io_uring_detail<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
+        let detail = fast_io::io_uring_status_detail();
+        writeln!(writer, "io_uring: {detail}")
     }
 
     /// Internal helper for the GPL footer. Single fmt call, no allocations.
@@ -539,6 +546,13 @@ mod tests {
         } else {
             assert!(output.contains("Platform I/O:"));
         }
+    }
+
+    #[test]
+    fn human_readable_contains_io_uring_detail() {
+        let report = VersionInfoReport::default();
+        let output = report.human_readable();
+        assert!(output.contains("io_uring:"));
     }
 
     #[test]

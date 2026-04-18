@@ -137,6 +137,7 @@ impl VersionInfoConfig {
         config.supports_socketpairs = socketpair_available();
         config.supports_simd_roll = checksums::simd_acceleration_available();
         config.supports_openssl_crypto = checksums::openssl_acceleration_available();
+        config.supports_io_uring = fast_io::is_io_uring_available();
         config
     }
 }
@@ -706,5 +707,11 @@ mod tests {
         // Basic sanity checks - runtime values vary
         assert!(config.supports_ipv6);
         assert!(config.supports_atimes);
+    }
+
+    #[test]
+    fn with_runtime_capabilities_detects_io_uring() {
+        let config = VersionInfoConfig::with_runtime_capabilities();
+        assert_eq!(config.supports_io_uring, fast_io::is_io_uring_available());
     }
 }
