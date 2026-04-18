@@ -292,7 +292,7 @@ mod tests {
         };
 
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
-        assert_eq!(prefix, ": ");
+        assert_eq!(prefix, "! ");
     }
 
     #[test]

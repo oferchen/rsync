@@ -10,11 +10,11 @@ pub enum RuleType {
     Include,
     /// Exclude rule (`-` prefix).
     Exclude,
-    /// Clear previously defined rules (`:` prefix).
+    /// Clear previously defined rules (`!` prefix).
     Clear,
     /// Merge rules from file (`.` prefix).
     Merge,
-    /// Directory merge rules (`,` prefix).
+    /// Directory merge rules (`:` prefix).
     DirMerge,
     /// Protect from deletion (`P` prefix).
     Protect,
@@ -24,26 +24,34 @@ pub enum RuleType {
 
 impl RuleType {
     /// Returns the prefix character for this rule type.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1137-1214` - prefix character to rule type mapping
     pub const fn prefix_char(self) -> char {
         match self {
             RuleType::Include => '+',
             RuleType::Exclude => '-',
-            RuleType::Clear => ':',
+            RuleType::Clear => '!',
             RuleType::Merge => '.',
-            RuleType::DirMerge => ',',
+            RuleType::DirMerge => ':',
             RuleType::Protect => 'P',
             RuleType::Risk => 'R',
         }
     }
 
     /// Parses a rule type from its prefix character.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1137-1214` - prefix character to rule type mapping
     pub const fn from_prefix_char(c: char) -> Option<Self> {
         match c {
             '+' => Some(RuleType::Include),
             '-' => Some(RuleType::Exclude),
-            ':' => Some(RuleType::Clear),
+            '!' => Some(RuleType::Clear),
             '.' => Some(RuleType::Merge),
-            ',' => Some(RuleType::DirMerge),
+            ':' => Some(RuleType::DirMerge),
             'P' => Some(RuleType::Protect),
             'R' => Some(RuleType::Risk),
             _ => None,
