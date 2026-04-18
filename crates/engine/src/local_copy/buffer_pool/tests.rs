@@ -1,5 +1,6 @@
 use super::*;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::thread;
 
 #[test]
@@ -1290,5 +1291,270 @@ fn tls_per_thread_isolation() {
 
     for h in handles {
         h.join().expect("thread panicked");
+    }
+}
+
+// --- Adaptive resizing tests ---
+
+#[test]
+fn adaptive_resizing_disabled_by_default() {
+    let pool = BufferPool::new(4);
+    assert!(!pool.is_adaptive());
+}
+
+#[test]
+fn adaptive_resizing_enabled_via_builder() {
+    let pool = BufferPool::new(4).with_adaptive_resizing();
+    assert!(pool.is_adaptive());
+}
+
+#[test]
+fn adaptive_resizing_with_builder_chain() {
+    let pool = BufferPool::with_buffer_size(4, 1024)
+        .with_memory_cap(8192)
+        .with_adaptive_resizing();
+    assert!(pool.is_adaptive());
+    assert_eq!(pool.memory_cap(), Some(8192));
+    assert_eq!(pool.buffer_size(), 1024);
+}
+
+/// A counting allocator that tracks allocations for adaptive resizing tests.
+#[derive(Debug)]
+struct AdaptiveTrackingAllocator {
+    alloc_count: AtomicUsize,
+    dealloc_count: AtomicUsize,
+}
+
+impl AdaptiveTrackingAllocator {
+    fn new() -> Self {
+        Self {
+            alloc_count: AtomicUsize::new(0),
+            dealloc_count: AtomicUsize::new(0),
+        }
+    }
+
+    fn alloc_count(&self) -> usize {
+        self.alloc_count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn dealloc_count(&self) -> usize {
+        self.dealloc_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl BufferAllocator for AdaptiveTrackingAllocator {
+    fn allocate(&self, size: usize) -> Vec<u8> {
+        self.alloc_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        vec![0u8; size]
+    }
+
+    fn deallocate(&self, _buffer: Vec<u8>) {
+        self.dealloc_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn adaptive_pool_grows_under_pressure() {
+    // Start with a tiny pool (capacity 2) and force many misses by
+    // holding all buffers checked out simultaneously.
+    let pool = Arc::new(
+        BufferPool::with_allocator(2, 1024, AdaptiveTrackingAllocator::new())
+            .with_adaptive_resizing(),
+    );
+    let initial_capacity = pool.max_buffers();
+    assert_eq!(initial_capacity, 2);
+
+    // Hold buffers to exhaust the pool, then acquire more to force misses.
+    // Each acquire beyond the pool's capacity triggers a miss. After 64
+    // operations (the check interval), the pool should grow.
+    let mut held = Vec::new();
+    for _ in 0..128 {
+        held.push(BufferPool::acquire_from(Arc::clone(&pool)));
+    }
+
+    // The pool should have grown due to high miss rate.
+    let new_capacity = pool.max_buffers();
+    assert!(
+        new_capacity > initial_capacity,
+        "expected capacity > {initial_capacity}, got {new_capacity}"
+    );
+
+    drop(held);
+}
+
+#[test]
+fn adaptive_pool_shrinks_when_idle() {
+    // Start with a large pool, use it lightly, and verify it shrinks.
+    let pool = Arc::new(BufferPool::with_buffer_size(32, 1024).with_adaptive_resizing());
+    assert_eq!(pool.max_buffers(), 32);
+
+    // Pre-populate the pool with buffers by acquiring and releasing.
+    // This puts buffers in TLS and central pool so utilization is low
+    // relative to the large capacity.
+    {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+
+    // Now acquire and release many times in a tight loop on the same thread.
+    // TLS absorbs most operations (all hits), and utilization stays low
+    // relative to the 32-slot capacity. After 64 ops, the pool should shrink.
+    for _ in 0..256 {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+
+    let new_capacity = pool.max_buffers();
+    assert!(
+        new_capacity < 32,
+        "expected capacity < 32, got {new_capacity}"
+    );
+}
+
+#[test]
+fn adaptive_pool_holds_steady_under_balanced_load() {
+    // Pre-fill the pool, then use it at a rate that roughly matches capacity.
+    // The pool should not resize.
+    let pool = Arc::new(BufferPool::with_buffer_size(8, 1024).with_adaptive_resizing());
+
+    // Pre-populate with 8 buffers.
+    let bufs: Vec<_> = (0..8)
+        .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+        .collect();
+    drop(bufs);
+
+    // Acquire and release one at a time - all hits from pool/TLS.
+    for _ in 0..256 {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+
+    // Capacity should stay at 8 (balanced utilization).
+    let capacity = pool.max_buffers();
+    assert!(
+        capacity >= 4 && capacity <= 16,
+        "expected capacity near 8, got {capacity}"
+    );
+}
+
+#[test]
+fn adaptive_pool_concurrent_growth() {
+    // Multiple threads all miss simultaneously, triggering growth.
+    let pool = Arc::new(BufferPool::with_buffer_size(2, 1024).with_adaptive_resizing());
+    let initial = pool.max_buffers();
+
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let pool = Arc::clone(&pool);
+            thread::spawn(move || {
+                // Hold 4 buffers each to force misses.
+                let held: Vec<_> = (0..4)
+                    .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+                    .collect();
+                drop(held);
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
+
+    // Pool should have grown from the initial 2.
+    let final_cap = pool.max_buffers();
+    assert!(
+        final_cap > initial,
+        "expected capacity > {initial}, got {final_cap}"
+    );
+}
+
+#[test]
+fn adaptive_pool_does_not_grow_without_feature() {
+    // Without adaptive resizing, capacity is fixed.
+    let pool = Arc::new(BufferPool::with_buffer_size(2, 1024));
+
+    let mut held = Vec::new();
+    for _ in 0..128 {
+        held.push(BufferPool::acquire_from(Arc::clone(&pool)));
+    }
+
+    assert_eq!(pool.max_buffers(), 2);
+    drop(held);
+}
+
+#[test]
+fn adaptive_pool_shrink_respects_minimum() {
+    // Pool should never shrink below the minimum (2).
+    let pool = Arc::new(BufferPool::with_buffer_size(4, 1024).with_adaptive_resizing());
+
+    // Light usage to trigger shrink.
+    for _ in 0..512 {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+
+    let capacity = pool.max_buffers();
+    assert!(capacity >= 2, "expected capacity >= 2, got {capacity}");
+}
+
+#[test]
+fn adaptive_pool_grow_respects_maximum() {
+    // Pool should never grow beyond 256.
+    let pool = Arc::new(BufferPool::with_buffer_size(128, 1024).with_adaptive_resizing());
+
+    // Force heavy misses by holding many buffers.
+    let mut held = Vec::new();
+    for _ in 0..1024 {
+        held.push(BufferPool::acquire_from(Arc::clone(&pool)));
+    }
+
+    let capacity = pool.max_buffers();
+    assert!(capacity <= 256, "expected capacity <= 256, got {capacity}");
+    drop(held);
+}
+
+#[test]
+fn adaptive_pool_with_custom_allocator() {
+    let pool = Arc::new(
+        BufferPool::with_allocator(2, 512, AdaptiveTrackingAllocator::new())
+            .with_adaptive_resizing(),
+    );
+
+    // Force misses to trigger growth.
+    let held: Vec<_> = (0..128)
+        .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+        .collect();
+
+    assert!(pool.max_buffers() > 2);
+    assert!(pool.allocator().alloc_count() > 2);
+
+    drop(held);
+}
+
+#[test]
+fn adaptive_pool_deallocates_on_shrink() {
+    let pool = Arc::new(
+        BufferPool::with_allocator(16, 512, AdaptiveTrackingAllocator::new())
+            .with_adaptive_resizing(),
+    );
+
+    // Pre-fill the pool.
+    let bufs: Vec<_> = (0..16)
+        .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+        .collect();
+    drop(bufs);
+
+    let deallocs_before = pool.allocator().dealloc_count();
+
+    // Light usage to trigger shrink. Pool has 16 buffers but low demand.
+    for _ in 0..512 {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+
+    // If the pool shrank, it should have deallocated excess buffers.
+    if pool.max_buffers() < 16 {
+        assert!(
+            pool.allocator().dealloc_count() > deallocs_before,
+            "expected deallocations after shrink"
+        );
     }
 }
