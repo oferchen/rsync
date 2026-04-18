@@ -254,7 +254,7 @@ impl GeneratorContext {
                     writer.write_all(&iflags.significant_wire_bits().to_le_bytes())?;
                 }
                 // upstream: sender.c:395 - log_item(FCLIENT, file, iflags, NULL)
-                if let Some(ref mut cb) = itemize {
+                if let Some(cb) = itemize {
                     let name = file_entry.path().to_string_lossy();
                     cb.on_itemize(&format!("{name}\n"));
                 }
