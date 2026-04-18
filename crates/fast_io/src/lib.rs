@@ -133,6 +133,50 @@ pub use io_uring::{
     RegisteredBufferSlot, is_io_uring_available, reader_from_path, writer_from_file,
 };
 
+/// Detailed io_uring availability status for `--version` output.
+///
+/// Returns a human-readable string describing io_uring support:
+/// - Whether the feature was compiled in
+/// - Whether the kernel supports it (Linux only)
+/// - The detected kernel version when relevant
+#[must_use]
+pub fn io_uring_status_detail() -> String {
+    io_uring_status_detail_impl()
+}
+
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+fn io_uring_status_detail_impl() -> String {
+    use io_uring::config_detail::{get_kernel_release_string, parse_kernel_version};
+
+    let kernel_version = get_kernel_release_string()
+        .and_then(|release| parse_kernel_version(&release));
+
+    match kernel_version {
+        Some((major, minor)) => {
+            if is_io_uring_available() {
+                format!("compiled in, available (kernel {major}.{minor})")
+            } else {
+                format!(
+                    "compiled in, unavailable (kernel {major}.{minor}, requires >= 5.6)"
+                )
+            }
+        }
+        None => "compiled in, unavailable (could not detect kernel version)".to_string(),
+    }
+}
+
+#[cfg(not(all(target_os = "linux", feature = "io_uring")))]
+fn io_uring_status_detail_impl() -> String {
+    #[cfg(not(target_os = "linux"))]
+    {
+        "not available (platform is not Linux)".to_string()
+    }
+    #[cfg(all(target_os = "linux", not(feature = "io_uring")))]
+    {
+        "not compiled in (io_uring feature disabled)".to_string()
+    }
+}
+
 #[cfg(unix)]
 pub use io_uring::{
     IoUringOrStdSocketReader, IoUringOrStdSocketWriter, IoUringSocketReader, IoUringSocketWriter,
@@ -268,6 +312,21 @@ mod tests {
         {
             assert!(caps.contains(&"CopyFileEx"));
         }
+    }
+
+    #[test]
+    fn io_uring_status_detail_returns_non_empty_string() {
+        let detail = io_uring_status_detail();
+        assert!(!detail.is_empty());
+
+        #[cfg(not(target_os = "linux"))]
+        assert!(detail.contains("not available"));
+
+        #[cfg(all(target_os = "linux", not(feature = "io_uring")))]
+        assert!(detail.contains("not compiled in"));
+
+        #[cfg(all(target_os = "linux", feature = "io_uring"))]
+        assert!(detail.contains("compiled in"));
     }
 
     #[test]
