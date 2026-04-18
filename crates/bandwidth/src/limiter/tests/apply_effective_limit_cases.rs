@@ -256,8 +256,6 @@ fn apply_effective_limit_ignores_unspecified_burst_when_creating_limiter() {
     assert_eq!(change, LimiterChange::Enabled);
 }
 
-// ==================== Additional coverage tests for apply_effective_limit ====================
-
 #[test]
 fn apply_effective_limit_caps_limit_and_updates_burst_together() {
     // Test the case where both limit_changed and burst_changed are true
@@ -535,8 +533,6 @@ fn apply_effective_limit_explicitly_disables_burst_with_limit_change() {
     assert_eq!(limiter.burst_bytes(), None); // Burst was explicitly cleared
 }
 
-// ==================== Comprehensive state transition tests ====================
-
 #[test]
 fn apply_effective_limit_state_transition_none_to_limited() {
     let mut limiter: Option<BandwidthLimiter> = None;
@@ -597,8 +593,6 @@ fn apply_effective_limit_state_transition_limited_to_limited_higher_unchanged() 
     assert_eq!(limiter.unwrap().limit_bytes(), low_limit);
 }
 
-// ==================== Burst-only edge cases ====================
-
 #[test]
 fn apply_effective_limit_burst_only_from_none_to_some() {
     let limit = NonZeroU64::new(4096).unwrap();
@@ -637,8 +631,6 @@ fn apply_effective_limit_burst_only_from_some_to_different() {
     assert_eq!(limiter.as_ref().unwrap().burst_bytes(), Some(burst2));
 }
 
-// ==================== Combined limit and burst changes ====================
-
 #[test]
 fn apply_effective_limit_both_limit_and_burst_change_simultaneously() {
     let limit1 = NonZeroU64::new(8192).unwrap();
@@ -671,8 +663,6 @@ fn apply_effective_limit_limit_changes_burst_cleared() {
     assert!(limiter.as_ref().unwrap().burst_bytes().is_none());
 }
 
-// ==================== No change scenarios ====================
-
 #[test]
 fn apply_effective_limit_all_params_none_with_no_limiter() {
     let mut limiter: Option<BandwidthLimiter> = None;
@@ -694,8 +684,6 @@ fn apply_effective_limit_all_params_none_with_existing_limiter() {
     assert_eq!(change, LimiterChange::Unchanged);
     assert!(limiter.is_some());
 }
-
-// ==================== Creating limiter with burst ====================
 
 #[test]
 fn apply_effective_limit_creates_limiter_with_burst_specified() {

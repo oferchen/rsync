@@ -14,7 +14,6 @@
 // 5. File permissions preserved during update
 // 6. Inode preservation (unlike temp file replacement)
 
-// ==================== Basic Inplace Tests ====================
 
 #[test]
 fn execute_inplace_updates_file_directly() {
@@ -68,7 +67,6 @@ fn execute_inplace_creates_new_file_when_destination_missing() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"brand new file");
 }
 
-// ==================== Inode Preservation Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -155,7 +153,6 @@ fn execute_without_inplace_changes_inode() {
     );
 }
 
-// ==================== No Temp File Tests ====================
 
 #[test]
 fn execute_inplace_does_not_leave_temp_files() {
@@ -193,7 +190,6 @@ fn execute_inplace_does_not_leave_temp_files() {
     );
 }
 
-// ==================== Partial Update Tests ====================
 
 #[test]
 fn execute_inplace_partial_update_small_to_large() {
@@ -257,7 +253,6 @@ fn execute_inplace_partial_update_large_to_small() {
     assert_eq!(fs::metadata(&destination).expect("metadata").len(), 4);
 }
 
-// ==================== Whole-File Transfer Tests ====================
 
 #[test]
 fn execute_inplace_with_whole_file_transfer() {
@@ -319,7 +314,6 @@ fn execute_inplace_with_whole_file_large_file() {
     assert_eq!(fs::read(&destination).expect("read dest"), large_content);
 }
 
-// ==================== Permission Preservation Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -395,7 +389,6 @@ fn execute_inplace_preserves_restricted_permissions() {
     assert_eq!(dest_perms.mode() & 0o777, 0o600);
 }
 
-// ==================== Timestamp Preservation Tests ====================
 
 #[test]
 fn execute_inplace_preserves_timestamps() {
@@ -432,7 +425,6 @@ fn execute_inplace_preserves_timestamps() {
     assert_eq!(dest_mtime, past_time);
 }
 
-// ==================== Edge Cases ====================
 
 #[test]
 fn execute_inplace_with_empty_source() {
@@ -521,7 +513,6 @@ fn execute_inplace_identical_files_skips_copy() {
     assert_eq!(summary.files_copied(), 0);
 }
 
-// ==================== Directory Tree Tests ====================
 
 #[test]
 fn execute_inplace_recursive_directory() {
@@ -563,7 +554,6 @@ fn execute_inplace_recursive_directory() {
     );
 }
 
-// ==================== Read-Only Directory Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -657,7 +647,6 @@ fn execute_without_inplace_fails_in_read_only_directory() {
     chmod(&dest_dir, restore).expect("restore directory");
 }
 
-// ==================== Combined Flag Tests ====================
 
 #[test]
 fn execute_inplace_combined_with_checksum() {
@@ -752,7 +741,6 @@ fn execute_inplace_combined_with_ignore_times() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== Binary Content Tests ====================
 
 #[test]
 fn execute_inplace_with_binary_content() {
@@ -782,7 +770,6 @@ fn execute_inplace_with_binary_content() {
     assert_eq!(fs::read(&destination).expect("read dest"), binary_content);
 }
 
-// ==================== Report/Events Tests ====================
 
 #[test]
 fn execute_inplace_records_copy_event() {
@@ -813,7 +800,6 @@ fn execute_inplace_records_copy_event() {
     assert_eq!(records[0].bytes_transferred(), 10);
 }
 
-// ==================== Delta Transfer with Inplace Tests ====================
 
 #[test]
 fn execute_inplace_with_delta_transfer_skips_matched_blocks() {
@@ -973,7 +959,6 @@ fn execute_inplace_with_delta_truncates_when_smaller() {
     );
 }
 
-// ==================== Dry Run Tests ====================
 
 #[test]
 fn execute_inplace_dry_run_does_not_modify() {

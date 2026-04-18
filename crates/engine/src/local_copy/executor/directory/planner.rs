@@ -614,8 +614,6 @@ fn plan_directory_entries_with_prefetch<'a>(
 mod tests {
     use super::*;
 
-    // ==================== EntryAction tests ====================
-
     #[test]
     fn entry_action_clone() {
         let action = EntryAction::CopyFile;
@@ -673,8 +671,6 @@ mod tests {
         let action = EntryAction::CopyDeviceAsFile;
         assert!(matches!(action, EntryAction::CopyDeviceAsFile));
     }
-
-    // ==================== DirectoryPlan field tests ====================
 
     #[test]
     fn directory_plan_default_values() {

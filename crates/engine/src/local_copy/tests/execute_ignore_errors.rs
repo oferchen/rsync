@@ -1,5 +1,4 @@
 
-// ==================== --ignore-errors tests ====================
 //
 // Upstream rsync behavior:
 // - Without --ignore-errors: if I/O errors occurred during transfer,
@@ -8,7 +7,6 @@
 // - With --ignore-errors: --delete proceeds with deletions even when
 //   I/O errors occurred during the transfer
 
-// ==================== Option Unit Tests ====================
 
 #[test]
 fn ignore_errors_option_defaults_to_false() {
@@ -127,7 +125,6 @@ fn ignore_errors_without_delete_is_harmless() {
     assert!(!opts.delete_extraneous());
 }
 
-// ==================== Functional Tests ====================
 //
 // These tests verify the actual interaction between --ignore-errors
 // and the deletion behavior when I/O errors occur.
@@ -447,7 +444,6 @@ fn no_ignore_errors_with_delete_after_suppresses_deletions() {
     assert!(result.is_err(), "copy should report I/O error");
 }
 
-// ==================== Edge Case Tests ====================
 
 #[test]
 fn ignore_errors_with_dry_run_reports_deletions() {

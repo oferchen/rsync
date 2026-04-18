@@ -15,7 +15,6 @@
 // 6. Mismatch detection with verification
 // 7. Works correctly with various file sizes
 
-// ==================== Basic Append Tests ====================
 
 #[test]
 fn append_adds_remaining_data_to_partial_file() {
@@ -175,7 +174,6 @@ fn append_handles_empty_destination() {
     );
 }
 
-// ==================== File Offset Correctness Tests ====================
 
 #[test]
 fn append_correct_offset_with_small_partial() {
@@ -297,7 +295,6 @@ fn append_almost_complete_file() {
     assert_eq!(fs::read(&destination).expect("read dest"), full);
 }
 
-// ==================== Append with Verification Tests ====================
 
 #[test]
 fn append_verify_succeeds_when_prefix_matches() {
@@ -458,7 +455,6 @@ fn append_without_verify_blindly_appends() {
     assert_eq!(result, b"WRONG DATAABCDEFGHIJ");
 }
 
-// ==================== Combined Options Tests ====================
 
 #[test]
 fn append_combined_with_times_preserves_mtime() {
@@ -564,7 +560,6 @@ fn append_with_checksum_mode() {
     );
 }
 
-// ==================== Directory Recursive Tests ====================
 
 #[test]
 fn append_recursive_directory_with_partial_files() {
@@ -668,7 +663,6 @@ fn append_nested_directory_structure() {
     );
 }
 
-// ==================== Binary Content Tests ====================
 
 #[test]
 fn append_binary_data() {
@@ -729,7 +723,6 @@ fn append_verify_binary_data_with_matching_prefix() {
     assert_eq!(fs::read(&destination).expect("read dest"), full_binary);
 }
 
-// ==================== Edge Cases ====================
 
 #[test]
 fn append_with_empty_source_skips_when_dest_has_content() {
@@ -819,7 +812,6 @@ fn append_verify_enabled_implies_append() {
     );
 }
 
-// ==================== Dry Run Tests ====================
 
 #[test]
 fn append_dry_run_reports_but_preserves_files() {
@@ -849,7 +841,6 @@ fn append_dry_run_reports_but_preserves_files() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"complete");
 }
 
-// ==================== Behavior Consistency Tests ====================
 
 #[test]
 fn append_matches_upstream_append_semantics() {
@@ -921,7 +912,6 @@ fn append_matches_upstream_append_semantics() {
     );
 }
 
-// ==================== Skip Behavior Tests ====================
 
 #[test]
 fn append_skips_when_destination_exactly_equals_source_size() {

@@ -142,8 +142,6 @@ fn limiter_clamps_debt_to_configured_burst() {
     assert!(sleep.requested() <= Duration::from_millis(1));
 }
 
-// ==================== Additional pacing tests ====================
-
 #[test]
 fn limiter_handles_very_slow_rate() {
     let mut session = recorded_sleep_session();

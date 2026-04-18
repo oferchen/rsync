@@ -14,7 +14,6 @@
 // 6. Hard links work correctly with delayed updates
 // 7. Metadata is applied after rename
 
-// ==================== Basic Delay Updates Tests ====================
 
 #[test]
 fn delay_updates_writes_to_temp_names_during_transfer() {
@@ -152,7 +151,6 @@ fn delay_updates_no_temp_files_remain_after_success() {
     );
 }
 
-// ==================== Combination with Temp Dir Tests ====================
 
 #[test]
 fn delay_updates_works_with_temp_dir() {
@@ -243,7 +241,6 @@ fn delay_updates_with_temp_dir_multiple_files() {
     assert!(staging_files.is_empty());
 }
 
-// ==================== Metadata Preservation Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -311,7 +308,6 @@ fn delay_updates_preserves_modification_time() {
     assert_eq!(dest_mtime, past_time);
 }
 
-// ==================== Nested Directory Tests ====================
 
 #[test]
 fn delay_updates_handles_nested_directories() {
@@ -361,7 +357,6 @@ fn delay_updates_handles_nested_directories() {
     );
 }
 
-// ==================== Replacing Existing Files Tests ====================
 
 #[test]
 fn delay_updates_replaces_existing_files_atomically() {
@@ -436,7 +431,6 @@ fn delay_updates_with_multiple_existing_files() {
     );
 }
 
-// ==================== Empty and Large File Tests ====================
 
 #[test]
 fn delay_updates_handles_empty_file() {
@@ -491,7 +485,6 @@ fn delay_updates_handles_large_file() {
     assert_eq!(fs::read(&destination).expect("read dest"), large_content);
 }
 
-// ==================== Dry Run Tests ====================
 
 #[test]
 fn delay_updates_dry_run_does_not_create_files() {
@@ -542,7 +535,6 @@ fn delay_updates_dry_run_does_not_modify_existing() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"original");
 }
 
-// ==================== Interaction with Other Options Tests ====================
 
 /// Test that delay_updates works with --delete to remove extraneous files.
 /// TODO: Fix implementation - delay_updates with delete has partial file finalization issue.
@@ -617,7 +609,6 @@ fn delay_updates_with_update_flag_skips_older_files() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"dest content");
 }
 
-// ==================== Special File Characteristics Tests ====================
 
 #[test]
 fn delay_updates_handles_files_with_spaces_in_name() {
@@ -670,7 +661,6 @@ fn delay_updates_handles_files_with_special_characters() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"special chars");
 }
 
-// ==================== Atomicity Verification Tests ====================
 
 #[test]
 fn delay_updates_provides_atomic_directory_update() {
@@ -718,7 +708,6 @@ fn delay_updates_provides_atomic_directory_update() {
     assert_eq!(content3, b"new content 3");
 }
 
-// ==================== Comparison with Non-Delay Mode Tests ====================
 
 #[test]
 fn delay_updates_differs_from_immediate_mode() {
@@ -767,7 +756,6 @@ fn delay_updates_differs_from_immediate_mode() {
     );
 }
 
-// ==================== Option Interactions ====================
 
 #[test]
 fn delay_updates_setting_enables_partial() {
@@ -787,7 +775,6 @@ fn delay_updates_can_be_disabled() {
     assert!(!opts.delay_updates_enabled(), "delay_updates should be disabled");
 }
 
-// ==================== Mixed New and Existing Files Tests ====================
 
 #[test]
 fn delay_updates_handles_mix_of_new_and_existing_files() {
@@ -833,7 +820,6 @@ fn delay_updates_handles_mix_of_new_and_existing_files() {
     );
 }
 
-// ==================== Staging Path Verification Tests ====================
 
 /// Verify that delay_updates uses .~tmp~ prefix for staging files,
 /// matching upstream rsync behavior. We check this by running a transfer
@@ -891,7 +877,6 @@ fn delay_updates_temp_files_use_upstream_rsync_prefix() {
     }
 }
 
-// ==================== Per-Destination-Directory Staging Tests ====================
 
 #[test]
 fn delay_updates_handles_multiple_subdirectories() {
@@ -965,7 +950,6 @@ fn delay_updates_handles_multiple_subdirectories() {
     assert_no_staging(&dest_root);
 }
 
-// ==================== Backup + Delay Updates Tests ====================
 
 #[test]
 fn delay_updates_with_backup_creates_backup_files() {
@@ -1050,7 +1034,6 @@ fn delay_updates_with_backup_suffix() {
     assert_eq!(fs::read(&backup).expect("read backup"), b"old");
 }
 
-// ==================== Checksum + Delay Updates Tests ====================
 
 #[test]
 fn delay_updates_with_checksum_comparison() {
@@ -1131,7 +1114,6 @@ fn delay_updates_with_checksum_skips_identical_files() {
     );
 }
 
-// ==================== Symlink + Delay Updates Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -1180,7 +1162,6 @@ fn delay_updates_preserves_symlinks() {
     );
 }
 
-// ==================== Hard Links + Delay Updates Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -1247,7 +1228,6 @@ fn delay_updates_preserves_multiple_hard_link_groups() {
     assert!(summary.hard_links_created() >= 3);
 }
 
-// ==================== Ignore Existing + Delay Updates Tests ====================
 
 #[test]
 fn delay_updates_with_ignore_existing_skips_existing_files() {
@@ -1289,7 +1269,6 @@ fn delay_updates_with_ignore_existing_skips_existing_files() {
     );
 }
 
-// ==================== Existing-Only + Delay Updates Tests ====================
 
 #[test]
 fn delay_updates_with_existing_only_skips_new_files() {
@@ -1330,7 +1309,6 @@ fn delay_updates_with_existing_only_skips_new_files() {
     );
 }
 
-// ==================== Unicode Filename Tests ====================
 
 #[test]
 fn delay_updates_handles_unicode_filenames() {
@@ -1377,7 +1355,6 @@ fn delay_updates_handles_unicode_filenames() {
     );
 }
 
-// ==================== Size-Only + Delay Updates Tests ====================
 
 #[test]
 fn delay_updates_with_size_only_skips_same_size_files() {
@@ -1414,7 +1391,6 @@ fn delay_updates_with_size_only_skips_same_size_files() {
     );
 }
 
-// ==================== Ignore-Times + Delay Updates Tests ====================
 
 #[test]
 fn delay_updates_with_ignore_times_always_transfers() {
@@ -1452,7 +1428,6 @@ fn delay_updates_with_ignore_times_always_transfers() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== Many Files (Stress) Tests ====================
 
 #[test]
 fn delay_updates_handles_many_files() {
@@ -1506,7 +1481,6 @@ fn delay_updates_handles_many_files() {
     assert!(leftovers.is_empty(), "staging files remain: {leftovers:?}");
 }
 
-// ==================== Deeply Nested + Delay Updates Tests ====================
 
 #[test]
 fn delay_updates_handles_deeply_nested_structure() {
@@ -1548,7 +1522,6 @@ fn delay_updates_handles_deeply_nested_structure() {
     }
 }
 
-// ==================== Builder Validation Tests ====================
 
 #[test]
 fn builder_rejects_inplace_with_delay_updates() {
@@ -1572,7 +1545,6 @@ fn builder_accepts_delay_updates_without_inplace() {
     assert!(opts.partial_enabled());
 }
 
-// ==================== Idempotency Tests ====================
 
 #[test]
 fn delay_updates_is_idempotent_on_second_run() {
@@ -1623,7 +1595,6 @@ fn delay_updates_is_idempotent_on_second_run() {
     );
 }
 
-// ==================== Partial Re-transfer Tests ====================
 
 #[test]
 fn delay_updates_only_transfers_changed_files() {
@@ -1674,7 +1645,6 @@ fn delay_updates_only_transfers_changed_files() {
     );
 }
 
-// ==================== Remove Source Files + Delay Updates Tests ====================
 
 #[test]
 fn delay_updates_with_remove_source_files() {
@@ -1715,7 +1685,6 @@ fn delay_updates_with_remove_source_files() {
     );
 }
 
-// ==================== Times Preservation with Multiple Files ====================
 
 #[test]
 fn delay_updates_preserves_times_across_multiple_files() {
@@ -1764,7 +1733,6 @@ fn delay_updates_preserves_times_across_multiple_files() {
     }
 }
 
-// ==================== Permissions Preservation with Multiple Files ====================
 
 #[cfg(unix)]
 #[test]
@@ -1820,7 +1788,6 @@ fn delay_updates_preserves_permissions_across_multiple_files() {
     }
 }
 
-// ==================== Binary Content Tests ====================
 
 #[test]
 fn delay_updates_handles_binary_content() {
@@ -1881,7 +1848,6 @@ fn delay_updates_handles_file_with_null_bytes() {
     );
 }
 
-// ==================== Option Wiring Tests ====================
 
 #[test]
 fn delay_updates_option_is_false_by_default() {
@@ -1912,7 +1878,6 @@ fn delay_updates_disabled_does_not_set_partial() {
     assert!(!opts.delay_updates_enabled());
 }
 
-// ==================== Dry Run with Complex Trees ====================
 
 #[test]
 fn delay_updates_dry_run_with_nested_tree_no_changes() {
@@ -1945,7 +1910,6 @@ fn delay_updates_dry_run_with_nested_tree_no_changes() {
     assert!(!dest_root.exists(), "dest should not be created in dry run");
 }
 
-// ==================== Replacement with Larger/Smaller Files ====================
 
 #[test]
 fn delay_updates_replaces_smaller_file_with_larger() {
@@ -2005,7 +1969,6 @@ fn delay_updates_replaces_larger_file_with_smaller() {
     );
 }
 
-// ==================== Mixed Directory Operations ====================
 
 #[test]
 fn delay_updates_creates_destination_directories_as_needed() {
@@ -2048,7 +2011,6 @@ fn delay_updates_creates_destination_directories_as_needed() {
     );
 }
 
-// ==================== .~tmp~ Staging Directory Tests ====================
 
 /// Verifies that `--delay-updates` automatically sets the partial directory
 /// to `.~tmp~` (matching upstream rsync's `tmp_partialdir`).

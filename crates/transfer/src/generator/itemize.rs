@@ -282,8 +282,6 @@ mod tests {
         }
     }
 
-    // ---- Existing tests updated to pass context ----
-
     #[test]
     fn format_new_file_transfer() {
         let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
@@ -432,8 +430,6 @@ mod tests {
         let line = format_itemize_line(&iflags, &entry, true, &default_ctx());
         assert_eq!(line, "cL+++++++++ mylink -> target\n");
     }
-
-    // ---- New tests for T/t time position distinction ----
 
     /// upstream: log.c:716-717 - non-symlink with preserve_mtimes shows lowercase 't'
     #[test]

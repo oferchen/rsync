@@ -525,7 +525,6 @@ fn one_file_system_with_symlinks_follows_on_same_fs() {
     assert!(summary.files_copied() >= 1);
 }
 
-// --- Double -xx (level 2) tests ---
 
 #[test]
 fn double_one_file_system_skips_root_source_that_is_mount_point() {

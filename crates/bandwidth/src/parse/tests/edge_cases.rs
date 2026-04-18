@@ -10,8 +10,6 @@
 
 use super::{BandwidthParseError, NonZeroU64, parse_bandwidth_argument, parse_bandwidth_limit};
 
-// ==================== Size Suffix Tests (1024-based like rsync) ====================
-
 mod size_suffixes {
     use super::*;
 
@@ -109,8 +107,6 @@ mod size_suffixes {
     }
 }
 
-// ==================== Rate Format Tests ====================
-
 mod rate_formats {
     use super::*;
 
@@ -178,8 +174,6 @@ mod rate_formats {
     }
 }
 
-// ==================== Zero Value Tests ====================
-
 mod zero_value {
     use super::*;
 
@@ -237,8 +231,6 @@ mod zero_value {
     }
 }
 
-// ==================== Negative Value Tests ====================
-
 mod negative_values {
     use super::*;
 
@@ -279,8 +271,6 @@ mod negative_values {
         assert!(result.is_some());
     }
 }
-
-// ==================== Overflow Tests ====================
 
 mod overflow {
     use super::*;
@@ -325,8 +315,6 @@ mod overflow {
         assert_eq!(error, BandwidthParseError::TooLarge);
     }
 }
-
-// ==================== Empty and Whitespace Tests ====================
 
 mod empty_and_whitespace {
     use super::*;
@@ -424,8 +412,6 @@ mod empty_and_whitespace {
         assert_eq!(error, BandwidthParseError::Invalid);
     }
 }
-
-// ==================== Invalid Format Tests ====================
 
 mod invalid_formats {
     use super::*;
@@ -590,8 +576,6 @@ mod invalid_formats {
     }
 }
 
-// ==================== Case Sensitivity Tests ====================
-
 mod case_sensitivity {
     use super::*;
 
@@ -675,8 +659,6 @@ mod case_sensitivity {
     }
 }
 
-// ==================== Error Message Tests ====================
-
 mod error_messages {
     use super::*;
 
@@ -724,8 +706,6 @@ mod error_messages {
     }
 }
 
-// ==================== Minimum Value Tests ====================
-
 mod minimum_values {
     use super::*;
 
@@ -764,8 +744,6 @@ mod minimum_values {
         assert_eq!(error, BandwidthParseError::TooSmall);
     }
 }
-
-// ==================== Scientific Notation Tests ====================
 
 mod scientific_notation {
     use super::*;
@@ -821,8 +799,6 @@ mod scientific_notation {
     }
 }
 
-// ==================== Decimal Separator Tests ====================
-
 mod decimal_separators {
     use super::*;
 
@@ -860,8 +836,6 @@ mod decimal_separators {
     }
 }
 
-// ==================== Leading Sign Tests ====================
-
 mod leading_signs {
     use super::*;
 
@@ -890,8 +864,6 @@ mod leading_signs {
     }
 }
 
-// ==================== Rounding Behavior Tests ====================
-
 mod rounding {
     use super::*;
 
@@ -919,8 +891,6 @@ mod rounding {
         assert_eq!(without_adj, with_adj);
     }
 }
-
-// ==================== Burst Component Tests ====================
 
 mod burst_component {
     use super::*;
@@ -958,8 +928,6 @@ mod burst_component {
         assert!(components.burst_specified());
     }
 }
-
-// ==================== Default Unit Behavior Tests ====================
 
 mod default_unit {
     use super::*;

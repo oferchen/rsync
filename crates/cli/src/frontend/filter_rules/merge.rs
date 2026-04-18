@@ -249,8 +249,6 @@ fn merge_directive_requires_argument(keyword: &str) -> bool {
 mod tests {
     use super::*;
 
-    // ==================== merge_directive_requires_argument tests ====================
-
     #[test]
     fn requires_argument_include() {
         assert!(merge_directive_requires_argument("include"));

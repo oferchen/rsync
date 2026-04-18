@@ -171,8 +171,6 @@ impl LocalCopyMetadata {
 mod tests {
     use super::*;
 
-    // ==================== LocalCopyFileKind tests ====================
-
     #[test]
     fn file_kind_is_directory_returns_true_for_directory() {
         assert!(LocalCopyFileKind::Directory.is_directory());

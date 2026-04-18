@@ -1076,7 +1076,6 @@ fn dictionary_sync_across_multiple_blocks() {
 fn dictionary_sync_across_file_boundaries() {
     let block_data = b"shared block data used in both files for dictionary sync";
 
-    // ---- File 1 ----
     let mut encoded_1 = Vec::new();
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
 
@@ -1126,7 +1125,6 @@ fn dictionary_sync_across_file_boundaries() {
     .concat();
     assert_eq!(file1_combined, file1_expected);
 
-    // ---- File 2 (reset and reuse) ----
     encoder.reset();
     decoder.reset();
 

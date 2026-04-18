@@ -24,7 +24,6 @@ fn daemon_inplace_push_preserves_destination_inodes() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
@@ -34,7 +33,6 @@ fn daemon_inplace_push_preserves_destination_inodes() {
     fs::write(source_dir.join("alpha.txt"), source_content_a).expect("write alpha.txt");
     fs::write(source_dir.join("beta.txt"), source_content_b).expect("write beta.txt");
 
-    // --- Destination (served by daemon, writable, pre-populated with old content) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
@@ -59,7 +57,6 @@ fn daemon_inplace_push_preserves_destination_inodes() {
         .expect("metadata beta before")
         .ino();
 
-    // --- Daemon config with max-sessions=2 (probe + 1 push) ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -87,7 +84,6 @@ fn daemon_inplace_push_preserves_destination_inodes() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Push with inplace(true) ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");
@@ -113,7 +109,6 @@ fn daemon_inplace_push_preserves_destination_inodes() {
         }
     }
 
-    // --- Verify destination content matches source ---
     assert_eq!(
         fs::read(dest_dir.join("alpha.txt")).expect("read dest alpha.txt"),
         source_content_a,
@@ -125,7 +120,6 @@ fn daemon_inplace_push_preserves_destination_inodes() {
         "beta.txt content mismatch after inplace push"
     );
 
-    // --- Verify inode numbers are preserved (proves inplace, not temp+rename) ---
     let inode_alpha_after = fs::metadata(dest_dir.join("alpha.txt"))
         .expect("metadata alpha after")
         .ino();

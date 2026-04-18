@@ -8,8 +8,6 @@ fn builder() -> ClientConfigBuilder {
     ClientConfigBuilder::default()
 }
 
-// --- arguments ---
-
 #[test]
 fn transfer_args_sets_values() {
     let config = builder().transfer_args(["--verbose", "--progress"]).build();
@@ -105,8 +103,6 @@ fn default_batch_config_is_none() {
     assert!(config.batch_config().is_none());
 }
 
-// --- deletion ---
-
 #[test]
 fn delete_sets_during_and_resets_to_disabled() {
     let config = ClientConfigBuilder::default().delete(true).build();
@@ -182,8 +178,6 @@ fn max_delete_propagates_limit() {
     let config = ClientConfigBuilder::default().max_delete(None).build();
     assert_eq!(config.max_delete(), None);
 }
-
-// --- filters ---
 
 #[test]
 fn debug_flags_sets_values() {
@@ -299,8 +293,6 @@ fn default_filter_rules_is_empty() {
     let config = builder().build();
     assert!(config.filter_rules().is_empty());
 }
-
-// --- metadata ---
 
 #[test]
 fn owner_sets_preserve() {
@@ -556,8 +548,6 @@ fn default_preserve_permissions_is_false() {
     assert!(!config.preserve_permissions());
 }
 
-// --- network ---
-
 #[test]
 fn bind_address_sets_value() {
     let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 0);
@@ -776,8 +766,6 @@ fn protect_args_default_is_none() {
     assert!(config.protect_args().is_none());
 }
 
-// --- output ---
-
 #[test]
 fn verbosity_sets_level() {
     let config = builder().verbosity(2).build();
@@ -889,8 +877,6 @@ fn itemize_changes_false_clears_flag() {
         .build();
     assert!(!config.itemize_changes());
 }
-
-// --- partials ---
 
 #[test]
 fn partial_sets_flag() {
@@ -1086,8 +1072,6 @@ fn validate_default_builder_ok() {
     assert!(b.validate().is_ok());
 }
 
-// --- paths ---
-
 #[test]
 fn compare_destination_adds_directory() {
     let config = builder().compare_destination("/tmp/compare").build();
@@ -1210,8 +1194,6 @@ fn default_backup_suffix_is_none() {
     let config = builder().build();
     assert!(config.backup_suffix().is_none());
 }
-
-// --- performance ---
 
 #[test]
 fn bandwidth_limit_sets_value() {
@@ -1483,8 +1465,6 @@ fn compress_false_after_level_clears_everything() {
     }
 }
 
-// --- preservation ---
-
 #[test]
 fn copy_links_sets_flag() {
     let config = builder().copy_links(true).build();
@@ -1637,8 +1617,6 @@ fn default_trust_sender_is_false() {
     let config = builder().build();
     assert!(!config.trust_sender());
 }
-
-// --- selection ---
 
 #[test]
 fn min_file_size_sets_limit() {
@@ -1862,8 +1840,6 @@ fn from0_default_is_false() {
     let config = builder().build();
     assert!(!config.from0());
 }
-
-// --- validation ---
 
 #[test]
 fn checksum_sets_flag() {

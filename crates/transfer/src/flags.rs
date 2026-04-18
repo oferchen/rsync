@@ -444,8 +444,6 @@ mod tests {
         assert!(!flags.backup);
     }
 
-    // ==================== clear_unsupported_features tests ====================
-
     /// When neither ACLs nor xattrs are requested, clearing unsupported features
     /// returns an empty list and leaves all flags unchanged.
     #[test]

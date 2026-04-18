@@ -24,7 +24,6 @@ fn daemon_push_then_pull_roundtrip_preserves_content() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side for push) ---
     let source_dir = temp.path().join("source");
     let source_subdir = source_dir.join("subdir");
     fs::create_dir_all(&source_subdir).expect("create source/subdir");
@@ -35,15 +34,12 @@ fn daemon_push_then_pull_roundtrip_preserves_content() {
     fs::write(source_subdir.join("nested.txt"), b"nested file content\n")
         .expect("write nested file");
 
-    // --- Module directory (served by daemon, writable) ---
     let module_dir = temp.path().join("module");
     fs::create_dir(&module_dir).expect("create module dir");
 
-    // --- Pull destination (client side for pull) ---
     let pull_dest = temp.path().join("pulled");
     fs::create_dir(&pull_dest).expect("create pull dest");
 
-    // --- Daemon config: 5 sessions = probe + push + pull + margin ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[lifecycle]\n\
@@ -183,18 +179,15 @@ fn daemon_push_incremental_update_lifecycle() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
     fs::write(source_dir.join("config.txt"), b"version=1\n").expect("write config v1");
     fs::write(source_dir.join("stable.txt"), b"unchanged content\n").expect("write stable");
 
-    // --- Module directory ---
     let module_dir = temp.path().join("module");
     fs::create_dir(&module_dir).expect("create module dir");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[incmod]\n\
@@ -313,7 +306,6 @@ fn daemon_pull_lifecycle_copies_full_tree() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Module directory (pre-populated, read-only) ---
     let module_dir = temp.path().join("module");
     let module_subdir = module_dir.join("docs");
     let module_deep = module_dir.join("docs/api");
@@ -327,11 +319,9 @@ fn daemon_pull_lifecycle_copies_full_tree() {
     // Include an empty file to verify zero-length files transfer correctly
     fs::write(module_dir.join("empty.txt"), b"").expect("write empty file");
 
-    // --- Pull destination ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest dir");
 
-    // --- Daemon config (read-only module) ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[docs]\n\
@@ -359,7 +349,6 @@ fn daemon_pull_lifecycle_copies_full_tree() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Pull from daemon ---
     let rsync_url = format!("rsync://127.0.0.1:{port}/docs/");
 
     let client_config = core::client::ClientConfig::builder()
@@ -430,7 +419,6 @@ fn daemon_push_lifecycle_preserves_permissions() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source with specific permissions ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
@@ -444,11 +432,9 @@ fn daemon_push_lifecycle_preserves_permissions() {
     fs::set_permissions(&config_path, fs::Permissions::from_mode(0o644))
         .expect("chmod settings 644");
 
-    // --- Module directory ---
     let module_dir = temp.path().join("module");
     fs::create_dir(&module_dir).expect("create module dir");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[permmod]\n\
@@ -476,7 +462,6 @@ fn daemon_push_lifecycle_preserves_permissions() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Push with permission preservation ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/permmod/");
@@ -539,16 +524,13 @@ fn daemon_push_lifecycle_rejects_read_only_module() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
     fs::write(source_dir.join("file.txt"), b"should not arrive\n").expect("write file");
 
-    // --- Module directory (read-only) ---
     let module_dir = temp.path().join("module");
     fs::create_dir(&module_dir).expect("create module dir");
 
-    // --- Daemon config with read only = true ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[readonly]\n\
@@ -576,7 +558,6 @@ fn daemon_push_lifecycle_rejects_read_only_module() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Attempt push to read-only module ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/readonly/");

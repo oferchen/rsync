@@ -333,8 +333,6 @@ impl PipelineController {
 mod tests {
     use super::*;
 
-    // ==================== PipelineState tests ====================
-
     #[test]
     fn pipeline_state_idle_equality() {
         assert_eq!(PipelineState::Idle, PipelineState::Idle);
@@ -363,8 +361,6 @@ mod tests {
         assert!(debug.contains("ProcessingEntry"));
     }
 
-    // ==================== PipelinePriority tests ====================
-
     #[test]
     fn pipeline_priority_ordering() {
         assert!(PipelinePriority::ProcessReadyEntries < PipelinePriority::FillPipeline);
@@ -390,8 +386,6 @@ mod tests {
         let copied = priority;
         assert_eq!(priority, copied);
     }
-
-    // ==================== PipelineController tests ====================
 
     #[test]
     fn controller_new_creates_idle_state() {

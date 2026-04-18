@@ -29,7 +29,6 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
     drop(held_listener);
     let daemon_handle = thread::spawn(move || run_daemon(config));
 
-    // --- Connection 1: send garbage instead of the @RSYNCD: version line ---
     // The daemon reads the greeting it sent, parses the garbage as a module
     // name, replies with @ERROR: and @RSYNCD: EXIT, then keeps the accept
     // loop running because catch_unwind isolates per-connection errors.
@@ -64,7 +63,6 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
         }
     } // bad stream dropped here — worker thread has already finished
 
-    // --- Connection 2: well-formed handshake ---
     // If catch_unwind isolation had failed the daemon would have exited and
     // connect_with_retries would time out.
     {

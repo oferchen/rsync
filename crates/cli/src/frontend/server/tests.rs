@@ -8,8 +8,6 @@ use super::parse::{
     parse_server_stop_after, parse_server_stop_at,
 };
 
-// ---- daemon_mode_arguments ----
-
 #[test]
 fn daemon_mode_arguments_empty_args() {
     let args: Vec<OsString> = vec![];
@@ -98,8 +96,6 @@ fn daemon_mode_arguments_oc_rsync_program() {
     assert!(!daemon_args.is_empty());
 }
 
-// ---- server_mode_requested ----
-
 #[test]
 fn server_mode_requested_no_server_flag() {
     let args: Vec<OsString> = vec![
@@ -178,8 +174,6 @@ fn server_mode_requested_server_not_in_first_position() {
     assert!(server_mode_requested(&args));
 }
 
-// ---- detect_secluded_args_flag ----
-
 #[test]
 fn detect_secluded_args_when_present() {
     let args: Vec<OsString> = vec![
@@ -208,8 +202,6 @@ fn detect_secluded_args_ignores_program_name() {
     let args: Vec<OsString> = vec![OsString::from("-s"), OsString::from("--server")];
     assert!(!detect_secluded_args_flag(&args));
 }
-
-// ---- parse_server_flag_string_and_args ----
 
 #[test]
 fn parse_server_args_basic() {
@@ -287,8 +279,6 @@ fn parse_server_args_skips_value_bearing_long_flags() {
     assert_eq!(flags, "-logDtpr");
     assert_eq!(pos_args, vec![OsString::from("dest/")]);
 }
-
-// ---- parse_server_long_flags ----
 
 #[test]
 fn long_flags_defaults() {
@@ -477,8 +467,6 @@ fn long_flags_all_combined() {
     assert_eq!(flags.stop_after.as_deref(), Some("30"));
 }
 
-// ---- is_known_server_long_flag ----
-
 #[test]
 fn known_flag_detects_boolean_flags() {
     assert!(is_known_server_long_flag("--server"));
@@ -515,8 +503,6 @@ fn known_flag_rejects_unknown() {
     assert!(!is_known_server_long_flag("dest/"));
 }
 
-// ---- parse_server_checksum_seed ----
-
 #[test]
 fn checksum_seed_parses_valid() {
     assert_eq!(parse_server_checksum_seed("0").unwrap(), 0);
@@ -543,8 +529,6 @@ fn checksum_seed_rejects_overflow() {
 fn checksum_seed_trims_whitespace() {
     assert_eq!(parse_server_checksum_seed("  42  ").unwrap(), 42);
 }
-
-// ---- parse_server_size_limit ----
 
 #[test]
 fn size_limit_parses_plain_number() {
@@ -582,8 +566,6 @@ fn size_limit_rejects_invalid() {
     assert!(parse_server_size_limit("abc", "--max-size").is_err());
 }
 
-// ---- parse_server_stop_after ----
-
 #[test]
 fn stop_after_parses_valid_minutes() {
     let deadline = parse_server_stop_after("10").unwrap();
@@ -606,8 +588,6 @@ fn stop_after_rejects_non_numeric() {
     assert!(parse_server_stop_after("abc").is_err());
 }
 
-// ---- parse_server_stop_at ----
-
 #[test]
 fn stop_at_rejects_empty() {
     assert!(parse_server_stop_at("").is_err());
@@ -624,8 +604,6 @@ fn stop_at_parses_far_future_date() {
     // May fail due to local offset issues in test env, but format should be ok
     assert!(result.is_ok() || result.is_err());
 }
-
-// ---- files-from and from0 flag ----
 
 #[test]
 fn long_flags_files_from_stdin() {

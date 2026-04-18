@@ -253,8 +253,6 @@ mod tests {
         )
     }
 
-    // --- Append strategy ---
-
     #[test]
     fn append_offset_selects_append_strategy() {
         assert_eq!(
@@ -278,8 +276,6 @@ mod tests {
             WriteStrategy::Append
         );
     }
-
-    // --- Inplace strategy ---
 
     #[test]
     fn inplace_enabled_selects_inplace_strategy() {
@@ -305,8 +301,6 @@ mod tests {
         );
     }
 
-    // --- Direct strategy ---
-
     #[test]
     fn no_existing_dest_selects_direct_strategy() {
         assert_eq!(
@@ -314,8 +308,6 @@ mod tests {
             WriteStrategy::Direct
         );
     }
-
-    // --- TempFileRename strategy ---
 
     #[test]
     fn partial_forces_temp_file_rename() {
@@ -365,8 +357,6 @@ mod tests {
         );
     }
 
-    // --- Priority ordering ---
-
     #[test]
     fn append_has_highest_priority() {
         assert_eq!(
@@ -406,8 +396,6 @@ mod tests {
             WriteStrategy::Direct
         );
     }
-
-    // --- AnonymousTempFile strategy ---
 
     #[test]
     fn partial_prevents_anonymous_strategy() {

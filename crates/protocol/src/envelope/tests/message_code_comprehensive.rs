@@ -10,10 +10,8 @@
 use super::*;
 use std::collections::HashMap;
 
-// ============================================================================
 // Wire Format Compatibility Tests
 // These tests verify that our message codes match upstream rsync's exact values
-// ============================================================================
 
 /// Verifies that all message codes have the exact numeric values expected by
 /// upstream rsync 3.4.1. These values are defined in rsync.h and must match
