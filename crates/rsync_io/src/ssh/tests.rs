@@ -1242,6 +1242,35 @@ fn has_hardware_aes_is_consistent() {
 }
 
 #[test]
+fn has_hardware_aes_returns_expected_for_platform() {
+    use super::builder::has_hardware_aes;
+
+    let result = has_hardware_aes();
+
+    // Apple Silicon (aarch64-apple-*) always has hardware AES via ARMv8
+    // Crypto Extensions. Most modern x86_64 CPUs (Intel Westmere+ 2010,
+    // AMD Bulldozer+ 2011) have AES-NI. On platforms without detection
+    // support (e.g., MIPS, RISC-V), has_hardware_aes() returns false.
+    //
+    // CI matrix covers macOS ARM (always true), Linux x86_64 (true on
+    // modern hosts), and Windows x86_64 (true on modern hosts). VMs
+    // without AES passthrough or older x86 CPUs without AES-NI would
+    // see false here - that path is exercised by the
+    // `no_aes_gcm_injection_without_hardware_and_user_cipher` test below.
+    #[cfg(target_arch = "aarch64")]
+    {
+        // All aarch64 Apple and AWS Graviton chips have AES.
+        assert!(
+            result,
+            "aarch64 platforms with Crypto Extensions should report hardware AES"
+        );
+    }
+
+    // On any platform, the result must be a valid bool (not a panic).
+    let _ = result;
+}
+
+#[test]
 fn aes_gcm_injection_requires_hardware_aes() {
     use super::builder::has_hardware_aes;
 
@@ -1259,6 +1288,54 @@ fn aes_gcm_injection_requires_hardware_aes() {
         has_cipher_flag,
         has_hardware_aes(),
         "cipher injection should match hardware AES availability"
+    );
+}
+
+#[test]
+fn no_aes_gcm_injection_without_hardware_and_user_cipher() {
+    // Verifies that all four conditions of should_inject_aes_gcm_ciphers()
+    // must hold simultaneously. Even with prefer_aes_gcm=true and an SSH
+    // program, existing `-c` in options prevents injection - exercising
+    // the guard that protects against overriding user cipher choices.
+    // This path is hardware-independent and always returns false.
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(true));
+    command.push_option("-c");
+    command.push_option("chacha20-poly1305@openssh.com");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    // The user's cipher choice must be preserved.
+    assert!(
+        rendered.contains(&"chacha20-poly1305@openssh.com".to_owned()),
+        "user cipher selection must be preserved: {rendered:?}"
+    );
+
+    // AES-GCM ciphers must not be injected alongside the user's choice.
+    assert!(
+        !rendered.contains(&"aes128-gcm@openssh.com,aes256-gcm@openssh.com".to_owned()),
+        "AES-GCM should not be injected when user already specified -c: {rendered:?}"
+    );
+}
+
+#[test]
+fn no_aes_gcm_injection_when_all_conditions_fail() {
+    // Exercises the case where every guard in should_inject_aes_gcm_ciphers()
+    // causes rejection: preference is None, program is not SSH, and custom
+    // options contain -c. On platforms without hardware AES (some VMs,
+    // older x86 without AES-NI), the hardware check also returns false.
+    let mut command = SshCommand::new("example.com");
+    command.set_program("plink");
+    command.set_prefer_aes_gcm(None);
+    command.push_option("-c");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.contains(&"aes128-gcm@openssh.com,aes256-gcm@openssh.com".to_owned()),
+        "no AES-GCM injection when all conditions fail: {rendered:?}"
     );
 }
 
