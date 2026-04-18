@@ -22,7 +22,8 @@
 //! |------|---------|----------|
 //! | `+` | Include rule | All |
 //! | `-` | Exclude rule | All |
-//! | `:` | Clear rules | All |
+//! | `:` | Per-dir merge (dir-merge) | v29+ |
+//! | `!` | Clear rules | All |
 //! | `/` | Anchored pattern | All |
 //! | `!` | No-match-with-this negates | All |
 //! | `C` | CVS exclude | All |
