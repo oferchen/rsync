@@ -36,8 +36,9 @@ max-threads = 1
 # Buffer pool global singleton tests share a process-wide OnceLock.
 # Parallel execution causes init_global_buffer_pool to see already-initialized
 # state from another test, leading to non-deterministic failures.
+# Env var tests mutate OC_RSYNC_BUFFER_POOL_SIZE and must not run concurrently.
 [[profile.default.overrides]]
-filter = "test(global_pool)"
+filter = "test(global_pool) | test(env_var)"
 test-group = "global-pool-serial"
 
 [test-groups.global-pool-serial]
