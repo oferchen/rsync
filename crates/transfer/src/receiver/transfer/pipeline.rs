@@ -372,4 +372,68 @@ impl ReceiverContext {
 
         result
     }
+
+    /// Dry-run transfer loop: sends NDX requests without data transfer.
+    ///
+    /// Mirrors upstream generator.c behavior during `!do_xfers`: sends NDX and
+    /// iflags for each file candidate, reads the echoed NDX+iflags from the
+    /// sender. No sum head or file data is exchanged. This allows the sender to
+    /// log each file name for verbose output.
+    ///
+    /// upstream: generator.c:1845-1946 - `!do_xfers` path sends write_ndx() then
+    /// goto cleanup, skipping write_sum_head(). sender.c:394-399 - `!do_xfers`
+    /// logs the item and echoes write_ndx_and_attrs() without receive_sums().
+    pub(in crate::receiver) fn run_dry_run_loop<
+        R: Read,
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        reader: &mut crate::reader::ServerReader<R>,
+        writer: &mut W,
+        files_to_transfer: &[(usize, &FileEntry, PathBuf)],
+    ) -> io::Result<()> {
+        if files_to_transfer.is_empty() {
+            writer.flush()?;
+            return Ok(());
+        }
+
+        let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+        let write_iflags = self.protocol.supports_iflags();
+        let preserve_xattrs = self.config.flags.xattrs;
+        let want_xattr_optim = self
+            .compat_flags
+            .is_some_and(|f| f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION));
+
+        for &(file_idx, file_entry, _) in files_to_transfer {
+            // upstream: generator.c:1925 - write_ndx(f_out, ndx)
+            let wire_ndx = self.flat_to_wire_ndx(file_idx);
+            ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;
+
+            // upstream: generator.c:1926 - iflags with ITEM_TRANSFER
+            if write_iflags {
+                use crate::receiver::wire::SenderAttrs;
+                writer.write_all(&SenderAttrs::ITEM_TRANSFER.to_le_bytes())?;
+            }
+
+            // Verbose: log the file name (client-mode only, same as non-dry-run path)
+            if self.config.flags.verbose && self.config.connection.client_mode {
+                info_log!(Name, 1, "{}", file_entry.path().display());
+            }
+
+            writer.flush()?;
+
+            // upstream: sender.c:394-399 - sender echoes write_ndx_and_attrs back
+            let (_echoed_ndx, _sender_attrs) =
+                crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
+                    reader,
+                    &mut ndx_read_codec,
+                    preserve_xattrs,
+                    want_xattr_optim,
+                )?;
+        }
+
+        writer.flush()?;
+        Ok(())
+    }
 }
