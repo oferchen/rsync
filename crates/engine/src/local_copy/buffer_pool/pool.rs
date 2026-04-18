@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use super::allocator::{BufferAllocator, DefaultAllocator};
 use super::guard::{BorrowedBufferGuard, BufferGuard};
@@ -89,6 +89,19 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     /// pool's soft capacity to match demand. Enabled via
     /// [`with_adaptive_resizing`](Self::with_adaptive_resizing).
     pressure: Option<PressureTracker>,
+    /// Cumulative count of acquire operations that found a buffer in the
+    /// thread-local cache or central pool (no fresh allocation needed).
+    ///
+    /// Always active regardless of whether adaptive resizing is enabled.
+    /// Uses `Relaxed` ordering since exact precision is not required for
+    /// telemetry - small counting errors under concurrent access are
+    /// acceptable.
+    total_hits: AtomicU64,
+    /// Cumulative count of acquire operations that required a fresh
+    /// allocation because no pooled buffer was available.
+    ///
+    /// Always active regardless of whether adaptive resizing is enabled.
+    total_misses: AtomicU64,
 }
 
 impl BufferPool {
@@ -117,6 +130,8 @@ impl BufferPool {
             memory_cap: None,
             throughput: None,
             pressure: None,
+            total_hits: AtomicU64::new(0),
+            total_misses: AtomicU64::new(0),
         }
     }
 
@@ -138,6 +153,8 @@ impl BufferPool {
             memory_cap: None,
             throughput: None,
             pressure: None,
+            total_hits: AtomicU64::new(0),
+            total_misses: AtomicU64::new(0),
         }
     }
 }
@@ -164,6 +181,8 @@ impl<A: BufferAllocator> BufferPool<A> {
             memory_cap: None,
             throughput: None,
             pressure: None,
+            total_hits: AtomicU64::new(0),
+            total_misses: AtomicU64::new(0),
         }
     }
 
@@ -294,6 +313,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         // Fast path: check thread-local cache.
         if let Some(buffer) = thread_local_cache::try_take() {
             if buffer.len() == pool.buffer_size {
+                pool.total_hits.fetch_add(1, Ordering::Relaxed);
                 // Re-reserve memory that was released by return_buffer's track_return.
                 pool.wait_and_reserve_memory(pool.buffer_size);
                 return BufferGuard {
@@ -332,6 +352,7 @@ impl<A: BufferAllocator> BufferPool<A> {
                     }
                     return None;
                 }
+                pool.total_hits.fetch_add(1, Ordering::Relaxed);
                 return Some(BufferGuard {
                     buffer: Some(buffer),
                     pool,
@@ -390,6 +411,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         // Fast path: check thread-local cache.
         if let Some(buffer) = thread_local_cache::try_take() {
             if buffer.len() == self.buffer_size {
+                self.total_hits.fetch_add(1, Ordering::Relaxed);
                 // Re-reserve memory that was released by return_buffer's track_return.
                 self.wait_and_reserve_memory(self.buffer_size);
                 return BorrowedBufferGuard {
@@ -426,6 +448,7 @@ impl<A: BufferAllocator> BufferPool<A> {
                     }
                     return None;
                 }
+                self.total_hits.fetch_add(1, Ordering::Relaxed);
                 return Some(BorrowedBufferGuard {
                     buffer: Some(buffer),
                     pool: self,
@@ -505,6 +528,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         let mut pool = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
         match pool.pop() {
             Some(buffer) => {
+                self.total_hits.fetch_add(1, Ordering::Relaxed);
                 if let Some(pressure) = &self.pressure {
                     pressure.record_hit();
                     self.maybe_resize(pressure, &mut pool);
@@ -512,6 +536,7 @@ impl<A: BufferAllocator> BufferPool<A> {
                 buffer
             }
             None => {
+                self.total_misses.fetch_add(1, Ordering::Relaxed);
                 if let Some(pressure) = &self.pressure {
                     pressure.record_miss();
                     self.maybe_resize(pressure, &mut pool);
@@ -606,6 +631,41 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn is_adaptive(&self) -> bool {
         self.pressure.is_some()
+    }
+
+    /// Returns the cumulative number of acquire operations that found a
+    /// buffer in the thread-local cache or central pool (no fresh
+    /// allocation needed).
+    #[must_use]
+    pub fn total_hits(&self) -> u64 {
+        self.total_hits.load(Ordering::Relaxed)
+    }
+
+    /// Returns the cumulative number of acquire operations that required
+    /// a fresh allocation because no pooled buffer was available.
+    #[must_use]
+    pub fn total_misses(&self) -> u64 {
+        self.total_misses.load(Ordering::Relaxed)
+    }
+
+    /// Returns the total number of acquire operations (hits + misses).
+    #[must_use]
+    pub fn total_acquires(&self) -> u64 {
+        self.total_hits() + self.total_misses()
+    }
+
+    /// Returns the hit rate as a fraction in `[0.0, 1.0]`.
+    ///
+    /// Returns `0.0` if no acquires have been recorded yet. The hit rate
+    /// measures how effectively the pool reuses buffers - higher values
+    /// indicate less allocation overhead.
+    #[must_use]
+    pub fn hit_rate(&self) -> f64 {
+        let total = self.total_acquires();
+        if total == 0 {
+            return 0.0;
+        }
+        self.total_hits() as f64 / total as f64
     }
 
     /// Atomically waits for and reserves `requested` bytes of capacity.
