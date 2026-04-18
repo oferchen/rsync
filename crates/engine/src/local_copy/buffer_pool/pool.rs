@@ -7,10 +7,12 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::allocator::{BufferAllocator, DefaultAllocator};
 use super::guard::{BorrowedBufferGuard, BufferGuard};
 use super::memory_cap::MemoryCap;
+use super::pressure::{PressureTracker, ResizeAction};
 use super::thread_local_cache;
 use super::throughput::ThroughputTracker;
 use super::{COPY_BUFFER_SIZE, adaptive_buffer_size};
@@ -64,9 +66,10 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     buffers: Mutex<Vec<Vec<u8>>>,
     /// Soft maximum number of buffers to retain in the central pool.
     ///
-    /// Enforced exactly under the Mutex lock. Thread-local cached buffers
-    /// are not counted. Returns `0` for a zero-capacity pool (never retains).
-    soft_capacity: usize,
+    /// Stored as an atomic to allow lock-free reads on the return path
+    /// while resize mutations happen under the Mutex lock. Thread-local
+    /// cached buffers are not counted.
+    soft_capacity: AtomicUsize,
     /// Size of each buffer in bytes.
     buffer_size: usize,
     /// Allocation strategy for creating and disposing of buffers.
@@ -80,6 +83,12 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     /// The tracker is only allocated when explicitly enabled via
     /// [`with_throughput_tracking`](Self::with_throughput_tracking).
     throughput: Option<ThroughputTracker>,
+    /// Optional pressure tracker for adaptive pool resizing.
+    ///
+    /// When present, tracks hit/miss rates and periodically adjusts the
+    /// pool's soft capacity to match demand. Enabled via
+    /// [`with_adaptive_resizing`](Self::with_adaptive_resizing).
+    pressure: Option<PressureTracker>,
 }
 
 impl BufferPool {
@@ -102,11 +111,12 @@ impl BufferPool {
     pub fn new(max_buffers: usize) -> Self {
         Self {
             buffers: Mutex::new(Vec::with_capacity(max_buffers)),
-            soft_capacity: max_buffers,
+            soft_capacity: AtomicUsize::new(max_buffers),
             buffer_size: COPY_BUFFER_SIZE,
             allocator: DefaultAllocator,
             memory_cap: None,
             throughput: None,
+            pressure: None,
         }
     }
 
@@ -122,11 +132,12 @@ impl BufferPool {
     pub fn with_buffer_size(max_buffers: usize, buffer_size: usize) -> Self {
         Self {
             buffers: Mutex::new(Vec::with_capacity(max_buffers)),
-            soft_capacity: max_buffers,
+            soft_capacity: AtomicUsize::new(max_buffers),
             buffer_size,
             allocator: DefaultAllocator,
             memory_cap: None,
             throughput: None,
+            pressure: None,
         }
     }
 }
@@ -147,11 +158,12 @@ impl<A: BufferAllocator> BufferPool<A> {
     pub fn with_allocator(max_buffers: usize, buffer_size: usize, allocator: A) -> Self {
         Self {
             buffers: Mutex::new(Vec::with_capacity(max_buffers)),
-            soft_capacity: max_buffers,
+            soft_capacity: AtomicUsize::new(max_buffers),
             buffer_size,
             allocator,
             memory_cap: None,
             throughput: None,
+            pressure: None,
         }
     }
 
@@ -202,6 +214,27 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn with_throughput_tracking_alpha(mut self, alpha: f64) -> Self {
         self.throughput = Some(ThroughputTracker::with_alpha(alpha));
+        self
+    }
+
+    /// Enables adaptive resizing based on allocation pressure.
+    ///
+    /// When enabled, the pool tracks hit/miss rates using atomic counters
+    /// and periodically adjusts its soft capacity:
+    ///
+    /// - **Grow**: When the miss rate exceeds 20% (too many fresh allocations),
+    ///   the capacity is doubled (up to 256).
+    /// - **Shrink**: When pool utilization drops below 30% and miss rate is
+    ///   low, the capacity is halved (down to 2).
+    ///
+    /// Pressure evaluation occurs every 64 acquire operations, amortizing
+    /// the cost. Between checks, only two `Relaxed` atomic increments are
+    /// performed per acquire - negligible overhead on the hot path.
+    ///
+    /// Adaptive resizing is zero-cost when not enabled.
+    #[must_use]
+    pub fn with_adaptive_resizing(mut self) -> Self {
+        self.pressure = Some(PressureTracker::new());
         self
     }
 
@@ -428,9 +461,10 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[allow(unsafe_code)]
     pub(super) fn return_buffer(&self, mut buffer: Vec<u8>) {
         let returned_len = buffer.len();
+        let capacity = self.soft_capacity.load(Ordering::Relaxed);
 
         // Zero-capacity pool: never retain buffers - deallocate immediately.
-        if self.soft_capacity == 0 {
+        if capacity == 0 {
             self.allocator.deallocate(buffer);
             self.track_return(returned_len);
             return;
@@ -452,7 +486,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         if let Some(buffer) = thread_local_cache::try_store(buffer) {
             // TLS slot occupied - route to central pool.
             let mut pool = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
-            if pool.len() >= self.soft_capacity {
+            if pool.len() >= capacity {
                 self.allocator.deallocate(buffer);
             } else {
                 pool.push(buffer);
@@ -464,10 +498,57 @@ impl<A: BufferAllocator> BufferPool<A> {
     }
 
     /// Pops a buffer from the central pool, or allocates a new one if empty.
+    ///
+    /// When adaptive resizing is enabled, records hit/miss statistics and
+    /// triggers periodic resize evaluations (every 64 operations).
     fn pop_buffer(&self) -> Vec<u8> {
         let mut pool = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
-        pool.pop()
-            .unwrap_or_else(|| self.allocator.allocate(self.buffer_size))
+        match pool.pop() {
+            Some(buffer) => {
+                if let Some(pressure) = &self.pressure {
+                    pressure.record_hit();
+                    self.maybe_resize(pressure, &mut pool);
+                }
+                buffer
+            }
+            None => {
+                if let Some(pressure) = &self.pressure {
+                    pressure.record_miss();
+                    self.maybe_resize(pressure, &mut pool);
+                }
+                self.allocator.allocate(self.buffer_size)
+            }
+        }
+    }
+
+    /// Evaluates pressure statistics and applies resize if warranted.
+    ///
+    /// Called while the pool Mutex is held, so capacity updates are
+    /// serialized with buffer push/pop operations.
+    fn maybe_resize(&self, pressure: &PressureTracker, pool: &mut Vec<Vec<u8>>) {
+        if !pressure.should_check() {
+            return;
+        }
+
+        let current_capacity = self.soft_capacity.load(Ordering::Relaxed);
+        let available = pool.len();
+
+        match pressure.evaluate(current_capacity, available) {
+            ResizeAction::Hold => {}
+            ResizeAction::Grow(new_capacity) => {
+                self.soft_capacity.store(new_capacity, Ordering::Relaxed);
+                pool.reserve(new_capacity.saturating_sub(pool.capacity()));
+            }
+            ResizeAction::Shrink(new_capacity) => {
+                self.soft_capacity.store(new_capacity, Ordering::Relaxed);
+                // Deallocate excess buffers beyond the new capacity.
+                while pool.len() > new_capacity {
+                    if let Some(buf) = pool.pop() {
+                        self.allocator.deallocate(buf);
+                    }
+                }
+            }
+        }
     }
 
     /// Returns the number of buffers currently in the central pool.
@@ -483,9 +564,12 @@ impl<A: BufferAllocator> BufferPool<A> {
     ///
     /// Thread-local cached buffers are additional (at most one per thread).
     /// Returns `0` for a zero-capacity pool (never retains buffers).
+    ///
+    /// When adaptive resizing is enabled, this value may change over time
+    /// as the pool adjusts to allocation pressure.
     #[must_use]
     pub fn max_buffers(&self) -> usize {
-        self.soft_capacity
+        self.soft_capacity.load(Ordering::Relaxed)
     }
 
     /// Returns the size of each buffer in bytes.
@@ -516,6 +600,12 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn memory_cap(&self) -> Option<usize> {
         self.memory_cap.as_ref().map(|cap| cap.limit())
+    }
+
+    /// Returns `true` if adaptive resizing is enabled.
+    #[must_use]
+    pub fn is_adaptive(&self) -> bool {
+        self.pressure.is_some()
     }
 
     /// Atomically waits for and reserves `requested` bytes of capacity.
