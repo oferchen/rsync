@@ -6728,6 +6728,773 @@ CONF
   return 0
 }
 
+# Per-filter-type interop: exclude with glob patterns.
+# Tests daemon exclude directive using glob wildcards (*, ?).
+# Both pull (upstream client, oc daemon) and push (upstream client, oc daemon)
+# directions must produce identical file selection.
+# upstream: clientserver.c:891 - exclude parsed with FILTRULE_WORD_SPLIT
+test_daemon_filter_exclude_glob() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local fg_src="${work}/filter-excl-glob-src"
+  local fg_dest_oc="${work}/filter-excl-glob-dest-oc"
+  local fg_dest_up="${work}/filter-excl-glob-dest-up"
+  rm -rf "$fg_src" "$fg_dest_oc" "$fg_dest_up"
+  mkdir -p "$fg_src/sub" "$fg_dest_oc" "$fg_dest_up"
+
+  echo "keep-a" > "$fg_src/readme.txt"
+  echo "keep-b" > "$fg_src/data.csv"
+  echo "keep-c" > "$fg_src/sub/info.txt"
+  echo "excl-1" > "$fg_src/temp.tmp"
+  echo "excl-2" > "$fg_src/build.o"
+  echo "excl-3" > "$fg_src/sub/cache.tmp"
+  echo "excl-4" > "$fg_src/sub/main.o"
+  echo "excl-5" > "$fg_src/a1.log"
+  echo "excl-6" > "$fg_src/sub/b2.log"
+
+  # helper: run one direction and verify results
+  _filter_excl_glob_verify() {
+    local label=$1 dest=$2
+
+    for f in readme.txt data.csv sub/info.txt; do
+      if [[ ! -f "$dest/$f" ]]; then
+        echo "    ${label}: missing allowed file: $f"
+        return 1
+      fi
+    done
+    for f in temp.tmp build.o sub/cache.tmp sub/main.o a1.log sub/b2.log; do
+      if [[ -f "$dest/$f" ]]; then
+        echo "    ${label}: excluded file transferred: $f"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # OC daemon direction: upstream client pulls from oc-rsync daemon
+  local fg_oc_conf="${work}/filter-excl-glob-oc.conf"
+  local fg_oc_pid="${work}/filter-excl-glob-oc.pid"
+  local fg_oc_log="${work}/filter-excl-glob-oc.log"
+  cat > "$fg_oc_conf" <<CONF
+pid file = ${fg_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[feg]
+path = ${fg_src}
+read only = true
+numeric ids = yes
+exclude = *.tmp *.o
+exclude = *.log
+CONF
+
+  start_oc_daemon_with_retry "$fg_oc_conf" "$fg_oc_log" "$upstream_binary" "$fg_oc_pid" "$oc_port"
+
+  local exit_code=0
+  timeout "$((hard_timeout * 2))" "$upstream_binary" -av --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/feg/" "${fg_dest_oc}/" \
+      >"${log}.filter-excl-glob-oc-pull.out" 2>"${log}.filter-excl-glob-oc-pull.err" || exit_code=$?
+  stop_oc_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    oc-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_excl_glob_verify "oc-pull" "$fg_dest_oc" || return 1
+
+  # Upstream daemon direction: oc-rsync client pulls from upstream daemon
+  local fg_up_conf="${work}/filter-excl-glob-up.conf"
+  local fg_up_pid="${work}/filter-excl-glob-up.pid"
+  local fg_up_log="${work}/filter-excl-glob-up.log"
+  cat > "$fg_up_conf" <<CONF
+pid file = ${fg_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[feg]
+path = ${fg_src}
+read only = true
+numeric ids = yes
+exclude = *.tmp *.o
+exclude = *.log
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$fg_up_conf" "$fg_up_log" "$fg_up_pid"
+
+  exit_code=0
+  timeout "$((hard_timeout * 2))" "$oc_bin" -av --timeout=10 \
+      "rsync://127.0.0.1:${upstream_port}/feg/" "${fg_dest_up}/" \
+      >"${log}.filter-excl-glob-up-pull.out" 2>"${log}.filter-excl-glob-up-pull.err" || exit_code=$?
+  stop_upstream_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    up-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_excl_glob_verify "up-pull" "$fg_dest_up" || return 1
+
+  return 0
+}
+
+# Per-filter-type interop: exclude with anchored patterns (containing /).
+# Anchored patterns are path-relative to the module root. A pattern like
+# /secret matches only at the top level, sub/secret does not match.
+# upstream: exclude.c:200-202 - XFLG_ABS_IF_SLASH sets FILTRULE_ABS_PATH.
+test_daemon_filter_exclude_anchored() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local fa_src="${work}/filter-excl-anchor-src"
+  local fa_dest_oc="${work}/filter-excl-anchor-dest-oc"
+  local fa_dest_up="${work}/filter-excl-anchor-dest-up"
+  rm -rf "$fa_src" "$fa_dest_oc" "$fa_dest_up"
+  mkdir -p "$fa_src/secret" "$fa_src/sub/secret" "$fa_src/logs" "$fa_src/sub/logs"
+  mkdir -p "$fa_dest_oc" "$fa_dest_up"
+
+  echo "keep-root" > "$fa_src/public.txt"
+  echo "keep-sub" > "$fa_src/sub/readme.txt"
+  # /secret is anchored - only matches top-level
+  echo "excl-top" > "$fa_src/secret/key.pem"
+  # sub/secret should NOT be excluded by /secret
+  echo "keep-nested" > "$fa_src/sub/secret/data.txt"
+  # /logs/ matches top-level dir only
+  echo "excl-log" > "$fa_src/logs/app.log"
+  # sub/logs should NOT be excluded by /logs/
+  echo "keep-sublog" > "$fa_src/sub/logs/debug.log"
+
+  _filter_excl_anchor_verify() {
+    local label=$1 dest=$2
+
+    for f in public.txt sub/readme.txt sub/secret/data.txt sub/logs/debug.log; do
+      if [[ ! -f "$dest/$f" ]]; then
+        echo "    ${label}: missing allowed file: $f"
+        return 1
+      fi
+    done
+    for f in secret/key.pem logs/app.log; do
+      if [[ -e "$dest/$f" ]]; then
+        echo "    ${label}: excluded file transferred: $f"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # OC daemon direction
+  local fa_oc_conf="${work}/filter-excl-anchor-oc.conf"
+  local fa_oc_pid="${work}/filter-excl-anchor-oc.pid"
+  local fa_oc_log="${work}/filter-excl-anchor-oc.log"
+  cat > "$fa_oc_conf" <<CONF
+pid file = ${fa_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[fea]
+path = ${fa_src}
+read only = true
+numeric ids = yes
+exclude = /secret
+exclude = /logs/
+CONF
+
+  start_oc_daemon_with_retry "$fa_oc_conf" "$fa_oc_log" "$upstream_binary" "$fa_oc_pid" "$oc_port"
+
+  local exit_code=0
+  timeout "$((hard_timeout * 2))" "$upstream_binary" -av --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/fea/" "${fa_dest_oc}/" \
+      >"${log}.filter-excl-anchor-oc.out" 2>"${log}.filter-excl-anchor-oc.err" || exit_code=$?
+  stop_oc_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    oc-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_excl_anchor_verify "oc-pull" "$fa_dest_oc" || return 1
+
+  # Upstream daemon direction
+  local fa_up_conf="${work}/filter-excl-anchor-up.conf"
+  local fa_up_pid="${work}/filter-excl-anchor-up.pid"
+  local fa_up_log="${work}/filter-excl-anchor-up.log"
+  cat > "$fa_up_conf" <<CONF
+pid file = ${fa_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[fea]
+path = ${fa_src}
+read only = true
+numeric ids = yes
+exclude = /secret
+exclude = /logs/
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$fa_up_conf" "$fa_up_log" "$fa_up_pid"
+
+  exit_code=0
+  timeout "$((hard_timeout * 2))" "$oc_bin" -av --timeout=10 \
+      "rsync://127.0.0.1:${upstream_port}/fea/" "${fa_dest_up}/" \
+      >"${log}.filter-excl-anchor-up.out" 2>"${log}.filter-excl-anchor-up.err" || exit_code=$?
+  stop_upstream_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    up-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_excl_anchor_verify "up-pull" "$fa_dest_up" || return 1
+
+  return 0
+}
+
+# Per-filter-type interop: include combined with exclude *.
+# The classic whitelist pattern: include specific files, exclude everything else.
+# upstream: clientserver.c:882-893 - include before exclude in daemon_filter_list.
+test_daemon_filter_include_exclude_star() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local fi_src="${work}/filter-inc-excl-src"
+  local fi_dest_oc="${work}/filter-inc-excl-dest-oc"
+  local fi_dest_up="${work}/filter-inc-excl-dest-up"
+  rm -rf "$fi_src" "$fi_dest_oc" "$fi_dest_up"
+  mkdir -p "$fi_src/sub" "$fi_dest_oc" "$fi_dest_up"
+
+  echo "allowed-txt" > "$fi_src/readme.txt"
+  echo "allowed-rs" > "$fi_src/main.rs"
+  echo "allowed-nested-txt" > "$fi_src/sub/notes.txt"
+  echo "excluded-dat" > "$fi_src/data.dat"
+  echo "excluded-bin" > "$fi_src/prog.bin"
+  echo "excluded-nested" > "$fi_src/sub/junk.dat"
+
+  _filter_inc_excl_verify() {
+    local label=$1 dest=$2
+
+    for f in readme.txt main.rs sub/notes.txt; do
+      if [[ ! -f "$dest/$f" ]]; then
+        echo "    ${label}: missing allowed file: $f"
+        return 1
+      fi
+    done
+    for f in data.dat prog.bin sub/junk.dat; do
+      if [[ -f "$dest/$f" ]]; then
+        echo "    ${label}: excluded file transferred: $f"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # OC daemon direction
+  local fi_oc_conf="${work}/filter-inc-excl-oc.conf"
+  local fi_oc_pid="${work}/filter-inc-excl-oc.pid"
+  local fi_oc_log="${work}/filter-inc-excl-oc.log"
+  # upstream: include is parsed before exclude in daemon_filter_list
+  # (clientserver.c:882-893). The filter directive order here is:
+  # filter first, then include_from, include, exclude_from, exclude.
+  cat > "$fi_oc_conf" <<CONF
+pid file = ${fi_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[fie]
+path = ${fi_src}
+read only = true
+numeric ids = yes
+filter = + *.txt
+filter = + *.rs
+filter = + */
+filter = - *
+CONF
+
+  start_oc_daemon_with_retry "$fi_oc_conf" "$fi_oc_log" "$upstream_binary" "$fi_oc_pid" "$oc_port"
+
+  local exit_code=0
+  timeout "$((hard_timeout * 2))" "$upstream_binary" -av --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/fie/" "${fi_dest_oc}/" \
+      >"${log}.filter-inc-excl-oc.out" 2>"${log}.filter-inc-excl-oc.err" || exit_code=$?
+  stop_oc_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    oc-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_inc_excl_verify "oc-pull" "$fi_dest_oc" || return 1
+
+  # Upstream daemon direction
+  local fi_up_conf="${work}/filter-inc-excl-up.conf"
+  local fi_up_pid="${work}/filter-inc-excl-up.pid"
+  local fi_up_log="${work}/filter-inc-excl-up.log"
+  cat > "$fi_up_conf" <<CONF
+pid file = ${fi_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[fie]
+path = ${fi_src}
+read only = true
+numeric ids = yes
+filter = + *.txt
+filter = + *.rs
+filter = + */
+filter = - *
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$fi_up_conf" "$fi_up_log" "$fi_up_pid"
+
+  exit_code=0
+  timeout "$((hard_timeout * 2))" "$oc_bin" -av --timeout=10 \
+      "rsync://127.0.0.1:${upstream_port}/fie/" "${fi_dest_up}/" \
+      >"${log}.filter-inc-excl-up.out" 2>"${log}.filter-inc-excl-up.err" || exit_code=$?
+  stop_upstream_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    up-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_inc_excl_verify "up-pull" "$fi_dest_up" || return 1
+
+  return 0
+}
+
+# Per-filter-type interop: filter directive with various rule types.
+# Tests the 'filter' rsyncd.conf directive using hide/show/protect/risk
+# keywords and short-form +/- prefixes.
+# upstream: exclude.c:1134-1178 - keyword-to-short-form mapping.
+test_daemon_filter_directive_types() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local fd_src="${work}/filter-dir-types-src"
+  local fd_dest_oc="${work}/filter-dir-types-dest-oc"
+  local fd_dest_up="${work}/filter-dir-types-dest-up"
+  rm -rf "$fd_src" "$fd_dest_oc" "$fd_dest_up"
+  mkdir -p "$fd_src/sub" "$fd_dest_oc" "$fd_dest_up"
+
+  echo "keep" > "$fd_src/visible.txt"
+  echo "keep" > "$fd_src/sub/nested.txt"
+  echo "hide-this" > "$fd_src/hidden.tmp"
+  echo "hide-nested" > "$fd_src/sub/hidden.tmp"
+  echo "excl-short" > "$fd_src/junk.bak"
+  echo "excl-kw" > "$fd_src/old.cache"
+
+  _filter_dir_types_verify() {
+    local label=$1 dest=$2
+
+    for f in visible.txt sub/nested.txt; do
+      if [[ ! -f "$dest/$f" ]]; then
+        echo "    ${label}: missing allowed file: $f"
+        return 1
+      fi
+    done
+    for f in hidden.tmp sub/hidden.tmp junk.bak old.cache; do
+      if [[ -f "$dest/$f" ]]; then
+        echo "    ${label}: excluded file transferred: $f"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # OC daemon direction
+  local fd_oc_conf="${work}/filter-dir-types-oc.conf"
+  local fd_oc_pid="${work}/filter-dir-types-oc.pid"
+  local fd_oc_log="${work}/filter-dir-types-oc.log"
+  cat > "$fd_oc_conf" <<CONF
+pid file = ${fd_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[fdt]
+path = ${fd_src}
+read only = true
+numeric ids = yes
+filter = - *.tmp
+filter = - *.bak
+filter = exclude *.cache
+CONF
+
+  start_oc_daemon_with_retry "$fd_oc_conf" "$fd_oc_log" "$upstream_binary" "$fd_oc_pid" "$oc_port"
+
+  local exit_code=0
+  timeout "$((hard_timeout * 2))" "$upstream_binary" -av --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/fdt/" "${fd_dest_oc}/" \
+      >"${log}.filter-dir-types-oc.out" 2>"${log}.filter-dir-types-oc.err" || exit_code=$?
+  stop_oc_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    oc-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_dir_types_verify "oc-pull" "$fd_dest_oc" || return 1
+
+  # Upstream daemon direction
+  local fd_up_conf="${work}/filter-dir-types-up.conf"
+  local fd_up_pid="${work}/filter-dir-types-up.pid"
+  local fd_up_log="${work}/filter-dir-types-up.log"
+  cat > "$fd_up_conf" <<CONF
+pid file = ${fd_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[fdt]
+path = ${fd_src}
+read only = true
+numeric ids = yes
+filter = - *.tmp
+filter = - *.bak
+filter = exclude *.cache
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$fd_up_conf" "$fd_up_log" "$fd_up_pid"
+
+  exit_code=0
+  timeout "$((hard_timeout * 2))" "$oc_bin" -av --timeout=10 \
+      "rsync://127.0.0.1:${upstream_port}/fdt/" "${fd_dest_up}/" \
+      >"${log}.filter-dir-types-up.out" 2>"${log}.filter-dir-types-up.err" || exit_code=$?
+  stop_upstream_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    up-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_dir_types_verify "up-pull" "$fd_dest_up" || return 1
+
+  return 0
+}
+
+# Per-filter-type interop: multiple overlapping filter rules.
+# Tests precedence when multiple include/exclude rules interact.
+# First matching rule wins, per upstream semantics.
+# upstream: exclude.c:1043 - check_filter iterates rules in order, first match wins.
+test_daemon_filter_overlapping_rules() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local fo_src="${work}/filter-overlap-src"
+  local fo_dest_oc="${work}/filter-overlap-dest-oc"
+  local fo_dest_up="${work}/filter-overlap-dest-up"
+  rm -rf "$fo_src" "$fo_dest_oc" "$fo_dest_up"
+  mkdir -p "$fo_src/sub" "$fo_dest_oc" "$fo_dest_up"
+
+  # important.log should be included (by name-specific include before *.log exclude)
+  echo "important" > "$fo_src/important.log"
+  echo "debug" > "$fo_src/debug.log"
+  echo "keep" > "$fo_src/data.txt"
+  echo "keep-sub" > "$fo_src/sub/info.txt"
+  echo "excl-sub-log" > "$fo_src/sub/trace.log"
+  # .keep.tmp should be included despite *.tmp exclude (more specific include first)
+  echo "keep-tmp" > "$fo_src/.keep.tmp"
+  echo "excl-tmp" > "$fo_src/build.tmp"
+
+  _filter_overlap_verify() {
+    local label=$1 dest=$2
+
+    for f in important.log data.txt sub/info.txt .keep.tmp; do
+      if [[ ! -f "$dest/$f" ]]; then
+        echo "    ${label}: missing allowed file: $f"
+        return 1
+      fi
+    done
+    for f in debug.log sub/trace.log build.tmp; do
+      if [[ -f "$dest/$f" ]]; then
+        echo "    ${label}: excluded file transferred: $f"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # OC daemon direction
+  local fo_oc_conf="${work}/filter-overlap-oc.conf"
+  local fo_oc_pid="${work}/filter-overlap-oc.pid"
+  local fo_oc_log="${work}/filter-overlap-oc.log"
+  # Order matters: filter rules processed first, then include, then exclude.
+  # filter = include important.log -> included before exclude *.log
+  # filter = include .keep.tmp -> included before exclude *.tmp
+  cat > "$fo_oc_conf" <<CONF
+pid file = ${fo_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[fol]
+path = ${fo_src}
+read only = true
+numeric ids = yes
+filter = + important.log
+filter = + .keep.tmp
+filter = - *.log
+filter = - *.tmp
+CONF
+
+  start_oc_daemon_with_retry "$fo_oc_conf" "$fo_oc_log" "$upstream_binary" "$fo_oc_pid" "$oc_port"
+
+  local exit_code=0
+  timeout "$((hard_timeout * 2))" "$upstream_binary" -av --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/fol/" "${fo_dest_oc}/" \
+      >"${log}.filter-overlap-oc.out" 2>"${log}.filter-overlap-oc.err" || exit_code=$?
+  stop_oc_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    oc-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_overlap_verify "oc-pull" "$fo_dest_oc" || return 1
+
+  # Upstream daemon direction
+  local fo_up_conf="${work}/filter-overlap-up.conf"
+  local fo_up_pid="${work}/filter-overlap-up.pid"
+  local fo_up_log="${work}/filter-overlap-up.log"
+  cat > "$fo_up_conf" <<CONF
+pid file = ${fo_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[fol]
+path = ${fo_src}
+read only = true
+numeric ids = yes
+filter = + important.log
+filter = + .keep.tmp
+filter = - *.log
+filter = - *.tmp
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$fo_up_conf" "$fo_up_log" "$fo_up_pid"
+
+  exit_code=0
+  timeout "$((hard_timeout * 2))" "$oc_bin" -av --timeout=10 \
+      "rsync://127.0.0.1:${upstream_port}/fol/" "${fo_dest_up}/" \
+      >"${log}.filter-overlap-up.out" 2>"${log}.filter-overlap-up.err" || exit_code=$?
+  stop_upstream_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    up-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_overlap_verify "up-pull" "$fo_dest_up" || return 1
+
+  return 0
+}
+
+# Per-filter-type interop: exclude_from and include_from file directives.
+# Tests loading filter patterns from external files via rsyncd.conf
+# 'exclude from' and 'include from' directives.
+# upstream: clientserver.c:878-889 - parse_filter_file for include_from/exclude_from.
+test_daemon_filter_from_files() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ff_src="${work}/filter-from-files-src"
+  local ff_dest_oc="${work}/filter-from-files-dest-oc"
+  local ff_dest_up="${work}/filter-from-files-dest-up"
+  rm -rf "$ff_src" "$ff_dest_oc" "$ff_dest_up"
+  mkdir -p "$ff_src/sub" "$ff_dest_oc" "$ff_dest_up"
+
+  echo "keep-a" > "$ff_src/readme.txt"
+  echo "keep-b" > "$ff_src/sub/data.txt"
+  echo "excl-1" > "$ff_src/secret.key"
+  echo "excl-2" > "$ff_src/password.key"
+  echo "excl-3" > "$ff_src/cache.dat"
+  echo "excl-4" > "$ff_src/sub/old.dat"
+
+  # Create exclude-from file with patterns
+  local excl_file="${work}/filter-from-excludes.txt"
+  cat > "$excl_file" <<'EOF'
+# Keys should never be transferred
+*.key
+# Cache files
+cache.dat
+EOF
+
+  _filter_from_files_verify() {
+    local label=$1 dest=$2
+
+    for f in readme.txt sub/data.txt sub/old.dat; do
+      if [[ ! -f "$dest/$f" ]]; then
+        echo "    ${label}: missing allowed file: $f"
+        return 1
+      fi
+    done
+    for f in secret.key password.key cache.dat; do
+      if [[ -f "$dest/$f" ]]; then
+        echo "    ${label}: excluded file transferred: $f"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # OC daemon direction
+  local ff_oc_conf="${work}/filter-from-files-oc.conf"
+  local ff_oc_pid="${work}/filter-from-files-oc.pid"
+  local ff_oc_log="${work}/filter-from-files-oc.log"
+  cat > "$ff_oc_conf" <<CONF
+pid file = ${ff_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[fff]
+path = ${ff_src}
+read only = true
+numeric ids = yes
+exclude from = ${excl_file}
+CONF
+
+  start_oc_daemon_with_retry "$ff_oc_conf" "$ff_oc_log" "$upstream_binary" "$ff_oc_pid" "$oc_port"
+
+  local exit_code=0
+  timeout "$((hard_timeout * 2))" "$upstream_binary" -av --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/fff/" "${ff_dest_oc}/" \
+      >"${log}.filter-from-files-oc.out" 2>"${log}.filter-from-files-oc.err" || exit_code=$?
+  stop_oc_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    oc-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_from_files_verify "oc-pull" "$ff_dest_oc" || return 1
+
+  # Upstream daemon direction
+  local ff_up_conf="${work}/filter-from-files-up.conf"
+  local ff_up_pid="${work}/filter-from-files-up.pid"
+  local ff_up_log="${work}/filter-from-files-up.log"
+  cat > "$ff_up_conf" <<CONF
+pid file = ${ff_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[fff]
+path = ${ff_src}
+read only = true
+numeric ids = yes
+exclude from = ${excl_file}
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$ff_up_conf" "$ff_up_log" "$ff_up_pid"
+
+  exit_code=0
+  timeout "$((hard_timeout * 2))" "$oc_bin" -av --timeout=10 \
+      "rsync://127.0.0.1:${upstream_port}/fff/" "${ff_dest_up}/" \
+      >"${log}.filter-from-files-up.out" 2>"${log}.filter-from-files-up.err" || exit_code=$?
+  stop_upstream_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    up-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_from_files_verify "up-pull" "$ff_dest_up" || return 1
+
+  return 0
+}
+
+# Per-filter-type interop: push direction with daemon filters.
+# Verifies that daemon-side filters also prevent writing excluded files
+# when clients push to the daemon.
+# upstream: exclude.c:1010-1013 - name_is_excluded checks daemon_filter_list.
+test_daemon_filter_push_direction() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local fp_src="${work}/filter-push-src"
+  local fp_dest_oc="${work}/filter-push-dest-oc"
+  local fp_dest_up="${work}/filter-push-dest-up"
+  rm -rf "$fp_src" "$fp_dest_oc" "$fp_dest_up"
+  mkdir -p "$fp_src/sub" "$fp_dest_oc" "$fp_dest_up"
+
+  echo "push-ok" > "$fp_src/data.txt"
+  echo "push-ok-sub" > "$fp_src/sub/nested.txt"
+  echo "push-excl-1" > "$fp_src/core.dump"
+  echo "push-excl-2" > "$fp_src/sub/core.dump"
+  echo "push-excl-3" > "$fp_src/crash.dmp"
+
+  _filter_push_verify() {
+    local label=$1 dest=$2
+
+    for f in data.txt sub/nested.txt; do
+      if [[ ! -f "$dest/$f" ]]; then
+        echo "    ${label}: missing allowed file: $f"
+        return 1
+      fi
+    done
+    for f in core.dump sub/core.dump crash.dmp; do
+      if [[ -f "$dest/$f" ]]; then
+        echo "    ${label}: excluded file transferred: $f"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # OC daemon direction (upstream pushes to oc daemon)
+  local fp_oc_conf="${work}/filter-push-oc.conf"
+  local fp_oc_pid="${work}/filter-push-oc.pid"
+  local fp_oc_log="${work}/filter-push-oc.log"
+  cat > "$fp_oc_conf" <<CONF
+pid file = ${fp_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[fpd]
+path = ${fp_dest_oc}
+read only = false
+numeric ids = yes
+exclude = *.dump *.dmp
+CONF
+
+  start_oc_daemon_with_retry "$fp_oc_conf" "$fp_oc_log" "$upstream_binary" "$fp_oc_pid" "$oc_port"
+
+  local exit_code=0
+  timeout "$((hard_timeout * 2))" "$upstream_binary" -av --timeout=10 \
+      "${fp_src}/" "rsync://127.0.0.1:${oc_port}/fpd/" \
+      >"${log}.filter-push-oc.out" 2>"${log}.filter-push-oc.err" || exit_code=$?
+  stop_oc_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    oc-push failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_push_verify "oc-push" "$fp_dest_oc" || return 1
+
+  # Upstream daemon direction (oc-rsync pushes to upstream daemon)
+  local fp_up_conf="${work}/filter-push-up.conf"
+  local fp_up_pid="${work}/filter-push-up.pid"
+  local fp_up_log="${work}/filter-push-up.log"
+  cat > "$fp_up_conf" <<CONF
+pid file = ${fp_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[fpd]
+path = ${fp_dest_up}
+read only = false
+numeric ids = yes
+exclude = *.dump *.dmp
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$fp_up_conf" "$fp_up_log" "$fp_up_pid"
+
+  exit_code=0
+  timeout "$((hard_timeout * 2))" "$oc_bin" -av --timeout=10 \
+      "${fp_src}/" "rsync://127.0.0.1:${upstream_port}/fpd/" \
+      >"${log}.filter-push-up.out" 2>"${log}.filter-push-up.err" || exit_code=$?
+  stop_upstream_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    up-push failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_push_verify "up-push" "$fp_dest_up" || return 1
+
+  return 0
+}
+
 # Verify delta transfer statistics (-v output) match between oc-rsync and
 # upstream daemons. Upstream rsync -v prints stats like:
 #   Total transferred file size: N bytes
@@ -6954,6 +7721,13 @@ run_standalone_interop_tests() {
     "up:symlinks"
     "oc:symlinks"
     "daemon-server-side-filter"
+    "daemon-filter-exclude-glob"
+    "daemon-filter-exclude-anchored"
+    "daemon-filter-include-exclude-star"
+    "daemon-filter-directive-types"
+    "daemon-filter-overlapping-rules"
+    "daemon-filter-from-files"
+    "daemon-filter-push-direction"
     "delta-stats"
   )
   local test_funcs=(
@@ -7009,6 +7783,13 @@ run_standalone_interop_tests() {
     "test_symlinks_upstream"
     "test_symlinks_oc"
     "test_daemon_server_side_filter"
+    "test_daemon_filter_exclude_glob"
+    "test_daemon_filter_exclude_anchored"
+    "test_daemon_filter_include_exclude_star"
+    "test_daemon_filter_directive_types"
+    "test_daemon_filter_overlapping_rules"
+    "test_daemon_filter_from_files"
+    "test_daemon_filter_push_direction"
     "test_delta_stats"
   )
 
@@ -7145,6 +7926,27 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       daemon-server-side-filter)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-filter-exclude-glob)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-filter-exclude-anchored)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-filter-include-exclude-star)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-filter-directive-types)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-filter-overlapping-rules)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-filter-from-files)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-filter-push-direction)
         test_args+=("$oc_port" "$upstream_port")
         ;;
       delta-stats)
