@@ -148,17 +148,15 @@ pub fn io_uring_status_detail() -> String {
 fn io_uring_status_detail_impl() -> String {
     use io_uring::config_detail::{get_kernel_release_string, parse_kernel_version};
 
-    let kernel_version = get_kernel_release_string()
-        .and_then(|release| parse_kernel_version(&release));
+    let kernel_version =
+        get_kernel_release_string().and_then(|release| parse_kernel_version(&release));
 
     match kernel_version {
         Some((major, minor)) => {
             if is_io_uring_available() {
                 format!("compiled in, available (kernel {major}.{minor})")
             } else {
-                format!(
-                    "compiled in, unavailable (kernel {major}.{minor}, requires >= 5.6)"
-                )
+                format!("compiled in, unavailable (kernel {major}.{minor}, requires >= 5.6)")
             }
         }
         None => "compiled in, unavailable (could not detect kernel version)".to_string(),
