@@ -1879,7 +1879,7 @@ fn to_exit_code_no_errors_returns_zero() {
 /// upstream: main.c:875-906 `read_final_goodbye()`
 mod legacy_goodbye_tests {
     use super::*;
-    use protocol::codec::create_ndx_codec;
+    use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
 
     /// NDX_DONE as 4-byte little-endian (-1 = 0xFFFFFFFF).
     const NDX_DONE_LE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
@@ -1914,7 +1914,7 @@ mod legacy_goodbye_tests {
         let mut reader = Cursor::new(receiver_input);
         let mut output = Vec::new();
         let mut ndx_read = create_ndx_codec(28);
-        let mut ndx_write = create_ndx_codec(28);
+        let mut ndx_write = MonotonicNdxWriter::new(28);
 
         ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write)
             .unwrap();
@@ -1931,7 +1931,7 @@ mod legacy_goodbye_tests {
         let mut reader = Cursor::new(receiver_input);
         let mut output = Vec::new();
         let mut ndx_read = create_ndx_codec(29);
-        let mut ndx_write = create_ndx_codec(29);
+        let mut ndx_write = MonotonicNdxWriter::new(29);
 
         ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write)
             .unwrap();
@@ -1948,7 +1948,7 @@ mod legacy_goodbye_tests {
         let mut reader = Cursor::new(bad_input);
         let mut output = Vec::new();
         let mut ndx_read = create_ndx_codec(28);
-        let mut ndx_write = create_ndx_codec(28);
+        let mut ndx_write = MonotonicNdxWriter::new(28);
 
         let result = ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write);
         assert!(result.is_err());
@@ -1969,7 +1969,7 @@ mod legacy_goodbye_tests {
         let mut reader = Cursor::new(receiver_input);
         let mut output = Vec::new();
         let mut ndx_read = create_ndx_codec(28);
-        let mut ndx_write = create_ndx_codec(28);
+        let mut ndx_write = MonotonicNdxWriter::new(28);
 
         ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write)
             .unwrap();

@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use logging::info_log;
-use protocol::codec::create_ndx_codec;
+use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
 use protocol::flist::FileEntry;
 
 use crate::delta_apply::ChecksumVerifier;
@@ -66,7 +66,7 @@ impl ReceiverContext {
 
         let deadline = TransferDeadline::from_system_time(self.config.stop_at);
 
-        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
         let request_config = RequestConfig {

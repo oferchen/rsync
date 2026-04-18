@@ -94,7 +94,7 @@ impl GeneratorContext {
     pub(super) fn write_ndx_and_attrs<W: Write>(
         &self,
         writer: &mut W,
-        ndx_codec: &mut NdxCodecEnum,
+        ndx_codec: &mut impl NdxCodec,
         ndx: i32,
         iflags: &ItemFlags,
         sum_head: &SumHead,
