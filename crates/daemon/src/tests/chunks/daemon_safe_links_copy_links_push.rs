@@ -28,7 +28,6 @@ fn daemon_safe_links_push_excludes_unsafe_preserves_safe() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     let source_subdir = source_dir.join("subdir");
     fs::create_dir_all(&source_subdir).expect("create source/subdir");
@@ -48,11 +47,9 @@ fn daemon_safe_links_push_excludes_unsafe_preserves_safe() {
     unix_fs::symlink("../../outside.txt", source_dir.join("unsafe_rel"))
         .expect("create unsafe_rel");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -80,7 +77,6 @@ fn daemon_safe_links_push_excludes_unsafe_preserves_safe() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Run client push with --links --safe-links ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");
@@ -101,7 +97,6 @@ fn daemon_safe_links_push_excludes_unsafe_preserves_safe() {
         }
     }
 
-    // --- Verify safe symlinks are preserved ---
     let safe_link_path = dest_dir.join("safe_link");
     assert!(
         safe_link_path.symlink_metadata().is_ok(),
@@ -124,7 +119,6 @@ fn daemon_safe_links_push_excludes_unsafe_preserves_safe() {
         "inner_link target should be preserved"
     );
 
-    // --- Verify unsafe symlinks are filtered out ---
     assert!(
         dest_dir.join("unsafe_abs").symlink_metadata().is_err(),
         "unsafe_abs must not exist (absolute path outside transfer tree)"
@@ -134,7 +128,6 @@ fn daemon_safe_links_push_excludes_unsafe_preserves_safe() {
         "unsafe_rel must not exist (relative path escapes transfer tree)"
     );
 
-    // --- Verify the regular file was transferred ---
     assert_eq!(
         fs::read_to_string(dest_dir.join("file.txt")).expect("read file.txt"),
         "safe-links content\n",
@@ -173,7 +166,6 @@ fn daemon_copy_links_push_replaces_symlinks_with_file_contents() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     let source_subdir = source_dir.join("subdir");
     fs::create_dir_all(&source_subdir).expect("create source/subdir");
@@ -189,11 +181,9 @@ fn daemon_copy_links_push_replaces_symlinks_with_file_contents() {
     std::os::unix::fs::symlink("../real.txt", source_subdir.join("link_up"))
         .expect("create link_up");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -221,7 +211,6 @@ fn daemon_copy_links_push_replaces_symlinks_with_file_contents() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Run client push with --copy-links ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");
@@ -248,7 +237,6 @@ fn daemon_copy_links_push_replaces_symlinks_with_file_contents() {
         }
     }
 
-    // --- Verify resolved symlinks are regular files with correct content ---
     let dest_link_same = dest_dir.join("link_same_dir");
     assert!(dest_link_same.exists(), "link_same_dir must exist at destination");
     assert!(
@@ -284,7 +272,6 @@ fn daemon_copy_links_push_replaces_symlinks_with_file_contents() {
         "subdir/link_up content must match the resolved symlink target"
     );
 
-    // --- Verify original regular files are also present ---
     assert_eq!(
         fs::read_to_string(dest_dir.join("real.txt")).expect("read real.txt"),
         "real data\n",

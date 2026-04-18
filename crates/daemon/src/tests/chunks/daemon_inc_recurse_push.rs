@@ -41,7 +41,6 @@ fn daemon_inc_recurse_push_nested_directories() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) with nested structure ---
     let source_dir = temp.path().join("source");
     let dir_a = source_dir.join("a");
     let dir_ab = dir_a.join("b");
@@ -57,11 +56,9 @@ fn daemon_inc_recurse_push_nested_directories() {
     fs::write(dir_abc.join("deep.txt"), b"deep nested content\n").expect("write deep.txt");
     fs::write(dir_d.join("side.txt"), b"side branch content\n").expect("write side.txt");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[incmod]\n\
@@ -89,7 +86,6 @@ fn daemon_inc_recurse_push_nested_directories() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Run client push with recursive + protocol 32 ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/incmod/");
@@ -116,7 +112,6 @@ fn daemon_inc_recurse_push_nested_directories() {
         }
     }
 
-    // --- Verify all directories were created ---
     assert!(
         dest_dir.join("a").is_dir(),
         "directory 'a' must exist after push"
@@ -134,7 +129,6 @@ fn daemon_inc_recurse_push_nested_directories() {
         "directory 'd' must exist after push"
     );
 
-    // --- Verify all files arrived with correct content ---
     assert_eq!(
         fs::read(dest_dir.join("top.txt")).expect("read dest top.txt"),
         b"top level content\n",

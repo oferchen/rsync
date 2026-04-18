@@ -37,8 +37,6 @@ mod tests {
         OsString::from(s)
     }
 
-    // --- parse_timeout_argument tests ---
-
     #[test]
     fn parse_timeout_argument_zero() {
         let result = parse_timeout_argument(&os("0")).unwrap();
@@ -81,8 +79,6 @@ mod tests {
         assert!(matches!(result, TransferTimeout::Seconds(n) if n.get() == 30));
     }
 
-    // --- parse_max_delete_argument tests ---
-
     #[test]
     fn parse_max_delete_argument_zero() {
         assert_eq!(parse_max_delete_argument(&os("0")).unwrap(), 0);
@@ -112,8 +108,6 @@ mod tests {
     fn parse_max_delete_argument_invalid() {
         assert!(parse_max_delete_argument(&os("xyz")).is_err());
     }
-
-    // --- parse_checksum_seed_argument tests ---
 
     #[test]
     fn parse_checksum_seed_argument_zero() {
@@ -145,8 +139,6 @@ mod tests {
         assert!(parse_checksum_seed_argument(&os("abc")).is_err());
     }
 
-    // --- parse_modify_window_argument tests ---
-
     #[test]
     fn parse_modify_window_argument_zero() {
         assert_eq!(parse_modify_window_argument(&os("0")).unwrap(), 0);
@@ -176,8 +168,6 @@ mod tests {
     fn parse_modify_window_argument_invalid() {
         assert!(parse_modify_window_argument(&os("foo")).is_err());
     }
-
-    // --- parse_human_readable_level tests ---
 
     #[test]
     fn parse_human_readable_level_zero() {

@@ -286,8 +286,6 @@ enum SideState {
 mod tests {
     use super::*;
 
-    // ==================== DirMergeEnforcedKind tests ====================
-
     #[test]
     fn dir_merge_enforced_kind_clone() {
         let kind = DirMergeEnforcedKind::Include;
@@ -309,8 +307,6 @@ mod tests {
         assert_eq!(DirMergeEnforcedKind::Exclude, DirMergeEnforcedKind::Exclude);
         assert_ne!(DirMergeEnforcedKind::Include, DirMergeEnforcedKind::Exclude);
     }
-
-    // ==================== DirMergeParser tests ====================
 
     #[test]
     fn dir_merge_parser_lines_enforce_kind_none() {
@@ -375,8 +371,6 @@ mod tests {
         assert!(whitespace.is_whitespace());
     }
 
-    // ==================== DirMergeOptions construction tests ====================
-
     #[test]
     fn dir_merge_options_new_default_values() {
         let opts = DirMergeOptions::new();
@@ -398,8 +392,6 @@ mod tests {
         let default_opts = DirMergeOptions::default();
         assert_eq!(new_opts, default_opts);
     }
-
-    // ==================== DirMergeOptions builder tests ====================
 
     #[test]
     fn dir_merge_options_inherit_false() {
@@ -499,8 +491,6 @@ mod tests {
         assert!(opts.list_clear_allowed());
     }
 
-    // ==================== sender/receiver modifier tests ====================
-
     #[test]
     fn dir_merge_options_sender_modifier() {
         let opts = DirMergeOptions::new().sender_modifier();
@@ -561,8 +551,6 @@ mod tests {
         assert!(!opts.applies_to_receiver());
     }
 
-    // ==================== anchor_root and perishable tests ====================
-
     #[test]
     fn dir_merge_options_anchor_root_true() {
         let opts = DirMergeOptions::new().anchor_root(true);
@@ -581,8 +569,6 @@ mod tests {
         assert!(opts.perishable());
     }
 
-    // ==================== clone and equality tests ====================
-
     #[test]
     fn dir_merge_options_clone() {
         let opts = DirMergeOptions::new()
@@ -600,8 +586,6 @@ mod tests {
         assert!(debug_str.contains("DirMergeOptions"));
     }
 
-    // ==================== parser accessor tests ====================
-
     #[test]
     fn dir_merge_options_parser_returns_reference() {
         let opts = DirMergeOptions::new();
@@ -616,8 +600,6 @@ mod tests {
         let parser = opts.parser();
         assert!(parser.is_whitespace());
     }
-
-    // ==================== integration tests ====================
 
     #[test]
     fn dir_merge_options_complex_configuration() {

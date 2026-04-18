@@ -318,8 +318,6 @@ fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Message> {
 mod tests {
     use super::*;
 
-    // ==================== parse_filter_directive tests ====================
-
     #[test]
     fn parse_include_short() {
         let result = parse_filter_directive(OsStr::new("+ *.txt"));
@@ -401,8 +399,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ==================== parse_rule_directive tests ====================
-
     #[test]
     fn rule_directive_protect() {
         let result = parse_rule_directive("P *.keep");
@@ -465,8 +461,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ==================== parse_exclude_if_present tests ====================
-
     #[test]
     fn exclude_if_present_basic() {
         let result = parse_exclude_if_present("exclude-if-present .nobackup");
@@ -514,8 +508,6 @@ mod tests {
         assert!(result.is_none());
     }
 
-    // ==================== parse_short_include_rule tests ====================
-
     #[test]
     fn short_include_basic() {
         let result = parse_short_include_rule("+ *.rs", '+', FilterRuleSpec::include);
@@ -561,8 +553,6 @@ mod tests {
         let result = parse_short_include_rule("- foo", '+', FilterRuleSpec::include);
         assert!(result.is_none());
     }
-
-    // ==================== parse_dir_merge_alias tests ====================
 
     #[test]
     fn dir_merge_basic() {
@@ -628,8 +618,6 @@ mod tests {
         }
     }
 
-    // ==================== parse_keyword_rule tests ====================
-
     #[test]
     fn keyword_include() {
         let result = parse_keyword_rule("include *.txt");
@@ -684,8 +672,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ==================== parse_long_merge_directive tests ====================
-
     #[test]
     fn long_merge_basic() {
         let result = parse_long_merge_directive("merge filter.rules");
@@ -706,8 +692,6 @@ mod tests {
         let result = parse_long_merge_directive("include pattern");
         assert!(result.is_none());
     }
-
-    // ==================== parse_shorthand_rules tests ====================
 
     #[test]
     fn shorthand_protect() {
@@ -742,8 +726,6 @@ mod tests {
         let result = parse_shorthand_rules("+ pattern");
         assert!(result.is_none());
     }
-
-    // ==================== Leading whitespace handling tests ====================
 
     #[test]
     fn leading_whitespace_trimmed() {

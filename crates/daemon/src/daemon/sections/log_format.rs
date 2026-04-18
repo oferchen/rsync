@@ -208,7 +208,6 @@ mod log_format_tests {
         }
     }
 
-    // --- TransferOperation tests ---
 
     #[test]
     fn transfer_operation_send_str() {
@@ -252,14 +251,12 @@ mod log_format_tests {
         assert!(debug.contains("Send"));
     }
 
-    // --- DEFAULT_LOG_FORMAT tests ---
 
     #[test]
     fn default_log_format_matches_upstream() {
         assert_eq!(DEFAULT_LOG_FORMAT, "%o %h [%a] %m (%u) %f %l");
     }
 
-    // --- expand_log_format: individual escape tests ---
 
     #[test]
     fn expand_operation() {
@@ -345,7 +342,6 @@ mod log_format_tests {
         assert_eq!(expand_log_format("%%", &ctx), "%");
     }
 
-    // --- expand_log_format: default format test ---
 
     #[test]
     fn expand_default_format() {
@@ -357,7 +353,6 @@ mod log_format_tests {
         );
     }
 
-    // --- expand_log_format: recv operation ---
 
     #[test]
     fn expand_recv_operation() {
@@ -367,7 +362,6 @@ mod log_format_tests {
         assert_eq!(result, "recv");
     }
 
-    // --- expand_log_format: edge cases ---
 
     #[test]
     fn expand_empty_format() {
@@ -449,7 +443,6 @@ mod log_format_tests {
         assert_eq!(result, ">f+++++++++ send docs/report.pdf 1048576 524288");
     }
 
-    // --- effective_log_format tests ---
 
     #[test]
     fn effective_log_format_uses_module_setting() {
@@ -471,7 +464,6 @@ mod log_format_tests {
         assert_eq!(effective_log_format(&module), DEFAULT_LOG_FORMAT);
     }
 
-    // --- format_daemon_timestamp tests ---
 
     #[test]
     fn timestamp_unix_epoch() {
@@ -505,7 +497,6 @@ mod log_format_tests {
         assert_eq!(ts, "2024/02/29 12:00:00");
     }
 
-    // --- push_u64 / push_u32 tests ---
 
     #[test]
     fn push_u64_zero() {
@@ -528,7 +519,6 @@ mod log_format_tests {
         assert_eq!(buf, "12345");
     }
 
-    // --- civil_from_days tests ---
 
     #[test]
     fn civil_from_days_epoch() {

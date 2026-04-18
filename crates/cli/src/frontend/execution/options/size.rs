@@ -288,8 +288,6 @@ mod tests {
         OsString::from(s)
     }
 
-    // --- parse_size_spec tests ---
-
     #[test]
     fn parse_size_spec_empty() {
         assert_eq!(parse_size_spec(""), Err(SizeParseError::Empty));
@@ -413,8 +411,6 @@ mod tests {
         assert_eq!(parse_size_spec("1Ki"), Err(SizeParseError::Invalid));
     }
 
-    // --- pow_u128_for_size tests ---
-
     #[test]
     fn pow_u128_for_size_zero_exponent() {
         assert_eq!(pow_u128_for_size(1024, 0), Ok(1));
@@ -432,8 +428,6 @@ mod tests {
         assert_eq!(pow_u128_for_size(1024, 2), Ok(1_048_576));
         assert_eq!(pow_u128_for_size(1000, 3), Ok(1_000_000_000));
     }
-
-    // --- SizeParseError tests ---
 
     #[test]
     fn size_parse_error_eq() {
@@ -455,8 +449,6 @@ mod tests {
         let cloned = err;
         assert_eq!(err, cloned);
     }
-
-    // --- parse_size_limit_argument tests ---
 
     #[test]
     fn parse_size_limit_argument_valid() {
@@ -484,8 +476,6 @@ mod tests {
     fn parse_size_limit_argument_invalid() {
         assert!(parse_size_limit_argument(&os("abc"), "--max-size").is_err());
     }
-
-    // --- parse_size_limit_argument for --max-alloc specifically ---
 
     #[test]
     fn parse_max_alloc_bytes() {
@@ -573,8 +563,6 @@ mod tests {
         );
     }
 
-    // --- parse_block_size_argument tests ---
-
     #[test]
     fn parse_block_size_argument_valid() {
         let result = parse_block_size_argument(&os("1K")).unwrap();
@@ -601,8 +589,6 @@ mod tests {
     fn parse_block_size_argument_negative() {
         assert!(parse_block_size_argument(&os("-1")).is_err());
     }
-
-    // --- parse_decimal_components tests ---
 
     #[test]
     fn parse_decimal_components_integer_only() {

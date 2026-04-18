@@ -32,7 +32,6 @@ fn daemon_relative_receive_preserves_nested_paths() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) with nested directories ---
     let source_dir = temp.path().join("source");
     let nested_abc = source_dir.join("a").join("b").join("c");
     fs::create_dir_all(&nested_abc).expect("create source/a/b/c");
@@ -45,11 +44,9 @@ fn daemon_relative_receive_preserves_nested_paths() {
     .expect("write shallow.txt");
     fs::write(source_dir.join("a").join("top.txt"), b"top content\n").expect("write top.txt");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -79,7 +76,6 @@ fn daemon_relative_receive_preserves_nested_paths() {
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);
 
-    // --- Run client push with --relative ---
     // Use trailing slash on source so contents are transferred with relative paths
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");

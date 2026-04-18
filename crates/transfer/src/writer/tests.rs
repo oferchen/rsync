@@ -520,9 +520,7 @@ fn mut_ref_delegates_msg_info() {
     assert!(!buf.is_empty());
 }
 
-// =========================================================================
 // Batch recorder tests
-// =========================================================================
 
 #[test]
 fn multiplex_writer_batch_recorder_captures_write_data() {
@@ -618,9 +616,7 @@ fn server_writer_batch_recorder_captures_through_server_write() {
     assert_eq!(&*recorded, b"server data");
 }
 
-// =========================================================================
 // Batch recorder + compression tests
-// =========================================================================
 //
 // upstream: io.c:write_buf() tees data to batch_fd AFTER compression.
 // The batch recorder must stay on MultiplexWriter (not CompressedWriter)

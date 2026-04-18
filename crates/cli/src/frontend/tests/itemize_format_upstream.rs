@@ -13,8 +13,6 @@
 use super::common::*;
 use super::*;
 
-// ==================== New file: >f+++++++++ ==================
-
 #[test]
 fn itemize_new_file_output_matches_upstream() {
     use tempfile::tempdir;
@@ -61,8 +59,6 @@ fn itemize_short_flag_i_produces_same_output() {
     assert_eq!(output, ">f+++++++++ short.txt\n");
 }
 
-// ==================== Format string length ==================
-
 #[test]
 fn itemize_output_format_is_eleven_chars_plus_space_plus_filename() {
     use tempfile::tempdir;
@@ -98,8 +94,6 @@ fn itemize_output_format_is_eleven_chars_plus_space_plus_filename() {
     );
     assert_eq!(parts[1], "measure.txt");
 }
-
-// ==================== Updated file: content change ==================
 
 #[test]
 fn itemize_updated_file_shows_change_indicators() {
@@ -156,8 +150,6 @@ fn itemize_updated_file_shows_change_indicators() {
     assert_eq!(&format_str[4..5], "t", "time should be 't': {format_str:?}");
 }
 
-// ==================== Unchanged file ==================
-
 #[test]
 fn itemize_unchanged_file_with_times_shows_no_output() {
     use filetime::{FileTime, set_file_mtime};
@@ -197,8 +189,6 @@ fn itemize_unchanged_file_with_times_shows_no_output() {
     );
 }
 
-// ==================== Multiple files ==================
-
 #[test]
 fn itemize_multiple_new_files_each_show_new_format() {
     use tempfile::tempdir;
@@ -237,8 +227,6 @@ fn itemize_multiple_new_files_each_show_new_format() {
     }
 }
 
-// ==================== Dry run combined with itemize ==================
-
 #[test]
 fn itemize_combined_with_dry_run_shows_what_would_transfer() {
     use tempfile::tempdir;
@@ -270,8 +258,6 @@ fn itemize_combined_with_dry_run_shows_what_would_transfer() {
     );
 }
 
-// ==================== Verbose combined with itemize ==================
-
 #[test]
 fn itemize_combined_with_verbose_shows_itemized_format() {
     use tempfile::tempdir;
@@ -297,8 +283,6 @@ fn itemize_combined_with_verbose_shows_itemized_format() {
         "verbose+itemize should show itemized format: {output:?}"
     );
 }
-
-// ==================== Delete with itemize ==================
 
 #[test]
 fn itemize_with_delete_shows_star_deleting_format() {
@@ -331,8 +315,6 @@ fn itemize_with_delete_shows_star_deleting_format() {
         "delete should show '*deleting' format: {output:?}"
     );
 }
-
-// ==================== Directory creation with itemize ==================
 
 #[test]
 fn itemize_recursive_new_directory_shows_cd_plus_pattern() {
@@ -373,8 +355,6 @@ fn itemize_recursive_new_directory_shows_cd_plus_pattern() {
     );
 }
 
-// ==================== Symlink with itemize ==================
-
 #[cfg(unix)]
 #[test]
 fn itemize_new_symlink_shows_cl_plus_pattern() {
@@ -411,8 +391,6 @@ fn itemize_new_symlink_shows_cl_plus_pattern() {
         "new symlink should show 'cL+++++++++': {output:?}"
     );
 }
-
-// ==================== Permission change with itemize ==================
 
 #[cfg(unix)]
 #[test]
@@ -463,8 +441,6 @@ fn itemize_chmod_shows_permission_indicator() {
     }
 }
 
-// ==================== No itemize suppresses output ==================
-
 #[test]
 fn no_itemize_changes_suppresses_output() {
     use tempfile::tempdir;
@@ -488,8 +464,6 @@ fn no_itemize_changes_suppresses_output() {
         "no-itemize-changes should suppress output"
     );
 }
-
-// ==================== Itemize toggle ordering ==================
 
 #[test]
 fn itemize_last_toggle_wins_enabled() {

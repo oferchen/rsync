@@ -29,7 +29,6 @@ fn mksocket_for_tests(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-// ==================== Socket Single-Source Tests ====================
 
 #[cfg(all(
     unix,
@@ -142,7 +141,6 @@ fn execute_without_specials_records_socket_skip_event() {
     );
 }
 
-// ==================== Socket Metadata Preservation ====================
 
 #[cfg(all(
     unix,
@@ -231,7 +229,6 @@ fn execute_copies_socket_preserving_timestamps() {
     assert_eq!(dest_mtime, mtime, "socket mtime should be preserved");
 }
 
-// ==================== Socket Within Directory ====================
 
 #[cfg(all(
     unix,
@@ -276,7 +273,6 @@ fn execute_copies_socket_within_directory() {
     assert_eq!(summary.fifos_created(), 1);
 }
 
-// ==================== Mixed FIFOs and Sockets ====================
 
 // Socket creation in temp dirs requires elevated privileges on macOS.
 #[cfg(all(
@@ -400,7 +396,6 @@ fn execute_without_specials_skips_both_fifos_and_sockets() {
     );
 }
 
-// ==================== Archive Mode (--specials implied) ====================
 
 #[cfg(all(
     unix,
@@ -497,7 +492,6 @@ fn execute_archive_mode_copies_fifo_and_socket_together() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== Dry Run ====================
 
 #[cfg(all(
     unix,
@@ -536,7 +530,6 @@ fn execute_dry_run_does_not_create_socket() {
     assert!(!dest_socket.exists(), "dry run should not create the socket");
 }
 
-// ==================== Force Replacement ====================
 
 #[cfg(all(
     unix,
@@ -618,7 +611,6 @@ fn execute_socket_replaces_regular_file() {
     );
 }
 
-// ==================== Socket Hard Link Preservation ====================
 
 #[cfg(all(
     unix,
@@ -675,7 +667,6 @@ fn execute_preserves_socket_hard_links() {
     );
 }
 
-// ==================== Specials with Delete ====================
 
 #[cfg(all(
     unix,
@@ -723,7 +714,6 @@ fn execute_delete_removes_extraneous_socket() {
     assert!(summary.items_deleted() >= 1);
 }
 
-// ==================== Specials Disabled Does Not Delete Specials ====================
 
 #[cfg(all(
     unix,
@@ -771,7 +761,6 @@ fn execute_without_specials_with_delete_does_not_delete_socket_from_keep_list() 
     assert_eq!(summary.fifos_created(), 0);
 }
 
-// ==================== Specials with Collect Events ====================
 
 #[cfg(all(
     unix,
@@ -813,7 +802,6 @@ fn execute_socket_produces_fifo_copied_event() {
     );
 }
 
-// ==================== Socket Idempotent Re-copy ====================
 
 #[cfg(all(
     unix,
@@ -854,7 +842,6 @@ fn execute_recopy_socket_replaces_existing_socket() {
     assert_eq!(summary.fifos_created(), 1);
 }
 
-// ==================== Specials with Symlinks ====================
 
 #[cfg(all(
     unix,
@@ -915,7 +902,6 @@ fn execute_copies_socket_and_symlink_together() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== Options Builder Tests ====================
 
 #[test]
 fn options_specials_enabled_returns_false_by_default() {

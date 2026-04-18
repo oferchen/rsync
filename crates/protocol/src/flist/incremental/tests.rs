@@ -205,8 +205,6 @@ fn test_multiple_pending_directories() {
     assert_eq!(incremental.pending_count(), 1);
 }
 
-// --- Orphan finalization tests ---
-
 #[test]
 fn test_finalize_no_orphans() {
     let mut incremental = IncrementalFileList::new();
