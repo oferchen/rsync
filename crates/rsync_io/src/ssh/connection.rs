@@ -297,6 +297,30 @@ impl StderrDrain {
             let _ = handle.join();
         }
     }
+
+    /// Joins the drain thread and prints collected stderr when `status`
+    /// indicates a non-zero exit.
+    ///
+    /// This is the single implementation of the "surface stderr on error in
+    /// Drop" logic used by both [`SshChildHandle::drop`] and
+    /// [`SshConnection::drop`]. The drain thread is joined first so all
+    /// output is available before the buffer is checked.
+    fn join_and_surface_on_error(&mut self, status: &io::Result<ExitStatus>) {
+        self.join();
+
+        if let Ok(exit) = status {
+            if !exit.success() {
+                let stderr = self.collected();
+                if !stderr.is_empty() {
+                    let text = String::from_utf8_lossy(&stderr);
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        eprintln!("ssh process exited with status {exit}:\n{trimmed}");
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Drop for StderrDrain {
@@ -384,32 +408,12 @@ impl Drop for SshChildHandle {
         }
         let status = self.child.wait();
 
-        // Join the drain thread before checking the buffer so all stderr
-        // output is available. StderrDrain::Drop would also join, but we
-        // need the data now.
+        // Surface collected stderr when the child exited with an error,
+        // ensuring SSH diagnostics are visible even on abnormal control
+        // flow (panic, early return) where the caller never calls
+        // wait_with_stderr().
         if let Some(ref mut drain) = self.stderr_drain {
-            drain.join();
-        }
-
-        // When the child exited with a non-zero status and stderr was
-        // captured, surface it so SSH errors are never silently lost -
-        // even on abnormal control flow (panic, early return) where the
-        // caller never calls wait_with_stderr(). The drain thread already
-        // forwarded individual lines in real time via eprint!, but a
-        // consolidated message here makes the failure clearly visible.
-        if let Ok(exit) = &status {
-            if !exit.success() {
-                if let Some(drain) = &self.stderr_drain {
-                    let stderr = drain.collected();
-                    if !stderr.is_empty() {
-                        let text = String::from_utf8_lossy(&stderr);
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            eprintln!("ssh process exited with status {exit}:\n{trimmed}");
-                        }
-                    }
-                }
-            }
+            drain.join_and_surface_on_error(&status);
         }
     }
 }
@@ -455,27 +459,11 @@ impl Drop for SshConnection {
             }
             let status = child.wait();
 
-            // Join the drain thread before checking the buffer.
-            if let Some(ref mut drain) = self.stderr_drain {
-                drain.join();
-            }
-
             // Surface collected stderr when the child exited with an error,
             // ensuring SSH diagnostics are visible even when the connection
             // is dropped without an explicit wait() call.
-            if let Ok(exit) = &status {
-                if !exit.success() {
-                    if let Some(drain) = &self.stderr_drain {
-                        let stderr = drain.collected();
-                        if !stderr.is_empty() {
-                            let text = String::from_utf8_lossy(&stderr);
-                            let trimmed = text.trim();
-                            if !trimmed.is_empty() {
-                                eprintln!("ssh process exited with status {exit}:\n{trimmed}");
-                            }
-                        }
-                    }
-                }
+            if let Some(ref mut drain) = self.stderr_drain {
+                drain.join_and_surface_on_error(&status);
             }
         }
     }
