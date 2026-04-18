@@ -1292,3 +1292,119 @@ fn tls_per_thread_isolation() {
         h.join().expect("thread panicked");
     }
 }
+
+// --- Telemetry counter tests ---
+
+#[test]
+fn telemetry_starts_at_zero() {
+    let pool = BufferPool::new(4);
+    assert_eq!(pool.total_hits(), 0);
+    assert_eq!(pool.total_misses(), 0);
+    assert_eq!(pool.total_acquires(), 0);
+    assert!((pool.hit_rate() - 1.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn telemetry_tracks_miss_on_cold_pool() {
+    let pool = BufferPool::new(4);
+    let _buf = pool.acquire();
+    // First acquire on empty pool = miss (no TLS, no central pool buffer).
+    assert_eq!(pool.total_misses(), 1);
+    assert_eq!(pool.total_hits(), 0);
+    assert_eq!(pool.total_acquires(), 1);
+}
+
+#[test]
+fn telemetry_tracks_hit_on_warm_pool() {
+    let pool = BufferPool::new(4);
+
+    // First acquire: miss (cold pool).
+    {
+        let _buf = pool.acquire();
+    }
+    // Buffer returned to TLS.
+
+    // Second acquire: hit from TLS.
+    {
+        let _buf = pool.acquire();
+    }
+    assert!(pool.total_hits() >= 1);
+    assert_eq!(
+        pool.total_acquires(),
+        pool.total_hits() + pool.total_misses()
+    );
+}
+
+#[test]
+fn telemetry_total_acquires_equals_hits_plus_misses() {
+    let pool = Arc::new(BufferPool::new(4));
+
+    // Several acquire-release cycles.
+    for _ in 0..10 {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+
+    assert_eq!(
+        pool.total_acquires(),
+        pool.total_hits() + pool.total_misses()
+    );
+    assert!(pool.total_acquires() == 10);
+}
+
+#[test]
+fn telemetry_hit_rate_calculation() {
+    let pool = Arc::new(BufferPool::new(4));
+
+    // First acquire: miss.
+    {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+    // Returns to TLS.
+
+    // Next 9 acquires: all hits from TLS (sequential on same thread).
+    for _ in 0..9 {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+
+    let rate = pool.hit_rate();
+    // 9 hits out of 10 total = 0.9.
+    assert!(rate > 0.5, "expected high hit rate, got {rate}");
+    assert!(rate <= 1.0);
+}
+
+#[test]
+fn telemetry_concurrent_tracking() {
+    let pool = Arc::new(BufferPool::new(8));
+    let thread_count = 8;
+    let iterations = 100;
+
+    let handles: Vec<_> = (0..thread_count)
+        .map(|_| {
+            let pool = Arc::clone(&pool);
+            thread::spawn(move || {
+                for _ in 0..iterations {
+                    let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+                }
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
+
+    assert_eq!(pool.total_acquires(), thread_count * iterations);
+    assert_eq!(
+        pool.total_acquires(),
+        pool.total_hits() + pool.total_misses()
+    );
+    assert!(pool.hit_rate() >= 0.0 && pool.hit_rate() <= 1.0);
+}
+
+#[test]
+fn telemetry_adaptive_miss_tracked() {
+    let pool = Arc::new(BufferPool::new(4));
+    // Adaptive acquire for a tiny file (non-standard size) = miss.
+    let _buf = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 1024);
+    assert!(pool.total_misses() >= 1);
+}

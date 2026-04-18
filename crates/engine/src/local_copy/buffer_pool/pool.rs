@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::allocator::{BufferAllocator, DefaultAllocator};
 use super::guard::{BorrowedBufferGuard, BufferGuard};
@@ -80,6 +81,17 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     /// The tracker is only allocated when explicitly enabled via
     /// [`with_throughput_tracking`](Self::with_throughput_tracking).
     throughput: Option<ThroughputTracker>,
+    /// Cumulative count of pool hits (buffer reused from central pool or TLS).
+    ///
+    /// Incremented on every successful acquire that reuses an existing buffer
+    /// rather than allocating a new one. Uses `Relaxed` ordering since exact
+    /// precision is not required - these are diagnostic counters.
+    total_hits: AtomicU64,
+    /// Cumulative count of pool misses (fresh allocation required).
+    ///
+    /// Incremented when neither the thread-local cache nor the central pool
+    /// has a buffer available, requiring a new allocation.
+    total_misses: AtomicU64,
 }
 
 impl BufferPool {
@@ -107,6 +119,8 @@ impl BufferPool {
             allocator: DefaultAllocator,
             memory_cap: None,
             throughput: None,
+            total_hits: AtomicU64::new(0),
+            total_misses: AtomicU64::new(0),
         }
     }
 
@@ -127,6 +141,8 @@ impl BufferPool {
             allocator: DefaultAllocator,
             memory_cap: None,
             throughput: None,
+            total_hits: AtomicU64::new(0),
+            total_misses: AtomicU64::new(0),
         }
     }
 }
@@ -152,6 +168,8 @@ impl<A: BufferAllocator> BufferPool<A> {
             allocator,
             memory_cap: None,
             throughput: None,
+            total_hits: AtomicU64::new(0),
+            total_misses: AtomicU64::new(0),
         }
     }
 
@@ -261,6 +279,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         // Fast path: check thread-local cache.
         if let Some(buffer) = thread_local_cache::try_take() {
             if buffer.len() == pool.buffer_size {
+                pool.total_hits.fetch_add(1, Ordering::Relaxed);
                 // Re-reserve memory that was released by return_buffer's track_return.
                 pool.wait_and_reserve_memory(pool.buffer_size);
                 return BufferGuard {
@@ -299,6 +318,7 @@ impl<A: BufferAllocator> BufferPool<A> {
                     }
                     return None;
                 }
+                pool.total_hits.fetch_add(1, Ordering::Relaxed);
                 return Some(BufferGuard {
                     buffer: Some(buffer),
                     pool,
@@ -337,6 +357,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         // Slow path: non-standard size - allocate fresh, skip TLS.
         // On drop the guard will pass it through `return_buffer` which
         // resizes it to the pool default before returning it.
+        pool.total_misses.fetch_add(1, Ordering::Relaxed);
         pool.wait_and_reserve_memory(desired);
         let buffer = pool.allocator.allocate(desired);
         BufferGuard {
@@ -357,6 +378,7 @@ impl<A: BufferAllocator> BufferPool<A> {
         // Fast path: check thread-local cache.
         if let Some(buffer) = thread_local_cache::try_take() {
             if buffer.len() == self.buffer_size {
+                self.total_hits.fetch_add(1, Ordering::Relaxed);
                 // Re-reserve memory that was released by return_buffer's track_return.
                 self.wait_and_reserve_memory(self.buffer_size);
                 return BorrowedBufferGuard {
@@ -393,6 +415,7 @@ impl<A: BufferAllocator> BufferPool<A> {
                     }
                     return None;
                 }
+                self.total_hits.fetch_add(1, Ordering::Relaxed);
                 return Some(BorrowedBufferGuard {
                     buffer: Some(buffer),
                     pool: self,
@@ -464,10 +487,21 @@ impl<A: BufferAllocator> BufferPool<A> {
     }
 
     /// Pops a buffer from the central pool, or allocates a new one if empty.
+    ///
+    /// Updates telemetry counters: increments `total_hits` on pool reuse,
+    /// `total_misses` on fresh allocation.
     fn pop_buffer(&self) -> Vec<u8> {
         let mut pool = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
-        pool.pop()
-            .unwrap_or_else(|| self.allocator.allocate(self.buffer_size))
+        match pool.pop() {
+            Some(buf) => {
+                self.total_hits.fetch_add(1, Ordering::Relaxed);
+                buf
+            }
+            None => {
+                self.total_misses.fetch_add(1, Ordering::Relaxed);
+                self.allocator.allocate(self.buffer_size)
+            }
+        }
     }
 
     /// Returns the number of buffers currently in the central pool.
@@ -516,6 +550,44 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn memory_cap(&self) -> Option<usize> {
         self.memory_cap.as_ref().map(|cap| cap.limit())
+    }
+
+    /// Returns the cumulative number of pool hits since creation.
+    ///
+    /// A hit occurs when a buffer is reused from the thread-local cache
+    /// or the central pool, avoiding a fresh allocation.
+    #[must_use]
+    pub fn total_hits(&self) -> u64 {
+        self.total_hits.load(Ordering::Relaxed)
+    }
+
+    /// Returns the cumulative number of pool misses since creation.
+    ///
+    /// A miss occurs when neither the thread-local cache nor the central
+    /// pool has a buffer available, requiring a fresh allocation.
+    #[must_use]
+    pub fn total_misses(&self) -> u64 {
+        self.total_misses.load(Ordering::Relaxed)
+    }
+
+    /// Returns the total number of acquire operations since creation.
+    ///
+    /// Equal to `total_hits() + total_misses()`.
+    #[must_use]
+    pub fn total_acquires(&self) -> u64 {
+        self.total_hits() + self.total_misses()
+    }
+
+    /// Returns the hit rate as a fraction in `[0.0, 1.0]`.
+    ///
+    /// Returns `1.0` if no acquires have occurred (no misses = perfect).
+    #[must_use]
+    pub fn hit_rate(&self) -> f64 {
+        let total = self.total_acquires();
+        if total == 0 {
+            return 1.0;
+        }
+        self.total_hits() as f64 / total as f64
     }
 
     /// Atomically waits for and reserves `requested` bytes of capacity.
