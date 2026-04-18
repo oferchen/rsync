@@ -8,7 +8,6 @@
 // - Self-referencing symlinks
 // - Permission handling for symlinks
 
-// ==================== Absolute vs Relative Symlink Targets ====================
 
 #[cfg(unix)]
 #[test]
@@ -128,7 +127,6 @@ fn symlink_complex_relative_path_with_dotdot() {
     assert!(dest_link.exists(), "symlink should resolve to target in dest");
 }
 
-// ==================== Broken Symlinks ====================
 
 #[cfg(unix)]
 #[test]
@@ -242,7 +240,6 @@ fn broken_symlink_becomes_valid_when_target_copied() {
     assert_eq!(fs::read(&dest_link).expect("read via link"), b"content");
 }
 
-// ==================== Symlink Chains ====================
 
 #[cfg(unix)]
 #[test]
@@ -385,7 +382,6 @@ fn symlink_chain_across_directories() {
     assert_eq!(fs::read(&dest_link2).expect("read content"), b"content");
 }
 
-// ==================== Symlinks Pointing Outside the Tree ====================
 
 #[cfg(unix)]
 #[test]
@@ -509,7 +505,6 @@ fn symlink_escapes_but_copy_unsafe_links_dereferences() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== Self-Referencing and Circular Symlinks ====================
 
 #[cfg(unix)]
 #[test]
@@ -630,7 +625,6 @@ fn three_way_symlink_cycle() {
     assert_eq!(summary.symlinks_copied(), 3);
 }
 
-// ==================== Permission Handling for Symlinks ====================
 
 #[cfg(unix)]
 #[test]
@@ -762,7 +756,6 @@ fn symlink_omit_link_times_option() {
     assert!(dest_link.exists());
 }
 
-// ==================== Edge Cases with Special Characters ====================
 
 #[cfg(unix)]
 #[test]
@@ -870,7 +863,6 @@ fn symlink_target_with_newline() {
     );
 }
 
-// ==================== Symlink to . and .. ====================
 
 #[cfg(unix)]
 #[test]
@@ -939,7 +931,6 @@ fn symlink_to_parent_within_safe_boundary() {
     assert_eq!(fs::read_link(&dest_link).expect("read"), Path::new(".."));
 }
 
-// ==================== Hard Links to Symlinks ====================
 
 #[cfg(unix)]
 #[test]
@@ -1000,7 +991,6 @@ fn hard_link_to_symlink_preserved() {
     assert_eq!(summary.symlinks_copied(), 2);
 }
 
-// ==================== Symlink Size Handling ====================
 
 #[cfg(unix)]
 #[test]

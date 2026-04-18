@@ -210,8 +210,6 @@ mod tests {
         assert_eq!(entry.state(), XattrState::Done);
     }
 
-    // ==================== Additional Comprehensive Tests ====================
-
     #[test]
     fn xattr_state_needs_request_only_for_abbrev() {
         assert!(XattrState::Abbrev.needs_request());

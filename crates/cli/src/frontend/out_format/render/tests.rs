@@ -33,7 +33,6 @@ fn make_event(
     )
 }
 
-// ==================== format_itemized_changes tests ====================
 //
 // Upstream rsync --itemize-changes format reference:
 //   YXcstpoguax  filename
@@ -46,8 +45,6 @@ fn make_event(
 //     '.' = attribute is unchanged
 //     '+' = file is new (all attributes are new)
 //     letter = attribute changed (c/s/t/T/p/o/g/u/n/b/a/x)
-
-// ---- Format length ----
 
 #[test]
 fn itemize_format_length_is_eleven_for_new_file() {
@@ -100,8 +97,6 @@ fn itemize_format_length_is_eleven_for_modified_file() {
         "format string should be 11 characters: {result:?}"
     );
 }
-
-// ---- Y (position 0): update type character ----
 
 #[test]
 fn itemize_y_position_data_copied_shows_greater_than() {
@@ -263,8 +258,6 @@ fn itemize_y_position_source_removed_shows_c() {
     );
 }
 
-// ---- X (position 1): file type character ----
-
 #[test]
 fn itemize_x_position_file_shows_f() {
     let event = make_event(
@@ -377,8 +370,6 @@ fn itemize_x_position_socket_shows_s_upper() {
     );
 }
 
-// ---- New file: all attributes show '+' (positions 2-10) ----
-
 #[test]
 fn itemize_new_file_shows_all_plus_in_attribute_positions() {
     let event = make_event(
@@ -469,8 +460,6 @@ fn itemize_hardlink_shows_all_plus_in_attribute_positions() {
     );
 }
 
-// ---- Delete format ----
-
 #[test]
 fn itemize_deleted_entry_shows_star_deleting() {
     let event = make_event(
@@ -485,8 +474,6 @@ fn itemize_deleted_entry_shows_star_deleting() {
         "deleted entry should be '*deleting  ' (11 chars): {result:?}"
     );
 }
-
-// ---- Individual attribute positions for changed files ----
 
 #[test]
 fn itemize_checksum_changed_shows_c_at_position_2() {
@@ -694,8 +681,6 @@ fn itemize_xattr_changed_shows_x_at_position_10() {
     );
 }
 
-// ---- No change shows dots for all attributes ----
-
 #[test]
 fn itemize_no_changes_shows_all_dots_in_attribute_positions() {
     let event = make_event(
@@ -710,8 +695,6 @@ fn itemize_no_changes_shows_all_dots_in_attribute_positions() {
         "no change with '.' update type should collapse dots to spaces: {result:?}"
     );
 }
-
-// ---- Combined changes ----
 
 #[test]
 fn itemize_checksum_and_size_change_shows_cs_at_positions_2_3() {
@@ -821,8 +804,6 @@ fn itemize_owner_and_group_change() {
     assert_eq!(result, ">f....og...", "owner+group change: {result:?}");
 }
 
-// ---- File type inference when metadata is None ----
-
 #[test]
 fn itemize_infers_file_type_from_data_copied_when_no_metadata() {
     let event = make_event(
@@ -902,8 +883,6 @@ fn itemize_infers_device_type_from_device_copied_when_no_metadata() {
         "should infer 'D' for DeviceCopied: {result:?}"
     );
 }
-
-// ---- Skipped variations show dot as Y ----
 
 #[test]
 fn itemize_skipped_missing_destination_shows_dot() {
@@ -1000,8 +979,6 @@ fn itemize_skipped_mount_point_shows_dot() {
         "SkippedMountPoint should be '.': {result:?}"
     );
 }
-
-// ---- Upstream format strings: complete patterns ----
 
 #[test]
 fn itemize_upstream_new_regular_file_pattern() {
@@ -1105,8 +1082,6 @@ fn itemize_upstream_transfer_time_pattern() {
     assert_eq!(format_itemized_changes(&event, false), ">f..T......");
 }
 
-// ---- Edge cases ----
-
 #[test]
 fn itemize_new_file_ignores_change_set_values() {
     // When created=true, all positions 2-10 should be '+' regardless of change_set
@@ -1195,8 +1170,6 @@ fn itemize_missing_data_length_is_eleven() {
     let result = format_itemized_changes(&event, false);
     assert_eq!(result.len(), 11);
 }
-
-// ---- Symlink-specific positions (upstream: log.c:705-710) ----
 
 #[test]
 fn itemize_symlink_size_always_dot_even_when_size_changed() {
@@ -1315,8 +1288,6 @@ fn itemize_file_size_still_reports_when_changed() {
     );
 }
 
-// ==================== Render integration tests ====================
-
 fn render_format(format_str: &str, event: &ClientEvent) -> String {
     let format = parse_out_format(std::ffi::OsStr::new(format_str)).unwrap();
     let mut output = Vec::new();
@@ -1337,8 +1308,6 @@ fn render_format_with_context(
     String::from_utf8(output).unwrap()
 }
 
-// ---- %n renders filename ----
-
 #[test]
 fn render_percent_n_shows_filename() {
     let event = make_event(
@@ -1349,8 +1318,6 @@ fn render_percent_n_shows_filename() {
     );
     assert_eq!(render_format("%n", &event), "test.txt\n");
 }
-
-// ---- %n adds trailing slash for directories ----
 
 #[test]
 fn render_percent_n_adds_trailing_slash_for_directory() {
@@ -1364,8 +1331,6 @@ fn render_percent_n_adds_trailing_slash_for_directory() {
     );
     assert_eq!(render_format("%n", &event), "mydir/\n");
 }
-
-// ---- %f does NOT add trailing slash for directories (full path) ----
 
 #[test]
 fn render_percent_f_no_trailing_slash_for_directory() {
@@ -1385,8 +1350,6 @@ fn render_percent_f_no_trailing_slash_for_directory() {
     );
 }
 
-// ---- %l shows file length ----
-
 #[test]
 fn render_percent_l_shows_file_length() {
     let event = make_event(
@@ -1399,8 +1362,6 @@ fn render_percent_l_shows_file_length() {
     assert_eq!(render_format("%l", &event), "0\n");
 }
 
-// ---- %b shows bytes transferred (0 for test events) ----
-
 #[test]
 fn render_percent_b_shows_bytes_transferred() {
     let event = make_event(
@@ -1412,8 +1373,6 @@ fn render_percent_b_shows_bytes_transferred() {
     // for_test always sets bytes_transferred to 0
     assert_eq!(render_format("%b", &event), "0\n");
 }
-
-// ---- %o shows operation description ----
 
 #[test]
 fn render_percent_o_shows_operation() {
@@ -1437,8 +1396,6 @@ fn render_percent_o_shows_deleted_for_entry_deleted() {
     assert_eq!(render_format("%o", &event), "deleted\n");
 }
 
-// ---- %p shows process ID ----
-
 #[test]
 fn render_percent_p_shows_current_pid() {
     let event = make_event(
@@ -1451,8 +1408,6 @@ fn render_percent_p_shows_current_pid() {
     let expected = format!("{}\n", std::process::id());
     assert_eq!(rendered, expected);
 }
-
-// ---- %t shows current timestamp in correct format ----
 
 #[test]
 fn render_percent_t_shows_timestamp_in_expected_format() {
@@ -1476,8 +1431,6 @@ fn render_percent_t_shows_timestamp_in_expected_format() {
     assert_eq!(&trimmed[16..17], ":", "position 16 should be ':'");
 }
 
-// ---- %M shows modification time (epoch default when no metadata) ----
-
 #[test]
 fn render_percent_m_shows_epoch_when_no_mtime() {
     let event = make_event(
@@ -1488,8 +1441,6 @@ fn render_percent_m_shows_epoch_when_no_mtime() {
     );
     assert_eq!(render_format("%M", &event), "1970/01/01-00:00:00\n");
 }
-
-// ---- %U and %G show uid/gid (0 when no metadata uid/gid) ----
 
 #[test]
 fn render_percent_u_upper_shows_uid_zero_for_test_metadata() {
@@ -1513,8 +1464,6 @@ fn render_percent_g_upper_shows_gid_zero_for_test_metadata() {
     assert_eq!(render_format("%G", &event), "0\n");
 }
 
-// ---- %B shows permissions (dashes when no mode) ----
-
 #[test]
 fn render_percent_b_upper_shows_dashes_for_test_metadata() {
     let event = make_event(
@@ -1526,8 +1475,6 @@ fn render_percent_b_upper_shows_dashes_for_test_metadata() {
     // test_metadata has mode = None => "---------"
     assert_eq!(render_format("%B", &event), "---------\n");
 }
-
-// ---- %L shows nothing for non-symlink files ----
 
 #[test]
 fn render_percent_l_upper_shows_nothing_for_regular_file() {
@@ -1542,8 +1489,6 @@ fn render_percent_l_upper_shows_nothing_for_regular_file() {
     // and the output is just the newline
     assert_eq!(render_format("%L", &event), "\n");
 }
-
-// ---- %i%n combined upstream pattern ----
 
 #[test]
 fn render_itemize_and_filename_combined_no_space() {
@@ -1569,8 +1514,6 @@ fn render_itemize_and_filename_with_space() {
     assert_eq!(render_format("%i %n", &event), ">f+++++++++ test.txt\n");
 }
 
-// ---- %% literal percent ----
-
 #[test]
 fn render_escaped_percent_produces_literal_percent() {
     let event = make_event(
@@ -1593,8 +1536,6 @@ fn render_literal_text_with_escaped_percent() {
     assert_eq!(render_format("100%%", &event), "100%\n");
 }
 
-// ---- Multiple codes in one format string ----
-
 #[test]
 fn render_multiple_codes_in_format_string() {
     let event = make_event(
@@ -1607,8 +1548,6 @@ fn render_multiple_codes_in_format_string() {
     assert_eq!(rendered, "[test.txt] 0 bytes copied\n");
 }
 
-// ---- Literal text mixed with codes ----
-
 #[test]
 fn render_literal_prefix_and_suffix_around_placeholder() {
     let event = make_event(
@@ -1620,8 +1559,6 @@ fn render_literal_prefix_and_suffix_around_placeholder() {
     let rendered = render_format("<<<%n>>>", &event);
     assert_eq!(rendered, "<<<test.txt>>>\n");
 }
-
-// ---- Remote context placeholders with populated context ----
 
 #[test]
 fn render_remote_host_with_context_populated() {
@@ -1723,8 +1660,6 @@ fn render_all_remote_placeholders_with_full_context() {
     assert_eq!(rendered, "host addr mod /path\n");
 }
 
-// ---- emit_out_format with multiple events ----
-
 #[test]
 fn emit_out_format_renders_multiple_events() {
     let event1 = ClientEvent::for_test(
@@ -1757,8 +1692,6 @@ fn emit_out_format_renders_empty_event_list() {
     emit_out_format(events, &format, &OutFormatContext::default(), &mut output).unwrap();
     assert!(output.is_empty());
 }
-
-// ---- Output always ends with newline ----
 
 #[test]
 fn render_output_always_ends_with_newline() {
@@ -1793,8 +1726,6 @@ fn render_output_does_not_double_newline_when_format_ends_with_newline() {
     assert!(!rendered.ends_with("\n\n"));
 }
 
-// ---- Width formatting with different placeholders ----
-
 #[test]
 fn render_width_right_aligned_filename() {
     let event = make_event(
@@ -1826,8 +1757,6 @@ fn render_width_left_aligned_filename() {
     assert!(trimmed.ends_with("            ")); // 12 trailing spaces
 }
 
-// ---- Humanized bytes formatting (unit-level, via format_numeric_value) ----
-
 #[test]
 fn render_separator_humanized_large_value() {
     let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::Separator);
@@ -1850,8 +1779,6 @@ fn render_binary_units_large_value() {
         PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::BinaryUnits);
     assert_eq!(format_numeric_value(2048, &format), "2.00K");
 }
-
-// ---- Humanized bytes below threshold falls back ----
 
 #[test]
 fn render_decimal_units_below_threshold_falls_back_to_separator() {

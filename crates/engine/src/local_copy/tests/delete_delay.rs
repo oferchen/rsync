@@ -13,7 +13,6 @@
 // 5. Deferred deletions respect filter rules
 // 6. Works with max_deletions limit
 
-// ==================== Basic Delay Behavior Tests ====================
 
 #[test]
 fn delete_delay_removes_extraneous_files_after_transfer() {
@@ -91,7 +90,6 @@ fn delete_delay_defers_directory_deletions_until_end() {
     assert!(summary.items_deleted() >= 1); // At least the directory
 }
 
-// ==================== Comparison with --delete-during ====================
 
 #[test]
 fn delete_delay_differs_from_delete_during_timing() {
@@ -170,7 +168,6 @@ fn delete_during_option_enables_during_timing() {
     assert_eq!(options.delete_timing(), Some(DeleteTiming::During));
 }
 
-// ==================== Recursive Directory Handling ====================
 
 #[test]
 fn delete_delay_works_with_recursive_traversal() {
@@ -266,7 +263,6 @@ fn delete_delay_handles_nested_empty_directories() {
     assert!(summary.items_deleted() >= 1);
 }
 
-// ==================== Partial Failures and Error Handling ====================
 
 #[test]
 fn delete_delay_with_max_deletions_limit() {
@@ -413,7 +409,6 @@ fn delete_delay_batches_multiple_directory_deletions() {
     assert!(summary.items_deleted() >= 6);
 }
 
-// ==================== Filter Integration ====================
 
 #[test]
 fn delete_delay_respects_exclude_filters() {
@@ -502,7 +497,6 @@ fn delete_delay_with_delete_excluded_removes_filtered_files() {
     assert_eq!(summary.items_deleted(), 1);
 }
 
-// ==================== Edge Cases ====================
 
 #[test]
 fn delete_delay_with_no_files_to_delete() {

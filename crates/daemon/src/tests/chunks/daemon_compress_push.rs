@@ -21,7 +21,6 @@ fn daemon_compress_push_transfers_files_with_compression() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
@@ -57,11 +56,9 @@ fn daemon_compress_push_transfers_files_with_compression() {
         .collect();
     fs::write(sub_dir.join("gamma.txt"), &compressible_c).expect("write gamma.txt");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config with max-sessions=2 (probe + push) ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -89,7 +86,6 @@ fn daemon_compress_push_transfers_files_with_compression() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Push with compression enabled ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");
@@ -115,7 +111,6 @@ fn daemon_compress_push_transfers_files_with_compression() {
         }
     }
 
-    // --- Verify all files transferred correctly ---
     assert_eq!(
         fs::read(dest_dir.join("alpha.txt")).expect("read dest alpha.txt"),
         compressible_a,

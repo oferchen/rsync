@@ -7,7 +7,6 @@
 // 4. Atomic rename semantics
 // 5. Comparison with upstream rsync behavior
 
-// ==================== Basic Temp Dir Placement Tests ====================
 
 #[test]
 fn execute_with_temp_dir_places_temp_files_in_specified_directory() {
@@ -117,7 +116,6 @@ fn execute_with_temp_dir_same_filesystem_uses_atomic_rename() {
     assert_eq!(fs::read(&destination).expect("read dest"), large_content);
 }
 
-// ==================== Cross-filesystem Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -161,7 +159,6 @@ fn execute_with_temp_dir_different_filesystem_falls_back_to_copy() {
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
 
-// ==================== Multiple Files Tests ====================
 
 #[test]
 fn execute_with_temp_dir_handles_multiple_files() {
@@ -211,7 +208,6 @@ fn execute_with_temp_dir_handles_multiple_files() {
     assert!(staging_files.is_empty(), "no temp files should remain");
 }
 
-// ==================== Nested Directory Tests ====================
 
 #[test]
 fn execute_with_temp_dir_handles_nested_directories() {
@@ -265,7 +261,6 @@ fn execute_with_temp_dir_handles_nested_directories() {
     assert!(staging_files.is_empty());
 }
 
-// ==================== Absolute Temp Dir Path Tests ====================
 
 #[test]
 fn execute_with_absolute_temp_dir_path() {
@@ -300,7 +295,6 @@ fn execute_with_absolute_temp_dir_path() {
     );
 }
 
-// ==================== Temp Dir with Existing Files Tests ====================
 
 #[test]
 fn execute_with_temp_dir_replaces_existing_destination() {
@@ -332,7 +326,6 @@ fn execute_with_temp_dir_replaces_existing_destination() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"new content");
 }
 
-// ==================== Empty File Tests ====================
 
 #[test]
 fn execute_with_temp_dir_handles_empty_file() {
@@ -362,7 +355,6 @@ fn execute_with_temp_dir_handles_empty_file() {
     assert_eq!(fs::metadata(&destination).expect("metadata").len(), 0);
 }
 
-// ==================== Large File Tests ====================
 
 #[test]
 fn execute_with_temp_dir_handles_large_file() {
@@ -401,7 +393,6 @@ fn execute_with_temp_dir_handles_large_file() {
     assert!(staging_files.is_empty());
 }
 
-// ==================== Temp Dir with Metadata Preservation ====================
 
 #[cfg(unix)]
 #[test]
@@ -474,7 +465,6 @@ fn execute_with_temp_dir_preserves_modification_time() {
     assert_eq!(dest_mtime, past_time);
 }
 
-// ==================== Temp Dir Nonexistent Tests ====================
 
 #[test]
 fn execute_with_nonexistent_temp_dir_fails() {
@@ -506,7 +496,6 @@ fn execute_with_nonexistent_temp_dir_fails() {
     );
 }
 
-// ==================== Combination with Other Options ====================
 
 #[test]
 fn execute_with_temp_dir_and_partial_mode() {
@@ -574,7 +563,6 @@ fn execute_with_temp_dir_and_delay_updates() {
     );
 }
 
-// ==================== Dry Run with Temp Dir ====================
 
 #[test]
 fn execute_dry_run_with_temp_dir_does_not_create_files() {
@@ -610,7 +598,6 @@ fn execute_dry_run_with_temp_dir_does_not_create_files() {
     assert!(staging_files.is_empty(), "no temp files in dry run");
 }
 
-// ==================== Inplace Mode with Temp Dir ====================
 
 #[test]
 fn execute_inplace_mode_ignores_temp_dir() {
@@ -653,7 +640,6 @@ fn execute_inplace_mode_ignores_temp_dir() {
     assert!(staging_files.is_empty());
 }
 
-// ==================== Temp Dir Cleanup on Success ====================
 
 #[test]
 fn execute_with_temp_dir_cleans_up_on_successful_multi_file_transfer() {
@@ -704,7 +690,6 @@ fn execute_with_temp_dir_cleans_up_on_successful_multi_file_transfer() {
     );
 }
 
-// ==================== Temp Dir Path with Spaces ====================
 
 #[test]
 fn execute_with_temp_dir_containing_spaces() {
@@ -736,7 +721,6 @@ fn execute_with_temp_dir_containing_spaces() {
     );
 }
 
-// ==================== Temp Dir with Special Characters ====================
 
 #[test]
 fn execute_with_temp_dir_containing_special_chars() {
@@ -765,7 +749,6 @@ fn execute_with_temp_dir_containing_special_chars() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"special chars");
 }
 
-// ==================== Atomic Semantics Verification ====================
 
 #[test]
 fn execute_with_temp_dir_provides_atomic_destination_update() {
@@ -803,7 +786,6 @@ fn execute_with_temp_dir_provides_atomic_destination_update() {
     assert_eq!(final_content, new_content);
 }
 
-// ==================== Temp Dir with Delete Option ====================
 
 #[test]
 fn execute_with_temp_dir_and_delete_removes_extraneous() {
@@ -842,7 +824,6 @@ fn execute_with_temp_dir_and_delete_removes_extraneous() {
     );
 }
 
-// ==================== Default Behavior (No Temp Dir) ====================
 
 #[test]
 fn execute_without_temp_dir_creates_temps_alongside_destination() {
@@ -880,7 +861,6 @@ fn execute_without_temp_dir_creates_temps_alongside_destination() {
     );
 }
 
-// ==================== Temp File Name Format Tests ====================
 
 #[test]
 fn execute_with_temp_dir_uses_upstream_temp_prefix() {
@@ -934,7 +914,6 @@ fn execute_with_temp_dir_format_in_custom_directory() {
     );
 }
 
-// ==================== Temp Dir with Whole File Transfer ====================
 
 #[test]
 fn execute_with_temp_dir_and_whole_file_mode() {
@@ -975,7 +954,6 @@ fn execute_with_temp_dir_and_whole_file_mode() {
     assert!(staging_files.is_empty());
 }
 
-// ==================== Options Round-Trip Tests ====================
 
 #[test]
 fn temp_dir_option_round_trip_via_builder() {
@@ -1016,7 +994,6 @@ fn temp_dir_option_does_not_affect_partial_mode() {
     );
 }
 
-// ==================== Binary Content Integrity ====================
 
 #[test]
 fn execute_with_temp_dir_preserves_binary_content_exactly() {
@@ -1051,7 +1028,6 @@ fn execute_with_temp_dir_preserves_binary_content_exactly() {
     );
 }
 
-// ==================== Idempotent Transfer with Temp Dir ====================
 
 #[test]
 fn execute_with_temp_dir_second_run_skips_identical_files() {
@@ -1099,7 +1075,6 @@ fn execute_with_temp_dir_second_run_skips_identical_files() {
     );
 }
 
-// ==================== Temp Dir Interaction with Checksum ====================
 
 #[test]
 fn execute_with_temp_dir_and_checksum_mode() {
@@ -1133,7 +1108,6 @@ fn execute_with_temp_dir_and_checksum_mode() {
     );
 }
 
-// ==================== Concurrent Unique Temp Files ====================
 
 #[test]
 fn execute_with_temp_dir_unique_temp_names_across_files() {
@@ -1167,7 +1141,6 @@ fn execute_with_temp_dir_unique_counter_per_file() {
     );
 }
 
-// ==================== Temp Dir with Backup Mode ====================
 
 #[test]
 fn execute_with_temp_dir_and_backup() {
@@ -1214,7 +1187,6 @@ fn execute_with_temp_dir_and_backup() {
     );
 }
 
-// ==================== Temp Dir with Nested Source and Flat Staging ====================
 
 #[test]
 fn execute_with_temp_dir_nested_source_uses_flat_staging() {

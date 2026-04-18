@@ -6,8 +6,6 @@ use super::super::frame::MessageFrame;
 use super::send::write_all_vectored;
 use super::{recv_msg, send_frame, send_msg, send_msgs_vectored};
 
-// ==================== send_msg tests ====================
-
 #[test]
 fn send_msg_empty_payload() {
     let mut buffer = Vec::new();
@@ -47,8 +45,6 @@ fn send_msg_encodes_payload_length() {
     let header = MessageHeader::decode(&buffer[..HEADER_LEN]).unwrap();
     assert_eq!(header.payload_len_usize(), 1000);
 }
-
-// ==================== recv_msg tests ====================
 
 #[test]
 fn recv_msg_empty_payload() {
@@ -107,8 +103,6 @@ fn recv_msg_truncated_header_returns_error() {
     assert!(result.is_err());
 }
 
-// ==================== recv_msg_into tests ====================
-
 #[test]
 fn recv_msg_into_reuses_buffer() {
     let payload = b"buffer reuse test";
@@ -150,8 +144,6 @@ fn recv_msg_into_empty_payload() {
     assert!(recv_buffer.is_empty());
 }
 
-// ==================== send_frame tests ====================
-
 #[test]
 fn send_frame_matches_send_msg() {
     let payload = b"frame test";
@@ -173,8 +165,6 @@ fn send_frame_empty_payload() {
     send_frame(&mut buffer, &frame).unwrap();
     assert_eq!(buffer.len(), HEADER_LEN);
 }
-
-// ==================== roundtrip tests ====================
 
 #[test]
 fn roundtrip_preserves_message() {
@@ -224,8 +214,6 @@ fn roundtrip_large_payload() {
     assert_eq!(frame.payload(), large_payload.as_slice());
 }
 
-// ==================== write_all_vectored tests ====================
-
 #[test]
 fn write_all_vectored_empty_slices() {
     let mut buffer = Vec::new();
@@ -257,8 +245,6 @@ fn write_all_vectored_both_slices() {
     write_all_vectored(&mut buffer, header, payload).unwrap();
     assert_eq!(buffer, b"HEADERPAYLOAD".as_slice());
 }
-
-// ==================== send_msgs_vectored tests ====================
 
 #[test]
 fn send_msgs_vectored_empty() {
@@ -539,8 +525,6 @@ fn send_msgs_vectored_all_message_codes() {
         assert_eq!(frame.payload(), payload);
     }
 }
-
-// ==================== Additional edge case tests ====================
 
 #[test]
 fn send_msgs_vectored_single_empty_message() {

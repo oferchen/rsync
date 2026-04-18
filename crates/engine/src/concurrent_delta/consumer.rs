@@ -535,8 +535,6 @@ mod tests {
         assert_eq!(results[4].ndx(), 0);
     }
 
-    // ==================== try_recv tests ====================
-
     #[test]
     fn try_recv_returns_none_when_no_results_ready() {
         let (tx, rx) = work_queue::bounded_with_capacity(8);

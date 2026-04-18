@@ -344,8 +344,6 @@ impl DeltaResult {
 mod tests {
     use super::*;
 
-    // ==================== DeltaWork tests ====================
-
     #[test]
     fn whole_file_work_has_no_basis() {
         let work = DeltaWork::whole_file(0, PathBuf::from("/dest/file.txt"), 1024);
@@ -429,8 +427,6 @@ mod tests {
         assert_ne!(DeltaWorkKind::WholeFile, DeltaWorkKind::Delta);
     }
 
-    // ==================== DeltaResult tests ====================
-
     #[test]
     fn success_result() {
         let result = DeltaResult::success(42, 1000, 300, 700);
@@ -494,8 +490,6 @@ mod tests {
         assert_eq!(DeltaResultStatus::default(), DeltaResultStatus::Success);
     }
 
-    // ==================== DeltaWork sequence tests ====================
-
     #[test]
     fn work_default_sequence_is_zero() {
         let work = DeltaWork::whole_file(0, PathBuf::from("/dest"), 100);
@@ -542,8 +536,6 @@ mod tests {
         );
         assert_eq!(work.sequence(), 0);
     }
-
-    // ==================== DeltaResult sequence tests ====================
 
     #[test]
     fn result_default_sequence_is_zero() {

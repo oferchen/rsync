@@ -12,7 +12,6 @@
 // 5. Works correctly with nested directory structures
 // 6. Behavior matches upstream rsync
 
-// ==================== Basic Partial Dir Placement Tests ====================
 
 #[test]
 fn partial_dir_places_partial_file_in_specified_directory() {
@@ -154,7 +153,6 @@ fn partial_dir_preserves_partial_file_on_discard() {
     );
 }
 
-// ==================== Nested Directory Tests ====================
 
 #[test]
 fn partial_dir_works_with_nested_source_directories() {
@@ -248,7 +246,6 @@ fn partial_dir_handles_multiple_files_in_nested_directories() {
     );
 }
 
-// ==================== Absolute Path Partial Dir Tests ====================
 
 #[test]
 fn partial_dir_supports_absolute_path() {
@@ -314,7 +311,6 @@ fn partial_dir_absolute_path_preserves_partial_on_discard() {
     );
 }
 
-// ==================== Partial Dir with Relative Path Components Tests ====================
 
 #[test]
 fn partial_dir_relative_to_destination_directory() {
@@ -353,7 +349,6 @@ fn partial_dir_relative_to_destination_directory() {
     assert!(destination.exists());
 }
 
-// ==================== Edge Cases Tests ====================
 
 #[test]
 fn partial_dir_handles_empty_file() {
@@ -452,7 +447,6 @@ fn partial_dir_overwrites_existing_partial_file() {
     guard.discard();
 }
 
-// ==================== Comparison with Non-Partial Mode Tests ====================
 
 #[test]
 fn partial_dir_differs_from_non_partial_behavior() {
@@ -490,7 +484,6 @@ fn partial_dir_differs_from_non_partial_behavior() {
     assert!(!staging2.exists(), "non-partial mode should remove file");
 }
 
-// ==================== Special Characters in Path Tests ====================
 
 #[test]
 fn partial_dir_handles_special_characters_in_filename() {
@@ -525,7 +518,6 @@ fn partial_dir_handles_special_characters_in_filename() {
     );
 }
 
-// ==================== Integration with Other Options Tests ====================
 
 #[test]
 fn partial_dir_with_times_preservation() {
@@ -602,7 +594,6 @@ fn partial_dir_with_permissions_preservation() {
     assert_eq!(dest_perms.mode() & 0o777, 0o640);
 }
 
-// ==================== Dry Run Tests ====================
 
 #[test]
 fn partial_dir_dry_run_does_not_create_directory() {
@@ -638,7 +629,6 @@ fn partial_dir_dry_run_does_not_create_directory() {
     // The test documents expected behavior - partial dir should NOT be created
 }
 
-// ==================== Option Interaction Tests ====================
 
 #[test]
 fn partial_dir_setting_enables_partial_flag() {
@@ -668,7 +658,6 @@ fn partial_dir_can_be_cleared_after_setting() {
     assert!(opts.partial_directory_path().is_none());
 }
 
-// ==================== Delete + Partial Dir Interaction Tests ====================
 //
 // Upstream rsync protects the partial-dir from deletion when --delete is used
 // with --partial-dir. This prevents --delete from removing the directory that
@@ -978,7 +967,6 @@ fn partial_dir_delete_with_dry_run_does_not_modify_anything() {
     );
 }
 
-// ==================== Partial Dir Resume Workflow Tests ====================
 
 #[test]
 fn partial_dir_find_basis_locates_existing_partial_for_resume() {
@@ -1078,7 +1066,6 @@ fn partial_dir_full_resume_workflow() {
     );
 }
 
-// ==================== Partial Dir with Multiple Transfer Directories ====================
 
 #[test]
 fn partial_dir_relative_path_independent_per_directory() {
@@ -1155,7 +1142,6 @@ fn partial_dir_absolute_path_shared_across_directories() {
     assert_eq!(basis_b, Some(shared_partial.join("common.txt")));
 }
 
-// ==================== Partial Dir Guard Behavior Tests ====================
 
 #[test]
 fn partial_dir_guard_staging_path_is_inside_partial_dir() {
@@ -1273,7 +1259,6 @@ fn partial_dir_guard_discard_preserves_for_later_resume() {
     );
 }
 
-// ==================== Edge Cases: Partial Dir Names ====================
 
 #[test]
 fn partial_dir_with_deeply_nested_relative_path() {
@@ -1424,7 +1409,6 @@ fn partial_dir_empty_partial_dir_survives_delete() {
     );
 }
 
-// ==================== Integration: Partial Dir + Copy Workflow ====================
 
 #[test]
 fn partial_dir_successful_copy_creates_and_uses_partial_dir() {

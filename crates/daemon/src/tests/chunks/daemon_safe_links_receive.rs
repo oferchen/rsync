@@ -44,7 +44,6 @@ fn daemon_safe_links_receive() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     let source_subdir = source_dir.join("subdir");
     fs::create_dir_all(&source_subdir).expect("create source/subdir");
@@ -74,11 +73,9 @@ fn daemon_safe_links_receive() {
     unix_fs::symlink("../../outside.txt", source_subdir.join("deep_esc"))
         .expect("create deep_esc");
 
-    // --- Destination (served by daemon, writable, munge symlinks off) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config with munge symlinks explicitly disabled ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[recvmod]\n\
@@ -109,7 +106,6 @@ fn daemon_safe_links_receive() {
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);
 
-    // --- Run client push with --links --safe-links ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/recvmod/");
@@ -130,7 +126,6 @@ fn daemon_safe_links_receive() {
         }
     }
 
-    // --- Verify safe symlinks are preserved ---
     let safe_link_path = dest_dir.join("safe_link");
     assert!(
         safe_link_path.symlink_metadata().is_ok(),
@@ -167,7 +162,6 @@ fn daemon_safe_links_receive() {
         "peer_link target should be preserved"
     );
 
-    // --- Verify unsafe symlinks are filtered out ---
     assert!(
         !dest_dir.join("unsafe_link").exists()
             && dest_dir.join("unsafe_link").symlink_metadata().is_err(),
@@ -186,7 +180,6 @@ fn daemon_safe_links_receive() {
         "subdir/deep_esc must not exist (relative path escapes from subdirectory)"
     );
 
-    // --- Verify the regular files were transferred ---
     let file_content = fs::read_to_string(dest_dir.join("file.txt")).expect("read file.txt");
     assert_eq!(file_content, "hello\n", "file.txt content mismatch");
 

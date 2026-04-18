@@ -1,7 +1,5 @@
 use crate::frontend::itemize::*;
 
-// ---- Update type character conversion ----
-
 #[test]
 fn update_type_sent_is_less_than() {
     assert_eq!(UpdateType::Sent.as_char(), '<');
@@ -32,8 +30,6 @@ fn update_type_message_is_star() {
     assert_eq!(UpdateType::Message.as_char(), '*');
 }
 
-// ---- File type character conversion ----
-
 #[test]
 fn file_type_regular_file_is_f() {
     assert_eq!(FileType::RegularFile.as_char(), 'f');
@@ -59,8 +55,6 @@ fn file_type_special_is_s_upper() {
     assert_eq!(FileType::Special.as_char(), 'S');
 }
 
-// ---- ItemizeChange construction and defaults ----
-
 #[test]
 fn new_creates_unchanged_regular_file() {
     let change = ItemizeChange::new();
@@ -74,8 +68,6 @@ fn new_creates_unchanged_regular_file() {
 fn default_is_same_as_new() {
     assert_eq!(ItemizeChange::default(), ItemizeChange::new());
 }
-
-// ---- is_unchanged detection ----
 
 #[test]
 fn is_unchanged_returns_true_for_no_changes() {

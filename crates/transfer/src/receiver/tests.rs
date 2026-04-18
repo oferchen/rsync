@@ -2212,8 +2212,6 @@ mod legacy_goodbye_tests {
     }
 }
 
-// --- Tests for --relative implied parent directory creation ---
-
 #[cfg(test)]
 mod relative_parents {
     use super::*;
@@ -2612,8 +2610,6 @@ mod receiver_itemize_tests {
     }
 }
 
-// ==================== path_contains_dot_dot security tests ====================
-
 #[test]
 fn path_contains_dot_dot_simple_traversal() {
     use std::path::Path;
@@ -2669,8 +2665,6 @@ fn path_contains_dot_dot_double_dotdot() {
         "a/../../b"
     )));
 }
-
-// --- sanitize_file_list / --trust-sender tests ---
 
 mod sanitize_file_list {
     use super::*;
@@ -2917,8 +2911,6 @@ mod input_multiplex_tests {
     }
 }
 
-// ==================== Per-directory merge filter deletion tests ====================
-
 /// Minimal writer that discards output and provides no-op `MsgInfoSender`.
 struct TestDeletionWriter;
 
@@ -3037,8 +3029,6 @@ fn receiver_set_and_get_filter_chain() {
 
     assert!(!ctx.filter_chain().is_empty());
 }
-
-// ==================== Hardlink creation tests ====================
 
 /// Creates a `ReceiverContext` configured for hardlink testing with protocol 32.
 fn receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContext {
@@ -3504,8 +3494,6 @@ fn create_hardlinks_multiple_followers_same_group() {
     assert_eq!(nlink, 4, "link count should be 4");
 }
 
-// ==================== Daemon filter rule tests ====================
-
 #[test]
 fn daemon_filter_set_empty_when_no_rules() {
     let handshake = test_handshake();
@@ -3685,9 +3673,7 @@ fn daemon_filter_rules_prepended_to_receiver_deletion_chain() {
     );
 }
 
-// =====================================================================
 // Protocol 28/29 io_error after file list (flist.c:2738-2742)
-// =====================================================================
 
 /// Verifies that `receive_file_list` reads the 4-byte LE io_error flag
 /// after the file list end marker for protocol < 30.

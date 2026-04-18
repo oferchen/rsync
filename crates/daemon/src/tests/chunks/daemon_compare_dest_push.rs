@@ -31,14 +31,12 @@ fn daemon_compare_dest_push_skips_unchanged_files() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
     fs::write(source_dir.join("unchanged.txt"), b"shared content\n").expect("write unchanged");
     fs::write(source_dir.join("changed.txt"), b"new version\n").expect("write changed");
 
-    // --- Reference directory (sibling of dest, has old versions) ---
     let ref_dir = temp.path().join("reference");
     fs::create_dir(&ref_dir).expect("create reference");
 
@@ -56,11 +54,9 @@ fn daemon_compare_dest_push_skips_unchanged_files() {
     filetime::set_file_mtime(source_dir.join("unchanged.txt"), old_time)
         .expect("backdate source unchanged");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -88,7 +84,6 @@ fn daemon_compare_dest_push_skips_unchanged_files() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Run client push with --compare-dest ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");
@@ -165,14 +160,12 @@ fn daemon_link_dest_push_creates_hardlinks() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
     fs::write(source_dir.join("unchanged.txt"), b"shared content\n").expect("write unchanged");
     fs::write(source_dir.join("new_file.txt"), b"brand new\n").expect("write new_file");
 
-    // --- Reference directory (sibling of dest) ---
     let ref_dir = temp.path().join("reference");
     fs::create_dir(&ref_dir).expect("create reference");
 
@@ -187,11 +180,9 @@ fn daemon_link_dest_push_creates_hardlinks() {
     filetime::set_file_mtime(source_dir.join("unchanged.txt"), old_time)
         .expect("backdate source unchanged");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -219,7 +210,6 @@ fn daemon_link_dest_push_creates_hardlinks() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Run client push with --link-dest ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");
@@ -318,14 +308,12 @@ fn daemon_copy_dest_push_copies_from_reference() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
     fs::write(source_dir.join("unchanged.txt"), b"shared content\n").expect("write unchanged");
     fs::write(source_dir.join("changed.txt"), b"new version\n").expect("write changed");
 
-    // --- Reference directory (sibling of dest) ---
     let ref_dir = temp.path().join("reference");
     fs::create_dir(&ref_dir).expect("create reference");
 
@@ -343,11 +331,9 @@ fn daemon_copy_dest_push_copies_from_reference() {
     filetime::set_file_mtime(source_dir.join("unchanged.txt"), old_time)
         .expect("backdate source unchanged");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -375,7 +361,6 @@ fn daemon_copy_dest_push_copies_from_reference() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Run client push with --copy-dest ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");

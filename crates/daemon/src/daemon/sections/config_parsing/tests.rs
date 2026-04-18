@@ -11,7 +11,6 @@ mod config_parsing_tests {
         file
     }
 
-    // --- resolve_config_relative_path tests ---
 
     #[test]
     fn resolve_config_relative_path_absolute() {
@@ -37,7 +36,6 @@ mod config_parsing_tests {
         assert_eq!(result, PathBuf::from("relative.txt"));
     }
 
-    // --- parse_config_modules basic tests ---
 
     #[test]
     fn parse_empty_config() {
@@ -95,7 +93,6 @@ mod config_parsing_tests {
         assert_eq!(result.modules[1].name, "mod2");
     }
 
-    // --- Module header error tests ---
 
     #[test]
     fn parse_unterminated_module_header() {
@@ -137,7 +134,6 @@ mod config_parsing_tests {
         assert_eq!(result.modules.len(), 1);
     }
 
-    // --- Directive parsing tests ---
 
     #[test]
     fn parse_missing_equals() {
@@ -153,7 +149,6 @@ mod config_parsing_tests {
         assert!(result.modules.is_empty());
     }
 
-    // --- Global directive tests ---
 
     #[test]
     fn parse_global_pid_file() {
@@ -209,7 +204,6 @@ mod config_parsing_tests {
         assert_eq!(value, "a+r");
     }
 
-    // --- MOTD tests ---
 
     #[test]
     fn parse_inline_motd() {
@@ -228,7 +222,6 @@ mod config_parsing_tests {
         assert_eq!(result.motd_lines[0], "Line 1");
     }
 
-    // --- Module directive tests ---
 
     #[test]
     fn parse_module_read_only() {
@@ -351,7 +344,6 @@ mod config_parsing_tests {
         assert_eq!(result.modules[0].max_connections.unwrap().get(), 10);
     }
 
-    // --- Include directive tests ---
 
     #[test]
     fn parse_include_directive() {
@@ -383,7 +375,6 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("recursive include"));
     }
 
-    // --- Empty value error tests ---
 
     #[test]
     fn parse_empty_path_errors() {
@@ -413,7 +404,6 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("must not be empty"));
     }
 
-    // --- Duplicate directive tests ---
 
     #[test]
     fn parse_duplicate_pid_file_errors() {
@@ -429,7 +419,6 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("duplicate"));
     }
 
-    // --- Invalid boolean tests ---
 
     #[test]
     fn parse_invalid_boolean_errors() {
@@ -438,7 +427,6 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("invalid boolean"));
     }
 
-    // --- Case insensitivity tests ---
 
     #[test]
     fn parse_keys_case_insensitive() {
@@ -453,7 +441,6 @@ mod config_parsing_tests {
         assert!(!result.modules[0].read_only);
     }
 
-    // --- Munge symlinks directive tests ---
 
     #[test]
     fn parse_module_munge_symlinks_yes() {
@@ -507,7 +494,6 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("duplicate"));
     }
 
-    // --- New directive parsing tests ---
 
     #[test]
     fn parse_module_max_verbosity() {
@@ -744,7 +730,6 @@ mod config_parsing_tests {
         assert!(result.modules[0].forward_lookup);
     }
 
-    // --- Strict modes directive tests ---
 
     #[test]
     fn parse_module_strict_modes_yes() {
@@ -819,7 +804,6 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("duplicate"));
     }
 
-    // --- Open noatime directive tests ---
 
     #[test]
     fn parse_module_open_noatime_yes() {
@@ -937,7 +921,6 @@ mod config_parsing_tests {
         assert!(!module.forward_lookup);
     }
 
-    // --- Config file not found ---
 
     #[test]
     fn parse_nonexistent_config() {
@@ -946,7 +929,6 @@ mod config_parsing_tests {
         assert!(err.to_string().contains("failed to"));
     }
 
-    // --- Global vs module directive ordering tests ---
 
     #[test]
     fn global_directives_before_modules_apply_as_defaults() {
@@ -1314,7 +1296,6 @@ mod config_parsing_tests {
         assert!(result.modules[0].use_chroot);
     }
 
-    // --- exclude from / include from tests ---
 
     #[test]
     fn exclude_from_and_include_from_default_to_none() {
@@ -1520,7 +1501,6 @@ mod config_parsing_tests {
         assert!(result.modules[1].exclude_from.is_none());
     }
 
-    // --- Syslog facility directive tests ---
 
     #[test]
     fn parse_syslog_facility_global_directive() {
@@ -1579,7 +1559,6 @@ mod config_parsing_tests {
         assert!(result.syslog_facility.is_none());
     }
 
-    // --- Syslog tag directive tests ---
 
     #[test]
     fn parse_syslog_tag_global_directive() {
@@ -1645,7 +1624,6 @@ mod config_parsing_tests {
         assert_eq!(tag, "backup-daemon");
     }
 
-    // --- address directive tests ---
 
     #[test]
     fn parse_address_ipv4() {
@@ -1702,7 +1680,6 @@ mod config_parsing_tests {
         assert!(msg.contains("duplicate 'address' directive"), "{msg}");
     }
 
-    // --- socket options directive tests ---
 
     #[test]
     fn parse_socket_options_single_option() {
@@ -1852,7 +1829,6 @@ mod config_parsing_tests {
         assert!(result.is_err());
     }
 
-    // --- filter / exclude / include tests ---
 
     #[test]
     fn parse_module_filter_single_rule() {
@@ -1980,7 +1956,6 @@ mod config_parsing_tests {
         assert!(result.modules[1].exclude.is_empty());
     }
 
-    // --- rsync port tests ---
 
     #[test]
     fn parse_global_rsync_port() {
@@ -2045,7 +2020,6 @@ mod config_parsing_tests {
         assert!(result.is_err());
     }
 
-    // --- module log file tests ---
 
     #[test]
     fn parse_module_log_file_absolute() {

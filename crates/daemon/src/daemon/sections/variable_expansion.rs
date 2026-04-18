@@ -251,7 +251,6 @@ mod variable_expansion_tests {
         }
     }
 
-    // --- expand_config_vars: individual variable tests ---
 
     #[test]
     fn expand_diffhost() {
@@ -313,7 +312,6 @@ mod variable_expansion_tests {
         );
     }
 
-    // --- Unknown and edge cases ---
 
     #[test]
     fn expand_unknown_variable_preserved() {
@@ -405,7 +403,6 @@ mod variable_expansion_tests {
         );
     }
 
-    // --- resolve_variable tests ---
 
     #[test]
     fn resolve_diffhost() {
@@ -443,7 +440,6 @@ mod variable_expansion_tests {
         assert_eq!(resolve_variable("NOPE", &ctx), None);
     }
 
-    // --- expand_module_vars tests ---
 
     #[test]
     fn expand_module_vars_expands_path() {
@@ -593,7 +589,6 @@ mod variable_expansion_tests {
         );
     }
 
-    // --- PathExpansionContext / expand_daemon_path tests ---
 
     fn sample_path_ctx<'a>() -> PathExpansionContext<'a> {
         PathExpansionContext {
@@ -721,7 +716,6 @@ mod variable_expansion_tests {
         );
     }
 
-    // --- expand_exec_command tests ---
 
     #[test]
     fn exec_command_expands_module_name() {
@@ -741,7 +735,6 @@ mod variable_expansion_tests {
         );
     }
 
-    // --- expand_log_file_path tests ---
 
     #[test]
     fn log_file_path_expands_module_name() {

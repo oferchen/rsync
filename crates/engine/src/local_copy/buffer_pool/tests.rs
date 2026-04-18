@@ -1003,8 +1003,6 @@ fn memory_cap_backpressure_multiple_waiters() {
     assert_eq!(pool.memory_usage(), 0);
 }
 
-// --- Throughput tracking integration tests ---
-
 #[test]
 fn no_throughput_tracker_by_default() {
     let pool = BufferPool::new(4);
@@ -1188,8 +1186,6 @@ fn sequential_returns_respect_soft_capacity() {
     assert_eq!(pool.available(), 2);
 }
 
-// --- Thread-local cache tests ---
-
 #[test]
 fn tls_absorbs_first_return() {
     // First buffer returned on a thread goes to TLS, not central pool.
@@ -1293,8 +1289,6 @@ fn tls_per_thread_isolation() {
         h.join().expect("thread panicked");
     }
 }
-
-// --- Adaptive resizing tests ---
 
 #[test]
 fn adaptive_resizing_disabled_by_default() {

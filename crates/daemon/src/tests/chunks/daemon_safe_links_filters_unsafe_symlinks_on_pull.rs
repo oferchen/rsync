@@ -35,7 +35,6 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_pull() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (served by daemon) ---
     let source_dir = temp.path().join("source");
     let source_subdir = source_dir.join("subdir");
     fs::create_dir_all(&source_subdir).expect("create source/subdir");
@@ -57,11 +56,9 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_pull() {
     unix_fs::symlink("../../outside.txt", source_dir.join("escape_link"))
         .expect("create escape_link");
 
-    // --- Destination (initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[safemod]\n\
@@ -91,7 +88,6 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_pull() {
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);
 
-    // --- Run client pull with --links --safe-links ---
     let rsync_url = format!("rsync://127.0.0.1:{port}/safemod/");
     let client_config = core::client::ClientConfig::builder()
         .transfer_args([
@@ -112,7 +108,6 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_pull() {
         }
     }
 
-    // --- Verify safe symlinks are preserved ---
     let safe_link_path = dest_dir.join("safe_link");
     assert!(
         safe_link_path.symlink_metadata().is_ok(),
@@ -137,7 +132,6 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_pull() {
         "inner_link target should be preserved"
     );
 
-    // --- Verify unsafe symlinks are filtered out ---
     assert!(
         !dest_dir.join("unsafe_link").exists()
             && dest_dir.join("unsafe_link").symlink_metadata().is_err(),
@@ -150,7 +144,6 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_pull() {
         "escape_link must not exist (relative path escapes transfer tree)"
     );
 
-    // --- Verify the regular file was transferred ---
     let file_content = fs::read_to_string(dest_dir.join("file.txt")).expect("read file.txt");
     assert_eq!(file_content, "hello\n", "file.txt content mismatch");
 

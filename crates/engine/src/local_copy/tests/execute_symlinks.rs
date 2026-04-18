@@ -291,7 +291,6 @@ fn execute_preserves_symlink_hard_links() {
     assert_eq!(summary.symlinks_copied(), 2);
 }
 
-// ==================== Safe Links Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -882,7 +881,6 @@ fn safe_links_disabled_allows_all_symlinks() {
     assert!(fs::symlink_metadata(dest_root.join("escape_link")).is_ok());
 }
 
-// ==================== --copy-unsafe-links Tests ====================
 
 #[cfg(unix)]
 #[test]

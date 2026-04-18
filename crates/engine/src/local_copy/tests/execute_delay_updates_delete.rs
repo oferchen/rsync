@@ -11,7 +11,6 @@
 // 2. No `.~tmp~` staging artifacts remain after the transfer.
 // 3. The summary correctly reports both transferred and deleted counts.
 
-// ==================== delay-updates + delete-during interaction ====================
 
 /// Verifies that when --delay-updates and --delete (During timing) are both
 /// active, the extraneous destination file C is not removed until AFTER files
