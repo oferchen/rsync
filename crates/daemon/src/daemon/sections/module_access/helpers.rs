@@ -409,7 +409,10 @@ fn strip_keyword_prefix<'a>(token: &'a str, keyword: &str) -> Option<&'a str> {
 /// a directory-only exclude (not include), the `FILTRULE_DIRECTORY` flag is
 /// cleared and `/***` is appended to the pattern.
 fn build_pattern_rule(pattern: &str, is_include: bool) -> FilterRuleWireFormat {
-    let anchored = pattern.starts_with('/');
+    // upstream: exclude.c:200-202 - XFLG_ABS_IF_SLASH sets FILTRULE_ABS_PATH
+    // when the pattern starts with '/' or contains any embedded '/'. Patterns
+    // like "subdir/file.txt" are anchored relative to the module root.
+    let anchored = pattern.starts_with('/') || pattern.contains('/');
     let directory_only = pattern.ends_with('/');
 
     // upstream: exclude.c:212-213 - XFLG_DIR2WILD3 applies only to
@@ -430,5 +433,56 @@ fn build_pattern_rule(pattern: &str, is_include: bool) -> FilterRuleWireFormat {
         rule.anchored = anchored;
         rule.directory_only = directory_only;
         rule
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pattern_leading_slash_is_anchored() {
+        let rule = build_pattern_rule("/foo", false);
+        assert!(rule.anchored);
+    }
+
+    #[test]
+    fn pattern_no_slash_is_not_anchored() {
+        let rule = build_pattern_rule("*.txt", false);
+        assert!(!rule.anchored);
+    }
+
+    #[test]
+    fn pattern_embedded_slash_is_anchored() {
+        // upstream: exclude.c:200-202 - XFLG_ABS_IF_SLASH anchors patterns
+        // with any slash, not just leading slash
+        let rule = build_pattern_rule("subdir/file.txt", false);
+        assert!(rule.anchored);
+    }
+
+    #[test]
+    fn pattern_deep_path_is_anchored() {
+        let rule = build_pattern_rule("a/b/c", false);
+        assert!(rule.anchored);
+    }
+
+    #[test]
+    fn directory_exclude_gets_wild3() {
+        let rule = build_pattern_rule("foo/", false);
+        assert!(rule.anchored); // has embedded '/'
+        assert!(!rule.directory_only); // cleared by DIR2WILD3
+        assert!(rule.pattern.ends_with("/***"));
+    }
+
+    #[test]
+    fn directory_include_keeps_directory_flag() {
+        let rule = build_pattern_rule("bar/", true);
+        assert!(rule.directory_only);
+    }
+
+    #[test]
+    fn include_with_embedded_slash_is_anchored() {
+        let rule = build_pattern_rule("src/main.rs", true);
+        assert!(rule.anchored);
     }
 }
