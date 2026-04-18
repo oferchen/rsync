@@ -76,7 +76,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
 
-pub use config::{IoUringConfig, is_io_uring_available};
+pub use config::{IoUringConfig, config_detail, is_io_uring_available};
 pub use disk_batch::IoUringDiskBatch;
 pub use file_factory::{
     IoUringOrStdReader, IoUringOrStdWriter, IoUringReaderFactory, IoUringWriterFactory,
