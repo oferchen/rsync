@@ -429,7 +429,7 @@ impl ReceiverContext {
                     &file_path,
                     None,
                     self.config.backup_dir.as_ref().map(std::path::Path::new),
-                    std::ffi::OsStr::new(self.config.backup_suffix.as_deref().unwrap_or("~")),
+                    std::ffi::OsStr::new(self.config.effective_backup_suffix()),
                 );
                 if let Some(parent) = backup_path.parent() {
                     if !parent.exists() {
