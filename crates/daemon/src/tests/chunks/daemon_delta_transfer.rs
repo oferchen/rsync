@@ -25,7 +25,6 @@ fn daemon_delta_transfer_updates_modified_files() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
@@ -41,11 +40,9 @@ fn daemon_delta_transfer_updates_modified_files() {
     fs::write(source_dir.join("data.txt"), &base_content).expect("write data.txt");
     fs::write(source_dir.join("other.txt"), &base_content).expect("write other.txt");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config with max-sessions=4 (probe + initial push + second push + margin) ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\

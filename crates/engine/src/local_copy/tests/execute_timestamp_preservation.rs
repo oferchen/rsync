@@ -1,6 +1,4 @@
-// ============================================================================
 // Tests for timestamp preservation behavior
-// ============================================================================
 //
 // This test module covers comprehensive timestamp preservation functionality:
 // - mtime preservation (modification time)

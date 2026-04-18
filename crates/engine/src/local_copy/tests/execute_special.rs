@@ -357,7 +357,6 @@ fn execute_without_one_file_system_crosses_mount_points() {
     );
 }
 
-// ==================== Symlink Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -504,7 +503,6 @@ fn execute_with_safe_links_skips_unsafe() {
     }));
 }
 
-// ==================== Hard Link Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -581,7 +579,6 @@ fn execute_without_hard_links_copies_separately() {
     assert_eq!(summary.files_copied(), 2);
 }
 
-// ==================== Dry Run Special Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -638,7 +635,6 @@ fn execute_dry_run_does_not_create_fifo() {
     assert!(!dest_fifo.exists());
 }
 
-// ==================== Symlink Edge Cases ====================
 
 #[cfg(unix)]
 #[test]
@@ -668,7 +664,6 @@ fn execute_copies_broken_symlink() {
     assert_eq!(dest_target, Path::new("nonexistent_target"));
 }
 
-// ==================== Multiple Special Files Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -723,7 +718,6 @@ fn execute_copies_mixed_special_files() {
         .is_fifo());
 }
 
-// ==================== Symlink to Special File Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -833,7 +827,6 @@ fn execute_symlink_pointing_to_socket_preserved_as_symlink() {
     assert_eq!(summary.fifos_created(), 1);
 }
 
-// ==================== FIFO Replacement Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -985,7 +978,6 @@ fn execute_symlink_replaces_existing_socket() {
     assert_eq!(fs::read_link(&dest).expect("read link"), target);
 }
 
-// ==================== FIFO Idempotent Re-copy ====================
 
 #[cfg(unix)]
 #[test]
@@ -1020,7 +1012,6 @@ fn execute_recopy_fifo_replaces_existing_fifo() {
     assert_eq!(summary.fifos_created(), 1);
 }
 
-// ==================== Multiple FIFOs with Different Permissions ====================
 
 #[cfg(unix)]
 #[test]
@@ -1087,7 +1078,6 @@ fn execute_copies_multiple_fifos_with_different_permissions() {
     );
 }
 
-// ==================== Specials with Delete ====================
 
 #[cfg(unix)]
 #[test]
@@ -1127,7 +1117,6 @@ fn execute_delete_removes_extraneous_fifo() {
     assert!(summary.items_deleted() >= 1);
 }
 
-// ==================== Device File Skipped Without Proper Option ====================
 
 #[cfg(unix)]
 #[test]
@@ -1159,7 +1148,6 @@ fn execute_device_file_skipped_without_devices_or_copy_devices() {
     }));
 }
 
-// ==================== copy_links with Symlink to FIFO (specials disabled) ====================
 
 #[cfg(unix)]
 #[test]
@@ -1214,7 +1202,6 @@ fn execute_copy_links_follows_symlink_to_fifo_specials_disabled_skips() {
     }));
 }
 
-// ==================== copy_unsafe_links with Broken Unsafe Symlink ====================
 
 #[cfg(unix)]
 #[test]
@@ -1252,7 +1239,6 @@ fn execute_copy_unsafe_links_broken_target_errors() {
     assert!(!dest_dir.join("broken_unsafe").exists());
 }
 
-// ==================== copy_dirlinks in Directory Tree ====================
 
 #[cfg(unix)]
 #[test]
@@ -1322,7 +1308,6 @@ fn execute_copy_dirlinks_follows_dir_symlink_but_preserves_file_symlink_in_tree(
     );
 }
 
-// ==================== safe_links Combined with copy_dirlinks ====================
 
 #[cfg(unix)]
 #[test]
@@ -1387,7 +1372,6 @@ fn execute_safe_links_with_copy_dirlinks_follows_unsafe_dir_symlink() {
     );
 }
 
-// ==================== FIFO Events with Collect Events ====================
 
 #[cfg(unix)]
 #[test]
@@ -1421,7 +1405,6 @@ fn execute_fifo_produces_fifo_copied_event() {
     );
 }
 
-// ==================== copy_links with Symlink Pointing to Symlink to File ====================
 
 #[cfg(unix)]
 #[test]
@@ -1480,7 +1463,6 @@ fn execute_copy_links_follows_nested_symlink_chain_to_regular_file() {
     assert_eq!(summary.files_copied(), 3);
 }
 
-// ==================== copy_links Overrides links Option ====================
 
 #[cfg(unix)]
 #[test]
@@ -1528,7 +1510,6 @@ fn execute_copy_links_overrides_links_option() {
     assert_eq!(summary.symlinks_copied(), 0);
 }
 
-// ==================== Symlink Without links Option Skipped ====================
 
 #[cfg(unix)]
 #[test]
@@ -1570,7 +1551,6 @@ fn execute_without_links_skips_symlink_records_event() {
     }));
 }
 
-// ==================== Specials Combined with All Metadata Options ====================
 
 #[cfg(all(
     unix,
@@ -1647,7 +1627,6 @@ fn execute_fifo_with_archive_options_preserves_all_metadata() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== copy_unsafe_links Preserves Safe Symlink in Dir Tree ====================
 
 #[cfg(unix)]
 #[test]
@@ -1714,7 +1693,6 @@ fn execute_copy_unsafe_links_in_tree_preserves_safe_and_dereferences_unsafe() {
     assert_eq!(summary.files_copied(), 2); // inside.txt + dereferenced unsafe
 }
 
-// ==================== keep_dirlinks with Multiple Nested Symlink Directories ====================
 
 #[cfg(unix)]
 #[test]
@@ -1770,7 +1748,6 @@ fn execute_keep_dirlinks_multiple_symlink_subdirs_all_preserved() {
     assert_eq!(fs::read(real_beta.join("b.txt")).expect("read"), b"beta");
 }
 
-// ==================== Dry Run with Specials and Symlinks Together ====================
 
 #[cfg(all(
     unix,

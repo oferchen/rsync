@@ -346,8 +346,6 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
 
-    // ==================== parse_stop_after_argument tests ====================
-
     #[test]
     fn stop_after_valid_minutes() {
         let result = parse_stop_after_argument(&OsString::from("10"));
@@ -434,8 +432,6 @@ mod tests {
         assert!(duration.as_secs() >= 86398 && duration.as_secs() <= 86402);
     }
 
-    // ==================== parse_stop_at_argument tests ====================
-
     #[test]
     fn stop_at_rejects_empty() {
         let result = parse_stop_at_argument(&OsString::from(""));
@@ -477,8 +473,6 @@ mod tests {
         let result = parse_stop_at_argument(&OsString::from("2025-01-32"));
         assert!(result.is_err());
     }
-
-    // ==================== parse_stop_at_internal tests ====================
 
     #[test]
     fn stop_at_internal_empty_input() {
@@ -553,8 +547,6 @@ mod tests {
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
-    // ==================== StopAtError and BuildError tests ====================
-
     #[test]
     fn stop_at_error_debug() {
         let error = StopAtError::InvalidFormat;
@@ -604,8 +596,6 @@ mod tests {
         assert!(matches!(stop_error, StopAtError::LocalOffset));
     }
 
-    // ==================== offset_datetime_to_system_time tests ====================
-
     #[test]
     fn offset_datetime_converts_epoch() {
         let epoch = OffsetDateTime::UNIX_EPOCH;
@@ -625,8 +615,6 @@ mod tests {
         // Verify it's after now
         assert!(result.unwrap() > SystemTime::now());
     }
-
-    // ==================== Helper function tests ====================
 
     #[test]
     fn invalid_stop_after_message_contains_value() {
@@ -651,8 +639,6 @@ mod tests {
         assert!(text.contains("past_time"));
         assert!(text.contains("not in the future"));
     }
-
-    // ==================== Date separator tests ====================
 
     #[test]
     fn stop_at_internal_dash_separator() {
@@ -682,8 +668,6 @@ mod tests {
                 || matches!(result, Err(StopAtError::LocalOffset))
         );
     }
-
-    // ==================== Two-digit year tests ====================
 
     #[test]
     fn stop_at_internal_two_digit_year_future() {

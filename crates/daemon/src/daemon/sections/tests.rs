@@ -19,7 +19,6 @@ fn canonical_option_trims_prefix_and_normalises_case() {
     assert_eq!(canonical_option("   CHECKSUM=md5"), "checksum");
 }
 
-// ==================== refused_option glob pattern tests ====================
 
 #[test]
 fn refused_option_exact_match() {
@@ -281,7 +280,6 @@ fn is_vital_option_rejects_non_vitals() {
     assert!(!is_vital_option("archive"));
 }
 
-// ==================== ProgramName tests ====================
 
 #[test]
 fn program_name_rsyncd_as_str() {
@@ -328,7 +326,6 @@ fn program_name_debug() {
     assert!(debug.contains("OcRsyncd"));
 }
 
-// ==================== parse_args tests ====================
 
 #[test]
 fn parse_args_empty_defaults_to_program_name() {
@@ -416,7 +413,6 @@ fn parse_args_hyphenated_values_in_remainder() {
     assert!(parsed.remainder.iter().any(|a| a == "--no-detach"));
 }
 
-// ==================== clap_command tests ====================
 
 #[test]
 fn clap_command_creates_command() {
@@ -438,7 +434,6 @@ fn clap_command_has_version_arg() {
     assert!(args.iter().any(|a| a.get_id() == "version"));
 }
 
-// ==================== render_help tests ====================
 
 #[test]
 fn render_help_rsyncd_contains_program_name() {
@@ -452,7 +447,6 @@ fn render_help_oc_rsyncd_contains_program_name() {
     assert!(!help.is_empty());
 }
 
-// ==================== apply_daemon_param_overrides tests ====================
 
 #[test]
 fn apply_daemon_param_overrides_sets_read_only() {

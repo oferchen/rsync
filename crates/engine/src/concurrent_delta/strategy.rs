@@ -311,8 +311,6 @@ mod tests {
         assert_eq!(strategy.kind(), DeltaWorkKind::Delta);
     }
 
-    // ==================== Sequence propagation tests ====================
-
     #[test]
     fn dispatch_propagates_sequence_whole_file() {
         let work = DeltaWork::whole_file(0, PathBuf::from("/dest/a"), 256).with_sequence(17);

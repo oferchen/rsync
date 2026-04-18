@@ -24,7 +24,6 @@ mod xattr_tests {
         }
     }
 
-    // ==================== Basic xattr Preservation Tests ====================
 
     #[test]
     fn execute_copies_file_with_single_xattr() {
@@ -92,7 +91,6 @@ mod xattr_tests {
         assert!(dest_xattr.is_none(), "xattr should not be copied without --xattrs");
     }
 
-    // ==================== Multiple xattrs Tests ====================
 
     #[test]
     fn execute_copies_multiple_xattrs_on_same_file() {
@@ -196,7 +194,6 @@ mod xattr_tests {
         }
     }
 
-    // ==================== Large xattr Value Tests ====================
 
     #[test]
     fn execute_copies_large_xattr_value() {
@@ -311,7 +308,6 @@ mod xattr_tests {
         assert!(copied.is_empty());
     }
 
-    // ==================== xattr on Directories Tests ====================
 
     #[test]
     fn execute_copies_xattr_on_directory() {
@@ -454,7 +450,6 @@ mod xattr_tests {
         );
     }
 
-    // ==================== xattr Update/Sync Tests ====================
 
     #[test]
     fn execute_updates_existing_xattr_value() {
@@ -589,7 +584,6 @@ mod xattr_tests {
         );
     }
 
-    // ==================== xattr Filter Tests ====================
 
     #[test]
     fn execute_xattr_filter_excludes_specific_attrs() {
@@ -705,7 +699,6 @@ mod xattr_tests {
         );
     }
 
-    // ==================== Dry Run Tests ====================
 
     #[test]
     fn execute_dry_run_does_not_copy_xattrs() {
@@ -739,7 +732,6 @@ mod xattr_tests {
         assert!(!destination.exists(), "dry run should not create file");
     }
 
-    // ==================== Edge Cases ====================
 
     #[test]
     fn execute_handles_special_characters_in_xattr_name() {
@@ -925,7 +917,6 @@ mod xattr_tests {
         );
     }
 
-    // ==================== Symlink xattr Tests ====================
 
     #[cfg(unix)]
     #[test]

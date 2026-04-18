@@ -270,8 +270,6 @@ fn parse_bandwidth_rejects_excessive_exponent() {
     assert_eq!(error, BandwidthParseError::TooLarge);
 }
 
-// ==================== Additional edge case tests ====================
-
 #[test]
 fn parse_bandwidth_rejects_empty_string() {
     let error = parse_bandwidth_argument("").unwrap_err();
@@ -384,8 +382,6 @@ proptest! {
         prop_assert_eq!(parsed, Some(expected));
     }
 }
-
-// ==================== Additional coverage tests ====================
 
 #[test]
 fn parse_bandwidth_handles_adjustment_when_product_less_than_denominator() {

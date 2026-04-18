@@ -1383,8 +1383,6 @@ fn no_aes_gcm_injection_when_all_conditions_fail() {
     );
 }
 
-// --- ConnectTimeout injection tests ---
-
 #[test]
 fn connect_timeout_injected_by_default() {
     let command = SshCommand::new("example.com");

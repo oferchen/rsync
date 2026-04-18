@@ -32,8 +32,6 @@ fn default_inputs() -> MetadataInputs<'static> {
     }
 }
 
-// --- archive mode ---
-
 #[test]
 fn archive_false_defaults_to_no_preservation() {
     let result = compute_metadata_settings(default_inputs()).unwrap();
@@ -61,8 +59,6 @@ fn archive_true_enables_preservation() {
     assert!(result.preserve_specials);
     assert!(result.preserve_symlinks);
 }
-
-// --- explicit flag overrides ---
 
 #[test]
 fn explicit_owner_overrides_archive() {
@@ -124,8 +120,6 @@ fn explicit_links_overrides_archive() {
     assert!(!compute_metadata_settings(inputs).unwrap().preserve_symlinks);
 }
 
-// --- super_mode ---
-
 #[test]
 fn super_mode_enables_owner() {
     let mut inputs = default_inputs();
@@ -150,8 +144,6 @@ fn super_mode_enables_perms() {
             .preserve_permissions
     );
 }
-
-// --- executability ---
 
 #[test]
 fn executability_follows_perms_when_enabled() {
@@ -181,8 +173,6 @@ fn executability_defaults_to_false() {
             .preserve_executability
     );
 }
-
-// --- atime / crtime ---
 
 #[test]
 fn atimes_defaults_to_false() {
@@ -216,8 +206,6 @@ fn crtimes_explicit_true() {
     assert!(compute_metadata_settings(inputs).unwrap().preserve_crtimes);
 }
 
-// --- omit times ---
-
 #[test]
 fn omit_dir_times_defaults_to_false() {
     assert!(
@@ -249,8 +237,6 @@ fn omit_link_times_explicit_true() {
     inputs.omit_link_times = Some(true);
     assert!(compute_metadata_settings(inputs).unwrap().omit_link_times);
 }
-
-// --- link handling ---
 
 #[test]
 fn hard_links_defaults_to_false() {
@@ -320,8 +306,6 @@ fn keep_dirlinks_explicit_true() {
     assert!(compute_metadata_settings(inputs).unwrap().keep_dirlinks);
 }
 
-// --- sparse ---
-
 #[test]
 fn sparse_defaults_to_false() {
     assert!(!compute_metadata_settings(default_inputs()).unwrap().sparse);
@@ -333,8 +317,6 @@ fn sparse_explicit_true() {
     inputs.sparse = Some(true);
     assert!(compute_metadata_settings(inputs).unwrap().sparse);
 }
-
-// --- relative and one_file_system ---
 
 #[test]
 fn relative_defaults_to_false() {
@@ -382,8 +364,6 @@ fn one_file_system_explicit_double() {
     );
 }
 
-// --- chmod ---
-
 #[test]
 fn no_chmod_returns_none() {
     assert!(
@@ -414,8 +394,6 @@ fn invalid_chmod_returns_error() {
     inputs.chmod = &chmod_specs;
     assert!(compute_metadata_settings(inputs).is_err());
 }
-
-// --- struct accessibility ---
 
 #[test]
 fn metadata_settings_all_fields_accessible() {

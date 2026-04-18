@@ -32,7 +32,6 @@ fn daemon_itemize_pull_reports_events() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (served by daemon, read-only) ---
     let source_dir = temp.path().join("source");
     let source_subdir = source_dir.join("subdir");
     fs::create_dir_all(&source_subdir).expect("create source/subdir");
@@ -41,7 +40,6 @@ fn daemon_itemize_pull_reports_events() {
     fs::write(source_dir.join("existing.txt"), b"updated content\n").expect("write existing");
     fs::write(source_subdir.join("nested.txt"), b"nested content\n").expect("write nested");
 
-    // --- Destination (client side) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
@@ -52,7 +50,6 @@ fn daemon_itemize_pull_reports_events() {
     filetime::set_file_mtime(dest_dir.join("existing.txt"), old_time)
         .expect("backdate dest existing");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pullmod]\n\
@@ -80,7 +77,6 @@ fn daemon_itemize_pull_reports_events() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Run client pull with verbosity to trigger itemize output ---
     let rsync_url = format!("rsync://127.0.0.1:{port}/pullmod/");
 
     let client_config = core::client::ClientConfig::builder()
@@ -99,7 +95,6 @@ fn daemon_itemize_pull_reports_events() {
         }
     };
 
-    // --- Verify files arrived at destination ---
     assert_eq!(
         fs::read(dest_dir.join("new_file.txt")).expect("read new_file"),
         b"brand new content\n",
@@ -116,7 +111,6 @@ fn daemon_itemize_pull_reports_events() {
         "nested.txt content mismatch"
     );
 
-    // --- Verify events contain expected itemize entries ---
     let events = summary.events();
 
     // Collect DataCopied events by relative path

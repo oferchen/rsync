@@ -571,9 +571,7 @@ fn multiplex_reader_redo_and_no_send_interleaved() {
     assert_eq!(mux.no_send_indices, vec![7]);
 }
 
-// =========================================================================
 // Batch recorder tests
-// =========================================================================
 
 #[test]
 fn multiplex_reader_batch_recorder_captures_demuxed_data() {
@@ -721,9 +719,7 @@ fn batch_recorder_roundtrip_writer_reader_capture_same_data() {
     assert_eq!(&*write_recorded, b"roundtrip test data");
 }
 
-// =========================================================================
 // Batch recorder + compression tests
-// =========================================================================
 //
 // upstream: io.c:read_buf() tees data to batch_fd BEFORE decompression.
 // The batch recorder must stay on MultiplexReader (not CompressedReader)

@@ -1,7 +1,5 @@
 use crate::frontend::itemize::*;
 
-// ---- Length is always 11 ----
-
 #[test]
 fn format_length_is_always_eleven() {
     let changes = vec![
@@ -32,8 +30,6 @@ fn format_length_is_always_eleven() {
     }
 }
 
-// ---- New file ignores individual change flags ----
-
 #[test]
 fn new_file_overrides_individual_flags() {
     let change = ItemizeChange::new()
@@ -46,8 +42,6 @@ fn new_file_overrides_individual_flags() {
     assert_eq!(change.format(), ">f+++++++++");
 }
 
-// ---- Typical content update pattern ----
-
 #[test]
 fn format_typical_content_update() {
     let change = ItemizeChange::new()
@@ -59,8 +53,6 @@ fn format_typical_content_update() {
     assert_eq!(change.format(), ">fcst......");
 }
 
-// ---- Directory with time update ----
-
 #[test]
 fn format_directory_time_update() {
     let change = ItemizeChange::new()
@@ -69,8 +61,6 @@ fn format_directory_time_update() {
         .with_time_changed(true);
     assert_eq!(change.format(), ">d..t......");
 }
-
-// ---- Missing data fills attribute positions with '?' ----
 
 #[test]
 fn format_missing_data_shows_question_marks() {

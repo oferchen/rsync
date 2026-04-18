@@ -22,7 +22,6 @@ fn daemon_delete_push_removes_extraneous_destination_files() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
@@ -30,11 +29,9 @@ fn daemon_delete_push_removes_extraneous_destination_files() {
     fs::write(source_dir.join("file_b.txt"), "contents of file B\n").expect("write file_b");
     fs::write(source_dir.join("file_c.txt"), "contents of file C\n").expect("write file_c");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config with max-sessions=4 (probe + 2 pushes + margin) ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\

@@ -1,5 +1,4 @@
 
-// ============================================================================
 // Filter program engine tests
 //
 // Exercises the filter evaluation engine (FilterOutcome, FilterSegment,
@@ -18,7 +17,6 @@
 // - Directory-only patterns require the is_dir flag.
 // - Empty programs allow everything.
 // - Programs with multiple segments compose correctly.
-// ============================================================================
 
 #[test]
 fn filter_outcome_default_allows_transfer_and_deletion() {

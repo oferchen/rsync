@@ -41,7 +41,6 @@ fn daemon_hardlinks_relative_receive_preserves_links() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) with nested directories ---
     let source_dir = temp.path().join("source");
 
     // Create x/ directory with a hard-link pair
@@ -73,11 +72,9 @@ fn daemon_hardlinks_relative_receive_preserves_links() {
         "source alpha.txt and alpha_link.txt must share an inode"
     );
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -105,7 +102,6 @@ fn daemon_hardlinks_relative_receive_preserves_links() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Run client push with -H -R ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");

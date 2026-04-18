@@ -1,5 +1,4 @@
 
-// ==================== Basic Copy-Dest Tests ====================
 
 #[test]
 fn copy_dest_identical_file_is_copied_not_linked() {
@@ -135,7 +134,6 @@ fn copy_dest_missing_file_transfers_normally() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== Multiple Copy-Dest Directories Tests ====================
 
 #[test]
 fn copy_dest_multiple_directories_checks_in_order() {
@@ -244,7 +242,6 @@ fn copy_dest_multiple_directories_uses_first_match() {
     }
 }
 
-// ==================== Copy-Dest vs Compare-Dest Tests ====================
 
 #[test]
 fn copy_dest_creates_file_while_compare_dest_skips() {
@@ -314,7 +311,6 @@ fn copy_dest_creates_file_while_compare_dest_skips() {
     assert_eq!(summary_copy.files_copied(), 1);
 }
 
-// ==================== Copy-Dest with Directory Trees ====================
 
 #[test]
 fn copy_dest_works_with_directory_trees() {
@@ -417,7 +413,6 @@ fn copy_dest_mixed_existing_and_new_files() {
     assert_eq!(summary.files_copied(), 3);
 }
 
-// ==================== Copy-Dest with Checksum Tests ====================
 
 #[test]
 fn copy_dest_with_checksum_validates_content() {
@@ -469,7 +464,6 @@ fn copy_dest_with_checksum_validates_content() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== Edge Cases ====================
 
 #[test]
 fn copy_dest_ignores_non_regular_files() {
@@ -592,7 +586,6 @@ fn copy_dest_empty_reference_directory() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== Copy-Dest with Inplace Mode Tests ====================
 
 #[test]
 fn copy_dest_with_inplace_mode_still_copies() {
@@ -639,7 +632,6 @@ fn copy_dest_with_inplace_mode_still_copies() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== Copy-Dest with Nonexistent Directory Tests ====================
 
 #[test]
 fn copy_dest_nonexistent_directory_transfers_normally() {
@@ -676,7 +668,6 @@ fn copy_dest_nonexistent_directory_transfers_normally() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== Copy-Dest with Zero-Length File Tests ====================
 
 #[test]
 fn copy_dest_copies_zero_length_file() {

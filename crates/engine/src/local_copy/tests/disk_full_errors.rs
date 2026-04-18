@@ -11,7 +11,6 @@
 // 5. Error messages include path context
 // 6. Guard behavior on disk full errors (temp file cleanup)
 
-// ==================== LocalCopyError Construction Tests ====================
 
 #[test]
 fn local_copy_error_from_disk_full_io_error() {
@@ -62,7 +61,6 @@ fn local_copy_error_disk_full_code_name_is_rerr_partial() {
     assert_eq!(error.code_name(), "RERR_PARTIAL");
 }
 
-// ==================== Error Kind Detection Tests ====================
 
 #[test]
 fn detect_storage_full_error_kind() {
@@ -90,7 +88,6 @@ fn raw_os_error_enospc_detected_as_storage_full() {
     assert_eq!(enospc.raw_os_error(), Some(28));
 }
 
-// ==================== Error Message Quality Tests ====================
 
 #[test]
 fn disk_full_error_message_includes_action_context() {
@@ -153,7 +150,6 @@ fn disk_full_error_preserves_original_io_error_message() {
     }
 }
 
-// ==================== DestinationWriteGuard Cleanup Tests ====================
 
 #[test]
 fn guard_discard_cleans_up_temp_file_on_disk_full() {
@@ -213,7 +209,6 @@ fn guard_partial_mode_preserves_file_on_discard() {
     );
 }
 
-// ==================== Guard Remove Functions Tests ====================
 
 #[test]
 fn remove_existing_destination_handles_disk_full_context() {
@@ -247,7 +242,6 @@ fn remove_incomplete_destination_silent_on_not_found() {
     remove_incomplete_destination(&path);
 }
 
-// ==================== Exit Code Verification Tests ====================
 
 #[test]
 fn io_error_exit_code_is_23_for_general_io_errors() {
@@ -290,7 +284,6 @@ fn io_error_exit_code_matches_upstream_rerr_partial() {
     assert_eq!(error.exit_code(), 23);
 }
 
-// ==================== Error Source Chain Tests ====================
 
 #[test]
 fn disk_full_error_has_source() {
@@ -315,7 +308,6 @@ fn disk_full_error_debug_format_includes_details() {
     assert!(debug.contains("write file"));
 }
 
-// ==================== Real File Operation Tests ====================
 
 #[test]
 #[cfg(unix)]
@@ -369,7 +361,6 @@ fn directory_write_error_propagates_correctly() {
     }
 }
 
-// ==================== Error Kind Extraction Tests ====================
 
 #[test]
 fn local_copy_error_kind_as_io_returns_components() {
@@ -400,7 +391,6 @@ fn local_copy_error_into_kind_consumes_error() {
     assert!(matches!(kind, LocalCopyErrorKind::Io { .. }));
 }
 
-// ==================== Comparison with Other Error Types ====================
 
 #[test]
 fn disk_full_vs_general_io_errors_have_same_exit_code() {
@@ -435,7 +425,6 @@ fn io_errors_have_different_code_name_than_timeout() {
     assert_ne!(io_error.code_name(), timeout_error.code_name());
 }
 
-// ==================== Large File Handling Tests ====================
 
 #[test]
 fn error_context_preserved_for_large_file_paths() {
@@ -469,7 +458,6 @@ fn error_for_special_characters_in_path() {
     }
 }
 
-// ==================== Concurrent Error Handling Tests ====================
 
 #[test]
 fn multiple_disk_full_errors_are_independent() {
@@ -491,7 +479,6 @@ fn multiple_disk_full_errors_are_independent() {
     }
 }
 
-// ==================== Partial Transfer Behavior Tests ====================
 
 #[test]
 fn disk_full_during_copy_preserves_partial_file_in_partial_mode() {
@@ -535,7 +522,6 @@ fn disk_full_during_copy_removes_temp_file_in_normal_mode() {
     assert!(!staging.exists(), "Temp file should be removed in normal mode");
 }
 
-// ==================== Error Recovery Tests ====================
 
 #[test]
 fn can_retry_after_disk_full_error() {
@@ -584,7 +570,6 @@ fn multiple_failed_attempts_clean_up_properly() {
     assert_eq!(fs::read(&dest).expect("read"), b"final success");
 }
 
-// ==================== Read-Only Filesystem Error Tests ====================
 
 #[test]
 fn readonly_filesystem_error_maps_correctly() {

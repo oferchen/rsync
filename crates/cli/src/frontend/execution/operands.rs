@@ -110,8 +110,6 @@ fn resolve_bind_address(text: &str) -> io::Result<SocketAddr> {
 mod tests {
     use super::*;
 
-    // ==================== is_option tests ====================
-
     #[test]
     fn is_option_single_dash_with_letter() {
         assert!(is_option(OsStr::new("-a")));
@@ -161,8 +159,6 @@ mod tests {
         assert!(is_option(OsStr::new("--port=8873")));
         assert!(is_option(OsStr::new("--config=/etc/rsyncd.conf")));
     }
-
-    // ==================== extract_operands tests ====================
 
     #[test]
     fn extract_operands_no_options() {
@@ -242,8 +238,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ==================== UnsupportedOption tests ====================
-
     #[test]
     fn unsupported_option_to_message_contains_option() {
         let unsupported = UnsupportedOption::new(OsString::from("--unknown-opt"));
@@ -251,8 +245,6 @@ mod tests {
         let text = format!("{message}");
         assert!(text.contains("--unknown-opt"));
     }
-
-    // ==================== parse_bind_address_argument tests ====================
 
     #[test]
     fn parse_bind_address_empty_value() {

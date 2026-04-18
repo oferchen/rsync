@@ -452,7 +452,6 @@ mod module_access_tests {
         assert!(!line.ends_with("\n\n"), "line must not have double newline");
     }
 
-    // --- check_secrets_file_permissions tests (Unix only) ---
 
     #[cfg(unix)]
     #[test]
@@ -506,7 +505,6 @@ mod module_access_tests {
         assert!(check_secrets_file_permissions(&secrets).is_ok());
     }
 
-    // --- verify_secret_response strict_modes enforcement tests ---
 
     #[cfg(unix)]
     #[test]
@@ -575,7 +573,6 @@ mod module_access_tests {
         assert!(!result, "auth should fail due to wrong response");
     }
 
-    // ==================== secluded-args daemon tests ====================
 
     #[test]
     fn read_client_arguments_normal_protocol30() {
@@ -635,7 +632,6 @@ mod module_access_tests {
         );
     }
 
-    // --- temp_dir wiring tests ---
 
     #[test]
     fn apply_long_form_args_parses_temp_dir_separate_args() {
@@ -676,7 +672,6 @@ mod module_access_tests {
         assert!(config.temp_dir.is_none());
     }
 
-    // --- reference directory wiring tests ---
 
     #[test]
     fn apply_long_form_args_parses_compare_dest_equals_format() {
@@ -912,7 +907,6 @@ mod module_access_tests {
         assert!(list.matches_path(Path::new("archive.bz2")));
     }
 
-    // ==================== build_daemon_filter_rules tests ====================
 
     fn test_module_with_defaults() -> ModuleRuntime {
         ModuleRuntime::from(ModuleDefinition::default())
@@ -1152,7 +1146,6 @@ mod module_access_tests {
         assert_eq!(rules[1].pattern, "*.bak");
     }
 
-    // ==================== build_pattern_rule tests ====================
 
     #[test]
     fn build_pattern_rule_exclude() {
@@ -1192,7 +1185,6 @@ mod module_access_tests {
         assert_eq!(rule.pattern, "build/");
     }
 
-    // ==================== parse_daemon_filter_token tests ====================
 
     #[test]
     fn parse_daemon_filter_token_exclude() {
@@ -1226,7 +1218,6 @@ mod module_access_tests {
         assert!(parse_daemon_filter_token("+").is_none());
     }
 
-    // ==================== keyword prefix tests (upstream exclude.c:1134-1178) ====================
 
     #[test]
     fn parse_daemon_filter_token_exclude_keyword() {
@@ -1311,7 +1302,6 @@ mod module_access_tests {
         assert!(parse_daemon_filter_token("include ").is_none());
     }
 
-    // ==================== strip_keyword_prefix tests ====================
 
     #[test]
     fn strip_keyword_prefix_space_separator() {
@@ -1339,7 +1329,6 @@ mod module_access_tests {
         assert_eq!(strip_keyword_prefix("include *.tmp", "exclude"), None);
     }
 
-    // ==================== read_patterns_from_file tests ====================
 
     #[test]
     fn read_patterns_from_file_basic() {
@@ -1462,7 +1451,6 @@ mod module_access_tests {
         assert!(has_secluded_args_flag(&args));
     }
 
-    // --- backup-dir wiring tests ---
 
     #[test]
     fn apply_long_form_args_parses_backup_dir_two_arg() {

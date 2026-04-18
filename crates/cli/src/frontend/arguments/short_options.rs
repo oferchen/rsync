@@ -117,8 +117,6 @@ fn expand_cluster(
 mod tests {
     use super::*;
 
-    // ==================== expand_cluster tests ====================
-
     fn make_flags(chars: &str) -> HashSet<char> {
         chars.chars().collect()
     }

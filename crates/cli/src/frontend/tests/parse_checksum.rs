@@ -35,8 +35,6 @@ fn parse_checksum_seed_argument_rejects_non_numeric() {
     );
 }
 
-// ===== Additional edge case tests (task #99) =====
-
 #[test]
 fn parse_checksum_seed_argument_rejects_overflow_u32() {
     // u32::MAX + 1 = 4294967296 should fail

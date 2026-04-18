@@ -120,8 +120,6 @@ pub(super) fn parse_short_merge_directive_line(
 mod tests {
     use super::*;
 
-    // ==================== parse_merge_directive tests ====================
-
     #[test]
     fn parse_merge_directive_returns_none_for_non_merge() {
         let result = parse_merge_directive("include *.txt");
@@ -187,8 +185,6 @@ mod tests {
         let result = parse_merge_directive("merge ");
         assert!(result.is_err());
     }
-
-    // ==================== parse_short_merge_directive_line tests ====================
 
     #[test]
     fn parse_short_merge_returns_none_for_empty() {

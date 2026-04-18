@@ -8,7 +8,6 @@
 // providing a single, comprehensive test suite focused exclusively on dry-run
 // semantics as documented in the rsync(1) man page.
 
-// ==================== Basic Dry-Run Semantics ====================
 
 #[test]
 fn dry_run_single_file_lists_but_does_not_copy() {
@@ -123,7 +122,6 @@ fn dry_run_preserves_existing_destination_unmodified() {
     );
 }
 
-// ==================== Directory Structure in Dry-Run ====================
 
 #[test]
 fn dry_run_directory_tree_not_created() {
@@ -190,7 +188,6 @@ fn dry_run_empty_directory_tree_reported() {
     assert!(!ctx.dest.exists(), "no destination should be created");
 }
 
-// ==================== Dry-Run with --delete ====================
 
 #[test]
 fn dry_run_with_delete_reports_deletions_but_preserves_files() {
@@ -324,7 +321,6 @@ fn dry_run_with_delete_during_reports_interleaved_events() {
     assert_eq!(fs::read(dest.join("keep.txt")).expect("read"), b"old");
 }
 
-// ==================== Dry-Run with Filters ====================
 
 #[test]
 fn dry_run_with_exclude_filter_omits_excluded_files() {
@@ -403,7 +399,6 @@ fn dry_run_with_include_exclude_filter_chain() {
     assert_eq!(paths, vec!["important.cfg"]);
 }
 
-// ==================== Dry-Run Records and Metadata ====================
 
 #[test]
 fn dry_run_records_contain_file_metadata() {
@@ -500,7 +495,6 @@ fn dry_run_records_update_is_not_marked_as_created() {
     assert_eq!(fs::read(&destination).expect("read"), b"old");
 }
 
-// ==================== Dry-Run Statistics ====================
 
 #[test]
 fn dry_run_statistics_match_apply_mode_statistics() {
@@ -597,7 +591,6 @@ fn dry_run_empty_files_reported() {
     assert!(!ctx.dest.exists());
 }
 
-// ==================== Dry-Run Combined With Various Options ====================
 
 #[test]
 fn dry_run_with_times_does_not_set_timestamps() {
@@ -757,7 +750,6 @@ fn dry_run_with_checksum_mode_reports_correctly() {
     assert!(!destination.exists());
 }
 
-// ==================== Dry-Run with Symlinks ====================
 
 #[cfg(unix)]
 #[test]
@@ -782,7 +774,6 @@ fn dry_run_does_not_create_symlinks() {
     assert!(!ctx.dest.exists(), "no destination should be created in dry run");
 }
 
-// ==================== Dry-Run with delete + filters interaction ====================
 
 #[test]
 fn dry_run_delete_respects_exclude_filters() {
@@ -822,7 +813,6 @@ fn dry_run_delete_respects_exclude_filters() {
     assert!(dest.join("keep.txt").exists());
 }
 
-// ==================== Dry-Run Multiple Files ====================
 
 #[test]
 fn dry_run_multiple_files_all_reported() {
@@ -858,7 +848,6 @@ fn dry_run_multiple_files_all_reported() {
     assert!(!ctx.dest.exists());
 }
 
-// ==================== Dry-Run Idempotency ====================
 
 #[test]
 fn dry_run_is_idempotent() {
@@ -881,7 +870,6 @@ fn dry_run_is_idempotent() {
     }
 }
 
-// ==================== Dry-Run with large files ====================
 
 #[test]
 fn dry_run_large_file_reports_correct_byte_count() {
@@ -907,7 +895,6 @@ fn dry_run_large_file_reports_correct_byte_count() {
     assert!(!destination.exists());
 }
 
-// ==================== Dry-Run with matched (up-to-date) files ====================
 
 #[test]
 fn dry_run_reports_matched_file_as_would_copy() {
@@ -948,7 +935,6 @@ fn dry_run_reports_matched_file_as_would_copy() {
     );
 }
 
-// ==================== Dry-Run with backup option ====================
 
 #[test]
 fn dry_run_with_backup_does_not_create_backup_files() {
@@ -985,7 +971,6 @@ fn dry_run_with_backup_does_not_create_backup_files() {
     assert_eq!(fs::read(&destination).expect("read"), b"old");
 }
 
-// ==================== Dry-Run with recursive nested tree ====================
 
 #[test]
 fn dry_run_deeply_nested_tree_all_reported() {
@@ -1020,7 +1005,6 @@ fn dry_run_deeply_nested_tree_all_reported() {
     assert!(!ctx.dest.exists());
 }
 
-// ==================== Dry-Run with --whole-file ====================
 
 #[test]
 fn dry_run_whole_file_reports_transfer() {
@@ -1047,7 +1031,6 @@ fn dry_run_whole_file_reports_transfer() {
     assert!(!destination.exists());
 }
 
-// ==================== Dry-Run with --inplace ====================
 
 #[test]
 fn dry_run_with_inplace_does_not_modify_destination() {

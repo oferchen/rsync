@@ -594,8 +594,6 @@ mod tests {
         assert_eq!(*result.status(), DeltaResultStatus::Success);
     }
 
-    // ==================== ParallelDeltaPipeline tests ====================
-
     #[test]
     fn parallel_submit_and_flush() {
         let mut pipeline = ParallelDeltaPipeline::new(2);
@@ -762,8 +760,6 @@ mod tests {
         }
         assert_eq!(prev_seq, Some(19));
     }
-
-    // ==================== ThresholdDeltaPipeline tests ====================
 
     #[test]
     fn threshold_below_threshold_uses_sequential() {
@@ -987,8 +983,6 @@ mod tests {
         }
     }
 
-    // ==================== Integration tests ====================
-
     #[test]
     fn parallel_1000_small_files_all_ordered_and_successful() {
         let mut pipeline = ParallelDeltaPipeline::new(4);
@@ -1091,8 +1085,6 @@ mod tests {
             );
         }
     }
-
-    // ==================== Consumer thread integration tests ====================
 
     #[test]
     fn parallel_poll_yields_streaming_results_during_submission() {

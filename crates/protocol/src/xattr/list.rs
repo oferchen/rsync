@@ -198,8 +198,6 @@ mod tests {
         assert!(list.find_by_name(b"user.missing").is_none());
     }
 
-    // ==================== Additional Comprehensive Tests ====================
-
     #[test]
     fn list_default_is_empty() {
         let list = XattrList::default();

@@ -37,7 +37,6 @@ fn daemon_unicode_emoji_filenames_roundtrip() {
     let emoji_dir_name = "\u{1F4C2}_folder"; // U+1F4C2 OPEN FILE FOLDER (4-byte UTF-8)
     let nested_name = "nested.txt";
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     let source_emoji_subdir = source_dir.join(emoji_dir_name);
     fs::create_dir_all(&source_emoji_subdir).expect("create source emoji subdir");
@@ -48,11 +47,9 @@ fn daemon_unicode_emoji_filenames_roundtrip() {
     fs::write(source_emoji_subdir.join(nested_name), b"nested payload\n")
         .expect("write nested in emoji dir");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -80,7 +77,6 @@ fn daemon_unicode_emoji_filenames_roundtrip() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Run client push ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");
@@ -99,7 +95,6 @@ fn daemon_unicode_emoji_filenames_roundtrip() {
         }
     }
 
-    // --- Verify destination files ---
     // Use a helper that checks content by scanning directory entries, tolerating
     // possible Unicode normalization differences on macOS.
 

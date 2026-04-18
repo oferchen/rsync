@@ -1,5 +1,4 @@
 
-// ==================== --checksum-seed tests ====================
 //
 // Upstream rsync behavior:
 // - Without --checksum-seed: the seed is negotiated automatically (typically
@@ -8,7 +7,6 @@
 //   producing deterministic results across runs. This is useful for debugging,
 //   testing, and batch mode reproducibility.
 
-// ==================== Option Unit Tests ====================
 
 #[test]
 fn checksum_seed_defaults_to_none() {
@@ -94,7 +92,6 @@ fn checksum_seed_new_defaults_to_none() {
     );
 }
 
-// ==================== Builder Unit Tests ====================
 
 #[test]
 fn checksum_seed_builder_defaults_to_none() {
@@ -187,7 +184,6 @@ fn checksum_seed_build_unchecked_works() {
     );
 }
 
-// ==================== Combination Tests ====================
 
 #[test]
 fn checksum_seed_compatible_with_checksum_mode() {
@@ -232,7 +228,6 @@ fn checksum_seed_without_checksum_mode() {
     assert_eq!(opts.checksum_seed(), Some(42));
 }
 
-// ==================== Functional Tests ====================
 //
 // These tests verify that the local copy engine works correctly when
 // checksum_seed is configured.
@@ -463,7 +458,6 @@ fn transfer_with_checksum_seed_and_delete() {
     assert!(summary.items_deleted() >= 1, "should report deletion");
 }
 
-// ==================== Round-Trip Tests ====================
 
 #[test]
 fn checksum_seed_round_trip_direct() {

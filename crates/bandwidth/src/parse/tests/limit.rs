@@ -238,8 +238,6 @@ fn parse_bandwidth_limit_rejects_missing_burst_value() {
     assert_eq!(error, BandwidthParseError::Invalid);
 }
 
-// ==================== Additional coverage tests for bandwidth limit components ====================
-
 #[test]
 fn constrained_by_clears_burst_when_override_is_unlimited() {
     // Test lines 218-224 in components.rs

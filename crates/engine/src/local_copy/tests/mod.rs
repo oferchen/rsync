@@ -206,8 +206,6 @@ mod test_helpers {
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
-    // ==================== Test Context ====================
-
     /// Test context for copy operations.
     ///
     /// This structure provides a self-contained test environment with:
@@ -311,8 +309,6 @@ mod test_helpers {
         }
     }
 
-    // ==================== Setup Functions ====================
-
     /// Creates a test context with temporary directory and source/dest paths.
     ///
     /// The source directory is created automatically. The dest directory is not
@@ -359,8 +355,6 @@ mod test_helpers {
         std::fs::create_dir_all(&reference).expect("create reference");
         (ctx, reference)
     }
-
-    // ==================== Tree Creation ====================
 
     /// Creates a directory tree for testing.
     ///
@@ -430,8 +424,6 @@ mod test_helpers {
         let mtime = FileTime::from_unix_time(mtime_unix, 0);
         filetime::set_file_times(path, atime, mtime).expect("set times");
     }
-
-    // ==================== Unix-specific Helpers ====================
 
     /// Creates a symbolic link (Unix only).
     #[cfg(unix)]
@@ -510,8 +502,6 @@ mod test_helpers {
         std::fs::metadata(path).expect("metadata").nlink()
     }
 
-    // ==================== Timestamp Helpers ====================
-
     /// A commonly used timestamp for tests (roughly 2023-11-14).
     pub const TEST_TIMESTAMP: i64 = 1_700_000_000;
 
@@ -549,8 +539,6 @@ mod test_helpers {
     pub fn get_mtime(path: &Path) -> FileTime {
         FileTime::from_last_modification_time(&std::fs::metadata(path).expect("metadata"))
     }
-
-    // ==================== Assertion Helpers ====================
 
     /// Asserts that a file exists at the given path.
     #[allow(dead_code)]
@@ -721,8 +709,6 @@ mod test_helpers {
         );
     }
 
-    // ==================== Summary Assertion Helpers ====================
-
     /// Builder for asserting copy summary statistics.
     ///
     /// # Example
@@ -879,8 +865,6 @@ mod test_helpers {
             }
         }
     }
-
-    // ==================== Options Builder Helpers ====================
 
     /// Common option presets for tests.
     pub mod presets {

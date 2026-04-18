@@ -1705,8 +1705,6 @@ fn write_delta_with_compression_plain_fallback() {
     assert!(!encoded.is_empty());
 }
 
-// ---- should_send_del_stats tests ----
-
 #[test]
 fn del_stats_not_sent_without_do_stats() {
     // upstream: INFO_GTE(STATS, 2) is false => never send del_stats
@@ -1996,8 +1994,6 @@ mod legacy_goodbye_tests {
     }
 }
 
-// ==================== files-from tests ====================
-
 mod files_from {
     use super::*;
 
@@ -2220,8 +2216,6 @@ mod files_from {
         assert_eq!(result, vec!["file.txt", "other.txt"]);
     }
 }
-
-// ==================== Per-directory merge filter tests ====================
 
 #[test]
 fn generator_skips_files_matching_per_directory_merge_rules() {

@@ -317,7 +317,6 @@ fn execute_copies_directory_tree() {
     assert!(summary.directories_created() >= 1);
 }
 
-// ==================== Empty File Tests ====================
 
 #[test]
 fn execute_copies_empty_file() {
@@ -365,7 +364,6 @@ fn execute_copies_empty_file_over_existing() {
     assert_eq!(fs::metadata(&destination).expect("metadata").len(), 0);
 }
 
-// ==================== Large File Tests ====================
 
 #[test]
 fn execute_copies_large_file() {
@@ -392,7 +390,6 @@ fn execute_copies_large_file() {
     assert_eq!(fs::read(&destination).expect("read dest"), large_content);
 }
 
-// ==================== Multiple File Tests ====================
 
 #[test]
 fn execute_copies_multiple_files_to_directory() {
@@ -420,7 +417,6 @@ fn execute_copies_multiple_files_to_directory() {
     assert_eq!(fs::read(dest_root.join("file3.txt")).expect("read"), b"content3");
 }
 
-// ==================== Dry Run Tests ====================
 
 #[test]
 fn execute_dry_run_does_not_create_destination() {
@@ -465,7 +461,6 @@ fn execute_dry_run_does_not_modify_existing_destination() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"original");
 }
 
-// ==================== Inplace Mode Tests ====================
 
 #[test]
 fn execute_with_inplace_updates_existing_file() {
@@ -492,7 +487,6 @@ fn execute_with_inplace_updates_existing_file() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"updated content");
 }
 
-// ==================== Partial Mode Tests ====================
 
 #[test]
 fn execute_with_partial_enabled_creates_partial_file_on_success() {
@@ -518,7 +512,6 @@ fn execute_with_partial_enabled_creates_partial_file_on_success() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"partial test");
 }
 
-// ==================== Permissions Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -552,7 +545,6 @@ fn execute_preserves_permissions_when_enabled() {
     assert_eq!(dest_perms.mode() & 0o777, 0o600);
 }
 
-// ==================== Times Preservation Tests ====================
 
 #[test]
 fn execute_preserves_modification_time_when_enabled() {
@@ -584,7 +576,6 @@ fn execute_preserves_modification_time_when_enabled() {
     assert_eq!(dest_mtime, past_time);
 }
 
-// ==================== Whole File Mode Tests ====================
 
 #[test]
 fn execute_with_whole_file_always_copies() {
@@ -617,7 +608,6 @@ fn execute_with_whole_file_always_copies() {
     assert_eq!(summary.files_copied(), 1);
 }
 
-// ==================== Recursive Directory Tests ====================
 
 #[test]
 fn execute_copies_deeply_nested_directory() {
@@ -643,7 +633,6 @@ fn execute_copies_deeply_nested_directory() {
     assert_eq!(fs::read(&dest_file).expect("read deep file"), b"deep content");
 }
 
-// ==================== Error Handling Tests ====================
 
 #[test]
 fn execute_file_copy_to_directory_places_file_inside() {
@@ -671,7 +660,6 @@ fn execute_file_copy_to_directory_places_file_inside() {
     assert_eq!(fs::read(&target_file).expect("read"), b"content");
 }
 
-// ==================== Summary Statistics Tests ====================
 
 #[test]
 fn execute_summary_tracks_total_source_bytes() {
@@ -720,7 +708,6 @@ fn execute_summary_tracks_directories_created() {
     assert!(dest_root.join("dir2").exists());
 }
 
-// ==================== Single File Copy Tests ====================
 
 #[test]
 fn execute_basic_single_file_copy() {
@@ -820,7 +807,6 @@ fn execute_creates_intermediate_directories_when_needed() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"nested");
 }
 
-// ==================== Directory Copy Tests ====================
 
 #[test]
 fn execute_copies_empty_directory() {
@@ -894,7 +880,6 @@ fn execute_copies_nested_directories() {
     assert_eq!(fs::read(dest_root.join("subdir").join("nested.txt")).expect("read"), b"nested");
 }
 
-// ==================== Timestamp Preservation Tests ====================
 
 #[test]
 fn execute_does_not_preserve_timestamps_by_default() {
@@ -1007,7 +992,6 @@ fn execute_preserves_very_old_timestamps() {
     assert_eq!(dest_mtime, very_old);
 }
 
-// ==================== Permission Preservation Tests ====================
 
 #[cfg(unix)]
 #[test]
@@ -1158,7 +1142,6 @@ fn execute_preserves_permissions_across_directory_tree() {
     );
 }
 
-// ==================== Combined Options Tests ====================
 
 #[test]
 fn execute_preserves_both_times_and_permissions() {
@@ -1206,7 +1189,6 @@ fn execute_preserves_both_times_and_permissions() {
     }
 }
 
-// ==================== File Size Tests ====================
 
 #[test]
 fn execute_handles_various_file_sizes() {
@@ -1275,7 +1257,6 @@ fn execute_copies_file_exactly_one_block_size() {
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
 
-// ==================== Binary Data Tests ====================
 
 #[test]
 fn execute_copies_binary_data_correctly() {
@@ -1328,7 +1309,6 @@ fn execute_copies_file_with_null_bytes() {
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }
 
-// ==================== Statistics and Reporting Tests ====================
 
 #[test]
 fn execute_summary_counts_bytes_correctly() {
@@ -1387,7 +1367,6 @@ fn execute_summary_reports_zero_for_no_changes() {
     assert_eq!(summary.bytes_copied(), 0);
 }
 
-// ==================== Edge Cases ====================
 
 #[test]
 fn execute_handles_filename_with_spaces() {
@@ -1494,7 +1473,6 @@ fn execute_copies_multiple_empty_directories() {
     assert!(dest_root.join("empty3").is_dir());
 }
 
-// ==================== Dry Run Validation Tests ====================
 
 #[test]
 fn execute_dry_run_reports_correct_statistics() {

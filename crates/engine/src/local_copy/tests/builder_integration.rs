@@ -12,7 +12,6 @@ use crate::local_copy::{
 use tempfile::tempdir;
 use std::fs;
 
-// ==================== Before: Using Fluent API Directly ====================
 // These tests show the previous pattern (still valid, but more verbose)
 
 #[test]
@@ -34,7 +33,6 @@ fn fluent_api_basic_copy() {
     assert_eq!(fs::read(&dest).expect("read"), b"hello");
 }
 
-// ==================== After: Using Builder Pattern ====================
 // These tests demonstrate cleaner setup with the builder
 
 #[test]

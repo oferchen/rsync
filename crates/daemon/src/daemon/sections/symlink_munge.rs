@@ -13,7 +13,6 @@ pub(crate) use ::metadata::symlink_munge::{munge_symlink, unmunge_symlink};
 mod symlink_munge_tests {
     use super::*;
 
-    // --- munge_symlink tests ---
 
     #[test]
     fn munge_prepends_prefix_to_absolute_path() {
@@ -45,7 +44,6 @@ mod symlink_munge_tests {
         assert_eq!(result, "/rsyncd-munged/.");
     }
 
-    // --- unmunge_symlink tests ---
 
     #[test]
     fn unmunge_strips_prefix() {
@@ -83,7 +81,6 @@ mod symlink_munge_tests {
         assert_eq!(result, Some(String::new()));
     }
 
-    // --- roundtrip tests ---
 
     #[test]
     fn roundtrip_absolute_path() {
@@ -117,7 +114,6 @@ mod symlink_munge_tests {
         assert_eq!(restored, Some(original.to_owned()));
     }
 
-    // --- effective_munge_symlinks tests ---
 
     #[test]
     fn effective_munge_auto_chroot_on() {

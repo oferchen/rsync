@@ -241,8 +241,6 @@ fn connect_program_configuration_error(text: impl Into<String>) -> ClientError {
 mod tests {
     use super::*;
 
-    // ==================== ConnectProgramConfig::new tests ====================
-
     #[test]
     fn connect_program_config_new_valid() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None);
@@ -270,8 +268,6 @@ mod tests {
         assert!(config.unwrap_err().contains("RSYNC_SHELL"));
     }
 
-    // ==================== ConnectProgramConfig::shell tests ====================
-
     #[test]
     fn connect_program_config_shell_none() {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
@@ -283,8 +279,6 @@ mod tests {
         let config = ConnectProgramConfig::new("nc %H %P".into(), Some("/bin/zsh".into())).unwrap();
         assert_eq!(config.shell().unwrap(), "/bin/zsh");
     }
-
-    // ==================== ConnectProgramConfig::format_command tests ====================
 
     #[test]
     fn format_command_substitutes_host() {

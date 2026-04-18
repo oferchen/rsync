@@ -294,7 +294,6 @@ pub(crate) fn load_dir_merge_rules_recursive(
 mod tests {
     use super::*;
 
-    // ==================== resolve_dir_merge_path tests ====================
     // These tests use Unix-style absolute paths (starting with /)
 
     #[cfg(unix)]
@@ -342,8 +341,6 @@ mod tests {
         let result = resolve_dir_merge_path(base, pattern);
         assert_eq!(result, PathBuf::from("/base/."));
     }
-
-    // ==================== DirMergeEntries tests ====================
 
     #[test]
     fn dir_merge_entries_default_is_empty() {
@@ -415,8 +412,6 @@ mod tests {
 
         assert_eq!(entries.rules.len(), 1);
     }
-
-    // ==================== clear_inherited tests ====================
 
     #[test]
     fn dir_merge_entries_default_clear_inherited_is_false() {

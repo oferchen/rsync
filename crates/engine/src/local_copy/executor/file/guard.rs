@@ -662,8 +662,6 @@ mod tests {
         guard.discard();
     }
 
-    // --- Linux-specific anonymous guard tests ---
-
     #[cfg(target_os = "linux")]
     mod anonymous {
         use super::*;

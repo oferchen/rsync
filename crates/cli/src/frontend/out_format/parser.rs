@@ -439,7 +439,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ---- Token content verification tests ----
     //
     // These tests verify that each placeholder letter maps to the correct
     // OutFormatPlaceholder variant, not just that parsing succeeds.
@@ -568,8 +567,6 @@ mod tests {
         assert_single_placeholder("%C", OutFormatPlaceholder::FullChecksum);
     }
 
-    // ---- Escaped percent produces a literal token ----
-
     #[test]
     fn parse_escaped_percent_produces_literal_percent_token() {
         let format = parse_out_format(&os("%%")).unwrap();
@@ -592,8 +589,6 @@ mod tests {
             other => panic!("expected literal '%%', got {other:?}"),
         }
     }
-
-    // ---- Token ordering with mixed literals and placeholders ----
 
     #[test]
     fn parse_mixed_format_preserves_token_order() {
@@ -631,8 +626,6 @@ mod tests {
         );
     }
 
-    // ---- Apostrophe before and after width combined ----
-
     #[test]
     fn parse_placeholder_format_apostrophe_before_and_after_width() {
         let mut chars = "'10'n".chars().peekable();
@@ -651,8 +644,6 @@ mod tests {
         assert_eq!(format.humanize(), HumanizeMode::BinaryUnits);
     }
 
-    // ---- Unsupported placeholder error messages ----
-
     #[test]
     fn parse_out_format_unsupported_placeholder_includes_letter_in_error() {
         let err = parse_out_format(&os("%z")).unwrap_err();
@@ -667,8 +658,6 @@ mod tests {
         assert!(msg.contains("%Q"), "error should mention '%Q', got: {msg}",);
     }
 
-    // ---- Literal-only input produces single literal token ----
-
     #[test]
     fn parse_literal_only_input_produces_single_literal_token() {
         let format = parse_out_format(&os("hello world")).unwrap();
@@ -679,8 +668,6 @@ mod tests {
             other => panic!("expected literal, got {other:?}"),
         }
     }
-
-    // ---- Placeholder with format metadata ----
 
     #[test]
     fn parse_width_format_attached_to_correct_placeholder() {

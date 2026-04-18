@@ -266,8 +266,6 @@ fn limiter_write_max_honours_minimum_when_burst_is_small() {
     assert_eq!(limiter.recommended_read_size(1024), 512);
 }
 
-// ==================== Configuration update comprehensive tests ====================
-
 #[test]
 fn update_limit_preserves_burst_setting() {
     let mut session = recorded_sleep_session();
@@ -331,8 +329,6 @@ fn multiple_sequential_updates() {
         assert_eq!(limiter.limit_bytes(), new_limit);
     }
 }
-
-// ==================== LimiterChange state transition tests ====================
 
 #[test]
 fn limiter_change_combine_all_empty_is_unchanged() {
@@ -421,8 +417,6 @@ fn limiter_change_partial_ord_consistent_with_ord() {
     }
 }
 
-// ==================== Reset behavior comprehensive tests ====================
-
 #[test]
 fn reset_clears_all_mutable_state() {
     let mut session = recorded_sleep_session();
@@ -470,8 +464,6 @@ fn reset_after_update_limit() {
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
 }
 
-// ==================== Clone and equality tests ====================
-
 #[test]
 fn cloned_limiter_has_same_configuration() {
     let original = BandwidthLimiter::with_burst(
@@ -498,8 +490,6 @@ fn cloned_limiter_has_same_debt() {
 
     assert_eq!(original_debt, cloned.accumulated_debt_for_testing());
 }
-
-// ==================== Write max calculation edge cases ====================
 
 #[test]
 fn write_max_scales_with_limit_at_boundaries() {
@@ -530,8 +520,6 @@ fn write_max_capped_at_burst() {
     // write_max should be capped to max(burst, MIN_WRITE_MAX)
     assert!(limiter.write_max_bytes() <= 1024);
 }
-
-// ==================== Accessor consistency tests ====================
 
 #[test]
 fn limit_bytes_consistent_after_operations() {

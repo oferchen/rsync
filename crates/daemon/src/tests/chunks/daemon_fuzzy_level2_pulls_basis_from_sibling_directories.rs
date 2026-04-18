@@ -31,7 +31,6 @@ fn daemon_fuzzy_level2_pulls_basis_from_sibling_directories() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (served by daemon) ---
     let source_dir = temp.path().join("source");
     let src_dir_a = source_dir.join("dir_a");
     let src_dir_b = source_dir.join("dir_b");
@@ -44,7 +43,6 @@ fn daemon_fuzzy_level2_pulls_basis_from_sibling_directories() {
     fs::write(src_dir_a.join("alpha.dat"), &content_alpha).expect("write source alpha");
     fs::write(src_dir_b.join("beta.dat"), &content_beta).expect("write source beta");
 
-    // --- Destination tree (pre-populated with files in swapped dirs) ---
     let dest_dir = temp.path().join("dest");
     let dest_dir_a = dest_dir.join("dir_a");
     let dest_dir_b = dest_dir.join("dir_b");
@@ -60,7 +58,6 @@ fn daemon_fuzzy_level2_pulls_basis_from_sibling_directories() {
     fuzzy2_backdate_file(&dest_dir_b.join("alpha.dat"));
     fuzzy2_backdate_file(&dest_dir_a.join("beta.dat"));
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[testmod]\n\
@@ -92,7 +89,6 @@ fn daemon_fuzzy_level2_pulls_basis_from_sibling_directories() {
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);
 
-    // --- Run client pull with --fuzzy --fuzzy ---
     let rsync_url = format!("rsync://127.0.0.1:{port}/testmod/");
     let client_config = core::client::ClientConfig::builder()
         .transfer_args([

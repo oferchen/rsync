@@ -84,8 +84,6 @@ fn sleep_for_splits_large_durations_into_chunks() {
     );
 }
 
-// ==================== Additional duration_from_microseconds tests ====================
-
 #[test]
 fn duration_from_microseconds_handles_exact_second_boundaries() {
     // Exactly 1 second
@@ -132,8 +130,6 @@ fn duration_from_microseconds_near_max_representable() {
     let duration = duration_from_microseconds(near_max);
     assert!(duration < Duration::MAX);
 }
-
-// ==================== sleep_for comprehensive tests ====================
 
 #[test]
 fn sleep_for_small_durations_record_correctly() {
@@ -255,8 +251,6 @@ fn sleep_for_nanoseconds() {
     let total: Duration = recorded.iter().copied().sum();
     assert_eq!(total, Duration::from_nanos(500));
 }
-
-// ==================== Boundary and overflow tests ====================
 
 #[test]
 fn duration_from_microseconds_various_overflow_boundaries() {

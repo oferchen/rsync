@@ -212,8 +212,6 @@ mod tests {
         is_unsafe_symlink(OsStr::new(target), Path::new(link))
     }
 
-    // --- Absolute and empty targets ---
-
     #[test]
     fn absolute_target_is_unsafe() {
         assert!(unsafe_link("/etc/passwd", "a/link"));
@@ -223,8 +221,6 @@ mod tests {
     fn empty_target_is_unsafe() {
         assert!(unsafe_link("", "a/link"));
     }
-
-    // --- Simple safe cases ---
 
     #[test]
     fn sibling_file_is_safe() {
@@ -242,8 +238,6 @@ mod tests {
         assert!(!unsafe_link("../file", "a/b/link"));
     }
 
-    // --- Depth escape ---
-
     #[test]
     fn dotdot_escaping_tree_is_unsafe() {
         // link at a/link, target ../../etc -> escapes
@@ -254,8 +248,6 @@ mod tests {
     fn deep_dotdot_escape_is_unsafe() {
         assert!(unsafe_link("../../../etc/passwd", "a/b/link"));
     }
-
-    // --- Mid-path /../ rejection (upstream 3.4.1 hardening) ---
 
     #[test]
     fn mid_path_dotdot_is_unsafe() {
@@ -275,8 +267,6 @@ mod tests {
         // Still checked by depth tracking
         assert!(!unsafe_link("../../file", "a/b/c/link"));
     }
-
-    // --- Upstream t_unsafe.c equivalents ---
 
     #[test]
     fn upstream_test_simple_relative() {
@@ -308,8 +298,6 @@ mod tests {
     fn dot_segment_is_safe() {
         assert!(!unsafe_link("./foo", "dir/link"));
     }
-
-    // --- Mid-path dotdot edge cases ---
 
     #[test]
     fn mid_path_dotdot_with_leading_dotdot() {

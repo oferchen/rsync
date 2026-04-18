@@ -272,8 +272,6 @@ fn finish_reports_final_offset_after_trailing_zeros() {
     assert_eq!(metadata.len(), final_offset);
 }
 
-// ==================== punch_hole tests ====================
-
 #[test]
 fn punch_hole_zero_length_is_noop() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -336,8 +334,6 @@ fn punch_hole_advances_file_position() {
     assert_eq!(pos, 1500);
 }
 
-// ==================== write_zeros_fallback tests ====================
-
 #[test]
 fn write_zeros_fallback_writes_exact_length() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -367,8 +363,6 @@ fn write_zeros_fallback_handles_large_length() {
     let metadata = file.as_file_mut().metadata().expect("metadata");
     assert_eq!(metadata.len(), len);
 }
-
-// ==================== SparseWriteState hole punching tests ====================
 
 #[test]
 fn sparse_state_flush_with_punch_hole() {
@@ -432,8 +426,6 @@ fn sparse_state_pending_zeros_tracks_accumulation() {
     state.accumulate(200);
     assert_eq!(state.pending_zeros(), 300);
 }
-
-// ==================== Boundary Condition Tests ====================
 
 #[test]
 fn sparse_writer_exactly_sparse_write_size() {
@@ -537,8 +529,6 @@ fn sparse_writer_just_over_sparse_write_size() {
     assert_eq!(buffer[super::SPARSE_WRITE_SIZE], b'Y');
 }
 
-// ==================== Data Pattern Tests ====================
-
 #[test]
 fn sparse_writer_leading_zeros_only() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -639,8 +629,6 @@ fn sparse_writer_single_byte_surrounded_by_zeros() {
     assert!(buffer[2049..].iter().all(|&b| b == 0));
 }
 
-// ==================== State Machine Tests ====================
-
 #[test]
 fn sparse_state_replace_vs_accumulate() {
     let mut state = SparseWriteState::default();
@@ -721,8 +709,6 @@ fn sparse_state_multiple_flush_cycles() {
     assert!(buffer[6000..].iter().all(|&b| b == 0xCC));
 }
 
-// ==================== Zero-Run Detection Edge Cases ====================
-
 #[test]
 fn leading_zero_run_single_byte() {
     assert_eq!(leading_zero_run(&[0]), 1);
@@ -782,8 +768,6 @@ fn zero_run_at_16_byte_boundary() {
     assert_eq!(trailing_zero_run(&data_17_trail), 16);
 }
 
-// ==================== Empty Input Tests ====================
-
 #[test]
 fn write_sparse_chunk_empty_chunk_returns_zero() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -807,8 +791,6 @@ fn leading_zero_run_empty_slice() {
 fn trailing_zero_run_empty_slice() {
     assert_eq!(trailing_zero_run(&[]), 0);
 }
-
-// ==================== Flush Edge Cases ====================
 
 #[test]
 fn sparse_state_flush_with_zero_pending_is_noop() {
@@ -848,8 +830,6 @@ fn sparse_state_flush_with_punch_hole_zero_pending_is_noop() {
     assert_eq!(pos, 4);
 }
 
-// ==================== Large Value Tests ====================
-
 #[test]
 fn sparse_state_accumulate_saturation() {
     let mut state = SparseWriteState::default();
@@ -871,8 +851,6 @@ fn sparse_state_default_values() {
     let state = SparseWriteState::default();
     assert_eq!(state.pending_zeros(), 0);
 }
-
-// ==================== Multi-Segment Chunk Tests ====================
 
 #[test]
 fn write_sparse_chunk_multiple_segments_in_one_chunk() {
@@ -940,8 +918,6 @@ fn write_sparse_chunk_non_aligned_size() {
     assert_eq!(buffer[size - 1], b'L');
 }
 
-// ==================== Dense Data Tests ====================
-
 #[test]
 fn write_sparse_chunk_all_nonzero_data() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -1000,8 +976,6 @@ fn write_sparse_chunk_alternating_pattern() {
 
     assert_eq!(buffer, chunk);
 }
-
-// ==================== Boundary Alignment Tests ====================
 
 #[test]
 fn leading_zero_run_at_multiple_of_16() {
@@ -1062,8 +1036,6 @@ fn zero_run_with_interior_nonzero() {
     assert_eq!(trailing_zero_run(&data), 23);
 }
 
-// ==================== Write Zeros Fallback Tests ====================
-
 #[test]
 fn write_zeros_fallback_zero_length() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -1106,8 +1078,6 @@ fn write_zeros_fallback_exact_buffer_size() {
     let metadata = file.as_file_mut().metadata().expect("metadata");
     assert_eq!(metadata.len(), exact_size);
 }
-
-// ==================== Punch Hole Tests ====================
 
 #[test]
 fn punch_hole_at_file_end() {
@@ -1187,8 +1157,6 @@ fn punch_hole_small_length() {
     assert!(buffer[513..].iter().all(|&b| b == 0xCC));
 }
 
-// ==================== Finish Method Tests ====================
-
 #[test]
 fn sparse_state_finish_returns_correct_position() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -1242,8 +1210,6 @@ fn sparse_state_finish_with_punch_hole_returns_position() {
 
     assert_eq!(final_pos, 1500);
 }
-
-// ==================== Chunked Write Integration ====================
 
 #[test]
 fn write_sparse_chunk_sequential_calls() {
@@ -1313,8 +1279,6 @@ fn write_sparse_chunk_all_zeros_followed_by_data() {
     assert_eq!(&buffer[100..103], b"XYZ");
 }
 
-// ==================== SIMD Fast Path Verification ====================
-
 #[test]
 fn leading_zero_run_exercises_simd_path() {
     // 48 bytes = 3 full 16-byte chunks (exercises SIMD fast path)
@@ -1359,8 +1323,6 @@ fn trailing_zero_run_exercises_simd_path() {
     assert_eq!(trailing_zero_run(&data), 0);
 }
 
-// ==================== SPARSE_WRITE_SIZE Boundary Tests ====================
-
 #[test]
 fn write_sparse_chunk_multiple_of_sparse_write_size() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -1392,8 +1354,6 @@ fn write_sparse_chunk_multiple_of_sparse_write_size() {
     assert!(buffer[1..size - 1].iter().all(|&b| b == 0));
     assert_eq!(buffer[size - 1], b'Z');
 }
-
-// ==================== Data at Segment Boundaries ====================
 
 #[test]
 fn write_sparse_chunk_data_at_segment_boundary() {
@@ -1436,8 +1396,6 @@ fn write_sparse_chunk_data_at_segment_boundary() {
     );
 }
 
-// ==================== Scalar Remainder Tests ====================
-
 #[test]
 fn leading_zero_run_scalar_remainder() {
     // Test cases where remainder after SIMD chunks needs scalar processing
@@ -1466,8 +1424,6 @@ fn trailing_zero_run_scalar_remainder() {
     data[1] = 1;
     assert_eq!(trailing_zero_run(&data), 16);
 }
-
-// ==================== Mixed Pattern Tests ====================
 
 #[test]
 fn write_sparse_chunk_scattered_nonzero_bytes() {
@@ -1536,8 +1492,6 @@ fn write_sparse_chunk_contiguous_data_block() {
     assert!(buffer[400..600].iter().all(|&b| b == 0xBB));
     assert!(buffer[600..].iter().all(|&b| b == 0));
 }
-
-// ==================== Edge Case: data_end <= data_start ====================
 
 #[test]
 fn write_sparse_chunk_segment_all_leading_zeros() {
@@ -1638,8 +1592,6 @@ fn write_sparse_chunk_first_byte_only() {
     assert!(buffer[1..].iter().all(|&b| b == 0));
 }
 
-// ==================== Single Byte Edge Cases ====================
-
 #[test]
 fn write_sparse_chunk_single_zero_byte() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -1682,8 +1634,6 @@ fn write_sparse_chunk_single_nonzero_byte() {
     assert_eq!(pos, 1);
 }
 
-// ==================== Verify Replace vs Accumulate Behavior ====================
-
 #[test]
 fn write_sparse_chunk_trailing_zeros_become_next_leading() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -1721,8 +1671,6 @@ fn write_sparse_chunk_trailing_zeros_become_next_leading() {
     assert!(buffer[1..7].iter().all(|&b| b == 0));
     assert_eq!(buffer[7], b'B');
 }
-
-// ==================== Zero-Run Scalar vs SIMD Consistency ====================
 
 #[test]
 fn leading_zero_run_consistency_across_sizes() {
@@ -1812,8 +1760,6 @@ fn trailing_zero_run_consistency_across_sizes() {
     }
 }
 
-// ==================== Large Pending Zero Flush ====================
-
 #[test]
 fn sparse_state_flush_large_pending() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -1830,8 +1776,6 @@ fn sparse_state_flush_large_pending() {
 
     assert_eq!(final_pos, large_pending);
 }
-
-// ==================== File Truncation Tests ====================
 
 #[test]
 fn sparse_write_with_truncation_preserves_holes() {
@@ -1860,8 +1804,6 @@ fn sparse_write_with_truncation_preserves_holes() {
     assert!(buffer[1..8].iter().all(|&b| b == 0));
     assert_eq!(buffer[8], b'T');
 }
-
-// ==================== Multiple Write Cycles ====================
 
 #[test]
 fn sparse_writer_multiple_write_finish_cycles() {
@@ -1902,8 +1844,6 @@ fn sparse_writer_multiple_write_finish_cycles() {
     assert_eq!(buffer[6], b'4');
 }
 
-// ==================== Verify Const Methods ====================
-
 #[test]
 fn sparse_state_const_methods() {
     let mut state = SparseWriteState::default();
@@ -1919,8 +1859,6 @@ fn sparse_state_const_methods() {
     // pending_zeros is const
     let _pending: u64 = state.pending_zeros();
 }
-
-// ==================== SparseRegion Tests ====================
 
 #[test]
 fn sparse_region_accessors() {
@@ -1973,8 +1911,6 @@ fn sparse_region_equality() {
     assert_eq!(hole1, hole2);
     assert_ne!(data1, hole1);
 }
-
-// ==================== SparseDetector Tests ====================
 
 #[test]
 fn sparse_detector_all_zeros() {
@@ -2170,8 +2106,6 @@ fn sparse_detector_default_threshold() {
     assert!(regions[0].is_hole());
 }
 
-// ==================== SparseWriter Tests ====================
-
 #[test]
 fn sparse_writer_basic_write() {
     let file = NamedTempFile::new().expect("temp file");
@@ -2242,8 +2176,6 @@ fn sparse_writer_file_accessors() {
     let _file_ref: &fs::File = writer.file();
     let _file_mut: &mut fs::File = writer.file_mut();
 }
-
-// ==================== SparseReader Tests ====================
 
 #[test]
 fn sparse_reader_empty_file() {
@@ -2464,8 +2396,6 @@ fn sparse_reader_coalesce_multiple_adjacent() {
     );
 }
 
-// ==================== Very Small SPARSE_WRITE_SIZE Multiples ====================
-
 #[test]
 fn write_sparse_chunk_very_small_chunks() {
     let mut file = NamedTempFile::new().expect("temp file");
@@ -2485,8 +2415,6 @@ fn write_sparse_chunk_very_small_chunks() {
 
     assert_eq!(final_pos, 200);
 }
-
-// ==================== Punch Hole Edge Cases ====================
 
 #[test]
 fn punch_hole_consecutive_holes() {

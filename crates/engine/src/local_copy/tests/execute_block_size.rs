@@ -1,5 +1,4 @@
 
-// ==================== Option plumbing tests ====================
 
 #[test]
 fn block_size_override_default_is_none() {
@@ -53,7 +52,6 @@ fn block_size_builder_none_clears_override() {
     assert!(opts.block_size_override().is_none());
 }
 
-// ==================== Delta transfer integration tests ====================
 
 #[test]
 fn block_size_override_affects_delta_matching_small_block() {

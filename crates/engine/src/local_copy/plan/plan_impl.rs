@@ -169,8 +169,6 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    // ==================== from_operands tests ====================
-
     #[test]
     fn from_operands_single_source() {
         let operands = vec![OsString::from("src"), OsString::from("dst")];
@@ -242,8 +240,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ==================== accessor tests ====================
-
     #[test]
     fn destination_returns_correct_path() {
         let operands = vec![OsString::from("source"), OsString::from("dest_dir")];
@@ -262,8 +258,6 @@ mod tests {
         let plan = LocalCopyPlan::from_operands(&operands).unwrap();
         assert_eq!(plan.sources().len(), 3);
     }
-
-    // ==================== Clone and Eq tests ====================
 
     #[test]
     fn plan_is_clone() {

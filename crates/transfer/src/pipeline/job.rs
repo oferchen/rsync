@@ -186,8 +186,6 @@ mod tests {
         FileEntry::new_file(name.into(), size, 0o644)
     }
 
-    // ==================== FileList tests ====================
-
     #[test]
     fn file_list_new_empty() {
         let list = FileList::new(Vec::new());
@@ -252,8 +250,6 @@ mod tests {
         assert!(Arc::ptr_eq(&list1.shared(), &list2.shared()));
     }
 
-    // ==================== FileJob tests ====================
-
     #[test]
     fn file_job_new() {
         let entry = Arc::new(make_test_entry("test.txt", 1024));
@@ -304,8 +300,6 @@ mod tests {
         let job = FileJob::new(0, PathBuf::from("/dest/arc.txt"), Arc::clone(&entry));
         assert!(Arc::ptr_eq(job.entry_arc(), &entry));
     }
-
-    // ==================== TransferFlags tests ====================
 
     #[test]
     fn transfer_flags_default() {

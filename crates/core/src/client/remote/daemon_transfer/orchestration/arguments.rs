@@ -155,7 +155,6 @@ pub(super) fn build_full_daemon_args(
         args.push(build_capability_string(is_sender));
     }
 
-    // --- Long-form arguments (upstream server_options() options.c:2737-2980) ---
     let we_are_sender = !is_sender;
 
     // upstream: options.c:2750-2762 - server needs to know about log-format

@@ -40,7 +40,6 @@ fn daemon_files_from_stdin_pull_limits_transferred_files() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (served by daemon, read-only) ---
     let source_dir = temp.path().join("source");
     let source_subdir = source_dir.join("dir");
     fs::create_dir_all(&source_subdir).expect("create source/dir");
@@ -49,7 +48,6 @@ fn daemon_files_from_stdin_pull_limits_transferred_files() {
     fs::write(source_subdir.join("two.txt"), b"second content\n").expect("write two.txt");
     fs::write(source_subdir.join("three.txt"), b"third content\n").expect("write three.txt");
 
-    // --- Files-from list (simulates stdin: only one.txt and three.txt) ---
     // In a real `--files-from=-` invocation, the user pipes file names to stdin.
     // The client reads them and forwards over the protocol as NUL-separated data.
     // Using LocalFile exercises the identical daemon-side code path because both
@@ -58,11 +56,9 @@ fn daemon_files_from_stdin_pull_limits_transferred_files() {
     let files_from_path = temp.path().join("filelist.txt");
     fs::write(&files_from_path, "dir/one.txt\ndir/three.txt\n").expect("write files-from list");
 
-    // --- Destination (client side, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pullmod]\n\
@@ -92,7 +88,6 @@ fn daemon_files_from_stdin_pull_limits_transferred_files() {
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);
 
-    // --- Run client pull with --files-from (simulating stdin via LocalFile) ---
     // Pull: source is daemon URL, destination is local path.
     // The client sends --files-from=- to the daemon and forwards the file list
     // data over the protocol stream - identical to the stdin code path.

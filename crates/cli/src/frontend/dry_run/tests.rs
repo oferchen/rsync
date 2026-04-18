@@ -1,7 +1,5 @@
 use super::*;
 
-// ---- DryRunAction path extraction ----
-
 #[test]
 fn action_path_returns_send_file_path() {
     let action = DryRunAction::SendFile {
@@ -36,8 +34,6 @@ fn action_path_returns_create_dir_path() {
     assert_eq!(action.path(), "subdir/");
 }
 
-// ---- DryRunAction size extraction ----
-
 #[test]
 fn action_size_returns_send_file_size() {
     let action = DryRunAction::SendFile {
@@ -71,8 +67,6 @@ fn action_size_returns_none_for_create_dir() {
     };
     assert_eq!(action.size(), None);
 }
-
-// ---- DryRunAction type detection ----
 
 #[test]
 fn action_is_deletion_returns_true_for_delete_file() {
@@ -123,8 +117,6 @@ fn action_is_directory_returns_false_for_send_file() {
     };
     assert!(!action.is_directory());
 }
-
-// ---- DryRunSummary basic operations ----
 
 #[test]
 fn summary_new_creates_empty_summary() {
@@ -185,8 +177,6 @@ fn summary_actions_returns_all_actions() {
     summary.add_action(action2.clone());
     assert_eq!(summary.actions(), &[action1, action2]);
 }
-
-// ---- DryRunSummary output formatting ----
 
 #[test]
 fn summary_format_output_verbosity_zero_returns_empty() {
@@ -314,8 +304,6 @@ fn summary_format_output_handles_multiple_actions() {
     assert!(output.contains("deleting old.txt"));
 }
 
-// ---- DryRunSummary summary line ----
-
 #[test]
 fn summary_format_summary_includes_dry_run_marker() {
     let summary = DryRunSummary::new();
@@ -347,8 +335,6 @@ fn summary_format_summary_shows_speedup() {
     let output = summary.format_summary();
     assert!(output.contains("speedup is 0.00"));
 }
-
-// ---- DryRunFormatter ----
 
 #[test]
 fn formatter_new_creates_formatter() {
@@ -431,8 +417,6 @@ fn formatter_format_actions_formats_multiple_actions() {
     assert_eq!(output, "file1.txt\nfile2.txt\n");
 }
 
-// ---- Number formatting ----
-
 #[test]
 fn format_number_with_commas_handles_zero() {
     assert_eq!(format_number_with_commas(0), "0");
@@ -465,8 +449,6 @@ fn format_number_with_commas_handles_large_numbers() {
     );
 }
 
-// ---- Path with special characters ----
-
 #[test]
 fn summary_format_output_handles_paths_with_spaces() {
     let mut summary = DryRunSummary::new();
@@ -488,8 +470,6 @@ fn summary_format_output_handles_paths_with_unicode() {
     let output = summary.format_output(1);
     assert!(output.contains("\u{6587}\u{4ef6}.txt"));
 }
-
-// ---- Large file sizes ----
 
 #[test]
 fn summary_handles_large_file_sizes() {
@@ -516,8 +496,6 @@ fn summary_handles_size_overflow_gracefully() {
     });
     assert_eq!(summary.total_size(), u64::MAX);
 }
-
-// ---- Empty action list ----
 
 #[test]
 fn summary_format_output_empty_list_returns_empty_string() {

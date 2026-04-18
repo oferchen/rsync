@@ -38,7 +38,6 @@ fn daemon_xattr_push_preserves_extended_attributes() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Probe xattr support on the temp filesystem ---
     let probe_file = temp.path().join(".xattr_probe");
     fs::write(&probe_file, b"probe").expect("write probe file");
     if xattr::set(&probe_file, "user.probe", b"1").is_err() {
@@ -48,7 +47,6 @@ fn daemon_xattr_push_preserves_extended_attributes() {
     }
     fs::remove_file(&probe_file).expect("remove probe file");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
@@ -71,11 +69,9 @@ fn daemon_xattr_push_preserves_extended_attributes() {
     xattr::set(&nested_path, "user.nested_attr", b"deep_value")
         .expect("set xattr on nested.txt");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -103,7 +99,6 @@ fn daemon_xattr_push_preserves_extended_attributes() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Run client push with -X (xattrs) ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");
@@ -129,7 +124,6 @@ fn daemon_xattr_push_preserves_extended_attributes() {
         }
     }
 
-    // --- Verify file contents arrived correctly ---
     let dest_alpha = dest_dir.join("alpha.txt");
     let dest_beta = dest_dir.join("beta.txt");
     let dest_nested = dest_dir.join("subdir").join("nested.txt");
@@ -154,7 +148,6 @@ fn daemon_xattr_push_preserves_extended_attributes() {
         b"nested content\n"
     );
 
-    // --- Verify xattrs were preserved ---
 
     // alpha.txt: user.test_key = "test_value"
     let alpha_xattr = xattr::get(&dest_alpha, "user.test_key")

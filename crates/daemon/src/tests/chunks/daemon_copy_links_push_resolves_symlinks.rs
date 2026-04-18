@@ -31,7 +31,6 @@ fn daemon_copy_links_push_resolves_symlinks() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     let source_subdir = source_dir.join("subdir");
     fs::create_dir_all(&source_subdir).expect("create source/subdir");
@@ -48,11 +47,9 @@ fn daemon_copy_links_push_resolves_symlinks() {
     std::os::unix::fs::symlink("nested.txt", source_subdir.join("link_nested.txt"))
         .expect("create symlink link_nested.txt");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -82,7 +79,6 @@ fn daemon_copy_links_push_resolves_symlinks() {
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);
 
-    // --- Run client push with --copy-links ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");

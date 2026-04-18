@@ -134,8 +134,6 @@ fn build_compat_flags_skips_avoid_xattr_optimization_when_client_missing_x() {
     );
 }
 
-// ===== setup_protocol() tests =====
-
 #[test]
 fn setup_protocol_below_30_returns_none_for_algorithms_and_compat() {
     // Protocol 29 should skip all negotiation and compat exchange
@@ -505,8 +503,6 @@ fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
     );
 }
 
-// ===== ProtocolSetupConfig builder tests =====
-
 #[test]
 fn protocol_setup_config_builder_new_sets_defaults() {
     let protocol = ProtocolVersion::try_from(31).unwrap();
@@ -589,8 +585,6 @@ fn protocol_setup_config_builder_works_in_real_setup() {
         "Protocol 29 should not negotiate"
     );
 }
-
-// ===== Checksum seed edge case tests (task #99) =====
 
 #[test]
 fn setup_protocol_server_uses_fixed_checksum_seed() {
@@ -730,8 +724,6 @@ fn setup_protocol_client_reads_negative_seed_from_server() {
         "Client should correctly read negative seed value"
     );
 }
-
-// ===== Pre-release 'V' compat flag tests =====
 
 #[test]
 fn client_has_pre_release_v_flag_detects_uppercase_v() {
@@ -1031,8 +1023,6 @@ fn build_capability_string_matches_mapping_order() {
     assert_eq!(chars, expected);
 }
 
-// ===== ProtocolNegotiator trait tests =====
-
 /// Mock negotiator that returns fixed values without wire I/O.
 ///
 /// Used to verify that `setup_protocol_with` delegates correctly to the
@@ -1247,8 +1237,6 @@ fn setup_protocol_delegates_to_default_negotiator() {
     assert_eq!(result1.checksum_seed, result2.checksum_seed);
     assert_eq!(stdout1, stdout2);
 }
-
-// ==================== ACL/xattr capability negotiation tests ====================
 
 /// When the client capability string includes 'x' (CF_AVOID_XATTR_OPTIM),
 /// the server advertises xattr awareness. Clients use this flag to detect

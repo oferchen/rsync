@@ -11,7 +11,6 @@
 // 8. Transfers work with log_file set (verify file is created)
 // 9. Combination with other options
 
-// ==================== Default Tests ====================
 
 #[test]
 fn log_file_default_is_none() {
@@ -25,7 +24,6 @@ fn log_file_format_default_is_none() {
     assert!(opts.log_file_format().is_none());
 }
 
-// ==================== Setter Tests ====================
 
 #[test]
 fn log_file_with_log_file_sets_path() {
@@ -75,7 +73,6 @@ fn log_file_format_with_log_file_format_accepts_string() {
     assert_eq!(opts.log_file_format(), Some("%o %n"));
 }
 
-// ==================== Effective Log File Format Tests ====================
 
 #[test]
 fn log_file_effective_format_returns_default_when_not_set() {
@@ -97,7 +94,6 @@ fn log_file_effective_format_after_clear_returns_default() {
     assert_eq!(opts.effective_log_file_format(), "%i %n%L");
 }
 
-// ==================== Builder Support Tests ====================
 
 #[test]
 fn log_file_builder_sets_log_file() {
@@ -162,7 +158,6 @@ fn log_file_builder_unchecked_sets_values() {
     assert_eq!(opts.log_file_format(), Some("%o %n"));
 }
 
-// ==================== Round-Trip Tests ====================
 
 #[test]
 fn log_file_round_trip_via_builder() {
@@ -188,7 +183,6 @@ fn log_file_round_trip_via_setters() {
     assert_eq!(opts.effective_log_file_format(), "%o %n %b");
 }
 
-// ==================== Transfer with Log File Tests ====================
 
 #[test]
 fn log_file_transfer_works_with_log_file_set() {
@@ -290,7 +284,6 @@ fn log_file_transfer_multiple_files_with_log_file() {
     );
 }
 
-// ==================== Combination with Other Options ====================
 
 #[test]
 fn log_file_combined_with_delete() {
@@ -455,7 +448,6 @@ fn log_file_combined_with_builder_archive() {
     );
 }
 
-// ==================== Dry Run with Log File ====================
 
 #[test]
 fn log_file_dry_run_does_not_fail() {
@@ -486,7 +478,6 @@ fn log_file_dry_run_does_not_fail() {
     );
 }
 
-// ==================== Builder Defaults Match Direct Defaults ====================
 
 #[test]
 fn log_file_builder_defaults_match_options_defaults() {
@@ -504,7 +495,6 @@ fn log_file_builder_defaults_match_options_defaults() {
     );
 }
 
-// ==================== Config Propagation Tests ====================
 
 #[test]
 fn log_file_config_propagation_setter_and_builder_agree() {
@@ -542,7 +532,6 @@ fn log_file_effective_format_uses_default_percent_i_n_l() {
     assert_eq!(opts.effective_log_file_format(), "%i %n%L");
 }
 
-// ==================== Edge Case Tests ====================
 
 #[test]
 fn log_file_empty_format_string_is_stored() {

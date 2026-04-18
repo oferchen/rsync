@@ -14,7 +14,6 @@
 
 use super::filter_program::MAX_DELETE_EXIT_CODE;
 
-// ==================== Basic Max-Delete Limit Tests ====================
 
 #[test]
 fn max_delete_stops_after_n_deletions() {
@@ -143,7 +142,6 @@ fn max_delete_error_message_format() {
     );
 }
 
-// ==================== Edge Cases ====================
 
 #[test]
 fn max_delete_zero_prevents_all_deletions() {
@@ -369,7 +367,6 @@ fn max_delete_none_allows_unlimited_deletions() {
     }
 }
 
-// ==================== Interaction with Delete Timing Modes ====================
 
 #[test]
 fn max_delete_with_delete_during() {
@@ -516,7 +513,6 @@ fn max_delete_with_delete_delay() {
     }
 }
 
-// ==================== Dry-Run Behavior ====================
 
 #[test]
 fn max_delete_with_dry_run_reports_limit_exceeded() {
@@ -589,7 +585,6 @@ fn max_delete_dry_run_success_when_under_limit() {
     assert!(target_root.join("extra.txt").exists());
 }
 
-// ==================== Directory Deletion Tests ====================
 
 #[test]
 fn max_delete_counts_directory_deletions() {
@@ -665,7 +660,6 @@ fn max_delete_mixed_files_and_directories() {
     }
 }
 
-// ==================== No Deletions Needed ====================
 
 #[test]
 fn max_delete_no_effect_when_no_deletions_needed() {
@@ -728,7 +722,6 @@ fn max_delete_without_delete_flag_has_no_effect() {
     );
 }
 
-// ==================== Exit Code Tests ====================
 
 #[test]
 fn max_delete_exit_code_is_25() {
@@ -742,7 +735,6 @@ fn max_delete_error_code_name() {
     assert_eq!(error.code_name(), "RERR_DEL_LIMIT");
 }
 
-// ==================== Option Builder Tests ====================
 
 #[test]
 fn max_deletions_option_sets_correctly() {

@@ -1,6 +1,4 @@
-// ============================================================================
 // Tests for --omit-dir-times flag
-// ============================================================================
 //
 // The --omit-dir-times flag prevents directory modification times from being
 // preserved, while still preserving file timestamps. This is useful for:

@@ -1,6 +1,4 @@
-// =============================================================================
 // Permission Denied Error Handling Tests
-// =============================================================================
 //
 // This module contains comprehensive tests for permission denied error handling
 // during local copy operations. Tests cover:

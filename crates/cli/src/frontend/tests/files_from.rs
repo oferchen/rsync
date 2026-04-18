@@ -1,8 +1,6 @@
 use super::common::*;
 use super::*;
 
-// ==================== File reading tests ====================
-
 #[test]
 fn files_from_reads_list_from_specified_file() {
     let tmp = test_support::create_tempdir();
@@ -54,8 +52,6 @@ fn files_from_preserves_non_utf8_entries() {
     assert_eq!(entries[0].as_os_str().as_bytes(), b"fo\x80");
 }
 
-// ==================== One filename per line tests ====================
-
 #[test]
 fn files_from_parses_one_filename_per_line() {
     let tmp = test_support::create_tempdir();
@@ -106,8 +102,6 @@ fn files_from_handles_mixed_line_endings() {
     assert_eq!(entries[1], "file2.txt");
     assert_eq!(entries[2], "file3.txt");
 }
-
-// ==================== Comment and blank line handling tests ====================
 
 #[test]
 fn files_from_skips_hash_comments() {
@@ -181,8 +175,6 @@ fn files_from_handles_comments_and_blank_lines_together() {
     assert_eq!(entries[1], "file2.txt");
 }
 
-// ==================== stdin tests ====================
-
 #[test]
 fn files_from_reads_from_stdin_with_dash() {
     use std::io::Cursor;
@@ -231,8 +223,6 @@ fn files_from_stdin_handles_blank_lines() {
     assert_eq!(entries[1], "file2.txt");
 }
 
-// ==================== zero-terminated tests ====================
-
 #[test]
 fn from0_reader_accepts_missing_trailing_separator() {
     let data = b"alpha\0beta\0gamma";
@@ -272,8 +262,6 @@ fn from0_disables_comment_handling() {
     assert_eq!(entries[1], ";alsonotacomment");
 }
 
-// ==================== edge cases ====================
-
 #[test]
 fn files_from_handles_empty_file() {
     let tmp = test_support::create_tempdir();
@@ -300,8 +288,6 @@ fn files_from_handles_whitespace_only_file() {
     assert_eq!(entries.len(), 0);
 }
 
-// ==================== Multiple files-from arguments ====================
-
 #[test]
 fn files_from_reads_from_multiple_files() {
     let tmp = test_support::create_tempdir();
@@ -327,8 +313,6 @@ fn files_from_empty_list_returns_empty_vec() {
     let result = load_file_list_operands(&entries, false).expect("load empty");
     assert!(result.is_empty());
 }
-
-// ==================== Unicode and special characters ====================
 
 #[test]
 fn files_from_handles_unicode_filenames() {
@@ -396,8 +380,6 @@ fn files_from_handles_special_characters_in_filenames() {
     assert_eq!(entries[4], "file\"5\".txt");
 }
 
-// ==================== Path handling tests ====================
-
 #[test]
 fn files_from_preserves_absolute_paths() {
     let tmp = test_support::create_tempdir();
@@ -455,8 +437,6 @@ fn files_from_handles_deeply_nested_paths() {
     assert_eq!(entries[0], "a/b/c/d/e/f/g/h/i/j/file.txt");
     assert_eq!(entries[1], "very/deeply/nested/path/to/some/file.txt");
 }
-
-// ==================== Zero-terminated edge cases ====================
 
 #[test]
 fn from0_handles_empty_entries() {
@@ -527,8 +507,6 @@ fn from0_preserves_non_utf8_in_zero_terminated() {
     assert_eq!(entries[1], "normal.txt");
 }
 
-// ==================== Comment edge cases ====================
-
 #[test]
 fn files_from_hash_only_on_first_char_is_comment() {
     let tmp = test_support::create_tempdir();
@@ -586,8 +564,6 @@ fn files_from_comments_only_file_returns_empty() {
     assert!(entries.is_empty());
 }
 
-// ==================== Reader function edge cases ====================
-
 #[test]
 fn reader_handles_very_long_lines() {
     use std::io::Cursor;
@@ -634,8 +610,6 @@ fn reader_handles_trailing_carriage_returns() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0], "file.txt");
 }
-
-// ==================== Integration tests with actual file operations ====================
 
 #[test]
 fn files_from_integration_copies_listed_files() {
@@ -756,8 +730,6 @@ fn files_from_integration_with_comments_only_list_succeeds() {
     assert!(!dest_dir.join("file.txt").exists());
 }
 
-// ==================== CLI argument parsing tests ====================
-
 #[test]
 fn parse_args_recognizes_files_from_with_equals() {
     use crate::frontend::arguments::parse_args;
@@ -846,8 +818,6 @@ fn parse_args_files_from_empty_value() {
     assert_eq!(parsed.files_from[0], "");
 }
 
-// ==================== Error handling tests ====================
-
 #[cfg(unix)]
 #[test]
 fn files_from_reports_permission_error() {
@@ -919,10 +889,6 @@ fn files_from_with_nonexistent_source_file_reports_error() {
             || rendered.contains("failed")
     );
 }
-
-// ==================== Additional comprehensive tests ====================
-
-// ==================== Real Unicode filename tests ====================
 
 #[test]
 fn files_from_handles_actual_unicode_characters() {
@@ -1004,8 +970,6 @@ fn files_from_handles_zero_width_characters() {
     assert_eq!(entries[0], "file\u{200D}name.txt");
     assert_eq!(entries[1], "test\u{200C}file.txt");
 }
-
-// ==================== Special character edge cases ====================
 
 #[test]
 fn files_from_handles_glob_metacharacters() {
@@ -1096,8 +1060,6 @@ fn files_from_handles_equals_and_colon_in_filenames() {
     assert_eq!(entries[3], "--not-a-flag.txt");
 }
 
-// ==================== Whitespace edge cases ====================
-
 #[test]
 fn files_from_handles_tab_characters() {
     let tmp = test_support::create_tempdir();
@@ -1152,8 +1114,6 @@ fn files_from_preserves_multiple_consecutive_spaces() {
     assert_eq!(entries[0], "file   three   spaces.txt");
     assert_eq!(entries[1], "file    four    spaces.txt");
 }
-
-// ==================== from0 comprehensive tests ====================
 
 #[test]
 fn from0_handles_embedded_newlines_and_carriage_returns() {
@@ -1254,8 +1214,6 @@ fn from0_handles_multiple_consecutive_nulls() {
     assert_eq!(entries[1], "file2.txt");
 }
 
-// ==================== Path edge cases ====================
-
 #[test]
 fn files_from_handles_dot_and_dotdot_paths() {
     let tmp = test_support::create_tempdir();
@@ -1337,8 +1295,6 @@ fn files_from_handles_double_slashes() {
     assert_eq!(entries[2], "trailing//");
 }
 
-// ==================== Comment edge cases ====================
-
 #[test]
 fn files_from_handles_whitespace_before_comment() {
     let tmp = test_support::create_tempdir();
@@ -1395,8 +1351,6 @@ fn files_from_handles_empty_comment_lines() {
     assert_eq!(entries[0], "file.txt");
 }
 
-// ==================== Large file tests ====================
-
 #[test]
 fn files_from_handles_large_number_of_entries() {
     let tmp = test_support::create_tempdir();
@@ -1430,8 +1384,6 @@ fn files_from_handles_large_file_with_comments() {
 
     assert_eq!(entries.len(), 5000);
 }
-
-// ==================== Mixed content tests ====================
 
 #[test]
 fn files_from_handles_comprehensive_mixed_content() {
@@ -1488,8 +1440,6 @@ more_files.txt
     assert_eq!(entries[14], "unicode_文件.txt");
     assert_eq!(entries[15], "more_files.txt");
 }
-
-// ==================== Multiple files-from sources ====================
 
 #[test]
 fn files_from_combines_multiple_list_files_preserving_order() {
@@ -1568,8 +1518,6 @@ fn files_from_handles_one_empty_file_among_many() {
     assert_eq!(entries[2], "c.txt");
     assert_eq!(entries[3], "d.txt");
 }
-
-// ==================== Integration tests with from0 and actual copy ====================
 
 #[test]
 fn files_from_integration_with_from0_copies_listed_files() {
@@ -1720,8 +1668,6 @@ fn files_from_integration_with_spaces_in_filenames() {
     assert!(dest_dir.join("  leading.txt").exists());
     assert!(dest_dir.join("trailing  .txt").exists());
 }
-
-// ==================== resolve_file_list_entries comprehensive tests ====================
 
 #[test]
 fn resolve_file_list_entries_handles_mixed_absolute_and_relative() {

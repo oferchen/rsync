@@ -27,7 +27,6 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
@@ -45,11 +44,9 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
     fs::write(source_dir.join("alpha.txt"), original_content).expect("write alpha.txt");
     fs::write(source_dir.join("beta.txt"), original_content).expect("write beta.txt");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config with max-sessions=4 (probe + initial push + checksum push + margin) ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\

@@ -33,7 +33,6 @@ fn daemon_files_from_push_limits_transferred_files() {
 
     let temp = tempdir().expect("tempdir");
 
-    // --- Source tree (client side) ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
@@ -41,15 +40,12 @@ fn daemon_files_from_push_limits_transferred_files() {
     fs::write(source_dir.join("b.txt"), b"beta content\n").expect("write b.txt");
     fs::write(source_dir.join("c.txt"), b"gamma content\n").expect("write c.txt");
 
-    // --- Files-from list (only a.txt and c.txt) ---
     let files_from_path = temp.path().join("filelist.txt");
     fs::write(&files_from_path, "a.txt\nc.txt\n").expect("write files-from list");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -79,7 +75,6 @@ fn daemon_files_from_push_limits_transferred_files() {
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);
 
-    // --- Run client push with --files-from ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");

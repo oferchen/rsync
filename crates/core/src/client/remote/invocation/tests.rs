@@ -435,8 +435,6 @@ fn remote_invocation_only_sends_upstream_compatible_args() {
     }
 }
 
-// ==================== new option forwarding tests ====================
-
 #[test]
 fn includes_delete_before_long_arg() {
     let config = ClientConfig::builder().delete_before(true).build();
@@ -758,8 +756,6 @@ fn includes_dry_run_flag() {
     assert!(flags.contains('n'), "expected 'n' in flags: {flags}");
 }
 
-// ==================== secluded-args tests ====================
-
 #[test]
 fn secluded_invocation_disabled_returns_normal_args() {
     let config = ClientConfig::builder().protect_args(None).build();
@@ -875,7 +871,6 @@ fn secluded_invocation_explicitly_disabled_returns_normal() {
     );
 }
 
-// ==================== comprehensive flag forwarding tests ====================
 //
 // These tests verify that every CLI flag supported by the builder is correctly
 // forwarded to the remote server invocation. Each test constructs a config with
@@ -926,8 +921,6 @@ fn receiver_flag_string(config: &ClientConfig) -> String {
     find_flag_string(&args).to_owned()
 }
 
-// ---------- default config produces minimal output ----------
-
 #[test]
 fn default_config_produces_expected_flags() {
     // ClientConfig::builder() sets recursive=true by default, and
@@ -957,8 +950,6 @@ fn default_config_has_no_long_form_args() {
     }
 }
 
-// ---------- archive mode composite test (-a = -rlptgoD) ----------
-
 #[test]
 fn archive_mode_flags_all_present() {
     // -a is equivalent to -rlptgoD
@@ -982,8 +973,6 @@ fn archive_mode_flags_all_present() {
     assert!(flags.contains('o'), "archive: missing 'o' in {flags}");
     assert!(flags.contains('D'), "archive: missing 'D' in {flags}");
 }
-
-// ---------- individual short-flag forwarding ----------
 
 #[test]
 fn includes_links_flag() {
@@ -1146,8 +1135,6 @@ fn delete_excluded_is_long_form_not_in_flag_string() {
     );
 }
 
-// ---------- ACL and xattr flags (feature-gated) ----------
-
 #[cfg(all(unix, feature = "acl"))]
 #[test]
 fn includes_acl_flag() {
@@ -1163,8 +1150,6 @@ fn includes_xattr_flag() {
     let flags = sender_flag_string(&config);
     assert!(flags.contains('X'), "expected 'X' in flags: {flags}");
 }
-
-// ---------- long-form argument forwarding ----------
 
 #[test]
 fn includes_delete_during_long_arg() {
@@ -1521,8 +1506,6 @@ fn includes_preallocate_long_arg() {
     );
 }
 
-// ---------- custom rsync path ----------
-
 #[test]
 fn custom_rsync_path_used_as_program_name() {
     let config = ClientConfig::builder()
@@ -1541,8 +1524,6 @@ fn default_rsync_path_is_rsync() {
     let args = build_sender_args(&config);
     assert_eq!(args[0], "rsync", "default program name should be 'rsync'");
 }
-
-// ---------- capability string ----------
 
 #[test]
 fn capability_string_present_in_sender_args() {
@@ -1565,8 +1546,6 @@ fn capability_string_present_in_receiver_args() {
         "expected capability string {expected} in args: {args:?}"
     );
 }
-
-// ---------- dot placeholder and path ----------
 
 #[test]
 fn dot_placeholder_precedes_remote_path_in_sender() {
@@ -1594,8 +1573,6 @@ fn dot_placeholder_precedes_remote_path_in_receiver() {
     );
 }
 
-// ---------- multiple remote paths ----------
-
 #[test]
 fn build_with_multiple_paths() {
     let config = ClientConfig::builder().build();
@@ -1611,8 +1588,6 @@ fn build_with_multiple_paths() {
     assert_eq!(args[dot_idx + 2], "/src2");
     assert_eq!(args[dot_idx + 3], "/src3");
 }
-
-// ---------- receiver-specific tests ----------
 
 #[test]
 fn receiver_flag_string_matches_sender_for_same_config() {
@@ -1630,8 +1605,6 @@ fn receiver_flag_string_matches_sender_for_same_config() {
         "flag strings should be identical for sender and receiver with same config"
     );
 }
-
-// ---------- delete mode exclusivity ----------
 
 #[test]
 fn only_one_delete_mode_emitted() {
@@ -1666,8 +1639,6 @@ fn delete_delay_emits_only_delay() {
     assert_eq!(delete_args.len(), 1);
     assert_eq!(delete_args[0], "--delete-delay");
 }
-
-// ---------- combined flag correctness ----------
 
 #[test]
 fn compress_with_level_emits_both_flag_and_level() {
@@ -1708,8 +1679,6 @@ fn backup_without_dir_or_suffix_emits_only_backup() {
     assert!(!args.iter().any(|a| a.starts_with("--backup-dir=")));
     assert!(!args.iter().any(|a| a.starts_with("--suffix=")));
 }
-
-// ---------- omission tests: disabled flags should NOT appear ----------
 
 #[test]
 fn omits_compress_flag_when_disabled() {
@@ -1872,8 +1841,6 @@ fn omits_reference_dirs_when_empty() {
         "should not emit reference dir args when empty: {args:?}"
     );
 }
-
-// ---------- exhaustive all-flags-at-once integration test ----------
 
 #[test]
 fn all_flags_enabled_produces_valid_invocation() {

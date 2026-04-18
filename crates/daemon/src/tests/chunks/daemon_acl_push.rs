@@ -40,7 +40,6 @@ fn daemon_acl_push_preserves_acls() {
     #[cfg(target_os = "macos")]
     let acl_option = AclOption::empty();
 
-    // --- Probe ACL support on this filesystem ---
     // Some CI runners use tmpfs or other filesystems that lack ACL support.
     // Write a scratch file, set an extended ACL, read it back, and skip if
     // the round-trip fails.
@@ -94,7 +93,6 @@ fn daemon_acl_push_preserves_acls() {
         return;
     }
 
-    // --- Source tree ---
     let source_dir = temp.path().join("source");
     fs::create_dir(&source_dir).expect("create source");
 
@@ -134,11 +132,9 @@ fn daemon_acl_push_preserves_acls() {
     setfacl(&[&file_a], &source_acl_entries, acl_option).expect("setfacl on alpha.txt");
     setfacl(&[&file_b], &source_acl_entries, acl_option).expect("setfacl on beta.txt");
 
-    // --- Destination (served by daemon, writable, initially empty) ---
     let dest_dir = temp.path().join("dest");
     fs::create_dir(&dest_dir).expect("create dest");
 
-    // --- Daemon config ---
     let config_file = temp.path().join("rsyncd.conf");
     let config_content = format!(
         "[pushmod]\n\
@@ -166,7 +162,6 @@ fn daemon_acl_push_preserves_acls() {
     let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
-    // --- Run client push with ACL preservation ---
     let mut source_arg = source_dir.clone().into_os_string();
     source_arg.push("/");
     let rsync_url = format!("rsync://127.0.0.1:{port}/pushmod/");
@@ -192,7 +187,6 @@ fn daemon_acl_push_preserves_acls() {
         }
     }
 
-    // --- Verify destination file contents ---
     let dest_alpha = dest_dir.join("alpha.txt");
     let dest_beta = dest_dir.join("beta.txt");
 
@@ -210,7 +204,6 @@ fn daemon_acl_push_preserves_acls() {
         "beta.txt content mismatch"
     );
 
-    // --- Verify ACLs are preserved at the destination ---
     let dest_alpha_acl =
         getfacl(&dest_alpha, acl_option).expect("getfacl on destination alpha.txt");
     let dest_beta_acl =

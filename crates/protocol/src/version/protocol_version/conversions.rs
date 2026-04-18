@@ -15,9 +15,7 @@ use super::super::constants::UPSTREAM_PROTOCOL_RANGE;
 use super::super::parse::{ParseProtocolVersionError, ParseProtocolVersionErrorKind};
 use super::ProtocolVersion;
 
-// ---------------------------------------------------------------------------
 // From<ProtocolVersion> for primitive types
-// ---------------------------------------------------------------------------
 
 impl From<ProtocolVersion> for u8 {
     #[inline]
@@ -122,9 +120,7 @@ impl_from_protocol_version_for_nonzero_signed!(
     NonZeroIsize => isize,
 );
 
-// ---------------------------------------------------------------------------
 // TryFrom implementations
-// ---------------------------------------------------------------------------
 
 impl TryFrom<u8> for ProtocolVersion {
     type Error = NegotiationError;
@@ -146,9 +142,7 @@ impl TryFrom<NonZeroU8> for ProtocolVersion {
     }
 }
 
-// ---------------------------------------------------------------------------
 // FromStr
-// ---------------------------------------------------------------------------
 
 impl FromStr for ProtocolVersion {
     type Err = ParseProtocolVersionError;
@@ -206,9 +200,7 @@ impl FromStr for ProtocolVersion {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Display
-// ---------------------------------------------------------------------------
 
 impl fmt::Display for ProtocolVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -216,9 +208,7 @@ impl fmt::Display for ProtocolVersion {
     }
 }
 
-// ---------------------------------------------------------------------------
 // PartialEq cross-type comparisons
-// ---------------------------------------------------------------------------
 
 impl PartialEq<u8> for ProtocolVersion {
     fn eq(&self, other: &u8) -> bool {

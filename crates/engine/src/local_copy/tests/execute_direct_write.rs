@@ -14,7 +14,6 @@
 // 6. Zero-length files use the direct write path
 // 7. Large files use the direct write path correctly
 
-// ==================== Basic Direct Write Tests ====================
 
 #[test]
 fn direct_write_creates_file_at_final_destination() {
@@ -133,7 +132,6 @@ fn direct_write_preserves_file_content_exactly() {
     );
 }
 
-// ==================== Multiple File Tests ====================
 
 #[test]
 fn direct_write_handles_multiple_files_in_directory() {
@@ -187,7 +185,6 @@ fn direct_write_handles_multiple_files_in_directory() {
     );
 }
 
-// ==================== Edge Case Tests ====================
 
 #[test]
 fn direct_write_zero_length_file() {
@@ -238,7 +235,6 @@ fn direct_write_large_file_content_intact() {
     );
 }
 
-// ==================== Fallback to Temp File Tests ====================
 
 #[test]
 fn existing_destination_does_not_use_direct_write() {
