@@ -159,13 +159,15 @@ impl FileListReader {
     /// Reads hardlink device and inode for protocol 28-29.
     ///
     /// In protocols before 30, hardlinks are identified by (dev, ino) pairs
-    /// rather than indices.
+    /// rather than indices. Only reads when XMIT_HLINKED is set - non-hardlinked
+    /// entries have no dev/ino data on the wire.
     ///
     /// Wire format:
     /// - If not XMIT_SAME_DEV_PRE30: read longint as dev (stored as dev + 1)
     /// - Always read longint as ino
     ///
-    /// // upstream: flist.c:recv_file_entry() lines 980-1000
+    /// // upstream: flist.c:recv_file_entry() - dev/ino read is gated on
+    /// // `preserve_hard_links && xflags & XMIT_HLINKED`
     pub(super) fn read_hardlink_dev_ino<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -173,6 +175,12 @@ impl FileListReader {
         mode: u32,
     ) -> io::Result<Option<(i64, i64)>> {
         if !self.preserve_hard_links || self.protocol.as_u8() >= 30 || self.protocol.as_u8() < 28 {
+            return Ok(None);
+        }
+
+        // upstream: flist.c:recv_file_entry() only reads dev/ino when
+        // XMIT_HLINKED is set. Non-hardlinked entries have no dev/ino on wire.
+        if !flags.hlinked() {
             return Ok(None);
         }
 
