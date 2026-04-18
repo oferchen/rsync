@@ -549,11 +549,19 @@ impl ReceiverContext {
             setup.acl_cache.as_deref(),
         );
 
-        let total_files = files_to_transfer.len();
-        let redo_config = pipeline_config.clone();
-        let mut no_progress: Option<&mut dyn crate::TransferProgressCallback> = None;
-        let (mut files_transferred, mut bytes_received, redo_indices) = self
-            .run_pipeline_loop_decoupled(
+        let mut files_transferred: usize = 0;
+        let mut bytes_received: u64 = 0;
+        let mut redo_count: usize = 0;
+
+        // upstream: generator.c:1845 - dry_run sends NDX requests without data
+        if self.config.flags.dry_run {
+            self.run_dry_run_loop(reader, writer, &files_to_transfer)?;
+        } else {
+            let total_files = files_to_transfer.len();
+            let redo_config = pipeline_config.clone();
+            let mut no_progress: Option<&mut dyn crate::TransferProgressCallback> = None;
+            let redo_indices;
+            (files_transferred, bytes_received, redo_indices) = self.run_pipeline_loop_decoupled(
                 reader,
                 writer,
                 pipeline_config,
@@ -565,40 +573,41 @@ impl ReceiverContext {
                 &mut no_progress,
             )?;
 
-        // Phase 2: redo pass for files that failed checksum verification.
-        let redo_count = redo_indices.len();
-        if !redo_indices.is_empty() {
-            setup.checksum_length = REDO_CHECKSUM_LENGTH;
+            // Phase 2: redo pass for files that failed checksum verification.
+            redo_count = redo_indices.len();
+            if !redo_indices.is_empty() {
+                setup.checksum_length = REDO_CHECKSUM_LENGTH;
 
-            let redo_files: Vec<(usize, &FileEntry, PathBuf)> = redo_indices
-                .iter()
-                .filter_map(|&idx| {
-                    self.file_list.get(idx).map(|entry| {
-                        let p = entry.path();
-                        let file_path = if p.as_os_str() == "." {
-                            setup.dest_dir.clone()
-                        } else {
-                            setup.dest_dir.join(p)
-                        };
-                        (idx, entry, file_path)
+                let redo_files: Vec<(usize, &FileEntry, PathBuf)> = redo_indices
+                    .iter()
+                    .filter_map(|&idx| {
+                        self.file_list.get(idx).map(|entry| {
+                            let p = entry.path();
+                            let file_path = if p.as_os_str() == "." {
+                                setup.dest_dir.clone()
+                            } else {
+                                setup.dest_dir.join(p)
+                            };
+                            (idx, entry, file_path)
+                        })
                     })
-                })
-                .collect();
+                    .collect();
 
-            let (redo_transferred, redo_bytes, _) = self.run_pipeline_loop_decoupled(
-                reader,
-                writer,
-                redo_config,
-                &setup,
-                redo_files,
-                &mut metadata_errors,
-                true,
-                total_files,
-                &mut no_progress,
-            )?;
+                let (redo_transferred, redo_bytes, _) = self.run_pipeline_loop_decoupled(
+                    reader,
+                    writer,
+                    redo_config,
+                    &setup,
+                    redo_files,
+                    &mut metadata_errors,
+                    true,
+                    total_files,
+                    &mut no_progress,
+                )?;
 
-            files_transferred += redo_transferred;
-            bytes_received += redo_bytes;
+                files_transferred += redo_transferred;
+                bytes_received += redo_bytes;
+            }
         }
 
         if self.config.flags.verbose && self.config.connection.client_mode {
@@ -711,10 +720,18 @@ impl ReceiverContext {
             setup.acl_cache.as_deref(),
         );
 
-        let total_files = files_to_transfer.len();
-        let redo_config = pipeline_config.clone();
-        let (mut files_transferred, mut bytes_received, redo_indices) = self
-            .run_pipeline_loop_decoupled(
+        let mut files_transferred: usize = 0;
+        let mut bytes_received: u64 = 0;
+        let mut redo_count: usize = 0;
+
+        // upstream: generator.c:1845 - dry_run sends NDX requests without data
+        if self.config.flags.dry_run {
+            self.run_dry_run_loop(reader, writer, &files_to_transfer)?;
+        } else {
+            let total_files = files_to_transfer.len();
+            let redo_config = pipeline_config.clone();
+            let redo_indices;
+            (files_transferred, bytes_received, redo_indices) = self.run_pipeline_loop_decoupled(
                 reader,
                 writer,
                 pipeline_config,
@@ -726,40 +743,41 @@ impl ReceiverContext {
                 &mut progress,
             )?;
 
-        // Phase 2: redo pass for files that failed checksum verification.
-        let redo_count = redo_indices.len();
-        if !redo_indices.is_empty() {
-            setup.checksum_length = REDO_CHECKSUM_LENGTH;
+            // Phase 2: redo pass for files that failed checksum verification.
+            redo_count = redo_indices.len();
+            if !redo_indices.is_empty() {
+                setup.checksum_length = REDO_CHECKSUM_LENGTH;
 
-            let redo_files: Vec<(usize, &FileEntry, PathBuf)> = redo_indices
-                .iter()
-                .filter_map(|&idx| {
-                    self.file_list.get(idx).map(|entry| {
-                        let p = entry.path();
-                        let file_path = if p.as_os_str() == "." {
-                            setup.dest_dir.clone()
-                        } else {
-                            setup.dest_dir.join(p)
-                        };
-                        (idx, entry, file_path)
+                let redo_files: Vec<(usize, &FileEntry, PathBuf)> = redo_indices
+                    .iter()
+                    .filter_map(|&idx| {
+                        self.file_list.get(idx).map(|entry| {
+                            let p = entry.path();
+                            let file_path = if p.as_os_str() == "." {
+                                setup.dest_dir.clone()
+                            } else {
+                                setup.dest_dir.join(p)
+                            };
+                            (idx, entry, file_path)
+                        })
                     })
-                })
-                .collect();
+                    .collect();
 
-            let (redo_transferred, redo_bytes, _) = self.run_pipeline_loop_decoupled(
-                reader,
-                writer,
-                redo_config,
-                &setup,
-                redo_files,
-                &mut metadata_errors,
-                true,
-                total_files,
-                &mut progress,
-            )?;
+                let (redo_transferred, redo_bytes, _) = self.run_pipeline_loop_decoupled(
+                    reader,
+                    writer,
+                    redo_config,
+                    &setup,
+                    redo_files,
+                    &mut metadata_errors,
+                    true,
+                    total_files,
+                    &mut progress,
+                )?;
 
-            files_transferred += redo_transferred;
-            bytes_received += redo_bytes;
+                files_transferred += redo_transferred;
+                bytes_received += redo_bytes;
+            }
         }
 
         self.create_hardlinks(&setup.dest_dir, writer);

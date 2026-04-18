@@ -44,11 +44,6 @@ impl ReceiverContext {
         stats: &mut TransferStats,
         acl_cache: Option<&protocol::acl::AclCache>,
     ) -> Vec<(usize, &'a FileEntry, PathBuf)> {
-        // upstream: receiver.c:693 - dry_run (!do_xfers) skips all file transfers
-        if self.config.flags.dry_run {
-            return Vec::new();
-        }
-
         // Phase A: Filter candidates (cheap, in-memory checks only).
         let daemon_filters = self.daemon_filter_set();
         let candidates: Vec<(usize, &FileEntry)> = self
@@ -97,6 +92,16 @@ impl ReceiverContext {
                 true
             })
             .collect();
+
+        // upstream: generator.c:1845 - dry_run (!do_xfers) skips stat and data
+        // transfer but still builds the candidate list so NDX requests are sent
+        // to the sender, which logs each file name for verbose output.
+        if self.config.flags.dry_run {
+            return candidates
+                .into_iter()
+                .map(|(idx, entry)| (idx, entry, dest_dir.join(entry.path())))
+                .collect();
+        }
 
         let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
         let size_only = self.config.file_selection.size_only;

@@ -55,6 +55,7 @@ fn render_stats(summary: &ClientSummary, human_readable: HumanReadableMode) -> S
         true,  // stats
         false, // progress_already_rendered
         false, // list_only
+        false, // dry_run
         None,
         &OutFormatContext::default(),
         NameOutputLevel::Disabled,
@@ -76,6 +77,7 @@ fn render_verbose(summary: &ClientSummary, verbosity: u8) -> String {
         false, // stats
         false, // progress_already_rendered
         false, // list_only
+        false, // dry_run
         None,
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
@@ -444,7 +446,8 @@ fn parity_totals_only_without_stats_flag() {
         None,
         false, // stats=false
         false,
-        false,
+        false, // list_only
+        false, // dry_run
         None,
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
@@ -561,7 +564,8 @@ fn parity_verbose_v2_includes_descriptor_and_bytes() {
         None,
         false,
         false,
-        false,
+        false, // list_only
+        false, // dry_run
         None,
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
