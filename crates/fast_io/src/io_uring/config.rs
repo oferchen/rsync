@@ -42,6 +42,21 @@ fn get_kernel_release() -> Option<String> {
     }
 }
 
+/// Public accessors for kernel version detection used by `--version` output.
+pub mod config_detail {
+    /// Parses kernel version from uname release string (e.g., "5.15.0-generic").
+    #[must_use]
+    pub fn parse_kernel_version(release: &str) -> Option<(u32, u32)> {
+        super::parse_kernel_version(release)
+    }
+
+    /// Returns the kernel release string from `uname(2)`.
+    #[must_use]
+    pub fn get_kernel_release_string() -> Option<String> {
+        super::get_kernel_release()
+    }
+}
+
 /// Checks if the current kernel supports io_uring.
 ///
 /// Returns `true` if all of the following hold:
