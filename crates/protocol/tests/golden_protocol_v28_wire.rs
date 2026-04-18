@@ -1017,6 +1017,89 @@ fn golden_v28_hardlink_dev_ino_roundtrip() {
 }
 
 // ---------------------------------------------------------------------------
+// Mixed hardlink and non-hardlink entries (protocol 28-29 interop fix)
+// upstream: flist.c:recv_file_entry() - dev/ino read gated on XMIT_HLINKED
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_v28_mixed_hardlink_and_plain_roundtrip() {
+    // Verifies that non-hardlinked entries interleaved with hardlinked entries
+    // decode correctly at protocol 28. The receiver must only read dev/ino
+    // when XMIT_HLINKED is set - reading unconditionally would consume bytes
+    // meant for the next entry, causing wire desync.
+    let protocol = proto28();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+    // Entry 1: plain file (no hardlink)
+    let mut e1 = FileEntry::new_file("plain.txt".into(), 100, 0o644);
+    e1.set_mtime(1_700_000_000, 0);
+
+    // Entry 2: hardlinked file
+    let mut e2 = FileEntry::new_file("linked_a.txt".into(), 200, 0o644);
+    e2.set_mtime(1_700_000_000, 0);
+    e2.set_hardlink_dev(42);
+    e2.set_hardlink_ino(12345);
+
+    // Entry 3: another plain file
+    let mut e3 = FileEntry::new_file("another.txt".into(), 300, 0o644);
+    e3.set_mtime(1_700_000_100, 0);
+
+    // Entry 4: same hardlink group
+    let mut e4 = FileEntry::new_file("linked_b.txt".into(), 200, 0o644);
+    e4.set_mtime(1_700_000_000, 0);
+    e4.set_hardlink_dev(42);
+    e4.set_hardlink_ino(12345);
+
+    writer.write_entry(&mut buf, &e1).unwrap();
+    writer.write_entry(&mut buf, &e2).unwrap();
+    writer.write_entry(&mut buf, &e3).unwrap();
+    writer.write_entry(&mut buf, &e4).unwrap();
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+    let r1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r1.name(), "plain.txt");
+    assert_eq!(r1.size(), 100);
+    assert_eq!(
+        r1.hardlink_dev(),
+        None,
+        "plain entry must have no hardlink dev"
+    );
+    assert_eq!(
+        r1.hardlink_ino(),
+        None,
+        "plain entry must have no hardlink ino"
+    );
+
+    let r2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r2.name(), "linked_a.txt");
+    assert_eq!(r2.size(), 200);
+    assert_eq!(r2.hardlink_dev(), Some(42));
+    assert_eq!(r2.hardlink_ino(), Some(12345));
+
+    let r3 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r3.name(), "another.txt");
+    assert_eq!(r3.size(), 300);
+    assert_eq!(
+        r3.hardlink_dev(),
+        None,
+        "plain entry must have no hardlink dev"
+    );
+
+    let r4 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r4.name(), "linked_b.txt");
+    assert_eq!(r4.size(), 200);
+    assert_eq!(r4.hardlink_dev(), Some(42));
+    assert_eq!(r4.hardlink_ino(), Some(12345));
+
+    // End marker
+    assert!(reader.read_entry(&mut cursor).unwrap().is_none());
+}
+
+// ---------------------------------------------------------------------------
 // Transfer stats exact wire bytes (protocol 28 - varlong30 only, no flist times)
 // upstream: main.c:handle_stats() - protocol < 29 omits flist times
 // ---------------------------------------------------------------------------
