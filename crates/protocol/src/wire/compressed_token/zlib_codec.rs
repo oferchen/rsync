@@ -429,13 +429,21 @@ impl ZlibTokenDecoder {
 
     /// Feeds block data into the decompressor's dictionary.
     ///
-    /// Uses fake deflate stored-block headers to feed raw data through inflate.
-    /// Reference: upstream token.c:see_deflate_token() lines 631-670.
+    /// Uses fake deflate stored-block headers to feed raw data through inflate,
+    /// concatenated into a single buffer per chunk. This ensures the inflate
+    /// engine sees the complete stored block (header + payload) atomically,
+    /// avoiding partial-block state issues between separate decompress calls.
+    ///
+    /// upstream: token.c:see_deflate_token() lines 631-670 - feeds header then
+    /// data in separate inflate() calls within the same do/while loop, relying
+    /// on zlib's stateful stream. With flate2/miniz_oxide, a single call with
+    /// the concatenated input is more robust.
     pub(super) fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
         if self.is_zlibx {
             return Ok(());
         }
         let mut remaining = data;
+        let mut combined = Vec::new();
 
         while !remaining.is_empty() {
             let chunk_len = remaining.len().min(0xFFFF);
@@ -443,15 +451,36 @@ impl ZlibTokenDecoder {
 
             let len_lo = (chunk_len & 0xFF) as u8;
             let len_hi = ((chunk_len >> 8) & 0xFF) as u8;
-            let header = [0x00, len_lo, len_hi, !len_lo, !len_hi];
 
-            self.decompressor
-                .decompress(&header, &mut self.output_buf, FlushDecompress::Sync)
-                .map_err(|e| io::Error::other(e.to_string()))?;
+            // Build a single buffer with stored-block header + payload.
+            // upstream: token.c:see_deflate_token() - hdr[0]=0x00 (stored block,
+            // not final), hdr[1..2]=len LE, hdr[3..4]=~len LE.
+            combined.clear();
+            combined.reserve(5 + chunk_len);
+            combined.extend_from_slice(&[0x00, len_lo, len_hi, !len_lo, !len_hi]);
+            combined.extend_from_slice(chunk);
 
-            self.decompressor
-                .decompress(chunk, &mut self.output_buf, FlushDecompress::Sync)
-                .map_err(|e| io::Error::other(e.to_string()))?;
+            // Feed the complete stored block in one call so inflate processes
+            // header + payload together without intermediate flush boundaries.
+            let mut input = &combined[..];
+            loop {
+                let before_in = self.decompressor.total_in();
+                let before_out = self.decompressor.total_out();
+
+                self.decompressor
+                    .decompress(input, &mut self.output_buf, FlushDecompress::Sync)
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+
+                let consumed = (self.decompressor.total_in() - before_in) as usize;
+                if consumed > 0 {
+                    input = &input[consumed..];
+                }
+                let produced = (self.decompressor.total_out() - before_out) as usize;
+
+                if input.is_empty() || (consumed == 0 && produced == 0) {
+                    break;
+                }
+            }
 
             remaining = &remaining[chunk_len..];
         }
