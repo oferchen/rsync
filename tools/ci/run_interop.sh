@@ -6778,9 +6778,9 @@ CONF
 
   start_oc_daemon_with_retry "$ds_oc_conf" "$ds_oc_log" "$upstream_binary" "$ds_oc_pid" "$oc_port"
 
-  # Push to oc-rsync daemon with -v to get stats
+  # Push to oc-rsync daemon with --stats to get Literal/Matched data lines
   local oc_exit=0
-  timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+  timeout "$hard_timeout" "$upstream_binary" -av --stats --timeout=10 \
       "${ds_src}/" "rsync://127.0.0.1:${oc_port}/ds/" \
       >"${log}.delta-stats-oc.out" 2>"${log}.delta-stats-oc.err" || oc_exit=$?
 
@@ -6809,7 +6809,7 @@ CONF
   sleep 2
 
   local up_exit=0
-  timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+  timeout "$hard_timeout" "$upstream_binary" -av --stats --timeout=10 \
       "${ds_src}/" "rsync://127.0.0.1:${upstream_port}/ds/" \
       >"${log}.delta-stats-up.out" 2>"${log}.delta-stats-up.err" || up_exit=$?
 
