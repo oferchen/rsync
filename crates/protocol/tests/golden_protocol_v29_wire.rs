@@ -509,6 +509,55 @@ fn golden_v29_hardlink_roundtrip() {
 }
 
 // ---------------------------------------------------------------------------
+// Mixed hardlink and non-hardlink entries (protocol 29 interop fix)
+// upstream: flist.c:recv_file_entry() - dev/ino read gated on XMIT_HLINKED
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_v29_mixed_hardlink_and_plain_roundtrip() {
+    // Regression test: non-hardlinked entries must not attempt to read dev/ino
+    // at protocol 29. The XMIT_HLINKED flag gates dev/ino on the wire.
+    let protocol = v29();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+    let mut plain = FileEntry::new_file("plain.txt".into(), 50, 0o644);
+    plain.set_mtime(1_700_000_000, 0);
+
+    let mut linked = FileEntry::new_file("linked.txt".into(), 100, 0o644);
+    linked.set_mtime(1_700_000_000, 0);
+    linked.set_hardlink_dev(7);
+    linked.set_hardlink_ino(9999);
+
+    let mut plain2 = FileEntry::new_file("other.txt".into(), 75, 0o644);
+    plain2.set_mtime(1_700_000_100, 0);
+
+    writer.write_entry(&mut buf, &plain).unwrap();
+    writer.write_entry(&mut buf, &linked).unwrap();
+    writer.write_entry(&mut buf, &plain2).unwrap();
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+    let r1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r1.name(), "plain.txt");
+    assert_eq!(r1.hardlink_dev(), None);
+
+    let r2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r2.name(), "linked.txt");
+    assert_eq!(r2.hardlink_dev(), Some(7));
+    assert_eq!(r2.hardlink_ino(), Some(9999));
+
+    let r3 = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(r3.name(), "other.txt");
+    assert_eq!(r3.size(), 75);
+    assert_eq!(r3.hardlink_dev(), None);
+
+    assert!(reader.read_entry(&mut cursor).unwrap().is_none());
+}
+
+// ---------------------------------------------------------------------------
 // Wire format identity: v29 file list encoding matches v28
 // upstream: flist.c - protocol 29 takes same code path as 28 for flist
 // ---------------------------------------------------------------------------
