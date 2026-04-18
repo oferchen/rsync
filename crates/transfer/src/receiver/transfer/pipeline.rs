@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use logging::info_log;
-use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
+use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
 use protocol::flist::FileEntry;
 
 use crate::delta_apply::ChecksumVerifier;
