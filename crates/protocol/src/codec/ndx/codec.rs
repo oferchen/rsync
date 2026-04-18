@@ -353,3 +353,69 @@ impl NdxCodec for NdxCodecEnum {
 pub fn create_ndx_codec(protocol_version: u8) -> NdxCodecEnum {
     NdxCodecEnum::new(protocol_version)
 }
+
+/// NDX codec wrapper that asserts strictly monotonic positive file indices.
+///
+/// Wraps an [`NdxCodecEnum`] and adds a `debug_assert!` in `write_ndx` to
+/// verify that each positive NDX (file index) is strictly greater than the
+/// previous one. Negative sentinel values (NDX_DONE, NDX_FLIST_EOF, etc.)
+/// are excluded from this check since they are control signals, not file
+/// indices.
+///
+/// Use this at wire-emission points (generator/receiver transfer loops) to
+/// catch ordering violations from parallel processing before they become
+/// protocol errors.
+///
+/// In release builds, the assertion is compiled out and this wrapper has
+/// zero overhead.
+#[derive(Debug, Clone)]
+pub struct MonotonicNdxWriter {
+    /// Inner codec that performs the actual wire encoding.
+    inner: NdxCodecEnum,
+    /// Tracks the last positive NDX written for monotonicity verification.
+    #[cfg(debug_assertions)]
+    last_positive: Option<i32>,
+}
+
+impl MonotonicNdxWriter {
+    /// Creates a new monotonic NDX writer for the given protocol version.
+    #[must_use]
+    pub fn new(protocol_version: u8) -> Self {
+        Self {
+            inner: NdxCodecEnum::new(protocol_version),
+            #[cfg(debug_assertions)]
+            last_positive: None,
+        }
+    }
+}
+
+impl NdxCodec for MonotonicNdxWriter {
+    fn write_ndx<W: Write + ?Sized>(&mut self, writer: &mut W, ndx: i32) -> io::Result<()> {
+        // Only check positive file indices - negative values are sentinels
+        // (NDX_DONE, NDX_FLIST_EOF, NDX_DEL_STATS, NDX_FLIST_OFFSET).
+        #[cfg(debug_assertions)]
+        if ndx >= 0 {
+            if let Some(prev) = self.last_positive {
+                debug_assert!(
+                    ndx > prev,
+                    "NDX monotonicity violation: emitted {ndx} after {prev} - \
+                     file indices must be strictly increasing on the wire"
+                );
+            }
+            self.last_positive = Some(ndx);
+        }
+        self.inner.write_ndx(writer, ndx)
+    }
+
+    fn write_ndx_done<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.inner.write_ndx_done(writer)
+    }
+
+    fn read_ndx<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<i32> {
+        self.inner.read_ndx(reader)
+    }
+
+    fn protocol_version(&self) -> u8 {
+        self.inner.protocol_version()
+    }
+}

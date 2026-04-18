@@ -46,7 +46,9 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub use codec::{LegacyNdxCodec, ModernNdxCodec, NdxCodec, NdxCodecEnum, create_ndx_codec};
+pub use codec::{
+    LegacyNdxCodec, ModernNdxCodec, MonotonicNdxWriter, NdxCodec, NdxCodecEnum, create_ndx_codec,
+};
 pub use constants::{
     NDX_DEL_STATS, NDX_DONE, NDX_DONE_LEGACY_BYTES, NDX_DONE_MODERN_BYTE, NDX_FLIST_EOF,
     NDX_FLIST_OFFSET,

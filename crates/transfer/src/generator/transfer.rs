@@ -16,7 +16,8 @@ use std::path::PathBuf;
 use logging::{PhaseTimer, debug_log};
 use protocol::TransferStats;
 use protocol::codec::{
-    NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec,
+    MonotonicNdxWriter, NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec,
+    create_ndx_codec,
 };
 use protocol::stats::DeleteStats;
 
@@ -80,7 +81,7 @@ impl GeneratorContext {
 
         // upstream: io.c:2244-2245 - separate read/write NDX state
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
-        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
 
         // INC_RECURSE: create scheduler and wire encoding state for lazy sub-list sending.
         // upstream: sender.c:227,261 - interleaves sub-list sending with file transfers.
@@ -478,7 +479,7 @@ impl GeneratorContext {
         reader: &mut R,
         writer: &mut W,
         ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
-        ndx_write_codec: &mut protocol::codec::NdxCodecEnum,
+        ndx_write_codec: &mut MonotonicNdxWriter,
     ) -> io::Result<()> {
         if !self.protocol.supports_goodbye_exchange() {
             return Ok(());

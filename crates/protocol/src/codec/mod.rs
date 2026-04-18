@@ -52,9 +52,10 @@ pub use protocol::{
 
 /// NDX (file index) codec types for file list operations.
 pub use ndx::{
-    LegacyNdxCodec, ModernNdxCodec, NDX_DEL_STATS, NDX_DONE, NDX_DONE_LEGACY_BYTES,
-    NDX_DONE_MODERN_BYTE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum, NdxState,
-    create_ndx_codec, read_goodbye, write_goodbye, write_ndx_done, write_ndx_flist_eof,
+    LegacyNdxCodec, ModernNdxCodec, MonotonicNdxWriter, NDX_DEL_STATS, NDX_DONE,
+    NDX_DONE_LEGACY_BYTES, NDX_DONE_MODERN_BYTE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec,
+    NdxCodecEnum, NdxState, create_ndx_codec, read_goodbye, write_goodbye, write_ndx_done,
+    write_ndx_flist_eof,
 };
 
 /// Unified container for all protocol version-aware codecs.
