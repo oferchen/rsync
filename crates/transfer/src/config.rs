@@ -567,31 +567,39 @@ mod tests {
     #[test]
     fn effective_backup_suffix_empty_when_backup_dir_set() {
         // upstream: options.c:2278-2279 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
-        let mut config = ServerConfig::default();
-        config.backup_dir = Some(".backups".to_owned());
+        let config = ServerConfig {
+            backup_dir: Some(".backups".to_owned()),
+            ..Default::default()
+        };
         assert_eq!(config.effective_backup_suffix(), "");
     }
 
     #[test]
     fn effective_backup_suffix_uses_explicit_suffix() {
-        let mut config = ServerConfig::default();
-        config.backup_suffix = Some(".bak".to_owned());
+        let config = ServerConfig {
+            backup_suffix: Some(".bak".to_owned()),
+            ..Default::default()
+        };
         assert_eq!(config.effective_backup_suffix(), ".bak");
     }
 
     #[test]
     fn effective_backup_suffix_explicit_overrides_backup_dir_default() {
         // When both --backup-dir and --suffix are set, --suffix wins
-        let mut config = ServerConfig::default();
-        config.backup_dir = Some(".backups".to_owned());
-        config.backup_suffix = Some(".old".to_owned());
+        let config = ServerConfig {
+            backup_dir: Some(".backups".to_owned()),
+            backup_suffix: Some(".old".to_owned()),
+            ..Default::default()
+        };
         assert_eq!(config.effective_backup_suffix(), ".old");
     }
 
     #[test]
     fn effective_backup_suffix_explicit_empty_with_no_backup_dir() {
-        let mut config = ServerConfig::default();
-        config.backup_suffix = Some(String::new());
+        let config = ServerConfig {
+            backup_suffix: Some(String::new()),
+            ..Default::default()
+        };
         assert_eq!(config.effective_backup_suffix(), "");
     }
 }
