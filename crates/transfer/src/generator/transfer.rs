@@ -714,6 +714,17 @@ impl GeneratorContext {
             })?;
         }
 
+        // upstream: main.c:1248-1258 - flush pending multiplex output before
+        // blocking on recv_filter_list(). Upstream's perform_io() flushes the
+        // output buffer while waiting for input via select(), but our separate
+        // read/write streams cannot do that. Without this flush, any buffered
+        // data (e.g. MSG_IO_TIMEOUT) stays unsent while we block reading the
+        // client's filter list, causing a protocol ordering deadlock in daemon
+        // pull mode where the client waits for server output before proceeding.
+        if !self.config.connection.client_mode {
+            writer.flush()?;
+        }
+
         // upstream: main.c:1258 - recv_filter_list() in server mode
         self.receive_filter_list_if_server(&mut reader)?;
 
