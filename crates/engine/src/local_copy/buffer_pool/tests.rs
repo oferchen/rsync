@@ -1391,18 +1391,38 @@ fn adaptive_pool_shrinks_when_idle() {
     let pool = Arc::new(BufferPool::with_buffer_size(32, 1024).with_adaptive_resizing());
     assert_eq!(pool.max_buffers(), 32);
 
-    // Pre-populate the pool with buffers by acquiring and releasing.
-    // This puts buffers in TLS and central pool so utilization is low
-    // relative to the large capacity.
+    // Pre-populate the central pool with a few buffers so acquires are hits.
     {
-        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+        let bufs: Vec<_> = (0..4)
+            .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+            .collect();
+        drop(bufs);
     }
 
-    // Now acquire and release many times in a tight loop on the same thread.
-    // TLS absorbs most operations (all hits), and utilization stays low
-    // relative to the 32-slot capacity. After 64 ops, the pool should shrink.
-    for _ in 0..256 {
-        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    // Use many short-lived threads so each acquire bypasses TLS (cold cache)
+    // and goes through pop_buffer(), which records hit/miss stats. Each
+    // thread acquires one buffer (hit from central pool), drops it on exit
+    // (returned to TLS, freed when thread exits). We need >= 64 ops to
+    // trigger a resize check, and most should be hits with low utilization.
+    for _ in 0..3 {
+        // Re-seed the pool between rounds.
+        {
+            let bufs: Vec<_> = (0..4)
+                .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+                .collect();
+            drop(bufs);
+        }
+        let handles: Vec<_> = (0..32)
+            .map(|_| {
+                let pool = Arc::clone(&pool);
+                thread::spawn(move || {
+                    let _buf = BufferPool::acquire_from(pool);
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
     }
 
     let new_capacity = pool.max_buffers();
@@ -1439,25 +1459,32 @@ fn adaptive_pool_holds_steady_under_balanced_load() {
 
 #[test]
 fn adaptive_pool_concurrent_growth() {
-    // Multiple threads all miss simultaneously, triggering growth.
+    // Many threads each acquire multiple buffers concurrently, forcing fresh
+    // allocations (misses). Each thread has a cold TLS cache so every acquire
+    // goes through pop_buffer() which records the miss. We need >= 64 ops
+    // (CHECK_INTERVAL) to trigger a resize evaluation. With 16 threads * 4
+    // acquires = 64 ops, all misses, the pool should grow from capacity 2.
     let pool = Arc::new(BufferPool::with_buffer_size(2, 1024).with_adaptive_resizing());
     let initial = pool.max_buffers();
 
-    let handles: Vec<_> = (0..8)
-        .map(|_| {
-            let pool = Arc::clone(&pool);
-            thread::spawn(move || {
-                // Hold 4 buffers each to force misses.
-                let held: Vec<_> = (0..4)
-                    .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
-                    .collect();
-                drop(held);
+    // Run two rounds to ensure at least one resize check fires.
+    for _ in 0..2 {
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                let pool = Arc::clone(&pool);
+                thread::spawn(move || {
+                    // Hold 4 buffers each to force misses (pool starts near-empty).
+                    let held: Vec<_> = (0..4)
+                        .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+                        .collect();
+                    drop(held);
+                })
             })
-        })
-        .collect();
+            .collect();
 
-    for h in handles {
-        h.join().expect("thread panicked");
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
     }
 
     // Pool should have grown from the initial 2.
