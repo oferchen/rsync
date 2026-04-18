@@ -792,6 +792,7 @@ where
             stats,
             verbosity,
             list_only,
+            dry_run,
             out_format_template: out_format_template.as_ref(),
             name_level,
             name_overridden,

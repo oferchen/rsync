@@ -243,6 +243,26 @@ impl GeneratorContext {
                 continue;
             }
 
+            // upstream: sender.c:394-399 - dry_run (!do_xfers) logs the item and
+            // echoes write_ndx_and_attrs() without calling receive_sums().
+            if self.config.flags.dry_run {
+                self.validate_file_index(ndx)?;
+                let file_entry = &self.file_list[ndx];
+                let ndx_i32 = self.flat_to_wire_ndx(ndx);
+                ndx_write_codec.write_ndx(&mut *writer, ndx_i32)?;
+                if self.protocol.supports_iflags() {
+                    writer.write_all(&iflags.significant_wire_bits().to_le_bytes())?;
+                }
+                // upstream: sender.c:395 - log_item(FCLIENT, file, iflags, NULL)
+                if let Some(cb) = itemize {
+                    let name = file_entry.path().to_string_lossy();
+                    cb.on_itemize(&format!("{name}\n"));
+                }
+                files_transferred += 1;
+                writer.flush()?;
+                continue;
+            }
+
             // upstream: sender.c:120 - receive_sums()
             let sum_head = SumHead::read(&mut *reader)?;
             self.timing.total_bytes_read += 16;
