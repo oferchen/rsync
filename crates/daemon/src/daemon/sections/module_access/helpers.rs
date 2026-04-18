@@ -409,7 +409,10 @@ fn strip_keyword_prefix<'a>(token: &'a str, keyword: &str) -> Option<&'a str> {
 /// a directory-only exclude (not include), the `FILTRULE_DIRECTORY` flag is
 /// cleared and `/***` is appended to the pattern.
 fn build_pattern_rule(pattern: &str, is_include: bool) -> FilterRuleWireFormat {
-    let anchored = pattern.starts_with('/');
+    // upstream: exclude.c:200-202 - XFLG_ABS_IF_SLASH sets FILTRULE_ABS_PATH
+    // when the pattern starts with '/' or contains any embedded '/'. Patterns
+    // like "subdir/file.txt" are anchored relative to the module root.
+    let anchored = pattern.starts_with('/') || pattern.contains('/');
     let directory_only = pattern.ends_with('/');
 
     // upstream: exclude.c:212-213 - XFLG_DIR2WILD3 applies only to

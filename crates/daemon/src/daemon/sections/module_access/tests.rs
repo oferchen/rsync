@@ -1185,6 +1185,51 @@ mod module_access_tests {
         assert_eq!(rule.pattern, "build/");
     }
 
+    #[test]
+    fn pattern_leading_slash_is_anchored() {
+        let rule = build_pattern_rule("/foo", false);
+        assert!(rule.anchored);
+    }
+
+    #[test]
+    fn pattern_no_slash_is_not_anchored() {
+        let rule = build_pattern_rule("*.txt", false);
+        assert!(!rule.anchored);
+    }
+
+    #[test]
+    fn pattern_embedded_slash_is_anchored() {
+        // upstream: exclude.c:200-202 - XFLG_ABS_IF_SLASH anchors patterns
+        // with any slash, not just leading slash
+        let rule = build_pattern_rule("subdir/file.txt", false);
+        assert!(rule.anchored);
+    }
+
+    #[test]
+    fn pattern_deep_path_is_anchored() {
+        let rule = build_pattern_rule("a/b/c", false);
+        assert!(rule.anchored);
+    }
+
+    #[test]
+    fn directory_exclude_gets_wild3() {
+        let rule = build_pattern_rule("foo/", false);
+        assert!(rule.anchored); // has embedded '/'
+        assert!(!rule.directory_only); // cleared by DIR2WILD3
+        assert!(rule.pattern.ends_with("/***"));
+    }
+
+    #[test]
+    fn directory_include_keeps_directory_flag() {
+        let rule = build_pattern_rule("bar/", true);
+        assert!(rule.directory_only);
+    }
+
+    #[test]
+    fn include_with_embedded_slash_is_anchored() {
+        let rule = build_pattern_rule("src/main.rs", true);
+        assert!(rule.anchored);
+    }
 
     #[test]
     fn parse_daemon_filter_token_exclude() {
