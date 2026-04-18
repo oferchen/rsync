@@ -91,6 +91,7 @@ mod global;
 mod guard;
 mod memory_cap;
 mod pool;
+mod pressure;
 mod thread_local_cache;
 /// EMA-based throughput tracker for dynamic buffer sizing.
 pub mod throughput;
