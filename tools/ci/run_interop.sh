@@ -6728,6 +6728,174 @@ CONF
   return 0
 }
 
+# Verify delta transfer statistics (-v output) match between oc-rsync and
+# upstream daemons. Upstream rsync -v prints stats like:
+#   Total transferred file size: N bytes
+#   Literal data: N bytes
+#   Matched data: N bytes
+#   ...
+#   total size is N  speedup is X.XX
+# This test verifies oc-rsync daemon produces compatible stats fields.
+test_delta_stats() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ds_src="${work}/delta-stats-src"
+  local ds_basis="${work}/delta-stats-basis"
+  local ds_dest_oc="${work}/delta-stats-dest-oc"
+  local ds_dest_up="${work}/delta-stats-dest-up"
+  rm -rf "$ds_src" "$ds_basis" "$ds_dest_oc" "$ds_dest_up"
+  mkdir -p "$ds_src" "$ds_basis" "$ds_dest_oc" "$ds_dest_up"
+  chmod 777 "$ds_dest_oc" "$ds_dest_up"
+
+  # Create a basis file and a modified version to force delta transfer.
+  # The basis (pre-existing at destination) shares ~90% with the source,
+  # so rsync should report matched > 0 and literal > 0.
+  dd if=/dev/urandom of="$ds_basis/data.bin" bs=1024 count=100 2>/dev/null
+  cp "$ds_basis/data.bin" "$ds_src/data.bin"
+  # Overwrite the first 10KB to create a delta
+  dd if=/dev/urandom of="$ds_src/data.bin" bs=1024 count=10 conv=notrunc 2>/dev/null
+
+  # Pre-populate destinations with the basis file
+  cp "$ds_basis/data.bin" "$ds_dest_oc/data.bin"
+  cp "$ds_basis/data.bin" "$ds_dest_up/data.bin"
+  # Backdate destination files to prevent quick-check skip
+  touch -t 200001010000 "$ds_dest_oc/data.bin" "$ds_dest_up/data.bin"
+
+  # Add a small text file for variety
+  echo "delta-stats-test-marker" > "$ds_src/marker.txt"
+
+  # Start oc-rsync daemon
+  local ds_oc_conf="${work}/delta-stats-oc.conf"
+  local ds_oc_pid="${work}/delta-stats-oc.pid"
+  local ds_oc_log="${work}/delta-stats-oc.log"
+  cat > "$ds_oc_conf" <<CONF
+[ds]
+    path = $ds_dest_oc
+    read only = false
+    use chroot = false
+CONF
+
+  start_oc_daemon_with_retry "$ds_oc_conf" "$ds_oc_log" "$upstream_binary" "$ds_oc_pid" "$oc_port"
+
+  # Push to oc-rsync daemon with -v to get stats
+  local oc_exit=0
+  timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${ds_src}/" "rsync://127.0.0.1:${oc_port}/ds/" \
+      >"${log}.delta-stats-oc.out" 2>"${log}.delta-stats-oc.err" || oc_exit=$?
+
+  stop_oc_daemon
+
+  if [[ "$oc_exit" -ne 0 ]]; then
+    echo "    oc-rsync daemon transfer failed (exit=$oc_exit)"
+    cat "${log}.delta-stats-oc.err" 2>/dev/null | head -10
+    return 1
+  fi
+
+  # Start upstream daemon for baseline comparison
+  local ds_up_conf="${work}/delta-stats-up.conf"
+  local ds_up_pid="${work}/delta-stats-up.pid"
+  local ds_up_log="${work}/delta-stats-up.log"
+  cat > "$ds_up_conf" <<CONF
+[ds]
+    path = $ds_dest_up
+    read only = false
+    use chroot = false
+CONF
+
+  "$upstream_binary" --daemon --no-detach --port="$upstream_port" \
+      --config="$ds_up_conf" --log-file="$ds_up_log" &
+  local up_daemon_pid=$!
+  sleep 2
+
+  local up_exit=0
+  timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      "${ds_src}/" "rsync://127.0.0.1:${upstream_port}/ds/" \
+      >"${log}.delta-stats-up.out" 2>"${log}.delta-stats-up.err" || up_exit=$?
+
+  kill "$up_daemon_pid" 2>/dev/null; wait "$up_daemon_pid" 2>/dev/null
+
+  if [[ "$up_exit" -ne 0 ]]; then
+    echo "    upstream daemon transfer failed (exit=$up_exit)"
+    cat "${log}.delta-stats-up.err" 2>/dev/null | head -10
+    return 1
+  fi
+
+  # Verify content arrived correctly at oc-rsync destination
+  if ! cmp -s "$ds_src/data.bin" "$ds_dest_oc/data.bin"; then
+    echo "    oc-rsync: data.bin content mismatch"
+    return 1
+  fi
+  if ! cmp -s "$ds_src/marker.txt" "$ds_dest_oc/marker.txt"; then
+    echo "    oc-rsync: marker.txt content mismatch"
+    return 1
+  fi
+
+  # Parse stats from both outputs.
+  # upstream rsync -v prints stats to stdout after the file list.
+  local oc_out="${log}.delta-stats-oc.out"
+  local up_out="${log}.delta-stats-up.out"
+
+  # Extract key stats fields
+  local oc_literal up_literal oc_matched up_matched oc_speedup up_speedup
+  oc_literal=$(grep -oP 'Literal data: \K[0-9,]+' "$oc_out" 2>/dev/null | tr -d ',') || true
+  up_literal=$(grep -oP 'Literal data: \K[0-9,]+' "$up_out" 2>/dev/null | tr -d ',') || true
+  oc_matched=$(grep -oP 'Matched data: \K[0-9,]+' "$oc_out" 2>/dev/null | tr -d ',') || true
+  up_matched=$(grep -oP 'Matched data: \K[0-9,]+' "$up_out" 2>/dev/null | tr -d ',') || true
+  oc_speedup=$(grep -oP 'speedup is \K[0-9.]+' "$oc_out" 2>/dev/null) || true
+  up_speedup=$(grep -oP 'speedup is \K[0-9.]+' "$up_out" 2>/dev/null) || true
+
+  # Verify oc-rsync produced all required stats fields
+  if [[ -z "$oc_literal" ]]; then
+    echo "    oc-rsync: missing 'Literal data' in stats output"
+    echo "    output: $(tail -10 "$oc_out")"
+    return 1
+  fi
+  if [[ -z "$oc_matched" ]]; then
+    echo "    oc-rsync: missing 'Matched data' in stats output"
+    echo "    output: $(tail -10 "$oc_out")"
+    return 1
+  fi
+  if [[ -z "$oc_speedup" ]]; then
+    echo "    oc-rsync: missing 'speedup is' in stats output"
+    echo "    output: $(tail -10 "$oc_out")"
+    return 1
+  fi
+
+  # Verify upstream also produced stats (sanity check)
+  if [[ -z "$up_literal" || -z "$up_matched" || -z "$up_speedup" ]]; then
+    echo "    upstream: missing stats fields (literal=$up_literal matched=$up_matched speedup=$up_speedup)"
+    echo "    output: $(tail -10 "$up_out")"
+    return 1
+  fi
+
+  # Delta transfer should have both literal (changed bytes) and matched
+  # (shared bytes) data. With 10KB changed out of 100KB, we expect
+  # matched > 0 and literal > 0.
+  if [[ "$oc_literal" -eq 0 ]]; then
+    echo "    oc-rsync: literal data is 0 (expected > 0 for delta transfer)"
+    return 1
+  fi
+  if [[ "$oc_matched" -eq 0 ]]; then
+    echo "    oc-rsync: matched data is 0 (expected > 0 for delta transfer)"
+    return 1
+  fi
+
+  # Compare oc-rsync stats against upstream. They should be identical
+  # since both received the same delta from the same source.
+  if [[ "$oc_literal" -ne "$up_literal" ]]; then
+    echo "    literal data mismatch: oc=$oc_literal upstream=$up_literal"
+    return 1
+  fi
+  if [[ "$oc_matched" -ne "$up_matched" ]]; then
+    echo "    matched data mismatch: oc=$oc_matched upstream=$up_matched"
+    return 1
+  fi
+
+  echo "    stats match: literal=$oc_literal matched=$oc_matched speedup=$oc_speedup"
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -6789,6 +6957,7 @@ run_standalone_interop_tests() {
     "up:symlinks"
     "oc:symlinks"
     "daemon-server-side-filter"
+    "delta-stats"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -6843,6 +7012,7 @@ run_standalone_interop_tests() {
     "test_symlinks_upstream"
     "test_symlinks_oc"
     "test_daemon_server_side_filter"
+    "test_delta_stats"
   )
 
   for i in "${!test_names[@]}"; do
@@ -6978,6 +7148,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       daemon-server-side-filter)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      delta-stats)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
