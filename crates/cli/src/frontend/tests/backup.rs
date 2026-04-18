@@ -77,7 +77,8 @@ fn backup_dir_flag_places_backups_in_relative_directory() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    let backup_path = dest_dir.join("backups/source/nested/file.txt~");
+    // upstream: options.c:2278-2279 - --backup-dir without --suffix uses empty suffix
+    let backup_path = dest_dir.join("backups/source/nested/file.txt");
     assert_eq!(
         std::fs::read(&backup_path).expect("read backup"),
         b"previous"
