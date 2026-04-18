@@ -460,7 +460,7 @@ impl<'a> CopyContext<'a> {
     pub(super) fn backup_existing_entry(
         &mut self,
         destination: &Path,
-        relative: Option<&Path>,
+        _relative: Option<&Path>,
         file_type: fs::FileType,
     ) -> Result<(), LocalCopyError> {
         if !self.options.backup_enabled() || self.mode.is_dry_run() {
@@ -471,10 +471,16 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
+        // Always derive the relative path from destination/destination_root
+        // rather than using the source-relative path. The source-relative path
+        // may not include the source directory basename (e.g., "nested/file.txt"
+        // instead of "source/nested/file.txt"), causing backup files to be
+        // placed at the wrong location when --backup-dir is used.
+        // upstream: backup.c:get_backup_name() uses the destination-relative path
         let backup_path = compute_backup_path(
             self.destination_root(),
             destination,
-            relative,
+            None,
             self.options.backup_directory(),
             self.options.backup_suffix(),
         );
