@@ -460,7 +460,7 @@ impl<'a> CopyContext<'a> {
     pub(super) fn backup_existing_entry(
         &mut self,
         destination: &Path,
-        relative: Option<&Path>,
+        _relative: Option<&Path>,
         file_type: fs::FileType,
     ) -> Result<(), LocalCopyError> {
         if !self.options.backup_enabled() || self.mode.is_dry_run() {
