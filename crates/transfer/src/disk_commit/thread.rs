@@ -11,6 +11,8 @@
 use std::io;
 use std::thread::{self, JoinHandle};
 
+use logging::debug_log;
+
 use crate::pipeline::messages::{CommitResult, FileMessage};
 use crate::pipeline::spsc;
 
@@ -75,6 +77,40 @@ fn try_create_disk_batch(policy: fast_io::IoUringPolicy) -> Option<fast_io::IoUr
     }
 }
 
+/// Logs io_uring availability at debug I/O level 1 (activated at `-vv`).
+///
+/// Reports whether io_uring is being used for disk writes and, if not, why.
+/// This gives users visibility into which I/O path is active without
+/// cluttering default output.
+fn log_io_uring_status(policy: fast_io::IoUringPolicy, batch_created: bool) {
+    match policy {
+        fast_io::IoUringPolicy::Disabled => {
+            debug_log!(
+                Io,
+                1,
+                "io_uring disabled by --no-io-uring, using standard I/O"
+            );
+        }
+        fast_io::IoUringPolicy::Auto | fast_io::IoUringPolicy::Enabled => {
+            if batch_created {
+                debug_log!(
+                    Io,
+                    1,
+                    "disk I/O: {}",
+                    fast_io::io_uring_availability_reason()
+                );
+            } else {
+                debug_log!(
+                    Io,
+                    1,
+                    "disk I/O: {}, using standard I/O fallback",
+                    fast_io::io_uring_availability_reason()
+                );
+            }
+        }
+    }
+}
+
 /// Main loop of the disk commit thread.
 ///
 /// Allocates a single 256KB write buffer reused across all files, matching
@@ -89,6 +125,8 @@ fn disk_thread_main(
 ) {
     let mut write_buf = Vec::with_capacity(WRITE_BUF_SIZE);
     let mut _disk_batch = try_create_disk_batch(config.io_uring_policy);
+
+    log_io_uring_status(config.io_uring_policy, _disk_batch.is_some());
 
     while let Ok(msg) = file_rx.recv() {
         match msg {
