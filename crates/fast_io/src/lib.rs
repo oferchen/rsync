@@ -386,3 +386,191 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod io_uring_fallback_tests {
+    use super::*;
+
+    // ─────────────────────────────────────────────────────────────────────
+    // io_uring fallback message verification (task #1578)
+    // ─────────────────────────────────────────────────────────────────────
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn io_uring_unavailable_on_non_linux() {
+        assert!(
+            !is_io_uring_available(),
+            "io_uring must not be available on non-Linux platforms"
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn io_uring_status_detail_indicates_platform_unavailability() {
+        let detail = io_uring_status_detail();
+        assert!(
+            detail.contains("not available"),
+            "status detail must indicate unavailability on non-Linux, got: {detail}"
+        );
+        assert!(
+            detail.contains("not Linux"),
+            "status detail must mention platform is not Linux, got: {detail}"
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn io_uring_availability_reason_describes_platform_constraint() {
+        let reason = io_uring_availability_reason();
+        assert!(
+            reason.starts_with("io_uring unavailable:"),
+            "reason must start with 'io_uring unavailable:' on non-Linux, got: {reason}"
+        );
+        assert!(
+            reason.contains("not Linux"),
+            "reason must explain platform is not Linux, got: {reason}"
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn io_uring_fallback_produces_no_errors() {
+        // Verify that querying io_uring status on non-Linux does not panic or error -
+        // the fallback path is exercised cleanly.
+        let available = is_io_uring_available();
+        let detail = io_uring_status_detail();
+        let reason = io_uring_availability_reason();
+
+        assert!(!available);
+        assert!(!detail.is_empty());
+        assert!(!reason.is_empty());
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn io_uring_capabilities_excluded_on_non_linux() {
+        let caps = platform_io_capabilities();
+        assert!(
+            !caps.contains(&"io_uring"),
+            "io_uring must not appear in capabilities on non-Linux"
+        );
+    }
+
+    #[cfg(all(target_os = "linux", feature = "io_uring"))]
+    #[test]
+    fn io_uring_status_detail_well_formed_on_linux() {
+        let detail = io_uring_status_detail();
+        assert!(
+            detail.starts_with("compiled in, "),
+            "Linux+feature status must start with 'compiled in, ', got: {detail}"
+        );
+        assert!(
+            detail.contains("available") || detail.contains("unavailable"),
+            "status detail must indicate availability state, got: {detail}"
+        );
+    }
+
+    #[cfg(all(target_os = "linux", feature = "io_uring"))]
+    #[test]
+    fn io_uring_availability_reason_well_formed_on_linux() {
+        let reason = io_uring_availability_reason();
+        assert!(
+            reason.starts_with("io_uring "),
+            "reason must start with 'io_uring ', got: {reason}"
+        );
+        // On Linux with the feature, the reason must mention the kernel version
+        // or a specific unavailability cause.
+        let has_kernel_info = reason.contains("kernel");
+        let has_parse_error = reason.contains("could not");
+        assert!(
+            has_kernel_info || has_parse_error,
+            "reason must contain kernel info or parse error, got: {reason}"
+        );
+    }
+
+    #[cfg(all(target_os = "linux", feature = "io_uring"))]
+    #[test]
+    fn io_uring_availability_consistent_with_reason() {
+        let available = is_io_uring_available();
+        let reason = io_uring_availability_reason();
+
+        if available {
+            assert!(
+                reason.contains("io_uring available"),
+                "reason must say 'available' when io_uring is available, got: {reason}"
+            );
+            assert!(
+                !reason.contains("unavailable"),
+                "reason must not say 'unavailable' when io_uring is available, got: {reason}"
+            );
+        } else {
+            assert!(
+                reason.contains("unavailable"),
+                "reason must say 'unavailable' when io_uring is not available, got: {reason}"
+            );
+        }
+    }
+
+    #[cfg(all(target_os = "linux", not(feature = "io_uring")))]
+    #[test]
+    fn io_uring_feature_disabled_status() {
+        let detail = io_uring_status_detail();
+        assert!(
+            detail.contains("not compiled in"),
+            "status must indicate feature not compiled when io_uring feature disabled, got: {detail}"
+        );
+
+        let reason = io_uring_availability_reason();
+        assert!(
+            reason.contains("not compiled in"),
+            "reason must indicate feature not compiled, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn io_uring_status_detail_is_single_line() {
+        let detail = io_uring_status_detail();
+        assert!(
+            !detail.contains('\n'),
+            "status detail must be a single line for display purposes, got: {detail}"
+        );
+    }
+
+    #[test]
+    fn io_uring_availability_reason_is_single_line() {
+        let reason = io_uring_availability_reason();
+        assert!(
+            !reason.contains('\n'),
+            "availability reason must be a single line for log output, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn io_uring_availability_reason_starts_with_io_uring_prefix() {
+        let reason = io_uring_availability_reason();
+        assert!(
+            reason.starts_with("io_uring "),
+            "reason must start with 'io_uring ' prefix for consistent log formatting, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn io_uring_status_detail_no_trailing_whitespace() {
+        let detail = io_uring_status_detail();
+        assert_eq!(
+            detail,
+            detail.trim(),
+            "status detail must not have leading/trailing whitespace"
+        );
+    }
+
+    #[test]
+    fn io_uring_availability_reason_no_trailing_whitespace() {
+        let reason = io_uring_availability_reason();
+        assert_eq!(
+            reason,
+            reason.trim(),
+            "availability reason must not have leading/trailing whitespace"
+        );
+    }
+}
