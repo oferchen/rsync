@@ -58,6 +58,12 @@ fn backup_dir_flag_places_backups_in_relative_directory() {
     let source_file = source_dir.join("nested/file.txt");
     std::fs::write(&source_file, b"updated").expect("write source");
     std::fs::write(dest_dir.join("source/nested/file.txt"), b"previous").expect("seed dest");
+    // Backdate destination to prevent quick-check skip (same mtime+size = no transfer)
+    let one_hour_ago = filetime::FileTime::from_system_time(
+        std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
+    );
+    filetime::set_file_mtime(dest_dir.join("source/nested/file.txt"), one_hour_ago)
+        .expect("backdate dest");
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -71,7 +77,8 @@ fn backup_dir_flag_places_backups_in_relative_directory() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    let backup_path = dest_dir.join("backups/source/nested/file.txt~");
+    // upstream: options.c:2278-2279 - --backup-dir without --suffix uses empty suffix
+    let backup_path = dest_dir.join("backups/source/nested/file.txt");
     assert_eq!(
         std::fs::read(&backup_path).expect("read backup"),
         b"previous"
