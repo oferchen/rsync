@@ -1082,6 +1082,50 @@ fn stderr_drain_joins_on_drop() {
 
 #[cfg(unix)]
 #[test]
+fn child_handle_drop_surfaces_stderr_on_nonzero_exit() {
+    // When SshChildHandle is dropped without wait_with_stderr() and the child
+    // exited with a non-zero status, the Drop impl must join the drain thread
+    // and surface stderr. This exercises the abnormal-exit Drop path that
+    // prevents SSH errors from being silently lost.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("printf 'fatal: host key verification failed\\n' >&2; exit 255");
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, writer, child_handle) = connection.split().expect("split");
+
+    writer.close().expect("close writer");
+
+    // Dropping the child handle without calling wait() should not panic,
+    // and the drain thread should be joined cleanly.
+    drop(child_handle);
+}
+
+#[cfg(unix)]
+#[test]
+fn connection_drop_surfaces_stderr_on_nonzero_exit() {
+    // When SshConnection is dropped (not split) and the child exited with
+    // an error, the Drop impl must surface stderr. This tests the direct
+    // connection Drop path used when callers do not split into reader/writer.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("printf 'Connection refused\\n' >&2; exit 1");
+    command.set_target_override(Some(OsString::new()));
+
+    let connection = command.spawn().expect("spawn shell");
+
+    // Dropping the connection directly without wait() should not panic,
+    // and the drain thread should be joined cleanly.
+    drop(connection);
+}
+
+#[cfg(unix)]
+#[test]
 fn stderr_deadlock_regression_large_stderr_does_not_block_stdout() {
     // Regression test: when a child writes large amounts to stderr while also
     // writing to stdout, the parent must be able to read stdout without
