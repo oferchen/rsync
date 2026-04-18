@@ -1432,7 +1432,7 @@ fn adaptive_pool_holds_steady_under_balanced_load() {
     // Capacity should stay at 8 (balanced utilization).
     let capacity = pool.max_buffers();
     assert!(
-        capacity >= 4 && capacity <= 16,
+        (4..=16).contains(&capacity),
         "expected capacity near 8, got {capacity}"
     );
 }
