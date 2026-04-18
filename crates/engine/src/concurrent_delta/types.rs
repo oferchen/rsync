@@ -38,6 +38,12 @@ pub struct DeltaWork {
     basis_path: Option<PathBuf>,
     /// Expected target file size from the file list entry.
     target_size: u64,
+    /// Literal bytes received over the wire during delta token processing.
+    /// Only meaningful for delta transfers; zero for whole-file transfers.
+    literal_bytes: u64,
+    /// Bytes matched from the basis file during delta token processing.
+    /// Only meaningful for delta transfers; zero for whole-file transfers.
+    matched_bytes: u64,
     /// Transfer kind (whole-file vs delta).
     kind: DeltaWorkKind,
 }
@@ -61,19 +67,40 @@ impl DeltaWork {
             dest_path,
             basis_path: None,
             target_size,
+            literal_bytes: 0,
+            matched_bytes: 0,
             kind: DeltaWorkKind::WholeFile,
         }
     }
 
-    /// Creates a new delta transfer work item.
+    /// Creates a new delta transfer work item with actual literal/matched byte counts
+    /// accumulated during delta token stream processing.
+    ///
+    /// # Arguments
+    ///
+    /// * `ndx` - File list index
+    /// * `dest_path` - Destination path for the reconstructed file
+    /// * `basis_path` - Path to the basis file used for block matching
+    /// * `target_size` - Expected target file size
+    /// * `literal_bytes` - Bytes received as literal data over the wire
+    /// * `matched_bytes` - Bytes copied from the basis file via block references
     #[must_use]
-    pub fn delta(ndx: u32, dest_path: PathBuf, basis_path: PathBuf, target_size: u64) -> Self {
+    pub fn delta(
+        ndx: u32,
+        dest_path: PathBuf,
+        basis_path: PathBuf,
+        target_size: u64,
+        literal_bytes: u64,
+        matched_bytes: u64,
+    ) -> Self {
         Self {
             ndx,
             sequence: 0,
             dest_path,
             basis_path: Some(basis_path),
             target_size,
+            literal_bytes,
+            matched_bytes,
             kind: DeltaWorkKind::Delta,
         }
     }
@@ -100,6 +127,18 @@ impl DeltaWork {
     #[must_use]
     pub const fn target_size(&self) -> u64 {
         self.target_size
+    }
+
+    /// Returns the literal bytes accumulated during delta token processing.
+    #[must_use]
+    pub const fn literal_bytes(&self) -> u64 {
+        self.literal_bytes
+    }
+
+    /// Returns the matched bytes accumulated during delta token processing.
+    #[must_use]
+    pub const fn matched_bytes(&self) -> u64 {
+        self.matched_bytes
     }
 
     /// Returns the transfer kind.
@@ -141,10 +180,17 @@ impl DeltaWork {
 
     /// Consumes the work item and returns its components.
     ///
-    /// Returns `(ndx, dest_path, basis_path, target_size)`.
+    /// Returns `(ndx, dest_path, basis_path, target_size, literal_bytes, matched_bytes)`.
     #[must_use]
-    pub fn into_parts(self) -> (u32, PathBuf, Option<PathBuf>, u64) {
-        (self.ndx, self.dest_path, self.basis_path, self.target_size)
+    pub fn into_parts(self) -> (u32, PathBuf, Option<PathBuf>, u64, u64, u64) {
+        (
+            self.ndx,
+            self.dest_path,
+            self.basis_path,
+            self.target_size,
+            self.literal_bytes,
+            self.matched_bytes,
+        )
     }
 }
 
@@ -318,6 +364,8 @@ mod tests {
             PathBuf::from("/dest/file.txt"),
             PathBuf::from("/basis/file.txt"),
             2048,
+            800,
+            1248,
         );
         assert_eq!(work.ndx(), 5);
         assert_eq!(work.dest_path(), std::path::Path::new("/dest/file.txt"));
@@ -326,24 +374,35 @@ mod tests {
             Some(std::path::Path::new("/basis/file.txt"))
         );
         assert_eq!(work.target_size(), 2048);
+        assert_eq!(work.literal_bytes(), 800);
+        assert_eq!(work.matched_bytes(), 1248);
         assert_eq!(work.kind(), DeltaWorkKind::Delta);
         assert!(work.is_delta());
     }
 
     #[test]
     fn work_into_parts_returns_components() {
-        let work = DeltaWork::delta(3, PathBuf::from("/dest"), PathBuf::from("/basis"), 500);
-        let (ndx, dest, basis, size) = work.into_parts();
+        let work = DeltaWork::delta(
+            3,
+            PathBuf::from("/dest"),
+            PathBuf::from("/basis"),
+            500,
+            200,
+            300,
+        );
+        let (ndx, dest, basis, size, literal, matched) = work.into_parts();
         assert_eq!(ndx, 3);
         assert_eq!(dest, PathBuf::from("/dest"));
         assert_eq!(basis, Some(PathBuf::from("/basis")));
         assert_eq!(size, 500);
+        assert_eq!(literal, 200);
+        assert_eq!(matched, 300);
     }
 
     #[test]
     fn whole_file_into_parts_has_no_basis() {
         let work = DeltaWork::whole_file(1, PathBuf::from("/dest"), 100);
-        let (_, _, basis, _) = work.into_parts();
+        let (_, _, basis, _, _, _) = work.into_parts();
         assert!(basis.is_none());
     }
 
@@ -354,6 +413,8 @@ mod tests {
             PathBuf::from("/dest/clone.txt"),
             PathBuf::from("/basis/clone.txt"),
             4096,
+            1500,
+            2596,
         );
         let cloned = work.clone();
         assert_eq!(cloned.ndx(), 7);
@@ -456,15 +517,29 @@ mod tests {
 
     #[test]
     fn work_sequence_preserved_on_clone() {
-        let work = DeltaWork::delta(1, PathBuf::from("/dest"), PathBuf::from("/basis"), 200)
-            .with_sequence(99);
+        let work = DeltaWork::delta(
+            1,
+            PathBuf::from("/dest"),
+            PathBuf::from("/basis"),
+            200,
+            80,
+            120,
+        )
+        .with_sequence(99);
         let cloned = work.clone();
         assert_eq!(cloned.sequence(), 99);
     }
 
     #[test]
     fn delta_work_default_sequence_is_zero() {
-        let work = DeltaWork::delta(5, PathBuf::from("/dest"), PathBuf::from("/basis"), 1024);
+        let work = DeltaWork::delta(
+            5,
+            PathBuf::from("/dest"),
+            PathBuf::from("/basis"),
+            1024,
+            400,
+            624,
+        );
         assert_eq!(work.sequence(), 0);
     }
 

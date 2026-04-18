@@ -423,6 +423,8 @@ mod tests {
             PathBuf::from("/dest/b.txt"),
             PathBuf::from("/basis/b.txt"),
             4096,
+            1200,
+            2896,
         );
         pipeline.submit_work(work).unwrap();
 
@@ -430,9 +432,8 @@ mod tests {
         assert!(result.is_success());
         assert_eq!(result.ndx(), 5);
         assert_eq!(result.bytes_written(), 4096);
-        // DeltaTransferStrategy splits 50/50.
-        assert_eq!(result.matched_bytes(), 2048);
-        assert_eq!(result.literal_bytes(), 2048);
+        assert_eq!(result.matched_bytes(), 2896);
+        assert_eq!(result.literal_bytes(), 1200);
     }
 
     #[test]
@@ -546,6 +547,8 @@ mod tests {
             PathBuf::from("/dest/delta"),
             PathBuf::from("/basis/delta"),
             1000,
+            400,
+            600,
         );
 
         pipeline.submit_work(whole).unwrap();
@@ -558,8 +561,8 @@ mod tests {
 
         let r1 = pipeline.poll_result().unwrap();
         assert_eq!(r1.ndx(), 1);
-        assert_eq!(r1.literal_bytes(), 500); // 50/50 split
-        assert_eq!(r1.matched_bytes(), 500);
+        assert_eq!(r1.literal_bytes(), 400);
+        assert_eq!(r1.matched_bytes(), 600);
     }
 
     #[test]
@@ -638,6 +641,8 @@ mod tests {
             PathBuf::from("/dest/delta"),
             PathBuf::from("/basis/delta"),
             1000,
+            400,
+            600,
         );
 
         pipeline.submit_work(whole).unwrap();
@@ -651,8 +656,8 @@ mod tests {
         assert_eq!(results[0].matched_bytes(), 0);
 
         assert_eq!(results[1].ndx(), 1);
-        assert_eq!(results[1].literal_bytes(), 500); // 50/50 split
-        assert_eq!(results[1].matched_bytes(), 500);
+        assert_eq!(results[1].literal_bytes(), 400);
+        assert_eq!(results[1].matched_bytes(), 600);
     }
 
     #[test]
@@ -852,6 +857,8 @@ mod tests {
             PathBuf::from("/dest/delta"),
             PathBuf::from("/basis/delta"),
             1000,
+            400,
+            600,
         );
         let whole2 = DeltaWork::whole_file(2, PathBuf::from("/dest/whole2"), 200);
 
@@ -863,8 +870,8 @@ mod tests {
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].literal_bytes(), 500);
         assert_eq!(results[0].matched_bytes(), 0);
-        assert_eq!(results[1].literal_bytes(), 500); // 50/50 split
-        assert_eq!(results[1].matched_bytes(), 500);
+        assert_eq!(results[1].literal_bytes(), 400);
+        assert_eq!(results[1].matched_bytes(), 600);
         assert_eq!(results[2].literal_bytes(), 200);
     }
 
@@ -1193,12 +1200,17 @@ mod tests {
 
         // Mix whole-file (success) and delta (success with different stats).
         for i in 0..10u32 {
+            let size = u64::from(i) * 100 + 100;
             let work = if i % 3 == 0 {
+                let literal = size / 3;
+                let matched = size - literal;
                 DeltaWork::delta(
                     i,
                     PathBuf::from(format!("/dest/{i}")),
                     PathBuf::from(format!("/basis/{i}")),
-                    u64::from(i) * 100 + 100,
+                    size,
+                    literal,
+                    matched,
                 )
             } else {
                 DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), u64::from(i) * 50)

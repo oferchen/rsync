@@ -426,8 +426,15 @@ mod tests {
             tx.send(DeltaWork::whole_file(0, PathBuf::from("/dst/a"), 1024).with_sequence(0))
                 .unwrap();
             tx.send(
-                DeltaWork::delta(1, PathBuf::from("/dst/b"), PathBuf::from("/basis/b"), 2048)
-                    .with_sequence(1),
+                DeltaWork::delta(
+                    1,
+                    PathBuf::from("/dst/b"),
+                    PathBuf::from("/basis/b"),
+                    2048,
+                    800,
+                    1248,
+                )
+                .with_sequence(1),
             )
             .unwrap();
             tx.send(DeltaWork::whole_file(2, PathBuf::from("/dst/c"), 512).with_sequence(2))
@@ -447,8 +454,8 @@ mod tests {
 
         // Second: delta, mixed literal/matched.
         assert_eq!(results[1].ndx(), 1);
-        assert_eq!(results[1].literal_bytes(), 1024);
-        assert_eq!(results[1].matched_bytes(), 1024);
+        assert_eq!(results[1].literal_bytes(), 800);
+        assert_eq!(results[1].matched_bytes(), 1248);
 
         // Third: whole-file, all literal.
         assert_eq!(results[2].ndx(), 2);
