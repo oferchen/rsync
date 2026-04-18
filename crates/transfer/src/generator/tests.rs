@@ -18,7 +18,7 @@ use protocol::wire::{CompressedTokenEncoder, DeltaOp};
 use protocol::{ChecksumAlgorithm, CompressionAlgorithm, NegotiationResult, ProtocolVersion};
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, Cursor};
+use std::io::{self, Cursor, Write};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
