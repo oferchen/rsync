@@ -183,12 +183,31 @@ impl SshCommand {
     /// Requests AES-GCM cipher selection for the SSH transport.
     ///
     /// When `Some(true)`, injects `-c aes128-gcm@openssh.com,aes256-gcm@openssh.com`
-    /// before the target argument — but only when the program is `ssh` and no
-    /// custom options contain `-c` (which would indicate the caller already
-    /// controls cipher selection).
+    /// before the target argument, preferring 128-bit for lower per-block
+    /// overhead. This is only applied when all of the following hold:
+    ///
+    /// - The CPU has hardware AES acceleration (AES-NI on x86/x86_64, AES
+    ///   instructions on aarch64). Without hardware support, OpenSSH's default
+    ///   `chacha20-poly1305@openssh.com` is faster because ChaCha20 is a pure
+    ///   software cipher optimized for CPUs lacking AES pipelines.
+    /// - The program is `ssh` (or `ssh.exe`). Non-SSH transports such as `rsh`
+    ///   or `plink` do not accept `-c`.
+    /// - No existing option already specifies `-c`, which would indicate the
+    ///   caller (or the user's `-e` remote-shell specification) already controls
+    ///   cipher selection.
     ///
     /// When `Some(false)`, cipher injection is explicitly suppressed.
     /// When `None` (the default), no cipher arguments are injected.
+    ///
+    /// # Performance
+    ///
+    /// On CPUs with hardware AES, AES-GCM runs in the CPU's AES pipeline and
+    /// delivers 2-4x the throughput of software ChaCha20-Poly1305, which is
+    /// OpenSSH's default cipher on most distributions. This can materially
+    /// improve SSH transfer throughput for large files.
+    ///
+    /// Upstream rsync does not inject cipher preferences - it relies on OpenSSH
+    /// defaults. This is an oc-rsync enhancement.
     pub const fn set_prefer_aes_gcm(&mut self, preference: Option<bool>) -> &mut Self {
         self.prefer_aes_gcm = preference;
         self
@@ -373,13 +392,18 @@ impl SshCommand {
 
     /// Determines whether AES-GCM cipher arguments should be injected.
     ///
-    /// Returns `true` only when `prefer_aes_gcm` is `Some(true)`, the CPU has
-    /// hardware AES acceleration, the program looks like an SSH client, and no
-    /// existing option already specifies `-c`.
+    /// Returns `true` only when all four conditions are met:
     ///
-    /// Returns `false` when `prefer_aes_gcm` is `None` (default - no change),
-    /// `Some(false)` (explicitly disabled), when the CPU lacks hardware AES,
-    /// when custom options contain `-c`, or when the program is not `ssh`.
+    /// 1. `prefer_aes_gcm` is `Some(true)` (caller opted in).
+    /// 2. The CPU has hardware AES - AES-NI on x86/x86_64, or the `aes`
+    ///    feature on aarch64 (see [`has_hardware_aes`]).
+    /// 3. The program basename is `ssh` or `ssh.exe`.
+    /// 4. No existing option already contains `-c` (the user has not specified
+    ///    a cipher via `-e "ssh -c ..."` or `push_option`).
+    ///
+    /// Returns `false` otherwise - including when `prefer_aes_gcm` is `None`
+    /// (the default, meaning no preference) or `Some(false)` (explicitly
+    /// disabled).
     fn should_inject_aes_gcm_ciphers(&self) -> bool {
         matches!(self.prefer_aes_gcm, Some(true))
             && has_hardware_aes()
@@ -449,9 +473,19 @@ impl SshCommand {
 
 /// Returns `true` when the CPU has hardware AES acceleration.
 ///
-/// Caches the result in a `OnceLock` to avoid repeated feature detection
-/// syscalls on platforms that probe `/proc/cpuinfo` or issue `mrs` instructions.
-/// Returns `false` on architectures where detection is unavailable.
+/// Hardware requirements by architecture:
+///
+/// - **x86 / x86_64** - requires AES-NI (Intel Westmere 2010+ or AMD
+///   Bulldozer 2011+). Detected via `is_x86_feature_detected!("aes")`.
+/// - **aarch64** - requires the ARMv8 Cryptography Extensions (AES
+///   instructions). Detected via `is_aarch64_feature_detected!("aes")`.
+///   Present on Apple M-series, AWS Graviton, and most ARMv8.1+ SoCs.
+/// - **Other architectures** - always returns `false`; AES-GCM cipher
+///   injection is never applied.
+///
+/// The result is cached in a `OnceLock` to avoid repeated feature detection
+/// syscalls on platforms that probe `/proc/cpuinfo` or issue `mrs`
+/// instructions.
 pub(super) fn has_hardware_aes() -> bool {
     static HAS_AES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *HAS_AES.get_or_init(|| {
