@@ -138,8 +138,6 @@ mod tests {
         sniffer
     }
 
-    // ==================== read_legacy_daemon_line tests ====================
-
     #[test]
     fn read_legacy_daemon_line_complete_in_buffer() {
         // Complete greeting already buffered
@@ -244,8 +242,6 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
     }
 
-    // ==================== read_and_parse_legacy_daemon_greeting tests ====================
-
     #[test]
     fn read_and_parse_greeting_version_31() {
         let data = b"@RSYNCD: 31.0\n";
@@ -300,8 +296,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ==================== read_and_parse_legacy_daemon_greeting_details tests ====================
-
     #[test]
     fn read_and_parse_greeting_details_basic() {
         let data = b"@RSYNCD: 31.0\n";
@@ -331,8 +325,6 @@ mod tests {
         // Should have checksum digests
         assert!(greeting.digest_list().is_some());
     }
-
-    // ==================== LegacyBufferReserveError tests ====================
 
     #[test]
     fn legacy_buffer_reserve_error_debug() {

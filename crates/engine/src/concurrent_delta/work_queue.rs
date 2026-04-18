@@ -703,8 +703,6 @@ mod tests {
         assert_eq!(ordered, expected);
     }
 
-    // ==================== drain_parallel_into tests ====================
-
     #[test]
     fn drain_parallel_into_streams_all_items() {
         let (tx, rx) = bounded_with_capacity(8);
@@ -817,8 +815,6 @@ mod tests {
         let results: Vec<_> = result_rx.iter().collect();
         assert_eq!(results, vec![(42, 128)]);
     }
-
-    // ==================== drain_parallel tests ====================
 
     #[test]
     fn drain_parallel_collects_all_items() {

@@ -7,8 +7,6 @@ use crate::acl::entry::{IdAccess, RsyncAcl};
 use crate::varint::write_varint;
 use std::io::Cursor;
 
-// --- AclPerms tests ---
-
 #[test]
 fn perms_from_bits_masks_to_three_bits() {
     assert_eq!(AclPerms::from_bits(0xFF).bits(), 0x07);
@@ -43,8 +41,6 @@ fn perms_display() {
     assert_eq!(format!("{}", AclPerms::from_bits(1)), "--x");
 }
 
-// --- AclTag tests ---
-
 #[test]
 fn tag_equality() {
     assert_eq!(AclTag::UserObj, AclTag::UserObj);
@@ -61,16 +57,12 @@ fn tag_debug_format() {
     assert!(format!("{:?}", AclTag::Group(100)).contains("Group"));
 }
 
-// --- AclEntry tests ---
-
 #[test]
 fn entry_construction() {
     let entry = AclEntry::new(AclTag::UserObj, AclPerms::from_bits(7));
     assert_eq!(entry.tag, AclTag::UserObj);
     assert_eq!(entry.perms.bits(), 7);
 }
-
-// --- AclDefinition tests ---
 
 #[test]
 fn empty_definition() {
@@ -162,8 +154,6 @@ fn definition_into_iterator_owned() {
     let entries: Vec<_> = def.into_iter().collect();
     assert_eq!(entries.len(), 3);
 }
-
-// --- Wire parsing tests ---
 
 /// Helper: builds wire bytes for a flags-only ACL (no entries).
 fn wire_empty_acl() -> Vec<u8> {
@@ -361,8 +351,6 @@ fn read_acl_all_permission_combinations() {
     }
 }
 
-// --- EOF error tests ---
-
 #[test]
 fn read_eof_on_flags() {
     let data: Vec<u8> = vec![];
@@ -404,8 +392,6 @@ fn read_eof_on_ida_count() {
     let mut cursor = Cursor::new(data);
     assert!(read_acl_definition(&mut cursor).is_err());
 }
-
-// --- Roundtrip tests ---
 
 #[test]
 fn roundtrip_empty_acl() {

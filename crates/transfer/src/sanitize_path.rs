@@ -143,8 +143,6 @@ fn sanitize_path_with_depth(path: &str, mut depth: i32, keep_dot_dirs: bool) -> 
 mod tests {
     use super::*;
 
-    // --- Basic sanitization ---
-
     #[test]
     fn empty_path_becomes_dot() {
         assert_eq!(sanitize_path(""), ".");
@@ -165,8 +163,6 @@ mod tests {
         assert_eq!(sanitize_path("foo/bar/"), "foo/bar");
     }
 
-    // --- Absolute path stripping ---
-
     #[test]
     fn absolute_path_stripped() {
         assert_eq!(sanitize_path("/etc/passwd"), "etc/passwd");
@@ -176,8 +172,6 @@ mod tests {
     fn root_only_becomes_dot() {
         assert_eq!(sanitize_path("/"), ".");
     }
-
-    // --- Dot component removal ---
 
     #[test]
     fn interior_dot_removed() {
@@ -193,8 +187,6 @@ mod tests {
     fn multiple_leading_dot_slash_removed() {
         assert_eq!(sanitize_path("./././foo"), "foo");
     }
-
-    // --- Dotdot collapsing ---
 
     #[test]
     fn dotdot_at_start_dropped_depth_zero() {
@@ -226,8 +218,6 @@ mod tests {
         assert_eq!(sanitize_path("a/../../../etc/passwd"), "etc/passwd");
     }
 
-    // --- Duplicate slashes ---
-
     #[test]
     fn duplicate_slashes_collapsed() {
         assert_eq!(sanitize_path("foo//bar"), "foo/bar");
@@ -237,8 +227,6 @@ mod tests {
     fn triple_slashes_collapsed() {
         assert_eq!(sanitize_path("foo///bar///baz"), "foo/bar/baz");
     }
-
-    // --- CVE-like adversarial inputs ---
 
     #[test]
     fn absolute_dotdot_traversal_blocked() {
@@ -279,8 +267,6 @@ mod tests {
         assert_eq!(sanitize_path("a/b/../"), "a");
     }
 
-    // --- keep_dot_dirs variant ---
-
     #[test]
     fn keep_dot_dirs_preserves_leading_dot_slash() {
         assert_eq!(sanitize_path_keep_dot_dirs("./foo"), "./foo");
@@ -301,8 +287,6 @@ mod tests {
         assert_eq!(sanitize_path_keep_dot_dirs("a/./b"), "a/./b");
     }
 
-    // --- depth parameter ---
-
     #[test]
     fn depth_allows_leading_dotdots() {
         assert_eq!(sanitize_path_with_depth("../foo", 1, false), "../foo");
@@ -318,8 +302,6 @@ mod tests {
         assert_eq!(sanitize_path_with_depth("../../foo", 0, false), "foo");
     }
 
-    // --- Unicode paths ---
-
     #[test]
     fn unicode_path_preserved() {
         assert_eq!(sanitize_path("datos/archivo.txt"), "datos/archivo.txt");
@@ -330,8 +312,6 @@ mod tests {
         assert_eq!(sanitize_path("datos/../secreto"), "secreto");
     }
 
-    // --- Symlink target sanitization (daemon mode, flist.c:1154) ---
-
     #[test]
     fn symlink_target_absolute_stripped() {
         assert_eq!(sanitize_path("/etc/hosts"), "etc/hosts");
@@ -341,8 +321,6 @@ mod tests {
     fn symlink_target_traversal_collapsed() {
         assert_eq!(sanitize_path("../../../etc/passwd"), "etc/passwd");
     }
-
-    // --- files_from adversarial entries ---
 
     #[test]
     fn files_from_dotdot_traversal() {

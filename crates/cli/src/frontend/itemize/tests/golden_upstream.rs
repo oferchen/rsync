@@ -5,16 +5,12 @@
 
 use crate::frontend::itemize::*;
 
-// ---- upstream: log.c:696-698 - ITEM_DELETED produces "*deleting  " (11 chars) ----
-
 #[test]
 fn golden_deleting_format_is_eleven_chars() {
     // upstream: `n = "*deleting  ";` - 9 content chars + 2 trailing spaces = 11
     let expected = "*deleting  ";
     assert_eq!(expected.len(), 11, "upstream *deleting must be 11 chars");
 }
-
-// ---- upstream: log.c:701-704 - direction indicators ----
 
 #[test]
 fn golden_direction_sent() {
@@ -64,8 +60,6 @@ fn golden_direction_not_updated() {
         .with_file_type(FileType::RegularFile);
     assert_eq!(change.format(), ".f         ");
 }
-
-// ---- upstream: log.c:705-714 - file type indicators ----
 
 #[test]
 fn golden_filetype_regular() {
@@ -117,8 +111,6 @@ fn golden_filetype_special() {
     assert_eq!(&change.format()[..2], ">S");
 }
 
-// ---- upstream: log.c:705-707 - symlinks never report size (position 3 = '.') ----
-
 #[test]
 fn golden_symlink_never_shows_size() {
     // upstream: log.c:707 - `c[3] = '.';` unconditionally for symlinks
@@ -141,8 +133,6 @@ fn golden_file_shows_size_when_changed() {
     assert_eq!(change.format(), ">f.s.......");
 }
 
-// ---- upstream: log.c:730-734 - ITEM_IS_NEW fills with '+', ITEM_MISSING_DATA with '?' ----
-
 #[test]
 fn golden_new_file_all_plus() {
     // upstream: log.c:731 - `ch = '+';` for ITEM_IS_NEW
@@ -162,8 +152,6 @@ fn golden_missing_data_all_question() {
         .with_missing_data(true);
     assert_eq!(change.format(), ">f?????????");
 }
-
-// ---- upstream: log.c:735-744 - trailing dots collapse to spaces for '.', 'h', 'c' ----
 
 #[test]
 fn golden_collapse_dots_for_not_updated() {
@@ -220,8 +208,6 @@ fn golden_partial_change_prevents_collapse() {
     assert_eq!(change.format(), ".f...p.....");
 }
 
-// ---- upstream: log.c:719-727 - attribute positions 2-10 ----
-
 #[test]
 fn golden_all_attributes_changed() {
     // upstream: log.c:719-727 - all flags set produces `cstpogbax`
@@ -240,8 +226,6 @@ fn golden_all_attributes_changed() {
         .with_xattr_changed(true);
     assert_eq!(change.format(), ">fcstpogbax");
 }
-
-// ---- upstream: log.c:723-725 - atime/crtime position (position 8) ----
 
 #[test]
 fn golden_atime_only_shows_u() {
@@ -274,8 +258,6 @@ fn golden_both_atime_crtime_shows_b() {
     assert_eq!(change.format(), ">f......b..");
 }
 
-// ---- upstream: log.c:708-710,716-717 - time position with T/t ----
-
 #[test]
 fn golden_time_lowercase_t() {
     // upstream: log.c:717 - preserve_mtimes => 't'
@@ -306,8 +288,6 @@ fn golden_time_uppercase_t_takes_precedence() {
         .with_time_set_to_transfer(true);
     assert_eq!(change.format(), ">f..T......");
 }
-
-// ---- string length invariant ----
 
 #[test]
 fn golden_all_outputs_are_eleven_chars() {
@@ -359,8 +339,6 @@ fn golden_all_outputs_are_eleven_chars() {
     }
 }
 
-// ---- symlink size suppression interacts with trailing-dot collapse ----
-
 #[test]
 fn golden_symlink_size_only_collapses_to_spaces() {
     // upstream: log.c:707 - symlink c[3] = '.', so if size_changed is the only flag,
@@ -372,8 +350,6 @@ fn golden_symlink_size_only_collapses_to_spaces() {
     // size is suppressed for symlinks, all rendered attrs are dots, collapse kicks in
     assert_eq!(change.format(), ".L         ");
 }
-
-// ---- symlink with checksum but no size ----
 
 #[test]
 fn golden_symlink_checksum_without_size() {

@@ -386,8 +386,6 @@ fn proxy_response_error(text: impl Into<String>) -> ClientError {
 mod tests {
     use super::*;
 
-    // ==================== parse_proxy_spec tests ====================
-
     #[test]
     fn parse_proxy_spec_simple_host_port() {
         let config = parse_proxy_spec("proxy.example.com:8080").unwrap();
@@ -512,8 +510,6 @@ mod tests {
         assert_eq!(config.port, 3128);
     }
 
-    // ==================== parse_proxy_host_port tests ====================
-
     #[test]
     fn parse_proxy_host_port_simple() {
         let (host, port) = parse_proxy_host_port("example.com:8080").unwrap();
@@ -570,8 +566,6 @@ mod tests {
         assert_eq!(host, "my host");
     }
 
-    // ==================== decode_proxy_component tests ====================
-
     #[test]
     fn decode_proxy_component_plain_text() {
         let result = decode_proxy_component("username", "test").unwrap();
@@ -623,8 +617,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ==================== ProxyCredentials tests ====================
-
     #[test]
     fn proxy_credentials_authorization_value_basic_auth() {
         let creds = ProxyCredentials::new("user".to_owned(), "pass".to_owned());
@@ -646,8 +638,6 @@ mod tests {
         assert_eq!(decoded, b"user@domain:p@ss:word");
     }
 
-    // ==================== ProxyConfig tests ====================
-
     #[test]
     fn proxy_config_display_returns_socket_addr() {
         let config = parse_proxy_spec("proxy.example.com:8080").unwrap();
@@ -668,8 +658,6 @@ mod tests {
         assert!(config.authorization_header().is_some());
         assert_eq!(config.authorization_header().unwrap(), "dXNlcjpwYXNz");
     }
-
-    // ==================== Edge cases and integration tests ====================
 
     #[test]
     fn parse_proxy_spec_localhost() {

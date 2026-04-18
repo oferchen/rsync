@@ -505,8 +505,6 @@ mod tests {
         assert!(debug.contains(DEFAULT_SYSLOG_TAG));
     }
 
-    // --- SyslogConfig::open tests ---
-
     #[test]
     fn open_does_not_panic_with_default_config() {
         let config = SyslogConfig::default();
