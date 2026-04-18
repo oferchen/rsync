@@ -382,8 +382,35 @@ impl Drop for SshChildHandle {
         if let Ok(None) = self.child.try_wait() {
             let _ = self.child.kill();
         }
-        let _ = self.child.wait();
-        // The StderrDrain's own Drop will join the thread.
+        let status = self.child.wait();
+
+        // Join the drain thread before checking the buffer so all stderr
+        // output is available. StderrDrain::Drop would also join, but we
+        // need the data now.
+        if let Some(ref mut drain) = self.stderr_drain {
+            drain.join();
+        }
+
+        // When the child exited with a non-zero status and stderr was
+        // captured, surface it so SSH errors are never silently lost -
+        // even on abnormal control flow (panic, early return) where the
+        // caller never calls wait_with_stderr(). The drain thread already
+        // forwarded individual lines in real time via eprint!, but a
+        // consolidated message here makes the failure clearly visible.
+        if let Ok(exit) = &status {
+            if !exit.success() {
+                if let Some(drain) = &self.stderr_drain {
+                    let stderr = drain.collected();
+                    if !stderr.is_empty() {
+                        let text = String::from_utf8_lossy(&stderr);
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            eprintln!("ssh process exited with status {exit}:\n{trimmed}");
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -426,7 +453,30 @@ impl Drop for SshConnection {
             if let Ok(None) = child.try_wait() {
                 let _ = child.kill();
             }
-            let _ = child.wait();
+            let status = child.wait();
+
+            // Join the drain thread before checking the buffer.
+            if let Some(ref mut drain) = self.stderr_drain {
+                drain.join();
+            }
+
+            // Surface collected stderr when the child exited with an error,
+            // ensuring SSH diagnostics are visible even when the connection
+            // is dropped without an explicit wait() call.
+            if let Ok(exit) = &status {
+                if !exit.success() {
+                    if let Some(drain) = &self.stderr_drain {
+                        let stderr = drain.collected();
+                        if !stderr.is_empty() {
+                            let text = String::from_utf8_lossy(&stderr);
+                            let trimmed = text.trim();
+                            if !trimmed.is_empty() {
+                                eprintln!("ssh process exited with status {exit}:\n{trimmed}");
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
