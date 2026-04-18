@@ -340,6 +340,27 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
+    /// Returns the effective backup suffix, matching upstream rsync defaults.
+    ///
+    /// When `backup_suffix` is explicitly set, returns that value. Otherwise,
+    /// returns `""` if `backup_dir` is set, or `"~"` as the default.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2278-2279`: `backup_suffix = backup_dir ? "" : BACKUP_SUFFIX`
+    pub fn effective_backup_suffix(&self) -> &str {
+        match self.backup_suffix.as_deref() {
+            Some(s) => s,
+            None => {
+                if self.backup_dir.is_some() {
+                    ""
+                } else {
+                    "~"
+                }
+            }
+        }
+    }
+
     /// Builds a [`ServerConfig`] from the compact flag string and positional arguments.
     ///
     /// The parser accepts empty flag strings when positional arguments are provided,
@@ -535,5 +556,50 @@ mod tests {
         )
         .unwrap();
         assert_ne!(config1, config2);
+    }
+
+    #[test]
+    fn effective_backup_suffix_defaults_to_tilde() {
+        let config = ServerConfig::default();
+        assert_eq!(config.effective_backup_suffix(), "~");
+    }
+
+    #[test]
+    fn effective_backup_suffix_empty_when_backup_dir_set() {
+        // upstream: options.c:2278-2279 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
+        let config = ServerConfig {
+            backup_dir: Some(".backups".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(config.effective_backup_suffix(), "");
+    }
+
+    #[test]
+    fn effective_backup_suffix_uses_explicit_suffix() {
+        let config = ServerConfig {
+            backup_suffix: Some(".bak".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(config.effective_backup_suffix(), ".bak");
+    }
+
+    #[test]
+    fn effective_backup_suffix_explicit_overrides_backup_dir_default() {
+        // When both --backup-dir and --suffix are set, --suffix wins
+        let config = ServerConfig {
+            backup_dir: Some(".backups".to_owned()),
+            backup_suffix: Some(".old".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(config.effective_backup_suffix(), ".old");
+    }
+
+    #[test]
+    fn effective_backup_suffix_explicit_empty_with_no_backup_dir() {
+        let config = ServerConfig {
+            backup_suffix: Some(String::new()),
+            ..Default::default()
+        };
+        assert_eq!(config.effective_backup_suffix(), "");
     }
 }

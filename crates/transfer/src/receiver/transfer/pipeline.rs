@@ -113,7 +113,7 @@ impl ReceiverContext {
             Some(BackupConfig {
                 dest_dir: setup.dest_dir.clone(),
                 backup_dir: self.config.backup_dir.as_ref().map(PathBuf::from),
-                suffix: self.config.backup_suffix.as_deref().unwrap_or("~").into(),
+                suffix: self.config.effective_backup_suffix().into(),
             })
         } else {
             None

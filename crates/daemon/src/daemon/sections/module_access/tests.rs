@@ -1461,4 +1461,64 @@ mod module_access_tests {
             .collect();
         assert!(has_secluded_args_flag(&args));
     }
+
+    // --- backup-dir wiring tests ---
+
+    #[test]
+    fn apply_long_form_args_parses_backup_dir_two_arg() {
+        let args = vec![
+            "--server".to_owned(),
+            "--backup-dir".to_owned(),
+            ".backups".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.backup_dir.as_deref(), Some(".backups"));
+        assert!(config.flags.backup);
+    }
+
+    #[test]
+    fn apply_long_form_args_parses_backup_dir_equals() {
+        let args = vec![
+            "--server".to_owned(),
+            "--backup-dir=.backups".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.backup_dir.as_deref(), Some(".backups"));
+        assert!(config.flags.backup);
+    }
+
+    #[test]
+    fn apply_long_form_args_backup_dir_effective_suffix_is_empty() {
+        // upstream: options.c:2278-2279 - when --backup-dir is set and no
+        // explicit --suffix is sent, the default suffix is "" (empty).
+        let args = vec![
+            "--server".to_owned(),
+            "--backup-dir".to_owned(),
+            ".backups".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.effective_backup_suffix(), "");
+    }
+
+    #[test]
+    fn apply_long_form_args_backup_dir_with_explicit_suffix() {
+        let args = vec![
+            "--server".to_owned(),
+            "--backup-dir".to_owned(),
+            ".backups".to_owned(),
+            "--suffix".to_owned(),
+            ".old".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        apply_long_form_args(&args, &mut config);
+        assert_eq!(config.backup_dir.as_deref(), Some(".backups"));
+        assert_eq!(config.effective_backup_suffix(), ".old");
+    }
 }
