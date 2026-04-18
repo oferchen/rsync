@@ -55,6 +55,15 @@ pub mod config_detail {
     pub fn get_kernel_release_string() -> Option<String> {
         super::get_kernel_release()
     }
+
+    /// Returns a human-readable reason for io_uring availability or unavailability.
+    ///
+    /// Probes the kernel version and attempts to create a minimal io_uring
+    /// instance, returning a log-friendly string describing the result.
+    #[must_use]
+    pub fn io_uring_availability_reason() -> String {
+        super::check_io_uring_reason().reason()
+    }
 }
 
 /// Checks if the current kernel supports io_uring.
@@ -81,23 +90,87 @@ pub fn is_io_uring_available() -> bool {
 }
 
 fn check_io_uring_available() -> bool {
-    // Check kernel version
+    matches!(
+        check_io_uring_reason(),
+        IoUringProbeResult::Available { .. }
+    )
+}
+
+/// Result of probing io_uring availability with the specific reason.
+#[derive(Debug, Clone)]
+pub(crate) enum IoUringProbeResult {
+    /// io_uring is available on this kernel.
+    Available {
+        /// Detected kernel major.minor version.
+        major: u32,
+        minor: u32,
+    },
+    /// Could not read the kernel release string from uname(2).
+    NoKernelRelease,
+    /// Kernel release string could not be parsed into major.minor.
+    UnparsableVersion,
+    /// Kernel version is below the 5.6 minimum.
+    KernelTooOld {
+        /// Detected kernel major.minor version.
+        major: u32,
+        minor: u32,
+    },
+    /// Kernel version is sufficient but io_uring_setup(2) failed - likely
+    /// blocked by seccomp, container runtime, or permission restrictions.
+    SyscallBlocked {
+        /// Detected kernel major.minor version.
+        major: u32,
+        minor: u32,
+    },
+}
+
+impl IoUringProbeResult {
+    /// Returns a human-readable reason string suitable for log output.
+    pub(crate) fn reason(&self) -> String {
+        match self {
+            Self::Available { major, minor } => {
+                format!("io_uring available (kernel {major}.{minor})")
+            }
+            Self::NoKernelRelease => {
+                "io_uring unavailable: could not read kernel version".to_string()
+            }
+            Self::UnparsableVersion => {
+                "io_uring unavailable: could not parse kernel version".to_string()
+            }
+            Self::KernelTooOld { major, minor } => {
+                format!("io_uring unavailable: kernel {major}.{minor} is below minimum 5.6")
+            }
+            Self::SyscallBlocked { major, minor } => {
+                format!(
+                    "io_uring unavailable: io_uring_setup(2) blocked on kernel {major}.{minor} \
+                     (seccomp, container, or permission restriction)"
+                )
+            }
+        }
+    }
+}
+
+/// Probes io_uring availability and returns the detailed result.
+pub(crate) fn check_io_uring_reason() -> IoUringProbeResult {
     let release = match get_kernel_release() {
         Some(r) => r,
-        None => return false,
+        None => return IoUringProbeResult::NoKernelRelease,
     };
 
-    let version = match parse_kernel_version(&release) {
+    let (major, minor) = match parse_kernel_version(&release) {
         Some(v) => v,
-        None => return false,
+        None => return IoUringProbeResult::UnparsableVersion,
     };
 
-    if version < MIN_KERNEL_VERSION {
-        return false;
+    if (major, minor) < MIN_KERNEL_VERSION {
+        return IoUringProbeResult::KernelTooOld { major, minor };
     }
 
-    // Try to create a small io_uring instance to verify it's not blocked
-    RawIoUring::new(4).is_ok()
+    if RawIoUring::new(4).is_ok() {
+        IoUringProbeResult::Available { major, minor }
+    } else {
+        IoUringProbeResult::SyscallBlocked { major, minor }
+    }
 }
 
 /// Configuration for io_uring instances.
