@@ -8,6 +8,33 @@
 //! per-thread result buffers for contention-free collection across the
 //! rayon thread pool.
 //!
+//! # SPMC (Single-Producer, Multiple-Consumer) Design
+//!
+//! This module assumes a Single-Producer Multiple-Consumer pattern. A single
+//! producer thread (the generator or receiver) feeds [`DeltaWork`] items into
+//! the queue, and multiple rayon worker threads consume them in parallel.
+//!
+//! This is SPMC rather than MPMC because the rsync wire protocol is inherently
+//! single-threaded on the receiving side - one multiplexed stream delivers file
+//! entries in sequence, so there is exactly one thread reading from the wire and
+//! producing work items. [`WorkQueueSender`] enforces this by being `Send` but
+//! not `Clone`, preventing multiple producers at compile time.
+//!
+//! ## Ordering Contract
+//!
+//! Work items arrive in wire order from the single producer. Consumers may
+//! process items out of order (determined by rayon work-stealing scheduling).
+//! When sequential output is required, results carry a sequence number and
+//! are fed through [`ReorderBuffer`](super::reorder::ReorderBuffer) to restore
+//! the original wire order before emission.
+//!
+//! ## Multi-Producer Considerations
+//!
+//! Supporting multiple producers would require replacing the `SyncSender` with
+//! a cloneable MPMC channel and revising the ordering contract (multiple
+//! producers would need coordinated sequence numbering). See issues #1382 and
+//! #1569 for future multi-producer design discussion.
+//!
 //! # Capacity
 //!
 //! The default capacity is `2 * rayon::current_num_threads()`, which keeps
@@ -19,9 +46,9 @@
 //!
 //! ```text
 //! Generator ─► WorkQueue (bounded) ─► drain_parallel(f) ─► Vec<R>
-//!                 blocks when full       rayon::scope          |
-//!                                        work-stealing        v
-//!                                                        ReorderBuffer
+//!  (single       blocks when full       rayon::scope          |
+//!  producer)                            work-stealing        v
+//!                                       (N consumers)   ReorderBuffer
 //!                                                             |
 //!                                                             v
 //!                                                   consumer (in-order)
@@ -33,9 +60,9 @@
 //!
 //! ```text
 //! Generator ─► WorkQueue ─► drain_parallel_into(f, tx) ─► SyncSender<R>
-//!                              rayon::scope                    |
-//!                              work-stealing                   v
-//!                                                     ReorderBuffer (live)
+//!  (single        rayon::scope                                 |
+//!  producer)      work-stealing                                v
+//!                 (N consumers)                       ReorderBuffer (live)
 //!                                                             |
 //!                                                             v
 //!                                                   consumer (incremental)
@@ -84,9 +111,12 @@ const CAPACITY_MULTIPLIER: usize = 2;
 ///
 /// # Thread Safety
 ///
-/// The [`WorkQueueSender`] is `Send` (but not `Clone` - single producer).
+/// The [`WorkQueueSender`] is `Send` but intentionally not `Clone`, enforcing
+/// the single-producer invariant at compile time. Only one thread - the
+/// generator or receiver reading from the wire - may send work items.
 /// The [`WorkQueueReceiver`] is `Send` and implements [`Iterator`] for use
-/// with [`rayon::scope`] based consumption loops.
+/// with [`rayon::scope`] based consumption loops, where multiple rayon
+/// workers act as concurrent consumers.
 ///
 /// # Example
 ///
