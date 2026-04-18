@@ -119,7 +119,7 @@ pub use platform_copy::{
 pub use traits::{FileReader, FileWriter};
 
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
-pub use splice::{is_splice_available, try_splice_to_file};
+pub use splice::{is_splice_available, recv_fd_to_file, try_splice_to_file};
 
 pub use mmap_reader::MmapReader;
 pub use o_tmpfile::{
