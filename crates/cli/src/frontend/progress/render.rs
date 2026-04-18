@@ -19,6 +19,7 @@ pub(crate) fn emit_transfer_summary(
     stats: bool,
     progress_already_rendered: bool,
     list_only: bool,
+    dry_run: bool,
     out_format: Option<&OutFormat>,
     out_format_context: &OutFormatContext,
     name_level: NameOutputLevel,
@@ -40,12 +41,12 @@ pub(crate) fn emit_transfer_summary(
             if wrote_listing {
                 writeln!(writer)?;
             }
-            emit_stats(summary, writer, human_readable_mode)?;
+            emit_stats(summary, writer, human_readable_mode, dry_run)?;
         } else if verbosity > 0 {
             if wrote_listing {
                 writeln!(writer)?;
             }
-            emit_totals(summary, writer, human_readable_mode)?;
+            emit_totals(summary, writer, human_readable_mode, dry_run)?;
         }
 
         return Ok(());
@@ -105,9 +106,9 @@ pub(crate) fn emit_transfer_summary(
         suppress_updated_only_totals && matches!(name_level, NameOutputLevel::UpdatedOnly);
 
     if stats {
-        emit_stats(summary, writer, human_readable_mode)?;
+        emit_stats(summary, writer, human_readable_mode, dry_run)?;
     } else if verbosity > 0 || (name_enabled && !suppress_name_totals) {
-        emit_totals(summary, writer, human_readable_mode)?;
+        emit_totals(summary, writer, human_readable_mode, dry_run)?;
     }
 
     Ok(())
@@ -199,6 +200,7 @@ pub(crate) fn emit_stats<W: Write + ?Sized>(
     summary: &ClientSummary,
     stdout: &mut W,
     human_readable: HumanReadableMode,
+    dry_run: bool,
 ) -> io::Result<()> {
     let files = summary.files_copied();
     let files_total = summary.regular_files_total();
@@ -280,7 +282,7 @@ pub(crate) fn emit_stats<W: Write + ?Sized>(
     writeln!(stdout, "Total bytes received: {bytes_received_display}")?;
     writeln!(stdout)?;
 
-    emit_totals(summary, stdout, human_readable)
+    emit_totals(summary, stdout, human_readable, dry_run)
 }
 
 /// Emits the summary lines reported by verbose transfers.
@@ -288,6 +290,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
     summary: &ClientSummary,
     stdout: &mut W,
     human_readable: HumanReadableMode,
+    dry_run: bool,
 ) -> io::Result<()> {
     let sent = summary.bytes_sent();
     let received = summary.bytes_received();
@@ -315,9 +318,10 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
         stdout,
         "sent {sent_display} bytes  received {received_display} bytes  {rate_display} bytes/sec"
     )?;
+    let dry_run_suffix = if dry_run { " (DRY RUN)" } else { "" };
     writeln!(
         stdout,
-        "total size is {total_size_display}  speedup is {speedup:.2}"
+        "total size is {total_size_display}  speedup is {speedup:.2}{dry_run_suffix}"
     )
 }
 
