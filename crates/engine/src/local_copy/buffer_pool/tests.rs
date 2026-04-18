@@ -1386,26 +1386,64 @@ fn adaptive_pool_grows_under_pressure() {
 }
 
 #[test]
-fn adaptive_pool_shrink_logic_via_pressure_tracker() {
-    // Shrink behavior cannot be reliably tested through the public pool API
-    // because thread-local buffers are lost (dropped, not returned to the
-    // central pool) when threads exit. This makes it impossible to maintain
-    // both low utilization (available/capacity < 30%) AND low miss rate
-    // (< 10%) simultaneously through acquire_from(). The PressureTracker
-    // unit tests in pressure.rs thoroughly verify the shrink algorithm.
+fn adaptive_pool_shrinks_when_idle() {
+    // Integration test for adaptive pool shrinking through the public API.
     //
-    // Here we verify the contract at the PressureTracker level: given the
-    // right stats, evaluate() recommends Shrink.
-    use super::super::pressure::{PressureTracker, ResizeAction};
+    // Mathematical analysis of shrink conditions:
+    //   - utilization = available / capacity < 0.30
+    //   - miss_rate = misses / total < 0.10
+    //   - ops >= CHECK_INTERVAL (64)
+    //   - Each fresh thread has cold TLS, so acquire_from calls pop_buffer()
+    //   - TLS buffers are lost on thread exit (not returned to central pool)
+    //
+    // Strategy:
+    // 1. Start at MAX_CAPACITY (256) so pre-fill misses can't cause growth.
+    // 2. Pre-fill: hold 64 buffers, then drop. Main thread's TLS absorbs 1,
+    //    central pool receives 63. Pressure tracker resets at ops=64 (all
+    //    misses, but capacity=MAX_CAPACITY → Hold → counters reset to 0).
+    // 3. Spawn 64 fresh threads (cold TLS → pop_buffer for each):
+    //    - 63 buffers in pool → 63 HITs, 1 MISS (pool empty for last thread)
+    //    - miss_rate = 1/64 ≈ 1.6% < 10% ✓
+    //    - At op 64: available=0, utilization = 0/256 = 0% < 30% ✓
+    //    - evaluate() → Shrink(128)
+    let pool = Arc::new(BufferPool::with_buffer_size(256, 1024).with_adaptive_resizing());
+    assert_eq!(pool.max_buffers(), 256);
 
-    let tracker = PressureTracker::new();
-    // Simulate 64 operations with 100% hit rate (0% miss rate).
-    for _ in 0..64 {
-        tracker.record_hit();
+    // Phase 1: Pre-fill the central pool.
+    // Acquire 64 buffers simultaneously - all go through pop_buffer (TLS is
+    // empty, pool is empty → 64 fresh allocations, all MISSes). At ops=64,
+    // maybe_resize fires: miss_rate=100% but capacity=256=MAX_CAPACITY, so
+    // grow is capped → Hold. Tracker resets to zero.
+    {
+        let bufs: Vec<_> = (0..64)
+            .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+            .collect();
+        drop(bufs);
+        // Drop order: first buffer → TLS (empty slot), remaining 63 → central
+        // pool (TLS occupied). Central pool now holds 63 buffers.
     }
-    // Capacity 32, only 4 available = 12.5% utilization (< 30% threshold).
-    let action = tracker.evaluate(32, 4);
-    assert_eq!(action, ResizeAction::Shrink(16));
+
+    // Phase 2: 64 fresh threads, each with cold TLS → pop_buffer on every
+    // acquire. Pool drains from 63 → 0: 63 HITs + 1 MISS = 1.6% miss rate.
+    // The 64th pop_buffer triggers maybe_resize with available=0, cap=256.
+    let handles: Vec<_> = (0..64)
+        .map(|_| {
+            let pool = Arc::clone(&pool);
+            thread::spawn(move || {
+                let _buf = BufferPool::acquire_from(pool);
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
+
+    let new_capacity = pool.max_buffers();
+    assert!(
+        new_capacity < 256,
+        "expected capacity < 256 (shrink), got {new_capacity}"
+    );
 }
 
 #[test]
