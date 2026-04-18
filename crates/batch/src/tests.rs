@@ -974,6 +974,174 @@ mod integration {
         );
     }
 
+    /// Verifies that compressed batch delta replay with block matches works
+    /// correctly using CPRES_ZLIB dictionary synchronization.
+    ///
+    /// This exercises the exact scenario that upstream rsync 3.4.1 fails on:
+    /// a compressed delta batch with copy tokens (block matches) requires the
+    /// decoder to feed matched block data into the inflate dictionary via
+    /// see_token(). Without this, inflate fails with "invalid distance too
+    /// far back" (error -3 at token.c:608).
+    ///
+    /// oc-rsync implements proper dictionary sync in batch replay, making it
+    /// capable of reading compressed delta batches that upstream itself cannot.
+    ///
+    /// upstream: token.c:see_deflate_token() - dictionary sync during live transfer
+    /// upstream: token.c:608 - inflate fails without dictionary sync in batch read
+    #[test]
+    fn test_replay_compressed_delta_with_block_matches() {
+        use protocol::flist::{FileEntry, FileListWriter};
+        use protocol::wire::CompressedTokenEncoder;
+
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("replay_delta_z.batch");
+        let dest_dir = temp_dir.path().join("dest");
+        fs::create_dir_all(&dest_dir).unwrap();
+
+        let protocol_version = 31;
+
+        // Create basis file at destination (pre-existing file for delta transfer).
+        // 2000 bytes of 'B' - block_length will be chosen by choose_block_size.
+        let basis_data = vec![b'B'; 2000];
+        fs::write(dest_dir.join("data.bin"), &basis_data).unwrap();
+
+        // Delta layout: copy block0(700) + copy block1(700) + literal(17) + copy block2(600).
+        let patch = b"CHANGED_DATA_HERE";
+        let output_size = 700 + 700 + patch.len() + 600; // 2017
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_checksum_seed(42);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        let flags = BatchFlags {
+            recurse: true,
+            do_compression: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol);
+
+        // Directory entry
+        let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
+        dir_entry.set_mtime(1_700_000_000, 0);
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // File entry with output size
+        let mut file_entry = FileEntry::new_file("data.bin".into(), output_size as u64, 0o644);
+        file_entry.set_mtime(1_700_000_001, 0);
+        buf.clear();
+        flist_writer.write_entry(&mut buf, &file_entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // End of flist
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        // NDX-framed delta with block matches and literals.
+        // Use CPRES_ZLIB (zlibx=false) so dictionary sync is required.
+        {
+            use protocol::codec::{NdxCodec, NdxCodecEnum};
+
+            let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
+            let mut ndx_buf = Vec::new();
+
+            // NDX for file entry (index 1)
+            ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            // iflags: ITEM_TRANSFER (0x8000)
+            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
+
+            // sum_head: block geometry for basis.
+            // Use block_length=700 (min block for 2000-byte file).
+            // 2000 / 700 = 2 full blocks + 600 remainder.
+            let block_length: i32 = 700;
+            let block_count: i32 = 3; // ceil(2000/700) = 3
+            let remainder: i32 = 2000 - 700 * 2; // 600
+            let s2length: i32 = 16;
+            writer.write_data(&block_count.to_le_bytes()).unwrap();
+            writer.write_data(&block_length.to_le_bytes()).unwrap();
+            writer.write_data(&s2length.to_le_bytes()).unwrap();
+            writer.write_data(&remainder.to_le_bytes()).unwrap();
+
+            // Encode compressed delta: copy block 0 (700 bytes), then literal
+            // patch, then copy remaining blocks. This requires CPRES_ZLIB
+            // dictionary sync because the encoder/decoder share state through
+            // the basis block data fed via see_token().
+            let mut token_buf = Vec::new();
+            let mut encoder = CompressedTokenEncoder::default();
+            encoder.set_zlibx(false); // CPRES_ZLIB mode
+
+            // Block 0: copy from basis (bytes 0..700)
+            encoder.send_block_match(&mut token_buf, 0).unwrap();
+            encoder.see_token(&basis_data[0..700]).unwrap();
+
+            // Delta layout: copy block 0, copy block 1, literal patch,
+            // copy block 2. Multiple block matches exercise dictionary sync.
+
+            // Block 1: copy from basis (bytes 700..1400)
+            encoder.send_block_match(&mut token_buf, 1).unwrap();
+            encoder.see_token(&basis_data[700..1400]).unwrap();
+
+            // Literal: the patched data (17 bytes)
+            encoder.send_literal(&mut token_buf, patch).unwrap();
+
+            // Block 2: copy from basis (bytes 1400..2000, remainder=600)
+            encoder.send_block_match(&mut token_buf, 2).unwrap();
+            encoder.see_token(&basis_data[1400..2000]).unwrap();
+
+            encoder.finish(&mut token_buf).unwrap();
+            writer.write_data(&token_buf).unwrap();
+
+            // File checksum (16 zero bytes)
+            writer.write_data(&[0u8; 16]).unwrap();
+
+            // NDX_DONE for phase 1 -> phase 2
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            // NDX_DONE for phase 2 -> end
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+        }
+
+        writer.finalize().unwrap();
+
+        // Replay the compressed delta batch
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
+
+        assert_eq!(result.file_count, 2); // 1 dir + 1 file
+        assert!(dest_dir.join("data.bin").exists());
+
+        let content = fs::read(dest_dir.join("data.bin")).unwrap();
+        // The output should be: block0(700) + block1(700) + patch(17) + block2(600)
+        // = 2017 bytes total.
+        assert_eq!(content.len(), 700 + 700 + patch.len() + 600);
+        // Verify the literal patch is present in the output
+        assert_eq!(&content[1400..1400 + patch.len()], patch);
+        // Verify block copies are correct
+        assert_eq!(&content[0..700], &basis_data[0..700]);
+        assert_eq!(&content[700..1400], &basis_data[700..1400]);
+        assert_eq!(&content[1400 + patch.len()..], &basis_data[1400..2000]);
+    }
+
     /// Verifies replay works when the batch header has `do_compression=true`.
     /// upstream: batch.c - when do_compression is set, delta tokens use
     /// compressed (DEFLATED_DATA) encoding in the batch file body.
