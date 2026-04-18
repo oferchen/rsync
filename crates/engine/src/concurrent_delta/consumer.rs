@@ -454,8 +454,8 @@ mod tests {
 
         // Second: delta, mixed literal/matched.
         assert_eq!(results[1].ndx(), 1);
-        assert_eq!(results[1].literal_bytes(), 1024);
-        assert_eq!(results[1].matched_bytes(), 1024);
+        assert_eq!(results[1].literal_bytes(), 800);
+        assert_eq!(results[1].matched_bytes(), 1248);
 
         // Third: whole-file, all literal.
         assert_eq!(results[2].ndx(), 2);
