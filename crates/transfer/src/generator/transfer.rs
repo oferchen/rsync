@@ -256,7 +256,7 @@ impl GeneratorContext {
                 // upstream: sender.c:395 - log_item(FCLIENT, file, iflags, NULL)
                 if let Some(ref mut cb) = itemize {
                     let name = file_entry.path().to_string_lossy();
-                    (*cb)(&format!("{name}\n"));
+                    cb.on_itemize(&format!("{name}\n"));
                 }
                 files_transferred += 1;
                 writer.flush()?;
