@@ -144,6 +144,37 @@ pub fn io_uring_status_detail() -> String {
     io_uring_status_detail_impl()
 }
 
+/// Returns a log-friendly reason string for io_uring availability.
+///
+/// On Linux with the `io_uring` feature enabled, probes the kernel version
+/// and attempts `io_uring_setup(2)`, returning a message like:
+/// - `"io_uring available (kernel 5.15)"`
+/// - `"io_uring unavailable: kernel 4.19 is below minimum 5.6"`
+/// - `"io_uring unavailable: io_uring_setup(2) blocked on kernel 6.1 (seccomp, container, or permission restriction)"`
+///
+/// On non-Linux platforms or without the feature, returns a compile-time reason.
+#[must_use]
+pub fn io_uring_availability_reason() -> String {
+    io_uring_availability_reason_impl()
+}
+
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+fn io_uring_availability_reason_impl() -> String {
+    io_uring::config_detail::io_uring_availability_reason()
+}
+
+#[cfg(not(all(target_os = "linux", feature = "io_uring")))]
+fn io_uring_availability_reason_impl() -> String {
+    #[cfg(not(target_os = "linux"))]
+    {
+        "io_uring unavailable: platform is not Linux".to_string()
+    }
+    #[cfg(all(target_os = "linux", not(feature = "io_uring")))]
+    {
+        "io_uring unavailable: io_uring feature not compiled in".to_string()
+    }
+}
+
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 fn io_uring_status_detail_impl() -> String {
     use io_uring::config_detail::{get_kernel_release_string, parse_kernel_version};
@@ -325,6 +356,25 @@ mod tests {
 
         #[cfg(all(target_os = "linux", feature = "io_uring"))]
         assert!(detail.contains("compiled in"));
+    }
+
+    #[test]
+    fn io_uring_availability_reason_returns_non_empty_string() {
+        let reason = io_uring_availability_reason();
+        assert!(!reason.is_empty());
+        assert!(reason.starts_with("io_uring "));
+
+        #[cfg(not(target_os = "linux"))]
+        assert!(reason.contains("not Linux"));
+
+        #[cfg(all(target_os = "linux", not(feature = "io_uring")))]
+        assert!(reason.contains("not compiled in"));
+
+        #[cfg(all(target_os = "linux", feature = "io_uring"))]
+        {
+            // Must contain either "available" or "unavailable"
+            assert!(reason.contains("available"));
+        }
     }
 
     #[test]
