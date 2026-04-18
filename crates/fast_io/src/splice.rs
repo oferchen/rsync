@@ -16,14 +16,24 @@
 //! This requires two `splice` calls per chunk but avoids any userspace buffer
 //! copies, keeping the data entirely in kernel pages.
 //!
+//! # API Layers
+//!
+//! - [`try_splice_to_file`] - Low-level: attempts `splice(2)` only, returns error
+//!   on unsupported platforms or syscall failure. Callers must handle fallback.
+//! - [`recv_fd_to_file`] - High-level: tries `splice(2)` for transfers >= 64KB,
+//!   automatically falls back to buffered `read`/`write` on failure or for small
+//!   transfers. Analogous to [`crate::sendfile::send_file_to_fd`] for the receive
+//!   direction.
+//!
 //! # Platform Support
 //!
 //! - **Linux 2.6.17+**: Uses `splice` for zero-copy socket-to-file transfer
-//! - **Other platforms**: Returns `Unsupported` error, triggering caller fallback
+//! - **Other platforms**: Falls back to buffered `read`/`write` (via `recv_fd_to_file`)
+//!   or returns `Unsupported` error (via `try_splice_to_file`)
 //!
 //! # Performance Characteristics
 //!
-//! - For transfers < 64KB: callers should use read/write directly (lower overhead)
+//! - For transfers < 64KB: `recv_fd_to_file` uses read/write directly (lower overhead)
 //! - For transfers >= 64KB: `splice` avoids userspace copies entirely
 //! - Pipe buffer size defaults to 64KB on most Linux kernels (tunable via
 //!   `/proc/sys/fs/pipe-max-size`)
@@ -37,14 +47,13 @@
 //! use std::fs::File;
 //! use std::net::TcpStream;
 //! use std::os::fd::AsRawFd;
-//! use fast_io::splice::try_splice_to_file;
+//! use fast_io::splice::recv_fd_to_file;
 //!
 //! let socket = TcpStream::connect("127.0.0.1:8080").unwrap();
 //! let file = File::create("output.bin").unwrap();
-//! match try_splice_to_file(socket.as_raw_fd(), file.as_raw_fd(), 1024 * 1024) {
-//!     Ok(n) => println!("Spliced {} bytes", n),
-//!     Err(_) => println!("Splice unavailable, using fallback"),
-//! }
+//! // Automatically tries splice(2) for large transfers, falls back to read/write.
+//! let received = recv_fd_to_file(socket.as_raw_fd(), file.as_raw_fd(), 1024 * 1024).unwrap();
+//! println!("Received {} bytes", received);
 //! # }
 //! ```
 
@@ -60,6 +69,12 @@ static SPLICE_SUPPORTED: OnceLock<bool> = OnceLock::new();
 /// fine - the kernel will transfer up to the pipe capacity per call.
 #[cfg(target_os = "linux")]
 const SPLICE_CHUNK_SIZE: usize = 64 * 1024;
+
+/// Minimum transfer size to attempt splice. Below this threshold, the overhead
+/// of creating a pipe pair and two splice syscalls per chunk exceeds the benefit
+/// of avoiding a userspace copy. Matches the sendfile threshold.
+#[cfg(target_os = "linux")]
+const SPLICE_THRESHOLD: u64 = 64 * 1024;
 
 /// Returns whether `splice(2)` is available on the current system.
 ///
@@ -242,6 +257,155 @@ pub fn try_splice_to_file(_socket_fd: i32, _file_fd: i32, _len: usize) -> std::i
     ))
 }
 
+/// Receives data from a raw file descriptor to a file, using `splice(2)` when available.
+///
+/// This is the receive-direction counterpart to [`crate::sendfile::send_file_to_fd`].
+/// It selects the best transfer mechanism based on the platform and transfer size:
+///
+/// - **Linux, length >= 64KB**: Tries `splice(2)` for zero-copy transfer.
+///   On failure (EINVAL, unsupported filesystem, etc.), falls back to `read`/`write`.
+/// - **Linux, length < 64KB**: Uses buffered `read`/`write` directly.
+/// - **Other unix platforms**: Uses buffered `read`/`write` via `libc`.
+/// - **Non-unix platforms**: Uses `std::io::copy` fallback.
+///
+/// # Arguments
+///
+/// * `source_fd` - Source file descriptor (typically a socket or pipe)
+/// * `dest_fd` - Destination file descriptor (typically a regular file)
+/// * `length` - Number of bytes to transfer
+///
+/// # Returns
+///
+/// The number of bytes actually transferred. May be less than `length` if the
+/// source reaches EOF.
+///
+/// # Errors
+///
+/// Returns an error if both the optimized path and the fallback fail.
+///
+/// # Example
+///
+/// ```no_run
+/// # #[cfg(unix)]
+/// # {
+/// use std::fs::File;
+/// use std::net::TcpStream;
+/// use std::os::fd::AsRawFd;
+/// use fast_io::splice::recv_fd_to_file;
+///
+/// let socket = TcpStream::connect("127.0.0.1:8080").unwrap();
+/// let file = File::create("output.bin").unwrap();
+/// let received = recv_fd_to_file(socket.as_raw_fd(), file.as_raw_fd(), 1024 * 1024).unwrap();
+/// println!("Received {} bytes", received);
+/// # }
+/// ```
+#[cfg(target_os = "linux")]
+pub fn recv_fd_to_file(
+    source_fd: std::os::fd::RawFd,
+    dest_fd: std::os::fd::RawFd,
+    length: u64,
+) -> std::io::Result<u64> {
+    if length >= SPLICE_THRESHOLD {
+        if let Ok(n) = try_splice_to_file(source_fd, dest_fd, length as usize) {
+            return Ok(n as u64);
+        }
+        // Fall through to read/write fallback
+    }
+    copy_fd_to_fd(source_fd, dest_fd, length)
+}
+
+/// Non-Linux unix stub - uses buffered `read`/`write` via `libc`.
+#[cfg(all(unix, not(target_os = "linux")))]
+pub fn recv_fd_to_file(
+    source_fd: std::os::fd::RawFd,
+    dest_fd: std::os::fd::RawFd,
+    length: u64,
+) -> std::io::Result<u64> {
+    copy_fd_to_fd(source_fd, dest_fd, length)
+}
+
+/// Non-unix stub - always returns `Unsupported`.
+#[cfg(not(unix))]
+pub fn recv_fd_to_file(_source_fd: i32, _dest_fd: i32, _length: u64) -> std::io::Result<u64> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "recv_fd_to_file requires unix file descriptors",
+    ))
+}
+
+/// Buffered `read`/`write` fallback for fd-to-fd transfer.
+///
+/// Reads from `source_fd` and writes to `dest_fd` using a 256KB userspace buffer,
+/// handling partial reads and writes. Used when `splice(2)` is unavailable or fails.
+///
+/// # Arguments
+///
+/// * `source_fd` - Source file descriptor to read from
+/// * `dest_fd` - Destination file descriptor to write to
+/// * `length` - Maximum number of bytes to transfer
+///
+/// # Returns
+///
+/// The number of bytes actually transferred. Returns early on EOF.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn copy_fd_to_fd(
+    source_fd: std::os::fd::RawFd,
+    dest_fd: std::os::fd::RawFd,
+    length: u64,
+) -> std::io::Result<u64> {
+    use std::io;
+
+    const BUF_SIZE: usize = 256 * 1024;
+    let mut buf = vec![0u8; BUF_SIZE];
+    let mut total: u64 = 0;
+    let mut remaining = length;
+
+    while remaining > 0 {
+        let to_read = (remaining as usize).min(BUF_SIZE);
+
+        // SAFETY: buf[..to_read] is a valid, aligned, mutable byte slice.
+        // source_fd is assumed valid by the caller (documented precondition).
+        let n = unsafe {
+            libc::read(
+                source_fd,
+                buf[..to_read].as_mut_ptr().cast::<libc::c_void>(),
+                to_read,
+            )
+        };
+
+        if n < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if n == 0 {
+            break; // EOF
+        }
+
+        let bytes_read = n as usize;
+        let mut written = 0;
+        while written < bytes_read {
+            // SAFETY: buf[written..bytes_read] is a valid byte slice.
+            // dest_fd is assumed valid by the caller.
+            let w = unsafe {
+                libc::write(
+                    dest_fd,
+                    buf[written..bytes_read].as_ptr().cast::<libc::c_void>(),
+                    bytes_read - written,
+                )
+            };
+            if w < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            written += w as usize;
+        }
+
+        total += bytes_read as u64;
+        remaining -= bytes_read as u64;
+    }
+
+    Ok(total)
+}
+
 /// RAII wrapper around a pipe pair created for splice intermediary use.
 ///
 /// The pipe is created with `O_CLOEXEC` to prevent fd leaks across `exec`.
@@ -307,6 +471,99 @@ mod tests {
         let result = try_splice_to_file(0, 0, 1024);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn test_recv_fd_to_file_unsupported_on_non_unix() {
+        let result = recv_fd_to_file(0, 0, 1024);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    mod unix_fallback_tests {
+        use super::*;
+        use std::io::{Read, Seek, SeekFrom};
+        use tempfile::NamedTempFile;
+
+        #[test]
+        fn test_recv_fd_to_file_uses_fallback() {
+            // On non-Linux unix, recv_fd_to_file uses the read/write fallback.
+            let content = b"Testing recv_fd_to_file fallback on non-Linux unix";
+            let mut dest = NamedTempFile::new().unwrap();
+
+            let mut socket_fds = [0i32; 2];
+            let result = unsafe {
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
+            };
+            assert_eq!(result, 0);
+
+            let recv_fd = socket_fds[0];
+            let send_fd = socket_fds[1];
+
+            let written = unsafe {
+                libc::write(
+                    send_fd,
+                    content.as_ptr().cast::<libc::c_void>(),
+                    content.len(),
+                )
+            };
+            assert_eq!(written, content.len() as isize);
+            unsafe { libc::close(send_fd) };
+
+            use std::os::fd::AsRawFd;
+            let received =
+                recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), content.len() as u64).unwrap();
+
+            unsafe { libc::close(recv_fd) };
+
+            assert_eq!(received, content.len() as u64);
+
+            dest.seek(SeekFrom::Start(0)).unwrap();
+            let mut file_content = Vec::new();
+            dest.read_to_end(&mut file_content).unwrap();
+            assert_eq!(file_content, content);
+        }
+
+        #[test]
+        fn test_copy_fd_to_fd_on_non_linux() {
+            // Direct test of the fallback path on macOS/BSD.
+            let content = b"Fallback path direct test on non-Linux unix";
+            let mut dest = NamedTempFile::new().unwrap();
+
+            let mut socket_fds = [0i32; 2];
+            let result = unsafe {
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
+            };
+            assert_eq!(result, 0);
+
+            let recv_fd = socket_fds[0];
+            let send_fd = socket_fds[1];
+
+            let written = unsafe {
+                libc::write(
+                    send_fd,
+                    content.as_ptr().cast::<libc::c_void>(),
+                    content.len(),
+                )
+            };
+            assert_eq!(written, content.len() as isize);
+            unsafe { libc::close(send_fd) };
+
+            use std::os::fd::AsRawFd;
+            let received =
+                copy_fd_to_fd(recv_fd, dest.as_file().as_raw_fd(), content.len() as u64).unwrap();
+
+            unsafe { libc::close(recv_fd) };
+
+            assert_eq!(received, content.len() as u64);
+
+            dest.seek(SeekFrom::Start(0)).unwrap();
+            let mut file_content = Vec::new();
+            dest.read_to_end(&mut file_content).unwrap();
+            assert_eq!(file_content, content);
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -534,6 +791,204 @@ mod tests {
             writer_thread.join().expect("writer thread should succeed");
 
             assert_eq!(spliced, size);
+
+            dest.seek(SeekFrom::Start(0)).unwrap();
+            let mut file_content = Vec::new();
+            dest.read_to_end(&mut file_content).unwrap();
+            assert_eq!(file_content, content);
+        }
+
+        /// Helper: creates a socketpair with a writer thread that sends `content`,
+        /// then closes the send end. Returns the recv fd.
+        fn socketpair_with_writer(content: Vec<u8>) -> (i32, std::thread::JoinHandle<()>) {
+            let mut socket_fds = [0i32; 2];
+            let result = unsafe {
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
+            };
+            assert_eq!(result, 0, "Failed to create socketpair");
+
+            let recv_fd = socket_fds[0];
+            let send_fd = socket_fds[1];
+
+            let handle = std::thread::spawn(move || {
+                let mut offset = 0;
+                while offset < content.len() {
+                    let n = unsafe {
+                        libc::write(
+                            send_fd,
+                            content[offset..].as_ptr().cast::<libc::c_void>(),
+                            content.len() - offset,
+                        )
+                    };
+                    assert!(n > 0, "write to socket failed");
+                    offset += n as usize;
+                }
+                unsafe { libc::close(send_fd) };
+            });
+
+            (recv_fd, handle)
+        }
+
+        #[test]
+        fn test_recv_fd_to_file_small_transfer() {
+            // Below SPLICE_THRESHOLD - should use read/write fallback directly.
+            let content = b"Small transfer below splice threshold";
+            let mut dest = NamedTempFile::new().unwrap();
+
+            let (recv_fd, writer) = socketpair_with_writer(content.to_vec());
+
+            use std::os::fd::AsRawFd;
+            let received =
+                recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), content.len() as u64).unwrap();
+
+            unsafe { libc::close(recv_fd) };
+            writer.join().expect("writer thread should succeed");
+
+            assert_eq!(received, content.len() as u64);
+
+            dest.seek(SeekFrom::Start(0)).unwrap();
+            let mut file_content = Vec::new();
+            dest.read_to_end(&mut file_content).unwrap();
+            assert_eq!(file_content, content);
+        }
+
+        #[test]
+        fn test_recv_fd_to_file_large_transfer() {
+            // Above SPLICE_THRESHOLD - should attempt splice, fall back if unavailable.
+            let size: usize = 256 * 1024;
+            let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+            let mut dest = NamedTempFile::new().unwrap();
+
+            let (recv_fd, writer) = socketpair_with_writer(content.clone());
+
+            use std::os::fd::AsRawFd;
+            let received =
+                recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
+
+            unsafe { libc::close(recv_fd) };
+            writer.join().expect("writer thread should succeed");
+
+            assert_eq!(received, size as u64);
+
+            dest.seek(SeekFrom::Start(0)).unwrap();
+            let mut file_content = Vec::new();
+            dest.read_to_end(&mut file_content).unwrap();
+            assert_eq!(file_content, content);
+        }
+
+        #[test]
+        fn test_recv_fd_to_file_empty() {
+            // Zero-length transfer should succeed immediately.
+            let mut dest = NamedTempFile::new().unwrap();
+
+            let mut socket_fds = [0i32; 2];
+            let result = unsafe {
+                libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
+            };
+            assert_eq!(result, 0);
+
+            let recv_fd = socket_fds[0];
+            let send_fd = socket_fds[1];
+            unsafe { libc::close(send_fd) };
+
+            use std::os::fd::AsRawFd;
+            let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), 1024).unwrap();
+
+            unsafe { libc::close(recv_fd) };
+
+            assert_eq!(received, 0);
+
+            dest.seek(SeekFrom::Start(0)).unwrap();
+            let mut file_content = Vec::new();
+            dest.read_to_end(&mut file_content).unwrap();
+            assert!(file_content.is_empty());
+        }
+
+        #[test]
+        fn test_recv_fd_to_file_exact_threshold() {
+            // Exactly at SPLICE_THRESHOLD boundary - should attempt splice path.
+            let size = SPLICE_THRESHOLD as usize;
+            let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+            let mut dest = NamedTempFile::new().unwrap();
+
+            let (recv_fd, writer) = socketpair_with_writer(content.clone());
+
+            use std::os::fd::AsRawFd;
+            let received =
+                recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
+
+            unsafe { libc::close(recv_fd) };
+            writer.join().expect("writer thread should succeed");
+
+            assert_eq!(received, size as u64);
+
+            dest.seek(SeekFrom::Start(0)).unwrap();
+            let mut file_content = Vec::new();
+            dest.read_to_end(&mut file_content).unwrap();
+            assert_eq!(file_content, content);
+        }
+
+        #[test]
+        fn test_copy_fd_to_fd_fallback() {
+            // Test the fallback path directly.
+            let content = b"Testing copy_fd_to_fd fallback path directly";
+            let mut dest = NamedTempFile::new().unwrap();
+
+            let (recv_fd, writer) = socketpair_with_writer(content.to_vec());
+
+            use std::os::fd::AsRawFd;
+            let received =
+                copy_fd_to_fd(recv_fd, dest.as_file().as_raw_fd(), content.len() as u64).unwrap();
+
+            unsafe { libc::close(recv_fd) };
+            writer.join().expect("writer thread should succeed");
+
+            assert_eq!(received, content.len() as u64);
+
+            dest.seek(SeekFrom::Start(0)).unwrap();
+            let mut file_content = Vec::new();
+            dest.read_to_end(&mut file_content).unwrap();
+            assert_eq!(file_content, content);
+        }
+
+        #[test]
+        fn test_copy_fd_to_fd_large() {
+            // Test fallback with data spanning multiple buffer fills (> 256KB).
+            let size: usize = 512 * 1024;
+            let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+            let mut dest = NamedTempFile::new().unwrap();
+
+            let (recv_fd, writer) = socketpair_with_writer(content.clone());
+
+            use std::os::fd::AsRawFd;
+            let received = copy_fd_to_fd(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
+
+            unsafe { libc::close(recv_fd) };
+            writer.join().expect("writer thread should succeed");
+
+            assert_eq!(received, size as u64);
+
+            dest.seek(SeekFrom::Start(0)).unwrap();
+            let mut file_content = Vec::new();
+            dest.read_to_end(&mut file_content).unwrap();
+            assert_eq!(file_content, content);
+        }
+
+        #[test]
+        fn test_recv_fd_to_file_partial_read() {
+            // Request more bytes than available - should stop at EOF.
+            let content = b"Short content for EOF test";
+            let mut dest = NamedTempFile::new().unwrap();
+
+            let (recv_fd, writer) = socketpair_with_writer(content.to_vec());
+
+            use std::os::fd::AsRawFd;
+            let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), 100_000).unwrap();
+
+            unsafe { libc::close(recv_fd) };
+            writer.join().expect("writer thread should succeed");
+
+            assert_eq!(received, content.len() as u64);
 
             dest.seek(SeekFrom::Start(0)).unwrap();
             let mut file_content = Vec::new();
