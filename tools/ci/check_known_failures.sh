@@ -252,6 +252,73 @@ run_standalone_test_by_name() {
       timeout "$hard_timeout" "$oc_bin" -av --iconv=utf8,latin1 --timeout=10 \
           "${comp_src}/" "${idest}/" >/dev/null 2>&1 || return 1
       ;;
+    upstream-compressed-batch-self-roundtrip)
+      # upstream rsync 3.4.1 cannot read back its own compressed delta batch
+      # files. The batch writer records raw compressed tokens (zlib DEFLATED_DATA)
+      # but the batch reader's inflate context lacks the dictionary sync that
+      # see_deflate_token() provides during live transfers, causing "inflate
+      # returned -3" at token.c:608.
+      #
+      # This test verifies the upstream bug still exists by:
+      # 1. Having upstream write a compressed delta batch
+      # 2. Having upstream try to read its own batch (expected to fail)
+      # 3. Having oc-rsync read the same batch (expected to succeed)
+      #
+      # upstream: token.c:608 - inflate fails without dictionary sync
+      # upstream: compat.c:194-195 - batch read defaults to CPRES_ZLIB
+      local bdir="${dest}/batch-delta"
+      local bsrc="${bdir}/src"
+      local bwrite="${bdir}/write-dest"
+      local bread="${bdir}/read-dest"
+      local oc_read="${bdir}/oc-read-dest"
+      local bfile="${bdir}/batch.rsync"
+      mkdir -p "$bsrc" "$bwrite" "$bread" "$oc_read"
+
+      # Create basis + modified source for delta transfer
+      dd if=/dev/zero bs=1K count=100 2>/dev/null | tr '\0' 'B' > "$bsrc/data.bin"
+      printf 'CHANGED_DATA_HERE' | dd of="$bsrc/data.bin" bs=1 seek=40000 conv=notrunc 2>/dev/null
+      dd if=/dev/zero bs=1K count=100 2>/dev/null | tr '\0' 'B' > "$bwrite/data.bin"
+      cp "$bwrite/data.bin" "$bread/data.bin"
+      cp "$bwrite/data.bin" "$oc_read/data.bin"
+
+      # Step 1: upstream writes compressed delta batch
+      if ! timeout "$hard_timeout" "$upstream_binary" -avI -z --no-whole-file \
+          --compress-choice=zlib --write-batch="$bfile" --timeout=10 \
+          "${bsrc}/" "${bwrite}/" >/dev/null 2>&1; then
+        return 1
+      fi
+
+      # Step 2: upstream reads its own batch - expected to fail (upstream bug)
+      local up_rc=0
+      timeout "$hard_timeout" "$upstream_binary" -av \
+          --read-batch="$bfile" --timeout=10 \
+          "${bread}/" >/dev/null 2>&1 || up_rc=$?
+
+      # Step 3: oc-rsync reads the same batch - expected to succeed
+      local oc_rc=0
+      timeout "$hard_timeout" "$oc_bin" -av \
+          --read-batch="$bfile" --timeout=10 \
+          "${oc_read}/" >/dev/null 2>&1 || oc_rc=$?
+
+      if [[ $oc_rc -ne 0 ]]; then
+        echo "    oc-rsync cannot read upstream compressed delta batch (regression)"
+        return 1
+      fi
+
+      if ! cmp -s "${bsrc}/data.bin" "${oc_read}/data.bin"; then
+        echo "    oc-rsync content mismatch after reading upstream compressed delta batch"
+        return 1
+      fi
+
+      # The test "fails" if upstream still cannot read its own batch -
+      # which is the expected upstream bug we are tracking.
+      if [[ $up_rc -ne 0 ]]; then
+        return 1
+      fi
+
+      # Verify upstream content match if it somehow succeeds
+      cmp -s "${bsrc}/data.bin" "${bread}/data.bin" || return 1
+      ;;
     *)
       return 2  # Unknown test, skip
       ;;

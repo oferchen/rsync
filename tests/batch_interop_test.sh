@@ -3,19 +3,15 @@
 #
 # Tests batch mode compatibility between oc-rsync and upstream rsync versions.
 #
-# NOTE: All tests are currently informational. The batch system has known
-# design limitations:
+# NOTE: All tests are currently informational. Failures do not block CI.
 #
-# 1. Cross-tool interop: oc-rsync uses a different batch body format than
-#    upstream rsync's raw protocol stream tee, so batch files are not
-#    interchangeable between implementations.
+# oc-rsync can read upstream rsync batch files (including compressed delta
+# batches with CPRES_ZLIB dictionary sync). Cross-tool interop from oc-rsync
+# to upstream is limited because oc-rsync uses a different batch body format.
 #
-# 2. Roundtrip: The batch writer captures per-operation delta ops but the
-#    replay reader expects FileEntry-delimited records. These formats are
-#    not compatible, so oc-rsync cannot replay its own batch files.
-#
-# This test runs for visibility and tracking progress toward full batch
-# support. Failures do not block CI.
+# Known upstream bug: rsync 3.4.1 cannot read back its own compressed delta
+# batch files due to missing inflate dictionary synchronization in the batch
+# reader (token.c:608). oc-rsync does not have this limitation.
 #
 # Environment variable overrides:
 #   OC_RSYNC              - path to oc-rsync binary
