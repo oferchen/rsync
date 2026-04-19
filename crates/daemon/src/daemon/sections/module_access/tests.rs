@@ -1554,4 +1554,120 @@ mod module_access_tests {
         assert_eq!(config.backup_dir.as_deref(), Some(".backups"));
         assert_eq!(config.effective_backup_suffix(), ".old");
     }
+
+    // --- split_filter_tokens tests ---
+
+    #[test]
+    fn split_filter_tokens_single_exclude() {
+        let tokens = split_filter_tokens("- *.tmp");
+        assert_eq!(tokens, vec!["- *.tmp"]);
+    }
+
+    #[test]
+    fn split_filter_tokens_single_include() {
+        let tokens = split_filter_tokens("+ *.rs");
+        assert_eq!(tokens, vec!["+ *.rs"]);
+    }
+
+    #[test]
+    fn split_filter_tokens_multiple_rules() {
+        let tokens = split_filter_tokens("+ *.txt + *.rs + */ - *");
+        assert_eq!(tokens, vec!["+ *.txt", "+ *.rs", "+ */", "- *"]);
+    }
+
+    #[test]
+    fn split_filter_tokens_mixed_include_exclude() {
+        let tokens = split_filter_tokens("+ important.log + .keep.tmp - *.log - *.tmp");
+        assert_eq!(
+            tokens,
+            vec!["+ important.log", "+ .keep.tmp", "- *.log", "- *.tmp"]
+        );
+    }
+
+    #[test]
+    fn split_filter_tokens_excludes_only() {
+        let tokens = split_filter_tokens("- *.tmp - *.bak - *.cache");
+        assert_eq!(tokens, vec!["- *.tmp", "- *.bak", "- *.cache"]);
+    }
+
+    #[test]
+    fn split_filter_tokens_empty() {
+        let tokens = split_filter_tokens("");
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn split_filter_tokens_whitespace_only() {
+        let tokens = split_filter_tokens("   ");
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn split_filter_tokens_keyword_rules() {
+        let tokens = split_filter_tokens("exclude *.tmp include *.rs");
+        assert_eq!(tokens, vec!["exclude *.tmp", "include *.rs"]);
+    }
+
+    #[test]
+    fn split_filter_tokens_bare_pattern() {
+        let tokens = split_filter_tokens("*.bak");
+        assert_eq!(tokens, vec!["*.bak"]);
+    }
+
+    // --- build_daemon_filter_rules with word-split filter lines ---
+
+    #[test]
+    fn build_daemon_filter_rules_filter_word_split_include_exclude() {
+        // Matches the test_daemon_filter_include_exclude_star interop test
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["+ *.txt + *.rs + */ - *".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 4);
+        assert_eq!(rules[0].pattern, "*.txt");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules[1].pattern, "*.rs");
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules[2].pattern, "*/");
+        assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules[3].pattern, "*");
+        assert_eq!(rules[3].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_filter_word_split_excludes() {
+        // Matches the test_daemon_filter_directive_types interop test
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["- *.tmp - *.bak - *.cache".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern, "*.tmp");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[1].pattern, "*.bak");
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[2].pattern, "*.cache");
+        assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    #[test]
+    fn build_daemon_filter_rules_filter_word_split_overlapping() {
+        // Matches the test_daemon_filter_overlapping_rules interop test
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["+ important.log + .keep.tmp - *.log - *.tmp".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 4);
+        assert_eq!(rules[0].pattern, "important.log");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules[1].pattern, ".keep.tmp");
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules[2].pattern, "*.log");
+        assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[3].pattern, "*.tmp");
+        assert_eq!(rules[3].rule_type, protocol::filters::RuleType::Exclude);
+    }
 }
