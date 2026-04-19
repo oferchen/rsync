@@ -6785,8 +6785,7 @@ use chroot = false
 path = ${fg_src}
 read only = true
 numeric ids = yes
-exclude = *.tmp *.o
-exclude = *.log
+exclude = *.tmp *.o *.log
 CONF
 
   start_oc_daemon_with_retry "$fg_oc_conf" "$fg_oc_log" "$upstream_binary" "$fg_oc_pid" "$oc_port"
@@ -6817,8 +6816,7 @@ munge symlinks = false
 path = ${fg_src}
 read only = true
 numeric ids = yes
-exclude = *.tmp *.o
-exclude = *.log
+exclude = *.tmp *.o *.log
 CONF
 
   start_upstream_daemon_with_retry "$upstream_binary" "$fg_up_conf" "$fg_up_log" "$fg_up_pid"
@@ -6895,8 +6893,7 @@ use chroot = false
 path = ${fa_src}
 read only = true
 numeric ids = yes
-exclude = /secret
-exclude = /logs/
+exclude = /secret /logs/
 CONF
 
   start_oc_daemon_with_retry "$fa_oc_conf" "$fa_oc_log" "$upstream_binary" "$fa_oc_pid" "$oc_port"
@@ -6927,8 +6924,7 @@ munge symlinks = false
 path = ${fa_src}
 read only = true
 numeric ids = yes
-exclude = /secret
-exclude = /logs/
+exclude = /secret /logs/
 CONF
 
   start_upstream_daemon_with_retry "$upstream_binary" "$fa_up_conf" "$fa_up_log" "$fa_up_pid"
@@ -7002,10 +6998,7 @@ use chroot = false
 path = ${fi_src}
 read only = true
 numeric ids = yes
-filter = + *.txt
-filter = + *.rs
-filter = + */
-filter = - *
+filter = + *.txt + *.rs + */ - *
 CONF
 
   start_oc_daemon_with_retry "$fi_oc_conf" "$fi_oc_log" "$upstream_binary" "$fi_oc_pid" "$oc_port"
@@ -7036,10 +7029,7 @@ munge symlinks = false
 path = ${fi_src}
 read only = true
 numeric ids = yes
-filter = + *.txt
-filter = + *.rs
-filter = + */
-filter = - *
+filter = + *.txt + *.rs + */ - *
 CONF
 
   start_upstream_daemon_with_retry "$upstream_binary" "$fi_up_conf" "$fi_up_log" "$fi_up_pid"
@@ -7111,9 +7101,7 @@ use chroot = false
 path = ${fd_src}
 read only = true
 numeric ids = yes
-filter = - *.tmp
-filter = - *.bak
-filter = exclude *.cache
+filter = - *.tmp - *.bak - *.cache
 CONF
 
   start_oc_daemon_with_retry "$fd_oc_conf" "$fd_oc_log" "$upstream_binary" "$fd_oc_pid" "$oc_port"
@@ -7144,9 +7132,7 @@ munge symlinks = false
 path = ${fd_src}
 read only = true
 numeric ids = yes
-filter = - *.tmp
-filter = - *.bak
-filter = exclude *.cache
+filter = - *.tmp - *.bak - *.cache
 CONF
 
   start_upstream_daemon_with_retry "$upstream_binary" "$fd_up_conf" "$fd_up_log" "$fd_up_pid"
@@ -7224,10 +7210,7 @@ use chroot = false
 path = ${fo_src}
 read only = true
 numeric ids = yes
-filter = + important.log
-filter = + .keep.tmp
-filter = - *.log
-filter = - *.tmp
+filter = + important.log + .keep.tmp - *.log - *.tmp
 CONF
 
   start_oc_daemon_with_retry "$fo_oc_conf" "$fo_oc_log" "$upstream_binary" "$fo_oc_pid" "$oc_port"
@@ -7258,10 +7241,7 @@ munge symlinks = false
 path = ${fo_src}
 read only = true
 numeric ids = yes
-filter = + important.log
-filter = + .keep.tmp
-filter = - *.log
-filter = - *.tmp
+filter = + important.log + .keep.tmp - *.log - *.tmp
 CONF
 
   start_upstream_daemon_with_retry "$upstream_binary" "$fo_up_conf" "$fo_up_log" "$fo_up_pid"
