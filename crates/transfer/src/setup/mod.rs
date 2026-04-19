@@ -155,7 +155,22 @@ pub fn setup_protocol_with<'a>(
 
             (Some(compat_flags), Some(algorithms))
         } else {
-            (None, None)
+            // upstream: compat.c - at protocol < 30, no binary negotiation
+            // occurs. Compression is determined solely by the -z flag (CPRES_ZLIB).
+            // Checksum is always MD4. We must still populate negotiated_algorithms
+            // so the token reader/writer uses compressed format.
+            let legacy_algorithms = if config.do_compression {
+                let compression = config
+                    .compress_choice
+                    .unwrap_or(protocol::CompressionAlgorithm::Zlib);
+                Some(protocol::NegotiationResult {
+                    checksum: protocol::ChecksumAlgorithm::MD4,
+                    compression,
+                })
+            } else {
+                None
+            };
+            (None, legacy_algorithms)
         };
 
     // Checksum seed exchange (ALL protocols, upstream compat.c:750)
