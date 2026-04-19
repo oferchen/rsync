@@ -228,9 +228,13 @@ fn build_daemon_filter_rules(
     // 1. filter rules - full filter syntax (e.g., "- *.tmp", "+ *.rs")
     // upstream: clientserver.c:874 - parse_filter_str(&daemon_filter_list, lp_filter(i),
     //           rule_template(FILTRULE_WORD_SPLIT), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3)
+    // FILTRULE_WORD_SPLIT means a single filter line can contain multiple
+    // space-separated rules: "+ *.txt + *.rs - *" is three rules.
     for filter_str in &module.filter {
-        if let Some(rule) = parse_daemon_filter_token(filter_str.trim()) {
-            rules.push(rule);
+        for token in split_filter_tokens(filter_str.trim()) {
+            if let Some(rule) = parse_daemon_filter_token(&token) {
+                rules.push(rule);
+            }
         }
     }
 
@@ -296,6 +300,82 @@ fn read_patterns_from_file(path: &Path) -> Result<Vec<String>, io::Error> {
         .collect();
 
     Ok(patterns)
+}
+
+/// Splits a filter string with `FILTRULE_WORD_SPLIT` semantics into individual
+/// rule tokens.
+///
+/// A single `filter` line in rsyncd.conf can contain multiple space-separated
+/// rules: `"+ *.txt + *.rs - *"` becomes `["+ *.txt", "+ *.rs", "- *"]`.
+///
+/// Each rule starts with a prefix (`+`, `-`, or a keyword like `include`,
+/// `exclude`, `hide`, `show`, `protect`, `risk`, `clear`, `merge`, `dir-merge`)
+/// followed by a pattern. The function scans for rule boundaries by looking for
+/// these prefixes after whitespace.
+///
+/// upstream: exclude.c:parse_filter_str() with FILTRULE_WORD_SPLIT flag
+fn split_filter_tokens(s: &str) -> Vec<String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Vec::new();
+    }
+
+    // Prefixes that start a new rule token when found after whitespace.
+    const SHORT_PREFIXES: &[&str] = &["+ ", "- ", "+/", "-/"];
+    const KEYWORD_PREFIXES: &[&str] = &[
+        "include ", "exclude ", "hide ", "show ", "protect ", "risk ", "clear ", "merge ",
+        "dir-merge ",
+    ];
+
+    /// Returns true if `s` starts with a filter rule prefix.
+    fn starts_with_rule_prefix(s: &str) -> bool {
+        for &p in SHORT_PREFIXES {
+            if s.starts_with(p) {
+                return true;
+            }
+        }
+        for &kw in KEYWORD_PREFIXES {
+            if s.starts_with(kw) {
+                return true;
+            }
+        }
+        false
+    }
+
+    let mut tokens = Vec::new();
+    let mut start = 0;
+
+    // Walk through the string looking for rule boundaries.
+    // A new rule starts when we see whitespace followed by a rule prefix.
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b' ' || bytes[i] == b'\t' {
+            // Found whitespace - check if what follows is a new rule prefix
+            let rest = &s[i..].trim_start();
+            if !rest.is_empty() && starts_with_rule_prefix(rest) {
+                // Save current token
+                let token = s[start..i].trim();
+                if !token.is_empty() {
+                    tokens.push(token.to_string());
+                }
+                // Advance past whitespace
+                let ws_len = s[i..].len() - rest.len();
+                start = i + ws_len;
+                i = start;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    // Push the last token
+    let token = s[start..].trim();
+    if !token.is_empty() {
+        tokens.push(token.to_string());
+    }
+
+    tokens
 }
 
 /// Parses a single daemon filter token in filter rule syntax.
