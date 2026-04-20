@@ -174,7 +174,9 @@ impl ReceiverContext {
                         let checksum_algorithm = setup.checksum_algorithm;
                         let sig_threshold = self.parallel_thresholds.signature;
 
-                        // Compute signatures - parallel when batch is large enough.
+                        // Ordering: wire protocol requires file requests in file-list index order.
+                        // Preserved by par_iter().map().collect() + sequential zip/send loop below.
+                        // Violation sends signatures for wrong files, corrupting delta transfer.
                         let sig_results: Vec<_> = if batch.len() >= sig_threshold {
                             batch
                                 .par_iter()

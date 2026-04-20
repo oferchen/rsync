@@ -124,6 +124,9 @@ impl BatchedStatCache {
         paths: &[&Path],
         follow_symlinks: bool,
     ) -> Vec<io::Result<Arc<fs::Metadata>>> {
+        // Ordering: results must correspond 1:1 with input paths by position.
+        // Preserved by par_iter().map().collect() (rayon preserves index order).
+        // Violation mismatches metadata with paths, corrupting file list construction.
         paths
             .par_iter()
             .map(|path| self.get_or_fetch(path, follow_symlinks))

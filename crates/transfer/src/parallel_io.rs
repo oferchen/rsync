@@ -118,6 +118,9 @@ where
         return items.into_iter().map(&f).collect();
     }
 
+    // Ordering: callers zip results with input by position.
+    // Preserved by `into_par_iter().map().collect()` (rayon preserves index order).
+    // Violation breaks result-to-file correspondence, applying wrong metadata.
     items.into_par_iter().map(f).collect()
 }
 

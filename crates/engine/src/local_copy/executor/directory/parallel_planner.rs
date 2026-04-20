@@ -94,7 +94,9 @@ pub(crate) fn prefetch_entry_metadata(
             .collect();
     }
 
-    // Parallel prefetch using rayon
+    // Ordering: prefetched data is matched to entries by index for sequential processing.
+    // Preserved by par_iter().enumerate().map().collect() (rayon preserves index order).
+    // Violation assigns wrong symlink/device metadata to entries, corrupting copies.
     entries
         .par_iter()
         .enumerate()
