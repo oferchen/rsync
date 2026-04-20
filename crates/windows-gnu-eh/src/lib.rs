@@ -1,16 +1,63 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
-//! Compatibility helpers for the Windows GNU target.
+//! Compatibility shims for `x86_64-pc-windows-gnu` exception handling.
 //!
-//! When cross-compiling with `cargo-zigbuild` the Windows GNU toolchain linked
-//! by Zig omits the legacy libgcc entry points `___register_frame_info` and
-//! `___deregister_frame_info` that Rust's startup object (`rsbegin.o`)
-//! references when DWARF unwind data is present. We forward these requests to
-//! the modern `__register_frame_info`/`__deregister_frame_info` symbols shipped
-//! with libunwind (or libgcc) when they are available at runtime so stack
-//! unwinding remains fully functional while still permitting fully-static
-//! linkers that omit the legacy entry points.
+//! # What this crate does
+//!
+//! When cross-compiling for `x86_64-pc-windows-gnu` (e.g. with `cargo-zigbuild`),
+//! the Zig-provided Windows GNU toolchain omits the legacy libgcc entry points
+//! `___register_frame_info` and `___deregister_frame_info`. Rust's startup
+//! object (`rsbegin.o`) references these symbols when DWARF unwind data is
+//! present, causing link failures without this crate.
+//!
+//! This crate provides `#[no_mangle]` shim functions that forward at runtime to
+//! the modern `__register_frame_info`/`__deregister_frame_info` symbols from
+//! libunwind or libgcc (whichever is loaded). The symbols are resolved lazily
+//! via `LoadLibraryA`/`GetProcAddress` and cached in atomics for subsequent
+//! calls. If no library provides the symbols, the shims silently no-op - this
+//! is safe because the symbols are only needed when DWARF unwinding is active.
+//!
+//! # When this crate is needed
+//!
+//! **Only** when targeting `x86_64-pc-windows-gnu`. On all other targets
+//! (including `x86_64-pc-windows-msvc`, all Unix, all macOS), this crate
+//! compiles to a single no-op `force_link()` function that is optimized away.
+//!
+//! The root binary (`oc-rsync`) calls `windows_gnu_eh::force_link()` in `main()`
+//! behind a `#[cfg(all(target_os = "windows", target_env = "gnu"))]` gate. This
+//! ensures the crate's object file is linked into the final binary, which makes
+//! the `#[no_mangle]` shim symbols available to the Rust runtime's `rsbegin.o`.
+//!
+//! # CI status
+//!
+//! As of 2026-04, CI does **not** test the `x86_64-pc-windows-gnu` target.
+//! All Windows CI jobs and release builds use `x86_64-pc-windows-msvc`:
+//! - `.github/workflows/ci.yml` - `windows-test` job runs on `windows-latest`
+//!   with MSVC toolchain only.
+//! - `.github/workflows/release-cross.yml` - Windows release artifacts target
+//!   `x86_64-pc-windows-msvc` exclusively.
+//!
+//! # Maintenance burden
+//!
+//! **Minimal.** The crate is ~180 lines of self-contained code with no
+//! dependencies beyond `core` and `kernel32`. It uses only stable Rust features
+//! and Windows API calls (`GetModuleHandleA`, `LoadLibraryA`, `GetProcAddress`)
+//! that have been stable since Windows XP. No updates are required unless Rust
+//! changes its startup object linking model for the GNU target.
+//!
+//! # Could this crate be dropped?
+//!
+//! **Yes, if GNU target support is dropped entirely.** Since CI and release
+//! builds exclusively use MSVC, and no downstream users have reported needing
+//! GNU builds, removing this crate would have no impact on tested or released
+//! artifacts. The only scenario requiring it is cross-compilation from Linux
+//! using `cargo-zigbuild` targeting `x86_64-pc-windows-gnu`.
+//!
+//! To remove: delete `crates/windows-gnu-eh/`, remove its entry from workspace
+//! `Cargo.toml` (both `[workspace.members]` and the
+//! `[target.'cfg(all(windows, target_env = "gnu"))'.dependencies]` section),
+//! and remove the `force_link()` call from `src/bin/oc-rsync.rs`.
 
 #[cfg(all(target_os = "windows", target_env = "gnu"))]
 mod windows_gnu {
