@@ -1,8 +1,8 @@
 //! Zero-run detection in data buffers for sparse file writing.
 //!
 //! Scans byte buffers to identify contiguous zero regions that can be
-//! represented as filesystem holes, using 16-byte `u128` aligned reads
-//! for throughput on the hot path.
+//! represented as filesystem holes. Delegates to `fast_io::zero_detect` for
+//! SIMD-accelerated scanning (AVX2/SSE2/NEON) with scalar fallback.
 
 use super::{SPARSE_WRITE_SIZE, SparseRegion};
 
@@ -126,7 +126,8 @@ impl SparseDetector {
     /// Quickly checks if the entire buffer is all zeros.
     ///
     /// This is faster than calling `scan()` when you only need to know whether
-    /// the buffer contains any non-zero data.
+    /// the buffer contains any non-zero data. Delegates to the SIMD-accelerated
+    /// implementation in `fast_io::zero_detect`.
     ///
     /// # Arguments
     ///
@@ -137,37 +138,17 @@ impl SparseDetector {
     /// `true` if all bytes in the buffer are zero, `false` otherwise.
     /// An empty buffer returns `true`.
     pub fn is_all_zeros(data: &[u8]) -> bool {
-        if data.is_empty() {
-            return true;
-        }
-        leading_zero_run(data) == data.len()
+        fast_io::zero_detect::is_all_zeros(data)
     }
 }
 
-/// Returns the number of leading zero bytes in `bytes` using 16-byte `u128` scanning.
+/// Returns the number of leading zero bytes in `bytes` using SIMD-accelerated scanning.
+///
+/// Delegates to `fast_io::zero_detect::find_first_nonzero` which uses AVX2 (32 bytes/iter),
+/// SSE2/NEON (16 bytes/iter), or scalar u128 fallback depending on platform.
 #[inline]
 pub(super) fn leading_zero_run(bytes: &[u8]) -> usize {
-    let mut offset = 0usize;
-    let mut iter = bytes.chunks_exact(16);
-
-    for chunk in &mut iter {
-        // SAFETY: chunks_exact(16) guarantees exactly 16-byte slices, so try_into cannot fail.
-        let chunk: &[u8; 16] = chunk.try_into().expect("chunks_exact guarantees 16 bytes");
-        if u128::from_ne_bytes(*chunk) == 0 {
-            offset += 16;
-            continue;
-        }
-
-        let position = chunk.iter().position(|&byte| byte != 0).unwrap_or(16);
-        return offset + position;
-    }
-
-    offset + leading_zero_run_scalar(iter.remainder())
-}
-
-#[inline]
-fn leading_zero_run_scalar(bytes: &[u8]) -> usize {
-    bytes.iter().take_while(|&&byte| byte == 0).count()
+    fast_io::zero_detect::find_first_nonzero(bytes)
 }
 
 /// Returns the number of trailing zero bytes in `bytes` using 16-byte `u128` scanning.
