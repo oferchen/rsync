@@ -26,6 +26,12 @@ pub fn is_io_uring_available() -> bool {
     false
 }
 
+/// Returns whether SQPOLL was requested but fell back (always `false` on this platform).
+#[must_use]
+pub fn sqpoll_fell_back() -> bool {
+    false
+}
+
 /// Configuration for io_uring instances (informational only on this platform).
 #[derive(Debug, Clone)]
 pub struct IoUringConfig {
