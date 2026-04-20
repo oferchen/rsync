@@ -988,6 +988,210 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "multi-producer")]
+    fn multi_producer_many_senders() {
+        // Verify that many cloned senders (N=8) can all send items concurrently
+        // and all items are received without loss or duplication.
+        let num_producers = 8u32;
+        let items_per_producer = 100u32;
+        let (tx, rx) = bounded_with_capacity(16);
+
+        let handles: Vec<_> = (0..num_producers)
+            .map(|producer_id| {
+                let sender = tx.clone();
+                thread::spawn(move || {
+                    let base = producer_id * items_per_producer;
+                    for i in 0..items_per_producer {
+                        sender
+                            .send(DeltaWork::whole_file(base + i, PathBuf::from("/dst"), 64))
+                            .unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        // Drop the original sender so the channel closes when all clones drop.
+        drop(tx);
+
+        let mut results = rx.drain_parallel(|w| w.ndx());
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        results.sort_unstable();
+        let expected: Vec<u32> = (0..(num_producers * items_per_producer)).collect();
+        assert_eq!(results, expected);
+    }
+
+    #[test]
+    #[cfg(feature = "multi-producer")]
+    fn multi_producer_dropping_one_sender_does_not_affect_others() {
+        // Dropping one cloned sender must not close the channel - other senders
+        // can continue sending and the receiver stays open.
+        let (tx, rx) = bounded_with_capacity(8);
+        let tx2 = tx.clone();
+        let tx3 = tx.clone();
+
+        // Drop one sender immediately.
+        drop(tx2);
+
+        // The remaining senders should still work.
+        tx.send(DeltaWork::whole_file(1, PathBuf::from("/dst"), 0))
+            .unwrap();
+        tx3.send(DeltaWork::whole_file(2, PathBuf::from("/dst"), 0))
+            .unwrap();
+
+        drop(tx);
+        drop(tx3);
+
+        let mut items: Vec<u32> = rx.into_iter().map(|w| w.ndx()).collect();
+        items.sort_unstable();
+        assert_eq!(items, vec![1, 2]);
+    }
+
+    #[test]
+    #[cfg(feature = "multi-producer")]
+    fn multi_producer_receiver_completes_only_when_all_senders_dropped() {
+        // The receiver iterator must not terminate until ALL sender clones are
+        // dropped, not just one.
+        let (tx, rx) = bounded_with_capacity(4);
+        let tx2 = tx.clone();
+        let tx3 = tx.clone();
+
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let received_clone = Arc::clone(&received);
+
+        let consumer = thread::spawn(move || {
+            for w in rx.into_iter() {
+                received_clone.lock().unwrap().push(w.ndx());
+            }
+        });
+
+        // First sender sends and drops.
+        tx.send(DeltaWork::whole_file(1, PathBuf::from("/dst"), 0))
+            .unwrap();
+        drop(tx);
+
+        // Small delay to let consumer process - channel should NOT be closed.
+        thread::sleep(Duration::from_millis(20));
+
+        // Second sender sends and drops.
+        tx2.send(DeltaWork::whole_file(2, PathBuf::from("/dst"), 0))
+            .unwrap();
+        drop(tx2);
+
+        thread::sleep(Duration::from_millis(20));
+
+        // Third sender sends and drops - this should close the channel.
+        tx3.send(DeltaWork::whole_file(3, PathBuf::from("/dst"), 0))
+            .unwrap();
+        drop(tx3);
+
+        consumer.join().unwrap();
+
+        let mut items = Arc::try_unwrap(received)
+            .expect("Arc should have single owner after join")
+            .into_inner()
+            .unwrap();
+        items.sort_unstable();
+        assert_eq!(items, vec![1, 2, 3]);
+    }
+
+    #[test]
+    #[cfg(feature = "multi-producer")]
+    fn multi_producer_drain_parallel_collects_from_all_producers() {
+        // Verifies `drain_parallel` works correctly when items arrive from
+        // multiple concurrent producers via cloned senders.
+        let (tx, rx) = bounded_with_capacity(8);
+        let tx2 = tx.clone();
+
+        let p1 = thread::spawn(move || {
+            for i in (0..100u32).step_by(2) {
+                tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), i as u64))
+                    .unwrap();
+            }
+        });
+
+        let p2 = thread::spawn(move || {
+            for i in (1..100u32).step_by(2) {
+                tx2.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), i as u64))
+                    .unwrap();
+            }
+        });
+
+        let results = rx.drain_parallel(|w| (w.ndx(), w.target_size()));
+        p1.join().unwrap();
+        p2.join().unwrap();
+
+        assert_eq!(results.len(), 100);
+
+        let mut sorted = results;
+        sorted.sort_unstable_by_key(|&(ndx, _)| ndx);
+        for (ndx, size) in &sorted {
+            assert_eq!(*size, u64::from(*ndx));
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "multi-producer")]
+    fn multi_producer_drain_parallel_into_from_multiple_senders() {
+        // Streaming variant also receives all items from multiple producers.
+        let (tx, rx) = bounded_with_capacity(8);
+        let tx2 = tx.clone();
+        let tx3 = tx.clone();
+        let items_each = 50u32;
+
+        let producers: Vec<_> = [tx, tx2, tx3]
+            .into_iter()
+            .enumerate()
+            .map(|(pid, sender)| {
+                thread::spawn(move || {
+                    let base = (pid as u32) * items_each;
+                    for i in 0..items_each {
+                        sender
+                            .send(DeltaWork::whole_file(base + i, PathBuf::from("/dst"), 0))
+                            .unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        let (result_tx, result_rx) = mpsc::sync_channel(16);
+        thread::spawn(move || {
+            rx.drain_parallel_into(|w| w.ndx(), result_tx);
+        });
+
+        let mut results: Vec<u32> = result_rx.iter().collect();
+        for p in producers {
+            p.join().unwrap();
+        }
+
+        results.sort_unstable();
+        let expected: Vec<u32> = (0..(3 * items_each)).collect();
+        assert_eq!(results, expected);
+    }
+
+    #[test]
+    #[cfg(feature = "multi-producer")]
+    fn multi_producer_send_error_after_receiver_drop() {
+        // All cloned senders should observe the send error once the receiver
+        // is dropped.
+        let (tx, rx) = bounded_with_capacity(4);
+        let tx2 = tx.clone();
+        drop(rx);
+
+        let err1 = tx
+            .send(DeltaWork::whole_file(1, PathBuf::from("/d"), 0))
+            .unwrap_err();
+        let err2 = tx2
+            .send(DeltaWork::whole_file(2, PathBuf::from("/d"), 0))
+            .unwrap_err();
+
+        assert_eq!(err1.0.ndx(), 1);
+        assert_eq!(err2.0.ndx(), 2);
+    }
+
+    #[test]
     fn drain_parallel_closure_captures_state() {
         let (tx, rx) = bounded_with_capacity(8);
         let total = 30u32;
