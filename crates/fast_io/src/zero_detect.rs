@@ -161,27 +161,31 @@ unsafe fn find_first_nonzero_avx2_inner(buf: &[u8]) -> usize {
         _mm256_cmpeq_epi8, _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_setzero_si256,
     };
 
-    let zero = _mm256_setzero_si256();
-    let mut offset = 0;
-    let len = buf.len();
+    // SAFETY: All intrinsics here require AVX2, guaranteed by #[target_feature(enable = "avx2")]
+    // and the runtime check in the caller. Pointer arithmetic is bounds-checked by the loop guard.
+    unsafe {
+        let zero = _mm256_setzero_si256();
+        let mut offset = 0;
+        let len = buf.len();
 
-    while offset + 32 <= len {
-        let ptr = buf.as_ptr().add(offset).cast();
-        let chunk = _mm256_loadu_si256(ptr);
-        let cmp = _mm256_cmpeq_epi8(chunk, zero);
-        let mask = _mm256_movemask_epi8(cmp) as u32;
+        while offset + 32 <= len {
+            let ptr = buf.as_ptr().add(offset).cast();
+            let chunk = _mm256_loadu_si256(ptr);
+            let cmp = _mm256_cmpeq_epi8(chunk, zero);
+            let mask = _mm256_movemask_epi8(cmp) as u32;
 
-        // mask has bit set for each byte that IS zero.
-        // We want the first byte that is NOT zero, i.e. first 0-bit.
-        if mask != 0xFFFF_FFFF {
-            let first_nonzero = (!mask).trailing_zeros() as usize;
-            return offset + first_nonzero;
+            // mask has bit set for each byte that IS zero.
+            // We want the first byte that is NOT zero, i.e. first 0-bit.
+            if mask != 0xFFFF_FFFF {
+                let first_nonzero = (!mask).trailing_zeros() as usize;
+                return offset + first_nonzero;
+            }
+            offset += 32;
         }
-        offset += 32;
-    }
 
-    // Handle remaining bytes with scalar
-    offset + find_first_nonzero_scalar(&buf[offset..])
+        // Handle remaining bytes with scalar
+        offset + find_first_nonzero_scalar(&buf[offset..])
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -205,24 +209,28 @@ unsafe fn find_first_nonzero_sse2_inner(buf: &[u8]) -> usize {
         _mm_cmpeq_epi8, _mm_loadu_si128, _mm_movemask_epi8, _mm_setzero_si128,
     };
 
-    let zero = _mm_setzero_si128();
-    let mut offset = 0;
-    let len = buf.len();
+    // SAFETY: All intrinsics here require SSE2, guaranteed by #[target_feature(enable = "sse2")]
+    // and the runtime check in the caller. Pointer arithmetic is bounds-checked by the loop guard.
+    unsafe {
+        let zero = _mm_setzero_si128();
+        let mut offset = 0;
+        let len = buf.len();
 
-    while offset + 16 <= len {
-        let ptr = buf.as_ptr().add(offset).cast();
-        let chunk = _mm_loadu_si128(ptr);
-        let cmp = _mm_cmpeq_epi8(chunk, zero);
-        let mask = _mm_movemask_epi8(cmp) as u16;
+        while offset + 16 <= len {
+            let ptr = buf.as_ptr().add(offset).cast();
+            let chunk = _mm_loadu_si128(ptr);
+            let cmp = _mm_cmpeq_epi8(chunk, zero);
+            let mask = _mm_movemask_epi8(cmp) as u16;
 
-        if mask != 0xFFFF {
-            let first_nonzero = (!mask).trailing_zeros() as usize;
-            return offset + first_nonzero;
+            if mask != 0xFFFF {
+                let first_nonzero = (!mask).trailing_zeros() as usize;
+                return offset + first_nonzero;
+            }
+            offset += 16;
         }
-        offset += 16;
-    }
 
-    offset + find_first_nonzero_scalar(&buf[offset..])
+        offset + find_first_nonzero_scalar(&buf[offset..])
+    }
 }
 
 // ---------------------------------------------------------------------------
