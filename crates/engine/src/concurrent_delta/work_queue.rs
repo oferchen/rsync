@@ -1089,7 +1089,10 @@ mod tests {
 
         consumer.join().unwrap();
 
-        let mut items = received.into_inner().unwrap();
+        let mut items = Arc::try_unwrap(received)
+            .expect("Arc should have single owner after join")
+            .into_inner()
+            .unwrap();
         items.sort_unstable();
         assert_eq!(items, vec![1, 2, 3]);
     }
