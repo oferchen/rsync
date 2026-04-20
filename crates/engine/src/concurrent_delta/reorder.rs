@@ -160,6 +160,30 @@ impl<T> ReorderBuffer<T> {
     pub fn force_insert(&mut self, sequence: u64, item: T) {
         self.pending.insert(sequence, item);
     }
+
+    /// Validates that all items have been delivered with no gaps in the sequence.
+    ///
+    /// Call this after all producers have finished and all results have been
+    /// drained. Panics if any items remain in the buffer - their presence
+    /// indicates a gap in the sequence (a work item was lost upstream).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the buffer still contains pending items, meaning one or more
+    /// sequence numbers between `next_expected` and the lowest buffered sequence
+    /// were never inserted - a fatal correctness violation.
+    pub fn finish(self) {
+        if !self.pending.is_empty() {
+            let first_buffered = *self.pending.keys().next().unwrap();
+            panic!(
+                "ReorderBuffer: sequence gap detected - expected seq {} but next buffered is seq {} \
+                 ({} items stranded)",
+                self.next_expected,
+                first_buffered,
+                self.pending.len(),
+            );
+        }
+    }
 }
 
 /// Iterator that drains contiguous in-order items from a [`ReorderBuffer`].
@@ -539,6 +563,45 @@ mod tests {
             capacity_pressure_observed,
             "capacity backpressure was never triggered - increase TOTAL_ITEMS or decrease BUFFER_CAPACITY"
         );
+    }
+
+    #[test]
+    fn finish_succeeds_when_fully_drained() {
+        let mut buf = ReorderBuffer::new(8);
+        buf.insert(0, "a").unwrap();
+        buf.insert(1, "b").unwrap();
+        buf.insert(2, "c").unwrap();
+        let _: Vec<_> = buf.drain_ready().collect();
+        buf.finish(); // no panic - all items delivered
+    }
+
+    #[test]
+    fn finish_succeeds_on_empty_buffer() {
+        let buf: ReorderBuffer<i32> = ReorderBuffer::new(4);
+        buf.finish(); // no items were ever inserted, no gap
+    }
+
+    #[test]
+    #[should_panic(expected = "sequence gap detected")]
+    fn finish_panics_on_gap() {
+        let mut buf = ReorderBuffer::new(8);
+        // Insert seq 0 and seq 2, skip seq 1 entirely.
+        buf.insert(0, "a").unwrap();
+        buf.insert(2, "c").unwrap();
+        let _: Vec<_> = buf.drain_ready().collect(); // delivers only seq 0
+        // Finishing with seq 1 missing triggers the panic.
+        buf.finish();
+    }
+
+    #[test]
+    #[should_panic(expected = "sequence gap detected")]
+    fn finish_panics_when_first_item_missing() {
+        let mut buf = ReorderBuffer::new(8);
+        // Only insert seq 1 and 2, never seq 0.
+        buf.insert(1, "b").unwrap();
+        buf.insert(2, "c").unwrap();
+        let _: Vec<_> = buf.drain_ready().collect(); // delivers nothing
+        buf.finish();
     }
 
     /// Validates `ReorderBuffer` with the actual `DeltaResult` type to ensure
