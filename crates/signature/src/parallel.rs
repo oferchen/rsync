@@ -133,6 +133,9 @@ pub fn generate_file_signature_parallel<R: Read>(
     // data-level parallelism for maximum throughput.
     const BATCH_SIZE: usize = 16;
 
+    // Ordering: block indices must match sequential file offsets for delta reconstruction.
+    // Preserved by par_chunks() + enumerate() assigning base_index from chunk position.
+    // Violation produces wrong block indices, causing corrupted file reconstruction.
     let blocks: Vec<SignatureBlock> = block_data
         .par_chunks(BATCH_SIZE)
         .enumerate()
