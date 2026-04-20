@@ -445,6 +445,102 @@ mod tests {
         assert_eq!(drained, vec!["c", "a", "b"]);
     }
 
+    /// Verifies that concurrent producers submitting results out of order
+    /// still yield strictly ascending sequence delivery to the consumer.
+    ///
+    /// Simulates the concurrent delta pipeline scenario: multiple worker
+    /// threads produce results with known sequence numbers at variable rates.
+    /// A single consumer thread owns the `ReorderBuffer` and receives items
+    /// via a channel, inserting them and draining in-order results.
+    ///
+    /// The bounded capacity is exercised: when the buffer is full, the
+    /// consumer must drain before accepting more items.
+    #[test]
+    fn concurrent_producers_in_order_delivery() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        const TOTAL_ITEMS: u64 = 200;
+        const NUM_PRODUCERS: u64 = 4;
+        const BUFFER_CAPACITY: usize = 32;
+
+        let (tx, rx) = mpsc::channel::<(u64, u64)>();
+
+        // Spawn producer threads - each owns a disjoint set of sequence numbers.
+        let producers: Vec<_> = (0..NUM_PRODUCERS)
+            .map(|producer_id| {
+                let tx = tx.clone();
+                thread::spawn(move || {
+                    let mut seq = producer_id;
+                    while seq < TOTAL_ITEMS {
+                        // Simulate variable work duration via lightweight spin.
+                        // Deterministic delay based on sequence to create reordering.
+                        let spins = ((seq * 7 + producer_id * 13) % 100) as u32;
+                        for _ in 0..spins {
+                            std::hint::spin_loop();
+                        }
+
+                        tx.send((seq, seq)).unwrap();
+                        seq += NUM_PRODUCERS;
+                    }
+                })
+            })
+            .collect();
+
+        // Drop the original sender so rx terminates when producers finish.
+        drop(tx);
+
+        // Consumer owns the buffer - no shared-mutable-state deadlock.
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::new(BUFFER_CAPACITY);
+        let mut collected: Vec<u64> = Vec::with_capacity(TOTAL_ITEMS as usize);
+        let mut capacity_pressure_observed = false;
+
+        for (seq, val) in rx {
+            // Try normal insert; on capacity exceeded, drain first then force.
+            match buf.insert(seq, val) {
+                Ok(()) => {}
+                Err(CapacityExceeded) => {
+                    capacity_pressure_observed = true;
+                    // Drain what we can, then force-insert the item.
+                    collected.extend(buf.drain_ready());
+                    buf.force_insert(seq, val);
+                }
+            }
+            // Opportunistically drain ready items.
+            collected.extend(buf.drain_ready());
+        }
+
+        // Wait for all producers.
+        for p in producers {
+            p.join().expect("producer panicked");
+        }
+
+        // Final drain of any remaining buffered items.
+        collected.extend(buf.drain_ready());
+
+        assert_eq!(
+            collected.len(),
+            TOTAL_ITEMS as usize,
+            "expected {TOTAL_ITEMS} items but got {}",
+            collected.len()
+        );
+
+        // Verify strictly ascending sequence order.
+        for (i, &val) in collected.iter().enumerate() {
+            assert_eq!(
+                val, i as u64,
+                "expected sequence {i} but got {val} - ordering violated"
+            );
+        }
+
+        // With 4 producers racing and capacity 32, we expect the buffer to
+        // have been pressured at least once during the run.
+        assert!(
+            capacity_pressure_observed,
+            "capacity backpressure was never triggered - increase TOTAL_ITEMS or decrease BUFFER_CAPACITY"
+        );
+    }
+
     /// Validates `ReorderBuffer` with the actual `DeltaResult` type to ensure
     /// the pipeline integration works end-to-end.
     ///
