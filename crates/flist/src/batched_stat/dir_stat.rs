@@ -146,6 +146,9 @@ impl DirectoryStatBatch {
         names: &[OsString],
         follow_symlinks: bool,
     ) -> Vec<io::Result<FstatResult>> {
+        // Ordering: results must correspond 1:1 with input names by position.
+        // Preserved by par_iter().map().collect() (rayon preserves index order).
+        // Violation mismatches metadata with file names.
         names
             .par_iter()
             .map(|name| self.stat_relative(name, follow_symlinks))

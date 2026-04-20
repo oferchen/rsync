@@ -128,6 +128,9 @@ impl ParallelExecutor {
         U: Send,
         F: Fn(&T) -> io::Result<U> + Sync,
     {
+        // Ordering: fold+reduce does NOT preserve input order - successes arrive in
+        // arbitrary thread order. Errors carry their original index for identification.
+        // Callers must not assume positional correspondence with input items.
         let run = || -> (Vec<U>, Vec<(usize, io::Error)>) {
             items
                 .par_iter()
@@ -181,6 +184,8 @@ impl ParallelExecutor {
     {
         let bytes = AtomicU64::new(0);
 
+        // Ordering: fold+reduce does NOT preserve input order - same as process().
+        // Errors carry their original index. Callers must not assume positional order.
         let run = || -> (Vec<U>, Vec<(usize, io::Error)>) {
             paths
                 .par_iter()

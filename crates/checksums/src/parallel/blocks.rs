@@ -110,6 +110,9 @@ where
     D::Digest: Send,
     T: AsRef<[u8]> + Sync,
 {
+    // Ordering: digests must correspond 1:1 with blocks by position for signature assembly.
+    // Preserved by par_iter().map().collect() (rayon preserves index order).
+    // Violation produces wrong strong checksums per block, breaking delta matching.
     blocks
         .par_iter()
         .map(|block| D::digest(block.as_ref()))
@@ -197,6 +200,9 @@ where
     D::Digest: Send,
     T: AsRef<[u8]> + Sync,
 {
+    // Ordering: signatures must match block positions for delta reconstruction.
+    // Preserved by par_iter().map().collect() (rayon preserves index order).
+    // Violation pairs wrong rolling+strong checksums with block offsets.
     blocks
         .par_iter()
         .map(|block| {
