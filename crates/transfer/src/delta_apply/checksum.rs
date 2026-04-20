@@ -48,7 +48,7 @@ impl ChecksumVerifier {
         _compat_flags: Option<&CompatibilityFlags>,
     ) -> Self {
         negotiated
-            .map(|n| Self::for_algorithm(n.checksum))
+            .map(|n| Self::for_algorithm_seeded(n.checksum, seed))
             .unwrap_or_else(|| {
                 if protocol.uses_varint_encoding() {
                     Self::Md5(Md5::new())
