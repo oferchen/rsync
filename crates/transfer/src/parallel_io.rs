@@ -124,6 +124,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_map_blocking_empty() {
@@ -207,5 +208,110 @@ mod tests {
         let items: Vec<i32> = (0..5).collect();
         let results = map_blocking(items, t.stat, |x| x * 2);
         assert_eq!(results, vec![0, 2, 4, 6, 8]);
+    }
+
+    /// Simulates a stat result paired with its original file list index.
+    /// The `delay_hint` field introduces variable per-item work to stress
+    /// rayon's work-stealing scheduler and expose any reordering bugs.
+    #[derive(Debug, Clone)]
+    struct FakeFileEntry {
+        index: usize,
+        path: String,
+        size: u64,
+        delay_hint: u8,
+    }
+
+    /// Simulates a stat result carrying its original index for ordering checks.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct StatResult {
+        index: usize,
+        path: String,
+        size: u64,
+    }
+
+    /// Generates a vector of fake file entries with random paths and sizes.
+    fn arb_file_entries() -> impl Strategy<Value = Vec<FakeFileEntry>> {
+        prop::collection::vec(
+            (
+                "[a-z]{1,8}/[a-z]{1,8}\\.[a-z]{1,3}",
+                0..10_000_000u64,
+                0..255u8,
+            ),
+            0..512,
+        )
+        .prop_map(|items| {
+            items
+                .into_iter()
+                .enumerate()
+                .map(|(i, (path, size, delay))| FakeFileEntry {
+                    index: i,
+                    path,
+                    size,
+                    delay_hint: delay,
+                })
+                .collect()
+        })
+    }
+
+    proptest! {
+        /// Verifies that `map_blocking` preserves input ordering regardless
+        /// of list size, threshold, or per-item work variance.
+        ///
+        /// This property must hold for the receiver's parallel quick-check:
+        /// file list indices drive protocol exchange, so any reordering would
+        /// cause the wrong file to be matched with its delta data.
+        #[test]
+        fn parallel_stat_preserves_ordering(
+            entries in arb_file_entries(),
+            threshold in 0..128usize,
+        ) {
+            let expected: Vec<StatResult> = entries
+                .iter()
+                .map(|e| StatResult {
+                    index: e.index,
+                    path: e.path.clone(),
+                    size: e.size,
+                })
+                .collect();
+
+            let results = map_blocking(entries, threshold, |entry| {
+                // Simulate variable-cost stat work via busy-spin proportional
+                // to delay_hint. This stresses rayon's scheduler without
+                // relying on thread::sleep (which is too coarse).
+                let mut acc = 0u64;
+                for _ in 0..(entry.delay_hint as u64 * 10) {
+                    acc = acc.wrapping_add(entry.size);
+                }
+                // Prevent the optimizer from eliding the loop
+                let _ = std::hint::black_box(acc);
+
+                StatResult {
+                    index: entry.index,
+                    path: entry.path,
+                    size: entry.size,
+                }
+            });
+
+            prop_assert_eq!(results.len(), expected.len());
+            for (i, (got, want)) in results.iter().zip(expected.iter()).enumerate() {
+                prop_assert_eq!(
+                    got, want,
+                    "ordering diverged at position {}: got index {}, want index {}",
+                    i, got.index, want.index,
+                );
+            }
+        }
+
+        /// Verifies that both the sequential and parallel code paths produce
+        /// identical results for the same input, regardless of where the
+        /// threshold falls relative to the list length.
+        #[test]
+        fn sequential_and_parallel_paths_agree(
+            items in prop::collection::vec(0..10_000i64, 0..256),
+        ) {
+            let sequential = map_blocking(items.clone(), usize::MAX, |x| x * 3 + 1);
+            let parallel = map_blocking(items, 1, |x| x * 3 + 1);
+            prop_assert_eq!(sequential, parallel);
+        }
     }
 }
