@@ -57,6 +57,26 @@
 //!   thread polls the submission queue, eliminating `io_uring_enter` syscalls.
 //!   Requires `CAP_SYS_NICE` or root; falls back to normal submission on
 //!   `EPERM`.
+//!
+//! # Privilege requirements
+//!
+//! | Feature | Privilege | Notes |
+//! |---------|-----------|-------|
+//! | Base io_uring | None (Linux 5.6+) | Blocked by seccomp in some container runtimes (Docker < 20.10.2, gVisor) |
+//! | SQPOLL (`IORING_SETUP_SQPOLL`) | `CAP_SYS_NICE` or root | Falls back transparently to regular submission on `EPERM` |
+//! | Registered buffers (`IORING_REGISTER_BUFFERS`) | None | Pins pages in kernel; falls back to regular `Read`/`Write` opcodes on failure |
+//! | File registration (`IORING_REGISTER_FILES`) | None | Eliminates per-SQE file table lookups |
+//! | Direct I/O (`O_DIRECT`) | None | Requires filesystem support (not tmpfs); alignment constraints apply |
+//! | Container / seccomp | N/A | `io_uring_setup(2)` may be blocked entirely; detected once at startup by [`is_io_uring_available`] |
+//!
+//! # Fallback chain
+//!
+//! Each layer degrades independently so that io_uring features are best-effort:
+//!
+//! - **Ring creation**: SQPOLL ring -> regular io_uring ring -> standard buffered I/O.
+//!   Factory types handle the final fallback to `BufReader`/`BufWriter`.
+//! - **Buffer registration**: registered (`READ_FIXED`/`WRITE_FIXED`) -> regular
+//!   (`Read`/`Write`) opcodes. Silent fallback on registration failure.
 
 mod batching;
 mod config;
