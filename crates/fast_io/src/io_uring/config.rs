@@ -22,6 +22,30 @@ const MIN_KERNEL_VERSION: (u32, u32) = (5, 6);
 static IO_URING_AVAILABLE: AtomicBool = AtomicBool::new(false);
 static IO_URING_CHECKED: AtomicBool = AtomicBool::new(false);
 
+/// Whether SQPOLL was requested but fell back to regular submission.
+///
+/// Set to `true` the first time `build_ring()` attempts SQPOLL and it fails
+/// (typically `EPERM` because the process lacks `CAP_SYS_NICE`). Callers
+/// can query this via [`sqpoll_fell_back`] for diagnostics or `--version` output.
+static SQPOLL_FALLBACK: AtomicBool = AtomicBool::new(false);
+
+/// Returns `true` if SQPOLL was requested but setup failed.
+///
+/// When `IoUringConfig::sqpoll` is `true` but the kernel rejects the request
+/// (usually `EPERM` due to missing `CAP_SYS_NICE`), `build_ring()` transparently
+/// falls back to a regular io_uring ring. This function reports whether that
+/// fallback occurred, enabling diagnostic output like:
+///
+/// ```text
+/// io_uring SQPOLL requires CAP_SYS_NICE, fell back to regular submission
+/// ```
+///
+/// Returns `false` if SQPOLL was never requested or if it succeeded.
+#[must_use]
+pub fn sqpoll_fell_back() -> bool {
+    SQPOLL_FALLBACK.load(Ordering::Relaxed)
+}
+
 /// Parses kernel version from uname release string (e.g., "5.15.0-generic").
 pub(super) fn parse_kernel_version(release: &str) -> Option<(u32, u32)> {
     let mut parts = release.split(|c: char| !c.is_ascii_digit());
@@ -277,7 +301,9 @@ impl IoUringConfig {
             match builder.build(self.sq_entries) {
                 Ok(ring) => return Ok(ring),
                 Err(_) => {
-                    // SQPOLL requires privileges — fall through to normal ring
+                    // SQPOLL requires CAP_SYS_NICE on most kernels. Record
+                    // the fallback so callers can surface it in diagnostics.
+                    SQPOLL_FALLBACK.store(true, Ordering::Relaxed);
                 }
             }
         }
