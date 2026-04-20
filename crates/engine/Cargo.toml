@@ -82,6 +82,11 @@ lazy-metadata = []
 # Trade-offs: Minimal overhead on single-core systems
 parallel = []
 
+# Multi-producer work queue - enables Clone for WorkQueueSender
+# Benefits: Multiple producer threads can feed the concurrent delta pipeline
+# Trade-offs: Relaxes the single-producer compile-time invariant
+multi-producer = []
+
 # ============================================================================
 # Runtime Features
 # ============================================================================
