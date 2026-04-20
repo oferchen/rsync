@@ -99,6 +99,7 @@ tracing = ["dep:tracing"]
 tempfile = "3.15"
 test-support = { path = "../test-support" }
 criterion = "0.5"
+proptest = "1.4"
 
 [[bench]]
 name = "map_file_benchmark"
