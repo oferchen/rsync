@@ -359,9 +359,12 @@ impl ZlibTokenDecoder {
                 let before_in = self.decompressor.total_in();
                 let before_out = self.decompressor.total_out();
 
-                self.decompressor
-                    .decompress(input, &mut self.output_buf, FlushDecompress::Sync)
-                    .map_err(|e| io::Error::other(e.to_string()))?;
+                let decompress_result = self.decompressor.decompress(
+                    input,
+                    &mut self.output_buf,
+                    FlushDecompress::Sync,
+                );
+                decompress_result.map_err(|e| io::Error::other(e.to_string()))?;
 
                 let consumed = (self.decompressor.total_in() - before_in) as usize;
                 let produced = (self.decompressor.total_out() - before_out) as usize;
