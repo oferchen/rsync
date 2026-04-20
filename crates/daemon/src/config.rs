@@ -9,12 +9,13 @@
 //! and default-path behaviour across the workspace.
 
 use std::ffi::OsString;
+use std::net::TcpListener;
 
 use core::branding::Brand;
 use platform::signal::SignalFlags;
 
 /// Configuration describing the requested daemon operation.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct DaemonConfig {
     brand: Brand,
     arguments: Vec<OsString>,
@@ -25,6 +26,24 @@ pub struct DaemonConfig {
     /// flags in response to stop/shutdown/paramchange events. When `None`,
     /// the daemon registers its own platform signal handlers on startup.
     signal_flags: Option<SignalFlags>,
+    /// Pre-bound TCP listener injected by test infrastructure.
+    ///
+    /// When set, the daemon accept loop uses this listener directly instead of
+    /// binding a new socket, eliminating the TOCTOU race between port allocation
+    /// and daemon bind in tests.
+    pre_bound_listener: Option<TcpListener>,
+}
+
+impl Clone for DaemonConfig {
+    fn clone(&self) -> Self {
+        Self {
+            brand: self.brand,
+            arguments: self.arguments.clone(),
+            load_default_paths: self.load_default_paths,
+            signal_flags: self.signal_flags.clone(),
+            pre_bound_listener: None,
+        }
+    }
 }
 
 impl PartialEq for DaemonConfig {
@@ -73,6 +92,16 @@ impl DaemonConfig {
         self.signal_flags.take()
     }
 
+    /// Returns an already-bound TCP listener for the daemon to accept on.
+    ///
+    /// When set, the daemon skips its own socket bind and uses this listener
+    /// directly. This eliminates the TOCTOU race between test port allocation
+    /// and daemon bind.
+    #[must_use]
+    pub fn take_pre_bound_listener(&mut self) -> Option<TcpListener> {
+        self.pre_bound_listener.take()
+    }
+
     /// Reports whether any daemon-specific arguments were provided.
     #[must_use]
     pub const fn has_runtime_request(&self) -> bool {
@@ -81,12 +110,25 @@ impl DaemonConfig {
 }
 
 /// Builder used to assemble a [`DaemonConfig`].
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct DaemonConfigBuilder {
     brand: Brand,
     arguments: Vec<OsString>,
     load_default_paths: bool,
     signal_flags: Option<SignalFlags>,
+    pre_bound_listener: Option<TcpListener>,
+}
+
+impl Clone for DaemonConfigBuilder {
+    fn clone(&self) -> Self {
+        Self {
+            brand: self.brand,
+            arguments: self.arguments.clone(),
+            load_default_paths: self.load_default_paths,
+            signal_flags: self.signal_flags.clone(),
+            pre_bound_listener: None,
+        }
+    }
 }
 
 impl PartialEq for DaemonConfigBuilder {
@@ -106,6 +148,19 @@ impl Default for DaemonConfigBuilder {
             arguments: Vec::new(),
             load_default_paths: true,
             signal_flags: None,
+            pre_bound_listener: None,
+        }
+    }
+}
+
+impl From<DaemonConfig> for DaemonConfigBuilder {
+    fn from(config: DaemonConfig) -> Self {
+        Self {
+            brand: config.brand,
+            arguments: config.arguments,
+            load_default_paths: config.load_default_paths,
+            signal_flags: config.signal_flags,
+            pre_bound_listener: config.pre_bound_listener,
         }
     }
 }
@@ -147,6 +202,17 @@ impl DaemonConfigBuilder {
         self
     }
 
+    /// Injects a pre-bound TCP listener for the daemon to accept on.
+    ///
+    /// When set, the daemon skips its own socket bind and uses this listener
+    /// directly. Intended for test infrastructure to eliminate the TOCTOU race
+    /// between port allocation and daemon bind.
+    #[must_use]
+    pub fn pre_bound_listener(mut self, listener: TcpListener) -> Self {
+        self.pre_bound_listener = Some(listener);
+        self
+    }
+
     /// Finalises the builder and constructs the [`DaemonConfig`].
     #[must_use]
     pub fn build(self) -> DaemonConfig {
@@ -155,6 +221,7 @@ impl DaemonConfigBuilder {
             arguments: self.arguments,
             load_default_paths: self.load_default_paths,
             signal_flags: self.signal_flags,
+            pre_bound_listener: self.pre_bound_listener,
         }
     }
 }

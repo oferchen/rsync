@@ -170,12 +170,13 @@ include!("daemon/sections/group_expansion.rs");
 #[cfg_attr(feature = "tracing", instrument(skip(config), name = "daemon_run"))]
 pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     let external_signal_flags = config.take_signal_flags();
+    let pre_bound_listener = config.take_pre_bound_listener();
     let options = RuntimeOptions::parse_with_brand(
         config.arguments(),
         config.brand(),
         config.load_default_paths(),
     )?;
-    serve_connections(options, external_signal_flags)
+    serve_connections(options, external_signal_flags, pre_bound_listener)
 }
 
 include!("daemon/sections/cli_args.rs");

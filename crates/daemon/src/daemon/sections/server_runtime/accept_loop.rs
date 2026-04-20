@@ -11,6 +11,7 @@
 fn serve_connections(
     options: RuntimeOptions,
     external_signal_flags: Option<platform::signal::SignalFlags>,
+    pre_bound_listener: Option<TcpListener>,
 ) -> Result<(), DaemonError> {
     // Use externally injected signal flags (from the Windows Service dispatcher)
     // when available, otherwise register platform signal handlers so SIGPIPE is
@@ -118,40 +119,57 @@ fn serve_connections(
         }
     };
 
-    // upstream: daemon-parm.txt - listen_backlog INTEGER, default 5.
-    // Using socket2 to create the listener allows explicit control over the
-    // backlog argument passed to listen(2).
-    const DEFAULT_LISTEN_BACKLOG: i32 = 5;
-    let backlog = listen_backlog.map_or(DEFAULT_LISTEN_BACKLOG, |v| v as i32);
+    // When a pre-bound listener is injected (test infrastructure), use it
+    // directly - skipping the bind step eliminates the TOCTOU race between
+    // port allocation and daemon bind.
+    let mut listeners: Vec<TcpListener>;
+    let mut bound_addresses: Vec<SocketAddr>;
 
-    let mut listeners: Vec<TcpListener> = Vec::with_capacity(bind_addresses.len());
-    let mut bound_addresses: Vec<SocketAddr> = Vec::with_capacity(bind_addresses.len());
+    if let Some(listener) = pre_bound_listener {
+        let local_addr = listener
+            .local_addr()
+            .unwrap_or_else(|_| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
+        bound_addresses = vec![local_addr];
+        listeners = vec![listener];
+    } else {
+        // upstream: daemon-parm.txt - listen_backlog INTEGER, default 5.
+        // Using socket2 to create the listener allows explicit control over the
+        // backlog argument passed to listen(2).
+        const DEFAULT_LISTEN_BACKLOG: i32 = 5;
+        let backlog = listen_backlog.map_or(DEFAULT_LISTEN_BACKLOG, |v| v as i32);
 
-    for addr in &bind_addresses {
-        let requested_addr = SocketAddr::new(*addr, port);
-        match bind_with_backlog(requested_addr, backlog) {
-            Ok(listener) => {
-                let local_addr = listener.local_addr().unwrap_or(requested_addr);
-                bound_addresses.push(local_addr);
-                listeners.push(listener);
-            }
-            Err(error) => {
-                // If binding to one family fails (e.g., IPv6 not available), continue
-                // with the other family if we're in dual-stack mode. Otherwise, fail.
-                if bind_addresses.len() > 1 && !listeners.is_empty() {
-                    continue;
+        listeners = Vec::with_capacity(bind_addresses.len());
+        bound_addresses = Vec::with_capacity(bind_addresses.len());
+
+        for addr in &bind_addresses {
+            let requested_addr = SocketAddr::new(*addr, port);
+            match bind_with_backlog(requested_addr, backlog) {
+                Ok(listener) => {
+                    let local_addr = listener.local_addr().unwrap_or(requested_addr);
+                    bound_addresses.push(local_addr);
+                    listeners.push(listener);
                 }
-                return Err(bind_error(requested_addr, error));
+                Err(error) => {
+                    // If binding to one family fails (e.g., IPv6 not available), continue
+                    // with the other family if we're in dual-stack mode. Otherwise, fail.
+                    if bind_addresses.len() > 1 && !listeners.is_empty() {
+                        continue;
+                    }
+                    return Err(bind_error(requested_addr, error));
+                }
             }
         }
-    }
 
-    if listeners.is_empty() {
-        let requested_addr = SocketAddr::new(bind_addresses[0], port);
-        return Err(bind_error(
-            requested_addr,
-            io::Error::new(io::ErrorKind::AddrNotAvailable, "no addresses available to bind"),
-        ));
+        if listeners.is_empty() {
+            let requested_addr = SocketAddr::new(bind_addresses[0], port);
+            return Err(bind_error(
+                requested_addr,
+                io::Error::new(
+                    io::ErrorKind::AddrNotAvailable,
+                    "no addresses available to bind",
+                ),
+            ));
+        }
     }
 
     // upstream: socket.c:set_socket_options() - apply socket options to each

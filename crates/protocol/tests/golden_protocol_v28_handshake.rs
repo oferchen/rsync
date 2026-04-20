@@ -192,13 +192,7 @@ fn golden_v28_daemon_server_greeting_bytes() {
     // This is exactly 14 bytes of ASCII text.
     let greeting = format_legacy_daemon_greeting(ProtocolVersion::V28);
 
-    #[rustfmt::skip]
-    let expected: &[u8] = &[
-        b'@', b'R', b'S', b'Y', b'N', b'C', b'D', b':', b' ',  // prefix (9 bytes)
-        b'2', b'8',                                               // version (2 bytes)
-        b'.', b'0',                                               // sub-version (2 bytes)
-        b'\n',                                                    // terminator (1 byte)
-    ];
+    let expected: &[u8] = b"@RSYNCD: 28.0\n";
 
     assert_eq!(greeting.as_bytes(), expected);
     assert_eq!(greeting.len(), 14, "greeting must be exactly 14 bytes");
