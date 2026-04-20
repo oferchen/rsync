@@ -14,12 +14,12 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-use engine::concurrent_delta::work_queue;
 use engine::concurrent_delta::DeltaWork;
+use engine::concurrent_delta::work_queue;
 
 /// Number of producer threads simulating parallel generators.
 const NUM_PRODUCERS: u32 = 4;
