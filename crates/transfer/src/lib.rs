@@ -164,6 +164,8 @@ pub mod map_file;
 pub mod pipeline;
 /// Progress reporting for server-side transfer operations.
 pub mod progress;
+/// Bounded sliding-window reorder buffer with backpressure.
+pub mod reorder_buffer;
 /// Reusable buffer for delta token data.
 pub mod token_buffer;
 /// Strategy-based reader for plain and compressed delta token formats.
