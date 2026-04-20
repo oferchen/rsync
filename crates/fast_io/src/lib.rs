@@ -79,6 +79,7 @@
 pub mod cached_sort;
 pub mod parallel;
 pub mod traits;
+pub mod zero_detect;
 
 pub mod copy_file_ex;
 pub mod copy_file_range;
