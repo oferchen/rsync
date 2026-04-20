@@ -311,3 +311,111 @@ impl IoUringConfig {
             .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_result_available_reason_contains_kernel_version() {
+        let result = IoUringProbeResult::Available { major: 6, minor: 1 };
+        let reason = result.reason();
+        assert!(reason.contains("io_uring available"));
+        assert!(reason.contains("6.1"));
+    }
+
+    #[test]
+    fn probe_result_no_kernel_release_reason() {
+        let result = IoUringProbeResult::NoKernelRelease;
+        let reason = result.reason();
+        assert!(reason.contains("unavailable"));
+        assert!(reason.contains("could not read kernel version"));
+    }
+
+    #[test]
+    fn probe_result_unparsable_version_reason() {
+        let result = IoUringProbeResult::UnparsableVersion;
+        let reason = result.reason();
+        assert!(reason.contains("unavailable"));
+        assert!(reason.contains("could not parse kernel version"));
+    }
+
+    #[test]
+    fn probe_result_kernel_too_old_reason() {
+        let result = IoUringProbeResult::KernelTooOld {
+            major: 4,
+            minor: 19,
+        };
+        let reason = result.reason();
+        assert!(reason.contains("unavailable"));
+        assert!(reason.contains("4.19"));
+        assert!(reason.contains("below minimum 5.6"));
+    }
+
+    #[test]
+    fn probe_result_syscall_blocked_reason() {
+        let result = IoUringProbeResult::SyscallBlocked {
+            major: 5,
+            minor: 15,
+        };
+        let reason = result.reason();
+        assert!(reason.contains("unavailable"));
+        assert!(reason.contains("5.15"));
+        assert!(reason.contains("blocked"));
+        assert!(reason.contains("seccomp"));
+    }
+
+    #[test]
+    fn probe_result_all_variants_start_with_io_uring_prefix() {
+        let variants: Vec<IoUringProbeResult> = vec![
+            IoUringProbeResult::Available { major: 6, minor: 8 },
+            IoUringProbeResult::NoKernelRelease,
+            IoUringProbeResult::UnparsableVersion,
+            IoUringProbeResult::KernelTooOld { major: 4, minor: 0 },
+            IoUringProbeResult::SyscallBlocked {
+                major: 5,
+                minor: 10,
+            },
+        ];
+
+        for variant in &variants {
+            let reason = variant.reason();
+            assert!(
+                reason.starts_with("io_uring "),
+                "all variants must start with 'io_uring ' prefix, got: {reason}"
+            );
+            assert!(
+                !reason.contains('\n'),
+                "reason must be single line, got: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn sqpoll_fell_back_initial_state() {
+        // The SQPOLL_FALLBACK atomic starts as false. It is only set to true
+        // when build_ring() attempts SQPOLL and it fails.
+        assert!(!sqpoll_fell_back());
+    }
+
+    #[test]
+    fn parse_kernel_version_valid_strings() {
+        assert_eq!(parse_kernel_version("5.6.0"), Some((5, 6)));
+        assert_eq!(parse_kernel_version("5.15.0-generic"), Some((5, 15)));
+        assert_eq!(parse_kernel_version("6.1.0"), Some((6, 1)));
+        assert_eq!(parse_kernel_version("4.19.123-aws"), Some((4, 19)));
+    }
+
+    #[test]
+    fn parse_kernel_version_invalid_strings() {
+        assert_eq!(parse_kernel_version("invalid"), None);
+        assert_eq!(parse_kernel_version(""), None);
+    }
+
+    #[test]
+    fn config_detail_io_uring_availability_reason_is_non_empty() {
+        let reason = config_detail::io_uring_availability_reason();
+        assert!(!reason.is_empty());
+        assert!(reason.starts_with("io_uring "));
+    }
+}
