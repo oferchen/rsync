@@ -114,7 +114,9 @@ where
         return;
     }
 
-    // Parallel key extraction
+    // Ordering: keys must correspond 1:1 with items by position for correct permutation.
+    // Preserved by par_iter().map().collect() (rayon preserves index order).
+    // Violation permutes items by wrong keys, producing incorrectly sorted file lists.
     let keys: Vec<K> = items.par_iter().map(&key_fn).collect();
 
     // Sort indices by keys

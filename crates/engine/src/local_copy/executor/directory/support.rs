@@ -100,7 +100,9 @@ fn read_directory_entries_sorted_parallel(
         return Ok(entries);
     }
 
-    // Phase 2: Fetch metadata in parallel using rayon
+    // Ordering: local copy requires deterministic directory listing order.
+    // Parallel metadata fetch loses traversal order, so sort_unstable_by() is
+    // applied after collection. Omitting the sort produces non-deterministic copies.
     let results: Vec<Result<DirectoryEntry, (PathBuf, std::io::Error)>> = pending
         .into_par_iter()
         .map(

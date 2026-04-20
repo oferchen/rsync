@@ -77,6 +77,9 @@ where
     T: Send,
     F: Fn(&FileListEntry) -> T + Sync + Send,
 {
+    // Ordering: results correspond 1:1 with file list entries by position.
+    // Preserved by par_iter().map().collect() (rayon preserves index order).
+    // Violation mismatches computed values with file entries.
     entries.par_iter().map(f).collect()
 }
 
@@ -123,7 +126,9 @@ pub fn collect_paths_then_metadata_parallel(
     // Collect all paths first using std::fs::read_dir recursively
     let paths = collect_paths_recursive(&root, &root, follow_symlinks);
 
-    // Fetch metadata in parallel
+    // Ordering: wire protocol requires file list sorted by name for deterministic indices.
+    // Parallel metadata fetch does not preserve traversal order, so sort_file_entries()
+    // is applied after collection. Omitting the sort breaks file-list index agreement.
     let results: Vec<_> = paths
         .into_par_iter()
         .map(|(full_path, relative_path, depth, is_root)| {
@@ -318,6 +323,9 @@ pub fn collect_paths_chunked_parallel(
     let mut entries = Vec::with_capacity(paths.len());
     let mut errors = Vec::new();
 
+    // Ordering: same as collect_paths_then_metadata_parallel - post-sort required.
+    // Each chunk's par_iter preserves intra-chunk order, but final sort_file_entries()
+    // establishes the canonical wire order. Omitting the sort breaks index agreement.
     for chunk in paths.chunks(chunk_size) {
         let results: Vec<_> = chunk
             .par_iter()
@@ -385,6 +393,9 @@ pub fn collect_paths_chunked_parallel(
 pub fn resolve_metadata_parallel(
     entries: Vec<LazyFileListEntry>,
 ) -> Result<Vec<FileListEntry>, Vec<(PathBuf, std::io::Error)>> {
+    // Ordering: wire protocol requires sorted file list for deterministic indices.
+    // Parallel metadata resolution does not preserve input order, so
+    // sort_file_entries() is applied after. Omitting the sort breaks index agreement.
     let results: Vec<_> = entries
         .into_par_iter()
         .map(|entry| {

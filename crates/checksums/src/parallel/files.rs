@@ -156,6 +156,9 @@ where
     D::Seed: Default + Clone + Send + Sync,
     D::Digest: Send,
 {
+    // Ordering: results must correspond 1:1 with input paths for whole-file checksum comparison.
+    // Preserved by par_iter().map().collect() (rayon preserves index order).
+    // Violation mismatches file hashes with paths, causing incorrect transfer decisions.
     paths
         .par_iter()
         .map(|path| hash_file_internal::<D>(path, config))
@@ -296,6 +299,9 @@ where
     D::Seed: Default + Clone + Send + Sync,
     D::Digest: Send,
 {
+    // Ordering: results must correspond 1:1 with input paths by position.
+    // Preserved by par_iter().map().collect() (rayon preserves index order).
+    // Violation mismatches file signatures with paths.
     paths
         .par_iter()
         .map(|path| compute_file_signatures_internal::<D>(path, block_size, buffer_size))
