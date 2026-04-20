@@ -309,6 +309,20 @@ impl std::fmt::Display for SendError {
 
 impl std::error::Error for SendError {}
 
+/// Cloning the sender enables multiple producer threads to feed the work queue
+/// concurrently, turning the pipeline from SPMC into MPMC. Each clone shares
+/// the same underlying bounded channel, so backpressure and capacity limits
+/// still apply. Sequence numbering must be coordinated externally when multiple
+/// producers are active.
+#[cfg(feature = "multi-producer")]
+impl Clone for WorkQueueSender {
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+        }
+    }
+}
+
 impl WorkQueueSender {
     /// Sends a work item into the queue, blocking if at capacity.
     ///
@@ -939,6 +953,36 @@ mod tests {
         }
         let ordered: Vec<u64> = reorder.drain_ready().map(|r| r.sequence()).collect();
         assert_eq!(ordered, (0..u64::from(total)).collect::<Vec<u64>>());
+    }
+
+    #[test]
+    #[cfg(feature = "multi-producer")]
+    fn clone_sender_multiple_producers() {
+        let (tx, rx) = bounded_with_capacity(8);
+        let tx2 = tx.clone();
+        let items_per_producer = 50u32;
+
+        let p1 = thread::spawn(move || {
+            for i in 0..items_per_producer {
+                tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+                    .unwrap();
+            }
+        });
+
+        let p2 = thread::spawn(move || {
+            for i in items_per_producer..(items_per_producer * 2) {
+                tx2.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+                    .unwrap();
+            }
+        });
+
+        let mut results = rx.drain_parallel(|w| w.ndx());
+        p1.join().unwrap();
+        p2.join().unwrap();
+
+        results.sort_unstable();
+        assert_eq!(results.len(), (items_per_producer * 2) as usize);
+        assert_eq!(results, (0..(items_per_producer * 2)).collect::<Vec<u32>>());
     }
 
     #[test]
