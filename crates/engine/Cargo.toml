@@ -103,6 +103,7 @@ test-support = { path = "../test-support" }
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
 apple-fs = { path = "../apple-fs" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+proptest = "1.8"
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = "1.6"
