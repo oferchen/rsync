@@ -199,6 +199,10 @@ pub(super) fn write_executable_script(path: &Path, contents: &str) {
 /// thread finishes before a connection succeeds the actual daemon error is
 /// included in the panic message instead of waiting for the full 30-second
 /// timeout.
+///
+/// The pre-bound `TcpListener` is passed directly to the daemon via
+/// `DaemonConfig`, eliminating the TOCTOU race between port allocation and
+/// daemon bind that previously caused flaky failures under CI load.
 pub(super) fn start_daemon(
     config: crate::DaemonConfig,
     port: u16,
@@ -207,9 +211,11 @@ pub(super) fn start_daemon(
     TcpStream,
     thread::JoinHandle<Result<(), crate::DaemonError>>,
 ) {
-    // Release the port reservation right before spawning the daemon thread
-    // to minimize the TOCTOU window between release and the daemon's bind.
-    drop(held_listener);
+    // Inject the already-bound listener into the config so the daemon uses it
+    // directly instead of binding a new socket to the same port.
+    let config = crate::DaemonConfigBuilder::from(config)
+        .pre_bound_listener(held_listener)
+        .build();
     let handle = thread::spawn(move || run_daemon(config));
     let stream = connect_to_daemon(port, Some(&handle));
     (stream, handle)
