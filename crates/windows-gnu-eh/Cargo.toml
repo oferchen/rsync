@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Compatibility shims for Windows GNU unwinding symbols required by rustc rsbegin"
+description = "Compatibility shims for x86_64-pc-windows-gnu DWARF unwinding - only needed for GNU cross-compilation, not MSVC"
 
 [lib]
 path = "src/lib.rs"
