@@ -32,8 +32,10 @@ const STDERR_BUFFER_CAP: usize = 64 * 1024;
 /// more than the OS pipe buffer capacity to stderr. The collected output is
 /// retrievable via [`stderr_output`](Self::stderr_output).
 pub struct SshConnection {
-    /// Child process handle. Option allows safe extraction in split() without unsafe code.
-    child: Option<Child>,
+    /// Child process handle shared with the connect watchdog thread.
+    /// The watchdog needs access to call `Child::kill()` on timeout,
+    /// so the handle is wrapped in `Arc<Mutex<Option<Child>>>`.
+    child: Arc<Mutex<Option<Child>>>,
     stdin: Option<ChildStdin>,
     stdout: Option<ChildStdout>,
     stderr_drain: Option<StderrDrain>,
@@ -57,12 +59,11 @@ impl SshConnection {
         connect_timeout: Option<Duration>,
     ) -> Self {
         let stderr_drain = stderr.map(StderrDrain::spawn);
-        let connect_watchdog = connect_timeout.map(|timeout| {
-            let pid = child.id();
-            ConnectWatchdog::arm(timeout, pid)
-        });
+        let shared_child = Arc::new(Mutex::new(Some(child)));
+        let connect_watchdog =
+            connect_timeout.map(|timeout| ConnectWatchdog::arm(timeout, Arc::clone(&shared_child)));
         Self {
-            child: Some(child),
+            child: shared_child,
             stdin,
             stdout: Some(stdout),
             stderr_drain,
@@ -106,8 +107,10 @@ impl SshConnection {
     /// Waits for the subprocess to exit, consuming the connection.
     pub fn wait(mut self) -> io::Result<ExitStatus> {
         let _ = self.close_stdin();
-        match self.child.take() {
+        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.take() {
             Some(mut child) => {
+                drop(guard);
                 let status = child.wait();
                 if let Some(ref mut drain) = self.stderr_drain {
                     drain.join();
@@ -129,8 +132,10 @@ impl SshConnection {
     /// when callers need to surface SSH error messages to the user on failure.
     pub fn wait_with_stderr(mut self) -> io::Result<(ExitStatus, Vec<u8>)> {
         let _ = self.close_stdin();
-        match self.child.take() {
+        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.take() {
             Some(mut child) => {
+                drop(guard);
                 let status = child.wait();
                 if let Some(ref mut drain) = self.stderr_drain {
                     drain.join();
@@ -150,7 +155,8 @@ impl SshConnection {
 
     /// Attempts to retrieve the subprocess exit status without blocking.
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        match self.child.as_mut() {
+        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.as_mut() {
             Some(child) => child.try_wait(),
             None => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -181,9 +187,14 @@ impl SshConnection {
             io::Error::new(io::ErrorKind::BrokenPipe, "stdout has already been taken")
         })?;
 
-        let child = self.child.take().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "child process already taken")
-        })?;
+        let child = self
+            .child
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "child process already taken")
+            })?;
 
         let stderr_drain = self.stderr_drain.take();
         let connect_watchdog = self.connect_watchdog.take();
@@ -379,7 +390,11 @@ struct ConnectWatchdog {
 
 impl ConnectWatchdog {
     /// Arms a watchdog that will fire after `timeout`.
-    fn arm(timeout: Duration, child_pid: u32) -> Self {
+    ///
+    /// The `shared_child` handle allows the watchdog thread to call
+    /// `Child::kill()` directly on timeout, which unblocks any pending
+    /// read/write on the child's pipes.
+    fn arm(timeout: Duration, shared_child: Arc<Mutex<Option<Child>>>) -> Self {
         let cancelled = Arc::new(AtomicBool::new(false));
         let fired = Arc::new(AtomicBool::new(false));
         let condvar_pair = Arc::new((Mutex::new(false), Condvar::new()));
@@ -411,24 +426,15 @@ impl ConnectWatchdog {
                     debug_log!(
                         Connect,
                         1,
-                        "ssh connect watchdog: timeout after {timeout:?} for pid {child_pid}"
+                        "ssh connect watchdog: timeout after {timeout:?}"
                     );
-                    // Kill the child process to unblock pipe I/O.
-                    // Uses `kill` command instead of libc::kill to stay safe
-                    // (rsync_io must not contain unsafe code per project policy).
-                    #[cfg(unix)]
-                    {
-                        use std::process::Command;
-                        let _ = Command::new("kill")
-                            .arg("-9")
-                            .arg(child_pid.to_string())
-                            .status();
-                    }
-                    #[cfg(windows)]
-                    {
-                        // On Windows, TerminateProcess requires a HANDLE. The
-                        // child will be killed by Drop when the caller observes
-                        // the fired flag via has_fired() or cancel().
+                    // Kill the child via the shared handle. Child::kill() is safe
+                    // Rust - no unsafe code needed. Killing closes the child's
+                    // pipe endpoints, unblocking any blocking read/write.
+                    if let Ok(mut guard) = shared_child.lock() {
+                        if let Some(ref mut child) = *guard {
+                            let _ = child.kill();
+                        }
                     }
                 }
             })
@@ -664,7 +670,8 @@ impl Drop for SshConnection {
 
         let _ = self.close_stdin();
 
-        if let Some(ref mut child) = self.child {
+        let mut guard = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref mut child) = *guard {
             if let Ok(None) = child.try_wait() {
                 let _ = child.kill();
             }
