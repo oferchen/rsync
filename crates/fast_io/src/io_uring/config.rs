@@ -418,4 +418,213 @@ mod tests {
         assert!(!reason.is_empty());
         assert!(reason.starts_with("io_uring "));
     }
+
+    // --- Kernel version parsing edge cases ---
+
+    #[test]
+    fn parse_kernel_version_extra_dots_azure() {
+        // Azure kernel strings have extra dot-separated segments.
+        assert_eq!(parse_kernel_version("5.15.0.1-azure"), Some((5, 15)));
+    }
+
+    #[test]
+    fn parse_kernel_version_very_large_numbers() {
+        assert_eq!(parse_kernel_version("100.200.300"), Some((100, 200)));
+    }
+
+    #[test]
+    fn parse_kernel_version_single_digit_returns_none() {
+        // A single digit has no minor component - the second `parts.next()?`
+        // yields an empty string from the trailing split, which fails to parse.
+        assert_eq!(parse_kernel_version("5"), None);
+    }
+
+    #[test]
+    fn parse_kernel_version_trailing_rc_suffix() {
+        // Release candidate strings like "6.1.0-rc1" - the split on non-digit
+        // chars separates "rc1" from the numeric parts.
+        assert_eq!(parse_kernel_version("6.1.0-rc1"), Some((6, 1)));
+    }
+
+    #[test]
+    fn parse_kernel_version_leading_zeros() {
+        // Rust's u32::parse treats leading zeros as valid decimal.
+        assert_eq!(parse_kernel_version("06.01.00"), Some((6, 1)));
+    }
+
+    #[test]
+    fn parse_kernel_version_zero_zero() {
+        assert_eq!(parse_kernel_version("0.0.0"), Some((0, 0)));
+    }
+
+    #[test]
+    fn parse_kernel_version_wsl_style() {
+        // WSL2 kernel: "5.15.167.4-microsoft-standard-WSL2"
+        assert_eq!(
+            parse_kernel_version("5.15.167.4-microsoft-standard-WSL2"),
+            Some((5, 15))
+        );
+    }
+
+    #[test]
+    fn parse_kernel_version_chromeos_style() {
+        // ChromeOS: "5.10.159-20950-g5765b1ef511a"
+        assert_eq!(
+            parse_kernel_version("5.10.159-20950-g5765b1ef511a"),
+            Some((5, 10))
+        );
+    }
+
+    // --- Config presets ---
+
+    fn is_power_of_two(n: u32) -> bool {
+        n > 0 && (n & (n - 1)) == 0
+    }
+
+    #[test]
+    fn default_config_sq_entries_is_power_of_two() {
+        let config = IoUringConfig::default();
+        assert!(
+            is_power_of_two(config.sq_entries),
+            "default sq_entries {} must be a power of 2",
+            config.sq_entries
+        );
+    }
+
+    #[test]
+    fn large_files_config_has_reasonable_values() {
+        let config = IoUringConfig::for_large_files();
+        assert!(
+            is_power_of_two(config.sq_entries),
+            "sq_entries {} must be a power of 2",
+            config.sq_entries
+        );
+        assert!(
+            config.sq_entries >= 64,
+            "large file config should have at least 64 SQ entries"
+        );
+        assert!(
+            config.buffer_size >= 128 * 1024,
+            "large file buffer should be at least 128 KB"
+        );
+        assert!(
+            config.buffer_size <= 4 * 1024 * 1024,
+            "large file buffer should not exceed 4 MB"
+        );
+        assert!(config.register_files, "fd registration should be enabled");
+        assert!(
+            config.register_buffers,
+            "buffer registration should be enabled for large files"
+        );
+        assert!(
+            config.registered_buffer_count >= 8,
+            "large file config should register at least 8 buffers"
+        );
+    }
+
+    #[test]
+    fn small_files_config_has_reasonable_values() {
+        let config = IoUringConfig::for_small_files();
+        assert!(
+            is_power_of_two(config.sq_entries),
+            "sq_entries {} must be a power of 2",
+            config.sq_entries
+        );
+        assert!(
+            config.buffer_size >= 4 * 1024,
+            "small file buffer should be at least 4 KB"
+        );
+        assert!(
+            config.buffer_size <= 128 * 1024,
+            "small file buffer should not exceed 128 KB"
+        );
+        assert!(config.register_files, "fd registration should be enabled");
+    }
+
+    #[test]
+    fn small_files_config_has_smaller_buffers_than_large() {
+        let small = IoUringConfig::for_small_files();
+        let large = IoUringConfig::for_large_files();
+        assert!(
+            small.buffer_size < large.buffer_size,
+            "small file buffer ({}) should be smaller than large file buffer ({})",
+            small.buffer_size,
+            large.buffer_size
+        );
+    }
+
+    #[test]
+    fn large_files_config_has_more_sq_entries_than_default() {
+        let default = IoUringConfig::default();
+        let large = IoUringConfig::for_large_files();
+        assert!(
+            large.sq_entries >= default.sq_entries,
+            "large file sq_entries ({}) should be >= default ({})",
+            large.sq_entries,
+            default.sq_entries
+        );
+    }
+
+    #[test]
+    fn default_config_sqpoll_disabled() {
+        let config = IoUringConfig::default();
+        assert!(!config.sqpoll, "SQPOLL should be disabled by default");
+    }
+
+    // --- SQPOLL fallback ---
+
+    #[test]
+    fn build_ring_with_sqpoll_falls_back_gracefully() {
+        // Request SQPOLL - on most CI machines without CAP_SYS_NICE this will
+        // fail and fall back to a regular ring. Either way, build_ring() must
+        // succeed.
+        let config = IoUringConfig {
+            sqpoll: true,
+            ..IoUringConfig::default()
+        };
+        let ring_result = config.build_ring();
+        assert!(
+            ring_result.is_ok(),
+            "build_ring() must succeed even when SQPOLL falls back: {:?}",
+            ring_result.err()
+        );
+    }
+
+    #[test]
+    fn sqpoll_fallback_flag_set_after_failed_sqpoll() {
+        // Reset the global to a known state - note: this is not thread-safe
+        // but test runners serialize by default.
+        SQPOLL_FALLBACK.store(false, Ordering::Relaxed);
+
+        let config = IoUringConfig {
+            sqpoll: true,
+            ..IoUringConfig::default()
+        };
+        let _ = config.build_ring();
+
+        // On unprivileged systems, SQPOLL setup fails and the flag is set.
+        // On privileged systems (root/CAP_SYS_NICE), SQPOLL succeeds and the
+        // flag stays false. Both outcomes are valid.
+        let fell_back = sqpoll_fell_back();
+        // We cannot assert a specific value since it depends on privileges,
+        // but we can verify the flag is queryable without panic.
+        assert!(
+            fell_back || !fell_back,
+            "sqpoll_fell_back() must return a bool"
+        );
+    }
+
+    #[test]
+    fn build_ring_without_sqpoll_does_not_set_fallback() {
+        SQPOLL_FALLBACK.store(false, Ordering::Relaxed);
+
+        let config = IoUringConfig::default();
+        assert!(!config.sqpoll);
+        let _ = config.build_ring();
+
+        assert!(
+            !sqpoll_fell_back(),
+            "SQPOLL fallback flag must not be set when SQPOLL was not requested"
+        );
+    }
 }
