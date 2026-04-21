@@ -270,7 +270,9 @@ where
     } else {
         open_noatime_flag
     };
-    let prefer_aes_gcm = if matches.get_flag("aes") {
+    let prefer_aes_gcm = if matches.get_flag("no-aes") {
+        Some(false)
+    } else if matches.get_flag("aes") {
         Some(true)
     } else {
         None

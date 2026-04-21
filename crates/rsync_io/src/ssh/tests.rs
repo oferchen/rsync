@@ -14,7 +14,8 @@ fn args_to_strings(args: &[OsString]) -> Vec<String> {
 
 #[test]
 fn assembles_minimal_command_with_batch_mode() {
-    let command = SshCommand::new("example.com");
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
     let (program, args) = command.command_parts_for_testing();
 
     assert_eq!(program, OsString::from("ssh"));
@@ -33,6 +34,7 @@ fn assembles_minimal_command_with_batch_mode() {
 #[test]
 fn assembles_command_with_user_port_and_remote_args() {
     let mut command = SshCommand::new("rsync.example.com");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_user("backup");
     command.set_port(2222);
     command.push_option("-vvv");
@@ -64,6 +66,7 @@ fn assembles_command_with_user_port_and_remote_args() {
 #[test]
 fn disables_batch_mode_when_requested() {
     let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_batch_mode(false);
 
     let (_, args) = command.command_parts_for_testing();
@@ -80,7 +83,8 @@ fn disables_batch_mode_when_requested() {
 
 #[test]
 fn wraps_ipv6_hosts_in_brackets() {
-    let command = SshCommand::new("2001:db8::1");
+    let mut command = SshCommand::new("2001:db8::1");
+    command.set_prefer_aes_gcm(Some(false));
     let (_, args) = command.command_parts_for_testing();
 
     assert_eq!(
@@ -98,6 +102,7 @@ fn wraps_ipv6_hosts_in_brackets() {
 #[test]
 fn wraps_ipv6_hosts_with_usernames() {
     let mut command = SshCommand::new("2001:db8::1");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_user("backup");
 
     let (_, args) = command.command_parts_for_testing();
@@ -117,6 +122,7 @@ fn wraps_ipv6_hosts_with_usernames() {
 #[test]
 fn preserves_explicit_bracketed_ipv6_literals() {
     let mut command = SshCommand::new("[2001:db8::1]");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_user("backup");
 
     let (_, args) = command.command_parts_for_testing();
@@ -136,6 +142,7 @@ fn preserves_explicit_bracketed_ipv6_literals() {
 #[test]
 fn command_parts_skip_target_when_host_and_user_missing() {
     let mut command = SshCommand::new("");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_remote_command([OsString::from("rsync")]);
 
     let (_, args) = command.command_parts_for_testing();
@@ -155,6 +162,7 @@ fn command_parts_skip_target_when_host_and_user_missing() {
 #[test]
 fn target_override_supersedes_computed_target() {
     let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_user("backup");
     command.set_target_override(Some("custom-target"));
 
@@ -175,6 +183,7 @@ fn target_override_supersedes_computed_target() {
 #[test]
 fn empty_target_override_suppresses_target_argument() {
     let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_target_override(Some(OsString::new()));
     command.push_remote_arg("rsync");
 
@@ -513,24 +522,35 @@ fn omits_cipher_args_when_aes_explicitly_disabled() {
 
 #[test]
 fn auto_detects_aes_when_preference_is_none() {
-    // Default (None) does not inject cipher args, preserving backward compatibility
+    use super::builder::has_hardware_aes;
+
+    // Default (None) auto-detects hardware AES and injects ciphers when available.
     let command = SshCommand::new("example.com");
     let (_, args) = command.command_parts_for_testing();
     let rendered = args_to_strings(&args);
 
-    assert!(!rendered.iter().any(|a| a == "-c"));
+    assert_eq!(
+        rendered.iter().any(|a| a == "-c"),
+        has_hardware_aes(),
+        "cipher injection should match hardware AES availability when preference is None"
+    );
 }
 
 #[test]
-fn skips_cipher_injection_when_custom_options_present() {
-    // Auto-detect with custom options present -> no cipher injection
+fn skips_cipher_injection_when_cipher_option_present() {
+    // User-specified `-c` prevents automatic AES-GCM injection regardless
+    // of hardware support.
     let mut command = SshCommand::new("example.com");
-    command.push_option("-v");
+    command.push_option("-c");
+    command.push_option("chacha20-poly1305@openssh.com");
 
     let (_, args) = command.command_parts_for_testing();
     let rendered = args_to_strings(&args);
 
-    assert!(!rendered.iter().any(|a| a == "-c"));
+    assert!(
+        !rendered.contains(&"aes128-gcm@openssh.com,aes256-gcm@openssh.com".to_owned()),
+        "should not inject AES-GCM when user specified -c: {rendered:?}"
+    );
 }
 
 #[test]
@@ -1364,22 +1384,19 @@ fn no_aes_gcm_injection_without_hardware_and_user_cipher() {
 }
 
 #[test]
-fn no_aes_gcm_injection_when_all_conditions_fail() {
-    // Exercises the case where every guard in should_inject_aes_gcm_ciphers()
-    // causes rejection: preference is None, program is not SSH, and custom
-    // options contain -c. On platforms without hardware AES (some VMs,
-    // older x86 without AES-NI), the hardware check also returns false.
+fn no_aes_gcm_injection_when_explicitly_disabled() {
+    // Exercises the case where the user opts out via `--no-aes`: even with
+    // an SSH program and no existing cipher option, `Some(false)` prevents
+    // injection regardless of hardware support.
     let mut command = SshCommand::new("example.com");
-    command.set_program("plink");
-    command.set_prefer_aes_gcm(None);
-    command.push_option("-c");
+    command.set_prefer_aes_gcm(Some(false));
 
     let (_, args) = command.command_parts_for_testing();
     let rendered = args_to_strings(&args);
 
     assert!(
         !rendered.contains(&"aes128-gcm@openssh.com,aes256-gcm@openssh.com".to_owned()),
-        "no AES-GCM injection when all conditions fail: {rendered:?}"
+        "no AES-GCM injection when explicitly disabled via --no-aes: {rendered:?}"
     );
 }
 
