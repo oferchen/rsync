@@ -605,13 +605,9 @@ mod tests {
         // On unprivileged systems, SQPOLL setup fails and the flag is set.
         // On privileged systems (root/CAP_SYS_NICE), SQPOLL succeeds and the
         // flag stays false. Both outcomes are valid.
-        let fell_back = sqpoll_fell_back();
         // We cannot assert a specific value since it depends on privileges,
         // but we can verify the flag is queryable without panic.
-        assert!(
-            fell_back || !fell_back,
-            "sqpoll_fell_back() must return a bool"
-        );
+        let _fell_back: bool = sqpoll_fell_back();
     }
 
     #[test]

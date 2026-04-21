@@ -161,7 +161,7 @@ jobs:
           failed=0
 
           echo "=== Test 1: Basic local copy ==="
-          if ! diff -r dest_seq_basic dest_par_basic; then
+          if ! diff -rq --no-dereference dest_seq_basic dest_par_basic; then
             echo "FAIL: Basic copy file trees differ"
             failed=1
           else
@@ -170,7 +170,7 @@ jobs:
 
           echo ""
           echo "=== Test 2: Checksum copy ==="
-          if ! diff -r dest_seq_checksum dest_par_checksum; then
+          if ! diff -rq --no-dereference dest_seq_checksum dest_par_checksum; then
             echo "FAIL: Checksum copy file trees differ"
             failed=1
           else
@@ -179,7 +179,7 @@ jobs:
 
           echo ""
           echo "=== Test 3: Delete copy ==="
-          if ! diff -r dest_seq_delete dest_par_delete; then
+          if ! diff -rq --no-dereference dest_seq_delete dest_par_delete; then
             echo "FAIL: Delete copy file trees differ"
             failed=1
           else
@@ -225,9 +225,9 @@ jobs:
           failed=0
 
           echo "=== Test 1: Itemize output comparison (basic) ==="
-          # Sort itemize lines since parallel order may differ
-          sort seq_basic_output.txt > seq_basic_sorted.txt
-          sort par_basic_output.txt > par_basic_sorted.txt
+          # Filter out stats summary lines (bytes/sec varies between runs) then sort
+          grep -v 'bytes/sec\|total size\|speedup' seq_basic_output.txt | sort > seq_basic_sorted.txt
+          grep -v 'bytes/sec\|total size\|speedup' par_basic_output.txt | sort > par_basic_sorted.txt
           if ! diff seq_basic_sorted.txt par_basic_sorted.txt; then
             echo "FAIL: Itemize output differs for basic copy"
             echo "--- Sequential output ---"
@@ -241,8 +241,8 @@ jobs:
 
           echo ""
           echo "=== Test 3: Itemize output comparison (delete) ==="
-          sort seq_delete_output.txt > seq_delete_sorted.txt
-          sort par_delete_output.txt > par_delete_sorted.txt
+          grep -v 'bytes/sec\|total size\|speedup' seq_delete_output.txt | sort > seq_delete_sorted.txt
+          grep -v 'bytes/sec\|total size\|speedup' par_delete_output.txt | sort > par_delete_sorted.txt
           if ! diff seq_delete_sorted.txt par_delete_sorted.txt; then
             echo "FAIL: Itemize output differs for delete copy"
             echo "--- Sequential output ---"
