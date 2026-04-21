@@ -99,7 +99,7 @@ pub mod throughput;
 pub use allocator::{BufferAllocator, DefaultAllocator};
 pub use global::{GlobalBufferPoolConfig, global_buffer_pool, init_global_buffer_pool};
 pub use guard::{BorrowedBufferGuard, BufferGuard};
-pub use pool::BufferPool;
+pub use pool::{BufferPool, BufferPoolStats};
 pub use throughput::ThroughputTracker;
 
 use super::COPY_BUFFER_SIZE;
