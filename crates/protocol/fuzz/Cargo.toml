@@ -43,5 +43,26 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "file_entry_roundtrip"
+path = "fuzz_targets/file_entry_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "multiplex_frame_roundtrip"
+path = "fuzz_targets/multiplex_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "varint_roundtrip"
+path = "fuzz_targets/varint_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
 # Standalone workspace - not part of root workspace
 [workspace]
