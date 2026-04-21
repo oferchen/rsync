@@ -299,6 +299,12 @@ impl Drop for IocpWriter {
     }
 }
 
+// SAFETY: IocpWriter owns its HANDLE and CompletionPort. Windows file handles
+// and completion ports are kernel objects safe to use from any thread.
+// The writer is used single-threaded but must be Send for trait bounds.
+#[allow(unsafe_code)]
+unsafe impl Send for IocpWriter {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

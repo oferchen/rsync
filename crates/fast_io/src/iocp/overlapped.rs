@@ -31,7 +31,7 @@ impl OverlappedOp {
             buffer: vec![0u8; buffer_size],
             valid_bytes: 0,
         });
-        set_offset(&mut op.as_mut(), offset);
+        set_offset(&mut op, offset);
         op
     }
 
@@ -42,7 +42,7 @@ impl OverlappedOp {
             buffer: data.to_vec(),
             valid_bytes: data.len(),
         });
-        set_offset(&mut op.as_mut(), offset);
+        set_offset(&mut op, offset);
         op
     }
 

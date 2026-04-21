@@ -298,6 +298,12 @@ impl Drop for IocpReader {
     }
 }
 
+// SAFETY: IocpReader owns its HANDLE and CompletionPort. Windows file handles
+// and completion ports are kernel objects safe to use from any thread.
+// The reader is used single-threaded but must be Send for trait bounds.
+#[allow(unsafe_code)]
+unsafe impl Send for IocpReader {}
+
 /// Converts a Path to a wide (UTF-16) null-terminated string for Win32 APIs.
 pub(crate) fn to_wide_path(path: &Path) -> io::Result<Vec<u16>> {
     use std::os::windows::ffi::OsStrExt;
