@@ -8,8 +8,10 @@
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, ExitStatus};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use logging::debug_log;
 
@@ -35,25 +37,50 @@ pub struct SshConnection {
     stdin: Option<ChildStdin>,
     stdout: Option<ChildStdout>,
     stderr_drain: Option<StderrDrain>,
+    connect_watchdog: Option<ConnectWatchdog>,
 }
 
 impl SshConnection {
     /// Constructs a new connection from the spawned child process.
     ///
     /// If `stderr` is `Some`, a background thread is spawned immediately to
-    /// drain it, preventing pipe-buffer deadlocks.
+    /// drain it, preventing pipe-buffer deadlocks. If `connect_timeout` is
+    /// `Some`, a watchdog thread is armed that will kill the child process
+    /// if the connection is not established within the given duration. Call
+    /// [`cancel_connect_watchdog`](Self::cancel_connect_watchdog) after
+    /// the remote rsync version greeting is received to disarm it.
     pub(super) fn new(
         child: Child,
         stdin: Option<ChildStdin>,
         stdout: ChildStdout,
         stderr: Option<ChildStderr>,
+        connect_timeout: Option<Duration>,
     ) -> Self {
         let stderr_drain = stderr.map(StderrDrain::spawn);
+        let connect_watchdog = connect_timeout.map(|timeout| {
+            let pid = child.id();
+            ConnectWatchdog::arm(timeout, pid)
+        });
         Self {
             child: Some(child),
             stdin,
             stdout: Some(stdout),
             stderr_drain,
+            connect_watchdog,
+        }
+    }
+
+    /// Disarms the connection establishment watchdog.
+    ///
+    /// Call this after the SSH connection is confirmed as established (e.g.,
+    /// after receiving the remote rsync version greeting). If the watchdog has
+    /// already fired, this returns an error indicating the timeout expired.
+    /// If no watchdog was armed, this is a no-op.
+    pub fn cancel_connect_watchdog(&mut self) -> io::Result<()> {
+        if let Some(watchdog) = self.connect_watchdog.take() {
+            watchdog.cancel()
+        } else {
+            Ok(())
         }
     }
 
@@ -159,6 +186,7 @@ impl SshConnection {
         })?;
 
         let stderr_drain = self.stderr_drain.take();
+        let connect_watchdog = self.connect_watchdog.take();
 
         Ok((
             SshReader { stdout },
@@ -166,6 +194,7 @@ impl SshConnection {
             SshChildHandle {
                 child,
                 stderr_drain,
+                connect_watchdog,
             },
         ))
     }
@@ -329,6 +358,127 @@ impl Drop for StderrDrain {
     }
 }
 
+/// Background watchdog that kills the SSH child process if the connection
+/// is not established within a configurable timeout.
+///
+/// The watchdog thread sleeps on a condvar until either the timeout expires
+/// or the watchdog is cancelled. If the timeout fires, the thread sets the
+/// `fired` flag. The caller (or Drop) is responsible for killing the child
+/// process when the watchdog fires - the watchdog itself only signals that
+/// the timeout expired.
+///
+/// The condvar-based design avoids busy polling and allows the cancel path
+/// to wake the thread immediately.
+struct ConnectWatchdog {
+    cancelled: Arc<AtomicBool>,
+    fired: Arc<AtomicBool>,
+    condvar_pair: Arc<(Mutex<bool>, Condvar)>,
+    handle: Option<JoinHandle<()>>,
+    timeout: Duration,
+}
+
+impl ConnectWatchdog {
+    /// Arms a watchdog that will fire after `timeout`.
+    fn arm(timeout: Duration, child_pid: u32) -> Self {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let fired = Arc::new(AtomicBool::new(false));
+        let condvar_pair = Arc::new((Mutex::new(false), Condvar::new()));
+
+        let thread_cancelled = Arc::clone(&cancelled);
+        let thread_fired = Arc::clone(&fired);
+        let thread_pair = Arc::clone(&condvar_pair);
+
+        let handle = thread::Builder::new()
+            .name("ssh-connect-watchdog".into())
+            .spawn(move || {
+                let (lock, cvar) = &*thread_pair;
+                let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+                // Wait until timeout or cancellation signal.
+                let (_guard, result) = cvar
+                    .wait_timeout_while(guard, timeout, |notified| !*notified)
+                    .unwrap_or_else(|e| e.into_inner());
+
+                // If we were cancelled, exit quietly.
+                if thread_cancelled.load(Ordering::Acquire) {
+                    return;
+                }
+
+                // Timeout expired - set the fired flag. The child will be killed
+                // by the connection's Drop impl or when the caller checks the flag.
+                if result.timed_out() {
+                    thread_fired.store(true, Ordering::Release);
+                    debug_log!(
+                        Connect,
+                        1,
+                        "ssh connect watchdog: timeout after {timeout:?} for pid {child_pid}"
+                    );
+                }
+            })
+            .expect("failed to spawn ssh connect watchdog thread");
+
+        Self {
+            cancelled,
+            fired,
+            condvar_pair,
+            handle: Some(handle),
+            timeout,
+        }
+    }
+
+    /// Returns `true` if the watchdog timeout has fired.
+    fn has_fired(&self) -> bool {
+        self.fired.load(Ordering::Acquire)
+    }
+
+    /// Cancels the watchdog, preventing it from firing.
+    ///
+    /// Returns `Ok(())` if the watchdog was successfully cancelled before it
+    /// fired. Returns an `io::Error` with `ErrorKind::TimedOut` if the
+    /// watchdog already fired (meaning the timeout expired).
+    fn cancel(mut self) -> io::Result<()> {
+        self.cancelled.store(true, Ordering::Release);
+
+        // Wake the watchdog thread so it exits immediately.
+        let (lock, cvar) = &*self.condvar_pair;
+        if let Ok(mut notified) = lock.lock() {
+            *notified = true;
+            cvar.notify_one();
+        }
+
+        // Join the watchdog thread.
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+
+        if self.fired.load(Ordering::Acquire) {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "ssh connection establishment timed out after {} seconds",
+                    self.timeout.as_secs()
+                ),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Drop for ConnectWatchdog {
+    fn drop(&mut self) {
+        // Signal cancellation so the thread exits if still running.
+        self.cancelled.store(true, Ordering::Release);
+        let (lock, cvar) = &*self.condvar_pair;
+        if let Ok(mut notified) = lock.lock() {
+            *notified = true;
+            cvar.notify_one();
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 /// Handle to wait for SSH subprocess completion.
 ///
 /// When the connection is split, the stderr drain thread (spawned at connection
@@ -339,6 +489,7 @@ impl Drop for StderrDrain {
 pub struct SshChildHandle {
     child: Child,
     stderr_drain: Option<StderrDrain>,
+    connect_watchdog: Option<ConnectWatchdog>,
 }
 
 impl std::fmt::Debug for SshChildHandle {
@@ -349,11 +500,32 @@ impl std::fmt::Debug for SshChildHandle {
                 "stderr_drain",
                 &self.stderr_drain.as_ref().map(|_| "StderrDrain(active)"),
             )
+            .field(
+                "connect_watchdog",
+                &self
+                    .connect_watchdog
+                    .as_ref()
+                    .map(|_| "ConnectWatchdog(armed)"),
+            )
             .finish()
     }
 }
 
 impl SshChildHandle {
+    /// Disarms the connection establishment watchdog.
+    ///
+    /// Call this after the SSH connection is confirmed as established (e.g.,
+    /// after receiving the remote rsync version greeting). If the watchdog has
+    /// already fired, this returns an error indicating the timeout expired.
+    /// If no watchdog was armed, this is a no-op.
+    pub fn cancel_connect_watchdog(&mut self) -> io::Result<()> {
+        if let Some(watchdog) = self.connect_watchdog.take() {
+            watchdog.cancel()
+        } else {
+            Ok(())
+        }
+    }
+
     /// Returns the stderr output collected so far by the background drain thread.
     ///
     /// The returned bytes are bounded to the most recent [`STDERR_BUFFER_CAP`]
@@ -400,6 +572,9 @@ impl SshChildHandle {
 
 impl Drop for SshChildHandle {
     fn drop(&mut self) {
+        // Drop the watchdog first to stop the background thread.
+        drop(self.connect_watchdog.take());
+
         // Reap the child process to prevent zombies.
         // Unlike SshConnection::Drop, stdin is not owned here (it lives in
         // SshWriter) so we skip the close_stdin step.
@@ -420,6 +595,21 @@ impl Drop for SshChildHandle {
 
 impl Read for SshConnection {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // Check whether the connect watchdog has fired before attempting a read.
+        // When the watchdog fires, the child will be killed by Drop, and reads
+        // would return EOF or a broken pipe error. Returning TimedOut gives the
+        // caller a clear signal to map to the appropriate exit code.
+        if let Some(ref watchdog) = self.connect_watchdog {
+            if watchdog.has_fired() {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "ssh connection establishment timed out after {} seconds",
+                        watchdog.timeout.as_secs()
+                    ),
+                ));
+            }
+        }
         match self.stdout.as_mut() {
             Some(stdout) => stdout.read(buf),
             None => Err(io::Error::new(
@@ -451,6 +641,9 @@ impl Write for SshConnection {
 
 impl Drop for SshConnection {
     fn drop(&mut self) {
+        // Drop the watchdog first to stop the background thread.
+        drop(self.connect_watchdog.take());
+
         let _ = self.close_stdin();
 
         if let Some(ref mut child) = self.child {

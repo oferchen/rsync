@@ -297,7 +297,13 @@ impl SshCommand {
         })?;
         let stderr = child.stderr.take();
 
-        Ok(SshConnection::new(child, Some(stdin), stdout, stderr))
+        Ok(SshConnection::new(
+            child,
+            Some(stdin),
+            stdout,
+            stderr,
+            self.connect_timeout,
+        ))
     }
 
     fn command_parts(&self) -> (OsString, Vec<OsString>) {
