@@ -97,9 +97,12 @@
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
+
+    #[cfg(feature = "multi-producer")]
+    use std::sync::Arc;
+    #[cfg(feature = "multi-producer")]
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use crate::concurrent_delta::DeltaWork;
     use crate::concurrent_delta::work_queue;
