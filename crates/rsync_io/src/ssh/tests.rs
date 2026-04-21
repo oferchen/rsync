@@ -1502,3 +1502,203 @@ fn connect_timeout_zero_duration() {
         "zero duration should produce ConnectTimeout=0: {rendered:?}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn connect_watchdog_fires_on_timeout() {
+    use std::time::Duration;
+
+    // Spawn a process that sleeps for a long time - simulating an SSH process
+    // that hangs during connection establishment.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("sleep 60");
+    command.set_target_override(Some(OsString::new()));
+    // Set a very short connect timeout to trigger the watchdog quickly.
+    command.set_connect_timeout(Some(Duration::from_millis(200)));
+
+    let mut connection = command.spawn().expect("spawn shell");
+
+    // Wait for the watchdog to fire before attempting any read. This avoids
+    // relying on Child::kill() to unblock a blocking pipe read, which is
+    // unreliable in Linux CI environments.
+    std::thread::sleep(Duration::from_millis(500));
+
+    // cancel_connect_watchdog should report that the timeout fired.
+    let cancel_result = connection.cancel_connect_watchdog();
+    assert!(
+        cancel_result.is_err(),
+        "cancel should report timeout after watchdog fired"
+    );
+    let err = cancel_result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    assert!(
+        err.to_string().contains("timed out"),
+        "error should mention timeout: {err}"
+    );
+
+    // After the watchdog has fired, the read should return immediately - either
+    // TimedOut (from the has_fired check) or an OS error (broken pipe / EOF
+    // from the killed child process).
+    let mut buf = [0u8; 1];
+    let result = connection.read(&mut buf);
+    match result {
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+        Err(_) => {
+            // OS-level error from killed child (broken pipe, EOF) is acceptable.
+        }
+        Ok(0) => {
+            // EOF from killed child is acceptable.
+        }
+        Ok(n) => {
+            panic!("unexpected successful read of {n} bytes from sleeping process");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn connect_watchdog_cancelled_before_timeout() {
+    use std::time::Duration;
+
+    // Spawn a process that exits quickly - simulating a successful SSH connection.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("echo hello");
+    command.set_target_override(Some(OsString::new()));
+    // Set a generous timeout that should not fire.
+    command.set_connect_timeout(Some(Duration::from_secs(30)));
+
+    let mut connection = command.spawn().expect("spawn shell");
+
+    // Read the output - this simulates reading the version greeting.
+    let mut buf = [0u8; 16];
+    let n = connection.read(&mut buf).expect("read should succeed");
+    assert!(n > 0, "should read some data");
+
+    // Cancel the watchdog - should succeed since the timeout hasn't fired.
+    let result = connection.cancel_connect_watchdog();
+    assert!(
+        result.is_ok(),
+        "cancel should succeed when watchdog hasn't fired: {result:?}"
+    );
+
+    // Second cancel is a no-op.
+    let result2 = connection.cancel_connect_watchdog();
+    assert!(result2.is_ok(), "double cancel should be a no-op");
+}
+
+#[cfg(unix)]
+#[test]
+fn connect_watchdog_not_armed_when_timeout_is_none() {
+    use std::time::Duration;
+
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("echo no-watchdog");
+    command.set_target_override(Some(OsString::new()));
+    command.set_connect_timeout(None);
+
+    let mut connection = command.spawn().expect("spawn shell");
+
+    // cancel_connect_watchdog is a no-op when no timeout is configured.
+    let result = connection.cancel_connect_watchdog();
+    assert!(result.is_ok(), "cancel without watchdog should be no-op");
+
+    // Read should work normally.
+    let mut buf = [0u8; 32];
+    let n = connection.read(&mut buf).expect("read");
+    assert!(n > 0);
+
+    let status = connection.wait().expect("wait");
+    assert!(status.success());
+    let _ = Duration::from_millis(0); // suppress unused import lint
+}
+
+#[cfg(unix)]
+#[test]
+fn connect_watchdog_transferred_to_child_handle_on_split() {
+    use std::time::Duration;
+
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("echo split-test");
+    command.set_target_override(Some(OsString::new()));
+    command.set_connect_timeout(Some(Duration::from_secs(30)));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, mut child_handle) = connection.split().expect("split");
+
+    // Cancel via child handle should succeed.
+    let result = child_handle.cancel_connect_watchdog();
+    assert!(
+        result.is_ok(),
+        "cancel via child handle should succeed: {result:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn connect_watchdog_fires_and_child_handle_reports_timeout() {
+    use std::time::Duration;
+
+    // Spawn a process that hangs, with a short timeout.
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("sleep 60");
+    command.set_target_override(Some(OsString::new()));
+    command.set_connect_timeout(Some(Duration::from_millis(200)));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, mut child_handle) = connection.split().expect("split");
+
+    // Wait for the watchdog to fire.
+    std::thread::sleep(Duration::from_millis(500));
+
+    let cancel_result = child_handle.cancel_connect_watchdog();
+    assert!(cancel_result.is_err(), "watchdog should have fired");
+    let err = cancel_result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    assert!(
+        err.to_string().contains("timed out"),
+        "error message should mention timeout: {err}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn connect_watchdog_error_message_includes_duration() {
+    use std::time::Duration;
+
+    let mut command = SshCommand::new("ignored");
+    command.set_program("sh");
+    command.set_batch_mode(false);
+    command.push_option("-c");
+    command.push_option("sleep 60");
+    command.set_target_override(Some(OsString::new()));
+    // Use a 2-second timeout - short enough for fast tests, long enough
+    // to produce a recognizable duration in the error message.
+    command.set_connect_timeout(Some(Duration::from_secs(2)));
+
+    let connection = command.spawn().expect("spawn shell");
+    let (_reader, _writer, mut child_handle) = connection.split().expect("split");
+
+    // Wait for the watchdog to fire.
+    std::thread::sleep(Duration::from_millis(2500));
+
+    let err = child_handle.cancel_connect_watchdog().unwrap_err();
+    assert!(
+        err.to_string().contains("2 seconds"),
+        "error should include the timeout duration: {err}"
+    );
+}

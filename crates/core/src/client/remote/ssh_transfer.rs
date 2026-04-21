@@ -548,7 +548,7 @@ fn run_server_over_ssh_connection(
     progress: Option<&mut dyn crate::server::TransferProgressCallback>,
     batch_ctx: Option<BatchContext>,
 ) -> Result<crate::server::ServerStats, ClientError> {
-    let (mut reader, mut writer, child_handle) = connection
+    let (mut reader, mut writer, mut child_handle) = connection
         .split()
         .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
 
@@ -573,6 +573,16 @@ fn run_server_over_ssh_connection(
             ));
         }
     };
+
+    // Connection established - disarm the connect watchdog. If the watchdog
+    // already fired (timeout expired during handshake), map to exit code 35
+    // (RERR_CONTIMEOUT) matching upstream rsync's --contimeout behavior.
+    if let Err(e) = child_handle.cancel_connect_watchdog() {
+        return Err(invalid_argument_error(
+            &format!("{e}"),
+            crate::exit_code::ExitCode::ConnectionTimeout.as_i32(),
+        ));
+    }
     let transfer_result = crate::server::run_server_with_handshake(
         config,
         handshake,
