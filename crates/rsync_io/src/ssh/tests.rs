@@ -14,7 +14,8 @@ fn args_to_strings(args: &[OsString]) -> Vec<String> {
 
 #[test]
 fn assembles_minimal_command_with_batch_mode() {
-    let command = SshCommand::new("example.com");
+    let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
     let (program, args) = command.command_parts_for_testing();
 
     assert_eq!(program, OsString::from("ssh"));
@@ -33,6 +34,7 @@ fn assembles_minimal_command_with_batch_mode() {
 #[test]
 fn assembles_command_with_user_port_and_remote_args() {
     let mut command = SshCommand::new("rsync.example.com");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_user("backup");
     command.set_port(2222);
     command.push_option("-vvv");
@@ -64,6 +66,7 @@ fn assembles_command_with_user_port_and_remote_args() {
 #[test]
 fn disables_batch_mode_when_requested() {
     let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_batch_mode(false);
 
     let (_, args) = command.command_parts_for_testing();
@@ -80,7 +83,8 @@ fn disables_batch_mode_when_requested() {
 
 #[test]
 fn wraps_ipv6_hosts_in_brackets() {
-    let command = SshCommand::new("2001:db8::1");
+    let mut command = SshCommand::new("2001:db8::1");
+    command.set_prefer_aes_gcm(Some(false));
     let (_, args) = command.command_parts_for_testing();
 
     assert_eq!(
@@ -98,6 +102,7 @@ fn wraps_ipv6_hosts_in_brackets() {
 #[test]
 fn wraps_ipv6_hosts_with_usernames() {
     let mut command = SshCommand::new("2001:db8::1");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_user("backup");
 
     let (_, args) = command.command_parts_for_testing();
@@ -117,6 +122,7 @@ fn wraps_ipv6_hosts_with_usernames() {
 #[test]
 fn preserves_explicit_bracketed_ipv6_literals() {
     let mut command = SshCommand::new("[2001:db8::1]");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_user("backup");
 
     let (_, args) = command.command_parts_for_testing();
@@ -136,6 +142,7 @@ fn preserves_explicit_bracketed_ipv6_literals() {
 #[test]
 fn command_parts_skip_target_when_host_and_user_missing() {
     let mut command = SshCommand::new("");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_remote_command([OsString::from("rsync")]);
 
     let (_, args) = command.command_parts_for_testing();
@@ -155,6 +162,7 @@ fn command_parts_skip_target_when_host_and_user_missing() {
 #[test]
 fn target_override_supersedes_computed_target() {
     let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_user("backup");
     command.set_target_override(Some("custom-target"));
 
@@ -175,6 +183,7 @@ fn target_override_supersedes_computed_target() {
 #[test]
 fn empty_target_override_suppresses_target_argument() {
     let mut command = SshCommand::new("example.com");
+    command.set_prefer_aes_gcm(Some(false));
     command.set_target_override(Some(OsString::new()));
     command.push_remote_arg("rsync");
 
