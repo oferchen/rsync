@@ -1725,3 +1725,107 @@ fn telemetry_try_acquire_from_counts_hits() {
     assert!(pool.total_hits() >= 1);
     assert_eq!(pool.total_acquires(), 2);
 }
+
+#[test]
+fn stats_returns_snapshot() {
+    let pool = Arc::new(BufferPool::new(4));
+    // First acquire: miss.
+    {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+    // Second acquire: TLS hit.
+    {
+        let _buf = BufferPool::acquire_from(Arc::clone(&pool));
+    }
+    let stats = pool.stats();
+    assert_eq!(stats.total_acquires(), 2);
+    assert_eq!(stats.total_misses, 1);
+    assert_eq!(stats.total_hits, 1);
+    assert_eq!(stats.total_growths, 0);
+    assert!((stats.hit_rate() - 0.5).abs() < f64::EPSILON);
+}
+
+#[test]
+fn stats_growths_zero_without_adaptive() {
+    let pool = Arc::new(BufferPool::new(2));
+    let mut held = Vec::new();
+    for _ in 0..128 {
+        held.push(BufferPool::acquire_from(Arc::clone(&pool)));
+    }
+    assert_eq!(pool.total_growths(), 0);
+    assert_eq!(pool.stats().total_growths, 0);
+    drop(held);
+}
+
+#[test]
+fn stats_growths_incremented_on_adaptive_grow() {
+    let pool = Arc::new(BufferPool::with_buffer_size(2, 1024).with_adaptive_resizing());
+    let initial = pool.max_buffers();
+
+    // Hold many buffers to force misses and trigger growth.
+    let mut held = Vec::new();
+    for _ in 0..128 {
+        held.push(BufferPool::acquire_from(Arc::clone(&pool)));
+    }
+
+    let new_capacity = pool.max_buffers();
+    if new_capacity > initial {
+        assert!(
+            pool.total_growths() >= 1,
+            "expected at least 1 growth event, got {}",
+            pool.total_growths()
+        );
+        assert!(
+            pool.stats().total_growths >= 1,
+            "stats().total_growths should match total_growths()"
+        );
+    }
+    drop(held);
+}
+
+#[test]
+fn stats_hit_rate_empty() {
+    let stats = super::pool::BufferPoolStats {
+        total_hits: 0,
+        total_misses: 0,
+        total_growths: 0,
+    };
+    assert_eq!(stats.hit_rate(), 0.0);
+    assert_eq!(stats.total_acquires(), 0);
+}
+
+#[test]
+fn stats_hit_rate_all_hits() {
+    let stats = super::pool::BufferPoolStats {
+        total_hits: 100,
+        total_misses: 0,
+        total_growths: 0,
+    };
+    assert!((stats.hit_rate() - 1.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn stats_hit_rate_all_misses() {
+    let stats = super::pool::BufferPoolStats {
+        total_hits: 0,
+        total_misses: 50,
+        total_growths: 0,
+    };
+    assert_eq!(stats.hit_rate(), 0.0);
+    assert_eq!(stats.total_acquires(), 50);
+}
+
+#[test]
+fn stats_debug_and_clone() {
+    let stats = super::pool::BufferPoolStats {
+        total_hits: 10,
+        total_misses: 5,
+        total_growths: 1,
+    };
+    let cloned = stats;
+    assert_eq!(stats, cloned);
+    let debug = format!("{stats:?}");
+    assert!(debug.contains("total_hits"));
+    assert!(debug.contains("total_misses"));
+    assert!(debug.contains("total_growths"));
+}
