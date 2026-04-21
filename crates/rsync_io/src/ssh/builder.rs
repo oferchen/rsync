@@ -412,11 +412,19 @@ impl SshCommand {
     }
 
     /// Checks whether the configured program appears to be an SSH client.
+    ///
+    /// Uses case-insensitive comparison on Windows where `SSH.EXE` or
+    /// `Ssh.exe` are common depending on how the path is resolved.
     fn is_ssh_program(&self) -> bool {
         let program = self.program.to_string_lossy();
         // Handle both forward slash (Unix) and backslash (Windows) path separators.
         let basename = program.rsplit(['/', '\\']).next().unwrap_or(&program);
-        basename == "ssh" || basename == "ssh.exe"
+        if cfg!(windows) {
+            let lower = basename.to_ascii_lowercase();
+            lower == "ssh" || lower == "ssh.exe"
+        } else {
+            basename == "ssh" || basename == "ssh.exe"
+        }
     }
 
     /// Checks whether any existing option already specifies the `-c` cipher flag.
