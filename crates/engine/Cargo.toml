@@ -138,3 +138,7 @@ harness = false
 [[bench]]
 name = "drain_parallel_benchmark"
 harness = false
+
+[[bench]]
+name = "buffer_pool_contention"
+harness = false
