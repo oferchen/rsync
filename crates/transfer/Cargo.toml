@@ -100,6 +100,7 @@ tempfile = "3.15"
 test-support = { path = "../test-support" }
 criterion = "0.5"
 proptest = "1.4"
+rand = "0.9"
 
 [[bench]]
 name = "map_file_benchmark"
@@ -107,4 +108,8 @@ harness = false
 
 [[bench]]
 name = "token_buffer_benchmark"
+harness = false
+
+[[bench]]
+name = "reorder_buffer_benchmark"
 harness = false

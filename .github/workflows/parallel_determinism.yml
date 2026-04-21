@@ -1,0 +1,270 @@
+name: Parallel Determinism
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - '.github/workflows/parallel_determinism.yml'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - '.github/workflows/parallel_determinism.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: parallel-determinism-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+
+jobs:
+  determinism:
+    name: Sequential vs Parallel output
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: parallel-determinism
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Create test fixtures
+        run: |
+          set -euo pipefail
+
+          mkdir -p test_src/subdir/nested
+          mkdir -p test_src/empty_dir
+          mkdir -p test_src/"dir with spaces"
+
+          # Empty file
+          touch test_src/empty_file
+
+          # Small files
+          echo "hello world" > test_src/small.txt
+          printf 'line %d\n' $(seq 1 10) > test_src/ten_lines.txt
+
+          # Medium file - 100 bytes
+          head -c 100 /dev/urandom > test_src/medium.bin
+
+          # Larger file - 10KB
+          head -c 10240 /dev/urandom > test_src/large_10k.bin
+
+          # 1MB file
+          head -c 1048576 /dev/urandom > test_src/large_1m.bin
+
+          # Files in subdirectories
+          echo "nested content" > test_src/subdir/file.txt
+          echo "deeply nested" > test_src/subdir/nested/deep.txt
+
+          # File with special characters in name
+          echo "special" > test_src/"file with spaces.txt"
+          echo "special2" > test_src/"file-with-dashes.txt"
+          echo "special3" > test_src/"file_with_underscores.txt"
+
+          # Files in dir with spaces
+          echo "spaced dir content" > test_src/"dir with spaces/file.txt"
+
+          # Symlinks
+          ln -s small.txt test_src/link_to_small
+          ln -s subdir/file.txt test_src/link_to_nested
+          ln -s /nonexistent test_src/dangling_link
+
+          # Files with specific permissions
+          echo "executable" > test_src/script.sh
+          chmod 755 test_src/script.sh
+          echo "readonly" > test_src/readonly.txt
+          chmod 444 test_src/readonly.txt
+
+          echo "Test fixtures created:"
+          find test_src -type f | wc -l
+          find test_src -type l | wc -l
+          find test_src -type d | wc -l
+
+      - name: "Test 1: Sequential local copy"
+        run: |
+          set -euo pipefail
+          mkdir -p dest_seq_basic
+          RAYON_NUM_THREADS=1 ./target/release/oc-rsync -av --itemize-changes test_src/ dest_seq_basic/ \
+            2>&1 | tee seq_basic_output.txt
+
+      - name: "Test 1: Parallel local copy"
+        run: |
+          set -euo pipefail
+          mkdir -p dest_par_basic
+          RAYON_NUM_THREADS=8 ./target/release/oc-rsync -av --itemize-changes test_src/ dest_par_basic/ \
+            2>&1 | tee par_basic_output.txt
+
+      - name: "Test 2: Sequential copy with checksums"
+        run: |
+          set -euo pipefail
+          mkdir -p dest_seq_checksum
+          RAYON_NUM_THREADS=1 ./target/release/oc-rsync -avc test_src/ dest_seq_checksum/ \
+            2>&1 | tee seq_checksum_output.txt
+
+      - name: "Test 2: Parallel copy with checksums"
+        run: |
+          set -euo pipefail
+          mkdir -p dest_par_checksum
+          RAYON_NUM_THREADS=8 ./target/release/oc-rsync -avc test_src/ dest_par_checksum/ \
+            2>&1 | tee par_checksum_output.txt
+
+      - name: "Test 3: Create pre-populated dest for delete test"
+        run: |
+          set -euo pipefail
+          # Pre-populate destinations with extra files that should be deleted
+          mkdir -p dest_seq_delete dest_par_delete
+
+          # Copy source first so both dests have the same baseline
+          RAYON_NUM_THREADS=1 ./target/release/oc-rsync -a test_src/ dest_seq_delete/
+          RAYON_NUM_THREADS=1 ./target/release/oc-rsync -a test_src/ dest_par_delete/
+
+          # Add extra files that --delete should remove
+          echo "stale" > dest_seq_delete/stale_file.txt
+          echo "stale" > dest_par_delete/stale_file.txt
+          mkdir -p dest_seq_delete/stale_dir
+          mkdir -p dest_par_delete/stale_dir
+          echo "stale nested" > dest_seq_delete/stale_dir/nested.txt
+          echo "stale nested" > dest_par_delete/stale_dir/nested.txt
+
+      - name: "Test 3: Sequential copy with --delete"
+        run: |
+          set -euo pipefail
+          RAYON_NUM_THREADS=1 ./target/release/oc-rsync -av --delete --itemize-changes test_src/ dest_seq_delete/ \
+            2>&1 | tee seq_delete_output.txt
+
+      - name: "Test 3: Parallel copy with --delete"
+        run: |
+          set -euo pipefail
+          RAYON_NUM_THREADS=8 ./target/release/oc-rsync -av --delete --itemize-changes test_src/ dest_par_delete/ \
+            2>&1 | tee par_delete_output.txt
+
+      - name: Compare file trees
+        run: |
+          set -euo pipefail
+          failed=0
+
+          echo "=== Test 1: Basic local copy ==="
+          if ! diff -rq --no-dereference dest_seq_basic dest_par_basic; then
+            echo "FAIL: Basic copy file trees differ"
+            failed=1
+          else
+            echo "PASS: File trees are identical"
+          fi
+
+          echo ""
+          echo "=== Test 2: Checksum copy ==="
+          if ! diff -rq --no-dereference dest_seq_checksum dest_par_checksum; then
+            echo "FAIL: Checksum copy file trees differ"
+            failed=1
+          else
+            echo "PASS: File trees are identical"
+          fi
+
+          echo ""
+          echo "=== Test 3: Delete copy ==="
+          if ! diff -rq --no-dereference dest_seq_delete dest_par_delete; then
+            echo "FAIL: Delete copy file trees differ"
+            failed=1
+          else
+            echo "PASS: File trees are identical"
+          fi
+
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Compare metadata (permissions, symlinks)
+        run: |
+          set -euo pipefail
+          failed=0
+
+          for test_name in basic checksum delete; do
+            echo "=== Metadata comparison: ${test_name} ==="
+
+            # Compare full stat output for all files
+            (cd dest_seq_${test_name} && find . -not -type d | sort | while read -r f; do
+              stat -c '%n %a %U %G %s' "$f" 2>/dev/null || true
+            done) > "meta_seq_${test_name}.txt"
+
+            (cd dest_par_${test_name} && find . -not -type d | sort | while read -r f; do
+              stat -c '%n %a %U %G %s' "$f" 2>/dev/null || true
+            done) > "meta_par_${test_name}.txt"
+
+            if ! diff "meta_seq_${test_name}.txt" "meta_par_${test_name}.txt"; then
+              echo "FAIL: Metadata differs for ${test_name}"
+              failed=1
+            else
+              echo "PASS: Metadata identical for ${test_name}"
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Compare itemize output
+        run: |
+          set -euo pipefail
+          failed=0
+
+          echo "=== Test 1: Itemize output comparison (basic) ==="
+          # Filter out stats summary lines (bytes/sec varies between runs) then sort
+          grep -v 'bytes/sec\|total size\|speedup' seq_basic_output.txt | sort > seq_basic_sorted.txt
+          grep -v 'bytes/sec\|total size\|speedup' par_basic_output.txt | sort > par_basic_sorted.txt
+          if ! diff seq_basic_sorted.txt par_basic_sorted.txt; then
+            echo "FAIL: Itemize output differs for basic copy"
+            echo "--- Sequential output ---"
+            cat seq_basic_output.txt
+            echo "--- Parallel output ---"
+            cat par_basic_output.txt
+            failed=1
+          else
+            echo "PASS: Itemize output identical (after sorting)"
+          fi
+
+          echo ""
+          echo "=== Test 3: Itemize output comparison (delete) ==="
+          grep -v 'bytes/sec\|total size\|speedup' seq_delete_output.txt | sort > seq_delete_sorted.txt
+          grep -v 'bytes/sec\|total size\|speedup' par_delete_output.txt | sort > par_delete_sorted.txt
+          if ! diff seq_delete_sorted.txt par_delete_sorted.txt; then
+            echo "FAIL: Itemize output differs for delete copy"
+            echo "--- Sequential output ---"
+            cat seq_delete_output.txt
+            echo "--- Parallel output ---"
+            cat par_delete_output.txt
+            failed=1
+          else
+            echo "PASS: Itemize output identical (after sorting)"
+          fi
+
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Upload comparison artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: determinism-comparison
+          path: |
+            seq_*.txt
+            par_*.txt
+            meta_*.txt
+          retention-days: 7
