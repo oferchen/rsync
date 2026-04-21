@@ -403,8 +403,9 @@ impl ConnectWatchdog {
                     return;
                 }
 
-                // Timeout expired - set the fired flag. The child will be killed
-                // by the connection's Drop impl or when the caller checks the flag.
+                // Timeout expired - set the fired flag and kill the child process.
+                // Killing the child unblocks any pending read/write on its pipes,
+                // preventing callers from hanging in blocking I/O.
                 if result.timed_out() {
                     thread_fired.store(true, Ordering::Release);
                     debug_log!(
@@ -412,6 +413,23 @@ impl ConnectWatchdog {
                         1,
                         "ssh connect watchdog: timeout after {timeout:?} for pid {child_pid}"
                     );
+                    // Kill the child process to unblock pipe I/O.
+                    // Uses `kill` command instead of libc::kill to stay safe
+                    // (rsync_io must not contain unsafe code per project policy).
+                    #[cfg(unix)]
+                    {
+                        use std::process::Command;
+                        let _ = Command::new("kill")
+                            .arg("-9")
+                            .arg(child_pid.to_string())
+                            .status();
+                    }
+                    #[cfg(windows)]
+                    {
+                        // On Windows, TerminateProcess requires a HANDLE. The
+                        // child will be killed by Drop when the caller observes
+                        // the fired flag via has_fired() or cancel().
+                    }
                 }
             })
             .expect("failed to spawn ssh connect watchdog thread");
