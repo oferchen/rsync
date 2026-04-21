@@ -102,6 +102,11 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     ///
     /// Always active regardless of whether adaptive resizing is enabled.
     total_misses: AtomicU64,
+    /// Cumulative count of pool capacity growth events.
+    ///
+    /// Incremented each time the adaptive resizer increases the soft
+    /// capacity. Always zero when adaptive resizing is not enabled.
+    total_growths: AtomicU64,
 }
 
 impl BufferPool {
@@ -132,6 +137,7 @@ impl BufferPool {
             pressure: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
+            total_growths: AtomicU64::new(0),
         }
     }
 
@@ -155,6 +161,7 @@ impl BufferPool {
             pressure: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
+            total_growths: AtomicU64::new(0),
         }
     }
 }
@@ -183,6 +190,7 @@ impl<A: BufferAllocator> BufferPool<A> {
             pressure: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
+            total_growths: AtomicU64::new(0),
         }
     }
 
@@ -562,6 +570,7 @@ impl<A: BufferAllocator> BufferPool<A> {
             ResizeAction::Hold => {}
             ResizeAction::Grow(new_capacity) => {
                 self.soft_capacity.store(new_capacity, Ordering::Relaxed);
+                self.total_growths.fetch_add(1, Ordering::Relaxed);
                 pool.reserve(new_capacity.saturating_sub(pool.capacity()));
             }
             ResizeAction::Shrink(new_capacity) => {
@@ -668,6 +677,31 @@ impl<A: BufferAllocator> BufferPool<A> {
         self.total_hits() as f64 / total as f64
     }
 
+    /// Returns the cumulative number of pool capacity growth events.
+    ///
+    /// Incremented each time adaptive resizing increases the soft capacity.
+    /// Always zero when adaptive resizing is not enabled.
+    #[must_use]
+    pub fn total_growths(&self) -> u64 {
+        self.total_growths.load(Ordering::Relaxed)
+    }
+
+    /// Returns a snapshot of all telemetry counters.
+    ///
+    /// The returned [`BufferPoolStats`] captures the current values of all
+    /// atomic counters. Because each counter uses `Relaxed` ordering, the
+    /// snapshot is not strictly consistent across counters under concurrent
+    /// access - individual values are accurate but may reflect slightly
+    /// different points in time.
+    #[must_use]
+    pub fn stats(&self) -> BufferPoolStats {
+        BufferPoolStats {
+            total_hits: self.total_hits(),
+            total_misses: self.total_misses(),
+            total_growths: self.total_growths(),
+        }
+    }
+
     /// Atomically waits for and reserves `requested` bytes of capacity.
     ///
     /// When a memory cap is configured, blocks until outstanding memory
@@ -709,5 +743,62 @@ impl Default for BufferPool<DefaultAllocator> {
             .map(std::num::NonZero::get)
             .unwrap_or(4);
         Self::new(max_buffers)
+    }
+}
+
+impl<A: BufferAllocator> Drop for BufferPool<A> {
+    /// Prints a telemetry summary to stderr when the `OC_RSYNC_BUFFER_POOL_STATS`
+    /// environment variable is set to `"1"`.
+    ///
+    /// The env var is checked only at drop time to avoid any overhead during
+    /// normal operation.
+    fn drop(&mut self) {
+        if std::env::var("OC_RSYNC_BUFFER_POOL_STATS").as_deref() == Ok("1") {
+            let stats = self.stats();
+            eprintln!(
+                "BufferPool stats: reuses={} allocations={} growths={} hit_rate={:.1}%",
+                stats.total_hits,
+                stats.total_misses,
+                stats.total_growths,
+                self.hit_rate() * 100.0,
+            );
+        }
+    }
+}
+
+/// Snapshot of [`BufferPool`] telemetry counters.
+///
+/// Returned by [`BufferPool::stats`]. All fields are plain integers copied
+/// from atomic counters at the time of the call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BufferPoolStats {
+    /// Number of acquire operations satisfied from the thread-local cache
+    /// or central pool (buffer reuse - no fresh allocation).
+    pub total_hits: u64,
+    /// Number of acquire operations that required a fresh allocation
+    /// because no pooled buffer was available.
+    pub total_misses: u64,
+    /// Number of times the adaptive resizer increased the pool's soft
+    /// capacity. Zero when adaptive resizing is not enabled.
+    pub total_growths: u64,
+}
+
+impl BufferPoolStats {
+    /// Returns the total number of acquire operations (hits + misses).
+    #[must_use]
+    pub fn total_acquires(&self) -> u64 {
+        self.total_hits + self.total_misses
+    }
+
+    /// Returns the hit rate as a fraction in `[0.0, 1.0]`.
+    ///
+    /// Returns `0.0` if no acquires have been recorded.
+    #[must_use]
+    pub fn hit_rate(&self) -> f64 {
+        let total = self.total_acquires();
+        if total == 0 {
+            return 0.0;
+        }
+        self.total_hits as f64 / total as f64
     }
 }
