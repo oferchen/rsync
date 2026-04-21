@@ -161,7 +161,7 @@ jobs:
           failed=0
 
           echo "=== Test 1: Basic local copy ==="
-          if ! diff -r dest_seq_basic dest_par_basic; then
+          if ! diff -rq --no-dereference dest_seq_basic dest_par_basic; then
             echo "FAIL: Basic copy file trees differ"
             failed=1
           else
@@ -170,7 +170,7 @@ jobs:
 
           echo ""
           echo "=== Test 2: Checksum copy ==="
-          if ! diff -r dest_seq_checksum dest_par_checksum; then
+          if ! diff -rq --no-dereference dest_seq_checksum dest_par_checksum; then
             echo "FAIL: Checksum copy file trees differ"
             failed=1
           else
@@ -179,7 +179,7 @@ jobs:
 
           echo ""
           echo "=== Test 3: Delete copy ==="
-          if ! diff -r dest_seq_delete dest_par_delete; then
+          if ! diff -rq --no-dereference dest_seq_delete dest_par_delete; then
             echo "FAIL: Delete copy file trees differ"
             failed=1
           else
