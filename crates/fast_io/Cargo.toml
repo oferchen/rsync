@@ -35,7 +35,7 @@ rustix = { version = "0.38", features = ["fs"] }
 io-uring = { version = "0.7", optional = true }
 
 [features]
-default = ["io_uring"]
+default = ["io_uring", "iocp"]
 
 # ============================================================================
 # I/O Optimization Features
@@ -46,6 +46,12 @@ default = ["io_uring"]
 # Benefits: 20-40% faster I/O via batched syscalls
 # Trade-offs: Linux-only, adds dependency on io-uring crate
 io_uring = ["dep:io-uring"]
+
+# Windows I/O Completion Ports for async file reads and writes
+# Requirements: Windows Vista+ (runtime detection and fallback)
+# Benefits: Overlapped async I/O with completion port batching
+# Trade-offs: Windows-only, adds complexity for async file operations
+iocp = []
 
 # copy_file_range: Always compiled with runtime detection (no longer a feature gate)
 # The copy_file_range module is always available; it uses runtime detection on Linux
@@ -61,7 +67,7 @@ syscall_batch = []
 
 [target.'cfg(windows)'.dependencies]
 # CopyFileExW for Windows-optimized file copy with no-buffering support
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
 
 [target.'cfg(not(unix))'.dependencies]
 filetime = "0.2"
