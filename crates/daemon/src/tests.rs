@@ -216,6 +216,8 @@ include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
 include!("tests/chunks/daemon_negotiation_version.rs");
 include!("tests/chunks/daemon_negotiation_error_handling.rs");
+// Protocol 28 forced-mode daemon negotiation
+include!("tests/chunks/daemon_protocol_28_forced_negotiation.rs");
 include!("tests/chunks/runtime_options_allows_relative_path_when_use_chroot_disabled.rs");
 include!("tests/chunks/runtime_options_allows_timeout_zero_in_config.rs");
 include!("tests/chunks/runtime_options_apply_global_refuse_options.rs");
