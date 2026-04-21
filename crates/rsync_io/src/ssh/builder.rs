@@ -392,23 +392,23 @@ impl SshCommand {
 
     /// Determines whether AES-GCM cipher arguments should be injected.
     ///
-    /// Returns `true` only when all four conditions are met:
+    /// Returns `true` when all of these conditions are met:
     ///
-    /// 1. `prefer_aes_gcm` is `Some(true)` (caller opted in).
+    /// 1. `prefer_aes_gcm` is not `Some(false)` (caller has not opted out).
     /// 2. The CPU has hardware AES - AES-NI on x86/x86_64, or the `aes`
     ///    feature on aarch64 (see [`has_hardware_aes`]).
     /// 3. The program basename is `ssh` or `ssh.exe`.
     /// 4. No existing option already contains `-c` (the user has not specified
     ///    a cipher via `-e "ssh -c ..."` or `push_option`).
     ///
-    /// Returns `false` otherwise - including when `prefer_aes_gcm` is `None`
-    /// (the default, meaning no preference) or `Some(false)` (explicitly
-    /// disabled).
+    /// Returns `false` when `prefer_aes_gcm` is `Some(false)` (explicitly
+    /// disabled via `--no-aes`) or when any hardware/program/cipher guard
+    /// fails.
     fn should_inject_aes_gcm_ciphers(&self) -> bool {
-        matches!(self.prefer_aes_gcm, Some(true))
-            && has_hardware_aes()
-            && self.is_ssh_program()
-            && !self.options_contain_cipher_flag()
+        if matches!(self.prefer_aes_gcm, Some(false)) {
+            return false;
+        }
+        has_hardware_aes() && self.is_ssh_program() && !self.options_contain_cipher_flag()
     }
 
     /// Checks whether the configured program appears to be an SSH client.
