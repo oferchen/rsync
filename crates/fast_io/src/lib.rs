@@ -575,4 +575,76 @@ mod io_uring_fallback_tests {
             "availability reason must not have leading/trailing whitespace"
         );
     }
+
+    #[test]
+    fn sqpoll_fell_back_starts_as_false() {
+        // SQPOLL fallback flag must default to false - it is only set when
+        // SQPOLL setup is attempted and fails on a Linux kernel.
+        assert!(
+            !sqpoll_fell_back(),
+            "sqpoll_fell_back() must be false at startup"
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn factory_reader_falls_back_to_std_on_non_linux() {
+        use crate::traits::FileReaderFactory;
+        use io_uring::{IoUringOrStdReader, IoUringReaderFactory};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("factory_fallback_reader.txt");
+        std::fs::write(&path, b"fallback test content").unwrap();
+
+        let factory = IoUringReaderFactory::default();
+        assert!(
+            !factory.will_use_io_uring(),
+            "factory must not use io_uring on non-Linux"
+        );
+
+        let reader = factory.open(&path).unwrap();
+        assert!(
+            matches!(reader, IoUringOrStdReader::Std(_)),
+            "reader must be Std variant on non-Linux"
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn factory_writer_falls_back_to_std_on_non_linux() {
+        use crate::traits::FileWriterFactory;
+        use io_uring::{IoUringOrStdWriter, IoUringWriterFactory};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("factory_fallback_writer.txt");
+
+        let factory = IoUringWriterFactory::default();
+        assert!(
+            !factory.will_use_io_uring(),
+            "factory must not use io_uring on non-Linux"
+        );
+
+        let writer = factory.create(&path).unwrap();
+        assert!(
+            matches!(writer, IoUringOrStdWriter::Std(_)),
+            "writer must be Std variant on non-Linux"
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn factory_writer_create_with_size_falls_back_to_std_on_non_linux() {
+        use crate::traits::FileWriterFactory;
+        use io_uring::{IoUringOrStdWriter, IoUringWriterFactory};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("factory_fallback_sized.txt");
+
+        let factory = IoUringWriterFactory::default();
+        let writer = factory.create_with_size(&path, 4096).unwrap();
+        assert!(
+            matches!(writer, IoUringOrStdWriter::Std(_)),
+            "sized writer must be Std variant on non-Linux"
+        );
+    }
 }
