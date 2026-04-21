@@ -298,6 +298,163 @@ fn multi_producer_fan_in_mixed_work_types() {
     }
 }
 
+/// High-contention fan-in: 16 producers each send a disjoint NDX range into a
+/// small queue. After `drain_parallel()`, every expected NDX must appear exactly
+/// once - no loss, no duplication. This stress-tests the bounded MPSC channel
+/// under heavy contention from many concurrent senders.
+#[test]
+fn multi_producer_fan_in_high_contention_completeness() {
+    let num_producers: u32 = 16;
+    let items_each: u32 = 250;
+    let (tx, rx) = work_queue::bounded_with_capacity(6);
+
+    let producers: Vec<_> = (0..num_producers)
+        .map(|pid| {
+            let sender = tx.clone();
+            thread::spawn(move || {
+                let base = pid * items_each;
+                for i in 0..items_each {
+                    let work =
+                        DeltaWork::whole_file(base + i, PathBuf::from("/dst"), (base + i) as u64);
+                    sender.send(work).unwrap();
+                }
+            })
+        })
+        .collect();
+
+    drop(tx);
+
+    let results: Vec<(u32, u64)> = rx.drain_parallel(|w| (w.ndx(), w.target_size()));
+
+    for p in producers {
+        p.join().unwrap();
+    }
+
+    let expected_total = (num_producers * items_each) as usize;
+    assert_eq!(results.len(), expected_total);
+
+    // Verify uniqueness and value integrity.
+    let mut sorted = results;
+    sorted.sort_unstable_by_key(|&(ndx, _)| ndx);
+    sorted.dedup_by_key(|entry| entry.0);
+    assert_eq!(
+        sorted.len(),
+        expected_total,
+        "duplicate NDX values detected"
+    );
+
+    for &(ndx, size) in &sorted {
+        assert_eq!(size, ndx as u64, "target_size mismatch for ndx {ndx}");
+    }
+}
+
+/// Backpressure observation: with a capacity-1 queue and multiple producers,
+/// the aggregate send count must stay close to the drain count. Producers cannot
+/// race far ahead because the bounded channel blocks them. This test verifies
+/// that the total items sent never exceeds drain count + num_producers + capacity
+/// at any observation point during consumption.
+#[test]
+fn multi_producer_fan_in_backpressure_observable() {
+    let capacity = 1usize;
+    let num_producers: u32 = 4;
+    let items_each: u32 = 100;
+    let (tx, rx) = work_queue::bounded_with_capacity(capacity);
+
+    let total_sent = Arc::new(AtomicU64::new(0));
+
+    let producers: Vec<_> = (0..num_producers)
+        .map(|pid| {
+            let sender = tx.clone();
+            let sent = Arc::clone(&total_sent);
+            thread::spawn(move || {
+                for seq in 0..items_each {
+                    let ndx = encode_ndx(pid, seq);
+                    let work = DeltaWork::whole_file(ndx, PathBuf::from("/dst"), 0);
+                    sender.send(work).unwrap();
+                    sent.fetch_add(1, Ordering::Release);
+                }
+            })
+        })
+        .collect();
+
+    drop(tx);
+
+    // Consume items one at a time, checking that producers haven't raced
+    // too far ahead. The maximum lead is bounded by:
+    //   capacity (buffered in channel) + num_producers (each may have one
+    //   in-flight send that completed just before our observation).
+    let max_lead = capacity as u64 + num_producers as u64 + 1;
+    let mut drained: u64 = 0;
+    for _work in rx.into_iter() {
+        drained += 1;
+        let sent = total_sent.load(Ordering::Acquire);
+        assert!(
+            sent <= drained + max_lead,
+            "producers raced ahead: sent={sent}, drained={drained}, max_lead={max_lead}"
+        );
+    }
+
+    for p in producers {
+        p.join().unwrap();
+    }
+
+    let expected_total = (num_producers * items_each) as u64;
+    assert_eq!(drained, expected_total);
+}
+
+/// Producers start at staggered intervals to simulate multi-root transfers where
+/// different directory trees begin generating work at different times. Verifies
+/// that late-arriving producers' items are still fully collected.
+#[test]
+fn multi_producer_fan_in_staggered_start() {
+    use std::time::Duration;
+
+    let num_producers: u32 = 4;
+    let items_each: u32 = 100;
+    let (tx, rx) = work_queue::bounded_with_capacity(8);
+
+    let producers: Vec<_> = (0..num_producers)
+        .map(|pid| {
+            let sender = tx.clone();
+            thread::spawn(move || {
+                // Stagger: producer N waits N milliseconds before starting.
+                if pid > 0 {
+                    thread::sleep(Duration::from_millis(pid as u64 * 5));
+                }
+                for seq in 0..items_each {
+                    let ndx = encode_ndx(pid, seq);
+                    let work = DeltaWork::whole_file(ndx, PathBuf::from("/dst"), 0);
+                    sender.send(work).unwrap();
+                }
+            })
+        })
+        .collect();
+
+    drop(tx);
+
+    let results = rx.drain_parallel(|w| w.ndx());
+
+    for p in producers {
+        p.join().unwrap();
+    }
+
+    let expected_total = (num_producers * items_each) as usize;
+    assert_eq!(results.len(), expected_total);
+
+    // Verify every producer contributed all its items.
+    let mut per_producer: HashMap<u32, usize> = HashMap::new();
+    for &ndx in &results {
+        *per_producer.entry(decode_producer_id(ndx)).or_default() += 1;
+    }
+    for pid in 0..num_producers {
+        assert_eq!(
+            per_producer.get(&pid).copied().unwrap_or(0),
+            items_each as usize,
+            "producer {pid} did not deliver all items"
+        );
+    }
+}
+
 /// Verifies `drain_parallel_into` (streaming variant) also works correctly
 /// with multiple producers, enabling incremental consumption.
 #[test]
