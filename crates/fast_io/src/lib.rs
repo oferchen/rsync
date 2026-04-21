@@ -40,6 +40,7 @@
 //! - **Zero-copy socket receive** using `splice` for socket-to-file transfers (Linux)
 //! - **Windows optimized copy** using `CopyFileExW` with optional no-buffering
 //! - **ReFS reflink** via `FSCTL_DUPLICATE_EXTENTS_TO_FILE` for instant CoW on Windows
+//! - **Windows IOCP** for overlapped async file I/O (optional, `iocp` feature)
 //! - **io_uring** for batched syscalls on Linux (optional, `io_uring` feature)
 //! - **Platform copy trait** abstracting `copy_file_range`, `clonefile`, `CopyFileExW`
 //! - **Cached sorting** with Schwartzian transform
@@ -111,6 +112,18 @@ pub mod io_uring;
 #[path = "io_uring_stub.rs"]
 pub mod io_uring;
 
+/// Windows I/O Completion Ports (IOCP) for async file I/O.
+///
+/// This module provides high-performance overlapped file I/O using Windows
+/// IOCP with automatic fallback to standard buffered I/O on unsupported
+/// systems. On non-Windows platforms or without the `iocp` cargo feature,
+/// a stub module is compiled that always returns standard I/O implementations.
+#[cfg(all(target_os = "windows", feature = "iocp"))]
+pub mod iocp;
+#[cfg(not(all(target_os = "windows", feature = "iocp")))]
+#[path = "iocp_stub.rs"]
+pub mod iocp;
+
 pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use platform_copy::{
@@ -134,6 +147,51 @@ pub use io_uring::{
     RegisteredBufferSlot, is_io_uring_available, reader_from_path, sqpoll_fell_back,
     writer_from_file,
 };
+
+pub use iocp::{
+    IocpConfig, IocpOrStdReader, IocpOrStdWriter, IocpReader, IocpReaderFactory, IocpWriter,
+    IocpWriterFactory, iocp_availability_reason, is_iocp_available,
+    skip_event_optimization_available,
+};
+pub use iocp::{
+    reader_from_path as iocp_reader_from_path, writer_from_file as iocp_writer_from_file,
+};
+
+/// Detailed IOCP availability status for `--version` output.
+///
+/// Returns a human-readable string describing IOCP support:
+/// - Whether the feature was compiled in
+/// - Whether the OS supports it (Windows only)
+#[must_use]
+pub fn iocp_status_detail() -> String {
+    iocp_status_detail_impl()
+}
+
+#[cfg(all(target_os = "windows", feature = "iocp"))]
+fn iocp_status_detail_impl() -> String {
+    if is_iocp_available() {
+        let skip_event = if skip_event_optimization_available() {
+            ", FILE_SKIP_SET_EVENT_ON_HANDLE active"
+        } else {
+            ""
+        };
+        format!("compiled in, available{skip_event}")
+    } else {
+        "compiled in, unavailable (CreateIoCompletionPort failed)".to_string()
+    }
+}
+
+#[cfg(not(all(target_os = "windows", feature = "iocp")))]
+fn iocp_status_detail_impl() -> String {
+    #[cfg(not(target_os = "windows"))]
+    {
+        "not available (platform is not Windows)".to_string()
+    }
+    #[cfg(all(target_os = "windows", not(feature = "iocp")))]
+    {
+        "not compiled in (iocp feature disabled)".to_string()
+    }
+}
 
 /// Detailed io_uring availability status for `--version` output.
 ///
@@ -226,7 +284,7 @@ pub use io_uring::{
 /// - **Linux**: `copy_file_range`, `sendfile`, `splice` (runtime-probed),
 ///   `FICLONE`, `O_TMPFILE`, `io_uring` (runtime-probed)
 /// - **macOS**: `clonefile`, `fcopyfile`
-/// - **Windows**: `CopyFileEx`
+/// - **Windows**: `CopyFileEx`, `IOCP` (runtime-probed)
 #[must_use]
 pub fn platform_io_capabilities() -> Vec<&'static str> {
     let mut caps = Vec::new();
@@ -260,6 +318,9 @@ pub fn platform_io_capabilities() -> Vec<&'static str> {
     #[cfg(target_os = "windows")]
     {
         caps.push("CopyFileEx");
+        if is_iocp_available() {
+            caps.push("IOCP");
+        }
     }
 
     caps
@@ -317,6 +378,36 @@ pub enum IoUringPolicy {
     Disabled,
 }
 
+/// Policy controlling IOCP usage for file I/O on Windows.
+///
+/// This enum allows callers to explicitly enable, disable, or auto-detect
+/// IOCP support. It mirrors [`IoUringPolicy`] for the Windows platform.
+///
+/// # Runtime detection
+///
+/// When set to `Auto`, the runtime check ([`iocp::is_iocp_available`])
+/// creates a test completion port and caches the result. On Windows Vista+,
+/// IOCP is always available. Files smaller than 64 KB use standard I/O
+/// regardless of this policy since the async overhead exceeds the benefit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IocpPolicy {
+    /// Auto-detect IOCP availability at runtime (default).
+    ///
+    /// Uses IOCP on Windows when the `iocp` feature is enabled.
+    /// Falls back to standard buffered I/O otherwise.
+    #[default]
+    Auto,
+    /// Force IOCP usage. Returns an error if IOCP is unavailable.
+    ///
+    /// Useful for testing or when IOCP is required for performance.
+    /// Fails with `ErrorKind::Unsupported` on non-Windows platforms.
+    Enabled,
+    /// Disable IOCP; always use standard buffered I/O.
+    ///
+    /// Useful for benchmarking or diagnosing IOCP-related issues.
+    Disabled,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,6 +434,33 @@ mod tests {
         {
             assert!(caps.contains(&"CopyFileEx"));
         }
+    }
+
+    #[test]
+    fn iocp_status_detail_returns_non_empty_string() {
+        let detail = iocp_status_detail();
+        assert!(!detail.is_empty());
+
+        #[cfg(not(target_os = "windows"))]
+        assert!(detail.contains("not available"));
+
+        #[cfg(all(target_os = "windows", not(feature = "iocp")))]
+        assert!(detail.contains("not compiled in"));
+
+        #[cfg(all(target_os = "windows", feature = "iocp"))]
+        assert!(detail.contains("compiled in"));
+    }
+
+    #[test]
+    fn iocp_status_detail_is_single_line() {
+        let detail = iocp_status_detail();
+        assert!(!detail.contains('\n'));
+    }
+
+    #[test]
+    fn iocp_status_detail_no_trailing_whitespace() {
+        let detail = iocp_status_detail();
+        assert_eq!(detail, detail.trim());
     }
 
     #[test]
