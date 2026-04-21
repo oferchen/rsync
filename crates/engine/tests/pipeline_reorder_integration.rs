@@ -48,13 +48,8 @@ fn end_to_end_streaming_pipeline_delivers_in_order() {
                 }
                 let _ = std::hint::black_box(acc);
 
-                DeltaResult::success(
-                    work.ndx(),
-                    work.target_size(),
-                    work.target_size(),
-                    0,
-                )
-                .with_sequence(work.sequence())
+                DeltaResult::success(work.ndx(), work.target_size(), work.target_size(), 0)
+                    .with_sequence(work.sequence())
             },
             stream_tx,
         );
