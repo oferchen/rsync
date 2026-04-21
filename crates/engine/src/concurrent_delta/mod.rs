@@ -169,6 +169,8 @@
 //! - `transfer::pipeline` for the pipelined receiver architecture
 
 pub mod consumer;
+#[cfg(test)]
+mod multi_producer_audit;
 pub mod reorder;
 pub mod strategy;
 mod types;
