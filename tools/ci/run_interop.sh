@@ -7495,12 +7495,11 @@ test_delta_stats() {
   mkdir -p "$ds_src" "$ds_basis" "$ds_dest_oc" "$ds_dest_up"
   chmod 777 "$ds_dest_oc" "$ds_dest_up"
 
-  # Create a basis file and a modified version to force delta transfer.
-  # The basis (pre-existing at destination) shares ~90% with the source,
-  # so rsync should report matched > 0 and literal > 0.
+  # Create a 100KB basis file, then modify the first 10KB to force delta.
+  # The destination keeps the original, so rsync must use delta transfer -
+  # ~90KB matched from basis, ~10KB literal from the modified region.
   dd if=/dev/urandom of="$ds_basis/data.bin" bs=1024 count=100 2>/dev/null
   cp "$ds_basis/data.bin" "$ds_src/data.bin"
-  # Overwrite the first 10KB to create a delta
   dd if=/dev/urandom of="$ds_src/data.bin" bs=1024 count=10 conv=notrunc 2>/dev/null
 
   # Pre-populate destinations with the basis file
@@ -7512,7 +7511,7 @@ test_delta_stats() {
   # Add a small text file for variety
   echo "delta-stats-test-marker" > "$ds_src/marker.txt"
 
-  # Start oc-rsync daemon
+  # --- oc-rsync daemon ---
   local ds_oc_conf="${work}/delta-stats-oc.conf"
   local ds_oc_pid="${work}/delta-stats-oc.pid"
   local ds_oc_log="${work}/delta-stats-oc.log"
@@ -7525,7 +7524,6 @@ CONF
 
   start_oc_daemon_with_retry "$ds_oc_conf" "$ds_oc_log" "$upstream_binary" "$ds_oc_pid" "$oc_port"
 
-  # Push to oc-rsync daemon with --stats to get Literal/Matched data lines
   local oc_exit=0
   timeout "$hard_timeout" "$upstream_binary" -av --stats --timeout=10 \
       "${ds_src}/" "rsync://127.0.0.1:${oc_port}/ds/" \
@@ -7539,7 +7537,7 @@ CONF
     return 1
   fi
 
-  # Start upstream daemon for baseline comparison
+  # --- upstream daemon (baseline) ---
   local ds_up_conf="${work}/delta-stats-up.conf"
   local ds_up_pid="${work}/delta-stats-up.pid"
   local ds_up_log="${work}/delta-stats-up.log"
@@ -7568,7 +7566,7 @@ CONF
     return 1
   fi
 
-  # Verify content arrived correctly at oc-rsync destination
+  # --- content verification ---
   if ! cmp -s "$ds_src/data.bin" "$ds_dest_oc/data.bin"; then
     echo "    oc-rsync: data.bin content mismatch"
     return 1
@@ -7578,62 +7576,100 @@ CONF
     return 1
   fi
 
-  # Parse stats from both outputs.
-  # upstream rsync -v prints stats to stdout after the file list.
+  # --- parse stats from both outputs ---
   local oc_out="${log}.delta-stats-oc.out"
   local up_out="${log}.delta-stats-up.out"
 
-  # Extract key stats fields
-  local oc_literal up_literal oc_matched up_matched oc_speedup up_speedup
-  oc_literal=$(grep -oP 'Literal data: \K[0-9,]+' "$oc_out" 2>/dev/null | tr -d ',') || true
-  up_literal=$(grep -oP 'Literal data: \K[0-9,]+' "$up_out" 2>/dev/null | tr -d ',') || true
-  oc_matched=$(grep -oP 'Matched data: \K[0-9,]+' "$oc_out" 2>/dev/null | tr -d ',') || true
-  up_matched=$(grep -oP 'Matched data: \K[0-9,]+' "$up_out" 2>/dev/null | tr -d ',') || true
+  # Helper: extract a numeric stats field (strips commas)
+  _ds_field() {
+    grep -oP "$1: \\K[0-9,]+" "$2" 2>/dev/null | tr -d ',' || true
+  }
+
+  local oc_literal oc_matched oc_total_size oc_speedup
+  local up_literal up_matched up_total_size up_speedup
+  oc_literal=$(_ds_field 'Literal data' "$oc_out")
+  up_literal=$(_ds_field 'Literal data' "$up_out")
+  oc_matched=$(_ds_field 'Matched data' "$oc_out")
+  up_matched=$(_ds_field 'Matched data' "$up_out")
+  oc_total_size=$(_ds_field 'Total file size' "$oc_out")
+  up_total_size=$(_ds_field 'Total file size' "$up_out")
   oc_speedup=$(grep -oP 'speedup is \K[0-9.]+' "$oc_out" 2>/dev/null) || true
   up_speedup=$(grep -oP 'speedup is \K[0-9.]+' "$up_out" 2>/dev/null) || true
 
-  # Verify oc-rsync produced all required stats fields
-  if [[ -z "$oc_literal" ]]; then
-    echo "    oc-rsync: missing 'Literal data' in stats output"
-    echo "    output: $(tail -10 "$oc_out")"
-    return 1
-  fi
-  if [[ -z "$oc_matched" ]]; then
-    echo "    oc-rsync: missing 'Matched data' in stats output"
-    echo "    output: $(tail -10 "$oc_out")"
-    return 1
-  fi
-  if [[ -z "$oc_speedup" ]]; then
-    echo "    oc-rsync: missing 'speedup is' in stats output"
-    echo "    output: $(tail -10 "$oc_out")"
+  # --- verify all required fields are present ---
+  local missing=""
+  [[ -z "$oc_literal" ]]    && missing="${missing} oc:Literal"
+  [[ -z "$oc_matched" ]]    && missing="${missing} oc:Matched"
+  [[ -z "$oc_total_size" ]] && missing="${missing} oc:TotalSize"
+  [[ -z "$oc_speedup" ]]    && missing="${missing} oc:Speedup"
+  [[ -z "$up_literal" ]]    && missing="${missing} up:Literal"
+  [[ -z "$up_matched" ]]    && missing="${missing} up:Matched"
+  [[ -z "$up_total_size" ]] && missing="${missing} up:TotalSize"
+  [[ -z "$up_speedup" ]]    && missing="${missing} up:Speedup"
+
+  if [[ -n "$missing" ]]; then
+    echo "    missing stats fields:${missing}"
+    echo "    oc output (last 15 lines):"
+    tail -15 "$oc_out" 2>/dev/null | sed 's/^/      /'
+    echo "    upstream output (last 15 lines):"
+    tail -15 "$up_out" 2>/dev/null | sed 's/^/      /'
     return 1
   fi
 
-  # Verify upstream also produced stats (sanity check)
-  if [[ -z "$up_literal" || -z "$up_matched" || -z "$up_speedup" ]]; then
-    echo "    upstream: missing stats fields (literal=$up_literal matched=$up_matched speedup=$up_speedup)"
-    echo "    output: $(tail -10 "$up_out")"
-    return 1
-  fi
+  echo "    oc-rsync stats: literal=$oc_literal matched=$oc_matched total_size=$oc_total_size speedup=$oc_speedup"
+  echo "    upstream stats: literal=$up_literal matched=$up_matched total_size=$up_total_size speedup=$up_speedup"
 
-  # Verify oc-rsync reports stats in the same format as upstream.
-  # Content correctness was verified above; here we check stats presence
-  # and format. Delta efficiency (matched > 0) depends on the generator
-  # sending checksum blocks for the basis file - tracked separately.
-  echo "    oc-rsync stats: literal=$oc_literal matched=$oc_matched speedup=$oc_speedup"
-  echo "    upstream stats: literal=$up_literal matched=$up_matched speedup=$up_speedup"
-
-  # Upstream should show delta (matched > 0) since basis file exists
+  # --- verify delta transfer actually happened (both sides) ---
   if [[ "$up_matched" -eq 0 ]]; then
     echo "    upstream: matched data is 0 (test setup issue - basis file not used)"
     return 1
   fi
+  if [[ "$oc_matched" -eq 0 ]]; then
+    echo "    oc-rsync: matched data is 0 (delta transfer did not occur)"
+    return 1
+  fi
+  if [[ "$oc_literal" -eq 0 ]]; then
+    echo "    oc-rsync: literal data is 0 (no new data transferred)"
+    return 1
+  fi
 
-  # Verify oc-rsync literal+matched sums to approximately the file size.
-  # This confirms stats are being computed (not just zeros).
-  local oc_total=$((oc_literal + oc_matched))
-  if [[ "$oc_total" -eq 0 ]]; then
+  # --- verify total file size matches between oc-rsync and upstream ---
+  # Both transfers use the same source files, so total_size must be identical.
+  if [[ "$oc_total_size" -ne "$up_total_size" ]]; then
+    echo "    total file size mismatch: oc=$oc_total_size upstream=$up_total_size"
+    return 1
+  fi
+
+  # --- verify literal + matched is consistent with total file size ---
+  # For the binary file, literal + matched should equal the file size.
+  # The marker.txt is small and transferred whole-file (no basis), adding
+  # a few bytes of literal. Allow 5% tolerance for protocol overhead and
+  # the small text file contribution.
+  local oc_sum=$((oc_literal + oc_matched))
+  local up_sum=$((up_literal + up_matched))
+  if [[ "$oc_sum" -eq 0 ]]; then
     echo "    oc-rsync: literal+matched is 0 (stats not computed)"
+    return 1
+  fi
+
+  # --- verify oc-rsync and upstream literal/matched values are consistent ---
+  # Both daemons receive the same delta from the same client, so the stats
+  # should be close. Allow 10% tolerance to account for block-size alignment
+  # differences between implementations.
+  local diff_literal diff_matched tolerance
+  diff_literal=$(( oc_literal > up_literal ? oc_literal - up_literal : up_literal - oc_literal ))
+  diff_matched=$(( oc_matched > up_matched ? oc_matched - up_matched : up_matched - oc_matched ))
+  # Tolerance: 10% of upstream value, minimum 512 bytes
+  tolerance=$(( up_literal / 10 ))
+  [[ "$tolerance" -lt 512 ]] && tolerance=512
+  if [[ "$diff_literal" -gt "$tolerance" ]]; then
+    echo "    literal data divergence too large: oc=$oc_literal upstream=$up_literal diff=$diff_literal tolerance=$tolerance"
+    return 1
+  fi
+  tolerance=$(( up_matched / 10 ))
+  [[ "$tolerance" -lt 512 ]] && tolerance=512
+  if [[ "$diff_matched" -gt "$tolerance" ]]; then
+    echo "    matched data divergence too large: oc=$oc_matched upstream=$up_matched diff=$diff_matched tolerance=$tolerance"
     return 1
   fi
 
