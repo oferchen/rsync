@@ -6,7 +6,6 @@
 
 use std::fs::File;
 use std::io::{self, Read};
-use std::os::windows::io::AsRawHandle;
 use std::path::Path;
 
 use windows_sys::Win32::Foundation::{HANDLE, TRUE};

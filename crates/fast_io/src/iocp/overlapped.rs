@@ -20,6 +20,7 @@ pub(crate) struct OverlappedOp {
     /// For writes, this contains the data to be written.
     pub(crate) buffer: Vec<u8>,
     /// Number of valid bytes in the buffer (for writes).
+    #[allow(dead_code)]
     pub(crate) valid_bytes: usize,
 }
 
@@ -74,11 +75,13 @@ impl OverlappedOp {
     }
 
     /// Returns the buffer capacity.
+    #[allow(dead_code)]
     pub(crate) fn buffer_capacity(&self) -> usize {
         self.buffer.len()
     }
 
     /// Sets the file offset for this operation.
+    #[allow(dead_code)]
     pub(crate) fn set_offset(self: &mut Pin<Box<Self>>, offset: u64) {
         set_offset(self, offset);
     }

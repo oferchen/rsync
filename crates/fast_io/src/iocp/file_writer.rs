@@ -76,7 +76,7 @@ impl IocpWriter {
         size: u64,
         config: &IocpConfig,
     ) -> io::Result<Self> {
-        let mut writer = Self::create(path, config)?;
+        let writer = Self::create(path, config)?;
 
         // Preallocate by setting end of file
         // SAFETY: handle is valid, SetFilePointerEx and SetEndOfFile are
