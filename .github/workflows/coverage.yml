@@ -56,13 +56,16 @@ jobs:
         with:
           tool: cargo-llvm-cov,cargo-nextest
 
-      - name: Generate LCOV coverage report
-        run: cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info
+      - name: Generate LCOV coverage report and enforce threshold
+        id: coverage
+        run: cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 80
 
       - name: Generate HTML coverage report
+        if: always() && steps.coverage.outcome != 'skipped'
         run: cargo llvm-cov report --html --output-dir coverage-html
 
       - name: Create step summary
+        if: always() && steps.coverage.outcome != 'skipped'
         run: |
           set -euo pipefail
           SUMMARY=$(cargo llvm-cov report 2>&1)
@@ -79,6 +82,7 @@ jobs:
           fi
 
       - name: Upload LCOV artifact
+        if: always() && steps.coverage.outcome != 'skipped'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: lcov-report
@@ -86,11 +90,9 @@ jobs:
           retention-days: 30
 
       - name: Upload HTML coverage report
+        if: always() && steps.coverage.outcome != 'skipped'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-html
           path: coverage-html/
           retention-days: 30
-
-      - name: Enforce line coverage threshold
-        run: cargo llvm-cov report --fail-under-lines 80
