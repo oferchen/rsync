@@ -16,7 +16,6 @@ use super::super::super::config::{
     TransferTimeout,
 };
 use super::{RemoteRole, SecludedInvocation};
-use compress::algorithm::CompressionAlgorithm;
 use transfer::setup::build_capability_string;
 
 /// Builder for constructing remote rsync `--server` invocation arguments.
