@@ -123,6 +123,7 @@ pub fn negotiate_capabilities(
 ///
 /// When both overrides are `None`, behaves identically to
 /// [`negotiate_capabilities`].
+#[allow(clippy::too_many_arguments)]
 pub fn negotiate_capabilities_with_override(
     protocol: ProtocolVersion,
     stdin: &mut dyn Read,
