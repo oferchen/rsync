@@ -434,8 +434,19 @@ impl SshCommand {
     }
 
     /// Checks whether any existing option already specifies the `-c` cipher flag.
+    ///
+    /// Detects three forms:
+    /// - Split: `-c` as a standalone element followed by the cipher name in
+    ///   the next element.
+    /// - Combined: `-caes128-ctr` where the cipher name is concatenated
+    ///   directly after `-c` without whitespace. SSH accepts this form.
+    /// - Compound: `-c aes128-ctr` as a single unsplit string (e.g., from a
+    ///   `push_option` call that did not split on whitespace).
     fn options_contain_cipher_flag(&self) -> bool {
-        self.options.iter().any(|opt| opt == "-c")
+        self.options.iter().any(|opt| {
+            let s = opt.to_string_lossy();
+            s == "-c" || (s.starts_with("-c") && s.len() > 2)
+        })
     }
 
     /// Determines whether SSH keepalive options should be injected.
