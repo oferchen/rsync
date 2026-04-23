@@ -1401,6 +1401,89 @@ fn no_aes_gcm_injection_when_explicitly_disabled() {
 }
 
 #[test]
+fn skips_cipher_injection_when_combined_cipher_option_present() {
+    // User specified `-caes128-ctr` (combined form without space) via push_option.
+    // The cipher flag detection must recognise this as a user-specified cipher.
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-caes128-ctr");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.contains(&"aes128-gcm@openssh.com,aes256-gcm@openssh.com".to_owned()),
+        "should not inject AES-GCM when user specified combined -c form: {rendered:?}"
+    );
+    assert!(
+        rendered.contains(&"-caes128-ctr".to_owned()),
+        "user combined cipher option should be preserved: {rendered:?}"
+    );
+}
+
+#[test]
+fn skips_cipher_injection_when_compound_cipher_option_present() {
+    // User specified `-c aes128-ctr` as a single unsplit option string.
+    // This can happen when push_option is called without splitting on whitespace.
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-c aes128-ctr");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.contains(&"aes128-gcm@openssh.com,aes256-gcm@openssh.com".to_owned()),
+        "should not inject AES-GCM when user specified compound -c form: {rendered:?}"
+    );
+}
+
+#[test]
+fn skips_cipher_injection_when_remote_shell_contains_cipher() {
+    // User specified `-e "ssh -c aes128-ctr"`. The parser splits this into
+    // separate tokens, so `-c` appears as a standalone option element.
+    let mut command = SshCommand::new("example.com");
+    command
+        .configure_remote_shell(OsStr::new("ssh -c aes128-ctr"))
+        .expect("valid remote shell");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.contains(&"aes128-gcm@openssh.com,aes256-gcm@openssh.com".to_owned()),
+        "should not inject AES-GCM when remote shell specifies -c: {rendered:?}"
+    );
+    assert!(
+        rendered.contains(&"-c".to_owned()),
+        "user -c flag should be preserved: {rendered:?}"
+    );
+    assert!(
+        rendered.contains(&"aes128-ctr".to_owned()),
+        "user cipher name should be preserved: {rendered:?}"
+    );
+}
+
+#[test]
+fn skips_cipher_injection_when_remote_shell_has_combined_cipher() {
+    // User specified `-e "ssh -caes256-ctr"` (combined form in remote shell).
+    let mut command = SshCommand::new("example.com");
+    command
+        .configure_remote_shell(OsStr::new("ssh -caes256-ctr"))
+        .expect("valid remote shell");
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.contains(&"aes128-gcm@openssh.com,aes256-gcm@openssh.com".to_owned()),
+        "should not inject AES-GCM when remote shell has combined -c: {rendered:?}"
+    );
+    assert!(
+        rendered.contains(&"-caes256-ctr".to_owned()),
+        "user combined cipher should be preserved: {rendered:?}"
+    );
+}
+
+#[test]
 fn connect_timeout_injected_by_default() {
     let command = SshCommand::new("example.com");
     let (_, args) = command.command_parts_for_testing();
