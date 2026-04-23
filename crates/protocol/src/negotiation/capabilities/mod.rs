@@ -32,7 +32,8 @@ mod negotiate;
 
 pub use algorithms::{ChecksumAlgorithm, CompressionAlgorithm};
 pub use negotiate::{
-    NegotiationResult, negotiate_capabilities, negotiate_capabilities_with_override,
+    NegotiationConfig, NegotiationResult, negotiate_capabilities,
+    negotiate_capabilities_with_override,
 };
 
 #[cfg(test)]

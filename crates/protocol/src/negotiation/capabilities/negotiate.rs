@@ -8,6 +8,36 @@ use super::algorithms::{
     ChecksumAlgorithm, CompressionAlgorithm, SUPPORTED_CHECKSUMS, supported_compressions,
 };
 
+/// Configuration for capability negotiation.
+///
+/// Bundles negotiation context flags and optional algorithm overrides
+/// into a single struct, following the Parameter Object pattern to keep
+/// function signatures concise.
+#[derive(Debug, Clone, Copy)]
+pub struct NegotiationConfig {
+    /// Whether to perform negotiation (false = use defaults without I/O).
+    ///
+    /// Set to false when the peer lacks `CF_VARINT_FLIST_FLAGS` ('v' capability)
+    /// and does not support `negotiate_the_strings()`.
+    pub do_negotiation: bool,
+    /// Whether compression negotiation is enabled (true when `-z` is active).
+    pub send_compression: bool,
+    /// Whether this is daemon mode (vs SSH mode).
+    pub is_daemon_mode: bool,
+    /// Whether this is the server side.
+    pub is_server: bool,
+    /// Optional user-specified checksum algorithm override (`--checksum-choice`).
+    ///
+    /// When set, the advertised checksum list is replaced with just this
+    /// algorithm, and selection is forced to it if the peer supports it.
+    pub checksum_override: Option<ChecksumAlgorithm>,
+    /// Optional user-specified compression algorithm override (`--compress-choice`).
+    ///
+    /// When set, the compression vstring exchange is skipped and this algorithm
+    /// is used directly - matching upstream `compat.c:543`.
+    pub compression_override: Option<CompressionAlgorithm>,
+}
+
 /// Outcome of the protocol 30+ capability negotiation.
 ///
 /// After both peers exchange their supported algorithm lists via the
@@ -97,50 +127,68 @@ pub fn negotiate_capabilities(
         protocol,
         stdin,
         stdout,
-        do_negotiation,
-        send_compression,
-        is_daemon_mode,
-        is_server,
-        None,
+        &NegotiationConfig {
+            do_negotiation,
+            send_compression,
+            is_daemon_mode,
+            is_server,
+            checksum_override: None,
+            compression_override: None,
+        },
     )
 }
 
-/// Negotiates checksum and compression algorithms with the peer, with an
-/// optional user-specified checksum algorithm override.
+/// Negotiates checksum and compression algorithms with the peer, with
+/// optional user-specified algorithm overrides via [`NegotiationConfig`].
 ///
-/// When `checksum_override` is `Some`, the advertised checksum list is replaced
-/// with just the requested algorithm (mirroring upstream rsync's
+/// When `config.checksum_override` is `Some`, the advertised checksum list is
+/// replaced with just the requested algorithm (mirroring upstream rsync's
 /// `--checksum-choice` behavior from `options.c:valid_checksums`). The override
 /// also forces selection of that algorithm from the peer's list, returning an
 /// error if the peer does not support it.
 ///
-/// When `checksum_override` is `None`, behaves identically to
+/// When `config.compression_override` is `Some`, the compression vstring
+/// exchange is skipped entirely (matching upstream `compat.c:543` which only
+/// exchanges compression vstrings when `do_compression && !compress_choice`).
+/// The override algorithm is used directly. The caller is responsible for
+/// ensuring `send_compression` is `false` when a compression override is
+/// active.
+///
+/// When both overrides are `None`, behaves identically to
 /// [`negotiate_capabilities`].
 pub fn negotiate_capabilities_with_override(
     protocol: ProtocolVersion,
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
-    do_negotiation: bool,
-    send_compression: bool,
-    is_daemon_mode: bool,
-    is_server: bool,
-    checksum_override: Option<ChecksumAlgorithm>,
+    config: &NegotiationConfig,
 ) -> io::Result<NegotiationResult> {
+    let NegotiationConfig {
+        do_negotiation,
+        send_compression,
+        is_daemon_mode,
+        is_server,
+        checksum_override,
+        compression_override,
+    } = *config;
     // Protocol < 30 doesn't support negotiation, use defaults
     if protocol.uses_fixed_encoding() {
         // When user forced a checksum on a legacy protocol, honour it directly
         // since there is no wire negotiation to perform.
         let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD4);
+        // upstream: compat.c:194-195 - legacy protocols always use zlib
+        // unless the user explicitly chose an algorithm.
+        let compression = compression_override.unwrap_or(CompressionAlgorithm::Zlib);
         debug_log!(
             Proto,
             1,
-            "protocol {} uses legacy encoding, using checksum={} compression=Zlib",
+            "protocol {} uses legacy encoding, using checksum={} compression={}",
             protocol.as_u8(),
-            checksum.as_str()
+            checksum.as_str(),
+            compression.as_str()
         );
         return Ok(NegotiationResult {
             checksum,
-            compression: CompressionAlgorithm::Zlib,
+            compression,
         });
     }
 
@@ -157,11 +205,13 @@ pub fn negotiate_capabilities_with_override(
         // upstream: compat.c:194 — when -z is active but no vstring negotiation,
         // parse_compress_choice() defaults to CPRES_ZLIB.
         let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD5);
-        let compression = if send_compression {
+        // upstream: compat.c:194 - when no vstring negotiation and no explicit
+        // choice, default to zlib. When compression_override is set, use it.
+        let compression = compression_override.unwrap_or(if send_compression {
             CompressionAlgorithm::Zlib
         } else {
             CompressionAlgorithm::None
-        };
+        });
         debug_log!(
             Proto,
             1,
@@ -251,7 +301,12 @@ pub fn negotiate_capabilities_with_override(
         None => choose_checksum_algorithm(&remote_checksum_list, is_server)?,
     };
 
-    let compression = if let Some(ref list) = remote_compression_list {
+    // upstream: compat.c:819 parse_compress_choice(1) - when the user
+    // specified --compress-choice, the vstring exchange was skipped and the
+    // override is used directly. When no override, use the negotiated list.
+    let compression = if let Some(forced) = compression_override {
+        forced
+    } else if let Some(ref list) = remote_compression_list {
         choose_compression_algorithm(list, is_server)?
     } else {
         CompressionAlgorithm::None

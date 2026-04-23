@@ -90,6 +90,13 @@ pub struct ClientConfig {
     pub(super) omit_link_times: bool,
     pub(super) compress: bool,
     pub(super) compression_algorithm: CompressionAlgorithm,
+    /// Whether the user explicitly specified `--compress-choice`.
+    ///
+    /// Distinguishes "user chose zstd" from "zstd is the default."
+    /// Required for correct forwarding to the remote peer - upstream
+    /// `options.c:2800-2805` only sends `--compress-choice` / `--new-compress`
+    /// / `--old-compress` when the user explicitly selected an algorithm.
+    pub(super) explicit_compress_choice: bool,
     pub(super) compression_level: Option<CompressionLevel>,
     pub(super) compression_setting: CompressionSetting,
     pub(super) skip_compress: SkipCompressList,
@@ -214,6 +221,7 @@ impl Default for ClientConfig {
             omit_link_times: false,
             compress: false,
             compression_algorithm: CompressionAlgorithm::default_algorithm(),
+            explicit_compress_choice: false,
             compression_level: None,
             compression_setting: CompressionSetting::default(),
             skip_compress: SkipCompressList::default(),

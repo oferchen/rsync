@@ -23,6 +23,21 @@ impl ClientConfig {
         self.compression_algorithm
     }
 
+    /// Returns whether the user explicitly specified `--compress-choice`.
+    ///
+    /// When `true`, the algorithm was set via `--compress-choice=ALGO`,
+    /// `--new-compress`, or `--old-compress`. When `false`, the algorithm
+    /// is the build-time default (zstd > lz4 > zlib).
+    ///
+    /// This distinction is required for correct argument forwarding to
+    /// the remote peer - upstream `options.c:2800-2805` only sends
+    /// `--compress-choice` / `--new-compress` / `--old-compress` when
+    /// the user explicitly selected an algorithm.
+    #[must_use]
+    pub const fn explicit_compress_choice(&self) -> bool {
+        self.explicit_compress_choice
+    }
+
     /// Returns the compression setting that should apply when compression is enabled.
     #[must_use]
     #[doc(alias = "--compress-level")]
