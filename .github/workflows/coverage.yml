@@ -57,13 +57,10 @@ jobs:
           tool: cargo-llvm-cov,cargo-nextest
 
       - name: Generate LCOV coverage report
-        run: cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info
+        run: cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 95
 
       - name: Generate HTML coverage report
         run: cargo llvm-cov report --html --output-dir coverage-html
-
-      - name: Enforce 95% line coverage threshold
-        run: cargo llvm-cov report --workspace --fail-under-lines 95
 
       - name: Create step summary
         run: |
