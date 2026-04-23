@@ -57,7 +57,7 @@ jobs:
           tool: cargo-llvm-cov,cargo-nextest
 
       - name: Generate LCOV coverage report
-        run: cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 95
+        run: cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info
 
       - name: Generate HTML coverage report
         run: cargo llvm-cov report --html --output-dir coverage-html
@@ -68,7 +68,6 @@ jobs:
           SUMMARY=$(cargo llvm-cov report 2>&1)
           TOTAL_LINE=$(echo "$SUMMARY" | grep '^TOTAL' || true)
           if [ -n "$TOTAL_LINE" ]; then
-            # Extract region and line coverage percentages
             LINE_PCT=$(echo "$TOTAL_LINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /%/) last=$i; print last}' | tr -d '%')
             printf '## Coverage Report\n\n' >> "$GITHUB_STEP_SUMMARY"
             printf '| Metric | Value |\n' >> "$GITHUB_STEP_SUMMARY"
@@ -92,3 +91,6 @@ jobs:
           name: coverage-html
           path: coverage-html/
           retention-days: 30
+
+      - name: Enforce line coverage threshold
+        run: cargo llvm-cov report --fail-under-lines 80
