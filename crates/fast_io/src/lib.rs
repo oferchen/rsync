@@ -79,6 +79,7 @@
 
 pub mod cached_sort;
 pub mod parallel;
+pub mod temp_file_strategy;
 pub mod traits;
 pub mod zero_detect;
 
@@ -139,6 +140,11 @@ pub use mmap_reader::MmapReader;
 pub use o_tmpfile::{
     AnonymousTempFile, OTmpfileSupport, TempFileResult, link_anonymous_tmpfile,
     o_tmpfile_available, o_tmpfile_probe, open_anonymous_tmpfile, open_temp_file,
+};
+#[cfg(target_os = "linux")]
+pub use temp_file_strategy::AnonymousTempFileStrategy;
+pub use temp_file_strategy::{
+    DefaultTempFileStrategy, NamedTempFileStrategy, TempFileHandle, TempFileKind, TempFileStrategy,
 };
 
 pub use io_uring::{
