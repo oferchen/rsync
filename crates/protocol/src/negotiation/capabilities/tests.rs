@@ -2561,3 +2561,89 @@ fn test_choose_compression_client_picks_best_local_preference() {
     let result = choose_compression_algorithm("zlib zlibx none", false).unwrap();
     assert_eq!(result, CompressionAlgorithm::ZlibX);
 }
+
+// -- compression_override tests for negotiate_capabilities_with_override --
+
+#[test]
+fn compression_override_used_on_legacy_protocol() {
+    // upstream: compat.c:194-195 - compression_override is honoured even on
+    // legacy protocols where no vstring exchange occurs.
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities_with_override(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        &NegotiationConfig {
+            do_negotiation: true,
+            send_compression: true,
+            is_daemon_mode: false,
+            is_server: true,
+            checksum_override: None,
+            compression_override: Some(CompressionAlgorithm::Zstd),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.compression, CompressionAlgorithm::Zstd);
+    assert!(stdout.is_empty(), "no wire data on legacy protocol");
+}
+
+#[test]
+fn compression_override_used_without_negotiation() {
+    // When do_negotiation=false and compression_override is set, the override
+    // should be used directly without any wire exchange.
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities_with_override(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        &NegotiationConfig {
+            do_negotiation: false,
+            send_compression: false, // override bypasses this
+            is_daemon_mode: false,
+            is_server: true,
+            checksum_override: None,
+            compression_override: Some(CompressionAlgorithm::LZ4),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.compression, CompressionAlgorithm::LZ4);
+    assert!(stdout.is_empty(), "no wire data without negotiation");
+}
+
+#[test]
+fn compression_override_none_falls_through_to_normal_negotiation() {
+    // When compression_override is None, normal vstring negotiation is used.
+    // Protocol 29 defaults to Zlib when no override is present.
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities_with_override(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        &NegotiationConfig {
+            do_negotiation: true,
+            send_compression: true,
+            is_daemon_mode: false,
+            is_server: true,
+            checksum_override: None,
+            compression_override: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.compression,
+        CompressionAlgorithm::Zlib,
+        "without override, legacy protocol defaults to Zlib"
+    );
+}

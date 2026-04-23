@@ -1239,6 +1239,29 @@ fn compression_algorithm_sets_value() {
 }
 
 #[test]
+fn compression_algorithm_marks_explicit_choice() {
+    // upstream: options.c:2800-2805 - explicit compress_choice is forwarded
+    // to the remote peer. The explicit flag distinguishes "user chose zstd"
+    // from "zstd is the default."
+    let config = builder()
+        .compression_algorithm(CompressionAlgorithm::Zstd)
+        .build();
+    assert!(
+        config.explicit_compress_choice(),
+        "calling compression_algorithm() should mark choice as explicit"
+    );
+}
+
+#[test]
+fn default_config_has_no_explicit_compress_choice() {
+    let config = builder().build();
+    assert!(
+        !config.explicit_compress_choice(),
+        "default config should not have explicit compress choice"
+    );
+}
+
+#[test]
 fn compression_setting_enabled() {
     let setting = CompressionSetting::level(CompressionLevel::Default);
     let config = builder().compression_setting(setting).build();

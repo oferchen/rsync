@@ -98,11 +98,11 @@ fn apply_common_daemon_config(
     server_config.checksum_choice = config.checksum_protocol_override();
     server_config.connection.compression_level = config.compression_level();
 
-    // upstream: compat.c:543,819 - when --compress-choice is set, bypass vstring
-    // negotiation and use the explicit algorithm. Convert from compress crate enum
-    // to protocol crate enum via the canonical wire name.
-    let algo = config.compression_algorithm();
-    if algo != compress::algorithm::CompressionAlgorithm::default_algorithm() {
+    // upstream: compat.c:543,819 - when --compress-choice is explicitly set,
+    // bypass vstring negotiation and use the specified algorithm. Convert from
+    // compress crate enum to protocol crate enum via the canonical wire name.
+    if config.explicit_compress_choice() {
+        let algo = config.compression_algorithm();
         if let Ok(proto_algo) = protocol::CompressionAlgorithm::parse(algo.name()) {
             server_config.connection.compress_choice = Some(proto_algo);
         }
