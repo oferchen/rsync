@@ -195,6 +195,20 @@ pub use fuzzy::{FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, compute_
 /// Hardlink detection and resolution.
 pub use hardlink::{HardlinkAction, HardlinkGroup, HardlinkKey, HardlinkResolver, HardlinkTracker};
 
+/// Buffer pool for cross-crate I/O buffer reuse.
+///
+/// The pool uses a two-level cache (thread-local fast path + central Mutex) to
+/// eliminate per-file allocation overhead on the hot transfer path. Buffers are
+/// returned automatically via RAII guards on drop.
+///
+/// Use [`global_buffer_pool`] for the process-wide singleton, or create a
+/// dedicated [`BufferPool`] for isolated subsystems.
+pub use local_copy::{
+    BorrowedBufferGuard, BufferAllocator, BufferGuard, BufferPool, BufferPoolStats,
+    DefaultAllocator, GlobalBufferPoolConfig, ThroughputTracker, global_buffer_pool,
+    init_global_buffer_pool,
+};
+
 /// Local filesystem copy operations.
 pub use local_copy::{
     BuilderError, DeleteTiming, HardlinkApplyResult, HardlinkApplyTracker, LocalCopyArgumentError,
