@@ -77,6 +77,10 @@ pub trait CapabilityNegotiator {
     /// returns defaults without any wire I/O. When true, both sides exchange
     /// their supported algorithm lists via vstrings and select the first
     /// mutually supported algorithm.
+    ///
+    /// When `compression_override` is `Some`, the compression vstring exchange
+    /// is skipped and the specified algorithm is used directly - matching
+    /// upstream `compat.c:543` (`do_compression && !compress_choice`).
     fn negotiate(
         &self,
         protocol: ProtocolVersion,
@@ -86,6 +90,7 @@ pub trait CapabilityNegotiator {
         send_compression: bool,
         is_daemon_mode: bool,
         is_server: bool,
+        compression_override: Option<protocol::CompressionAlgorithm>,
     ) -> io::Result<NegotiationResult>;
 }
 
@@ -179,8 +184,9 @@ impl CapabilityNegotiator for RsyncNegotiator {
         send_compression: bool,
         is_daemon_mode: bool,
         is_server: bool,
+        compression_override: Option<protocol::CompressionAlgorithm>,
     ) -> io::Result<NegotiationResult> {
-        protocol::negotiate_capabilities(
+        protocol::negotiate_capabilities_with_override(
             protocol,
             stdin,
             stdout,
@@ -188,6 +194,8 @@ impl CapabilityNegotiator for RsyncNegotiator {
             send_compression,
             is_daemon_mode,
             is_server,
+            None,
+            compression_override,
         )
     }
 }

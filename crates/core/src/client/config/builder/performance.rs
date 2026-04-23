@@ -36,10 +36,18 @@ impl ClientConfigBuilder {
         self
     }
 
-    builder_setter! {
-        /// Overrides the compression algorithm used when compression is enabled.
-        #[doc(alias = "--compress-choice")]
-        compression_algorithm: CompressionAlgorithm,
+    /// Overrides the compression algorithm used when compression is enabled.
+    ///
+    /// Calling this method marks the choice as explicit, so the invocation
+    /// builder will forward it to the remote peer via `--compress-choice`,
+    /// `--new-compress`, or `--old-compress` - matching upstream
+    /// `options.c:2800-2805`.
+    #[must_use]
+    #[doc(alias = "--compress-choice")]
+    pub const fn compression_algorithm(mut self, value: CompressionAlgorithm) -> Self {
+        self.compression_algorithm = value;
+        self.explicit_compress_choice = true;
+        self
     }
 
     /// Sets the compression level that should apply when compression is enabled.

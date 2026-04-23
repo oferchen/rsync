@@ -102,11 +102,12 @@ pub fn negotiate_capabilities(
         is_daemon_mode,
         is_server,
         None,
+        None,
     )
 }
 
-/// Negotiates checksum and compression algorithms with the peer, with an
-/// optional user-specified checksum algorithm override.
+/// Negotiates checksum and compression algorithms with the peer, with
+/// optional user-specified algorithm overrides.
 ///
 /// When `checksum_override` is `Some`, the advertised checksum list is replaced
 /// with just the requested algorithm (mirroring upstream rsync's
@@ -114,7 +115,13 @@ pub fn negotiate_capabilities(
 /// also forces selection of that algorithm from the peer's list, returning an
 /// error if the peer does not support it.
 ///
-/// When `checksum_override` is `None`, behaves identically to
+/// When `compression_override` is `Some`, the compression vstring exchange is
+/// skipped entirely (matching upstream `compat.c:543` which only exchanges
+/// compression vstrings when `do_compression && !compress_choice`). The
+/// override algorithm is used directly. The caller is responsible for ensuring
+/// `send_compression` is `false` when a compression override is active.
+///
+/// When both overrides are `None`, behaves identically to
 /// [`negotiate_capabilities`].
 pub fn negotiate_capabilities_with_override(
     protocol: ProtocolVersion,
@@ -125,22 +132,27 @@ pub fn negotiate_capabilities_with_override(
     is_daemon_mode: bool,
     is_server: bool,
     checksum_override: Option<ChecksumAlgorithm>,
+    compression_override: Option<CompressionAlgorithm>,
 ) -> io::Result<NegotiationResult> {
     // Protocol < 30 doesn't support negotiation, use defaults
     if protocol.uses_fixed_encoding() {
         // When user forced a checksum on a legacy protocol, honour it directly
         // since there is no wire negotiation to perform.
         let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD4);
+        // upstream: compat.c:194-195 - legacy protocols always use zlib
+        // unless the user explicitly chose an algorithm.
+        let compression = compression_override.unwrap_or(CompressionAlgorithm::Zlib);
         debug_log!(
             Proto,
             1,
-            "protocol {} uses legacy encoding, using checksum={} compression=Zlib",
+            "protocol {} uses legacy encoding, using checksum={} compression={}",
             protocol.as_u8(),
-            checksum.as_str()
+            checksum.as_str(),
+            compression.as_str()
         );
         return Ok(NegotiationResult {
             checksum,
-            compression: CompressionAlgorithm::Zlib,
+            compression,
         });
     }
 
@@ -157,11 +169,13 @@ pub fn negotiate_capabilities_with_override(
         // upstream: compat.c:194 — when -z is active but no vstring negotiation,
         // parse_compress_choice() defaults to CPRES_ZLIB.
         let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD5);
-        let compression = if send_compression {
+        // upstream: compat.c:194 - when no vstring negotiation and no explicit
+        // choice, default to zlib. When compression_override is set, use it.
+        let compression = compression_override.unwrap_or(if send_compression {
             CompressionAlgorithm::Zlib
         } else {
             CompressionAlgorithm::None
-        };
+        });
         debug_log!(
             Proto,
             1,
@@ -251,7 +265,12 @@ pub fn negotiate_capabilities_with_override(
         None => choose_checksum_algorithm(&remote_checksum_list, is_server)?,
     };
 
-    let compression = if let Some(ref list) = remote_compression_list {
+    // upstream: compat.c:819 parse_compress_choice(1) - when the user
+    // specified --compress-choice, the vstring exchange was skipped and the
+    // override is used directly. When no override, use the negotiated list.
+    let compression = if let Some(forced) = compression_override {
+        forced
+    } else if let Some(ref list) = remote_compression_list {
         choose_compression_algorithm(list, is_server)?
     } else {
         CompressionAlgorithm::None
