@@ -134,24 +134,24 @@ pub fn setup_protocol_with<'a>(
                 negotiator,
             );
 
-            let mut algorithms = negotiator.negotiate(
+            // upstream: compat.c:819 parse_compress_choice(1) - when an
+            // explicit compress_choice is set (--compress-choice=ALGO,
+            // --new-compress, --old-compress), pass it as a compression
+            // override so the protocol layer uses it directly without
+            // vstring exchange.
+            let algorithms = negotiator.negotiate(
                 config.protocol,
                 stdin,
                 stdout,
-                do_negotiation,
-                send_compression,
-                config.is_daemon_mode,
-                config.is_server,
+                &protocol::NegotiationConfig {
+                    do_negotiation,
+                    send_compression,
+                    is_daemon_mode: config.is_daemon_mode,
+                    is_server: config.is_server,
+                    checksum_override: None,
+                    compression_override: config.compress_choice,
+                },
             )?;
-
-            // upstream: compat.c:819 parse_compress_choice(1) - when an
-            // explicit compress_choice is set (--compress-choice=ALGO,
-            // --new-compress, --old-compress), override the negotiated
-            // compression with the specified algorithm. The vstring exchange
-            // was skipped, so the negotiation result has compression=None.
-            if let Some(algo) = config.compress_choice {
-                algorithms.compression = algo;
-            }
 
             (Some(compat_flags), Some(algorithms))
         } else {

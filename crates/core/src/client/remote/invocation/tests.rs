@@ -1261,28 +1261,47 @@ fn includes_compress_level_default() {
 }
 
 #[test]
-fn includes_compress_choice_for_non_default_algorithm() {
-    // Use zlib which is non-default (default is zstd per upstream precedence)
+fn includes_old_compress_for_explicit_zlib() {
+    // upstream: options.c:2802 - explicit zlib sent as --old-compress
     let config = ClientConfig::builder()
         .compression_algorithm(CompressionAlgorithm::Zlib)
         .build();
     let args = build_sender_args(&config);
     assert!(
-        args.iter()
-            .any(|a| a.starts_with("--compress-choice=") && a.contains("zlib")),
-        "expected --compress-choice=zlib in args: {args:?}"
+        args.iter().any(|a| a == "--old-compress"),
+        "expected --old-compress for explicit zlib in args: {args:?}"
     );
 }
 
 #[test]
-fn omits_compress_choice_for_default_algorithm() {
+fn omits_compress_choice_when_not_explicitly_set() {
+    // Default config (no explicit --compress-choice) should not send any
+    // compress-choice argument, even if the default algorithm is non-zlib.
+    let config = ClientConfig::builder().build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a.starts_with("--compress-choice=")
+            || a == "--old-compress"
+            || a == "--new-compress"),
+        "should not emit compress-choice args when not explicitly set: {args:?}"
+    );
+}
+
+#[test]
+fn includes_compress_choice_for_explicit_default_algorithm() {
+    // Even when the user explicitly chooses the default algorithm (e.g.
+    // --compress-choice=zstd when zstd is the default), it should still
+    // be forwarded to the remote side.
     let config = ClientConfig::builder()
         .compression_algorithm(CompressionAlgorithm::default_algorithm())
         .build();
     let args = build_sender_args(&config);
+    let has_compress_arg = args.iter().any(|a| {
+        a.starts_with("--compress-choice=") || a == "--old-compress" || a == "--new-compress"
+    });
     assert!(
-        !args.iter().any(|a| a.starts_with("--compress-choice=")),
-        "should not emit --compress-choice for default algorithm: {args:?}"
+        has_compress_arg,
+        "explicitly choosing the default algorithm should still forward it: {args:?}"
     );
 }
 
@@ -1297,6 +1316,22 @@ fn includes_compress_choice_for_lz4() {
         args.iter()
             .any(|a| a.starts_with("--compress-choice=") && a.contains("lz4")),
         "expected --compress-choice=lz4 in args: {args:?}"
+    );
+}
+
+#[test]
+fn includes_new_compress_for_explicit_zlibx() {
+    // upstream: options.c:2800 - zlibx sent as --new-compress
+    let config = ClientConfig::builder()
+        .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zlib)
+        .build();
+    // Note: the compress crate maps both "zlib" and "zlibx" to Zlib.
+    // The wire name of CompressionAlgorithm::Zlib is "zlib", so this
+    // should emit --old-compress, not --new-compress.
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--old-compress"),
+        "expected --old-compress for zlib algorithm: {args:?}"
     );
 }
 
@@ -2022,9 +2057,14 @@ fn all_flags_enabled_produces_valid_invocation() {
     }
 
     // Verify args with values using prefix matching
+    // upstream: options.c:2802 - explicit zlib is sent as --old-compress
+    assert!(
+        args.iter().any(|a| a == "--old-compress"),
+        "all-flags test: expected --old-compress for explicit zlib: {args:?}"
+    );
+
     let expected_prefixed = [
         "--checksum-choice=",
-        "--compress-choice=",
         "--bwlimit=",
         "--partial-dir=",
         "--temp-dir=",

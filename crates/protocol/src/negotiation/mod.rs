@@ -21,8 +21,8 @@ mod sniffer;
 mod types;
 
 pub use capabilities::{
-    ChecksumAlgorithm, CompressionAlgorithm, NegotiationResult, negotiate_capabilities,
-    negotiate_capabilities_with_override,
+    ChecksumAlgorithm, CompressionAlgorithm, NegotiationConfig, NegotiationResult,
+    negotiate_capabilities, negotiate_capabilities_with_override,
 };
 pub use detector::NegotiationPrologueDetector;
 pub use sniffer::{

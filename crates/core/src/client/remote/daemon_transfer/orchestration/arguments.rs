@@ -164,13 +164,16 @@ pub(super) fn build_full_daemon_args(
         args.push("--log-format=%i".to_owned());
     }
 
-    // --compress-choice=ALGO (non-default compression algorithm)
-    // upstream: options.c:2800-2805 - sent when compress_choice is set to a
-    // non-default algorithm. Mirrors the SSH invocation builder logic.
-    {
+    // upstream: options.c:2800-2805 - compress choice forwarding.
+    // Only sent when the user explicitly specified --compress-choice,
+    // --new-compress, or --old-compress.
+    if config.explicit_compress_choice() {
         let algo = config.compression_algorithm();
-        if algo != compress::algorithm::CompressionAlgorithm::default_algorithm() {
-            args.push(format!("--compress-choice={}", algo.name()));
+        let name = algo.name();
+        match name {
+            "zlibx" => args.push("--new-compress".to_owned()),
+            "zlib" => args.push("--old-compress".to_owned()),
+            _ => args.push(format!("--compress-choice={name}")),
         }
     }
 

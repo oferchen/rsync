@@ -16,7 +16,6 @@ use super::super::super::config::{
     TransferTimeout,
 };
 use super::{RemoteRole, SecludedInvocation};
-use compress::algorithm::CompressionAlgorithm;
 use transfer::setup::build_capability_string;
 
 /// Builder for constructing remote rsync `--server` invocation arguments.
@@ -235,11 +234,22 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(format!("--compress-level={numeric}")));
         }
 
-        // --compress-choice=ALGO (non-default compression algorithm)
-        // upstream: options.c - compress_choice forwarded when not the default zlib
-        let algo = self.config.compression_algorithm();
-        if algo != CompressionAlgorithm::default_algorithm() {
-            args.push(OsString::from(format!("--compress-choice={}", algo.name())));
+        // upstream: options.c:2800-2805 - compress choice forwarding.
+        // Only sent when the user explicitly specified --compress-choice,
+        // --new-compress, or --old-compress. The wire format depends on the
+        // algorithm: zlibx uses --new-compress, explicit zlib uses
+        // --old-compress, and other algorithms use --compress-choice=ALGO.
+        if self.config.explicit_compress_choice() {
+            let algo = self.config.compression_algorithm();
+            let name = algo.name();
+            match name {
+                // upstream: compat.c:100 - "zlibx" is the new-compress alias
+                "zlibx" => args.push(OsString::from("--new-compress")),
+                // upstream: options.c:2802 - explicit zlib sent as --old-compress
+                "zlib" => args.push(OsString::from("--old-compress")),
+                // upstream: options.c:2804-2805 - other algorithms
+                _ => args.push(OsString::from(format!("--compress-choice={name}"))),
+            }
         }
 
         // --checksum-choice=ALGO

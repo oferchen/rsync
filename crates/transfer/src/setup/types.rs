@@ -199,6 +199,19 @@ impl<'a> ProtocolSetupConfig<'a> {
         self
     }
 
+    /// Sets the explicit compression algorithm override.
+    ///
+    /// When set, compression vstring negotiation is skipped and this algorithm
+    /// is used directly - matching upstream `compat.c:543` which only exchanges
+    /// compression vstrings when `do_compression && !compress_choice`.
+    ///
+    /// Default: `None`
+    #[must_use]
+    pub const fn with_compress_choice(mut self, choice: Option<CompressionAlgorithm>) -> Self {
+        self.compress_choice = choice;
+        self
+    }
+
     /// Sets whether incremental recursion is allowed.
     ///
     /// Default: `false`

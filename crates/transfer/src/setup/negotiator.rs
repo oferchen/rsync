@@ -73,19 +73,20 @@ pub trait CompatFlagsExchanger {
 pub trait CapabilityNegotiator {
     /// Performs the full capability negotiation exchange.
     ///
-    /// When `do_negotiation` is false (peer lacks `CF_VARINT_FLIST_FLAGS`),
-    /// returns defaults without any wire I/O. When true, both sides exchange
-    /// their supported algorithm lists via vstrings and select the first
-    /// mutually supported algorithm.
+    /// When `config.do_negotiation` is false (peer lacks
+    /// `CF_VARINT_FLIST_FLAGS`), returns defaults without any wire I/O. When
+    /// true, both sides exchange their supported algorithm lists via vstrings
+    /// and select the first mutually supported algorithm.
+    ///
+    /// When `config.compression_override` is `Some`, the compression vstring
+    /// exchange is skipped and the specified algorithm is used directly -
+    /// matching upstream `compat.c:543` (`do_compression && !compress_choice`).
     fn negotiate(
         &self,
         protocol: ProtocolVersion,
         stdin: &mut dyn Read,
         stdout: &mut dyn Write,
-        do_negotiation: bool,
-        send_compression: bool,
-        is_daemon_mode: bool,
-        is_server: bool,
+        config: &protocol::NegotiationConfig,
     ) -> io::Result<NegotiationResult>;
 }
 
@@ -175,20 +176,9 @@ impl CapabilityNegotiator for RsyncNegotiator {
         protocol: ProtocolVersion,
         stdin: &mut dyn Read,
         stdout: &mut dyn Write,
-        do_negotiation: bool,
-        send_compression: bool,
-        is_daemon_mode: bool,
-        is_server: bool,
+        config: &protocol::NegotiationConfig,
     ) -> io::Result<NegotiationResult> {
-        protocol::negotiate_capabilities(
-            protocol,
-            stdin,
-            stdout,
-            do_negotiation,
-            send_compression,
-            is_daemon_mode,
-            is_server,
-        )
+        protocol::negotiate_capabilities_with_override(protocol, stdin, stdout, config)
     }
 }
 

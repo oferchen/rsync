@@ -1089,14 +1089,15 @@ impl CapabilityNegotiator for MockNegotiator {
         _protocol: protocol::ProtocolVersion,
         _stdin: &mut dyn std::io::Read,
         _stdout: &mut dyn std::io::Write,
-        _do_negotiation: bool,
-        _send_compression: bool,
-        _is_daemon_mode: bool,
-        _is_server: bool,
+        config: &protocol::NegotiationConfig,
     ) -> std::io::Result<protocol::NegotiationResult> {
+        // Honour the override when provided, matching the real negotiator
+        let compression = config
+            .compression_override
+            .unwrap_or(self.fixed_compression);
         Ok(protocol::NegotiationResult {
             checksum: self.fixed_checksum,
-            compression: self.fixed_compression,
+            compression,
         })
     }
 }
@@ -1445,5 +1446,136 @@ fn capability_string_does_not_contain_acl_xattr_transfer_flags() {
     assert!(
         !cap.contains('X'),
         "capability string should not contain 'X' (xattr transfer flag): {cap}"
+    );
+}
+
+// -- compress-choice negotiation tests --
+
+#[test]
+fn compress_choice_override_skips_vstring_and_uses_algorithm() {
+    // upstream: compat.c:543 - when compress_choice is set, compression
+    // vstring exchange is skipped and the algorithm is used directly.
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let client_args = ["-efxCIvu".to_owned()];
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args),
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: true,
+        compress_choice: Some(protocol::CompressionAlgorithm::Zstd),
+        checksum_seed: Some(42),
+        allow_inc_recurse: false,
+    };
+
+    let mock = MockNegotiator::new();
+    let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock)
+        .expect("compress-choice override setup should succeed");
+
+    let algos = result.negotiated_algorithms.unwrap();
+    assert_eq!(
+        algos.compression,
+        protocol::CompressionAlgorithm::Zstd,
+        "compress_choice=zstd should override negotiated compression"
+    );
+}
+
+#[test]
+fn compress_choice_none_allows_normal_negotiation() {
+    // When compress_choice is None and do_compression=true, normal vstring
+    // negotiation should occur (send_compression=true).
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let client_args = ["-efxCIvu".to_owned()];
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: Some(&client_args),
+        is_server: true,
+        is_daemon_mode: true,
+        do_compression: true,
+        compress_choice: None,
+        checksum_seed: Some(42),
+        allow_inc_recurse: false,
+    };
+
+    let mock = MockNegotiator::new();
+    let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock)
+        .expect("normal negotiation should succeed");
+
+    let algos = result.negotiated_algorithms.unwrap();
+    // Mock returns CompressionAlgorithm::None when no override is given
+    assert_eq!(
+        algos.compression,
+        protocol::CompressionAlgorithm::None,
+        "without compress_choice, mock returns its default (None)"
+    );
+}
+
+#[test]
+fn compress_choice_zlib_override_on_legacy_protocol() {
+    // upstream: compat.c:194-195 - legacy protocols always use zlib unless
+    // the user explicitly chose an algorithm.
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: None,
+        is_server: true,
+        is_daemon_mode: false,
+        do_compression: true,
+        compress_choice: Some(protocol::CompressionAlgorithm::ZlibX),
+        checksum_seed: Some(42),
+        allow_inc_recurse: false,
+    };
+
+    let result = setup_protocol(&mut stdout, &mut stdin, &config)
+        .expect("legacy protocol with compress_choice should succeed");
+
+    // For protocol < 30, negotiation is skipped but compress_choice is
+    // honoured in the legacy path.
+    let algos = result.negotiated_algorithms.unwrap();
+    assert_eq!(
+        algos.compression,
+        protocol::CompressionAlgorithm::ZlibX,
+        "compress_choice=zlibx should be used on legacy protocol"
+    );
+}
+
+#[test]
+fn with_compress_choice_builder_method() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    let config = ProtocolSetupConfig::new(protocol, true)
+        .with_compress_choice(Some(protocol::CompressionAlgorithm::Zstd))
+        .with_compression(true);
+
+    assert_eq!(
+        config.compress_choice,
+        Some(protocol::CompressionAlgorithm::Zstd)
+    );
+    assert!(config.do_compression);
+}
+
+#[test]
+fn with_compress_choice_none_clears_override() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+
+    let config = ProtocolSetupConfig::new(protocol, true)
+        .with_compress_choice(Some(protocol::CompressionAlgorithm::Zstd))
+        .with_compress_choice(None);
+
+    assert!(
+        config.compress_choice.is_none(),
+        "second with_compress_choice(None) should clear the override"
     );
 }
