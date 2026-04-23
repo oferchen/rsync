@@ -63,7 +63,7 @@ jobs:
         run: cargo llvm-cov report --html --output-dir coverage-html
 
       - name: Enforce 95% line coverage threshold
-        run: cargo llvm-cov report --fail-under-lines 95
+        run: cargo llvm-cov report --workspace --fail-under-lines 95
 
       - name: Create step summary
         run: |
