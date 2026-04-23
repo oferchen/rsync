@@ -17,8 +17,11 @@ fn acquire_and_return_via_public_api() {
     guard[0] = 0xAB;
     assert_eq!(guard[0], 0xAB);
 
-    // Drop returns the buffer to the pool.
+    // Acquire a second buffer so the first drop fills the thread-local slot
+    // and the second overflows to the central pool where available() counts.
+    let guard2: BufferGuard = BufferPool::acquire_from(Arc::clone(&pool));
     drop(guard);
+    drop(guard2);
     assert_eq!(pool.available(), 1);
 }
 
@@ -26,9 +29,13 @@ fn acquire_and_return_via_public_api() {
 fn borrowed_guard_via_public_api() {
     let pool = BufferPool::with_buffer_size(4, 32);
 
+    // Acquire two buffers: first drop fills thread-local slot, second overflows
+    // to central pool where available() can observe it.
     let guard = pool.acquire();
     assert_eq!(guard.len(), 32);
+    let guard2 = pool.acquire();
     drop(guard);
+    drop(guard2);
 
     assert_eq!(pool.available(), 1);
 }
