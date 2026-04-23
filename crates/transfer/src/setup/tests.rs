@@ -1089,14 +1089,12 @@ impl CapabilityNegotiator for MockNegotiator {
         _protocol: protocol::ProtocolVersion,
         _stdin: &mut dyn std::io::Read,
         _stdout: &mut dyn std::io::Write,
-        _do_negotiation: bool,
-        _send_compression: bool,
-        _is_daemon_mode: bool,
-        _is_server: bool,
-        compression_override: Option<protocol::CompressionAlgorithm>,
+        config: &protocol::NegotiationConfig,
     ) -> std::io::Result<protocol::NegotiationResult> {
         // Honour the override when provided, matching the real negotiator
-        let compression = compression_override.unwrap_or(self.fixed_compression);
+        let compression = config
+            .compression_override
+            .unwrap_or(self.fixed_compression);
         Ok(protocol::NegotiationResult {
             checksum: self.fixed_checksum,
             compression,

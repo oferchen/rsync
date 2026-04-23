@@ -143,11 +143,14 @@ pub fn setup_protocol_with<'a>(
                 config.protocol,
                 stdin,
                 stdout,
-                do_negotiation,
-                send_compression,
-                config.is_daemon_mode,
-                config.is_server,
-                config.compress_choice,
+                &protocol::NegotiationConfig {
+                    do_negotiation,
+                    send_compression,
+                    is_daemon_mode: config.is_daemon_mode,
+                    is_server: config.is_server,
+                    checksum_override: None,
+                    compression_override: config.compress_choice,
+                },
             )?;
 
             (Some(compat_flags), Some(algorithms))

@@ -2576,12 +2576,14 @@ fn compression_override_used_on_legacy_protocol() {
         protocol,
         &mut stdin,
         &mut stdout,
-        true,
-        true,
-        false,
-        true,
-        None,
-        Some(CompressionAlgorithm::Zstd),
+        &NegotiationConfig {
+            do_negotiation: true,
+            send_compression: true,
+            is_daemon_mode: false,
+            is_server: true,
+            checksum_override: None,
+            compression_override: Some(CompressionAlgorithm::Zstd),
+        },
     )
     .unwrap();
 
@@ -2601,12 +2603,14 @@ fn compression_override_used_without_negotiation() {
         protocol,
         &mut stdin,
         &mut stdout,
-        false, // no negotiation
-        false, // send_compression=false (override bypasses this)
-        false,
-        true,
-        None,
-        Some(CompressionAlgorithm::LZ4),
+        &NegotiationConfig {
+            do_negotiation: false,
+            send_compression: false, // override bypasses this
+            is_daemon_mode: false,
+            is_server: true,
+            checksum_override: None,
+            compression_override: Some(CompressionAlgorithm::LZ4),
+        },
     )
     .unwrap();
 
@@ -2626,12 +2630,14 @@ fn compression_override_none_falls_through_to_normal_negotiation() {
         protocol,
         &mut stdin,
         &mut stdout,
-        true,
-        true,
-        false,
-        true,
-        None,
-        None,
+        &NegotiationConfig {
+            do_negotiation: true,
+            send_compression: true,
+            is_daemon_mode: false,
+            is_server: true,
+            checksum_override: None,
+            compression_override: None,
+        },
     )
     .unwrap();
 
