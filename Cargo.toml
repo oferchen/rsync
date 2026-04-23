@@ -25,6 +25,7 @@ required-features = ["dhat-heap"]
 # ============================================================================
 # Optimized for best performance on modern systems.
 # io_uring auto-detects Linux 5.6+ at runtime and falls back to standard I/O.
+# IOCP auto-detects Windows Vista+ at runtime and falls back to synchronous I/O.
 default = [
     "zstd",
     "lz4",
@@ -34,6 +35,7 @@ default = [
     "parallel",
     "copy_file_range",
     "io_uring",
+    "iocp",
 ]
 
 # ============================================================================
@@ -71,6 +73,12 @@ parallel = ["cli/parallel", "checksums/parallel"]
 # Benefits: 20-40% faster I/O on supported systems via syscall batching
 # Trade-offs: Linux-only, requires modern kernel, adds ~100KB to binary
 io_uring = ["transfer/io_uring", "fast_io/io_uring"]
+
+# IOCP (I/O Completion Ports) for Windows - async file I/O
+# Requirements: Windows Vista+ (runtime detection, automatic fallback)
+# Benefits: Overlapped async reads/writes via kernel completion ports
+# Trade-offs: Windows-only, adds complexity for async file operations
+iocp = ["fast_io/iocp"]
 
 # copy_file_range syscall - zero-copy file transfers on same filesystem
 # Requirements: Linux 4.5+ for same-fs, 5.3+ for cross-fs (automatic fallback)
