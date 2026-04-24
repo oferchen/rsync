@@ -1,22 +1,19 @@
 //! Dhat heap profiling harness for oc-rsync.
 //!
-//! This benchmark creates a controlled transfer scenario and profiles heap allocations
-//! using dhat. The output can be analyzed with dhat-viewer.
+//! This standalone tool profiles heap allocations using dhat.
+//! The output can be analyzed with dhat-viewer.
 //!
 //! # Usage
 //!
 //! ```bash
-//! # Build with dhat feature and profile
-//! cargo build --profile dhat --features dhat-heap
-//!
-//! # Run the profiler (generates dhat-heap.json)
-//! cargo run --profile dhat --features dhat-heap --bin dhat-profile
+//! # Build and run from the workspace root
+//! cargo build --release --manifest-path tools/dhat-profile/Cargo.toml
+//! cargo run --release --manifest-path tools/dhat-profile/Cargo.toml
 //!
 //! # Analyze with dhat-viewer
 //! # Open https://nicholass.github.io/nicholasses-dhat-viewer/ and load dhat-heap.json
 //! ```
 
-#[cfg(feature = "dhat-heap")]
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
@@ -35,7 +32,6 @@ fn setup_test_data(dir: &Path, file_count: usize, file_size: usize) {
 }
 
 fn main() {
-    #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
 
     // Use temp directory based on env or /tmp
@@ -52,8 +48,7 @@ fn main() {
     println!("Source: {}", src_dir.display());
     println!("Dest: {}", dest_dir.display());
 
-    // Note: In a real harness, we would invoke the rsync transfer logic here.
-    // For now, this demonstrates the dhat setup pattern.
+    // Note: In a real harness, invoke the rsync transfer logic here.
     // The actual profiling should call into core::client::run_transfer() or similar.
 
     println!("\nTo profile actual transfers, modify this harness to call:");
