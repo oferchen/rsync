@@ -31,6 +31,8 @@ fn transfer_stats_incremental_fields_exist() {
         files_skipped: 2,
         delete_stats: DeleteStats::new(),
         delete_limit_exceeded: false,
+        literal_data: 0,
+        matched_data: 0,
         redo_count: 0,
     };
 

@@ -49,7 +49,7 @@ impl ReceiverContext {
         is_redo_pass: bool,
         total_files: usize,
         progress: &mut Option<&mut dyn crate::TransferProgressCallback>,
-    ) -> io::Result<(usize, u64, Vec<usize>)> {
+    ) -> io::Result<(usize, u64, u64, u64, Vec<usize>)> {
         use crate::disk_commit::{BackupConfig, DiskCommitConfig};
         use crate::pipeline::receiver::PipelinedReceiver;
         use crate::shared::TransferDeadline;
@@ -61,7 +61,7 @@ impl ReceiverContext {
         // upstream: generator.c sends itemize immediately per-file via rwrite()
         if files_to_transfer.is_empty() {
             writer.flush()?;
-            return Ok((0, 0, Vec::new()));
+            return Ok((0, 0, 0, 0, Vec::new()));
         }
 
         let deadline = TransferDeadline::from_system_time(self.config.stop_at);
@@ -102,6 +102,8 @@ impl ReceiverContext {
             VecDeque::with_capacity(pipeline.window_size());
         let mut files_transferred = 0usize;
         let mut bytes_received = 0u64;
+        let mut total_literal_bytes = 0u64;
+        let mut total_matched_bytes = 0u64;
 
         let mut checksum_verifier = ChecksumVerifier::new(
             self.negotiated_algorithms.as_ref(),
@@ -135,7 +137,7 @@ impl ReceiverContext {
             let _ = pipelined_receiver.take_redo_indices();
         }
 
-        let result = (|| -> io::Result<(usize, u64, Vec<usize>)> {
+        let result = (|| -> io::Result<(usize, u64, u64, u64, Vec<usize>)> {
             // Track how many requests the sender has received (flushed) but
             // not yet responded to. We only flush the write buffer when this
             // drops to zero - otherwise the sender already has queued requests.
@@ -327,6 +329,8 @@ impl ReceiverContext {
                 }
 
                 bytes_received += result.total_bytes;
+                total_literal_bytes += result.literal_bytes;
+                total_matched_bytes += result.matched_bytes;
                 files_transferred += 1;
 
                 // upstream: receiver.c:950 - log_item() after successful file transfer
@@ -366,7 +370,13 @@ impl ReceiverContext {
 
             let redo_indices = pipelined_receiver.take_redo_indices();
 
-            Ok((files_transferred, bytes_received, redo_indices))
+            Ok((
+                files_transferred,
+                bytes_received,
+                total_literal_bytes,
+                total_matched_bytes,
+                redo_indices,
+            ))
         })();
 
         // Graceful shutdown regardless of success or failure.

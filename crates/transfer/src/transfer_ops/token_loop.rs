@@ -84,11 +84,14 @@ pub(super) fn process_remaining_tokens<R: Read>(
     mut total_bytes: u64,
     pending_delta: Option<DeltaToken>,
     token_reader: &mut TokenReader,
+    initial_literal_bytes: u64,
 ) -> io::Result<StreamingResult> {
     let send_abort = |tx: &spsc::Sender<FileMessage>, reason: String| {
         let _ = tx.send(FileMessage::Abort { reason });
     };
 
+    let mut literal_bytes: u64 = initial_literal_bytes;
+    let mut matched_bytes: u64 = 0;
     let mut next_delta = pending_delta;
 
     loop {
@@ -121,6 +124,8 @@ pub(super) fn process_remaining_tokens<R: Read>(
 
                 return Ok(StreamingResult {
                     total_bytes,
+                    literal_bytes,
+                    matched_bytes,
                     expected_checksum,
                     checksum_len,
                 });
@@ -133,7 +138,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
                         return Err(e);
                     }
                 };
-                let len = buf.len();
+                let len = buf.len() as u64;
 
                 file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
                     io::Error::new(
@@ -141,7 +146,8 @@ pub(super) fn process_remaining_tokens<R: Read>(
                         "disk commit thread disconnected during chunk send",
                     )
                 })?;
-                total_bytes += len as u64;
+                total_bytes += len;
+                literal_bytes += len;
             }
             DeltaToken::BlockRef(block_idx) => {
                 if let (Some(sig), Some(basis_map)) = (signature, basis_map.as_mut()) {
@@ -184,7 +190,9 @@ pub(super) fn process_remaining_tokens<R: Read>(
                             "disk commit thread disconnected during block send",
                         )
                     })?;
-                    total_bytes += bytes_to_copy as u64;
+                    let copy_len = bytes_to_copy as u64;
+                    total_bytes += copy_len;
+                    matched_bytes += copy_len;
                 } else {
                     let msg = format!("block reference {block_idx} without basis file");
                     send_abort(file_tx, msg.clone());
