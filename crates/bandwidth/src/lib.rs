@@ -4,9 +4,15 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+#[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
+mod async_limiter;
 mod limiter;
 mod parse;
 
+#[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
+pub use crate::async_limiter::AsyncRateLimiter;
 pub use crate::limiter::{BandwidthLimiter, LimiterChange, LimiterSleep, apply_effective_limit};
 #[cfg(any(test, feature = "test-support"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]

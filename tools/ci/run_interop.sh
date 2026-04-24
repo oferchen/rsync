@@ -469,7 +469,7 @@ stop_oc_daemon() {
     oc_pid=""
   fi
   if [[ -n "${oc_port_current}" ]]; then
-    wait_for_port_free "${oc_port_current}" 10
+    wait_for_port_free "${oc_port_current}" 10 || true
     oc_port_current=""
   fi
   if [[ -n "${oc_pid_file_current:-}" ]]; then
@@ -494,7 +494,7 @@ stop_upstream_daemon() {
     up_pid=""
   fi
   if [[ -n "${up_port_current}" ]]; then
-    wait_for_port_free "${up_port_current}" 10
+    wait_for_port_free "${up_port_current}" 10 || true
     up_port_current=""
   fi
   if [[ -n "${up_pid_file_current:-}" ]]; then
@@ -564,7 +564,7 @@ wait_for_port_free() {
     elapsed=$((elapsed + 1))
   done
   echo "Warning: port $port still in use after ${max_wait}s" >&2
-  return 0
+  return 1
 }
 
 # Check that a port is available before starting a daemon.
@@ -664,14 +664,25 @@ start_upstream_daemon() {
   local log_file=$3
   local pid_file=$4
 
+  stop_upstream_daemon
+
   up_pid_file_current="$pid_file"
+
+  # Extract port from config for availability check and wait_for_port
+  local port
+  port=$(grep -oP 'port\s*=\s*\K\d+' "$config" 2>/dev/null || echo "")
+
+  if [[ -n "$port" ]]; then
+    if ! check_port_available "$port"; then
+      echo "FATAL: port $port still occupied, cannot start upstream daemon" >&2
+      return 1
+    fi
+  fi
+
   # Close stdin to prevent SIGPIPE when daemon writes to closed pipe
   "$binary" --daemon --config "$config" --no-detach --log-file "$log_file" </dev/null &
   up_pid=$!
 
-  # Extract port from config for wait_for_port
-  local port
-  port=$(grep -oP 'port\s*=\s*\K\d+' "$config" 2>/dev/null || echo "")
   if [[ -n "$port" ]]; then
     up_port_current="$port"
     if ! wait_for_port "$port" 10; then

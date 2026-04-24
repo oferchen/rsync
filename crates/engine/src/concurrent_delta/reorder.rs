@@ -7,9 +7,10 @@
 //!
 //! # Design
 //!
-//! Uses a [`BTreeMap`] internally for O(log n) insertion and O(1) extraction
-//! of the minimum key. A configurable capacity bound prevents unbounded memory
-//! growth when a slow item blocks delivery of many subsequent items.
+//! Uses a pre-allocated ring buffer internally for O(1) insertion and O(1)
+//! extraction of the next expected item. A configurable capacity bound
+//! prevents unbounded memory growth when a slow item blocks delivery of
+//! many subsequent items.
 //!
 //! # Upstream Reference
 //!
@@ -18,19 +19,23 @@
 //! invariant that post-processing (checksum verification, metadata commit)
 //! sees files in file-list order.
 
-use std::collections::BTreeMap;
-
 /// Collects out-of-order items and yields them in sequence order.
 ///
 /// Each item must carry a unique sequence number starting from 0. The buffer
 /// holds items that arrived ahead of their turn and releases them as soon as
 /// a contiguous run from `next_expected` becomes available.
 ///
+/// Internally uses a pre-allocated ring buffer (`Box<[Option<T>]>`) indexed
+/// by `(sequence - next_expected) + head`, wrapping at capacity. This gives
+/// O(1) insert and O(1) drain - a significant improvement over the previous
+/// `BTreeMap`-based O(log n) insert approach.
+///
 /// # Capacity Bound
 ///
-/// When the number of buffered (not-yet-yielded) items reaches `capacity`,
-/// [`insert`](ReorderBuffer::insert) returns `Err(CapacityExceeded)`. The
-/// caller can then apply backpressure or drain pending items before retrying.
+/// When the distance between a new item's sequence number and `next_expected`
+/// exceeds `capacity`, [`insert`](ReorderBuffer::insert) returns
+/// `Err(CapacityExceeded)`. The caller can then apply backpressure or drain
+/// pending items before retrying.
 ///
 /// # Examples
 ///
@@ -50,11 +55,15 @@ use std::collections::BTreeMap;
 /// ```
 #[derive(Debug)]
 pub struct ReorderBuffer<T> {
-    /// Items waiting to be yielded, keyed by sequence number.
-    pending: BTreeMap<u64, T>,
+    /// Pre-allocated ring buffer slots.
+    slots: Box<[Option<T>]>,
+    /// Index into `slots` where `next_expected` sequence maps.
+    head: usize,
     /// Next sequence number the consumer expects.
     next_expected: u64,
-    /// Maximum number of items allowed in `pending` before rejecting inserts.
+    /// Number of items currently stored in the ring buffer.
+    count: usize,
+    /// Maximum number of items allowed before rejecting inserts.
     capacity: usize,
 }
 
@@ -73,17 +82,38 @@ impl std::error::Error for CapacityExceeded {}
 impl<T> ReorderBuffer<T> {
     /// Creates a new reorder buffer with the given capacity bound.
     ///
+    /// Pre-allocates a ring buffer of `capacity` slots, trading memory for
+    /// O(1) insert and drain operations.
+    ///
     /// # Panics
     ///
     /// Panics if `capacity` is zero.
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         assert!(capacity > 0, "reorder buffer capacity must be non-zero");
+        let slots: Vec<Option<T>> = (0..capacity).map(|_| None).collect();
         Self {
-            pending: BTreeMap::new(),
+            slots: slots.into_boxed_slice(),
+            head: 0,
             next_expected: 0,
+            count: 0,
             capacity,
         }
+    }
+
+    /// Computes the ring buffer index for a given sequence number.
+    ///
+    /// Returns `None` if the sequence is behind `next_expected` or the
+    /// offset from `next_expected` exceeds capacity.
+    fn slot_index(&self, sequence: u64) -> Option<usize> {
+        if sequence < self.next_expected {
+            return None;
+        }
+        let offset = (sequence - self.next_expected) as usize;
+        if offset >= self.capacity {
+            return None;
+        }
+        Some((self.head + offset) % self.capacity)
     }
 
     /// Inserts an item with the given sequence number.
@@ -92,28 +122,33 @@ impl<T> ReorderBuffer<T> {
     /// immediately via [`next_in_order`](Self::next_in_order). Otherwise it
     /// is buffered until all preceding items have been yielded.
     ///
-    /// Returns `Err(CapacityExceeded)` if the buffer already holds `capacity`
-    /// items. The item is not consumed on error.
+    /// Returns `Err(CapacityExceeded)` if the sequence offset from
+    /// `next_expected` exceeds the ring buffer capacity. The item is not
+    /// consumed on error.
     ///
     /// # Errors
     ///
-    /// Returns [`CapacityExceeded`] when the buffer is full.
+    /// Returns [`CapacityExceeded`] when the buffer is full or the sequence
+    /// offset exceeds capacity.
     pub fn insert(&mut self, sequence: u64, item: T) -> Result<(), CapacityExceeded> {
-        if self.pending.len() >= self.capacity {
-            return Err(CapacityExceeded);
+        let idx = self.slot_index(sequence).ok_or(CapacityExceeded)?;
+        if self.slots[idx].is_none() {
+            self.count += 1;
         }
-        self.pending.insert(sequence, item);
+        self.slots[idx] = Some(item);
         Ok(())
     }
 
     /// Returns the next in-order item if available.
     ///
     /// Yields the item with sequence number equal to `next_expected` and
-    /// advances the expected counter. Returns `None` if that item has not
-    /// yet been inserted.
+    /// advances the expected counter and head pointer. Returns `None` if
+    /// that item has not yet been inserted.
     pub fn next_in_order(&mut self) -> Option<T> {
-        let item = self.pending.remove(&self.next_expected)?;
+        let item = self.slots[self.head].take()?;
+        self.head = (self.head + 1) % self.capacity;
         self.next_expected += 1;
+        self.count -= 1;
         Some(item)
     }
 
@@ -134,14 +169,14 @@ impl<T> ReorderBuffer<T> {
 
     /// Returns the number of items currently buffered (not yet yielded).
     #[must_use]
-    pub fn buffered_count(&self) -> usize {
-        self.pending.len()
+    pub const fn buffered_count(&self) -> usize {
+        self.count
     }
 
     /// Returns `true` if no items are buffered.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.pending.is_empty()
+    pub const fn is_empty(&self) -> bool {
+        self.count == 0
     }
 
     /// Returns the capacity bound.
@@ -154,11 +189,45 @@ impl<T> ReorderBuffer<T> {
     ///
     /// Used by the consumer loop to break deadlocks when the buffer is full
     /// and [`drain_ready`](Self::drain_ready) cannot make progress because
-    /// `next_expected` is not yet buffered. Temporarily exceeding capacity is
-    /// safe when all items are already in memory (e.g., collected by
-    /// `drain_parallel`).
+    /// `next_expected` is not yet buffered. For sequences within the existing
+    /// ring capacity, this inserts directly. For sequences beyond capacity,
+    /// the ring is grown to accommodate the item.
     pub fn force_insert(&mut self, sequence: u64, item: T) {
-        self.pending.insert(sequence, item);
+        if let Some(idx) = self.slot_index(sequence) {
+            if self.slots[idx].is_none() {
+                self.count += 1;
+            }
+            self.slots[idx] = Some(item);
+        } else if sequence >= self.next_expected {
+            // Sequence exceeds current capacity - grow the ring buffer.
+            let offset = (sequence - self.next_expected) as usize;
+            let new_capacity = offset + 1;
+            self.grow(new_capacity);
+            let idx = (self.head + offset) % new_capacity;
+            if self.slots[idx].is_none() {
+                self.count += 1;
+            }
+            self.slots[idx] = Some(item);
+        }
+        // Silently ignore sequences behind next_expected (already delivered).
+    }
+
+    /// Grows the ring buffer to at least `min_capacity` slots.
+    ///
+    /// Linearizes the ring (head moves to index 0) during the resize.
+    fn grow(&mut self, min_capacity: usize) {
+        let new_cap = min_capacity.max(self.capacity * 2);
+        let mut new_slots: Vec<Option<T>> = (0..new_cap).map(|_| None).collect();
+
+        // Linearize: copy from head..end, then 0..head.
+        for (i, slot) in new_slots.iter_mut().enumerate().take(self.capacity) {
+            let src = (self.head + i) % self.capacity;
+            *slot = self.slots[src].take();
+        }
+
+        self.slots = new_slots.into_boxed_slice();
+        self.head = 0;
+        self.capacity = new_cap;
     }
 
     /// Validates that all items have been delivered with no gaps in the sequence.
@@ -173,14 +242,20 @@ impl<T> ReorderBuffer<T> {
     /// sequence numbers between `next_expected` and the lowest buffered sequence
     /// were never inserted - a fatal correctness violation.
     pub fn finish(self) {
-        if !self.pending.is_empty() {
-            let first_buffered = *self.pending.keys().next().unwrap();
+        if self.count > 0 {
+            // Find the first occupied slot to report the gap.
+            let mut first_seq = self.next_expected;
+            for i in 0..self.capacity {
+                let idx = (self.head + i) % self.capacity;
+                if self.slots[idx].is_some() {
+                    first_seq = self.next_expected + i as u64;
+                    break;
+                }
+            }
             panic!(
                 "ReorderBuffer: sequence gap detected - expected seq {} but next buffered is seq {} \
                  ({} items stranded)",
-                self.next_expected,
-                first_buffered,
-                self.pending.len(),
+                self.next_expected, first_seq, self.count,
             );
         }
     }
@@ -268,10 +343,11 @@ mod tests {
     #[test]
     fn capacity_bounds_enforcement() {
         let mut buf = ReorderBuffer::new(2);
-        buf.insert(5, "x").unwrap();
-        buf.insert(3, "y").unwrap();
-        // Buffer is full (2 items, capacity 2)
-        assert_eq!(buf.insert(7, "z"), Err(CapacityExceeded));
+        // With capacity 2, valid offsets from next_expected (0) are 0 and 1
+        buf.insert(0, "x").unwrap();
+        buf.insert(1, "y").unwrap();
+        // Seq 2 has offset 2 from next_expected=0, which equals capacity
+        assert_eq!(buf.insert(2, "z"), Err(CapacityExceeded));
         assert_eq!(buf.buffered_count(), 2);
     }
 
@@ -280,11 +356,12 @@ mod tests {
         let mut buf = ReorderBuffer::new(2);
         buf.insert(0, 10).unwrap();
         buf.insert(1, 20).unwrap();
+        // Seq 2 has offset 2 from next_expected=0, which equals capacity
         assert_eq!(buf.insert(2, 30), Err(CapacityExceeded));
 
         // Drain the ready items
         assert_eq!(buf.next_in_order(), Some(10));
-        // Now there is room
+        // Now there is room (next_expected=1, seq 2 has offset 1)
         buf.insert(2, 30).unwrap();
         assert_eq!(buf.next_in_order(), Some(20));
         assert_eq!(buf.next_in_order(), Some(30));
@@ -345,11 +422,9 @@ mod tests {
     fn large_sequence_numbers() {
         let mut buf = ReorderBuffer::new(4);
         let base = u64::MAX - 3;
-        buf.insert(base, "a").unwrap();
-        // This buffer expects sequence 0, so these won't be yielded until
-        // next_expected reaches base - but we can verify insertion works.
-        assert_eq!(buf.next_in_order(), None);
-        assert_eq!(buf.buffered_count(), 1);
+        // Offset from next_expected (0) is enormous - must be rejected
+        assert_eq!(buf.insert(base, "a"), Err(CapacityExceeded));
+        assert_eq!(buf.buffered_count(), 0);
     }
 
     #[test]
@@ -400,14 +475,13 @@ mod tests {
 
     #[test]
     fn duplicate_sequence_overwrites_previous() {
-        // BTreeMap::insert replaces the value for an existing key.
+        // Ring buffer replaces the value for an existing slot.
         // This is graceful - no panic, no error - but the original item is lost.
         let mut buf = ReorderBuffer::new(4);
         buf.insert(0, "first").unwrap();
         buf.insert(0, "replaced").unwrap();
         assert_eq!(buf.next_in_order(), Some("replaced"));
         assert_eq!(buf.next_in_order(), None);
-        // Duplicate consumed one capacity slot (same key), count stays 0 after drain.
         assert!(buf.is_empty());
     }
 
@@ -458,15 +532,15 @@ mod tests {
     fn force_insert_bypasses_capacity() {
         let mut buf = ReorderBuffer::new(2);
         buf.insert(1, "a").unwrap();
-        buf.insert(2, "b").unwrap();
-        // Normal insert fails at capacity.
-        assert_eq!(buf.insert(0, "c"), Err(CapacityExceeded));
-        // force_insert succeeds despite being over capacity.
-        buf.force_insert(0, "c");
+        buf.insert(0, "b").unwrap();
+        // Normal insert for seq 2 fails (offset 2 >= capacity 2).
+        assert_eq!(buf.insert(2, "c"), Err(CapacityExceeded));
+        // force_insert grows the ring to accommodate.
+        buf.force_insert(2, "c");
         assert_eq!(buf.buffered_count(), 3);
         // drain_ready yields all three in order.
         let drained: Vec<&str> = buf.drain_ready().collect();
-        assert_eq!(drained, vec!["c", "a", "b"]);
+        assert_eq!(drained, vec!["b", "a", "c"]);
     }
 
     /// Verifies that concurrent producers submitting results out of order
@@ -640,5 +714,38 @@ mod tests {
         assert_eq!(drained[2].ndx(), 20);
         assert!(drained[2].is_success());
         assert_eq!(drained[2].bytes_written(), 2000);
+    }
+
+    #[test]
+    fn ring_buffer_wraps_correctly() {
+        // Verify head pointer wraps around the ring buffer.
+        let mut buf = ReorderBuffer::new(4);
+
+        // Fill and drain twice to force head wrapping.
+        for batch in 0..3u64 {
+            let base = batch * 4;
+            for i in 0..4 {
+                buf.insert(base + i, base + i).unwrap();
+            }
+            let drained: Vec<u64> = buf.drain_ready().collect();
+            assert_eq!(drained.len(), 4);
+            for (j, &val) in drained.iter().enumerate() {
+                assert_eq!(val, base + j as u64);
+            }
+            assert!(buf.is_empty());
+        }
+        assert_eq!(buf.next_expected(), 12);
+    }
+
+    #[test]
+    fn ring_buffer_stress_sequential() {
+        // Stress test: many sequential insert-drain cycles.
+        let mut buf = ReorderBuffer::new(8);
+        for i in 0..1000u64 {
+            buf.insert(i, i).unwrap();
+            assert_eq!(buf.next_in_order(), Some(i));
+        }
+        assert!(buf.is_empty());
+        assert_eq!(buf.next_expected(), 1000);
     }
 }
