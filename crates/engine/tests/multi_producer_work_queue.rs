@@ -68,7 +68,7 @@ fn multi_producer_fan_in_all_items_received() {
     // Drop the original sender so the channel closes when all clones finish.
     drop(tx);
 
-    let results: Vec<(u32, u64)> = rx.drain_parallel(|w| (w.ndx(), w.target_size()));
+    let results: Vec<(u32, u64)> = rx.drain_parallel(|w| (w.ndx().get(), w.target_size()));
 
     for p in producers {
         p.join().unwrap();
@@ -139,7 +139,7 @@ fn multi_producer_fan_in_per_producer_ordering() {
     drop(tx);
 
     // Collect both NDX and sequence so we can verify per-producer order.
-    let results: Vec<(u32, u64)> = rx.drain_parallel(|w| (w.ndx(), w.sequence()));
+    let results: Vec<(u32, u64)> = rx.drain_parallel(|w| (w.ndx().get(), w.sequence()));
 
     for p in producers {
         p.join().unwrap();
@@ -207,7 +207,7 @@ fn multi_producer_fan_in_backpressure_no_deadlock() {
 
     drop(tx);
 
-    let results = rx.drain_parallel(|w| w.ndx());
+    let results = rx.drain_parallel(|w| w.ndx().get());
 
     for p in producers {
         p.join().unwrap();
@@ -267,7 +267,7 @@ fn multi_producer_fan_in_mixed_work_types() {
     drop(tx);
 
     let results: Vec<(u32, bool, u64)> =
-        rx.drain_parallel(|w| (w.ndx(), w.is_delta(), w.target_size()));
+        rx.drain_parallel(|w| (w.ndx().get(), w.is_delta(), w.target_size()));
 
     for p in producers {
         p.join().unwrap();
@@ -324,7 +324,7 @@ fn multi_producer_fan_in_high_contention_completeness() {
 
     drop(tx);
 
-    let results: Vec<(u32, u64)> = rx.drain_parallel(|w| (w.ndx(), w.target_size()));
+    let results: Vec<(u32, u64)> = rx.drain_parallel(|w| (w.ndx().get(), w.target_size()));
 
     for p in producers {
         p.join().unwrap();
@@ -432,7 +432,7 @@ fn multi_producer_fan_in_staggered_start() {
 
     drop(tx);
 
-    let results = rx.drain_parallel(|w| w.ndx());
+    let results = rx.drain_parallel(|w| w.ndx().get());
 
     for p in producers {
         p.join().unwrap();
@@ -478,7 +478,7 @@ fn multi_producer_fan_in_streaming_drain() {
 
     let (result_tx, result_rx) = crossbeam_channel::bounded(16);
     let drain_handle = thread::spawn(move || {
-        rx.drain_parallel_into(|w| w.ndx(), result_tx);
+        rx.drain_parallel_into(|w| w.ndx().get(), result_tx);
     });
 
     let mut results: Vec<u32> = result_rx.iter().collect();
