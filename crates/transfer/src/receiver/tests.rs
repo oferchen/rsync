@@ -1394,6 +1394,8 @@ fn transfer_stats_has_incremental_fields() {
         files_skipped: 5,
         delete_stats: DeleteStats::new(),
         delete_limit_exceeded: false,
+        literal_data: 0,
+        matched_data: 0,
         redo_count: 0,
     };
 
