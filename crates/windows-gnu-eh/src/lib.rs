@@ -31,12 +31,11 @@
 //!
 //! # CI status
 //!
-//! As of 2026-04, CI does **not** test the `x86_64-pc-windows-gnu` target.
-//! All Windows CI jobs and release builds use `x86_64-pc-windows-msvc`:
-//! - `.github/workflows/ci.yml` - `windows-test` job runs on `windows-latest`
-//!   with MSVC toolchain only.
-//! - `.github/workflows/release-cross.yml` - Windows release artifacts target
-//!   `x86_64-pc-windows-msvc` exclusively.
+//! CI validates `x86_64-pc-windows-gnu` compilation via the
+//! `windows-gnu-cross-check` job in `.github/workflows/ci.yml`, which runs
+//! `cargo check --workspace --target x86_64-pc-windows-gnu` on Ubuntu with
+//! `mingw-w64`. Windows release builds still use `x86_64-pc-windows-msvc`
+//! exclusively (`.github/workflows/release-cross.yml`).
 //!
 //! # Maintenance burden
 //!
