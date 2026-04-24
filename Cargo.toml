@@ -14,11 +14,6 @@ autobins = false
 name = "oc-rsync"
 path = "src/bin/oc-rsync.rs"
 
-[[bin]]
-name = "dhat-profile"
-path = "src/bin/dhat_profile.rs"
-required-features = ["dhat-heap"]
-
 [features]
 # ============================================================================
 # Default Features
@@ -106,9 +101,6 @@ async = ["daemon/async", "core/async"]
 # systemd sd-notify integration for daemon
 sd-notify = ["daemon/sd-notify"]
 
-# Heap allocation profiling with dhat - use with profile.dhat
-dhat-heap = ["dep:dhat"]
-
 [dependencies]
 cli = { path = "crates/cli", default-features = false }
 daemon = { path = "crates/daemon", default-features = false }
@@ -127,10 +119,6 @@ libc = "0.2"
 tempfile = "3.15"
 checksums = { path = "crates/checksums" }
 protocol = { path = "crates/protocol" }
-
-[dependencies.dhat]
-workspace = true
-optional = true
 
 # Extra deps only for Windows + GNU
 [target.'cfg(all(windows, target_env = "gnu"))'.dependencies]
@@ -167,6 +155,7 @@ members = [
 ]
 exclude = [
     "crates/protocol/fuzz",
+    "tools/dhat-profile",
 ]
 resolver = "2"
 
@@ -198,10 +187,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Parallel computation - feature-gated for parallel file operations
 rayon = "1.10"
+# Crossbeam concurrency primitives - bounded channels with lower overhead than std
+crossbeam = "0.8"
+crossbeam-channel = "0.5"
 # Concurrent hash map - for shared state across daemon sessions
 dashmap = "6.1"
-# Heap profiling - for allocation analysis with dhat-viewer
-dhat = "0.3"
 
 [workspace.metadata.docs.rs]
 all-features = true
