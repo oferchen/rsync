@@ -268,6 +268,150 @@ fn selector_for_protocol_version_31() {
     assert_eq!(strategy.algorithm_name(), "md5");
 }
 
+// --- Protocol version boundary tests ---
+// upstream: checksum.c - protocol < 30 uses MD4, >= 30 uses MD5.
+
+#[test]
+fn strong_checksum_protocol_0_uses_md4() {
+    let strategy = ChecksumStrategySelector::for_protocol_version(0, 0);
+    assert_eq!(strategy.algorithm_name(), "md4");
+    assert_eq!(strategy.digest_len(), 16);
+}
+
+#[test]
+fn strong_checksum_protocol_27_uses_md4() {
+    let strategy = ChecksumStrategySelector::for_protocol_version(27, 99999);
+    assert_eq!(strategy.algorithm_name(), "md4");
+    assert_eq!(strategy.digest_len(), 16);
+}
+
+#[test]
+fn strong_checksum_protocol_29_is_last_md4() {
+    let strategy = ChecksumStrategySelector::for_protocol_version(29, 12345);
+    assert_eq!(strategy.algorithm_name(), "md4");
+    assert_eq!(strategy.algorithm_kind(), ChecksumAlgorithmKind::Md4);
+}
+
+#[test]
+fn strong_checksum_protocol_30_is_first_md5() {
+    let strategy = ChecksumStrategySelector::for_protocol_version(30, 12345);
+    assert_eq!(strategy.algorithm_name(), "md5");
+    assert_eq!(strategy.algorithm_kind(), ChecksumAlgorithmKind::Md5);
+}
+
+#[test]
+fn strong_checksum_protocol_29_30_boundary_differ() {
+    let pre = ChecksumStrategySelector::for_protocol_version(29, 42);
+    let post = ChecksumStrategySelector::for_protocol_version(30, 42);
+    assert_eq!(pre.algorithm_name(), "md4");
+    assert_eq!(post.algorithm_name(), "md5");
+    assert_ne!(
+        pre.compute(b"boundary test data"),
+        post.compute(b"boundary test data"),
+        "MD4 and MD5 must produce different digests"
+    );
+}
+
+#[test]
+fn strong_checksum_protocol_32_uses_md5() {
+    let strategy = ChecksumStrategySelector::for_protocol_version(32, 0);
+    assert_eq!(strategy.algorithm_name(), "md5");
+    assert_eq!(strategy.algorithm_kind(), ChecksumAlgorithmKind::Md5);
+}
+
+#[test]
+fn strong_checksum_protocol_u8_max_uses_md5() {
+    let strategy = ChecksumStrategySelector::for_protocol_version(u8::MAX, 0);
+    assert_eq!(strategy.algorithm_name(), "md5");
+    assert_eq!(strategy.digest_len(), 16);
+}
+
+#[test]
+fn strong_checksum_protocol_32_uses_xxh3_when_negotiated() {
+    // XXH3 requires explicit negotiation via for_algorithm, not for_protocol_version.
+    // Protocol version alone defaults to MD5 for >= 30.
+    let default = ChecksumStrategySelector::for_protocol_version(32, 42);
+    assert_eq!(default.algorithm_name(), "md5");
+
+    let negotiated = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Xxh3, 42);
+    assert_eq!(negotiated.algorithm_name(), "xxh3");
+    assert_eq!(negotiated.algorithm_kind(), ChecksumAlgorithmKind::Xxh3);
+    assert_eq!(negotiated.digest_len(), 8);
+}
+
+#[test]
+fn seed_order_ignored_for_pre30_protocols() {
+    // MD4 has no seed, so proper vs legacy seed order must not affect output.
+    let proper = ChecksumStrategySelector::for_protocol_version_with_seed_order(29, 12345, true);
+    let legacy = ChecksumStrategySelector::for_protocol_version_with_seed_order(29, 12345, false);
+    assert_eq!(proper.algorithm_name(), "md4");
+    assert_eq!(legacy.algorithm_name(), "md4");
+    assert_eq!(
+        proper.compute(b"seed order test"),
+        legacy.compute(b"seed order test"),
+        "MD4 ignores seed ordering"
+    );
+}
+
+#[test]
+fn seed_order_matters_for_protocol_30_and_above() {
+    for version in [30, 31, 32] {
+        let proper =
+            ChecksumStrategySelector::for_protocol_version_with_seed_order(version, 9999, true);
+        let legacy =
+            ChecksumStrategySelector::for_protocol_version_with_seed_order(version, 9999, false);
+        assert_eq!(proper.algorithm_name(), "md5");
+        assert_eq!(legacy.algorithm_name(), "md5");
+        assert_ne!(
+            proper.compute(b"seed order test"),
+            legacy.compute(b"seed order test"),
+            "proper and legacy seed ordering must differ for protocol {version}"
+        );
+    }
+}
+
+#[test]
+fn md4_pre30_seed_does_not_affect_output() {
+    // MD4 ignores the seed parameter entirely.
+    let s1 = ChecksumStrategySelector::for_protocol_version(29, 0);
+    let s2 = ChecksumStrategySelector::for_protocol_version(29, i32::MAX);
+    let s3 = ChecksumStrategySelector::for_protocol_version(29, i32::MIN);
+    let data = b"seed independence test";
+    assert_eq!(s1.compute(data), s2.compute(data));
+    assert_eq!(s2.compute(data), s3.compute(data));
+}
+
+#[test]
+fn md5_post30_seed_affects_output() {
+    let s1 = ChecksumStrategySelector::for_protocol_version(30, 0);
+    let s2 = ChecksumStrategySelector::for_protocol_version(30, 1);
+    assert_ne!(
+        s1.compute(b"seed sensitivity test"),
+        s2.compute(b"seed sensitivity test"),
+        "different seeds must produce different MD5 digests"
+    );
+}
+
+#[test]
+fn all_supported_protocol_versions_produce_valid_digests() {
+    // Verify every protocol version from 27 (minimum supported) through 32
+    // (current) produces a non-empty, correctly-sized digest.
+    let data = b"protocol version sweep";
+    for version in 27..=32 {
+        let strategy = ChecksumStrategySelector::for_protocol_version(version, 42);
+        let digest = strategy.compute(data);
+        assert!(
+            !digest.is_empty(),
+            "protocol {version} produced empty digest"
+        );
+        assert_eq!(
+            digest.len(),
+            strategy.digest_len(),
+            "protocol {version} digest length mismatch"
+        );
+    }
+}
+
 #[test]
 fn selector_for_protocol_version_with_seed_order() {
     let proper = ChecksumStrategySelector::for_protocol_version_with_seed_order(30, 123, true);
