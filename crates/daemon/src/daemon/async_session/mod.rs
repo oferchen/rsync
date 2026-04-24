@@ -25,7 +25,7 @@
 //! listener.serve().await?;
 //! ```
 
-#![allow(dead_code)]
+#![allow(dead_code)] // REASON: async daemon path not yet wired to production; types used in tests
 
 mod listener;
 mod session;

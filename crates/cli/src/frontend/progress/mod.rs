@@ -6,9 +6,9 @@ mod live;
 mod mode;
 mod render;
 
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: convenience re-export; not all items used in every module
 pub use self::diagnostic::{DiagnosticEvent, flush_diagnostics, render_diagnostic_events};
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: convenience re-export; not all items used in every module
 pub(crate) use self::format::{
     VerboseRateDisplay, compute_rate, describe_event_kind, event_matches_name_level,
     format_decimal_bytes, format_human_bytes, format_human_rate, format_list_permissions,

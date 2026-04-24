@@ -16,7 +16,7 @@ impl TargetSelector {
     }
 
     #[cfg(not(unix))]
-    #[allow(dead_code)]
+    #[allow(dead_code)] // REASON: used on unix; stub on other platforms
     pub(crate) fn matches(self, _file_type: std::fs::FileType) -> bool {
         matches!(self, TargetSelector::All | TargetSelector::Files)
     }

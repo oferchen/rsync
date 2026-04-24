@@ -80,7 +80,7 @@ impl std::fmt::Display for ShutdownReason {
 /// to check signal state during operations.
 #[derive(Debug)]
 pub struct SignalHandler {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // REASON: field read only in tests; stored to track handler installation
     installed: bool,
 }
 

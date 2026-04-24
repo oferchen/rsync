@@ -30,7 +30,7 @@ impl TracingStream {
     ///
     /// The `direction` parameter is used in log messages to distinguish
     /// between different streams (e.g., "read", "write").
-    #[allow(dead_code)]
+    #[allow(dead_code)] // REASON: debug/diagnostic utility for daemon protocol tracing
     pub fn new(stream: TcpStream, direction: &'static str) -> Self {
         log_to_file(&format!("[TracingStream::{direction}] Created"));
         Self {

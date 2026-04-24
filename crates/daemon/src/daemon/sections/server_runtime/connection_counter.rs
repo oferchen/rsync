@@ -29,7 +29,7 @@ impl ConnectionCounter {
     ///
     /// Wired into the accept loop for future daemon-level max-connections
     /// enforcement.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // REASON: wired when daemon accept loop enforces max-connections
     pub(crate) fn active(&self) -> usize {
         self.active.load(Ordering::Acquire)
     }
