@@ -66,7 +66,7 @@ fn bench_drain_parallel(c: &mut Criterion) {
                             });
 
                             let results: Vec<u64> = rx.drain_parallel(|w| {
-                                let hash = simulate_work(w.ndx(), w.target_size());
+                                let hash = simulate_work(w.ndx().get(), w.target_size());
                                 black_box(hash)
                             });
 
