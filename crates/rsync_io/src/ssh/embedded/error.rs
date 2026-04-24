@@ -49,4 +49,11 @@ pub enum SshError {
         /// Number of seconds before timeout.
         secs: u64,
     },
+
+    /// The URL was syntactically valid but semantically invalid for SSH.
+    #[error("invalid SSH URL: {reason}")]
+    InvalidUrl {
+        /// Description of why the URL is invalid.
+        reason: String,
+    },
 }
