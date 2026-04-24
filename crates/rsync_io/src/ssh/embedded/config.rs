@@ -28,6 +28,31 @@ const DEFAULT_KEEPALIVE_MAX_COUNT: u32 = 3;
 /// Holds all parameters needed to establish and maintain an SSH session.
 /// Use `Default::default()` for sensible defaults or the builder methods
 /// to customize individual fields. For `ssh://` URLs, use `from_url()`.
+///
+/// # Examples
+///
+/// Builder-style construction:
+///
+/// ```no_run
+/// use rsync_io::ssh::embedded::SshConfig;
+/// use std::time::Duration;
+///
+/// let mut cfg = SshConfig::default();
+/// cfg.host("example.com")
+///    .port(2222)
+///    .username("deploy")
+///    .connect_timeout(Duration::from_secs(10));
+/// ```
+///
+/// Parsing from an SSH URL:
+///
+/// ```no_run
+/// use rsync_io::ssh::embedded::SshConfig;
+///
+/// let (cfg, remote_path) = SshConfig::from_url("ssh://user@host/~/data").unwrap();
+/// assert_eq!(cfg.host, "host");
+/// assert_eq!(remote_path, "~/data");
+/// ```
 #[derive(Debug, Clone)]
 pub struct SshConfig {
     /// Remote hostname or IP address.
@@ -203,6 +228,13 @@ impl SshConfig {
     ///
     /// Returns `(config, remote_path)` where `remote_path` is the decoded path
     /// component. A leading `/~/` is converted to `~/` for home-relative paths.
+    /// Fields not present in the URL (ciphers, timeouts, etc.) use `Default`
+    /// values.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SshError::UrlParse` for malformed URLs, or `SshError::InvalidUrl`
+    /// when the scheme is not `ssh://` or the host/path is empty.
     pub fn from_url(url_str: &str) -> Result<(Self, String), SshError> {
         let parsed = Url::parse(url_str)?;
 
