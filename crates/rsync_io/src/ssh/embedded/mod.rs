@@ -15,6 +15,8 @@ mod error;
 #[cfg(feature = "embedded-ssh")]
 mod handler;
 #[cfg(feature = "embedded-ssh")]
+mod resolve;
+#[cfg(feature = "embedded-ssh")]
 mod types;
 
 #[cfg(feature = "embedded-ssh")]
@@ -25,5 +27,7 @@ pub use config::SshConfig;
 pub use error::SshError;
 #[cfg(feature = "embedded-ssh")]
 pub use handler::SshClientHandler;
+#[cfg(feature = "embedded-ssh")]
+pub use resolve::resolve_host;
 #[cfg(feature = "embedded-ssh")]
 pub use types::{IpPreference, StrictHostKeyChecking};
