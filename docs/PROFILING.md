@@ -15,8 +15,8 @@ cargo build --release
 cargo build --profile release-with-debug
 ./scripts/flamegraph_profile.sh --scenario small_files
 
-# Heap allocation analysis
-cargo run --profile dhat --features dhat-heap --bin dhat-profile
+# Heap allocation analysis (standalone tool, not part of workspace)
+cargo run --release --manifest-path tools/dhat-profile/Cargo.toml
 ```
 
 ## Profiling Workflow
@@ -61,11 +61,8 @@ Look for:
 Analyze memory allocations:
 
 ```bash
-# Build with dhat feature
-cargo build --profile dhat --features dhat-heap
-
-# Run profiler
-cargo run --profile dhat --features dhat-heap --bin dhat-profile
+# Build and run the standalone dhat-profile tool (excluded from workspace)
+cargo run --release --manifest-path tools/dhat-profile/Cargo.toml
 
 # Analyze results
 # Open https://nicholass.github.io/nicholasses-dhat-viewer/
@@ -106,7 +103,9 @@ Use for: Flamegraphs, perf profiling
 
 ### dhat
 
-Release optimizations for heap profiling:
+Release optimizations with debug symbols for heap profiling.
+The `dhat-profile` tool is a standalone crate at `tools/dhat-profile/` (excluded from workspace)
+to avoid pulling `dhat` into default or `--all-features` builds.
 
 ```toml
 [profile.dhat]
@@ -115,7 +114,7 @@ debug = true
 strip = false
 ```
 
-Use for: Dhat heap analysis
+Use for: Dhat heap analysis with `cargo run --profile dhat --manifest-path tools/dhat-profile/Cargo.toml`
 
 ## Benchmark Scenarios
 
