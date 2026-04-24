@@ -10,7 +10,7 @@
 //! | Submodule | Type | Role |
 //! |-----------|------|------|
 //! | `types` | [`DeltaWork`], [`DeltaResult`] | Per-file work item (NDX, paths, size) and outcome (stats, redo/fail status) |
-//! | [`work_queue`] | `WorkQueueSender` / `WorkQueueReceiver` | Bounded `sync_channel` (2x thread count) with backpressure |
+//! | [`work_queue`] | `WorkQueueSender` / `WorkQueueReceiver` | Bounded `crossbeam_channel` (2x thread count) with backpressure |
 //! | [`strategy`] | [`DeltaStrategy`] trait | Dispatches to [`WholeFileStrategy`] or [`DeltaTransferStrategy`] based on [`DeltaWorkKind`] |
 //! | [`reorder`] | [`ReorderBuffer`] | `BTreeMap`-backed buffer that yields results in submission order |
 //! | [`consumer`] | [`DeltaConsumer`] | Background thread that drains `WorkQueue` via `drain_parallel` into `ReorderBuffer` for in-order delivery |
