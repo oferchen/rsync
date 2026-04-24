@@ -56,6 +56,7 @@
 
 mod builder;
 mod connection;
+pub mod embedded;
 mod operand;
 mod parse;
 
