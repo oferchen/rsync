@@ -304,14 +304,16 @@ mod tests {
         // Replenish happens on next consume call. Force it via a zero-byte consume.
         limiter.consume(0).await;
         // After ~200ms at 10_000 bytes/s, ~2000 tokens should have accumulated.
+        // Use wide bounds to tolerate CI coverage instrumentation slowing the
+        // tokio runtime (observed ~1200 tokens under llvm-cov).
         let tokens = limiter.available_tokens();
         assert!(
-            tokens >= 1_500,
-            "expected >= 1500 tokens after 200ms, got {tokens}"
+            tokens >= 1_000,
+            "expected >= 1000 tokens after 200ms, got {tokens}"
         );
         assert!(
-            tokens <= 3_000,
-            "expected <= 3000 tokens after 200ms, got {tokens}"
+            tokens <= 3_500,
+            "expected <= 3500 tokens after 200ms, got {tokens}"
         );
     }
 
