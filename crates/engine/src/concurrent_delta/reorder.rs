@@ -343,10 +343,11 @@ mod tests {
     #[test]
     fn capacity_bounds_enforcement() {
         let mut buf = ReorderBuffer::new(2);
-        buf.insert(5, "x").unwrap();
-        buf.insert(3, "y").unwrap();
-        // Buffer is full (2 items, capacity 2) and seq 7 offset >= capacity
-        assert_eq!(buf.insert(7, "z"), Err(CapacityExceeded));
+        // With capacity 2, valid offsets from next_expected (0) are 0 and 1
+        buf.insert(0, "x").unwrap();
+        buf.insert(1, "y").unwrap();
+        // Seq 2 has offset 2 from next_expected=0, which equals capacity
+        assert_eq!(buf.insert(2, "z"), Err(CapacityExceeded));
         assert_eq!(buf.buffered_count(), 2);
     }
 
@@ -421,9 +422,8 @@ mod tests {
     fn large_sequence_numbers() {
         let mut buf = ReorderBuffer::new(4);
         let base = u64::MAX - 3;
-        buf.insert(base, "a").unwrap();
-        // This buffer expects sequence 0, so offset is huge - won't fit.
-        // But the slot_index check catches offset >= capacity.
+        // Offset from next_expected (0) is enormous - must be rejected
+        assert_eq!(buf.insert(base, "a"), Err(CapacityExceeded));
         assert_eq!(buf.buffered_count(), 0);
     }
 
