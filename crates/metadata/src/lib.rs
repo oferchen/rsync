@@ -114,7 +114,7 @@ mod ownership;
 #[cfg(not(unix))]
 mod ownership_stub;
 #[cfg(not(unix))]
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: used on non-unix as the ownership implementation
 use ownership_stub as ownership;
 
 /// Optimized metadata caching with statx support on Linux.

@@ -75,7 +75,7 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
                 destination_path.display()
             );
             guard.commit()?;
-            #[allow(unused_mut)] // mut needed on unix for with_fd()
+            #[allow(unused_mut)] // REASON: mutated on unix for with_fd()
             let mut params = FinalizeMetadataParams::new(
                 metadata,
                 metadata_options,
@@ -100,7 +100,7 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
             drop(writer_for_metadata.take());
         }
     } else {
-        #[allow(unused_mut)] // mut needed on unix for with_fd()
+        #[allow(unused_mut)] // REASON: mutated on unix for with_fd()
         let mut params = FinalizeMetadataParams::new(
             metadata,
             metadata_options,

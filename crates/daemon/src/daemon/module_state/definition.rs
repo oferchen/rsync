@@ -247,7 +247,7 @@ impl ModuleDefinition {
     }
 
     /// Returns the per-module log file path, if configured.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // REASON: wired when per-module log files are opened at connection time
     pub(crate) fn module_log_file(&self) -> Option<&Path> {
         self.log_file.as_deref()
     }
