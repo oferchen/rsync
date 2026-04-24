@@ -192,6 +192,19 @@ crossbeam = "0.8"
 crossbeam-channel = "0.5"
 # Concurrent hash map - for shared state across daemon sessions
 dashmap = "6.1"
+# Pure-Rust SSH client - embedded SSH transport alternative to system ssh binary
+russh = "0.45"
+russh-keys = "0.45"
+# SSH key parsing and manipulation
+ssh-key = { version = "0.6", features = ["std"] }
+# URL parsing for ssh:// URIs
+url = "2"
+# Secure password input from terminal
+rpassword = "7"
+# Terminal detection for interactive prompts
+is-terminal = "0.4"
+# CPU feature detection for cipher selection (x86/x86_64 only)
+raw-cpuid = "11"
 
 [workspace.metadata.docs.rs]
 all-features = true

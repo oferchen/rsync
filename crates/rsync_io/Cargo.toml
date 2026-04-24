@@ -18,6 +18,19 @@ thiserror = "2.0"
 protocol = { path = "../protocol" }
 logging = { path = "../logging" }
 memchr = "2.7"
+russh = { workspace = true, optional = true }
+russh-keys = { workspace = true, optional = true }
+ssh-key = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+rpassword = { workspace = true, optional = true }
+is-terminal = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
+raw-cpuid = { workspace = true, optional = true }
+
+[features]
+embedded-ssh = ["dep:russh", "dep:russh-keys", "dep:ssh-key", "dep:url", "dep:rpassword", "dep:is-terminal", "dep:tokio"]
 
 [dev-dependencies]
 proptest = "1.4"
