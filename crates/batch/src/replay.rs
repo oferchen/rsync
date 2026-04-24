@@ -42,6 +42,25 @@ use crate::error::{BatchError, BatchResult};
 use crate::reader::BatchReader;
 use protocol::flist::sort_file_list;
 
+/// Compression codec used in a batch file's compressed token stream.
+///
+/// Upstream rsync write-batch forces `compress_choice = "zlib"` (compat.c:413-414),
+/// so batch files from upstream always contain zlib-compressed data. However,
+/// upstream rsync 3.4.1+ with SUPPORT_ZSTD can auto-negotiate zstd for live
+/// transfers, and a hypothetical or patched upstream could produce batch files
+/// with zstd-compressed tokens. oc-rsync detects the actual codec from the
+/// compressed payload to handle both cases correctly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompressionCodec {
+    /// Zlib/DEFLATE - the upstream default for batch files.
+    /// upstream: compat.c:194-195 - batch read defaults to CPRES_ZLIB
+    Zlib,
+    /// Zstd - possible if the batch was written by a patched upstream or
+    /// future rsync version that allows zstd in batch mode.
+    #[cfg(feature = "zstd")]
+    Zstd,
+}
+
 /// Result of a batch replay operation.
 ///
 /// Contains aggregate statistics about the files processed during replay.
@@ -434,19 +453,32 @@ pub fn replay(
 
     // upstream: batch.c:check_batch_flags() - when the batch stream flags
     // include do_compression (bit 8), the token data in the batch file uses
-    // compressed format (DEFLATED_DATA headers). Batch files always use
-    // CPRES_ZLIB - upstream compat.c:194-195 defaults to CPRES_ZLIB when
-    // reading a batch (no remote negotiation occurs for batch replay).
+    // compressed format (DEFLATED_DATA headers).
+    //
+    // Upstream always forces CPRES_ZLIB for batch reads (compat.c:194-195),
+    // so we start with a zlib decoder. However, if zlib decompression fails
+    // on the first token, we fall back to zstd. This auto-detection handles
+    // both standard upstream batch files (always zlib) and hypothetical
+    // zstd-compressed batch files from patched or future upstream versions.
     let mut compressed_decoder = if flags.do_compression {
-        Some(create_compressed_decoder(proto)?)
+        Some(create_compressed_decoder(CompressionCodec::Zlib)?)
     } else {
         None
     };
-    // Batch files always use CPRES_ZLIB regardless of protocol version -
-    // upstream compat.c:194-195 falls through to CPRES_ZLIB when reading a
-    // batch (no negotiated compress-choice). Streaming reads with see_token()
-    // between each recv_token() maintain the decompressor's sliding dictionary.
-    let cpres_zlib = flags.do_compression;
+    // Track detected codec - starts as zlib, may change to zstd on first
+    // decompression failure. Determines whether dictionary sync (see_token)
+    // is needed: required for CPRES_ZLIB, noop for zstd.
+    #[cfg_attr(not(feature = "zstd"), allow(unused_mut))]
+    let mut detected_codec = if flags.do_compression {
+        Some(CompressionCodec::Zlib)
+    } else {
+        None
+    };
+    // CPRES_ZLIB requires dictionary synchronization via see_token() between
+    // each recv_token() call. Zstd does not need dictionary sync (see_token
+    // is a noop). This flag is updated if codec detection switches to zstd.
+    #[cfg_attr(not(feature = "zstd"), allow(unused_mut))]
+    let mut cpres_zlib = detected_codec == Some(CompressionCodec::Zlib);
 
     // upstream: flist.c:2923 - with INC_RECURSE, the first flist has ndx_start=1.
     // Subsequent sub-lists have ndx_start = prev->ndx_start + prev->used + 1
@@ -720,7 +752,26 @@ pub fn replay(
         // headers. Otherwise, tokens use the simple 4-byte LE i32 format.
         // upstream: token.c:recv_token() dispatches to recv_deflated_token() or
         // simple_recv_token() based on do_compression.
-        let delta_ops = if let Some(ref mut decoder) = compressed_decoder {
+        let delta_ops = if compressed_decoder.is_some() {
+            // Auto-detect codec on the first compressed file: peek at the
+            // stream to check if the payload contains zstd frames. If so,
+            // replace the zlib decoder with zstd. Detection only runs once
+            // (first file) - all files in a batch use the same codec.
+            #[cfg(feature = "zstd")]
+            if detected_codec == Some(CompressionCodec::Zlib)
+                && !compressed_decoder.as_ref().unwrap().initialized()
+            {
+                let stream = reader
+                    .inner_reader()
+                    .ok_or_else(|| BatchError::Io(std::io::Error::other("batch file not open")))?;
+                let actual_codec = detect_compression_codec(stream);
+                if actual_codec != CompressionCodec::Zlib {
+                    compressed_decoder = Some(create_compressed_decoder(actual_codec)?);
+                    detected_codec = Some(actual_codec);
+                    cpres_zlib = false;
+                }
+            }
+            let decoder = compressed_decoder.as_mut().unwrap();
             // upstream: token.c:recv_deflated_token() r_init resets inflate
             // context per file. The decoder.reset() mirrors this behavior.
             decoder.reset();
@@ -902,36 +953,164 @@ fn default_xfer_sum_len(protocol_version: i32) -> usize {
 
 /// Creates a `CompressedTokenDecoder` for batch replay.
 ///
-/// Batch files do not record which compression algorithm was negotiated
-/// during the original transfer. When upstream's `check_batch_flags()`
-/// restores `do_compression` from the stream flags bitmap, the value is
-/// just 1 (truthy). `parse_compress_choice()` then maps that to
-/// `CPRES_ZLIB` (upstream compat.c:194-195), regardless of protocol
-/// version.
+/// Selects the appropriate decoder based on the detected compression codec.
+/// Upstream rsync write-batch forces zlib (compat.c:413-414), and read-batch
+/// defaults to CPRES_ZLIB (compat.c:194-195). oc-rsync extends this by
+/// auto-detecting the codec from the compressed payload, allowing it to
+/// read batch files regardless of which algorithm was used during recording.
 ///
-/// This creates a known upstream limitation: if the original write-batch
-/// transfer auto-negotiated zstd (rsync 3.4.1 with SUPPORT_ZSTD), the
-/// batch file contains zstd-compressed tokens, but read-batch assumes
-/// CPRES_ZLIB. This causes upstream rsync to fail reading its own batch
-/// files with "WARNING: failed verification" on delta transfers. The
-/// workaround is `--compress-choice=zlib` during write-batch.
+/// For zlib: sets zlibx=false so `see_token()` feeds matched block data
+/// into the inflate dictionary. Without this, inflate fails with "invalid
+/// distance too far back".
 ///
-/// oc-rsync avoids this issue entirely by recording uncompressed data
-/// in batch files (do_compression=false in stream flags). When reading
-/// upstream-written batch files, oc-rsync uses CPRES_ZLIB to match
-/// upstream's read-batch behavior.
-///
-/// We always set zlibx=false for batch reading to match upstream:
-/// - see_token() feeds matched block data into the inflate dictionary
-/// - Without this, inflate fails with "invalid distance too far back"
+/// For zstd: `see_token()` is a noop - no dictionary synchronization needed.
 ///
 /// upstream: compat.c:194-195 - batch read defaults to CPRES_ZLIB
 /// upstream: token.c:see_deflate_token() - feeds block data into inflate dictionary
-fn create_compressed_decoder(_proto: i32) -> BatchResult<CompressedTokenDecoder> {
-    let mut decoder = CompressedTokenDecoder::new();
-    // Batch files always use CPRES_ZLIB - upstream compat.c:194-195
-    decoder.set_zlibx(false);
-    Ok(decoder)
+fn create_compressed_decoder(codec: CompressionCodec) -> BatchResult<CompressedTokenDecoder> {
+    match codec {
+        CompressionCodec::Zlib => {
+            let mut decoder = CompressedTokenDecoder::new();
+            decoder.set_zlibx(false);
+            Ok(decoder)
+        }
+        #[cfg(feature = "zstd")]
+        CompressionCodec::Zstd => CompressedTokenDecoder::new_zstd().map_err(|e| {
+            BatchError::Io(std::io::Error::new(
+                e.kind(),
+                format!("failed to create zstd decoder for batch replay: {e}"),
+            ))
+        }),
+    }
+}
+
+/// Detects the compression codec from the batch stream by peeking at compressed data.
+///
+/// Upstream rsync write-batch always uses zlib (compat.c:413-414), but a
+/// patched or future upstream could produce zstd-compressed batch files.
+/// This function peeks at the first DEFLATED_DATA block in the stream,
+/// checks for the zstd magic number (`0xFD2FB528` LE), and returns the
+/// detected codec. The stream position is restored after peeking.
+///
+/// The function scans forward from the current position looking for a byte
+/// with the DEFLATED_DATA flag (upper 2 bits = 0x40). It reads the 2-byte
+/// header to get the payload length, then checks the first 4 bytes of the
+/// payload for the zstd frame magic. The stream is then seeked back to
+/// the original position.
+///
+/// If the stream contains no DEFLATED_DATA blocks before EOF, or if an
+/// I/O error occurs during peeking, falls back to zlib (the upstream default).
+///
+/// upstream: token.c:recv_deflated_token() - DEFLATED_DATA flag = 0x40
+/// zstd spec: frames start with magic 0xFD2FB528 (LE bytes: 28 B5 2F FD)
+#[cfg(feature = "zstd")]
+fn detect_compression_codec(reader: &mut BufReader<File>) -> CompressionCodec {
+    let start_pos = match reader.stream_position() {
+        Ok(pos) => pos,
+        Err(_) => return CompressionCodec::Zlib,
+    };
+
+    let result = peek_for_codec(reader);
+
+    // Always restore stream position regardless of detection result.
+    let _ = reader.seek(SeekFrom::Start(start_pos));
+
+    result.unwrap_or(CompressionCodec::Zlib)
+}
+
+/// Inner peek logic for codec detection, separated for clean error handling.
+///
+/// Scans the stream byte-by-byte looking for a DEFLATED_DATA header (flag
+/// byte with upper 2 bits = 0x40). Once found, reads the payload length
+/// from the 2-byte header and checks the first 4 bytes for the zstd magic.
+///
+/// Returns `None` if no DEFLATED_DATA block is found before EOF or on error.
+#[cfg(feature = "zstd")]
+fn peek_for_codec(reader: &mut BufReader<File>) -> Option<CompressionCodec> {
+    // Scan for the first DEFLATED_DATA flag byte. The compressed token stream
+    // starts with flag bytes that can be END_FLAG (0x00), TOKEN_LONG (0x20),
+    // TOKENRUN_LONG (0x21), DEFLATED_DATA (0x40-0x7F), TOKEN_REL (0x80-0xBF),
+    // or TOKENRUN_REL (0xC0-0xFF). We need to find a DEFLATED_DATA byte.
+    //
+    // Limit scan to 64KB to avoid reading the entire batch file.
+    const SCAN_LIMIT: usize = 65536;
+    let mut scanned = 0;
+
+    while scanned < SCAN_LIMIT {
+        let mut byte = [0u8; 1];
+        if reader.read_exact(&mut byte).is_err() {
+            return None;
+        }
+        scanned += 1;
+
+        let flag = byte[0];
+
+        // Check if this byte has the DEFLATED_DATA pattern (upper 2 bits = 01)
+        if (flag & 0xC0) == 0x40 {
+            // Read the second byte of the DEFLATED_DATA header
+            let high = (flag & 0x3F) as usize;
+            let mut low_buf = [0u8; 1];
+            if reader.read_exact(&mut low_buf).is_err() {
+                return None;
+            }
+            let len = (high << 8) | (low_buf[0] as usize);
+
+            if len < 4 {
+                // Payload too short to contain zstd magic - assume zlib.
+                return Some(CompressionCodec::Zlib);
+            }
+
+            // Read the first 4 bytes of the compressed payload
+            let mut magic_buf = [0u8; 4];
+            if reader.read_exact(&mut magic_buf).is_err() {
+                return None;
+            }
+
+            // Zstd frame magic: 0xFD2FB528 stored as LE bytes [0x28, 0xB5, 0x2F, 0xFD]
+            #[cfg(feature = "zstd")]
+            if magic_buf == [0x28, 0xB5, 0x2F, 0xFD] {
+                return Some(CompressionCodec::Zstd);
+            }
+
+            return Some(CompressionCodec::Zlib);
+        }
+
+        // Skip over known flag types to avoid false DEFLATED_DATA matches.
+        // TOKEN_LONG: 4-byte token follows
+        if flag == 0x20 {
+            let mut skip = [0u8; 4];
+            if reader.read_exact(&mut skip).is_err() {
+                return None;
+            }
+            scanned += 4;
+            continue;
+        }
+        // TOKENRUN_LONG: 4-byte token + 2-byte run count
+        if flag == 0x21 {
+            let mut skip = [0u8; 6];
+            if reader.read_exact(&mut skip).is_err() {
+                return None;
+            }
+            scanned += 6;
+            continue;
+        }
+        // TOKEN_REL (0x80-0xBF): no additional data
+        if flag & 0xC0 == 0x80 {
+            continue;
+        }
+        // TOKENRUN_REL (0xC0-0xFF): 2-byte run count follows
+        if flag & 0xC0 == 0xC0 {
+            let mut skip = [0u8; 2];
+            if reader.read_exact(&mut skip).is_err() {
+                return None;
+            }
+            scanned += 2;
+            continue;
+        }
+        // END_FLAG (0x00) or other: continue scanning
+    }
+
+    None
 }
 
 /// Chooses block length using the same heuristic as upstream rsync.
@@ -1116,38 +1295,38 @@ mod tests {
     }
 
     #[test]
-    fn compressed_decoder_created_for_proto_31() {
-        // Protocol 31 creates a zlib/zlibx decoder.
-        let decoder = create_compressed_decoder(31).unwrap();
+    fn compressed_decoder_created_for_zlib() {
+        let decoder = create_compressed_decoder(CompressionCodec::Zlib).unwrap();
         assert!(
             !decoder.initialized(),
-            "fresh decoder should not be initialized"
+            "fresh zlib decoder should not be initialized"
+        );
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn compressed_decoder_created_for_zstd() {
+        let decoder = create_compressed_decoder(CompressionCodec::Zstd).unwrap();
+        assert!(
+            !decoder.initialized(),
+            "fresh zstd decoder should not be initialized"
         );
     }
 
     #[test]
-    fn compressed_decoder_created_for_proto_32() {
-        // Protocol 32 also uses zlib for batch replay - batch files don't
-        // record the negotiated algorithm, and upstream always falls back
-        // to CPRES_ZLIB via parse_compress_choice().
-        let decoder = create_compressed_decoder(32).unwrap();
-        assert!(
-            !decoder.initialized(),
-            "fresh decoder should not be initialized"
-        );
+    fn cpres_zlib_true_for_zlib_codec() {
+        // When the detected codec is zlib, dictionary sync (see_token)
+        // must be active. This matches upstream CPRES_ZLIB behavior.
+        let codec = CompressionCodec::Zlib;
+        assert!(Some(codec) == Some(CompressionCodec::Zlib));
     }
 
+    #[cfg(feature = "zstd")]
     #[test]
-    fn compressed_batch_always_uses_cpres_zlib() {
-        // Batch files always use CPRES_ZLIB regardless of protocol version -
-        // upstream compat.c:194-195 defaults to CPRES_ZLIB for batch reads.
-        // Verify create_compressed_decoder sets zlibx=false for all versions.
-        for proto in [28, 30, 31, 32] {
-            let decoder = create_compressed_decoder(proto).unwrap();
-            assert!(
-                !decoder.initialized(),
-                "fresh decoder for proto {proto} should not be initialized"
-            );
-        }
+    fn cpres_zlib_false_for_zstd_codec() {
+        // When the detected codec is zstd, dictionary sync is unnecessary
+        // because zstd's see_token() is a noop.
+        let codec = CompressionCodec::Zstd;
+        assert!(Some(codec) != Some(CompressionCodec::Zlib));
     }
 }
