@@ -1519,4 +1519,519 @@ mod integration {
         assert_eq!(&content[1400..1400 + patch.len()], patch);
         assert_eq!(&content[1400 + patch.len()..], &basis_data[1400..2000]);
     }
+
+    /// Verifies that compressed batch replay correctly resets the decoder
+    /// between multiple files.
+    ///
+    /// Upstream rsync's `recv_deflated_token()` reinitializes the inflate
+    /// context at the start of each file (r_init flag). If the decoder is
+    /// not reset between files, the inflate state from the first file's
+    /// compressed stream leaks into the second, corrupting decompression.
+    ///
+    /// This test exercises the exact code path in `replay.rs` where
+    /// `decoder.reset()` is called before each file's token reading loop.
+    ///
+    /// upstream: token.c:496 - inflateReset per file
+    /// upstream: token.c:recv_deflated_token() - r_init resets state
+    #[test]
+    fn test_replay_compressed_multi_file_resets_decoder() {
+        use protocol::flist::{FileEntry, FileListWriter};
+        use protocol::wire::CompressedTokenEncoder;
+
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("replay_multi_z.batch");
+        let dest_dir = temp_dir.path().join("dest");
+        fs::create_dir_all(&dest_dir).unwrap();
+
+        let protocol_version = 31;
+        let file1_data = b"First file content for multi-file batch test";
+        let file2_data = b"Second file has entirely different compressed content";
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_checksum_seed(42);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        let flags = BatchFlags {
+            recurse: true,
+            do_compression: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol);
+
+        // Directory entry
+        let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
+        dir_entry.set_mtime(1_700_000_000, 0);
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // File 1 entry
+        let mut entry1 = FileEntry::new_file("file1.txt".into(), file1_data.len() as u64, 0o644);
+        entry1.set_mtime(1_700_000_001, 0);
+        buf.clear();
+        flist_writer.write_entry(&mut buf, &entry1).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // File 2 entry
+        let mut entry2 = FileEntry::new_file("file2.txt".into(), file2_data.len() as u64, 0o644);
+        entry2.set_mtime(1_700_000_002, 0);
+        buf.clear();
+        flist_writer.write_entry(&mut buf, &entry2).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // End of flist
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        // NDX-framed delta data for both files
+        {
+            use protocol::codec::{NdxCodec, NdxCodecEnum};
+
+            let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
+            let mut ndx_buf = Vec::new();
+
+            // File 1: NDX=1, compressed literal
+            ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
+            writer.write_data(&0i32.to_le_bytes()).unwrap(); // block_count=0
+            writer.write_data(&0i32.to_le_bytes()).unwrap(); // block_length=0
+            writer.write_data(&0i32.to_le_bytes()).unwrap(); // s2length=0
+            writer.write_data(&0i32.to_le_bytes()).unwrap(); // remainder=0
+
+            let mut token_buf = Vec::new();
+            let mut encoder = CompressedTokenEncoder::default();
+            encoder.set_zlibx(true);
+            encoder.send_literal(&mut token_buf, file1_data).unwrap();
+            encoder.finish(&mut token_buf).unwrap();
+            writer.write_data(&token_buf).unwrap();
+            writer.write_data(&[0u8; 16]).unwrap(); // file checksum
+
+            // File 2: NDX=2, compressed literal
+            ndx_buf.clear();
+            ndx_codec.write_ndx(&mut ndx_buf, 2).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+            writer.write_data(&0i32.to_le_bytes()).unwrap();
+
+            token_buf.clear();
+            let mut encoder2 = CompressedTokenEncoder::default();
+            encoder2.set_zlibx(true);
+            encoder2.send_literal(&mut token_buf, file2_data).unwrap();
+            encoder2.finish(&mut token_buf).unwrap();
+            writer.write_data(&token_buf).unwrap();
+            writer.write_data(&[0u8; 16]).unwrap(); // file checksum
+
+            // NDX_DONE phase 1 -> phase 2
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            // NDX_DONE phase 2 -> end
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+        }
+
+        writer.finalize().unwrap();
+
+        // Replay
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
+
+        assert_eq!(result.file_count, 3); // 1 dir + 2 files
+
+        let content1 = fs::read(dest_dir.join("file1.txt")).unwrap();
+        assert_eq!(
+            content1, file1_data,
+            "first file content should match after multi-file compressed replay"
+        );
+
+        let content2 = fs::read(dest_dir.join("file2.txt")).unwrap();
+        assert_eq!(
+            content2, file2_data,
+            "second file content should match after decoder reset"
+        );
+    }
+
+    /// Verifies compressed batch replay with multiple files where each file
+    /// has CPRES_ZLIB block matches requiring dictionary synchronization.
+    ///
+    /// This is the most demanding compressed batch scenario: each file has
+    /// a pre-existing basis at the destination, so the delta contains copy
+    /// tokens. The decoder must reset between files AND correctly feed basis
+    /// block data via see_token() for each file independently.
+    ///
+    /// This exercises the upstream bug scenario (token.c:608 inflate -3) for
+    /// multiple files in sequence, verifying that oc-rsync handles it correctly.
+    ///
+    /// upstream: token.c:see_deflate_token() - per-file dictionary sync
+    /// upstream: token.c:608 - inflate error -3 when dictionary sync missing
+    #[test]
+    fn test_replay_compressed_multi_file_with_block_matches() {
+        use protocol::flist::{FileEntry, FileListWriter};
+        use protocol::wire::CompressedTokenEncoder;
+
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("replay_multi_delta_z.batch");
+        let dest_dir = temp_dir.path().join("dest");
+        fs::create_dir_all(&dest_dir).unwrap();
+
+        let protocol_version = 31;
+
+        // Create basis files at destination
+        let basis1 = vec![b'A'; 2000];
+        let basis2 = vec![b'X'; 2000];
+        fs::write(dest_dir.join("alpha.dat"), &basis1).unwrap();
+        fs::write(dest_dir.join("beta.dat"), &basis2).unwrap();
+
+        let patch1 = b"PATCH_FOR_ALPHA!";
+        let patch2 = b"PATCH_FOR_BETA!!";
+        let output1_size = 700 + patch1.len() + 700 + 600; // copy block0 + literal + copy block1 + copy block2
+        let output2_size = 700 + 700 + patch2.len() + 600;
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_checksum_seed(42);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        let flags = BatchFlags {
+            recurse: true,
+            do_compression: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol);
+
+        // Directory
+        let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
+        dir_entry.set_mtime(1_700_000_000, 0);
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // File 1
+        let mut f1 = FileEntry::new_file("alpha.dat".into(), output1_size as u64, 0o644);
+        f1.set_mtime(1_700_000_001, 0);
+        buf.clear();
+        flist_writer.write_entry(&mut buf, &f1).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // File 2
+        let mut f2 = FileEntry::new_file("beta.dat".into(), output2_size as u64, 0o644);
+        f2.set_mtime(1_700_000_002, 0);
+        buf.clear();
+        flist_writer.write_entry(&mut buf, &f2).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // End flist
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        // Delta data for both files with CPRES_ZLIB dictionary sync
+        {
+            use protocol::codec::{NdxCodec, NdxCodecEnum};
+
+            let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
+            let block_length: i32 = 700;
+            let block_count: i32 = 3;
+            let remainder: i32 = 600;
+            let s2length: i32 = 16;
+
+            // --- File 1: copy block0 + literal + copy block1 + copy block2 ---
+            let mut ndx_buf = Vec::new();
+            ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
+            writer.write_data(&block_count.to_le_bytes()).unwrap();
+            writer.write_data(&block_length.to_le_bytes()).unwrap();
+            writer.write_data(&s2length.to_le_bytes()).unwrap();
+            writer.write_data(&remainder.to_le_bytes()).unwrap();
+
+            let mut token_buf = Vec::new();
+            let mut enc1 = CompressedTokenEncoder::default();
+            enc1.set_zlibx(false); // CPRES_ZLIB
+
+            enc1.send_block_match(&mut token_buf, 0).unwrap();
+            enc1.see_token(&basis1[0..700]).unwrap();
+
+            enc1.send_literal(&mut token_buf, patch1).unwrap();
+
+            enc1.send_block_match(&mut token_buf, 1).unwrap();
+            enc1.see_token(&basis1[700..1400]).unwrap();
+
+            enc1.send_block_match(&mut token_buf, 2).unwrap();
+            enc1.see_token(&basis1[1400..2000]).unwrap();
+
+            enc1.finish(&mut token_buf).unwrap();
+            writer.write_data(&token_buf).unwrap();
+            writer.write_data(&[0u8; 16]).unwrap();
+
+            // --- File 2: copy block0 + copy block1 + literal + copy block2 ---
+            ndx_buf.clear();
+            ndx_codec.write_ndx(&mut ndx_buf, 2).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
+            writer.write_data(&block_count.to_le_bytes()).unwrap();
+            writer.write_data(&block_length.to_le_bytes()).unwrap();
+            writer.write_data(&s2length.to_le_bytes()).unwrap();
+            writer.write_data(&remainder.to_le_bytes()).unwrap();
+
+            token_buf.clear();
+            let mut enc2 = CompressedTokenEncoder::default();
+            enc2.set_zlibx(false); // CPRES_ZLIB
+
+            enc2.send_block_match(&mut token_buf, 0).unwrap();
+            enc2.see_token(&basis2[0..700]).unwrap();
+
+            enc2.send_block_match(&mut token_buf, 1).unwrap();
+            enc2.see_token(&basis2[700..1400]).unwrap();
+
+            enc2.send_literal(&mut token_buf, patch2).unwrap();
+
+            enc2.send_block_match(&mut token_buf, 2).unwrap();
+            enc2.see_token(&basis2[1400..2000]).unwrap();
+
+            enc2.finish(&mut token_buf).unwrap();
+            writer.write_data(&token_buf).unwrap();
+            writer.write_data(&[0u8; 16]).unwrap();
+
+            // NDX_DONE phase 1 -> phase 2
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            // NDX_DONE phase 2 -> end
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+        }
+
+        writer.finalize().unwrap();
+
+        // Replay
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
+
+        assert_eq!(result.file_count, 3); // 1 dir + 2 files
+
+        // Verify file 1: block0(700) + patch1(16) + block1(700) + block2(600)
+        let content1 = fs::read(dest_dir.join("alpha.dat")).unwrap();
+        assert_eq!(content1.len(), output1_size);
+        assert_eq!(&content1[0..700], &basis1[0..700]);
+        assert_eq!(&content1[700..700 + patch1.len()], &patch1[..]);
+        assert_eq!(
+            &content1[700 + patch1.len()..1400 + patch1.len()],
+            &basis1[700..1400]
+        );
+        assert_eq!(&content1[1400 + patch1.len()..], &basis1[1400..2000]);
+
+        // Verify file 2: block0(700) + block1(700) + patch2(16) + block2(600)
+        let content2 = fs::read(dest_dir.join("beta.dat")).unwrap();
+        assert_eq!(content2.len(), output2_size);
+        assert_eq!(&content2[0..700], &basis2[0..700]);
+        assert_eq!(&content2[700..1400], &basis2[700..1400]);
+        assert_eq!(&content2[1400..1400 + patch2.len()], &patch2[..]);
+        assert_eq!(&content2[1400 + patch2.len()..], &basis2[1400..2000]);
+    }
+
+    /// Verifies that compressed batch replay handles a mix of new files
+    /// (no basis) and delta files (with basis) in the same batch.
+    ///
+    /// When a file has no pre-existing basis at the destination, the replay
+    /// path uses `read_compressed_delta_tokens()` (eager mode, no dictionary
+    /// sync needed) instead of the streaming CPRES_ZLIB path. This test
+    /// verifies the transition between these two paths within a single
+    /// batch file.
+    ///
+    /// upstream: receiver.c:receive_data() - basis_exists determines path
+    #[test]
+    fn test_replay_compressed_mixed_new_and_delta_files() {
+        use protocol::flist::{FileEntry, FileListWriter};
+        use protocol::wire::CompressedTokenEncoder;
+
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("replay_mixed_z.batch");
+        let dest_dir = temp_dir.path().join("dest");
+        fs::create_dir_all(&dest_dir).unwrap();
+
+        let protocol_version = 31;
+
+        // Only create basis for delta.dat - new.txt has no basis
+        let basis_data = vec![b'D'; 2000];
+        fs::write(dest_dir.join("delta.dat"), &basis_data).unwrap();
+
+        let new_file_data = b"brand new file without basis";
+        let patch_data = b"DELTA_PATCH_DATA";
+        let delta_output_size = 700 + 700 + patch_data.len() + 600;
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_checksum_seed(42);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        let flags = BatchFlags {
+            recurse: true,
+            do_compression: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol);
+
+        // Directory
+        let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
+        dir_entry.set_mtime(1_700_000_000, 0);
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // File 1: delta.dat (has basis)
+        let mut f_delta = FileEntry::new_file("delta.dat".into(), delta_output_size as u64, 0o644);
+        f_delta.set_mtime(1_700_000_001, 0);
+        buf.clear();
+        flist_writer.write_entry(&mut buf, &f_delta).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // File 2: new.txt (no basis)
+        let mut f_new = FileEntry::new_file("new.txt".into(), new_file_data.len() as u64, 0o644);
+        f_new.set_mtime(1_700_000_002, 0);
+        buf.clear();
+        flist_writer.write_entry(&mut buf, &f_new).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // End flist
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        // Delta data
+        {
+            use protocol::codec::{NdxCodec, NdxCodecEnum};
+
+            let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
+            let block_length: i32 = 700;
+            let block_count: i32 = 3;
+            let remainder: i32 = 600;
+
+            // --- delta.dat: CPRES_ZLIB with block matches ---
+            let mut ndx_buf = Vec::new();
+            ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
+            writer.write_data(&block_count.to_le_bytes()).unwrap();
+            writer.write_data(&block_length.to_le_bytes()).unwrap();
+            writer.write_data(&16i32.to_le_bytes()).unwrap();
+            writer.write_data(&remainder.to_le_bytes()).unwrap();
+
+            let mut token_buf = Vec::new();
+            let mut enc = CompressedTokenEncoder::default();
+            enc.set_zlibx(false); // CPRES_ZLIB
+
+            enc.send_block_match(&mut token_buf, 0).unwrap();
+            enc.see_token(&basis_data[0..700]).unwrap();
+
+            enc.send_block_match(&mut token_buf, 1).unwrap();
+            enc.see_token(&basis_data[700..1400]).unwrap();
+
+            enc.send_literal(&mut token_buf, patch_data).unwrap();
+
+            enc.send_block_match(&mut token_buf, 2).unwrap();
+            enc.see_token(&basis_data[1400..2000]).unwrap();
+
+            enc.finish(&mut token_buf).unwrap();
+            writer.write_data(&token_buf).unwrap();
+            writer.write_data(&[0u8; 16]).unwrap();
+
+            // --- new.txt: whole-file literal (no basis, uses eager path) ---
+            ndx_buf.clear();
+            ndx_codec.write_ndx(&mut ndx_buf, 2).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
+            writer.write_data(&0i32.to_le_bytes()).unwrap(); // block_count=0
+            writer.write_data(&0i32.to_le_bytes()).unwrap(); // block_length=0
+            writer.write_data(&0i32.to_le_bytes()).unwrap(); // s2length=0
+            writer.write_data(&0i32.to_le_bytes()).unwrap(); // remainder=0
+
+            token_buf.clear();
+            let mut enc2 = CompressedTokenEncoder::default();
+            enc2.set_zlibx(true); // zlibx for whole-file
+            enc2.send_literal(&mut token_buf, new_file_data).unwrap();
+            enc2.finish(&mut token_buf).unwrap();
+            writer.write_data(&token_buf).unwrap();
+            writer.write_data(&[0u8; 16]).unwrap();
+
+            // NDX_DONE phase 1 -> phase 2
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            // NDX_DONE phase 2 -> end
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+        }
+
+        writer.finalize().unwrap();
+
+        // Replay
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
+
+        assert_eq!(result.file_count, 3);
+
+        // Verify delta.dat
+        let content_delta = fs::read(dest_dir.join("delta.dat")).unwrap();
+        assert_eq!(content_delta.len(), delta_output_size);
+        assert_eq!(&content_delta[0..700], &basis_data[0..700]);
+        assert_eq!(&content_delta[700..1400], &basis_data[700..1400]);
+        assert_eq!(
+            &content_delta[1400..1400 + patch_data.len()],
+            &patch_data[..]
+        );
+        assert_eq!(
+            &content_delta[1400 + patch_data.len()..],
+            &basis_data[1400..2000]
+        );
+
+        // Verify new.txt
+        let content_new = fs::read(dest_dir.join("new.txt")).unwrap();
+        assert_eq!(content_new, new_file_data);
+    }
 }
