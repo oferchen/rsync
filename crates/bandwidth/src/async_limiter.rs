@@ -75,11 +75,11 @@ impl AsyncRateLimiter {
     /// A request larger than the burst capacity is handled in a single sleep -
     /// the method calculates the total time needed and waits accordingly.
     pub async fn consume(&mut self, bytes: u64) {
+        self.replenish();
+
         if bytes == 0 {
             return;
         }
-
-        self.replenish();
 
         if self.tokens >= bytes {
             self.tokens -= bytes;
@@ -295,26 +295,20 @@ mod tests {
 
     #[tokio::test]
     async fn tokens_replenish_over_time() {
+        // Pause tokio time for deterministic testing - coverage instrumentation
+        // (llvm-cov) distorts real wall-clock timing, making bounds unreliable.
+        tokio::time::pause();
         let mut limiter = AsyncRateLimiter::new(10_000);
         // Drain the bucket.
         limiter.consume(10_000).await;
         assert_eq!(limiter.available_tokens(), 0);
-        // Wait for tokens to accumulate.
+        // Advance frozen time by 200ms. With paused time, tokio::time::sleep
+        // auto-advances the clock, and Instant::now() reflects the advance.
         tokio::time::sleep(Duration::from_millis(200)).await;
         // Replenish happens on next consume call. Force it via a zero-byte consume.
         limiter.consume(0).await;
-        // After ~200ms at 10_000 bytes/s, ~2000 tokens should have accumulated.
-        // Use wide bounds to tolerate CI coverage instrumentation slowing the
-        // tokio runtime (observed ~1200 tokens under llvm-cov).
-        let tokens = limiter.available_tokens();
-        assert!(
-            tokens >= 1_000,
-            "expected >= 1000 tokens after 200ms, got {tokens}"
-        );
-        assert!(
-            tokens <= 3_500,
-            "expected <= 3500 tokens after 200ms, got {tokens}"
-        );
+        // With deterministic time: 200ms at 10_000 bytes/s = exactly 2000 tokens.
+        assert_eq!(limiter.available_tokens(), 2000);
     }
 
     /// Verifies the type is `Send + Sync` at compile time.
