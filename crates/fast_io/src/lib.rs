@@ -78,6 +78,7 @@
 #![deny(missing_docs)]
 
 pub mod cached_sort;
+pub mod kernel_version;
 pub mod parallel;
 pub mod temp_file_strategy;
 pub mod traits;
@@ -133,6 +134,9 @@ pub use platform_copy::{
 };
 pub use traits::{FileReader, FileWriter};
 
+pub use kernel_version::{
+    IO_URING_MIN_KERNEL, KernelVersion, log_io_uring_probe_result, parse_kernel_version,
+};
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 pub use splice::{is_splice_available, recv_fd_to_file, try_splice_to_file};
 
