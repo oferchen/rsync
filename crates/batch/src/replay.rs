@@ -479,6 +479,7 @@ pub fn replay(
     // Track detected codec - starts as zlib, may change to zstd on first
     // decompression failure. Determines whether dictionary sync (see_token)
     // is needed: required for CPRES_ZLIB, noop for zstd.
+    #[cfg_attr(not(feature = "zstd"), allow(unused_mut))]
     let mut detected_codec = if flags.do_compression {
         Some(CompressionCodec::Zlib)
     } else {
@@ -487,6 +488,7 @@ pub fn replay(
     // CPRES_ZLIB requires dictionary synchronization via see_token() between
     // each recv_token() call. Zstd does not need dictionary sync (see_token
     // is a noop). This flag is updated if codec detection switches to zstd.
+    #[cfg_attr(not(feature = "zstd"), allow(unused_mut))]
     let mut cpres_zlib = detected_codec == Some(CompressionCodec::Zlib);
 
     // upstream: flist.c:2923 - with INC_RECURSE, the first flist has ndx_start=1.
@@ -1019,6 +1021,7 @@ fn create_compressed_decoder(codec: CompressionCodec) -> BatchResult<CompressedT
 ///
 /// upstream: token.c:recv_deflated_token() - DEFLATED_DATA flag = 0x40
 /// zstd spec: frames start with magic 0xFD2FB528 (LE bytes: 28 B5 2F FD)
+#[cfg(feature = "zstd")]
 fn detect_compression_codec(reader: &mut BufReader<File>) -> CompressionCodec {
     let start_pos = match reader.stream_position() {
         Ok(pos) => pos,
@@ -1040,6 +1043,7 @@ fn detect_compression_codec(reader: &mut BufReader<File>) -> CompressionCodec {
 /// from the 2-byte header and checks the first 4 bytes for the zstd magic.
 ///
 /// Returns `None` if no DEFLATED_DATA block is found before EOF or on error.
+#[cfg(feature = "zstd")]
 fn peek_for_codec(reader: &mut BufReader<File>) -> Option<CompressionCodec> {
     // Scan for the first DEFLATED_DATA flag byte. The compressed token stream
     // starts with flag bytes that can be END_FLAG (0x00), TOKEN_LONG (0x20),
