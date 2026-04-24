@@ -356,7 +356,7 @@ mod tests {
         let results: Vec<DeltaResult> = consumer.iter().collect();
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].ndx(), 42);
+        assert_eq!(results[0].ndx().get(), 42);
         assert_eq!(results[0].sequence(), 0);
         assert_eq!(results[0].bytes_written(), 128);
     }
@@ -448,17 +448,17 @@ mod tests {
         assert_eq!(results.len(), 3);
 
         // First: whole-file, all literal.
-        assert_eq!(results[0].ndx(), 0);
+        assert_eq!(results[0].ndx().get(), 0);
         assert_eq!(results[0].literal_bytes(), 1024);
         assert_eq!(results[0].matched_bytes(), 0);
 
         // Second: delta, mixed literal/matched.
-        assert_eq!(results[1].ndx(), 1);
+        assert_eq!(results[1].ndx().get(), 1);
         assert_eq!(results[1].literal_bytes(), 800);
         assert_eq!(results[1].matched_bytes(), 1248);
 
         // Third: whole-file, all literal.
-        assert_eq!(results[2].ndx(), 2);
+        assert_eq!(results[2].ndx().get(), 2);
         assert_eq!(results[2].literal_bytes(), 512);
         assert_eq!(results[2].matched_bytes(), 0);
     }
@@ -528,11 +528,11 @@ mod tests {
 
         assert_eq!(results.len(), 5);
         // Results are in sequence order, so NDX values follow submission order.
-        assert_eq!(results[0].ndx(), 100);
-        assert_eq!(results[1].ndx(), 42);
-        assert_eq!(results[2].ndx(), 7);
-        assert_eq!(results[3].ndx(), 999);
-        assert_eq!(results[4].ndx(), 0);
+        assert_eq!(results[0].ndx().get(), 100);
+        assert_eq!(results[1].ndx().get(), 42);
+        assert_eq!(results[2].ndx().get(), 7);
+        assert_eq!(results[3].ndx().get(), 999);
+        assert_eq!(results[4].ndx().get(), 0);
     }
 
     #[test]
