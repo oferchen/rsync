@@ -1159,10 +1159,6 @@ mod tests {
         assert!(err.to_string().contains("io_uring"));
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Parity tests - output must be identical regardless of policy
-    // ─────────────────────────────────────────────────────────────────────
-
     #[test]
     fn writer_parity_disabled_vs_auto() {
         let test_data: Vec<u8> = (0..4096).map(|i| ((i * 7 + 13) % 256) as u8).collect();
@@ -1213,10 +1209,6 @@ mod tests {
         assert_eq!(data_disabled, data_auto);
         assert_eq!(data_disabled, test_data);
     }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // Partial write and multi-chunk tests
-    // ─────────────────────────────────────────────────────────────────────
 
     #[test]
     fn writer_handles_partial_writes_correctly() {

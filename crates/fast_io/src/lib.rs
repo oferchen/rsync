@@ -545,10 +545,6 @@ mod tests {
 mod io_uring_fallback_tests {
     use super::*;
 
-    // ─────────────────────────────────────────────────────────────────────
-    // io_uring fallback message verification (task #1578)
-    // ─────────────────────────────────────────────────────────────────────
-
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn io_uring_unavailable_on_non_linux() {

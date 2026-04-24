@@ -220,9 +220,9 @@ impl<T> ReorderBuffer<T> {
         let mut new_slots: Vec<Option<T>> = (0..new_cap).map(|_| None).collect();
 
         // Linearize: copy from head..end, then 0..head.
-        for i in 0..self.capacity {
+        for (i, slot) in new_slots.iter_mut().enumerate().take(self.capacity) {
             let src = (self.head + i) % self.capacity;
-            new_slots[i] = self.slots[src].take();
+            *slot = self.slots[src].take();
         }
 
         self.slots = new_slots.into_boxed_slice();

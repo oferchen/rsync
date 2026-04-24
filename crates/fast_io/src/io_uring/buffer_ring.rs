@@ -37,10 +37,6 @@ use io_uring::IoUring as RawIoUring;
 
 use super::config;
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Kernel constants not yet exposed by libc or io-uring crate
-// ──────────────────────────────────────────────────────────────────────────────
-
 /// `IORING_REGISTER_PBUF_RING` opcode (kernel 5.19+).
 const IORING_REGISTER_PBUF_RING: libc::c_uint = 22;
 
@@ -58,10 +54,6 @@ const IORING_CQE_F_BUFFER: u32 = 1 << 0;
 
 /// Buffer ID shift in CQE flags.
 const IORING_CQE_BUFFER_SHIFT: u32 = 16;
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Kernel structs for PBUF_RING registration
-// ──────────────────────────────────────────────────────────────────────────────
 
 /// Matches `struct io_uring_buf_reg` from the kernel.
 #[repr(C)]
@@ -81,10 +73,6 @@ struct IoUringBuf {
     bid: u16,
     resv: u16,
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Error type
-// ──────────────────────────────────────────────────────────────────────────────
 
 /// Errors specific to buffer ring operations.
 #[derive(Debug, thiserror::Error)]
@@ -139,10 +127,6 @@ impl From<BufferRingError> for io::Error {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Configuration
-// ──────────────────────────────────────────────────────────────────────────────
-
 /// Configuration for a provided buffer ring.
 ///
 /// Controls the ring dimensions and buffer group identity.
@@ -190,10 +174,6 @@ impl BufferRingConfig {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Runtime detection
-// ──────────────────────────────────────────────────────────────────────────────
-
 /// Returns `true` if the kernel supports PBUF_RING (>= 5.19).
 ///
 /// Checks the kernel version via `uname(2)`. This is a necessary but not
@@ -211,10 +191,6 @@ pub fn is_supported() -> bool {
     };
     (major, minor) >= MIN_PBUF_RING_KERNEL
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// BufferRing
-// ──────────────────────────────────────────────────────────────────────────────
 
 /// A provided buffer ring (PBUF_RING) registered with an io_uring instance.
 ///
@@ -592,8 +568,6 @@ pub fn buffer_id_from_cqe_flags(flags: u32) -> Option<u16> {
     }
 }
 
-/// Uses `AsRawFd` to get the fd from the ring. This is a helper trait
-/// import to keep the `new` method clean.
 use std::os::unix::io::AsRawFd;
 
 /// Checks that the running kernel supports PBUF_RING.
