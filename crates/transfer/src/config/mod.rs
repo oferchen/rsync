@@ -1,5 +1,10 @@
-#![deny(unsafe_code)]
 //! Server configuration derived from the compact flag string and trailing arguments.
+
+mod builder;
+mod error;
+
+pub use builder::ServerConfigBuilder;
+pub use error::BuilderError;
 
 use std::ffi::OsString;
 use std::time::SystemTime;
@@ -391,6 +396,9 @@ impl ServerConfig {
         })
     }
 }
+
+#[cfg(test)]
+mod builder_tests;
 
 #[cfg(test)]
 mod tests {
