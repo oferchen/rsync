@@ -202,7 +202,6 @@ impl BatchWriter {
 
 impl Drop for BatchWriter {
     fn drop(&mut self) {
-        // Ensure file is flushed on drop
         let _ = self.flush();
     }
 }

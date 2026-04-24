@@ -109,27 +109,11 @@ fn write_literals_to_file(
     Ok(())
 }
 
-/// Apply delta operations to reconstruct a target file from a basis file.
+/// Applies delta operations to reconstruct a file from a basis file.
 ///
 /// Reads copy and literal tokens from `delta_ops` and writes the
 /// reconstructed output to `dest_path`. Copy tokens reference blocks in
 /// `basis_path` at offsets computed as `block_index * block_length`.
-///
-/// # Arguments
-///
-/// * `basis_path` - Path to the existing basis file used for copy operations.
-/// * `dest_path` - Path where the reconstructed output is written.
-/// * `delta_ops` - Sequence of delta operations (literal data and basis-file
-///   copies) to apply.
-/// * `block_length` - Block size used to calculate basis-file offsets for copy
-///   operations. Upstream rsync derives this from `choose_block_size()` in
-///   `match.c:365`.
-///
-/// # Errors
-///
-/// Returns [`BatchError::Io`] if the basis file cannot be opened, the output
-/// file cannot be created, or any read/write/seek operation fails.
-/// Applies delta operations to reconstruct a file from a basis file.
 ///
 /// `block_count` is the number of blocks in the basis file's signature.
 /// `remainder` is the size of the last block (which may be shorter than
@@ -138,6 +122,11 @@ fn write_literals_to_file(
 ///
 /// upstream: receiver.c:recv_files() / match.c - block_length for all blocks
 /// except the last, which uses remainder.
+///
+/// # Errors
+///
+/// Returns [`BatchError::Io`] if the basis file cannot be opened, the output
+/// file cannot be created, or any read/write/seek operation fails.
 pub fn apply_delta_ops(
     basis_path: &Path,
     dest_path: &Path,
@@ -900,13 +889,6 @@ pub fn replay(
     Ok(result)
 }
 
-/// Choose block length using the same heuristic as upstream rsync.
-///
-/// Upstream `match.c:choose_block_size()` computes the block length as the
-/// integer square root of the file size, clamped to `[BLOCK_SIZE (700),
-/// MAX_BLOCK_SIZE (128 * 1024)]`. For batch replay the exact same
-/// derivation ensures copy-token offsets align with the blocks that the
-/// sender used during the original transfer.
 /// Returns the default xfer checksum length for batch replay.
 ///
 /// upstream: `checksum.c:188` - `xfer_sum_len = csum_len_for_type(xfer_sum_nni->num, 0)`.
@@ -952,6 +934,13 @@ fn create_compressed_decoder(_proto: i32) -> BatchResult<CompressedTokenDecoder>
     Ok(decoder)
 }
 
+/// Chooses block length using the same heuristic as upstream rsync.
+///
+/// Upstream `match.c:choose_block_size()` computes the block length as the
+/// integer square root of the file size, clamped to `[BLOCK_SIZE (700),
+/// MAX_BLOCK_SIZE (128 * 1024)]`. For batch replay the exact same
+/// derivation ensures copy-token offsets align with the blocks that the
+/// sender used during the original transfer.
 fn choose_block_length(file_size: u64) -> usize {
     const MIN_BLOCK: usize = 700;
     const MAX_BLOCK: usize = 128 * 1024;
