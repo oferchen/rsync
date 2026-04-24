@@ -92,6 +92,7 @@ pub use strategy::Lz4Strategy;
 #[cfg(feature = "zstd")]
 pub use strategy::ZstdStrategy;
 pub use strategy::{
-    CompressionAlgorithmKind, CompressionStrategy, CompressionStrategySelector,
+    CompressionAlgorithmKind, CompressionNegotiator, CompressionStrategy,
+    CompressionStrategySelector, DefaultCompressionNegotiator, FixedCompressionNegotiator,
     NoCompressionStrategy, ZlibStrategy,
 };
