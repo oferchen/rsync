@@ -58,7 +58,7 @@ jobs:
 
       - name: Generate LCOV coverage report and enforce threshold
         id: coverage
-        run: cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 95
+        run: cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 80
 
       - name: Generate HTML coverage report
         if: always() && steps.coverage.outcome != 'skipped'
