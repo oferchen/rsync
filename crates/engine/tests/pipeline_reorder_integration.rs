@@ -34,7 +34,7 @@ fn end_to_end_streaming_pipeline_delivers_in_order() {
     });
 
     // Stream channel: results arrive out of order from rayon workers.
-    let (stream_tx, stream_rx) = mpsc::sync_channel::<DeltaResult>(32);
+    let (stream_tx, stream_rx) = crossbeam_channel::bounded::<DeltaResult>(32);
 
     // Drain thread: processes items in parallel, streams results as they complete.
     let drain_thread = thread::spawn(move || {

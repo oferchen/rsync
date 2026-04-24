@@ -14,7 +14,7 @@
 //!     v  drain_parallel_into(dispatch, stream_tx)
 //! rayon workers (parallel)
 //!     |
-//!     v  SyncSender<DeltaResult> (streaming, bounded)
+//!     v  crossbeam_channel::Sender<DeltaResult> (streaming, bounded)
 //! delta-reorder thread
 //!     |
 //!     v  ReorderBuffer (incremental insert + drain)
@@ -132,7 +132,7 @@ impl DeltaConsumer {
         // Bounded channel between drain and reorder threads. Capacity matches
         // reorder buffer so workers can stay ahead without unbounded buffering.
         let stream_capacity = reorder_capacity.max(rayon::current_num_threads() * 2);
-        let (stream_tx, stream_rx) = mpsc::sync_channel::<DeltaResult>(stream_capacity);
+        let (stream_tx, stream_rx) = crossbeam_channel::bounded::<DeltaResult>(stream_capacity);
 
         // Thread 1: runs rayon::scope, streaming results as workers complete.
         let drain_handle = thread::Builder::new()
