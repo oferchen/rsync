@@ -392,6 +392,66 @@ pub fn default_capacity() -> usize {
     rayon::current_num_threads() * CAPACITY_MULTIPLIER
 }
 
+/// Size threshold below which files are considered "small" for queue sizing.
+///
+/// Files under 64 KiB benefit from deeper queues because per-file overhead
+/// (syscalls, metadata) dominates over I/O time, making worker starvation
+/// the primary bottleneck.
+const SMALL_FILE_THRESHOLD: u64 = 64 * 1024;
+
+/// Size threshold above which files are considered "large" for queue sizing.
+///
+/// Files over 1 MiB are I/O-bound - deeper queues just waste memory without
+/// improving throughput since each worker spends most of its time in I/O.
+const LARGE_FILE_THRESHOLD: u64 = 1024 * 1024;
+
+/// Queue depth multiplier for small file workloads.
+const SMALL_FILE_MULTIPLIER: usize = 8;
+
+/// Queue depth multiplier for large file workloads.
+const LARGE_FILE_MULTIPLIER: usize = 2;
+
+/// Queue depth multiplier for mixed/medium file workloads.
+const MEDIUM_FILE_MULTIPLIER: usize = 4;
+
+/// Returns an adaptive work queue capacity based on the average file size.
+///
+/// Small files (< 64 KiB) are CPU/syscall-bound, so a deeper queue (8x
+/// thread count) keeps workers saturated despite per-file overhead. Large
+/// files (> 1 MiB) are I/O-bound, so a shallow queue (2x) avoids wasting
+/// memory. Medium files interpolate to 4x.
+///
+/// # Arguments
+///
+/// * `avg_file_size` - Average file size in bytes across the transfer set.
+///   Use 0 or `None`-equivalent when unknown to get the default 2x multiplier.
+///
+/// # Examples
+///
+/// ```
+/// use engine::concurrent_delta::work_queue;
+///
+/// // Many small config files - deep queue to avoid worker starvation.
+/// let depth = work_queue::adaptive_queue_depth(4096);
+/// assert!(depth >= rayon::current_num_threads() * 4);
+///
+/// // Large media files - shallow queue, I/O-bound.
+/// let depth = work_queue::adaptive_queue_depth(10_000_000);
+/// assert!(depth <= rayon::current_num_threads() * 4);
+/// ```
+#[must_use]
+pub fn adaptive_queue_depth(avg_file_size: u64) -> usize {
+    let threads = rayon::current_num_threads();
+    let multiplier = if avg_file_size < SMALL_FILE_THRESHOLD {
+        SMALL_FILE_MULTIPLIER
+    } else if avg_file_size > LARGE_FILE_THRESHOLD {
+        LARGE_FILE_MULTIPLIER
+    } else {
+        MEDIUM_FILE_MULTIPLIER
+    };
+    threads * multiplier
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -1211,6 +1271,41 @@ mod tests {
         sorted.sort_unstable();
         let expected: Vec<u32> = (0..total).map(|i| i * multiplier).collect();
         assert_eq!(sorted, expected);
+    }
+
+    #[test]
+    fn adaptive_queue_depth_small_files() {
+        let threads = rayon::current_num_threads();
+        // Files under 64 KiB get 8x multiplier.
+        assert_eq!(adaptive_queue_depth(0), threads * 8);
+        assert_eq!(adaptive_queue_depth(1024), threads * 8);
+        assert_eq!(adaptive_queue_depth(63 * 1024), threads * 8);
+    }
+
+    #[test]
+    fn adaptive_queue_depth_medium_files() {
+        let threads = rayon::current_num_threads();
+        // Files between 64 KiB and 1 MiB get 4x multiplier.
+        assert_eq!(adaptive_queue_depth(64 * 1024), threads * 4);
+        assert_eq!(adaptive_queue_depth(512 * 1024), threads * 4);
+        assert_eq!(adaptive_queue_depth(1024 * 1024), threads * 4);
+    }
+
+    #[test]
+    fn adaptive_queue_depth_large_files() {
+        let threads = rayon::current_num_threads();
+        // Files over 1 MiB get 2x multiplier.
+        assert_eq!(adaptive_queue_depth(1024 * 1024 + 1), threads * 2);
+        assert_eq!(adaptive_queue_depth(10 * 1024 * 1024), threads * 2);
+        assert_eq!(adaptive_queue_depth(u64::MAX), threads * 2);
+    }
+
+    #[test]
+    fn adaptive_queue_depth_always_positive() {
+        // All size values produce a positive capacity.
+        for size in [0, 1, 1000, 65536, 1_000_000, 100_000_000] {
+            assert!(adaptive_queue_depth(size) > 0);
+        }
     }
 
     proptest! {

@@ -3,6 +3,8 @@
 mod capabilities;
 mod conversions;
 
+pub use capabilities::ProtocolCapabilities;
+
 #[cfg(test)]
 mod tests;
 

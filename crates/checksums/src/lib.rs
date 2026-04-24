@@ -358,6 +358,7 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+pub mod crc32c;
 mod rolling;
 pub mod strong;
 

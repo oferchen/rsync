@@ -148,10 +148,11 @@ pub use temp_file_strategy::{
 };
 
 pub use io_uring::{
-    IoUringConfig, IoUringDiskBatch, IoUringKernelInfo, IoUringOrStdReader, IoUringOrStdWriter,
-    IoUringReader, IoUringReaderFactory, IoUringWriter, IoUringWriterFactory,
-    RegisteredBufferGroup, RegisteredBufferSlot, is_io_uring_available, reader_from_path,
-    sqpoll_fell_back, writer_from_file,
+    BufferRing, BufferRingConfig, BufferRingError, IoUringConfig, IoUringDiskBatch,
+    IoUringKernelInfo, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory,
+    IoUringWriter, IoUringWriterFactory, RegisteredBufferGroup, RegisteredBufferSlot,
+    buffer_id_from_cqe_flags, is_io_uring_available, reader_from_path, sqpoll_fell_back,
+    writer_from_file,
 };
 
 pub use iocp::{
@@ -543,10 +544,6 @@ mod tests {
 #[cfg(test)]
 mod io_uring_fallback_tests {
     use super::*;
-
-    // ─────────────────────────────────────────────────────────────────────
-    // io_uring fallback message verification (task #1578)
-    // ─────────────────────────────────────────────────────────────────────
 
     #[cfg(not(target_os = "linux"))]
     #[test]

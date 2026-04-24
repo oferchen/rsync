@@ -544,3 +544,138 @@ fn supported_protocols_display_is_not_empty() {
     assert!(display.contains("32"));
     assert!(display.contains("28"));
 }
+
+// ProtocolCapabilities tests
+
+#[test]
+fn capabilities_from_protocol_version() {
+    use super::ProtocolCapabilities;
+
+    let caps = ProtocolCapabilities::from(ProtocolVersion::V32);
+    assert_eq!(caps.version(), ProtocolVersion::V32);
+}
+
+#[test]
+fn capabilities_multiplex() {
+    use super::ProtocolCapabilities;
+
+    // All supported versions (28+) support multiplex I/O (requires >= 23).
+    for v in ProtocolVersion::supported_versions() {
+        let caps = ProtocolCapabilities::new(*v);
+        assert!(caps.multiplex(), "v{} should support multiplex", v.as_u8());
+    }
+}
+
+#[test]
+fn capabilities_extended_flags() {
+    use super::ProtocolCapabilities;
+
+    // All supported versions (28+) support extended flags (requires >= 28).
+    for v in ProtocolVersion::supported_versions() {
+        let caps = ProtocolCapabilities::new(*v);
+        assert!(
+            caps.extended_flags(),
+            "v{} should support extended flags",
+            v.as_u8()
+        );
+    }
+}
+
+#[test]
+fn capabilities_inline_hardlinks() {
+    use super::ProtocolCapabilities;
+
+    // Protocol 30+ supports inline hardlinks.
+    let caps_32 = ProtocolCapabilities::new(ProtocolVersion::V32);
+    assert!(caps_32.inline_hardlinks());
+
+    let caps_30 = ProtocolCapabilities::new(ProtocolVersion::V30);
+    assert!(caps_30.inline_hardlinks());
+
+    let caps_29 = ProtocolCapabilities::new(ProtocolVersion::V29);
+    assert!(!caps_29.inline_hardlinks());
+}
+
+#[test]
+fn capabilities_preferred_compression() {
+    use super::ProtocolCapabilities;
+
+    // Protocol 31+ prefers zstd.
+    let caps_32 = ProtocolCapabilities::new(ProtocolVersion::V32);
+    assert_eq!(caps_32.preferred_compression(), "zstd");
+
+    let caps_31 = ProtocolCapabilities::new(ProtocolVersion::V31);
+    assert_eq!(caps_31.preferred_compression(), "zstd");
+
+    // Protocol 30 and below prefers zlib.
+    let caps_30 = ProtocolCapabilities::new(ProtocolVersion::V30);
+    assert_eq!(caps_30.preferred_compression(), "zlib");
+
+    let caps_28 = ProtocolCapabilities::new(ProtocolVersion::V28);
+    assert_eq!(caps_28.preferred_compression(), "zlib");
+}
+
+#[test]
+fn capabilities_varint_encoding() {
+    use super::ProtocolCapabilities;
+
+    let caps_32 = ProtocolCapabilities::new(ProtocolVersion::V32);
+    assert!(caps_32.varint_encoding());
+
+    let caps_29 = ProtocolCapabilities::new(ProtocolVersion::V29);
+    assert!(!caps_29.varint_encoding());
+}
+
+#[test]
+fn capabilities_inc_recurse() {
+    use super::ProtocolCapabilities;
+
+    let caps_30 = ProtocolCapabilities::new(ProtocolVersion::V30);
+    assert!(caps_30.inc_recurse());
+
+    let caps_29 = ProtocolCapabilities::new(ProtocolVersion::V29);
+    assert!(!caps_29.inc_recurse());
+}
+
+#[test]
+fn capabilities_checksum_negotiation() {
+    use super::ProtocolCapabilities;
+
+    let caps_30 = ProtocolCapabilities::new(ProtocolVersion::V30);
+    assert!(caps_30.checksum_negotiation());
+
+    let caps_29 = ProtocolCapabilities::new(ProtocolVersion::V29);
+    assert!(!caps_29.checksum_negotiation());
+}
+
+#[test]
+fn capabilities_delete_stats() {
+    use super::ProtocolCapabilities;
+
+    let caps_31 = ProtocolCapabilities::new(ProtocolVersion::V31);
+    assert!(caps_31.delete_stats());
+
+    let caps_30 = ProtocolCapabilities::new(ProtocolVersion::V30);
+    assert!(!caps_30.delete_stats());
+}
+
+#[test]
+fn capabilities_equality() {
+    use super::ProtocolCapabilities;
+
+    let a = ProtocolCapabilities::new(ProtocolVersion::V32);
+    let b = ProtocolCapabilities::from(ProtocolVersion::V32);
+    assert_eq!(a, b);
+
+    let c = ProtocolCapabilities::new(ProtocolVersion::V28);
+    assert_ne!(a, c);
+}
+
+#[test]
+fn capabilities_debug() {
+    use super::ProtocolCapabilities;
+
+    let caps = ProtocolCapabilities::new(ProtocolVersion::V32);
+    let debug = format!("{caps:?}");
+    assert!(debug.contains("ProtocolCapabilities"));
+}

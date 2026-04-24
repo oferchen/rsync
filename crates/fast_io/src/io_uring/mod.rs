@@ -79,6 +79,7 @@
 //!   (`Read`/`Write`) opcodes. Silent fallback on registration failure.
 
 mod batching;
+pub mod buffer_ring;
 mod config;
 mod disk_batch;
 mod file_factory;
@@ -96,6 +97,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
 
+pub use buffer_ring::{BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags};
 pub use config::{
     IoUringConfig, IoUringKernelInfo, config_detail, is_io_uring_available, sqpoll_fell_back,
 };

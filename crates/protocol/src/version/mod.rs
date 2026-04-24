@@ -25,8 +25,8 @@ pub use constants::{
 pub use iter::{SupportedProtocolNumbersIter, SupportedVersionsIter};
 pub use parse::{ParseProtocolVersionError, ParseProtocolVersionErrorKind};
 pub use protocol_version::{
-    ProtocolVersion, SUPPORTED_PROTOCOL_BITMAP, SUPPORTED_PROTOCOL_COUNT, SUPPORTED_PROTOCOLS,
-    SUPPORTED_PROTOCOLS_DISPLAY,
+    ProtocolCapabilities, ProtocolVersion, SUPPORTED_PROTOCOL_BITMAP, SUPPORTED_PROTOCOL_COUNT,
+    SUPPORTED_PROTOCOLS, SUPPORTED_PROTOCOLS_DISPLAY,
 };
 pub use select::select_highest_mutual;
 

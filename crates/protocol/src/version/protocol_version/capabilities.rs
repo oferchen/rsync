@@ -202,4 +202,193 @@ impl ProtocolVersion {
     pub const fn supports_extended_goodbye(self) -> bool {
         self.as_u8() >= 31
     }
+
+    /// Returns `true` if this protocol version supports inline hardlink
+    /// encoding in the file list.
+    ///
+    /// Protocol >= 30 encodes hardlink device/inode pairs inline in the file
+    /// list entry rather than as separate messages. This enables incremental
+    /// file list building with hardlink deduplication.
+    ///
+    /// # Upstream Reference
+    ///
+    /// upstream: flist.c - `protocol_version >= 30` gates inline dev/ino fields
+    #[must_use]
+    pub const fn supports_inline_hardlinks(self) -> bool {
+        self.as_u8() >= 30
+    }
+
+    /// Returns the preferred compression algorithm name for this protocol version.
+    ///
+    /// Protocol >= 31 prefers zstd (if available at compile time), falling back
+    /// to zlibx. Protocol 27-30 uses zlib (the only compression supported by
+    /// those versions of upstream rsync).
+    ///
+    /// This does not perform negotiation - it returns the local preference.
+    /// Actual algorithm selection happens during capability exchange.
+    ///
+    /// # Upstream Reference
+    ///
+    /// upstream: compat.c:100-112 `valid_compressions_items[]` - zstd first
+    /// when `SUPPORT_ZSTD` is defined (protocol >= 31).
+    #[must_use]
+    pub const fn preferred_compression(self) -> &'static str {
+        if self.as_u8() >= 31 {
+            // Protocol 31+ supports negotiated compression (zstd, lz4, zlibx, zlib).
+            // The actual preference depends on compile-time features, but zstd is
+            // the canonical recommendation for modern protocol versions.
+            "zstd"
+        } else {
+            "zlib"
+        }
+    }
+
+    /// Returns `true` if this protocol version supports checksum negotiation.
+    ///
+    /// Protocol >= 30 can negotiate checksum algorithms (MD5, XXH3, XXH128)
+    /// via the `-e.LsfxCIvu` capability string. Earlier versions are locked
+    /// to MD4 (protocol 27-29) or MD5 (protocol 30 without negotiation).
+    ///
+    /// # Upstream Reference
+    ///
+    /// upstream: compat.c:720 `set_allow_inc_recurse()` - checksum negotiation
+    /// gated by protocol >= 30 and `-e` capability flag.
+    #[must_use]
+    pub const fn supports_checksum_negotiation(self) -> bool {
+        self.as_u8() >= 30
+    }
+
+    /// Returns `true` if this protocol version supports delete statistics.
+    ///
+    /// Protocol >= 31 sends per-type deletion counts (files, dirs, symlinks,
+    /// devices, specials) via `NDX_DEL_STATS` during the goodbye phase.
+    ///
+    /// # Upstream Reference
+    ///
+    /// upstream: main.c - `read_del_stats()` gated by protocol >= 31.
+    #[must_use]
+    pub const fn supports_delete_stats(self) -> bool {
+        self.as_u8() >= 31
+    }
+
+    /// Returns `true` if this protocol version supports incremental file list
+    /// recursion.
+    ///
+    /// Protocol >= 30 with `inc_recurse` compatibility flag enables streaming
+    /// file list exchange where files are transferred as they are discovered
+    /// rather than after the complete file list is built.
+    ///
+    /// # Upstream Reference
+    ///
+    /// upstream: compat.c:720 `set_allow_inc_recurse()` - INC_RECURSE gated
+    /// by protocol >= 30.
+    #[must_use]
+    pub const fn supports_inc_recurse(self) -> bool {
+        self.as_u8() >= 30
+    }
+}
+
+/// Protocol capabilities newtype providing a focused API for version-dependent
+/// feature gating.
+///
+/// Wraps a [`ProtocolVersion`] and exposes only capability queries, making it
+/// suitable for passing into subsystems that need to know what features are
+/// available without access to the full protocol version API.
+///
+/// # Examples
+///
+/// ```
+/// use protocol::{ProtocolVersion, ProtocolCapabilities};
+///
+/// let caps = ProtocolCapabilities::from(ProtocolVersion::V32);
+/// assert!(caps.multiplex());
+/// assert!(caps.extended_flags());
+/// assert!(caps.inline_hardlinks());
+/// assert_eq!(caps.preferred_compression(), "zstd");
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct ProtocolCapabilities(ProtocolVersion);
+
+impl ProtocolCapabilities {
+    /// Creates capabilities from a negotiated protocol version.
+    #[must_use]
+    pub const fn new(version: ProtocolVersion) -> Self {
+        Self(version)
+    }
+
+    /// Returns the underlying protocol version.
+    #[must_use]
+    pub const fn version(self) -> ProtocolVersion {
+        self.0
+    }
+
+    /// Returns `true` if multiplexed I/O is supported.
+    ///
+    /// Delegates to [`ProtocolVersion::supports_multiplex_io`].
+    #[must_use]
+    pub const fn multiplex(self) -> bool {
+        self.0.supports_multiplex_io()
+    }
+
+    /// Returns the preferred compression algorithm name.
+    ///
+    /// Delegates to [`ProtocolVersion::preferred_compression`].
+    #[must_use]
+    pub const fn preferred_compression(self) -> &'static str {
+        self.0.preferred_compression()
+    }
+
+    /// Returns `true` if extended file flags are supported.
+    ///
+    /// Delegates to [`ProtocolVersion::supports_extended_flags`].
+    #[must_use]
+    pub const fn extended_flags(self) -> bool {
+        self.0.supports_extended_flags()
+    }
+
+    /// Returns `true` if inline hardlink encoding is supported.
+    ///
+    /// Delegates to [`ProtocolVersion::supports_inline_hardlinks`].
+    #[must_use]
+    pub const fn inline_hardlinks(self) -> bool {
+        self.0.supports_inline_hardlinks()
+    }
+
+    /// Returns `true` if varint encoding is used.
+    ///
+    /// Delegates to [`ProtocolVersion::uses_varint_encoding`].
+    #[must_use]
+    pub const fn varint_encoding(self) -> bool {
+        self.0.uses_varint_encoding()
+    }
+
+    /// Returns `true` if incremental recursion is supported.
+    ///
+    /// Delegates to [`ProtocolVersion::supports_inc_recurse`].
+    #[must_use]
+    pub const fn inc_recurse(self) -> bool {
+        self.0.supports_inc_recurse()
+    }
+
+    /// Returns `true` if checksum algorithm negotiation is supported.
+    ///
+    /// Delegates to [`ProtocolVersion::supports_checksum_negotiation`].
+    #[must_use]
+    pub const fn checksum_negotiation(self) -> bool {
+        self.0.supports_checksum_negotiation()
+    }
+
+    /// Returns `true` if delete statistics are supported.
+    ///
+    /// Delegates to [`ProtocolVersion::supports_delete_stats`].
+    #[must_use]
+    pub const fn delete_stats(self) -> bool {
+        self.0.supports_delete_stats()
+    }
+}
+
+impl From<ProtocolVersion> for ProtocolCapabilities {
+    fn from(version: ProtocolVersion) -> Self {
+        Self(version)
+    }
 }
