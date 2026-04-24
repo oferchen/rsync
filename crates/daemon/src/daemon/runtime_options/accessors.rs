@@ -17,7 +17,7 @@ impl RuntimeOptions {
     /// Returns the configured TCP port from the config file `port` directive.
     ///
     /// Upstream: `daemon-parm.txt` - `port` INTEGER, P_GLOBAL, default 0.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // REASON: accessor for daemon listener; wired when async daemon starts
     pub(crate) fn rsync_port(&self) -> Option<u16> {
         self.rsync_port
     }
@@ -34,7 +34,7 @@ impl RuntimeOptions {
     /// Returns whether incoming connections require a PROXY protocol header.
     ///
     /// upstream: clientserver.c:1298 - checked before accepting client data.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // REASON: accessor for daemon listener; wired when async daemon starts
     pub(crate) fn proxy_protocol(&self) -> bool {
         self.proxy_protocol
     }
@@ -42,7 +42,7 @@ impl RuntimeOptions {
     /// Returns the directory the daemon chroots into before forking children.
     ///
     /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // REASON: accessor for daemon listener; wired when async daemon starts
     pub(crate) fn daemon_chroot(&self) -> Option<&Path> {
         self.daemon_chroot.as_deref()
     }

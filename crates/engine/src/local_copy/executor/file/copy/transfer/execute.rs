@@ -564,7 +564,8 @@ fn try_skip_up_to_date(
     record_path: &Path,
     existing: &fs::Metadata,
     flags: &TransferFlags,
-    #[allow(unused_variables)] mode: LocalCopyExecution,
+    #[allow(unused_variables)] // REASON: used on unix with feature "xattr"
+    mode: LocalCopyExecution,
 ) -> Result<bool, LocalCopyError> {
     let prefetched_match = if flags.checksum_enabled {
         context.lookup_checksum(source)

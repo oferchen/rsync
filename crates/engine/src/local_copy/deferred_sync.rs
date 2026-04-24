@@ -285,7 +285,7 @@ fn sync_filesystem(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
-#[allow(dead_code)]
+#[allow(dead_code)] // REASON: call site is cfg-gated to linux; this stub used only in tests
 fn sync_filesystem(_path: &Path) -> io::Result<()> {
     // Not available on this platform
     Err(io::Error::new(

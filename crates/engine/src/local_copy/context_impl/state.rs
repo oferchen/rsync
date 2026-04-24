@@ -677,12 +677,6 @@ impl<'a> CopyContext<'a> {
         self.io_errors_occurred = true;
     }
 
-    /// Reports whether any I/O errors occurred during the transfer.
-    #[allow(dead_code)]
-    pub(super) const fn io_errors_occurred(&self) -> bool {
-        self.io_errors_occurred
-    }
-
     /// Reports whether deletions should proceed despite I/O errors.
     ///
     /// Returns `true` if:

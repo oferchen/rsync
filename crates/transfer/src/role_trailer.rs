@@ -61,7 +61,7 @@ pub(crate) fn generator() -> String {
 }
 
 /// Returns the role trailer suffix for the daemon role.
-#[allow(dead_code)]
+#[allow(dead_code)] // REASON: wired when daemon error messages include role trailers
 pub(crate) fn daemon() -> String {
     format!(" [daemon={VERSION}]")
 }

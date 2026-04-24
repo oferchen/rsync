@@ -40,14 +40,6 @@ impl<'a> CopyContext<'a> {
         self.options.munge_links_enabled()
     }
 
-    /// Returns the number of leading relative-path components that represent
-    /// the transfer root name and should be excluded when computing safe-links
-    /// depth.
-    #[allow(dead_code)]
-    pub(super) const fn safety_depth_offset(&self) -> usize {
-        self.safety_depth_offset
-    }
-
     /// Sets the safety depth offset.  Call with `1` before entering a
     /// whole-directory copy (no trailing slash), `0` for a contents copy.
     pub(super) fn set_safety_depth_offset(&mut self, offset: usize) {
