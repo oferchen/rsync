@@ -13,6 +13,10 @@
 //!     |-- ZstdStrategy            Zstandard, protocol >= 36 default
 //!     |-- Lz4Strategy             LZ4, fast compression
 //!
+//! CompressionNegotiator (trait)
+//!     |-- DefaultCompressionNegotiator  upstream rsync 3.4.1 algorithm selection
+//!     |-- FixedCompressionNegotiator    testing/override with predetermined algorithm
+//!
 //! CompressionStrategySelector (factory)
 //!     |-- for_protocol_version()  protocol-aware default selection
 //!     |-- for_algorithm()         explicit algorithm choice
@@ -50,6 +54,8 @@
 
 mod impls;
 mod kind;
+/// Compression algorithm negotiation abstraction.
+pub mod negotiator;
 mod selector;
 mod traits;
 
@@ -62,5 +68,8 @@ pub use impls::Lz4Strategy;
 pub use impls::ZstdStrategy;
 pub use impls::{NoCompressionStrategy, ZlibStrategy};
 pub use kind::CompressionAlgorithmKind;
+pub use negotiator::{
+    CompressionNegotiator, DefaultCompressionNegotiator, FixedCompressionNegotiator,
+};
 pub use selector::CompressionStrategySelector;
 pub use traits::CompressionStrategy;
