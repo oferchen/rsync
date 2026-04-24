@@ -19,13 +19,16 @@ targets = ["x86_64-unknown-linux-gnu"]
 [features]
 default = []
 test-support = []
+async = ["dep:tokio"]
 
 [dependencies]
 memchr = "2.7"
 thiserror = "2.0"
+tokio = { workspace = true, optional = true, features = ["time"] }
 
 [dev-dependencies]
 proptest = "1.8"
+tokio = { workspace = true, features = ["rt", "macros", "time"] }
 
 [[test]]
 name = "bwlimit_rate_limiting"

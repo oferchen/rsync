@@ -178,9 +178,9 @@ pub use varint::{
     write_varlong, write_varlong30,
 };
 pub use version::{
-    ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolVersion,
-    ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP, SUPPORTED_PROTOCOL_BOUNDS,
-    SUPPORTED_PROTOCOL_COUNT, SUPPORTED_PROTOCOL_RANGE, SUPPORTED_PROTOCOLS,
-    SUPPORTED_PROTOCOLS_DISPLAY, SupportedProtocolNumbersIter, SupportedVersionsIter,
-    select_highest_mutual,
+    ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolCapabilities,
+    ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP,
+    SUPPORTED_PROTOCOL_BOUNDS, SUPPORTED_PROTOCOL_COUNT, SUPPORTED_PROTOCOL_RANGE,
+    SUPPORTED_PROTOCOLS, SUPPORTED_PROTOCOLS_DISPLAY, SupportedProtocolNumbersIter,
+    SupportedVersionsIter, select_highest_mutual,
 };
