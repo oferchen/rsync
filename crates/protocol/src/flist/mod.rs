@@ -36,7 +36,6 @@ mod flags;
 mod hardlink;
 mod incremental;
 mod intern;
-mod macros;
 mod read;
 #[cfg(test)]
 mod segment;
