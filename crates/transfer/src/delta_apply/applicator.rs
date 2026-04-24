@@ -65,10 +65,10 @@ pub struct DeltaApplicator<'a> {
     sparse_state: Option<SparseWriteState>,
     checksum_verifier: ChecksumVerifier,
     basis_signature: Option<&'a FileSignature>,
-    /// Cached basis file mapper - opened once and reused for all block refs
-    /// Uses BasisMapStrategy: adaptive on Unix, buffered on Windows
+    /// Cached basis file mapper, opened once and reused for all block references.
+    /// Uses `AdaptiveMapStrategy` on Unix, `BufferedMap` on Windows.
     basis_map: Option<MapFile<BasisMapStrategy>>,
-    /// Reusable buffer for literal token data
+    /// Reusable buffer for literal token data to avoid per-token allocations.
     token_buffer: TokenBuffer,
     stats: DeltaApplyResult,
 }
@@ -87,8 +87,6 @@ impl<'a> DeltaApplicator<'a> {
         basis_signature: Option<&'a FileSignature>,
         basis_path: Option<&'a Path>,
     ) -> io::Result<Self> {
-        // Open basis file once if provided - cached for all block references
-        // Uses BasisMapStrategy: adaptive on Unix, buffered on Windows
         let basis_map = if let Some(path) = basis_path {
             #[cfg(unix)]
             let map = MapFile::open_adaptive(path);
@@ -194,7 +192,6 @@ impl<'a> DeltaApplicator<'a> {
             self.stats.bytes_written
         );
 
-        // Use cached MapFile - data stays in 256KB sliding window
         let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
 
         self.checksum_verifier.update(block_data);
@@ -244,7 +241,6 @@ impl<'a> DeltaApplicator<'a> {
             }
             std::cmp::Ordering::Greater => {
                 let len = token as usize;
-                // Reuse TokenBuffer - grows but never shrinks
                 self.token_buffer.resize_for(len);
                 reader.read_exact(self.token_buffer.as_mut_slice())?;
 
@@ -257,7 +253,6 @@ impl<'a> DeltaApplicator<'a> {
                     self.stats.bytes_written
                 );
 
-                // Apply literal data inline to avoid borrow conflict
                 let data = self.token_buffer.as_slice();
                 self.checksum_verifier.update(data);
 
@@ -286,11 +281,8 @@ impl<'a> DeltaApplicator<'a> {
             sparse.finish(&mut self.output)?;
         }
 
-        // Note: We don't call sync_all() by default, matching upstream rsync behavior.
-        // Upstream rsync only fsyncs when --fsync flag is explicitly set.
-
-        // Read expected checksum into stack buffer - mirrors upstream sum_end(char *sum)
-        // which writes into a caller-provided buffer, never allocating.
+        // upstream: sum_end(char *sum) writes into caller-provided buffer.
+        // sync_all() is not called - upstream rsync only fsyncs with --fsync.
         let expected_len = self.checksum_verifier.digest_len();
         let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         reader.read_exact(&mut expected[..expected_len])?;
