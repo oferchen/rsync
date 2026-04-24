@@ -198,6 +198,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Parallel computation - feature-gated for parallel file operations
 rayon = "1.10"
+# Crossbeam concurrency primitives - bounded channels with lower overhead than std
+crossbeam = "0.8"
+crossbeam-channel = "0.5"
 # Concurrent hash map - for shared state across daemon sessions
 dashmap = "6.1"
 # Heap profiling - for allocation analysis with dhat-viewer
