@@ -1,8 +1,29 @@
 //! Shared enumeration describing compression algorithms supported by the workspace.
+//!
+//! This module also defines default compression level constants for each
+//! algorithm, matching upstream rsync defaults.
 
 use ::core::str::FromStr;
 
 use thiserror::Error;
+
+/// Default zlib compression level matching upstream rsync.
+/// upstream: token.c - `Z_DEFAULT_COMPRESSION` resolves to 6.
+pub const ZLIB_DEFAULT_LEVEL: i32 = 6;
+
+/// Default zstd compression level.
+/// upstream: token.c - `ZSTD_CLEVEL_DEFAULT` is 3.
+pub const ZSTD_DEFAULT_LEVEL: i32 = 3;
+
+/// Fastest zstd compression level used for the `Fast` variant.
+pub const ZSTD_FAST_LEVEL: i32 = 1;
+
+/// Best zstd compression level used for the `Best` variant.
+/// upstream: token.c - maximum level capped at 19 (ZSTD_maxCLevel without ultra).
+pub const ZSTD_BEST_LEVEL: i32 = 19;
+
+/// Default lz4 acceleration factor. Higher values trade compression ratio for speed.
+pub const LZ4_DEFAULT_ACCELERATION: i32 = 1;
 
 /// Compression algorithms recognised by the workspace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -283,6 +304,40 @@ mod tests {
     #[test]
     fn available_is_not_empty() {
         assert!(!CompressionAlgorithm::available().is_empty());
+    }
+
+    #[test]
+    fn zlib_default_level_matches_upstream() {
+        // upstream: token.c - Z_DEFAULT_COMPRESSION resolves to 6
+        assert_eq!(ZLIB_DEFAULT_LEVEL, 6);
+    }
+
+    #[test]
+    fn zstd_default_level_matches_upstream() {
+        // upstream: token.c - ZSTD_CLEVEL_DEFAULT is 3
+        assert_eq!(ZSTD_DEFAULT_LEVEL, 3);
+    }
+
+    #[test]
+    fn zstd_fast_level_is_minimum_positive() {
+        assert_eq!(ZSTD_FAST_LEVEL, 1);
+    }
+
+    #[test]
+    fn zstd_best_level_matches_upstream_max() {
+        // upstream: token.c - capped at 19 (ZSTD_maxCLevel without ultra)
+        assert_eq!(ZSTD_BEST_LEVEL, 19);
+    }
+
+    #[test]
+    fn lz4_default_acceleration_is_standard() {
+        assert_eq!(LZ4_DEFAULT_ACCELERATION, 1);
+    }
+
+    #[test]
+    fn compression_level_ordering() {
+        assert!(ZSTD_FAST_LEVEL < ZSTD_DEFAULT_LEVEL);
+        assert!(ZSTD_DEFAULT_LEVEL < ZSTD_BEST_LEVEL);
     }
 }
 
