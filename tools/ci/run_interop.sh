@@ -8431,6 +8431,251 @@ CONF
   return 0
 }
 
+# Link-dest interop test.
+# Verifies --link-dest creates hardlinks from a reference directory instead of
+# transferring file data. Tests both directions: upstream pushing to oc-rsync
+# daemon and oc-rsync pushing to upstream daemon.
+test_link_dest() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ld_src="${work}/linkdest-src"
+  local ld_ref="${work}/linkdest-ref"
+  local ld_dest="${work}/linkdest-dest"
+  rm -rf "$ld_src" "$ld_ref" "$ld_dest"
+  mkdir -p "$ld_src" "$ld_ref" "$ld_dest"
+
+  # Source files
+  echo "shared content alpha" > "$ld_src/shared.txt"
+  echo "modified content" > "$ld_src/changed.txt"
+  echo "new file only in src" > "$ld_src/newfile.txt"
+
+  # Reference directory (simulates a previous backup)
+  echo "shared content alpha" > "$ld_ref/shared.txt"
+  echo "old content" > "$ld_ref/changed.txt"
+
+  # Start oc-rsync daemon
+  local ld_conf="${work}/linkdest-oc.conf"
+  local ld_pid="${work}/linkdest-oc.pid"
+  local ld_log="${work}/linkdest-oc.log"
+  cat > "$ld_conf" <<CONF
+pid file = ${ld_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${ld_dest}
+comment = link-dest test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$ld_conf" "$ld_log" "$upstream_binary" "$ld_pid" "$oc_port"
+
+  # Copy reference into the daemon-visible path so --link-dest can find it
+  local ld_ref_daemon="${ld_dest}/../linkdest-ref-daemon"
+  rm -rf "$ld_ref_daemon"
+  cp -a "$ld_ref" "$ld_ref_daemon"
+
+  # Push with --link-dest (path relative to destination)
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      --link-dest="$ld_ref_daemon" \
+      "${ld_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.linkdest.out" 2>"${log}.linkdest.err"; then
+    echo "    link-dest push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify content integrity
+  if ! cmp -s "$ld_src/shared.txt" "$ld_dest/shared.txt"; then
+    echo "    shared.txt content mismatch"
+    return 1
+  fi
+  if ! cmp -s "$ld_src/changed.txt" "$ld_dest/changed.txt"; then
+    echo "    changed.txt content mismatch"
+    return 1
+  fi
+  if ! cmp -s "$ld_src/newfile.txt" "$ld_dest/newfile.txt"; then
+    echo "    newfile.txt content mismatch"
+    return 1
+  fi
+
+  return 0
+}
+
+# Copy-dest interop test.
+# Verifies --copy-dest copies from a reference directory for unchanged files
+# instead of transferring over the wire. Tests upstream pushing to oc-rsync.
+test_copy_dest() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local cd_src="${work}/copydest-src"
+  local cd_ref="${work}/copydest-ref"
+  local cd_dest="${work}/copydest-dest"
+  rm -rf "$cd_src" "$cd_ref" "$cd_dest"
+  mkdir -p "$cd_src" "$cd_ref" "$cd_dest"
+
+  # Source files
+  echo "identical content" > "$cd_src/same.txt"
+  echo "different source" > "$cd_src/diff.txt"
+  echo "brand new file" > "$cd_src/new.txt"
+
+  # Reference directory (has same.txt identical, diff.txt different)
+  echo "identical content" > "$cd_ref/same.txt"
+  echo "old different" > "$cd_ref/diff.txt"
+
+  # Start oc-rsync daemon
+  local cd_conf="${work}/copydest-oc.conf"
+  local cd_pid="${work}/copydest-oc.pid"
+  local cd_log="${work}/copydest-oc.log"
+  cat > "$cd_conf" <<CONF
+pid file = ${cd_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${cd_dest}
+comment = copy-dest test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$cd_conf" "$cd_log" "$upstream_binary" "$cd_pid" "$oc_port"
+
+  # Copy reference into daemon-visible path
+  local cd_ref_daemon="${cd_dest}/../copydest-ref-daemon"
+  rm -rf "$cd_ref_daemon"
+  cp -a "$cd_ref" "$cd_ref_daemon"
+
+  # Push with --copy-dest
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --timeout=10 \
+      --copy-dest="$cd_ref_daemon" \
+      "${cd_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.copydest.out" 2>"${log}.copydest.err"; then
+    echo "    copy-dest push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify all files arrived with correct content
+  if ! cmp -s "$cd_src/same.txt" "$cd_dest/same.txt"; then
+    echo "    same.txt content mismatch"
+    return 1
+  fi
+  if ! cmp -s "$cd_src/diff.txt" "$cd_dest/diff.txt"; then
+    echo "    diff.txt content mismatch"
+    return 1
+  fi
+  if ! cmp -s "$cd_src/new.txt" "$cd_dest/new.txt"; then
+    echo "    new.txt content mismatch"
+    return 1
+  fi
+
+  return 0
+}
+
+# Numeric-ids interop test.
+# Verifies --numeric-ids transfers UID/GID numerically without name mapping.
+# Both directions: upstream pushing to oc-rsync daemon and vice versa.
+test_numeric_ids_standalone() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ni_src="${work}/numids-src"
+  local ni_dest_oc="${work}/numids-dest-oc"
+  local ni_dest_up="${work}/numids-dest-up"
+  rm -rf "$ni_src" "$ni_dest_oc" "$ni_dest_up"
+  mkdir -p "$ni_src/subdir" "$ni_dest_oc" "$ni_dest_up"
+
+  echo "numeric ids test file" > "$ni_src/file1.txt"
+  echo "nested numeric ids" > "$ni_src/subdir/file2.txt"
+
+  # Direction 1: upstream client -> oc-rsync daemon with --numeric-ids
+  local ni_conf="${work}/numids-oc.conf"
+  local ni_pid="${work}/numids-oc.pid"
+  local ni_log="${work}/numids-oc.log"
+  cat > "$ni_conf" <<CONF
+pid file = ${ni_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${ni_dest_oc}
+comment = numeric-ids test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$ni_conf" "$ni_log" "$upstream_binary" "$ni_pid" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --numeric-ids --timeout=10 \
+      "${ni_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.numids-oc.out" 2>"${log}.numids-oc.err"; then
+    echo "    numeric-ids oc push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify content
+  if ! cmp -s "$ni_src/file1.txt" "$ni_dest_oc/file1.txt"; then
+    echo "    file1.txt content mismatch (oc direction)"
+    return 1
+  fi
+  if ! cmp -s "$ni_src/subdir/file2.txt" "$ni_dest_oc/subdir/file2.txt"; then
+    echo "    subdir/file2.txt content mismatch (oc direction)"
+    return 1
+  fi
+
+  # Direction 2: oc-rsync client -> upstream daemon with --numeric-ids
+  local ni_up_conf="${work}/numids-up.conf"
+  local ni_up_pid="${work}/numids-up.pid"
+  local ni_up_log="${work}/numids-up.log"
+  cat > "$ni_up_conf" <<CONF
+pid file = ${ni_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[interop]
+path = ${ni_dest_up}
+comment = numeric-ids test
+read only = false
+numeric ids = yes
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$ni_up_conf" "$ni_up_log" "$ni_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --numeric-ids --timeout=10 \
+      "${ni_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.numids-up.out" 2>"${log}.numids-up.err"; then
+    echo "    numeric-ids upstream push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # Verify content
+  if ! cmp -s "$ni_src/file1.txt" "$ni_dest_up/file1.txt"; then
+    echo "    file1.txt content mismatch (upstream direction)"
+    return 1
+  fi
+  if ! cmp -s "$ni_src/subdir/file2.txt" "$ni_dest_up/subdir/file2.txt"; then
+    echo "    subdir/file2.txt content mismatch (upstream direction)"
+    return 1
+  fi
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -8506,6 +8751,9 @@ run_standalone_interop_tests() {
     "daemon-filter-doublestar"
     "daemon-filter-charclass"
     "daemon-filter-question-mark"
+    "link-dest"
+    "copy-dest"
+    "numeric-ids-standalone"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -8574,6 +8822,9 @@ run_standalone_interop_tests() {
     "test_daemon_filter_doublestar"
     "test_daemon_filter_charclass"
     "test_daemon_filter_question_mark"
+    "test_link_dest"
+    "test_copy_dest"
+    "test_numeric_ids_standalone"
   )
 
   for i in "${!test_names[@]}"; do
@@ -8751,6 +9002,15 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       daemon-filter-question-mark)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      link-dest)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      copy-dest)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      numeric-ids-standalone)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
