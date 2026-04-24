@@ -179,7 +179,8 @@ pub use self::adaptive_buffer::{
     adaptive_buffer_size, adaptive_token_capacity, adaptive_writer_capacity,
 };
 pub use self::config::{
-    FileSelectionConfig, ReferenceDirectory, ReferenceDirectoryKind, ServerConfig,
+    BuilderError, FileSelectionConfig, ReferenceDirectory, ReferenceDirectoryKind, ServerConfig,
+    ServerConfigBuilder,
 };
 pub use self::delta_config::DeltaGeneratorConfig;
 pub use self::flags::{InfoFlags, ParseFlagError, ParsedServerFlags};
