@@ -192,6 +192,8 @@ crossbeam = "0.8"
 crossbeam-channel = "0.5"
 # Concurrent hash map - for shared state across daemon sessions
 dashmap = "6.1"
+# Async trait compat for russh client::Handler (russh uses #[async_trait])
+async-trait = "0.1"
 # Pure-Rust SSH client - embedded SSH transport alternative to system ssh binary
 russh = "0.45"
 russh-keys = "0.45"
