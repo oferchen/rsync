@@ -748,4 +748,202 @@ mod tests {
         assert!(buf.is_empty());
         assert_eq!(buf.next_expected(), 1000);
     }
+
+    #[test]
+    fn interleaved_gaps_progressive_fill() {
+        // Insert even-numbered items, then progressively fill odd gaps.
+        // Each odd fill should cascade delivery through the next even.
+        let mut buf = ReorderBuffer::new(16);
+
+        // Insert 0, 2, 4, 6, 8 (gaps at 1, 3, 5, 7).
+        for i in (0..10).step_by(2) {
+            buf.insert(i, i).unwrap();
+        }
+
+        // Only seq 0 is deliverable.
+        assert_eq!(buf.next_in_order(), Some(0));
+        assert_eq!(buf.next_in_order(), None);
+        assert_eq!(buf.buffered_count(), 4); // 2, 4, 6, 8
+
+        // Fill gap at 1 - should cascade to deliver 1, 2.
+        buf.insert(1, 1).unwrap();
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained, vec![1, 2]);
+        assert_eq!(buf.next_expected(), 3);
+
+        // Fill gap at 3 - cascades 3, 4.
+        buf.insert(3, 3).unwrap();
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained, vec![3, 4]);
+
+        // Fill gap at 5 - cascades 5, 6.
+        buf.insert(5, 5).unwrap();
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained, vec![5, 6]);
+
+        // Fill gap at 7 - cascades 7, 8.
+        buf.insert(7, 7).unwrap();
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained, vec![7, 8]);
+
+        assert!(buf.is_empty());
+        assert_eq!(buf.next_expected(), 9);
+    }
+
+    #[test]
+    fn burst_after_gap() {
+        // Insert a contiguous burst 0-4, then a second burst 10-14 with a gap
+        // at 5-9. Verify first burst drains, second is stuck until gap fills.
+        let mut buf = ReorderBuffer::new(32);
+
+        for i in 0..5 {
+            buf.insert(i, i).unwrap();
+        }
+        for i in 10..15 {
+            buf.insert(i, i).unwrap();
+        }
+
+        // Drain the first burst.
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained, vec![0, 1, 2, 3, 4]);
+        assert_eq!(buf.next_expected(), 5);
+        assert_eq!(buf.buffered_count(), 5); // 10-14 waiting
+
+        // Nothing drains while 5-9 are missing.
+        assert_eq!(buf.next_in_order(), None);
+
+        // Fill the gap 5-9.
+        for i in 5..10 {
+            buf.insert(i, i).unwrap();
+        }
+
+        // Now 5-14 should all drain in order.
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained, vec![5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+        assert!(buf.is_empty());
+        assert_eq!(buf.next_expected(), 15);
+    }
+
+    /// Deterministic pseudo-random permutation stress test.
+    ///
+    /// Inserts 1000 items in a deterministic shuffled order using a simple
+    /// linear congruential generator. Verifies the output is perfectly
+    /// ordered 0-999 regardless of insertion order.
+    #[test]
+    fn stress_deterministic_random_order() {
+        const N: usize = 1000;
+        let capacity = N;
+        let mut buf = ReorderBuffer::new(capacity);
+
+        // Generate a deterministic permutation of 0..N using Fisher-Yates
+        // with a simple LCG for reproducibility.
+        let mut perm: Vec<u64> = (0..N as u64).collect();
+        let mut rng_state: u64 = 0xDEAD_BEEF_CAFE_1234; // fixed seed
+        for i in (1..N).rev() {
+            // LCG: state = state * 6364136223846793005 + 1442695040888963407
+            rng_state = rng_state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let j = (rng_state >> 33) as usize % (i + 1);
+            perm.swap(i, j);
+        }
+
+        // Insert in shuffled order, draining opportunistically.
+        let mut collected: Vec<u64> = Vec::with_capacity(N);
+        for &seq in &perm {
+            buf.insert(seq, seq).unwrap();
+            collected.extend(buf.drain_ready());
+        }
+        // Final drain for any remaining items.
+        collected.extend(buf.drain_ready());
+
+        assert_eq!(collected.len(), N);
+        for (i, &val) in collected.iter().enumerate() {
+            assert_eq!(
+                val, i as u64,
+                "expected sequence {i} but got {val} at output position {i}"
+            );
+        }
+        assert!(buf.is_empty());
+        assert_eq!(buf.next_expected(), N as u64);
+    }
+
+    #[test]
+    fn large_gap_fill_one_at_a_time() {
+        // Insert item 100 first, then fill 0-99 one at a time in forward order.
+        // Nothing should be delivered until seq 0 arrives, then cascading delivery.
+        let mut buf = ReorderBuffer::new(128);
+
+        buf.insert(100, 100u64).unwrap();
+        assert_eq!(buf.next_in_order(), None);
+        assert_eq!(buf.buffered_count(), 1);
+
+        // Fill 1-99 (still missing seq 0).
+        for i in 1..100 {
+            buf.insert(i, i).unwrap();
+            assert_eq!(
+                buf.next_in_order(),
+                None,
+                "should not deliver before seq 0 arrives (inserting {i})"
+            );
+        }
+        assert_eq!(buf.buffered_count(), 100);
+
+        // Insert seq 0 - triggers cascade of all 101 items.
+        buf.insert(0, 0).unwrap();
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained.len(), 101);
+        for (i, &val) in drained.iter().enumerate() {
+            assert_eq!(val, i as u64);
+        }
+        assert!(buf.is_empty());
+        assert_eq!(buf.next_expected(), 101);
+    }
+
+    #[test]
+    fn force_insert_beyond_capacity_then_drain() {
+        // Verify force_insert with a large gap grows the buffer and maintains
+        // ordering after the gap is filled.
+        let mut buf = ReorderBuffer::new(4);
+
+        buf.insert(0, 0u64).unwrap();
+        buf.insert(1, 1).unwrap();
+
+        // Force-insert far beyond capacity.
+        buf.force_insert(20, 20);
+        assert!(buf.capacity() > 4); // ring was grown
+
+        // Fill the gap 2-19.
+        for i in 2..20 {
+            buf.insert(i, i).unwrap();
+        }
+
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained.len(), 21);
+        for (i, &val) in drained.iter().enumerate() {
+            assert_eq!(val, i as u64);
+        }
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn multiple_drain_ready_calls_are_idempotent() {
+        // After drain_ready exhausts contiguous items, subsequent calls
+        // yield nothing until a new contiguous item is inserted.
+        let mut buf = ReorderBuffer::new(8);
+        buf.insert(0, 'a').unwrap();
+        buf.insert(1, 'b').unwrap();
+        buf.insert(3, 'd').unwrap(); // gap at 2
+
+        let first: Vec<char> = buf.drain_ready().collect();
+        assert_eq!(first, vec!['a', 'b']);
+
+        let second: Vec<char> = buf.drain_ready().collect();
+        assert!(second.is_empty());
+
+        // Fill the gap.
+        buf.insert(2, 'c').unwrap();
+        let third: Vec<char> = buf.drain_ready().collect();
+        assert_eq!(third, vec!['c', 'd']);
+    }
 }
