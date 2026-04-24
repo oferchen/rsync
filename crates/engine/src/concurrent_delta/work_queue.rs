@@ -85,7 +85,7 @@
 //! });
 //!
 //! // Parallel consumers via drain_parallel
-//! let ndx_list: Vec<u32> = rx.drain_parallel(|w| w.ndx());
+//! let ndx_list: Vec<u32> = rx.drain_parallel(|w| w.ndx().get());
 //! assert_eq!(ndx_list.len(), 100);
 //! ```
 //!
@@ -135,7 +135,7 @@ const CAPACITY_MULTIPLIER: usize = 2;
 /// });
 ///
 /// // Parallel consumers via drain_parallel
-/// let results: Vec<u32> = rx.drain_parallel(|w| w.ndx());
+/// let results: Vec<u32> = rx.drain_parallel(|w| w.ndx().get());
 /// ```
 pub struct WorkQueueSender {
     tx: Sender<DeltaWork>,
@@ -191,7 +191,7 @@ impl WorkQueueReceiver {
     ///     }
     /// });
     ///
-    /// let indices: Vec<u32> = rx.drain_parallel(|w| w.ndx());
+    /// let indices: Vec<u32> = rx.drain_parallel(|w| w.ndx().get());
     /// assert_eq!(indices.len(), 10);
     /// ```
     pub fn drain_parallel<F, R>(self, f: F) -> Vec<R>
@@ -265,7 +265,7 @@ impl WorkQueueReceiver {
     ///
     /// // Drain thread - sends results as workers complete
     /// std::thread::spawn(move || {
-    ///     work_rx.drain_parallel_into(|w| w.ndx(), result_tx);
+    ///     work_rx.drain_parallel_into(|w| w.ndx().get(), result_tx);
     /// });
     ///
     /// // Consumer thread - processes results incrementally
@@ -470,7 +470,7 @@ mod tests {
         tx.send(work).unwrap();
         let mut iter = rx.into_iter();
         let item = iter.next().unwrap();
-        assert_eq!(item.ndx(), 1);
+        assert_eq!(item.ndx().get(), 1);
     }
 
     #[test]
@@ -490,7 +490,7 @@ mod tests {
             .unwrap();
         drop(tx);
 
-        let items: Vec<u32> = rx.into_iter().map(|w| w.ndx()).collect();
+        let items: Vec<u32> = rx.into_iter().map(|w| w.ndx().get()).collect();
         assert_eq!(items, vec![1, 2]);
     }
 
@@ -511,7 +511,7 @@ mod tests {
             for w in rx.into_iter() {
                 let results = &results;
                 s.spawn(move |_| {
-                    results.lock().unwrap().push(w.ndx());
+                    results.lock().unwrap().push(w.ndx().get());
                 });
             }
         });
@@ -549,7 +549,7 @@ mod tests {
         );
 
         // Now drain everything.
-        let items: Vec<u32> = rx.into_iter().map(|w| w.ndx()).collect();
+        let items: Vec<u32> = rx.into_iter().map(|w| w.ndx().get()).collect();
         producer.join().unwrap();
         assert_eq!(items, vec![0, 1, 2, 3, 4]);
     }
@@ -588,7 +588,7 @@ mod tests {
                     // Simulate work to increase chance of overlapping.
                     thread::sleep(Duration::from_micros(100));
                     active_ref.fetch_sub(1, Ordering::SeqCst);
-                    collected.lock().unwrap().push(w.ndx());
+                    collected.lock().unwrap().push(w.ndx().get());
                 });
             }
         });
@@ -627,7 +627,7 @@ mod tests {
 
         // Queue is full (capacity 1). Verify the item arrives.
         let mut iter = rx.into_iter();
-        assert_eq!(iter.next().unwrap().ndx(), 0);
+        assert_eq!(iter.next().unwrap().ndx().get(), 0);
     }
 
     #[test]
@@ -638,7 +638,7 @@ mod tests {
             .send(DeltaWork::whole_file(0, PathBuf::from("/d"), 0))
             .unwrap_err();
         assert_eq!(err.to_string(), "work queue receiver has been dropped");
-        assert_eq!(err.0.ndx(), 0);
+        assert_eq!(err.0.ndx().get(), 0);
     }
 
     #[test]
@@ -688,7 +688,7 @@ mod tests {
         let items: Vec<_> = rx.into_iter().collect();
         assert_eq!(items.len(), 1);
         assert!(items[0].is_delta());
-        assert_eq!(items[0].ndx(), 42);
+        assert_eq!(items[0].ndx().get(), 42);
         assert_eq!(items[0].target_size(), 2048);
     }
 
@@ -702,7 +702,7 @@ mod tests {
         }
         drop(tx);
 
-        let items: Vec<u32> = rx.into_iter().map(|w| w.ndx()).collect();
+        let items: Vec<u32> = rx.into_iter().map(|w| w.ndx().get()).collect();
         assert_eq!(items, vec![0, 1, 2, 3, 4]);
     }
 
@@ -725,7 +725,7 @@ mod tests {
             .into_iter()
             .map(|w| {
                 assert!(Instant::now() < deadline, "deadlock detected - timed out");
-                w.ndx()
+                w.ndx().get()
             })
             .collect();
 
@@ -756,7 +756,7 @@ mod tests {
             for w in rx.into_iter() {
                 let collected = &collected;
                 s.spawn(move |_| {
-                    let seq = u64::from(w.ndx());
+                    let seq = u64::from(w.ndx().get());
                     let result = strategy::dispatch(&w).with_sequence(seq);
                     collected.lock().unwrap().push(result);
                 });
@@ -791,7 +791,7 @@ mod tests {
 
         let (result_tx, result_rx) = crossbeam_channel::bounded(16);
         thread::spawn(move || {
-            rx.drain_parallel_into(|w| w.ndx(), result_tx);
+            rx.drain_parallel_into(|w| w.ndx().get(), result_tx);
         });
 
         let mut results: Vec<u32> = result_rx.iter().collect();
@@ -808,7 +808,7 @@ mod tests {
 
         let (result_tx, result_rx) = crossbeam_channel::bounded(4);
         thread::spawn(move || {
-            rx.drain_parallel_into(|w| w.ndx(), result_tx);
+            rx.drain_parallel_into(|w| w.ndx().get(), result_tx);
         });
 
         let results: Vec<u32> = result_rx.iter().collect();
@@ -831,7 +831,7 @@ mod tests {
 
         let (result_tx, result_rx) = crossbeam_channel::bounded(2);
         thread::spawn(move || {
-            rx.drain_parallel_into(|w| w.ndx(), result_tx);
+            rx.drain_parallel_into(|w| w.ndx().get(), result_tx);
         });
 
         let mut results = Vec::new();
@@ -857,7 +857,7 @@ mod tests {
 
         let (result_tx, result_rx) = crossbeam_channel::bounded(4);
         let drain_handle = thread::spawn(move || {
-            rx.drain_parallel_into(|w| w.ndx(), result_tx);
+            rx.drain_parallel_into(|w| w.ndx().get(), result_tx);
         });
 
         // Take a few results then drop the receiver.
@@ -883,7 +883,7 @@ mod tests {
 
         let (result_tx, result_rx) = crossbeam_channel::bounded(4);
         thread::spawn(move || {
-            rx.drain_parallel_into(|w| (w.ndx(), w.target_size()), result_tx);
+            rx.drain_parallel_into(|w| (w.ndx().get(), w.target_size()), result_tx);
         });
 
         let results: Vec<_> = result_rx.iter().collect();
@@ -902,7 +902,7 @@ mod tests {
             }
         });
 
-        let mut results = rx.drain_parallel(|w| w.ndx());
+        let mut results = rx.drain_parallel(|w| w.ndx().get());
         producer.join().unwrap();
 
         results.sort_unstable();
@@ -913,7 +913,7 @@ mod tests {
     fn drain_parallel_empty_queue() {
         let (tx, rx) = bounded_with_capacity(4);
         drop(tx); // close immediately - no items sent
-        let results: Vec<u32> = rx.drain_parallel(|w| w.ndx());
+        let results: Vec<u32> = rx.drain_parallel(|w| w.ndx().get());
         assert!(results.is_empty());
     }
 
@@ -934,7 +934,7 @@ mod tests {
             }
         });
 
-        let results = rx.drain_parallel(|w| w.ndx());
+        let results = rx.drain_parallel(|w| w.ndx().get());
         producer.join().unwrap();
 
         assert_eq!(results.len(), total as usize);
@@ -957,7 +957,7 @@ mod tests {
         });
 
         let results: Vec<Result<u32, String>> = rx.drain_parallel(|w| {
-            let ndx = w.ndx();
+            let ndx = w.ndx().get();
             if ndx % 5 == 0 {
                 Err(format!("failed on ndx {ndx}"))
             } else {
@@ -981,7 +981,7 @@ mod tests {
             .unwrap();
         drop(tx);
 
-        let results = rx.drain_parallel(|w| (w.ndx(), w.target_size()));
+        let results = rx.drain_parallel(|w| (w.ndx().get(), w.target_size()));
         assert_eq!(results, vec![(42, 128)]);
     }
 
@@ -1001,7 +1001,7 @@ mod tests {
         });
 
         let results = rx.drain_parallel(|w| {
-            let seq = u64::from(w.ndx());
+            let seq = u64::from(w.ndx().get());
             strategy::dispatch(&w).with_sequence(seq)
         });
         producer.join().unwrap();
@@ -1036,7 +1036,7 @@ mod tests {
             }
         });
 
-        let mut results = rx.drain_parallel(|w| w.ndx());
+        let mut results = rx.drain_parallel(|w| w.ndx().get());
         p1.join().unwrap();
         p2.join().unwrap();
 
@@ -1071,7 +1071,7 @@ mod tests {
         // Drop the original sender so the channel closes when all clones drop.
         drop(tx);
 
-        let mut results = rx.drain_parallel(|w| w.ndx());
+        let mut results = rx.drain_parallel(|w| w.ndx().get());
         for h in handles {
             h.join().unwrap();
         }
@@ -1102,7 +1102,7 @@ mod tests {
         drop(tx);
         drop(tx3);
 
-        let mut items: Vec<u32> = rx.into_iter().map(|w| w.ndx()).collect();
+        let mut items: Vec<u32> = rx.into_iter().map(|w| w.ndx().get()).collect();
         items.sort_unstable();
         assert_eq!(items, vec![1, 2]);
     }
@@ -1121,7 +1121,7 @@ mod tests {
 
         let consumer = thread::spawn(move || {
             for w in rx.into_iter() {
-                received_clone.lock().unwrap().push(w.ndx());
+                received_clone.lock().unwrap().push(w.ndx().get());
             }
         });
 
@@ -1177,7 +1177,7 @@ mod tests {
             }
         });
 
-        let results = rx.drain_parallel(|w| (w.ndx(), w.target_size()));
+        let results = rx.drain_parallel(|w| (w.ndx().get(), w.target_size()));
         p1.join().unwrap();
         p2.join().unwrap();
 
@@ -1216,7 +1216,7 @@ mod tests {
 
         let (result_tx, result_rx) = crossbeam_channel::bounded(16);
         thread::spawn(move || {
-            rx.drain_parallel_into(|w| w.ndx(), result_tx);
+            rx.drain_parallel_into(|w| w.ndx().get(), result_tx);
         });
 
         let mut results: Vec<u32> = result_rx.iter().collect();
@@ -1245,8 +1245,8 @@ mod tests {
             .send(DeltaWork::whole_file(2, PathBuf::from("/d"), 0))
             .unwrap_err();
 
-        assert_eq!(err1.0.ndx(), 1);
-        assert_eq!(err2.0.ndx(), 2);
+        assert_eq!(err1.0.ndx().get(), 1);
+        assert_eq!(err2.0.ndx().get(), 2);
     }
 
     #[test]
@@ -1262,7 +1262,7 @@ mod tests {
             }
         });
 
-        let results = rx.drain_parallel(|w| w.ndx() * multiplier);
+        let results = rx.drain_parallel(|w| w.ndx().get() * multiplier);
         producer.join().unwrap();
 
         let mut sorted = results;
@@ -1429,7 +1429,7 @@ mod tests {
             // Each worker does a variable amount of spin work keyed on its index
             // to create scheduling contention and non-uniform completion times.
             let results: Vec<(u32, u32)> = rx.drain_parallel(|w| {
-                let idx = w.ndx();
+                let idx = w.ndx().get();
                 // Spin proportional to (idx % 17) to vary per-item cost.
                 let spin = (idx % 17) as usize * 50;
                 let mut acc = 0u64;

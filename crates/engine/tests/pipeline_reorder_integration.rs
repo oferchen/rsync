@@ -41,7 +41,7 @@ fn end_to_end_streaming_pipeline_delivers_in_order() {
         work_rx.drain_parallel_into(
             |work| {
                 // Simulate variable-cost work to induce out-of-order completion.
-                let spins = ((work.ndx() * 7 + 13) % 200) as usize;
+                let spins = ((work.ndx().get() * 7 + 13) % 200) as usize;
                 let mut acc = 0u64;
                 for j in 0..spins {
                     acc = acc.wrapping_add(j as u64);
@@ -102,7 +102,7 @@ fn end_to_end_streaming_pipeline_delivers_in_order() {
             "sequence mismatch at position {i}: expected {i}, got {}",
             r.sequence()
         );
-        assert_eq!(r.ndx(), i as u32);
+        assert_eq!(r.ndx().get(), i as u32);
         assert_eq!(r.bytes_written(), (i as u64) * 10);
         assert!(r.is_success());
     }
@@ -138,7 +138,7 @@ fn delta_consumer_end_to_end_ordering_guarantee() {
             "out of order at position {i}: expected seq {i}, got {}",
             r.sequence()
         );
-        assert_eq!(r.ndx(), i as u32);
+        assert_eq!(r.ndx().get(), i as u32);
         assert!(r.is_success());
     }
 }
@@ -181,7 +181,7 @@ fn mixed_work_kinds_preserve_stats_in_order() {
         let i_u64 = i as u64;
 
         assert_eq!(r.sequence(), i_u64, "sequence mismatch at {i}");
-        assert_eq!(r.ndx(), i_u32);
+        assert_eq!(r.ndx().get(), i_u32);
         assert!(r.is_success());
 
         if i_u32 % 3 == 0 {
@@ -246,7 +246,7 @@ fn batch_drain_parallel_with_reorder_buffer() {
     // drain_parallel collects all results (out of order).
     let results = work_rx.drain_parallel(|work| {
         // Variable spin to induce reordering.
-        let spins = ((work.ndx() * 11 + 3) % 150) as usize;
+        let spins = ((work.ndx().get() * 11 + 3) % 150) as usize;
         let mut acc = 0u64;
         for j in 0..spins {
             acc = acc.wrapping_add(j as u64);
@@ -271,6 +271,6 @@ fn batch_drain_parallel_with_reorder_buffer() {
 
     for (i, r) in ordered.iter().enumerate() {
         assert_eq!(r.sequence(), i as u64);
-        assert_eq!(r.ndx(), i as u32);
+        assert_eq!(r.ndx().get(), i as u32);
     }
 }
