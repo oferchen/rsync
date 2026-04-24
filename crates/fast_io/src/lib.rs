@@ -148,10 +148,10 @@ pub use temp_file_strategy::{
 };
 
 pub use io_uring::{
-    IoUringConfig, IoUringDiskBatch, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader,
-    IoUringReaderFactory, IoUringWriter, IoUringWriterFactory, RegisteredBufferGroup,
-    RegisteredBufferSlot, is_io_uring_available, reader_from_path, sqpoll_fell_back,
-    writer_from_file,
+    IoUringConfig, IoUringDiskBatch, IoUringKernelInfo, IoUringOrStdReader, IoUringOrStdWriter,
+    IoUringReader, IoUringReaderFactory, IoUringWriter, IoUringWriterFactory,
+    RegisteredBufferGroup, RegisteredBufferSlot, is_io_uring_available, reader_from_path,
+    sqpoll_fell_back, writer_from_file,
 };
 
 pub use iocp::{
@@ -214,14 +214,25 @@ pub fn io_uring_status_detail() -> String {
 ///
 /// On Linux with the `io_uring` feature enabled, probes the kernel version
 /// and attempts `io_uring_setup(2)`, returning a message like:
-/// - `"io_uring available (kernel 5.15)"`
-/// - `"io_uring unavailable: kernel 4.19 is below minimum 5.6"`
-/// - `"io_uring unavailable: io_uring_setup(2) blocked on kernel 6.1 (seccomp, container, or permission restriction)"`
+/// - `"io_uring: enabled (kernel 5.15, 48 ops supported)"`
+/// - `"io_uring: disabled (kernel 4.19 < 5.6 required)"`
+/// - `"io_uring: disabled (kernel 6.1, io_uring_setup(2) blocked by seccomp, container, or permission restriction)"`
 ///
 /// On non-Linux platforms or without the feature, returns a compile-time reason.
 #[must_use]
 pub fn io_uring_availability_reason() -> String {
     io_uring_availability_reason_impl()
+}
+
+/// Returns structured kernel information for io_uring availability.
+///
+/// Provides machine-readable fields for callers that need to act on
+/// kernel version or supported op count programmatically. On non-Linux
+/// platforms or without the `io_uring` feature, returns a struct with
+/// `available: false` and `None` kernel versions.
+#[must_use]
+pub fn io_uring_kernel_info() -> io_uring::IoUringKernelInfo {
+    io_uring_kernel_info_impl()
 }
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
@@ -233,30 +244,46 @@ fn io_uring_availability_reason_impl() -> String {
 fn io_uring_availability_reason_impl() -> String {
     #[cfg(not(target_os = "linux"))]
     {
-        "io_uring unavailable: platform is not Linux".to_string()
+        "io_uring: disabled (platform is not Linux)".to_string()
     }
     #[cfg(all(target_os = "linux", not(feature = "io_uring")))]
     {
-        "io_uring unavailable: io_uring feature not compiled in".to_string()
+        "io_uring: disabled (io_uring feature not compiled in)".to_string()
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+fn io_uring_kernel_info_impl() -> io_uring::IoUringKernelInfo {
+    io_uring::config_detail::io_uring_kernel_info()
+}
+
+#[cfg(not(all(target_os = "linux", feature = "io_uring")))]
+fn io_uring_kernel_info_impl() -> io_uring::IoUringKernelInfo {
+    io_uring::IoUringKernelInfo {
+        available: false,
+        kernel_major: None,
+        kernel_minor: None,
+        supported_ops: 0,
+        reason: io_uring_availability_reason_impl(),
     }
 }
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 fn io_uring_status_detail_impl() -> String {
-    use io_uring::config_detail::{get_kernel_release_string, parse_kernel_version};
+    let info = io_uring::config_detail::io_uring_kernel_info();
 
-    let kernel_version =
-        get_kernel_release_string().and_then(|release| parse_kernel_version(&release));
-
-    match kernel_version {
-        Some((major, minor)) => {
-            if is_io_uring_available() {
-                format!("compiled in, available (kernel {major}.{minor})")
+    match (info.kernel_major, info.kernel_minor) {
+        (Some(major), Some(minor)) => {
+            if info.available {
+                format!(
+                    "compiled in, available (kernel {major}.{minor}, {} ops)",
+                    info.supported_ops
+                )
             } else {
                 format!("compiled in, unavailable (kernel {major}.{minor}, requires >= 5.6)")
             }
         }
-        None => "compiled in, unavailable (could not detect kernel version)".to_string(),
+        _ => "compiled in, unavailable (could not detect kernel version)".to_string(),
     }
 }
 
@@ -488,7 +515,7 @@ mod tests {
     fn io_uring_availability_reason_returns_non_empty_string() {
         let reason = io_uring_availability_reason();
         assert!(!reason.is_empty());
-        assert!(reason.starts_with("io_uring "));
+        assert!(reason.starts_with("io_uring: "));
 
         #[cfg(not(target_os = "linux"))]
         assert!(reason.contains("not Linux"));
@@ -498,8 +525,8 @@ mod tests {
 
         #[cfg(all(target_os = "linux", feature = "io_uring"))]
         {
-            // Must contain either "available" or "unavailable"
-            assert!(reason.contains("available"));
+            // Must contain either "enabled" or "disabled"
+            assert!(reason.contains("enabled") || reason.contains("disabled"));
         }
     }
 
@@ -549,8 +576,8 @@ mod io_uring_fallback_tests {
     fn io_uring_availability_reason_describes_platform_constraint() {
         let reason = io_uring_availability_reason();
         assert!(
-            reason.starts_with("io_uring unavailable:"),
-            "reason must start with 'io_uring unavailable:' on non-Linux, got: {reason}"
+            reason.starts_with("io_uring: disabled"),
+            "reason must start with 'io_uring: disabled' on non-Linux, got: {reason}"
         );
         assert!(
             reason.contains("not Linux"),
@@ -601,8 +628,8 @@ mod io_uring_fallback_tests {
     fn io_uring_availability_reason_well_formed_on_linux() {
         let reason = io_uring_availability_reason();
         assert!(
-            reason.starts_with("io_uring "),
-            "reason must start with 'io_uring ', got: {reason}"
+            reason.starts_with("io_uring: "),
+            "reason must start with 'io_uring: ', got: {reason}"
         );
         // On Linux with the feature, the reason must mention the kernel version
         // or a specific unavailability cause.
@@ -622,17 +649,17 @@ mod io_uring_fallback_tests {
 
         if available {
             assert!(
-                reason.contains("io_uring available"),
-                "reason must say 'available' when io_uring is available, got: {reason}"
+                reason.contains("enabled"),
+                "reason must say 'enabled' when io_uring is available, got: {reason}"
             );
             assert!(
-                !reason.contains("unavailable"),
-                "reason must not say 'unavailable' when io_uring is available, got: {reason}"
+                !reason.contains("disabled"),
+                "reason must not say 'disabled' when io_uring is available, got: {reason}"
             );
         } else {
             assert!(
-                reason.contains("unavailable"),
-                "reason must say 'unavailable' when io_uring is not available, got: {reason}"
+                reason.contains("disabled"),
+                "reason must say 'disabled' when io_uring is not available, got: {reason}"
             );
         }
     }
@@ -675,8 +702,8 @@ mod io_uring_fallback_tests {
     fn io_uring_availability_reason_starts_with_io_uring_prefix() {
         let reason = io_uring_availability_reason();
         assert!(
-            reason.starts_with("io_uring "),
-            "reason must start with 'io_uring ' prefix for consistent log formatting, got: {reason}"
+            reason.starts_with("io_uring: "),
+            "reason must start with 'io_uring: ' prefix for consistent log formatting, got: {reason}"
         );
     }
 
