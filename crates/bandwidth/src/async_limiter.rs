@@ -294,9 +294,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(coverage, ignore = "test-util feature unavailable under llvm-cov")]
     async fn tokens_replenish_over_time() {
-        // Pause tokio time for deterministic testing - coverage instrumentation
-        // (llvm-cov) distorts real wall-clock timing, making bounds unreliable.
         tokio::time::pause();
         let mut limiter = AsyncRateLimiter::new(10_000);
         // Drain the bucket.
