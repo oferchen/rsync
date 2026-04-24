@@ -1,4 +1,7 @@
 //! Configuration enums for the embedded SSH transport.
+//!
+//! These types mirror OpenSSH client options and control host key
+//! verification policy and IP version preference for DNS resolution.
 
 /// Host key verification policy.
 ///
@@ -7,10 +10,19 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrictHostKeyChecking {
     /// Reject connections to hosts with unknown or mismatched keys.
+    ///
+    /// Safest option - requires the host key to already exist in the
+    /// known hosts file. New hosts must be added manually.
     Yes,
-    /// Accept any host key without verification (insecure).
+    /// Accept unknown host keys without prompting and persist them.
+    ///
+    /// Insecure - vulnerable to MITM on first connect. Changed keys
+    /// are still rejected. Useful for automated/batch transfers.
     No,
-    /// Prompt the user when encountering an unknown host key.
+    /// Prompt the user interactively when encountering an unknown host key.
+    ///
+    /// Default mode, matching OpenSSH behavior. Falls back to rejection
+    /// when no TTY is available (e.g., backgrounded or piped).
     Ask,
 }
 
@@ -26,13 +38,14 @@ impl Default for StrictHostKeyChecking {
 /// addresses. Mirrors the SSH `-4`/`-6` flag behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IpPreference {
-    /// Let the system choose (default: prefer IPv4 if both available).
+    /// Let the system choose based on available addresses.
     Auto,
-    /// Prefer IPv6 addresses when available.
+    /// Prefer IPv6 addresses when both are available. Mirrors `ssh -6` with
+    /// fallback to IPv4.
     PreferV6,
-    /// Only use IPv4 addresses.
+    /// Only resolve and connect to IPv4 addresses. Mirrors `ssh -4`.
     ForceV4,
-    /// Only use IPv6 addresses.
+    /// Only resolve and connect to IPv6 addresses. Mirrors `ssh -6`.
     ForceV6,
 }
 

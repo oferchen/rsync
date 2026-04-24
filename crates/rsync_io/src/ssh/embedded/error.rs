@@ -1,4 +1,8 @@
 //! Error types for the embedded SSH transport.
+//!
+//! Covers every failure mode in the SSH connection lifecycle: URL parsing,
+//! TCP connect, host key verification, authentication, key loading, and
+//! I/O during data transfer.
 
 /// Errors from the embedded SSH transport layer.
 ///
