@@ -337,7 +337,7 @@ where
     };
     let open_noatime_enabled = open_noatime_setting.unwrap_or(false);
 
-    #[allow(unused_variables)]
+    #[allow(unused_variables)] // REASON: used on unix with feature "acl"
     let preserve_acls = acls.unwrap_or(false);
 
     if let Err(code) = validate_feature_support(preserve_acls, xattrs, stderr) {

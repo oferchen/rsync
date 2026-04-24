@@ -24,7 +24,7 @@ impl ParsedChown {
     }
 
     /// Returns the original spec string
-    #[allow(dead_code)]
+    #[allow(dead_code)] // REASON: accessor used in unit tests
     pub(crate) const fn spec(&self) -> &OsString {
         &self.spec
     }

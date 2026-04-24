@@ -122,7 +122,7 @@ pub(crate) use context::{
     MetadataPathContext, OwnedPathContext,
 };
 
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: convenience re-export; not all items used in every module
 pub(crate) use dir_merge::{
     FilterParseError, ParsedFilterDirective, apply_dir_merge_rule_defaults,
     filter_program_local_error, load_dir_merge_rules_recursive, parse_filter_directive_line,

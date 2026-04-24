@@ -18,7 +18,7 @@ mod recognized;
 mod select;
 
 pub use advertisement::ProtocolVersionAdvertisement;
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: convenience re-export; not all constants used externally
 pub use constants::{
     MAXIMUM_PROTOCOL_ADVERTISEMENT, SUPPORTED_PROTOCOL_BOUNDS, SUPPORTED_PROTOCOL_RANGE,
 };

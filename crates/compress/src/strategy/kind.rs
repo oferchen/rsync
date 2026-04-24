@@ -79,7 +79,7 @@ impl CompressionAlgorithmKind {
     /// Returns all supported algorithm kinds in the current build.
     #[must_use]
     pub fn all() -> Vec<Self> {
-        #[allow(unused_mut)]
+        #[allow(unused_mut)] // REASON: mutated when zstd or lz4 features are enabled
         let mut algorithms = vec![Self::None, Self::Zlib];
         #[cfg(feature = "zstd")]
         algorithms.push(Self::Zstd);

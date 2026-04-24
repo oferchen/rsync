@@ -76,14 +76,6 @@ impl<'a> CopyContext<'a> {
         }
     }
 
-    /// Records the elapsed time spent transferring the file list over the wire.
-    #[allow(dead_code)]
-    pub(super) const fn record_file_list_transfer(&mut self, elapsed: Duration) {
-        if !elapsed.is_zero() {
-            self.summary.record_file_list_transfer(elapsed);
-        }
-    }
-
     /// Consumes the context and returns the final [`CopyOutcome`].
     pub(super) fn into_outcome(self) -> CopyOutcome {
         CopyOutcome {
