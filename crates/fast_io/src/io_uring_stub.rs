@@ -26,6 +26,23 @@ pub fn is_io_uring_available() -> bool {
     false
 }
 
+/// Structured kernel information for io_uring availability reporting.
+///
+/// On non-Linux platforms, all fields indicate unavailability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IoUringKernelInfo {
+    /// Whether io_uring is usable on this system (always `false`).
+    pub available: bool,
+    /// Detected kernel major version (always `None`).
+    pub kernel_major: Option<u32>,
+    /// Detected kernel minor version (always `None`).
+    pub kernel_minor: Option<u32>,
+    /// Number of supported io_uring opcodes (always 0).
+    pub supported_ops: u32,
+    /// Human-readable reason string.
+    pub reason: String,
+}
+
 /// Returns whether SQPOLL was requested but fell back (always `false` on this platform).
 #[must_use]
 pub fn sqpoll_fell_back() -> bool {

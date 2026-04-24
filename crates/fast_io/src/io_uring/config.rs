@@ -66,6 +66,24 @@ fn get_kernel_release() -> Option<String> {
     }
 }
 
+/// Structured kernel information for io_uring availability reporting.
+///
+/// Provides machine-readable fields for callers that need to act on
+/// kernel version or op count (e.g., `--version` output, debug logging).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IoUringKernelInfo {
+    /// Whether io_uring is usable on this system.
+    pub available: bool,
+    /// Detected kernel major version, if parseable.
+    pub kernel_major: Option<u32>,
+    /// Detected kernel minor version, if parseable.
+    pub kernel_minor: Option<u32>,
+    /// Number of supported io_uring opcodes (0 if unavailable or probe failed).
+    pub supported_ops: u32,
+    /// Human-readable reason string (same as `io_uring_availability_reason()`).
+    pub reason: String,
+}
+
 /// Public accessors for kernel version detection used by `--version` output.
 pub mod config_detail {
     /// Parses kernel version from uname release string (e.g., "5.15.0-generic").
@@ -84,9 +102,54 @@ pub mod config_detail {
     ///
     /// Probes the kernel version and attempts to create a minimal io_uring
     /// instance, returning a log-friendly string describing the result.
+    ///
+    /// Example outputs:
+    /// - `"io_uring: enabled (kernel 6.1, 48 ops supported)"`
+    /// - `"io_uring: disabled (kernel 4.19 < 5.6 required)"`
+    /// - `"io_uring: disabled (kernel 5.15, io_uring_setup(2) blocked by seccomp, container, or permission restriction)"`
     #[must_use]
     pub fn io_uring_availability_reason() -> String {
         super::check_io_uring_reason().reason()
+    }
+
+    /// Returns structured kernel information for io_uring availability.
+    ///
+    /// Probes the kernel version and io_uring syscall availability, returning
+    /// a struct with machine-readable fields for programmatic consumption.
+    #[must_use]
+    pub fn io_uring_kernel_info() -> super::IoUringKernelInfo {
+        let result = super::check_io_uring_reason();
+        match &result {
+            super::IoUringProbeResult::Available {
+                major,
+                minor,
+                supported_ops,
+            } => super::IoUringKernelInfo {
+                available: true,
+                kernel_major: Some(*major),
+                kernel_minor: Some(*minor),
+                supported_ops: *supported_ops,
+                reason: result.reason(),
+            },
+            super::IoUringProbeResult::KernelTooOld { major, minor }
+            | super::IoUringProbeResult::SyscallBlocked { major, minor } => {
+                super::IoUringKernelInfo {
+                    available: false,
+                    kernel_major: Some(*major),
+                    kernel_minor: Some(*minor),
+                    supported_ops: 0,
+                    reason: result.reason(),
+                }
+            }
+            super::IoUringProbeResult::NoKernelRelease
+            | super::IoUringProbeResult::UnparsableVersion => super::IoUringKernelInfo {
+                available: false,
+                kernel_major: None,
+                kernel_minor: None,
+                supported_ops: 0,
+                reason: result.reason(),
+            },
+        }
     }
 }
 
@@ -128,6 +191,8 @@ pub(crate) enum IoUringProbeResult {
         /// Detected kernel major.minor version.
         major: u32,
         minor: u32,
+        /// Number of supported io_uring opcodes reported by `IORING_REGISTER_PROBE`.
+        supported_ops: u32,
     },
     /// Could not read the kernel release string from uname(2).
     NoKernelRelease,
@@ -152,25 +217,42 @@ impl IoUringProbeResult {
     /// Returns a human-readable reason string suitable for log output.
     pub(crate) fn reason(&self) -> String {
         match self {
-            Self::Available { major, minor } => {
-                format!("io_uring available (kernel {major}.{minor})")
+            Self::Available {
+                major,
+                minor,
+                supported_ops,
+            } => {
+                format!("io_uring: enabled (kernel {major}.{minor}, {supported_ops} ops supported)")
             }
             Self::NoKernelRelease => {
-                "io_uring unavailable: could not read kernel version".to_string()
+                "io_uring: disabled (could not read kernel version)".to_string()
             }
             Self::UnparsableVersion => {
-                "io_uring unavailable: could not parse kernel version".to_string()
+                "io_uring: disabled (could not parse kernel version)".to_string()
             }
             Self::KernelTooOld { major, minor } => {
-                format!("io_uring unavailable: kernel {major}.{minor} is below minimum 5.6")
+                format!("io_uring: disabled (kernel {major}.{minor} < 5.6 required)")
             }
             Self::SyscallBlocked { major, minor } => {
                 format!(
-                    "io_uring unavailable: io_uring_setup(2) blocked on kernel {major}.{minor} \
-                     (seccomp, container, or permission restriction)"
+                    "io_uring: disabled (kernel {major}.{minor}, io_uring_setup(2) blocked \
+                     by seccomp, container, or permission restriction)"
                 )
             }
         }
+    }
+}
+
+/// Counts supported io_uring opcodes by probing via `IORING_REGISTER_PROBE`.
+///
+/// Creates a temporary ring, registers a probe, and counts how many opcodes
+/// the kernel reports as supported. Returns 0 if the probe fails.
+fn count_supported_ops(ring: &RawIoUring) -> u32 {
+    let mut probe = io_uring::Probe::new();
+    if ring.submitter().register_probe(&mut probe).is_ok() {
+        (0..=u8::MAX).filter(|&op| probe.is_supported(op)).count() as u32
+    } else {
+        0
     }
 }
 
@@ -190,10 +272,16 @@ pub(crate) fn check_io_uring_reason() -> IoUringProbeResult {
         return IoUringProbeResult::KernelTooOld { major, minor };
     }
 
-    if RawIoUring::new(4).is_ok() {
-        IoUringProbeResult::Available { major, minor }
-    } else {
-        IoUringProbeResult::SyscallBlocked { major, minor }
+    match RawIoUring::new(4) {
+        Ok(ring) => {
+            let supported_ops = count_supported_ops(&ring);
+            IoUringProbeResult::Available {
+                major,
+                minor,
+                supported_ops,
+            }
+        }
+        Err(_) => IoUringProbeResult::SyscallBlocked { major, minor },
     }
 }
 
@@ -317,18 +405,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn probe_result_available_reason_contains_kernel_version() {
-        let result = IoUringProbeResult::Available { major: 6, minor: 1 };
+    fn probe_result_available_reason_contains_kernel_version_and_ops() {
+        let result = IoUringProbeResult::Available {
+            major: 6,
+            minor: 1,
+            supported_ops: 48,
+        };
         let reason = result.reason();
-        assert!(reason.contains("io_uring available"));
+        assert!(reason.contains("enabled"));
         assert!(reason.contains("6.1"));
+        assert!(reason.contains("48 ops supported"));
     }
 
     #[test]
     fn probe_result_no_kernel_release_reason() {
         let result = IoUringProbeResult::NoKernelRelease;
         let reason = result.reason();
-        assert!(reason.contains("unavailable"));
+        assert!(reason.contains("disabled"));
         assert!(reason.contains("could not read kernel version"));
     }
 
@@ -336,7 +429,7 @@ mod tests {
     fn probe_result_unparsable_version_reason() {
         let result = IoUringProbeResult::UnparsableVersion;
         let reason = result.reason();
-        assert!(reason.contains("unavailable"));
+        assert!(reason.contains("disabled"));
         assert!(reason.contains("could not parse kernel version"));
     }
 
@@ -347,9 +440,9 @@ mod tests {
             minor: 19,
         };
         let reason = result.reason();
-        assert!(reason.contains("unavailable"));
+        assert!(reason.contains("disabled"));
         assert!(reason.contains("4.19"));
-        assert!(reason.contains("below minimum 5.6"));
+        assert!(reason.contains("< 5.6 required"));
     }
 
     #[test]
@@ -359,7 +452,7 @@ mod tests {
             minor: 15,
         };
         let reason = result.reason();
-        assert!(reason.contains("unavailable"));
+        assert!(reason.contains("disabled"));
         assert!(reason.contains("5.15"));
         assert!(reason.contains("blocked"));
         assert!(reason.contains("seccomp"));
@@ -368,7 +461,11 @@ mod tests {
     #[test]
     fn probe_result_all_variants_start_with_io_uring_prefix() {
         let variants: Vec<IoUringProbeResult> = vec![
-            IoUringProbeResult::Available { major: 6, minor: 8 },
+            IoUringProbeResult::Available {
+                major: 6,
+                minor: 8,
+                supported_ops: 50,
+            },
             IoUringProbeResult::NoKernelRelease,
             IoUringProbeResult::UnparsableVersion,
             IoUringProbeResult::KernelTooOld { major: 4, minor: 0 },
@@ -381,14 +478,64 @@ mod tests {
         for variant in &variants {
             let reason = variant.reason();
             assert!(
-                reason.starts_with("io_uring "),
-                "all variants must start with 'io_uring ' prefix, got: {reason}"
+                reason.starts_with("io_uring: "),
+                "all variants must start with 'io_uring: ' prefix, got: {reason}"
             );
             assert!(
                 !reason.contains('\n'),
                 "reason must be single line, got: {reason}"
             );
         }
+    }
+
+    #[test]
+    fn kernel_info_available_has_all_fields() {
+        let info = IoUringKernelInfo {
+            available: true,
+            kernel_major: Some(6),
+            kernel_minor: Some(1),
+            supported_ops: 48,
+            reason: "io_uring: enabled (kernel 6.1, 48 ops supported)".to_string(),
+        };
+        assert!(info.available);
+        assert_eq!(info.kernel_major, Some(6));
+        assert_eq!(info.kernel_minor, Some(1));
+        assert!(info.supported_ops > 0);
+    }
+
+    #[test]
+    fn kernel_info_unavailable_has_zero_ops() {
+        let info = IoUringKernelInfo {
+            available: false,
+            kernel_major: Some(4),
+            kernel_minor: Some(19),
+            supported_ops: 0,
+            reason: "io_uring: disabled (kernel 4.19 < 5.6 required)".to_string(),
+        };
+        assert!(!info.available);
+        assert_eq!(info.supported_ops, 0);
+    }
+
+    #[test]
+    fn kernel_info_no_kernel_release_has_none_versions() {
+        let info = IoUringKernelInfo {
+            available: false,
+            kernel_major: None,
+            kernel_minor: None,
+            supported_ops: 0,
+            reason: "io_uring: disabled (could not read kernel version)".to_string(),
+        };
+        assert!(!info.available);
+        assert!(info.kernel_major.is_none());
+        assert!(info.kernel_minor.is_none());
+    }
+
+    #[test]
+    fn config_detail_kernel_info_returns_consistent_result() {
+        let info = config_detail::io_uring_kernel_info();
+        let reason = config_detail::io_uring_availability_reason();
+        assert_eq!(info.reason, reason);
+        assert_eq!(info.available, is_io_uring_available());
     }
 
     #[test]
@@ -416,7 +563,7 @@ mod tests {
     fn config_detail_io_uring_availability_reason_is_non_empty() {
         let reason = config_detail::io_uring_availability_reason();
         assert!(!reason.is_empty());
-        assert!(reason.starts_with("io_uring "));
+        assert!(reason.starts_with("io_uring: "));
     }
 
     // --- Kernel version parsing edge cases ---
