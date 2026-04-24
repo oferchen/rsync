@@ -380,4 +380,332 @@ mod tests {
             cloned.select_algorithm(&["zlib"], false)
         );
     }
+
+    // ---- Protocol version x feature matrix tests ----
+    //
+    // These test the full negotiation matrix: protocol version ranges
+    // (which determine what a remote peer might advertise) combined with
+    // feature-gated local algorithm availability.
+
+    #[test]
+    fn negotiation_pre_v30_remote_only_zlib() {
+        // Protocol < 30: remote peer only supports zlib (no negotiation vstring).
+        // Client should select zlib since it is always available locally.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zlib"], false);
+        assert_eq!(selected, "zlib");
+    }
+
+    #[test]
+    fn negotiation_pre_v30_remote_only_zlib_server_side() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zlib"], true);
+        assert_eq!(selected, "zlib");
+    }
+
+    #[test]
+    fn negotiation_v28_remote_zlib_and_none() {
+        // Protocol 28: remote advertises zlib + none (typical pre-v30 peer).
+        let negotiator = DefaultCompressionNegotiator::new();
+        // As client: local preference order wins - zlibx before zlib
+        let selected = negotiator.select_algorithm(&["zlib", "none"], false);
+        assert_eq!(selected, "zlib");
+    }
+
+    #[test]
+    fn negotiation_v29_remote_zlibx_zlib_none() {
+        // Protocol 29: remote advertises zlibx, zlib, none.
+        let negotiator = DefaultCompressionNegotiator::new();
+        // Client prefers local order: zlibx is in local list before zlib
+        let selected = negotiator.select_algorithm(&["zlibx", "zlib", "none"], false);
+        assert_eq!(selected, "zlibx");
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn negotiation_v30_remote_zlib_zstd_client_prefers_zstd() {
+        // Protocol 30-31: remote supports zstd + zlib. With zstd feature
+        // enabled, client's local preference order is zstd > zlibx > zlib.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zlib", "zlibx", "zstd", "none"], false);
+        // Client iterates local list: zstd is first locally, and remote has it
+        assert_eq!(selected, "zstd");
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn negotiation_v31_server_respects_remote_order() {
+        // Protocol 31: as server, we iterate the remote (client's) list.
+        // Remote prefers zlib over zstd - server should respect that.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zlib", "zstd", "none"], true);
+        assert_eq!(selected, "zlib");
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn negotiation_v32_remote_zstd_first_server() {
+        // Protocol 32+: remote (client) prefers zstd - server picks zstd.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zstd", "zlib", "none"], true);
+        assert_eq!(selected, "zstd");
+    }
+
+    #[cfg(not(feature = "zstd"))]
+    #[test]
+    fn negotiation_without_zstd_falls_back_to_zlib() {
+        // Without zstd feature: remote advertises zstd + zlib, but we
+        // can only select zlib since zstd is not compiled in.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zstd", "zlib", "none"], false);
+        assert_eq!(selected, "zlib");
+    }
+
+    #[cfg(not(feature = "zstd"))]
+    #[test]
+    fn negotiation_without_zstd_server_skips_zstd() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zstd", "zlib", "none"], true);
+        // Server iterates remote list: zstd is not available, so skip to zlib
+        assert_eq!(selected, "zlib");
+    }
+
+    #[cfg(not(feature = "zstd"))]
+    #[test]
+    fn negotiation_without_zstd_supported_list_excludes_zstd() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let supported = negotiator.supported_algorithms();
+        assert!(!supported.contains(&"zstd"));
+    }
+
+    #[test]
+    fn negotiation_lz4_not_in_auto_negotiation() {
+        // lz4 is intentionally omitted from auto-negotiation (per code comment).
+        // Even with the lz4 feature enabled, it should not appear in the list.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let supported = negotiator.supported_algorithms();
+        assert!(
+            !supported.contains(&"lz4"),
+            "lz4 must not appear in auto-negotiation list"
+        );
+    }
+
+    #[test]
+    fn negotiation_remote_only_lz4_returns_none() {
+        // If remote only supports lz4, and we don't advertise it,
+        // negotiation should fall back to "none".
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["lz4"], false);
+        assert_eq!(selected, "none");
+    }
+
+    #[test]
+    fn negotiation_remote_only_lz4_server_returns_none() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["lz4"], true);
+        assert_eq!(selected, "none");
+    }
+
+    #[test]
+    fn negotiation_remote_unknown_algorithms_ignored() {
+        // Remote advertises completely unknown algorithms.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["brotli", "snappy", "lzma"], false);
+        assert_eq!(selected, "none");
+    }
+
+    #[test]
+    fn negotiation_remote_unknown_then_zlib_server() {
+        // Server: remote list has unknown first, then zlib.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["brotli", "zlib", "none"], true);
+        assert_eq!(selected, "zlib");
+    }
+
+    #[test]
+    fn negotiation_protocol_version_0_defaults_zlib() {
+        // Edge case: protocol version 0 should default to zlib.
+        assert_eq!(
+            CompressionAlgorithmKind::for_protocol_version(0),
+            CompressionAlgorithmKind::Zlib
+        );
+    }
+
+    #[test]
+    fn negotiation_protocol_version_255_high() {
+        // Edge case: very high protocol version.
+        let kind = CompressionAlgorithmKind::for_protocol_version(255);
+        #[cfg(feature = "zstd")]
+        assert_eq!(kind, CompressionAlgorithmKind::Zstd);
+        #[cfg(not(feature = "zstd"))]
+        assert_eq!(kind, CompressionAlgorithmKind::Zlib);
+    }
+
+    #[test]
+    fn negotiation_protocol_version_35_boundary() {
+        // Protocol 35 is last version before zstd default threshold.
+        assert_eq!(
+            CompressionAlgorithmKind::for_protocol_version(35),
+            CompressionAlgorithmKind::Zlib
+        );
+    }
+
+    #[test]
+    fn negotiation_protocol_version_36_boundary() {
+        // Protocol 36 is the zstd default threshold.
+        let kind = CompressionAlgorithmKind::for_protocol_version(36);
+        #[cfg(feature = "zstd")]
+        assert_eq!(kind, CompressionAlgorithmKind::Zstd);
+        #[cfg(not(feature = "zstd"))]
+        assert_eq!(kind, CompressionAlgorithmKind::Zlib);
+    }
+
+    #[test]
+    fn negotiation_protocol_version_range_below_36_all_zlib() {
+        // All protocol versions below 36 default to zlib.
+        for v in [1, 10, 20, 28, 29, 30, 31, 32, 33, 34, 35] {
+            assert_eq!(
+                CompressionAlgorithmKind::for_protocol_version(v),
+                CompressionAlgorithmKind::Zlib,
+                "protocol version {v} should default to zlib"
+            );
+        }
+    }
+
+    #[test]
+    fn negotiation_client_zlibx_preferred_over_zlib() {
+        // When remote offers both zlibx and zlib, client should pick zlibx
+        // because zlibx comes before zlib in local preference order.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zlib", "zlibx", "none"], false);
+        assert_eq!(selected, "zlibx");
+    }
+
+    #[test]
+    fn negotiation_server_zlibx_vs_zlib_respects_remote_order() {
+        // Server iterates remote list, so zlib comes first if remote lists it first.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zlib", "zlibx", "none"], true);
+        // "zlib" resolves via from_name to Zlib kind, which is in supported list
+        assert_eq!(selected, "zlib");
+    }
+
+    #[test]
+    fn negotiation_server_zlibx_first_in_remote() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zlibx", "zlib", "none"], true);
+        // zlibx maps to Zlib kind, which is available and in supported list
+        assert_eq!(selected, "zlib");
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn negotiation_client_zstd_unavailable_on_remote_falls_to_zlibx() {
+        // Client has zstd locally but remote only offers zlibx + zlib.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zlibx", "zlib", "none"], false);
+        // Client iterates local: zstd not in remote, next is zlibx - found!
+        assert_eq!(selected, "zlibx");
+    }
+
+    #[test]
+    fn negotiation_remote_only_none() {
+        // Remote only supports "none" - should match.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["none"], false);
+        assert_eq!(selected, "none");
+    }
+
+    #[test]
+    fn negotiation_remote_only_none_server() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["none"], true);
+        assert_eq!(selected, "none");
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn negotiation_zstd_is_first_in_supported_list() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let supported = negotiator.supported_algorithms();
+        assert_eq!(
+            supported[0], "zstd",
+            "zstd must be highest preference when feature is enabled"
+        );
+    }
+
+    #[test]
+    fn negotiation_supported_list_always_ends_with_none() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let supported = negotiator.supported_algorithms();
+        assert_eq!(
+            supported.last(),
+            Some(&"none"),
+            "none must be last in preference order"
+        );
+    }
+
+    #[test]
+    fn negotiation_supported_list_size() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let supported = negotiator.supported_algorithms();
+        // zlibx, zlib, none = 3 base, +1 if zstd
+        #[cfg(feature = "zstd")]
+        assert_eq!(supported.len(), 4);
+        #[cfg(not(feature = "zstd"))]
+        assert_eq!(supported.len(), 3);
+    }
+
+    #[test]
+    fn negotiation_duplicate_in_remote_list() {
+        // Remote sends duplicates - should still work, picking first match.
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zlib", "zlib", "none", "none"], false);
+        assert_eq!(selected, "zlib");
+    }
+
+    #[test]
+    fn negotiation_server_duplicate_in_remote_list() {
+        let negotiator = DefaultCompressionNegotiator::new();
+        let selected = negotiator.select_algorithm(&["zlib", "zlib", "none"], true);
+        assert_eq!(selected, "zlib");
+    }
+
+    #[test]
+    fn fixed_negotiator_zlibx() {
+        let negotiator = FixedCompressionNegotiator::new("zlibx");
+        assert_eq!(
+            negotiator.select_algorithm(&["zlib", "zlibx", "none"], false),
+            "zlibx"
+        );
+        assert_eq!(
+            negotiator.select_algorithm(&["zlib", "none"], false),
+            "none"
+        );
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn fixed_negotiator_zstd() {
+        let negotiator = FixedCompressionNegotiator::new("zstd");
+        assert_eq!(
+            negotiator.select_algorithm(&["zstd", "zlib"], false),
+            "zstd"
+        );
+        assert_eq!(
+            negotiator.select_algorithm(&["zlib", "none"], false),
+            "none"
+        );
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn fixed_negotiator_lz4() {
+        let negotiator = FixedCompressionNegotiator::new("lz4");
+        assert_eq!(negotiator.select_algorithm(&["lz4", "zlib"], false), "lz4");
+        assert_eq!(
+            negotiator.select_algorithm(&["zlib", "none"], false),
+            "none"
+        );
+    }
 }
