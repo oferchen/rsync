@@ -459,8 +459,6 @@ fn multi_producer_fan_in_staggered_start() {
 /// with multiple producers, enabling incremental consumption.
 #[test]
 fn multi_producer_fan_in_streaming_drain() {
-    use std::sync::mpsc;
-
     let (tx, rx) = work_queue::bounded_with_capacity(8);
 
     let producers: Vec<_> = (0..NUM_PRODUCERS)
@@ -478,7 +476,7 @@ fn multi_producer_fan_in_streaming_drain() {
 
     drop(tx);
 
-    let (result_tx, result_rx) = mpsc::sync_channel(16);
+    let (result_tx, result_rx) = crossbeam_channel::bounded(16);
     let drain_handle = thread::spawn(move || {
         rx.drain_parallel_into(|w| w.ndx(), result_tx);
     });
