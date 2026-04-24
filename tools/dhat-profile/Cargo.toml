@@ -1,0 +1,15 @@
+[package]
+name = "dhat-profile"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "dhat-profile"
+path = "src/main.rs"
+
+[dependencies]
+dhat = "0.3"

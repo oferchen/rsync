@@ -30,8 +30,7 @@
 //!
 //! ## Multi-Producer Considerations
 //!
-//! Supporting multiple producers would require replacing the `SyncSender` with
-//! a cloneable MPMC channel and revising the ordering contract (multiple
+//! Supporting multiple producers would require revising the ordering contract (multiple
 //! producers would need coordinated sequence numbering). See issues #1382 and
 //! #1569 for future multi-producer design discussion.
 //!
@@ -59,7 +58,7 @@
 //! waiting for all items to finish:
 //!
 //! ```text
-//! Generator ─► WorkQueue ─► drain_parallel_into(f, tx) ─► SyncSender<R>
+//! Generator ─► WorkQueue ─► drain_parallel_into(f, tx) ─► Sender<R>
 //!  (single        rayon::scope                                 |
 //!  producer)      work-stealing                                v
 //!                 (N consumers)                       ReorderBuffer (live)
@@ -96,7 +95,7 @@
 //! enables parallel processing while bounding memory - upstream does not need
 //! this because it never queues ahead.
 
-use std::sync::mpsc::{self, Receiver, SyncSender};
+use crossbeam_channel::{self as channel, Receiver, Sender};
 
 use super::DeltaWork;
 
@@ -139,7 +138,7 @@ const CAPACITY_MULTIPLIER: usize = 2;
 /// let results: Vec<u32> = rx.drain_parallel(|w| w.ndx());
 /// ```
 pub struct WorkQueueSender {
-    tx: SyncSender<DeltaWork>,
+    tx: Sender<DeltaWork>,
 }
 
 /// Receiving half of the bounded work queue.
@@ -239,7 +238,7 @@ impl WorkQueueReceiver {
     /// consumer can process results (e.g., reorder and write to disk) while
     /// delta computation continues for remaining items.
     ///
-    /// The `SyncSender` provides backpressure: if the consumer falls behind,
+    /// The bounded `Sender` provides backpressure: if the consumer falls behind,
     /// workers block on `tx.send()` rather than accumulating unbounded results
     /// in memory.
     ///
@@ -253,10 +252,9 @@ impl WorkQueueReceiver {
     /// use engine::concurrent_delta::work_queue;
     /// use engine::concurrent_delta::DeltaWork;
     /// use std::path::PathBuf;
-    /// use std::sync::mpsc;
     ///
     /// let (work_tx, work_rx) = work_queue::bounded();
-    /// let (result_tx, result_rx) = mpsc::sync_channel(16);
+    /// let (result_tx, result_rx) = crossbeam_channel::bounded(16);
     ///
     /// // Producer thread
     /// std::thread::spawn(move || {
@@ -275,7 +273,7 @@ impl WorkQueueReceiver {
     ///     // Process each result as it arrives
     /// }
     /// ```
-    pub fn drain_parallel_into<F, R>(self, f: F, tx: SyncSender<R>)
+    pub fn drain_parallel_into<F, R>(self, f: F, tx: Sender<R>)
     where
         F: Fn(DeltaWork) -> R + Send + Sync,
         R: Send,
@@ -380,7 +378,7 @@ pub fn bounded() -> (WorkQueueSender, WorkQueueReceiver) {
 #[must_use]
 pub fn bounded_with_capacity(capacity: usize) -> (WorkQueueSender, WorkQueueReceiver) {
     assert!(capacity > 0, "work queue capacity must be non-zero");
-    let (tx, rx) = mpsc::sync_channel(capacity);
+    let (tx, rx) = channel::bounded(capacity);
     (WorkQueueSender { tx }, WorkQueueReceiver { rx })
 }
 
@@ -543,7 +541,7 @@ mod tests {
         thread::sleep(Duration::from_millis(50));
         let sent_before_drain = sent_count.load(Ordering::Acquire);
         // The producer should have sent at most capacity + 1 items
-        // (capacity in the buffer + 1 that the sync_channel allows to be
+        // (capacity in the buffer + 1 that the bounded channel allows to be
         // "in flight" during the blocking send call).
         assert!(
             sent_before_drain <= 3,
@@ -791,7 +789,7 @@ mod tests {
             }
         });
 
-        let (result_tx, result_rx) = mpsc::sync_channel(16);
+        let (result_tx, result_rx) = crossbeam_channel::bounded(16);
         thread::spawn(move || {
             rx.drain_parallel_into(|w| w.ndx(), result_tx);
         });
@@ -808,7 +806,7 @@ mod tests {
         let (tx, rx) = bounded_with_capacity(4);
         drop(tx);
 
-        let (result_tx, result_rx) = mpsc::sync_channel(4);
+        let (result_tx, result_rx) = crossbeam_channel::bounded(4);
         thread::spawn(move || {
             rx.drain_parallel_into(|w| w.ndx(), result_tx);
         });
@@ -831,7 +829,7 @@ mod tests {
             }
         });
 
-        let (result_tx, result_rx) = mpsc::sync_channel(2);
+        let (result_tx, result_rx) = crossbeam_channel::bounded(2);
         thread::spawn(move || {
             rx.drain_parallel_into(|w| w.ndx(), result_tx);
         });
@@ -857,7 +855,7 @@ mod tests {
             }
         });
 
-        let (result_tx, result_rx) = mpsc::sync_channel(4);
+        let (result_tx, result_rx) = crossbeam_channel::bounded(4);
         let drain_handle = thread::spawn(move || {
             rx.drain_parallel_into(|w| w.ndx(), result_tx);
         });
@@ -883,7 +881,7 @@ mod tests {
             .unwrap();
         drop(tx);
 
-        let (result_tx, result_rx) = mpsc::sync_channel(4);
+        let (result_tx, result_rx) = crossbeam_channel::bounded(4);
         thread::spawn(move || {
             rx.drain_parallel_into(|w| (w.ndx(), w.target_size()), result_tx);
         });
@@ -1216,7 +1214,7 @@ mod tests {
             })
             .collect();
 
-        let (result_tx, result_rx) = mpsc::sync_channel(16);
+        let (result_tx, result_rx) = crossbeam_channel::bounded(16);
         thread::spawn(move || {
             rx.drain_parallel_into(|w| w.ndx(), result_tx);
         });
