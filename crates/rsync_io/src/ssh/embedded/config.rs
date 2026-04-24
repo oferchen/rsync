@@ -630,6 +630,79 @@ mod tests {
         assert_eq!(path, "~/backups");
     }
 
+    // --- Keepalive and timeout edge-case tests ---
+
+    #[test]
+    fn connect_timeout_zero_disables_timeout() {
+        let mut cfg = SshConfig::default();
+        cfg.connect_timeout(Duration::ZERO);
+        assert_eq!(cfg.connect_timeout, Duration::ZERO);
+    }
+
+    #[test]
+    fn connect_timeout_large_value() {
+        let mut cfg = SshConfig::default();
+        let one_day = Duration::from_secs(86_400);
+        cfg.connect_timeout(one_day);
+        assert_eq!(cfg.connect_timeout, one_day);
+    }
+
+    #[test]
+    fn keepalive_interval_custom_value() {
+        let mut cfg = SshConfig::default();
+        cfg.keepalive_interval(Some(Duration::from_secs(15)));
+        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(15)));
+    }
+
+    #[test]
+    fn keepalive_interval_sub_second() {
+        let mut cfg = SshConfig::default();
+        cfg.keepalive_interval(Some(Duration::from_millis(500)));
+        assert_eq!(cfg.keepalive_interval, Some(Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn keepalive_max_count_zero() {
+        let mut cfg = SshConfig::default();
+        cfg.keepalive_max_count(0);
+        assert_eq!(cfg.keepalive_max_count, 0);
+    }
+
+    #[test]
+    fn keepalive_max_count_large_value() {
+        let mut cfg = SshConfig::default();
+        cfg.keepalive_max_count(u32::MAX);
+        assert_eq!(cfg.keepalive_max_count, u32::MAX);
+    }
+
+    #[test]
+    fn builder_chaining_timeout_and_keepalive() {
+        let mut cfg = SshConfig::default();
+        cfg.connect_timeout(Duration::from_secs(5))
+            .keepalive_interval(Some(Duration::from_secs(10)))
+            .keepalive_max_count(7);
+        assert_eq!(cfg.connect_timeout, Duration::from_secs(5));
+        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(10)));
+        assert_eq!(cfg.keepalive_max_count, 7);
+    }
+
+    #[test]
+    fn builder_disable_keepalive_then_reenable() {
+        let mut cfg = SshConfig::default();
+        cfg.keepalive_interval(None);
+        assert!(cfg.keepalive_interval.is_none());
+        cfg.keepalive_interval(Some(Duration::from_secs(30)));
+        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn timeout_round_trip_preserves_nanos() {
+        let mut cfg = SshConfig::default();
+        let precise = Duration::new(10, 123_456_789);
+        cfg.connect_timeout(precise);
+        assert_eq!(cfg.connect_timeout, precise);
+    }
+
     #[test]
     fn from_url_preserves_defaults_for_non_url_fields() {
         let (cfg, _) = SshConfig::from_url("ssh://host/path").unwrap();
