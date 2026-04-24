@@ -946,4 +946,93 @@ mod tests {
         let third: Vec<char> = buf.drain_ready().collect();
         assert_eq!(third, vec!['c', 'd']);
     }
+
+    /// Verifies that `ReorderBuffer` produces strictly sequential output
+    /// regardless of insertion order.
+    ///
+    /// This is the channel-agnostic ordering invariant: the reorder buffer
+    /// restores submission order using sequence numbers, independent of the
+    /// underlying channel implementation (std mpsc, crossbeam, etc.).
+    ///
+    /// Tests three scenarios:
+    /// 1. A small batch inserted in a specific scrambled order.
+    /// 2. A large batch (200 items) inserted in a deterministic pseudo-random
+    ///    order derived from a fixed seed.
+    /// 3. Burst insertion (groups of items arrive together) with interleaved drains.
+    #[test]
+    fn reorder_ordering_invariant() {
+        // Scenario 1: Small batch, specific scrambled order.
+        {
+            let mut buf = ReorderBuffer::new(16);
+            let insertion_order: Vec<u64> = vec![5, 2, 0, 3, 1, 4];
+            for seq in &insertion_order {
+                buf.insert(*seq, *seq).unwrap();
+            }
+            let drained: Vec<u64> = buf.drain_ready().collect();
+            let expected: Vec<u64> = (0..6).collect();
+            assert_eq!(
+                drained, expected,
+                "small batch: output must be sequential 0..6"
+            );
+            assert!(buf.is_empty());
+        }
+
+        // Scenario 2: Large batch with deterministic pseudo-random insertion order.
+        // Uses a simple LCG (linear congruential generator) seeded at 42 to
+        // produce a fixed permutation of 0..200, ensuring determinism across runs.
+        {
+            let n: u64 = 200;
+            let mut indices: Vec<u64> = (0..n).collect();
+
+            // Fisher-Yates shuffle with deterministic LCG.
+            let mut rng_state: u64 = 42;
+            for i in (1..indices.len()).rev() {
+                // LCG: state = state * 6364136223846793005 + 1 (mod 2^64)
+                rng_state = rng_state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1);
+                let j = (rng_state >> 33) as usize % (i + 1);
+                indices.swap(i, j);
+            }
+
+            let mut buf = ReorderBuffer::new(n as usize);
+            for &seq in &indices {
+                buf.insert(seq, seq * 10).unwrap();
+            }
+            let drained: Vec<u64> = buf.drain_ready().collect();
+            let expected: Vec<u64> = (0..n).map(|i| i * 10).collect();
+            assert_eq!(
+                drained, expected,
+                "large batch: output must be sequential with correct values"
+            );
+            assert!(buf.is_empty());
+        }
+
+        // Scenario 3: Burst insertion with interleaved drains.
+        // Items arrive in bursts (groups of 5), each burst scrambled,
+        // with drains after each burst.
+        {
+            let total: u64 = 30;
+            let burst_size: u64 = 5;
+            let mut buf = ReorderBuffer::new(total as usize);
+            let mut collected = Vec::new();
+
+            for burst_start in (0..total).step_by(burst_size as usize) {
+                // Each burst arrives in reverse order within the group.
+                let burst_end = (burst_start + burst_size).min(total);
+                for seq in (burst_start..burst_end).rev() {
+                    buf.insert(seq, seq).unwrap();
+                }
+                // Drain whatever is ready after this burst.
+                collected.extend(buf.drain_ready());
+            }
+
+            let expected: Vec<u64> = (0..total).collect();
+            assert_eq!(
+                collected, expected,
+                "burst insertion: output must be sequential 0..{total}"
+            );
+            assert!(buf.is_empty());
+        }
+    }
 }
