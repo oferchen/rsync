@@ -197,6 +197,35 @@ jobs:
           retention-days: 7
 
   # ===========================================================================
+  # Windows GNU Cross-Check - Validate x86_64-pc-windows-gnu compilation
+  # ===========================================================================
+  windows-gnu-cross-check:
+    name: Windows GNU cross-check
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Install mingw-w64
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-windows-gnu-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Check compilation
+        run: cargo check --workspace --target x86_64-pc-windows-gnu
+
+  # ===========================================================================
   # macOS Test - Platform-specific testing with toolchain matrix
   # ===========================================================================
   macos-test:
