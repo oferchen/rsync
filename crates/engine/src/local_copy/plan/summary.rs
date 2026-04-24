@@ -240,12 +240,16 @@ impl LocalCopySummary {
         bytes_sent: u64,
         total_source_bytes: u64,
         elapsed: Duration,
+        literal_data: u64,
+        matched_data: u64,
     ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
             bytes_received,
             bytes_sent,
+            bytes_copied: literal_data,
+            matched_bytes: matched_data,
             total_source_bytes,
             total_elapsed: elapsed,
             ..Default::default()
@@ -435,14 +439,40 @@ mod tests {
 
     #[test]
     fn from_receiver_stats_sets_fields() {
-        let summary =
-            LocalCopySummary::from_receiver_stats(100, 50, 1024, 256, 8192, Duration::from_secs(5));
+        let summary = LocalCopySummary::from_receiver_stats(
+            100,
+            50,
+            1024,
+            256,
+            8192,
+            Duration::from_secs(5),
+            0,
+            0,
+        );
         assert_eq!(summary.regular_files_total(), 100);
         assert_eq!(summary.files_copied(), 50);
         assert_eq!(summary.bytes_received(), 1024);
         assert_eq!(summary.bytes_sent(), 256);
         assert_eq!(summary.total_source_bytes(), 8192);
         assert_eq!(summary.total_elapsed(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn from_receiver_stats_with_delta_data() {
+        let summary = LocalCopySummary::from_receiver_stats(
+            10,
+            5,
+            2048,
+            512,
+            4096,
+            Duration::from_secs(2),
+            800,
+            1200,
+        );
+        assert_eq!(summary.bytes_copied(), 800);
+        assert_eq!(summary.matched_bytes(), 1200);
+        assert_eq!(summary.files_copied(), 5);
+        assert_eq!(summary.bytes_received(), 2048);
     }
 
     #[test]

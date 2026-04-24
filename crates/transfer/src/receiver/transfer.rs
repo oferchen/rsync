@@ -488,6 +488,8 @@ impl ReceiverContext {
             files_skipped: 0,
             delete_stats: DeleteStats::new(),
             delete_limit_exceeded: false,
+            literal_data: 0,
+            matched_data: 0,
             redo_count: 0,
         })
     }
@@ -551,6 +553,8 @@ impl ReceiverContext {
 
         let mut files_transferred: usize = 0;
         let mut bytes_received: u64 = 0;
+        let mut literal_data: u64 = 0;
+        let mut matched_data: u64 = 0;
         let mut redo_count: usize = 0;
 
         // upstream: generator.c:1845 - dry_run sends NDX requests without data
@@ -561,7 +565,13 @@ impl ReceiverContext {
             let redo_config = pipeline_config.clone();
             let mut no_progress: Option<&mut dyn crate::TransferProgressCallback> = None;
             let redo_indices;
-            (files_transferred, bytes_received, redo_indices) = self.run_pipeline_loop_decoupled(
+            (
+                files_transferred,
+                bytes_received,
+                literal_data,
+                matched_data,
+                redo_indices,
+            ) = self.run_pipeline_loop_decoupled(
                 reader,
                 writer,
                 pipeline_config,
@@ -593,20 +603,23 @@ impl ReceiverContext {
                     })
                     .collect();
 
-                let (redo_transferred, redo_bytes, _) = self.run_pipeline_loop_decoupled(
-                    reader,
-                    writer,
-                    redo_config,
-                    &setup,
-                    redo_files,
-                    &mut metadata_errors,
-                    true,
-                    total_files,
-                    &mut no_progress,
-                )?;
+                let (redo_transferred, redo_bytes, redo_literal, redo_matched, _) = self
+                    .run_pipeline_loop_decoupled(
+                        reader,
+                        writer,
+                        redo_config,
+                        &setup,
+                        redo_files,
+                        &mut metadata_errors,
+                        true,
+                        total_files,
+                        &mut no_progress,
+                    )?;
 
                 files_transferred += redo_transferred;
                 bytes_received += redo_bytes;
+                literal_data += redo_literal;
+                matched_data += redo_matched;
             }
         }
 
@@ -631,6 +644,8 @@ impl ReceiverContext {
 
         stats.files_transferred = files_transferred;
         stats.bytes_received = bytes_received;
+        stats.literal_data = literal_data;
+        stats.matched_data = matched_data;
         stats.total_source_bytes = total_source_bytes;
         if !metadata_errors.is_empty() {
             stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
@@ -722,6 +737,8 @@ impl ReceiverContext {
 
         let mut files_transferred: usize = 0;
         let mut bytes_received: u64 = 0;
+        let mut literal_data: u64 = 0;
+        let mut matched_data: u64 = 0;
         let mut redo_count: usize = 0;
 
         // upstream: generator.c:1845 - dry_run sends NDX requests without data
@@ -731,7 +748,13 @@ impl ReceiverContext {
             let total_files = files_to_transfer.len();
             let redo_config = pipeline_config.clone();
             let redo_indices;
-            (files_transferred, bytes_received, redo_indices) = self.run_pipeline_loop_decoupled(
+            (
+                files_transferred,
+                bytes_received,
+                literal_data,
+                matched_data,
+                redo_indices,
+            ) = self.run_pipeline_loop_decoupled(
                 reader,
                 writer,
                 pipeline_config,
@@ -763,20 +786,23 @@ impl ReceiverContext {
                     })
                     .collect();
 
-                let (redo_transferred, redo_bytes, _) = self.run_pipeline_loop_decoupled(
-                    reader,
-                    writer,
-                    redo_config,
-                    &setup,
-                    redo_files,
-                    &mut metadata_errors,
-                    true,
-                    total_files,
-                    &mut progress,
-                )?;
+                let (redo_transferred, redo_bytes, redo_literal, redo_matched, _) = self
+                    .run_pipeline_loop_decoupled(
+                        reader,
+                        writer,
+                        redo_config,
+                        &setup,
+                        redo_files,
+                        &mut metadata_errors,
+                        true,
+                        total_files,
+                        &mut progress,
+                    )?;
 
                 files_transferred += redo_transferred;
                 bytes_received += redo_bytes;
+                literal_data += redo_literal;
+                matched_data += redo_matched;
             }
         }
 
@@ -784,6 +810,8 @@ impl ReceiverContext {
 
         stats.files_transferred = files_transferred;
         stats.bytes_received = bytes_received;
+        stats.literal_data = literal_data;
+        stats.matched_data = matched_data;
         stats.total_source_bytes = self.file_list.iter().map(|e| e.size()).sum();
         if !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0 {
             stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;

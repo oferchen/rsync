@@ -28,6 +28,16 @@ use super::{ResponseContext, read_response_header};
 pub struct StreamingResult {
     /// Total bytes of file data read from the wire.
     pub total_bytes: u64,
+    /// Literal (new) data bytes for this file.
+    ///
+    /// Data from `DeltaToken::Literal` tokens that did not match any block
+    /// in the basis file. Accumulated during token processing.
+    pub literal_bytes: u64,
+    /// Matched (reused) data bytes for this file.
+    ///
+    /// Data from `DeltaToken::BlockRef` tokens that reference basis file blocks.
+    /// Accumulated during token processing.
+    pub matched_bytes: u64,
     /// Expected whole-file checksum read from the sender (for deferred verification).
     pub expected_checksum: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
     /// Number of valid bytes in `expected_checksum`.
@@ -157,6 +167,8 @@ pub fn process_file_response_streaming<R: Read>(
 
                 return Ok(StreamingResult {
                     total_bytes,
+                    literal_bytes: total_bytes,
+                    matched_bytes: 0,
                     expected_checksum,
                     checksum_len,
                 });
@@ -185,6 +197,7 @@ pub fn process_file_response_streaming<R: Read>(
                 total_bytes,
                 Some(next_delta),
                 token_reader,
+                total_bytes, // initial literal bytes from first chunk
             )
         }
         first_delta => {
@@ -203,6 +216,7 @@ pub fn process_file_response_streaming<R: Read>(
                 total_bytes,
                 Some(first_delta),
                 token_reader,
+                0,
             )
         }
     }
