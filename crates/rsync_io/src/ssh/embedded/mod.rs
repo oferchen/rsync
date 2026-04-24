@@ -7,6 +7,8 @@
 pub mod cipher;
 
 #[cfg(feature = "embedded-ssh")]
+mod auth;
+#[cfg(feature = "embedded-ssh")]
 mod config;
 #[cfg(feature = "embedded-ssh")]
 mod error;
@@ -15,6 +17,8 @@ mod handler;
 #[cfg(feature = "embedded-ssh")]
 mod types;
 
+#[cfg(feature = "embedded-ssh")]
+pub use auth::authenticate;
 #[cfg(feature = "embedded-ssh")]
 pub use config::SshConfig;
 #[cfg(feature = "embedded-ssh")]
