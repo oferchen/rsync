@@ -7676,6 +7676,328 @@ CONF
   return 0
 }
 
+# Per-filter-type interop: double-star (**) glob pattern.
+# Tests that **/*.ext matches files at any depth.
+# upstream: exclude.c:874 - MATCHFLG_WILD2 set when ** detected.
+test_daemon_filter_doublestar() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ds_src="${work}/filter-doublestar-src"
+  local ds_dest_oc="${work}/filter-doublestar-dest-oc"
+  local ds_dest_up="${work}/filter-doublestar-dest-up"
+  rm -rf "$ds_src" "$ds_dest_oc" "$ds_dest_up"
+  mkdir -p "$ds_src/sub/deep" "$ds_dest_oc" "$ds_dest_up"
+
+  echo "keep-txt" > "$ds_src/readme.txt"
+  echo "keep-rs"  > "$ds_src/main.rs"
+  echo "keep-sub" > "$ds_src/sub/data.csv"
+  echo "keep-deep"> "$ds_src/sub/deep/info.md"
+  # .o files at various depths - should all be excluded by **/*.o
+  echo "excl-root"> "$ds_src/build.o"
+  echo "excl-sub" > "$ds_src/sub/module.o"
+  echo "excl-deep"> "$ds_src/sub/deep/helper.o"
+  # .tmp files at various depths - should all be excluded by **/*.tmp
+  echo "excl-tmp1"> "$ds_src/scratch.tmp"
+  echo "excl-tmp2"> "$ds_src/sub/deep/work.tmp"
+
+  _filter_doublestar_verify() {
+    local label=$1 dest=$2
+
+    for f in readme.txt main.rs sub/data.csv sub/deep/info.md; do
+      if [[ ! -f "$dest/$f" ]]; then
+        echo "    ${label}: missing allowed file: $f"
+        return 1
+      fi
+    done
+    for f in build.o sub/module.o sub/deep/helper.o scratch.tmp sub/deep/work.tmp; do
+      if [[ -f "$dest/$f" ]]; then
+        echo "    ${label}: excluded file transferred: $f"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # OC daemon direction: upstream client pulls from oc-rsync daemon
+  local ds_oc_conf="${work}/filter-doublestar-oc.conf"
+  local ds_oc_pid="${work}/filter-doublestar-oc.pid"
+  local ds_oc_log="${work}/filter-doublestar-oc.log"
+  cat > "$ds_oc_conf" <<CONF
+pid file = ${ds_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[fds]
+path = ${ds_src}
+read only = true
+numeric ids = yes
+exclude = **/*.o **/*.tmp
+CONF
+
+  start_oc_daemon_with_retry "$ds_oc_conf" "$ds_oc_log" "$upstream_binary" "$ds_oc_pid" "$oc_port"
+
+  local exit_code=0
+  timeout "$((hard_timeout * 2))" "$upstream_binary" -av --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/fds/" "${ds_dest_oc}/" \
+      >"${log}.filter-doublestar-oc.out" 2>"${log}.filter-doublestar-oc.err" || exit_code=$?
+  stop_oc_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    oc-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_doublestar_verify "oc-pull" "$ds_dest_oc" || return 1
+
+  # Upstream daemon direction: oc-rsync client pulls from upstream daemon
+  local ds_up_conf="${work}/filter-doublestar-up.conf"
+  local ds_up_pid="${work}/filter-doublestar-up.pid"
+  local ds_up_log="${work}/filter-doublestar-up.log"
+  cat > "$ds_up_conf" <<CONF
+pid file = ${ds_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[fds]
+path = ${ds_src}
+read only = true
+numeric ids = yes
+exclude = **/*.o **/*.tmp
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$ds_up_conf" "$ds_up_log" "$ds_up_pid"
+
+  exit_code=0
+  timeout "$((hard_timeout * 2))" "$oc_bin" -av --timeout=10 \
+      "rsync://127.0.0.1:${upstream_port}/fds/" "${ds_dest_up}/" \
+      >"${log}.filter-doublestar-up.out" 2>"${log}.filter-doublestar-up.err" || exit_code=$?
+  stop_upstream_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    up-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_doublestar_verify "up-pull" "$ds_dest_up" || return 1
+
+  return 0
+}
+
+# Per-filter-type interop: character class ([...]) glob pattern.
+# Tests that [a-m]* includes only files starting with letters a through m.
+# upstream: exclude.c - wildmatch handles [...] character classes via
+# wildmatch.c:domatch().
+test_daemon_filter_charclass() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local cc_src="${work}/filter-charclass-src"
+  local cc_dest_oc="${work}/filter-charclass-dest-oc"
+  local cc_dest_up="${work}/filter-charclass-dest-up"
+  rm -rf "$cc_src" "$cc_dest_oc" "$cc_dest_up"
+  mkdir -p "$cc_src/sub" "$cc_dest_oc" "$cc_dest_up"
+
+  # Files starting with a-m - should be included
+  echo "keep-a" > "$cc_src/alpha.txt"
+  echo "keep-c" > "$cc_src/cherry.dat"
+  echo "keep-m" > "$cc_src/mango.rs"
+  echo "keep-sub"> "$cc_src/sub/berry.csv"
+  # Files starting with n-z - should be excluded
+  echo "excl-n" > "$cc_src/noodle.txt"
+  echo "excl-z" > "$cc_src/zebra.dat"
+  echo "excl-sub"> "$cc_src/sub/orange.csv"
+
+  _filter_charclass_verify() {
+    local label=$1 dest=$2
+
+    for f in alpha.txt cherry.dat mango.rs sub/berry.csv; do
+      if [[ ! -f "$dest/$f" ]]; then
+        echo "    ${label}: missing allowed file: $f"
+        return 1
+      fi
+    done
+    for f in noodle.txt zebra.dat sub/orange.csv; do
+      if [[ -f "$dest/$f" ]]; then
+        echo "    ${label}: excluded file transferred: $f"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # OC daemon direction: upstream client pulls from oc-rsync daemon
+  local cc_oc_conf="${work}/filter-charclass-oc.conf"
+  local cc_oc_pid="${work}/filter-charclass-oc.pid"
+  local cc_oc_log="${work}/filter-charclass-oc.log"
+  cat > "$cc_oc_conf" <<CONF
+pid file = ${cc_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[fcc]
+path = ${cc_src}
+read only = true
+numeric ids = yes
+filter = + [a-m]* + */ - *
+CONF
+
+  start_oc_daemon_with_retry "$cc_oc_conf" "$cc_oc_log" "$upstream_binary" "$cc_oc_pid" "$oc_port"
+
+  local exit_code=0
+  timeout "$((hard_timeout * 2))" "$upstream_binary" -av --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/fcc/" "${cc_dest_oc}/" \
+      >"${log}.filter-charclass-oc.out" 2>"${log}.filter-charclass-oc.err" || exit_code=$?
+  stop_oc_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    oc-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_charclass_verify "oc-pull" "$cc_dest_oc" || return 1
+
+  # Upstream daemon direction: oc-rsync client pulls from upstream daemon
+  local cc_up_conf="${work}/filter-charclass-up.conf"
+  local cc_up_pid="${work}/filter-charclass-up.pid"
+  local cc_up_log="${work}/filter-charclass-up.log"
+  cat > "$cc_up_conf" <<CONF
+pid file = ${cc_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[fcc]
+path = ${cc_src}
+read only = true
+numeric ids = yes
+filter = + [a-m]* + */ - *
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$cc_up_conf" "$cc_up_log" "$cc_up_pid"
+
+  exit_code=0
+  timeout "$((hard_timeout * 2))" "$oc_bin" -av --timeout=10 \
+      "rsync://127.0.0.1:${upstream_port}/fcc/" "${cc_dest_up}/" \
+      >"${log}.filter-charclass-up.out" 2>"${log}.filter-charclass-up.err" || exit_code=$?
+  stop_upstream_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    up-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_charclass_verify "up-pull" "$cc_dest_up" || return 1
+
+  return 0
+}
+
+# Per-filter-type interop: question mark (?) single-character wildcard.
+# Tests that file?.txt matches single-character substitutions but not
+# multi-character ones (file10.txt should not match).
+# upstream: wildmatch.c:domatch() - '?' matches exactly one character.
+test_daemon_filter_question_mark() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local qm_src="${work}/filter-qmark-src"
+  local qm_dest_oc="${work}/filter-qmark-dest-oc"
+  local qm_dest_up="${work}/filter-qmark-dest-up"
+  rm -rf "$qm_src" "$qm_dest_oc" "$qm_dest_up"
+  mkdir -p "$qm_src/sub" "$qm_dest_oc" "$qm_dest_up"
+
+  # Files matching file?.txt - should be excluded
+  echo "excl-1" > "$qm_src/file1.txt"
+  echo "excl-A" > "$qm_src/fileA.txt"
+  echo "excl-z" > "$qm_src/filez.txt"
+  echo "excl-sub"> "$qm_src/sub/file9.txt"
+  # Files NOT matching file?.txt - should be kept
+  echo "keep-10" > "$qm_src/file10.txt"
+  echo "keep-name"> "$qm_src/filename.txt"
+  echo "keep-other"> "$qm_src/readme.md"
+  echo "keep-sub" > "$qm_src/sub/data.csv"
+  # Edge case: file.txt has no char where ? is - should not match
+  echo "keep-bare"> "$qm_src/file.txt"
+
+  _filter_qmark_verify() {
+    local label=$1 dest=$2
+
+    for f in file10.txt filename.txt readme.md sub/data.csv file.txt; do
+      if [[ ! -f "$dest/$f" ]]; then
+        echo "    ${label}: missing allowed file: $f"
+        return 1
+      fi
+    done
+    for f in file1.txt fileA.txt filez.txt sub/file9.txt; do
+      if [[ -f "$dest/$f" ]]; then
+        echo "    ${label}: excluded file transferred: $f"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # OC daemon direction: upstream client pulls from oc-rsync daemon
+  local qm_oc_conf="${work}/filter-qmark-oc.conf"
+  local qm_oc_pid="${work}/filter-qmark-oc.pid"
+  local qm_oc_log="${work}/filter-qmark-oc.log"
+  cat > "$qm_oc_conf" <<CONF
+pid file = ${qm_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[fqm]
+path = ${qm_src}
+read only = true
+numeric ids = yes
+exclude = file?.txt
+CONF
+
+  start_oc_daemon_with_retry "$qm_oc_conf" "$qm_oc_log" "$upstream_binary" "$qm_oc_pid" "$oc_port"
+
+  local exit_code=0
+  timeout "$((hard_timeout * 2))" "$upstream_binary" -av --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/fqm/" "${qm_dest_oc}/" \
+      >"${log}.filter-qmark-oc.out" 2>"${log}.filter-qmark-oc.err" || exit_code=$?
+  stop_oc_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    oc-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_qmark_verify "oc-pull" "$qm_dest_oc" || return 1
+
+  # Upstream daemon direction: oc-rsync client pulls from upstream daemon
+  local qm_up_conf="${work}/filter-qmark-up.conf"
+  local qm_up_pid="${work}/filter-qmark-up.pid"
+  local qm_up_log="${work}/filter-qmark-up.log"
+  cat > "$qm_up_conf" <<CONF
+pid file = ${qm_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[fqm]
+path = ${qm_src}
+read only = true
+numeric ids = yes
+exclude = file?.txt
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$qm_up_conf" "$qm_up_log" "$qm_up_pid"
+
+  exit_code=0
+  timeout "$((hard_timeout * 2))" "$oc_bin" -av --timeout=10 \
+      "rsync://127.0.0.1:${upstream_port}/fqm/" "${qm_dest_up}/" \
+      >"${log}.filter-qmark-up.out" 2>"${log}.filter-qmark-up.err" || exit_code=$?
+  stop_upstream_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    up-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _filter_qmark_verify "up-pull" "$qm_dest_up" || return 1
+
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -7745,6 +8067,9 @@ run_standalone_interop_tests() {
     "daemon-filter-from-files"
     "daemon-filter-push-direction"
     "delta-stats"
+    "daemon-filter-doublestar"
+    "daemon-filter-charclass"
+    "daemon-filter-question-mark"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -7807,6 +8132,9 @@ run_standalone_interop_tests() {
     "test_daemon_filter_from_files"
     "test_daemon_filter_push_direction"
     "test_delta_stats"
+    "test_daemon_filter_doublestar"
+    "test_daemon_filter_charclass"
+    "test_daemon_filter_question_mark"
   )
 
   for i in "${!test_names[@]}"; do
@@ -7966,6 +8294,15 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       delta-stats)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-filter-doublestar)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-filter-charclass)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-filter-question-mark)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
