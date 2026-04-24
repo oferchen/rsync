@@ -72,6 +72,26 @@ pub struct TransferStats {
     /// - `main.c:1367` - `deletion_count >= max_delete` triggers exit 25
     pub delete_limit_exceeded: bool,
 
+    /// Total literal (new) data bytes written during delta application.
+    ///
+    /// Accumulated from per-file delta token processing. Literal tokens carry
+    /// data that does not match any block in the basis file.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `match.c:330` - `stats.literal_data += s->sums[j].len`
+    pub literal_data: u64,
+
+    /// Total matched (reused) data bytes during delta application.
+    ///
+    /// Accumulated from per-file delta token processing. Matched tokens
+    /// reference blocks copied from the basis file.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `match.c:118` - `stats.matched_data += s2length`
+    pub matched_data: u64,
+
     /// Number of files that were retransmitted due to checksum verification failure.
     ///
     /// Mirrors upstream rsync's redo mechanism where files that fail whole-file

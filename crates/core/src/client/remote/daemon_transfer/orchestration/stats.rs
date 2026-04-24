@@ -29,6 +29,8 @@ pub(super) fn convert_server_stats_to_summary(
                 transfer_stats.bytes_sent,
                 transfer_stats.total_source_bytes,
                 elapsed,
+                transfer_stats.literal_data,
+                transfer_stats.matched_data,
             );
             (s, transfer_stats.io_error, transfer_stats.error_count)
         }
