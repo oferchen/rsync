@@ -544,3 +544,152 @@ fn empty_input_produces_valid_digest() {
         assert_eq!(digest.len(), kind.digest_len());
     }
 }
+
+// --- Exhaustive protocol version boundary tests ---
+// upstream: checksum.c - protocol < 30 uses MD4, >= 30 uses MD5.
+// These tests verify the boundary holds across the entire u8 range.
+
+#[test]
+fn protocol_version_boundary_exhaustive_algorithm_kind() {
+    // Every version below 30 must select MD4; every version 30+ must select MD5.
+    for version in 0..30u8 {
+        let strategy = ChecksumStrategySelector::for_protocol_version(version, 0);
+        assert_eq!(
+            strategy.algorithm_kind(),
+            ChecksumAlgorithmKind::Md4,
+            "protocol {version} should use MD4"
+        );
+    }
+    for version in 30..=u8::MAX {
+        let strategy = ChecksumStrategySelector::for_protocol_version(version, 0);
+        assert_eq!(
+            strategy.algorithm_kind(),
+            ChecksumAlgorithmKind::Md5,
+            "protocol {version} should use MD5"
+        );
+    }
+}
+
+#[test]
+fn protocol_version_boundary_digest_always_16_bytes() {
+    // Both MD4 and MD5 produce 16-byte digests, so the digest length must
+    // be 16 regardless of which side of the boundary we land on.
+    let data = b"digest length invariant";
+    for version in [0, 1, 15, 28, 29, 30, 31, 32, 100, u8::MAX] {
+        let strategy = ChecksumStrategySelector::for_protocol_version(version, 42);
+        let digest = strategy.compute(data);
+        assert_eq!(
+            digest.len(),
+            16,
+            "protocol {version} digest length must be 16"
+        );
+    }
+}
+
+#[test]
+fn protocol_version_boundary_compute_into_consistent() {
+    // Verify compute_into matches compute across the boundary.
+    let data = b"compute_into boundary test";
+    for version in [0, 29, 30, u8::MAX] {
+        let strategy = ChecksumStrategySelector::for_protocol_version(version, 99);
+        let digest = strategy.compute(data);
+        let mut buf = [0u8; 16];
+        strategy.compute_into(data, &mut buf);
+        assert_eq!(
+            &buf[..digest.len()],
+            digest.as_bytes(),
+            "protocol {version}: compute_into must match compute"
+        );
+    }
+}
+
+#[test]
+fn protocol_version_boundary_seed_order_at_extremes() {
+    // Seed order must be irrelevant for protocol 0 (MD4) and must matter
+    // for protocol u8::MAX (MD5).
+    let proper_0 = ChecksumStrategySelector::for_protocol_version_with_seed_order(0, 12345, true);
+    let legacy_0 = ChecksumStrategySelector::for_protocol_version_with_seed_order(0, 12345, false);
+    assert_eq!(proper_0.algorithm_kind(), ChecksumAlgorithmKind::Md4);
+    assert_eq!(
+        proper_0.compute(b"extremes"),
+        legacy_0.compute(b"extremes"),
+        "MD4 (protocol 0) must ignore seed ordering"
+    );
+
+    let proper_max =
+        ChecksumStrategySelector::for_protocol_version_with_seed_order(u8::MAX, 12345, true);
+    let legacy_max =
+        ChecksumStrategySelector::for_protocol_version_with_seed_order(u8::MAX, 12345, false);
+    assert_eq!(proper_max.algorithm_kind(), ChecksumAlgorithmKind::Md5);
+    assert_ne!(
+        proper_max.compute(b"extremes"),
+        legacy_max.compute(b"extremes"),
+        "MD5 (protocol 255) must differentiate seed ordering"
+    );
+}
+
+#[test]
+fn protocol_version_boundary_adjacent_versions_differ() {
+    // Versions 29 and 30 are the only adjacent pair where algorithm changes.
+    // All other adjacent pairs within the same range must produce identical kinds.
+    for version in 1..30u8 {
+        let prev = ChecksumStrategySelector::for_protocol_version(version - 1, 0);
+        let curr = ChecksumStrategySelector::for_protocol_version(version, 0);
+        assert_eq!(
+            prev.algorithm_kind(),
+            curr.algorithm_kind(),
+            "protocols {} and {} must use the same algorithm (MD4)",
+            version - 1,
+            version
+        );
+    }
+    for version in 31..=u8::MAX {
+        let prev = ChecksumStrategySelector::for_protocol_version(version - 1, 0);
+        let curr = ChecksumStrategySelector::for_protocol_version(version, 0);
+        assert_eq!(
+            prev.algorithm_kind(),
+            curr.algorithm_kind(),
+            "protocols {} and {version} must use the same algorithm (MD5)",
+            version - 1
+        );
+    }
+    // The boundary itself: 29 and 30 must differ.
+    let v29 = ChecksumStrategySelector::for_protocol_version(29, 0);
+    let v30 = ChecksumStrategySelector::for_protocol_version(30, 0);
+    assert_ne!(v29.algorithm_kind(), v30.algorithm_kind());
+}
+
+#[test]
+fn protocol_version_boundary_md4_deterministic_across_seeds() {
+    // MD4 (pre-30) ignores the seed, so all seed values must produce
+    // identical digests for the same input and protocol version.
+    let data = b"md4 seed invariance";
+    let seeds = [i32::MIN, -1, 0, 1, 42, 99999, i32::MAX];
+    let reference = ChecksumStrategySelector::for_protocol_version(0, 0).compute(data);
+    for &seed in &seeds {
+        let digest = ChecksumStrategySelector::for_protocol_version(0, seed).compute(data);
+        assert_eq!(
+            digest, reference,
+            "MD4 must produce identical output regardless of seed {seed}"
+        );
+    }
+}
+
+#[test]
+fn protocol_version_boundary_md5_seed_sensitive() {
+    // MD5 (post-30) must produce different output for different non-zero seeds.
+    let data = b"md5 seed sensitivity";
+    let d0 = ChecksumStrategySelector::for_protocol_version(u8::MAX, 0).compute(data);
+    let d1 = ChecksumStrategySelector::for_protocol_version(u8::MAX, 1).compute(data);
+    let d_neg = ChecksumStrategySelector::for_protocol_version(u8::MAX, -1).compute(data);
+    let d_max = ChecksumStrategySelector::for_protocol_version(u8::MAX, i32::MAX).compute(data);
+    let d_min = ChecksumStrategySelector::for_protocol_version(u8::MAX, i32::MIN).compute(data);
+
+    // All five must be distinct (seed affects the MD5 prefix).
+    let all = [&d0, &d1, &d_neg, &d_max, &d_min];
+    for i in 0..all.len() {
+        for j in (i + 1)..all.len() {
+            assert_ne!(all[i], all[j], "MD5 digests for distinct seeds must differ");
+        }
+    }
+}
