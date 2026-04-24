@@ -7690,6 +7690,122 @@ CONF
   return 0
 }
 
+# Per-filter-type interop: include from = FILE directive in rsyncd.conf.
+# Verifies that daemon-side "include from" loads patterns from an external
+# file and, combined with a catch-all exclude, only transfers matching files.
+# upstream: exclude.c - parse_filter_file() handles "include from" directives.
+test_daemon_filter_include_from_files() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local if_src="${work}/include-from-files-src"
+  local if_dest_oc="${work}/include-from-files-dest-oc"
+  local if_dest_up="${work}/include-from-files-dest-up"
+  rm -rf "$if_src" "$if_dest_oc" "$if_dest_up"
+  mkdir -p "$if_src/sub" "$if_dest_oc" "$if_dest_up"
+
+  echo "included-a" > "$if_src/readme.txt"
+  echo "included-b" > "$if_src/sub/notes.txt"
+  echo "included-c" > "$if_src/lib.rs"
+  echo "excluded-1" > "$if_src/image.png"
+  echo "excluded-2" > "$if_src/archive.tar.gz"
+  echo "excluded-3" > "$if_src/sub/data.csv"
+
+  # Create include-from file with patterns
+  local incl_file="${work}/include-from-patterns.txt"
+  cat > "$incl_file" <<'EOF'
+# Text files should be transferred
+*.txt
+# Rust source files
+*.rs
+# Allow directory traversal
+*/
+EOF
+
+  _include_from_files_verify() {
+    local label=$1 dest=$2
+
+    for f in readme.txt sub/notes.txt lib.rs; do
+      if [[ ! -f "$dest/$f" ]]; then
+        echo "    ${label}: missing included file: $f"
+        return 1
+      fi
+    done
+    for f in image.png archive.tar.gz sub/data.csv; do
+      if [[ -f "$dest/$f" ]]; then
+        echo "    ${label}: non-included file transferred: $f"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # OC daemon direction (upstream client pulls from oc-rsync daemon)
+  local if_oc_conf="${work}/include-from-files-oc.conf"
+  local if_oc_pid="${work}/include-from-files-oc.pid"
+  local if_oc_log="${work}/include-from-files-oc.log"
+  cat > "$if_oc_conf" <<CONF
+pid file = ${if_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[iff]
+path = ${if_src}
+read only = true
+numeric ids = yes
+include from = ${incl_file}
+exclude = *
+CONF
+
+  start_oc_daemon_with_retry "$if_oc_conf" "$if_oc_log" "$upstream_binary" "$if_oc_pid" "$oc_port"
+
+  local exit_code=0
+  timeout "$((hard_timeout * 2))" "$upstream_binary" -av --timeout=10 \
+      "rsync://127.0.0.1:${oc_port}/iff/" "${if_dest_oc}/" \
+      >"${log}.include-from-files-oc.out" 2>"${log}.include-from-files-oc.err" || exit_code=$?
+  stop_oc_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    oc-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _include_from_files_verify "oc-pull" "$if_dest_oc" || return 1
+
+  # Upstream daemon direction (oc-rsync client pulls from upstream daemon)
+  local if_up_conf="${work}/include-from-files-up.conf"
+  local if_up_pid="${work}/include-from-files-up.pid"
+  local if_up_log="${work}/include-from-files-up.log"
+  cat > "$if_up_conf" <<CONF
+pid file = ${if_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[iff]
+path = ${if_src}
+read only = true
+numeric ids = yes
+include from = ${incl_file}
+exclude = *
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$if_up_conf" "$if_up_log" "$if_up_pid"
+
+  exit_code=0
+  timeout "$((hard_timeout * 2))" "$oc_bin" -av --timeout=10 \
+      "rsync://127.0.0.1:${upstream_port}/iff/" "${if_dest_up}/" \
+      >"${log}.include-from-files-up.out" 2>"${log}.include-from-files-up.err" || exit_code=$?
+  stop_upstream_daemon
+
+  if [[ "$exit_code" -ne 0 ]]; then
+    echo "    up-pull failed (exit=$exit_code)"
+    return 1
+  fi
+  _include_from_files_verify "up-pull" "$if_dest_up" || return 1
+
+  return 0
+}
+
 # Per-filter-type interop: push direction with daemon filters.
 # Verifies that daemon-side filters also prevent writing excluded files
 # when clients push to the daemon.
@@ -8384,6 +8500,7 @@ run_standalone_interop_tests() {
     "daemon-filter-directive-types"
     "daemon-filter-overlapping-rules"
     "daemon-filter-from-files"
+    "daemon-filter-include-from-files"
     "daemon-filter-push-direction"
     "delta-stats"
     "daemon-filter-doublestar"
@@ -8451,6 +8568,7 @@ run_standalone_interop_tests() {
     "test_daemon_filter_directive_types"
     "test_daemon_filter_overlapping_rules"
     "test_daemon_filter_from_files"
+    "test_daemon_filter_include_from_files"
     "test_daemon_filter_push_direction"
     "test_delta_stats"
     "test_daemon_filter_doublestar"
@@ -8615,6 +8733,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       daemon-filter-from-files)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      daemon-filter-include-from-files)
         test_args+=("$oc_port" "$upstream_port")
         ;;
       daemon-filter-push-direction)
