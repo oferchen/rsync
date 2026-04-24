@@ -44,7 +44,7 @@ memchr = "2.7"
 rustc-hash = { workspace = true }
 serde = { workspace = true, optional = true }
 thiserror = "2.0"
-lz4_flex = { version = "0.11", optional = true, default-features = false, features = ["safe-encode", "safe-decode"] }
+lz4_flex = { version = "0.13", optional = true, default-features = false, features = ["safe-encode", "safe-decode"] }
 zstd = { version = "0.13", optional = true }
 tokio = { version = "1.43", features = ["io-util"], optional = true }
 tokio-util = { version = "0.7", features = ["codec"], optional = true }
