@@ -6080,6 +6080,323 @@ CONF
   return 0
 }
 
+# Protect filter (P) interop test.
+# Upstream rsync pushes to oc-rsync daemon with --delete --filter='P *.log'.
+# P-protected *.log files on dest must survive deletion.
+# Also tests oc-rsync pushing to upstream daemon (both directions).
+# upstream: exclude.c - XFLG_DEF_INCLUDE|XFLG_OLD_PREFIXES maps 'P' to protect rule.
+test_delete_filter_protect() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  # --- Direction 1: upstream pushes to oc-rsync daemon ---
+  local dp_src="${work}/del-protect-src"
+  local dp_dest="${work}/del-protect-dest"
+  rm -rf "$dp_src" "$dp_dest"
+  mkdir -p "$dp_src/subdir" "$dp_dest/subdir"
+
+  # Source files
+  echo "source alpha" > "$dp_src/alpha.txt"
+  echo "source beta" > "$dp_src/beta.txt"
+  echo "source nested" > "$dp_src/subdir/nested.txt"
+
+  # Dest-only files: *.log protected, others not
+  echo "dest protected" > "$dp_dest/keeper.log"
+  echo "dest unprotected" > "$dp_dest/destonly.txt"
+  echo "dest nested protect" > "$dp_dest/subdir/nested.log"
+  echo "dest nested unprotect" > "$dp_dest/subdir/extra.txt"
+
+  local dp_conf="${work}/del-protect-oc.conf"
+  local dp_pid="${work}/del-protect-oc.pid"
+  local dp_log="${work}/del-protect-oc.log"
+  cat > "$dp_conf" <<CONF
+pid file = ${dp_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${dp_dest}
+comment = delete-filter-protect test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$dp_conf" "$dp_log" "$upstream_binary" "$dp_pid" "$oc_port"
+
+  # Push with --delete --filter='P *.log'
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --delete --timeout=10 \
+      --filter='P *.log' \
+      "${dp_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.del-protect-up.out" 2>"${log}.del-protect-up.err"; then
+    echo "    delete-filter-protect (up->oc) push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify source files transferred
+  for f in alpha.txt beta.txt subdir/nested.txt; do
+    if [[ ! -f "$dp_dest/$f" ]]; then
+      echo "    (up->oc) missing source file: $f"
+      return 1
+    fi
+    if ! cmp -s "$dp_src/$f" "$dp_dest/$f"; then
+      echo "    (up->oc) content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify P-protected *.log files survived --delete
+  for f in keeper.log subdir/nested.log; do
+    if [[ ! -f "$dp_dest/$f" ]]; then
+      echo "    (up->oc) P-protected file $f was deleted"
+      return 1
+    fi
+  done
+
+  # Verify non-protected dest-only files were deleted
+  for f in destonly.txt subdir/extra.txt; do
+    if [[ -f "$dp_dest/$f" ]]; then
+      echo "    (up->oc) unprotected file $f survived"
+      return 1
+    fi
+  done
+
+  # --- Direction 2: oc-rsync pushes to upstream daemon ---
+  local dp_dest2="${work}/del-protect-dest2"
+  rm -rf "$dp_dest2"
+  mkdir -p "$dp_dest2/subdir"
+
+  # Re-populate dest with same layout
+  echo "dest protected" > "$dp_dest2/keeper.log"
+  echo "dest unprotected" > "$dp_dest2/destonly.txt"
+  echo "dest nested protect" > "$dp_dest2/subdir/nested.log"
+  echo "dest nested unprotect" > "$dp_dest2/subdir/extra.txt"
+
+  local dp_conf2="${work}/del-protect-up.conf"
+  local dp_pid2="${work}/del-protect-up.pid"
+  local dp_log2="${work}/del-protect-up.log"
+  cat > "$dp_conf2" <<CONF
+pid file = ${dp_pid2}
+port = ${upstream_port}
+use chroot = false
+
+[interop]
+path = ${dp_dest2}
+comment = delete-filter-protect test direction 2
+read only = false
+numeric ids = yes
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$dp_conf2" "$dp_log2" "$dp_pid2"
+
+  # oc-rsync pushes with --delete --filter='P *.log'
+  if ! timeout "$hard_timeout" "$oc_bin" -av --delete --timeout=10 \
+      --filter='P *.log' \
+      "${dp_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.del-protect-oc.out" 2>"${log}.del-protect-oc.err"; then
+    echo "    delete-filter-protect (oc->up) push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # Verify source files transferred
+  for f in alpha.txt beta.txt subdir/nested.txt; do
+    if [[ ! -f "$dp_dest2/$f" ]]; then
+      echo "    (oc->up) missing source file: $f"
+      return 1
+    fi
+    if ! cmp -s "$dp_src/$f" "$dp_dest2/$f"; then
+      echo "    (oc->up) content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify P-protected *.log files survived
+  for f in keeper.log subdir/nested.log; do
+    if [[ ! -f "$dp_dest2/$f" ]]; then
+      echo "    (oc->up) P-protected file $f was deleted"
+      return 1
+    fi
+  done
+
+  # Verify non-protected dest-only files were deleted
+  for f in destonly.txt subdir/extra.txt; do
+    if [[ -f "$dp_dest2/$f" ]]; then
+      echo "    (oc->up) unprotected file $f survived"
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# Risk filter (R) interop test.
+# Upstream rsync pushes to oc-rsync daemon with --delete, P (protect) for *.log
+# and *.sh, then R (risk) overriding protect for *.log only.
+# Verifies *.log files are deleted (risk overrides protect), *.sh files survive.
+# Also tests oc-rsync pushing to upstream daemon (both directions).
+# upstream: exclude.c - 'R' modifier maps to risk rule that overrides protect.
+test_delete_filter_risk() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  # --- Direction 1: upstream pushes to oc-rsync daemon ---
+  local dr_src="${work}/del-risk-src"
+  local dr_dest="${work}/del-risk-dest"
+  rm -rf "$dr_src" "$dr_dest"
+  mkdir -p "$dr_src/subdir" "$dr_dest/subdir"
+
+  # Source files
+  echo "source alpha" > "$dr_src/alpha.txt"
+  echo "source beta" > "$dr_src/beta.txt"
+  echo "source nested" > "$dr_src/subdir/nested.txt"
+
+  # Dest-only files: *.log and *.sh are P-protected, but R overrides for *.log
+  echo "dest risk log" > "$dr_dest/risky.log"
+  echo "dest protected sh" > "$dr_dest/keeper.sh"
+  echo "dest unprotected" > "$dr_dest/destonly.txt"
+  echo "dest nested risk" > "$dr_dest/subdir/nested.log"
+
+  local dr_conf="${work}/del-risk-oc.conf"
+  local dr_pid="${work}/del-risk-oc.pid"
+  local dr_log="${work}/del-risk-oc.log"
+  cat > "$dr_conf" <<CONF
+pid file = ${dr_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${dr_dest}
+comment = delete-filter-risk test
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$dr_conf" "$dr_log" "$upstream_binary" "$dr_pid" "$oc_port"
+
+  # Push with --delete, protect *.log and *.sh, then risk (override) *.log
+  if ! timeout "$hard_timeout" "$upstream_binary" -av --delete --timeout=10 \
+      --filter='P *.log' --filter='P *.sh' --filter='R *.log' \
+      "${dr_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.del-risk-up.out" 2>"${log}.del-risk-up.err"; then
+    echo "    delete-filter-risk (up->oc) push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # Verify source files transferred
+  for f in alpha.txt beta.txt subdir/nested.txt; do
+    if [[ ! -f "$dr_dest/$f" ]]; then
+      echo "    (up->oc) missing source file: $f"
+      return 1
+    fi
+    if ! cmp -s "$dr_src/$f" "$dr_dest/$f"; then
+      echo "    (up->oc) content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify R (risk) overrides P: *.log files should be deleted
+  for f in risky.log subdir/nested.log; do
+    if [[ -f "$dr_dest/$f" ]]; then
+      echo "    (up->oc) risk file $f survived despite R modifier"
+      return 1
+    fi
+  done
+
+  # Verify P-protected *.sh files (not overridden by R) survived
+  if [[ ! -f "$dr_dest/keeper.sh" ]]; then
+    echo "    (up->oc) P-protected file keeper.sh was deleted"
+    return 1
+  fi
+
+  # Verify non-protected, non-risk dest-only files were deleted
+  if [[ -f "$dr_dest/destonly.txt" ]]; then
+    echo "    (up->oc) unprotected file destonly.txt survived"
+    return 1
+  fi
+
+  # --- Direction 2: oc-rsync pushes to upstream daemon ---
+  local dr_dest2="${work}/del-risk-dest2"
+  rm -rf "$dr_dest2"
+  mkdir -p "$dr_dest2/subdir"
+
+  # Re-populate dest with same layout
+  echo "dest risk log" > "$dr_dest2/risky.log"
+  echo "dest protected sh" > "$dr_dest2/keeper.sh"
+  echo "dest unprotected" > "$dr_dest2/destonly.txt"
+  echo "dest nested risk" > "$dr_dest2/subdir/nested.log"
+
+  local dr_conf2="${work}/del-risk-up.conf"
+  local dr_pid2="${work}/del-risk-up.pid"
+  local dr_log2="${work}/del-risk-up.log"
+  cat > "$dr_conf2" <<CONF
+pid file = ${dr_pid2}
+port = ${upstream_port}
+use chroot = false
+
+[interop]
+path = ${dr_dest2}
+comment = delete-filter-risk test direction 2
+read only = false
+numeric ids = yes
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$dr_conf2" "$dr_log2" "$dr_pid2"
+
+  # oc-rsync pushes with --delete, protect then risk
+  if ! timeout "$hard_timeout" "$oc_bin" -av --delete --timeout=10 \
+      --filter='P *.log' --filter='P *.sh' --filter='R *.log' \
+      "${dr_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.del-risk-oc.out" 2>"${log}.del-risk-oc.err"; then
+    echo "    delete-filter-risk (oc->up) push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  # Verify source files transferred
+  for f in alpha.txt beta.txt subdir/nested.txt; do
+    if [[ ! -f "$dr_dest2/$f" ]]; then
+      echo "    (oc->up) missing source file: $f"
+      return 1
+    fi
+    if ! cmp -s "$dr_src/$f" "$dr_dest2/$f"; then
+      echo "    (oc->up) content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # Verify R overrides P: *.log files should be deleted
+  for f in risky.log subdir/nested.log; do
+    if [[ -f "$dr_dest2/$f" ]]; then
+      echo "    (oc->up) risk file $f survived despite R modifier"
+      return 1
+    fi
+  done
+
+  # Verify P-protected *.sh survived
+  if [[ ! -f "$dr_dest2/keeper.sh" ]]; then
+    echo "    (oc->up) P-protected file keeper.sh was deleted"
+    return 1
+  fi
+
+  # Verify non-protected dest-only files deleted
+  if [[ -f "$dr_dest2/destonly.txt" ]]; then
+    echo "    (oc->up) unprotected file destonly.txt survived"
+    return 1
+  fi
+
+  return 0
+}
+
 # -FF filter shortcut interop test.
 # Tests that -FF (double -F) correctly reads .rsync-filter files in both
 # the source root and subdirectories, excluding matching files from transfer.
@@ -8053,6 +8370,8 @@ run_standalone_interop_tests() {
     "max-connections"
     "exclude-include-precedence"
     "delete-with-filters"
+    "delete-filter-protect"
+    "delete-filter-risk"
     "ff-filter-shortcut"
     "acl-xattr-graceful-degradation-309"
     "log-format-daemon"
@@ -8118,6 +8437,8 @@ run_standalone_interop_tests() {
     "test_max_connections"
     "test_exclude_include_precedence"
     "test_delete_with_filters"
+    "test_delete_filter_protect"
+    "test_delete_filter_risk"
     "test_ff_filter_shortcut"
     "test_acl_xattr_graceful_degradation_309"
     "test_log_format_daemon"
@@ -8252,6 +8573,12 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       delete-with-filters)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      delete-filter-protect)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      delete-filter-risk)
         test_args+=("$oc_port" "$upstream_port")
         ;;
       ff-filter-shortcut)
