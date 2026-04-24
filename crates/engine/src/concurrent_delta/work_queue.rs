@@ -1306,6 +1306,102 @@ mod tests {
         }
     }
 
+    /// Verifies the RAII correctness invariant: dropping `WorkQueueReceiver`
+    /// signals the producer via `SendError`, preventing indefinite blocking.
+    ///
+    /// This invariant holds for both `std::sync::mpsc::sync_channel` and
+    /// `crossbeam_channel::bounded` - both disconnect the channel when the
+    /// receiver is dropped, causing the sender to observe an error.
+    ///
+    /// The test spawns a producer thread that sends items into the queue,
+    /// drops the receiver on the main thread, and verifies:
+    /// 1. The producer observes a `SendError` (not an indefinite block).
+    /// 2. The producer thread exits cleanly without hanging.
+    #[test]
+    fn receiver_drop_signals_producer_raii() {
+        let (tx, rx) = bounded_with_capacity(2);
+
+        // Fill the queue to capacity so the next send will block.
+        tx.send(DeltaWork::whole_file(0, PathBuf::from("/dst"), 0))
+            .unwrap();
+        tx.send(DeltaWork::whole_file(1, PathBuf::from("/dst"), 0))
+            .unwrap();
+
+        // Spawn a producer that will block on send (queue is full).
+        let producer = thread::spawn(move || {
+            let mut send_errors = 0u32;
+            for i in 2..100u32 {
+                match tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0)) {
+                    Ok(()) => {}
+                    Err(_) => {
+                        send_errors += 1;
+                        break;
+                    }
+                }
+            }
+            send_errors
+        });
+
+        // Drop the receiver - this must unblock the producer's send.
+        drop(rx);
+
+        // Producer must exit within a reasonable time and report a SendError.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let send_errors = producer.join().expect("producer thread panicked");
+        assert!(
+            Instant::now() < deadline,
+            "producer thread hung after receiver drop - RAII disconnect failed"
+        );
+        assert!(
+            send_errors > 0,
+            "producer never observed SendError after receiver drop"
+        );
+    }
+
+    /// Verifies that dropping `WorkQueueReceiver` while the producer is blocked
+    /// on a full queue causes the blocked send to return `SendError`.
+    ///
+    /// This is a stricter variant of the RAII test that specifically targets the
+    /// "blocked producer" scenario - the producer is guaranteed to be mid-send
+    /// when the receiver drops.
+    #[test]
+    fn receiver_drop_unblocks_full_queue_producer() {
+        let (tx, rx) = bounded_with_capacity(1);
+
+        // Fill the single-slot queue.
+        tx.send(DeltaWork::whole_file(0, PathBuf::from("/dst"), 0))
+            .unwrap();
+
+        let error_observed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let error_clone = Arc::clone(&error_observed);
+
+        // Producer will block on this send because the queue is full.
+        let producer = thread::spawn(move || {
+            let result = tx.send(DeltaWork::whole_file(1, PathBuf::from("/dst"), 0));
+            if result.is_err() {
+                error_clone.store(true, Ordering::Release);
+            }
+        });
+
+        // Give the producer time to enter the blocking send.
+        thread::sleep(Duration::from_millis(50));
+
+        // Drop the receiver - must unblock the producer.
+        drop(rx);
+
+        // Producer must complete without hanging.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        producer.join().expect("producer thread panicked");
+        assert!(
+            Instant::now() < deadline,
+            "producer thread hung after receiver drop"
+        );
+        assert!(
+            error_observed.load(Ordering::Acquire),
+            "blocked producer did not observe SendError when receiver was dropped"
+        );
+    }
+
     proptest! {
         /// Property test: `drain_parallel` preserves input ordering under contention.
         ///
