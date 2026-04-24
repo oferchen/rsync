@@ -7437,7 +7437,7 @@ path = ${if_src}
 read only = true
 numeric ids = yes
 include from = ${incl_file}
-filter = - *
+exclude = *
 CONF
 
   start_oc_daemon_with_retry "$if_oc_conf" "$if_oc_log" "$upstream_binary" "$if_oc_pid" "$oc_port"
@@ -7469,7 +7469,7 @@ path = ${if_src}
 read only = true
 numeric ids = yes
 include from = ${incl_file}
-filter = - *
+exclude = *
 CONF
 
   start_upstream_daemon_with_retry "$upstream_binary" "$if_up_conf" "$if_up_log" "$if_up_pid"
