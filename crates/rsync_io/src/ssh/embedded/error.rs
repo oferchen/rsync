@@ -60,4 +60,13 @@ pub enum SshError {
         /// Description of why the URL is invalid.
         reason: String,
     },
+
+    /// DNS resolution produced no addresses matching the IP version preference.
+    #[error("no {preference} addresses found for {host}")]
+    DnsResolution {
+        /// Hostname that was resolved.
+        host: String,
+        /// IP version preference that filtered out all results.
+        preference: String,
+    },
 }

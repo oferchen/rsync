@@ -36,3 +36,4 @@ embedded-ssh = ["dep:async-trait", "dep:russh", "dep:russh-keys", "dep:ssh-key",
 [dev-dependencies]
 proptest = "1.4"
 tempfile = "3.15"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
