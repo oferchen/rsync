@@ -49,6 +49,15 @@ highlight = "all"
 workspace-default-features = "allow"
 external-default-features = "allow"
 
+# Single async runtime policy: tokio is the only allowed async runtime.
+# Ban alternative runtimes to prevent accidental introduction via transitive deps.
+deny = [
+    { crate = "async-std" },
+    { crate = "smol" },
+    { crate = "async-executor" },
+    { crate = "async-io" },
+]
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
