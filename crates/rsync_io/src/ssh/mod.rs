@@ -65,5 +65,7 @@ pub use connection::{SshChildHandle, SshConnection, SshReader, SshWriter};
 pub use operand::{RemoteOperand, RemoteOperandParseError, parse_ssh_operand};
 pub use parse::{RemoteShellParseError, parse_remote_shell};
 
+pub mod embedded;
+
 #[cfg(test)]
 mod tests;
