@@ -170,17 +170,13 @@ pub fn is_io_uring_available() -> bool {
         return IO_URING_AVAILABLE.load(Ordering::Relaxed);
     }
 
-    let available = check_io_uring_available();
+    let result = check_io_uring_reason();
+    let reason = result.reason();
+    let available = matches!(result, IoUringProbeResult::Available { .. });
     IO_URING_AVAILABLE.store(available, Ordering::Relaxed);
     IO_URING_CHECKED.store(true, Ordering::Relaxed);
+    logging::debug_log!(Io, 1, "{reason}");
     available
-}
-
-fn check_io_uring_available() -> bool {
-    matches!(
-        check_io_uring_reason(),
-        IoUringProbeResult::Available { .. }
-    )
 }
 
 /// Result of probing io_uring availability with the specific reason.
