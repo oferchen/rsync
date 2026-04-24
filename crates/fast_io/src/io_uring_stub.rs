@@ -117,6 +117,114 @@ impl IoUringConfig {
     }
 }
 
+/// Stub module for provided buffer ring (not available on this platform).
+pub mod buffer_ring {
+    use std::io;
+
+    /// Errors specific to buffer ring operations (stub - never constructed).
+    #[derive(Debug, thiserror::Error)]
+    pub enum BufferRingError {
+        /// PBUF_RING is not supported on this platform.
+        #[error("PBUF_RING is not available on this platform")]
+        Unsupported,
+    }
+
+    impl From<BufferRingError> for io::Error {
+        fn from(e: BufferRingError) -> Self {
+            io::Error::new(io::ErrorKind::Unsupported, e)
+        }
+    }
+
+    /// Configuration for a provided buffer ring (informational only on this platform).
+    #[derive(Debug, Clone)]
+    pub struct BufferRingConfig {
+        /// Number of entries in the ring.
+        pub ring_size: u32,
+        /// Size of each buffer in bytes.
+        pub buffer_size: u32,
+        /// Buffer group ID.
+        pub bgid: u16,
+    }
+
+    impl Default for BufferRingConfig {
+        fn default() -> Self {
+            Self {
+                ring_size: 64,
+                buffer_size: 64 * 1024,
+                bgid: 0,
+            }
+        }
+    }
+
+    /// Stub provided buffer ring (not available on this platform).
+    ///
+    /// On non-Linux platforms, [`new`](Self::new) always returns an error
+    /// and [`try_new`](Self::try_new) always returns `None`.
+    #[derive(Debug)]
+    pub struct BufferRing {
+        _private: (),
+    }
+
+    impl BufferRing {
+        /// Always returns an `Unsupported` error on this platform.
+        pub fn new(_ring: &(), _config: BufferRingConfig) -> Result<Self, BufferRingError> {
+            Err(BufferRingError::Unsupported)
+        }
+
+        /// Always returns `None` on this platform.
+        #[must_use]
+        pub fn try_new(_ring: &(), _config: BufferRingConfig) -> Option<Self> {
+            None
+        }
+
+        /// Returns the buffer group ID (never called on this platform).
+        #[must_use]
+        pub fn bgid(&self) -> u16 {
+            0
+        }
+
+        /// Returns the ring size (never called on this platform).
+        #[must_use]
+        pub fn ring_size(&self) -> u32 {
+            0
+        }
+
+        /// Returns the buffer size (never called on this platform).
+        #[must_use]
+        pub fn buffer_size(&self) -> u32 {
+            0
+        }
+
+        /// Returns `None` on this platform.
+        #[must_use]
+        pub fn buffer_ptr(&self, _buf_id: u16) -> Option<*const u8> {
+            None
+        }
+
+        /// No-op on this platform.
+        pub fn recycle_buffer(&self, _buf_id: u16) {}
+
+        /// Returns the configuration (never called on this platform).
+        #[must_use]
+        pub fn config(&self) -> &BufferRingConfig {
+            unreachable!("BufferRing cannot be constructed on this platform")
+        }
+    }
+
+    /// Returns `false` on non-Linux platforms.
+    #[must_use]
+    pub fn is_supported() -> bool {
+        false
+    }
+
+    /// Always returns `None` on this platform (no CQE buffer flag support).
+    #[inline]
+    #[must_use]
+    pub fn buffer_id_from_cqe_flags(_flags: u32) -> Option<u16> {
+        None
+    }
+}
+
 /// Stub module for registered buffer types (not available on this platform).
 pub mod registered_buffers {
     use std::io;
@@ -207,6 +315,7 @@ pub mod registered_buffers {
     }
 }
 
+pub use buffer_ring::{BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags};
 pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot};
 
 /// Stub batched io_uring disk writer (not available on this platform).
@@ -905,6 +1014,37 @@ mod tests {
     }
 
     #[test]
+    fn buffer_ring_is_not_supported_on_stub() {
+        assert!(!buffer_ring::is_supported());
+    }
+
+    #[test]
+    fn buffer_ring_try_new_returns_none_on_stub() {
+        let config = BufferRingConfig::default();
+        assert!(BufferRing::try_new(&(), config).is_none());
+    }
+
+    #[test]
+    fn buffer_ring_new_returns_error_on_stub() {
+        let config = BufferRingConfig::default();
+        let err: io::Error = BufferRing::new(&(), config).unwrap_err().into();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn buffer_id_from_cqe_flags_returns_none_on_stub() {
+        assert_eq!(buffer_id_from_cqe_flags(0xFFFF_FFFF), None);
+    }
+
+    #[test]
+    fn buffer_ring_config_default_has_valid_values() {
+        let config = BufferRingConfig::default();
+        assert!(config.ring_size > 0);
+        assert!(config.buffer_size > 0);
+        assert_eq!(config.bgid, 0);
+    }
+
+    #[test]
     fn registered_buffer_group_try_new_returns_none() {
         let result = RegisteredBufferGroup::try_new(&(), 4096, 4);
         assert!(result.is_none());
@@ -1019,10 +1159,6 @@ mod tests {
         assert!(err.to_string().contains("io_uring"));
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    // Parity tests - output must be identical regardless of policy
-    // ─────────────────────────────────────────────────────────────────────
-
     #[test]
     fn writer_parity_disabled_vs_auto() {
         let test_data: Vec<u8> = (0..4096).map(|i| ((i * 7 + 13) % 256) as u8).collect();
@@ -1073,10 +1209,6 @@ mod tests {
         assert_eq!(data_disabled, data_auto);
         assert_eq!(data_disabled, test_data);
     }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // Partial write and multi-chunk tests
-    // ─────────────────────────────────────────────────────────────────────
 
     #[test]
     fn writer_handles_partial_writes_correctly() {
