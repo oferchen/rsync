@@ -10,6 +10,46 @@
 
 use std::path::PathBuf;
 
+/// File index in the transfer file list.
+///
+/// Wraps a `u32` NDX value to prevent accidental mixing with sequence
+/// numbers or other integer types in the concurrent delta pipeline.
+///
+/// # Upstream Reference
+///
+/// Corresponds to the NDX (file index) values that upstream rsync uses
+/// throughout `receiver.c` and `generator.c` to identify files in the
+/// sorted file list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct FileNdx(u32);
+
+impl FileNdx {
+    /// Creates a new file index.
+    #[must_use]
+    pub const fn new(ndx: u32) -> Self {
+        Self(ndx)
+    }
+
+    /// Returns the raw `u32` value.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for FileNdx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<u32> for FileNdx {
+    fn from(ndx: u32) -> Self {
+        Self(ndx)
+    }
+}
+
 /// A unit of work for the concurrent delta pipeline.
 ///
 /// Represents a single file that requires delta computation. Created by the
@@ -24,7 +64,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct DeltaWork {
     /// File list index (NDX) - stable position in the sorted file list.
-    ndx: u32,
+    ndx: FileNdx,
     /// Pipeline sequence number for reordering after parallel dispatch.
     ///
     /// Assigned by the producer before sending into the work queue so that
@@ -60,9 +100,9 @@ pub enum DeltaWorkKind {
 impl DeltaWork {
     /// Creates a new whole-file transfer work item.
     #[must_use]
-    pub fn whole_file(ndx: u32, dest_path: PathBuf, target_size: u64) -> Self {
+    pub fn whole_file(ndx: impl Into<FileNdx>, dest_path: PathBuf, target_size: u64) -> Self {
         Self {
-            ndx,
+            ndx: ndx.into(),
             sequence: 0,
             dest_path,
             basis_path: None,
@@ -86,7 +126,7 @@ impl DeltaWork {
     /// * `matched_bytes` - Bytes copied from the basis file via block references
     #[must_use]
     pub fn delta(
-        ndx: u32,
+        ndx: impl Into<FileNdx>,
         dest_path: PathBuf,
         basis_path: PathBuf,
         target_size: u64,
@@ -94,7 +134,7 @@ impl DeltaWork {
         matched_bytes: u64,
     ) -> Self {
         Self {
-            ndx,
+            ndx: ndx.into(),
             sequence: 0,
             dest_path,
             basis_path: Some(basis_path),
@@ -107,7 +147,7 @@ impl DeltaWork {
 
     /// Returns the file list index (NDX).
     #[must_use]
-    pub const fn ndx(&self) -> u32 {
+    pub const fn ndx(&self) -> FileNdx {
         self.ndx
     }
 
@@ -182,7 +222,7 @@ impl DeltaWork {
     ///
     /// Returns `(ndx, dest_path, basis_path, target_size, literal_bytes, matched_bytes)`.
     #[must_use]
-    pub fn into_parts(self) -> (u32, PathBuf, Option<PathBuf>, u64, u64, u64) {
+    pub fn into_parts(self) -> (FileNdx, PathBuf, Option<PathBuf>, u64, u64, u64) {
         (
             self.ndx,
             self.dest_path,
@@ -207,7 +247,7 @@ impl DeltaWork {
 #[derive(Debug, Clone, Default)]
 pub struct DeltaResult {
     /// File list index (NDX) - correlates with the originating [`DeltaWork`].
-    ndx: u32,
+    ndx: FileNdx,
     /// Pipeline sequence number for reordering results from concurrent workers.
     ///
     /// Assigned by the producer before dispatching to the work queue so that
@@ -248,9 +288,14 @@ pub enum DeltaResultStatus {
 impl DeltaResult {
     /// Creates a successful result.
     #[must_use]
-    pub fn success(ndx: u32, bytes_written: u64, literal_bytes: u64, matched_bytes: u64) -> Self {
+    pub fn success(
+        ndx: impl Into<FileNdx>,
+        bytes_written: u64,
+        literal_bytes: u64,
+        matched_bytes: u64,
+    ) -> Self {
         Self {
-            ndx,
+            ndx: ndx.into(),
             sequence: 0,
             bytes_written,
             literal_bytes,
@@ -261,9 +306,9 @@ impl DeltaResult {
 
     /// Creates a redo result (checksum mismatch in phase 1).
     #[must_use]
-    pub fn needs_redo(ndx: u32, reason: String) -> Self {
+    pub fn needs_redo(ndx: impl Into<FileNdx>, reason: String) -> Self {
         Self {
-            ndx,
+            ndx: ndx.into(),
             status: DeltaResultStatus::NeedsRedo { reason },
             ..Default::default()
         }
@@ -271,9 +316,9 @@ impl DeltaResult {
 
     /// Creates a failed result (non-recoverable error).
     #[must_use]
-    pub fn failed(ndx: u32, reason: String) -> Self {
+    pub fn failed(ndx: impl Into<FileNdx>, reason: String) -> Self {
         Self {
-            ndx,
+            ndx: ndx.into(),
             status: DeltaResultStatus::Failed { reason },
             ..Default::default()
         }
@@ -293,7 +338,7 @@ impl DeltaResult {
 
     /// Returns the file list index (NDX).
     #[must_use]
-    pub const fn ndx(&self) -> u32 {
+    pub const fn ndx(&self) -> FileNdx {
         self.ndx
     }
 
@@ -346,8 +391,8 @@ mod tests {
 
     #[test]
     fn whole_file_work_has_no_basis() {
-        let work = DeltaWork::whole_file(0, PathBuf::from("/dest/file.txt"), 1024);
-        assert_eq!(work.ndx(), 0);
+        let work = DeltaWork::whole_file(0u32, PathBuf::from("/dest/file.txt"), 1024);
+        assert_eq!(work.ndx(), FileNdx::new(0));
         assert_eq!(work.dest_path(), std::path::Path::new("/dest/file.txt"));
         assert!(work.basis_path().is_none());
         assert_eq!(work.target_size(), 1024);
@@ -358,14 +403,14 @@ mod tests {
     #[test]
     fn delta_work_has_basis() {
         let work = DeltaWork::delta(
-            5,
+            5u32,
             PathBuf::from("/dest/file.txt"),
             PathBuf::from("/basis/file.txt"),
             2048,
             800,
             1248,
         );
-        assert_eq!(work.ndx(), 5);
+        assert_eq!(work.ndx(), FileNdx::new(5));
         assert_eq!(work.dest_path(), std::path::Path::new("/dest/file.txt"));
         assert_eq!(
             work.basis_path(),
@@ -381,7 +426,7 @@ mod tests {
     #[test]
     fn work_into_parts_returns_components() {
         let work = DeltaWork::delta(
-            3,
+            3u32,
             PathBuf::from("/dest"),
             PathBuf::from("/basis"),
             500,
@@ -389,7 +434,7 @@ mod tests {
             300,
         );
         let (ndx, dest, basis, size, literal, matched) = work.into_parts();
-        assert_eq!(ndx, 3);
+        assert_eq!(ndx, FileNdx::new(3));
         assert_eq!(dest, PathBuf::from("/dest"));
         assert_eq!(basis, Some(PathBuf::from("/basis")));
         assert_eq!(size, 500);
@@ -415,7 +460,7 @@ mod tests {
             2596,
         );
         let cloned = work.clone();
-        assert_eq!(cloned.ndx(), 7);
+        assert_eq!(cloned.ndx(), FileNdx::new(7));
         assert_eq!(cloned.dest_path(), std::path::Path::new("/dest/clone.txt"));
         assert!(cloned.is_delta());
     }
@@ -429,8 +474,8 @@ mod tests {
 
     #[test]
     fn success_result() {
-        let result = DeltaResult::success(42, 1000, 300, 700);
-        assert_eq!(result.ndx(), 42);
+        let result = DeltaResult::success(42u32, 1000, 300, 700);
+        assert_eq!(result.ndx(), FileNdx::new(42));
         assert_eq!(result.bytes_written(), 1000);
         assert_eq!(result.literal_bytes(), 300);
         assert_eq!(result.matched_bytes(), 700);
@@ -440,8 +485,8 @@ mod tests {
 
     #[test]
     fn needs_redo_result() {
-        let result = DeltaResult::needs_redo(10, "checksum mismatch".to_string());
-        assert_eq!(result.ndx(), 10);
+        let result = DeltaResult::needs_redo(10u32, "checksum mismatch".to_string());
+        assert_eq!(result.ndx(), FileNdx::new(10));
         assert_eq!(result.bytes_written(), 0);
         assert!(!result.is_success());
         assert!(result.needs_retry());
@@ -449,8 +494,8 @@ mod tests {
 
     #[test]
     fn failed_result() {
-        let result = DeltaResult::failed(99, "I/O error".to_string());
-        assert_eq!(result.ndx(), 99);
+        let result = DeltaResult::failed(99u32, "I/O error".to_string());
+        assert_eq!(result.ndx(), FileNdx::new(99));
         assert!(!result.is_success());
         assert!(!result.needs_retry());
     }
@@ -458,7 +503,7 @@ mod tests {
     #[test]
     fn default_result_is_success_with_zeroes() {
         let result = DeltaResult::default();
-        assert_eq!(result.ndx(), 0);
+        assert_eq!(result.ndx(), FileNdx::new(0));
         assert_eq!(result.bytes_written(), 0);
         assert_eq!(result.literal_bytes(), 0);
         assert_eq!(result.matched_bytes(), 0);
@@ -467,9 +512,9 @@ mod tests {
 
     #[test]
     fn result_clone() {
-        let result = DeltaResult::success(5, 500, 200, 300);
+        let result = DeltaResult::success(5u32, 500, 200, 300);
         let cloned = result.clone();
-        assert_eq!(cloned.ndx(), 5);
+        assert_eq!(cloned.ndx(), FileNdx::new(5));
         assert_eq!(cloned.bytes_written(), 500);
         assert!(cloned.is_success());
     }
@@ -547,7 +592,7 @@ mod tests {
     fn result_with_sequence() {
         let result = DeltaResult::success(1, 100, 50, 50).with_sequence(10);
         assert_eq!(result.sequence(), 10);
-        assert_eq!(result.ndx(), 1);
+        assert_eq!(result.ndx(), FileNdx::new(1));
     }
 
     #[test]
@@ -565,8 +610,79 @@ mod tests {
 
     #[test]
     fn result_failed_with_sequence() {
-        let result = DeltaResult::failed(7, "I/O error".to_string()).with_sequence(42);
+        let result = DeltaResult::failed(7u32, "I/O error".to_string()).with_sequence(42);
         assert_eq!(result.sequence(), 42);
         assert!(!result.is_success());
+    }
+
+    #[test]
+    fn file_ndx_new_and_get_roundtrip() {
+        for val in [0u32, 1, 42, u32::MAX] {
+            let ndx = FileNdx::new(val);
+            assert_eq!(ndx.get(), val);
+        }
+    }
+
+    #[test]
+    fn file_ndx_ordering_matches_u32() {
+        let a = FileNdx::new(1);
+        let b = FileNdx::new(2);
+        let c = FileNdx::new(2);
+        assert!(a < b);
+        assert!(b > a);
+        assert_eq!(b, c);
+        assert!(a <= b);
+        assert!(b >= a);
+    }
+
+    #[test]
+    fn file_ndx_display() {
+        assert_eq!(FileNdx::new(0).to_string(), "0");
+        assert_eq!(FileNdx::new(42).to_string(), "42");
+        assert_eq!(FileNdx::new(u32::MAX).to_string(), u32::MAX.to_string());
+    }
+
+    #[test]
+    fn file_ndx_from_u32() {
+        let ndx: FileNdx = 7u32.into();
+        assert_eq!(ndx, FileNdx::new(7));
+    }
+
+    #[test]
+    fn file_ndx_btreemap_key() {
+        use std::collections::BTreeMap;
+        let mut map = BTreeMap::new();
+        map.insert(FileNdx::new(3), "third");
+        map.insert(FileNdx::new(1), "first");
+        map.insert(FileNdx::new(2), "second");
+
+        let keys: Vec<FileNdx> = map.keys().copied().collect();
+        assert_eq!(
+            keys,
+            vec![FileNdx::new(1), FileNdx::new(2), FileNdx::new(3)]
+        );
+        assert_eq!(map[&FileNdx::new(2)], "second");
+    }
+
+    #[test]
+    fn file_ndx_hash() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(FileNdx::new(5));
+        set.insert(FileNdx::new(5));
+        set.insert(FileNdx::new(10));
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn file_ndx_default_is_zero() {
+        assert_eq!(FileNdx::default(), FileNdx::new(0));
+    }
+
+    #[test]
+    fn file_ndx_copy_semantics() {
+        let a = FileNdx::new(42);
+        let b = a;
+        assert_eq!(a, b); // `a` still usable after copy
     }
 }

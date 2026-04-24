@@ -155,7 +155,7 @@ mod tests {
             }
         });
 
-        let mut results = rx.drain_parallel(|w| (w.ndx(), w.sequence()));
+        let mut results = rx.drain_parallel(|w| (w.ndx().get(), w.sequence()));
         producer.join().unwrap();
 
         // Sort by sequence to verify all sequences are unique and contiguous.
@@ -196,7 +196,7 @@ mod tests {
             }
         });
 
-        let mut results = rx.drain_parallel(|w| (w.ndx(), w.sequence()));
+        let mut results = rx.drain_parallel(|w| (w.ndx().get(), w.sequence()));
         p1.join().unwrap();
         p2.join().unwrap();
 

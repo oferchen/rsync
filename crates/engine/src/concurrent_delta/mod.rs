@@ -179,4 +179,4 @@ pub mod work_queue;
 pub use consumer::DeltaConsumer;
 pub use reorder::ReorderBuffer;
 pub use strategy::{DeltaStrategy, DeltaTransferStrategy, WholeFileStrategy};
-pub use types::{DeltaResult, DeltaResultStatus, DeltaWork, DeltaWorkKind};
+pub use types::{DeltaResult, DeltaResultStatus, DeltaWork, DeltaWorkKind, FileNdx};

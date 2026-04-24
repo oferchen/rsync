@@ -388,7 +388,7 @@ mod tests {
 
         let result = pipeline.poll_result().unwrap();
         assert!(result.is_success());
-        assert_eq!(result.ndx(), 0);
+        assert_eq!(result.ndx().get(), 0);
         assert_eq!(result.bytes_written(), 1024);
         assert_eq!(result.literal_bytes(), 1024);
         assert_eq!(result.matched_bytes(), 0);
@@ -408,7 +408,7 @@ mod tests {
 
         for i in 0..5u32 {
             let result = pipeline.poll_result().unwrap();
-            assert_eq!(result.ndx(), i);
+            assert_eq!(result.ndx().get(), i);
             assert_eq!(result.sequence(), u64::from(i));
             assert_eq!(result.bytes_written(), u64::from(i) * 100);
         }
@@ -430,7 +430,7 @@ mod tests {
 
         let result = pipeline.poll_result().unwrap();
         assert!(result.is_success());
-        assert_eq!(result.ndx(), 5);
+        assert_eq!(result.ndx().get(), 5);
         assert_eq!(result.bytes_written(), 4096);
         assert_eq!(result.matched_bytes(), 2896);
         assert_eq!(result.literal_bytes(), 1200);
@@ -444,13 +444,13 @@ mod tests {
         let work0 = DeltaWork::whole_file(0, PathBuf::from("/dest/0"), 100);
         pipeline.submit_work(work0).unwrap();
         let r0 = pipeline.poll_result().unwrap();
-        assert_eq!(r0.ndx(), 0);
+        assert_eq!(r0.ndx().get(), 0);
         assert_eq!(r0.sequence(), 0);
 
         let work1 = DeltaWork::whole_file(1, PathBuf::from("/dest/1"), 200);
         pipeline.submit_work(work1).unwrap();
         let r1 = pipeline.poll_result().unwrap();
-        assert_eq!(r1.ndx(), 1);
+        assert_eq!(r1.ndx().get(), 1);
         assert_eq!(r1.sequence(), 1);
 
         assert!(pipeline.poll_result().is_none());
@@ -470,9 +470,9 @@ mod tests {
 
         let remaining = Box::new(pipeline).flush();
         assert_eq!(remaining.len(), 2);
-        assert_eq!(remaining[0].ndx(), 2);
+        assert_eq!(remaining[0].ndx().get(), 2);
         assert_eq!(remaining[0].sequence(), 2);
-        assert_eq!(remaining[1].ndx(), 3);
+        assert_eq!(remaining[1].ndx().get(), 3);
         assert_eq!(remaining[1].sequence(), 3);
     }
 
@@ -505,7 +505,7 @@ mod tests {
         let remaining = Box::new(pipeline).flush();
         assert_eq!(remaining.len(), 3);
         for (i, r) in remaining.iter().enumerate() {
-            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.ndx().get(), i as u32);
             assert_eq!(r.sequence(), i as u64);
         }
     }
@@ -530,7 +530,7 @@ mod tests {
         pipeline.submit_work(work).unwrap();
 
         let result = pipeline.poll_result().unwrap();
-        assert_eq!(result.ndx(), 7);
+        assert_eq!(result.ndx().get(), 7);
         assert!(result.is_success());
 
         let remaining = pipeline.flush();
@@ -555,12 +555,12 @@ mod tests {
         pipeline.submit_work(delta).unwrap();
 
         let r0 = pipeline.poll_result().unwrap();
-        assert_eq!(r0.ndx(), 0);
+        assert_eq!(r0.ndx().get(), 0);
         assert_eq!(r0.literal_bytes(), 500);
         assert_eq!(r0.matched_bytes(), 0);
 
         let r1 = pipeline.poll_result().unwrap();
-        assert_eq!(r1.ndx(), 1);
+        assert_eq!(r1.ndx().get(), 1);
         assert_eq!(r1.literal_bytes(), 400);
         assert_eq!(r1.matched_bytes(), 600);
     }
@@ -607,7 +607,7 @@ mod tests {
         assert_eq!(results.len(), 10);
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.sequence(), i as u64);
-            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.ndx().get(), i as u32);
             assert!(r.is_success());
             assert_eq!(r.bytes_written(), i as u64 * 100);
         }
@@ -625,7 +625,7 @@ mod tests {
         assert_eq!(results.len(), 50);
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.sequence(), i as u64, "result {i} has wrong sequence");
-            assert_eq!(r.ndx(), i as u32, "result {i} has wrong ndx");
+            assert_eq!(r.ndx().get(), i as u32, "result {i} has wrong ndx");
         }
     }
 
@@ -649,11 +649,11 @@ mod tests {
         let results = Box::new(pipeline).flush();
         assert_eq!(results.len(), 2);
 
-        assert_eq!(results[0].ndx(), 0);
+        assert_eq!(results[0].ndx().get(), 0);
         assert_eq!(results[0].literal_bytes(), 500);
         assert_eq!(results[0].matched_bytes(), 0);
 
-        assert_eq!(results[1].ndx(), 1);
+        assert_eq!(results[1].ndx().get(), 1);
         assert_eq!(results[1].literal_bytes(), 400);
         assert_eq!(results[1].matched_bytes(), 600);
     }
@@ -705,7 +705,7 @@ mod tests {
 
         let results = Box::new(pipeline).flush();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].ndx(), 42);
+        assert_eq!(results[0].ndx().get(), 42);
         assert_eq!(results[0].sequence(), 0);
         assert_eq!(results[0].bytes_written(), 256);
     }
@@ -721,7 +721,7 @@ mod tests {
         let results = pipeline.flush();
         assert_eq!(results.len(), 3);
         for (i, r) in results.iter().enumerate() {
-            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.ndx().get(), i as u32);
         }
     }
 
@@ -738,7 +738,7 @@ mod tests {
         assert_eq!(results.len(), count as usize);
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.sequence(), i as u64);
-            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.ndx().get(), i as u32);
         }
     }
 
@@ -777,7 +777,7 @@ mod tests {
         let results = Box::new(pipeline).flush();
         assert_eq!(results.len(), 5);
         for (i, r) in results.iter().enumerate() {
-            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.ndx().get(), i as u32);
             assert!(r.is_success());
         }
     }
@@ -797,7 +797,7 @@ mod tests {
         let results = Box::new(pipeline).flush();
         assert_eq!(results.len(), 5);
         for (i, r) in results.iter().enumerate() {
-            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.ndx().get(), i as u32);
         }
     }
 
@@ -813,7 +813,7 @@ mod tests {
         let results = Box::new(pipeline).flush();
         assert_eq!(results.len(), 10);
         for (i, r) in results.iter().enumerate() {
-            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.ndx().get(), i as u32);
             assert_eq!(r.sequence(), i as u64);
         }
     }
@@ -891,7 +891,7 @@ mod tests {
 
         let results = Box::new(pipeline).flush();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].ndx(), 7);
+        assert_eq!(results[0].ndx().get(), 7);
         assert_eq!(results[0].bytes_written(), 128);
     }
 
@@ -943,7 +943,7 @@ mod tests {
         assert_eq!(results.len(), count as usize);
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.sequence(), i as u64);
-            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.ndx().get(), i as u32);
         }
     }
 
@@ -999,7 +999,7 @@ mod tests {
             let i_u32 = i as u32;
             let expected_size = u64::from(i_u32 % 50) * 32 + 64;
             assert_eq!(r.sequence(), i as u64, "wrong sequence at index {i}");
-            assert_eq!(r.ndx(), i_u32, "wrong ndx at index {i}");
+            assert_eq!(r.ndx().get(), i_u32, "wrong ndx at index {i}");
             assert!(r.is_success(), "not successful at index {i}");
             assert_eq!(
                 r.bytes_written(),
@@ -1040,7 +1040,7 @@ mod tests {
         assert_eq!(results.len(), count as usize);
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.sequence(), i as u64, "wrong sequence at index {i}");
-            assert_eq!(r.ndx(), i as u32, "wrong ndx at index {i}");
+            assert_eq!(r.ndx().get(), i as u32, "wrong ndx at index {i}");
             assert!(r.is_success(), "not successful at index {i}");
             assert_eq!(r.bytes_written(), 256, "wrong bytes_written at index {i}");
         }
@@ -1076,7 +1076,7 @@ mod tests {
         for (i, r) in results.iter().enumerate() {
             let expected_size = if i < 30 { 128u64 } else { 256u64 };
             assert_eq!(r.sequence(), i as u64, "wrong sequence at index {i}");
-            assert_eq!(r.ndx(), i as u32, "wrong ndx at index {i}");
+            assert_eq!(r.ndx().get(), i as u32, "wrong ndx at index {i}");
             assert!(r.is_success(), "not successful at index {i}");
             assert_eq!(
                 r.bytes_written(),
@@ -1150,7 +1150,7 @@ mod tests {
                 "out of order at position {i}: got sequence {}",
                 r.sequence()
             );
-            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.ndx().get(), i as u32);
             assert!(r.is_success());
         }
     }
@@ -1214,7 +1214,7 @@ mod tests {
         assert_eq!(results.len(), 10);
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.sequence(), i as u64);
-            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.ndx().get(), i as u32);
             assert!(r.is_success());
         }
     }
