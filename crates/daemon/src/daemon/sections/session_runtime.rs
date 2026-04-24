@@ -116,7 +116,7 @@ fn handle_session(
 /// Currently unused because daemon connections always use the legacy protocol -
 /// the server must send the `@RSYNCD:` greeting first, creating a deadlock if
 /// we wait for client data to determine the style.
-#[allow(dead_code)]
+#[allow(dead_code)] // REASON: prepared for binary negotiation path; daemon always uses legacy
 fn detect_session_style(stream: &TcpStream, fallback_available: bool) -> io::Result<SessionStyle> {
     stream.set_nonblocking(true)?;
     let mut peek_buf = [0u8; LEGACY_DAEMON_PREFIX_LEN];
@@ -164,7 +164,7 @@ enum SessionStyle {
     /// Line-oriented `@RSYNCD:` text protocol.
     Legacy,
     /// Binary 4-byte LE version exchange followed by multiplex frames.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // REASON: prepared for binary negotiation path
     Binary,
 }
 

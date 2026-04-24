@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 /// produce precise diagnostics.
 #[derive(Debug, Clone)]
 pub struct ConfigError {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // REASON: stored for future diagnostic output
     kind: ErrorKind,
     line: Option<usize>,
     message: String,
@@ -18,7 +18,7 @@ pub struct ConfigError {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[allow(dead_code)] // REASON: variants constructed but not yet matched on; for future diagnostics
 pub(crate) enum ErrorKind {
     Io,
     Parse,

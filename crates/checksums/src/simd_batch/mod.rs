@@ -41,7 +41,7 @@ pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<Digest> {
 /// Uses the global dispatcher's scalar path. Prefer [`digest_batch`] for
 /// multiple inputs to benefit from SIMD parallelism.
 #[must_use]
-#[allow(dead_code)]
+#[allow(dead_code)] // REASON: public API exercised by simd_parity_tests
 pub fn digest(input: &[u8]) -> Digest {
     md5_dispatcher::global().digest(input)
 }
@@ -50,7 +50,7 @@ pub fn digest(input: &[u8]) -> Digest {
 ///
 /// Useful for logging, diagnostics, and SIMD parity tests.
 #[must_use]
-#[allow(dead_code)]
+#[allow(dead_code)] // REASON: public API exercised by simd_parity_tests
 pub fn active_backend() -> Backend {
     md5_dispatcher::global().backend()
 }
@@ -59,7 +59,7 @@ pub fn active_backend() -> Backend {
 ///
 /// Returns `true` for any backend other than `Scalar`.
 #[must_use]
-#[allow(dead_code)]
+#[allow(dead_code)] // REASON: public API exercised by simd_parity_tests
 pub fn simd_available() -> bool {
     active_backend() != Backend::Scalar
 }
@@ -71,7 +71,7 @@ pub fn simd_available() -> bool {
 /// - SSE2/NEON/WASM: 4 lanes
 /// - Scalar: 1 lane
 #[must_use]
-#[allow(dead_code)]
+#[allow(dead_code)] // REASON: public API exercised by simd_parity_tests
 pub fn parallel_lanes() -> usize {
     active_backend().lanes()
 }

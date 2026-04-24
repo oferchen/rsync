@@ -30,7 +30,7 @@ pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<Digest> {
 /// Computes an MD4 digest for a single input using the scalar path.
 ///
 /// For multiple inputs, prefer [`digest_batch`] to benefit from SIMD parallelism.
-#[allow(dead_code)]
+#[allow(dead_code)] // REASON: public API exercised by simd_parity_tests
 pub fn digest(input: &[u8]) -> Digest {
     scalar::digest(input)
 }

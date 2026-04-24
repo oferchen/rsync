@@ -39,20 +39,20 @@ pub use listing::{
 pub use request::{ModuleListOptions, ModuleListRequest};
 pub use types::DaemonAddress;
 
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use crate::auth::{DaemonAuthDigest, compute_daemon_auth_response};
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use auth::{
     DaemonAuthContext, SensitiveBytes, load_daemon_password, send_daemon_auth_credentials,
 };
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use connect::{
     ConnectProgramConfig, ProxyConfig, ProxyCredentials, connect_direct, connect_via_proxy,
     establish_proxy_tunnel, parse_proxy_spec, resolve_connect_timeout, resolve_daemon_addresses,
 };
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use errors::map_daemon_handshake_error;
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use parsing::parse_host_port;
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use socket_options::apply_socket_options;

@@ -6,7 +6,7 @@
 // When enabled, symlink targets are prefixed with `/rsyncd-munged/` on send
 // and the prefix is stripped on receive, preventing symlinks from escaping
 // the module root on non-chrooted modules.
-#[allow(unused_imports)]
+#[allow(unused_imports)] // REASON: re-export for daemon file list processing; currently used in tests
 pub(crate) use ::metadata::symlink_munge::{munge_symlink, unmunge_symlink};
 
 #[cfg(test)]
