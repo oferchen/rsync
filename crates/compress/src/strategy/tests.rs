@@ -331,3 +331,289 @@ fn consistent_results_across_calls() {
     strategy.compress(TEST_DATA, &mut out2).unwrap();
     assert_eq!(out1, out2);
 }
+
+// ---- Protocol version x feature flag matrix for selector and kind ----
+
+#[test]
+fn selector_protocol_version_0_returns_zlib() {
+    let strategy = CompressionStrategySelector::for_protocol_version(0);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+}
+
+#[test]
+fn selector_protocol_version_28_returns_zlib() {
+    let strategy = CompressionStrategySelector::for_protocol_version(28);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+}
+
+#[test]
+fn selector_protocol_version_29_returns_zlib() {
+    let strategy = CompressionStrategySelector::for_protocol_version(29);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+}
+
+#[test]
+fn selector_protocol_version_30_returns_zlib() {
+    let strategy = CompressionStrategySelector::for_protocol_version(30);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+}
+
+#[test]
+fn selector_protocol_version_31_returns_zlib() {
+    let strategy = CompressionStrategySelector::for_protocol_version(31);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+}
+
+#[test]
+fn selector_protocol_version_32_returns_zlib() {
+    let strategy = CompressionStrategySelector::for_protocol_version(32);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+}
+
+#[test]
+fn selector_protocol_version_255_high() {
+    let strategy = CompressionStrategySelector::for_protocol_version(255);
+    #[cfg(feature = "zstd")]
+    assert_eq!(strategy.algorithm_name(), "zstd");
+    #[cfg(not(feature = "zstd"))]
+    assert_eq!(strategy.algorithm_name(), "zlib");
+}
+
+#[test]
+fn kind_for_protocol_below_36_always_zlib() {
+    for v in 0..36u8 {
+        assert_eq!(
+            CompressionAlgorithmKind::for_protocol_version(v),
+            CompressionAlgorithmKind::Zlib,
+            "protocol version {v} should default to zlib"
+        );
+    }
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn kind_for_protocol_36_and_above_zstd() {
+    for v in [36, 37, 40, 50, 100, 255] {
+        assert_eq!(
+            CompressionAlgorithmKind::for_protocol_version(v),
+            CompressionAlgorithmKind::Zstd,
+            "protocol version {v} should default to zstd when feature enabled"
+        );
+    }
+}
+
+#[cfg(not(feature = "zstd"))]
+#[test]
+fn kind_for_protocol_36_and_above_falls_to_zlib_without_zstd() {
+    for v in [36, 37, 100, 255] {
+        assert_eq!(
+            CompressionAlgorithmKind::for_protocol_version(v),
+            CompressionAlgorithmKind::Zlib,
+            "protocol version {v} should fall back to zlib without zstd feature"
+        );
+    }
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn negotiate_zstd_preferred_when_both_support() {
+    let local = vec![
+        CompressionAlgorithmKind::Zstd,
+        CompressionAlgorithmKind::Zlib,
+        CompressionAlgorithmKind::None,
+    ];
+    let remote = vec![
+        CompressionAlgorithmKind::Zstd,
+        CompressionAlgorithmKind::Zlib,
+    ];
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    assert_eq!(strategy.algorithm_name(), "zstd");
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn negotiate_falls_to_zlib_when_remote_lacks_zstd() {
+    let local = vec![
+        CompressionAlgorithmKind::Zstd,
+        CompressionAlgorithmKind::Zlib,
+    ];
+    let remote = vec![CompressionAlgorithmKind::Zlib];
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn negotiate_lz4_when_both_support() {
+    let local = vec![
+        CompressionAlgorithmKind::Lz4,
+        CompressionAlgorithmKind::Zlib,
+    ];
+    let remote = vec![
+        CompressionAlgorithmKind::Lz4,
+        CompressionAlgorithmKind::Zlib,
+    ];
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    assert_eq!(strategy.algorithm_name(), "lz4");
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn negotiate_lz4_falls_to_zlib_when_remote_lacks_lz4() {
+    let local = vec![
+        CompressionAlgorithmKind::Lz4,
+        CompressionAlgorithmKind::Zlib,
+    ];
+    let remote = vec![CompressionAlgorithmKind::Zlib];
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+}
+
+#[test]
+fn negotiate_empty_local_returns_none() {
+    let local: Vec<CompressionAlgorithmKind> = vec![];
+    let remote = vec![CompressionAlgorithmKind::Zlib];
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    assert_eq!(strategy.algorithm_name(), "none");
+}
+
+#[test]
+fn negotiate_empty_remote_returns_none() {
+    let local = vec![CompressionAlgorithmKind::Zlib];
+    let remote: Vec<CompressionAlgorithmKind> = vec![];
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    assert_eq!(strategy.algorithm_name(), "none");
+}
+
+#[test]
+fn negotiate_both_empty_returns_none() {
+    let local: Vec<CompressionAlgorithmKind> = vec![];
+    let remote: Vec<CompressionAlgorithmKind> = vec![];
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    assert_eq!(strategy.algorithm_name(), "none");
+}
+
+#[test]
+fn negotiate_only_none_kind() {
+    let local = vec![CompressionAlgorithmKind::None];
+    let remote = vec![CompressionAlgorithmKind::None];
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    assert_eq!(strategy.algorithm_name(), "none");
+}
+
+#[test]
+fn kind_from_name_zlibx_maps_to_zlib() {
+    // "zlibx" is an alias for zlib in from_name
+    let kind = CompressionAlgorithmKind::from_name("zlibx");
+    assert_eq!(kind, Some(CompressionAlgorithmKind::Zlib));
+}
+
+#[test]
+fn kind_from_name_deflate_maps_to_zlib() {
+    let kind = CompressionAlgorithmKind::from_name("deflate");
+    assert_eq!(kind, Some(CompressionAlgorithmKind::Zlib));
+}
+
+#[test]
+fn kind_from_name_case_insensitive() {
+    assert_eq!(
+        CompressionAlgorithmKind::from_name("NONE"),
+        Some(CompressionAlgorithmKind::None)
+    );
+    assert_eq!(
+        CompressionAlgorithmKind::from_name("Zlib"),
+        Some(CompressionAlgorithmKind::Zlib)
+    );
+    assert_eq!(
+        CompressionAlgorithmKind::from_name("ZLibX"),
+        Some(CompressionAlgorithmKind::Zlib)
+    );
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn kind_from_name_zstandard_alias() {
+    assert_eq!(
+        CompressionAlgorithmKind::from_name("zstandard"),
+        Some(CompressionAlgorithmKind::Zstd)
+    );
+}
+
+#[test]
+fn kind_display() {
+    assert_eq!(format!("{}", CompressionAlgorithmKind::None), "none");
+    assert_eq!(format!("{}", CompressionAlgorithmKind::Zlib), "zlib");
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn kind_display_zstd() {
+    assert_eq!(format!("{}", CompressionAlgorithmKind::Zstd), "zstd");
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn kind_display_lz4() {
+    assert_eq!(format!("{}", CompressionAlgorithmKind::Lz4), "lz4");
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn kind_all_contains_zstd() {
+    let all = CompressionAlgorithmKind::all();
+    assert!(all.contains(&CompressionAlgorithmKind::Zstd));
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn kind_all_contains_lz4() {
+    let all = CompressionAlgorithmKind::all();
+    assert!(all.contains(&CompressionAlgorithmKind::Lz4));
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn selector_for_algorithm_zstd() {
+    let strategy = CompressionStrategySelector::for_algorithm(
+        CompressionAlgorithmKind::Zstd,
+        CompressionLevel::Default,
+    )
+    .unwrap();
+    assert_eq!(strategy.algorithm_name(), "zstd");
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn selector_for_algorithm_lz4() {
+    let strategy = CompressionStrategySelector::for_algorithm(
+        CompressionAlgorithmKind::Lz4,
+        CompressionLevel::Default,
+    )
+    .unwrap();
+    assert_eq!(strategy.algorithm_name(), "lz4");
+}
+
+#[test]
+fn negotiate_local_preference_order_wins() {
+    // When local lists Zlib before None, and remote has both,
+    // Zlib should be selected (not None).
+    let local = vec![
+        CompressionAlgorithmKind::Zlib,
+        CompressionAlgorithmKind::None,
+    ];
+    let remote = vec![
+        CompressionAlgorithmKind::None,
+        CompressionAlgorithmKind::Zlib,
+    ];
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+}
