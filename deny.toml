@@ -16,8 +16,6 @@ targets = [
 ignore = []
 
 [licenses]
-unlicensed = "deny"
-copyleft = "warn"
 allow = [
     "MIT",
     "Apache-2.0",
