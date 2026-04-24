@@ -223,11 +223,12 @@ pub const fn default_algorithm() -> CompressionAlgorithm {
 // upstream: token.c:init_compression_level() - ZSTD_CLEVEL_DEFAULT is 3,
 // ZSTD_minCLevel() is the minimum, ZSTD_maxCLevel() is the maximum.
 fn zstd_level(level: CompressionLevel) -> i32 {
+    use crate::algorithm::{ZSTD_BEST_LEVEL, ZSTD_DEFAULT_LEVEL, ZSTD_FAST_LEVEL};
     match level {
         CompressionLevel::None => 0,
-        CompressionLevel::Fast => 1,
-        CompressionLevel::Default => 3,
-        CompressionLevel::Best => 19,
+        CompressionLevel::Fast => ZSTD_FAST_LEVEL,
+        CompressionLevel::Default => ZSTD_DEFAULT_LEVEL,
+        CompressionLevel::Best => ZSTD_BEST_LEVEL,
         CompressionLevel::Precise(value) => i32::from(value.get()),
     }
 }
