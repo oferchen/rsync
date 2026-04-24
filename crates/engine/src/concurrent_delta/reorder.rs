@@ -703,15 +703,15 @@ mod tests {
 
         // Verify ordering by sequence.
         assert_eq!(drained[0].sequence(), 0);
-        assert_eq!(drained[0].ndx(), 10);
+        assert_eq!(drained[0].ndx().get(), 10);
         assert!(drained[0].is_success());
 
         assert_eq!(drained[1].sequence(), 1);
-        assert_eq!(drained[1].ndx(), 15);
+        assert_eq!(drained[1].ndx().get(), 15);
         assert!(drained[1].needs_retry());
 
         assert_eq!(drained[2].sequence(), 2);
-        assert_eq!(drained[2].ndx(), 20);
+        assert_eq!(drained[2].ndx().get(), 20);
         assert!(drained[2].is_success());
         assert_eq!(drained[2].bytes_written(), 2000);
     }

@@ -174,7 +174,7 @@ mod tests {
         let work = DeltaWork::whole_file(1, PathBuf::from("/dest/a.txt"), 2048);
         let result = strategy.process(&work);
         assert!(result.is_success());
-        assert_eq!(result.ndx(), 1);
+        assert_eq!(result.ndx().get(), 1);
         assert_eq!(result.bytes_written(), 2048);
         assert_eq!(result.literal_bytes(), 2048);
         assert_eq!(result.matched_bytes(), 0);
@@ -199,7 +199,7 @@ mod tests {
         );
         let result = strategy.process(&work);
         assert!(result.is_success());
-        assert_eq!(result.ndx(), 5);
+        assert_eq!(result.ndx().get(), 5);
         assert_eq!(result.bytes_written(), 4096);
         assert_eq!(result.matched_bytes(), 2896);
         assert_eq!(result.literal_bytes(), 1200);
@@ -237,7 +237,7 @@ mod tests {
         let work = DeltaWork::whole_file(3, PathBuf::from("/dest/c.txt"), 512);
         let result = dispatch(&work);
         assert!(result.is_success());
-        assert_eq!(result.ndx(), 3);
+        assert_eq!(result.ndx().get(), 3);
         assert_eq!(result.literal_bytes(), 512);
         assert_eq!(result.matched_bytes(), 0);
     }
@@ -254,7 +254,7 @@ mod tests {
         );
         let result = dispatch(&work);
         assert!(result.is_success());
-        assert_eq!(result.ndx(), 7);
+        assert_eq!(result.ndx().get(), 7);
         assert_eq!(result.bytes_written(), 1000);
         assert_eq!(result.matched_bytes(), 650);
         assert_eq!(result.literal_bytes(), 350);
@@ -356,7 +356,7 @@ mod tests {
         let results: Vec<DeltaResult> = items.iter().map(dispatch).collect();
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.sequence(), i as u64);
-            assert_eq!(r.ndx(), i as u32);
+            assert_eq!(r.ndx().get(), i as u32);
         }
     }
 }
