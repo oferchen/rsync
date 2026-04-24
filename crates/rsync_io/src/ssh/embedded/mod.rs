@@ -7,10 +7,14 @@
 pub mod cipher;
 
 #[cfg(feature = "embedded-ssh")]
+mod config;
+#[cfg(feature = "embedded-ssh")]
 mod error;
 #[cfg(feature = "embedded-ssh")]
 mod types;
 
+#[cfg(feature = "embedded-ssh")]
+pub use config::SshConfig;
 #[cfg(feature = "embedded-ssh")]
 pub use error::SshError;
 #[cfg(feature = "embedded-ssh")]
