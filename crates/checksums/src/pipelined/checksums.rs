@@ -42,7 +42,7 @@ pub struct BlockChecksums<D> {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use checksums::pipelined::{compute_checksums_pipelined, PipelineConfig};
 /// use checksums::strong::Md5;
 /// use std::io::Cursor;

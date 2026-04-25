@@ -96,24 +96,22 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use checksums::parallel::hash_files_parallel;
 /// use checksums::strong::Sha256;
-/// use std::path::PathBuf;
 ///
-/// let files = vec![
-///     PathBuf::from("file1.txt"),
-///     PathBuf::from("file2.txt"),
-/// ];
+/// let dir = tempfile::tempdir().unwrap();
+/// let file1 = dir.path().join("file1.txt");
+/// let file2 = dir.path().join("file2.txt");
+/// std::fs::write(&file1, b"hello").unwrap();
+/// std::fs::write(&file2, b"world").unwrap();
 ///
+/// let files = vec![file1, file2];
 /// let results = hash_files_parallel::<Sha256>(&files, 64 * 1024);
 ///
-/// for result in results {
-///     match result.digest {
-///         Ok(digest) => println!("{}: {:x?}", result.path.display(), digest.as_ref()),
-///         Err(e) => eprintln!("{}: error - {}", result.path.display(), e),
-///     }
-/// }
+/// assert_eq!(results.len(), 2);
+/// assert!(results[0].digest.is_ok());
+/// assert!(results[1].digest.is_ok());
 /// ```
 pub fn hash_files_parallel<D>(
     paths: &[PathBuf],
@@ -135,17 +133,22 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use checksums::parallel::{hash_files_parallel_with_config, FileHashConfig};
 /// use checksums::strong::Md5;
-/// use std::path::PathBuf;
+///
+/// let dir = tempfile::tempdir().unwrap();
+/// let path = dir.path().join("data.bin");
+/// std::fs::write(&path, b"test data").unwrap();
 ///
 /// let config = FileHashConfig::new()
 ///     .with_buffer_size(128 * 1024)
 ///     .with_max_memory_file_size(4 * 1024 * 1024);
 ///
-/// let files: Vec<PathBuf> = vec![/* ... */];
+/// let files = vec![path];
 /// let results = hash_files_parallel_with_config::<Md5>(&files, &config);
+/// assert_eq!(results.len(), 1);
+/// assert!(results[0].digest.is_ok());
 /// ```
 pub fn hash_files_parallel_with_config<D>(
     paths: &[PathBuf],
@@ -172,14 +175,19 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use checksums::parallel::hash_files_with_seed_parallel;
 /// use checksums::strong::Xxh64;
-/// use std::path::PathBuf;
 ///
-/// let files: Vec<PathBuf> = vec![/* ... */];
+/// let dir = tempfile::tempdir().unwrap();
+/// let path = dir.path().join("data.bin");
+/// std::fs::write(&path, b"seeded hash input").unwrap();
+///
+/// let files = vec![path];
 /// let seed = 0x12345678u64;
 /// let results = hash_files_with_seed_parallel::<Xxh64>(&files, seed, 64 * 1024);
+/// assert_eq!(results.len(), 1);
+/// assert!(results[0].digest.is_ok());
 /// ```
 pub fn hash_files_with_seed_parallel<D>(
     paths: &[PathBuf],
@@ -275,19 +283,18 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use checksums::parallel::compute_file_signatures_parallel;
 /// use checksums::strong::Md5;
-/// use std::path::PathBuf;
 ///
-/// let files: Vec<PathBuf> = vec![/* ... */];
+/// let dir = tempfile::tempdir().unwrap();
+/// let path = dir.path().join("test.bin");
+/// std::fs::write(&path, b"block signature test data").unwrap();
+///
+/// let files = vec![path];
 /// let results = compute_file_signatures_parallel::<Md5>(&files, 8192, 64 * 1024);
-///
-/// for result in results {
-///     if let Ok(sigs) = result.signatures {
-///         println!("{}: {} blocks", result.path.display(), sigs.len());
-///     }
-/// }
+/// assert_eq!(results.len(), 1);
+/// assert!(results[0].signatures.is_ok());
 /// ```
 pub fn compute_file_signatures_parallel<D>(
     paths: &[PathBuf],

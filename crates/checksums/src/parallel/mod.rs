@@ -8,23 +8,22 @@
 //!
 //! The module provides functions for hashing multiple files concurrently:
 //!
-//! ```ignore
-//! use checksums::parallel::{hash_files_parallel, FileHashResult};
+//! ```
+//! use checksums::parallel::hash_files_parallel;
 //! use checksums::strong::Sha256;
-//! use std::path::PathBuf;
 //!
-//! let files = vec![
-//!     PathBuf::from("/path/to/file1"),
-//!     PathBuf::from("/path/to/file2"),
-//! ];
+//! let dir = tempfile::tempdir().unwrap();
+//! let file1 = dir.path().join("file1");
+//! let file2 = dir.path().join("file2");
+//! std::fs::write(&file1, b"data1").unwrap();
+//! std::fs::write(&file2, b"data2").unwrap();
 //!
+//! let files = vec![file1, file2];
 //! let results = hash_files_parallel::<Sha256>(&files, 64 * 1024);
 //!
-//! for result in results {
-//!     match result.digest {
-//!         Ok(digest) => println!("{}: {:?}", result.path.display(), digest.as_ref()),
-//!         Err(e) => eprintln!("{}: error - {}", result.path.display(), e),
-//!     }
+//! assert_eq!(results.len(), 2);
+//! for result in &results {
+//!     assert!(result.digest.is_ok());
 //! }
 //! ```
 
