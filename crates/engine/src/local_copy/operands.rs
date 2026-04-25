@@ -282,7 +282,7 @@ pub(crate) fn has_trailing_separator(path: &OsStr) -> bool {
 pub(crate) fn operand_is_remote(path: &OsStr) -> bool {
     let text = path.to_string_lossy();
 
-    if text.starts_with("rsync://") {
+    if text.starts_with("rsync://") || text.starts_with("ssh://") {
         return true;
     }
 
@@ -404,6 +404,16 @@ mod tests {
     fn operand_is_remote_rsync_url() {
         assert!(operand_is_remote(OsStr::new("rsync://example.com/module")));
         assert!(operand_is_remote(OsStr::new("rsync://user@host/path")));
+    }
+
+    #[test]
+    fn operand_is_remote_ssh_url() {
+        assert!(operand_is_remote(OsStr::new("ssh://host/path")));
+        assert!(operand_is_remote(OsStr::new("ssh://user@host/path")));
+        assert!(operand_is_remote(OsStr::new(
+            "ssh://user@host:2222/path/to/file"
+        )));
+        assert!(operand_is_remote(OsStr::new("ssh://host/~/data")));
     }
 
     #[test]
