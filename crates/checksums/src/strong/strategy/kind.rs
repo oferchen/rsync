@@ -80,6 +80,7 @@ impl ChecksumAlgorithmKind {
     ///
     /// Accepts canonical names and common aliases (case-insensitive).
     /// See upstream `compat.c` for the negotiation protocol.
+    #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "md4" => Some(Self::Md4),
