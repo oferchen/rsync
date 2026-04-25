@@ -56,6 +56,20 @@ impl ClientConfigBuilder {
         protect_args: Option<bool>,
     }
 
+    /// Configures the embedded SSH transport options.
+    ///
+    /// These options override `SshConfig` defaults when the `embedded-ssh`
+    /// feature is enabled and the transfer target uses an `ssh://` URL.
+    #[cfg(feature = "embedded-ssh")]
+    #[must_use]
+    pub fn embedded_ssh_config(
+        mut self,
+        config: Option<super::super::client::EmbeddedSshOptions>,
+    ) -> Self {
+        self.embedded_ssh_config = config;
+        self
+    }
+
     /// Configures the deadline at which the transfer should stop.
     #[must_use]
     #[doc(alias = "--stop-after")]
