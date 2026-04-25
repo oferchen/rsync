@@ -201,6 +201,7 @@ impl DeltaConsumer {
     ///
     /// Useful for polling from a pipeline loop where blocking would stall
     /// the producer.
+    #[must_use]
     pub fn try_recv(&self) -> Option<DeltaResult> {
         self.result_rx.try_recv().ok()
     }
@@ -210,6 +211,7 @@ impl DeltaConsumer {
     /// The iterator blocks waiting for the next result and terminates when
     /// all results have been delivered (the background thread finishes and
     /// the internal channel closes).
+    #[must_use]
     pub fn iter(&self) -> DeltaConsumerIter<'_> {
         DeltaConsumerIter {
             rx: &self.result_rx,

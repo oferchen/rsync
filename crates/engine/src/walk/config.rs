@@ -151,6 +151,7 @@ impl WalkConfig {
     }
 
     /// Returns the maximum depth, if set.
+    #[must_use]
     pub const fn get_max_depth(&self) -> Option<NonZeroUsize> {
         self.max_depth
     }

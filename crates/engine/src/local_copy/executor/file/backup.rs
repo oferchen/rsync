@@ -21,6 +21,7 @@ use crate::local_copy::create_symlink;
 /// # Upstream Reference
 ///
 /// - `backup.c:get_backup_name()` - path computation for backup files
+#[must_use]
 pub fn compute_backup_path(
     destination_root: &Path,
     destination: &Path,

@@ -54,6 +54,7 @@ impl WalkEntry {
     /// Returns the file name of this entry.
     ///
     /// Returns `None` if the path terminates in `..` or is the root.
+    #[must_use]
     pub fn file_name(&self) -> Option<&std::ffi::OsStr> {
         self.path.file_name()
     }

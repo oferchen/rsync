@@ -48,6 +48,7 @@ pub enum SparseRegion {
 
 impl SparseRegion {
     /// Returns the starting offset of this region.
+    #[must_use]
     pub const fn offset(&self) -> u64 {
         match self {
             Self::Data { offset, .. } | Self::Hole { offset, .. } => *offset,
@@ -55,6 +56,7 @@ impl SparseRegion {
     }
 
     /// Returns the length of this region in bytes.
+    #[must_use]
     pub const fn length(&self) -> u64 {
         match self {
             Self::Data { length, .. } | Self::Hole { length, .. } => *length,
@@ -62,11 +64,13 @@ impl SparseRegion {
     }
 
     /// Returns true if this is a hole (sparse) region.
+    #[must_use]
     pub const fn is_hole(&self) -> bool {
         matches!(self, Self::Hole { .. })
     }
 
     /// Returns true if this is a data region.
+    #[must_use]
     pub const fn is_data(&self) -> bool {
         matches!(self, Self::Data { .. })
     }
