@@ -118,8 +118,9 @@ fn algorithm_kind_default_levels() {
 
 #[test]
 fn algorithm_kind_for_protocol_version_follows_rsync_defaults() {
-    // Protocol < 36 should use Zlib
-    for version in 27..36 {
+    // Protocol < 30 has no vstring negotiation; upstream default is Zlib
+    // (compat.c:556-563).
+    for version in 27..30 {
         assert_eq!(
             CompressionAlgorithmKind::for_protocol_version(version),
             CompressionAlgorithmKind::Zlib,
@@ -127,10 +128,11 @@ fn algorithm_kind_for_protocol_version_follows_rsync_defaults() {
         );
     }
 
-    // Protocol >= 36 should use Zstd (if available)
+    // Protocol 30+ defaults to Zstd when SUPPORT_ZSTD is defined
+    // (upstream: compat.c:101-102 valid_compressions_items[]).
     #[cfg(feature = "zstd")]
     {
-        for version in 36..40 {
+        for version in 30..40 {
             assert_eq!(
                 CompressionAlgorithmKind::for_protocol_version(version),
                 CompressionAlgorithmKind::Zstd,
@@ -141,7 +143,7 @@ fn algorithm_kind_for_protocol_version_follows_rsync_defaults() {
 
     #[cfg(not(feature = "zstd"))]
     {
-        for version in 36..40 {
+        for version in 30..40 {
             assert_eq!(
                 CompressionAlgorithmKind::for_protocol_version(version),
                 CompressionAlgorithmKind::Zlib,
@@ -370,16 +372,23 @@ fn lz4_strategy_empty_input() {
 
 #[test]
 fn selector_for_protocol_version_creates_correct_strategy() {
-    // Protocol 30 should use Zlib
+    // Pre-30 always returns Zlib (upstream: compat.c:556-563 - no vstring
+    // negotiation, fallback codec is "zlib").
+    let strategy = CompressionStrategySelector::for_protocol_version(28);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+
+    let strategy = CompressionStrategySelector::for_protocol_version(29);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+
+    // Protocol 30+ defaults to Zstd when the feature is compiled in
+    // (upstream: compat.c:101-102 valid_compressions_items[]).
     let strategy = CompressionStrategySelector::for_protocol_version(30);
+    #[cfg(feature = "zstd")]
+    assert_eq!(strategy.algorithm_name(), "zstd");
+    #[cfg(not(feature = "zstd"))]
     assert_eq!(strategy.algorithm_name(), "zlib");
 
-    // Protocol 35 should use Zlib
-    let strategy = CompressionStrategySelector::for_protocol_version(35);
-    assert_eq!(strategy.algorithm_name(), "zlib");
-
-    // Protocol 36 should use Zstd (if available)
-    let strategy = CompressionStrategySelector::for_protocol_version(36);
+    let strategy = CompressionStrategySelector::for_protocol_version(32);
     #[cfg(feature = "zstd")]
     assert_eq!(strategy.algorithm_name(), "zstd");
     #[cfg(not(feature = "zstd"))]
