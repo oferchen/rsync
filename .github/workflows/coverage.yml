@@ -30,6 +30,9 @@ env:
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "full"
   CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
+  # Override rust-toolchain.toml (which pins 1.88.0) so cargo-llvm-cov can use
+  # the unstable -Z coverage-options=branch flag, which requires nightly.
+  RUSTUP_TOOLCHAIN: nightly
 
 jobs:
   coverage:
