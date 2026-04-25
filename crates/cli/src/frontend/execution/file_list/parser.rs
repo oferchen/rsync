@@ -103,7 +103,7 @@ fn operand_has_windows_prefix(path: &OsStr) -> bool {
 pub(crate) fn operand_is_remote(path: &OsStr) -> bool {
     let text = path.to_string_lossy();
 
-    if text.starts_with("rsync://") {
+    if text.starts_with("rsync://") || text.starts_with("ssh://") {
         return true;
     }
 
