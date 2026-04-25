@@ -4,7 +4,8 @@
 //! [`BufferPool`](super::BufferPool). When a rayon worker acquires a buffer,
 //! the thread-local slot is checked first (zero synchronization, ~2 ns). On
 //! return, the buffer is stored in the slot if empty, avoiding the central
-//! pool's `Mutex` entirely for the common single-buffer-per-thread pattern.
+//! pool's lock-free queue entirely for the common single-buffer-per-thread
+//! pattern.
 //!
 //! # Design
 //!
