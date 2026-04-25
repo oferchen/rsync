@@ -145,20 +145,24 @@ pub trait StrongDigest: Sized {
     }
 
     /// Creates a new hasher using the provided seed value.
+    #[must_use]
     fn with_seed(seed: Self::Seed) -> Self;
 
     /// Feeds additional bytes into the digest state.
     fn update(&mut self, data: &[u8]);
 
     /// Finalises the digest and returns the resulting hash.
+    #[must_use]
     fn finalize(self) -> Self::Digest;
 
     /// Convenience helper that hashes `data` in a single call.
+    #[must_use]
     fn digest(data: &[u8]) -> Self::Digest {
         Self::digest_with_seed(Default::default(), data)
     }
 
     /// Convenience helper that hashes `data` using an explicit seed value.
+    #[must_use]
     fn digest_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Digest {
         let mut hasher = Self::with_seed(seed);
         hasher.update(data);
