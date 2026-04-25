@@ -18,14 +18,14 @@ use super::{RemoteOperandParsed, RemoteOperands, TransferSpec};
 
 /// Checks if an operand represents a remote path.
 ///
-/// Detects `rsync://` URLs, double-colon daemon syntax (`host::module`), and
-/// single-colon SSH syntax (`host:path`). This mirrors upstream
+/// Detects `rsync://` URLs, `ssh://` URLs, double-colon daemon syntax
+/// (`host::module`), and single-colon SSH syntax (`host:path`). This mirrors upstream
 /// `main.c:check_for_hostspec()`. A simplified version that matches the logic in
 /// `engine::local_copy::operand_is_remote` which is not public.
 pub fn operand_is_remote(path: &OsStr) -> bool {
     let text = path.to_string_lossy();
 
-    if text.starts_with("rsync://") {
+    if text.starts_with("rsync://") || text.starts_with("ssh://") {
         return true;
     }
 

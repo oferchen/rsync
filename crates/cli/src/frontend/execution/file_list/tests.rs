@@ -16,6 +16,16 @@ fn operand_is_remote_rsync_url() {
 }
 
 #[test]
+fn operand_is_remote_ssh_url() {
+    assert!(operand_is_remote(OsStr::new("ssh://host/path")));
+    assert!(operand_is_remote(OsStr::new("ssh://user@host/path")));
+    assert!(operand_is_remote(OsStr::new(
+        "ssh://user@host:2222/path/to/file"
+    )));
+    assert!(operand_is_remote(OsStr::new("ssh://host/~/data")));
+}
+
+#[test]
 fn operand_is_remote_double_colon() {
     assert!(operand_is_remote(OsStr::new("host::module")));
     assert!(operand_is_remote(OsStr::new("user@host::module/path")));

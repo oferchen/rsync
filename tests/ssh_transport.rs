@@ -252,6 +252,14 @@ fn test_ssh_operand_detection() {
     assert!(operand_is_remote(&OsString::from(
         "rsync://host/module/path"
     )));
+    assert!(operand_is_remote(&OsString::from("ssh://host/path")));
+    assert!(operand_is_remote(&OsString::from(
+        "ssh://user@host/path/to/file"
+    )));
+    assert!(operand_is_remote(&OsString::from(
+        "ssh://user@host:2222/path"
+    )));
+    assert!(operand_is_remote(&OsString::from("ssh://host/~/data")));
     assert!(operand_is_remote(&OsString::from("host::module/path")));
 
     // Test non-remote operands
