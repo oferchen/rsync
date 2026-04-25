@@ -35,6 +35,7 @@ pub const DEFLATED_DATA: u8 = 0x40;
 pub const MAX_BLOCK_SIZE: usize = 16383;
 
 /// Maximum decompressed size to prevent memory exhaustion attacks.
+///
 /// Set to 64 MiB which is larger than any reasonable rsync block.
 /// Upstream rsync uses 128KB blocks max, but we allow for larger custom configs.
 pub const MAX_DECOMPRESSED_SIZE: usize = 64 * 1024 * 1024;
@@ -327,7 +328,7 @@ pub const fn compressed_size_from_header(header: [u8; 2]) -> Option<usize> {
 
 impl From<lz4_flex::block::CompressError> for RawLz4Error {
     fn from(e: lz4_flex::block::CompressError) -> Self {
-        RawLz4Error::Io(io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+        Self::Io(io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
     }
 }
 
@@ -335,7 +336,7 @@ impl From<RawLz4Error> for io::Error {
     fn from(e: RawLz4Error) -> Self {
         match e {
             RawLz4Error::Io(io_err) => io_err,
-            other => io::Error::new(io::ErrorKind::InvalidData, other.to_string()),
+            other => Self::new(io::ErrorKind::InvalidData, other.to_string()),
         }
     }
 }

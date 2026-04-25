@@ -108,3 +108,6 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "transfer_benchmark"
 harness = false
+
+[lints]
+workspace = true

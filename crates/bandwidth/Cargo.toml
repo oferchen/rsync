@@ -45,3 +45,6 @@ required-features = ["test-support"]
 [[test]]
 name = "bwlimit_scenarios"
 required-features = ["test-support"]
+
+[lints]
+workspace = true

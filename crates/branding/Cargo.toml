@@ -22,3 +22,6 @@ toml = "1.1"
 
 [build-dependencies]
 toml = "1.1"
+
+[lints]
+workspace = true

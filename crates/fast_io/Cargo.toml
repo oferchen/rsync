@@ -84,3 +84,6 @@ harness = false
 [[bench]]
 name = "platform_copy"
 harness = false
+
+[lints]
+workspace = true

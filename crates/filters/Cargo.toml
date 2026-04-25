@@ -26,3 +26,6 @@ tracing = ["dep:tracing"]
 proptest = "1.4"
 tempfile = "3.15"
 test-support = { path = "../test-support" }
+
+[lints]
+workspace = true

@@ -158,11 +158,9 @@ impl RsyncLayer {
     }
 
     /// Map a tracing level to a verbosity level.
-    const fn level_to_verbosity_level(level: &Level) -> u8 {
-        match *level {
-            Level::ERROR => 1,
-            Level::WARN => 1,
-            Level::INFO => 1,
+    const fn level_to_verbosity_level(level: Level) -> u8 {
+        match level {
+            Level::ERROR | Level::WARN | Level::INFO => 1,
             Level::DEBUG => 2,
             Level::TRACE => 3,
         }
@@ -177,7 +175,7 @@ where
         let metadata = event.metadata();
         let target = metadata.target();
         let level = metadata.level();
-        let verbosity_level = Self::level_to_verbosity_level(level);
+        let verbosity_level = Self::level_to_verbosity_level(*level);
 
         // Try to map to debug flag first (more specific)
         if let Some(debug_flag) = Self::target_to_debug_flag(target) {
@@ -334,11 +332,11 @@ mod tests {
 
     #[test]
     fn test_level_to_verbosity_level() {
-        assert_eq!(RsyncLayer::level_to_verbosity_level(&Level::ERROR), 1);
-        assert_eq!(RsyncLayer::level_to_verbosity_level(&Level::WARN), 1);
-        assert_eq!(RsyncLayer::level_to_verbosity_level(&Level::INFO), 1);
-        assert_eq!(RsyncLayer::level_to_verbosity_level(&Level::DEBUG), 2);
-        assert_eq!(RsyncLayer::level_to_verbosity_level(&Level::TRACE), 3);
+        assert_eq!(RsyncLayer::level_to_verbosity_level(Level::ERROR), 1);
+        assert_eq!(RsyncLayer::level_to_verbosity_level(Level::WARN), 1);
+        assert_eq!(RsyncLayer::level_to_verbosity_level(Level::INFO), 1);
+        assert_eq!(RsyncLayer::level_to_verbosity_level(Level::DEBUG), 2);
+        assert_eq!(RsyncLayer::level_to_verbosity_level(Level::TRACE), 3);
     }
 }
 

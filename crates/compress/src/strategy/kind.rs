@@ -99,9 +99,8 @@ impl CompressionAlgorithmKind {
             return Self::Zstd;
             #[cfg(not(feature = "zstd"))]
             return Self::Zlib;
-        } else {
-            Self::Zlib
         }
+        Self::Zlib
     }
 }
 

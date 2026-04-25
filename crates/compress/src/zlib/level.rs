@@ -56,11 +56,11 @@ impl CompressionLevel {
 impl From<CompressionLevel> for Compression {
     fn from(level: CompressionLevel) -> Self {
         match level {
-            CompressionLevel::None => Compression::none(),
-            CompressionLevel::Fast => Compression::fast(),
-            CompressionLevel::Default => Compression::default(),
-            CompressionLevel::Best => Compression::best(),
-            CompressionLevel::Precise(value) => Compression::new(u32::from(value.get())),
+            CompressionLevel::None => Self::none(),
+            CompressionLevel::Fast => Self::fast(),
+            CompressionLevel::Default => Self::default(),
+            CompressionLevel::Best => Self::best(),
+            CompressionLevel::Precise(value) => Self::new(u32::from(value.get())),
         }
     }
 }

@@ -13,7 +13,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 /// Returns the global buffer where test sleep durations are accumulated.
-pub(crate) fn recorded_sleeps() -> &'static Mutex<Vec<Duration>> {
+pub fn recorded_sleeps() -> &'static Mutex<Vec<Duration>> {
     static RECORDED_SLEEPS: OnceLock<Mutex<Vec<Duration>>> = OnceLock::new();
     RECORDED_SLEEPS.get_or_init(|| Mutex::new(Vec::new()))
 }
@@ -24,20 +24,20 @@ fn recorded_sleep_session_lock() -> &'static Mutex<()> {
 }
 
 /// Appends the given sleep chunks to the global recorded buffer.
-pub(crate) fn append_recorded_sleeps(chunks: Vec<Duration>) {
+pub fn append_recorded_sleeps(chunks: Vec<Duration>) {
     lock_recorded_sleeps().extend(chunks);
 }
 
 fn lock_recorded_sleeps() -> MutexGuard<'static, Vec<Duration>> {
     recorded_sleeps()
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn lock_recorded_sleep_session() -> MutexGuard<'static, ()> {
     recorded_sleep_session_lock()
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg_attr(docsrs, doc(cfg(feature = "test-support")))]
@@ -54,15 +54,15 @@ pub struct RecordedSleepSession<'a> {
     _guard: MutexGuard<'a, ()>,
 }
 
-impl<'a> RecordedSleepSession<'a> {
+impl RecordedSleepSession<'_> {
     #[inline]
-    fn with_recorded_sleeps<R>(&self, op: impl FnOnce(&[Duration]) -> R) -> R {
+    fn with_recorded_sleeps<R>(op: impl FnOnce(&[Duration]) -> R) -> R {
         let guard = lock_recorded_sleeps();
         op(guard.as_slice())
     }
 
     #[inline]
-    fn with_recorded_sleeps_mut<R>(&self, op: impl FnOnce(&mut Vec<Duration>) -> R) -> R {
+    fn with_recorded_sleeps_mut<R>(op: impl FnOnce(&mut Vec<Duration>) -> R) -> R {
         let mut guard = lock_recorded_sleeps();
         op(guard.as_mut())
     }
@@ -70,21 +70,21 @@ impl<'a> RecordedSleepSession<'a> {
     /// Removes any previously recorded durations.
     #[inline]
     pub fn clear(&mut self) {
-        self.with_recorded_sleeps_mut(|durations| durations.clear());
+        Self::with_recorded_sleeps_mut(Vec::clear);
     }
 
     /// Returns `true` when no sleep durations have been recorded.
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.with_recorded_sleeps(|durations| durations.is_empty())
+        Self::with_recorded_sleeps(<[Duration]>::is_empty)
     }
 
     /// Returns the number of recorded sleep intervals.
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
-        self.with_recorded_sleeps(|durations| durations.len())
+        Self::with_recorded_sleeps(<[Duration]>::len)
     }
 
     /// Returns a snapshot of the recorded sleep durations without clearing them.
@@ -116,7 +116,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// ```
     #[inline]
     pub fn snapshot(&self) -> Vec<Duration> {
-        self.with_recorded_sleeps(|durations| durations.to_vec())
+        Self::with_recorded_sleeps(<[Duration]>::to_vec)
     }
 
     /// Returns the most recently recorded sleep duration without draining the buffer.
@@ -147,7 +147,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// ```
     #[inline]
     pub fn last_duration(&self) -> Option<Duration> {
-        self.with_recorded_sleeps(|durations| durations.last().copied())
+        Self::with_recorded_sleeps(|durations| durations.last().copied())
     }
 
     /// Returns the cumulative duration of all recorded sleeps without consuming them.
@@ -181,18 +181,18 @@ impl<'a> RecordedSleepSession<'a> {
     #[inline]
     #[must_use]
     pub fn total_duration(&self) -> Duration {
-        self.with_recorded_sleeps(|durations| {
+        Self::with_recorded_sleeps(|durations| {
             durations
                 .iter()
                 .copied()
-                .fold(Duration::ZERO, |acc, chunk| acc.saturating_add(chunk))
+                .fold(Duration::ZERO, Duration::saturating_add)
         })
     }
 
     /// Drains the recorded sleep durations, returning ownership of the vector.
     #[inline]
     pub fn take(&mut self) -> Vec<Duration> {
-        self.with_recorded_sleeps_mut(mem::take)
+        Self::with_recorded_sleeps_mut(mem::take)
     }
 
     /// Consumes the session and returns the recorded durations.
@@ -248,6 +248,17 @@ impl<'a> RecordedSleepSession<'a> {
             _session: PhantomData,
         }
     }
+
+    /// Returns a read-only iterator - identical to [`iter`](Self::iter).
+    ///
+    /// The recorded sleep buffer is behind a mutex, so mutation is performed
+    /// through [`clear`](Self::clear) or [`take`](Self::take) rather than via
+    /// the iterator. This method exists to satisfy the `IntoIterator for &mut`
+    /// contract.
+    #[inline]
+    pub fn iter_mut(&mut self) -> RecordedSleepIter<'_> {
+        self.iter()
+    }
 }
 
 /// Converts a [`RecordedSleepSession`] into an iterator over the captured durations.
@@ -275,7 +286,7 @@ impl<'a> RecordedSleepSession<'a> {
 /// assert_eq!(durations.len(), 1);
 /// # }
 /// ```
-impl<'a> IntoIterator for RecordedSleepSession<'a> {
+impl IntoIterator for RecordedSleepSession<'_> {
     type Item = Duration;
     type IntoIter = std::vec::IntoIter<Duration>;
 

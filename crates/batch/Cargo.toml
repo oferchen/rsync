@@ -21,3 +21,6 @@ filetime = "0.2"
 [dev-dependencies]
 tempfile = "3.15"
 protocol = { path = "../protocol" }
+
+[lints]
+workspace = true

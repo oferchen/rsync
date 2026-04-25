@@ -15,7 +15,7 @@ mod components;
 mod numeric;
 
 pub use components::BandwidthLimitComponents;
-pub(crate) use numeric::pow_u128;
+pub use numeric::pow_u128;
 
 use numeric::parse_decimal_with_exponent;
 
@@ -198,16 +198,20 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         .ok_or(BandwidthParseError::TooLarge)?;
     let mut denominator = denominator;
 
-    if decimal_exponent > 0 {
-        let factor = pow_u128(10, decimal_exponent.unsigned_abs())?;
-        numerator = numerator
-            .checked_mul(factor)
-            .ok_or(BandwidthParseError::TooLarge)?;
-    } else if decimal_exponent < 0 {
-        let factor = pow_u128(10, decimal_exponent.unsigned_abs())?;
-        denominator = denominator
-            .checked_mul(factor)
-            .ok_or(BandwidthParseError::TooLarge)?;
+    match decimal_exponent.cmp(&0) {
+        std::cmp::Ordering::Greater => {
+            let factor = pow_u128(10, decimal_exponent.unsigned_abs())?;
+            numerator = numerator
+                .checked_mul(factor)
+                .ok_or(BandwidthParseError::TooLarge)?;
+        }
+        std::cmp::Ordering::Less => {
+            let factor = pow_u128(10, decimal_exponent.unsigned_abs())?;
+            denominator = denominator
+                .checked_mul(factor)
+                .ok_or(BandwidthParseError::TooLarge)?;
+        }
+        std::cmp::Ordering::Equal => {}
     }
 
     let product = numerator

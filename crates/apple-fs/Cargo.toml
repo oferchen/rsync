@@ -12,3 +12,6 @@ nix = { version = "0.29", default-features = false, features = ["fs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 unicode-normalization = "0.1"
+
+[lints]
+workspace = true

@@ -21,31 +21,31 @@ pub use change::{LimiterChange, apply_effective_limit};
 pub use core::BandwidthLimiter;
 pub use sleep::LimiterSleep;
 
-pub(super) use sleep::{duration_from_microseconds, sleep_for};
+pub use sleep::{duration_from_microseconds, sleep_for};
 
 /// One million microseconds per second.
 // upstream: io.c:sleep_for_bwlimit() ONE_SEC macro
-pub(super) const MICROS_PER_SECOND: u128 = 1_000_000;
+pub const MICROS_PER_SECOND: u128 = 1_000_000;
 
 /// Minimum accumulated debt before the limiter actually sleeps.
 // upstream: io.c:sleep_for_bwlimit() - `ONE_SEC / 10` threshold
-pub(super) const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
+pub const MINIMUM_SLEEP_MICROS: u128 = MICROS_PER_SECOND / 10;
 
 /// Largest microsecond value representable as a `Duration`.
-pub(super) const MAX_REPRESENTABLE_MICROSECONDS: u128 =
+pub const MAX_REPRESENTABLE_MICROSECONDS: u128 =
     (u64::MAX as u128) * MICROS_PER_SECOND + (MICROS_PER_SECOND - 1);
 
 /// Upper bound for a single `select()`-style sleep call.
-pub(super) const MAX_SLEEP_DURATION: Duration = Duration::new(i64::MAX as u64, 999_999_999);
+pub const MAX_SLEEP_DURATION: Duration = Duration::new(i64::MAX as u64, 999_999_999);
 
 /// Floor for the per-write chunk size.
 // upstream: options.c:2378 - `if (bwlimit_writemax < 512) bwlimit_writemax = 512`
-pub(super) const MIN_WRITE_MAX: usize = 512;
+pub const MIN_WRITE_MAX: usize = 512;
 
 #[cfg(any(test, feature = "test-support"))]
 mod test_support;
 #[cfg(any(test, feature = "test-support"))]
-pub(super) use self::test_support::append_recorded_sleeps;
+pub use self::test_support::append_recorded_sleeps;
 #[cfg(any(test, feature = "test-support"))]
 pub use self::test_support::{RecordedSleepIter, RecordedSleepSession, recorded_sleep_session};
 

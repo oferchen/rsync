@@ -113,3 +113,6 @@ harness = false
 [[bench]]
 name = "reorder_buffer_benchmark"
 harness = false
+
+[lints]
+workspace = true

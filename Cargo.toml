@@ -101,6 +101,9 @@ async = ["daemon/async", "core/async"]
 # systemd sd-notify integration for daemon
 sd-notify = ["daemon/sd-notify"]
 
+[lints]
+workspace = true
+
 [dependencies]
 cli = { path = "crates/cli", default-features = false }
 daemon = { path = "crates/daemon", default-features = false }
@@ -213,6 +216,14 @@ all-features = true
 no-default-features = false
 rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
+
+# ============================================================================
+# Rust Compiler Lints - Workspace-Wide Enforcement
+# ============================================================================
+
+[workspace.lints.rust]
+unused_imports = "deny"
+dead_code = "deny"
 
 # ============================================================================
 # Clippy Lints - Strict Code Quality Configuration

@@ -43,11 +43,11 @@ impl CompressionAlgorithm {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
-            CompressionAlgorithm::Zlib => "zlib",
+            Self::Zlib => "zlib",
             #[cfg(feature = "lz4")]
-            CompressionAlgorithm::Lz4 => "lz4",
+            Self::Lz4 => "lz4",
             #[cfg(feature = "zstd")]
-            CompressionAlgorithm::Zstd => "zstd",
+            Self::Zstd => "zstd",
         }
     }
 
@@ -59,21 +59,21 @@ impl CompressionAlgorithm {
     pub const fn default_algorithm() -> Self {
         #[cfg(feature = "zstd")]
         {
-            CompressionAlgorithm::Zstd
+            Self::Zstd
         }
         #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
         {
-            CompressionAlgorithm::Lz4
+            Self::Lz4
         }
         #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
         {
-            CompressionAlgorithm::Zlib
+            Self::Zlib
         }
     }
 
     /// Returns the set of algorithms available in the current build.
     #[must_use]
-    pub const fn available() -> &'static [CompressionAlgorithm] {
+    pub const fn available() -> &'static [Self] {
         #[cfg(all(feature = "zstd", feature = "lz4"))]
         {
             const ALGORITHMS: &[CompressionAlgorithm] = &[
@@ -369,11 +369,11 @@ impl FromStr for CompressionAlgorithm {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "zlib" | "zlibx" => Ok(CompressionAlgorithm::Zlib),
+            "zlib" | "zlibx" => Ok(Self::Zlib),
             #[cfg(feature = "lz4")]
-            "lz4" => Ok(CompressionAlgorithm::Lz4),
+            "lz4" => Ok(Self::Lz4),
             #[cfg(feature = "zstd")]
-            "zstd" => Ok(CompressionAlgorithm::Zstd),
+            "zstd" => Ok(Self::Zstd),
             other => Err(CompressionAlgorithmParseError::new(other.to_owned())),
         }
     }

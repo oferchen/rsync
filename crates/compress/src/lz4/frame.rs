@@ -196,8 +196,7 @@ pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> 
 
 fn frame_info_for_level(level: CompressionLevel) -> FrameInfo {
     let block_size = match level {
-        CompressionLevel::None => BlockSize::Max64KB,
-        CompressionLevel::Fast => BlockSize::Max64KB,
+        CompressionLevel::None | CompressionLevel::Fast => BlockSize::Max64KB,
         CompressionLevel::Default => BlockSize::Max256KB,
         CompressionLevel::Best => BlockSize::Max4MB,
         CompressionLevel::Precise(value) => match value.get() {

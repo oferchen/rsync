@@ -29,3 +29,6 @@ flate2 = "1.0"
 zstd = { version = "0.13", optional = true }
 lz4_flex = { version = "0.13", optional = true, default-features = false, features = ["frame", "safe-encode", "safe-decode"] }
 thiserror = "2.0"
+
+[lints]
+workspace = true

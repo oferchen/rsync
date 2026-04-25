@@ -180,7 +180,7 @@ impl CompressionDecider {
         // Check magic bytes if available and enabled
         if self.use_magic_detection {
             if let Some(data) = first_block {
-                if let Some(category) = self.detect_category_by_magic(data) {
+                if let Some(category) = Self::detect_category_by_magic(data) {
                     if !category.is_compressible() {
                         return CompressionDecision::Skip;
                     }
@@ -249,7 +249,7 @@ impl CompressionDecider {
     }
 
     /// Detects file category by examining magic bytes.
-    fn detect_category_by_magic(&self, data: &[u8]) -> Option<FileCategory> {
+    fn detect_category_by_magic(data: &[u8]) -> Option<FileCategory> {
         for sig in KNOWN_SIGNATURES {
             if sig.matches(data) {
                 // Special handling for RIFF container (can be AVI, WAV, or WEBP)
@@ -262,10 +262,9 @@ impl CompressionDecider {
                             b"WEBP" => FileCategory::Image,
                             _ => continue, // Unknown RIFF subtype, check other signatures
                         });
-                    } else {
-                        // Incomplete RIFF header - not enough data to determine type
-                        continue;
                     }
+                    // Incomplete RIFF header - not enough data to determine type
+                    continue;
                 }
 
                 return Some(sig.category);

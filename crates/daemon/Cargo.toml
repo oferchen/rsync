@@ -71,3 +71,6 @@ exacl = { workspace = true }
 [[bench]]
 name = "daemon_benchmark"
 harness = false
+
+[lints]
+workspace = true

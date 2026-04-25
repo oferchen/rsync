@@ -24,3 +24,6 @@ which = "6"
 toml_edit = "0.25"
 tempfile = "3.15"
 regex = "1"
+
+[lints]
+workspace = true

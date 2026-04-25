@@ -38,7 +38,6 @@ impl CompressionStrategySelector {
     pub fn for_protocol_version(protocol_version: u8) -> Box<dyn CompressionStrategy> {
         let kind = CompressionAlgorithmKind::for_protocol_version(protocol_version);
         Self::for_algorithm_kind(kind, kind.default_level())
-            .unwrap_or_else(|_| Box::new(ZlibStrategy::with_default_level()))
     }
 
     /// Creates a strategy for the specified algorithm kind with a given level.
@@ -63,21 +62,21 @@ impl CompressionStrategySelector {
         kind: CompressionAlgorithmKind,
         level: CompressionLevel,
     ) -> io::Result<Box<dyn CompressionStrategy>> {
-        Self::for_algorithm_kind(kind, level)
+        Ok(Self::for_algorithm_kind(kind, level))
     }
 
     /// Creates a strategy for the given algorithm kind and compression level.
     fn for_algorithm_kind(
         kind: CompressionAlgorithmKind,
         level: CompressionLevel,
-    ) -> io::Result<Box<dyn CompressionStrategy>> {
+    ) -> Box<dyn CompressionStrategy> {
         match kind {
-            CompressionAlgorithmKind::None => Ok(Box::new(NoCompressionStrategy::new())),
-            CompressionAlgorithmKind::Zlib => Ok(Box::new(ZlibStrategy::new(level))),
+            CompressionAlgorithmKind::None => Box::new(NoCompressionStrategy::new()),
+            CompressionAlgorithmKind::Zlib => Box::new(ZlibStrategy::new(level)),
             #[cfg(feature = "zstd")]
-            CompressionAlgorithmKind::Zstd => Ok(Box::new(ZstdStrategy::new(level))),
+            CompressionAlgorithmKind::Zstd => Box::new(ZstdStrategy::new(level)),
             #[cfg(feature = "lz4")]
-            CompressionAlgorithmKind::Lz4 => Ok(Box::new(Lz4Strategy::new(level))),
+            CompressionAlgorithmKind::Lz4 => Box::new(Lz4Strategy::new(level)),
         }
     }
 
@@ -117,9 +116,7 @@ impl CompressionStrategySelector {
     ) -> Box<dyn CompressionStrategy> {
         for &local_algo in local_algorithms {
             if remote_algorithms.contains(&local_algo) && local_algo.is_available() {
-                if let Ok(strategy) = Self::for_algorithm_kind(local_algo, level) {
-                    return strategy;
-                }
+                return Self::for_algorithm_kind(local_algo, level);
             }
         }
 

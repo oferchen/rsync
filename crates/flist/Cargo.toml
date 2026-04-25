@@ -34,3 +34,6 @@ default = []
 parallel = ["rayon", "dep:libc"]
 # Serialization support for file list types
 serde = ["dep:serde"]
+
+[lints]
+workspace = true

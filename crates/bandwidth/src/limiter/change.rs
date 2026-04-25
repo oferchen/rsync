@@ -87,8 +87,8 @@ impl PartialOrd for LimiterChange {
     }
 }
 
-impl FromIterator<LimiterChange> for LimiterChange {
-    fn from_iter<I: IntoIterator<Item = LimiterChange>>(iter: I) -> Self {
+impl FromIterator<Self> for LimiterChange {
+    fn from_iter<I: IntoIterator<Item = Self>>(iter: I) -> Self {
         Self::combine_all(iter)
     }
 }

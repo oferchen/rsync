@@ -11,3 +11,6 @@ description = "Shared test utilities for the oc-rsync workspace"
 
 [dependencies]
 tempfile = "3.15"
+
+[lints]
+workspace = true

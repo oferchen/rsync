@@ -24,33 +24,33 @@ impl Write for CountingSink {
     }
 }
 
-pub(crate) struct CountingWriter<W> {
+pub struct CountingWriter<W> {
     inner: W,
     bytes: u64,
 }
 
 impl<W> CountingWriter<W> {
-    pub(crate) const fn new(inner: W) -> Self {
+    pub const fn new(inner: W) -> Self {
         Self { inner, bytes: 0 }
     }
 
     #[inline]
-    pub(crate) const fn bytes(&self) -> u64 {
+    pub const fn bytes(&self) -> u64 {
         self.bytes
     }
 
     #[inline]
-    pub(crate) const fn inner_ref(&self) -> &W {
+    pub const fn inner_ref(&self) -> &W {
         &self.inner
     }
 
     #[inline]
-    pub(crate) const fn inner_mut(&mut self) -> &mut W {
+    pub const fn inner_mut(&mut self) -> &mut W {
         &mut self.inner
     }
 
     #[inline]
-    pub(crate) fn into_parts(self) -> (W, u64) {
+    pub fn into_parts(self) -> (W, u64) {
         (self.inner, self.bytes)
     }
 
@@ -59,7 +59,7 @@ impl<W> CountingWriter<W> {
     /// Saturation prevents overflow if the counter exceeds `u64::MAX` (unlikely
     /// in practice but provides a safety guarantee for very long-running streams).
     #[inline]
-    pub(crate) const fn saturating_add_bytes(&mut self, written: usize) {
+    pub const fn saturating_add_bytes(&mut self, written: usize) {
         self.bytes = self.bytes.saturating_add(written as u64);
     }
 }

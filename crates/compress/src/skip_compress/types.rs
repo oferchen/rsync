@@ -45,10 +45,9 @@ impl FileCategory {
     #[must_use]
     pub const fn is_compressible(self) -> bool {
         match self {
-            Self::Image | Self::Video | Self::Audio | Self::Archive => false,
-            Self::Document => false, // PDFs and Office docs are usually pre-compressed
-            Self::Text | Self::Data | Self::Executable => true,
-            Self::Unknown => true, // Optimistic default
+            // PDFs and Office docs are usually pre-compressed
+            Self::Image | Self::Video | Self::Audio | Self::Archive | Self::Document => false,
+            Self::Text | Self::Data | Self::Executable | Self::Unknown => true,
         }
     }
 }

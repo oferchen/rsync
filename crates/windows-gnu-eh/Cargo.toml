@@ -9,3 +9,6 @@ description = "Compatibility shims for x86_64-pc-windows-gnu DWARF unwinding - o
 
 [lib]
 path = "src/lib.rs"
+
+[lints]
+workspace = true

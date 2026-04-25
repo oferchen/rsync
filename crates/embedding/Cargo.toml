@@ -18,3 +18,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 cli = { path = "../cli" }
 daemon = { path = "../daemon" }
 core = { path = "../core" }
+
+[lints]
+workspace = true

@@ -19,3 +19,6 @@ core = { path = "../core", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[lints]
+workspace = true

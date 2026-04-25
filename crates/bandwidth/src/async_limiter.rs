@@ -91,7 +91,7 @@ impl AsyncRateLimiter {
         self.tokens = 0;
 
         // Calculate sleep duration: deficit / rate seconds.
-        let sleep_nanos = (deficit as u128) * 1_000_000_000 / (self.rate.get() as u128);
+        let sleep_nanos = u128::from(deficit) * 1_000_000_000 / u128::from(self.rate.get());
         let sleep_duration = Duration::from_nanos(sleep_nanos as u64);
 
         tokio::time::sleep(sleep_duration).await;
@@ -158,8 +158,8 @@ impl AsyncRateLimiter {
         // Calculate tokens earned: elapsed_secs * rate.
         // Use nanos for precision: (elapsed_nanos * rate) / 1_000_000_000.
         let elapsed_nanos = elapsed.as_nanos();
-        let earned = (elapsed_nanos * (self.rate.get() as u128)) / 1_000_000_000;
-        let earned = earned.min(u64::MAX as u128) as u64;
+        let earned = (elapsed_nanos * u128::from(self.rate.get())) / 1_000_000_000;
+        let earned = earned.min(u128::from(u64::MAX)) as u64;
 
         self.tokens = self.tokens.saturating_add(earned).min(self.burst);
     }

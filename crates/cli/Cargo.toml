@@ -79,3 +79,6 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "startup_benchmark"
 harness = false
+
+[lints]
+workspace = true

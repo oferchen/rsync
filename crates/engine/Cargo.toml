@@ -143,3 +143,6 @@ harness = false
 [[bench]]
 name = "buffer_pool_contention"
 harness = false
+
+[lints]
+workspace = true
