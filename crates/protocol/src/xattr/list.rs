@@ -129,6 +129,7 @@ impl XattrList {
     }
 }
 
+/// Consumes the list and yields owned `XattrEntry` values.
 impl IntoIterator for XattrList {
     type Item = XattrEntry;
     type IntoIter = std::vec::IntoIter<XattrEntry>;
@@ -138,6 +139,7 @@ impl IntoIterator for XattrList {
     }
 }
 
+/// Yields borrowed references to the xattr entries.
 impl<'a> IntoIterator for &'a XattrList {
     type Item = &'a XattrEntry;
     type IntoIter = std::slice::Iter<'a, XattrEntry>;
@@ -147,6 +149,7 @@ impl<'a> IntoIterator for &'a XattrList {
     }
 }
 
+/// Collects `XattrEntry` values into an `XattrList`.
 impl FromIterator<XattrEntry> for XattrList {
     fn from_iter<T: IntoIterator<Item = XattrEntry>>(iter: T) -> Self {
         Self {

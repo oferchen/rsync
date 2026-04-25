@@ -140,6 +140,7 @@ impl XattrSet {
     }
 }
 
+/// Yields borrowed references to the xattr definitions.
 impl<'a> IntoIterator for &'a XattrSet {
     type Item = &'a XattrDefinition;
     type IntoIter = std::slice::Iter<'a, XattrDefinition>;
@@ -149,6 +150,7 @@ impl<'a> IntoIterator for &'a XattrSet {
     }
 }
 
+/// Consumes the set and yields owned `XattrDefinition` values.
 impl IntoIterator for XattrSet {
     type Item = XattrDefinition;
     type IntoIter = std::vec::IntoIter<XattrDefinition>;
@@ -159,10 +161,24 @@ impl IntoIterator for XattrSet {
 }
 
 /// Result of receiving xattr data from the wire.
+///
+/// Returned by [`recv_xattr`](super::recv_xattr) to distinguish between
+/// a cache reference (the common case for files sharing the same xattrs)
+/// and a newly received literal xattr set.
+///
+/// # Upstream Reference
+///
+/// Mirrors the two branches of `xattrs.c:receive_xattr()`: `ndx != 0`
+/// yields a cache lookup, `ndx == 0` reads literal entry data.
 #[derive(Debug)]
 pub enum RecvXattrResult {
-    /// A cache index was received - look up in the xattr cache.
+    /// A previously cached xattr set is referenced by this 0-based index.
+    ///
+    /// Look up the corresponding `XattrList` in the `XattrCache`.
     CacheHit(u32),
-    /// Literal xattr data was received.
+    /// A new xattr set was received inline with full entry data.
+    ///
+    /// The entries have been parsed but names remain in wire format -
+    /// the caller must apply `wire_to_local()` for platform translation.
     Literal(XattrList),
 }
