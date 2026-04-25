@@ -348,4 +348,28 @@ mod tests {
                 .contains("mode value exceeds platform limits")
         );
     }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn create_fifo_noop_on_non_unix() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        fs::File::create(&source).expect("create source");
+        let metadata = fs::metadata(&source).expect("metadata");
+        let fifo_path = temp.path().join("fifo");
+        let result = create_fifo(&fifo_path, &metadata);
+        assert!(result.is_ok());
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn create_device_node_noop_on_non_unix() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let source = temp.path().join("source");
+        fs::File::create(&source).expect("create source");
+        let metadata = fs::metadata(&source).expect("metadata");
+        let device_path = temp.path().join("device");
+        let result = create_device_node(&device_path, &metadata);
+        assert!(result.is_ok());
+    }
 }

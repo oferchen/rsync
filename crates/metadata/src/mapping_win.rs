@@ -86,3 +86,77 @@ impl NameMapping {
         Err(MappingParseError)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mapping_kind_none_display() {
+        let kind = MappingKind::None;
+        let display = format!("{kind}");
+        assert!(display.contains("unsupported"));
+        assert!(display.contains("Windows"));
+    }
+
+    #[test]
+    fn mapping_parse_error_display() {
+        let err = MappingParseError;
+        let display = format!("{err}");
+        assert!(display.contains("not supported on Windows"));
+    }
+
+    #[test]
+    fn mapping_parse_error_is_std_error() {
+        let err = MappingParseError;
+        let _: &dyn std::error::Error = &err;
+    }
+
+    #[test]
+    fn user_mapping_parse_always_fails() {
+        assert!(UserMapping::parse("root:0").is_err());
+        assert!(UserMapping::parse("*:65534").is_err());
+        assert!(UserMapping::parse("").is_err());
+    }
+
+    #[test]
+    fn group_mapping_parse_always_fails() {
+        assert!(GroupMapping::parse("wheel:0").is_err());
+        assert!(GroupMapping::parse("*:65534").is_err());
+        assert!(GroupMapping::parse("").is_err());
+    }
+
+    #[test]
+    fn name_mapping_parse_always_fails() {
+        assert!(NameMapping::parse("user:group").is_err());
+        assert!(NameMapping::parse("root:root").is_err());
+        assert!(NameMapping::parse("").is_err());
+    }
+
+    #[test]
+    fn mapping_kind_debug() {
+        let kind = MappingKind::None;
+        let debug = format!("{kind:?}");
+        assert!(debug.contains("None"));
+    }
+
+    #[test]
+    fn mapping_parse_error_equality() {
+        assert_eq!(MappingParseError, MappingParseError);
+    }
+
+    #[test]
+    fn user_mapping_equality() {
+        assert_eq!(UserMapping, UserMapping);
+    }
+
+    #[test]
+    fn group_mapping_equality() {
+        assert_eq!(GroupMapping, GroupMapping);
+    }
+
+    #[test]
+    fn name_mapping_equality() {
+        assert_eq!(NameMapping, NameMapping);
+    }
+}

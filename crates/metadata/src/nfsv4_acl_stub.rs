@@ -86,3 +86,123 @@ pub fn sync_nfsv4_acls(
 pub fn has_nfsv4_acl(_path: &Path, _follow_symlinks: bool) -> bool {
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn nfs4_acl_xattr_constant_value() {
+        assert_eq!(NFS4_ACL_XATTR, "system.nfs4_acl");
+    }
+
+    #[test]
+    fn get_nfsv4_acl_returns_none() {
+        let path = Path::new("/nonexistent/file");
+        let result = get_nfsv4_acl(path, false).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn get_nfsv4_acl_follow_symlinks_returns_none() {
+        let path = Path::new("/nonexistent/file");
+        let result = get_nfsv4_acl(path, true).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn set_nfsv4_acl_with_none_returns_ok() {
+        let path = Path::new("/nonexistent/file");
+        let result = set_nfsv4_acl(path, None, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn set_nfsv4_acl_with_acl_returns_ok() {
+        let path = Path::new("/nonexistent/file");
+        let acl = Nfs4Acl::default();
+        let result = set_nfsv4_acl(path, Some(&acl), true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn set_nfsv4_acl_with_nonempty_acl_returns_ok() {
+        let path = Path::new("/nonexistent/file");
+        let acl = Nfs4Acl {
+            aces: vec![Nfs4Ace {
+                ace_type: AceType::Allow,
+                flags: AceFlags(0),
+                mask: AccessMask(0x1f),
+                who: "OWNER@".to_string(),
+            }],
+        };
+        let result = set_nfsv4_acl(path, Some(&acl), false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn sync_nfsv4_acls_returns_ok() {
+        let src = Path::new("/nonexistent/src");
+        let dst = Path::new("/nonexistent/dst");
+        let result = sync_nfsv4_acls(src, dst, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn has_nfsv4_acl_returns_false() {
+        let path = Path::new("/nonexistent/file");
+        assert!(!has_nfsv4_acl(path, false));
+        assert!(!has_nfsv4_acl(path, true));
+    }
+
+    #[test]
+    fn nfs4_acl_default_is_empty() {
+        let acl = Nfs4Acl::default();
+        assert!(acl.aces.is_empty());
+    }
+
+    #[test]
+    fn ace_type_values() {
+        assert_eq!(AceType::Allow as u32, 0);
+        assert_eq!(AceType::Deny as u32, 1);
+    }
+
+    #[test]
+    fn ace_flags_default_is_zero() {
+        let flags = AceFlags::default();
+        assert_eq!(flags.0, 0);
+    }
+
+    #[test]
+    fn access_mask_default_is_zero() {
+        let mask = AccessMask::default();
+        assert_eq!(mask.0, 0);
+    }
+
+    #[test]
+    fn nfs4_ace_equality() {
+        let ace1 = Nfs4Ace {
+            ace_type: AceType::Allow,
+            flags: AceFlags(0),
+            mask: AccessMask(0x1f),
+            who: "OWNER@".to_string(),
+        };
+        let ace2 = ace1.clone();
+        assert_eq!(ace1, ace2);
+    }
+
+    #[test]
+    fn nfs4_acl_clone() {
+        let acl = Nfs4Acl {
+            aces: vec![Nfs4Ace {
+                ace_type: AceType::Deny,
+                flags: AceFlags(1),
+                mask: AccessMask(0xff),
+                who: "GROUP@".to_string(),
+            }],
+        };
+        let cloned = acl.clone();
+        assert_eq!(acl, cloned);
+    }
+}
