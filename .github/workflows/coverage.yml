@@ -56,30 +56,45 @@ jobs:
         with:
           tool: cargo-llvm-cov,cargo-nextest
 
+      # --branch enables LLVM branch coverage instrumentation (-C instrument-coverage=branch).
+      # The profraw data then supports both line and branch coverage reports.
+      # --fail-under-lines enforces the line coverage threshold only.
       - name: Generate LCOV coverage report and enforce threshold
         id: coverage
-        run: cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 80
+        run: cargo llvm-cov nextest --branch --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 80
 
       - name: Generate HTML coverage report
         if: always() && steps.coverage.outcome != 'skipped'
         run: cargo llvm-cov report --html --output-dir coverage-html
+
+      # Generate a separate LCOV file with branch coverage data for downstream tools.
+      # No fail threshold - this is informational only while branch coverage baselines are established.
+      - name: Generate branch coverage LCOV report
+        if: always() && steps.coverage.outcome != 'skipped'
+        run: cargo llvm-cov report --branch --lcov --output-path lcov-branch.info
 
       - name: Create step summary
         if: always() && steps.coverage.outcome != 'skipped'
         run: |
           set -euo pipefail
           SUMMARY=$(cargo llvm-cov report 2>&1)
+          BRANCH_SUMMARY=$(cargo llvm-cov report --branch 2>&1)
           TOTAL_LINE=$(echo "$SUMMARY" | grep '^TOTAL' || true)
+          TOTAL_BRANCH=$(echo "$BRANCH_SUMMARY" | grep '^TOTAL' || true)
+          printf '## Coverage Report\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '| Metric | Value |\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '|--------|-------|\n' >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$TOTAL_LINE" ]; then
             LINE_PCT=$(echo "$TOTAL_LINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /%/) last=$i; print last}' | tr -d '%')
-            printf '## Coverage Report\n\n' >> "$GITHUB_STEP_SUMMARY"
-            printf '| Metric | Value |\n' >> "$GITHUB_STEP_SUMMARY"
-            printf '|--------|-------|\n' >> "$GITHUB_STEP_SUMMARY"
-            printf '| **Line Coverage** | **%s%%** |\n\n' "$LINE_PCT" >> "$GITHUB_STEP_SUMMARY"
-            printf '<details>\n<summary>Full report</summary>\n\n```\n%s\n```\n</details>\n' "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
-          else
-            printf '## Coverage Report\n\n```\n%s\n```\n' "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+            printf '| **Line Coverage** | **%s%%** |\n' "$LINE_PCT" >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -n "$TOTAL_BRANCH" ]; then
+            BRANCH_PCT=$(echo "$TOTAL_BRANCH" | awk '{for(i=1;i<=NF;i++) if($i ~ /%/) last=$i; print last}' | tr -d '%')
+            printf '| **Branch Coverage** | **%s%%** |\n' "$BRANCH_PCT" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          printf '\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '<details>\n<summary>Line coverage details</summary>\n\n```\n%s\n```\n</details>\n\n' "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          printf '<details>\n<summary>Branch coverage details</summary>\n\n```\n%s\n```\n</details>\n' "$BRANCH_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload LCOV artifact
         if: always() && steps.coverage.outcome != 'skipped'
@@ -87,6 +102,14 @@ jobs:
         with:
           name: lcov-report
           path: lcov.info
+          retention-days: 30
+
+      - name: Upload branch coverage LCOV artifact
+        if: always() && steps.coverage.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lcov-branch-report
+          path: lcov-branch.info
           retention-days: 30
 
       - name: Upload HTML coverage report
