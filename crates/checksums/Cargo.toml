@@ -35,8 +35,6 @@ openssl-vendored = ["openssl", "openssl/vendored"]
 [dependencies]
 md4 = { version = "0.10", default-features = false, features = ["std"] }
 digest = { version = "0.10", default-features = false, features = ["std"] }
-sha1 = { version = "0.10", default-features = false, features = ["std"] }
-sha2 = { version = "0.10", default-features = false, features = ["std"] }
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64", "xxh3"] }
 # xxh3 crate provides runtime SIMD detection (AVX2 on x86_64, NEON on aarch64)
 xxh3 = { version = "0.1" }
@@ -47,12 +45,19 @@ rayon = { version = "1.10" }
 fast_io = { path = "../fast_io", default-features = false }
 logging = { path = "../logging" }
 
-# md5-asm requires NASM on Windows and fails under MSVC; enable asm only on unix
+# *-asm crates require NASM on Windows and fail under MSVC; enable asm only on unix.
+# On unix, the `asm` feature on sha1/sha2 enables sha2-asm which provides assembly
+# fallbacks; the pure-Rust backend already auto-detects SHA-NI (x86_64) and
+# crypto extensions (aarch64) via `cpufeatures` regardless of this feature.
 [target.'cfg(unix)'.dependencies]
 md-5 = { version = "0.10", default-features = false, features = ["std", "asm"] }
+sha1 = { version = "0.10", default-features = false, features = ["std", "asm"] }
+sha2 = { version = "0.10", default-features = false, features = ["std", "asm"] }
 
 [target.'cfg(not(unix))'.dependencies]
 md-5 = { version = "0.10", default-features = false, features = ["std"] }
+sha1 = { version = "0.10", default-features = false, features = ["std"] }
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 proptest = "1.4"
