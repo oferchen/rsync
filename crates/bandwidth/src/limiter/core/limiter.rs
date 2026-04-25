@@ -84,27 +84,27 @@ impl BandwidthLimiter {
         }
     }
 
-    /// Returns the configured limit in bytes per second.
+    /// Configured bytes-per-second transfer cap.
     #[inline]
     #[must_use]
     pub const fn limit_bytes(&self) -> NonZeroU64 {
         self.limit_bytes
     }
 
-    /// Returns the configured burst size in bytes, if any.
+    /// Optional burst allowance above the steady-state limit.
     #[inline]
     pub const fn burst_bytes(&self) -> Option<NonZeroU64> {
         self.burst_bytes
     }
 
-    /// Returns the maximum chunk size the limiter schedules before sleeping.
+    /// Maximum bytes permitted in a single I/O operation.
     #[inline]
     #[must_use]
     pub const fn write_max_bytes(&self) -> usize {
         self.write_max
     }
 
-    /// Returns the maximum chunk size that should be written before sleeping.
+    /// Clamps `buffer_len` to `write_max` so each I/O batch stays within the pacing budget.
     #[inline]
     #[must_use]
     pub fn recommended_read_size(&self, buffer_len: usize) -> usize {
