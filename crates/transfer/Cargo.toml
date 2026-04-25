@@ -28,7 +28,7 @@ getrandom = "0.3"
 thiserror = "2.0"
 tracing = { workspace = true, optional = true }
 rayon = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -86,7 +86,7 @@ incremental-flist = []
 # ============================================================================
 
 # Async runtime support - enables tokio-based async pipeline for transfers
-async = ["dep:tokio-util"]
+async = ["dep:tokio", "dep:tokio-util"]
 
 # ============================================================================
 # Debugging Features
