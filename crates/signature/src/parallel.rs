@@ -52,7 +52,7 @@ use crate::layout::SignatureLayout;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use signature::{
 ///     SignatureLayoutParams, calculate_signature_layout,
 ///     SignatureAlgorithm,
@@ -76,6 +76,9 @@ use crate::layout::SignatureLayout;
 ///     layout,
 ///     SignatureAlgorithm::Md4,
 /// ).expect("signature");
+///
+/// assert!(signature.blocks().len() > 0);
+/// assert_eq!(signature.total_bytes(), 1_000_000);
 /// ```
 #[cfg_attr(feature = "tracing", instrument(skip(reader), fields(algorithm = ?algorithm, block_count = layout.block_count()), name = "generate_signature_parallel"))]
 pub fn generate_file_signature_parallel<R: Read>(
@@ -180,25 +183,30 @@ pub const PARALLEL_THRESHOLD_BYTES: u64 = 256 * 1024; // 256 KB
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use signature::{SignatureLayoutParams, calculate_signature_layout, SignatureAlgorithm};
 /// use signature::parallel::generate_file_signature_auto;
 /// use protocol::ProtocolVersion;
-/// use std::fs::File;
+/// use std::io::Cursor;
 /// use std::num::NonZeroU8;
 ///
-/// let file = File::open("large_file.bin")?;
-/// let metadata = file.metadata()?;
+/// let data = vec![0u8; 512 * 1024]; // 512 KB - above parallel threshold
 /// let params = SignatureLayoutParams::new(
-///     metadata.len(),
+///     data.len() as u64,
 ///     None,
 ///     ProtocolVersion::NEWEST,
 ///     NonZeroU8::new(16).unwrap(),
 /// );
-/// let layout = calculate_signature_layout(params)?;
+/// let layout = calculate_signature_layout(params).unwrap();
 ///
-/// // Automatically uses parallel mode for large files
-/// let signature = generate_file_signature_auto(file, layout, SignatureAlgorithm::Md4)?;
+/// // Automatically uses parallel mode for large inputs
+/// let signature = generate_file_signature_auto(
+///     Cursor::new(data),
+///     layout,
+///     SignatureAlgorithm::Md4,
+/// ).unwrap();
+///
+/// assert!(signature.blocks().len() > 0);
 /// ```
 pub fn generate_file_signature_auto<R: Read>(
     reader: R,

@@ -23,7 +23,7 @@ use tokio::time::{Duration, Instant};
 /// # async fn example() {
 /// use bandwidth::AsyncRateLimiter;
 ///
-/// let limiter = AsyncRateLimiter::new(1_048_576); // 1 MiB/s
+/// let mut limiter = AsyncRateLimiter::new(1_048_576); // 1 MiB/s
 /// limiter.consume(4096).await;
 /// # }
 /// ```
@@ -128,21 +128,21 @@ impl AsyncRateLimiter {
         self.tokens = self.tokens.min(self.burst);
     }
 
-    /// Returns the current rate in bytes per second.
+    /// Configured bytes-per-second limit.
     #[inline]
     #[must_use]
     pub const fn rate(&self) -> u64 {
         self.rate.get()
     }
 
-    /// Returns the burst capacity in bytes.
+    /// Maximum token accumulation before capping.
     #[inline]
     #[must_use]
     pub const fn burst_capacity(&self) -> u64 {
         self.burst
     }
 
-    /// Returns the number of tokens currently available.
+    /// Tokens currently available for consumption.
     #[inline]
     #[must_use]
     pub const fn available_tokens(&self) -> u64 {

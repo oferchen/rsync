@@ -86,7 +86,7 @@ impl Suffix {
         Self(normalized)
     }
 
-    /// Returns the normalized suffix string.
+    /// Normalized, lowercase, dot-stripped suffix text.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0

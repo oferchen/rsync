@@ -7,8 +7,10 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
-//! use filters::debug_filter::{FilterTracer, trace_filter_rule_added};
+//! ```
+//! use filters::debug_filter::{
+//!     FilterTracer, trace_filter_rule_added, trace_filter_evaluate,
+//! };
 //!
 //! let mut tracer = FilterTracer::new();
 //!
@@ -19,6 +21,8 @@
 //! tracer.record_evaluation(false);
 //!
 //! tracer.summary();
+//! assert_eq!(tracer.rules_added(), 1);
+//! assert_eq!(tracer.total_excluded(), 1);
 //! ```
 
 /// Target name for tracing events, matching rsync's debug category.
@@ -180,7 +184,7 @@ pub fn trace_filter_summary(
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// # use filters::debug_filter::FilterTracer;
 /// let mut tracer = FilterTracer::new();
 ///
@@ -272,31 +276,31 @@ impl FilterTracer {
         self.dir_merges = 0;
     }
 
-    /// Returns the number of rules added.
+    /// Total filter rules loaded from all sources.
     #[must_use]
     pub const fn rules_added(&self) -> usize {
         self.rules_added
     }
 
-    /// Returns the total number of paths evaluated.
+    /// Paths tested against the filter chain so far.
     #[must_use]
     pub const fn total_evaluated(&self) -> usize {
         self.total_evaluated
     }
 
-    /// Returns the number of paths included.
+    /// Paths that matched an include rule or passed by default.
     #[must_use]
     pub const fn total_included(&self) -> usize {
         self.total_included
     }
 
-    /// Returns the number of paths excluded.
+    /// Paths that matched an exclude rule.
     #[must_use]
     pub const fn total_excluded(&self) -> usize {
         self.total_excluded
     }
 
-    /// Returns the number of directory merge operations.
+    /// Per-directory merge file loads performed.
     #[must_use]
     pub const fn dir_merges(&self) -> usize {
         self.dir_merges

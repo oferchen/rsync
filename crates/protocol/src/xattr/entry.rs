@@ -81,13 +81,13 @@ impl XattrEntry {
         }
     }
 
-    /// Returns the attribute name.
+    /// Raw attribute name as bytes, preserving non-UTF-8 names.
     #[must_use]
     pub fn name(&self) -> &[u8] {
         &self.name
     }
 
-    /// Returns the attribute name as a string (lossy conversion).
+    /// Attribute name as a UTF-8 string, replacing invalid bytes with the replacement character.
     #[must_use]
     pub fn name_str(&self) -> Cow<'_, str> {
         String::from_utf8_lossy(&self.name)
@@ -123,7 +123,7 @@ impl XattrEntry {
         self.datum_len > MAX_FULL_DATUM
     }
 
-    /// Returns the transfer state.
+    /// Current wire transfer state of this extended attribute.
     #[must_use]
     pub const fn state(&self) -> XattrState {
         self.state
