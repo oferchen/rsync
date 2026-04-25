@@ -28,6 +28,7 @@ impl XattrList {
         Self { entries }
     }
 
+    /// Number of extended attributes in this list.
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
