@@ -1080,7 +1080,7 @@ fn encoder_write_all_trait_method() {
 #[test]
 fn encoder_write_fmt_trait_method() {
     let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
-    write!(&mut encoder, "formatted {} data {}", 42, "test").expect("write_fmt");
+    write!(&mut encoder, "formatted {} data test", 42).expect("write_fmt");
     let (compressed, _) = encoder.finish_into_inner().expect("finish");
     let decompressed = decompress_to_vec(&compressed).expect("decompress");
     assert_eq!(decompressed, b"formatted 42 data test");
