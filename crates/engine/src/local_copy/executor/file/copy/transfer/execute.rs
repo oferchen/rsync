@@ -160,7 +160,28 @@ pub(in crate::local_copy) fn execute_transfer(
     };
     #[cfg(target_os = "macos")]
     if clonefile_eligible {
-        if let Ok(()) = crate::local_copy::clonefile::try_clonefile(source, destination) {
+        // Dispatch through the configured PlatformCopy. Only commit to the
+        // fast path when the strategy reported a true zero-copy reflink
+        // (clonefile/FICLONE/ReFS reflink); any data-copy fallback would
+        // bypass rsync's delta machinery without honouring the eligibility
+        // assumptions, so on non-zero-copy results we discard and fall
+        // through to the normal copy path below.
+        let cloned = match context
+            .options()
+            .platform_copy()
+            .copy_file(source, destination, file_size)
+        {
+            Ok(result) if result.is_zero_copy() => true,
+            Ok(_) => {
+                let _ = std::fs::remove_file(destination);
+                false
+            }
+            Err(_) => {
+                let _ = std::fs::remove_file(destination);
+                false
+            }
+        };
+        if cloned {
             let start = Instant::now();
             debug_log!(
                 Send,

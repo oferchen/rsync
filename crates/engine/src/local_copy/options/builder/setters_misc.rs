@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+use fast_io::PlatformCopy;
+
 use super::LocalCopyOptionsBuilder;
 use crate::batch::BatchWriter;
 use crate::signature::SignatureAlgorithm;
@@ -136,6 +138,16 @@ impl LocalCopyOptionsBuilder {
     #[must_use]
     pub fn batch_writer(mut self, writer: Option<Arc<Mutex<BatchWriter>>>) -> Self {
         self.batch_writer = writer;
+        self
+    }
+
+    /// Replaces the platform copy strategy used by whole-file fast paths.
+    ///
+    /// Defaults to [`fast_io::DefaultPlatformCopy`]. Tests can substitute a
+    /// custom implementation to verify dispatch.
+    #[must_use]
+    pub fn platform_copy(mut self, platform_copy: Arc<dyn PlatformCopy>) -> Self {
+        self.platform_copy = platform_copy;
         self
     }
 }
