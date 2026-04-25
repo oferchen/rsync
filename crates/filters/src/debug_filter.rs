@@ -272,26 +272,31 @@ impl FilterTracer {
         self.dir_merges = 0;
     }
 
+    /// Total filter rules loaded from all sources.
     #[must_use]
     pub const fn rules_added(&self) -> usize {
         self.rules_added
     }
 
+    /// Paths tested against the filter chain so far.
     #[must_use]
     pub const fn total_evaluated(&self) -> usize {
         self.total_evaluated
     }
 
+    /// Paths that matched an include rule or passed by default.
     #[must_use]
     pub const fn total_included(&self) -> usize {
         self.total_included
     }
 
+    /// Paths that matched an exclude rule.
     #[must_use]
     pub const fn total_excluded(&self) -> usize {
         self.total_excluded
     }
 
+    /// Per-directory merge file loads performed.
     #[must_use]
     pub const fn dir_merges(&self) -> usize {
         self.dir_merges

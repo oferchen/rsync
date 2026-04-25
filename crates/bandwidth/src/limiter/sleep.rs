@@ -29,11 +29,13 @@ impl LimiterSleep {
         Self { requested, actual }
     }
 
+    /// Duration the limiter intended to sleep based on accumulated debt.
     #[must_use]
     pub const fn requested(&self) -> Duration {
         self.requested
     }
 
+    /// Duration actually elapsed after chunked sleeping.
     #[must_use]
     pub const fn actual(&self) -> Duration {
         self.actual

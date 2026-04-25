@@ -12,6 +12,7 @@ pub struct FileSignature {
 }
 
 impl FileSignature {
+    /// Constructs a signature from a computed layout and block list.
     pub(crate) const fn new(
         layout: SignatureLayout,
         blocks: Vec<SignatureBlock>,
@@ -34,6 +35,7 @@ impl FileSignature {
         Self::new(layout, blocks, total_bytes)
     }
 
+    /// Block size and checksum parameters used during generation.
     #[inline]
     #[must_use]
     pub const fn layout(&self) -> SignatureLayout {
@@ -47,6 +49,7 @@ impl FileSignature {
         &self.blocks
     }
 
+    /// Source file size consumed while computing the signature.
     #[inline]
     #[must_use]
     pub const fn total_bytes(&self) -> u64 {

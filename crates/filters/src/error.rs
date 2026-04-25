@@ -22,6 +22,7 @@ impl FilterError {
         Self { pattern, source }
     }
 
+    /// Filter pattern that triggered this error.
     #[must_use]
     pub fn pattern(&self) -> &str {
         &self.pattern

@@ -84,17 +84,20 @@ impl BandwidthLimiter {
         }
     }
 
+    /// Configured bytes-per-second transfer cap.
     #[inline]
     #[must_use]
     pub const fn limit_bytes(&self) -> NonZeroU64 {
         self.limit_bytes
     }
 
+    /// Optional burst allowance above the steady-state limit.
     #[inline]
     pub const fn burst_bytes(&self) -> Option<NonZeroU64> {
         self.burst_bytes
     }
 
+    /// Maximum bytes permitted in a single I/O operation.
     #[inline]
     #[must_use]
     pub const fn write_max_bytes(&self) -> usize {

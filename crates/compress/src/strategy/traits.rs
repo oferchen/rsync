@@ -34,8 +34,10 @@ pub trait CompressionStrategy: Send + Sync {
     /// Returns the number of decompressed bytes written to `output`.
     fn decompress(&self, input: &[u8], output: &mut Vec<u8>) -> io::Result<usize>;
 
+    /// Identifies which compression algorithm this strategy implements.
     fn algorithm_kind(&self) -> CompressionAlgorithmKind;
 
+    /// Wire-format name derived from the algorithm kind.
     fn algorithm_name(&self) -> &'static str {
         self.algorithm_kind().name()
     }

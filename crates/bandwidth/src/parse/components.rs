@@ -128,10 +128,12 @@ impl BandwidthLimitComponents {
         }
     }
 
+    /// Negotiated bytes-per-second rate, or `None` for unlimited.
     pub const fn rate(&self) -> Option<NonZeroU64> {
         self.rate
     }
 
+    /// Negotiated burst allowance, or `None` if unset.
     pub const fn burst(&self) -> Option<NonZeroU64> {
         self.burst
     }

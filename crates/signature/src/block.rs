@@ -32,24 +32,28 @@ impl SignatureBlock {
         Self::new(index, rolling, DigestBuf::from_slice(strong, strong.len()))
     }
 
+    /// Zero-based position of this block within the file signature.
     #[inline]
     #[must_use]
     pub const fn index(&self) -> u64 {
         self.index
     }
 
+    /// Rolling checksum used for fast block matching.
     #[inline]
     #[must_use]
     pub const fn rolling(&self) -> RollingDigest {
         self.rolling
     }
 
+    /// Strong checksum bytes for collision-resistant verification.
     #[inline]
     #[must_use]
     pub fn strong(&self) -> &[u8] {
         self.strong.as_slice()
     }
 
+    /// Strong checksum as an owned digest buffer.
     #[inline]
     #[must_use]
     pub const fn strong_digest(&self) -> DigestBuf {
