@@ -58,3 +58,56 @@ pub fn apply_xattrs_from_list(
     warn_xattr_unsupported();
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn sync_xattrs_returns_ok() {
+        let src = Path::new("/nonexistent/src");
+        let dst = Path::new("/nonexistent/dst");
+        let result = sync_xattrs(src, dst, false, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn sync_xattrs_with_filter_returns_ok() {
+        let src = Path::new("/nonexistent/src");
+        let dst = Path::new("/nonexistent/dst");
+        let filter = |_name: &str| true;
+        let result = sync_xattrs(src, dst, true, Some(&filter));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn read_xattrs_for_wire_returns_empty_list() {
+        let path = Path::new("/nonexistent/file");
+        let result = read_xattrs_for_wire(path, false, false, 0).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn read_xattrs_for_wire_as_root_returns_empty_list() {
+        let path = Path::new("/nonexistent/file");
+        let result = read_xattrs_for_wire(path, true, true, 42).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn apply_xattrs_from_list_returns_ok() {
+        let dst = Path::new("/nonexistent/dst");
+        let xattr_list = XattrList::new();
+        let result = apply_xattrs_from_list(dst, &xattr_list, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn apply_xattrs_from_list_follow_symlinks_returns_ok() {
+        let dst = Path::new("/nonexistent/dst");
+        let xattr_list = XattrList::new();
+        let result = apply_xattrs_from_list(dst, &xattr_list, true);
+        assert!(result.is_ok());
+    }
+}

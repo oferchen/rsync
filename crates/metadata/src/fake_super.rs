@@ -459,4 +459,52 @@ mod tests {
         assert!(is_device_file(0o60660)); // Block device
         assert!(is_device_file(0o20666)); // Char device
     }
+
+    #[cfg(not(all(unix, feature = "xattr")))]
+    mod stub_tests {
+        use super::*;
+        use std::path::Path;
+
+        #[test]
+        fn store_fake_super_stub_returns_unsupported() {
+            let path = Path::new("/nonexistent/file");
+            let stat = FakeSuperStat {
+                mode: 0o100644,
+                uid: 1000,
+                gid: 1000,
+                rdev: None,
+            };
+            let err = store_fake_super(path, &stat).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+            assert!(err.to_string().contains("xattr"));
+        }
+
+        #[test]
+        fn load_fake_super_stub_returns_none() {
+            let path = Path::new("/nonexistent/file");
+            let result = load_fake_super(path).unwrap();
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn remove_fake_super_stub_returns_ok() {
+            let path = Path::new("/nonexistent/file");
+            let result = remove_fake_super(path);
+            assert!(result.is_ok());
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn from_metadata_non_unix_returns_defaults() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        std::fs::write(&path, b"content").expect("write");
+        let metadata = std::fs::metadata(&path).expect("metadata");
+        let stat = FakeSuperStat::from_metadata(&metadata);
+        assert_eq!(stat.mode, 0o100644);
+        assert_eq!(stat.uid, 0);
+        assert_eq!(stat.gid, 0);
+        assert_eq!(stat.rdev, None);
+    }
 }
