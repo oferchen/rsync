@@ -1,7 +1,7 @@
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::net::IpAddr;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use super::aux_channel::{build_stderr_channel, configure_stderr_channel};
