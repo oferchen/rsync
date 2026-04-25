@@ -1,9 +1,10 @@
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::net::IpAddr;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
+use super::aux_channel::{build_stderr_channel, configure_stderr_channel};
 use super::connection::SshConnection;
 use super::parse::{RemoteShellParseError, parse_remote_shell};
 use logging::debug_log;
@@ -255,6 +256,13 @@ impl SshCommand {
     }
 
     /// Spawns the configured command and returns a [`SshConnection`].
+    ///
+    /// On Unix the child's stderr is wired through a `socketpair(2)` when
+    /// possible, exposing a real socket descriptor on the parent side that
+    /// future event-loop integrations can poll alongside stdin/stdout. If
+    /// socketpair creation fails for any reason (e.g., file-descriptor
+    /// exhaustion), the spawn transparently falls back to the conventional
+    /// `Stdio::piped()` anonymous pipe. Windows always uses the pipe path.
     pub fn spawn(&self) -> io::Result<SshConnection> {
         let (program, args) = self.command_parts();
 
@@ -272,12 +280,17 @@ impl SshCommand {
         let mut command = Command::new(&program);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
-        command.stderr(Stdio::piped());
         command.args(args.iter());
 
         for (key, value) in &self.envs {
             command.env(key, value);
         }
+
+        // Attempt to install a socketpair-based stderr channel before
+        // spawning. On success, we hold the parent end and configure the
+        // command to inherit the child end as its stderr. On failure (or on
+        // Windows) we fall back to the conventional anonymous pipe path.
+        let parent_socketpair_end = configure_stderr_channel(&mut command);
 
         let mut child = command.spawn()?;
 
@@ -295,13 +308,14 @@ impl SshCommand {
                 "ssh command did not expose a readable stdout",
             )
         })?;
-        let stderr = child.stderr.take();
+
+        let stderr_channel = build_stderr_channel(parent_socketpair_end, child.stderr.take());
 
         Ok(SshConnection::new(
             child,
             Some(stdin),
             stdout,
-            stderr,
+            stderr_channel,
             self.connect_timeout,
         ))
     }

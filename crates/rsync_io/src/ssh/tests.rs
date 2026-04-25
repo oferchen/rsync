@@ -1096,7 +1096,8 @@ fn stderr_drain_joins_on_drop() {
     writer.close().expect("close writer");
 
     // Drop without calling wait() - the drain thread should be joined by
-    // StderrDrain's Drop impl, and the child reaped by SshChildHandle's Drop.
+    // the StderrAuxChannel Drop impl, and the child reaped by
+    // SshChildHandle's Drop.
     drop(child_handle);
 }
 
@@ -1149,9 +1150,10 @@ fn connection_drop_surfaces_stderr_on_nonzero_exit() {
 fn stderr_deadlock_regression_large_stderr_does_not_block_stdout() {
     // Regression test: when a child writes large amounts to stderr while also
     // writing to stdout, the parent must be able to read stdout without
-    // deadlocking. Without the StderrDrain background thread, the child would
-    // fill the OS pipe buffer (~64 KB) on stderr, block, and never write to
-    // stdout - causing the parent to block on stdout read indefinitely.
+    // deadlocking. Without the StderrAuxChannel background drain, the child
+    // would fill the OS pipe buffer (~64 KB) on stderr, block, and never
+    // write to stdout - causing the parent to block on stdout read
+    // indefinitely.
     //
     // This test uses a 5-second timeout to detect deadlock rather than
     // hanging the test suite.
