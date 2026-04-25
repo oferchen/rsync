@@ -2034,4 +2034,134 @@ mod integration {
         let content_new = fs::read(dest_dir.join("new.txt")).unwrap();
         assert_eq!(content_new, new_file_data);
     }
+
+    /// Verifies compressed batch replay with CPRES_ZLIB mode for a whole-file
+    /// transfer where no basis file exists at the destination.
+    ///
+    /// Upstream rsync writes batch tokens in CPRES_ZLIB mode (zlibx=false)
+    /// regardless of whether the file has a basis or not. When the basis does
+    /// not exist, the delta stream contains only literals (no block matches),
+    /// so see_token() is never called. The decoder must still correctly inflate
+    /// the literal data even in CPRES_ZLIB mode without any dictionary sync.
+    ///
+    /// This tests the code path in replay.rs where cpres_zlib=true but
+    /// basis_exists=false, which falls through to read_compressed_delta_tokens()
+    /// (eager mode). The decoder was created with set_zlibx(false) but works
+    /// correctly because literal-only streams don't require dictionary sync.
+    ///
+    /// upstream: token.c:send_deflated_token() - uses CPRES_ZLIB for all files
+    /// upstream: io.c:write_batch_monitor_in - tees compressed bytes to batch_fd
+    #[test]
+    fn test_replay_cpres_zlib_no_basis_whole_file() {
+        use protocol::flist::{FileEntry, FileListWriter};
+        use protocol::wire::CompressedTokenEncoder;
+
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("replay_zlib_no_basis.batch");
+        let dest_dir = temp_dir.path().join("dest");
+        fs::create_dir_all(&dest_dir).unwrap();
+
+        let protocol_version = 30;
+        let file_data = b"whole-file literal data in CPRES_ZLIB mode without basis";
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_checksum_seed(42);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        let flags = BatchFlags {
+            recurse: true,
+            do_compression: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol);
+
+        // Directory entry
+        let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
+        dir_entry.set_mtime(1_700_000_000, 0);
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // File entry - no basis at destination
+        let mut file_entry =
+            FileEntry::new_file("newfile.txt".into(), file_data.len() as u64, 0o644);
+        file_entry.set_mtime(1_700_000_001, 0);
+        buf.clear();
+        flist_writer.write_entry(&mut buf, &file_entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        // End of flist
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        // NDX-framed delta: CPRES_ZLIB (zlibx=false) literal-only stream
+        {
+            use protocol::codec::{NdxCodec, NdxCodecEnum};
+
+            let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
+            let mut ndx_buf = Vec::new();
+
+            ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            // iflags: ITEM_TRANSFER (0x8000)
+            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
+
+            // sum_head: block_count=0 (whole-file, no basis)
+            writer.write_data(&0i32.to_le_bytes()).unwrap(); // block_count
+            writer.write_data(&0i32.to_le_bytes()).unwrap(); // block_length
+            writer.write_data(&16i32.to_le_bytes()).unwrap(); // s2length
+            writer.write_data(&0i32.to_le_bytes()).unwrap(); // remainder
+
+            // Encode with CPRES_ZLIB mode (zlibx=false) - this is what
+            // upstream rsync uses for all batch writes regardless of basis.
+            let mut token_buf = Vec::new();
+            let mut encoder = CompressedTokenEncoder::default();
+            encoder.set_zlibx(false); // CPRES_ZLIB, not CPRES_ZLIBX
+            encoder.send_literal(&mut token_buf, file_data).unwrap();
+            encoder.finish(&mut token_buf).unwrap();
+            writer.write_data(&token_buf).unwrap();
+
+            // File checksum (16 zero bytes)
+            writer.write_data(&[0u8; 16]).unwrap();
+
+            // NDX_DONE phase 1 -> phase 2
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            // NDX_DONE phase 2 -> end
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+        }
+
+        writer.finalize().unwrap();
+
+        // Replay - no basis file at destination, cpres_zlib=true path
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
+
+        assert_eq!(result.file_count, 2); // 1 dir + 1 file
+        assert!(dest_dir.join("newfile.txt").exists());
+
+        let content = fs::read(dest_dir.join("newfile.txt")).unwrap();
+        assert_eq!(
+            content, file_data,
+            "CPRES_ZLIB literal-only stream must decompress correctly without basis"
+        );
+    }
 }
