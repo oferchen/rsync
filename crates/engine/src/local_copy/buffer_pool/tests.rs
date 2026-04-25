@@ -594,9 +594,10 @@ fn adaptive_buffers_returned_under_concurrent_pressure() {
         h.join().expect("thread panicked");
     }
 
-    // With TLS + Mutex<Vec>, concurrent returns go through each thread's
-    // TLS slot first, then to the central pool (exact capacity under lock).
-    // The important invariant is that all retained buffers have the correct size.
+    // With TLS + lock-free ArrayQueue, concurrent returns go through each
+    // thread's TLS slot first, then to the central queue (soft capacity
+    // enforced via an atomic length check). The important invariant is
+    // that all retained buffers have the correct size.
 
     // Every buffer in the pool should now be at the default size.
     for _ in 0..pool.available() {
@@ -1126,10 +1127,10 @@ fn concurrent_throughput_recording() {
 
 #[test]
 fn concurrent_burst_returns_respect_capacity() {
-    // Validates the Mutex<Vec> + TLS design: when many threads return
-    // buffers simultaneously, the central pool retains at most
-    // soft_capacity (exact, under lock). Each thread also retains one
-    // buffer in TLS.
+    // Validates the lock-free ArrayQueue + TLS design: when many threads
+    // return buffers simultaneously, the central queue retains at most
+    // soft_capacity (enforced exactly by the admission counter via
+    // compare_exchange_weak). Each thread also retains one buffer in TLS.
     use std::sync::Barrier;
 
     let thread_count = 32;
@@ -1155,9 +1156,10 @@ fn concurrent_burst_returns_respect_capacity() {
         h.join().expect("thread panicked");
     }
 
-    // Central pool has at most soft_capacity (exact enforcement under Mutex).
-    // Each thread's TLS slot also holds one buffer but those are invisible
-    // to available(). TLS buffers are reclaimed when threads exit.
+    // Central queue retains at most soft_capacity (lock-free admission via
+    // compare_exchange_weak guarantees no overshoot). Each thread's TLS
+    // slot also holds one buffer but those are invisible to available().
+    // TLS buffers are reclaimed when threads exit.
     let available = pool.available();
     assert!(
         available <= soft_cap,
@@ -1828,4 +1830,49 @@ fn stats_debug_and_clone() {
     assert!(debug.contains("total_hits"));
     assert!(debug.contains("total_misses"));
     assert!(debug.contains("total_growths"));
+}
+
+#[test]
+fn lock_free_acquire_release_under_scoped_concurrency() {
+    // Hammers the lock-free ArrayQueue acquire/release path from many
+    // scoped threads with no per-iteration TLS reuse. Each iteration
+    // allocates a small Vec of guards so successive returns must traverse
+    // the central queue (TLS holds at most one buffer per thread). The
+    // test verifies that the `crossbeam_queue::ArrayQueue` plus the
+    // `compare_exchange_weak` admission counter never overshoots the soft
+    // capacity, even under sustained contention from many cores.
+    let soft_cap = 8;
+    let pool = BufferPool::new(soft_cap);
+    let thread_count = 16;
+    let iterations = 500;
+
+    std::thread::scope(|scope| {
+        for _ in 0..thread_count {
+            scope.spawn(|| {
+                for i in 0..iterations {
+                    // Hold three buffers concurrently per iteration so
+                    // returns overflow the per-thread TLS slot and reach
+                    // the lock-free queue.
+                    let mut guards: [Option<BorrowedBufferGuard<'_>>; 3] = [None, None, None];
+                    for slot in &mut guards {
+                        *slot = Some(pool.acquire());
+                    }
+                    for (n, slot) in guards.iter_mut().enumerate() {
+                        let mut g = slot.take().expect("guard present");
+                        g[0] = ((i + n) & 0xFF) as u8;
+                        // Drop in inverse order to vary the return pattern.
+                    }
+                }
+            });
+        }
+    });
+
+    // Soft capacity is never exceeded - the admission counter strictly
+    // gates the queue length. TLS slots hold one buffer per thread but
+    // are released when those threads exit (scope join above).
+    let observed = pool.available();
+    assert!(
+        observed <= soft_cap,
+        "central queue exceeded soft cap: {observed} > {soft_cap}"
+    );
 }

@@ -28,6 +28,7 @@ fast_io = { path = "../fast_io", default-features = false }
 thiserror = "2.0"
 rayon = { workspace = true }
 crossbeam-channel = { workspace = true }
+crossbeam-queue = "0.3"
 tracing = { workspace = true, optional = true }
 globset = "0.4"
 jwalk = { workspace = true }

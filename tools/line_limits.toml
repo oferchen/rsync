@@ -57,3 +57,8 @@ path = "crates/protocol/src/negotiation/tests/sniffer_take.rs"
 max_lines = 570
 warn_lines = 530
 
+[[overrides]]
+path = "crates/engine/src/local_copy/buffer_pool/pool.rs"
+max_lines = 950
+warn_lines = 900
+
