@@ -10,6 +10,7 @@
 //! providing the default preference order: zstd > lz4 > zlibx > zlib > none.
 
 use super::CompressionAlgorithmKind;
+use super::profile::ProtocolCompressionProfile;
 
 /// Trait for compression algorithm negotiation and selection.
 ///
@@ -86,18 +87,10 @@ impl DefaultCompressionNegotiator {
 
 impl CompressionNegotiator for DefaultCompressionNegotiator {
     fn supported_algorithms(&self) -> Vec<&'static str> {
-        let mut list = Vec::with_capacity(5);
-
-        // upstream: compat.c:101-102 - zstd first when SUPPORT_ZSTD is defined
-        #[cfg(feature = "zstd")]
-        list.push("zstd");
-
-        // NOTE: lz4 is intentionally omitted from auto-negotiation.
-        // Its per-token wire framing is not yet interop-validated with upstream.
-        // Explicit --compress-choice=lz4 still works (bypasses this list).
-
-        list.extend_from_slice(&["zlibx", "zlib", "none"]);
-        list
+        // Default negotiator targets modern (protocol >= 30) peers; share the
+        // single advertisement list with ProtocolAwareCompressionNegotiator so
+        // both stay in lockstep with upstream's valid_compressions_items[].
+        ProtocolCompressionProfile::MODERN.advertised_algorithms()
     }
 
     fn select_algorithm(&self, remote_list: &[&str], is_server: bool) -> &'static str {
@@ -229,32 +222,17 @@ impl ProtocolAwareCompressionNegotiator {
 
 impl CompressionNegotiator for ProtocolAwareCompressionNegotiator {
     fn supported_algorithms(&self) -> Vec<&'static str> {
-        if self.protocol_version < 30 {
-            // upstream: compat.c:556-563 - protocol < 30 has no vstring
-            // negotiation; compression is always zlib.
-            return vec!["zlib"];
-        }
-
-        // Protocol >= 30: full vstring negotiation with upstream preference order.
-        // upstream: compat.c:100-111 valid_compressions_items[] -
-        // zstd first when SUPPORT_ZSTD is defined, then lz4, zlibx, zlib, none.
-        let mut list = Vec::with_capacity(5);
-
-        #[cfg(feature = "zstd")]
-        list.push("zstd");
-
-        // NOTE: lz4 is intentionally omitted from auto-negotiation.
-        // Its per-token wire framing is not yet interop-validated with upstream.
-        // Explicit --compress-choice=lz4 still works (bypasses this list).
-
-        list.extend_from_slice(&["zlibx", "zlib", "none"]);
-        list
+        // Single source of truth for per-protocol advertisement lists.
+        // upstream: compat.c:100-112 valid_compressions_items[] (modern),
+        // compat.c:556-568 (legacy zlib-only fallback).
+        ProtocolCompressionProfile::for_protocol(self.protocol_version).advertised_algorithms()
     }
 
     fn select_algorithm(&self, remote_list: &[&str], is_server: bool) -> &'static str {
-        if self.protocol_version < 30 {
+        let profile = ProtocolCompressionProfile::for_protocol(self.protocol_version);
+        if !profile.supports_vstring_negotiation {
             // upstream: compat.c:562 - no vstring exchange; zlib is mandatory.
-            // The remote list is irrelevant for protocol < 30.
+            // The remote list is irrelevant for legacy protocols.
             return "zlib";
         }
 
@@ -656,18 +634,21 @@ mod tests {
     }
 
     #[test]
-    fn negotiation_protocol_version_35_boundary() {
-        // Protocol 35 is last version before zstd default threshold.
+    fn negotiation_protocol_version_29_boundary() {
+        // Protocol 29 is the last version before vstring negotiation; the
+        // upstream fallback codec is "zlib" (compat.c:556-563).
         assert_eq!(
-            CompressionAlgorithmKind::for_protocol_version(35),
+            CompressionAlgorithmKind::for_protocol_version(29),
             CompressionAlgorithmKind::Zlib
         );
     }
 
     #[test]
-    fn negotiation_protocol_version_36_boundary() {
-        // Protocol 36 is the zstd default threshold.
-        let kind = CompressionAlgorithmKind::for_protocol_version(36);
+    fn negotiation_protocol_version_30_boundary() {
+        // Protocol 30 is the first version with vstring negotiation. The
+        // canonical default kind is zstd when SUPPORT_ZSTD is defined
+        // (upstream: compat.c:101-102 valid_compressions_items[]).
+        let kind = CompressionAlgorithmKind::for_protocol_version(30);
         #[cfg(feature = "zstd")]
         assert_eq!(kind, CompressionAlgorithmKind::Zstd);
         #[cfg(not(feature = "zstd"))]
@@ -675,9 +656,10 @@ mod tests {
     }
 
     #[test]
-    fn negotiation_protocol_version_range_below_36_all_zlib() {
-        // All protocol versions below 36 default to zlib.
-        for v in [1, 10, 20, 28, 29, 30, 31, 32, 33, 34, 35] {
+    fn negotiation_protocol_version_range_below_30_all_zlib() {
+        // All protocol versions below 30 default to zlib (no vstring
+        // negotiation in upstream).
+        for v in [1, 10, 20, 28, 29] {
             assert_eq!(
                 CompressionAlgorithmKind::for_protocol_version(v),
                 CompressionAlgorithmKind::Zlib,

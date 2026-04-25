@@ -20,15 +20,19 @@ pub struct CompressionStrategySelector;
 impl CompressionStrategySelector {
     /// Selects the default algorithm for a given protocol version.
     ///
-    /// Protocol < 36 defaults to Zlib. Protocol >= 36 defaults to Zstd when
-    /// available, otherwise Zlib.
+    /// Protocol < 30 has no vstring negotiation and always defaults to Zlib.
+    /// Protocol >= 30 defaults to Zstd when the feature is compiled in,
+    /// falling back to Zlib otherwise.
+    ///
+    /// Delegates to the central
+    /// [`super::ProtocolCompressionProfile`] table.
     ///
     /// # Example
     ///
     /// ```
     /// use compress::strategy::CompressionStrategySelector;
     ///
-    /// let strategy = CompressionStrategySelector::for_protocol_version(36);
+    /// let strategy = CompressionStrategySelector::for_protocol_version(32);
     /// # #[cfg(feature = "zstd")]
     /// assert_eq!(strategy.algorithm_name(), "zstd");
     /// # #[cfg(not(feature = "zstd"))]

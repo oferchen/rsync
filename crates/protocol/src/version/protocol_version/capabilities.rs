@@ -220,27 +220,27 @@ impl ProtocolVersion {
 
     /// Returns the preferred compression algorithm name for this protocol version.
     ///
-    /// Protocol >= 31 prefers zstd (if available at compile time), falling back
-    /// to zlibx. Protocol 27-30 uses zlib (the only compression supported by
-    /// those versions of upstream rsync).
+    /// Pre-30 peers cannot negotiate codecs and always use zlib. Protocol 30+
+    /// peers negotiate via vstrings; the wire-name returned here is the first
+    /// preference advertised in the current build (zstd when the `zstd`
+    /// feature is enabled, otherwise zlibx).
     ///
     /// This does not perform negotiation - it returns the local preference.
     /// Actual algorithm selection happens during capability exchange.
     ///
+    /// Delegates to the central
+    /// [`ProtocolCompressionProfile`](compress::strategy::ProtocolCompressionProfile)
+    /// table.
+    ///
     /// # Upstream Reference
     ///
     /// upstream: compat.c:100-112 `valid_compressions_items[]` - zstd first
-    /// when `SUPPORT_ZSTD` is defined (protocol >= 31).
+    /// when `SUPPORT_ZSTD` is defined; vstring negotiation gated on protocol
+    /// >= 30 via `do_negotiated_strings`.
     #[must_use]
     pub const fn preferred_compression(self) -> &'static str {
-        if self.as_u8() >= 31 {
-            // Protocol 31+ supports negotiated compression (zstd, lz4, zlibx, zlib).
-            // The actual preference depends on compile-time features, but zstd is
-            // the canonical recommendation for modern protocol versions.
-            "zstd"
-        } else {
-            "zlib"
-        }
+        compress::strategy::ProtocolCompressionProfile::for_protocol(self.as_u8())
+            .preferred_codec_name()
     }
 
     /// Returns `true` if this protocol version supports checksum negotiation.
@@ -304,6 +304,7 @@ impl ProtocolVersion {
 /// assert!(caps.multiplex());
 /// assert!(caps.extended_flags());
 /// assert!(caps.inline_hardlinks());
+/// # #[cfg(feature = "zstd")]
 /// assert_eq!(caps.preferred_compression(), "zstd");
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

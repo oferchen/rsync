@@ -67,19 +67,42 @@ fn algorithm_kind_all() {
 
 #[test]
 fn algorithm_kind_for_protocol_version() {
+    // Pre-30 always defaults to Zlib (upstream: compat.c:556-563 - no
+    // vstring negotiation, fallback is "zlib").
     assert_eq!(
-        CompressionAlgorithmKind::for_protocol_version(30),
+        CompressionAlgorithmKind::for_protocol_version(28),
         CompressionAlgorithmKind::Zlib
     );
     assert_eq!(
-        CompressionAlgorithmKind::for_protocol_version(35),
+        CompressionAlgorithmKind::for_protocol_version(29),
         CompressionAlgorithmKind::Zlib
     );
+
+    // Protocol 30+ prefers Zstd when the zstd feature is compiled in
+    // (upstream: compat.c:101-102 valid_compressions_items[]). Without
+    // the feature the default falls back to Zlib.
     #[cfg(feature = "zstd")]
-    assert_eq!(
-        CompressionAlgorithmKind::for_protocol_version(36),
-        CompressionAlgorithmKind::Zstd
-    );
+    {
+        assert_eq!(
+            CompressionAlgorithmKind::for_protocol_version(30),
+            CompressionAlgorithmKind::Zstd
+        );
+        assert_eq!(
+            CompressionAlgorithmKind::for_protocol_version(32),
+            CompressionAlgorithmKind::Zstd
+        );
+    }
+    #[cfg(not(feature = "zstd"))]
+    {
+        assert_eq!(
+            CompressionAlgorithmKind::for_protocol_version(30),
+            CompressionAlgorithmKind::Zlib
+        );
+        assert_eq!(
+            CompressionAlgorithmKind::for_protocol_version(32),
+            CompressionAlgorithmKind::Zlib
+        );
+    }
 }
 
 #[test]
@@ -196,14 +219,14 @@ fn lz4_strategy_algorithm_name() {
 }
 
 #[test]
-fn selector_for_protocol_version_35() {
-    let strategy = CompressionStrategySelector::for_protocol_version(35);
+fn selector_for_protocol_version_29_returns_zlib() {
+    let strategy = CompressionStrategySelector::for_protocol_version(29);
     assert_eq!(strategy.algorithm_name(), "zlib");
 }
 
 #[test]
-fn selector_for_protocol_version_36() {
-    let strategy = CompressionStrategySelector::for_protocol_version(36);
+fn selector_for_protocol_version_30_modern_default() {
+    let strategy = CompressionStrategySelector::for_protocol_version(30);
     #[cfg(feature = "zstd")]
     assert_eq!(strategy.algorithm_name(), "zstd");
     #[cfg(not(feature = "zstd"))]
@@ -347,41 +370,49 @@ fn selector_protocol_version_28_returns_zlib() {
 }
 
 #[test]
-fn selector_protocol_version_29_returns_zlib() {
-    let strategy = CompressionStrategySelector::for_protocol_version(29);
-    assert_eq!(strategy.algorithm_name(), "zlib");
+fn selector_protocol_version_legacy_below_30_always_zlib() {
+    // Pre-30 has no vstring negotiation; upstream defaults to "zlib".
+    for v in 0..30u8 {
+        let strategy = CompressionStrategySelector::for_protocol_version(v);
+        assert_eq!(
+            strategy.algorithm_name(),
+            "zlib",
+            "protocol {v} must default to zlib"
+        );
+    }
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn selector_protocol_version_modern_30_plus_zstd() {
+    // Protocol >= 30 with zstd compiled in: the canonical default kind is
+    // zstd (upstream: compat.c:101-102 valid_compressions_items[]).
+    for v in [30u8, 31, 32, 40, 100, 255] {
+        let strategy = CompressionStrategySelector::for_protocol_version(v);
+        assert_eq!(
+            strategy.algorithm_name(),
+            "zstd",
+            "protocol {v} must default to zstd when feature enabled"
+        );
+    }
+}
+
+#[cfg(not(feature = "zstd"))]
+#[test]
+fn selector_protocol_version_modern_30_plus_zlib_without_zstd() {
+    for v in [30u8, 31, 32, 40, 100, 255] {
+        let strategy = CompressionStrategySelector::for_protocol_version(v);
+        assert_eq!(
+            strategy.algorithm_name(),
+            "zlib",
+            "protocol {v} must fall back to zlib without zstd feature"
+        );
+    }
 }
 
 #[test]
-fn selector_protocol_version_30_returns_zlib() {
-    let strategy = CompressionStrategySelector::for_protocol_version(30);
-    assert_eq!(strategy.algorithm_name(), "zlib");
-}
-
-#[test]
-fn selector_protocol_version_31_returns_zlib() {
-    let strategy = CompressionStrategySelector::for_protocol_version(31);
-    assert_eq!(strategy.algorithm_name(), "zlib");
-}
-
-#[test]
-fn selector_protocol_version_32_returns_zlib() {
-    let strategy = CompressionStrategySelector::for_protocol_version(32);
-    assert_eq!(strategy.algorithm_name(), "zlib");
-}
-
-#[test]
-fn selector_protocol_version_255_high() {
-    let strategy = CompressionStrategySelector::for_protocol_version(255);
-    #[cfg(feature = "zstd")]
-    assert_eq!(strategy.algorithm_name(), "zstd");
-    #[cfg(not(feature = "zstd"))]
-    assert_eq!(strategy.algorithm_name(), "zlib");
-}
-
-#[test]
-fn kind_for_protocol_below_36_always_zlib() {
-    for v in 0..36u8 {
+fn kind_for_protocol_below_30_always_zlib() {
+    for v in 0..30u8 {
         assert_eq!(
             CompressionAlgorithmKind::for_protocol_version(v),
             CompressionAlgorithmKind::Zlib,
@@ -392,8 +423,11 @@ fn kind_for_protocol_below_36_always_zlib() {
 
 #[cfg(feature = "zstd")]
 #[test]
-fn kind_for_protocol_36_and_above_zstd() {
-    for v in [36, 37, 40, 50, 100, 255] {
+fn kind_for_protocol_30_and_above_zstd() {
+    // Upstream: compat.c:101-102 - zstd is the first preference whenever
+    // SUPPORT_ZSTD is defined and vstring negotiation is available
+    // (protocol >= 30).
+    for v in [30u8, 31, 32, 40, 100, 255] {
         assert_eq!(
             CompressionAlgorithmKind::for_protocol_version(v),
             CompressionAlgorithmKind::Zstd,
@@ -404,8 +438,8 @@ fn kind_for_protocol_36_and_above_zstd() {
 
 #[cfg(not(feature = "zstd"))]
 #[test]
-fn kind_for_protocol_36_and_above_falls_to_zlib_without_zstd() {
-    for v in [36, 37, 100, 255] {
+fn kind_for_protocol_30_and_above_falls_to_zlib_without_zstd() {
+    for v in [30u8, 31, 32, 100, 255] {
         assert_eq!(
             CompressionAlgorithmKind::for_protocol_version(v),
             CompressionAlgorithmKind::Zlib,
@@ -792,9 +826,10 @@ fn negotiate_none_kind_roundtrip() {
 // ---- Kind edge cases ----
 
 #[test]
-fn kind_for_protocol_version_boundary_35_is_zlib() {
+fn kind_for_protocol_version_boundary_29_is_zlib() {
+    // Pre-30 always defaults to Zlib (upstream: compat.c:556-563).
     assert_eq!(
-        CompressionAlgorithmKind::for_protocol_version(35),
+        CompressionAlgorithmKind::for_protocol_version(29),
         CompressionAlgorithmKind::Zlib
     );
 }
