@@ -60,6 +60,7 @@ impl SkipCompressList {
     }
 
     /// Returns `true` when the provided path's extension matches a skipped suffix.
+    #[must_use]
     pub fn matches_path(&self, path: &Path) -> bool {
         if self.patterns.is_empty() {
             return false;
@@ -76,6 +77,7 @@ impl SkipCompressList {
     }
 
     /// Returns `true` if no suffixes are configured.
+    #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.patterns.is_empty()
     }

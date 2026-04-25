@@ -246,6 +246,7 @@ impl DestinationWriteGuard {
     ///
     /// For named temp files this is the on-disk temp path. For anonymous files
     /// this returns the final destination path since no intermediate path exists.
+    #[must_use]
     pub fn staging_path(&self) -> &Path {
         match &self.strategy {
             GuardStrategy::NamedTempFile { temp_path, .. } => temp_path,
@@ -362,18 +363,21 @@ impl DestinationWriteGuard {
     /// Returns the final destination path.
     ///
     /// This is the path where the file will be located after calling [`commit`](Self::commit).
+    #[must_use]
     pub fn final_path(&self) -> &Path {
         &self.final_path
     }
 
     /// Returns `true` if this guard uses the anonymous `O_TMPFILE` strategy.
     #[cfg(target_os = "linux")]
+    #[must_use]
     pub fn is_anonymous(&self) -> bool {
         matches!(self.strategy, GuardStrategy::Anonymous { .. })
     }
 
     /// Returns `true` if this guard uses the anonymous `O_TMPFILE` strategy.
     #[cfg(not(target_os = "linux"))]
+    #[must_use]
     pub fn is_anonymous(&self) -> bool {
         false
     }
