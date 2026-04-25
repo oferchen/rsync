@@ -127,4 +127,126 @@ mod tests {
             assert_eq!(to_hex(&one_shot), expected_hex);
         }
     }
+
+    #[test]
+    fn empty_input_known_hash() {
+        let digest = Sha1::digest(b"");
+        assert_eq!(to_hex(&digest), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+    }
+
+    #[test]
+    fn abc_known_hash() {
+        let digest = Sha1::digest(b"abc");
+        assert_eq!(to_hex(&digest), "a9993e364706816aba3e25717850c26c9cd0d89d");
+    }
+
+    #[test]
+    fn streaming_matches_one_shot() {
+        let data = b"The quick brown fox jumps over the lazy dog";
+
+        let one_shot = Sha1::digest(data);
+
+        let mut hasher = Sha1::new();
+        hasher.update(&data[..10]);
+        hasher.update(&data[10..20]);
+        hasher.update(&data[20..]);
+        let streaming = hasher.finalize();
+
+        assert_eq!(one_shot, streaming);
+    }
+
+    #[test]
+    fn byte_at_a_time_matches_one_shot() {
+        let data = b"incremental SHA-1 input";
+        let expected = Sha1::digest(data);
+
+        let mut hasher = Sha1::new();
+        for &byte in data.iter() {
+            hasher.update(&[byte]);
+        }
+        assert_eq!(hasher.finalize(), expected);
+    }
+
+    #[test]
+    fn different_data_different_hashes() {
+        assert_ne!(Sha1::digest(b"aaa"), Sha1::digest(b"bbb"));
+    }
+
+    #[test]
+    fn large_data_consistent() {
+        // Exercise the hash with > 1 MiB of cyclic data to walk multiple
+        // 64-byte SHA-1 compression blocks and verify deterministic output.
+        let data: Vec<u8> = (0u8..=255).cycle().take(1024 * 1024 + 17).collect();
+        let first = Sha1::digest(&data);
+        let second = Sha1::digest(&data);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn incremental_chunks_consistent() {
+        let data: Vec<u8> = (0u8..=255).cycle().take(8192).collect();
+        let expected = Sha1::digest(&data);
+
+        for chunk_size in [1usize, 7, 13, 64, 1000] {
+            let mut hasher = Sha1::new();
+            for chunk in data.chunks(chunk_size) {
+                hasher.update(chunk);
+            }
+            assert_eq!(hasher.finalize(), expected, "chunk_size={chunk_size}");
+        }
+    }
+
+    #[test]
+    fn hash_function_is_deterministic() {
+        let data = b"deterministic input";
+        assert_eq!(Sha1::digest(data), Sha1::digest(data));
+    }
+
+    #[test]
+    fn default_trait_matches_new() {
+        let a = Sha1::new().finalize();
+        let b = Sha1::default().finalize();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn clone_preserves_state() {
+        let mut hasher = Sha1::new();
+        hasher.update(b"partial state");
+        let cloned = hasher.clone();
+
+        assert_eq!(hasher.finalize(), cloned.finalize());
+    }
+
+    #[test]
+    fn length_extension_protection() {
+        // hash(empty) must differ from hash([0u8]) - a single null byte is not
+        // the same as no input.
+        assert_ne!(Sha1::digest(b""), Sha1::digest(&[0u8]));
+    }
+
+    #[test]
+    fn hex_output_format_matches_lowercase() {
+        let digest = Sha1::digest(b"abc");
+        let hex = to_hex(&digest);
+        assert_eq!(hex.len(), 40);
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(hex.chars().all(|c| !c.is_ascii_uppercase()));
+    }
+
+    #[test]
+    fn strong_digest_trait_matches_inherent_api() {
+        let data = b"trait dispatch parity";
+
+        let inherent = Sha1::digest(data);
+        let via_trait = <Sha1 as StrongDigest>::digest(data);
+        assert_eq!(inherent, via_trait);
+
+        let mut hasher = <Sha1 as StrongDigest>::with_seed(());
+        StrongDigest::update(&mut hasher, data);
+        let trait_streaming = StrongDigest::finalize(hasher);
+        assert_eq!(trait_streaming, inherent);
+
+        assert_eq!(<Sha1 as StrongDigest>::DIGEST_LEN, 20);
+    }
 }
