@@ -305,13 +305,13 @@ impl FilterRule {
         }
     }
 
-    /// Returns the rule action.
+    /// Include or exclude action applied when this rule matches.
     #[must_use]
     pub const fn action(&self) -> FilterAction {
         self.action
     }
 
-    /// Returns the pattern text associated with the rule.
+    /// Glob or literal pattern text for matching.
     #[must_use]
     pub fn pattern(&self) -> &str {
         &self.pattern
