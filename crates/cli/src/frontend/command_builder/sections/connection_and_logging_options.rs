@@ -193,6 +193,71 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("ssh-cipher")
+                .long("ssh-cipher")
+                .value_name("CIPHERS")
+                .help("Comma-separated cipher preference list for embedded SSH.")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("ssh-connect-timeout")
+                .long("ssh-connect-timeout")
+                .value_name("SECS")
+                .help("Connection timeout in seconds for embedded SSH.")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("ssh-keepalive")
+                .long("ssh-keepalive")
+                .value_name("SECS")
+                .help("Keepalive interval in seconds for embedded SSH (0 = disable).")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("ssh-identity")
+                .long("ssh-identity")
+                .value_name("FILE")
+                .help("Identity file for embedded SSH (repeatable).")
+                .action(ArgAction::Append)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("ssh-no-agent")
+                .long("ssh-no-agent")
+                .help("Disable SSH agent authentication for embedded SSH.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("ssh-strict-host-key-checking")
+                .long("ssh-strict-host-key-checking")
+                .value_name("MODE")
+                .help("Host key verification policy for embedded SSH (yes, no, ask).")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("ssh-ipv6")
+                .long("ssh-ipv6")
+                .help("Prefer IPv6 for embedded SSH connections.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("ssh-port")
+                .long("ssh-port")
+                .value_name("PORT")
+                .help("Port override for embedded SSH connections.")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("args")
                 .action(ArgAction::Append)
                 .num_args(0..)
