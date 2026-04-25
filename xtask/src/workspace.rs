@@ -1,10 +1,29 @@
 use crate::error::{TaskError, TaskResult};
 use crate::util::read_file_with_context;
 use branding::workspace;
+use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
 use toml::Value;
+
+/// Minimal serde shape for the root package section.
+#[derive(Deserialize)]
+struct PackageSection {
+    #[serde(default)]
+    name: Option<String>,
+}
+
+/// Minimal serde shape for extracting sections from a combined
+/// `[package]` + `[workspace]` Cargo.toml manifest without requiring
+/// the parser to validate every field.
+#[derive(Deserialize)]
+struct ManifestShape {
+    #[serde(default)]
+    package: Option<PackageSection>,
+    #[serde(default)]
+    workspace: Option<Value>,
+}
 
 /// Branding metadata extracted from the workspace manifest.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,28 +117,32 @@ pub fn load_workspace_branding(workspace: &Path) -> TaskResult<WorkspaceBranding
 /// Returns the name of the root package defined in `Cargo.toml`.
 pub fn root_package_name(workspace: &Path) -> TaskResult<String> {
     let manifest = read_workspace_manifest(workspace)?;
-    let value = manifest.parse::<Value>().map_err(|error| {
+    let shape: ManifestShape = toml::from_str(&manifest).map_err(|error| {
         TaskError::Metadata(format!("failed to parse workspace manifest: {error}"))
     })?;
 
-    let package_table = value
-        .get("package")
-        .and_then(Value::as_table)
-        .ok_or_else(|| metadata_error("missing [package] table"))?;
-
-    package_table
-        .get("name")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
+    shape
+        .package
+        .and_then(|p| p.name)
         .ok_or_else(|| metadata_error("missing package.name entry"))
 }
 
 /// Parses the branding metadata from the provided manifest contents.
+///
+/// Uses typed serde deserialization to extract only the `[workspace]`
+/// section, avoiding TOML spec edge cases with combined
+/// `[package]` + `[workspace]` manifests.
 pub fn parse_workspace_branding(manifest: &str) -> TaskResult<WorkspaceBranding> {
-    let value = manifest.parse::<Value>().map_err(|error| {
+    let shape: ManifestShape = toml::from_str(manifest).map_err(|error| {
         TaskError::Metadata(format!("failed to parse workspace manifest: {error}"))
     })?;
-    parse_workspace_branding_from_value(&value)
+    let workspace_value = shape
+        .workspace
+        .ok_or_else(|| metadata_error("missing [workspace] table"))?;
+    // Wrap in a root table for compatibility with parse_workspace_branding_from_value.
+    let mut root = toml::map::Map::new();
+    root.insert("workspace".to_owned(), workspace_value);
+    parse_workspace_branding_from_value(&Value::Table(root))
 }
 
 /// Parses the branding metadata from a TOML [`Value`].
@@ -356,53 +379,23 @@ source = "{source}"
         )
     }
 
-    // #[test]
-    // fn parse_workspace_branding_extracts_fields() {
-    //     let manifest = include_str!("../../Cargo.toml");
-    //     let branding = parse_workspace_branding(manifest).expect("parse succeeds");
-    //     let metadata = workspace::metadata();
-    //     let expected = WorkspaceBranding {
-    //         brand: metadata.brand().to_owned(),
-    //         upstream_version: metadata.upstream_version().to_owned(),
-    //         rust_version: metadata.rust_version().to_owned(),
-    //         protocol: u16::try_from(metadata.protocol_version()).unwrap(),
-    //         client_bin: metadata.client_program_name().to_owned(),
-    //         daemon_bin: metadata.daemon_program_name().to_owned(),
-    //         legacy_client_bin: metadata.legacy_client_program_name().to_owned(),
-    //         legacy_daemon_bin: metadata.legacy_daemon_program_name().to_owned(),
-    //         daemon_config_dir: PathBuf::from(metadata.daemon_config_dir()),
-    //         daemon_config: PathBuf::from(metadata.daemon_config_path()),
-    //         daemon_secrets: PathBuf::from(metadata.daemon_secrets_path()),
-    //         legacy_daemon_config_dir: PathBuf::from(metadata.legacy_daemon_config_dir()),
-    //         legacy_daemon_config: PathBuf::from(metadata.legacy_daemon_config_path()),
-    //         legacy_daemon_secrets: PathBuf::from(metadata.legacy_daemon_secrets_path()),
-    //         source: metadata.source_url().to_owned(),
-    //         cross_compile: BTreeMap::from([
-    //             (
-    //                 String::from("linux"),
-    //                 vec![String::from("x86_64"), String::from("aarch64")],
-    //             ),
-    //             (
-    //                 String::from("macos"),
-    //                 vec![String::from("x86_64"), String::from("aarch64")],
-    //             ),
-    //             (
-    //                 String::from("windows"),
-    //                 vec![String::from("x86_64"), String::from("aarch64")],
-    //             ),
-    //         ]),
-    //         cross_compile_matrix: BTreeMap::from([
-    //             (String::from("darwin-aarch64"), true),
-    //             (String::from("darwin-x86_64"), true),
-    //             (String::from("linux-aarch64"), true),
-    //             (String::from("linux-x86_64"), true),
-    //             (String::from("windows-aarch64"), false),
-    //             (String::from("windows-x86"), false),
-    //             (String::from("windows-x86_64"), true),
-    //         ]),
-    //     };
-    //     assert_eq!(branding, expected);
-    // }
+    #[test]
+    fn parse_workspace_branding_extracts_fields() {
+        let manifest = include_str!("../../Cargo.toml");
+        let branding = parse_workspace_branding(manifest).expect("parse succeeds");
+        let metadata = workspace::metadata();
+        assert_eq!(branding.brand, metadata.brand());
+        assert_eq!(branding.upstream_version, metadata.upstream_version());
+        assert_eq!(branding.rust_version, metadata.rust_version());
+        assert_eq!(
+            branding.protocol,
+            u16::try_from(metadata.protocol_version()).unwrap()
+        );
+        assert_eq!(branding.client_bin, metadata.client_program_name());
+        assert_eq!(branding.daemon_bin, metadata.daemon_program_name());
+        assert_eq!(branding.source, metadata.source_url());
+        assert!(!branding.cross_compile.is_empty());
+    }
 
     #[test]
     fn cross_compile_entries_must_not_be_empty() {
