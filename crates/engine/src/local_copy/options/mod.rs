@@ -17,6 +17,7 @@ mod link_dest;
 mod logging;
 mod metadata;
 mod path_behavior;
+mod platform_copy;
 pub(crate) mod staging;
 mod types;
 

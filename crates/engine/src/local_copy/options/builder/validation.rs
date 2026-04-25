@@ -191,6 +191,7 @@ impl LocalCopyOptionsBuilder {
             ignore_errors: self.ignore_errors,
             log_file: self.log_file,
             log_file_format: self.log_file_format,
+            platform_copy: self.platform_copy,
         }
     }
 }
