@@ -9,8 +9,8 @@
 //! selection algorithm from `protocol::negotiation::capabilities::algorithms`,
 //! providing the default preference order: zstd > lz4 > zlibx > zlib > none.
 
-use super::profile::ProtocolCompressionProfile;
 use super::CompressionAlgorithmKind;
+use super::profile::ProtocolCompressionProfile;
 
 /// Trait for compression algorithm negotiation and selection.
 ///
