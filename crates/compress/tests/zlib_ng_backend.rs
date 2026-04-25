@@ -92,7 +92,10 @@ fn zlib_ng_handles_incompressible_data() {
         compress_to_vec(&payload, CompressionLevel::Best).expect("compress incompressible");
 
     let decompressed = decompress_to_vec(&compressed).expect("decompress incompressible");
-    assert_eq!(decompressed, payload, "incompressible data roundtrip failed");
+    assert_eq!(
+        decompressed, payload,
+        "incompressible data roundtrip failed"
+    );
 }
 
 #[test]

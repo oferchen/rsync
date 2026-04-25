@@ -617,3 +617,204 @@ fn negotiate_local_preference_order_wins() {
         CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
     assert_eq!(strategy.algorithm_name(), "zlib");
 }
+
+// ---- Selector roundtrip tests: verify returned strategies compress/decompress ----
+
+#[test]
+fn selector_for_protocol_version_roundtrip() {
+    for version in [0, 28, 29, 30, 31, 32, 35, 36, 255] {
+        let strategy = CompressionStrategySelector::for_protocol_version(version);
+        let mut compressed = Vec::new();
+        let mut decompressed = Vec::new();
+
+        strategy.compress(TEST_DATA, &mut compressed).unwrap();
+        strategy.decompress(&compressed, &mut decompressed).unwrap();
+        assert_eq!(
+            &decompressed, TEST_DATA,
+            "roundtrip failed for protocol version {version}"
+        );
+    }
+}
+
+#[test]
+fn selector_for_algorithm_roundtrip_zlib_fast() {
+    let strategy = CompressionStrategySelector::for_algorithm(
+        CompressionAlgorithmKind::Zlib,
+        CompressionLevel::Fast,
+    )
+    .unwrap();
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+
+    strategy.compress(TEST_DATA, &mut compressed).unwrap();
+    strategy.decompress(&compressed, &mut decompressed).unwrap();
+    assert_eq!(&decompressed, TEST_DATA);
+}
+
+#[test]
+fn selector_for_algorithm_roundtrip_zlib_best() {
+    let strategy = CompressionStrategySelector::for_algorithm(
+        CompressionAlgorithmKind::Zlib,
+        CompressionLevel::Best,
+    )
+    .unwrap();
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+
+    strategy
+        .compress(COMPRESSIBLE_DATA, &mut compressed)
+        .unwrap();
+    strategy.decompress(&compressed, &mut decompressed).unwrap();
+    assert_eq!(&decompressed, COMPRESSIBLE_DATA);
+}
+
+#[test]
+fn selector_for_algorithm_roundtrip_none() {
+    let strategy = CompressionStrategySelector::for_algorithm(
+        CompressionAlgorithmKind::None,
+        CompressionLevel::None,
+    )
+    .unwrap();
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+
+    strategy.compress(TEST_DATA, &mut compressed).unwrap();
+    strategy.decompress(&compressed, &mut decompressed).unwrap();
+    assert_eq!(&decompressed, TEST_DATA);
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn selector_for_algorithm_roundtrip_zstd() {
+    let strategy = CompressionStrategySelector::for_algorithm(
+        CompressionAlgorithmKind::Zstd,
+        CompressionLevel::Fast,
+    )
+    .unwrap();
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+
+    strategy.compress(TEST_DATA, &mut compressed).unwrap();
+    strategy.decompress(&compressed, &mut decompressed).unwrap();
+    assert_eq!(&decompressed, TEST_DATA);
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn selector_for_algorithm_roundtrip_lz4() {
+    let strategy = CompressionStrategySelector::for_algorithm(
+        CompressionAlgorithmKind::Lz4,
+        CompressionLevel::Default,
+    )
+    .unwrap();
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+
+    strategy.compress(TEST_DATA, &mut compressed).unwrap();
+    strategy.decompress(&compressed, &mut decompressed).unwrap();
+    assert_eq!(&decompressed, TEST_DATA);
+}
+
+// ---- Concrete factory methods with explicit levels ----
+
+#[test]
+fn selector_zlib_with_level() {
+    let strategy = CompressionStrategySelector::zlib(CompressionLevel::Fast);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+    strategy.compress(TEST_DATA, &mut compressed).unwrap();
+    strategy.decompress(&compressed, &mut decompressed).unwrap();
+    assert_eq!(&decompressed, TEST_DATA);
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn selector_zstd_with_level() {
+    let strategy = CompressionStrategySelector::zstd(CompressionLevel::Best);
+    assert_eq!(strategy.algorithm_name(), "zstd");
+
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+    strategy.compress(TEST_DATA, &mut compressed).unwrap();
+    strategy.decompress(&compressed, &mut decompressed).unwrap();
+    assert_eq!(&decompressed, TEST_DATA);
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn selector_lz4_with_level() {
+    let strategy = CompressionStrategySelector::lz4(CompressionLevel::Fast);
+    assert_eq!(strategy.algorithm_name(), "lz4");
+
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+    strategy.compress(TEST_DATA, &mut compressed).unwrap();
+    strategy.decompress(&compressed, &mut decompressed).unwrap();
+    assert_eq!(&decompressed, TEST_DATA);
+}
+
+// ---- Negotiate with custom compression level ----
+
+#[test]
+fn negotiate_passes_level_to_strategy() {
+    let local = vec![CompressionAlgorithmKind::Zlib];
+    let remote = vec![CompressionAlgorithmKind::Zlib];
+
+    let strategy = CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Best);
+    assert_eq!(strategy.algorithm_name(), "zlib");
+
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+    strategy
+        .compress(COMPRESSIBLE_DATA, &mut compressed)
+        .unwrap();
+    strategy.decompress(&compressed, &mut decompressed).unwrap();
+    assert_eq!(&decompressed, COMPRESSIBLE_DATA);
+}
+
+#[test]
+fn negotiate_none_kind_roundtrip() {
+    let local = vec![CompressionAlgorithmKind::None];
+    let remote = vec![CompressionAlgorithmKind::None];
+
+    let strategy =
+        CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
+
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+    strategy.compress(TEST_DATA, &mut compressed).unwrap();
+    strategy.decompress(&compressed, &mut decompressed).unwrap();
+    assert_eq!(&decompressed, TEST_DATA);
+}
+
+// ---- Kind edge cases ----
+
+#[test]
+fn kind_for_protocol_version_boundary_35_is_zlib() {
+    assert_eq!(
+        CompressionAlgorithmKind::for_protocol_version(35),
+        CompressionAlgorithmKind::Zlib
+    );
+}
+
+#[test]
+fn kind_clone_copy_eq_hash() {
+    let a = CompressionAlgorithmKind::Zlib;
+    let b = a;
+    assert_eq!(a, b);
+
+    let mut set = std::collections::HashSet::new();
+    set.insert(a);
+    assert!(set.contains(&b));
+    assert!(!set.contains(&CompressionAlgorithmKind::None));
+}
+
+#[test]
+fn kind_debug_format() {
+    let debug = format!("{:?}", CompressionAlgorithmKind::Zlib);
+    assert_eq!(debug, "Zlib");
+    let debug = format!("{:?}", CompressionAlgorithmKind::None);
+    assert_eq!(debug, "None");
+}
