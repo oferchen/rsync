@@ -31,25 +31,30 @@
 //!    synchronization (~2 ns). This absorbs 95%+ of operations under the
 //!    typical rayon workload (one buffer per worker per file).
 //!
-//! 2. **Central pool** - a `Mutex<Vec<Vec<u8>>>` stores overflow buffers.
-//!    Only accessed on thread-local miss. Capacity is enforced exactly under
-//!    the lock - no TOCTOU race.
+//! 2. **Central pool** - a lock-free [`crossbeam_queue::ArrayQueue`] stores
+//!    overflow buffers. Only accessed on thread-local miss. Push and pop
+//!    are wait-free in the contended case (single CAS) with no syscalls.
+//!    The soft capacity is enforced via an atomic admission counter
+//!    (`compare_exchange_weak` on every return), so the central queue
+//!    never exceeds the soft cap even under burst returns from many
+//!    threads.
 //!
-//! This design eliminates contention on the hot path while keeping the
-//! implementation simple and dependency-free (std only, no crossbeam).
+//! This design eliminates the central mutex on the hot path entirely while
+//! keeping the public API stable.
 //!
 //! # Contention Characteristics
 //!
 //! Under typical rsync workloads - where rayon worker threads each process
 //! one file at a time - the thread-local cache handles virtually all acquire
-//! and return operations with zero synchronization. The central Mutex is
+//! and return operations with zero synchronization. The central queue is
 //! only touched during initial warm-up (first acquire per thread) and when
 //! a thread returns a buffer while its local slot is occupied.
 //!
 //! Under high-concurrency workloads (e.g., parallel delta chunk processing),
 //! the thread-local cache still absorbs the majority of operations since
-//! each thread processes chunks sequentially. The Mutex is held only for
-//! the duration of a `Vec::push`/`Vec::pop` - nanoseconds.
+//! each thread processes chunks sequentially. The lock-free queue exchanges
+//! mutex acquisition for a single CAS per push/pop, removing the syscall
+//! tail latency that contended mutexes incur.
 //!
 //! # RAII Guard Pattern
 //!
