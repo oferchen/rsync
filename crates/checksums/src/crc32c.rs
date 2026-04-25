@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn debug_format_contains_state() {
         let hasher = Crc32cHasher::new();
-        let debug = format!("{:?}", hasher);
+        let debug = format!("{hasher:?}");
         assert!(debug.contains("Crc32cHasher"));
         assert!(debug.contains("state"));
     }
@@ -400,7 +400,7 @@ mod tests {
     fn crc32c_file_single_byte() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("one.bin");
-        std::fs::write(&path, &[0x42]).unwrap();
+        std::fs::write(&path, [0x42]).unwrap();
 
         assert_eq!(crc32c_file(&path).unwrap(), crc32c_bytes(&[0x42]));
     }
