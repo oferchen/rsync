@@ -144,33 +144,95 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    // --- RFC 3720 / iSCSI standard CRC32C test vectors ---
+
     #[test]
     fn empty_data_returns_zero() {
         assert_eq!(crc32c_bytes(b""), 0);
     }
 
     #[test]
-    fn known_value_hello_world() {
-        // CRC32C("hello world") is a well-known test vector.
-        let checksum = crc32c_bytes(b"hello world");
-        // Verify determinism - same input must produce same output.
-        assert_eq!(checksum, crc32c_bytes(b"hello world"));
-        assert_ne!(checksum, 0);
+    fn known_32_bytes_of_zeros() {
+        // 32 bytes of zeros - verified against crc32c crate reference.
+        let data = [0u8; 32];
+        assert_eq!(crc32c_bytes(&data), 0x8A9136AA);
     }
+
+    #[test]
+    fn known_32_bytes_of_0xff() {
+        // 32 bytes of 0xFF - verified against crc32c crate reference.
+        let data = [0xFFu8; 32];
+        assert_eq!(crc32c_bytes(&data), 0x62A8AB43);
+    }
+
+    #[test]
+    fn known_ascending_bytes() {
+        // 32 bytes ascending 0x00..=0x1F - verified against crc32c crate reference.
+        let data: Vec<u8> = (0x00u8..=0x1F).collect();
+        assert_eq!(crc32c_bytes(&data), 0x46DD794E);
+    }
+
+    #[test]
+    fn known_descending_bytes() {
+        // 32 bytes descending 0x1F..=0x00 - verified against crc32c crate reference.
+        let data: Vec<u8> = (0x00u8..=0x1F).rev().collect();
+        assert_eq!(crc32c_bytes(&data), 0x113FDB5C);
+    }
+
+    // --- Single byte tests ---
+
+    #[test]
+    fn single_byte_zero() {
+        let checksum = crc32c_bytes(&[0x00]);
+        assert_ne!(checksum, 0);
+        // Verify determinism.
+        assert_eq!(checksum, crc32c_bytes(&[0x00]));
+    }
+
+    #[test]
+    fn single_byte_0xff() {
+        let checksum = crc32c_bytes(&[0xFF]);
+        assert_ne!(checksum, 0);
+        assert_ne!(checksum, crc32c_bytes(&[0x00]));
+    }
+
+    #[test]
+    fn each_single_byte_is_unique() {
+        // Every distinct single byte must produce a distinct CRC32C.
+        let checksums: Vec<u32> = (0u8..=255).map(|b| crc32c_bytes(&[b])).collect();
+        let mut sorted = checksums.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 256);
+    }
+
+    // --- Known string values ---
+
+    #[test]
+    fn known_value_hello_world() {
+        // CRC32C("hello world") - verified against reference implementations.
+        assert_eq!(crc32c_bytes(b"hello world"), 0xC99465AA);
+    }
+
+    #[test]
+    fn known_value_123456789() {
+        // CRC32C of the ASCII digits "123456789" - the classic check value
+        // for the Castagnoli polynomial.
+        assert_eq!(crc32c_bytes(b"123456789"), 0xE3069283);
+    }
+
+    // --- Streaming hasher ---
 
     #[test]
     fn streaming_matches_one_shot() {
         let data = b"The quick brown fox jumps over the lazy dog";
-
         let one_shot = crc32c_bytes(data);
 
         let mut hasher = Crc32cHasher::new();
         hasher.update(&data[..10]);
         hasher.update(&data[10..20]);
         hasher.update(&data[20..]);
-        let streaming = hasher.finalize();
-
-        assert_eq!(one_shot, streaming);
+        assert_eq!(hasher.finalize(), one_shot);
     }
 
     #[test]
@@ -186,9 +248,42 @@ mod tests {
     }
 
     #[test]
+    fn streaming_empty_updates_are_noop() {
+        let mut hasher = Crc32cHasher::new();
+        hasher.update(b"data");
+        let before = hasher.clone().finalize();
+        hasher.update(b"");
+        hasher.update(b"");
+        assert_eq!(hasher.finalize(), before);
+    }
+
+    #[test]
+    fn streaming_all_empty_equals_zero() {
+        let mut hasher = Crc32cHasher::new();
+        hasher.update(b"");
+        hasher.update(b"");
+        assert_eq!(hasher.finalize(), 0);
+    }
+
+    // --- Differentiation ---
+
+    #[test]
     fn different_data_different_checksums() {
         assert_ne!(crc32c_bytes(b"aaa"), crc32c_bytes(b"bbb"));
     }
+
+    #[test]
+    fn order_matters() {
+        assert_ne!(crc32c_bytes(b"ab"), crc32c_bytes(b"ba"));
+    }
+
+    #[test]
+    fn length_matters() {
+        // "a" vs "aa" - CRC32C distinguishes different lengths.
+        assert_ne!(crc32c_bytes(b"a"), crc32c_bytes(b"aa"));
+    }
+
+    // --- with_initial ---
 
     #[test]
     fn with_initial_chains_correctly() {
@@ -200,10 +295,37 @@ mod tests {
         let partial = crc32c_bytes(&data[..mid]);
         let mut hasher = Crc32cHasher::with_initial(partial);
         hasher.update(&data[mid..]);
-        let chained = hasher.finalize();
-
-        assert_eq!(full, chained);
+        assert_eq!(hasher.finalize(), full);
     }
+
+    #[test]
+    fn with_initial_zero_equals_new() {
+        let a = Crc32cHasher::new();
+        let b = Crc32cHasher::with_initial(0);
+        assert_eq!(a.finalize(), b.finalize());
+    }
+
+    #[test]
+    fn with_initial_nonzero_differs_from_new() {
+        let mut a = Crc32cHasher::new();
+        a.update(b"test");
+
+        let mut b = Crc32cHasher::with_initial(0xDEADBEEF);
+        b.update(b"test");
+
+        assert_ne!(a.finalize(), b.finalize());
+    }
+
+    #[test]
+    fn with_initial_no_update_returns_initial() {
+        let initial = 0x12345678;
+        let hasher = Crc32cHasher::with_initial(initial);
+        // Finalize without any update should return the initial value since
+        // CRC32C of zero-length data appended to a state preserves the state.
+        assert_eq!(hasher.finalize(), initial);
+    }
+
+    // --- Default / Clone / Debug trait coverage ---
 
     #[test]
     fn default_trait_matches_new() {
@@ -211,6 +333,38 @@ mod tests {
         let b = Crc32cHasher::default();
         assert_eq!(a.finalize(), b.finalize());
     }
+
+    #[test]
+    fn clone_preserves_state() {
+        let mut hasher = Crc32cHasher::new();
+        hasher.update(b"partial");
+        let cloned = hasher.clone();
+        assert_eq!(hasher.finalize(), cloned.finalize());
+    }
+
+    #[test]
+    fn clone_divergence() {
+        let mut hasher = Crc32cHasher::new();
+        hasher.update(b"shared");
+
+        let mut fork_a = hasher.clone();
+        let mut fork_b = hasher;
+
+        fork_a.update(b"path_a");
+        fork_b.update(b"path_b");
+
+        assert_ne!(fork_a.finalize(), fork_b.finalize());
+    }
+
+    #[test]
+    fn debug_format_contains_state() {
+        let hasher = Crc32cHasher::new();
+        let debug = format!("{:?}", hasher);
+        assert!(debug.contains("Crc32cHasher"));
+        assert!(debug.contains("state"));
+    }
+
+    // --- File checksum ---
 
     #[test]
     fn crc32c_file_reads_correctly() {
@@ -224,8 +378,7 @@ mod tests {
         }
 
         let file_checksum = crc32c_file(&path).unwrap();
-        let mem_checksum = crc32c_bytes(data);
-        assert_eq!(file_checksum, mem_checksum);
+        assert_eq!(file_checksum, crc32c_bytes(data));
     }
 
     #[test]
@@ -234,8 +387,7 @@ mod tests {
         let path = dir.path().join("empty.bin");
         File::create(&path).unwrap();
 
-        let checksum = crc32c_file(&path).unwrap();
-        assert_eq!(checksum, 0);
+        assert_eq!(crc32c_file(&path).unwrap(), 0);
     }
 
     #[test]
@@ -245,29 +397,101 @@ mod tests {
     }
 
     #[test]
+    fn crc32c_file_single_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("one.bin");
+        std::fs::write(&path, &[0x42]).unwrap();
+
+        assert_eq!(crc32c_file(&path).unwrap(), crc32c_bytes(&[0x42]));
+    }
+
+    #[test]
     fn crc32c_file_large_data() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("large.bin");
 
-        // Create data larger than BUF_SIZE to exercise multi-chunk reading.
+        // Data larger than BUF_SIZE to exercise multi-chunk reading.
         let data: Vec<u8> = (0u8..=255).cycle().take(BUF_SIZE * 3 + 42).collect();
         {
             let mut f = File::create(&path).unwrap();
             f.write_all(&data).unwrap();
         }
 
-        let file_checksum = crc32c_file(&path).unwrap();
-        let mem_checksum = crc32c_bytes(&data);
-        assert_eq!(file_checksum, mem_checksum);
+        assert_eq!(crc32c_file(&path).unwrap(), crc32c_bytes(&data));
     }
 
     #[test]
-    fn clone_preserves_state() {
-        let mut hasher = Crc32cHasher::new();
-        hasher.update(b"partial");
-        let cloned = hasher.clone();
+    fn crc32c_file_exactly_buf_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("exact.bin");
 
-        // Both should produce the same result when finalized without further updates.
-        assert_eq!(hasher.finalize(), cloned.finalize());
+        // Exactly BUF_SIZE bytes - boundary condition for the read loop.
+        let data: Vec<u8> = (0u8..=255).cycle().take(BUF_SIZE).collect();
+        std::fs::write(&path, &data).unwrap();
+
+        assert_eq!(crc32c_file(&path).unwrap(), crc32c_bytes(&data));
+    }
+
+    #[test]
+    fn crc32c_file_buf_size_plus_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plus1.bin");
+
+        // BUF_SIZE + 1 bytes - just past the first chunk boundary.
+        let data: Vec<u8> = (0u8..=255).cycle().take(BUF_SIZE + 1).collect();
+        std::fs::write(&path, &data).unwrap();
+
+        assert_eq!(crc32c_file(&path).unwrap(), crc32c_bytes(&data));
+    }
+
+    // --- Edge case patterns ---
+
+    #[test]
+    fn all_zeros_pattern() {
+        let data = [0u8; 1024];
+        let checksum = crc32c_bytes(&data);
+        assert_ne!(checksum, 0);
+        // Must differ from shorter all-zeros.
+        assert_ne!(checksum, crc32c_bytes(&[0u8; 32]));
+    }
+
+    #[test]
+    fn all_ones_pattern() {
+        let data = [0xFFu8; 1024];
+        let checksum = crc32c_bytes(&data);
+        assert_ne!(checksum, 0);
+        assert_ne!(checksum, crc32c_bytes(&[0xFFu8; 32]));
+    }
+
+    #[test]
+    fn repeating_pattern_sensitivity() {
+        // CRC32C should distinguish different repeating patterns.
+        let a: Vec<u8> = [0xAA, 0x55].iter().copied().cycle().take(128).collect();
+        let b: Vec<u8> = [0x55, 0xAA].iter().copied().cycle().take(128).collect();
+        assert_ne!(crc32c_bytes(&a), crc32c_bytes(&b));
+    }
+
+    #[test]
+    fn determinism_across_calls() {
+        let data = b"determinism check";
+        let first = crc32c_bytes(data);
+        for _ in 0..100 {
+            assert_eq!(crc32c_bytes(data), first);
+        }
+    }
+
+    #[test]
+    fn large_input_4mb() {
+        // 4 MiB of data - exercises multiple BUF_SIZE iterations and ensures
+        // no overflow or accumulation errors in the CRC state.
+        let data: Vec<u8> = (0u8..=255).cycle().take(4 * 1024 * 1024).collect();
+
+        let one_shot = crc32c_bytes(&data);
+
+        let mut hasher = Crc32cHasher::new();
+        for chunk in data.chunks(BUF_SIZE) {
+            hasher.update(chunk);
+        }
+        assert_eq!(hasher.finalize(), one_shot);
     }
 }
