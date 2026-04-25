@@ -22,11 +22,17 @@
 
 pub(crate) mod batch_support;
 pub mod daemon_transfer;
+#[cfg(feature = "embedded-ssh")]
+pub mod embedded_ssh_transfer;
 pub(crate) mod flags;
 pub mod invocation;
 pub mod remote_to_remote;
 pub mod ssh_transfer;
 pub use daemon_transfer::run_daemon_transfer;
+#[cfg(feature = "embedded-ssh")]
+pub(crate) use embedded_ssh_transfer::is_ssh_url;
+#[cfg(feature = "embedded-ssh")]
+pub use embedded_ssh_transfer::run_embedded_ssh_transfer;
 pub use invocation::{
     RemoteInvocationBuilder, RemoteOperands, RemoteRole, SecludedInvocation, TransferSpec,
     determine_transfer_role, operand_is_remote,
