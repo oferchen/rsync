@@ -73,12 +73,15 @@ fn validate_bin_manifest_packaging(
         ))
     })?;
 
-    let manifest_value: Value = manifest_text.parse().map_err(|error| {
-        TaskError::Metadata(format!(
-            "failed to parse {}: {error}",
-            manifest_path.display()
-        ))
-    })?;
+    let manifest_value: Value = {
+        let table: toml::Table = toml::from_str(&manifest_text).map_err(|error| {
+            TaskError::Metadata(format!(
+                "failed to parse {}: {error}",
+                manifest_path.display()
+            ))
+        })?;
+        Value::Table(table)
+    };
 
     let daemon_config = branding.daemon_config.display().to_string();
     let daemon_secrets = branding.daemon_secrets.display().to_string();
@@ -380,7 +383,8 @@ mod tests {
             assets = [["source", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"], ["source2", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"]]
             conf-files = ["etc/oc-rsyncd/oc-rsyncd.conf", "etc/oc-rsyncd/oc-rsyncd.secrets"]
         "#;
-        let value: Value = manifest.parse().expect("parse succeeds");
+        let table: toml::Table = toml::from_str(manifest).expect("parse succeeds");
+        let value = Value::Table(table);
         let deb = value
             .get("package")
             .and_then(Value::as_table)
@@ -408,7 +412,8 @@ mod tests {
                 { path = "src2", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true }
             ]
         "#;
-        let value: Value = manifest.parse().expect("parse succeeds");
+        let table: toml::Table = toml::from_str(manifest).expect("parse succeeds");
+        let value = Value::Table(table);
         let rpm = value
             .get("package")
             .and_then(Value::as_table)
@@ -427,7 +432,8 @@ mod tests {
                 { path = "src", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644" }
             ]
         "#;
-        let value: Value = manifest_missing_flag.parse().expect("parse succeeds");
+        let table: toml::Table = toml::from_str(manifest_missing_flag).expect("parse succeeds");
+        let value = Value::Table(table);
         let rpm = value
             .get("package")
             .and_then(Value::as_table)
