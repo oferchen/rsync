@@ -277,6 +277,35 @@ where
     } else {
         None
     };
+    let ssh_cipher: Vec<String> = matches
+        .remove_one::<OsString>("ssh-cipher")
+        .map(|v| {
+            v.to_string_lossy()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let ssh_connect_timeout = matches
+        .remove_one::<OsString>("ssh-connect-timeout")
+        .and_then(|v| v.to_string_lossy().parse::<u64>().ok());
+    let ssh_keepalive = matches
+        .remove_one::<OsString>("ssh-keepalive")
+        .and_then(|v| v.to_string_lossy().parse::<u64>().ok());
+    let ssh_identity: Vec<PathBuf> = matches
+        .remove_many::<OsString>("ssh-identity")
+        .map(|vals| vals.map(PathBuf::from).collect())
+        .unwrap_or_default();
+    let ssh_no_agent = matches.get_flag("ssh-no-agent");
+    let ssh_strict_host_key_checking = matches
+        .remove_one::<OsString>("ssh-strict-host-key-checking")
+        .map(|v| v.to_string_lossy().into_owned());
+    let ssh_ipv6 = matches.get_flag("ssh-ipv6");
+    let ssh_port = matches
+        .remove_one::<OsString>("ssh-port")
+        .and_then(|v| v.to_string_lossy().parse::<u16>().ok());
+
     let compress_level_opt = matches.get_one::<OsString>("compress-level").cloned();
     if let Some(ref value) = compress_level_opt
         && let Ok(setting) = parse_compress_level_argument(value.as_os_str())
@@ -741,5 +770,13 @@ where
         no_iconv,
         executability,
         prefer_aes_gcm,
+        ssh_cipher,
+        ssh_connect_timeout,
+        ssh_keepalive,
+        ssh_identity,
+        ssh_no_agent,
+        ssh_strict_host_key_checking,
+        ssh_ipv6,
+        ssh_port,
     })
 }

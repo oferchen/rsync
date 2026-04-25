@@ -201,6 +201,14 @@ where
         dparam,
         no_iconv,
         prefer_aes_gcm,
+        ssh_cipher: _ssh_cipher,
+        ssh_connect_timeout: _ssh_connect_timeout,
+        ssh_keepalive: _ssh_keepalive,
+        ssh_identity: _ssh_identity,
+        ssh_no_agent: _ssh_no_agent,
+        ssh_strict_host_key_checking: _ssh_strict_host_key_checking,
+        ssh_ipv6: _ssh_ipv6,
+        ssh_port: _ssh_port,
     } = parsed;
 
     let password_file = password_file.map(PathBuf::from);

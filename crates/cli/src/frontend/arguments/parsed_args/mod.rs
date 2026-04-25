@@ -519,4 +519,29 @@ pub struct ParsedArgs {
     /// `--aes` - force AES-GCM cipher selection for SSH connections.
     /// `None` = use runtime hardware detection.
     pub prefer_aes_gcm: Option<bool>,
+
+    // ── Embedded SSH ────────────────────────────────────────────────
+    /// `--ssh-cipher` - comma-separated cipher preference list for embedded SSH.
+    pub ssh_cipher: Vec<String>,
+
+    /// `--ssh-connect-timeout` - connection timeout in seconds for embedded SSH.
+    pub ssh_connect_timeout: Option<u64>,
+
+    /// `--ssh-keepalive` - keepalive interval in seconds for embedded SSH (0 = disable).
+    pub ssh_keepalive: Option<u64>,
+
+    /// `--ssh-identity` - identity file paths for embedded SSH (repeatable).
+    pub ssh_identity: Vec<PathBuf>,
+
+    /// `--ssh-no-agent` - disable SSH agent authentication.
+    pub ssh_no_agent: bool,
+
+    /// `--ssh-strict-host-key-checking` - host key verification policy (`yes`, `no`, `ask`).
+    pub ssh_strict_host_key_checking: Option<String>,
+
+    /// `--ssh-ipv6` - prefer IPv6 for embedded SSH connections.
+    pub ssh_ipv6: bool,
+
+    /// `--ssh-port` - port override for embedded SSH connections.
+    pub ssh_port: Option<u16>,
 }
