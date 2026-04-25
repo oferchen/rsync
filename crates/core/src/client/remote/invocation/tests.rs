@@ -1,12 +1,12 @@
 //! Tests for remote invocation builder and transfer role detection.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 use compress::algorithm::CompressionAlgorithm;
 use transfer::setup::build_capability_string;
 
 use super::builder::RemoteInvocationBuilder;
-use super::transfer_role::determine_transfer_role;
+use super::transfer_role::{determine_transfer_role, operand_is_remote};
 use super::{RemoteOperands, RemoteRole, TransferSpec};
 use crate::client::config::{ClientConfig, TransferTimeout};
 
@@ -2085,4 +2085,268 @@ fn all_flags_enabled_produces_valid_invocation() {
     assert!(args.contains(&build_capability_string(false)));
     assert!(args.contains(&".".to_owned()));
     assert!(args.contains(&"/path".to_owned()));
+}
+
+// ---------------------------------------------------------------------------
+// operand_is_remote: local path classification
+// ---------------------------------------------------------------------------
+
+#[test]
+fn local_absolute_path_is_not_remote() {
+    assert!(!operand_is_remote(OsStr::new("/tmp/foo")));
+}
+
+#[test]
+fn local_relative_path_is_not_remote() {
+    assert!(!operand_is_remote(OsStr::new("./relative/path")));
+}
+
+#[test]
+fn local_bare_filename_is_not_remote() {
+    assert!(!operand_is_remote(OsStr::new("file.txt")));
+}
+
+#[test]
+fn local_path_with_colon_after_slash_is_not_remote() {
+    // Colon appears after a slash, so the before-colon part contains '/'.
+    // upstream: main.c - only treat as remote if no slash before colon.
+    assert!(!operand_is_remote(OsStr::new("/foo:bar")));
+}
+
+#[test]
+fn local_path_with_colon_after_backslash_is_not_remote() {
+    assert!(!operand_is_remote(OsStr::new("dir\\sub:file")));
+}
+
+#[test]
+fn local_path_nested_colon_after_slash_is_not_remote() {
+    assert!(!operand_is_remote(OsStr::new("/a/b/c:d")));
+}
+
+#[test]
+fn local_dot_path_is_not_remote() {
+    assert!(!operand_is_remote(OsStr::new(".")));
+}
+
+#[test]
+fn local_parent_path_is_not_remote() {
+    assert!(!operand_is_remote(OsStr::new("..")));
+}
+
+// ---------------------------------------------------------------------------
+// operand_is_remote: Windows drive letter handling
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+#[test]
+fn windows_drive_letter_is_not_remote() {
+    assert!(!operand_is_remote(OsStr::new("C:\\Windows\\path")));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_drive_letter_forward_slash_is_not_remote() {
+    assert!(!operand_is_remote(OsStr::new("D:/Users/test")));
+}
+
+#[cfg(not(windows))]
+#[test]
+fn single_letter_colon_on_unix_is_remote() {
+    // On Unix, "C:" looks like host:path with empty path - treated as remote.
+    // Only Windows has the drive letter exemption.
+    assert!(operand_is_remote(OsStr::new("C:")));
+}
+
+// ---------------------------------------------------------------------------
+// operand_is_remote: rsync:// URL detection
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rsync_url_is_remote() {
+    assert!(operand_is_remote(OsStr::new("rsync://host/module/path")));
+}
+
+#[test]
+fn rsync_url_with_user_is_remote() {
+    assert!(operand_is_remote(OsStr::new("rsync://user@host/module")));
+}
+
+#[test]
+fn rsync_url_bare_host_is_remote() {
+    assert!(operand_is_remote(OsStr::new("rsync://host")));
+}
+
+// ---------------------------------------------------------------------------
+// operand_is_remote: ssh:// URL detection
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ssh_url_is_remote() {
+    assert!(operand_is_remote(OsStr::new("ssh://host/path")));
+}
+
+#[test]
+fn ssh_url_with_user_is_remote() {
+    assert!(operand_is_remote(OsStr::new("ssh://user@host/path")));
+}
+
+#[test]
+fn ssh_url_with_port_is_remote() {
+    assert!(operand_is_remote(OsStr::new("ssh://user@host:22/path")));
+}
+
+#[test]
+fn ssh_url_bare_host_is_remote() {
+    assert!(operand_is_remote(OsStr::new("ssh://host")));
+}
+
+// ---------------------------------------------------------------------------
+// operand_is_remote: traditional remote-shell syntax (host:path)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn host_colon_path_is_remote() {
+    assert!(operand_is_remote(OsStr::new("host:path")));
+}
+
+#[test]
+fn user_at_host_colon_path_is_remote() {
+    assert!(operand_is_remote(OsStr::new("user@host:path")));
+}
+
+#[test]
+fn host_colon_empty_path_is_remote() {
+    assert!(operand_is_remote(OsStr::new("host:")));
+}
+
+#[test]
+fn ip_colon_path_is_remote() {
+    assert!(operand_is_remote(OsStr::new("192.168.1.1:/data")));
+}
+
+// ---------------------------------------------------------------------------
+// operand_is_remote: double-colon daemon syntax (host::module)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn host_double_colon_module_is_remote() {
+    assert!(operand_is_remote(OsStr::new("host::module")));
+}
+
+#[test]
+fn user_at_host_double_colon_module_is_remote() {
+    assert!(operand_is_remote(OsStr::new("user@host::module")));
+}
+
+#[test]
+fn host_double_colon_module_path_is_remote() {
+    assert!(operand_is_remote(OsStr::new("host::module/subdir")));
+}
+
+// ---------------------------------------------------------------------------
+// operand_is_remote: edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn empty_string_is_not_remote() {
+    assert!(!operand_is_remote(OsStr::new("")));
+}
+
+#[test]
+fn http_url_is_not_classified_as_ssh() {
+    // "http://foo" has a colon, but the before-colon part ("http") contains
+    // no '/' or '\', so it is treated as host:path (remote).
+    // This matches upstream rsync behavior - http:// is not special-cased.
+    assert!(operand_is_remote(OsStr::new("http://foo")));
+}
+
+#[test]
+fn ftp_url_is_not_special_cased() {
+    // Same as http:// - upstream rsync treats any host:path as remote.
+    assert!(operand_is_remote(OsStr::new("ftp://foo")));
+}
+
+#[test]
+fn uppercase_ssh_url_is_not_recognized() {
+    // Only lowercase "ssh://" triggers the URL check. Uppercase "SSH://"
+    // falls through to the colon-based check where "SSH" has no '/' or '\'
+    // before the colon, so it is treated as host:path (remote) anyway.
+    assert!(operand_is_remote(OsStr::new("SSH://host/path")));
+}
+
+#[test]
+fn uppercase_rsync_url_is_not_recognized_as_url() {
+    // "RSYNC://host" - "RSYNC" has no slash before colon, treated as remote.
+    assert!(operand_is_remote(OsStr::new("RSYNC://host")));
+}
+
+#[test]
+fn path_with_only_colons_double_is_remote() {
+    // "::" contains double-colon, so it is treated as remote daemon syntax.
+    assert!(operand_is_remote(OsStr::new("::")));
+}
+
+#[test]
+fn path_with_single_colon_only_is_remote() {
+    // ":" has a colon with empty before and after parts. Empty before has no
+    // '/' or '\', so it falls through to remote classification.
+    assert!(operand_is_remote(OsStr::new(":")));
+}
+
+// ---------------------------------------------------------------------------
+// operand_is_remote integration with determine_transfer_role
+// ---------------------------------------------------------------------------
+
+#[test]
+fn local_to_ssh_url_is_push() {
+    let sources = vec![OsString::from("/tmp/data")];
+    let dest = OsString::from("ssh://user@host/remote/path");
+    let spec = determine_transfer_role(&sources, &dest).unwrap();
+    assert_eq!(spec.role(), RemoteRole::Sender);
+    match spec {
+        TransferSpec::Push {
+            local_sources,
+            remote_dest,
+        } => {
+            assert_eq!(local_sources, vec!["/tmp/data"]);
+            assert_eq!(remote_dest, "ssh://user@host/remote/path");
+        }
+        _ => panic!("expected Push for local -> ssh:// transfer"),
+    }
+}
+
+#[test]
+fn ssh_url_to_local_is_pull() {
+    let sources = vec![OsString::from("ssh://host/remote/file")];
+    let dest = OsString::from("/tmp/local");
+    let spec = determine_transfer_role(&sources, &dest).unwrap();
+    assert_eq!(spec.role(), RemoteRole::Receiver);
+}
+
+#[test]
+fn rsync_url_to_local_is_pull() {
+    let sources = vec![OsString::from("rsync://host/module/file")];
+    let dest = OsString::from("./local_dir");
+    let spec = determine_transfer_role(&sources, &dest).unwrap();
+    assert_eq!(spec.role(), RemoteRole::Receiver);
+}
+
+#[test]
+fn local_path_with_colon_after_slash_is_local_in_transfer() {
+    // Both operands are local (colon after slash is not remote).
+    let sources = vec![OsString::from("/data:backup/files")];
+    let dest = OsString::from("/tmp/dest");
+    let result = determine_transfer_role(&sources, &dest);
+    assert!(
+        result.is_err(),
+        "two local operands should produce 'no remote operand' error"
+    );
+}
+
+#[test]
+fn daemon_double_colon_to_local_is_pull() {
+    let sources = vec![OsString::from("host::module/path")];
+    let dest = OsString::from("/tmp/local");
+    let spec = determine_transfer_role(&sources, &dest).unwrap();
+    assert_eq!(spec.role(), RemoteRole::Receiver);
 }
