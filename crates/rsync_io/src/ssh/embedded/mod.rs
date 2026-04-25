@@ -11,6 +11,8 @@ mod auth;
 #[cfg(feature = "embedded-ssh")]
 mod config;
 #[cfg(feature = "embedded-ssh")]
+mod connect;
+#[cfg(feature = "embedded-ssh")]
 mod error;
 #[cfg(feature = "embedded-ssh")]
 mod handler;
@@ -23,6 +25,8 @@ mod types;
 pub use auth::authenticate;
 #[cfg(feature = "embedded-ssh")]
 pub use config::SshConfig;
+#[cfg(feature = "embedded-ssh")]
+pub use connect::{ChannelReader, ChannelWriter, connect_and_exec};
 #[cfg(feature = "embedded-ssh")]
 pub use error::SshError;
 #[cfg(feature = "embedded-ssh")]

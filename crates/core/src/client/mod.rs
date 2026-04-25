@@ -98,6 +98,8 @@ pub mod remote;
 mod run;
 mod summary;
 
+#[cfg(feature = "embedded-ssh")]
+pub use self::config::EmbeddedSshOptions;
 pub use self::config::{
     AddressMode, BandwidthLimit, BindAddress, ClientConfig, ClientConfigBuilder,
     CompressionSetting, ConfigConflict, DeleteMode, FilesFromSource, FilterRuleKind,

@@ -208,6 +208,30 @@ fn run_client_internal(
         .any(|arg| remote::operand_is_remote(arg));
 
     if has_remote {
+        // When the embedded-ssh feature is enabled and any operand uses an
+        // ssh:// URL, dispatch to the embedded SSH transport instead of
+        // spawning the system ssh binary.
+        #[cfg(feature = "embedded-ssh")]
+        {
+            let has_ssh_url = config
+                .transfer_args()
+                .iter()
+                .any(|arg| remote::is_ssh_url(&arg.to_string_lossy()));
+
+            if has_ssh_url {
+                let summary =
+                    remote::run_embedded_ssh_transfer(&config, observer, batch_writer.clone())?;
+
+                if let Some(ref writer_arc) = batch_writer
+                    && let Some(batch_cfg) = config.batch_config()
+                {
+                    batch::finalize_batch(writer_arc, batch_cfg, &summary)?;
+                }
+
+                return Ok(summary);
+            }
+        }
+
         let summary = remote::run_ssh_transfer(&config, observer, batch_writer.clone())?;
 
         // Finalize batch file if batch mode was active

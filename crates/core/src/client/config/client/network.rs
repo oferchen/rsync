@@ -110,6 +110,17 @@ impl ClientConfig {
         self.protect_args
     }
 
+    /// Returns the embedded SSH options, if configured.
+    ///
+    /// These options override `SshConfig` defaults when the `embedded-ssh`
+    /// feature is enabled and an `ssh://` URL is used.
+    #[cfg(feature = "embedded-ssh")]
+    #[doc(alias = "--ssh-cipher")]
+    #[doc(alias = "--ssh-no-agent")]
+    pub fn embedded_ssh_config(&self) -> Option<&super::EmbeddedSshOptions> {
+        self.embedded_ssh_config.as_ref()
+    }
+
     /// Returns the forced protocol version, if any.
     ///
     /// When set, the client advertises this version during the daemon handshake

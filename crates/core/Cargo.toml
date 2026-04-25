@@ -85,6 +85,9 @@ iconv = ["protocol/iconv"]
 # Runtime Features
 # ============================================================================
 
+# Embedded SSH transport using russh - pure Rust alternative to spawning system ssh
+embedded-ssh = ["dep:tokio", "rsync_io/embedded-ssh"]
+
 # Async runtime support - enables tokio-based async I/O for core operations
 async = ["dep:tokio", "engine/async", "transfer/async"]
 

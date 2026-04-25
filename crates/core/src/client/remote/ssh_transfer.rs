@@ -424,7 +424,7 @@ fn run_proxy_transfer(
 /// (files listed, files transferred, and bytes sent/received) to create a
 /// LocalCopySummary with the most relevant fields populated. The elapsed time
 /// is used to calculate the transfer rate (bytes/sec) shown in the summary output.
-fn convert_server_stats_to_summary(
+pub(super) fn convert_server_stats_to_summary(
     stats: crate::server::ServerStats,
     elapsed: Duration,
 ) -> ClientSummary {

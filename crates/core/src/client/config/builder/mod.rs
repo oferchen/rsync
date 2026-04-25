@@ -249,6 +249,8 @@ pub struct ClientConfigBuilder {
     no_motd: bool,
     daemon_params: Vec<String>,
     protocol_version: Option<protocol::ProtocolVersion>,
+    #[cfg(feature = "embedded-ssh")]
+    embedded_ssh_config: Option<super::client::EmbeddedSshOptions>,
     #[cfg(all(unix, feature = "acl"))]
     preserve_acls: bool,
     #[cfg(all(unix, feature = "xattr"))]
@@ -404,6 +406,8 @@ impl ClientConfigBuilder {
             no_motd: self.no_motd,
             daemon_params: self.daemon_params,
             protocol_version: self.protocol_version,
+            #[cfg(feature = "embedded-ssh")]
+            embedded_ssh_config: self.embedded_ssh_config,
             #[cfg(all(unix, feature = "acl"))]
             preserve_acls: self.preserve_acls,
             #[cfg(all(unix, feature = "xattr"))]

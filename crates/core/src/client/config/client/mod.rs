@@ -178,10 +178,38 @@ pub struct ClientConfig {
     pub(super) no_motd: bool,
     pub(super) daemon_params: Vec<String>,
     pub(super) protocol_version: Option<protocol::ProtocolVersion>,
+    #[cfg(feature = "embedded-ssh")]
+    pub(super) embedded_ssh_config: Option<EmbeddedSshOptions>,
     #[cfg(all(unix, feature = "acl"))]
     pub(super) preserve_acls: bool,
     #[cfg(all(unix, feature = "xattr"))]
     pub(super) preserve_xattrs: bool,
+}
+
+/// Options for the embedded SSH transport (russh-based).
+///
+/// These fields override defaults from `SshConfig` when the transfer
+/// uses `ssh://` URLs with the `embedded-ssh` feature enabled. Fields
+/// left as `None` use `SshConfig::default()` values.
+#[cfg(feature = "embedded-ssh")]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EmbeddedSshOptions {
+    /// Cipher preference list overriding hardware-detected defaults.
+    pub ciphers: Vec<String>,
+    /// Connection timeout in seconds (overrides `SshConfig` default of 30s).
+    pub connect_timeout_secs: Option<u64>,
+    /// Keepalive interval in seconds. `Some(0)` disables keepalives.
+    pub keepalive_interval_secs: Option<u64>,
+    /// Identity file paths for key-based authentication.
+    pub identity_files: Vec<std::path::PathBuf>,
+    /// Whether to disable SSH agent authentication.
+    pub no_agent: bool,
+    /// Host key verification policy (`yes`, `no`, `ask`).
+    pub strict_host_key_checking: Option<String>,
+    /// Prefer IPv6 for DNS resolution.
+    pub prefer_ipv6: bool,
+    /// Port override (takes precedence over port in the URL).
+    pub port: Option<u16>,
 }
 
 impl Default for ClientConfig {
@@ -303,6 +331,8 @@ impl Default for ClientConfig {
             no_motd: false,
             daemon_params: Vec::new(),
             protocol_version: None,
+            #[cfg(feature = "embedded-ssh")]
+            embedded_ssh_config: None,
             #[cfg(all(unix, feature = "acl"))]
             preserve_acls: false,
             #[cfg(all(unix, feature = "xattr"))]
