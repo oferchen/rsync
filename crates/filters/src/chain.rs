@@ -135,6 +135,7 @@ impl DirMergeConfig {
         self
     }
 
+    /// Per-directory merge filename configured for this rule.
     #[must_use]
     pub fn filename(&self) -> &str {
         &self.filename
@@ -396,16 +397,19 @@ impl FilterChain {
         self.global.is_empty() && self.scopes.is_empty()
     }
 
+    /// Number of active per-directory filter scopes on the stack.
     #[must_use]
     pub fn scope_depth(&self) -> usize {
         self.scopes.len()
     }
 
+    /// Directory nesting level relative to the transfer root.
     #[must_use]
     pub fn current_depth(&self) -> usize {
         self.current_depth
     }
 
+    /// Base filter set applied before any per-directory rules.
     #[must_use]
     pub fn global(&self) -> &FilterSet {
         &self.global
@@ -475,11 +479,13 @@ pub struct DirFilterGuard {
 }
 
 impl DirFilterGuard {
+    /// Directory depth at which this guard was pushed.
     #[must_use]
     pub const fn depth(&self) -> usize {
         self.depth
     }
 
+    /// Number of per-directory scopes introduced by this guard.
     #[must_use]
     pub const fn pushed_count(&self) -> usize {
         self.pushed_count

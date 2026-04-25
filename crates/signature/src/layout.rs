@@ -26,6 +26,7 @@ pub struct SignatureLayoutParams {
 }
 
 impl SignatureLayoutParams {
+    /// Constructs layout parameters from file metadata and protocol settings.
     #[must_use]
     pub const fn new(
         file_length: u64,
@@ -41,23 +42,27 @@ impl SignatureLayoutParams {
         }
     }
 
+    /// Source file size in bytes.
     #[inline]
     #[must_use]
     pub const fn file_length(self) -> u64 {
         self.file_length
     }
 
+    /// Caller-specified block length override, if any.
     #[inline]
     pub const fn forced_block_length(self) -> Option<NonZeroU32> {
         self.forced_block_length
     }
 
+    /// Protocol version governing layout computation.
     #[inline]
     #[must_use]
     pub const fn protocol(self) -> ProtocolVersion {
         self.protocol
     }
 
+    /// Negotiated strong checksum truncation length.
     #[inline]
     #[must_use]
     pub const fn checksum_length(self) -> NonZeroU8 {
@@ -91,6 +96,7 @@ impl SignatureLayout {
         }
     }
 
+    /// Computed block size in bytes for signature generation.
     #[inline]
     #[must_use]
     pub const fn block_length(self) -> NonZeroU32 {
@@ -104,12 +110,14 @@ impl SignatureLayout {
         self.remainder
     }
 
+    /// Total number of blocks covering the source file.
     #[inline]
     #[must_use]
     pub const fn block_count(self) -> u64 {
         self.block_count
     }
 
+    /// Strong checksum byte length per block.
     #[inline]
     #[must_use]
     pub const fn strong_sum_length(self) -> NonZeroU8 {
