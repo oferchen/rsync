@@ -19,3 +19,22 @@ pub const fn uid_from_raw(raw: u32) -> u32 {
 pub const fn gid_from_raw(raw: u32) -> u32 {
     raw
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uid_from_raw_identity() {
+        assert_eq!(uid_from_raw(0), 0);
+        assert_eq!(uid_from_raw(1000), 1000);
+        assert_eq!(uid_from_raw(u32::MAX), u32::MAX);
+    }
+
+    #[test]
+    fn gid_from_raw_identity() {
+        assert_eq!(gid_from_raw(0), 0);
+        assert_eq!(gid_from_raw(1000), 1000);
+        assert_eq!(gid_from_raw(u32::MAX), u32::MAX);
+    }
+}

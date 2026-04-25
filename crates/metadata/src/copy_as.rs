@@ -402,4 +402,54 @@ mod tests {
         let guard = switch_effective_ids(&ids);
         assert!(guard.is_ok());
     }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn non_unix_switch_without_group_returns_noop_guard() {
+        let ids = CopyAsIds { uid: 0, gid: None };
+        let guard = switch_effective_ids(&ids);
+        assert!(guard.is_ok());
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn non_unix_resolve_user_by_name_returns_unsupported() {
+        let err = resolve_user_by_name("root").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn non_unix_resolve_group_by_name_returns_unsupported() {
+        let err = resolve_group_by_name("wheel").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn non_unix_parse_named_user_fails() {
+        let spec = OsString::from("root");
+        let err = parse_copy_as_spec(&spec).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn non_unix_parse_named_group_fails() {
+        let spec = OsString::from("0:wheel");
+        let err = parse_copy_as_spec(&spec).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn non_unix_guard_drop_is_noop() {
+        let ids = CopyAsIds {
+            uid: 1000,
+            gid: Some(1000),
+        };
+        let guard = switch_effective_ids(&ids).unwrap();
+        drop(guard);
+        // No panic or side effects from drop
+    }
 }
