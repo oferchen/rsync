@@ -38,11 +38,13 @@ impl SparseDetector {
     /// # Arguments
     ///
     /// * `min_hole_size` - Minimum number of consecutive zero bytes to treat as a hole
+    #[must_use]
     pub const fn new(min_hole_size: usize) -> Self {
         Self { min_hole_size }
     }
 
     /// Creates a detector with the default threshold matching rsync's behavior.
+    #[must_use]
     pub const fn default_threshold() -> Self {
         Self::new(SPARSE_WRITE_SIZE)
     }
@@ -62,6 +64,7 @@ impl SparseDetector {
     ///
     /// A vector of `SparseRegion` entries describing the data and hole regions.
     /// An empty input buffer returns an empty vector.
+    #[must_use]
     pub fn scan(&self, data: &[u8], base_offset: u64) -> Vec<SparseRegion> {
         if data.is_empty() {
             return Vec::new();
@@ -137,6 +140,7 @@ impl SparseDetector {
     ///
     /// `true` if all bytes in the buffer are zero, `false` otherwise.
     /// An empty buffer returns `true`.
+    #[must_use]
     pub fn is_all_zeros(data: &[u8]) -> bool {
         fast_io::zero_detect::is_all_zeros(data)
     }
