@@ -830,6 +830,296 @@ fn sync_flush_after_each_write_produces_decompressible_prefix() {
 }
 
 #[test]
+fn compression_level_none_roundtrip() {
+    let payload = b"data that will not be deflated".repeat(10);
+    let compressed = compress_to_vec(&payload, CompressionLevel::None).expect("compress none");
+    let decompressed = decompress_to_vec(&compressed).expect("decompress none");
+    assert_eq!(decompressed, payload);
+    // Level None stores data verbatim - compressed size >= original
+    assert!(compressed.len() >= payload.len());
+}
+
+#[test]
+fn compression_level_fast_roundtrip() {
+    let payload = b"fast compression test data with repetition repetition repetition".repeat(10);
+    let compressed = compress_to_vec(&payload, CompressionLevel::Fast).expect("compress fast");
+    let decompressed = decompress_to_vec(&compressed).expect("decompress fast");
+    assert_eq!(decompressed, payload);
+    assert!(compressed.len() < payload.len());
+}
+
+#[test]
+fn compression_level_best_roundtrip() {
+    let payload = b"best compression test data with repetition repetition repetition".repeat(10);
+    let compressed = compress_to_vec(&payload, CompressionLevel::Best).expect("compress best");
+    let decompressed = decompress_to_vec(&compressed).expect("decompress best");
+    assert_eq!(decompressed, payload);
+    assert!(compressed.len() < payload.len());
+}
+
+#[test]
+fn compression_level_none_streaming_roundtrip() {
+    let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::None);
+    let payload = b"none level streaming test";
+    encoder.write(payload).expect("write");
+    let (compressed, bytes) = encoder.finish_into_inner().expect("finish");
+    assert_eq!(bytes as usize, compressed.len());
+    let decompressed = decompress_to_vec(&compressed).expect("decompress");
+    assert_eq!(decompressed, payload);
+}
+
+#[test]
+fn compression_level_fast_streaming_roundtrip() {
+    let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Fast);
+    let payload = b"fast level streaming test with repeated words words words";
+    encoder.write(payload).expect("write");
+    let (compressed, bytes) = encoder.finish_into_inner().expect("finish");
+    assert_eq!(bytes as usize, compressed.len());
+    let decompressed = decompress_to_vec(&compressed).expect("decompress");
+    assert_eq!(decompressed, payload);
+}
+
+#[test]
+fn from_numeric_zero_returns_none_variant() {
+    let level = CompressionLevel::from_numeric(0).expect("level 0 is valid");
+    assert_eq!(level, CompressionLevel::None);
+}
+
+#[test]
+fn from_numeric_rejects_large_values() {
+    for invalid in [10, 11, 100, 255, 1000, u32::MAX] {
+        let err = CompressionLevel::from_numeric(invalid).expect_err("should reject");
+        assert_eq!(err.level(), invalid);
+    }
+}
+
+#[test]
+fn compression_level_error_display_message() {
+    let err = CompressionLevelError::new(42);
+    let msg = err.to_string();
+    assert!(
+        msg.contains("42"),
+        "error message should contain the invalid level"
+    );
+    assert!(
+        msg.contains("0-9"),
+        "error message should mention the valid range"
+    );
+}
+
+#[test]
+fn compression_level_error_equality() {
+    let a = CompressionLevelError::new(10);
+    let b = CompressionLevelError::new(10);
+    let c = CompressionLevelError::new(11);
+    assert_eq!(a, b);
+    assert_ne!(a, c);
+}
+
+#[test]
+fn compression_level_clone_and_copy() {
+    let level = CompressionLevel::Fast;
+    let cloned = level;
+    assert_eq!(level, cloned);
+
+    let precise = CompressionLevel::from_numeric(5).expect("valid");
+    let copied = precise;
+    assert_eq!(precise, copied);
+}
+
+#[test]
+fn compression_level_debug_output() {
+    let level = CompressionLevel::Default;
+    let debug = format!("{level:?}");
+    assert!(debug.contains("Default"));
+
+    let precise = CompressionLevel::from_numeric(3).expect("valid");
+    let debug = format!("{precise:?}");
+    assert!(debug.contains("Precise"));
+}
+
+#[test]
+fn compression_level_into_flate2_all_variants() {
+    let cases = [
+        (CompressionLevel::None, Compression::none()),
+        (CompressionLevel::Fast, Compression::fast()),
+        (CompressionLevel::Default, Compression::default()),
+        (CompressionLevel::Best, Compression::best()),
+    ];
+    for (level, expected) in cases {
+        let actual = Compression::from(level);
+        assert_eq!(actual.level(), expected.level());
+    }
+}
+
+#[test]
+fn single_byte_streaming_roundtrip() {
+    let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
+    encoder.write(b"X").expect("write single byte");
+    let (compressed, bytes) = encoder.finish_into_inner().expect("finish");
+    assert!(bytes > 0);
+    let decompressed = decompress_to_vec(&compressed).expect("decompress");
+    assert_eq!(decompressed, b"X");
+}
+
+#[test]
+fn large_data_roundtrip() {
+    // 1 MB of mixed data
+    let payload: Vec<u8> = (0..1_048_576u32).map(|i| (i % 251) as u8).collect();
+    let compressed =
+        compress_to_vec(&payload, CompressionLevel::Default).expect("compress large data");
+    assert!(
+        compressed.len() < payload.len(),
+        "large data should compress"
+    );
+    let decompressed = decompress_to_vec(&compressed).expect("decompress large data");
+    assert_eq!(decompressed, payload);
+}
+
+#[test]
+fn large_data_streaming_roundtrip() {
+    let payload: Vec<u8> = (0..1_048_576u32).map(|i| (i % 251) as u8).collect();
+    let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Fast);
+    for chunk in payload.chunks(4096) {
+        encoder.write(chunk).expect("write chunk");
+    }
+    let (compressed, bytes) = encoder.finish_into_inner().expect("finish");
+    assert_eq!(bytes as usize, compressed.len());
+    let decompressed = decompress_to_vec(&compressed).expect("decompress");
+    assert_eq!(decompressed, payload);
+}
+
+#[test]
+fn incompressible_data_roundtrip() {
+    // Random-like data that resists compression
+    let payload: Vec<u8> = (0..512).map(|i| ((i * 137 + 73) % 256) as u8).collect();
+    let compressed =
+        compress_to_vec(&payload, CompressionLevel::Best).expect("compress incompressible");
+    let decompressed = decompress_to_vec(&compressed).expect("decompress incompressible");
+    assert_eq!(decompressed, payload);
+}
+
+#[test]
+fn decompress_invalid_data_returns_error() {
+    let garbage = b"this is not valid deflate data";
+    let result = decompress_to_vec(garbage);
+    assert!(result.is_err(), "decompressing garbage should fail");
+}
+
+#[test]
+fn decompress_truncated_data_returns_error() {
+    let payload = b"test data for truncation".repeat(10);
+    let compressed =
+        compress_to_vec(&payload, CompressionLevel::Default).expect("compress succeeds");
+    // Truncate to half
+    let truncated = &compressed[..compressed.len() / 2];
+    let result = decompress_to_vec(truncated);
+    // Truncated data may decompress partially or fail - either is acceptable
+    // as long as it does not panic
+    if let Ok(partial) = result {
+        assert!(partial.len() < payload.len());
+    }
+}
+
+#[test]
+fn decoder_partial_reads_accumulate_byte_count() {
+    let payload = b"partial read test payload that is long enough".repeat(5);
+    let compressed =
+        compress_to_vec(&payload, CompressionLevel::Default).expect("compress succeeds");
+    let mut decoder = CountingZlibDecoder::new(Cursor::new(compressed));
+
+    let mut total_read = 0;
+    let mut collected = Vec::new();
+    let mut buf = [0u8; 7]; // Small buffer to force multiple reads
+    loop {
+        let n = decoder.read(&mut buf).expect("read succeeds");
+        if n == 0 {
+            break;
+        }
+        total_read += n;
+        collected.extend_from_slice(&buf[..n]);
+    }
+
+    assert_eq!(total_read, payload.len());
+    assert_eq!(decoder.bytes_read(), payload.len() as u64);
+    assert_eq!(collected, payload);
+}
+
+#[test]
+fn decoder_zero_length_read_returns_zero() {
+    let compressed =
+        compress_to_vec(b"test", CompressionLevel::Default).expect("compress succeeds");
+    let mut decoder = CountingZlibDecoder::new(Cursor::new(compressed));
+    let mut empty = [0u8; 0];
+    let n = decoder.read(&mut empty).expect("zero-length read succeeds");
+    assert_eq!(n, 0);
+    assert_eq!(decoder.bytes_read(), 0);
+}
+
+#[test]
+fn encoder_bytes_written_matches_finish() {
+    let mut encoder = CountingZlibEncoder::new(CompressionLevel::Default);
+    encoder
+        .write(b"test payload for byte counting")
+        .expect("write");
+    encoder.flush().expect("flush");
+    let before_finish = encoder.bytes_written();
+    let final_bytes = encoder.finish().expect("finish");
+    assert!(final_bytes >= before_finish);
+}
+
+#[test]
+fn encoder_write_all_trait_method() {
+    let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
+    Write::write_all(&mut encoder, b"write_all test").expect("write_all");
+    let (compressed, _) = encoder.finish_into_inner().expect("finish");
+    let decompressed = decompress_to_vec(&compressed).expect("decompress");
+    assert_eq!(decompressed, b"write_all test");
+}
+
+#[test]
+fn encoder_write_fmt_trait_method() {
+    let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
+    write!(&mut encoder, "formatted {} data test", 42).expect("write_fmt");
+    let (compressed, _) = encoder.finish_into_inner().expect("finish");
+    let decompressed = decompress_to_vec(&compressed).expect("decompress");
+    assert_eq!(decompressed, b"formatted 42 data test");
+}
+
+#[test]
+fn precise_constructor_creates_correct_variant() {
+    let nz = NonZeroU8::new(4).expect("non-zero");
+    let level = CompressionLevel::precise(nz);
+    assert_eq!(level, CompressionLevel::Precise(nz));
+}
+
+#[test]
+fn best_produces_smaller_output_than_fast() {
+    let payload = b"repetitive data ".repeat(200);
+    let fast = compress_to_vec(&payload, CompressionLevel::Fast).expect("fast");
+    let best = compress_to_vec(&payload, CompressionLevel::Best).expect("best");
+    assert!(
+        best.len() <= fast.len(),
+        "Best ({}) should produce output <= Fast ({})",
+        best.len(),
+        fast.len()
+    );
+}
+
+#[test]
+fn none_level_does_not_shrink_data() {
+    let payload = b"ABCDEFGHIJ".repeat(100);
+    let compressed = compress_to_vec(&payload, CompressionLevel::None).expect("compress none");
+    // Level 0 stores uncompressed - output should be >= input
+    assert!(
+        compressed.len() >= payload.len(),
+        "None level should not shrink data: compressed={} original={}",
+        compressed.len(),
+        payload.len()
+    );
+}
+
+#[test]
 fn counting_encoder_flush_produces_sync_flush() {
     // Verify that calling flush() on CountingZlibEncoder produces
     // a Z_SYNC_FLUSH, matching the upstream per-token pattern.
