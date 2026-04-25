@@ -10,6 +10,11 @@ use std::cmp::Ordering;
 use std::num::NonZeroU64;
 
 /// Result returned by limiter updates describing how throttling changed.
+///
+/// Variants are ordered by precedence so that [`combine`](Self::combine) and
+/// [`combine_all`](Self::combine_all) return the most significant transition
+/// when multiple updates are applied in sequence. The ordering is:
+/// `Unchanged` < `Updated` < `Enabled` < `Disabled`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[must_use]
 pub enum LimiterChange {
@@ -93,8 +98,16 @@ impl FromIterator<LimiterChange> for LimiterChange {
     }
 }
 
-/// Applies a module-specific bandwidth cap to an optional limiter, mirroring upstream precedence rules.
+/// Applies a module-specific bandwidth cap to an optional limiter, mirroring
+/// upstream rsync's precedence rules.
 ///
+/// When a daemon module defines its own `bwlimit`, the strictest (lowest)
+/// byte-per-second rate wins. If `limit` is `None` and `limit_specified` is
+/// `true`, throttling is disabled entirely. The `burst` and `burst_specified`
+/// flags are handled independently so daemon modules can override burst
+/// without touching the rate.
+///
+/// Returns a [`LimiterChange`] describing the transition that occurred.
 // upstream: options.c:2374 - daemon_bwlimit override: strictest rate wins
 pub fn apply_effective_limit(
     limiter: &mut Option<BandwidthLimiter>,

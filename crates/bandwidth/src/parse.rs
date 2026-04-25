@@ -253,6 +253,13 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 }
 
 /// Parses a bandwidth limit containing an optional burst component.
+///
+/// Accepts the `RATE[:BURST]` syntax used in daemon module configuration.
+/// Both the rate and burst segments follow the same suffix and multiplier
+/// rules as [`parse_bandwidth_argument`]. A rate of `0` produces an
+/// unlimited configuration. Surrounding whitespace is rejected to match
+/// upstream rsync's strict parsing.
+// upstream: options.c:server_options() - bwlimit with optional burst
 #[doc(alias = "--bwlimit")]
 pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, BandwidthParseError> {
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
