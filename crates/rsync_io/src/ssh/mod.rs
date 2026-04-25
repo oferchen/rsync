@@ -54,6 +54,7 @@
 //! - [`crate::negotiate_session`] for the negotiation façade that consumes
 //!   [`SshConnection`] streams.
 
+mod aux_channel;
 mod builder;
 mod connection;
 pub mod embedded;
