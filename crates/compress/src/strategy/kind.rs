@@ -23,6 +23,7 @@ pub enum CompressionAlgorithmKind {
 }
 
 impl CompressionAlgorithmKind {
+    /// Wire-format name used during protocol negotiation.
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
@@ -47,6 +48,7 @@ impl CompressionAlgorithmKind {
         }
     }
 
+    /// Upstream-compatible default compression level per algorithm.
     #[must_use]
     pub const fn default_level(&self) -> CompressionLevel {
         match self {

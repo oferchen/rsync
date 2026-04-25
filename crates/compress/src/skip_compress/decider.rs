@@ -117,6 +117,7 @@ impl CompressionDecider {
         self.skip_extensions.remove(&suffix)
     }
 
+    /// File extensions that bypass compression entirely.
     #[must_use]
     pub fn skip_extensions(&self) -> &HashSet<Suffix> {
         &self.skip_extensions
@@ -134,6 +135,7 @@ impl CompressionDecider {
         self.compression_threshold = threshold.clamp(0.0, 1.0);
     }
 
+    /// Ratio at or above which a file is considered incompressible.
     #[must_use]
     pub fn compression_threshold(&self) -> f64 {
         self.compression_threshold
@@ -144,6 +146,7 @@ impl CompressionDecider {
         self.sample_size = size.max(64); // Minimum 64 bytes for meaningful detection
     }
 
+    /// Byte count sampled from each file for auto-detection.
     #[must_use]
     pub fn sample_size(&self) -> usize {
         self.sample_size

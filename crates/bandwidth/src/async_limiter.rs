@@ -128,18 +128,21 @@ impl AsyncRateLimiter {
         self.tokens = self.tokens.min(self.burst);
     }
 
+    /// Configured bytes-per-second limit.
     #[inline]
     #[must_use]
     pub const fn rate(&self) -> u64 {
         self.rate.get()
     }
 
+    /// Maximum token accumulation before capping.
     #[inline]
     #[must_use]
     pub const fn burst_capacity(&self) -> u64 {
         self.burst
     }
 
+    /// Tokens currently available for consumption.
     #[inline]
     #[must_use]
     pub const fn available_tokens(&self) -> u64 {
