@@ -407,4 +407,464 @@ mod tests {
         let user = effective_username(&config).unwrap();
         assert_eq!(user, "explicit");
     }
+
+    // --- Mock SSH server for auth flow integration tests ---
+
+    use std::sync::Arc;
+
+    use russh::server::Server as _;
+    use tokio::net::TcpListener;
+
+    /// Auth policy for the mock SSH server.
+    #[derive(Clone)]
+    struct MockAuthPolicy {
+        /// Public keys the server accepts.
+        accepted_keys: Vec<russh_keys::key::PublicKey>,
+        /// Password the server accepts (if any).
+        accepted_password: Option<String>,
+    }
+
+    /// Mock SSH server that accepts/rejects auth based on `MockAuthPolicy`.
+    #[derive(Clone)]
+    struct MockSshServer {
+        policy: MockAuthPolicy,
+    }
+
+    struct MockServerHandler {
+        policy: MockAuthPolicy,
+    }
+
+    #[async_trait::async_trait]
+    impl russh::server::Handler for MockServerHandler {
+        type Error = russh::Error;
+
+        async fn channel_open_session(
+            &mut self,
+            _channel: russh::Channel<russh::server::Msg>,
+            _session: &mut russh::server::Session,
+        ) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+
+        async fn auth_publickey(
+            &mut self,
+            _user: &str,
+            public_key: &russh_keys::key::PublicKey,
+        ) -> Result<russh::server::Auth, Self::Error> {
+            for accepted in &self.policy.accepted_keys {
+                if accepted.fingerprint() == public_key.fingerprint() {
+                    return Ok(russh::server::Auth::Accept);
+                }
+            }
+            Ok(russh::server::Auth::Reject {
+                proceed_with_methods: Some(
+                    russh::MethodSet::PASSWORD | russh::MethodSet::PUBLICKEY,
+                ),
+            })
+        }
+
+        async fn auth_password(
+            &mut self,
+            _user: &str,
+            password: &str,
+        ) -> Result<russh::server::Auth, Self::Error> {
+            if let Some(ref expected) = self.policy.accepted_password {
+                if password == expected {
+                    return Ok(russh::server::Auth::Accept);
+                }
+            }
+            Ok(russh::server::Auth::Reject {
+                proceed_with_methods: Some(
+                    russh::MethodSet::PASSWORD | russh::MethodSet::PUBLICKEY,
+                ),
+            })
+        }
+    }
+
+    impl russh::server::Server for MockSshServer {
+        type Handler = MockServerHandler;
+
+        fn new_client(&mut self, _peer_addr: Option<std::net::SocketAddr>) -> Self::Handler {
+            MockServerHandler {
+                policy: self.policy.clone(),
+            }
+        }
+    }
+
+    /// Generate a russh server config with a fresh host key.
+    fn mock_server_config() -> Arc<russh::server::Config> {
+        let keypair = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
+        Arc::new(russh::server::Config {
+            keys: vec![keypair],
+            ..Default::default()
+        })
+    }
+
+    /// Start a mock SSH server on an ephemeral port and return the port number.
+    /// The server runs in the background until the runtime is dropped.
+    async fn start_mock_server(policy: MockAuthPolicy) -> (u16, russh_keys::key::PublicKey) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+
+        let server_config = mock_server_config();
+        let host_pubkey = server_config.keys[0]
+            .clone_public_key()
+            .expect("clone pubkey");
+
+        let mut server = MockSshServer { policy };
+
+        tokio::spawn(async move {
+            server.run_on_socket(server_config, &listener).await.ok();
+        });
+
+        (port, host_pubkey)
+    }
+
+    /// Create an `SshConfig` pointing to 127.0.0.1 at the given port with
+    /// StrictHostKeyChecking::No, agent disabled, and no identity files.
+    fn test_ssh_config(port: u16) -> SshConfig {
+        SshConfig {
+            host: "127.0.0.1".to_owned(),
+            port,
+            username: Some("testuser".to_owned()),
+            password: None,
+            identity_files: Vec::new(),
+            use_agent: false,
+            ciphers: None,
+            connect_timeout: std::time::Duration::from_secs(5),
+            keepalive_interval: None,
+            keepalive_max_count: 3,
+            known_hosts_file: None,
+            strict_host_key_checking: super::super::types::StrictHostKeyChecking::No,
+            ip_preference: super::super::types::IpPreference::Auto,
+        }
+    }
+
+    /// Connect to the mock server and return a client handle.
+    async fn connect_to_mock(
+        port: u16,
+        host_pubkey: &russh_keys::key::PublicKey,
+    ) -> russh::client::Handle<SshClientHandler> {
+        let handler = SshClientHandler::new(
+            "127.0.0.1".to_owned(),
+            port,
+            super::super::types::StrictHostKeyChecking::No,
+            None,
+        );
+
+        let client_config = Arc::new(russh::client::Config::default());
+        let _ = host_pubkey; // Host key verification handled by StrictHostKeyChecking::No.
+
+        russh::client::connect(client_config, ("127.0.0.1", port), handler)
+            .await
+            .expect("connect to mock server")
+    }
+
+    #[tokio::test]
+    async fn authenticate_pubkey_succeeds() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key_path = dir.path().join("id_ed25519");
+
+        // Generate a keypair and write the private key.
+        let keypair = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
+        let pubkey = keypair.clone_public_key().expect("pubkey");
+        let mut buf = Vec::new();
+        russh_keys::encode_pkcs8_pem(&keypair, &mut buf).expect("encode pem");
+        std::fs::write(&key_path, &buf).expect("write key");
+
+        let policy = MockAuthPolicy {
+            accepted_keys: vec![pubkey],
+            accepted_password: None,
+        };
+
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.identity_files = vec![key_path];
+
+        let result = authenticate(&mut handle, &config).await;
+        assert!(result.is_ok(), "pubkey auth should succeed: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn authenticate_password_succeeds() {
+        let policy = MockAuthPolicy {
+            accepted_keys: Vec::new(),
+            accepted_password: Some("correct-password".to_owned()),
+        };
+
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.password = Some("correct-password".to_owned());
+
+        let result = authenticate(&mut handle, &config).await;
+        assert!(result.is_ok(), "password auth should succeed: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn authenticate_wrong_password_fails() {
+        let policy = MockAuthPolicy {
+            accepted_keys: Vec::new(),
+            accepted_password: Some("correct".to_owned()),
+        };
+
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.password = Some("wrong".to_owned());
+
+        let result = authenticate(&mut handle, &config).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, SshError::AuthenticationFailed { .. }),
+            "expected AuthenticationFailed, got: {err:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_all_methods_exhausted_reports_tried() {
+        let policy = MockAuthPolicy {
+            accepted_keys: Vec::new(),
+            accepted_password: None,
+        };
+
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        // No agent, no identity files, no password, stdin is not a TTY.
+        let config = test_ssh_config(port);
+
+        let result = authenticate(&mut handle, &config).await;
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            SshError::AuthenticationFailed { tried } => {
+                // Agent and pubkey were skipped (disabled), only password was tried.
+                assert!(
+                    tried.contains("password"),
+                    "tried should include password: {tried}",
+                );
+                assert!(
+                    !tried.contains("agent"),
+                    "agent was disabled, should not appear in tried: {tried}",
+                );
+                assert!(
+                    !tried.contains("publickey"),
+                    "no identity files, should not appear in tried: {tried}",
+                );
+            }
+            other => panic!("expected AuthenticationFailed, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticate_agent_disabled_skips_agent() {
+        let policy = MockAuthPolicy {
+            accepted_keys: Vec::new(),
+            accepted_password: Some("pw".to_owned()),
+        };
+
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.use_agent = false;
+        config.password = Some("pw".to_owned());
+
+        // Auth should succeed via password without ever trying agent.
+        let result = authenticate(&mut handle, &config).await;
+        assert!(result.is_ok(), "should succeed via password: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn authenticate_agent_enabled_falls_through_to_password() {
+        let policy = MockAuthPolicy {
+            accepted_keys: Vec::new(),
+            accepted_password: Some("fallback".to_owned()),
+        };
+
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        // Enable agent but unset SSH_AUTH_SOCK so agent cannot connect.
+        config.use_agent = true;
+        config.password = Some("fallback".to_owned());
+
+        // Agent will fail (no sock), fallback to password.
+        let result = authenticate(&mut handle, &config).await;
+        assert!(
+            result.is_ok(),
+            "should fall through to password: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_identity_file_wrong_key_falls_to_password() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key_path = dir.path().join("id_ed25519");
+
+        // Generate a keypair the server does NOT accept.
+        let wrong_key = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
+        let mut buf = Vec::new();
+        russh_keys::encode_pkcs8_pem(&wrong_key, &mut buf).expect("encode pem");
+        std::fs::write(&key_path, &buf).expect("write key");
+
+        // Server accepts a different key and password.
+        let accepted_key = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
+        let accepted_pubkey = accepted_key.clone_public_key().expect("pubkey");
+        let policy = MockAuthPolicy {
+            accepted_keys: vec![accepted_pubkey],
+            accepted_password: Some("backup".to_owned()),
+        };
+
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.identity_files = vec![key_path];
+        config.password = Some("backup".to_owned());
+
+        // Wrong key fails, falls through to password.
+        let result = authenticate(&mut handle, &config).await;
+        assert!(
+            result.is_ok(),
+            "should fall through to password: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_missing_identity_file_skipped() {
+        let policy = MockAuthPolicy {
+            accepted_keys: Vec::new(),
+            accepted_password: Some("pass".to_owned()),
+        };
+
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.identity_files = vec![
+            std::path::PathBuf::from("/nonexistent/key1"),
+            std::path::PathBuf::from("/nonexistent/key2"),
+        ];
+        config.password = Some("pass".to_owned());
+
+        // Missing files are silently skipped, falls through to password.
+        let result = authenticate(&mut handle, &config).await;
+        assert!(result.is_ok(), "missing keys should be skipped: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn authenticate_multiple_identity_files_tries_in_order() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        // Generate two keypairs - server accepts the second one.
+        let wrong_key = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
+        let right_key = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
+        let right_pubkey = right_key.clone_public_key().expect("pubkey");
+
+        let wrong_path = dir.path().join("id_wrong");
+        let right_path = dir.path().join("id_right");
+
+        let mut buf = Vec::new();
+        russh_keys::encode_pkcs8_pem(&wrong_key, &mut buf).expect("encode");
+        std::fs::write(&wrong_path, &buf).expect("write");
+
+        buf.clear();
+        russh_keys::encode_pkcs8_pem(&right_key, &mut buf).expect("encode");
+        std::fs::write(&right_path, &buf).expect("write");
+
+        let policy = MockAuthPolicy {
+            accepted_keys: vec![right_pubkey],
+            accepted_password: None,
+        };
+
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        // Wrong key first, right key second - should try in order.
+        config.identity_files = vec![wrong_path, right_path];
+
+        let result = authenticate(&mut handle, &config).await;
+        assert!(
+            result.is_ok(),
+            "second identity file should succeed: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_no_methods_available() {
+        let policy = MockAuthPolicy {
+            accepted_keys: Vec::new(),
+            accepted_password: None,
+        };
+
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        // All auth disabled: no agent, no keys, no password, no TTY.
+        let mut config = test_ssh_config(port);
+        config.use_agent = false;
+        config.identity_files = Vec::new();
+        config.password = None;
+
+        let result = authenticate(&mut handle, &config).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SshError::AuthenticationFailed { tried } => {
+                // Only password should appear (it was attempted but no-TTY/no-password).
+                assert!(tried.contains("password"), "got: {tried}");
+            }
+            other => panic!("expected AuthenticationFailed, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticate_tried_list_includes_all_attempted_methods() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key_path = dir.path().join("id_ed25519");
+
+        let keypair = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
+        let mut buf = Vec::new();
+        russh_keys::encode_pkcs8_pem(&keypair, &mut buf).expect("encode");
+        std::fs::write(&key_path, &buf).expect("write key");
+
+        // Server rejects everything.
+        let policy = MockAuthPolicy {
+            accepted_keys: Vec::new(),
+            accepted_password: None,
+        };
+
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.use_agent = true;
+        config.identity_files = vec![key_path];
+        config.password = None;
+
+        let result = authenticate(&mut handle, &config).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SshError::AuthenticationFailed { tried } => {
+                assert!(tried.contains("agent"), "should have tried agent: {tried}");
+                assert!(
+                    tried.contains("publickey"),
+                    "should have tried publickey: {tried}"
+                );
+                assert!(
+                    tried.contains("password"),
+                    "should have tried password: {tried}"
+                );
+            }
+            other => panic!("expected AuthenticationFailed, got: {other:?}"),
+        }
+    }
 }
