@@ -15,7 +15,18 @@ use super::super::{
 };
 use super::write_max::calculate_write_max;
 
-/// Token-bucket style limiter that mirrors upstream rsync's pacing rules.
+/// Token-bucket style bandwidth limiter that mirrors upstream rsync's pacing rules.
+///
+/// Each call to [`register`](Self::register) accumulates byte debt. The limiter
+/// subtracts a time-based allowance (proportional to the configured rate) for
+/// the wall-clock time elapsed since the previous call. When outstanding debt
+/// exceeds a minimum threshold, the limiter sleeps to keep the transfer at or
+/// below the target byte-per-second rate. An optional burst cap prevents
+/// excessive debt accumulation after idle periods.
+///
+/// The chunk size returned by [`write_max_bytes`](Self::write_max_bytes) scales
+/// linearly with the rate so that pacing sleeps remain short and responsive,
+/// matching the `bwlimit_writemax = bwlimit * 128` formula in upstream rsync.
 ///
 // upstream: io.c:sleep_for_bwlimit()
 #[doc(alias = "--bwlimit")]
@@ -31,12 +42,22 @@ pub struct BandwidthLimiter {
 
 impl BandwidthLimiter {
     /// Constructs a new limiter from the supplied byte-per-second rate.
+    ///
+    /// The burst cap is left unconstrained so debt can grow freely between
+    /// calls. Use [`with_burst`](Self::with_burst) to cap debt accumulation.
+    // upstream: io.c:sleep_for_bwlimit() - initial setup
     #[must_use]
     pub fn new(limit: NonZeroU64) -> Self {
         Self::with_burst(limit, None)
     }
 
     /// Constructs a new limiter from the supplied rate and optional burst size.
+    ///
+    /// When `burst` is `Some`, outstanding debt is clamped to that many bytes
+    /// after every [`register`](Self::register) call, preventing long stalls
+    /// that would otherwise occur after idle periods. When `burst` is `None`,
+    /// debt grows without bound.
+    // upstream: io.c:sleep_for_bwlimit() - burst cap logic
     #[must_use]
     pub fn with_burst(limit: NonZeroU64, burst: Option<NonZeroU64>) -> Self {
         let write_max = calculate_write_max(limit, burst);
@@ -52,11 +73,20 @@ impl BandwidthLimiter {
     }
 
     /// Updates the limiter so a new byte-per-second limit takes effect.
+    ///
+    /// The burst cap is preserved from the current configuration. Accumulated
+    /// debt and timing state are reset so the new rate applies immediately
+    /// without carryover from the previous period.
     pub fn update_limit(&mut self, limit: NonZeroU64) {
         self.update_configuration(limit, self.burst_bytes);
     }
 
     /// Updates the limiter so both the rate and burst configuration take effect.
+    ///
+    /// Recalculates the write-max chunk size for the new rate and resets all
+    /// internal accounting (debt, timing, simulated elapsed time). This is
+    /// used when a daemon module overrides the client-supplied `--bwlimit`.
+    // upstream: options.c:2374 - daemon_bwlimit override reconfiguration
     #[doc(alias = "--bwlimit")]
     pub fn update_configuration(&mut self, limit: NonZeroU64, burst: Option<NonZeroU64>) {
         let write_max = calculate_write_max(limit, burst);
@@ -70,6 +100,10 @@ impl BandwidthLimiter {
     }
 
     /// Resets the limiter while keeping the current configuration.
+    ///
+    /// Clears accumulated debt and timing state so the next
+    /// [`register`](Self::register) call starts a fresh accounting period.
+    /// The rate and burst settings are preserved.
     pub const fn reset(&mut self) {
         self.total_written = 0;
         self.last_instant = None;
@@ -92,19 +126,33 @@ impl BandwidthLimiter {
     }
 
     /// Optional burst allowance above the steady-state limit.
+    ///
+    /// When set, the limiter clamps outstanding debt to this value after
+    /// each [`register`](Self::register) call. Returns `None` when debt is
+    /// unconstrained.
     #[inline]
+    #[must_use]
     pub const fn burst_bytes(&self) -> Option<NonZeroU64> {
         self.burst_bytes
     }
 
     /// Maximum bytes permitted in a single I/O operation.
+    ///
+    /// The value scales linearly with the configured rate so that pacing
+    /// sleeps remain short and responsive. Callers should split writes
+    /// larger than this threshold into chunks.
+    // upstream: options.c:2377 - bwlimit_writemax = bwlimit * 128
     #[inline]
     #[must_use]
     pub const fn write_max_bytes(&self) -> usize {
         self.write_max
     }
 
-    /// Clamps `buffer_len` to `write_max` so each I/O batch stays within the pacing budget.
+    /// Clamps `buffer_len` to [`write_max_bytes`](Self::write_max_bytes) so each
+    /// I/O batch stays within the pacing budget.
+    ///
+    /// Returns the smaller of `buffer_len` and the configured write-max,
+    /// guaranteeing at least one byte to prevent zero-length reads.
     #[inline]
     #[must_use]
     pub fn recommended_read_size(&self, buffer_len: usize) -> usize {
@@ -112,7 +160,17 @@ impl BandwidthLimiter {
         buffer_len.min(limit)
     }
 
-    /// Records a completed write and sleeps if the limiter accumulated debt.
+    /// Records a completed write and sleeps if the accumulated debt exceeds
+    /// the minimum threshold.
+    ///
+    /// The method adds `bytes` to the outstanding debt, subtracts the
+    /// time-based allowance for the wall-clock time since the previous call,
+    /// clamps debt to the burst cap when configured, and sleeps if the
+    /// resulting debt represents at least 100 ms of transfer time. Returns a
+    /// [`LimiterSleep`](super::super::LimiterSleep) describing the requested
+    /// and actual sleep durations.
+    ///
+    /// A zero-byte call is a no-op and returns immediately.
     // upstream: io.c:sleep_for_bwlimit() - debt accumulation and sleep logic
     pub fn register(&mut self, bytes: usize) -> super::super::LimiterSleep {
         if bytes == 0 {
