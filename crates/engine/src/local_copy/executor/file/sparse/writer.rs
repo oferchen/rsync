@@ -44,6 +44,7 @@ impl SparseWriter {
     ///
     /// * `file` - The file to write to
     /// * `sparse_enabled` - Whether to create sparse holes for zero regions
+    #[must_use]
     pub fn new(file: fs::File, sparse_enabled: bool) -> Self {
         Self {
             file,

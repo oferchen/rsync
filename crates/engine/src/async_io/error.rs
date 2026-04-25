@@ -29,6 +29,7 @@ pub enum AsyncIoError {
 
 impl AsyncIoError {
     /// Creates an I/O error with path context.
+    #[must_use]
     pub fn io(path: impl Into<PathBuf>, source: io::Error) -> Self {
         Self::Io {
             path: path.into(),

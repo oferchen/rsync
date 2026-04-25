@@ -256,6 +256,7 @@ impl HardlinkTracker {
     ///
     /// - `Some(source_index)` if this file should be linked to `source_index`
     /// - `None` if this file should be transferred normally or was never registered
+    #[must_use]
     pub fn get_hardlink_target(&self, file_index: i32) -> Option<i32> {
         match self.resolve(file_index) {
             HardlinkAction::LinkTo(target) => Some(target),
