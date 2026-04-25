@@ -129,11 +129,13 @@ impl BandwidthLimitComponents {
     }
 
     /// Negotiated bytes-per-second rate, or `None` for unlimited.
+    #[must_use]
     pub const fn rate(&self) -> Option<NonZeroU64> {
         self.rate
     }
 
     /// Negotiated burst allowance, or `None` if unset.
+    #[must_use]
     pub const fn burst(&self) -> Option<NonZeroU64> {
         self.burst
     }
@@ -244,6 +246,10 @@ impl BandwidthLimitComponents {
 impl FromStr for BandwidthLimitComponents {
     type Err = BandwidthParseError;
 
+    /// Parses a `--bwlimit` style string into bandwidth limit components.
+    ///
+    /// Delegates to [`parse_bandwidth_limit`] to handle rate, burst, and
+    /// suffix parsing.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         parse_bandwidth_limit(text)
     }
