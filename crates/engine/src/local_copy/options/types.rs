@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 use ::metadata::{ChmodModifiers, CopyAsIds, GroupMapping, UserMapping};
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
+use fast_io::{DefaultPlatformCopy, PlatformCopy};
 use filters::FilterSet;
 
 use crate::batch::BatchWriter;
@@ -191,6 +192,13 @@ pub struct LocalCopyOptions {
     pub(super) log_file: Option<PathBuf>,
     /// Optional format string for per-item log entries.
     pub(super) log_file_format: Option<String>,
+    /// Platform-abstracted file copy strategy used by whole-file copy paths.
+    ///
+    /// Defaults to [`DefaultPlatformCopy`], which selects the best available
+    /// mechanism (FICLONE/copy_file_range on Linux, clonefile/fcopyfile on
+    /// macOS, ReFS reflink/CopyFileExW on Windows) with portable fallback.
+    /// Tests can inject a fake implementation to verify dispatch.
+    pub(super) platform_copy: Arc<dyn PlatformCopy>,
 }
 
 impl LocalCopyOptions {
@@ -296,6 +304,7 @@ impl LocalCopyOptions {
             ignore_errors: false,
             log_file: None,
             log_file_format: None,
+            platform_copy: Arc::new(DefaultPlatformCopy::new()),
         }
     }
 }
