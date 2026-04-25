@@ -336,8 +336,9 @@ mod tests {
 
     #[test]
     fn compression_level_ordering() {
-        assert!(ZSTD_FAST_LEVEL < ZSTD_DEFAULT_LEVEL);
-        assert!(ZSTD_DEFAULT_LEVEL < ZSTD_BEST_LEVEL);
+        let (fast, default, best) = (ZSTD_FAST_LEVEL, ZSTD_DEFAULT_LEVEL, ZSTD_BEST_LEVEL);
+        assert!(fast < default);
+        assert!(default < best);
     }
 }
 
