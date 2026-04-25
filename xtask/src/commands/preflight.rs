@@ -12,9 +12,12 @@ use validation::{
 /// Executes the `preflight` command.
 pub fn execute(workspace: &Path) -> TaskResult<()> {
     let manifest_text = read_workspace_manifest(workspace)?;
-    let manifest_value: Value = manifest_text.parse().map_err(|error| {
-        TaskError::Metadata(format!("failed to parse workspace manifest: {error}"))
-    })?;
+    let manifest_value: Value = {
+        let table: toml::Table = toml::from_str(&manifest_text).map_err(|error| {
+            TaskError::Metadata(format!("failed to parse workspace manifest: {error}"))
+        })?;
+        Value::Table(table)
+    };
     let branding = parse_workspace_branding_from_value(&manifest_value)?;
 
     validate_branding(&branding)?;
