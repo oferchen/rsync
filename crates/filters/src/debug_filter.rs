@@ -7,8 +7,10 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
-//! use filters::debug_filter::{FilterTracer, trace_filter_rule_added};
+//! ```
+//! use filters::debug_filter::{
+//!     FilterTracer, trace_filter_rule_added, trace_filter_evaluate,
+//! };
 //!
 //! let mut tracer = FilterTracer::new();
 //!
@@ -19,6 +21,8 @@
 //! tracer.record_evaluation(false);
 //!
 //! tracer.summary();
+//! assert_eq!(tracer.rules_added(), 1);
+//! assert_eq!(tracer.total_excluded(), 1);
 //! ```
 
 /// Target name for tracing events, matching rsync's debug category.
@@ -180,7 +184,7 @@ pub fn trace_filter_summary(
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// # use filters::debug_filter::FilterTracer;
 /// let mut tracer = FilterTracer::new();
 ///

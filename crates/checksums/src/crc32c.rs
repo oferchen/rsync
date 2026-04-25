@@ -112,12 +112,15 @@ pub fn crc32c_bytes(data: &[u8]) -> u32 {
 ///
 /// # Examples
 ///
-/// ```no_run
-/// use checksums::crc32c::crc32c_file;
-/// use std::path::Path;
+/// ```
+/// use checksums::crc32c::{crc32c_file, crc32c_bytes};
 ///
-/// let checksum = crc32c_file(Path::new("/etc/hosts")).unwrap();
-/// println!("CRC32C: {checksum:#010x}");
+/// let dir = tempfile::tempdir().unwrap();
+/// let path = dir.path().join("test.txt");
+/// std::fs::write(&path, b"hello world").unwrap();
+///
+/// let file_checksum = crc32c_file(&path).unwrap();
+/// assert_eq!(file_checksum, crc32c_bytes(b"hello world"));
 /// ```
 pub fn crc32c_file(path: &Path) -> io::Result<u32> {
     let file = File::open(path)?;

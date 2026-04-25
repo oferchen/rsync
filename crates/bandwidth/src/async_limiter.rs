@@ -23,7 +23,7 @@ use tokio::time::{Duration, Instant};
 /// # async fn example() {
 /// use bandwidth::AsyncRateLimiter;
 ///
-/// let limiter = AsyncRateLimiter::new(1_048_576); // 1 MiB/s
+/// let mut limiter = AsyncRateLimiter::new(1_048_576); // 1 MiB/s
 /// limiter.consume(4096).await;
 /// # }
 /// ```
