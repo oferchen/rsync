@@ -41,9 +41,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install Rust (stable)
+      - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
         with:
+          toolchain: nightly
           components: llvm-tools-preview
 
       - name: Rust cache
