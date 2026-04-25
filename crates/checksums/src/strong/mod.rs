@@ -94,8 +94,15 @@ pub const fn openssl_acceleration_available() -> bool {
 
 /// Streaming SHA-1 hasher (160-bit output).
 pub use sha1::Sha1;
-/// Streaming SHA-256 hasher (256-bit output).
-pub use sha256::Sha256;
+/// Streaming SHA-256 hasher (256-bit output) and runtime hardware acceleration
+/// query.
+///
+/// - [`Sha256`] -- streaming hasher with automatic SHA-NI (x86_64) and ARMv8
+///   crypto extension (aarch64) detection via the `sha2` crate's `cpufeatures`
+///   integration.
+/// - [`sha256_hardware_acceleration_available`] -- reports whether the running
+///   CPU exposes SHA-256 hardware acceleration on the current architecture.
+pub use sha256::{Sha256, sha256_hardware_acceleration_available};
 /// Streaming SHA-512 hasher (512-bit output).
 pub use sha512::Sha512;
 /// XXHash streaming hashers and runtime SIMD detection query.
