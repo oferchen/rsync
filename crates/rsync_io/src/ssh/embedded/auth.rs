@@ -252,8 +252,10 @@ mod tests {
     use super::*;
     #[test]
     fn effective_username_from_config() {
-        let mut config = SshConfig::default();
-        config.username = Some("alice".to_owned());
+        let config = SshConfig {
+            username: Some("alice".to_owned()),
+            ..SshConfig::default()
+        };
         let user = effective_username(&config).unwrap();
         assert_eq!(user, "alice");
     }
@@ -338,7 +340,7 @@ mod tests {
     #[test]
     fn auth_methods_ordering() {
         // Verify the tried-methods list is built correctly.
-        let tried = vec!["agent", "publickey", "password"];
+        let tried = ["agent", "publickey", "password"];
         assert_eq!(tried.join(", "), "agent, publickey, password");
     }
 
