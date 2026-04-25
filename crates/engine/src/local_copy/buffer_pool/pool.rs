@@ -1,13 +1,15 @@
 //! Core [`BufferPool`] implementation.
 //!
-//! Provides the thread-safe buffer pool backed by `Mutex<Vec<Vec<u8>>>` with
-//! a thread-local single-slot cache for zero-synchronization acquire/return
-//! on the hot path. See the [module-level documentation](super) for design
-//! rationale and usage patterns.
+//! Provides the thread-safe buffer pool backed by a lock-free
+//! [`crossbeam_queue::ArrayQueue`] with a thread-local single-slot cache for
+//! zero-synchronization acquire/return on the hot path. See the
+//! [module-level documentation](super) for design rationale and usage
+//! patterns.
 
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+use crossbeam_queue::ArrayQueue;
 
 use super::allocator::{BufferAllocator, DefaultAllocator};
 use super::guard::{BorrowedBufferGuard, BufferGuard};
@@ -16,6 +18,28 @@ use super::pressure::{PressureTracker, ResizeAction};
 use super::thread_local_cache;
 use super::throughput::ThroughputTracker;
 use super::{COPY_BUFFER_SIZE, adaptive_buffer_size};
+
+/// Default fixed capacity for the lock-free central queue.
+///
+/// `ArrayQueue` requires a fixed capacity at construction time, so the
+/// queue is sized to the larger of the caller-requested `max_buffers`
+/// and this default. This headroom allows the adaptive resizer to grow
+/// the soft capacity without having to reallocate the queue.
+///
+/// Matches the upper bound enforced by the adaptive resizer (`MAX_CAPACITY`
+/// in `pressure.rs`). At 128 KB per buffer, 64 buffers = 8 MiB of
+/// outstanding pooled memory before a fresh allocation is required.
+const DEFAULT_QUEUE_CAPACITY: usize = 256;
+
+/// Computes the fixed [`ArrayQueue`] capacity for a given soft maximum.
+///
+/// Returns the larger of `max_buffers` and [`DEFAULT_QUEUE_CAPACITY`], with
+/// a floor of `1` because `ArrayQueue::new(0)` panics. Soft-capacity
+/// enforcement (including the zero-capacity case) is handled separately
+/// in `return_buffer`.
+fn queue_capacity(max_buffers: usize) -> usize {
+    max_buffers.max(DEFAULT_QUEUE_CAPACITY).max(1)
+}
 
 /// A thread-safe pool of reusable I/O buffers with a two-level cache.
 ///
@@ -27,17 +51,22 @@ use super::{COPY_BUFFER_SIZE, adaptive_buffer_size};
 ///    thread provides zero-synchronization acquire/return for the common
 ///    case where each rayon worker holds one buffer at a time.
 ///
-/// 2. **Central pool** - a `Mutex<Vec<Vec<u8>>>` stores overflow buffers.
+/// 2. **Central pool** - a lock-free [`ArrayQueue`] stores overflow buffers.
+///    Acquire pops from the queue, return pushes back. Both operations
+///    are wait-free in the contended case (single CAS) with no syscalls.
 ///    Only accessed when the thread-local slot misses (empty on acquire,
 ///    occupied on return).
 ///
 /// # Capacity Enforcement
 ///
-/// The pool has a soft maximum capacity (`max_buffers`). Under normal
-/// operation, the central pool retains at most `max_buffers` buffers.
-/// The capacity check is exact under the Mutex lock - no TOCTOU race.
-/// Thread-local cached buffers do not count against this limit since
-/// they are conceptually "in use" by their thread.
+/// The pool has a soft maximum capacity (`max_buffers`). The underlying
+/// [`ArrayQueue`] is sized at construction to hold at least
+/// [`DEFAULT_QUEUE_CAPACITY`] buffers (or `max_buffers` if larger). The
+/// soft capacity is enforced on return via an atomic
+/// `compare_exchange_weak` admission counter that allows at most
+/// `soft_capacity` concurrent successful admissions, so the central queue
+/// never exceeds the soft cap. Thread-local cached buffers do not count
+/// against this limit since they are conceptually "in use" by their thread.
 ///
 /// # Memory Cap
 ///
@@ -49,26 +78,35 @@ use super::{COPY_BUFFER_SIZE, adaptive_buffer_size};
 ///
 /// # Buffer Lifecycle
 ///
-/// 1. **Acquire** - check thread-local slot, then pop from central pool,
-///    then allocate fresh.
+/// 1. **Acquire** - check thread-local slot, then pop from the lock-free
+///    central queue, then allocate fresh.
 /// 2. **Use** - caller reads/writes through the RAII guard's `Deref`/`DerefMut`.
 /// 3. **Return** - guard's `Drop` impl passes the buffer back via
 ///    [`return_buffer`](Self::return_buffer), which tries the thread-local
-///    slot first, then the central pool.
+///    slot first, then the central queue.
 #[derive(Debug)]
 pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
-    /// Central pool of available buffers, protected by a Mutex.
+    /// Central pool of available buffers, backed by a lock-free MPMC queue.
     ///
     /// Only accessed when the thread-local cache misses. Under the typical
-    /// rayon workload (one buffer per worker per file), this Mutex sees
+    /// rayon workload (one buffer per worker per file), this queue sees
     /// near-zero contention because the thread-local cache absorbs the
-    /// hot path.
-    buffers: Mutex<Vec<Vec<u8>>>,
+    /// hot path. Under heavy concurrency the queue's wait-free push/pop
+    /// avoids the syscall overhead of a contended mutex.
+    buffers: ArrayQueue<Vec<u8>>,
+    /// Number of buffers currently held in the central queue.
+    ///
+    /// Maintained alongside the [`ArrayQueue`] so the soft-capacity check
+    /// on return can be performed via a single `compare_exchange_weak`
+    /// rather than a racy `len()` read. Decremented after each successful
+    /// pop. Without this counter, multiple concurrent returns could each
+    /// observe `len() < capacity` and all push, overshooting the soft cap.
+    central_count: AtomicUsize,
     /// Soft maximum number of buffers to retain in the central pool.
     ///
-    /// Stored as an atomic to allow lock-free reads on the return path
-    /// while resize mutations happen under the Mutex lock. Thread-local
-    /// cached buffers are not counted.
+    /// Read atomically on every return to enforce the soft cap and on
+    /// every adaptive-resize evaluation. Thread-local cached buffers are
+    /// not counted against this limit.
     soft_capacity: AtomicUsize,
     /// Size of each buffer in bytes.
     buffer_size: usize,
@@ -128,7 +166,8 @@ impl BufferPool {
     #[must_use]
     pub fn new(max_buffers: usize) -> Self {
         Self {
-            buffers: Mutex::new(Vec::with_capacity(max_buffers)),
+            buffers: ArrayQueue::new(queue_capacity(max_buffers)),
+            central_count: AtomicUsize::new(0),
             soft_capacity: AtomicUsize::new(max_buffers),
             buffer_size: COPY_BUFFER_SIZE,
             allocator: DefaultAllocator,
@@ -152,7 +191,8 @@ impl BufferPool {
     #[must_use]
     pub fn with_buffer_size(max_buffers: usize, buffer_size: usize) -> Self {
         Self {
-            buffers: Mutex::new(Vec::with_capacity(max_buffers)),
+            buffers: ArrayQueue::new(queue_capacity(max_buffers)),
+            central_count: AtomicUsize::new(0),
             soft_capacity: AtomicUsize::new(max_buffers),
             buffer_size,
             allocator: DefaultAllocator,
@@ -181,7 +221,8 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn with_allocator(max_buffers: usize, buffer_size: usize, allocator: A) -> Self {
         Self {
-            buffers: Mutex::new(Vec::with_capacity(max_buffers)),
+            buffers: ArrayQueue::new(queue_capacity(max_buffers)),
+            central_count: AtomicUsize::new(0),
             soft_capacity: AtomicUsize::new(max_buffers),
             buffer_size,
             allocator,
@@ -484,8 +525,9 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// `transfer.rs` and `parallel_checksum.rs`).
     ///
     /// The return path tries the thread-local cache first (zero sync). If
-    /// the slot is occupied, falls through to the central pool. If the
-    /// central pool is at capacity, the buffer is deallocated.
+    /// the slot is occupied, falls through to the lock-free central queue.
+    /// If the queue is at capacity (either the soft limit or the underlying
+    /// `ArrayQueue` slot count), the buffer is deallocated.
     ///
     /// When a memory cap is configured, outstanding bytes are decremented
     /// and any threads blocked in `acquire` are notified.
@@ -515,31 +557,75 @@ impl<A: BufferAllocator> BufferPool<A> {
 
         // Fast path: try thread-local cache first (zero synchronization).
         if let Some(buffer) = thread_local_cache::try_store(buffer) {
-            // TLS slot occupied - route to central pool.
-            let mut pool = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
-            if pool.len() >= capacity {
-                self.allocator.deallocate(buffer);
-            } else {
-                pool.push(buffer);
-            }
+            // TLS slot occupied - admit to the lock-free central queue.
+            // The atomic compare_exchange on `central_count` reserves a
+            // slot only if the current count is strictly below the soft
+            // capacity; racing returners observe each other's increments
+            // so only the first `capacity` admissions succeed. A
+            // successful reservation guarantees the subsequent push()
+            // succeeds because the queue's hard capacity is sized at or
+            // above the maximum soft capacity.
+            self.admit_or_deallocate(buffer, capacity);
         }
 
         // Release outstanding memory and wake blocked acquirers.
         self.track_return(returned_len);
     }
 
-    /// Pops a buffer from the central pool, or allocates a new one if empty.
+    /// Admits a buffer to the central queue under the soft cap, or
+    /// deallocates it.
     ///
-    /// When adaptive resizing is enabled, records hit/miss statistics and
-    /// triggers periodic resize evaluations (every 64 operations).
+    /// Uses [`compare_exchange_weak`](AtomicUsize::compare_exchange_weak) to
+    /// reserve a slot in `central_count` only when the current count is
+    /// strictly below `capacity`. On success, the buffer is pushed onto
+    /// the lock-free [`ArrayQueue`] (always succeeds because the queue's
+    /// hard capacity is at least [`DEFAULT_QUEUE_CAPACITY`] >= any soft
+    /// cap). On rejection (count >= capacity), the buffer is deallocated.
+    fn admit_or_deallocate(&self, buffer: Vec<u8>, capacity: usize) {
+        let mut current = self.central_count.load(Ordering::Relaxed);
+        loop {
+            if current >= capacity {
+                self.allocator.deallocate(buffer);
+                return;
+            }
+            match self.central_count.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    // Slot reserved - push must succeed because the queue's
+                    // hard capacity is >= any value central_count can reach.
+                    if let Err(buffer) = self.buffers.push(buffer) {
+                        // Defensive fallback: undo the reservation and
+                        // deallocate. Unreachable given the queue sizing
+                        // invariant in `queue_capacity`.
+                        self.central_count.fetch_sub(1, Ordering::Relaxed);
+                        self.allocator.deallocate(buffer);
+                    }
+                    return;
+                }
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    /// Pops a buffer from the central queue, or allocates a new one if empty.
+    ///
+    /// Uses the lock-free [`ArrayQueue::pop`] hot path. The accompanying
+    /// `central_count` counter is decremented on success so future returns
+    /// can re-admit buffers up to the soft capacity. When adaptive resizing
+    /// is enabled, records hit/miss statistics and triggers periodic resize
+    /// evaluations (every 64 operations).
     fn pop_buffer(&self) -> Vec<u8> {
-        let mut pool = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
-        match pool.pop() {
+        match self.buffers.pop() {
             Some(buffer) => {
+                self.central_count.fetch_sub(1, Ordering::Relaxed);
                 self.total_hits.fetch_add(1, Ordering::Relaxed);
                 if let Some(pressure) = &self.pressure {
                     pressure.record_hit();
-                    self.maybe_resize(pressure, &mut pool);
+                    self.maybe_resize(pressure);
                 }
                 buffer
             }
@@ -547,7 +633,7 @@ impl<A: BufferAllocator> BufferPool<A> {
                 self.total_misses.fetch_add(1, Ordering::Relaxed);
                 if let Some(pressure) = &self.pressure {
                     pressure.record_miss();
-                    self.maybe_resize(pressure, &mut pool);
+                    self.maybe_resize(pressure);
                 }
                 self.allocator.allocate(self.buffer_size)
             }
@@ -556,42 +642,50 @@ impl<A: BufferAllocator> BufferPool<A> {
 
     /// Evaluates pressure statistics and applies resize if warranted.
     ///
-    /// Called while the pool Mutex is held, so capacity updates are
-    /// serialized with buffer push/pop operations.
-    fn maybe_resize(&self, pressure: &PressureTracker, pool: &mut Vec<Vec<u8>>) {
+    /// Capacity updates are atomic stores; the queue mutations on shrink
+    /// are lock-free [`ArrayQueue::pop`] calls. Concurrent acquires may
+    /// observe an intermediate state during shrink (a brief window where
+    /// the queue still holds buffers above the new soft cap), but the
+    /// extras are reclaimed on the next return.
+    fn maybe_resize(&self, pressure: &PressureTracker) {
         if !pressure.should_check() {
             return;
         }
 
         let current_capacity = self.soft_capacity.load(Ordering::Relaxed);
-        let available = pool.len();
+        let available = self.buffers.len();
 
         match pressure.evaluate(current_capacity, available) {
             ResizeAction::Hold => {}
             ResizeAction::Grow(new_capacity) => {
                 self.soft_capacity.store(new_capacity, Ordering::Relaxed);
                 self.total_growths.fetch_add(1, Ordering::Relaxed);
-                pool.reserve(new_capacity.saturating_sub(pool.capacity()));
             }
             ResizeAction::Shrink(new_capacity) => {
                 self.soft_capacity.store(new_capacity, Ordering::Relaxed);
                 // Deallocate excess buffers beyond the new capacity.
-                while pool.len() > new_capacity {
-                    if let Some(buf) = pool.pop() {
-                        self.allocator.deallocate(buf);
+                while self.buffers.len() > new_capacity {
+                    match self.buffers.pop() {
+                        Some(buf) => {
+                            self.central_count.fetch_sub(1, Ordering::Relaxed);
+                            self.allocator.deallocate(buf);
+                        }
+                        None => break,
                     }
                 }
             }
         }
     }
 
-    /// Returns the number of buffers currently in the central pool.
+    /// Returns the number of buffers currently in the central queue.
     ///
     /// Does not include the thread-local cached buffer (at most one per
-    /// thread). Primarily useful for testing and monitoring.
+    /// thread). Primarily useful for testing and monitoring. The returned
+    /// value is a lock-free snapshot of [`ArrayQueue::len`] and may briefly
+    /// race with concurrent push/pop operations.
     #[must_use]
     pub fn available(&self) -> usize {
-        self.buffers.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.buffers.len()
     }
 
     /// Returns the soft maximum number of buffers the central pool will retain.
