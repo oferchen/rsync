@@ -64,3 +64,57 @@ pub fn apply_acls_from_cache(
     warn_acl_unsupported();
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn sync_acls_returns_ok() {
+        let src = Path::new("/nonexistent/src");
+        let dst = Path::new("/nonexistent/dst");
+        let result = sync_acls(src, dst, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn sync_acls_follow_symlinks_returns_ok() {
+        let src = Path::new("/nonexistent/src");
+        let dst = Path::new("/nonexistent/dst");
+        let result = sync_acls(src, dst, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn get_rsync_acl_non_default_returns_from_mode() {
+        let path = Path::new("/nonexistent/file");
+        let acl = get_rsync_acl(path, 0o755, false);
+        let from_mode = RsyncAcl::from_mode(0o755);
+        assert_eq!(acl, from_mode);
+    }
+
+    #[test]
+    fn get_rsync_acl_default_returns_empty() {
+        let path = Path::new("/nonexistent/file");
+        let acl = get_rsync_acl(path, 0o755, true);
+        let empty = RsyncAcl::new();
+        assert_eq!(acl, empty);
+    }
+
+    #[test]
+    fn apply_acls_from_cache_returns_ok() {
+        let dst = Path::new("/nonexistent/dst");
+        let cache = AclCache::new();
+        let result = apply_acls_from_cache(dst, &cache, 0, None, false, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn apply_acls_from_cache_with_default_ndx_returns_ok() {
+        let dst = Path::new("/nonexistent/dst");
+        let cache = AclCache::new();
+        let result = apply_acls_from_cache(dst, &cache, 0, Some(1), true, Some(0o644));
+        assert!(result.is_ok());
+    }
+}

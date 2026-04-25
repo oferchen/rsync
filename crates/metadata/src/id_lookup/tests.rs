@@ -1,9 +1,11 @@
 //! Tests for UID/GID lookup and mapping.
 
 use super::*;
+#[cfg(unix)]
 use std::sync::{Mutex, OnceLock};
 
 /// Global lock to serialize tests that modify shared caches.
+#[cfg(unix)]
 fn cache_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -156,6 +158,7 @@ fn map_uid_and_map_gid_consistency() {
     assert!(gid_result.is_some());
 }
 
+#[cfg(unix)]
 #[test]
 fn uid_cache_stores_mapping_on_lookup() {
     let _lock = cache_lock().lock().unwrap();
@@ -170,6 +173,7 @@ fn uid_cache_stores_mapping_on_lookup() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn gid_cache_stores_mapping_on_lookup() {
     let _lock = cache_lock().lock().unwrap();
@@ -184,6 +188,7 @@ fn gid_cache_stores_mapping_on_lookup() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn numeric_ids_bypasses_cache() {
     let _lock = cache_lock().lock().unwrap();
@@ -206,6 +211,7 @@ fn numeric_ids_bypasses_cache() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn repeated_lookups_return_same_result() {
     let _lock = cache_lock().lock().unwrap();
@@ -219,6 +225,7 @@ fn repeated_lookups_return_same_result() {
     assert_eq!(second, third);
 }
 
+#[cfg(unix)]
 #[test]
 fn clear_id_caches_empties_both_caches() {
     let _lock = cache_lock().lock().unwrap();
@@ -235,6 +242,7 @@ fn clear_id_caches_empties_both_caches() {
 // "The special uid 0 and the special group 0 are never mapped via user/group
 // names even if the --numeric-ids option is not specified."
 
+#[cfg(unix)]
 #[test]
 fn map_uid_zero_bypasses_name_lookup_even_without_numeric_ids() {
     let result = map_uid(0, false);
@@ -242,6 +250,7 @@ fn map_uid_zero_bypasses_name_lookup_even_without_numeric_ids() {
     assert_eq!(result.unwrap().as_raw(), 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn map_gid_zero_bypasses_name_lookup_even_without_numeric_ids() {
     let result = map_gid(0, false);
@@ -249,6 +258,7 @@ fn map_gid_zero_bypasses_name_lookup_even_without_numeric_ids() {
     assert_eq!(result.unwrap().as_raw(), 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn map_uid_zero_does_not_populate_cache() {
     let _lock = cache_lock().lock().unwrap();
@@ -263,6 +273,7 @@ fn map_uid_zero_does_not_populate_cache() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn map_gid_zero_does_not_populate_cache() {
     let _lock = cache_lock().lock().unwrap();
@@ -277,6 +288,7 @@ fn map_gid_zero_does_not_populate_cache() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn map_uid_zero_with_numeric_ids_true() {
     let result = map_uid(0, true);
@@ -284,6 +296,7 @@ fn map_uid_zero_with_numeric_ids_true() {
     assert_eq!(result.unwrap().as_raw(), 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn map_gid_zero_with_numeric_ids_true() {
     let result = map_gid(0, true);
@@ -291,6 +304,7 @@ fn map_gid_zero_with_numeric_ids_true() {
     assert_eq!(result.unwrap().as_raw(), 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn non_zero_ids_still_use_name_lookup_when_numeric_ids_false() {
     let _lock = cache_lock().lock().unwrap();
@@ -309,4 +323,35 @@ fn non_zero_ids_still_use_name_lookup_when_numeric_ids_false() {
         gid_cache_size() > 0,
         "Non-zero GID should populate cache via name lookup path"
     );
+}
+
+// Non-Unix stub tests - map_uid/map_gid return the raw value unchanged.
+
+#[cfg(not(unix))]
+#[test]
+fn non_unix_map_uid_returns_raw_value() {
+    assert_eq!(map_uid(0, false), Some(0));
+    assert_eq!(map_uid(1000, false), Some(1000));
+    assert_eq!(map_uid(65534, true), Some(65534));
+}
+
+#[cfg(not(unix))]
+#[test]
+fn non_unix_map_gid_returns_raw_value() {
+    assert_eq!(map_gid(0, false), Some(0));
+    assert_eq!(map_gid(1000, false), Some(1000));
+    assert_eq!(map_gid(65534, true), Some(65534));
+}
+
+#[cfg(not(unix))]
+#[test]
+fn non_unix_map_uid_numeric_ids_flag_ignored() {
+    // On non-unix, numeric_ids flag has no effect - always passthrough.
+    assert_eq!(map_uid(42, true), map_uid(42, false));
+}
+
+#[cfg(not(unix))]
+#[test]
+fn non_unix_map_gid_numeric_ids_flag_ignored() {
+    assert_eq!(map_gid(42, true), map_gid(42, false));
 }
