@@ -81,13 +81,11 @@ impl XattrEntry {
         }
     }
 
-    /// Returns the attribute name.
     #[must_use]
     pub fn name(&self) -> &[u8] {
         &self.name
     }
 
-    /// Returns the attribute name as a string (lossy conversion).
     #[must_use]
     pub fn name_str(&self) -> Cow<'_, str> {
         String::from_utf8_lossy(&self.name)
@@ -123,7 +121,6 @@ impl XattrEntry {
         self.datum_len > MAX_FULL_DATUM
     }
 
-    /// Returns the transfer state.
     #[must_use]
     pub const fn state(&self) -> XattrState {
         self.state

@@ -29,13 +29,11 @@ impl LimiterSleep {
         Self { requested, actual }
     }
 
-    /// Returns the amount of time the limiter attempted to sleep.
     #[must_use]
     pub const fn requested(&self) -> Duration {
         self.requested
     }
 
-    /// Returns the time actually observed by the limiter.
     #[must_use]
     pub const fn actual(&self) -> Duration {
         self.actual

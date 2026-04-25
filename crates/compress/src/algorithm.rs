@@ -358,7 +358,6 @@ impl CompressionAlgorithmParseError {
         }
     }
 
-    /// Returns the invalid input.
     #[must_use]
     pub fn input(&self) -> &str {
         &self.input
