@@ -63,9 +63,10 @@ jobs:
       # --branch enables LLVM branch coverage instrumentation (-C instrument-coverage=branch).
       # The profraw data then supports both line and branch coverage reports.
       # --fail-under-lines enforces the line coverage threshold only.
+      # Tightened from 80; raise toward 95 incrementally. See AGENTS.md.
       - name: Generate LCOV coverage report and enforce threshold
         id: coverage
-        run: cargo llvm-cov nextest --branch --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 80
+        run: cargo llvm-cov nextest --branch --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 84
 
       - name: Generate HTML coverage report
         if: always() && steps.coverage.outcome != 'skipped'
