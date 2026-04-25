@@ -96,7 +96,7 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use checksums::{parallel::compute_digests_parallel, strong::Md5};
 ///
 /// let blocks: Vec<&[u8]> = vec![b"block1", b"block2", b"block3"];
@@ -126,7 +126,7 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use checksums::{parallel::compute_digests_with_seed_parallel, strong::Xxh64};
 ///
 /// let blocks: Vec<&[u8]> = vec![b"block1", b"block2", b"block3"];
@@ -154,7 +154,7 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use checksums::parallel::compute_rolling_checksums_parallel;
 ///
 /// let blocks: Vec<&[u8]> = vec![b"block1", b"block2", b"block3"];
@@ -183,14 +183,15 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use checksums::{parallel::compute_block_signatures_parallel, strong::Md5};
 ///
 /// let blocks: Vec<&[u8]> = vec![b"block1", b"block2", b"block3"];
 /// let signatures = compute_block_signatures_parallel::<Md5, _>(&blocks);
+/// assert_eq!(signatures.len(), 3);
 ///
 /// for sig in &signatures {
-///     println!("Rolling: {:08x}, Strong: {:?}", sig.rolling, sig.strong.as_ref());
+///     assert_ne!(sig.rolling, 0);
 /// }
 /// ```
 pub fn compute_block_signatures_parallel<D, T>(blocks: &[T]) -> Vec<BlockSignature<D::Digest>>
@@ -226,7 +227,7 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use checksums::parallel::process_blocks_parallel;
 /// use checksums::RollingChecksum;
 ///
@@ -238,6 +239,8 @@ where
 ///     checksum.update(block);
 ///     (checksum.value(), block.len())
 /// });
+/// assert_eq!(results.len(), 3);
+/// assert_eq!(results[0].1, 6); // "block1" is 6 bytes
 /// ```
 pub fn process_blocks_parallel<T, R, F>(blocks: &[T], f: F) -> Vec<R>
 where
@@ -255,17 +258,20 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use checksums::parallel::filter_blocks_by_checksum;
 ///
 /// let blocks: Vec<&[u8]> = vec![b"block1", b"block2", b"block3"];
-/// let target_mask = 0xFFFF0000u32;
-/// let target_value = 0x12340000u32;
 ///
-/// // Find blocks whose upper 16 bits match
-/// let matches = filter_blocks_by_checksum(&blocks, |checksum| {
-///     (checksum & target_mask) == target_value
+/// // Find blocks whose checksum is non-zero (all should match)
+/// let matches = filter_blocks_by_checksum(&blocks, |checksum| checksum != 0);
+/// assert_eq!(matches.len(), 3);
+///
+/// // Find blocks matching a specific mask - may return 0..3 results
+/// let narrow = filter_blocks_by_checksum(&blocks, |checksum| {
+///     (checksum & 0xFFFF0000) == 0
 /// });
+/// assert!(narrow.len() <= 3);
 /// ```
 pub fn filter_blocks_by_checksum<T, F>(blocks: &[T], predicate: F) -> Vec<usize>
 where
