@@ -1,5 +1,6 @@
 //! Compression algorithm kind enumeration.
 
+use super::profile::ProtocolCompressionProfile;
 use crate::algorithm::CompressionAlgorithm;
 use crate::zlib::CompressionLevel;
 use std::fmt;
@@ -12,9 +13,11 @@ use std::fmt;
 pub enum CompressionAlgorithmKind {
     /// No compression - data is passed through uncompressed.
     None,
-    /// Zlib/DEFLATE - Default for rsync protocol < 36.
+    /// Zlib/DEFLATE - Mandatory codec for rsync protocol < 30 and the
+    /// negotiation fallback for all protocol versions.
     Zlib,
-    /// Zstandard - Default for rsync protocol >= 36.
+    /// Zstandard - Preferred codec for protocol >= 30 when compiled with
+    /// the `zstd` feature.
     #[cfg(feature = "zstd")]
     Zstd,
     /// LZ4 - Fast compression option.
@@ -90,18 +93,21 @@ impl CompressionAlgorithmKind {
 
     /// Returns the default algorithm for a given protocol version.
     ///
-    /// Protocol < 36 defaults to Zlib. Protocol >= 36 defaults to Zstd when
-    /// available, falling back to Zlib otherwise.
+    /// Protocol < 30 defaults to Zlib (upstream has no vstring negotiation
+    /// before protocol 30). Protocol >= 30 defaults to Zstd when the `zstd`
+    /// feature is compiled in, falling back to Zlib otherwise.
+    ///
+    /// Delegates to the central [`ProtocolCompressionProfile`] table.
+    ///
+    /// # Upstream Reference
+    ///
+    /// upstream: compat.c:556-563 - `recv_negotiate_str` defaults to `"zlib"`
+    /// when `do_negotiated_strings == 0` (protocol < 30 unconditionally).
+    /// upstream: compat.c:101-102 - zstd is the first entry in
+    /// `valid_compressions_items[]` when `SUPPORT_ZSTD` is defined.
     #[must_use]
     pub const fn for_protocol_version(protocol_version: u8) -> Self {
-        if protocol_version >= 36 {
-            #[cfg(feature = "zstd")]
-            return Self::Zstd;
-            #[cfg(not(feature = "zstd"))]
-            return Self::Zlib;
-        } else {
-            Self::Zlib
-        }
+        ProtocolCompressionProfile::for_protocol(protocol_version).default_kind()
     }
 }
 
