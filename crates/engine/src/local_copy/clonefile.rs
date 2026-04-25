@@ -35,6 +35,8 @@
 use std::io;
 use std::path::Path;
 
+use fast_io::{DefaultPlatformCopy, PlatformCopy};
+
 /// Result of a clone-or-copy operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloneResult {
@@ -46,38 +48,44 @@ pub enum CloneResult {
 
 /// Try to clone a file using copy-on-write if available.
 ///
-/// Falls back to standard copy on non-macOS or when clonefile fails
-/// (e.g., cross-filesystem, unsupported filesystem).
+/// Dispatches through [`DefaultPlatformCopy`], which selects the best available
+/// mechanism (clonefile/FICLONE/ReFS reflink) and falls back to portable copy
+/// when CoW is unavailable. To inject a custom strategy (for example in tests),
+/// see [`clone_or_copy_with`].
 ///
-/// Returns `Ok(CloneResult::Cloned)` if CoW clone succeeded,
-/// `Ok(CloneResult::Copied(bytes))` if standard copy was used,
-/// or `Err` on failure of both paths.
-///
-/// # Platform Behavior
-///
-/// - **macOS**: Attempts `clonefile()` first. On failure (e.g., cross-device,
-///   unsupported fs), falls back to `std::fs::copy`.
-/// - **Other platforms**: Always uses `std::fs::copy` (clonefile unavailable).
+/// Returns `Ok(CloneResult::Cloned)` when a zero-copy CoW reflink succeeded,
+/// `Ok(CloneResult::Copied(bytes))` when the platform fell back to a data
+/// copy, or `Err` when every strategy failed.
 ///
 /// # Errors
 ///
 /// Returns an error if:
 /// - Source file doesn't exist or isn't readable
 /// - Destination cannot be created (permission denied, invalid path, etc.)
-/// - Both clonefile and standard copy fail
+/// - All copy mechanisms fail
 pub fn clone_or_copy(src: &Path, dst: &Path) -> io::Result<CloneResult> {
-    // Try clonefile first (macOS only, returns Unsupported on other platforms)
-    match try_clonefile(src, dst) {
-        Ok(()) => Ok(CloneResult::Cloned),
-        Err(_e) => {
-            // Clonefile failed or not available, clean up any partial destination
-            // and fall back to standard copy
-            let _ = std::fs::remove_file(dst); // Ignore errors (dst may not exist)
+    clone_or_copy_with(&DefaultPlatformCopy::new(), src, dst)
+}
 
-            // Fall back to standard copy
-            let bytes = copy_file_standard(src, dst)?;
-            Ok(CloneResult::Copied(bytes))
-        }
+/// Variant of [`clone_or_copy`] that uses a caller-supplied [`PlatformCopy`].
+///
+/// Allows injecting a fake strategy in tests or wiring the strategy stored in
+/// `LocalCopyOptions` so that engine paths share a single copy backend.
+///
+/// # Errors
+///
+/// Returns an error if every mechanism in the supplied strategy fails.
+pub fn clone_or_copy_with(
+    platform_copy: &dyn PlatformCopy,
+    src: &Path,
+    dst: &Path,
+) -> io::Result<CloneResult> {
+    let size_hint = std::fs::metadata(src).map(|m| m.len()).unwrap_or(0);
+    let result = platform_copy.copy_file(src, dst, size_hint)?;
+    if result.is_zero_copy() {
+        Ok(CloneResult::Cloned)
+    } else {
+        Ok(CloneResult::Copied(result.bytes_copied))
     }
 }
 

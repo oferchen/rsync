@@ -119,7 +119,7 @@ impl CopyResult {
 ///
 /// - [`DefaultPlatformCopy`](super::DefaultPlatformCopy) - auto-selects the best mechanism per platform
 /// - Custom implementations can be provided for testing or specialized behavior
-pub trait PlatformCopy: Send + Sync {
+pub trait PlatformCopy: fmt::Debug + Send + Sync {
     /// Copies a file from `src` to `dst`, selecting the best platform mechanism.
     ///
     /// The `size_hint` parameter is advisory - it helps select the optimal copy

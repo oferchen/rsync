@@ -40,6 +40,8 @@
 use std::io;
 use std::path::Path;
 
+use fast_io::{CopyMethod, DefaultPlatformCopy, PlatformCopy};
+
 /// Threshold above which COPY_FILE_NO_BUFFERING is used on Windows.
 ///
 /// Re-exported from [`fast_io::copy_file_ex::NO_BUFFERING_THRESHOLD`] for
@@ -115,18 +117,29 @@ impl WinCopyResult {
 /// assert_eq!(result.bytes_copied(), 4);
 /// ```
 pub fn copy_file_optimized(src: &Path, dst: &Path) -> io::Result<WinCopyResult> {
-    // Try Windows-optimized copy first (returns Unsupported on other platforms)
-    match fast_io::copy_file_ex::try_copy_file_ex(src, dst) {
-        Ok(bytes) => Ok(WinCopyResult::WindowsCopy(bytes)),
-        Err(_e) => {
-            // Windows copy failed or not available, clean up any partial destination
-            // and fall back to standard copy
-            let _ = std::fs::remove_file(dst); // Ignore errors (dst may not exist)
+    copy_file_optimized_with(&DefaultPlatformCopy::new(), src, dst)
+}
 
-            // Fall back to standard copy
-            let bytes = copy_file_standard(src, dst)?;
-            Ok(WinCopyResult::StandardCopy(bytes))
+/// Variant of [`copy_file_optimized`] that uses a caller-supplied [`PlatformCopy`].
+///
+/// Allows injecting a fake strategy in tests or wiring the strategy stored in
+/// `LocalCopyOptions` so engine paths share a single copy backend.
+///
+/// # Errors
+///
+/// Returns an error if every mechanism in the supplied strategy fails.
+pub fn copy_file_optimized_with(
+    platform_copy: &dyn PlatformCopy,
+    src: &Path,
+    dst: &Path,
+) -> io::Result<WinCopyResult> {
+    let size_hint = std::fs::metadata(src).map(|m| m.len()).unwrap_or(0);
+    let result = platform_copy.copy_file(src, dst, size_hint)?;
+    match result.method {
+        CopyMethod::CopyFileEx | CopyMethod::ReFsReflink => {
+            Ok(WinCopyResult::WindowsCopy(result.bytes_copied))
         }
+        _ => Ok(WinCopyResult::StandardCopy(result.bytes_copied)),
     }
 }
 
