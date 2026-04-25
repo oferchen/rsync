@@ -12,7 +12,6 @@ pub struct FileSignature {
 }
 
 impl FileSignature {
-    /// Creates a new signature container.
     pub(crate) const fn new(
         layout: SignatureLayout,
         blocks: Vec<SignatureBlock>,
@@ -35,7 +34,6 @@ impl FileSignature {
         Self::new(layout, blocks, total_bytes)
     }
 
-    /// Returns the layout used to generate the signature.
     #[inline]
     #[must_use]
     pub const fn layout(&self) -> SignatureLayout {
@@ -49,7 +47,6 @@ impl FileSignature {
         &self.blocks
     }
 
-    /// Returns the total number of bytes consumed while generating the signature.
     #[inline]
     #[must_use]
     pub const fn total_bytes(&self) -> u64 {

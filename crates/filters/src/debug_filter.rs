@@ -272,31 +272,26 @@ impl FilterTracer {
         self.dir_merges = 0;
     }
 
-    /// Returns the number of rules added.
     #[must_use]
     pub const fn rules_added(&self) -> usize {
         self.rules_added
     }
 
-    /// Returns the total number of paths evaluated.
     #[must_use]
     pub const fn total_evaluated(&self) -> usize {
         self.total_evaluated
     }
 
-    /// Returns the number of paths included.
     #[must_use]
     pub const fn total_included(&self) -> usize {
         self.total_included
     }
 
-    /// Returns the number of paths excluded.
     #[must_use]
     pub const fn total_excluded(&self) -> usize {
         self.total_excluded
     }
 
-    /// Returns the number of directory merge operations.
     #[must_use]
     pub const fn dir_merges(&self) -> usize {
         self.dir_merges

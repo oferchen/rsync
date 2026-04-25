@@ -128,12 +128,10 @@ impl BandwidthLimitComponents {
         }
     }
 
-    /// Returns the configured byte-per-second rate, if any.
     pub const fn rate(&self) -> Option<NonZeroU64> {
         self.rate
     }
 
-    /// Returns the configured burst size in bytes, if any.
     pub const fn burst(&self) -> Option<NonZeroU64> {
         self.burst
     }

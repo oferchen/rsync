@@ -23,7 +23,6 @@ pub enum CompressionAlgorithmKind {
 }
 
 impl CompressionAlgorithmKind {
-    /// Returns the canonical name for the algorithm.
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
@@ -48,7 +47,6 @@ impl CompressionAlgorithmKind {
         }
     }
 
-    /// Returns the default compression level for the algorithm.
     #[must_use]
     pub const fn default_level(&self) -> CompressionLevel {
         match self {

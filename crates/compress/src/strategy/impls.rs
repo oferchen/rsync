@@ -17,7 +17,6 @@ use crate::lz4::raw;
 pub struct NoCompressionStrategy;
 
 impl NoCompressionStrategy {
-    /// Creates a new no-compression strategy.
     #[must_use]
     pub const fn new() -> Self {
         Self
@@ -49,7 +48,6 @@ pub struct ZlibStrategy {
 }
 
 impl ZlibStrategy {
-    /// Creates a new Zlib strategy with the specified compression level.
     #[must_use]
     pub const fn new(level: CompressionLevel) -> Self {
         Self { level }
@@ -103,7 +101,6 @@ pub struct ZstdStrategy {
 
 #[cfg(feature = "zstd")]
 impl ZstdStrategy {
-    /// Creates a new Zstd strategy with the specified compression level.
     #[must_use]
     pub const fn new(level: CompressionLevel) -> Self {
         Self { level }
@@ -164,7 +161,6 @@ pub struct Lz4Strategy {
 
 #[cfg(feature = "lz4")]
 impl Lz4Strategy {
-    /// Creates a new LZ4 strategy with the specified compression level.
     #[must_use]
     pub const fn new(level: CompressionLevel) -> Self {
         Self { level }
@@ -176,7 +172,6 @@ impl Lz4Strategy {
         Self::new(CompressionLevel::Default)
     }
 
-    /// Returns the configured compression level.
     #[must_use]
     pub const fn level(&self) -> CompressionLevel {
         self.level

@@ -86,7 +86,6 @@ impl Suffix {
         Self(normalized)
     }
 
-    /// Returns the normalized suffix string.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0

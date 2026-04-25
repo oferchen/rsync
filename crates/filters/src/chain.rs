@@ -135,7 +135,6 @@ impl DirMergeConfig {
         self
     }
 
-    /// Returns the filename to search for in each directory.
     #[must_use]
     pub fn filename(&self) -> &str {
         &self.filename
@@ -397,19 +396,16 @@ impl FilterChain {
         self.global.is_empty() && self.scopes.is_empty()
     }
 
-    /// Returns the number of active per-directory scopes.
     #[must_use]
     pub fn scope_depth(&self) -> usize {
         self.scopes.len()
     }
 
-    /// Returns the current directory depth.
     #[must_use]
     pub fn current_depth(&self) -> usize {
         self.current_depth
     }
 
-    /// Returns the global base filter set.
     #[must_use]
     pub fn global(&self) -> &FilterSet {
         &self.global
@@ -479,13 +475,11 @@ pub struct DirFilterGuard {
 }
 
 impl DirFilterGuard {
-    /// Returns the directory depth at which this guard was created.
     #[must_use]
     pub const fn depth(&self) -> usize {
         self.depth
     }
 
-    /// Returns the number of filter scopes pushed for this directory.
     #[must_use]
     pub const fn pushed_count(&self) -> usize {
         self.pushed_count
