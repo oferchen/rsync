@@ -402,3 +402,128 @@ fn human_readable_two_separate_short_flags_is_combined() {
     let parsed = parse_test_args(["-h", "-h", "src/", "dst/"]).expect("parse");
     assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
 }
+
+// ── Embedded SSH arguments ──────────────────────────────────────────
+
+#[test]
+fn ssh_cipher_parses_comma_separated_list() {
+    let parsed = parse_test_args([
+        "--ssh-cipher",
+        "aes256-gcm,chacha20-poly1305",
+        "src/",
+        "dst/",
+    ])
+    .expect("parse");
+    assert_eq!(
+        parsed.ssh_cipher,
+        vec!["aes256-gcm".to_string(), "chacha20-poly1305".to_string()]
+    );
+}
+
+#[test]
+fn ssh_cipher_defaults_to_empty() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(parsed.ssh_cipher.is_empty());
+}
+
+#[test]
+fn ssh_connect_timeout_parses_seconds() {
+    let parsed = parse_test_args(["--ssh-connect-timeout", "30", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.ssh_connect_timeout, Some(30));
+}
+
+#[test]
+fn ssh_connect_timeout_defaults_to_none() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.ssh_connect_timeout, None);
+}
+
+#[test]
+fn ssh_keepalive_parses_seconds() {
+    let parsed = parse_test_args(["--ssh-keepalive", "60", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.ssh_keepalive, Some(60));
+}
+
+#[test]
+fn ssh_keepalive_zero_disables() {
+    let parsed = parse_test_args(["--ssh-keepalive", "0", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.ssh_keepalive, Some(0));
+}
+
+#[test]
+fn ssh_identity_single_file() {
+    let parsed = parse_test_args([
+        "--ssh-identity",
+        "/home/user/.ssh/id_ed25519",
+        "src/",
+        "dst/",
+    ])
+    .expect("parse");
+    assert_eq!(
+        parsed.ssh_identity,
+        vec![std::path::PathBuf::from("/home/user/.ssh/id_ed25519")]
+    );
+}
+
+#[test]
+fn ssh_identity_multiple_files() {
+    let parsed = parse_test_args([
+        "--ssh-identity",
+        "/home/user/.ssh/id_ed25519",
+        "--ssh-identity",
+        "/home/user/.ssh/id_rsa",
+        "src/",
+        "dst/",
+    ])
+    .expect("parse");
+    assert_eq!(parsed.ssh_identity.len(), 2);
+}
+
+#[test]
+fn ssh_no_agent_flag() {
+    let parsed = parse_test_args(["--ssh-no-agent", "src/", "dst/"]).expect("parse");
+    assert!(parsed.ssh_no_agent);
+}
+
+#[test]
+fn ssh_no_agent_defaults_to_false() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(!parsed.ssh_no_agent);
+}
+
+#[test]
+fn ssh_strict_host_key_checking_yes() {
+    let parsed =
+        parse_test_args(["--ssh-strict-host-key-checking", "yes", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.ssh_strict_host_key_checking, Some("yes".to_string()));
+}
+
+#[test]
+fn ssh_strict_host_key_checking_defaults_to_none() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.ssh_strict_host_key_checking, None);
+}
+
+#[test]
+fn ssh_ipv6_flag() {
+    let parsed = parse_test_args(["--ssh-ipv6", "src/", "dst/"]).expect("parse");
+    assert!(parsed.ssh_ipv6);
+}
+
+#[test]
+fn ssh_ipv6_defaults_to_false() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(!parsed.ssh_ipv6);
+}
+
+#[test]
+fn ssh_port_parses_number() {
+    let parsed = parse_test_args(["--ssh-port", "2222", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.ssh_port, Some(2222));
+}
+
+#[test]
+fn ssh_port_defaults_to_none() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.ssh_port, None);
+}

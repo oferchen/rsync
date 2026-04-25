@@ -252,8 +252,10 @@ mod tests {
     use super::*;
     #[test]
     fn effective_username_from_config() {
-        let mut config = SshConfig::default();
-        config.username = Some("alice".to_owned());
+        let config = SshConfig {
+            username: Some("alice".to_owned()),
+            ..SshConfig::default()
+        };
         let user = effective_username(&config).unwrap();
         assert_eq!(user, "alice");
     }
@@ -338,10 +340,7 @@ mod tests {
     #[test]
     fn auth_methods_ordering() {
         // Verify the tried-methods list is built correctly.
-        let mut tried = Vec::new();
-        tried.push("agent");
-        tried.push("publickey");
-        tried.push("password");
+        let tried = ["agent", "publickey", "password"];
         assert_eq!(tried.join(", "), "agent, publickey, password");
     }
 
@@ -369,8 +368,10 @@ mod tests {
     #[test]
     fn url_password_triggers_warning_path() {
         // Verify that a config with password set takes the URL-password branch.
-        let mut config = SshConfig::default();
-        config.password = Some("secret".to_owned());
+        let config = SshConfig {
+            password: Some("secret".to_owned()),
+            ..SshConfig::default()
+        };
         assert!(config.password.is_some());
     }
 
