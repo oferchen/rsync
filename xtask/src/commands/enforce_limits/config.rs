@@ -53,9 +53,10 @@ pub(super) fn parse_line_limits_config(
     contents: &str,
     origin: &Path,
 ) -> TaskResult<LineLimitsConfig> {
-    let value = contents.parse::<Value>().map_err(|error| {
+    let table: toml::Table = toml::from_str(contents).map_err(|error| {
         TaskError::Metadata(format!("failed to parse {}: {error}", origin.display()))
     })?;
+    let value = Value::Table(table);
 
     let mut config = LineLimitsConfig::default();
     if let Some(default_max) = value.get("default_max_lines") {
