@@ -17,8 +17,8 @@ use engine::{DeltaStrategy, DeltaTransferStrategy, DeltaWork};
 use tempfile::TempDir;
 
 const ONE_MEBIBYTE: usize = 1024 * 1024;
-const SHARED_PREFIX_LEN: usize = 800 * 1024;
-const DIVERGENT_TAIL_LEN: usize = 200 * 1024;
+const SHARED_PREFIX_LEN: usize = 824 * 1024;
+const DIVERGENT_TAIL_LEN: usize = ONE_MEBIBYTE - SHARED_PREFIX_LEN;
 
 /// Generates 1 MiB of deterministic byte content using a simple LCG so adjacent
 /// byte windows are unique enough for the rolling+strong checksum matcher.
@@ -44,9 +44,9 @@ fn read_file(path: &Path) -> Vec<u8> {
     fs::read(path).expect("read output file")
 }
 
-/// Scenario 1: 1 MiB source where the first 800 KiB matches the basis and the
+/// Scenario 1: 1 MiB source where the first 824 KiB matches the basis and the
 /// final 200 KiB diverges. Expects literal_bytes near 200 KiB, matched_bytes
-/// near 800 KiB, and a byte-identical destination file.
+/// near 824 KiB, and a byte-identical destination file.
 #[test]
 fn delta_transfer_strategy_matches_shared_prefix() {
     let temp = TempDir::new().expect("tempdir");
