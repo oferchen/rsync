@@ -740,12 +740,36 @@ NEON) are used where available, with automatic scalar fallbacks.
 
 ## Performance Options
 
+The io_uring policy selects one of three modes for the asynchronous file I/O
+backend on Linux. Specify at most one of **--io-uring** or **--no-io-uring**;
+omitting both leaves the policy in its default *auto* state.
+
+| Policy | Selected by | Behaviour |
+|--------|-------------|-----------|
+| *auto* (default) | neither flag | Probe the kernel at startup. Use io_uring when available (Linux 5.6+), otherwise fall back to standard buffered I/O without warning. |
+| *enabled* | **--io-uring** | Require io_uring. Exit with an error at startup if probing fails (kernel < 5.6, **io_uring_setup**(2) blocked by seccomp, or feature compiled out). |
+| *disabled* | **--no-io-uring** | Skip the kernel probe and always use standard buffered I/O even when io_uring is available. Useful for benchmarking or when running under restrictive sandboxes. |
+
+The probe additionally selects between standard submission and SQPOLL mode.
+SQPOLL requires **CAP_SYS_NICE**; when that capability is missing the runtime
+falls back to standard submission and emits a one-time log message. The active
+backend is reported by **--version** and by **-vv** output, where the label is
+*standard I/O*, *io_uring*, or *io_uring (SQPOLL)*.
+
+On non-Linux targets and on builds without the *io_uring* feature compiled in,
+*auto* and *disabled* both resolve to standard buffered I/O, while *enabled*
+exits with an error.
+
 **--io-uring**
-:   Force io_uring for file I/O. Returns an error if io_uring is unavailable.
-    Available on Linux 5.6+.
+:   Force io_uring for file I/O (policy *enabled*). Returns an error if
+    io_uring is unavailable, including on non-Linux platforms, on Linux
+    kernels older than 5.6, or when **io_uring_setup**(2) is blocked.
+    Overrides a previous **--no-io-uring** on the same command line.
 
 **--no-io-uring**
-:   Disable io_uring. Always use standard buffered I/O.
+:   Disable io_uring (policy *disabled*). Always use standard buffered I/O
+    even when the kernel supports io_uring. Overrides a previous
+    **--io-uring** on the same command line.
 
 ## Scheduling Options
 
