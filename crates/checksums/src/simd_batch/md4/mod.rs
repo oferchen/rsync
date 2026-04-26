@@ -7,6 +7,27 @@
 //!
 //! Used by upstream rsync for protocol versions < 30.
 //! See upstream `checksum.c:get_checksum2()` for algorithm selection.
+//!
+//! # Runtime Dispatch Ladder
+//!
+//! [`Md4Dispatcher`] probes CPU features once at first use and selects the
+//! widest available SIMD backend. The dispatch order is:
+//!
+//! 1. **AVX-512** (16 lanes) - `is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw")`
+//! 2. **AVX2** (8 lanes) - `is_x86_feature_detected!("avx2")`
+//! 3. **SSE2** (4 lanes) - always true on `x86_64`
+//! 4. **NEON** (4 lanes) - always true on `aarch64`
+//! 5. **WASM SIMD** (4 lanes) - `wasm32` with `simd128`
+//! 6. **Scalar** (1 lane) - portable fallback
+//!
+//! Note: unlike MD5, MD4's batch dispatcher does not expose dedicated SSSE3
+//! or SSE4.1 paths because the simpler round functions do not benefit from
+//! `pshufb` / `blendv`; the SSE2 path is reused for all SSE-family CPUs.
+//!
+//! Parity between every backend and the scalar reference is enforced by
+//! `simd_parity_tests::md4_simd_parity` via RFC 1320 vectors, lane-boundary
+//! sweeps, partial-batch coverage, large inputs (up to 100 KiB), and proptest
+//! property checks against arbitrary byte vectors.
 
 pub mod scalar;
 

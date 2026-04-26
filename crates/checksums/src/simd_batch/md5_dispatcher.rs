@@ -1,4 +1,21 @@
-//! Runtime CPU detection and backend dispatch.
+//! Runtime CPU detection and backend dispatch for batch MD5 hashing.
+//!
+//! The [`Dispatcher`] probes the host CPU once at first use and selects the
+//! widest available SIMD backend. The dispatch ladder is:
+//!
+//! 1. **AVX-512** (16 lanes) - `is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw")`
+//! 2. **AVX2** (8 lanes) - `is_x86_feature_detected!("avx2")`
+//! 3. **SSE4.1** (4 lanes, blendv) - `is_x86_feature_detected!("sse4.1")`
+//! 4. **SSSE3** (4 lanes, pshufb) - `is_x86_feature_detected!("ssse3")`
+//! 5. **SSE2** (4 lanes, baseline) - always true on `x86_64`
+//! 6. **NEON** (4 lanes) - always true on `aarch64`
+//! 7. **WASM SIMD** (4 lanes) - `wasm32` with `simd128`
+//! 8. **Scalar** (1 lane) - portable fallback
+//!
+//! Parity between every backend and the scalar reference is enforced by
+//! `simd_parity_tests::md5_simd_parity` via RFC 1321 vectors, lane-boundary
+//! sweeps, partial-batch coverage, large inputs (up to 100 KiB), and proptest
+//! property checks against arbitrary byte vectors.
 
 use super::Digest;
 use super::md5_scalar as scalar;

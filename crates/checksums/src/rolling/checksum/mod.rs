@@ -1,3 +1,25 @@
+//! Rolling checksum core with architecture-specific SIMD dispatch.
+//!
+//! [`RollingChecksum::update`] funnels through [`accumulate_chunk_dispatch`],
+//! which selects the fastest implementation available on the host CPU. The
+//! dispatch ladder is:
+//!
+//! | Architecture | Order | Path |
+//! |--------------|-------|------|
+//! | x86 / x86_64 | 1 | AVX2 (32 bytes/iter) when `is_x86_feature_detected!("avx2")` |
+//! | x86 / x86_64 | 2 | SSE2 (16 bytes/iter) when `is_x86_feature_detected!("sse2")` |
+//! | aarch64      | 1 | NEON (16 bytes/iter) when `is_aarch64_feature_detected!("neon")` |
+//! | All          | last | Scalar (4-byte unrolled loop) - exact match for upstream `checksum.c:get_checksum1()` |
+//!
+//! Feature probing is done once and cached in a `OnceLock` (see the `x86` and
+//! `neon` submodules). All SIMD paths tail-call into the scalar implementation
+//! for any trailing bytes that do not fill a full SIMD lane, so byte-for-byte
+//! parity with upstream is preserved on every input length.
+//!
+//! Parity between scalar and each SIMD path is exhaustively tested by the
+//! `rolling::tests::checksum::simd` module across multiple sizes and seed
+//! states.
+
 use std::io::{self, IoSlice, Read};
 
 #[cfg(target_arch = "aarch64")]
