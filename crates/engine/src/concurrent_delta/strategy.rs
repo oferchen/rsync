@@ -22,7 +22,33 @@
 //!       +---> DeltaTransferStrategy (basis + delta tokens)
 //! ```
 
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
+use std::num::NonZeroU8;
+use std::path::Path;
+
+use matching::{DeltaGenerator, DeltaSignatureIndex, apply_delta};
+use protocol::ProtocolVersion;
+use signature::{
+    SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout,
+    generate_file_signature,
+};
+
 use super::types::{DeltaResult, DeltaWork, DeltaWorkKind};
+
+/// Strong checksum length used by self-contained delta computation in
+/// [`DeltaTransferStrategy`].
+///
+/// Mirrors the upstream rsync default of `MAX_DIGEST_LEN = 16` bytes for the
+/// MD4-based signature pipeline (see `rsync.h:166`). Using the maximum length
+/// ensures the matcher does not produce false positives on synthetic inputs.
+const STRONG_SUM_LEN: u8 = 16;
+
+/// Signature algorithm used by self-contained delta computation.
+///
+/// Matches upstream rsync's protocol-30 default (`compat.c:get_default_nonce`)
+/// when no explicit checksum negotiation has occurred.
+const SIGNATURE_ALGORITHM: SignatureAlgorithm = SignatureAlgorithm::Md4;
 
 /// Strategy for processing a delta work item.
 ///
@@ -106,10 +132,17 @@ impl DeltaTransferStrategy {
 
 impl DeltaStrategy for DeltaTransferStrategy {
     fn process(&self, work: &DeltaWork) -> DeltaResult {
-        let target_size = work.target_size();
-        // Delta transfer: use actual literal/matched byte counts accumulated
-        // during delta token stream processing.
+        // Self-contained pipeline: when both basis and source paths are present,
+        // run the real DeltaGenerator over the source against a signature
+        // computed from the basis, then apply the script to produce the dest.
+        if let (Some(basis), Some(source)) = (work.basis_path(), work.source_path()) {
+            return run_self_contained_delta(work, basis, source);
+        }
+
+        // Pre-computed pipeline: receiver.c:receive_data() already split the
+        // wire stream into literal vs matched bytes; carry them through.
         // upstream: receiver.c:receive_data() tracks these via data/match_sum.
+        let target_size = work.target_size();
         let literal = work.literal_bytes();
         let matched = work.matched_bytes();
         DeltaResult::success(work.ndx(), target_size, literal, matched)
@@ -118,6 +151,85 @@ impl DeltaStrategy for DeltaTransferStrategy {
     fn kind(&self) -> DeltaWorkKind {
         DeltaWorkKind::Delta
     }
+}
+
+/// Per-file outcome of the self-contained delta pipeline used to report
+/// real stats to [`DeltaResult::success`] without intermediate copies.
+struct SelfContainedOutcome {
+    total: u64,
+    literal: u64,
+    matched: u64,
+}
+
+/// Executes the full delta pipeline: builds a signature from `basis`, runs
+/// [`DeltaGenerator`] over `source`, applies the resulting script against the
+/// basis, and writes the reconstructed bytes to the destination path on the
+/// work item.
+///
+/// Returns a [`DeltaResult::failed`] when any I/O, signature, or matching
+/// step fails; the worker pipeline forwards failures to the consumer for
+/// downstream redo handling.
+fn run_self_contained_delta(work: &DeltaWork, basis: &Path, source: &Path) -> DeltaResult {
+    match self_contained_delta(basis, source, work.dest_path()) {
+        Ok(outcome) => {
+            DeltaResult::success(work.ndx(), outcome.total, outcome.literal, outcome.matched)
+        }
+        Err(error) => DeltaResult::failed(work.ndx(), error),
+    }
+}
+
+/// Internal pipeline body returning a flat error string so the caller can wrap
+/// it into a [`DeltaResult::failed`]. Each `?` site preserves enough context
+/// (file path, stage name) to make failures actionable in transfer logs.
+fn self_contained_delta(
+    basis: &Path,
+    source: &Path,
+    dest: &Path,
+) -> Result<SelfContainedOutcome, String> {
+    let strong = NonZeroU8::new(STRONG_SUM_LEN)
+        .ok_or_else(|| "internal error: STRONG_SUM_LEN must be non-zero".to_string())?;
+
+    let basis_len = std::fs::metadata(basis)
+        .map_err(|error| format!("basis stat failed: {}: {error}", basis.display()))?
+        .len();
+
+    let layout_params =
+        SignatureLayoutParams::new(basis_len, None, ProtocolVersion::NEWEST, strong);
+    let layout = calculate_signature_layout(layout_params)
+        .map_err(|error| format!("signature layout failed: {error}"))?;
+
+    let basis_file = File::open(basis)
+        .map_err(|error| format!("basis open failed: {}: {error}", basis.display()))?;
+    let signature =
+        generate_file_signature(BufReader::new(basis_file), layout, SIGNATURE_ALGORITHM)
+            .map_err(|error| format!("signature generation failed: {error}"))?;
+    let index = DeltaSignatureIndex::from_signature(&signature, SIGNATURE_ALGORITHM)
+        .map_err(|error| format!("signature index build failed: {error}"))?;
+
+    let source_file = File::open(source)
+        .map_err(|error| format!("source open failed: {}: {error}", source.display()))?;
+    let script = DeltaGenerator::new()
+        .generate(BufReader::new(source_file), &index)
+        .map_err(|error| format!("delta generation failed: {error}"))?;
+
+    let basis_apply = File::open(basis)
+        .map_err(|error| format!("basis reopen failed: {}: {error}", basis.display()))?;
+    let dest_file = File::create(dest)
+        .map_err(|error| format!("destination create failed: {}: {error}", dest.display()))?;
+    let mut dest_writer = BufWriter::new(dest_file);
+    apply_delta(BufReader::new(basis_apply), &mut dest_writer, &index, &script)
+        .map_err(|error| format!("delta application failed: {error}"))?;
+    dest_writer
+        .into_inner()
+        .map_err(|err| err.into_error())
+        .and_then(|file| file.sync_all())
+        .map_err(|error| format!("destination flush failed: {error}"))?;
+
+    Ok(SelfContainedOutcome {
+        total: script.total_bytes(),
+        literal: script.literal_bytes(),
+        matched: script.copy_bytes(),
+    })
 }
 
 /// Selects and returns the appropriate strategy for a given work item.
@@ -164,6 +276,7 @@ pub fn dispatch(work: &DeltaWork) -> DeltaResult {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
 
     use super::*;
@@ -357,6 +470,68 @@ mod tests {
         for (i, r) in results.iter().enumerate() {
             assert_eq!(r.sequence(), i as u64);
             assert_eq!(r.ndx().get(), i as u32);
+        }
+    }
+
+    /// Smoke test for the self-contained pipeline: identical source and basis
+    /// must reconstruct the source byte-for-byte and report at most a partial
+    /// trailing block as literal data.
+    #[test]
+    fn self_contained_pipeline_round_trip_identical() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let basis_path = temp.path().join("basis.bin");
+        let source_path = temp.path().join("source.bin");
+        let dest_path = temp.path().join("dest.bin");
+
+        let payload: Vec<u8> = (0..32 * 1024).map(|i| (i % 251) as u8).collect();
+        fs::write(&basis_path, &payload).expect("write basis");
+        fs::write(&source_path, &payload).expect("write source");
+
+        let work = DeltaWork::delta_with_source(
+            0u32,
+            dest_path.clone(),
+            basis_path,
+            source_path,
+            payload.len() as u64,
+        );
+
+        let result = DeltaTransferStrategy::new().process(&work);
+        assert!(result.is_success(), "{:?}", result.status());
+        assert_eq!(result.bytes_written(), payload.len() as u64);
+        assert!(
+            result.matched_bytes() > 0,
+            "expected basis blocks to match for identical payload"
+        );
+
+        let written = fs::read(&dest_path).expect("read dest");
+        assert_eq!(written, payload);
+    }
+
+    /// Reports a typed failure when the basis file is missing instead of panicking.
+    #[test]
+    fn self_contained_pipeline_reports_basis_open_failure() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let basis_path = temp.path().join("missing.bin");
+        let source_path = temp.path().join("source.bin");
+        let dest_path = temp.path().join("dest.bin");
+
+        fs::write(&source_path, b"hello").expect("write source");
+
+        let work = DeltaWork::delta_with_source(
+            7u32,
+            dest_path,
+            basis_path,
+            source_path,
+            5,
+        );
+
+        let result = DeltaTransferStrategy::new().process(&work);
+        assert!(!result.is_success());
+        match result.status() {
+            crate::concurrent_delta::DeltaResultStatus::Failed { reason } => {
+                assert!(reason.contains("basis"), "unexpected reason: {reason}");
+            }
+            other => panic!("expected Failed status, got {other:?}"),
         }
     }
 }
