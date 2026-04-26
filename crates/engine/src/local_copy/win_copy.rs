@@ -135,11 +135,19 @@ pub fn copy_file_optimized_with(
 ) -> io::Result<WinCopyResult> {
     let size_hint = std::fs::metadata(src).map(|m| m.len()).unwrap_or(0);
     let result = platform_copy.copy_file(src, dst, size_hint)?;
+    // Zero-copy reflink methods (clonefile/FICLONE/ReFS) return
+    // bytes_copied=0 because no data physically traversed userspace.
+    // The caller-facing byte count is the logical file size so that
+    // progress and statistics reflect the data made available at the
+    // destination, matching upstream rsync's accounting.
+    let bytes = if result.is_zero_copy() {
+        size_hint
+    } else {
+        result.bytes_copied
+    };
     match result.method {
-        CopyMethod::CopyFileEx | CopyMethod::ReFsReflink => {
-            Ok(WinCopyResult::WindowsCopy(result.bytes_copied))
-        }
-        _ => Ok(WinCopyResult::StandardCopy(result.bytes_copied)),
+        CopyMethod::CopyFileEx | CopyMethod::ReFsReflink => Ok(WinCopyResult::WindowsCopy(bytes)),
+        _ => Ok(WinCopyResult::StandardCopy(bytes)),
     }
 }
 

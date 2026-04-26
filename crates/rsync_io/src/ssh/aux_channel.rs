@@ -492,7 +492,11 @@ mod tests {
     fn channel_join_is_idempotent() {
         // Calling join() multiple times must be safe (no double-panic from
         // re-joining a JoinHandle). Both impls share this Drop/join logic.
-        let (a, _b) = UnixStream::pair().expect("socketpair");
+        //
+        // The writer half is dropped via the wildcard pattern `_` (not the
+        // named binding `_b`, which would extend the writer's lifetime to
+        // end-of-scope and block the drain thread waiting for EOF).
+        let (a, _) = UnixStream::pair().expect("socketpair");
         let mut channel = SocketpairStderrChannel::spawn(a);
         channel.join();
         channel.join();
@@ -576,7 +580,12 @@ mod tests {
         let parent = configure_stderr_channel(&mut command).expect("socketpair available");
         let mut child = command.spawn().expect("spawn sh");
         let _ = child.wait();
-        // Drain the parent end manually to verify data was routed correctly.
+        // `command.stderr(Stdio::from(child_fd))` retains the child end of
+        // the socketpair inside `Command` (spawn dups the fd into the child
+        // but does not consume the parent's copy). Drop it now so the
+        // remaining writer reference is the child's fd 2; once the child
+        // exits, the parent end will see EOF instead of blocking forever.
+        drop(command);
         let mut channel = SocketpairStderrChannel::spawn(parent);
         channel.join();
         let collected = channel.collected();
