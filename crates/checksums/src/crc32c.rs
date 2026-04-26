@@ -10,6 +10,24 @@
 //! `--checksum` quick-check, where a fast pre-filter can avoid expensive
 //! strong-checksum computation for files that have clearly changed.
 //!
+//! # Runtime Dispatch Ladder
+//!
+//! Hardware acceleration is provided by the [`crc32c`] crate, which performs
+//! runtime CPU feature detection on the first call and caches the result. The
+//! dispatch order is:
+//!
+//! 1. **x86_64 SSE4.2** - `crc32` instruction (8 bytes/iteration on x86_64,
+//!    4 bytes/iteration on x86) when `is_x86_feature_detected!("sse4.2")`.
+//! 2. **aarch64 CRC extension** - `crc32cb`/`crc32ch`/`crc32cw`/`crc32cx`
+//!    instructions when `is_aarch64_feature_detected!("crc")`.
+//! 3. **Software fallback** - portable byte-at-a-time table lookup using the
+//!    Castagnoli polynomial.
+//!
+//! All paths produce byte-identical output. Parity is exercised by the
+//! `streaming_random_buffer_matches_one_shot` and `streaming_chunk_sizes_match_one_shot`
+//! tests below, which feed the same data through both single-shot and chunked
+//! streaming paths regardless of which backend the runtime selects.
+//!
 //! # Upstream Reference
 //!
 //! Upstream rsync does not use CRC32C in its wire protocol. This checksum is
@@ -493,5 +511,74 @@ mod tests {
             hasher.update(chunk);
         }
         assert_eq!(hasher.finalize(), one_shot);
+    }
+
+    /// Dispatch parity: a 16 KiB pseudo-random buffer must produce identical
+    /// digests via the streaming path and the one-shot path regardless of
+    /// which backend (SSE4.2, aarch64 CRC, or software) the runtime selects.
+    /// Both paths funnel through the same `crc32c` crate dispatcher; this
+    /// test guards against regressions where the streaming wrapper diverges
+    /// from the one-shot implementation.
+    #[test]
+    fn streaming_random_buffer_matches_one_shot() {
+        // Deterministic pseudo-random pattern - reproducible across CI runs.
+        let data: Vec<u8> = (0..16 * 1024)
+            .map(|i| (i.wrapping_mul(2654435761) >> 16) as u8)
+            .collect();
+
+        let one_shot = crc32c_bytes(&data);
+
+        let mut hasher = Crc32cHasher::new();
+        hasher.update(&data);
+        let streamed_single = hasher.finalize();
+        assert_eq!(streamed_single, one_shot);
+    }
+
+    /// Dispatch parity across chunk sizes: feed the same 16 KiB buffer through
+    /// the streaming hasher in chunks of varying sizes (1 byte up to several
+    /// KiB) and assert every chunking produces the same digest as the one-shot
+    /// call. Catches state-machine bugs in the streaming wrapper that the
+    /// fixed-size `large_input_4mb` test cannot reach.
+    #[test]
+    fn streaming_chunk_sizes_match_one_shot() {
+        let data: Vec<u8> = (0..16 * 1024)
+            .map(|i| (i.wrapping_mul(2246822519) >> 8) as u8)
+            .collect();
+
+        let expected = crc32c_bytes(&data);
+
+        for chunk_size in [1usize, 3, 7, 16, 64, 128, 1023, 1024, 4096, 8191] {
+            let mut hasher = Crc32cHasher::new();
+            for chunk in data.chunks(chunk_size) {
+                hasher.update(chunk);
+            }
+            assert_eq!(
+                hasher.finalize(),
+                expected,
+                "CRC32C streaming/one-shot mismatch at chunk_size={chunk_size}"
+            );
+        }
+    }
+
+    /// RFC 3720 / iSCSI canonical test vectors exercised through the streaming
+    /// API. Pairs with `known_value_123456789` (which uses the one-shot path)
+    /// to confirm the streaming wrapper agrees with the canonical check value.
+    #[test]
+    fn streaming_canonical_vectors_match() {
+        let vectors: &[(&[u8], u32)] = &[
+            (b"", 0),
+            (b"123456789", 0xE3069283),
+            (b"hello world", 0xC99465AA),
+        ];
+
+        for (input, expected) in vectors {
+            let mut hasher = Crc32cHasher::new();
+            hasher.update(input);
+            assert_eq!(
+                hasher.finalize(),
+                *expected,
+                "CRC32C streaming canonical mismatch for {input:?}"
+            );
+        }
     }
 }

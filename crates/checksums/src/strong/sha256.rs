@@ -10,20 +10,28 @@ use super::StrongDigest;
 /// # Hardware Acceleration
 ///
 /// The `sha2` crate auto-detects hardware SHA acceleration at runtime via
-/// the `cpufeatures` crate:
+/// the `cpufeatures` crate. The dispatch ladder is:
 ///
-/// - **x86_64**: SHA-NI (Intel SHA Extensions, AMD Zen) when the `sha`,
-///   `sse2`, `ssse3`, and `sse4.1` CPU features are present.
-/// - **aarch64**: ARMv8 Cryptography Extensions (`sha2`) when present.
-/// - **Other architectures**: software fallback only.
+/// 1. **x86_64 SHA-NI** - Intel SHA Extensions / AMD Zen `sha256rnds2` /
+///    `sha256msg1` / `sha256msg2` when `is_x86_feature_detected!("sha")`
+///    together with the `sse2`, `ssse3`, and `sse4.1` baseline that the
+///    `sha2` accelerated backend requires.
+/// 2. **aarch64 ARMv8 cryptography extension** - `sha256h` / `sha256h2` /
+///    `sha256su0` / `sha256su1` when `is_aarch64_feature_detected!("sha2")`.
+/// 3. **Hand-tuned assembly fallback** - `sha2-asm` on Unix targets, used on
+///    hosts without SHA-NI but where assembly compilation succeeds.
+/// 4. **Pure-Rust scalar fallback** - portable software implementation used on
+///    Windows (where `sha2-asm` requires NASM) and on architectures without
+///    hardware acceleration.
 ///
 /// Detection happens automatically on the first hash operation and is cached
 /// internally by `cpufeatures`. No `RUSTFLAGS` or compile-time target features
 /// are required: a single binary picks the fastest backend at runtime on every
-/// host. On Unix targets the `asm` feature is enabled to provide an additional
-/// hand-tuned assembly fallback for hosts without SHA-NI; Windows builds use
-/// the pure-Rust backend because the `sha2-asm` build script depends on NASM
-/// and fails under MSVC.
+/// host.
+///
+/// Parity between the streaming and one-shot paths (which both flow through
+/// the same active backend) is exercised by `streaming_random_buffer_matches_one_shot`
+/// and `streaming_chunk_sizes_match_one_shot` below.
 ///
 /// Runtime availability can be queried via
 /// [`sha256_hardware_acceleration_available`].
@@ -379,5 +387,52 @@ mod tests {
         assert_eq!(trait_streaming, inherent);
 
         assert_eq!(<Sha256 as StrongDigest>::DIGEST_LEN, 32);
+    }
+
+    /// Dispatch parity: a 16 KiB pseudo-random buffer must produce identical
+    /// digests via the streaming path and the one-shot path. Both routes go
+    /// through the same `sha2`/`cpufeatures`-selected backend (SHA-NI on
+    /// x86_64, ARMv8 sha2 on aarch64, or pure-Rust scalar elsewhere); this
+    /// test guards against regressions in the streaming wrapper that would
+    /// only surface for inputs longer than the existing 1 KiB and 8 KiB
+    /// checks.
+    #[test]
+    fn streaming_random_buffer_matches_one_shot() {
+        // Deterministic pseudo-random pattern - reproducible across CI runs.
+        let data: Vec<u8> = (0..16 * 1024)
+            .map(|i| (i.wrapping_mul(2654435761) >> 16) as u8)
+            .collect();
+
+        let one_shot = Sha256::digest(&data);
+
+        let mut hasher = Sha256::new();
+        hasher.update(&data);
+        assert_eq!(hasher.finalize(), one_shot);
+    }
+
+    /// Dispatch parity across chunk sizes: feed a 16 KiB buffer through the
+    /// streaming hasher in chunks of varying sizes and assert every chunking
+    /// produces the same digest as the one-shot call. Exercises the active
+    /// backend's compression-block boundary handling for inputs that span
+    /// many 64-byte SHA-256 blocks.
+    #[test]
+    fn streaming_chunk_sizes_match_one_shot() {
+        let data: Vec<u8> = (0..16 * 1024)
+            .map(|i| (i.wrapping_mul(2246822519) >> 8) as u8)
+            .collect();
+
+        let expected = Sha256::digest(&data);
+
+        for chunk_size in [1usize, 3, 7, 16, 63, 64, 65, 1023, 1024, 4096, 8191] {
+            let mut hasher = Sha256::new();
+            for chunk in data.chunks(chunk_size) {
+                hasher.update(chunk);
+            }
+            assert_eq!(
+                hasher.finalize(),
+                expected,
+                "SHA-256 streaming/one-shot mismatch at chunk_size={chunk_size}"
+            );
+        }
     }
 }
