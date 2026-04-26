@@ -76,6 +76,16 @@ pub struct DeltaWork {
     dest_path: PathBuf,
     /// Path to the basis file for delta transfer, `None` for whole-file transfer.
     basis_path: Option<PathBuf>,
+    /// Optional source path for self-contained delta computation.
+    ///
+    /// When `Some` together with `basis_path`, [`DeltaTransferStrategy::process`]
+    /// runs the full `DeltaGenerator` pipeline (signature build, block matching,
+    /// script application) and reports actual stats. When `None`, the strategy
+    /// reports the pre-computed `literal_bytes`/`matched_bytes` set by the
+    /// receiver pipeline that already applied the wire delta.
+    ///
+    /// [`DeltaTransferStrategy::process`]: super::strategy::DeltaTransferStrategy::process
+    source_path: Option<PathBuf>,
     /// Expected target file size from the file list entry.
     target_size: u64,
     /// Literal bytes received over the wire during delta token processing.
@@ -106,6 +116,7 @@ impl DeltaWork {
             sequence: 0,
             dest_path,
             basis_path: None,
+            source_path: None,
             target_size,
             literal_bytes: 0,
             matched_bytes: 0,
@@ -138,9 +149,50 @@ impl DeltaWork {
             sequence: 0,
             dest_path,
             basis_path: Some(basis_path),
+            source_path: None,
             target_size,
             literal_bytes,
             matched_bytes,
+            kind: DeltaWorkKind::Delta,
+        }
+    }
+
+    /// Creates a delta transfer work item that triggers self-contained
+    /// block matching against a local source file.
+    ///
+    /// Unlike [`DeltaWork::delta`], this constructor stores both the basis and
+    /// the source paths, enabling
+    /// [`DeltaTransferStrategy::process`](super::strategy::DeltaTransferStrategy::process)
+    /// to run the full [`DeltaGenerator`](matching::DeltaGenerator) pipeline:
+    /// signature generation from the basis, rolling+strong checksum block
+    /// matching against the source, literal/COPY token emission, and applied
+    /// script written to the destination. Returned stats reflect the actual
+    /// matching outcome.
+    ///
+    /// # Arguments
+    ///
+    /// * `ndx` - File list index
+    /// * `dest_path` - Destination path where the reconstructed file is written
+    /// * `basis_path` - Path to the basis file used for block matching
+    /// * `source_path` - Path to the source file consumed by the matcher
+    /// * `target_size` - Expected target file size (typically equals source size)
+    #[must_use]
+    pub fn delta_with_source(
+        ndx: impl Into<FileNdx>,
+        dest_path: PathBuf,
+        basis_path: PathBuf,
+        source_path: PathBuf,
+        target_size: u64,
+    ) -> Self {
+        Self {
+            ndx: ndx.into(),
+            sequence: 0,
+            dest_path,
+            basis_path: Some(basis_path),
+            source_path: Some(source_path),
+            target_size,
+            literal_bytes: 0,
+            matched_bytes: 0,
             kind: DeltaWorkKind::Delta,
         }
     }
@@ -161,6 +213,16 @@ impl DeltaWork {
     #[must_use]
     pub fn basis_path(&self) -> Option<&std::path::Path> {
         self.basis_path.as_deref()
+    }
+
+    /// Returns the source path used for self-contained delta computation.
+    ///
+    /// Present only when the work item was constructed via
+    /// [`DeltaWork::delta_with_source`]. When `Some`, the strategy runs the
+    /// full block-matching pipeline rather than relying on pre-computed stats.
+    #[must_use]
+    pub fn source_path(&self) -> Option<&std::path::Path> {
+        self.source_path.as_deref()
     }
 
     /// Returns the expected target file size.
@@ -684,5 +746,41 @@ mod tests {
         let a = FileNdx::new(42);
         let b = a;
         assert_eq!(a, b); // `a` still usable after copy
+    }
+
+    #[test]
+    fn delta_with_source_records_source_path() {
+        let work = DeltaWork::delta_with_source(
+            4u32,
+            PathBuf::from("/dest/d.txt"),
+            PathBuf::from("/basis/d.txt"),
+            PathBuf::from("/source/d.txt"),
+            8192,
+        );
+        assert_eq!(work.source_path(), Some(std::path::Path::new("/source/d.txt")));
+        assert_eq!(work.basis_path(), Some(std::path::Path::new("/basis/d.txt")));
+        assert_eq!(work.target_size(), 8192);
+        assert_eq!(work.literal_bytes(), 0);
+        assert_eq!(work.matched_bytes(), 0);
+        assert!(work.is_delta());
+    }
+
+    #[test]
+    fn delta_without_source_returns_none_for_source_path() {
+        let work = DeltaWork::delta(
+            1u32,
+            PathBuf::from("/dest"),
+            PathBuf::from("/basis"),
+            128,
+            32,
+            96,
+        );
+        assert!(work.source_path().is_none());
+    }
+
+    #[test]
+    fn whole_file_has_no_source_path() {
+        let work = DeltaWork::whole_file(0u32, PathBuf::from("/dest"), 64);
+        assert!(work.source_path().is_none());
     }
 }
