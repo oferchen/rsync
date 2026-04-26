@@ -12,12 +12,20 @@
 //! prevents unbounded memory growth when a slow item blocks delivery of
 //! many subsequent items.
 //!
+//! Optionally, a caller can compose an
+//! [`AdaptiveCapacityPolicy`](super::adaptive::AdaptiveCapacityPolicy) into
+//! the buffer via [`ReorderBuffer::with_adaptive_policy`]. The buffer then
+//! grows under sustained pressure and shrinks back toward the policy's
+//! minimum once the gap closes, all while preserving the same public API.
+//!
 //! # Upstream Reference
 //!
 //! Upstream rsync processes files sequentially in `recv_files()`. This buffer
 //! restores that sequential ordering after parallel dispatch, preserving the
 //! invariant that post-processing (checksum verification, metadata commit)
 //! sees files in file-list order.
+
+use super::adaptive::{AdaptiveCapacityPolicy, AdaptiveState, ReorderStats};
 
 /// Collects out-of-order items and yields them in sequence order.
 ///
@@ -65,6 +73,13 @@ pub struct ReorderBuffer<T> {
     count: usize,
     /// Maximum number of items allowed before rejecting inserts.
     capacity: usize,
+    /// Highest occupied offset from `next_expected` plus one, used by the
+    /// adaptive policy to size the live gap window. Reset to 0 whenever the
+    /// buffer empties or the head advances past it.
+    high_water_offset: usize,
+    /// Optional adaptive capacity scaling state. `None` preserves the
+    /// historical fixed-capacity behaviour.
+    adaptive: Option<AdaptiveState>,
 }
 
 /// Error returned when the reorder buffer is at capacity.
@@ -98,7 +113,26 @@ impl<T> ReorderBuffer<T> {
             next_expected: 0,
             count: 0,
             capacity,
+            high_water_offset: 0,
+            adaptive: None,
         }
+    }
+
+    /// Creates a reorder buffer governed by an
+    /// [`AdaptiveCapacityPolicy`](super::adaptive::AdaptiveCapacityPolicy).
+    ///
+    /// The buffer starts at `policy.min` slots and resizes between `min` and
+    /// `max` based on observed pressure. See [`AdaptiveCapacityPolicy`] for
+    /// the grow / shrink rules.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `policy.min` is zero (validated by the policy constructor).
+    #[must_use]
+    pub fn with_adaptive_policy(policy: AdaptiveCapacityPolicy) -> Self {
+        let mut buf = Self::new(policy.min);
+        buf.adaptive = Some(AdaptiveState::new(policy));
+        buf
     }
 
     /// Computes the ring buffer index for a given sequence number.
@@ -131,12 +165,93 @@ impl<T> ReorderBuffer<T> {
     /// Returns [`CapacityExceeded`] when the buffer is full or the sequence
     /// offset exceeds capacity.
     pub fn insert(&mut self, sequence: u64, item: T) -> Result<(), CapacityExceeded> {
+        // Adaptive policy may grow the ring before insert to avoid the error.
+        if self.adaptive.is_some() && self.slot_index(sequence).is_none() {
+            self.try_adaptive_preinsert_grow(sequence);
+        }
         let idx = self.slot_index(sequence).ok_or(CapacityExceeded)?;
         if self.slots[idx].is_none() {
             self.count += 1;
         }
         self.slots[idx] = Some(item);
+        if sequence >= self.next_expected {
+            let offset_plus_one = (sequence - self.next_expected) as usize + 1;
+            if offset_plus_one > self.high_water_offset {
+                self.high_water_offset = offset_plus_one;
+            }
+        }
+        self.maybe_adapt_capacity();
         Ok(())
+    }
+
+    /// Grows the ring (within policy bounds) when an incoming sequence would
+    /// otherwise be rejected. Honours the policy's `max` cap; if the sequence
+    /// still cannot fit, the caller's `insert` returns `CapacityExceeded`.
+    fn try_adaptive_preinsert_grow(&mut self, sequence: u64) {
+        let Some(state) = self.adaptive.as_ref() else {
+            return;
+        };
+        if sequence < self.next_expected {
+            return;
+        }
+        let needed = (sequence - self.next_expected) as usize + 1;
+        let max = state.policy.max;
+        if self.capacity >= max {
+            return;
+        }
+        let target = needed.min(max);
+        if target <= self.capacity {
+            return;
+        }
+        self.grow(target);
+        if let Some(state) = self.adaptive.as_mut() {
+            state.grow_events += 1;
+            state.reset_window();
+        }
+    }
+
+    /// Records a utilization sample and applies grow / shrink decisions when
+    /// an adaptive policy is configured. No-op for fixed-capacity buffers.
+    fn maybe_adapt_capacity(&mut self) {
+        if self.adaptive.is_none() {
+            return;
+        }
+        let utilization = self.count as f32 / self.capacity as f32;
+        let gap_window = self.high_water_offset;
+        let count = self.count;
+        let capacity = self.capacity;
+
+        let (should_grow, should_shrink, target_grow, target_shrink) = {
+            let state = self.adaptive.as_mut().expect("adaptive state present");
+            state.record_sample(utilization);
+            let grow = state.should_grow(count, capacity, gap_window);
+            let shrink = !grow && state.should_shrink();
+            let tg = if grow {
+                state.policy.next_grow(capacity)
+            } else {
+                capacity
+            };
+            // Floor for shrink keeps every buffered item addressable.
+            let floor = gap_window.max(state.policy.min);
+            let ts = if shrink {
+                state.policy.next_shrink(capacity, floor)
+            } else {
+                capacity
+            };
+            (grow, shrink, tg, ts)
+        };
+
+        if should_grow && target_grow > self.capacity {
+            self.grow(target_grow);
+            let state = self.adaptive.as_mut().expect("adaptive state present");
+            state.grow_events += 1;
+            state.reset_window();
+        } else if should_shrink && target_shrink < self.capacity {
+            self.resize_to(target_shrink);
+            let state = self.adaptive.as_mut().expect("adaptive state present");
+            state.shrink_events += 1;
+            state.reset_window();
+        }
     }
 
     /// Returns the next in-order item if available.
@@ -149,6 +264,12 @@ impl<T> ReorderBuffer<T> {
         self.head = (self.head + 1) % self.capacity;
         self.next_expected += 1;
         self.count -= 1;
+        // The high-water mark is tracked relative to next_expected, so it
+        // shifts down as we deliver. Saturate at zero when the buffer empties.
+        self.high_water_offset = self.high_water_offset.saturating_sub(1);
+        if self.count == 0 {
+            self.high_water_offset = 0;
+        }
         Some(item)
     }
 
@@ -185,6 +306,24 @@ impl<T> ReorderBuffer<T> {
         self.capacity
     }
 
+    /// Returns adaptive capacity counters (grow/shrink event totals plus the
+    /// current capacity). Counters are zero for fixed-capacity buffers.
+    #[must_use]
+    pub fn stats(&self) -> ReorderStats {
+        match self.adaptive.as_ref() {
+            Some(s) => ReorderStats {
+                grow_events: s.grow_events,
+                shrink_events: s.shrink_events,
+                capacity: self.capacity,
+            },
+            None => ReorderStats {
+                grow_events: 0,
+                shrink_events: 0,
+                capacity: self.capacity,
+            },
+        }
+    }
+
     /// Inserts an item regardless of the capacity bound.
     ///
     /// Used by the consumer loop to break deadlocks when the buffer is full
@@ -203,31 +342,56 @@ impl<T> ReorderBuffer<T> {
             let offset = (sequence - self.next_expected) as usize;
             let new_capacity = offset + 1;
             self.grow(new_capacity);
-            let idx = (self.head + offset) % new_capacity;
+            let idx = (self.head + offset) % self.capacity;
             if self.slots[idx].is_none() {
                 self.count += 1;
             }
             self.slots[idx] = Some(item);
+        } else {
+            // Silently ignore sequences behind next_expected (already delivered).
+            return;
         }
-        // Silently ignore sequences behind next_expected (already delivered).
+        if sequence >= self.next_expected {
+            let offset_plus_one = (sequence - self.next_expected) as usize + 1;
+            if offset_plus_one > self.high_water_offset {
+                self.high_water_offset = offset_plus_one;
+            }
+        }
     }
 
     /// Grows the ring buffer to at least `min_capacity` slots.
     ///
-    /// Linearizes the ring (head moves to index 0) during the resize.
+    /// Linearizes the ring (head moves to index 0) during the resize. When
+    /// invoked from the adaptive policy `min_capacity` already encodes the
+    /// desired target; for legacy `force_insert` callers the doubling fallback
+    /// preserves the original amortized growth contract.
     fn grow(&mut self, min_capacity: usize) {
-        let new_cap = min_capacity.max(self.capacity * 2);
-        let mut new_slots: Vec<Option<T>> = (0..new_cap).map(|_| None).collect();
+        let new_cap = match self.adaptive.as_ref() {
+            Some(_) => min_capacity.max(self.capacity + 1),
+            None => min_capacity.max(self.capacity * 2),
+        };
+        self.resize_to(new_cap);
+    }
 
-        // Linearize: copy from head..end, then 0..head.
-        for (i, slot) in new_slots.iter_mut().enumerate().take(self.capacity) {
+    /// Reallocates the ring to exactly `new_capacity` slots, linearizing
+    /// occupied entries to indices `0..count`. Caller must guarantee
+    /// `new_capacity >= high_water_offset` so no buffered item is evicted.
+    fn resize_to(&mut self, new_capacity: usize) {
+        debug_assert!(
+            new_capacity >= self.high_water_offset,
+            "resize would evict buffered items: new_capacity={}, high_water={}",
+            new_capacity,
+            self.high_water_offset
+        );
+        let mut new_slots: Vec<Option<T>> = (0..new_capacity).map(|_| None).collect();
+        let copy_len = self.capacity.min(new_capacity);
+        for (i, slot) in new_slots.iter_mut().enumerate().take(copy_len) {
             let src = (self.head + i) % self.capacity;
             *slot = self.slots[src].take();
         }
-
         self.slots = new_slots.into_boxed_slice();
         self.head = 0;
-        self.capacity = new_cap;
+        self.capacity = new_capacity;
     }
 
     /// Validates that all items have been delivered with no gaps in the sequence.
@@ -1034,5 +1198,185 @@ mod tests {
             );
             assert!(buf.is_empty());
         }
+    }
+}
+
+#[cfg(test)]
+mod adaptive_tests {
+    use super::*;
+
+    /// Default-constructed buffers must remain unaffected by adaptive logic.
+    #[test]
+    fn fixed_capacity_default_unchanged() {
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::new(4);
+        for i in 0..4 {
+            buf.insert(i, i).unwrap();
+        }
+        assert_eq!(buf.capacity(), 4);
+        let stats = buf.stats();
+        assert_eq!(stats.grow_events, 0);
+        assert_eq!(stats.shrink_events, 0);
+        assert_eq!(stats.capacity, 4);
+        // Capacity-exceeded behaviour preserved.
+        assert_eq!(buf.insert(4, 4), Err(CapacityExceeded));
+    }
+
+    #[test]
+    fn adaptive_buffer_starts_at_min_capacity() {
+        let policy = AdaptiveCapacityPolicy::new(4, 32, 2.0);
+        let buf: ReorderBuffer<u64> = ReorderBuffer::with_adaptive_policy(policy);
+        assert_eq!(buf.capacity(), 4);
+        assert_eq!(buf.stats().grow_events, 0);
+    }
+
+    /// Inserting beyond `min` capacity grows the ring (without losing items)
+    /// up to but never beyond `max`.
+    #[test]
+    fn grows_under_load() {
+        let policy = AdaptiveCapacityPolicy::with_window(2, 16, 2.0, 64);
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::with_adaptive_policy(policy);
+
+        // Build a wide gap (insert seq 0..7 with a hole at 0) to force growth.
+        for seq in 1..8 {
+            // seq 1, 2 fit (capacity 2 -> grows). Subsequent inserts continue
+            // to grow up to max as the gap window widens.
+            buf.insert(seq, seq).unwrap();
+        }
+        let stats = buf.stats();
+        assert!(stats.grow_events > 0, "buffer never grew under load");
+        assert!(
+            buf.capacity() >= 8,
+            "capacity {} < required gap window 8",
+            buf.capacity()
+        );
+        assert!(
+            buf.capacity() <= 16,
+            "capacity {} exceeded max",
+            buf.capacity()
+        );
+
+        // Fill the head and confirm ordered drain still works after growth.
+        buf.insert(0, 0).unwrap();
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained, (0..8).collect::<Vec<_>>());
+    }
+
+    /// The grow path must never breach `policy.max`.
+    #[test]
+    fn never_exceeds_max() {
+        let policy = AdaptiveCapacityPolicy::with_window(2, 8, 2.0, 64);
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::with_adaptive_policy(policy);
+
+        // Try to drive a gap of 12 - capacity should cap at 8.
+        for seq in 1..8 {
+            buf.insert(seq, seq).unwrap();
+        }
+        // Once at max, inserts beyond capacity must error.
+        let err = buf.insert(8, 8);
+        assert_eq!(err, Err(CapacityExceeded));
+        assert!(buf.capacity() <= 8);
+    }
+
+    /// After a sustained idle window, capacity should shrink back toward `min`.
+    #[test]
+    fn shrinks_when_idle() {
+        let policy = AdaptiveCapacityPolicy::with_window(2, 32, 2.0, 4);
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::with_adaptive_policy(policy);
+
+        // Force a grow: build a gap so capacity expands.
+        for seq in 1..6 {
+            buf.insert(seq, seq).unwrap();
+        }
+        let grown = buf.capacity();
+        assert!(grown >= 6, "expected grown capacity, got {grown}");
+        let grow_events = buf.stats().grow_events;
+        assert!(grow_events >= 1);
+
+        // Drain everything to clear the gap.
+        buf.insert(0, 0).unwrap();
+        let _: Vec<_> = buf.drain_ready().collect();
+        assert!(buf.is_empty());
+
+        // Submit single-item inserts that immediately drain - low utilization.
+        for seq in 6..30 {
+            buf.insert(seq, seq).unwrap();
+            let _ = buf.next_in_order();
+        }
+        let stats = buf.stats();
+        assert!(stats.shrink_events >= 1, "buffer never shrank when idle");
+        assert!(buf.capacity() < grown, "capacity did not decrease");
+    }
+
+    /// Shrinks must clamp at `policy.min` no matter how long the idle window.
+    #[test]
+    fn never_drops_below_min() {
+        let min = 4usize;
+        let policy = AdaptiveCapacityPolicy::with_window(min, 32, 2.0, 4);
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::with_adaptive_policy(policy);
+
+        // Drive growth then quiesce.
+        for seq in 1..10 {
+            buf.insert(seq, seq).unwrap();
+        }
+        buf.insert(0, 0).unwrap();
+        let _: Vec<_> = buf.drain_ready().collect();
+
+        for seq in 10..200 {
+            buf.insert(seq, seq).unwrap();
+            let _ = buf.next_in_order();
+        }
+        assert!(
+            buf.capacity() >= min,
+            "capacity {} dropped below min {min}",
+            buf.capacity()
+        );
+        // Min is the hard floor.
+        assert_eq!(buf.capacity(), min);
+    }
+
+    /// Stats reflect both grow and shrink events accurately.
+    #[test]
+    fn stats_track_both_events() {
+        let policy = AdaptiveCapacityPolicy::with_window(2, 16, 2.0, 4);
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::with_adaptive_policy(policy);
+
+        // Trigger at least one grow.
+        for seq in 1..6 {
+            buf.insert(seq, seq).unwrap();
+        }
+        assert!(buf.stats().grow_events >= 1);
+
+        // Drain and idle to trigger at least one shrink.
+        buf.insert(0, 0).unwrap();
+        let _: Vec<_> = buf.drain_ready().collect();
+        for seq in 6..40 {
+            buf.insert(seq, seq).unwrap();
+            let _ = buf.next_in_order();
+        }
+        let stats = buf.stats();
+        assert!(stats.grow_events >= 1);
+        assert!(stats.shrink_events >= 1);
+        assert_eq!(stats.capacity, buf.capacity());
+    }
+
+    /// Ordering is preserved across grow / shrink transitions.
+    #[test]
+    fn ordering_preserved_through_resize() {
+        let policy = AdaptiveCapacityPolicy::with_window(2, 64, 2.0, 8);
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::with_adaptive_policy(policy);
+
+        let n: u64 = 200;
+        // Insert in reversed bursts of 8 to force out-of-order delivery and
+        // exercise both grow and shrink paths.
+        let mut collected: Vec<u64> = Vec::with_capacity(n as usize);
+        for burst_start in (0..n).step_by(8) {
+            let end = (burst_start + 8).min(n);
+            for seq in (burst_start..end).rev() {
+                buf.insert(seq, seq).unwrap();
+            }
+            collected.extend(buf.drain_ready());
+        }
+        let expected: Vec<u64> = (0..n).collect();
+        assert_eq!(collected, expected);
     }
 }
