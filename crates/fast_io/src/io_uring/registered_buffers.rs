@@ -969,7 +969,7 @@ mod tests {
     /// the user-side memory because `Drop` does not touch the ring.
     #[test]
     fn drop_group_before_ring_does_not_panic() {
-        let ring = match RawIoUring::new(4) {
+        let mut ring = match RawIoUring::new(4) {
             Ok(r) => r,
             Err(_) => return,
         };
