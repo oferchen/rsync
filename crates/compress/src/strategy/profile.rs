@@ -149,6 +149,14 @@ impl ProtocolCompressionProfile {
     }
 }
 
+// Compile-time invariants for the LEGACY/MODERN profile constants. Stronger
+// than runtime tests: a regression here is a build failure, not a test
+// failure. Stated as `const _: () = assert!(...)` so they fold at compile
+// time, which also keeps clippy::assertions_on_constants from firing on the
+// equivalent runtime form.
+const _: () = assert!(!ProtocolCompressionProfile::LEGACY.supports_vstring_negotiation);
+const _: () = assert!(ProtocolCompressionProfile::MODERN.supports_vstring_negotiation);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,16 +201,6 @@ mod tests {
     fn proto_255_resolves_to_modern() {
         let p = ProtocolCompressionProfile::for_protocol(255);
         assert_eq!(p, ProtocolCompressionProfile::MODERN);
-    }
-
-    #[test]
-    fn legacy_disables_vstring_negotiation() {
-        assert!(!ProtocolCompressionProfile::LEGACY.supports_vstring_negotiation);
-    }
-
-    #[test]
-    fn modern_enables_vstring_negotiation() {
-        assert!(ProtocolCompressionProfile::MODERN.supports_vstring_negotiation);
     }
 
     #[test]

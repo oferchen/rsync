@@ -166,21 +166,22 @@ pub(in crate::local_copy) fn execute_transfer(
         // bypass rsync's delta machinery without honouring the eligibility
         // assumptions, so on non-zero-copy results we discard and fall
         // through to the normal copy path below.
-        let cloned = match context
-            .options()
-            .platform_copy()
-            .copy_file(source, destination, file_size)
-        {
-            Ok(result) if result.is_zero_copy() => true,
-            Ok(_) => {
-                let _ = std::fs::remove_file(destination);
-                false
-            }
-            Err(_) => {
-                let _ = std::fs::remove_file(destination);
-                false
-            }
-        };
+        let cloned =
+            match context
+                .options()
+                .platform_copy()
+                .copy_file(source, destination, file_size)
+            {
+                Ok(result) if result.is_zero_copy() => true,
+                Ok(_) => {
+                    let _ = std::fs::remove_file(destination);
+                    false
+                }
+                Err(_) => {
+                    let _ = std::fs::remove_file(destination);
+                    false
+                }
+            };
         if cloned {
             let start = Instant::now();
             debug_log!(
