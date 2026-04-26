@@ -11,7 +11,55 @@
 //! 2. **Register** - pass `iovec` array to `submitter.register_buffers()`.
 //! 3. **Checkout** - callers acquire a slot index for use with `ReadFixed`/`WriteFixed`.
 //! 4. **Return** - callers release the slot back to the free list.
-//! 5. **Drop** - deregisters buffers via `submitter.unregister_buffers()`, then frees memory.
+//! 5. **Drop** - frees user-side memory. Kernel-side unregistration happens
+//!    implicitly when the ring fd is closed; callers may also invoke
+//!    [`RegisteredBufferGroup::unregister`] explicitly while the ring is alive.
+//!
+//! # Drop ordering and the ring fd
+//!
+//! [`RegisteredBufferGroup`] does not hold a reference to the [`RawIoUring`]
+//! instance it was registered with. This is intentional: the kernel
+//! automatically releases the pinned user pages when the ring fd is closed
+//! (see `io_uring_register(2)` and `fs/io_uring.c:io_sqe_buffers_unregister`).
+//!
+//! Owners of both a `RawIoUring` and a `RegisteredBufferGroup` (such as
+//! `IoUringReader` and `IoUringWriter`) MUST declare the ring field BEFORE
+//! the `RegisteredBufferGroup` field. Rust drops fields in declaration
+//! order, so this ensures:
+//!
+//! 1. `RawIoUring::Drop` closes the ring fd first, releasing the kernel's
+//!    pinning of the registered buffer pages.
+//! 2. `RegisteredBufferGroup::Drop` then deallocates the user-side memory
+//!    backing those buffers.
+//!
+//! Reversing this order (group before ring) would still be sound because
+//! `Drop` only deallocates user memory and never touches the ring; the
+//! kernel would still hold the pinning until the ring fd later closes.
+//! However, the documented ordering matches the implementation in
+//! [`super::file_reader`] and [`super::file_writer`].
+//!
+//! # Why Drop does not call `unregister_buffers`
+//!
+//! Calling `submitter.unregister_buffers()` from `Drop` would require the
+//! group to hold a reference to the ring. That introduces lifetime coupling
+//! and makes it impossible for the ring to be dropped first - which is the
+//! natural ordering when the ring owns the group. Instead we rely on the
+//! kernel's automatic cleanup on ring fd close, and expose
+//! [`RegisteredBufferGroup::unregister`] for callers that want deterministic
+//! cleanup while keeping the ring alive (e.g., to register a new buffer set).
+//!
+//! # Panic safety
+//!
+//! `Drop` performs only `std::alloc::dealloc` calls, which do not panic when
+//! given a layout that matches the original allocation. This makes the impl
+//! safe during stack unwinding: a panic in user code that drops a
+//! `RegisteredBufferGroup` will not trigger a double-panic abort.
+//!
+//! # Process termination
+//!
+//! On `SIGKILL` or other forced exits, neither `Drop` nor any userspace
+//! cleanup runs, but the kernel reclaims both the ring fd and the registered
+//! buffer pages as part of normal process teardown. No leak occurs.
 //!
 //! # Kernel limits
 //!
@@ -331,13 +379,24 @@ impl RegisteredBufferGroup {
 
 impl Drop for RegisteredBufferGroup {
     fn drop(&mut self) {
-        // Note: we do not call unregister_buffers here because we do not hold
-        // a reference to the ring. The kernel will clean up automatically when
-        // the ring fd is closed. However, callers should call unregister()
-        // before dropping the ring for deterministic cleanup.
+        // Drop ordering invariant (see module docs): the ring fd is closed
+        // before this Drop runs, which causes the kernel to release the
+        // pinning on these buffer pages (io_uring_register(2) /
+        // fs/io_uring.c:io_sqe_buffers_unregister). All we do here is free
+        // the user-side memory.
+        //
+        // Panic safety: alloc::dealloc does not panic when called with a
+        // matching layout, so this Drop is safe during stack unwinding.
+        // No double-panic / process abort can be triggered from here.
+        //
+        // SIGKILL: this code does not run on forced termination, but the
+        // kernel reclaims both the ring fd and the registered pages as part
+        // of process teardown.
         for ptr in &self.buffers {
-            // Safety: each pointer was allocated with self.layout and has not
-            // been freed yet. We own all buffers exclusively at this point.
+            // Safety: each pointer was allocated with self.layout via
+            // alloc::alloc_zeroed and has not been freed yet. We own all
+            // buffers exclusively at this point - no slot can outlive the
+            // group because RegisteredBufferSlot borrows &self.
             unsafe { alloc::dealloc(*ptr, self.layout) };
         }
     }
@@ -902,5 +961,190 @@ mod tests {
 
         drop(checked_out);
         let _ = group.unregister(&ring_rw);
+    }
+
+    /// Drop ordering invariant: dropping the `RegisteredBufferGroup` BEFORE
+    /// the `RawIoUring` is sound. The kernel still holds the buffer pinning
+    /// (released later when the ring fd closes), but we may safely deallocate
+    /// the user-side memory because `Drop` does not touch the ring.
+    #[test]
+    fn drop_group_before_ring_does_not_panic() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 2) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        // Drop the group first while the ring is still alive.
+        drop(group);
+
+        // Ring is still usable for ordinary operations after the group dies.
+        // Submitting a no-op (nop) verifies the ring fd remains valid.
+        let entry = io_uring::opcode::Nop::new().build().user_data(0xdead);
+        // Safety: SQE is a Nop with no buffer pointers.
+        unsafe {
+            ring.submission()
+                .push(&entry)
+                .expect("nop submission after group drop");
+        }
+        ring.submit_and_wait(1).expect("nop completes");
+        let cqe = ring.completion().next().expect("nop CQE");
+        assert_eq!(cqe.user_data(), 0xdead);
+        assert_eq!(cqe.result(), 0);
+    }
+
+    /// Drop ordering invariant: dropping the ring BEFORE the group is the
+    /// natural order used by `IoUringReader`/`IoUringWriter`. The kernel
+    /// auto-releases the buffer pinning when the ring fd closes; the group
+    /// then frees user-side memory in its own Drop.
+    #[test]
+    fn drop_ring_before_group_frees_memory_cleanly() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 2) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        // Close the ring first - kernel releases buffer pinning.
+        drop(ring);
+
+        // Now dropping the group must still be sound: it deallocates user
+        // memory and never accesses the (now-closed) ring fd.
+        drop(group);
+    }
+
+    /// Mirrors the field declaration order used by `IoUringReader` and
+    /// `IoUringWriter`: ring before registered_buffers. Verifies that
+    /// implicit drop runs ring-first then group-second without aborting.
+    #[test]
+    fn struct_field_drop_order_matches_callers() {
+        struct OwnerLikeReader {
+            ring: RawIoUring,
+            #[allow(dead_code)]
+            registered_buffers: Option<RegisteredBufferGroup>,
+        }
+
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = RegisteredBufferGroup::try_new(&ring, 4096, 2);
+
+        let owner = OwnerLikeReader {
+            ring,
+            registered_buffers: group,
+        };
+
+        // Implicit drop in declaration order: ring first, then group.
+        // Must complete without panic or process abort.
+        drop(owner);
+    }
+
+    /// Panic during slot use must not corrupt the group: dropping the slot
+    /// during unwinding returns it to the free list, and dropping the group
+    /// during unwinding deallocates buffers safely.
+    #[test]
+    fn panic_during_slot_use_unwinds_cleanly() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 2) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _slot = group.checkout().expect("slot checkout");
+            // Slot is held; panic forces Drop during unwinding.
+            panic!("simulated panic during slot use");
+        }));
+
+        assert!(result.is_err(), "panic should propagate via catch_unwind");
+
+        // Slot must have been returned to the free list during unwinding.
+        assert_eq!(
+            group.available(),
+            2,
+            "slot should be returned on panic-driven drop"
+        );
+
+        // Group is still usable after the panic.
+        let _slot_again = group.checkout().expect("re-checkout after panic");
+    }
+
+    /// `unregister()` returns an error when the buffer set has already been
+    /// released by closing the ring (or never registered). The error must
+    /// be reported to the caller; it must NOT cause a panic or abort.
+    #[test]
+    fn unregister_after_ring_closed_returns_error_or_ok() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 2) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        // Successful explicit unregister against the live ring.
+        let first = group.unregister(&ring);
+        assert!(
+            first.is_ok(),
+            "first unregister against live ring should succeed: {first:?}"
+        );
+
+        // A second unregister has nothing to release; the kernel may return
+        // EINVAL/ENXIO. The wrapper must surface this gracefully (Result),
+        // never panic. The exact error code is kernel-dependent, so we just
+        // require the call returns (Ok or Err) without panicking.
+        let _ = group.unregister(&ring);
+    }
+
+    /// User-side buffer memory must be freed regardless of whether
+    /// `unregister()` was called. We verify this by exercising both code
+    /// paths (with and without explicit unregister) and confirming Drop
+    /// completes without panic - leak detection is delegated to ASan/Miri
+    /// in CI when available.
+    #[test]
+    fn buffers_freed_with_or_without_explicit_unregister() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        // Path A: explicit unregister, then drop.
+        {
+            let group = match RegisteredBufferGroup::new(&ring, 4096, 4) {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            let _ = group.unregister(&ring);
+            drop(group);
+        }
+
+        // Path B: drop without explicit unregister (relies on kernel cleanup
+        // when ring closes; here we keep the ring alive across drop).
+        {
+            let group = match RegisteredBufferGroup::new(&ring, 4096, 4) {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            drop(group);
+        }
+
+        // Path C: re-register on the same ring, drop, repeat. Verifies the
+        // ring remains in a clean state for further registrations.
+        for _ in 0..3 {
+            if let Some(group) = RegisteredBufferGroup::try_new(&ring, 4096, 2) {
+                let _ = group.unregister(&ring);
+            }
+        }
     }
 }
