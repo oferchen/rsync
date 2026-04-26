@@ -16,17 +16,21 @@
 //! macOS. The plumbing assertion (the option holds and exposes the
 //! injected strategy) runs on every platform.
 
-use std::ffi::OsString;
-use std::fs;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use engine::local_copy::{
-    LocalCopyExecution, LocalCopyOptions, LocalCopyOptionsBuilder, LocalCopyPlan,
-};
+#[cfg(target_os = "macos")]
+use std::ffi::OsString;
+#[cfg(target_os = "macos")]
+use std::fs;
+
+use engine::local_copy::{LocalCopyOptions, LocalCopyOptionsBuilder};
+#[cfg(target_os = "macos")]
+use engine::local_copy::{LocalCopyExecution, LocalCopyPlan};
 use fast_io::{CopyMethod, CopyResult, PlatformCopy};
+#[cfg(target_os = "macos")]
 use tempfile::tempdir;
 
 /// `PlatformCopy` fake that counts invocations and reports a non-zero-copy
