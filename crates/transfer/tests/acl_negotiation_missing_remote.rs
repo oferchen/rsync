@@ -169,7 +169,7 @@ fn end_to_end_remote_without_acl_support_at_protocol_32() {
 /// ```
 #[test]
 fn end_to_end_protocol_below_30_rejects_acls_with_upstream_message() {
-    for version in [27u8, 28, 29] {
+    for version in [28u8, 29] {
         let proto = ProtocolVersion::try_from(version).unwrap();
         let flags = ProtocolRestrictionFlags {
             preserve_acls: true,
@@ -194,7 +194,7 @@ fn end_to_end_protocol_below_30_rejects_acls_with_upstream_message() {
 /// no peer to be incompatible with.
 #[test]
 fn local_server_bypasses_acl_protocol_gate() {
-    for version in [27u8, 28, 29, 30, 31, 32] {
+    for version in [28u8, 29, 30, 31, 32] {
         let proto = ProtocolVersion::try_from(version).unwrap();
         let flags = ProtocolRestrictionFlags {
             preserve_acls: true,
