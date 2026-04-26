@@ -203,7 +203,7 @@ fn self_contained_delta(
         generate_file_signature(BufReader::new(basis_file), layout, SIGNATURE_ALGORITHM)
             .map_err(|error| format!("signature generation failed: {error}"))?;
     let index = DeltaSignatureIndex::from_signature(&signature, SIGNATURE_ALGORITHM)
-        .map_err(|error| format!("signature index build failed: {error}"))?;
+        .ok_or_else(|| "signature index build failed".to_string())?;
 
     let source_file = File::open(source)
         .map_err(|error| format!("source open failed: {}: {error}", source.display()))?;
