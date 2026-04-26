@@ -26,9 +26,9 @@ use std::ffi::OsString;
 #[cfg(target_os = "macos")]
 use std::fs;
 
-use engine::local_copy::{LocalCopyOptions, LocalCopyOptionsBuilder};
 #[cfg(target_os = "macos")]
 use engine::local_copy::{LocalCopyExecution, LocalCopyPlan};
+use engine::local_copy::{LocalCopyOptions, LocalCopyOptionsBuilder};
 use fast_io::{CopyMethod, CopyResult, PlatformCopy};
 #[cfg(target_os = "macos")]
 use tempfile::tempdir;
