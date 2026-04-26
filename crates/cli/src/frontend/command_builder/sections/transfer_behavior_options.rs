@@ -138,14 +138,22 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("io-uring")
                     .long("io-uring")
-                    .help("Force io_uring for file I/O (error if unavailable).")
+                    .help(
+                        "Force io_uring for file I/O (policy=enabled); \
+                         error if unavailable. Default policy is auto: \
+                         probe kernel and fall back to standard I/O.",
+                    )
                     .action(ArgAction::SetTrue)
                     .overrides_with("no-io-uring"),
             )
             .arg(
                 Arg::new("no-io-uring")
                     .long("no-io-uring")
-                    .help("Disable io_uring; always use standard buffered I/O.")
+                    .help(
+                        "Disable io_uring (policy=disabled); always use \
+                         standard buffered I/O even when the kernel \
+                         supports io_uring.",
+                    )
                     .action(ArgAction::SetTrue)
                     .overrides_with("io-uring"),
             )
