@@ -168,6 +168,7 @@
 //! - [`crate::delta`] for block-matching primitives
 //! - `transfer::pipeline` for the pipelined receiver architecture
 
+pub mod adaptive;
 pub mod consumer;
 #[cfg(test)]
 mod multi_producer_audit;
@@ -176,6 +177,7 @@ pub mod strategy;
 mod types;
 pub mod work_queue;
 
+pub use adaptive::{AdaptiveCapacityPolicy, ReorderStats};
 pub use consumer::DeltaConsumer;
 pub use reorder::ReorderBuffer;
 pub use strategy::{DeltaStrategy, DeltaTransferStrategy, WholeFileStrategy};
