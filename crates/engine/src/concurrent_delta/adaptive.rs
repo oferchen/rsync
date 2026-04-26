@@ -228,24 +228,24 @@ mod tests {
     #[test]
     #[should_panic(expected = "min capacity must be non-zero")]
     fn min_zero_panics() {
-        AdaptiveCapacityPolicy::new(0, 4, 2.0);
+        let _ = AdaptiveCapacityPolicy::new(0, 4, 2.0);
     }
 
     #[test]
     #[should_panic(expected = "max must be >= min")]
     fn max_less_than_min_panics() {
-        AdaptiveCapacityPolicy::new(8, 4, 2.0);
+        let _ = AdaptiveCapacityPolicy::new(8, 4, 2.0);
     }
 
     #[test]
     #[should_panic(expected = "growth_factor must be a finite value > 1.0")]
     fn growth_factor_one_panics() {
-        AdaptiveCapacityPolicy::new(2, 8, 1.0);
+        let _ = AdaptiveCapacityPolicy::new(2, 8, 1.0);
     }
 
     #[test]
     #[should_panic(expected = "sample_window must be non-zero")]
     fn zero_window_panics() {
-        AdaptiveCapacityPolicy::with_window(2, 8, 2.0, 0);
+        let _ = AdaptiveCapacityPolicy::with_window(2, 8, 2.0, 0);
     }
 }
