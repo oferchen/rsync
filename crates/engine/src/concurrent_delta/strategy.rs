@@ -30,8 +30,7 @@ use std::path::Path;
 use matching::{DeltaGenerator, DeltaSignatureIndex, apply_delta};
 use protocol::ProtocolVersion;
 use signature::{
-    SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout,
-    generate_file_signature,
+    SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
 };
 
 use super::types::{DeltaResult, DeltaWork, DeltaWorkKind};
@@ -217,8 +216,13 @@ fn self_contained_delta(
     let dest_file = File::create(dest)
         .map_err(|error| format!("destination create failed: {}: {error}", dest.display()))?;
     let mut dest_writer = BufWriter::new(dest_file);
-    apply_delta(BufReader::new(basis_apply), &mut dest_writer, &index, &script)
-        .map_err(|error| format!("delta application failed: {error}"))?;
+    apply_delta(
+        BufReader::new(basis_apply),
+        &mut dest_writer,
+        &index,
+        &script,
+    )
+    .map_err(|error| format!("delta application failed: {error}"))?;
     dest_writer
         .into_inner()
         .map_err(|err| err.into_error())
@@ -517,13 +521,7 @@ mod tests {
 
         fs::write(&source_path, b"hello").expect("write source");
 
-        let work = DeltaWork::delta_with_source(
-            7u32,
-            dest_path,
-            basis_path,
-            source_path,
-            5,
-        );
+        let work = DeltaWork::delta_with_source(7u32, dest_path, basis_path, source_path, 5);
 
         let result = DeltaTransferStrategy::new().process(&work);
         assert!(!result.is_success());
