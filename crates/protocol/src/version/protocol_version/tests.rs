@@ -599,28 +599,26 @@ fn capabilities_inline_hardlinks() {
 #[test]
 fn capabilities_preferred_compression() {
     use super::ProtocolCapabilities;
+    use compress::strategy::ProtocolCompressionProfile;
 
-    // Protocol 30+ supports vstring negotiation. The preferred wire-name
-    // returned matches `valid_compressions_items[0]`: "zstd" when the
-    // feature is compiled in, "zlibx" otherwise.
-    let caps_32 = ProtocolCapabilities::new(ProtocolVersion::V32);
-    let caps_31 = ProtocolCapabilities::new(ProtocolVersion::V31);
-    let caps_30 = ProtocolCapabilities::new(ProtocolVersion::V30);
-    #[cfg(feature = "zstd")]
-    {
-        assert_eq!(caps_32.preferred_compression(), "zstd");
-        assert_eq!(caps_31.preferred_compression(), "zstd");
-        assert_eq!(caps_30.preferred_compression(), "zstd");
-    }
-    #[cfg(not(feature = "zstd"))]
-    {
-        assert_eq!(caps_32.preferred_compression(), "zlibx");
-        assert_eq!(caps_31.preferred_compression(), "zlibx");
-        assert_eq!(caps_30.preferred_compression(), "zlibx");
+    // The protocol crate's `zstd` feature is independent from the compress
+    // crate's `zstd` feature, so the test must consult the same authoritative
+    // source as `preferred_compression()` rather than duplicating the cfg
+    // gate. upstream: compat.c:100-112 `valid_compressions_items[]`.
+    for version in [
+        ProtocolVersion::V32,
+        ProtocolVersion::V31,
+        ProtocolVersion::V30,
+        ProtocolVersion::V28,
+    ] {
+        let caps = ProtocolCapabilities::new(version);
+        let expected =
+            ProtocolCompressionProfile::for_protocol(version.as_u8()).preferred_codec_name();
+        assert_eq!(caps.preferred_compression(), expected);
     }
 
-    // Protocol < 30 has no vstring negotiation; the preferred codec is
-    // always zlib (upstream: compat.c:556-563).
+    // Protocol < 30 has no vstring negotiation; preferred codec is always
+    // zlib regardless of any feature flag. upstream: compat.c:556-563.
     let caps_28 = ProtocolCapabilities::new(ProtocolVersion::V28);
     assert_eq!(caps_28.preferred_compression(), "zlib");
 }

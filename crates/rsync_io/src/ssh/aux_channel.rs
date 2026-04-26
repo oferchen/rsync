@@ -576,7 +576,12 @@ mod tests {
         let parent = configure_stderr_channel(&mut command).expect("socketpair available");
         let mut child = command.spawn().expect("spawn sh");
         let _ = child.wait();
-        // Drain the parent end manually to verify data was routed correctly.
+        // `command.stderr(Stdio::from(child_fd))` retains the child end of
+        // the socketpair inside `Command` (spawn dups the fd into the child
+        // but does not consume the parent's copy). Drop it now so the
+        // remaining writer reference is the child's fd 2; once the child
+        // exits, the parent end will see EOF instead of blocking forever.
+        drop(command);
         let mut channel = SocketpairStderrChannel::spawn(parent);
         channel.join();
         let collected = channel.collected();
