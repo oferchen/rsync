@@ -757,8 +757,14 @@ mod tests {
             PathBuf::from("/source/d.txt"),
             8192,
         );
-        assert_eq!(work.source_path(), Some(std::path::Path::new("/source/d.txt")));
-        assert_eq!(work.basis_path(), Some(std::path::Path::new("/basis/d.txt")));
+        assert_eq!(
+            work.source_path(),
+            Some(std::path::Path::new("/source/d.txt"))
+        );
+        assert_eq!(
+            work.basis_path(),
+            Some(std::path::Path::new("/basis/d.txt"))
+        );
         assert_eq!(work.target_size(), 8192);
         assert_eq!(work.literal_bytes(), 0);
         assert_eq!(work.matched_bytes(), 0);
