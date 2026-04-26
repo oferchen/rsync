@@ -263,6 +263,253 @@ fn daemon_protocol_28_forced_client_api_push() {
     let _ = daemon_result;
 }
 
+/// End-to-end test using the client API with forced protocol 28 against a
+/// daemon performing a pull. Mirrors `daemon_protocol_28_forced_client_api_push`
+/// but exercises the receiver-direction code path through the daemon, locking
+/// in the protocol 28 fixes from PRs #1604, #1606, #1670, #1700, #1704.
+///
+/// The push case alone is insufficient because pull/push exercise opposite
+/// roles: pull makes the daemon the sender, so the legacy file-list encoder
+/// (no varint, no INC_RECURSE) and downgraded checksum/compression negotiation
+/// must work on the server side.
+#[cfg(unix)]
+#[test]
+fn daemon_protocol_28_forced_client_api_pull() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
+
+    let temp = tempdir().expect("tempdir");
+
+    let module_dir = temp.path().join("module");
+    let module_subdir = module_dir.join("nested");
+    fs::create_dir_all(&module_subdir).expect("create module/nested");
+
+    fs::write(module_dir.join("hello.txt"), b"hello world\n").expect("write hello");
+    fs::write(module_dir.join("data.bin"), b"\x00\x01\x02\x03\xff\xfe\xfd")
+        .expect("write data.bin");
+    fs::write(module_subdir.join("inner.txt"), b"nested payload\n").expect("write inner");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir(&dest_dir).expect("create dest");
+
+    let config_file = temp.path().join("rsyncd.conf");
+    fs::write(
+        &config_file,
+        format!(
+            "[pullmod]\npath = {}\nread only = true\nuse chroot = false\n",
+            module_dir.display()
+        ),
+    )
+    .expect("write config");
+
+    let (port, held_listener) = allocate_test_port();
+
+    let daemon_config = DaemonConfig::builder()
+        .disable_default_paths()
+        .arguments([
+            OsString::from("--config"),
+            config_file.as_os_str().to_owned(),
+            OsString::from("--port"),
+            OsString::from(port.to_string()),
+            OsString::from("--max-sessions"),
+            OsString::from("2"),
+        ])
+        .build();
+
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    drop(probe_stream);
+
+    let rsync_url = format!("rsync://127.0.0.1:{port}/pullmod/");
+
+    // Force protocol 28 via client config; client is the receiver.
+    let client_config = core::client::ClientConfig::builder()
+        .transfer_args([OsString::from(&rsync_url), OsString::from(dest_dir.as_os_str())])
+        .protocol_version(Some(ProtocolVersion::V28))
+        .build();
+
+    let result = core::client::run_client(client_config);
+
+    match &result {
+        Ok(summary) => {
+            assert!(
+                summary.files_copied() >= 3,
+                "Expected at least 3 files transferred at protocol 28 pull, got {}",
+                summary.files_copied()
+            );
+        }
+        Err(e) => {
+            let _ = daemon_handle.join();
+            panic!("Protocol 28 forced pull failed: {e}");
+        }
+    }
+
+    // Verify byte-for-byte content match across all pulled files.
+    assert_eq!(
+        fs::read(dest_dir.join("hello.txt")).expect("read pulled hello.txt"),
+        b"hello world\n",
+        "hello.txt content must match after protocol 28 pull"
+    );
+    assert_eq!(
+        fs::read(dest_dir.join("data.bin")).expect("read pulled data.bin"),
+        b"\x00\x01\x02\x03\xff\xfe\xfd",
+        "data.bin binary content must match after protocol 28 pull"
+    );
+    assert_eq!(
+        fs::read(dest_dir.join("nested/inner.txt")).expect("read pulled nested/inner.txt"),
+        b"nested payload\n",
+        "nested/inner.txt content must match after protocol 28 pull"
+    );
+
+    let daemon_result = daemon_handle.join().expect("daemon thread");
+    let _ = daemon_result;
+}
+
+/// End-to-end roundtrip test combining push and pull at forced protocol 28
+/// against the same daemon module. Verifies the daemon can sustain both
+/// roles in a single session lifecycle, with byte-for-byte content equality
+/// between original source and pulled destination.
+#[cfg(unix)]
+#[test]
+fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
+    let _lock = ENV_LOCK.lock().expect("env lock");
+    let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
+    let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
+
+    let temp = tempdir().expect("tempdir");
+
+    let source_dir = temp.path().join("source");
+    let source_subdir = source_dir.join("subdir");
+    fs::create_dir_all(&source_subdir).expect("create source/subdir");
+
+    fs::write(source_dir.join("readme.txt"), b"protocol 28 readme\n").expect("write readme");
+    fs::write(source_dir.join("blob.bin"), b"\xde\xad\xbe\xef\x00\x11\x22\x33")
+        .expect("write blob");
+    fs::write(source_subdir.join("nested.txt"), b"nested under proto 28\n")
+        .expect("write nested");
+
+    let module_dir = temp.path().join("module");
+    fs::create_dir(&module_dir).expect("create module dir");
+
+    let pull_dest = temp.path().join("pulled");
+    fs::create_dir(&pull_dest).expect("create pull dest");
+
+    let config_file = temp.path().join("rsyncd.conf");
+    fs::write(
+        &config_file,
+        format!(
+            "[lifecycle28]\npath = {}\nread only = false\nuse chroot = false\n",
+            module_dir.display()
+        ),
+    )
+    .expect("write config");
+
+    let (port, held_listener) = allocate_test_port();
+
+    let daemon_config = DaemonConfig::builder()
+        .disable_default_paths()
+        .arguments([
+            OsString::from("--config"),
+            config_file.as_os_str().to_owned(),
+            OsString::from("--port"),
+            OsString::from(port.to_string()),
+            OsString::from("--max-sessions"),
+            OsString::from("4"),
+        ])
+        .build();
+
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
+    drop(probe_stream);
+
+    // === Phase 1: Push at forced protocol 28 ===
+    {
+        let mut source_arg = source_dir.clone().into_os_string();
+        source_arg.push("/");
+        let rsync_url = format!("rsync://127.0.0.1:{port}/lifecycle28/");
+
+        let client_config = core::client::ClientConfig::builder()
+            .transfer_args([source_arg, OsString::from(&rsync_url)])
+            .protocol_version(Some(ProtocolVersion::V28))
+            .build();
+
+        let result = core::client::run_client(client_config);
+        match &result {
+            Ok(summary) => {
+                assert!(
+                    summary.files_copied() >= 3,
+                    "protocol 28 push must copy at least 3 files, got {}",
+                    summary.files_copied()
+                );
+            }
+            Err(e) => {
+                let _ = daemon_handle.join();
+                panic!("protocol 28 push phase failed: {e}");
+            }
+        }
+    }
+
+    assert_eq!(
+        fs::read(module_dir.join("readme.txt")).expect("read module readme"),
+        b"protocol 28 readme\n",
+        "readme.txt must arrive in module after protocol 28 push"
+    );
+    assert_eq!(
+        fs::read(module_dir.join("blob.bin")).expect("read module blob.bin"),
+        b"\xde\xad\xbe\xef\x00\x11\x22\x33",
+        "blob.bin must arrive in module after protocol 28 push"
+    );
+    assert_eq!(
+        fs::read(module_dir.join("subdir/nested.txt")).expect("read module nested"),
+        b"nested under proto 28\n",
+        "subdir/nested.txt must arrive in module after protocol 28 push"
+    );
+
+    // === Phase 2: Pull at forced protocol 28 ===
+    {
+        let rsync_url = format!("rsync://127.0.0.1:{port}/lifecycle28/");
+
+        let client_config = core::client::ClientConfig::builder()
+            .transfer_args([OsString::from(&rsync_url), OsString::from(pull_dest.as_os_str())])
+            .protocol_version(Some(ProtocolVersion::V28))
+            .build();
+
+        let result = core::client::run_client(client_config);
+        match &result {
+            Ok(summary) => {
+                assert!(
+                    summary.files_copied() >= 3,
+                    "protocol 28 pull must copy at least 3 files, got {}",
+                    summary.files_copied()
+                );
+            }
+            Err(e) => {
+                let _ = daemon_handle.join();
+                panic!("protocol 28 pull phase failed: {e}");
+            }
+        }
+    }
+
+    // Roundtrip equality: pulled content matches original source byte-for-byte.
+    assert_eq!(
+        fs::read(pull_dest.join("readme.txt")).expect("read pulled readme"),
+        b"protocol 28 readme\n",
+        "readme.txt roundtrip mismatch at protocol 28"
+    );
+    assert_eq!(
+        fs::read(pull_dest.join("blob.bin")).expect("read pulled blob.bin"),
+        b"\xde\xad\xbe\xef\x00\x11\x22\x33",
+        "blob.bin roundtrip mismatch at protocol 28"
+    );
+    assert_eq!(
+        fs::read(pull_dest.join("subdir/nested.txt")).expect("read pulled nested"),
+        b"nested under proto 28\n",
+        "subdir/nested.txt roundtrip mismatch at protocol 28"
+    );
+
+    let daemon_result = daemon_handle.join().expect("daemon thread");
+    let _ = daemon_result;
+}
+
 #[test]
 fn daemon_protocol_28_forced_module_listing_works() {
     // Verify that module listing works at forced protocol 28.
