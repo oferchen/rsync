@@ -522,7 +522,7 @@ mod tests {
     #[test]
     fn streaming_random_buffer_matches_one_shot() {
         // Deterministic pseudo-random pattern - reproducible across CI runs.
-        let data: Vec<u8> = (0..16 * 1024)
+        let data: Vec<u8> = (0u32..16 * 1024)
             .map(|i| (i.wrapping_mul(2654435761) >> 16) as u8)
             .collect();
 
@@ -541,7 +541,7 @@ mod tests {
     /// fixed-size `large_input_4mb` test cannot reach.
     #[test]
     fn streaming_chunk_sizes_match_one_shot() {
-        let data: Vec<u8> = (0..16 * 1024)
+        let data: Vec<u8> = (0u32..16 * 1024)
             .map(|i| (i.wrapping_mul(2246822519) >> 8) as u8)
             .collect();
 
