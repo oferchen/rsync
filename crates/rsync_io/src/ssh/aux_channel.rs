@@ -492,7 +492,11 @@ mod tests {
     fn channel_join_is_idempotent() {
         // Calling join() multiple times must be safe (no double-panic from
         // re-joining a JoinHandle). Both impls share this Drop/join logic.
-        let (a, _b) = UnixStream::pair().expect("socketpair");
+        //
+        // The writer half is dropped via the wildcard pattern `_` (not the
+        // named binding `_b`, which would extend the writer's lifetime to
+        // end-of-scope and block the drain thread waiting for EOF).
+        let (a, _) = UnixStream::pair().expect("socketpair");
         let mut channel = SocketpairStderrChannel::spawn(a);
         channel.join();
         channel.join();
