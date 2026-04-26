@@ -62,6 +62,8 @@
 //! | < 30     | Zlib (no vstring negotiation)              |
 //! | >= 30    | Zstd when feature enabled, else Zlib       |
 
+/// Runtime compression-level adaptation strategy.
+pub mod adaptive_level;
 mod impls;
 mod kind;
 /// Compression algorithm negotiation abstraction.
@@ -74,6 +76,9 @@ mod traits;
 #[cfg(test)]
 mod tests;
 
+pub use adaptive_level::{
+    AdaptiveLevelConfig, AdaptiveLevelStrategy, DefaultAdaptiveLevelStrategy, LevelBounds,
+};
 #[cfg(feature = "lz4")]
 pub use impls::Lz4Strategy;
 #[cfg(feature = "zstd")]
