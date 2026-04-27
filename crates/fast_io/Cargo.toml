@@ -29,7 +29,7 @@ memmap2 = "0.9"
 libc = "0.2"
 
 # rustix is used for statx syscall on Linux (always compiled, runtime detection)
-rustix = { version = "0.38", features = ["fs"] }
+rustix = { version = "1.1", features = ["fs"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Optional: io_uring support (Linux 5.6+)
