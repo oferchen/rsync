@@ -142,10 +142,40 @@ pub(super) fn submit_write_batch(
     Ok(global_done)
 }
 
+/// Builds a SEND SQE with `IOSQE_ASYNC` set.
+///
+/// Setting `IOSQE_ASYNC` forces the kernel to dispatch the SEND on its async
+/// worker pool from the start, instead of attempting it inline on the
+/// submitting task. When the socket is not immediately writable (TCP
+/// backpressure), this prevents `submit_and_wait` from stalling the issuing
+/// task while the peer drains the receive window, which would otherwise cause
+/// head-of-line blocking between unrelated send and recv rings.
+///
+/// upstream: socket.c::writefd_unbuffered uses non-blocking writes with
+/// select(2) to wait for write-ready before each write; `IOSQE_ASYNC` is the
+/// io_uring equivalent for SEND submissions that may block.
+#[inline]
+fn build_send_sqe(
+    fd: types::Fd,
+    fixed_fd_slot: i32,
+    ptr: *const u8,
+    len: u32,
+    user_data: u64,
+) -> io_uring::squeue::Entry {
+    let entry = opcode::Send::new(sqe_fd(fd.0, fixed_fd_slot), ptr, len)
+        .build()
+        .user_data(user_data)
+        .flags(io_uring::squeue::Flags::ASYNC);
+    maybe_fixed_file(entry, fixed_fd_slot)
+}
+
 /// Submits a batch of send SQEs from contiguous `data` and collects completions.
 ///
 /// Analogous to [`submit_write_batch`] but uses `opcode::Send` instead of
 /// `opcode::Write` and omits file offsets (stream sockets have no position).
+///
+/// Each SEND SQE is built with `IOSQE_ASYNC` (see [`build_send_sqe`]) so the
+/// kernel does not stall the submitter on TCP backpressure.
 pub(super) fn submit_send_batch(
     ring: &mut RawIoUring,
     fd: types::Fd,
@@ -179,14 +209,13 @@ pub(super) fn submit_send_batch(
                 if want == 0 {
                     continue;
                 }
-                let entry = opcode::Send::new(
-                    sqe_fd(fd.0, fixed_fd_slot),
+                let entry = build_send_sqe(
+                    fd,
+                    fixed_fd_slot,
                     data[start + done..].as_ptr(),
                     want as u32,
-                )
-                .build()
-                .user_data(idx as u64);
-                let entry = maybe_fixed_file(entry, fixed_fd_slot);
+                    idx as u64,
+                );
 
                 unsafe {
                     ring.submission()
