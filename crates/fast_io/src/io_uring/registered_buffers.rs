@@ -1025,6 +1025,7 @@ mod tests {
     #[test]
     fn struct_field_drop_order_matches_callers() {
         struct OwnerLikeReader {
+            #[allow(dead_code)]
             ring: RawIoUring,
             #[allow(dead_code)]
             registered_buffers: Option<RegisteredBufferGroup>,
