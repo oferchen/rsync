@@ -14,6 +14,31 @@ updates:
     labels:
       - "dependencies"
     groups:
+      # RustCrypto trait family must move together: md4/sha1/sha2 internally
+      # depend on a specific digest version range, and cargo_metadata's
+      # cargo-platform transitive bumps the MSRV. Group across all update
+      # types (including major) to keep coupled crates aligned in one PR.
+      rustcrypto:
+        patterns:
+          - "digest"
+          - "md-5"
+          - "md4"
+          - "sha1"
+          - "sha2"
+          - "blake2"
+          - "blake3"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
+      cargo-metadata:
+        patterns:
+          - "cargo_metadata"
+          - "cargo-platform"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
       minor-and-patch:
         update-types:
           - "minor"

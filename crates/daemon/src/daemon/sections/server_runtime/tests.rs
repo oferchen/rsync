@@ -612,7 +612,7 @@ fn apply_listener_socket_options_nodelay_keepalive() {
     apply_socket_options_to_listener(&listener, &opts).expect("apply succeeds");
 
     let sock = socket2::SockRef::from(&listener);
-    assert!(sock.nodelay().expect("query nodelay"));
+    assert!(sock.tcp_nodelay().expect("query nodelay"));
     assert!(sock.keepalive().expect("query keepalive"));
 }
 
@@ -639,7 +639,7 @@ fn apply_stream_socket_options_nodelay_keepalive() {
     apply_socket_options_to_stream(&stream, &opts).expect("apply succeeds");
 
     let sock = socket2::SockRef::from(&stream);
-    assert!(sock.nodelay().expect("query nodelay"));
+    assert!(sock.tcp_nodelay().expect("query nodelay"));
     assert!(sock.keepalive().expect("query keepalive"));
 }
 
