@@ -92,7 +92,7 @@ impl SparseReader {
         let mut pos = 0u64;
 
         while pos < file_size {
-            match rustix::fs::seek(fd, RustixSeekFrom::Data(pos as i64)) {
+            match rustix::fs::seek(fd, RustixSeekFrom::Data(pos)) {
                 Ok(data_start) => {
                     if data_start > pos {
                         regions.push(SparseRegion::Hole {
@@ -101,7 +101,7 @@ impl SparseReader {
                         });
                     }
 
-                    match rustix::fs::seek(fd, RustixSeekFrom::Hole(data_start as i64)) {
+                    match rustix::fs::seek(fd, RustixSeekFrom::Hole(data_start)) {
                         Ok(hole_start) => {
                             if hole_start > data_start {
                                 regions.push(SparseRegion::Data {
