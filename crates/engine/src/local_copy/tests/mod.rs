@@ -950,16 +950,12 @@ mod test_helpers {
 
 #[cfg(unix)]
 mod unix_ids {
-    #![allow(unsafe_code)]
-
     pub(super) fn uid(raw: u32) -> rustix::fs::Uid {
-        // Safety: constructing `Uid` from a raw value is how rustix exposes platform IDs.
-        unsafe { rustix::fs::Uid::from_raw(raw) }
+        rustix::fs::Uid::from_raw(raw)
     }
 
     pub(super) fn gid(raw: u32) -> rustix::fs::Gid {
-        // Safety: constructing `Gid` from a raw value is how rustix exposes platform IDs.
-        unsafe { rustix::fs::Gid::from_raw(raw) }
+        rustix::fs::Gid::from_raw(raw)
     }
 }
 

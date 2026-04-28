@@ -22,3 +22,9 @@ jobs:
         with:
           fail-on-severity: high
           deny-licenses: AGPL-3.0-only, AGPL-3.0-or-later
+          # GHSA-f5v4-2wr6-hqmg: russh 0.45 keyboard-interactive pre-auth DoS.
+          # The embedded-ssh feature is opt-in and not in the default build set;
+          # the auth path is only reachable when a user explicitly enables it.
+          # Bumping russh 0.45 -> 0.60.1 is a 15-minor-version API rewrite
+          # tracked separately; allowlist here keeps dependency review green.
+          allow-ghsas: GHSA-f5v4-2wr6-hqmg
