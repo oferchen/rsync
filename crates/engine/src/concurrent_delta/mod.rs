@@ -12,7 +12,7 @@
 //! | `types` | [`DeltaWork`], [`DeltaResult`] | Per-file work item (NDX, paths, size) and outcome (stats, redo/fail status) |
 //! | [`work_queue`] | `WorkQueueSender` / `WorkQueueReceiver` | Bounded `crossbeam_channel` (2x thread count) with backpressure |
 //! | [`strategy`] | [`DeltaStrategy`] trait | Dispatches to [`WholeFileStrategy`] or [`DeltaTransferStrategy`] based on [`DeltaWorkKind`] |
-//! | [`reorder`] | [`ReorderBuffer`] | `BTreeMap`-backed buffer that yields results in submission order |
+//! | [`reorder`] | [`ReorderBuffer`] | Ring-buffer (`Box<[Option<T>]>`) that yields results in submission order with O(1) insert and drain |
 //! | [`consumer`] | [`DeltaConsumer`] | Background thread that drains `WorkQueue` via `drain_parallel` into `ReorderBuffer` for in-order delivery |
 //!
 //! # Production Pipeline
@@ -66,8 +66,9 @@
 //! ### `engine::concurrent_delta` (this module)
 //! The core concurrent pipeline. The producer assigns monotonic sequence
 //! numbers, rayon workers process files out of order, and `ReorderBuffer`
-//! (BTreeMap-backed) yields results in submission order before wire output.
-//! **GUARDED** by `ReorderBuffer`.
+//! (ring-buffer-backed, `Box<[Option<T>]>`) yields results in submission order
+//! before wire output, with O(1) insert and drain. **GUARDED** by
+//! `ReorderBuffer`.
 //!
 //! ### `transfer::receiver::transfer::pipeline` (`pipeline.rs:180`)
 //! Parallel signature computation in the pipelined receiver. Results are
