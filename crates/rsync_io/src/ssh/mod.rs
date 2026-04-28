@@ -53,6 +53,26 @@
 //!
 //! - [`crate::negotiate_session`] for the negotiation façade that consumes
 //!   [`SshConnection`] streams.
+//!
+//! # io_uring and SSH stdio
+//!
+//! The SSH data channel is the spawned `ssh` child's inherited stdio: a
+//! `(stdin, stdout)` pipe pair created by `Command::spawn`, not a socket.
+//! The `fast_io` io_uring `socket_reader` / `socket_writer` fast paths
+//! require an `AF_INET`/`AF_INET6` socket FD and are therefore unreachable
+//! for SSH transfers - regardless of kernel version or `io_uring_policy`.
+//! This mirrors upstream rsync, which also performs blocking reads/writes
+//! on the inherited stdio FDs when invoked over SSH (`main.c:504 do_cmd()`).
+//!
+//! The Linux kernel does support submitting `IORING_OP_READ` /
+//! `IORING_OP_WRITE` against pipe FDs (5.1+), and `splice()` / `vmsplice()`
+//! enable zero-copy pipe transfers. Wiring these into the SSH transport
+//! is tracked separately as tasks #1859 (pipe-FD io_uring) and #1860
+//! (splice-based zero-copy).
+//!
+//! Daemon-mode TCP sockets and local-disk transfers DO benefit from
+//! `fast_io`: TCP uses the socket fast path, and on-disk file I/O uses
+//! the io_uring read/write submission paths.
 
 mod aux_channel;
 mod builder;
