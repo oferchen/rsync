@@ -34,7 +34,7 @@ openssl-vendored = ["openssl", "openssl/vendored"]
 
 [dependencies]
 md4 = { version = "0.10", default-features = false, features = ["std"] }
-digest = { version = "0.11", default-features = false, features = ["std"] }
+digest = { version = "0.10", default-features = false, features = ["std"] }
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64", "xxh3"] }
 # xxh3 crate provides runtime SIMD detection (AVX2 on x86_64, NEON on aarch64)
 xxh3 = { version = "0.1" }

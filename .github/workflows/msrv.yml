@@ -51,4 +51,4 @@ jobs:
           shared-key: ci-${{ runner.os }}-msrv-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Check workspace compiles on MSRV
-        run: cargo check --workspace --all-features
+        run: cargo check --locked --workspace --all-features

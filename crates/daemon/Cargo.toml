@@ -38,7 +38,7 @@ platform = { path = "../platform" }
 protocol = { path = "../protocol" }
 logging-sink = { path = "../logging-sink" }
 fs2 = "0.4"
-socket2 = "0.6"
+socket2 = { version = "0.6", features = ["all"] }
 tempfile = "3.15"
 tokio = { workspace = true, optional = true, features = ["net", "io-util", "sync", "rt", "time"] }
 dashmap = { workspace = true, optional = true }

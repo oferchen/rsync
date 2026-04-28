@@ -69,7 +69,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features --no-deps
+        run: cargo clippy --locked --workspace --all-targets --all-features --no-deps
 
   # ===========================================================================
   # Test Job - Full test suite on Linux with toolchain matrix
@@ -105,10 +105,10 @@ jobs:
           tool: cargo-nextest
 
       - name: Build
-        run: cargo build --workspace --all-features
+        run: cargo build --locked --workspace --all-features
 
       - name: Run tests
-        run: cargo nextest run --workspace --all-features
+        run: cargo nextest run --locked --workspace --all-features
 
       - name: Set up SSH loopback
         if: matrix.toolchain == 'stable'
@@ -123,7 +123,7 @@ jobs:
       - name: Run SSH integration tests
         if: matrix.toolchain == 'stable'
         continue-on-error: true
-        run: cargo nextest run --workspace --all-features --run-ignored ignored-only -E 'test(ssh)'
+        run: cargo nextest run --locked --workspace --all-features --run-ignored ignored-only -E 'test(ssh)'
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -178,13 +178,13 @@ jobs:
           tool: cargo-nextest
 
       - name: Build
-        run: cargo build --workspace --all-features
+        run: cargo build --locked --workspace --all-features
 
       - name: Test
         run: |
           # Run Windows-specific crates only (core, engine, cli have platform code)
           # Full test suite runs on Linux; Windows validates platform-specific paths
-          cargo nextest run -p core -p engine -p cli --all-features
+          cargo nextest run --locked -p core -p engine -p cli --all-features
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -223,7 +223,7 @@ jobs:
           shared-key: ci-windows-gnu-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Check compilation
-        run: cargo check --workspace --target x86_64-pc-windows-gnu
+        run: cargo check --locked --workspace --target x86_64-pc-windows-gnu
 
   # ===========================================================================
   # macOS Test - Platform-specific testing with toolchain matrix
@@ -258,13 +258,13 @@ jobs:
           tool: cargo-nextest
 
       - name: Build
-        run: cargo build --workspace --all-features
+        run: cargo build --locked --workspace --all-features
 
       - name: Test
         run: |
           # Run macOS-specific crates only (core, engine, cli have platform code)
           # Full test suite runs on Linux; macOS validates platform-specific paths
-          cargo nextest run -p core -p engine -p cli --all-features
+          cargo nextest run --locked -p core -p engine -p cli --all-features
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -316,10 +316,10 @@ jobs:
           tool: cargo-nextest
 
       - name: Build
-        run: cargo build --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
+        run: cargo build --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
 
       - name: Test
-        run: cargo nextest run --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
+        run: cargo nextest run --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
 
       - name: Verify static linking
         run: |
