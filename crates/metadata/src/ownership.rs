@@ -1,16 +1,18 @@
-//! Raw UID/GID conversion helpers.
+//! Raw UID/GID conversion helpers (Unix).
 //!
-//! Provides safe wrappers around rustix's `from_raw` methods for
-//! converting raw platform identifiers to typed wrappers.
+//! Mirrors the surface of [`ownership_stub`] so callers can use one API on every
+//! platform: `ownership::uid_from_raw` / `ownership::gid_from_raw`. On Unix these
+//! produce typed [`rustix::fs::Uid`] / [`rustix::fs::Gid`] values; the non-Unix
+//! stub is the identity over `u32`.
+//!
+//! [`ownership_stub`]: crate::ownership_stub
 
-/// Wraps a raw UID value into a typed `Uid` for use with rustix filesystem operations.
-#[cfg(unix)]
+#[inline]
 pub(crate) fn uid_from_raw(raw: rustix::process::RawUid) -> rustix::fs::Uid {
     rustix::fs::Uid::from_raw(raw)
 }
 
-/// Wraps a raw GID value into a typed `Gid` for use with rustix filesystem operations.
-#[cfg(unix)]
+#[inline]
 pub(crate) fn gid_from_raw(raw: rustix::process::RawGid) -> rustix::fs::Gid {
     rustix::fs::Gid::from_raw(raw)
 }
