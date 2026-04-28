@@ -167,11 +167,16 @@ fn apply_socket_options_impl(
 /// `set_tclass_v6` for IPv6 (both take `u32`). Upstream rsync's `socket.c`
 /// calls `setsockopt(..., IPPROTO_IP, IP_TOS, ...)` which only succeeds on
 /// AF_INET sockets; we mirror that semantics for v4 and apply the equivalent
-/// `IPV6_TCLASS` for v6.
+/// `IPV6_TCLASS` for v6 on Unix. socket2 only exposes `set_tclass_v6` on
+/// Unix targets, so on Windows we skip v6 to mirror upstream's v4-only
+/// IP_TOS behaviour.
 fn apply_ip_tos(sock: &socket2::SockRef<'_>, tos: u32) -> io::Result<()> {
     match sock.local_addr()?.as_socket() {
         Some(std::net::SocketAddr::V4(_)) => sock.set_tos_v4(tos),
+        #[cfg(unix)]
         Some(std::net::SocketAddr::V6(_)) => sock.set_tclass_v6(tos),
+        #[cfg(not(unix))]
+        Some(std::net::SocketAddr::V6(_)) => Ok(()),
         None => Err(io::Error::other(
             "cannot determine socket address family for IP_TOS",
         )),
