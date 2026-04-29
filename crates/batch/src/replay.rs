@@ -405,7 +405,6 @@ pub fn replay(
             }
             protocol::flist::FileType::Symlink => {
                 if let Some(target) = entry.link_target() {
-                    // Ensure parent directory exists
                     if let Some(parent) = dest_path.parent() {
                         if !parent.exists() {
                             fs::create_dir_all(parent).map_err(|e| {
@@ -424,7 +423,6 @@ pub fn replay(
                 }
             }
             protocol::flist::FileType::Regular => {
-                // Ensure parent directory exists
                 if let Some(parent) = dest_path.parent() {
                     if !parent.exists() {
                         fs::create_dir_all(parent).map_err(|e| {

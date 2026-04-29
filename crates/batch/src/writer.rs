@@ -23,7 +23,6 @@ pub struct BatchWriter {
 impl BatchWriter {
     /// Create a new batch writer.
     pub fn new(config: BatchConfig) -> BatchResult<Self> {
-        // Create the batch file
         let batch_path = config.batch_file_path();
         let file = File::create(batch_path).map_err(|e| {
             BatchError::Io(io::Error::new(
@@ -270,13 +269,12 @@ mod tests {
 
         let mut writer = BatchWriter::new(config).unwrap();
 
-        // Must write header first
+        // write_data before write_header must fail
         assert!(writer.write_data(b"test").is_err());
 
         let flags = BatchFlags::default();
         writer.write_header(flags).unwrap();
 
-        // Now data write should succeed
         assert!(writer.write_data(b"test data").is_ok());
         assert!(writer.flush().is_ok());
     }

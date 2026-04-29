@@ -63,7 +63,6 @@ pub struct BatchReader {
 impl BatchReader {
     /// Create a new batch reader.
     pub fn new(config: BatchConfig) -> BatchResult<Self> {
-        // Open the batch file
         let batch_path = config.batch_file_path();
         let file = File::open(batch_path).map_err(|e| {
             BatchError::Io(io::Error::new(

@@ -29,12 +29,11 @@ impl BatchReader {
         }
 
         if let Some(ref mut reader) = self.batch_file {
-            // Try to read the next file entry
-            // If we hit EOF or an empty path, we've reached the end of the file list
+            // EOF or an empty path marks the end of the file list.
             match FileEntry::read_from(reader) {
                 Ok(entry) => {
                     if entry.path.is_empty() {
-                        Ok(None) // End of file list marker
+                        Ok(None)
                     } else {
                         Ok(Some(entry))
                     }
