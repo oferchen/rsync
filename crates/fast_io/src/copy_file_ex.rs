@@ -144,7 +144,8 @@ fn try_copy_file_ex_impl(src: &Path, dst: &Path) -> io::Result<u64> {
         .chain(std::iter::once(0))
         .collect();
 
-    // Use no-buffering for files above the threshold to bypass system cache
+    // Bypass the system cache for files above the threshold: large sequential
+    // copies otherwise pollute the cache and take a hit from the buffer copy.
     let file_size = std::fs::metadata(src)?.len();
     let flags = if file_size > NO_BUFFERING_THRESHOLD {
         ffi::COPY_FILE_NO_BUFFERING

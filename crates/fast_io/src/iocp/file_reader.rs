@@ -112,19 +112,20 @@ impl IocpReader {
         };
 
         if success == TRUE {
-            // Completed synchronously
+            // ReadFile may complete synchronously even with FILE_FLAG_OVERLAPPED;
+            // when it does, no completion will be queued so handle it inline.
             let n = bytes_read as usize;
             buf[..n].copy_from_slice(&op.buffer[..n]);
             return Ok(n);
         }
 
         let err = io::Error::last_os_error();
+        // ERROR_IO_PENDING (997) is the documented "operation queued" status;
+        // any other error is fatal.
         if err.raw_os_error() != Some(997) {
-            // ERROR_IO_PENDING = 997
             return Err(err);
         }
 
-        // Wait for completion
         let mut transferred: u32 = 0;
         let mut key: usize = 0;
         let mut overlapped_out: *mut windows_sys::Win32::System::IO::OVERLAPPED =
@@ -168,7 +169,6 @@ impl IocpReader {
         let mut offset: usize = 0;
 
         while offset < file_size {
-            // Submit a batch of reads
             let batch_count = std::cmp::min(
                 max_concurrent,
                 (file_size - offset + buf_size - 1) / buf_size,
@@ -182,7 +182,6 @@ impl IocpReader {
                 })
                 .collect();
 
-            // Submit all reads
             for (i, op) in ops.iter_mut().enumerate() {
                 let op_offset = offset + i * buf_size;
                 let op_size = std::cmp::min(buf_size, file_size - op_offset);
@@ -211,7 +210,6 @@ impl IocpReader {
                 }
             }
 
-            // Collect completions
             for i in 0..batch_count {
                 let mut transferred: u32 = 0;
                 let mut key: usize = 0;
@@ -234,7 +232,9 @@ impl IocpReader {
                     return Err(io::Error::last_os_error());
                 }
 
-                // Determine which op completed by matching the overlapped pointer
+                // Completions are processed in submission order rather than by
+                // matching the returned OVERLAPPED pointer. This is safe because
+                // each batch waits for all submitted ops before moving on.
                 let op_offset = offset + i * buf_size;
                 let n = transferred as usize;
                 let dest_end = std::cmp::min(op_offset + n, file_size);

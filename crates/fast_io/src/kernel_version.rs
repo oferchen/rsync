@@ -95,8 +95,6 @@ pub fn log_io_uring_probe_result() {}
 mod tests {
     use super::*;
 
-    // --- parse_kernel_version: valid inputs ---
-
     #[test]
     fn parse_standard_release() {
         assert_eq!(
@@ -206,8 +204,6 @@ mod tests {
         );
     }
 
-    // --- parse_kernel_version: invalid inputs ---
-
     #[test]
     fn parse_empty_string() {
         assert_eq!(parse_kernel_version(""), None);
@@ -232,8 +228,6 @@ mod tests {
     fn parse_letters_only() {
         assert_eq!(parse_kernel_version("abc.def.ghi"), None);
     }
-
-    // --- KernelVersion::meets_minimum ---
 
     #[test]
     fn meets_minimum_exact_match() {
@@ -271,8 +265,6 @@ mod tests {
         assert!(!v.meets_minimum(5, 6));
     }
 
-    // --- KernelVersion::Display ---
-
     #[test]
     fn display_format() {
         let v = KernelVersion {
@@ -281,8 +273,6 @@ mod tests {
         };
         assert_eq!(format!("{v}"), "5.15");
     }
-
-    // --- IO_URING_MIN_KERNEL constant ---
 
     #[test]
     fn min_kernel_is_5_6() {
@@ -294,8 +284,6 @@ mod tests {
     fn min_kernel_meets_itself() {
         assert!(IO_URING_MIN_KERNEL.meets_minimum(5, 6));
     }
-
-    // --- log_io_uring_probe_result ---
 
     #[test]
     fn log_probe_result_does_not_panic() {

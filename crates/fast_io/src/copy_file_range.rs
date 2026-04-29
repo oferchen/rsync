@@ -169,7 +169,6 @@ fn try_io_uring_copy(source: &File, destination: &File, length: u64) -> io::Resu
     while total_copied < length {
         let want = ((length - total_copied) as usize).min(buf_size);
 
-        // Submit read from source
         let read_entry =
             io_uring::opcode::Read::new(io_uring::types::Fd(src_fd), buf.as_mut_ptr(), want as u32)
                 .offset(src_offset)
@@ -202,7 +201,6 @@ fn try_io_uring_copy(source: &File, destination: &File, length: u64) -> io::Resu
         let bytes_read = read_result as usize;
         src_offset += bytes_read as u64;
 
-        // Submit write to destination
         let write_entry = io_uring::opcode::Write::new(
             io_uring::types::Fd(dst_fd),
             buf.as_ptr(),
@@ -318,17 +316,12 @@ fn try_copy_file_range(source: &File, destination: &File, length: u64) -> io::Re
         };
 
         if result < 0 {
-            let err = io::Error::last_os_error();
-            if total_copied == 0 {
-                // Failed on first chunk - return error to trigger fallback
-                return Err(err);
-            }
-            // Partial copy succeeded, but now we hit an error - still return error
-            return Err(err);
+            // Always surface the error so the caller can fall back; partial copies
+            // are still treated as failures because a partial dst is invalid.
+            return Err(io::Error::last_os_error());
         }
 
         if result == 0 {
-            // EOF reached
             break;
         }
 
@@ -381,7 +374,6 @@ fn copy_file_contents_readwrite(source: &File, destination: &File, length: u64) 
         let to_read = (remaining as usize).min(buf.len());
         let n = reader.read(&mut buf[..to_read])?;
         if n == 0 {
-            // EOF reached
             break;
         }
         writer.write_all(&buf[..n])?;
@@ -450,7 +442,6 @@ mod tests {
 
     #[test]
     fn test_copy_small_file_below_threshold() {
-        // Small file (< 64KB) should use read/write path directly
         let content = b"Hello, world! This is a small file.";
         let source = create_temp_file(content).unwrap();
         let mut dest = NamedTempFile::new().unwrap();
@@ -466,8 +457,7 @@ mod tests {
 
     #[test]
     fn test_copy_large_file_above_threshold() {
-        // Large file (>= 64KB) should attempt copy_file_range
-        let size = 128 * 1024; // 128KB
+        let size = 128 * 1024; // 128KB - exceeds COPY_FILE_RANGE_THRESHOLD
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
         let mut dest = NamedTempFile::new().unwrap();
@@ -497,7 +487,6 @@ mod tests {
 
     #[test]
     fn test_copy_partial_eof() {
-        // Request more bytes than available - should stop at EOF
         let content = b"Short content";
         let source = create_temp_file(content).unwrap();
         let mut dest = NamedTempFile::new().unwrap();
@@ -512,7 +501,6 @@ mod tests {
 
     #[test]
     fn test_copy_exact_threshold() {
-        // Exactly at threshold should attempt copy_file_range
         let size = COPY_FILE_RANGE_THRESHOLD as usize;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
@@ -529,7 +517,6 @@ mod tests {
 
     #[test]
     fn test_readwrite_fallback_direct() {
-        // Test the read/write fallback path directly
         let content = b"Testing fallback path directly";
         let source = create_temp_file(content).unwrap();
         let mut dest = NamedTempFile::new().unwrap();
@@ -546,20 +533,17 @@ mod tests {
 
     #[test]
     fn test_parity_both_paths() {
-        // Both paths should produce identical output for same input
+        // Tiered dispatch and the read/write fallback must produce byte-identical
+        // output for the same input - regression guard against silent data drift.
         let size = 256 * 1024; // 256KB - forces copy_file_range attempt
-        let content: Vec<u8> = (0..size)
-            .map(|i| ((i * 7 + 13) % 256) as u8) // Pseudo-random pattern
-            .collect();
+        let content: Vec<u8> = (0..size).map(|i| ((i * 7 + 13) % 256) as u8).collect();
 
-        // Path 1: copy_file_contents (attempts copy_file_range)
         let source1 = create_temp_file(&content).unwrap();
         let mut dest1 = NamedTempFile::new().unwrap();
         let copied1 = copy_file_contents(source1.as_file(), dest1.as_file(), size as u64).unwrap();
         dest1.seek(SeekFrom::Start(0)).unwrap();
         let result1 = read_file_contents(dest1.as_file()).unwrap();
 
-        // Path 2: copy_file_contents_readwrite (direct fallback)
         let source2 = create_temp_file(&content).unwrap();
         let mut dest2 = NamedTempFile::new().unwrap();
         let copied2 =
@@ -567,19 +551,17 @@ mod tests {
         dest2.seek(SeekFrom::Start(0)).unwrap();
         let result2 = read_file_contents(dest2.as_file()).unwrap();
 
-        // Both should copy all bytes
         assert_eq!(copied1, size as u64);
         assert_eq!(copied2, size as u64);
-
-        // Both should produce identical output
         assert_eq!(result1, result2);
         assert_eq!(result1, content);
     }
 
     #[test]
     fn test_large_file_multi_chunk() {
-        // Test file larger than typical kernel copy_file_range limit
-        let size = 2 * 1024 * 1024; // 2MB - may require multiple syscalls
+        // 2MB exercises the multi-iteration loop in try_copy_file_range, where the
+        // kernel typically returns short copies and the caller must continue.
+        let size = 2 * 1024 * 1024;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
         let mut dest = NamedTempFile::new().unwrap();
@@ -595,15 +577,15 @@ mod tests {
 
     #[test]
     fn test_copy_with_file_position() {
-        // Test that file position is respected
+        // Verifies that copy_file_contents honours the source's current file
+        // position rather than implicitly seeking to zero - critical because
+        // copy_file_range advances the source offset in place.
         let content = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         let mut source = create_temp_file(content).unwrap();
         let mut dest = NamedTempFile::new().unwrap();
 
-        // Seek source to position 10
         source.seek(SeekFrom::Start(10)).unwrap();
 
-        // Copy 10 bytes from position 10
         let copied = copy_file_contents(source.as_file(), dest.as_file(), 10).unwrap();
 
         assert_eq!(copied, 10);
@@ -615,12 +597,13 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_try_copy_file_range_linux() {
-        // On Linux, try_copy_file_range should succeed for same-filesystem copy
+        // Same-filesystem temp files succeed on kernel 4.5+. Older kernels and
+        // cross-filesystem cases (kernel < 5.3) return an error, which is the
+        // signal the production code uses to fall back to read/write.
         let content = b"Testing copy_file_range syscall directly";
         let source = create_temp_file(content).unwrap();
         let mut dest = NamedTempFile::new().unwrap();
 
-        // This may fail on old kernels or cross-filesystem, but that's expected
         match try_copy_file_range(source.as_file(), dest.as_file(), content.len() as u64) {
             Ok(copied) => {
                 assert_eq!(copied, content.len() as u64);
@@ -629,7 +612,6 @@ mod tests {
                 assert_eq!(dest_content, content);
             }
             Err(_) => {
-                // Fallback is expected on old kernels or cross-filesystem
                 eprintln!("copy_file_range not available, fallback will be used");
             }
         }
@@ -638,7 +620,6 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn test_try_copy_file_range_non_linux() {
-        // On non-Linux platforms, should always return Unsupported
         let content = b"Test";
         let source = create_temp_file(content).unwrap();
         let dest = NamedTempFile::new().unwrap();
@@ -651,8 +632,8 @@ mod tests {
     #[cfg(all(target_os = "linux", feature = "io_uring"))]
     #[test]
     fn test_try_io_uring_copy_linux() {
-        // On Linux with io_uring, try_io_uring_copy should succeed when the
-        // kernel supports it. Falls back gracefully on older kernels.
+        // Succeeds on kernels with io_uring (5.6+); older kernels return Err so
+        // production callers can fall back. Either outcome is acceptable here.
         let size = 512 * 1024; // 512KB - above IO_URING_COPY_THRESHOLD
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
@@ -666,7 +647,6 @@ mod tests {
                 assert_eq!(dest_content, content);
             }
             Err(_) => {
-                // io_uring unavailable on this kernel - expected fallback
                 eprintln!("io_uring not available, fallback will be used");
             }
         }
@@ -675,7 +655,6 @@ mod tests {
     #[cfg(not(all(target_os = "linux", feature = "io_uring")))]
     #[test]
     fn test_try_io_uring_copy_stub() {
-        // On non-Linux or without io_uring feature, should return Unsupported
         let content = b"Test io_uring stub";
         let source = create_temp_file(content).unwrap();
         let dest = NamedTempFile::new().unwrap();
@@ -687,9 +666,9 @@ mod tests {
 
     #[test]
     fn test_buffered_copy_above_io_uring_threshold() {
-        // Files above IO_URING_COPY_THRESHOLD should try io_uring first,
-        // then fall through to copy_file_range or read/write
-        let size = 512 * 1024; // 512KB
+        // 512KB exceeds IO_URING_COPY_THRESHOLD so the buffered path exercises
+        // tier 1 (io_uring), then 2 (copy_file_range), then 3 (read/write).
+        let size = 512 * 1024;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
         let mut dest = NamedTempFile::new().unwrap();

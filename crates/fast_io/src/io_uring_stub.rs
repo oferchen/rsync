@@ -1073,7 +1073,8 @@ mod tests {
 
     #[test]
     fn disk_batch_bytes_written_is_zero() {
-        // Cannot construct one on stub platform, but verify the trait.
+        // The stub cannot construct an IoUringDiskBatch; this test only
+        // confirms try_new always returns None on this platform.
         let config = IoUringConfig::default();
         assert!(IoUringDiskBatch::try_new(&config).is_none());
     }
@@ -1119,8 +1120,9 @@ mod tests {
         tmp.write_all(b"").unwrap();
         let file = tmp.reopen().unwrap();
 
+        // Auto must silently fall back to Std on this platform; the probe
+        // returns false unconditionally so io_uring is never selected.
         let writer = writer_from_file(file, 8192, IoUringPolicy::Auto).unwrap();
-        // On non-Linux, Auto always falls back to Std
         assert!(matches!(writer, IoUringOrStdWriter::Std(_)));
     }
 
@@ -1163,7 +1165,6 @@ mod tests {
     fn writer_parity_disabled_vs_auto() {
         let test_data: Vec<u8> = (0..4096).map(|i| ((i * 7 + 13) % 256) as u8).collect();
 
-        // Write via Disabled policy
         let dir = tempdir().unwrap();
         let path_disabled = dir.path().join("parity_disabled.bin");
         {
@@ -1173,7 +1174,8 @@ mod tests {
             writer.flush().unwrap();
         }
 
-        // Write via Auto policy (also falls back to Std on non-Linux)
+        // Auto also falls back to Std on non-Linux, so the two outputs must
+        // be byte-identical.
         let path_auto = dir.path().join("parity_auto.bin");
         {
             let file = std::fs::File::create(&path_auto).unwrap();
@@ -1197,11 +1199,9 @@ mod tests {
         let test_data: Vec<u8> = (0..8192).map(|i| ((i * 11 + 3) % 256) as u8).collect();
         std::fs::write(&path, &test_data).unwrap();
 
-        // Read via Disabled policy
         let mut reader_disabled = reader_from_path(&path, IoUringPolicy::Disabled).unwrap();
         let data_disabled = reader_disabled.read_all().unwrap();
 
-        // Read via Auto policy
         let mut reader_auto = reader_from_path(&path, IoUringPolicy::Auto).unwrap();
         let data_auto = reader_auto.read_all().unwrap();
 
@@ -1265,7 +1265,6 @@ mod tests {
         reader.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"4567");
 
-        // Read remaining
         let mut rest = Vec::new();
         reader.read_to_end(&mut rest).unwrap();
         assert_eq!(&rest, b"89ABCDEF");
@@ -1310,7 +1309,6 @@ mod tests {
         let path = dir.path().join("roundtrip.bin");
         let test_data: Vec<u8> = (0..65536).map(|i| ((i * 17 + 5) % 256) as u8).collect();
 
-        // Write
         {
             let file = std::fs::File::create(&path).unwrap();
             let mut writer = writer_from_file(file, 16384, IoUringPolicy::Disabled).unwrap();
@@ -1318,7 +1316,6 @@ mod tests {
             writer.flush().unwrap();
         }
 
-        // Read back
         let mut reader = reader_from_path(&path, IoUringPolicy::Disabled).unwrap();
         let read_back = reader.read_all().unwrap();
 

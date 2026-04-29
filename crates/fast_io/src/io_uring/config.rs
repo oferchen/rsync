@@ -562,8 +562,6 @@ mod tests {
         assert!(reason.starts_with("io_uring: "));
     }
 
-    // --- Kernel version parsing edge cases ---
-
     #[test]
     fn parse_kernel_version_extra_dots_azure() {
         // Azure kernel strings have extra dot-separated segments.
@@ -617,8 +615,6 @@ mod tests {
             Some((5, 10))
         );
     }
-
-    // --- Config presets ---
 
     fn is_power_of_two(n: u32) -> bool {
         n > 0 && (n & (n - 1)) == 0
@@ -713,8 +709,6 @@ mod tests {
         let config = IoUringConfig::default();
         assert!(!config.sqpoll, "SQPOLL should be disabled by default");
     }
-
-    // --- SQPOLL fallback ---
 
     #[test]
     fn build_ring_with_sqpoll_falls_back_gracefully() {

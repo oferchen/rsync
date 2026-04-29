@@ -103,7 +103,7 @@ pub fn is_iocp_available() -> bool {
 /// completion port instead).
 #[must_use]
 pub fn skip_event_optimization_available() -> bool {
-    // Ensure we've probed
+    // Force the probe to run so SKIP_EVENT_AVAILABLE reflects detected support.
     let _ = is_iocp_available();
     SKIP_EVENT_AVAILABLE.load(Ordering::Relaxed)
 }
@@ -140,14 +140,14 @@ fn probe_iocp() -> bool {
         return false;
     }
 
-    // Clean up the test port
     #[allow(unsafe_code)]
     unsafe {
         windows_sys::Win32::Foundation::CloseHandle(handle);
     }
 
-    // Probe FILE_SKIP_SET_EVENT_ON_HANDLE - available on Windows Vista+
-    // We set this globally; it's safe because we always use completion ports.
+    // FILE_SKIP_SET_EVENT_ON_HANDLE is unconditionally safe under our model
+    // because we always use completion ports rather than waiting on the
+    // file handle's event. Available on Windows Vista+.
     SKIP_EVENT_AVAILABLE.store(true, Ordering::Relaxed);
 
     IOCP_STATUS.store(AVAILABLE, Ordering::Relaxed);
@@ -183,13 +183,13 @@ mod tests {
 
     #[test]
     fn iocp_available_on_windows() {
-        // On Windows, IOCP should always be available (Vista+)
+        // IOCP is part of the kernel on Windows Vista+, so the probe must
+        // succeed on every supported Windows host.
         assert!(is_iocp_available());
     }
 
     #[test]
     fn iocp_availability_cached() {
-        // First call probes, subsequent calls use cache
         let first = is_iocp_available();
         let second = is_iocp_available();
         assert_eq!(first, second);

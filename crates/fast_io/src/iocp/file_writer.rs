@@ -78,9 +78,9 @@ impl IocpWriter {
     ) -> io::Result<Self> {
         let writer = Self::create(path, config)?;
 
-        // Preallocate by setting end of file
-        // SAFETY: handle is valid, SetFilePointerEx and SetEndOfFile are
-        // standard Win32 operations.
+        // SAFETY: handle is valid; the SetFilePointerEx/SetEndOfFile pair is
+        // the documented Win32 sequence to preallocate disk blocks for the
+        // file before any overlapped write is submitted.
         #[allow(unsafe_code)]
         unsafe {
             let mut new_pos: i64 = 0;
@@ -127,12 +127,11 @@ impl IocpWriter {
         }
 
         let err = io::Error::last_os_error();
+        // ERROR_IO_PENDING (997) means the write is queued; any other error is fatal.
         if err.raw_os_error() != Some(997) {
-            // ERROR_IO_PENDING = 997
             return Err(err);
         }
 
-        // Wait for completion
         let mut transferred: u32 = 0;
         let mut key: usize = 0;
         let mut overlapped_out: *mut windows_sys::Win32::System::IO::OVERLAPPED =
@@ -193,18 +192,18 @@ impl Write for IocpWriter {
         let available = self.config.buffer_size - self.buffer.len();
 
         if buf.len() <= available {
-            // Fits in buffer
             self.buffer.extend_from_slice(buf);
             self.bytes_written += buf.len() as u64;
             Ok(buf.len())
         } else if self.buffer.is_empty() && buf.len() >= self.config.buffer_size {
-            // Large write, bypass buffer entirely
+            // Bypass the internal buffer when the caller already provided at
+            // least one full chunk: an overlapped write directly from `buf`
+            // saves a copy.
             let n = self.write_at(self.file_offset, buf)?;
             self.file_offset += n as u64;
             self.bytes_written += n as u64;
             Ok(n)
         } else {
-            // Fill buffer, flush, then continue
             self.buffer.extend_from_slice(&buf[..available]);
             self.flush_buffer()?;
             let remaining = &buf[available..];
@@ -223,7 +222,6 @@ impl Write for IocpWriter {
 
 impl Seek for IocpWriter {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        // Flush any buffered data first
         self.flush_buffer()?;
         match pos {
             SeekFrom::Start(p) => {
@@ -278,7 +276,8 @@ impl FileWriter for IocpWriter {
             if SetEndOfFile(self.handle) != TRUE {
                 return Err(io::Error::last_os_error());
             }
-            // Reset file pointer to current write position
+            // SetEndOfFile leaves the pointer at `size`; restore it so that the
+            // next overlapped write resumes at the caller's logical offset.
             if SetFilePointerEx(self.handle, self.file_offset as i64, &mut new_pos, 0) != TRUE {
                 return Err(io::Error::last_os_error());
             }
@@ -289,7 +288,6 @@ impl FileWriter for IocpWriter {
 
 impl Drop for IocpWriter {
     fn drop(&mut self) {
-        // Best-effort flush
         let _ = self.flush_buffer();
         // SAFETY: self.handle is valid and owned by this struct.
         #[allow(unsafe_code)]
@@ -408,7 +406,6 @@ mod tests {
         }
 
         let metadata = std::fs::metadata(&path).unwrap();
-        // File should be at least 1024 bytes due to preallocation
         assert!(metadata.len() >= 1024);
     }
 }
