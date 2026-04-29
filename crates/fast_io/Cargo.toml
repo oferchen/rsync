@@ -84,3 +84,7 @@ harness = false
 [[bench]]
 name = "platform_copy"
 harness = false
+
+[[bench]]
+name = "splice_pipe"
+harness = false
