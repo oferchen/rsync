@@ -251,7 +251,6 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let kh_path = dir.path().join("known_hosts");
 
-        // Write the key as a known host.
         russh_keys::learn_known_hosts_path("testhost.example", 22, &pubkey, &kh_path)
             .expect("learn");
 
@@ -274,7 +273,6 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let kh_path = dir.path().join("known_hosts");
 
-        // Create an empty known_hosts file.
         std::fs::File::create(&kh_path).expect("create");
 
         let handler = SshClientHandler::new(
@@ -300,7 +298,6 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let kh_path = dir.path().join("known_hosts");
 
-        // Create an empty known_hosts file.
         std::fs::File::create(&kh_path).expect("create");
 
         let handler = SshClientHandler::new(
@@ -405,7 +402,6 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let kh_path = dir.path().join("known_hosts");
 
-        // Write garbage.
         let mut f = std::fs::File::create(&kh_path).expect("create");
         writeln!(f, "not a valid known_hosts line !!! garbage").expect("write");
         drop(f);

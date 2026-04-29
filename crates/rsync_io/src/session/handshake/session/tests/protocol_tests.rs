@@ -126,7 +126,6 @@ fn remote_advertisement_legacy() {
 fn remote_protocol_was_clamped_binary() {
     let binary = create_binary_handshake();
     let session = SessionHandshake::Binary(binary);
-    // Our test handshake uses protocol 31 which is in supported range
     assert!(!session.remote_protocol_was_clamped());
 }
 
@@ -134,7 +133,6 @@ fn remote_protocol_was_clamped_binary() {
 fn remote_protocol_was_clamped_legacy() {
     let legacy = create_legacy_handshake();
     let session = SessionHandshake::Legacy(legacy);
-    // Our test handshake uses protocol 31 which is in supported range
     assert!(!session.remote_protocol_was_clamped());
 }
 
@@ -142,7 +140,6 @@ fn remote_protocol_was_clamped_legacy() {
 fn local_protocol_was_capped_binary() {
     let binary = create_binary_handshake();
     let session = SessionHandshake::Binary(binary);
-    // Our test handshake uses the same protocol for desired and negotiated
     assert!(!session.local_protocol_was_capped());
 }
 
@@ -150,7 +147,6 @@ fn local_protocol_was_capped_binary() {
 fn local_protocol_was_capped_legacy() {
     let legacy = create_legacy_handshake();
     let session = SessionHandshake::Legacy(legacy);
-    // Our test handshake uses the same protocol for desired and negotiated
     assert!(!session.local_protocol_was_capped());
 }
 

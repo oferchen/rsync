@@ -189,7 +189,6 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(31).unwrap();
         let greeting = build_client_greeting(&server, protocol);
         let greeting_str = String::from_utf8_lossy(&greeting);
-        // When negotiated == server protocol, we preserve subprotocol
         assert!(greeting_str.contains("31.9"), "got: {greeting_str}");
     }
 
@@ -199,7 +198,6 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(30).unwrap();
         let greeting = build_client_greeting(&server, protocol);
         let greeting_str = String::from_utf8_lossy(&greeting);
-        // When negotiated < server protocol, subprotocol is 0
         assert!(greeting_str.contains("30.0"), "got: {greeting_str}");
     }
 
@@ -227,7 +225,6 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(30).unwrap();
         let greeting = build_client_greeting(&server, protocol);
         let greeting_str = String::from_utf8_lossy(&greeting);
-        // Should only have "@RSYNCD: 30.0\n"
         assert_eq!(greeting_str.trim(), "@RSYNCD: 30.0");
     }
 
@@ -272,7 +269,6 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(30).unwrap();
         let greeting = build_client_greeting(&server, protocol);
         let greeting_str = String::from_utf8_lossy(&greeting);
-        // Should have "@RSYNCD: 30.0" with space after colon
         assert!(greeting_str.starts_with("@RSYNCD: "));
     }
 
@@ -282,7 +278,6 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(31).unwrap();
         let greeting = build_client_greeting(&server, protocol);
         let greeting_str = String::from_utf8_lossy(&greeting);
-        // Should contain "31.5" (dot separating major.minor)
         assert!(greeting_str.contains('.'));
     }
 

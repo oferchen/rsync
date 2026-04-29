@@ -249,7 +249,9 @@ mod tests {
     use protocol::{CompatibilityFlags, LegacyDaemonGreetingOwned, ProtocolVersion};
     use std::io::Cursor;
 
-    // Helper to create binary handshake parts
+    /// Builds binary handshake parts at protocol 31. The first byte differs
+    /// from `'@'` so the sniffer chooses the binary prologue, and the remaining
+    /// bytes encode protocol 31 as a little-endian u32.
     fn create_binary_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
@@ -264,7 +266,7 @@ mod tests {
         )
     }
 
-    // Helper to create legacy handshake parts
+    /// Builds legacy daemon handshake parts at protocol 31.
     fn create_legacy_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
@@ -292,7 +294,6 @@ mod tests {
     fn into_stream_reconstructs_negotiated_stream_for_binary() {
         let parts = create_binary_parts();
         let stream = parts.into_stream();
-        // After sniffing, only the first byte was read to determine binary mode
         assert!(stream.buffered_len() > 0);
     }
 
@@ -482,7 +483,6 @@ mod tests {
             CompatibilityFlags::EMPTY,
             stream.into_parts(),
         );
-        // Capped if negotiated < remote
         assert!(parts.local_protocol_was_capped());
     }
 
@@ -512,7 +512,6 @@ mod tests {
     fn into_inner_extracts_transport_for_binary() {
         let parts = create_binary_parts();
         let inner: Cursor<Vec<u8>> = parts.into_inner();
-        // The position may have advanced during sniffing
         assert!(!inner.get_ref().is_empty());
     }
 
@@ -520,7 +519,6 @@ mod tests {
     fn into_inner_extracts_transport_for_legacy() {
         let parts = create_legacy_parts();
         let inner: Cursor<Vec<u8>> = parts.into_inner();
-        // The position may have advanced during sniffing
         assert!(!inner.get_ref().is_empty());
     }
 }

@@ -189,9 +189,7 @@ fn try_from_session_to_legacy_err() {
 fn map_stream_inner_binary() {
     let binary = create_binary_handshake();
     let session = SessionHandshake::Binary(binary);
-    let mapped = session.map_stream_inner(|_cursor| {
-        // Return a simple unit type to verify transformation
-    });
+    let mapped = session.map_stream_inner(|_cursor| {});
     assert!(mapped.is_binary());
 }
 
@@ -199,9 +197,7 @@ fn map_stream_inner_binary() {
 fn map_stream_inner_legacy() {
     let legacy = create_legacy_handshake();
     let session = SessionHandshake::Legacy(legacy);
-    let mapped = session.map_stream_inner(|_cursor| {
-        // Return a simple unit type to verify transformation
-    });
+    let mapped = session.map_stream_inner(|_cursor| {});
     assert!(mapped.is_legacy());
 }
 

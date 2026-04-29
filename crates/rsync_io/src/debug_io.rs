@@ -532,11 +532,10 @@ mod tests {
 
     #[test]
     fn test_format_hex_dump_rsyncd_banner() {
-        // Test with typical rsync banner prefix
         let data = b"@RSYNCD: 31.0\n";
         let result = format_hex_dump(data);
-        assert!(result.contains("40 52 53 59")); // @RSY in hex
-        assert!(result.contains("|@RSYNCD: 31.0.|")); // newline becomes dot
+        assert!(result.contains("40 52 53 59"));
+        assert!(result.contains("|@RSYNCD: 31.0.|"));
     }
 }
 
@@ -544,31 +543,26 @@ mod tests {
 mod no_tracing_tests {
     use super::*;
 
-    // These tests verify that the no-op functions compile and can be called
-    // without the tracing feature enabled
-
+    /// Verifies the no-op trace functions compile and remain callable when the
+    /// `tracing` feature is disabled.
     #[test]
     fn test_trace_functions_compile() {
-        // Level 1
         trace_stream_open("tcp://localhost:873");
         trace_stream_close("tcp://localhost:873");
         trace_ssh_spawn("ssh", "localhost");
         trace_negotiation_style("binary");
 
-        // Level 2
         trace_stream_read(512);
         trace_stream_write(256);
         trace_buffered_read(100, true);
         trace_buffered_read(100, false);
         trace_banner("recv", "@RSYNCD: 31.0");
 
-        // Level 3
         trace_negotiation_buffer_state("initial", 0, 100, 14);
         trace_buffer_consume(50, 50);
         trace_buffer_extend(100, 200);
         trace_stream_map("map_inner", true);
 
-        // Level 4
         trace_protocol_bytes("banner", b"@RSYNCD: 31.0\n");
         trace_sniff_bytes(b"@RSY", "NeedMoreData");
         trace_raw_read(&[1, 2, 3], "socket");
