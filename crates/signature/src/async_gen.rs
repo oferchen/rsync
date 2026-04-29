@@ -309,12 +309,10 @@ impl AsyncSignatureGenerator {
     ///
     /// Returns an error if any worker thread panicked.
     pub fn shutdown(mut self) -> io::Result<()> {
-        // Send shutdown to all workers
         for _ in 0..self.workers.len() {
             let _ = self.request_sender.send(WorkerMessage::Shutdown);
         }
 
-        // Wait for all workers to finish
         let workers = std::mem::take(&mut self.workers);
         for handle in workers {
             handle
@@ -328,7 +326,6 @@ impl AsyncSignatureGenerator {
 
 impl Drop for AsyncSignatureGenerator {
     fn drop(&mut self) {
-        // Send shutdown signal to workers
         for _ in 0..self.workers.len() {
             let _ = self.request_sender.send(WorkerMessage::Shutdown);
         }
@@ -370,10 +367,8 @@ fn worker_thread_main_shared(
 /// This is called by worker threads.
 fn generate_signature_sync(request: SignatureRequest) -> SignatureResult {
     let result = (|| -> Result<FileSignature, Box<dyn std::error::Error>> {
-        // Open basis file
         let basis_file = fs::File::open(&request.basis_path)?;
 
-        // Calculate signature layout
         let params = SignatureLayoutParams::new(
             request.basis_size,
             None,
@@ -382,7 +377,6 @@ fn generate_signature_sync(request: SignatureRequest) -> SignatureResult {
         );
         let layout = calculate_signature_layout(params)?;
 
-        // Generate signature
         Ok(generate_file_signature(
             basis_file,
             layout,

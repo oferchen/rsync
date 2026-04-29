@@ -96,22 +96,18 @@ pub fn generate_file_signature<R: Read>(
     let mut blocks = Vec::with_capacity(expected_blocks_usize);
     let mut total_bytes: u64 = 0;
 
-    // Pre-allocate batch buffers for reading multiple blocks before computing checksums.
-    // Each buffer holds one block's worth of data; we reuse them across batches.
+    // Reusable per-block buffers; cleared and refilled on every batch iteration.
     let batch_capacity = BATCH_SIZE.min(expected_blocks_usize).max(1);
     let mut batch_bufs: Vec<Vec<u8>> = (0..batch_capacity)
         .map(|_| vec![0u8; block_len.max(1)])
         .collect();
-    // Actual byte lengths of each block in the current batch (may differ for last block).
+    // Actual byte lengths of each block in the current batch (last block may be short).
     let mut batch_lens: Vec<usize> = Vec::with_capacity(batch_capacity);
-    // Rolling checksums computed during the read phase, paired with batch data for the
-    // strong checksum batch call.
     let mut batch_rolling: Vec<RollingDigest> = Vec::with_capacity(batch_capacity);
 
     let mut index: usize = 0;
 
     while index < expected_blocks_usize {
-        // Fill the batch
         let batch_end = (index + batch_capacity).min(expected_blocks_usize);
         let batch_count = batch_end - index;
         batch_lens.clear();
@@ -134,7 +130,6 @@ pub fn generate_file_signature<R: Read>(
             batch_lens.push(target_len);
         }
 
-        // Build slice references for the batch strong checksum call
         let batch_slices: Vec<&[u8]> = batch_bufs
             .iter()
             .zip(batch_lens.iter())
