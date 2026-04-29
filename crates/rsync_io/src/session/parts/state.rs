@@ -213,9 +213,10 @@ mod tests {
     use crate::sniff_negotiation_stream;
     use std::io::Cursor;
 
-    // Helper to create binary handshake parts
+    /// Builds binary handshake parts at protocol 31. The first byte differs
+    /// from `'@'` so the sniffer chooses the binary prologue, and the remaining
+    /// bytes encode protocol 31 as a little-endian u32.
     fn create_binary_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
-        // Binary negotiation: protocol 31 as BE u32
         let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
@@ -229,7 +230,7 @@ mod tests {
         )
     }
 
-    // Helper to create legacy handshake parts
+    /// Builds legacy daemon handshake parts at protocol 31.
     fn create_legacy_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
@@ -451,7 +452,6 @@ mod tests {
             assert_eq!(local.as_u8(), 31);
             assert_eq!(negotiated.as_u8(), 31);
             assert_eq!(flags, CompatibilityFlags::EMPTY);
-            // Stream contains the buffered bytes captured during sniffing
             assert!(!stream.buffered().is_empty());
         } else {
             panic!("expected Binary variant");

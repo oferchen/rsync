@@ -60,7 +60,7 @@ mod tests {
     use protocol::{CompatibilityFlags, LegacyDaemonGreetingOwned, ProtocolVersion};
     use std::io::Cursor;
 
-    // Helper to create a BinaryHandshake
+    /// Builds a binary handshake fixture at protocol 31.
     fn create_binary_handshake() -> BinaryHandshake<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
@@ -75,7 +75,7 @@ mod tests {
         )
     }
 
-    // Helper to create a LegacyDaemonHandshake
+    /// Builds a legacy daemon handshake fixture at protocol 31.
     fn create_legacy_handshake() -> LegacyDaemonHandshake<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
@@ -85,7 +85,7 @@ mod tests {
         LegacyDaemonHandshake::from_components(greeting, proto31, stream)
     }
 
-    // Helper to create SessionHandshakeParts (binary)
+    /// Builds binary `SessionHandshakeParts` at protocol 31.
     fn create_binary_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
@@ -100,7 +100,7 @@ mod tests {
         )
     }
 
-    // Helper to create SessionHandshakeParts (legacy)
+    /// Builds legacy `SessionHandshakeParts` at protocol 31.
     fn create_legacy_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");

@@ -113,7 +113,9 @@ mod tests {
     use protocol::CompatibilityFlags;
     use std::io::Cursor;
 
-    // Helper to create binary handshake parts
+    /// Builds binary handshake parts at protocol 31. The first byte differs
+    /// from `'@'` so the sniffer chooses the binary prologue, and the remaining
+    /// bytes encode protocol 31 as a little-endian u32.
     fn create_binary_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
@@ -128,7 +130,7 @@ mod tests {
         )
     }
 
-    // Helper to create legacy handshake parts
+    /// Builds legacy daemon handshake parts at protocol 31.
     fn create_legacy_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
@@ -265,7 +267,6 @@ mod tests {
     fn remote_advertisement_returns_classification_for_binary() {
         let parts = create_binary_parts();
         let adv = parts.remote_advertisement();
-        // Protocol 31 is supported, so clamped() returns None
         assert!(adv.supported().is_some());
         assert_eq!(adv.supported().unwrap().as_u8(), 31);
     }
@@ -274,7 +275,6 @@ mod tests {
     fn remote_advertisement_returns_classification_for_legacy() {
         let parts = create_legacy_parts();
         let adv = parts.remote_advertisement();
-        // Protocol 31 is supported, so clamped() returns None
         assert!(adv.supported().is_some());
         assert_eq!(adv.supported().unwrap().as_u8(), 31);
     }
@@ -296,7 +296,6 @@ mod tests {
     fn server_greeting_includes_subprotocol() {
         let parts = create_legacy_parts();
         let greeting = parts.server_greeting().expect("legacy has greeting");
-        // Subprotocol is a u32 (0 in our test case)
         assert_eq!(greeting.subprotocol(), 0);
     }
 

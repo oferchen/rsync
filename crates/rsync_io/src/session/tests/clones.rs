@@ -460,5 +460,3 @@ fn session_handshake_parts_from_legacy_components_round_trips() {
     assert_eq!(transport.writes(), b"@RSYNCD: 31.0\n");
     assert_eq!(transport.flushes(), 1);
 }
-
-// InstrumentedTransport is provided by the support module.

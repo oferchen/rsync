@@ -408,8 +408,6 @@ mod tests {
         assert_eq!(user, "explicit");
     }
 
-    // --- Mock SSH server for auth flow integration tests ---
-
     use std::sync::Arc;
 
     use russh::server::Server as _;

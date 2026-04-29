@@ -499,8 +499,6 @@ mod tests {
         assert_eq!(cfg.username.as_deref(), Some("bob"));
     }
 
-    // --- URL parsing tests ---
-
     #[test]
     fn from_url_simple_host_path() {
         let (cfg, path) = SshConfig::from_url("ssh://host/path/to/file").unwrap();
@@ -629,8 +627,6 @@ mod tests {
         assert_eq!(cfg.password.as_deref(), Some("s3cret"));
         assert_eq!(path, "~/backups");
     }
-
-    // --- Keepalive and timeout edge-case tests ---
 
     #[test]
     fn connect_timeout_zero_disables_timeout() {
