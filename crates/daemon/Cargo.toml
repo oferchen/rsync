@@ -54,7 +54,7 @@ sd-notify = { version = "0.4.5", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 checksums = { path = "../checksums", default-features = false }
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
 ] }
 
