@@ -3,9 +3,16 @@
 //! Provides `ReusableBufWriter` which reuses an externally-owned buffer,
 //! matching upstream rsync's static `wf_writeBuf` (fileio.c:161). Large
 //! chunks bypass the buffer entirely via `write_all_vectored`.
+//!
+//! The [`Writer`] enum dispatches between `ReusableBufWriter` and
+//! [`fast_io::IoUringDiskBatch`] so the disk-commit hot path can use batched
+//! io_uring submissions when available (Linux 5.6+ with the `io_uring`
+//! feature) while preserving identical semantics for sparse mode and
+//! non-Linux platforms.
 
 use std::fs;
 use std::io::{self, IoSlice, Seek, Write};
+use std::path::Path;
 
 /// Fixed write buffer size matching upstream's `wf_writeBufSize = WRITE_SIZE * 8`
 /// (fileio.c:161). Upstream always uses 256 KB regardless of file size.
@@ -117,5 +124,92 @@ impl Seek for ReusableBufWriter<'_> {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
         self.flush()?;
         self.file.seek(pos)
+    }
+}
+
+/// Writer variant used by the disk-commit thread for a single file.
+///
+/// `Buffered` uses [`ReusableBufWriter`] backed by the thread's reusable
+/// 256 KB buffer. `IoUring` borrows the disk thread's persistent
+/// [`fast_io::IoUringDiskBatch`] which has already been registered with the
+/// active file via `begin_file`.
+///
+/// Sparse mode requires `Seek`, which `IoUringDiskBatch` does not provide,
+/// so callers must select `Buffered` whenever `use_sparse` is set.
+pub(super) enum Writer<'a> {
+    Buffered(ReusableBufWriter<'a>),
+    #[cfg(all(target_os = "linux", feature = "io_uring"))]
+    IoUring {
+        batch: &'a mut fast_io::IoUringDiskBatch,
+    },
+}
+
+impl<'a> Writer<'a> {
+    /// Returns a `Write + Seek` view of the buffered writer for sparse mode.
+    ///
+    /// Sparse writes require `Seek` to punch holes via `seek(Current(n))`,
+    /// which io_uring's batch writer does not support. Sparse mode therefore
+    /// always uses the buffered variant; this accessor enforces that at the
+    /// type level.
+    pub(super) fn buffered_for_sparse(&mut self) -> &mut ReusableBufWriter<'a> {
+        match self {
+            Writer::Buffered(w) => w,
+            #[cfg(all(target_os = "linux", feature = "io_uring"))]
+            Writer::IoUring { .. } => {
+                debug_assert!(false, "sparse mode must select buffered writer");
+                unreachable!("sparse mode must select buffered writer")
+            }
+        }
+    }
+
+    /// Writes the entire chunk, dispatching to the active variant.
+    pub(super) fn write_chunk(&mut self, data: &[u8]) -> io::Result<()> {
+        match self {
+            Writer::Buffered(w) => w.write_all(data),
+            #[cfg(all(target_os = "linux", feature = "io_uring"))]
+            Writer::IoUring { batch } => batch.write_data(data),
+        }
+    }
+
+    /// Flushes pending data and, when requested, fsyncs the underlying file.
+    ///
+    /// For the io_uring variant this is a no-op: both flush and fsync are
+    /// performed atomically by [`Self::finish`] via the batch's
+    /// `commit_file(do_fsync)`, avoiding a redundant ring submission.
+    pub(super) fn flush_and_sync(&mut self, do_fsync: bool, file_path: &Path) -> io::Result<()> {
+        match self {
+            Writer::Buffered(w) => {
+                if do_fsync {
+                    w.sync().map_err(|e| {
+                        io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
+                    })
+                } else {
+                    w.flush().map_err(|e| {
+                        io::Error::other(format!("flush failed for {file_path:?}: {e}"))
+                    })
+                }
+            }
+            #[cfg(all(target_os = "linux", feature = "io_uring"))]
+            Writer::IoUring { .. } => Ok(()),
+        }
+    }
+
+    /// Releases the writer and, for io_uring, commits the active file (with
+    /// optional fsync) so its file handle can be used for rename/truncate.
+    ///
+    /// The buffered variant simply drops, closing the file. The io_uring
+    /// variant calls `commit_file` to flush, optionally fsync, and detach the
+    /// file from the batch.
+    pub(super) fn finish(self, do_fsync: bool, file_path: &Path) -> io::Result<()> {
+        match self {
+            Writer::Buffered(_) => Ok(()),
+            #[cfg(all(target_os = "linux", feature = "io_uring"))]
+            Writer::IoUring { batch } => batch.commit_file(do_fsync).map(|_| ()).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!("io_uring commit failed for {file_path:?}: {e}"),
+                )
+            }),
+        }
     }
 }
