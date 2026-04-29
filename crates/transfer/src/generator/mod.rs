@@ -28,6 +28,56 @@
 //! - [`engine::delta::DeltaSignatureIndex`] - Fast block lookup for delta generation
 //! - [`engine::signature`] - Signature reconstruction from wire format
 //! - [`protocol::wire`] - Wire format for signatures and deltas
+//!
+//! # Sender-side INC_RECURSE state machine
+//!
+//! When the sender advertises and negotiates `INC_RECURSE` (`'i'` capability),
+//! the file list is streamed as per-directory sub-segments rather than as one
+//! monolithic list. The send loop drives the following state machine:
+//!
+//! ```text
+//!   Idle -> ScanDir -> SendChunk -> WaitAck -> NextDir -> Done
+//!     ^                                          |
+//!     +------------------------------------------+
+//! ```
+//!
+//! - **Idle**: handshake complete, top-level entries enqueued.
+//! - **ScanDir**: walk one directory; produce a `PendingSegment`.
+//! - **SendChunk**: emit the segment via `send_file_list` /
+//!   `encode_and_send_segment`, throttled by `MIN_FILECNT_LOOKAHEAD`
+//!   (see `SegmentScheduler`).
+//! - **WaitAck**: process incoming NDX requests / signatures from the
+//!   receiver while the next segment is staged.
+//! - **NextDir**: advance the cursor; loop back to ScanDir.
+//! - **Done**: emit `NDX_FLIST_EOF` (`flist_eof_sent = true`) and proceed
+//!   to the goodbye phase.
+//!
+//! ## Upstream Reference
+//!
+//! - `flist.c:2192 send_file_list()` - top-level + initial segment dispatch.
+//! - `flist.c:send_extra_file_list()` - per-directory sub-segments,
+//!   `MIN_FILECNT_LOOKAHEAD` throttling, `NDX_FLIST_EOF` finalization.
+//! - `sender.c:199 send_files()` - main send loop, calls into segment
+//!   scheduling at the top and bottom of each iteration (lines ~227, ~261).
+//! - `generator.c:2226 generate_files()` - peer side that consumes the
+//!   segmented stream and drives signature/data exchange.
+//! - `receiver.c:522 recv_files()` - receiver-side counterpart to the
+//!   sender's segmented dispatch.
+//! - `compat.c:161 set_allow_inc_recurse()` - capability negotiation gate
+//!   (`allow_inc_recurse` is cleared when `!recurse || use_qsort` or when
+//!   the sender side cannot satisfy the segmentation contract).
+//!
+//! ## Current status
+//!
+//! The sender-side state machine and segment scheduler are implemented
+//! (see `IncrementalState`, `SegmentScheduler`, `PendingSegment`),
+//! but oc-rsync does NOT advertise the `'i'` capability when acting as
+//! sender. [`crate::setup::build_capability_string`] is
+//! invoked with `allow_inc_recurse = !is_sender`, so push transfers
+//! omit `'i'` from the capability string sent to the daemon. This is a
+//! deliberate, documented gate while sender-side interop is validated
+//! against upstream rsync 3.0.9 / 3.1.3 / 3.4.1; see task #1862.
+//! Pull transfers (oc-rsync as receiver) negotiate INC_RECURSE normally.
 
 mod delta;
 mod file_list;
