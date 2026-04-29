@@ -90,7 +90,7 @@ impl ServiceNotifier {
             return Ok(());
         }
 
-        sd_notify::notify(false, states)
+        sd_notify::notify(states)
     }
 }
 
