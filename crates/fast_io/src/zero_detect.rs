@@ -78,10 +78,6 @@ pub fn is_all_zeros(buf: &[u8]) -> bool {
     find_first_nonzero(buf) == buf.len()
 }
 
-// ---------------------------------------------------------------------------
-// Dispatch
-// ---------------------------------------------------------------------------
-
 type FindFn = fn(&[u8]) -> usize;
 
 static DISPATCH: OnceLock<FindFn> = OnceLock::new();
@@ -112,10 +108,7 @@ fn select_impl() -> FindFn {
     find_first_nonzero_scalar
 }
 
-// ---------------------------------------------------------------------------
-// Scalar fallback - processes 16 bytes at a time via u128
-// ---------------------------------------------------------------------------
-
+/// Scalar fallback - processes 16 bytes per iteration via `u128`.
 fn find_first_nonzero_scalar(buf: &[u8]) -> usize {
     let mut offset = 0;
     let mut iter = buf.chunks_exact(16);
@@ -138,10 +131,7 @@ fn find_first_nonzero_scalar(buf: &[u8]) -> usize {
     offset
 }
 
-// ---------------------------------------------------------------------------
-// x86/x86_64: AVX2 (32 bytes per iteration)
-// ---------------------------------------------------------------------------
-
+/// AVX2 implementation processing 32 bytes per iteration on x86/x86_64.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 fn find_first_nonzero_avx2(buf: &[u8]) -> usize {
     // SAFETY: Caller is only reached when AVX2 is detected at runtime.
@@ -188,10 +178,7 @@ unsafe fn find_first_nonzero_avx2_inner(buf: &[u8]) -> usize {
     }
 }
 
-// ---------------------------------------------------------------------------
-// x86/x86_64: SSE2 (16 bytes per iteration)
-// ---------------------------------------------------------------------------
-
+/// SSE2 implementation processing 16 bytes per iteration on x86/x86_64.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 fn find_first_nonzero_sse2(buf: &[u8]) -> usize {
     // SAFETY: Caller is only reached when SSE2 is detected at runtime.
@@ -233,10 +220,7 @@ unsafe fn find_first_nonzero_sse2_inner(buf: &[u8]) -> usize {
     }
 }
 
-// ---------------------------------------------------------------------------
-// aarch64: NEON (16 bytes per iteration)
-// ---------------------------------------------------------------------------
-
+/// NEON implementation processing 16 bytes per iteration on aarch64.
 #[cfg(target_arch = "aarch64")]
 fn find_first_nonzero_neon(buf: &[u8]) -> usize {
     // SAFETY: Caller is only reached when NEON is detected at runtime.
@@ -291,15 +275,9 @@ unsafe fn find_first_nonzero_neon_inner(buf: &[u8]) -> usize {
     offset + find_first_nonzero_scalar(&buf[offset..])
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // -- Basic API tests --
 
     #[test]
     fn zero_empty_buffer() {
@@ -364,8 +342,6 @@ mod tests {
         let buf = vec![0xAA; 128];
         assert_eq!(find_first_nonzero(&buf), 0);
     }
-
-    // -- Parity tests: all implementations must agree --
 
     #[test]
     fn zero_parity_scalar_vs_dispatch() {
@@ -486,8 +462,6 @@ mod tests {
             );
         }
     }
-
-    // -- Edge cases --
 
     #[test]
     fn zero_buffer_smaller_than_simd_width() {

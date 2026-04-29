@@ -7,10 +7,6 @@
 
 use fast_io::splice::{is_splice_available, recv_fd_to_file, try_splice_to_file};
 
-// ---------------------------------------------------------------------------
-// Cross-platform tests
-// ---------------------------------------------------------------------------
-
 #[test]
 fn splice_availability_is_deterministic() {
     // Repeated calls must return the same cached result.
@@ -33,10 +29,6 @@ fn recv_fd_returns_unsupported_on_non_unix() {
     let err = recv_fd_to_file(0, 0, 1024).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
 }
-
-// ---------------------------------------------------------------------------
-// Unix helpers (shared by macOS fallback tests and Linux tests)
-// ---------------------------------------------------------------------------
 
 /// Creates a Unix socketpair. The writer thread sends `content` then closes
 /// its end so the reader sees EOF. Returns `(recv_fd, join_handle)`.
@@ -80,10 +72,7 @@ fn assert_file_contents(dest: &mut tempfile::NamedTempFile, expected: &[u8]) {
     assert_eq!(buf, expected, "file content mismatch");
 }
 
-// ---------------------------------------------------------------------------
-// Unix fallback tests (run on all unix platforms including Linux)
-// ---------------------------------------------------------------------------
-
+/// Unix fallback tests (run on all unix platforms including Linux).
 #[cfg(unix)]
 mod fallback {
     use super::*;
@@ -189,10 +178,7 @@ mod fallback {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Linux-specific splice tests
-// ---------------------------------------------------------------------------
-
+/// Linux-specific splice tests.
 #[cfg(target_os = "linux")]
 mod linux_splice {
     use super::*;

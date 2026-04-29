@@ -105,6 +105,5 @@ mod tests {
     fn completion_port_drops_cleanly() {
         let port = CompletionPort::new(1).unwrap();
         drop(port);
-        // No panic = success
     }
 }

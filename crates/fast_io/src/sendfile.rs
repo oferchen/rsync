@@ -149,9 +149,7 @@ pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u
         if let Ok(n) = try_sendfile(source, dest_fd, length) {
             return Ok(n);
         }
-        // Fall through to read/write fallback
     }
-    // Fallback: read from source, write to fd
     copy_via_fd_write(source, dest_fd, length)
 }
 
@@ -213,16 +211,15 @@ fn try_sendfile(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
         let result = unsafe { libc::sendfile(dest_fd, src_fd, std::ptr::null_mut(), chunk) };
 
         if result < 0 {
-            let err = io::Error::last_os_error();
+            // First-chunk failure surfaces the error so the caller can fall back.
+            // Once any bytes have moved we return what was already sent so the
+            // socket peer sees a consistent prefix rather than a duplicated retry.
             if total == 0 {
-                // Failed on first chunk - return error to trigger fallback
-                return Err(err);
+                return Err(io::Error::last_os_error());
             }
-            // Partial transfer succeeded, but now we hit an error - return what we have
             return Ok(total);
         }
         if result == 0 {
-            // EOF reached
             break;
         }
 
@@ -263,11 +260,10 @@ fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64
         let to_read = (remaining as usize).min(buf.len());
         let n = reader.read(&mut buf[..to_read])?;
         if n == 0 {
-            // EOF reached
             break;
         }
 
-        // Write all bytes to the file descriptor, handling partial writes
+        // libc::write may return short, so loop until the chunk is drained.
         let mut written = 0;
         while written < n {
             // SAFETY: buf[written..n] is a valid slice, and dest_fd is assumed valid
@@ -303,11 +299,10 @@ fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64
         let to_read = (remaining as usize).min(buf.len());
         let n = reader.read(&mut buf[..to_read])?;
         if n == 0 {
-            // EOF reached
             break;
         }
 
-        // Write all bytes to the file descriptor, handling partial writes
+        // libc::write may return short, so loop until the chunk is drained.
         let mut written = 0;
         while written < n {
             // SAFETY: buf[written..n] is a valid slice, and dest_fd is assumed valid
@@ -363,7 +358,6 @@ fn copy_via_readwrite<W: Write>(
         let to_read = (remaining as usize).min(buf.len());
         let n = reader.read(&mut buf[..to_read])?;
         if n == 0 {
-            // EOF reached
             break;
         }
         destination.write_all(&buf[..n])?;
@@ -392,7 +386,6 @@ mod tests {
 
     #[test]
     fn test_send_to_writer_small_file() {
-        // Small file (< 64KB) should use read/write path directly
         let content = b"Hello, world! This is a small file for testing.";
         let source = create_temp_file(content).unwrap();
         let mut output = Vec::new();
@@ -406,8 +399,8 @@ mod tests {
 
     #[test]
     fn test_send_to_writer_large_file() {
-        // Large file (>= 64KB) should trigger sendfile attempt (but falls back for Vec)
-        let size = 128 * 1024; // 128KB
+        // Above SENDFILE_THRESHOLD; the Vec writer forces the read/write fallback.
+        let size = 128 * 1024;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
         let mut output = Vec::new();
@@ -421,7 +414,6 @@ mod tests {
 
     #[test]
     fn test_send_to_writer_empty_file() {
-        // Empty file should work without errors
         let content = b"";
         let source = create_temp_file(content).unwrap();
         let mut output = Vec::new();
@@ -434,7 +426,6 @@ mod tests {
 
     #[test]
     fn test_send_to_writer_exact_content() {
-        // Verify data integrity with specific pattern
         let content: Vec<u8> = (0..1000).map(|i| ((i * 7 + 13) % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
         let mut output = Vec::new();
@@ -448,7 +439,6 @@ mod tests {
 
     #[test]
     fn test_send_to_writer_partial() {
-        // Request fewer bytes than available
         let content = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         let source = create_temp_file(content).unwrap();
         let mut output = Vec::new();
@@ -461,7 +451,6 @@ mod tests {
 
     #[test]
     fn test_send_to_writer_beyond_eof() {
-        // Request more bytes than available - should stop at EOF
         let content = b"Short content";
         let source = create_temp_file(content).unwrap();
         let mut output = Vec::new();
@@ -474,15 +463,14 @@ mod tests {
 
     #[test]
     fn test_send_with_file_position() {
-        // Test that file position is respected
+        // sendfile uses the source's current offset; verify the wrapper preserves
+        // that contract instead of implicitly seeking to zero.
         let content = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         let mut source = create_temp_file(content).unwrap();
         let mut output = Vec::new();
 
-        // Seek source to position 10
         source.seek(SeekFrom::Start(10)).unwrap();
 
-        // Send 10 bytes from position 10
         let sent = send_file_to_writer(source.as_file(), &mut output, 10).unwrap();
 
         assert_eq!(sent, 10);
@@ -492,11 +480,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_send_file_to_fd_pipe() {
-        // Test sendfile to a pipe (should work on Linux)
         let content = b"Testing sendfile with pipe on Linux";
         let source = create_temp_file(content).unwrap();
 
-        // Create a pipe for testing
         let mut pipe_fds = [0i32; 2];
         let result = unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
         assert_eq!(result, 0, "Failed to create pipe");
@@ -504,16 +490,13 @@ mod tests {
         let read_fd = pipe_fds[0];
         let write_fd = pipe_fds[1];
 
-        // Send data through sendfile to pipe
         let sent = send_file_to_fd(source.as_file(), write_fd, content.len() as u64);
 
-        // Close write end
         unsafe { libc::close(write_fd) };
 
         if let Ok(sent_bytes) = sent {
             assert_eq!(sent_bytes, content.len() as u64);
 
-            // Read from pipe to verify content
             let mut received = vec![0u8; content.len()];
             let n = unsafe {
                 libc::read(
@@ -526,18 +509,17 @@ mod tests {
             assert_eq!(received, content);
         }
 
-        // Close read end
         unsafe { libc::close(read_fd) };
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn test_send_file_to_fd_socketpair() {
-        // Test sendfile to a socket (ideal use case)
+        // socketpair is the canonical sendfile destination - exercises the
+        // kernel's zero-copy fast path rather than the read/write fallback.
         let content = b"Testing sendfile with socketpair";
         let source = create_temp_file(content).unwrap();
 
-        // Create a socket pair for testing
         let mut socket_fds = [0i32; 2];
         let result = unsafe {
             libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
@@ -547,15 +529,11 @@ mod tests {
         let recv_fd = socket_fds[0];
         let send_fd = socket_fds[1];
 
-        // Send data through sendfile to socket
         let sent = send_file_to_fd(source.as_file(), send_fd, content.len() as u64).unwrap();
-
         assert_eq!(sent, content.len() as u64);
 
-        // Close send end to signal EOF
         unsafe { libc::close(send_fd) };
 
-        // Read from socket to verify content
         let mut received = vec![0u8; content.len()];
         let n = unsafe {
             libc::read(
@@ -567,7 +545,6 @@ mod tests {
         assert_eq!(n, content.len() as isize);
         assert_eq!(received, content);
 
-        // Close receive end
         unsafe { libc::close(recv_fd) };
     }
 
@@ -576,12 +553,10 @@ mod tests {
     fn test_send_file_to_fd_large() {
         use std::thread;
 
-        // Test large file transfer via sendfile
-        let size = 512 * 1024; // 512KB - well above threshold
+        let size = 512 * 1024; // 512KB - exceeds SENDFILE_THRESHOLD
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let source = create_temp_file(&content).unwrap();
 
-        // Create a pipe for testing
         let mut pipe_fds = [0i32; 2];
         let result = unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
         assert_eq!(result, 0, "Failed to create pipe");
@@ -589,7 +564,8 @@ mod tests {
         let read_fd = pipe_fds[0];
         let write_fd = pipe_fds[1];
 
-        // Spawn reader thread to avoid pipe buffer deadlock
+        // 512KB exceeds the default 64KB pipe buffer, so we must drain it from
+        // another thread to avoid blocking the sender.
         let expected_content = content.clone();
         let reader_thread = thread::spawn(move || {
             let mut received = Vec::new();
@@ -607,18 +583,14 @@ mod tests {
             received
         });
 
-        // Send data through sendfile (main thread)
         let sent = send_file_to_fd(source.as_file(), write_fd, size as u64);
 
-        // Close write end to signal EOF to reader
         unsafe { libc::close(write_fd) };
 
-        // Verify send succeeded
         assert!(sent.is_ok(), "sendfile should succeed");
         let sent_bytes = sent.unwrap();
         assert_eq!(sent_bytes, size as u64);
 
-        // Wait for reader and verify content
         let received = reader_thread.join().expect("reader thread should succeed");
         assert_eq!(received.len(), expected_content.len());
         assert_eq!(received, expected_content);
