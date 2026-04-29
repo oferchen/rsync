@@ -100,7 +100,6 @@ impl BlockHashTable {
         let tag_table = TagTable::new(&blocks);
         let mut table = FxHashMap::default();
 
-        // Build hash table with chaining
         for (idx, block) in blocks.iter().enumerate() {
             table
                 .entry(block.checksum)
@@ -118,13 +117,11 @@ impl BlockHashTable {
 
     /// Build a hash table with pre-sorted blocks (enables sequential scan optimization).
     pub fn new_sorted(mut blocks: Vec<BlockEntry>) -> Self {
-        // Sort blocks by rolling checksum
         blocks.sort_by_key(|b| b.checksum);
 
         let tag_table = TagTable::new(&blocks);
         let mut table = FxHashMap::default();
 
-        // Build hash table with chaining
         for (idx, block) in blocks.iter().enumerate() {
             table
                 .entry(block.checksum)
@@ -144,12 +141,10 @@ impl BlockHashTable {
     /// Returns indices into the blocks array.
     /// Uses tag table for O(1) rejection of non-matches.
     pub fn find_weak_matches(&self, checksum: u32) -> &[usize] {
-        // First check tag table for quick rejection
         if !self.tag_table.might_match(checksum) {
             return &[];
         }
 
-        // Look up in hash table
         self.table
             .get(&checksum)
             .map(|v| v.as_slice())
@@ -172,10 +167,8 @@ impl BlockHashTable {
     /// 2. Rolling checksum match
     /// 3. Strong checksum verification
     pub fn find_match(&self, rolling_checksum: u32, strong_checksum: &[u8]) -> Option<&BlockEntry> {
-        // Get weak matches (includes tag table check)
         let weak_matches = self.find_weak_matches(rolling_checksum);
 
-        // Verify each weak match against strong checksum
         for &block_idx in weak_matches {
             if let Some(block) = self.verify_match(block_idx, strong_checksum) {
                 return Some(block);
@@ -316,7 +309,6 @@ mod tests {
         assert!(!table.is_empty());
         assert!(table.is_sorted());
 
-        // Verify blocks are actually sorted
         for i in 1..table.blocks.len() {
             assert!(table.blocks[i - 1].checksum <= table.blocks[i].checksum);
         }
@@ -467,24 +459,23 @@ mod tests {
             },
             BlockEntry {
                 index: 1,
-                checksum: 0x12345678, // Same rolling checksum
+                checksum: 0x12345678,
                 strong_checksum: vec![0xbb, 0xbb],
                 block_len: 4096,
             },
             BlockEntry {
                 index: 2,
-                checksum: 0x12345678, // Same rolling checksum
+                checksum: 0x12345678,
                 strong_checksum: vec![0xcc, 0xcc],
                 block_len: 4096,
             },
         ];
         let table = BlockHashTable::new(blocks);
 
-        // Should find all weak matches
         let weak_matches = table.find_weak_matches(0x12345678);
         assert_eq!(weak_matches.len(), 3);
 
-        // Should find the correct block by strong checksum
+        // Strong checksum disambiguates the colliding rolling checksums.
         let matched = table.find_match(0x12345678, &[0xbb, 0xbb]);
         assert!(matched.is_some());
         assert_eq!(matched.unwrap().index, 1);
@@ -516,21 +507,19 @@ mod tests {
 
         assert_eq!(table.len(), 10000);
 
-        // Verify we can find specific blocks
         let matched = table.find_match(5000 * 1000, &[(5000 >> 8) as u8, (5000 & 0xFF) as u8]);
         assert!(matched.is_some());
         assert_eq!(matched.unwrap().index, 5000);
 
-        // Verify non-existent block returns None
         let not_matched = table.find_match(0xFFFFFFFF, &[0xFF, 0xFF]);
         assert!(not_matched.is_none());
 
-        // Test sorted variant with large block set
         let mut blocks2 = Vec::new();
         for i in 0..10000 {
             blocks2.push(BlockEntry {
                 index: i,
-                checksum: (10000 - i) * 1000, // Reverse order
+                // Insert in reverse order to exercise the sorted constructor.
+                checksum: (10000 - i) * 1000,
                 strong_checksum: vec![(i >> 8) as u8, (i & 0xFF) as u8],
                 block_len: 4096,
             });
@@ -540,7 +529,6 @@ mod tests {
         assert_eq!(table_sorted.len(), 10000);
         assert!(table_sorted.is_sorted());
 
-        // Verify we can still find blocks after sorting
         let matched =
             table_sorted.find_match(5000 * 1000, &[(5000 >> 8) as u8, (5000 & 0xFF) as u8]);
         assert!(matched.is_some());
