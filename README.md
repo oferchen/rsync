@@ -32,7 +32,28 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
 | **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
 | **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
-| **Platforms** | Linux, macOS (full); Windows (partial - no ACLs/xattrs) |
+| **Platforms** | Linux, macOS (full); Windows (partial - no ACLs/xattrs/symlinks/devices) |
+
+### Platform Support
+
+The primary platform is Linux. macOS is well-supported with parity for all metadata, ACL, and xattr features. Windows builds and runs core transfer modes, but several POSIX-specific features are stubbed; ongoing work targets Windows ACL preservation (#1866), Windows xattr (alternate data stream) preservation (#1867), and wiring IOCP into the transfer pipeline (#1868).
+
+| Feature | Linux | macOS | Windows | Notes |
+|---------|:-----:|:-----:|:-------:|-------|
+| Permissions (`-p`) | ✓ | ✓ | ⚠ | Windows preserves only the read-only flag; POSIX mode bits are not applicable. |
+| Times (`-t`) | ✓ | ✓ | ✓ | Nanosecond precision via the `filetime` crate on all platforms. |
+| File ownership (`-o`/`-g`, uid/gid) | ✓ | ✓ | ✗ | `apply_ownership_from_entry` is a no-op on non-Unix; uid/gid mapping is Unix-only. |
+| ACLs (`-A`) | ✓ | ✓ | ✗ | Uses `exacl` on Linux/macOS/FreeBSD; Windows falls through to a no-op stub with a one-time warning (see #1866). |
+| Extended attributes (`-X`) | ✓ | ✓ | ✗ | Wired only behind `cfg(all(unix, feature = "xattr"))`; non-Unix uses a no-op stub with a one-time warning (see #1867). |
+| Hardlinks (`-H`) | ✓ | ✓ | ✓ | Uses portable `std::fs::hard_link`; works on NTFS. |
+| Symbolic links | ✓ | ✓ | ✗ | `create_symlinks` is `cfg(not(unix))` no-op; symlink entries are skipped on Windows. |
+| Devices/specials (`-D`) | ✓ | ✓ | ✗ | `create_fifo` and `create_device_node` are no-ops on non-Unix. |
+| Sparse files (`-S`) | ✓ | ✓ | ⚠ | Uses portable `seek` + `set_len`; depends on filesystem (NTFS supports sparse but is not explicitly marked via `FSCTL_SET_SPARSE`). |
+| Async I/O backend | ✓ io_uring | ⚠ standard I/O | ⚠ IOCP compiled, not wired | io_uring runtime-detected on Linux 5.6+; IOCP is implemented in `fast_io` but not yet consumed by the transfer pipeline (#1868). |
+| Reflink / clone copy | ✓ FICLONE | ✓ clonefile | ⚠ ReFS reflink | Linux Btrfs/XFS/bcachefs via `FICLONE`; macOS via `clonefile`; Windows via `FSCTL_DUPLICATE_EXTENTS_TO_FILE` (ReFS only). |
+| Optimized file copy | ✓ `copy_file_range` | ✓ `fcopyfile` | ✓ `CopyFileExW` | All three are wired into the local-copy executor with standard-I/O fallback. |
+
+Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
 ### What's New (v0.6.0)
 

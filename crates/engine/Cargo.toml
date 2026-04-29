@@ -144,3 +144,7 @@ harness = false
 [[bench]]
 name = "buffer_pool_contention"
 harness = false
+
+[[bench]]
+name = "reorder_buffer_scaling"
+harness = false
