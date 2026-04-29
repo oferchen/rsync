@@ -332,24 +332,22 @@ impl Write for IoUringWriter {
             return Ok(0);
         }
 
-        // If data fits in buffer, just copy it
         if self.buffer_pos + buf.len() <= self.buffer_size {
             self.buffer[self.buffer_pos..self.buffer_pos + buf.len()].copy_from_slice(buf);
             self.buffer_pos += buf.len();
             return Ok(buf.len());
         }
 
-        // Flush current buffer
         self.flush_buffer()?;
 
-        // If data is larger than buffer, write directly using batched path
+        // Bypass internal buffer when data is at least one full chunk: a single
+        // batched submission is cheaper than copy-then-flush.
         if buf.len() >= self.buffer_size {
             self.write_all_batched(buf, self.bytes_written)?;
             self.bytes_written += buf.len() as u64;
             return Ok(buf.len());
         }
 
-        // Otherwise, buffer the data
         self.buffer[..buf.len()].copy_from_slice(buf);
         self.buffer_pos = buf.len();
         Ok(buf.len())
@@ -412,7 +410,6 @@ impl Seek for IoUringWriter {
 
 impl Drop for IoUringWriter {
     fn drop(&mut self) {
-        // Best-effort flush on drop
         let _ = self.flush_buffer();
     }
 }
