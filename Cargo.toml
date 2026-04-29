@@ -195,7 +195,7 @@ dashmap = "6.1"
 # Async trait compat for russh client::Handler (russh uses #[async_trait])
 async-trait = "0.1"
 # Pure-Rust SSH client - embedded SSH transport alternative to system ssh binary
-russh = "0.45"
+russh = "0.60"
 russh-keys = "0.45"
 # SSH key parsing and manipulation
 ssh-key = { version = "0.6", features = ["std"] }
