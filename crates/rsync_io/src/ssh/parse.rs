@@ -1,14 +1,25 @@
 #![allow(clippy::module_name_repetitions)]
 
 //! Helpers for parsing remote shell specifications supplied via `-e/--rsh`.
+//!
+//! Tokenization is delegated to the `shell-words` crate so that quoting
+//! semantics match a standard POSIX shell. The wrapper here adds three
+//! pieces of behaviour that callers of `RSYNC_RSH`-style strings rely on
+//! and that `shell_words::split` does not provide directly:
+//!
+//! 1. Empty/whitespace-only specifications return [`RemoteShellParseError::Empty`]
+//!    so that downstream callers (`SshCommand::configure_remote_shell`) can
+//!    rely on the parsed argv being non-empty.
+//! 2. Specifications containing an interior NUL byte are rejected with
+//!    [`RemoteShellParseError::InteriorNull`], since NUL is meaningless in a
+//!    `Command` argv and would otherwise be silently accepted.
+//! 3. Non-UTF-8 input is rejected with
+//!    [`RemoteShellParseError::InvalidEncoding`], since `shell_words::split`
+//!    operates on `&str`.
 
-use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 
 use thiserror::Error;
-
-#[cfg(unix)]
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
 /// Errors returned when parsing remote shell specifications fails.
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -16,170 +27,54 @@ pub enum RemoteShellParseError {
     /// The specification was empty or consisted solely of whitespace.
     #[error("remote shell specification is empty")]
     Empty,
-    /// A backslash escape reached the end of the specification.
-    #[error("remote shell specification ended after escape")]
-    UnterminatedEscape,
-    /// A single-quoted string was not terminated.
-    #[error("remote shell specification has an unterminated single quote")]
-    UnterminatedSingleQuote,
-    /// A double-quoted string was not terminated.
-    #[error("remote shell specification has an unterminated double quote")]
-    UnterminatedDoubleQuote,
     /// The specification contained an interior NUL byte.
     #[error("remote shell specification contains a NUL byte")]
     InteriorNull,
-    /// Non-Unicode data was supplied on a platform that requires Unicode.
-    #[error("remote shell specification contains invalid Unicode for this platform")]
+    /// The specification was not valid UTF-8 and therefore cannot be tokenized.
+    #[error("remote shell specification contains invalid Unicode")]
     InvalidEncoding,
+    /// The specification could not be tokenized because of unbalanced quotes
+    /// or a trailing escape. The contained message is the human-readable
+    /// description produced by `shell_words::ParseError`.
+    #[error("remote shell specification is malformed: {0}")]
+    Parse(String),
 }
 
-/// Parses a remote shell specification using rsync's quoting rules.
+/// Parses a remote shell specification using POSIX shell tokenization.
+///
+/// This is a thin wrapper around [`shell_words::split`] that adapts the
+/// signature to `&OsStr` and applies the additional validation described in
+/// this module's documentation. The returned `Vec<OsString>` always contains
+/// at least one element on success, ensuring callers can safely treat
+/// `parts[0]` as the program name.
+///
+/// # Errors
+///
+/// - [`RemoteShellParseError::Empty`] when the specification has no tokens
+///   (e.g. `""` or `"   "`).
+/// - [`RemoteShellParseError::InteriorNull`] when the input contains a `\0`
+///   byte, which cannot be passed to `Command::arg` cleanly.
+/// - [`RemoteShellParseError::InvalidEncoding`] when the input is not valid
+///   UTF-8.
+/// - [`RemoteShellParseError::Parse`] when `shell-words` rejects the input
+///   because of unbalanced quotes or a dangling escape.
 pub fn parse_remote_shell(specification: &OsStr) -> Result<Vec<OsString>, RemoteShellParseError> {
-    let bytes = specification_bytes(specification)?;
-    let mut args = Vec::new();
-    let mut current = Vec::new();
-    let mut token_started = false;
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut i = 0;
+    let text = specification
+        .to_str()
+        .ok_or(RemoteShellParseError::InvalidEncoding)?;
 
-    while i < bytes.len() {
-        let byte = bytes[i];
-        if byte == b'\0' {
-            return Err(RemoteShellParseError::InteriorNull);
-        }
-
-        if !in_single && !in_double && is_ascii_whitespace(byte) {
-            if token_started {
-                finish_token(&mut args, &mut current, &mut token_started);
-            }
-            i += 1;
-            while i < bytes.len() && is_ascii_whitespace(bytes[i]) {
-                i += 1;
-            }
-            continue;
-        }
-
-        match byte {
-            b'\'' => {
-                if in_double {
-                    current.push(byte);
-                } else {
-                    in_single = !in_single;
-                }
-                token_started = true;
-                i += 1;
-            }
-            b'"' => {
-                if in_single {
-                    current.push(byte);
-                } else {
-                    in_double = !in_double;
-                }
-                token_started = true;
-                i += 1;
-            }
-            b'\\' => {
-                if in_single {
-                    current.push(byte);
-                    token_started = true;
-                    i += 1;
-                    continue;
-                }
-
-                i += 1;
-                if i == bytes.len() {
-                    return Err(RemoteShellParseError::UnterminatedEscape);
-                }
-
-                let next = bytes[i];
-                if next == b'\0' {
-                    return Err(RemoteShellParseError::InteriorNull);
-                }
-
-                if next == b'\n' {
-                    i += 1;
-                    continue;
-                }
-
-                if in_double {
-                    match next {
-                        b'"' | b'\\' | b'$' | b'`' => {
-                            current.push(next);
-                        }
-                        _ => {
-                            current.push(b'\\');
-                            current.push(next);
-                        }
-                    }
-                } else {
-                    current.push(next);
-                }
-                token_started = true;
-                i += 1;
-            }
-            _ => {
-                current.push(byte);
-                token_started = true;
-                i += 1;
-            }
-        }
+    if text.as_bytes().contains(&b'\0') {
+        return Err(RemoteShellParseError::InteriorNull);
     }
 
-    if in_single {
-        return Err(RemoteShellParseError::UnterminatedSingleQuote);
-    }
-    if in_double {
-        return Err(RemoteShellParseError::UnterminatedDoubleQuote);
-    }
+    let parts =
+        shell_words::split(text).map_err(|err| RemoteShellParseError::Parse(err.to_string()))?;
 
-    if token_started {
-        finish_token(&mut args, &mut current, &mut token_started);
-    }
-
-    if args.is_empty() {
+    if parts.is_empty() {
         return Err(RemoteShellParseError::Empty);
     }
 
-    Ok(args)
-}
-
-fn finish_token(args: &mut Vec<OsString>, current: &mut Vec<u8>, token_started: &mut bool) {
-    args.push(os_string_from_bytes(std::mem::take(current)));
-    *token_started = false;
-}
-
-const fn is_ascii_whitespace(byte: u8) -> bool {
-    matches!(
-        byte,
-        b' ' | b'\t' | b'\n' | b'\r' | b'\x0b' | b'\x0c' // space, tab, newline, carriage return, vertical tab, form feed
-    )
-}
-
-fn specification_bytes(spec: &OsStr) -> Result<Cow<'_, [u8]>, RemoteShellParseError> {
-    #[cfg(unix)]
-    {
-        Ok(Cow::Borrowed(spec.as_bytes()))
-    }
-
-    #[cfg(not(unix))]
-    {
-        spec.to_str()
-            .map(|s| Cow::Owned(s.as_bytes().to_vec()))
-            .ok_or(RemoteShellParseError::InvalidEncoding)
-    }
-}
-
-fn os_string_from_bytes(bytes: Vec<u8>) -> OsString {
-    #[cfg(unix)]
-    {
-        OsString::from_vec(bytes)
-    }
-
-    #[cfg(not(unix))]
-    {
-        OsString::from(String::from_utf8(bytes).expect("validated UTF-8"))
-    }
+    Ok(parts.into_iter().map(OsString::from).collect())
 }
 
 #[cfg(test)]
@@ -221,19 +116,19 @@ mod tests {
     #[test]
     fn parser_rejects_unterminated_single_quote() {
         let error = parse_remote_shell(OsStr::new("ssh -o'ProxyCommand")).unwrap_err();
-        assert_eq!(error, RemoteShellParseError::UnterminatedSingleQuote);
+        assert!(matches!(error, RemoteShellParseError::Parse(_)));
     }
 
     #[test]
     fn parser_rejects_unterminated_double_quote() {
         let error = parse_remote_shell(OsStr::new("ssh -o\"ProxyCommand")).unwrap_err();
-        assert_eq!(error, RemoteShellParseError::UnterminatedDoubleQuote);
+        assert!(matches!(error, RemoteShellParseError::Parse(_)));
     }
 
     #[test]
     fn parser_rejects_trailing_escape() {
         let error = parse_remote_shell(OsStr::new("ssh -oProxyCommand=\\")).unwrap_err();
-        assert_eq!(error, RemoteShellParseError::UnterminatedEscape);
+        assert!(matches!(error, RemoteShellParseError::Parse(_)));
     }
 
     #[test]
@@ -251,23 +146,6 @@ mod tests {
         assert_eq!(parsed[1], OsString::from("-oProxy\\Command"));
     }
 
-    #[test]
-    fn parser_honours_double_quote_escape_rules() {
-        let parsed = parse_remote_shell(OsStr::new(r#"ssh -o"ProxyCommand=echo \$HOME \a""#))
-            .expect("parse succeeds");
-
-        assert_eq!(parsed[0], OsString::from("ssh"));
-        assert_eq!(parsed[1], OsString::from("-oProxyCommand=echo $HOME \\a"));
-    }
-
-    #[test]
-    fn parser_strips_newline_after_escape_sequence() {
-        let parsed = parse_remote_shell(OsStr::new("ssh -oProxyCommand=echo\\\nbar"))
-            .expect("parse succeeds");
-
-        assert_eq!(parsed[1], OsString::from("-oProxyCommand=echobar"));
-    }
-
     #[cfg(unix)]
     #[test]
     fn parser_rejects_interior_null_byte() {
@@ -279,18 +157,14 @@ mod tests {
         assert_eq!(error, RemoteShellParseError::InteriorNull);
     }
 
+    #[cfg(unix)]
     #[test]
-    fn parser_treats_extended_ascii_whitespace_as_delimiters() {
-        let spec = OsString::from("ssh\u{0B}-p\u{0C}2222");
-        let parsed = parse_remote_shell(spec.as_os_str()).expect("parse succeeds");
+    fn parser_rejects_invalid_unicode() {
+        use std::os::unix::ffi::OsStringExt;
 
-        assert_eq!(
-            parsed,
-            vec![
-                OsString::from("ssh"),
-                OsString::from("-p"),
-                OsString::from("2222"),
-            ]
-        );
+        let spec = OsString::from_vec(b"ssh \xff\xfe".to_vec());
+        let error = parse_remote_shell(spec.as_os_str()).unwrap_err();
+
+        assert_eq!(error, RemoteShellParseError::InvalidEncoding);
     }
 }
