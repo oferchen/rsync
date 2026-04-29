@@ -86,11 +86,11 @@ impl DeltaSignatureIndex {
             return None;
         }
 
-        // Key is (sum1, sum2) - all candidates have block_length
         let key = (digest.sum1(), digest.sum2());
         let candidates = self.lookup.get(&key)?;
 
-        // Use parallel matching for many candidates (strong checksum is CPU-intensive)
+        // Strong checksum is CPU-intensive; parallelise only when there are
+        // enough candidates to amortise rayon's per-call overhead.
         #[cfg(feature = "parallel")]
         if candidates.len() >= Self::PARALLEL_THRESHOLD {
             return self.find_match_parallel(candidates, window);
@@ -240,12 +240,10 @@ impl DeltaSignatureIndex {
         if block.len() != self.block_length {
             return false;
         }
-        // Cheap: compare rolling checksum first
         let block_digest = block.rolling();
         if digest.sum1() != block_digest.sum1() || digest.sum2() != block_digest.sum2() {
             return false;
         }
-        // Expensive: verify with strong checksum
         let strong = self
             .algorithm
             .compute_truncated_slices(first, second, self.strong_length);

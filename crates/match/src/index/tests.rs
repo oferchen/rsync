@@ -184,7 +184,6 @@ fn find_match_bytes_wrong_length_returns_none() {
         DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index");
 
     let digest = index.block(0).rolling();
-    // Window with wrong length
     let window = vec![b'a'; index.block_length() - 1];
     assert!(index.find_match_bytes(digest, &window).is_none());
 }
@@ -205,7 +204,6 @@ fn find_match_bytes_no_match_returns_none() {
         DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index");
 
     let digest = index.block(0).rolling();
-    // Window with right length but different content
     let window = vec![b'z'; index.block_length()];
     assert!(index.find_match_bytes(digest, &window).is_none());
 }
@@ -228,7 +226,6 @@ fn find_match_window_wrong_length_returns_none() {
     let digest = index.block(0).rolling();
     let mut window = VecDeque::new();
     let mut scratch = Vec::new();
-    // Add fewer bytes than block length
     for _ in 0..index.block_length() - 1 {
         window.push_back(b'a');
     }
@@ -245,20 +242,18 @@ fn find_match_window_wrong_length_returns_none() {
 /// collisions in the hash table, verifying the strong checksum disambiguates.
 #[test]
 fn find_match_bytes_uses_strong_checksum_for_collision() {
-    // Create data with two identical-content blocks - they'll have same rolling checksum
-    // but the lookup should still work correctly.
+    // Block 0 and block 2 share the same content (and therefore the same
+    // rolling checksum); block 1 carries a distinct pattern. The lookup must
+    // still resolve each block correctly via the strong checksum.
     let block_size = 700usize;
     let mut data = vec![0u8; block_size * 3];
 
-    // Block 0: pattern A
     for (i, byte) in data[..block_size].iter_mut().enumerate() {
         *byte = (i % 256) as u8;
     }
-    // Block 1: pattern B (different from A)
     for (i, byte) in data[block_size..2 * block_size].iter_mut().enumerate() {
         *byte = ((i + 128) % 256) as u8;
     }
-    // Block 2: pattern A again (same as block 0)
     for (i, byte) in data[2 * block_size..].iter_mut().enumerate() {
         *byte = (i % 256) as u8;
     }
@@ -275,21 +270,19 @@ fn find_match_bytes_uses_strong_checksum_for_collision() {
     let index =
         DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index");
 
-    // Verify block 0 matches with its own content
     let block0_digest = index.block(0).rolling();
     let block0_window: Vec<u8> = data[..index.block_length()].to_vec();
     let found0 = index.find_match_bytes(block0_digest, &block0_window);
     assert!(found0.is_some(), "block 0 should match");
 
-    // Verify block 1 matches with its own content
     let block1_digest = index.block(1).rolling();
     let block1_start = index.block_length();
     let block1_window: Vec<u8> = data[block1_start..block1_start + index.block_length()].to_vec();
     let found1 = index.find_match_bytes(block1_digest, &block1_window);
     assert!(found1.is_some(), "block 1 should match");
 
-    // Use block 0's digest with block 1's content - should not match
-    // (same rolling checksum lookup, but strong checksum differs)
+    // Same rolling-checksum lookup key, but different content: the strong
+    // checksum disambiguates and rejects the false positive.
     let no_match = index.find_match_bytes(block0_digest, &block1_window);
     assert!(
         no_match.is_none(),
@@ -299,7 +292,6 @@ fn find_match_bytes_uses_strong_checksum_for_collision() {
 
 #[test]
 fn rebuild_reuses_allocation() {
-    // Build an index from a first signature.
     let data1 = vec![b'a'; 2048];
     let params1 = SignatureLayoutParams::new(
         data1.len() as u64,
@@ -315,7 +307,6 @@ fn rebuild_reuses_allocation() {
 
     let capacity_before = index.lookup.capacity();
 
-    // Build a second, different signature.
     let data2 = vec![b'b'; 3000];
     let params2 = SignatureLayoutParams::new(
         data2.len() as u64,
@@ -327,23 +318,20 @@ fn rebuild_reuses_allocation() {
     let sig2 =
         generate_file_signature(data2.as_slice(), layout2, SignatureAlgorithm::Md4).expect("sig2");
 
-    // Rebuild the index in-place.
     let has_full = index.rebuild(&sig2, SignatureAlgorithm::Md4);
     assert!(has_full, "second signature should have full blocks");
 
-    // The lookup table allocation must not have shrunk.
+    // The lookup-table allocation must be reused, not shrunk, after rebuild.
     assert!(
         index.lookup.capacity() >= capacity_before,
         "capacity should be preserved across rebuild"
     );
 
-    // Verify the lookup is correct: a match against the second data must work.
     let digest = index.block(0).rolling();
     let window = vec![b'b'; index.block_length()];
     let found = index.find_match_bytes(digest, &window);
     assert!(found.is_some(), "should find a match after rebuild");
 
-    // And the old data must no longer match.
     let old_window = vec![b'a'; index.block_length()];
     let old_found = index.find_match_bytes(digest, &old_window);
     assert!(

@@ -72,12 +72,10 @@ impl FuzzyMatcher {
 
         let mut best_match: Option<FuzzyMatch> = None;
 
-        // Search destination directory (always done for level 1 and 2)
         if let Some(m) = search_directory(dest_dir, &target_name_str, target_size, self.min_score) {
             update_best_match(&mut best_match, m, self.min_score);
         }
 
-        // Search additional fuzzy basis directories (only for level 2)
         if self.fuzzy_level >= FUZZY_LEVEL_2 {
             for basis_dir in &self.fuzzy_basis_dirs {
                 if let Some(m) =
@@ -112,7 +110,6 @@ fn search_directory(
     for entry in entries.flatten() {
         let path = entry.path();
 
-        // Skip directories and non-regular files
         let metadata = match entry.metadata() {
             Ok(m) if m.is_file() => m,
             _ => continue,
@@ -123,7 +120,8 @@ fn search_directory(
             None => continue,
         };
 
-        // Don't match the exact same name (that's not fuzzy)
+        // Skip the exact-name match: fuzzy matching only fires when no
+        // identically-named file exists in the destination.
         if candidate_name == target_name {
             continue;
         }
@@ -180,7 +178,8 @@ mod tests {
 
         #[test]
         fn default_trait() {
-            // Default derive uses 0 for fuzzy_level
+            // Derived Default leaves both fields at 0; FuzzyMatcher::new() is
+            // the supported way to obtain a usable level-1 matcher.
             let matcher = FuzzyMatcher::default();
             assert_eq!(matcher.fuzzy_level(), 0);
             assert_eq!(matcher.min_score(), 0);
@@ -230,10 +229,10 @@ mod tests {
 
         #[test]
         fn level_2_skips_basis_dirs_without_config() {
-            // Even with level 2, if no basis dirs configured, only search dest
+            // Level 2 without configured basis dirs degenerates to level 1
+            // behaviour (search the destination directory only).
             let matcher = FuzzyMatcher::with_level(2);
             assert!(matcher.fuzzy_basis_dirs.is_empty());
-            // This is correct behavior - level 2 without basis dirs acts like level 1
         }
     }
 

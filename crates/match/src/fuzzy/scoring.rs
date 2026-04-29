@@ -77,24 +77,19 @@ pub fn compute_similarity_score(
 ) -> u32 {
     let mut score: u32 = 0;
 
-    // Extract extensions
     let (target_base, target_ext) = split_name_extension(target);
     let (candidate_base, candidate_ext) = split_name_extension(candidate);
 
-    // Extension match bonus
     if target_ext == candidate_ext && !target_ext.is_empty() {
         score += EXTENSION_MATCH_BONUS;
     }
 
-    // Common prefix length (on base name)
     let prefix_len = common_prefix_length(target_base, candidate_base);
     score += prefix_len as u32 * PREFIX_MATCH_POINTS;
 
-    // Common suffix length (on base name, excluding extension)
     let suffix_len = common_suffix_length(target_base, candidate_base);
     score += suffix_len as u32 * SUFFIX_MATCH_POINTS;
 
-    // Size similarity bonus
     if target_size > 0 && candidate_size > 0 {
         let size_ratio = if target_size >= candidate_size {
             candidate_size as f64 / target_size as f64
@@ -102,8 +97,8 @@ pub fn compute_similarity_score(
             target_size as f64 / candidate_size as f64
         };
 
-        // Bonus if sizes are within 50% of each other (ratio >= 0.5)
-        // This mirrors upstream rsync's size similarity heuristic
+        // upstream rsync's size-similarity heuristic: award a bonus when
+        // sizes are within 50% of each other (ratio >= 0.5).
         if size_ratio >= 0.5 {
             score += SIZE_SIMILARITY_BONUS;
         }
@@ -157,7 +152,7 @@ fn common_prefix_length(a: &str, b: &str) -> usize {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
 
-    // Fast path: compare bytes directly for ASCII
+    // Fast path: byte-wise compare; ASCII filenames hit this branch.
     let min_len = a_bytes.len().min(b_bytes.len());
     let mut common_bytes = 0;
 
@@ -168,11 +163,12 @@ fn common_prefix_length(a: &str, b: &str) -> usize {
         common_bytes = i + 1;
     }
 
-    // If we're at a UTF-8 boundary on both sides, count chars in the prefix
+    // If the byte-prefix lands on a UTF-8 boundary in both strings the char
+    // count is exact; otherwise fall back to a Unicode-aware comparison so we
+    // never split a multibyte sequence.
     if a.is_char_boundary(common_bytes) && b.is_char_boundary(common_bytes) {
         a[..common_bytes].chars().count()
     } else {
-        // Fallback: count matching Unicode chars
         a.chars()
             .zip(b.chars())
             .take_while(|(ca, cb)| ca == cb)
@@ -201,7 +197,7 @@ fn common_suffix_length(a: &str, b: &str) -> usize {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
 
-    // Fast path: compare bytes directly from the end for ASCII
+    // Fast path: byte-wise compare from the tail; ASCII filenames hit this branch.
     let min_len = a_bytes.len().min(b_bytes.len());
     let mut common_bytes = 0;
 
@@ -214,13 +210,13 @@ fn common_suffix_length(a: &str, b: &str) -> usize {
         common_bytes = i + 1;
     }
 
-    // If we're at a UTF-8 boundary on both sides, count chars in the suffix
     let a_start = a_bytes.len() - common_bytes;
     let b_start = b_bytes.len() - common_bytes;
     if a.is_char_boundary(a_start) && b.is_char_boundary(b_start) {
         a[a_start..].chars().count()
     } else {
-        // Fallback: count matching Unicode chars from the end
+        // Byte-suffix straddles a multibyte sequence; fall back to a
+        // Unicode-aware reverse comparison.
         a.chars()
             .rev()
             .zip(b.chars().rev())
@@ -292,7 +288,7 @@ mod tests {
 
         #[test]
         fn partial_match() {
-            assert_eq!(common_suffix_length("testing", "running"), 3); // "ing"
+            assert_eq!(common_suffix_length("testing", "running"), 3);
         }
 
         #[test]
@@ -307,7 +303,7 @@ mod tests {
 
         #[test]
         fn extension_like() {
-            assert_eq!(common_suffix_length("file.txt", "data.txt"), 4); // ".txt"
+            assert_eq!(common_suffix_length("file.txt", "data.txt"), 4);
         }
 
         #[test]
@@ -428,21 +424,18 @@ mod tests {
         #[test]
         fn zero_target_size() {
             let score = compute_similarity_score("file.txt", "data.txt", 0, 1000);
-            // Should not get size bonus when target size is 0
             assert!(score >= EXTENSION_MATCH_BONUS);
         }
 
         #[test]
         fn zero_candidate_size() {
             let score = compute_similarity_score("file.txt", "data.txt", 1000, 0);
-            // Should not get size bonus when candidate size is 0
             assert!(score >= EXTENSION_MATCH_BONUS);
         }
 
         #[test]
         fn both_sizes_zero() {
             let score = compute_similarity_score("file.txt", "data.txt", 0, 0);
-            // Should not get size bonus when both are 0
             assert!(score >= EXTENSION_MATCH_BONUS);
         }
 
@@ -457,14 +450,14 @@ mod tests {
 
         #[test]
         fn candidate_larger_than_target() {
+            // 500/1000 = 0.5 lands exactly on the bonus threshold.
             let score = compute_similarity_score("a.txt", "b.txt", 500, 1000);
-            // 500/1000 = 0.5, should still get size bonus
             assert!(score >= EXTENSION_MATCH_BONUS + SIZE_SIMILARITY_BONUS);
         }
 
         #[test]
         fn candidate_much_larger() {
-            // ratio < 0.5
+            // 100/1000 = 0.1 falls below the bonus threshold.
             let score = compute_similarity_score("a.txt", "b.txt", 100, 1000);
             assert!(
                 score < EXTENSION_MATCH_BONUS + SIZE_SIMILARITY_BONUS,
@@ -474,9 +467,9 @@ mod tests {
 
         #[test]
         fn no_extension_match() {
+            // Common prefix "file" (4 chars) but different extension.
             let score = compute_similarity_score("file.txt", "file.csv", 1000, 1000);
-            // Same prefix "file" but different extension
-            assert!(score >= PREFIX_MATCH_POINTS * 4); // "file" is 4 chars
+            assert!(score >= PREFIX_MATCH_POINTS * 4);
             assert!(
                 score < EXTENSION_MATCH_BONUS + PREFIX_MATCH_POINTS * 4 + SIZE_SIMILARITY_BONUS
             );
