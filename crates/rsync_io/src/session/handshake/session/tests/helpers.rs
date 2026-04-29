@@ -6,10 +6,10 @@ use crate::sniff_negotiation_stream;
 use protocol::{CompatibilityFlags, ProtocolVersion, parse_legacy_daemon_greeting_owned};
 use std::io::Cursor;
 
-/// Creates a binary handshake fixture at protocol 31.
+/// Creates a binary handshake fixture at protocol 31. The first byte differs
+/// from `'@'` so the sniffer chooses the binary prologue, and the remaining
+/// bytes encode protocol 31 as a little-endian u32.
 pub(super) fn create_binary_handshake() -> BinaryHandshake<Cursor<Vec<u8>>> {
-    // Binary negotiation is triggered by first byte != '@'
-    // Protocol 31 as LE u32: 0x1f 0x00 0x00 0x00
     let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
         .expect("sniff succeeds");
     let proto31 = ProtocolVersion::from_supported(31).unwrap();

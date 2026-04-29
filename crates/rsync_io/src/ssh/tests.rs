@@ -284,14 +284,12 @@ fn stderr_output_bounded_to_cap() {
     let (status, stderr) = child_handle.wait_with_stderr().expect("wait");
     assert!(status.success());
 
-    // Buffer should be bounded to 64 KB.
     let cap = 64 * 1024;
     assert!(
         stderr.len() <= cap,
         "stderr buffer should be bounded to {cap}, got {}",
         stderr.len()
     );
-    // Should have collected some output (not empty).
     assert!(!stderr.is_empty(), "expected non-empty stderr output");
 }
 
@@ -410,16 +408,13 @@ fn split_connection_provides_separate_read_write_halves() {
 
     let (mut reader, mut writer, child_handle) = connection.split().expect("split succeeds");
 
-    // Write to stdin via writer
     writer.write_all(b"test").expect("write");
     writer.close().expect("close writer");
 
-    // Read from stdout via reader
     let mut buffer = Vec::new();
     reader.read_to_end(&mut buffer).expect("read");
     assert_eq!(&buffer, b"test");
 
-    // Wait for child via handle
     let status = child_handle.wait().expect("wait");
     assert!(status.success());
 }

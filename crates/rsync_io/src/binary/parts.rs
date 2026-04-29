@@ -447,9 +447,10 @@ mod tests {
     use protocol::NegotiationPrologue;
     use std::io::{self, Cursor};
 
+    /// Builds binary handshake parts at protocol 31. The first byte differs
+    /// from `'@'` so the sniffer chooses the binary prologue, and the remaining
+    /// bytes encode protocol 31 as a little-endian u32.
     fn create_test_parts() -> BinaryHandshakeParts<Cursor<Vec<u8>>> {
-        // Binary negotiation is triggered by first byte != '@'
-        // Protocol 31 as LE u32: 0x1f 0x00 0x00 0x00
         let stream = sniff_negotiation_stream(Cursor::new(vec![0x1f, 0x00, 0x00, 0x00]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
