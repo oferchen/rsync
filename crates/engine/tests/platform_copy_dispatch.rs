@@ -112,7 +112,13 @@ fn executor_dispatches_whole_file_copy_through_platform_copy() {
         OsString::from(destination.as_os_str()),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan succeeds");
+    // The macOS clonefile dispatch is gated on `xattrs_enabled() &&
+    // !has_xattr_filter_rules` when the `xattr` feature is on, because
+    // clonefile copies xattrs verbatim. To exercise the dispatch hook with
+    // the default executor options we must enable xattr preservation.
     let options = LocalCopyOptions::new().with_platform_copy(counting.clone());
+    #[cfg(feature = "xattr")]
+    let options = options.xattrs(true);
 
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
