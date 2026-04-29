@@ -209,6 +209,7 @@ where
         ssh_strict_host_key_checking: _ssh_strict_host_key_checking,
         ssh_ipv6: _ssh_ipv6,
         ssh_port: _ssh_port,
+        jump_host,
     } = parsed;
 
     let password_file = password_file.map(PathBuf::from);
@@ -754,6 +755,7 @@ where
         early_input: early_input.map(PathBuf::from),
         prefer_aes_gcm,
         protect_args,
+        jump_hosts: jump_host,
         batch_config,
         no_motd,
         daemon_params: dparam
