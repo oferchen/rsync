@@ -79,8 +79,8 @@ jobs:
 
       - name: Build (${{ matrix.name }})
         if: ${{ !matrix.linux_only || runner.os == 'Linux' }}
-        run: cargo build ${{ matrix.args }}
+        run: cargo build --locked ${{ matrix.args }}
 
       - name: Test (${{ matrix.name }})
         if: ${{ !matrix.linux_only || runner.os == 'Linux' }}
-        run: cargo nextest run --profile ci ${{ matrix.args }}
+        run: cargo nextest run --locked --profile ci ${{ matrix.args }}
