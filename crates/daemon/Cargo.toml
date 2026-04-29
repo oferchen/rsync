@@ -50,7 +50,7 @@ libc = "0.2"
 
 # sd-notify is Linux-only (systemd notification)
 [target.'cfg(target_os = "linux")'.dependencies]
-sd-notify = { version = "0.4.5", optional = true }
+sd-notify = { version = "0.5.0", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 checksums = { path = "../checksums", default-features = false }
