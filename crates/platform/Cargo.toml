@@ -18,7 +18,7 @@ nix = { version = "0.29", default-features = false, features = ["fs", "process",
 signal-hook = "0.4"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_NetworkManagement_NetManagement",
     "Win32_Security",
