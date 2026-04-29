@@ -164,7 +164,6 @@ pub fn generate_signature_pipelined<R: Read + Send + 'static>(
         batch_data.push(chunk.to_vec());
         block_index += 1;
 
-        // Flush the batch when full or when all blocks have been read
         if batch_data.len() >= BATCH_SIZE || block_index == expected_blocks_usize {
             let batch_slices: Vec<&[u8]> = batch_data.iter().map(|v| v.as_slice()).collect();
             let strong_digests = algorithm.compute_truncated_batch(&batch_slices, strong_len);

@@ -104,7 +104,6 @@ pub fn generate_file_signature_parallel<R: Read>(
         return Ok(FileSignature::new(layout, Vec::new(), 0));
     }
 
-    // Phase 1: Read all blocks into memory
     let mut block_data: Vec<Vec<u8>> = Vec::with_capacity(expected_blocks_usize);
     let mut total_bytes: u64 = 0;
 
@@ -122,14 +121,11 @@ pub fn generate_file_signature_parallel<R: Read>(
         block_data.push(buffer);
     }
 
-    // Check for trailing data
     let mut extra = [0u8; 1];
     if reader.read(&mut extra)? != 0 {
         return Err(SignatureError::TrailingData { bytes: 1 });
     }
 
-    // Phase 2: Compute checksums in parallel using SIMD batch within each rayon chunk.
-    //
     // Rayon distributes chunks of blocks across threads. Within each chunk, the SIMD
     // batch API processes multiple blocks through multi-lane hashing (e.g., 4-16 lanes
     // for MD4/MD5 on AVX2/AVX-512). This combines thread-level parallelism with
@@ -213,7 +209,6 @@ pub fn generate_file_signature_auto<R: Read>(
     layout: SignatureLayout,
     algorithm: SignatureAlgorithm,
 ) -> Result<FileSignature, SignatureError> {
-    // Calculate file size from layout components
     let block_len = u64::from(layout.block_length().get());
     let file_size = if layout.remainder() != 0 {
         // Last block is partial: (count-1) full blocks + remainder
@@ -223,7 +218,6 @@ pub fn generate_file_signature_auto<R: Read>(
             .saturating_mul(block_len)
             .saturating_add(u64::from(layout.remainder()))
     } else {
-        // All blocks are full
         layout.block_count().saturating_mul(block_len)
     };
 
