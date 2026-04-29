@@ -158,15 +158,17 @@ pub fn generate_script_with_args(
 }
 
 /// Quote a string for safe shell usage.
+///
+/// Returns the string unchanged when it only contains shell-safe characters
+/// (alphanumerics plus `-_/.:=`); otherwise wraps it in single quotes and
+/// escapes embedded single quotes using the `'\''` idiom.
 fn shell_quote(s: &str) -> String {
-    // Check if quoting is needed
     if s.chars().all(|c| {
         c.is_alphanumeric() || c == '-' || c == '_' || c == '/' || c == '.' || c == ':' || c == '='
     }) {
         return s.to_owned();
     }
 
-    // Need quoting - use single quotes and escape any single quotes
     let mut result = String::from("'");
     for ch in s.chars() {
         if ch == '\'' {
