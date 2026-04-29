@@ -20,11 +20,6 @@ use fast_io::{
 };
 use tempfile::tempdir;
 
-// ---------------------------------------------------------------------------
-// Cross-platform: the probe must always answer without panicking and the
-// answer must be consistent across calls (result is cached).
-// ---------------------------------------------------------------------------
-
 #[test]
 fn is_io_uring_available_is_idempotent() {
     let first = is_io_uring_available();
@@ -143,13 +138,6 @@ fn concurrent_probe_calls_are_safe() {
     assert!(!panicked.load(Ordering::SeqCst), "probe panicked");
 }
 
-// ---------------------------------------------------------------------------
-// Fallback chain: with `IoUringPolicy::Auto` and `Disabled`, factories must
-// always yield a working reader/writer regardless of probe outcome. With
-// `Enabled` on a platform that lacks io_uring, callers must receive an
-// `Unsupported` error rather than a panic.
-// ---------------------------------------------------------------------------
-
 #[test]
 fn auto_policy_yields_working_writer_and_reader() {
     let dir = tempdir().unwrap();
@@ -203,11 +191,6 @@ fn factory_reports_runtime_decision_consistently() {
     assert_eq!(writer_factory.will_use_io_uring(), probe);
 }
 
-// ---------------------------------------------------------------------------
-// Non-Linux platforms (or builds without the `io_uring` feature) must always
-// report the probe as unavailable and surface a clear platform reason.
-// ---------------------------------------------------------------------------
-
 #[cfg(not(all(target_os = "linux", feature = "io_uring")))]
 #[test]
 fn probe_is_unavailable_without_linux_io_uring() {
@@ -245,14 +228,10 @@ fn enabled_policy_returns_unsupported_without_linux_io_uring() {
     assert!(reader_err.to_string().to_lowercase().contains("io_uring"));
 }
 
-// ---------------------------------------------------------------------------
-// Linux-with-feature: the probe runs against the live kernel. It must agree
-// with whether the kernel meets the documented 5.6 minimum, but a kernel
-// that meets the minimum can still be reported unavailable if the syscall
-// is blocked (for example by seccomp inside a container). Both outcomes are
-// acceptable - what matters is that the boolean and the reason agree.
-// ---------------------------------------------------------------------------
-
+/// Linux with the io_uring feature: the probe runs against the live kernel.
+/// A kernel meeting the documented 5.6 minimum can still be reported unavailable
+/// if the syscall is blocked (for example by seccomp inside a container). Both
+/// outcomes are acceptable - what matters is that the boolean and the reason agree.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 #[test]
 fn linux_probe_matches_kernel_version() {

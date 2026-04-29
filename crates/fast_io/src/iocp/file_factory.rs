@@ -184,12 +184,12 @@ impl FileReaderFactory for IocpReaderFactory {
 
     fn open(&self, path: &Path) -> io::Result<Self::Reader> {
         if self.will_use_iocp() {
-            // Check file size - small files don't benefit from IOCP
+            // Files below IOCP_MIN_FILE_SIZE are read synchronously because the
+            // overlapped-I/O setup overhead exceeds the async benefit at that size.
             let metadata = std::fs::metadata(path)?;
             if metadata.len() >= IOCP_MIN_FILE_SIZE {
-                match IocpReader::open(path, &self.config) {
-                    Ok(reader) => return Ok(IocpOrStdReader::Iocp(reader)),
-                    Err(_) => {} // Fall through to std
+                if let Ok(reader) = IocpReader::open(path, &self.config) {
+                    return Ok(IocpOrStdReader::Iocp(reader));
                 }
             }
         }
@@ -242,9 +242,8 @@ impl FileWriterFactory for IocpWriterFactory {
 
     fn create(&self, path: &Path) -> io::Result<Self::Writer> {
         if self.will_use_iocp() {
-            match IocpWriter::create(path, &self.config) {
-                Ok(writer) => return Ok(IocpOrStdWriter::Iocp(writer)),
-                Err(_) => {} // Fall through to std
+            if let Ok(writer) = IocpWriter::create(path, &self.config) {
+                return Ok(IocpOrStdWriter::Iocp(writer));
             }
         }
         Ok(IocpOrStdWriter::Std(StdFileWriter::create(path)?))
@@ -252,9 +251,8 @@ impl FileWriterFactory for IocpWriterFactory {
 
     fn create_with_size(&self, path: &Path, size: u64) -> io::Result<Self::Writer> {
         if self.will_use_iocp() {
-            match IocpWriter::create_with_size(path, size, &self.config) {
-                Ok(writer) => return Ok(IocpOrStdWriter::Iocp(writer)),
-                Err(_) => {} // Fall through to std
+            if let Ok(writer) = IocpWriter::create_with_size(path, size, &self.config) {
+                return Ok(IocpOrStdWriter::Iocp(writer));
             }
         }
         Ok(IocpOrStdWriter::Std(StdFileWriter::create_with_size(
@@ -280,8 +278,9 @@ pub fn writer_from_file(
                     "IOCP requested but not available on this system",
                 ));
             }
-            // Can't use IOCP with an existing File handle easily since
-            // it wasn't opened with FILE_FLAG_OVERLAPPED. Fall back.
+            // An existing std::fs::File was not opened with FILE_FLAG_OVERLAPPED,
+            // so it cannot be associated with a completion port. Fall back to
+            // standard buffered I/O even under the Enabled policy.
             Ok(IocpOrStdWriter::Std(
                 StdFileWriter::from_file_with_capacity(file, buffer_capacity),
             ))
@@ -346,7 +345,6 @@ mod tests {
 
         let factory = IocpReaderFactory::default();
         let reader = factory.open(&path).unwrap();
-        // Small file should use Std variant
         assert!(matches!(reader, IocpOrStdReader::Std(_)));
     }
 
@@ -415,7 +413,6 @@ mod tests {
         let path = dir.path().join("roundtrip.bin");
         let test_data: Vec<u8> = (0..65536).map(|i| ((i * 17 + 5) % 256) as u8).collect();
 
-        // Write
         {
             let factory = IocpWriterFactory::default();
             let mut writer = factory.create(&path).unwrap();
@@ -423,7 +420,6 @@ mod tests {
             writer.flush().unwrap();
         }
 
-        // Read back
         let factory = IocpReaderFactory::default();
         let mut reader = factory.open(&path).unwrap();
         let read_back = reader.read_all().unwrap();
