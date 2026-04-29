@@ -27,7 +27,6 @@ fn populate_index(
         has_full_blocks = true;
         let digest = block.rolling();
         tag_table[digest.sum1() as usize] = true;
-        // Key is (sum1, sum2) only - all indexed blocks have block_length
         lookup
             .entry((digest.sum1(), digest.sum2()))
             .or_default()

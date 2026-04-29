@@ -254,14 +254,11 @@ mod tests {
 
         #[test]
         fn scoring_constants_reasonable() {
-            // Extension match should be worth several prefix chars
+            // Pin the relative weights: extension > prefix > suffix; size
+            // bonus is meaningful but never dominates name similarity.
             assert_eq!(EXTENSION_MATCH_BONUS, 50);
             assert_eq!(PREFIX_MATCH_POINTS, 10);
-
-            // Prefix should be worth more than suffix
             assert_eq!(SUFFIX_MATCH_POINTS, 8);
-
-            // Size bonus should be meaningful but not dominant
             assert_eq!(SIZE_SIMILARITY_BONUS, 30);
             assert_eq!(MIN_FUZZY_SCORE, 10);
         }

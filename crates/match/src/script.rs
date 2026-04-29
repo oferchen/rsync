@@ -275,7 +275,6 @@ mod tests {
         assert_eq!(error.kind(), ErrorKind::InvalidInput);
     }
 
-    // DeltaToken tests
     #[test]
     fn delta_token_literal_byte_len() {
         let token = DeltaToken::Literal(vec![1, 2, 3, 4, 5]);
@@ -329,7 +328,6 @@ mod tests {
         assert_ne!(a, c);
     }
 
-    // DeltaScript tests
     #[test]
     fn delta_script_new_and_accessors() {
         let tokens = vec![
