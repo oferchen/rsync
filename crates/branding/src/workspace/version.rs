@@ -193,7 +193,6 @@ impl std::str::FromStr for Version {
             return Err(VersionParseError::new(s, "empty version string"));
         }
 
-        // Split on optional -rust suffix
         let (base, rust_branded) = match trimmed.rsplit_once("-rust") {
             Some((base, "")) => (base, true),
             Some(_) => {
@@ -205,7 +204,6 @@ impl std::str::FromStr for Version {
             None => (trimmed, false),
         };
 
-        // Parse x.y.z components
         let parts: Vec<&str> = base.split('.').collect();
         if parts.len() != 3 {
             return Err(VersionParseError::new(
@@ -236,7 +234,6 @@ fn parse_component(
         return Err(VersionParseError::new(original, component_name));
     }
 
-    // Allow leading zeros but reject non-numeric characters
     s.parse::<u32>().map_err(|_| {
         VersionParseError::new(original, "version components must be non-negative integers")
     })
