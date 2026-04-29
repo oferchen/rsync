@@ -92,13 +92,12 @@ impl RingBuffer {
     #[inline]
     pub fn push_back(&mut self, byte: u8) -> Option<u8> {
         if self.len < self.buffer.len() {
-            // Buffer not yet full: append at len position
             let pos = (self.head + self.len) % self.buffer.len();
             self.buffer[pos] = byte;
             self.len += 1;
             None
         } else {
-            // Buffer full: overwrite oldest byte at head
+            // Buffer full: overwrite the oldest byte (at head) and return it.
             let outgoing = self.buffer[self.head];
             self.buffer[self.head] = byte;
             self.head = (self.head + 1) % self.buffer.len();
@@ -144,19 +143,18 @@ impl RingBuffer {
             return &[];
         }
 
-        // Fast path: already contiguous
+        // Fast path: already contiguous from the start of the backing buffer.
         if self.head == 0 {
             return &self.buffer[..self.len];
         }
 
-        // Check if data is contiguous even with non-zero head
+        // Fast path: contiguous starting from a non-zero head, no wrap-around.
         let end = self.head + self.len;
         if end <= self.buffer.len() {
-            // Data is contiguous in the middle of the buffer
             return &self.buffer[self.head..end];
         }
 
-        // Slow path: need to rotate to make contiguous
+        // Slow path: data wraps; rotate the backing buffer to make it contiguous.
         self.buffer.rotate_left(self.head);
         self.head = 0;
         &self.buffer[..self.len]
@@ -176,10 +174,8 @@ impl RingBuffer {
 
         let end = self.head + self.len;
         if end <= self.buffer.len() {
-            // Data is contiguous
             Some(&self.buffer[self.head..end])
         } else {
-            // Wrapped, would need rotation
             None
         }
     }
@@ -195,10 +191,8 @@ impl RingBuffer {
 
         let end = self.head + self.len;
         if end <= self.buffer.len() {
-            // No wrap-around: single contiguous slice
             (&self.buffer[self.head..end], &[])
         } else {
-            // Wrapped: two slices
             let first_len = self.buffer.len() - self.head;
             let second_len = self.len - first_len;
             (&self.buffer[self.head..], &self.buffer[..second_len])
@@ -320,11 +314,10 @@ mod tests {
         buf.push_back(1);
         buf.push_back(2);
         buf.push_back(3);
-        buf.push_back(4); // overwrites 1, head moves
-        buf.push_back(5); // overwrites 2, head moves
+        buf.push_back(4);
+        buf.push_back(5);
 
-        // Buffer now contains [5, 3, 4] with head at position 2
-        // Logical order is [3, 4, 5]
+        // Backing buffer is [5, 3, 4] with head=2; logical order is [3, 4, 5].
         assert_eq!(buf.as_slice(), &[3, 4, 5]);
     }
 
@@ -348,7 +341,8 @@ mod tests {
         buf.push_back(1);
         buf.push_back(2);
         buf.push_back(3);
-        buf.push_back(4); // [4, 2, 3] head=1
+        // Backing layout becomes [4, 2, 3] with head=1.
+        buf.push_back(4);
 
         let (first, second) = buf.as_slices();
         assert_eq!(first, &[2, 3]);
@@ -374,7 +368,7 @@ mod tests {
         for i in 0..10u8 {
             buf.push_back(i);
         }
-        // After 10 pushes into capacity-3 buffer, contains [7, 8, 9]
+        // 10 pushes into a capacity-3 buffer leave the last three values.
         assert_eq!(buf.pop_front(), Some(7));
         assert_eq!(buf.pop_front(), Some(8));
         assert_eq!(buf.pop_front(), Some(9));
@@ -389,7 +383,6 @@ mod tests {
 
     #[test]
     fn sliding_window_simulation() {
-        // Simulate the delta generator's sliding window behavior
         let mut buf = RingBuffer::with_capacity(4);
         let data = b"hello world";
 
@@ -400,10 +393,7 @@ mod tests {
             }
         }
 
-        // After processing "hello world" with window size 4:
-        // Window contains "orld" (last 4 bytes)
         assert_eq!(buf.as_slice(), b"orld");
-        // Outgoing bytes are "hello w" (first 7 bytes)
         assert_eq!(outgoing_bytes, b"hello w");
     }
 
@@ -414,7 +404,6 @@ mod tests {
         buf.push_back(2);
         buf.push_back(3);
 
-        // Not wrapped, should return slice
         assert_eq!(buf.try_as_slice(), Some(&[1u8, 2, 3][..]));
     }
 
@@ -424,9 +413,9 @@ mod tests {
         buf.push_back(1);
         buf.push_back(2);
         buf.push_back(3);
-        buf.push_back(4); // Overwrites 1, buffer wraps
+        // The fourth push wraps the buffer; try_as_slice must not paper over it.
+        buf.push_back(4);
 
-        // Wrapped, should return None
         assert_eq!(buf.try_as_slice(), None);
     }
 
@@ -438,39 +427,35 @@ mod tests {
 
     #[test]
     fn as_slice_contiguous_middle() {
-        // Test the new optimization: contiguous data in the middle
+        // Exercise the contiguous-with-non-zero-head fast path: the data
+        // sits in the middle of the backing buffer with no wrap-around.
         let mut buf = RingBuffer::with_capacity(5);
         buf.push_back(1);
         buf.push_back(2);
         buf.push_back(3);
-        buf.pop_front(); // head moves to 1
-        buf.pop_front(); // head moves to 2
+        buf.pop_front();
+        buf.pop_front();
 
-        // Now only [3] at position 2, head=2, len=1
-        // This is contiguous in the middle
         assert_eq!(buf.as_slice(), &[3]);
     }
 
     #[test]
     fn capacity_one_buffer() {
-        // Edge case: buffer with capacity 1
         let mut buf = RingBuffer::with_capacity(1);
         assert!(buf.is_empty());
         assert_eq!(buf.capacity(), 1);
 
-        // Push first byte
         assert_eq!(buf.push_back(42), None);
         assert!(buf.is_full());
         assert_eq!(buf.len(), 1);
         assert_eq!(buf.as_slice(), &[42]);
 
-        // Push second byte - should evict first
+        // Pushing into a full capacity-1 buffer evicts and returns the prior byte.
         assert_eq!(buf.push_back(99), Some(42));
         assert!(buf.is_full());
         assert_eq!(buf.len(), 1);
         assert_eq!(buf.as_slice(), &[99]);
 
-        // Pop should return the byte
         assert_eq!(buf.pop_front(), Some(99));
         assert!(buf.is_empty());
     }
@@ -478,7 +463,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "ring buffer capacity must be non-zero")]
     fn capacity_zero_panics() {
-        // Edge case: capacity 0 should panic
         let _ = RingBuffer::with_capacity(0);
     }
 
@@ -539,7 +523,6 @@ mod tests {
         buf.push_back(2);
         buf.push_back(3);
 
-        // Destination is too small (2 bytes for 3 bytes of data)
         let mut dest = [0u8; 2];
         buf.copy_to_slice(&mut dest);
     }

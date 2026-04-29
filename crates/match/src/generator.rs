@@ -91,13 +91,12 @@ impl DeltaGenerator {
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
 
-        // Statistics for DEBUG_DELTASUM level 2
         let mut hash_hits = 0u64;
         let mut false_alarms = 0u64;
         let mut matches = 0u64;
         let mut offset = 0u64;
 
-        // upstream: match.c — want_i tracks expected next block index for
+        // upstream: match.c - want_i tracks the expected next block index for
         // adjacent-match hinting. After a match at block i, the next match
         // is likely at block i+1. Checking this hint before the hash table
         // lookup skips the probe entirely when data is sequential.
@@ -107,7 +106,6 @@ impl DeltaGenerator {
         let mut buffer_pos = 0usize;
         let mut buffer_len = 0usize;
 
-        // DEBUG_DELTASUM level 2: Log hash search start (mirrors upstream match.c)
         debug_log!(
             Deltasum,
             2,
@@ -116,7 +114,6 @@ impl DeltaGenerator {
             index.block_length()
         );
 
-        // DEBUG_DELTASUM level 3: Log detailed search parameters
         debug_log!(
             Deltasum,
             3,
@@ -137,21 +134,17 @@ impl DeltaGenerator {
             let byte = buffer[buffer_pos];
             buffer_pos += 1;
 
-            // Ring buffer auto-evicts when at capacity, returning the evicted byte
             let evicted = window.push_back(byte);
 
-            // Rolling checksum update: use evicted byte directly (if any)
             if let Some(outgoing_byte) = evicted {
-                // Window was full: roll with evicted byte leaving, new byte entering
-                // Use roll() directly for single-byte operations (faster than roll_many)
+                // roll() is faster than roll_many() for single-byte updates.
                 rolling
                     .roll(outgoing_byte, byte)
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-                // Evicted byte becomes a literal
                 pending_literals.push(outgoing_byte);
                 offset += 1;
 
-                // upstream: match.c:339-340 — flush early to bound memory growth
+                // upstream: match.c:339-340 - flush early to bound memory growth
                 if pending_literals.len() >= block_len + CHUNK_SIZE {
                     literal_bytes += pending_literals.len() as u64;
                     total_bytes += pending_literals.len() as u64;
@@ -160,18 +153,15 @@ impl DeltaGenerator {
                     tokens.push(DeltaToken::Literal(filled));
                 }
             } else {
-                // Window not yet full: use optimized single-byte update
                 rolling.update_byte(byte);
             }
 
-            // Only check for matches when window is full
             if !window.is_full() {
                 continue;
             }
 
             let digest = rolling.digest();
 
-            // DEBUG_DELTASUM level 4: Per-iteration offset tracking (very verbose)
             debug_log!(
                 Deltasum,
                 4,
@@ -182,7 +172,7 @@ impl DeltaGenerator {
             );
 
             // Match using two-slice view to avoid O(block_len) rotation when wrapped.
-            // upstream: match.c:144-190 — try want_i hint before hash probe.
+            // upstream: match.c:144-190 - try want_i hint before hash probe.
             let (first, second) = window.as_slices();
             let matched = if let Some(hint) = want_i {
                 if index.check_block_match_slices(hint, digest, first, second) {
@@ -196,7 +186,7 @@ impl DeltaGenerator {
                 index.find_match_slices(digest, first, second)
             };
             if let Some(mut match_idx) = matched {
-                // upstream: match.c:265-310 — block match with bulk refill.
+                // upstream: match.c:265-310 - block match with bulk refill.
                 // After each match, refill the window in bulk and compute the
                 // rolling checksum via SIMD-accelerated update() instead of
                 // block_len individual push_back()+update_byte() calls. Chained
@@ -213,7 +203,6 @@ impl DeltaGenerator {
                         rolling.digest().value()
                     );
 
-                    // Flush pending literals before the copy token
                     if !pending_literals.is_empty() {
                         literal_bytes += pending_literals.len() as u64;
                         total_bytes += pending_literals.len() as u64;
@@ -239,8 +228,7 @@ impl DeltaGenerator {
                     rolling.reset();
                     offset += block_len as u64;
 
-                    // Bulk refill: gather block_len bytes from I/O buffer + reader.
-                    // upstream: match.c:303-308 — recomputes checksum from scratch
+                    // upstream: match.c:303-308 - recomputes checksum from scratch
                     // over the next window via get_checksum1() (SIMD-accelerated).
                     let mut filled = 0usize;
                     while filled < block_len {
@@ -258,18 +246,18 @@ impl DeltaGenerator {
                     }
 
                     if filled < block_len {
-                        break; // Near EOF — let byte-by-byte loop drain remaining
+                        // Near EOF: let the byte-by-byte loop drain the remaining bytes.
+                        break;
                     }
 
-                    // Full window: compute rolling checksum via SIMD bulk update
                     let (s1, s2) = window.as_slices();
                     rolling.update(s1);
                     if !s2.is_empty() {
                         rolling.update(s2);
                     }
 
-                    // Check for adjacent match at next block boundary.
-                    // upstream: match.c:144-190 — try want_i hint first.
+                    // upstream: match.c:144-190 - try want_i hint at the next
+                    // block boundary before falling back to a hash probe.
                     let adj_digest = rolling.digest();
                     let (f, s) = window.as_slices();
                     let adj_match = if let Some(hint) = want_i {
@@ -296,7 +284,8 @@ impl DeltaGenerator {
             }
         }
 
-        // Drain remaining bytes from window as literals
+        // Drain any bytes still in the window as literals (window held fewer
+        // than block_len bytes at EOF, so no further match is possible).
         while let Some(byte) = window.pop_front() {
             pending_literals.push(byte);
         }
@@ -307,7 +296,6 @@ impl DeltaGenerator {
             tokens.push(DeltaToken::Literal(pending_literals));
         }
 
-        // DEBUG_DELTASUM level 2: Log completion with statistics (mirrors upstream match.c)
         debug_log!(Deltasum, 2, "done hash search");
         debug_log!(
             Deltasum,
@@ -318,7 +306,7 @@ impl DeltaGenerator {
             matches
         );
 
-        // DEBUG_DELTASUM level 1: Basic summary (match_report equivalent)
+        // upstream: match.c match_report() equivalent.
         debug_log!(
             Deltasum,
             1,
@@ -406,7 +394,6 @@ mod tests {
         assert_eq!(output, input);
     }
 
-    // DeltaGenerator constructor tests
     #[test]
     fn delta_generator_new_uses_default_buffer_len() {
         let generator = DeltaGenerator::new();
@@ -455,7 +442,6 @@ mod tests {
         assert!(debug.contains("buffer_len"));
     }
 
-    // Empty input tests
     #[test]
     fn generate_delta_empty_input_produces_empty_script() {
         let basis = vec![0u8; 2048];
@@ -491,7 +477,6 @@ mod tests {
         assert_eq!(script.total_bytes(), input.len() as u64);
     }
 
-    // Buffer length effects
     #[test]
     fn generate_delta_with_small_buffer_produces_same_result() {
         let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
@@ -524,17 +509,14 @@ mod tests {
         assert_eq!(script1.total_bytes(), script2.total_bytes());
     }
 
-    // Copy token tests
     #[test]
     fn generate_delta_copy_only_has_zero_literal_bytes() {
         let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
         let index = build_index(&basis);
         let block_len = index.block_length();
-        // Use exact block boundaries
         let input = basis[..block_len].to_vec();
 
         let script = generate_delta(&input[..], &index).expect("script");
-        // Should be all copy, no literals
         assert_eq!(script.literal_bytes(), 0);
     }
 
@@ -544,16 +526,15 @@ mod tests {
         let index = build_index(&basis);
         let block_len = index.block_length();
 
-        let mut input = vec![1u8, 2u8, 3u8]; // 3 literal bytes
-        input.extend_from_slice(&basis[..block_len]); // matching block
-        input.extend_from_slice(b"end"); // 3 more literal bytes
+        let mut input = vec![1u8, 2u8, 3u8];
+        input.extend_from_slice(&basis[..block_len]);
+        input.extend_from_slice(b"end");
 
         let script = generate_delta(&input[..], &index).expect("script");
         assert!(script.tokens().len() >= 2);
         assert_eq!(script.literal_bytes(), 6);
     }
 
-    // Convenience function test
     #[test]
     fn generate_delta_convenience_function_works() {
         let basis = vec![0u8; 2048];
@@ -568,11 +549,9 @@ mod tests {
     fn delta_script_round_trip_identical_data() {
         let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
         let index = build_index(&basis);
-        // Use the same data as basis
         let input = basis.clone();
 
         let script = generate_delta(&input[..], &index).expect("script");
-        // Should be mostly or all copy tokens
         assert!(script.literal_bytes() < script.total_bytes());
 
         let mut basis_cursor = Cursor::new(basis);
