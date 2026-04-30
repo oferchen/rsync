@@ -107,7 +107,6 @@ mod basic {
     #[test]
     fn hardlink_table_different_devices() {
         let mut table = HardlinkTable::new();
-        // Same inode on different devices - should be separate entries
         let r1 = table.find_or_insert(DevIno::new(1, 100), 0);
         let r2 = table.find_or_insert(DevIno::new(2, 100), 1);
         assert_eq!(r1, HardlinkLookup::First(0));
@@ -128,8 +127,6 @@ mod collision {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    /// Test that files from different systems with same dev/ino are correctly linked.
-    ///
     /// When syncing from the same source filesystem, files with identical
     /// (dev, ino) pairs are true hardlinks and should be linked together.
     #[test]
@@ -153,10 +150,8 @@ mod collision {
         assert_eq!(entry.first_ndx, 0);
     }
 
-    /// Test that same inode on different devices are NOT linked.
-    ///
-    /// Different devices with the same inode number are distinct files,
-    /// not hardlinks. This can happen when syncing from multiple filesystems.
+    /// Different devices with the same inode number are distinct files, not
+    /// hardlinks. This can happen when syncing from multiple filesystems.
     #[test]
     fn same_inode_different_device_not_linked() {
         let mut table = HardlinkTable::new();
@@ -181,7 +176,6 @@ mod collision {
         assert_eq!(table.len(), 4);
     }
 
-    /// Test that same device with different inodes are NOT linked.
     #[test]
     fn same_device_different_inode_not_linked() {
         let mut table = HardlinkTable::new();
@@ -245,8 +239,6 @@ mod collision {
         }
     }
 
-    /// Test that DevIno hash considers both dev and ino fields.
-    ///
     /// Verifies that the Hash implementation produces different hashes
     /// for DevIno pairs that differ only in one field.
     #[test]
@@ -309,10 +301,8 @@ mod collision {
 mod large_scale {
     use crate::flist::hardlink::{DevIno, HardlinkLookup, HardlinkTable};
 
-    /// Test handling of many hardlinks to a single file.
-    ///
-    /// In practice, a single file can have thousands of hardlinks.
-    /// This tests that link_count handles high values correctly.
+    /// In practice, a single file can have thousands of hardlinks; verifies
+    /// `link_count` handles high values correctly.
     #[test]
     fn many_hardlinks_to_single_file() {
         let mut table = HardlinkTable::new();
@@ -335,8 +325,6 @@ mod large_scale {
         assert_eq!(table.len(), 1);
     }
 
-    /// Test handling of many distinct hardlink groups.
-    ///
     /// Verifies the table can handle thousands of distinct (dev, ino) pairs
     /// without degraded performance or incorrect lookups.
     #[test]
@@ -400,9 +388,7 @@ mod large_scale {
         }
     }
 
-    /// Test with maximum u32 file indices.
-    ///
-    /// Verifies handling of file indices near u32::MAX.
+    /// Verifies handling of file indices near `u32::MAX`.
     #[test]
     fn max_file_index_values() {
         let mut table = HardlinkTable::new();
@@ -422,7 +408,6 @@ mod large_scale {
         }
     }
 
-    /// Test with extreme dev/ino values.
     #[test]
     fn extreme_dev_ino_values() {
         let mut table = HardlinkTable::new();
@@ -449,9 +434,7 @@ mod large_scale {
         }
     }
 
-    /// Test link count approaching u32::MAX.
-    ///
-    /// While unlikely in practice, verifies no overflow in link_count.
+    /// While unlikely in practice, verifies no overflow in `link_count`.
     #[test]
     fn link_count_high_values() {
         let mut table = HardlinkTable::new();
@@ -476,8 +459,6 @@ mod large_scale {
 mod interleaved_access {
     use crate::flist::hardlink::{DevIno, HardlinkLookup, HardlinkTable};
 
-    /// Test interleaved inserts and lookups.
-    ///
     /// Simulates realistic usage where files are discovered in arbitrary order.
     #[test]
     fn interleaved_inserts_and_lookups() {
@@ -549,9 +530,7 @@ mod interleaved_access {
         assert_eq!(table.get(&dev_ino).unwrap().link_count, 1);
     }
 
-    /// Test that file index is preserved correctly through lookups.
-    ///
-    /// The first_ndx should always point to the first file inserted,
+    /// The `first_ndx` should always point to the first file inserted,
     /// regardless of how many subsequent links are added.
     #[test]
     fn first_index_preserved_through_many_links() {
