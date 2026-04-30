@@ -1,17 +1,14 @@
-// Comprehensive tests for MessageCode and LogCode handling
-//
-// These tests verify:
-// - Wire format compatibility with upstream rsync 3.4.1
-// - Complete coverage of all message code variants
-// - Edge cases in parsing, formatting, and conversion
-// - Semantic correctness of message classification
-// - Cross-component integration between MessageCode and LogCode
+//! Comprehensive tests for MessageCode and LogCode handling.
+//!
+//! These tests verify:
+//! - Wire format compatibility with upstream rsync 3.4.1
+//! - Complete coverage of all message code variants
+//! - Edge cases in parsing, formatting, and conversion
+//! - Semantic correctness of message classification
+//! - Cross-component integration between MessageCode and LogCode
 
 use super::*;
 use std::collections::HashMap;
-
-// Wire Format Compatibility Tests
-// These tests verify that our message codes match upstream rsync's exact values
 
 /// Verifies that all message codes have the exact numeric values expected by
 /// upstream rsync 3.4.1. These values are defined in rsync.h and must match
@@ -141,7 +138,6 @@ fn message_code_is_logging_correctly_categorizes_all_variants() {
         );
     }
 
-    // Verify we covered all codes
     assert_eq!(
         logging_codes.len() + non_logging_codes.len(),
         MessageCode::ALL.len(),
@@ -177,11 +173,10 @@ fn message_code_flush_alias_is_info() {
     assert_eq!(MessageCode::FLUSH, MessageCode::Info);
     assert_eq!(MessageCode::FLUSH.as_u8(), 2);
 
-    // Parsing MSG_FLUSH should yield Info
     let parsed: MessageCode = "MSG_FLUSH".parse().expect("MSG_FLUSH should parse");
     assert_eq!(parsed, MessageCode::Info);
 
-    // But name() returns MSG_INFO, not MSG_FLUSH
+    // name() returns the canonical MSG_INFO, not the MSG_FLUSH alias.
     assert_eq!(MessageCode::FLUSH.name(), "MSG_INFO");
 }
 
@@ -189,7 +184,6 @@ fn message_code_flush_alias_is_info() {
 /// all logging variants.
 #[test]
 fn message_code_log_code_bidirectional_conversion() {
-    // All LogCodes except None should have a MessageCode equivalent
     for &log in LogCode::all() {
         if log == LogCode::None {
             assert!(
@@ -247,7 +241,6 @@ fn message_code_without_log_equivalent_fails_conversion() {
 /// LogCode variants.
 #[test]
 fn message_code_and_log_code_numeric_alignment() {
-    // These pairs should have the same numeric value
     let aligned_pairs = [
         (MessageCode::ErrorXfer, LogCode::ErrorXfer),
         (MessageCode::Info, LogCode::Info),
@@ -784,12 +777,10 @@ fn message_code_sparse_value_ranges() {
 /// Documents that log codes are contiguous (0-8) unlike message codes.
 #[test]
 fn log_code_contiguous_value_range() {
-    // Log codes are contiguous 0-8
     for i in 0u8..=8 {
         assert!(LogCode::from_u8(i).is_some(), "LogCode {i} should exist");
     }
 
-    // All other values are invalid
     for i in 9u8..=255 {
         assert!(
             LogCode::from_u8(i).is_none(),
