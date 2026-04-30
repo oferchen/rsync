@@ -43,6 +43,7 @@ mod sort;
 mod state;
 mod trace;
 mod wire_mode;
+mod wire_path;
 mod write;
 
 pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};

@@ -14,6 +14,7 @@ use super::super::flags::{
     XMIT_RDEV_MINOR_8_PRE30, XMIT_SAME_DEV_PRE30, XMIT_SAME_NAME, XMIT_SAME_RDEV_MAJOR,
     XMIT_TOP_DIR,
 };
+use super::super::wire_path::path_bytes_to_wire;
 use super::FileListWriter;
 
 impl FileListWriter {
@@ -112,10 +113,14 @@ impl FileListWriter {
         }
 
         if let Some(target) = entry.link_target() {
-            let target_bytes = target.as_os_str().as_encoded_bytes();
+            // Symlink targets use the same wire-form normalisation as filenames:
+            // any platform-native backslash separators are translated to forward
+            // slashes before transmission.
+            // upstream: flist.c:send_file_entry() lines 660-670 and util1.c:955-961
+            let target_bytes = path_bytes_to_wire(target.as_path());
             let len = target_bytes.len();
             write_varint30_int(writer, len as i32, self.protocol.as_u8())?;
-            writer.write_all(target_bytes)?;
+            writer.write_all(&target_bytes)?;
         }
 
         Ok(())
