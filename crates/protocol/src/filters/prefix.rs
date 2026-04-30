@@ -88,6 +88,8 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
 
 /// Builds a prefix for protocol >= 29 (modern, full modifiers).
 fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> String {
+    use super::wire::RuleType;
+
     // Maximum prefix length: type(1) + modifiers(10) + space(1) = 12 chars
     let mut prefix = String::with_capacity(12);
 
@@ -123,8 +125,17 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
         prefix.push('x');
     }
 
-    // Protocol version gated modifiers
-    if protocol.supports_sender_receiver_modifiers() {
+    // Protocol version gated modifiers.
+    //
+    // upstream: exclude.c:1180-1207 sets prefix_specifies_side when the rule
+    // type char is R/P (and S/H if/when added), and exclude.c:1269-1278
+    // rejects an explicit `r`/`s` modifier in that case as
+    // "invalid modifier". The R/P/S/H prefixes already imply the side, so we
+    // must not emit the redundant `r`/`s` flag for those rule types - even if
+    // the wire-format struct has the corresponding side bit set.
+    let side_implied_by_prefix = matches!(rule.rule_type, RuleType::Risk | RuleType::Protect);
+
+    if protocol.supports_sender_receiver_modifiers() && !side_implied_by_prefix {
         if rule.sender_side {
             prefix.push('s');
         }
@@ -310,6 +321,58 @@ mod tests {
             xattr_only: false,
             sender_side: false,
             receiver_side: false,
+            perishable: false,
+            negate: false,
+        };
+
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
+        assert_eq!(prefix, "P ");
+    }
+
+    /// Risk/Protect prefixes already imply receiver-side at the upstream
+    /// parser (exclude.c:1180-1207). Emitting an explicit `r` modifier on
+    /// top of those is rejected by upstream as "invalid modifier 'r' at
+    /// position N in filter rule". The encoder must therefore suppress the
+    /// `r` flag when the rule type is Risk or Protect, even if the wire
+    /// struct carries `receiver_side: true`.
+    #[test]
+    fn risk_rule_does_not_emit_redundant_receiver_modifier() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat {
+            rule_type: RuleType::Risk,
+            pattern: "*.log".to_owned(),
+            anchored: false,
+            directory_only: false,
+            no_inherit: false,
+            cvs_exclude: false,
+            word_split: false,
+            exclude_from_merge: false,
+            xattr_only: false,
+            sender_side: false,
+            receiver_side: true,
+            perishable: false,
+            negate: false,
+        };
+
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
+        assert_eq!(prefix, "R ");
+    }
+
+    #[test]
+    fn protect_rule_does_not_emit_redundant_receiver_modifier() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat {
+            rule_type: RuleType::Protect,
+            pattern: "*.log".to_owned(),
+            anchored: false,
+            directory_only: false,
+            no_inherit: false,
+            cvs_exclude: false,
+            word_split: false,
+            exclude_from_merge: false,
+            xattr_only: false,
+            sender_side: false,
+            receiver_side: true,
             perishable: false,
             negate: false,
         };
