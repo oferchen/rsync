@@ -71,6 +71,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "  -H, --hard-links  Preserve hard links between files.\n",
             "      --no-hard-links  Disable hard link preservation.\n",
             "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",
+            "      --apple-double-skip  Skip macOS AppleDouble (._foo) sidecar files.\n",
             "      --filter=RULE  Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'include PATTERN', 'exclude PATTERN', 'show PATTERN'/'S PATTERN', 'hide PATTERN'/'H PATTERN', 'protect PATTERN'/'P PATTERN', 'risk PATTERN'/'R PATTERN', 'exclude-if-present=FILE', 'merge[,MODS] FILE' or '.[,MODS] FILE' with MODS drawn from '+', '-', 'C', 'e', 'n', 'w', 's', 'r', 'p', '/', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE' with MODS drawn from '+', '-', 'n', 'e', 'w', 's', 'r', 'p', '/', and 'C').\n",
             "  -F            Alias for per-directory .rsync-filter handling (repeat to also load receiver-side files).\n",
             "      --files-from=FILE  Read additional source operands from FILE.\n",
