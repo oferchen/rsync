@@ -140,6 +140,187 @@ fn preserves_explicit_bracketed_ipv6_literals() {
 }
 
 #[test]
+fn wraps_ipv6_hosts_with_scoped_zone_id() {
+    // RFC 4007 link-local with interface zone id: must round-trip the
+    // literal `%zone` inside the brackets.
+    let mut command = SshCommand::new("fe80::1%eth0");
+    command.set_prefer_aes_gcm(Some(false));
+    command.set_user("backup");
+
+    let (_, args) = command.command_parts_for_testing();
+
+    assert_eq!(
+        args_to_strings(&args),
+        vec![
+            "-oBatchMode=yes".to_owned(),
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
+            "backup@[fe80::1%eth0]".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn wraps_bracketed_ipv6_hosts_with_scoped_zone_id() {
+    // URL-style outer brackets around an IPv6+zone literal still
+    // re-emit the canonical `[addr%zone]` form.
+    let mut command = SshCommand::new("[fe80::1%en0]");
+    command.set_prefer_aes_gcm(Some(false));
+
+    let (_, args) = command.command_parts_for_testing();
+
+    assert_eq!(
+        args_to_strings(&args),
+        vec![
+            "-oBatchMode=yes".to_owned(),
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
+            "[fe80::1%en0]".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn does_not_bracket_malformed_ipv6_with_multiple_double_colons() {
+    // The legacy `host_contains_colon` heuristic accepted any `:`-bearing
+    // input as IPv6 and would have wrapped this in brackets. Strict
+    // `Ipv6Addr::from_str` validation rejects multi-`::` literals, so the
+    // host is now passed through unchanged for SSH to surface the
+    // resolution failure.
+    let mut command = SshCommand::new("2001:db8:::1");
+    command.set_prefer_aes_gcm(Some(false));
+
+    let (_, args) = command.command_parts_for_testing();
+
+    assert_eq!(
+        args_to_strings(&args),
+        vec![
+            "-oBatchMode=yes".to_owned(),
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
+            "2001:db8:::1".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn does_not_bracket_garbage_colon_input() {
+    // Loose substring checks (`host.contains(':')`) would have also
+    // bracketed this; strict parsing leaves it untouched.
+    let mut command = SshCommand::new("garbage:input");
+    command.set_prefer_aes_gcm(Some(false));
+
+    let (_, args) = command.command_parts_for_testing();
+
+    assert_eq!(
+        args_to_strings(&args),
+        vec![
+            "-oBatchMode=yes".to_owned(),
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
+            "garbage:input".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn does_not_bracket_zone_with_whitespace() {
+    // Zone identifiers must not contain whitespace; the malformed input
+    // is passed through unchanged rather than silently wrapped.
+    let mut command = SshCommand::new("fe80::1%eth 0");
+    command.set_prefer_aes_gcm(Some(false));
+
+    let (_, args) = command.command_parts_for_testing();
+
+    assert_eq!(
+        args_to_strings(&args),
+        vec![
+            "-oBatchMode=yes".to_owned(),
+            "-oServerAliveInterval=20".to_owned(),
+            "-oServerAliveCountMax=3".to_owned(),
+            "-oConnectTimeout=30".to_owned(),
+            "fe80::1%eth 0".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn does_not_bracket_ipv4_or_hostname() {
+    // Sanity check: dotted-quad IPv4 and ordinary hostnames are emitted
+    // verbatim with no brackets.
+    let mut ipv4 = SshCommand::new("192.0.2.1");
+    ipv4.set_prefer_aes_gcm(Some(false));
+    let (_, ipv4_args) = ipv4.command_parts_for_testing();
+    assert!(args_to_strings(&ipv4_args).contains(&"192.0.2.1".to_owned()));
+
+    let mut hostname = SshCommand::new("rsync.example.com");
+    hostname.set_prefer_aes_gcm(Some(false));
+    let (_, host_args) = hostname.command_parts_for_testing();
+    assert!(args_to_strings(&host_args).contains(&"rsync.example.com".to_owned()));
+}
+
+#[test]
+fn parse_host_for_ssh_classifies_inputs() {
+    use super::builder::{BuildError, HostKind, parse_host_for_ssh};
+
+    assert_eq!(
+        parse_host_for_ssh("rsync.example.com"),
+        Ok(HostKind::Hostname("rsync.example.com".to_owned()))
+    );
+    assert_eq!(
+        parse_host_for_ssh("192.0.2.1"),
+        Ok(HostKind::Ipv4(Ipv4Addr::new(192, 0, 2, 1)))
+    );
+    assert_eq!(
+        parse_host_for_ssh("2001:db8::1"),
+        Ok(HostKind::Ipv6 {
+            addr: "2001:db8::1".parse().unwrap(),
+            zone: None,
+        })
+    );
+    assert_eq!(
+        parse_host_for_ssh("[2001:db8::1]"),
+        Ok(HostKind::Ipv6 {
+            addr: "2001:db8::1".parse().unwrap(),
+            zone: None,
+        })
+    );
+    assert_eq!(
+        parse_host_for_ssh("fe80::1%eth0"),
+        Ok(HostKind::Ipv6 {
+            addr: "fe80::1".parse().unwrap(),
+            zone: Some("eth0".to_owned()),
+        })
+    );
+
+    assert!(matches!(parse_host_for_ssh(""), Err(BuildError::EmptyHost)));
+    assert!(matches!(
+        parse_host_for_ssh("2001:db8:::1"),
+        Err(BuildError::InvalidIpv6(_))
+    ));
+    assert!(matches!(
+        parse_host_for_ssh("garbage:input"),
+        Err(BuildError::InvalidIpv6(_))
+    ));
+    assert!(matches!(
+        parse_host_for_ssh("fe80::1%"),
+        Err(BuildError::InvalidZoneId(_))
+    ));
+    assert!(matches!(
+        parse_host_for_ssh("fe80::1%eth 0"),
+        Err(BuildError::InvalidZoneId(_))
+    ));
+    assert!(matches!(
+        parse_host_for_ssh("fe80::1%eth]0"),
+        Err(BuildError::InvalidZoneId(_))
+    ));
+}
+
+#[test]
 fn command_parts_skip_target_when_host_and_user_missing() {
     let mut command = SshCommand::new("");
     command.set_prefer_aes_gcm(Some(false));
