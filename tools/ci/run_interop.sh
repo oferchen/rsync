@@ -6246,11 +6246,13 @@ CONF
 }
 
 # Risk filter (R) interop test.
-# Upstream rsync pushes to oc-rsync daemon with --delete, P (protect) for *.log
-# and *.sh, then R (risk) overriding protect for *.log only.
+# Upstream rsync pushes to oc-rsync daemon with --delete, R (risk) overriding
+# protect for *.log first, then P (protect) for *.log and *.sh.
 # Verifies *.log files are deleted (risk overrides protect), *.sh files survive.
 # Also tests oc-rsync pushing to upstream daemon (both directions).
-# upstream: exclude.c - 'R' modifier maps to risk rule that overrides protect.
+# upstream: exclude.c:1201-1207 'R' = FILTRULE_INCLUDE|FILTRULE_RECEIVER_SIDE
+# (an include rule allowing deletion). exclude.c:1038-1065 check_filter() uses
+# first-match-wins, so R must be listed BEFORE P to override it.
 test_delete_filter_risk() {
   local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
         oc_port=$6 upstream_port=$7
@@ -6266,7 +6268,8 @@ test_delete_filter_risk() {
   echo "source beta" > "$dr_src/beta.txt"
   echo "source nested" > "$dr_src/subdir/nested.txt"
 
-  # Dest-only files: *.log and *.sh are P-protected, but R overrides for *.log
+  # Dest-only files: R (risk) overrides P (protect) for *.log via first-match-wins;
+  # *.sh remains P-protected because no preceding R rule matches it.
   echo "dest risk log" > "$dr_dest/risky.log"
   echo "dest protected sh" > "$dr_dest/keeper.sh"
   echo "dest unprotected" > "$dr_dest/destonly.txt"
@@ -6289,9 +6292,10 @@ CONF
 
   start_oc_daemon "$dr_conf" "$dr_log" "$upstream_binary" "$dr_pid" "$oc_port"
 
-  # Push with --delete, protect *.log and *.sh, then risk (override) *.log
+  # Push with --delete; R (risk) precedes P (protect) so *.log gets deleted
+  # via first-match-wins, while *.sh stays protected.
   if ! timeout "$hard_timeout" "$upstream_binary" -av --delete --timeout=10 \
-      --filter='P *.log' --filter='P *.sh' --filter='R *.log' \
+      --filter='R *.log' --filter='P *.log' --filter='P *.sh' \
       "${dr_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
       >"${log}.del-risk-up.out" 2>"${log}.del-risk-up.err"; then
     echo "    delete-filter-risk (up->oc) push failed (exit=$?)"
@@ -6361,9 +6365,10 @@ CONF
 
   start_upstream_daemon "$upstream_binary" "$dr_conf2" "$dr_log2" "$dr_pid2"
 
-  # oc-rsync pushes with --delete, protect then risk
+  # oc-rsync pushes with --delete; R (risk) precedes P (protect) so *.log gets
+  # deleted via first-match-wins, while *.sh stays protected.
   if ! timeout "$hard_timeout" "$oc_bin" -av --delete --timeout=10 \
-      --filter='P *.log' --filter='P *.sh' --filter='R *.log' \
+      --filter='R *.log' --filter='P *.log' --filter='P *.sh' \
       "${dr_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
       >"${log}.del-risk-oc.out" 2>"${log}.del-risk-oc.err"; then
     echo "    delete-filter-risk (oc->up) push failed (exit=$?)"
