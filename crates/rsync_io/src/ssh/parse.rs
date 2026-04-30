@@ -67,6 +67,12 @@ pub fn parse_remote_shell(specification: &OsStr) -> Result<Vec<OsString>, Remote
         return Err(RemoteShellParseError::InteriorNull);
     }
 
+    if has_trailing_escape(text) {
+        return Err(RemoteShellParseError::Parse(
+            "trailing escape character".to_string(),
+        ));
+    }
+
     let parts =
         shell_words::split(text).map_err(|err| RemoteShellParseError::Parse(err.to_string()))?;
 
@@ -75,6 +81,54 @@ pub fn parse_remote_shell(specification: &OsStr) -> Result<Vec<OsString>, Remote
     }
 
     Ok(parts.into_iter().map(OsString::from).collect())
+}
+
+/// Returns `true` when `text` ends with an unescaped backslash that has no
+/// character to escape.
+///
+/// `shell_words::split` silently accepts a dangling trailing backslash, but
+/// upstream rsync (and the previous bespoke tokenizer) reject it. This walks
+/// the string tracking single- and double-quote regions so that backslashes
+/// inside single quotes - where the shell treats them as literal characters -
+/// are not flagged. Inside double-quoted regions and outside any quoting, a
+/// backslash escapes the next byte; consecutive `\\` cancel each other out.
+fn has_trailing_escape(text: &str) -> bool {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escape_pending = false;
+    let mut last_was_active_backslash = false;
+
+    for byte in text.bytes() {
+        if escape_pending {
+            // The previous byte was an active backslash; consume this byte.
+            escape_pending = false;
+            last_was_active_backslash = false;
+            continue;
+        }
+
+        match byte {
+            b'\\' if in_single => {
+                last_was_active_backslash = false;
+            }
+            b'\\' => {
+                escape_pending = true;
+                last_was_active_backslash = true;
+            }
+            b'\'' if !in_double => {
+                in_single = !in_single;
+                last_was_active_backslash = false;
+            }
+            b'"' if !in_single => {
+                in_double = !in_double;
+                last_was_active_backslash = false;
+            }
+            _ => {
+                last_was_active_backslash = false;
+            }
+        }
+    }
+
+    escape_pending && last_was_active_backslash
 }
 
 #[cfg(test)]
