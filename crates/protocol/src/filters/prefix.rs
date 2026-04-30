@@ -87,12 +87,35 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
 }
 
 /// Builds a prefix for protocol >= 29 (modern, full modifiers).
+///
+/// Protect (`P`) and Risk (`R`) rules are normalized to upstream's wire
+/// representation before transmission. Upstream's `get_rule_prefix()`
+/// (`exclude.c:1536-1572`) only emits `+`, `-`, or `:` as the leading
+/// character; the receiver-side semantics that distinguish a protect rule
+/// from a plain exclude are conveyed exclusively via the `r` modifier flag.
+/// Sending a literal `P` over the wire causes upstream's parser to combine
+/// it with the receiver-side `r` modifier emitted from `applies_to_receiver`,
+/// producing an invalid `Pr` rule (upstream `exclude.c:1270-1271` rejects
+/// `r` after a side-specifying prefix).
+///
+/// upstream: exclude.c:1536-1542 - protect rules emit `-` (exclude semantics).
+/// upstream: exclude.c:1201-1206 - risk rules emit `+` (include semantics).
 fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> String {
+    use super::wire::RuleType;
+
     // Maximum prefix length: type(1) + modifiers(10) + space(1) = 12 chars
     let mut prefix = String::with_capacity(12);
 
-    // First character: rule type
-    prefix.push(rule.rule_type.prefix_char());
+    // First character: rule type, with Protect/Risk normalized to upstream's
+    // wire format. The receiver-side flag (set on FilterRuleSpec::protect /
+    // FilterRuleSpec::risk via applies_to_receiver) is emitted as the `r`
+    // modifier below, matching upstream's send_filter_list().
+    let prefix_char = match rule.rule_type {
+        RuleType::Protect => '-',
+        RuleType::Risk => '+',
+        other => other.prefix_char(),
+    };
+    prefix.push(prefix_char);
 
     // Modifiers (order matters for compatibility)
     if rule.anchored {
@@ -123,12 +146,16 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
         prefix.push('x');
     }
 
-    // Protocol version gated modifiers
+    // Protocol version gated modifiers. Protect/Risk rule types always emit
+    // the `r` modifier because upstream's wire encoding represents them
+    // exclusively via FILTRULE_RECEIVER_SIDE on a plain exclude/include rule.
+    // upstream: exclude.c:1569-1572 - `r` modifier on rules with RECEIVER_SIDE.
     if protocol.supports_sender_receiver_modifiers() {
         if rule.sender_side {
             prefix.push('s');
         }
-        if rule.receiver_side {
+        let force_receiver = matches!(rule.rule_type, RuleType::Protect | RuleType::Risk);
+        if rule.receiver_side || force_receiver {
             prefix.push('r');
         }
     }
@@ -296,7 +323,11 @@ mod tests {
     }
 
     #[test]
-    fn protect_rule_prefix() {
+    fn protect_rule_emits_dash_with_receiver_modifier() {
+        // upstream: exclude.c:1645 send_filter_list() encodes a P rule as
+        // an exclude (`-`) carrying the FILTRULE_RECEIVER_SIDE modifier (`r`).
+        // FilterRuleSpec::protect() sets applies_to_receiver=true, which
+        // build_wire_format_rules() forwards as receiver_side=true.
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::Protect,
@@ -309,12 +340,37 @@ mod tests {
             exclude_from_merge: false,
             xattr_only: false,
             sender_side: false,
-            receiver_side: false,
+            receiver_side: true,
             perishable: false,
             negate: false,
         };
 
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
-        assert_eq!(prefix, "P ");
+        assert_eq!(prefix, "-r ");
+    }
+
+    #[test]
+    fn risk_rule_emits_plus_with_receiver_modifier() {
+        // upstream: exclude.c:1201-1206 - 'R' parses as INCLUDE|RECEIVER_SIDE,
+        // so it serializes as `+r` (include with receiver modifier).
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat {
+            rule_type: RuleType::Risk,
+            pattern: "scratch".to_owned(),
+            anchored: false,
+            directory_only: false,
+            no_inherit: false,
+            cvs_exclude: false,
+            word_split: false,
+            exclude_from_merge: false,
+            xattr_only: false,
+            sender_side: false,
+            receiver_side: true,
+            perishable: false,
+            negate: false,
+        };
+
+        let prefix = build_rule_prefix(&rule, protocol).unwrap();
+        assert_eq!(prefix, "+r ");
     }
 }
