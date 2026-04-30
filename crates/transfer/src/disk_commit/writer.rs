@@ -200,6 +200,10 @@ impl<'a> Writer<'a> {
     /// The buffered variant simply drops, closing the file. The io_uring
     /// variant calls `commit_file` to flush, optionally fsync, and detach the
     /// file from the batch.
+    #[cfg_attr(
+        not(all(target_os = "linux", feature = "io_uring")),
+        allow(unused_variables)
+    )]
     pub(super) fn finish(self, do_fsync: bool, file_path: &Path) -> io::Result<()> {
         match self {
             Writer::Buffered(_) => Ok(()),
