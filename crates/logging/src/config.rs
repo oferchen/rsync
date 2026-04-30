@@ -152,7 +152,6 @@ impl VerbosityConfig {
                 config.debug.proto = 1;
             }
             _ => {
-                // Level 5+
                 // upstream debug_verbosity[5] = "CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK"
                 config.info.nonreg = 1;
                 config.info.copy = 1;
@@ -275,7 +274,6 @@ fn parse_flag_token(token: &str) -> Result<(&str, u8), String> {
         return Err("empty flag token".to_owned());
     }
 
-    // Find where the digits start
     let digit_start = token.find(|c: char| c.is_ascii_digit());
 
     match digit_start {
@@ -287,10 +285,7 @@ fn parse_flag_token(token: &str) -> Result<(&str, u8), String> {
                 .map_err(|_| format!("invalid level in flag: {token}"))?;
             Ok((name, level))
         }
-        None => {
-            // No digits, default to level 1
-            Ok((token, 1))
-        }
+        None => Ok((token, 1)),
     }
 }
 
@@ -383,7 +378,6 @@ mod tests {
     fn test_from_verbose_level_0() {
         let config = VerbosityConfig::from_verbose_level(0);
 
-        // Level 0 only sets nonreg
         assert_eq!(config.info.nonreg, 1);
         assert_eq!(config.info.copy, 0);
         assert_eq!(config.info.del, 0);
@@ -399,7 +393,6 @@ mod tests {
     fn test_from_verbose_level_3() {
         let config = VerbosityConfig::from_verbose_level(3);
 
-        // Level 3 has enhanced debug flags
         assert_eq!(config.debug.connect, 2);
         assert_eq!(config.debug.del, 2);
         assert_eq!(config.debug.deltasum, 2);
@@ -420,7 +413,6 @@ mod tests {
     fn test_from_verbose_level_4() {
         let config = VerbosityConfig::from_verbose_level(4);
 
-        // Level 4 has further enhanced flags
         assert_eq!(config.debug.cmd, 2);
         assert_eq!(config.debug.del, 3);
         assert_eq!(config.debug.deltasum, 3);
@@ -436,14 +428,13 @@ mod tests {
     fn test_from_verbose_level_5_and_higher() {
         let config = VerbosityConfig::from_verbose_level(5);
 
-        // Level 5+ has maximum debug output
         assert_eq!(config.debug.deltasum, 4);
         assert_eq!(config.debug.flist, 4);
         assert_eq!(config.debug.chdir, 1);
         assert_eq!(config.debug.hash, 1);
         assert_eq!(config.debug.hlink, 1);
 
-        // Level 10 should also have max output
+        // Levels above 5 saturate at the level 5 mapping.
         let config10 = VerbosityConfig::from_verbose_level(10);
         assert_eq!(config10.debug.deltasum, 4);
         assert_eq!(config10.debug.flist, 4);
@@ -456,7 +447,6 @@ mod tests {
     fn test_apply_all_info_flags() {
         let mut config = VerbosityConfig::default();
 
-        // Test all info flags
         config.apply_info_flag("backup").unwrap();
         assert_eq!(config.info.backup, 1);
 
@@ -495,7 +485,6 @@ mod tests {
     fn test_apply_all_debug_flags() {
         let mut config = VerbosityConfig::default();
 
-        // Test all debug flags
         config.apply_debug_flag("acl").unwrap();
         assert_eq!(config.debug.acl, 1);
 
