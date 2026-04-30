@@ -993,8 +993,6 @@ fn read_longint_truncated_extended() {
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
-// -- 1-byte encoding tests --
-
 #[test]
 fn all_1byte_values_encode_to_single_byte() {
     for value in 0..=127_i32 {
@@ -1124,8 +1122,6 @@ fn multiple_1byte_values_in_stream() {
         assert_eq!(decoded, expected);
     }
 }
-
-// -- 2-byte encoding tests --
 
 #[test]
 fn boundary_128_encodes_to_2_bytes() {
@@ -1267,8 +1263,6 @@ fn encoding_matches_upstream_format() {
         );
     }
 }
-
-// -- Extended encoding tests (values > 16383) --
 
 #[test]
 fn boundary_16384_is_3_bytes() {
@@ -1487,8 +1481,6 @@ fn powers_of_two_extended() {
     }
 }
 
-// -- Proptest property tests --
-
 proptest! {
     #[test]
     fn varint_roundtrip_all_i32(value: i32) {
@@ -1572,8 +1564,6 @@ proptest! {
         prop_assert!(len <= 5, "varint encoding should use at most 5 bytes, got {}", len);
     }
 }
-
-// -- Byte boundary tests --
 
 /// The exact boundary values where encoding size changes.
 const BYTE_BOUNDARIES: [(i32, usize, &str); 8] = [
