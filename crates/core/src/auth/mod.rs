@@ -279,11 +279,9 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         .zip(b.iter())
         .fold(0u8, |acc, (x, y)| acc | (x ^ y));
 
-    // Convert to bool without branching on intermediate values.
-    // wrapping_sub(1) on 0 gives 255 (0xFF), on any non-zero gives < 255.
-    // Right-shifting by 8 bits gives 0 for 0xFF and 0 for anything else that
-    // doesn't overflow. Instead, we use the fact that 0u8 == 0 is true.
-    // The fold above ensures constant-time iteration.
+    // The fold above visited every byte regardless of intermediate values, so
+    // the only timing-variable step that remains is this final equality check
+    // against zero, which is independent of where any difference occurred.
     diff == 0
 }
 
@@ -343,8 +341,6 @@ mod tests {
         assert_eq!(digests_for_response(&"A".repeat(len)), MD_LEGACY);
     }
 
-    // Tests for constant_time_eq
-
     #[test]
     fn constant_time_eq_returns_true_for_equal_slices() {
         assert!(constant_time_eq(b"hello", b"hello"));
@@ -368,7 +364,6 @@ mod tests {
 
     #[test]
     fn constant_time_eq_handles_single_byte_difference() {
-        // Test that even a single bit difference is detected
         assert!(!constant_time_eq(b"\x00", b"\x01"));
         assert!(!constant_time_eq(b"\xff", b"\xfe"));
     }
@@ -379,7 +374,6 @@ mod tests {
         let challenge = "mychallenge";
         let correct = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Sha256);
 
-        // Tamper with the response
         let mut tampered = correct.clone();
         if let Some(c) = tampered.pop() {
             tampered.push(if c == 'A' { 'B' } else { 'A' });
