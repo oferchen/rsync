@@ -643,8 +643,8 @@ pub(super) fn parse_host_for_ssh(host: &str) -> Result<HostKind, BuildError> {
     // Zone identifiers (`%eth0`) only attach to IPv6 literals. A hostname
     // containing `%` is invalid here -- DNS labels do not permit `%`.
     if let Some((addr_str, zone_str)) = stripped.split_once('%') {
-        let addr = Ipv6Addr::from_str(addr_str)
-            .map_err(|_| BuildError::InvalidIpv6(host.to_string()))?;
+        let addr =
+            Ipv6Addr::from_str(addr_str).map_err(|_| BuildError::InvalidIpv6(host.to_string()))?;
         validate_zone_id(zone_str).map_err(|_| BuildError::InvalidZoneId(host.to_string()))?;
         return Ok(HostKind::Ipv6 {
             addr,
@@ -695,9 +695,7 @@ fn validate_zone_id(zone: &str) -> Result<(), ()> {
 fn host_str_for_validation(host: &OsStr) -> Option<String> {
     #[cfg(unix)]
     {
-        std::str::from_utf8(host.as_bytes())
-            .ok()
-            .map(str::to_owned)
+        std::str::from_utf8(host.as_bytes()).ok().map(str::to_owned)
     }
 
     #[cfg(not(unix))]

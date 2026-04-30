@@ -297,10 +297,7 @@ fn parse_host_for_ssh_classifies_inputs() {
         })
     );
 
-    assert!(matches!(
-        parse_host_for_ssh(""),
-        Err(BuildError::EmptyHost)
-    ));
+    assert!(matches!(parse_host_for_ssh(""), Err(BuildError::EmptyHost)));
     assert!(matches!(
         parse_host_for_ssh("2001:db8:::1"),
         Err(BuildError::InvalidIpv6(_))
