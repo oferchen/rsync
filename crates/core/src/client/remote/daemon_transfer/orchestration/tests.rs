@@ -689,3 +689,86 @@ mod files_from_forwarding_tests {
         assert!(conn.files_from_data.is_none());
     }
 }
+
+mod iconv_bridge {
+    //! Integration tests for the `--iconv` bridge from `IconvSetting`
+    //! to `ConnectionConfig.iconv` (closes #1911).
+
+    use super::*;
+    use crate::client::config::IconvSetting;
+
+    #[test]
+    fn unspecified_setting_leaves_connection_iconv_none() {
+        let config = ClientConfig::builder()
+            .iconv(IconvSetting::Unspecified)
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        assert!(server_config.connection.iconv.is_none());
+    }
+
+    #[test]
+    fn disabled_setting_leaves_connection_iconv_none() {
+        let config = ClientConfig::builder()
+            .iconv(IconvSetting::Disabled)
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        assert!(server_config.connection.iconv.is_none());
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn explicit_setting_populates_connection_iconv_for_receiver() {
+        let config = ClientConfig::builder()
+            .iconv(IconvSetting::Explicit {
+                local: "UTF-8".to_owned(),
+                remote: Some("ISO-8859-1".to_owned()),
+            })
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let converter = server_config
+            .connection
+            .iconv
+            .expect("--iconv=utf-8,latin1 must produce a converter on the receiver path");
+        assert!(!converter.is_identity());
+        assert_eq!(converter.local_encoding_name(), "UTF-8");
+        assert_eq!(converter.remote_encoding_name(), "windows-1252");
+        // encoding_rs maps "ISO-8859-1" to "windows-1252" per WHATWG spec.
+        // The contract for this bridge is that a non-identity converter
+        // is wired through; the exact label normalisation is owned by
+        // the protocol crate's iconv module.
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn explicit_setting_populates_connection_iconv_for_generator() {
+        let config = ClientConfig::builder()
+            .iconv(IconvSetting::Explicit {
+                local: "UTF-8".to_owned(),
+                remote: Some("ISO-8859-1".to_owned()),
+            })
+            .build();
+        let server_config =
+            build_server_config_for_generator(&config, &["src".to_owned()], Vec::new()).unwrap();
+        assert!(server_config.connection.iconv.is_some());
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn locale_default_setting_populates_connection_iconv() {
+        let config = ClientConfig::builder()
+            .iconv(IconvSetting::LocaleDefault)
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &["dest".to_owned()], Vec::new()).unwrap();
+        let converter = server_config
+            .connection
+            .iconv
+            .expect("--iconv=. must produce a locale-derived converter");
+        // converter_from_locale uses UTF-8 on both sides for portability,
+        // making it an identity converter on most modern systems.
+        assert!(converter.is_identity());
+    }
+}
