@@ -345,7 +345,6 @@ mod tests {
         let result = parse_short_merge_directive(":- filter");
         assert!(result.is_some());
         if let Some(Ok(FilterDirective::Rule(spec))) = result {
-            // The rule should have exclude enforced
             let _ = spec;
         }
     }
