@@ -8692,6 +8692,572 @@ CONF
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# .rsync-filter per-directory inheritance interop tests.
+#
+# Each test builds a fixture, then runs the same flags through both the oc
+# daemon (push from upstream client) and the upstream daemon (push from oc
+# client). After both pushes, the test asserts that the set of paths under
+# each destination matches exactly the same expected set, byte for byte.
+# This mirrors upstream rsync 3.4.1's behaviour and detects any divergence
+# in oc-rsync's per-directory merge-file handling.
+#
+# Helper: rsync_filter_run_both_directions
+#   $1: tag (used in working filenames)
+#   $2: src dir  (already populated by the caller)
+#   $3: log prefix
+#   $4: oc_port
+#   $5: upstream_port
+#   $6: upstream_binary
+#   $7: oc_bin
+#   $8..: rsync flags (e.g. "-av" "-FF")
+# Sets globals:
+#   __RFI_DEST_OC, __RFI_DEST_UP - destination dirs to compare expected files in.
+# Returns 0 on success, 1 on failure.
+rsync_filter_run_both_directions() {
+  local tag=$1 src=$2 log_prefix=$3 oc_port=$4 upstream_port=$5
+  local upstream_binary=$6 oc_bin=$7
+  shift 7
+  local -a flags=("$@")
+
+  local dest_oc="${src%/*}/${tag}-dest-oc"
+  local dest_up="${src%/*}/${tag}-dest-up"
+  rm -rf "$dest_oc" "$dest_up"
+  mkdir -p "$dest_oc" "$dest_up"
+
+  # --- Direction 1: upstream client -> oc-rsync daemon ---
+  local conf_oc="${src%/*}/${tag}-oc.conf"
+  local pid_oc="${src%/*}/${tag}-oc.pid"
+  local log_oc="${src%/*}/${tag}-oc.log"
+  cat > "$conf_oc" <<CONF
+pid file = ${pid_oc}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${dest_oc}
+comment = ${tag}
+read only = false
+numeric ids = yes
+CONF
+
+  start_oc_daemon "$conf_oc" "$log_oc" "$upstream_binary" "$pid_oc" "$oc_port"
+
+  if ! timeout "$hard_timeout" "$upstream_binary" "${flags[@]}" --timeout=10 \
+      "${src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log_prefix}.${tag}.up2oc.out" 2>"${log_prefix}.${tag}.up2oc.err"; then
+    echo "    up->oc push failed (exit=$?)"
+    stop_oc_daemon
+    return 1
+  fi
+
+  stop_oc_daemon
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local conf_up="${src%/*}/${tag}-up.conf"
+  local pid_up="${src%/*}/${tag}-up.pid"
+  local log_up="${src%/*}/${tag}-up.log"
+  cat > "$conf_up" <<CONF
+pid file = ${pid_up}
+port = ${upstream_port}
+use chroot = false
+
+[interop]
+path = ${dest_up}
+comment = ${tag}
+read only = false
+numeric ids = yes
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$conf_up" "$log_up" "$pid_up"
+
+  if ! timeout "$hard_timeout" "$oc_bin" "${flags[@]}" --timeout=10 \
+      "${src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log_prefix}.${tag}.oc2up.out" 2>"${log_prefix}.${tag}.oc2up.err"; then
+    echo "    oc->up push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  __RFI_DEST_OC="$dest_oc"
+  __RFI_DEST_UP="$dest_up"
+  return 0
+}
+
+# Helper: assert that both destinations contain $1's listed relative paths
+# (one per line), and that each path's contents match $src/$path byte-for-byte.
+# Also asserts that the combined file count matches the expected list size
+# (no extra files transferred).
+#
+# $1: src dir
+# $2: file with newline-separated expected paths (relative)
+# Uses globals: __RFI_DEST_OC, __RFI_DEST_UP
+rsync_filter_assert_expected() {
+  local src=$1 expected_file=$2
+  local d
+  for d in "$__RFI_DEST_OC" "$__RFI_DEST_UP"; do
+    local label="oc"
+    [[ "$d" == "$__RFI_DEST_UP" ]] && label="up"
+
+    # Verify each expected file is present and matches.
+    while IFS= read -r path; do
+      [[ -z "$path" ]] && continue
+      if [[ ! -e "$d/$path" ]]; then
+        echo "    [$label] expected file missing: $path"
+        return 1
+      fi
+      if [[ -f "$src/$path" ]]; then
+        if ! cmp -s "$src/$path" "$d/$path"; then
+          echo "    [$label] content mismatch: $path"
+          return 1
+        fi
+      fi
+    done < "$expected_file"
+
+    # Count actual transferred files (excluding directories).
+    local actual_count
+    actual_count=$(find "$d" -type f | wc -l | tr -d ' ')
+    local expected_count
+    expected_count=$(grep -cE '.' "$expected_file" || true)
+    if [[ "$actual_count" != "$expected_count" ]]; then
+      echo "    [$label] file count mismatch: expected=$expected_count actual=$actual_count"
+      echo "    [$label] actual tree:"
+      (cd "$d" && find . -type f | sort) | sed 's/^/      /'
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Test 1: deeply-nested .rsync-filter (5 levels).
+test_rsync_filter_deeply_nested() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-deep-src"
+  rm -rf "$src"
+  mkdir -p "$src/l1/l2/l3/l4/l5"
+
+  # Each level has a kept file, a skipped file, and a .rsync-filter
+  # that excludes that level's "*.skipN" pattern. Patterns at deeper levels
+  # accumulate due to inheritance.
+  local i
+  for i in 1 2 3 4 5; do
+    local d="$src"
+    local lvl=1
+    while (( lvl < i )); do d="$d/l$lvl"; lvl=$((lvl+1)); done
+    d="$d/l$i"
+    echo "keep-l$i" > "$d/keep.txt"
+    echo "skip-l$i" > "$d/file.skip$i"
+    printf '%s\n' "exclude *.skip$i" > "$d/.rsync-filter"
+  done
+
+  local expected="${work}/rfi-deep-expected.txt"
+  cat > "$expected" <<EOF
+l1/.rsync-filter
+l1/keep.txt
+l1/l2/.rsync-filter
+l1/l2/keep.txt
+l1/l2/l3/.rsync-filter
+l1/l2/l3/keep.txt
+l1/l2/l3/l4/.rsync-filter
+l1/l2/l3/l4/keep.txt
+l1/l2/l3/l4/l5/.rsync-filter
+l1/l2/l3/l4/l5/keep.txt
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-deep" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" -av -F || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
+# Test 2: anchored vs unanchored cross-directory interaction.
+test_rsync_filter_anchored_cross_dir() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-anchor-src"
+  rm -rf "$src"
+  mkdir -p "$src/a/b" "$src/c"
+
+  # /a/b/secret.txt is anchored: only the exact path is excluded.
+  # The same basename in cousin dir /c/ should still transfer.
+  printf '/a/b/secret.txt\n' > "$src/.rsync-filter.tmp"
+  # Convert to filter format: prefix with "- ".
+  awk '{print "- " $0}' "$src/.rsync-filter.tmp" > "$src/.rsync-filter"
+  rm "$src/.rsync-filter.tmp"
+
+  echo "secret-a-b" > "$src/a/b/secret.txt"
+  echo "kept-a-b"   > "$src/a/b/kept.txt"
+  echo "kept-c"     > "$src/c/secret.txt"
+  echo "kept-root"  > "$src/root.txt"
+
+  local expected="${work}/rfi-anchor-expected.txt"
+  cat > "$expected" <<EOF
+.rsync-filter
+a/b/kept.txt
+c/secret.txt
+root.txt
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-anchor" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" \
+    -av --filter='dir-merge /.rsync-filter' || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
+# Test 3: dir-merge with `-` modifier (rules-are-excludes).
+test_rsync_filter_dir_merge_minus() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-minus-src"
+  rm -rf "$src"
+  mkdir -p "$src/sub"
+
+  # `:- .rsync-filter`: bare patterns are treated as excludes.
+  printf '*.bak\n*.tmp\n' > "$src/.rsync-filter"
+  echo "kept" > "$src/kept.txt"
+  echo "skip" > "$src/skip.bak"
+  echo "skip" > "$src/skip.tmp"
+  echo "kept-sub" > "$src/sub/kept.txt"
+  echo "skip-sub" > "$src/sub/scratch.tmp"
+
+  local expected="${work}/rfi-minus-expected.txt"
+  cat > "$expected" <<EOF
+.rsync-filter
+kept.txt
+sub/kept.txt
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-minus" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" \
+    -av --filter='dir-merge,- .rsync-filter' || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
+# Test 4: dir-merge with `+` modifier (rules-are-includes), gated on a final exclude.
+test_rsync_filter_dir_merge_plus() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-plus-src"
+  rm -rf "$src"
+  mkdir -p "$src/sub"
+
+  # `:+ .rsync-filter`: bare patterns are treated as includes.
+  # Combined with a trailing `--exclude='*'`, only listed names transfer.
+  printf '*.txt\n' > "$src/.rsync-filter"
+  echo "kept"  > "$src/kept.txt"
+  echo "skip" > "$src/skip.bin"
+  printf '*.md\n' > "$src/sub/.rsync-filter"
+  echo "kept-md"  > "$src/sub/notes.md"
+  echo "skip-bin" > "$src/sub/binary.bin"
+  # Subdirectories themselves must be allowed for descent.
+  : "no-op-needed"
+
+  local expected="${work}/rfi-plus-expected.txt"
+  cat > "$expected" <<EOF
+kept.txt
+sub/notes.md
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-plus" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" \
+    -av \
+    --filter='dir-merge,+ .rsync-filter' \
+    --include='*/' \
+    --exclude='*' || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
+# Test 5: -FF shorthand expansion (covered also by test_ff_filter_shortcut,
+# but here we add a deeper-nested fixture and verify the shorthand still
+# excludes .rsync-filter at every level).
+test_rsync_filter_ff_shorthand_nested() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-ff-src"
+  rm -rf "$src"
+  mkdir -p "$src/a/b"
+
+  printf 'exclude *.log\n' > "$src/.rsync-filter"
+  printf 'exclude *.cache\n' > "$src/a/.rsync-filter"
+  printf 'exclude *.tmp\n' > "$src/a/b/.rsync-filter"
+
+  echo "x" > "$src/keep.txt"
+  echo "x" > "$src/skip.log"
+  echo "x" > "$src/a/keep.txt"
+  echo "x" > "$src/a/skip.cache"
+  echo "x" > "$src/a/b/keep.txt"
+  echo "x" > "$src/a/b/skip.tmp"
+
+  local expected="${work}/rfi-ff-expected.txt"
+  cat > "$expected" <<EOF
+keep.txt
+a/keep.txt
+a/b/keep.txt
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-ff" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" -av -FF || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
+# Test 6: .rsync-filter located mid-tree only (not at root).
+test_rsync_filter_mid_tree_only() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-mid-src"
+  rm -rf "$src"
+  mkdir -p "$src/a/sub" "$src/b"
+
+  # Only sub/ has a .rsync-filter; rules apply only at and below sub/.
+  printf 'exclude *.bak\n' > "$src/a/sub/.rsync-filter"
+
+  echo "x" > "$src/keep-root.bak"
+  echo "x" > "$src/a/keep-a.bak"
+  echo "x" > "$src/a/sub/skip.bak"
+  echo "x" > "$src/a/sub/kept.txt"
+  echo "x" > "$src/b/keep-b.bak"
+
+  local expected="${work}/rfi-mid-expected.txt"
+  cat > "$expected" <<EOF
+keep-root.bak
+a/keep-a.bak
+a/sub/.rsync-filter
+a/sub/kept.txt
+b/keep-b.bak
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-mid" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" -av -F || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
+# Test 7: source-root-only .rsync-filter (rules apply throughout tree).
+test_rsync_filter_source_root_only() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-root-src"
+  rm -rf "$src"
+  mkdir -p "$src/a/b"
+
+  printf 'exclude *.bak\n' > "$src/.rsync-filter"
+
+  echo "x" > "$src/skip-root.bak"
+  echo "x" > "$src/keep-root.txt"
+  echo "x" > "$src/a/skip-a.bak"
+  echo "x" > "$src/a/keep-a.txt"
+  echo "x" > "$src/a/b/skip-ab.bak"
+  echo "x" > "$src/a/b/keep-ab.txt"
+
+  local expected="${work}/rfi-root-expected.txt"
+  cat > "$expected" <<EOF
+.rsync-filter
+keep-root.txt
+a/keep-a.txt
+a/b/keep-ab.txt
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-root" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" -av \
+    --filter='dir-merge .rsync-filter' || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
+# Test 8: conflicting rules at different depths (deeper include beats parent
+# exclude due to first-match-wins from innermost scope).
+test_rsync_filter_conflicting_depths() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-conflict-src"
+  rm -rf "$src"
+  mkdir -p "$src/sub"
+
+  printf 'exclude *.bak\n' > "$src/.rsync-filter"
+  # Sub directory adds an include that wins for its own .bak files.
+  printf 'include *.bak\n' > "$src/sub/.rsync-filter"
+
+  echo "x" > "$src/skip-root.bak"
+  echo "x" > "$src/keep-root.txt"
+  echo "x" > "$src/sub/keep-sub.bak"
+  echo "x" > "$src/sub/keep-sub.txt"
+
+  local expected="${work}/rfi-conflict-expected.txt"
+  cat > "$expected" <<EOF
+.rsync-filter
+keep-root.txt
+sub/.rsync-filter
+sub/keep-sub.bak
+sub/keep-sub.txt
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-conflict" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" -av \
+    --filter='dir-merge .rsync-filter' || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
+# Test 9: zero-byte .rsync-filter is a no-op (everything transfers).
+test_rsync_filter_empty_noop() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-empty-src"
+  rm -rf "$src"
+  mkdir -p "$src/sub"
+
+  : > "$src/.rsync-filter"
+  echo "x" > "$src/file1.txt"
+  echo "x" > "$src/file2.bak"
+  echo "x" > "$src/sub/nested.txt"
+
+  local expected="${work}/rfi-empty-expected.txt"
+  cat > "$expected" <<EOF
+.rsync-filter
+file1.txt
+file2.bak
+sub/nested.txt
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-empty" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" -av \
+    --filter='dir-merge .rsync-filter' || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
+# Test 10: comments and blank lines in .rsync-filter.
+test_rsync_filter_comments_and_blanks() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-comments-src"
+  rm -rf "$src"
+  mkdir -p "$src"
+
+  cat > "$src/.rsync-filter" <<'FILTER'
+# this is a hash comment
+; this is a semicolon comment
+
+# blank line above; rule below
+
+exclude *.bak
+
+FILTER
+
+  echo "x" > "$src/keep.txt"
+  echo "x" > "$src/skip.bak"
+
+  local expected="${work}/rfi-comments-expected.txt"
+  cat > "$expected" <<EOF
+.rsync-filter
+keep.txt
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-comments" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" -av \
+    --filter='dir-merge .rsync-filter' || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
+# Test 11: .rsync-filter without trailing newline.
+test_rsync_filter_no_trailing_newline() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-notrail-src"
+  rm -rf "$src"
+  mkdir -p "$src"
+
+  # Use printf without final \n; the last rule must still be honoured.
+  printf 'exclude *.bak\nexclude *.tmp' > "$src/.rsync-filter"
+
+  echo "x" > "$src/keep.txt"
+  echo "x" > "$src/skip.bak"
+  echo "x" > "$src/skip.tmp"
+
+  local expected="${work}/rfi-notrail-expected.txt"
+  cat > "$expected" <<EOF
+.rsync-filter
+keep.txt
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-notrail" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" -av \
+    --filter='dir-merge .rsync-filter' || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
+# Test 12: no-inherit modifier `n` on dir-merge.
+# Upstream behaviour: ancestor merge rules do not apply to deeper directories.
+# This currently exposes Finding 1 in the audit
+# (FilterChain::enter_directory ignores DirMergeConfig::inherit). Marked as
+# known failure for the up direction below.
+test_rsync_filter_no_inherit_modifier() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local src="${work}/rfi-noinh-src"
+  rm -rf "$src"
+  mkdir -p "$src/sub"
+
+  # Root .rsync-filter excludes *.bak; with `n` modifier, it does NOT apply to
+  # subdir. Subdir has its own (empty) .rsync-filter so push_local_filters
+  # still touches that level.
+  printf 'exclude *.bak\n' > "$src/.rsync-filter"
+  : > "$src/sub/.rsync-filter"
+
+  echo "x" > "$src/skip.bak"
+  echo "x" > "$src/keep.txt"
+  echo "x" > "$src/sub/keep.bak"  # would be excluded if inherited
+  echo "x" > "$src/sub/keep.txt"
+
+  local expected="${work}/rfi-noinh-expected.txt"
+  cat > "$expected" <<EOF
+.rsync-filter
+keep.txt
+sub/.rsync-filter
+sub/keep.bak
+sub/keep.txt
+EOF
+
+  rsync_filter_run_both_directions \
+    "rfi-noinh" "$src" "$log" "$oc_port" "$upstream_port" \
+    "$upstream_binary" "$oc_bin" -av \
+    --filter='dir-merge,n .rsync-filter' || return 1
+  rsync_filter_assert_expected "$src" "$expected" || return 1
+  return 0
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -8770,6 +9336,18 @@ run_standalone_interop_tests() {
     "link-dest"
     "copy-dest"
     "numeric-ids-standalone"
+    "rsync-filter-deeply-nested"
+    "rsync-filter-anchored-cross-dir"
+    "rsync-filter-dir-merge-minus"
+    "rsync-filter-dir-merge-plus"
+    "rsync-filter-ff-shorthand-nested"
+    "rsync-filter-mid-tree-only"
+    "rsync-filter-source-root-only"
+    "rsync-filter-conflicting-depths"
+    "rsync-filter-empty-noop"
+    "rsync-filter-comments-and-blanks"
+    "rsync-filter-no-trailing-newline"
+    "rsync-filter-no-inherit-modifier"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -8841,6 +9419,18 @@ run_standalone_interop_tests() {
     "test_link_dest"
     "test_copy_dest"
     "test_numeric_ids_standalone"
+    "test_rsync_filter_deeply_nested"
+    "test_rsync_filter_anchored_cross_dir"
+    "test_rsync_filter_dir_merge_minus"
+    "test_rsync_filter_dir_merge_plus"
+    "test_rsync_filter_ff_shorthand_nested"
+    "test_rsync_filter_mid_tree_only"
+    "test_rsync_filter_source_root_only"
+    "test_rsync_filter_conflicting_depths"
+    "test_rsync_filter_empty_noop"
+    "test_rsync_filter_comments_and_blanks"
+    "test_rsync_filter_no_trailing_newline"
+    "test_rsync_filter_no_inherit_modifier"
   )
 
   for i in "${!test_names[@]}"; do
@@ -9027,6 +9617,42 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       numeric-ids-standalone)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-deeply-nested)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-anchored-cross-dir)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-dir-merge-minus)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-dir-merge-plus)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-ff-shorthand-nested)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-mid-tree-only)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-source-root-only)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-conflicting-depths)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-empty-noop)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-comments-and-blanks)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-no-trailing-newline)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      rsync-filter-no-inherit-modifier)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac
