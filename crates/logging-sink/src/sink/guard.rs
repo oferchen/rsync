@@ -119,8 +119,7 @@ mod tests {
     fn into_inner_returns_sink_reference() {
         let mut sink = make_sink();
         let guard = LineModeGuard::new(&mut sink, LineMode::WithNewline);
-        let inner = guard.into_inner();
-        let _ = inner;
+        let _inner = guard.into_inner();
     }
 
     #[test]
@@ -138,7 +137,7 @@ mod tests {
     fn deref_allows_access_to_sink() {
         let mut sink = make_sink();
         let guard = LineModeGuard::new(&mut sink, LineMode::WithNewline);
-        let _ = guard.line_mode();
+        assert_eq!(guard.line_mode(), LineMode::WithNewline);
     }
 
     #[test]

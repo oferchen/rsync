@@ -49,8 +49,11 @@ impl RsyncLayer {
     }
 
     /// Map a tracing target to an rsync info flag.
+    ///
+    /// Matches a `::segment` substring or an exact word so module paths like
+    /// `rsync::copy` resolve while unrelated strings such as `unknown` do not
+    /// alias short names like `own`.
     fn target_to_info_flag(target: &str) -> Option<InfoFlag> {
-        // Match against rsync module paths - look for :: separator or exact word match
         match target {
             t if t.contains("::copy") || t == "copy" => Some(InfoFlag::Copy),
             t if t.contains("::del") || t.contains("::delete") || t == "del" || t == "delete" => {
@@ -78,9 +81,12 @@ impl RsyncLayer {
     }
 
     /// Map a tracing target to an rsync debug flag.
+    ///
+    /// Uses the same `::segment`-or-exact-match strategy as
+    /// [`Self::target_to_info_flag`] so unrelated strings cannot alias short
+    /// flag names. `Deltasum` is matched before `Del` because both share the
+    /// `del` prefix and the more specific category must win.
     fn target_to_debug_flag(target: &str) -> Option<DebugFlag> {
-        // Match against rsync module paths - look for :: separator or exact word match
-        // This avoids false positives like "unknown" matching "own"
         match target {
             t if t.contains("::acl") || t == "acl" => Some(DebugFlag::Acl),
             t if t.contains("::backup") || t == "backup" => Some(DebugFlag::Backup),
@@ -88,7 +94,6 @@ impl RsyncLayer {
             t if t.contains("::chdir") || t == "chdir" => Some(DebugFlag::Chdir),
             t if t.contains("::connect") || t == "connect" => Some(DebugFlag::Connect),
             t if t.contains("::cmd") || t == "cmd" => Some(DebugFlag::Cmd),
-            // Check deltasum before del to avoid false matches
             t if t.contains("::deltasum")
                 || t.contains("::delta")
                 || t == "deltasum"
@@ -179,10 +184,11 @@ where
         let level = metadata.level();
         let verbosity_level = Self::level_to_verbosity_level(level);
 
-        // Try to map to debug flag first (more specific)
+        // Debug flags are checked first because they are more specific than
+        // info flags - a target matching both should route to the debug
+        // category to mirror upstream's preference for fine-grained output.
         if let Some(debug_flag) = Self::target_to_debug_flag(target) {
             if debug_gte(debug_flag, verbosity_level) {
-                // Collect the message from the event
                 let mut visitor = MessageVisitor::default();
                 event.record(&mut visitor);
                 if let Some(message) = visitor.message {
@@ -246,7 +252,8 @@ pub fn init_tracing(config: VerbosityConfig) {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    // Also initialize the thread-local verbosity config
+    // Install the same config in thread-local storage so direct uses of
+    // info_log!/debug_log! observe the verbosity selected for tracing.
     super::thread_local::init(config.clone());
 
     let layer = RsyncLayer::new(config);
