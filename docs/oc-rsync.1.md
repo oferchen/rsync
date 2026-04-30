@@ -543,6 +543,14 @@ NEON) are used where available, with automatic scalar fallbacks.
 **-C**, **--cvs-exclude**
 :   Auto-ignore files using CVS-style ignore rules.
 
+**--apple-double-skip**
+:   Skip macOS AppleDouble (`._foo`) sidecar files. macOS writes these files on
+    filesystems that cannot represent extended attributes natively (FAT, exFAT,
+    most network shares) to carry FinderInfo, resource forks, and xattrs.
+    Replicating them onto other systems usually clutters destinations with
+    stale metadata; enabling this flag appends `._*` to the filter chain as a
+    perishable exclusion so explicit include rules supplied earlier still win.
+
 **-F**
 :   Shortcut for per-directory .rsync-filter handling. Repeat (**-FF**) to
     also load receiver-side filter files.
