@@ -79,7 +79,6 @@ fn message_code_try_from_u8_succeeds_for_all_18_codes() {
 fn message_code_all_array_contains_exactly_18_codes_with_correct_values() {
     assert_eq!(MessageCode::ALL.len(), 18);
 
-    // Map expected (variant, numeric_value) pairs
     let expected: [(MessageCode, u8); 18] = [
         (MessageCode::Data, 0),
         (MessageCode::ErrorXfer, 1),
@@ -183,7 +182,6 @@ fn message_code_from_u8_rejects_gap_values() {
 /// value for diagnostic purposes.
 #[test]
 fn message_code_try_from_u8_returns_unknown_message_code_error() {
-    // Test representative values from different gap ranges
     let invalid_values: &[u8] = &[
         11,  // First gap (11-21)
         21,  // Last value in first gap
@@ -287,7 +285,6 @@ fn message_code_from_u8_agrees_with_try_from_on_success() {
 /// Tests that `from_u8()` and `TryFrom<u8>` agree on failure cases.
 #[test]
 fn message_code_from_u8_agrees_with_try_from_on_failure() {
-    // Sample of invalid values
     for value in [11_u8, 50, 99, 150, 255] {
         let via_from = MessageCode::from_u8(value);
         let via_try = MessageCode::try_from(value).ok();
@@ -381,7 +378,6 @@ fn message_code_debug_differs_from_display() {
     for &code in MessageCode::all() {
         let debug_output = format!("{code:?}");
         let display_output = format!("{code}");
-        // Debug shows "Data", Display shows "MSG_DATA"
         assert_ne!(
             debug_output, display_output,
             "Debug and Display should differ for {code:?}"
@@ -406,12 +402,10 @@ fn message_code_values_are_unique() {
 /// Tests that the FLUSH alias constant has the expected properties.
 #[test]
 fn message_code_flush_alias_properties() {
-    // FLUSH is an alias for Info
     assert_eq!(MessageCode::FLUSH, MessageCode::Info);
     assert_eq!(MessageCode::FLUSH.as_u8(), 2);
     assert_eq!(MessageCode::FLUSH.name(), "MSG_INFO");
 
-    // MSG_FLUSH parses to Info
     let parsed: MessageCode = "MSG_FLUSH".parse().expect("MSG_FLUSH should parse");
     assert_eq!(parsed, MessageCode::FLUSH);
     assert_eq!(parsed, MessageCode::Info);
