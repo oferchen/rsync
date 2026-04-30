@@ -126,6 +126,7 @@ where
         include_from,
         filters,
         cvs_exclude,
+        apple_double_skip,
         rsync_filter_shortcuts: _,
         files_from,
         from0,
@@ -773,6 +774,7 @@ where
         includes,
         filters,
         cvs_exclude,
+        apple_double_skip,
     };
 
     let builder = match filters::apply_filters(builder, filter_inputs, stderr) {

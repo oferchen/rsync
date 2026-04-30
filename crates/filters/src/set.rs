@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use crate::{
     FilterAction, FilterError, FilterRule, MergeFileError,
+    apple_double::default_patterns as apple_double_default_patterns,
     compiled::{CompiledRule, apply_clear_rule},
     cvs::default_patterns as cvs_default_patterns,
     decision::{DecisionContext, FilterSetInner},
@@ -226,6 +227,52 @@ impl FilterSet {
         Self::from_rules(all_rules)
     }
 
+    /// Builds a [`FilterSet`] from the supplied rules with AppleDouble
+    /// exclusions appended.
+    ///
+    /// AppleDouble (`._foo`) sidecars are macOS metadata companion files
+    /// emitted on filesystems that cannot store extended attributes natively.
+    /// Replicating them across machines is rarely useful and frequently
+    /// undesirable; the `--apple-double-skip` option appends `._*` to the
+    /// filter chain so they are dropped from transfers.
+    ///
+    /// AppleDouble rules are placed at the end of the rule list so explicit
+    /// include rules supplied earlier still win under first-match-wins
+    /// evaluation, matching the precedence used by `--cvs-exclude`.
+    ///
+    /// # Perishable Rules
+    ///
+    /// When `perishable` is `true`, the AppleDouble pattern is marked as
+    /// perishable. This should be `true` for protocol version 30 or higher,
+    /// allowing explicit include rules to override the built-in exclusion.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use filters::{FilterRule, FilterSet};
+    /// use std::path::Path;
+    ///
+    /// let set = FilterSet::from_rules_with_apple_double(
+    ///     [FilterRule::include("notes.txt")],
+    ///     true,
+    /// )
+    /// .unwrap();
+    ///
+    /// assert!(!set.allows(Path::new("._notes.txt"), false));
+    /// assert!(set.allows(Path::new("notes.txt"), false));
+    /// ```
+    pub fn from_rules_with_apple_double<I>(
+        rules: I,
+        perishable: bool,
+    ) -> Result<Self, FilterError>
+    where
+        I: IntoIterator<Item = FilterRule>,
+    {
+        let mut all_rules: Vec<FilterRule> = rules.into_iter().collect();
+        all_rules.extend(apple_double_exclusion_rules(perishable));
+        Self::from_rules(all_rules)
+    }
+
     /// Builds a [`FilterSet`] from rules, expanding merge file references.
     ///
     /// When a merge rule (`. FILE`) is encountered, the referenced file is
@@ -381,6 +428,38 @@ pub fn cvs_exclusion_rules(perishable: bool) -> impl Iterator<Item = FilterRule>
     })
 }
 
+/// Creates filter rules for the default AppleDouble exclusion pattern.
+///
+/// The single canonical pattern is `._*`, which matches any file whose name
+/// begins with `._`. This is the pattern macOS uses to store FinderInfo,
+/// resource forks, and extended attributes alongside files on filesystems
+/// that cannot represent them natively. The patterns mirror the format
+/// surfaced by [`crate::apple_double::default_patterns`].
+///
+/// # Arguments
+///
+/// * `perishable` - If `true`, marks the rules as perishable (overridable by
+///   explicit include rules). This should be `true` for rsync protocol
+///   version 30 or higher to mirror the behaviour of `--cvs-exclude`.
+///
+/// # Examples
+///
+/// ```
+/// use filters::apple_double_exclusion_rules;
+///
+/// let rules: Vec<_> = apple_double_exclusion_rules(false).collect();
+/// assert_eq!(rules.len(), 1);
+/// ```
+pub fn apple_double_exclusion_rules(perishable: bool) -> impl Iterator<Item = FilterRule> {
+    apple_double_default_patterns().map(move |pattern| {
+        let mut rule = FilterRule::exclude(pattern.to_owned());
+        if perishable {
+            rule = rule.with_perishable(true);
+        }
+        rule
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -526,5 +605,60 @@ mod tests {
         // Both explicit and CVS exclusions should work
         assert!(!set.allows(Path::new("notes.txt"), false));
         assert!(!set.allows(Path::new("main.o"), false));
+    }
+
+    // AppleDouble exclusion tests
+
+    #[test]
+    fn apple_double_exclusion_rules_not_empty() {
+        let rules: Vec<_> = apple_double_exclusion_rules(false).collect();
+        assert!(!rules.is_empty());
+    }
+
+    #[test]
+    fn apple_double_exclusion_rules_perishable_flag() {
+        let perishable_rules: Vec<_> = apple_double_exclusion_rules(true).collect();
+        let non_perishable_rules: Vec<_> = apple_double_exclusion_rules(false).collect();
+
+        for rule in &perishable_rules {
+            assert!(rule.is_perishable());
+        }
+        for rule in &non_perishable_rules {
+            assert!(!rule.is_perishable());
+        }
+    }
+
+    #[test]
+    fn from_rules_with_apple_double_excludes_top_level_sidecar() {
+        let set = FilterSet::from_rules_with_apple_double(vec![], false).unwrap();
+        assert!(!set.allows(Path::new("._notes.txt"), false));
+        assert!(!set.allows(Path::new("._DS_Store"), false));
+    }
+
+    #[test]
+    fn from_rules_with_apple_double_excludes_nested_sidecar() {
+        let set = FilterSet::from_rules_with_apple_double(vec![], false).unwrap();
+        assert!(!set.allows(Path::new("subdir/._inner.txt"), false));
+        assert!(!set.allows(Path::new("a/b/c/._deep"), false));
+    }
+
+    #[test]
+    fn from_rules_with_apple_double_allows_normal_files() {
+        let set = FilterSet::from_rules_with_apple_double(vec![], false).unwrap();
+        assert!(set.allows(Path::new("notes.txt"), false));
+        assert!(set.allows(Path::new("subdir/inner.txt"), false));
+        // Files starting with a single dot but not ._ should pass
+        assert!(set.allows(Path::new(".hidden"), false));
+    }
+
+    #[test]
+    fn from_rules_with_apple_double_explicit_include_higher_priority() {
+        // Explicit include rule should take precedence over AppleDouble exclusions
+        // because first-match-wins favours rules supplied earlier.
+        let rules = vec![FilterRule::include("._keep")];
+        let set = FilterSet::from_rules_with_apple_double(rules, false).unwrap();
+        assert!(set.allows(Path::new("._keep"), false));
+        // Non-included sidecars are still excluded.
+        assert!(!set.allows(Path::new("._other"), false));
     }
 }

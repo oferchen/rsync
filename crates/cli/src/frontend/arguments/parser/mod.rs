@@ -575,6 +575,7 @@ where
     let rsync_filter_shortcuts = rsync_filter_indices.len();
     let filter_args = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
     let cvs_exclude = matches.get_flag("cvs-exclude");
+    let apple_double_skip = matches.get_flag("apple-double-skip");
     let files_from = matches
         .remove_many::<OsString>("files-from")
         .map(Iterator::collect)
@@ -751,6 +752,7 @@ where
         include_from,
         filters: filter_args,
         cvs_exclude,
+        apple_double_skip,
         rsync_filter_shortcuts,
         files_from,
         from0,
