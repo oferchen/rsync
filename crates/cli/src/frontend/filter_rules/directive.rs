@@ -177,7 +177,6 @@ mod tests {
     fn merge_directive_options_returns_reference() {
         let directive = MergeDirective::new(OsString::from("rules.txt"), None);
         let options = directive.options();
-        // Verify options are accessible via the reference
         let _ = options.inherit_rules();
     }
 
