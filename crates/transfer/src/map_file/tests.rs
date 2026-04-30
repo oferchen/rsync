@@ -1604,3 +1604,31 @@ fn mmap_as_slice_empty_file() {
     let slice = strategy.as_slice();
     assert!(slice.is_empty());
 }
+
+/// `open_buffered` forces the `Buffered` variant even for files that the
+/// adaptive selector would otherwise place on `mmap` (>= MMAP_THRESHOLD).
+/// This is the seam used by `DeltaApplicator` when paired with an io_uring
+/// writer (#1906, audit F1).
+#[test]
+fn adaptive_open_buffered_forces_buffered_for_large_file() {
+    // Above MMAP_THRESHOLD (1 MiB) - the adaptive default would pick mmap.
+    let temp = create_test_file((MMAP_THRESHOLD as usize) + 4096);
+
+    let buffered_only = AdaptiveMapStrategy::open_buffered(temp.path()).unwrap();
+    assert!(buffered_only.is_buffered());
+    assert!(!buffered_only.is_mmap());
+
+    // Sanity: the default adaptive open _would_ have picked mmap.
+    let adaptive_default = AdaptiveMapStrategy::open(temp.path()).unwrap();
+    assert!(adaptive_default.is_mmap());
+}
+
+/// `MapFile::open_adaptive_buffered` is the wrapper-level entry point that
+/// `DeltaApplicator::new` calls when `BasisWriterKind::IoUring` is selected.
+#[test]
+fn map_file_open_adaptive_buffered_is_buffered() {
+    let temp = create_test_file((MMAP_THRESHOLD as usize) + 4096);
+    let map = MapFile::open_adaptive_buffered(temp.path()).unwrap();
+    assert!(map.is_buffered());
+    assert!(!map.is_mmap());
+}
