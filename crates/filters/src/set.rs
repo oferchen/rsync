@@ -261,10 +261,7 @@ impl FilterSet {
     /// assert!(!set.allows(Path::new("._notes.txt"), false));
     /// assert!(set.allows(Path::new("notes.txt"), false));
     /// ```
-    pub fn from_rules_with_apple_double<I>(
-        rules: I,
-        perishable: bool,
-    ) -> Result<Self, FilterError>
+    pub fn from_rules_with_apple_double<I>(rules: I, perishable: bool) -> Result<Self, FilterError>
     where
         I: IntoIterator<Item = FilterRule>,
     {

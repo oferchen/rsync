@@ -49,7 +49,11 @@ mod tests {
         let mut rules = Vec::new();
         append_apple_double_exclude_rules(&mut rules).unwrap();
         for rule in &rules {
-            assert!(rule.is_perishable(), "rule {} not perishable", rule.pattern());
+            assert!(
+                rule.is_perishable(),
+                "rule {} not perishable",
+                rule.pattern()
+            );
         }
     }
 
