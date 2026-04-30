@@ -418,7 +418,6 @@ mod tests {
             "flush must produce output in the sink"
         );
 
-        // Write second token
         let token2 = b"incremental decompression test - token two";
         encoder.write(token2).expect("write token 2");
 
