@@ -124,6 +124,8 @@ If the SSH transport itself compresses the stream (`Compression yes` in `ssh_con
 
 Bind the daemon itself to `127.0.0.1` (or a private VPC interface) and route external clients exclusively through the TLS terminator.
 
+See `docs/deployment/daemon-tls.md` for runnable stunnel / SSH tunnel / HAProxy recipes.
+
 ### Daemon module hardening
 
 In addition to `use chroot = yes`, prefer:
