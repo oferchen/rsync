@@ -30,6 +30,8 @@ mod applicator;
 mod checksum;
 mod sparse;
 
-pub use applicator::{DeltaApplicator, DeltaApplyConfig, DeltaApplyResult, apply_delta_stream};
+pub use applicator::{
+    BasisWriterKind, DeltaApplicator, DeltaApplyConfig, DeltaApplyResult, apply_delta_stream,
+};
 pub use checksum::ChecksumVerifier;
 pub use sparse::SparseWriteState;
