@@ -623,6 +623,12 @@ NEON) are used where available, with automatic scalar fallbacks.
 :   Execute *COMMAND* to reach rsync:// daemons. Supports **%H** (hostname)
     and **%P** (port) placeholders.
 
+**--jump-host**=*[user@]HOST[:PORT][,...]*
+:   Comma-separated proxy-jump hosts. Forwarded to the remote shell as
+    **ssh -J** *value* when the configured remote shell is OpenSSH. Only
+    the long form is provided; the short flag **-J** is reserved by upstream
+    rsync for **--omit-link-times**.
+
 **-M**, **--remote-option**=*OPTION*
 :   Forward *OPTION* to the remote rsync command. Can be specified multiple
     times.

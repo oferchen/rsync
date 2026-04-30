@@ -544,4 +544,7 @@ pub struct ParsedArgs {
 
     /// `--ssh-port` - port override for embedded SSH connections.
     pub ssh_port: Option<u16>,
+
+    /// `--jump-host` - comma-separated proxy-jump hosts (forwarded as `ssh -J`).
+    pub jump_host: Option<OsString>,
 }

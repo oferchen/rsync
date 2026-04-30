@@ -305,6 +305,9 @@ where
     let ssh_port = matches
         .remove_one::<OsString>("ssh-port")
         .and_then(|v| v.to_string_lossy().parse::<u16>().ok());
+    let jump_host = matches
+        .remove_one::<OsString>("jump-host")
+        .filter(|v| !v.is_empty());
 
     let compress_level_opt = matches.get_one::<OsString>("compress-level").cloned();
     if let Some(ref value) = compress_level_opt
@@ -778,5 +781,6 @@ where
         ssh_strict_host_key_checking,
         ssh_ipv6,
         ssh_port,
+        jump_host,
     })
 }

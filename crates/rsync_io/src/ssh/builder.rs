@@ -52,6 +52,7 @@ pub struct SshCommand {
     envs: Vec<(OsString, OsString)>,
     target_override: Option<OsString>,
     prefer_aes_gcm: Option<bool>,
+    jump_hosts: Option<OsString>,
 }
 
 impl SshCommand {
@@ -72,6 +73,7 @@ impl SshCommand {
             envs: Vec::new(),
             target_override: None,
             prefer_aes_gcm: None,
+            jump_hosts: None,
         }
     }
 
@@ -211,6 +213,22 @@ impl SshCommand {
     /// defaults. This is an oc-rsync enhancement.
     pub const fn set_prefer_aes_gcm(&mut self, preference: Option<bool>) -> &mut Self {
         self.prefer_aes_gcm = preference;
+        self
+    }
+
+    /// Configures the comma-separated list of OpenSSH ProxyJump hosts.
+    ///
+    /// When `Some(value)` and `value` is non-empty, `-J <value>` is appended
+    /// to the SSH argv before the destination operand. The value is forwarded
+    /// verbatim and may take the OpenSSH form
+    /// `[user@]host[:port][,[user@]host[:port]...]`. An empty `OsString` is
+    /// treated as no configuration to avoid emitting a bare `-J ` to ssh.
+    ///
+    /// `-J` is only injected when the program looks like an SSH client
+    /// (`ssh` / `ssh.exe`). Non-SSH transports such as `rsh` or `plink` do
+    /// not understand the option and would fail at spawn time.
+    pub fn set_jump_hosts<S: Into<OsString>>(&mut self, value: Option<S>) -> &mut Self {
+        self.jump_hosts = value.map(Into::into).filter(|v| !v.is_empty());
         self
     }
 
@@ -371,6 +389,18 @@ impl SshCommand {
             args.push(OsString::from(
                 "aes128-gcm@openssh.com,aes256-gcm@openssh.com",
             ));
+        }
+
+        // Inject the OpenSSH ProxyJump (`-J`) value when configured and the
+        // configured program looks like an SSH client. Mirrors the user's
+        // `-J [user@]host[:port][,...]` argument which is forwarded verbatim
+        // before the destination operand.
+        if let Some(jump) = &self.jump_hosts
+            && !jump.is_empty()
+            && self.is_ssh_program()
+        {
+            args.push(OsString::from("-J"));
+            args.push(jump.clone());
         }
 
         if let Some(target) = self.target_argument()
