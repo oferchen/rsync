@@ -78,7 +78,6 @@ impl FromStr for SecludedArgsMode {
 mod tests {
     use super::*;
 
-    // Tests for SecludedArgsMode::label
     #[test]
     fn optional_label() {
         assert_eq!(SecludedArgsMode::Optional.label(), "optional secluded-args");
@@ -89,7 +88,6 @@ mod tests {
         assert_eq!(SecludedArgsMode::Default.label(), "default secluded-args");
     }
 
-    // Tests for SecludedArgsMode::from_label
     #[test]
     fn from_label_optional() {
         let result = SecludedArgsMode::from_label("optional secluded-args");
@@ -118,7 +116,6 @@ mod tests {
         assert_eq!(SecludedArgsMode::from_label("default"), None);
     }
 
-    // Tests for Display trait
     #[test]
     fn display_optional() {
         assert_eq!(
@@ -135,7 +132,6 @@ mod tests {
         );
     }
 
-    // Tests for FromStr trait
     #[test]
     fn parse_optional() {
         let result: Result<SecludedArgsMode, _> = "optional secluded-args".parse();
@@ -160,7 +156,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // Tests for trait implementations
     #[test]
     fn mode_is_clone() {
         let mode = SecludedArgsMode::Optional;
@@ -186,7 +181,6 @@ mod tests {
         assert_ne!(SecludedArgsMode::Optional, SecludedArgsMode::Default);
     }
 
-    // Tests for ParseSecludedArgsModeError
     #[test]
     fn error_display() {
         let err = "invalid".parse::<SecludedArgsMode>().unwrap_err();
@@ -208,7 +202,6 @@ mod tests {
         assert_eq!(err, copied);
     }
 
-    // Tests for roundtrip
     #[test]
     fn label_roundtrip_optional() {
         let mode = SecludedArgsMode::Optional;

@@ -632,7 +632,6 @@ mod tests {
     fn empty_algorithm_list_shows_none() {
         let report = VersionInfoReport::default().with_checksum_algorithms(Vec::<&str>::new());
         let output = report.human_readable();
-        // When empty, should show "none" under the list
         assert!(output.contains("Checksum list:"));
     }
 
