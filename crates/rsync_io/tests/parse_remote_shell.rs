@@ -22,8 +22,14 @@ use rsync_io::{RemoteShellParseError, parse_remote_shell};
 fn assert_parses_to(input: &str, expected: &[&str]) {
     let parsed = parse_remote_shell(OsStr::new(input))
         .unwrap_or_else(|err| panic!("parsing {input:?} should succeed but got {err:?}"));
-    let expected_owned: Vec<OsString> = expected.iter().map(|token| OsString::from(*token)).collect();
-    assert_eq!(parsed, expected_owned, "tokens mismatch for input {input:?}");
+    let expected_owned: Vec<OsString> = expected
+        .iter()
+        .map(|token| OsString::from(*token))
+        .collect();
+    assert_eq!(
+        parsed, expected_owned,
+        "tokens mismatch for input {input:?}"
+    );
 }
 
 #[test]
@@ -64,11 +70,7 @@ fn parses_single_quoted_argument_with_spaces() {
 fn parses_mixed_quoting_in_one_token() {
     assert_parses_to(
         r#"ssh -oProxyCommand="ssh -W %h:%p gw" -i'/path/to key'"#,
-        &[
-            "ssh",
-            "-oProxyCommand=ssh -W %h:%p gw",
-            "-i/path/to key",
-        ],
+        &["ssh", "-oProxyCommand=ssh -W %h:%p gw", "-i/path/to key"],
     );
 }
 
@@ -89,10 +91,7 @@ fn parses_backslash_escaped_space() {
 
 #[test]
 fn preserves_backslash_inside_single_quotes() {
-    assert_parses_to(
-        r"ssh -o'Proxy\Command'",
-        &["ssh", r"-oProxy\Command"],
-    );
+    assert_parses_to(r"ssh -o'Proxy\Command'", &["ssh", r"-oProxy\Command"]);
 }
 
 #[test]
@@ -151,9 +150,7 @@ fn rejects_invalid_unicode() {
 /// printable ASCII payload bytes). Lengths up to 64 keep proptest cases
 /// fast while still triggering deeply nested quote/escape interactions.
 fn shell_input_strategy() -> impl Strategy<Value = String> {
-    let alphabet: Vec<char> = "abcXYZ09 \t\n\\\"'-_/=:.%h%p#"
-        .chars()
-        .collect();
+    let alphabet: Vec<char> = "abcXYZ09 \t\n\\\"'-_/=:.%h%p#".chars().collect();
     proptest::collection::vec(proptest::sample::select(alphabet), 0..64)
         .prop_map(|chars| chars.into_iter().collect())
 }
