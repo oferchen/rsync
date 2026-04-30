@@ -103,7 +103,6 @@ pub fn generate_signature_pipelined<R: Read + Send + 'static>(
 
     let file_size = layout.file_size();
 
-    // Configure pipeline with block size matching signature blocks
     let pipeline_config = PipelineConfig {
         block_size: block_len,
         min_file_size: config.pipeline.min_file_size,
@@ -113,14 +112,13 @@ pub fn generate_signature_pipelined<R: Read + Send + 'static>(
     let mut buffered_reader =
         DoubleBufferedReader::with_size_hint(reader, pipeline_config, Some(file_size));
 
-    // Batch size for SIMD strong checksum computation, matching generation.rs.
+    // Must match generation.rs::BATCH_SIZE so SIMD batch hashing widens identically.
     const BATCH_SIZE: usize = 16;
 
     let mut blocks = Vec::with_capacity(expected_blocks_usize);
     let mut total_bytes: u64 = 0;
     let mut block_index: usize = 0;
 
-    // Accumulators for batch strong checksum computation.
     let batch_cap = BATCH_SIZE.min(expected_blocks_usize).max(1);
     let mut batch_data: Vec<Vec<u8>> = Vec::with_capacity(batch_cap);
     let mut batch_rolling: Vec<RollingDigest> = Vec::with_capacity(batch_cap);
