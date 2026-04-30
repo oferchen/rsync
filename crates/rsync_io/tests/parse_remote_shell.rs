@@ -156,11 +156,14 @@ fn shell_input_strategy() -> impl Strategy<Value = String> {
 }
 
 proptest! {
-    /// `parse_remote_shell` must produce exactly the same token vector as
-    /// `shell_words::split` for any input that contains no NUL byte and
-    /// tokenizes to a non-empty argv. Inputs containing a NUL byte or that
-    /// fail to tokenize are validated against their respective error
-    /// classes in the companion property tests below.
+    /// `parse_remote_shell` must produce the same token vector as
+    /// `shell_words::split` whenever both accept the input, and may be
+    /// strictly stricter (rejecting inputs that `shell_words::split` would
+    /// accept) - upstream rsync's bespoke tokenizer rejects dangling
+    /// trailing backslashes that `shell_words` silently absorbs, and we
+    /// preserve that behaviour. Inputs containing a NUL byte or that fail
+    /// to tokenize are validated against their respective error classes in
+    /// the companion property tests below.
     #[test]
     fn parity_with_shell_words_for_valid_inputs(input in shell_input_strategy()) {
         prop_assume!(!input.as_bytes().contains(&b'\0'));
@@ -177,6 +180,11 @@ proptest! {
             }
             (Err(RemoteShellParseError::Parse(_)), Err(_)) => {
                 // Both rejected the same input; nothing else to assert.
+            }
+            (Err(RemoteShellParseError::Parse(_)), Ok(_)) => {
+                // We are strictly stricter than `shell_words::split` - the
+                // only tightening currently is rejecting a dangling trailing
+                // backslash, matching upstream rsync's bespoke tokenizer.
             }
             (lhs, rhs) => {
                 prop_assert!(
