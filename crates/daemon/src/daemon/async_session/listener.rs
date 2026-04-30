@@ -185,17 +185,16 @@ impl AsyncDaemonListener {
                 result = self.listener.accept() => {
                     let (stream, peer_addr) = result?;
 
-                    // Try to acquire a connection permit
                     let permit = match self.connection_semaphore.clone().try_acquire_owned() {
                         Ok(permit) => permit,
                         Err(_) => {
-                            // Connection limit reached - close immediately
+                            // Connection limit reached - close immediately so the client sees
+                            // EOF instead of being held in a half-open state.
                             drop(stream);
                             continue;
                         }
                     };
 
-                    // Register the connection
                     #[cfg(feature = "concurrent-sessions")]
                     let session_id = self.session_registry.register(peer_addr, None);
                     #[cfg(feature = "concurrent-sessions")]
@@ -207,12 +206,10 @@ impl AsyncDaemonListener {
                     #[cfg(feature = "concurrent-sessions")]
                     let pool = self.connection_pool.clone();
 
-                    // Spawn handler task.
-                    // Tokio captures panics in spawn'd tasks (returning
-                    // Err(JoinError) from the JoinHandle).  We log them
-                    // explicitly so panics in one connection never tear
-                    // down the daemon - matching upstream rsync's fork-
-                    // per-connection isolation.
+                    // Tokio captures panics in spawned tasks (returning Err(JoinError) from
+                    // the JoinHandle). We log them explicitly so panics in one connection
+                    // never tear down the daemon - matching upstream rsync's
+                    // fork-per-connection isolation.
                     tokio::spawn(async move {
                         let result = handle_async_session(
                             stream,
@@ -229,14 +226,12 @@ impl AsyncDaemonListener {
                         )
                         .await;
 
-                        // Unregister on completion
                         #[cfg(feature = "concurrent-sessions")]
                         {
                             registry.unregister(&session_id);
                             pool.unregister(&conn_id);
                         }
 
-                        // Release permit
                         drop(permit);
 
                         if let Err(e) = result {

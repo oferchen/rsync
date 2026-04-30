@@ -168,7 +168,7 @@ pub(super) async fn handle_async_session(
             .and_then(|s| s.trim().parse::<f32>().ok())
             .unwrap_or(28.0) as u8
     } else {
-        28 // Default to protocol 28
+        28
     };
 
     #[cfg(feature = "concurrent-sessions")]
@@ -199,7 +199,8 @@ pub(super) async fn handle_async_session(
         pool.set_module(conn_id, m.clone());
     }
 
-    // For now, send an error response (full module handling would go here)
+    // Module handling lives on the synchronous daemon path; the async listener responds with
+    // the upstream-compatible @ERROR + @RSYNCD: EXIT sequence so clients fail cleanly.
     let error_msg = "@ERROR: daemon functionality limited in async mode\n";
     writer.write_all(error_msg.as_bytes()).await?;
     writer.write_all(b"@RSYNCD: EXIT\n").await?;
@@ -247,18 +248,17 @@ impl AsyncRateLimiter {
     pub async fn acquire(&mut self, bytes: usize) {
         let bytes = bytes as f64;
 
-        // Replenish tokens based on elapsed time
         let now = std::time::Instant::now();
         let elapsed = now.duration_since(self.last_update).as_secs_f64();
+        // Cap accumulated tokens at 2x the per-second rate to allow short bursts without
+        // unbounded credit accumulation across idle periods.
         self.tokens = (self.tokens + elapsed * self.bytes_per_second as f64)
-            .min(self.bytes_per_second as f64 * 2.0); // Allow burst up to 2x
+            .min(self.bytes_per_second as f64 * 2.0);
         self.last_update = now;
 
-        // Check if we have enough tokens
         if self.tokens >= bytes {
             self.tokens -= bytes;
         } else {
-            // Need to wait
             let needed = bytes - self.tokens;
             let wait_secs = needed / self.bytes_per_second as f64;
             tokio::time::sleep(Duration::from_secs_f64(wait_secs)).await;
