@@ -115,7 +115,6 @@ mod windows_impl {
     /// process was not launched by the SCM).
     #[allow(unsafe_code)]
     pub fn run_service_dispatcher(callback: ServiceMainCallback) -> Result<(), io::Error> {
-        // Store the callback for retrieval in service_main.
         SERVICE_CALLBACK
             .set(std::sync::Mutex::new(Some(callback)))
             .map_err(|_| {
@@ -176,18 +175,13 @@ mod windows_impl {
 
         let _ = SERVICE_STATUS_HANDLE.set(SendSyncHandle(status_handle));
 
-        // Create signal flags and store them globally for the control handler.
+        // Publish flags globally so the control handler can reach them.
         let flags = SignalFlags::new();
         let _ = SERVICE_FLAGS.set(flags.clone());
 
-        // Report SERVICE_START_PENDING.
         let _ = report_status_raw(status_handle, SERVICE_START_PENDING, 0, 3000);
-
-        // Report SERVICE_RUNNING.
         let _ = report_status_raw(status_handle, SERVICE_RUNNING, 0, 0);
 
-        // Run the user callback. Extract it from the OnceLock<Mutex<Option>>
-        // with a flat chain of and_then to avoid deep nesting.
         let callback = SERVICE_CALLBACK
             .get()
             .and_then(|mutex| mutex.lock().ok())
@@ -198,7 +192,6 @@ mod windows_impl {
             None => 1,
         };
 
-        // Report SERVICE_STOPPED.
         let _ = report_status_raw(status_handle, SERVICE_STOPPED, exit_code, 0);
     }
 

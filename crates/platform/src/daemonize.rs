@@ -58,7 +58,6 @@ pub fn redirect_stdio_to_devnull() -> io::Result<()> {
     let nix_to_io = |e: nix::Error| io::Error::from_raw_os_error(e as i32);
 
     for fd in 0..=2_i32 {
-        // nix::unistd::close is safe
         let _ = nix::unistd::close(fd);
         let new_fd =
             nix::fcntl::open(c"/dev/null", OFlag::O_RDWR, Mode::empty()).map_err(nix_to_io)?;

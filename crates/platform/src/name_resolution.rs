@@ -33,9 +33,9 @@ pub fn name_to_rid(name: &str) -> Option<u32> {
     let mut domain_size: u32 = 0;
     let mut sid_type = SID_NAME_USE::default();
 
-    // First call to determine buffer sizes.
-    // SAFETY: Passing null buffers with zero sizes to get required sizes is
-    // the documented usage pattern for LookupAccountNameW.
+    // SAFETY: First call uses null buffers and zero sizes to retrieve the
+    // required buffer sizes - this is the documented two-call pattern for
+    // LookupAccountNameW.
     unsafe {
         let _ = LookupAccountNameW(
             PCWSTR::null(),
@@ -55,8 +55,8 @@ pub fn name_to_rid(name: &str) -> Option<u32> {
     let mut sid_buf = vec![0_u8; sid_size as usize];
     let mut domain_buf = vec![0_u16; domain_size as usize];
 
-    // SAFETY: `sid_buf` and `domain_buf` are correctly sized from the first call.
-    // `sid_type` receives the account type classification.
+    // SAFETY: Buffers are correctly sized from the first call; `sid_type`
+    // receives the account type classification.
     let ok = unsafe {
         LookupAccountNameW(
             PCWSTR::null(),
