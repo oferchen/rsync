@@ -38,7 +38,13 @@ pub(super) fn process_file(
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
 
-    let mut output = make_writer(file, write_buf, disk_batch, config.use_sparse)?;
+    let mut output = make_writer(
+        file,
+        write_buf,
+        disk_batch,
+        config.use_sparse,
+        begin.append_offset,
+    )?;
 
     let mut sparse_state = if config.use_sparse {
         Some(SparseWriteState::default())
@@ -147,7 +153,13 @@ pub(super) fn process_whole_file(
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
 
-    let mut output = make_writer(file, write_buf, disk_batch, config.use_sparse)?;
+    let mut output = make_writer(
+        file,
+        write_buf,
+        disk_batch,
+        config.use_sparse,
+        begin.append_offset,
+    )?;
     let bytes_written = data.len() as u64;
 
     let mut checksum_verifier = begin.checksum_verifier.take();
@@ -235,9 +247,16 @@ fn open_output_file(
 /// submission and the buffered fallback.
 ///
 /// Selects io_uring when (a) the disk thread holds an active
-/// [`fast_io::IoUringDiskBatch`] and (b) sparse mode is disabled. Sparse
-/// mode requires `Seek`, which the batch writer does not provide, so it
-/// always falls back to the buffered variant.
+/// [`fast_io::IoUringDiskBatch`], (b) sparse mode is disabled, and (c) the
+/// file does not start at a non-zero offset (append mode). Sparse mode
+/// requires `Seek`, which the batch writer does not provide.
+///
+/// Append mode opens the file and seeks past existing content via
+/// [`std::io::Seek::seek`]. The io_uring batch writer issues SQEs with
+/// absolute offsets starting at 0 and ignores the file position, so it would
+/// overwrite the existing prefix with zeros. Append mode therefore always
+/// falls back to the buffered writer, which honors the seek via
+/// `Write::write_all` on the underlying `File`.
 ///
 /// On the io_uring path, `batch.begin_file(file)` registers the fd with the
 /// ring; the matching `commit_file` happens via [`Writer::finish`].
@@ -247,10 +266,11 @@ fn make_writer<'a>(
     write_buf: &'a mut Vec<u8>,
     disk_batch: Option<&'a mut fast_io::IoUringDiskBatch>,
     use_sparse: bool,
+    append_offset: u64,
 ) -> io::Result<Writer<'a>> {
     #[cfg(all(target_os = "linux", feature = "io_uring"))]
     {
-        if !use_sparse {
+        if !use_sparse && append_offset == 0 {
             if let Some(batch) = disk_batch {
                 batch.begin_file(file)?;
                 return Ok(Writer::IoUring { batch });
