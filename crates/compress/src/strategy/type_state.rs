@@ -303,8 +303,6 @@ mod tests {
         )
     }
 
-    // ---- Full lifecycle tests ----
-
     #[test]
     fn full_lifecycle_selects_zlib() {
         let strategy = default_pipeline()
@@ -349,8 +347,6 @@ mod tests {
             .into_strategy();
         assert_eq!(strategy.algorithm_name(), "none");
     }
-
-    // ---- State-specific method tests ----
 
     #[test]
     fn uninit_local_algorithms_returns_negotiator_list() {
@@ -406,8 +402,6 @@ mod tests {
         assert_eq!(selected.compression_level(), CompressionLevel::Best);
     }
 
-    // ---- Server vs client asymmetry ----
-
     #[test]
     fn server_respects_remote_order() {
         let selected = default_pipeline()
@@ -425,8 +419,6 @@ mod tests {
         // Client iterates local list: zlibx appears before "none" locally
         assert_eq!(selected.selected_algorithm_name(), "zlibx");
     }
-
-    // ---- Feature-gated tests ----
 
     #[cfg(feature = "zstd")]
     #[test]
@@ -450,8 +442,6 @@ mod tests {
         );
     }
 
-    // ---- Strategy roundtrip through pipeline ----
-
     #[test]
     fn strategy_from_pipeline_compresses_and_decompresses() {
         let strategy = default_pipeline()
@@ -468,8 +458,6 @@ mod tests {
         assert_eq!(&decompressed, input);
     }
 
-    // ---- Send + Sync ----
-
     #[test]
     fn pipeline_states_are_send() {
         fn assert_send<T: Send>() {}
@@ -478,8 +466,6 @@ mod tests {
         assert_send::<NegotiationPipeline<AlgorithmSelected>>();
     }
 
-    // ---- Compile-time safety ----
-    //
     // The following invalid transitions are prevented at compile time:
     //
     // ```compile_fail
