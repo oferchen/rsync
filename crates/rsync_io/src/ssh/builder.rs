@@ -1,7 +1,8 @@
 use std::ffi::{OsStr, OsString};
 use std::io;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::process::{Command, Stdio};
+use std::str::FromStr;
 use std::time::Duration;
 
 use super::aux_channel::{build_stderr_channel, configure_stderr_channel};
@@ -429,12 +430,25 @@ impl SshCommand {
             target.push("@");
         }
 
-        if host_needs_ipv6_brackets(&self.host) {
-            target.push("[");
-            target.push(&self.host);
-            target.push("]");
-        } else {
-            target.push(&self.host);
+        // Strict validation: IPv6 hosts must parse via `Ipv6Addr::from_str`
+        // (with optional `%zone` suffix per RFC 4007). Anything else is
+        // treated as an opaque hostname/operand and emitted unchanged.
+        // The bracket form `[addr%zone]` follows upstream rsync's IPv6
+        // host-operand convention used by `parse_ssh_operand`.
+        let host_str = host_str_for_validation(&self.host);
+        match host_str.as_deref().map(parse_host_for_ssh) {
+            Some(Ok(HostKind::Ipv6 { addr, zone })) => {
+                target.push("[");
+                target.push(addr.to_string());
+                if let Some(zone) = zone {
+                    target.push("%");
+                    target.push(zone);
+                }
+                target.push("]");
+            }
+            _ => {
+                target.push(&self.host);
+            }
         }
 
         Some(target)
@@ -573,40 +587,149 @@ pub(super) fn has_hardware_aes() -> bool {
     })
 }
 
-fn host_needs_ipv6_brackets(host: &OsStr) -> bool {
+/// Classified SSH host operand.
+///
+/// Returned by [`parse_host_for_ssh`]. Only the [`HostKind::Ipv6`] variant
+/// requires bracket-wrapping when emitting the `user@host` operand to SSH.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum HostKind {
+    /// DNS hostname (or any string the validator does not classify as an IP
+    /// literal). Emitted to SSH unchanged, with no surrounding brackets.
+    Hostname(String),
+    /// Successfully parsed IPv4 dotted-quad literal. Emitted unbracketed.
+    Ipv4(Ipv4Addr),
+    /// Successfully parsed IPv6 literal, optionally carrying an RFC 4007
+    /// scoped zone identifier (e.g. `fe80::1%eth0`). Always emitted inside
+    /// brackets, with `%zone` re-attached inside the brackets per upstream
+    /// rsync convention: `[fe80::1%eth0]`.
+    Ipv6 {
+        /// The parsed IPv6 address.
+        addr: Ipv6Addr,
+        /// The optional zone identifier as authored by the caller (no `%`
+        /// prefix). Validated to be non-empty and free of whitespace and
+        /// `]`, but otherwise opaque (interface names vary by OS).
+        zone: Option<String>,
+    },
+}
+
+/// Errors returned by [`parse_host_for_ssh`].
+///
+/// Kept private to the SSH builder module for now; the public surface
+/// continues to accept any host string and falls back to passing it through
+/// unchanged when validation fails. These variants exist so unit tests can
+/// assert which malformed inputs the strict parser rejects.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub(super) enum BuildError {
+    /// Input was empty.
+    #[error("ssh host is empty")]
+    EmptyHost,
+    /// A `:` was present but the input did not parse as a valid IPv6 literal.
+    /// Catches multiple `::` sequences, trailing junk, invalid hex groups,
+    /// etc.
+    #[error("ssh host contains ':' but is not a valid IPv6 address: {0}")]
+    InvalidIpv6(String),
+    /// The zone identifier following `%` was empty or contained whitespace
+    /// or `]`. Bare hostnames containing `%` also reach this branch when
+    /// the prefix is not a valid IPv6 literal.
+    #[error("ssh host has malformed zone identifier: {0}")]
+    InvalidZoneId(String),
+}
+
+/// Classifies an SSH `host` operand for `ssh user@host` rendering.
+///
+/// Behaviour:
+///
+/// - Inputs surrounded by `[...]` have the brackets stripped before parsing
+///   (URL-style `[2001:db8::1]`).
+/// - Inputs containing `%` are split into address and zone halves; the
+///   address must parse as `Ipv6Addr::from_str`, and the zone is rejected
+///   if empty or if it contains whitespace or `]`.
+/// - Inputs containing `:` (without `%`) must parse as `Ipv6Addr::from_str`.
+///   Loose substring checks like the prior `host_contains_colon` heuristic
+///   accepted malformed input such as `2001:db8:::1` or `garbage:input`;
+///   strict validation rejects both.
+/// - Inputs that successfully parse as `Ipv4Addr::from_str` are returned as
+///   [`HostKind::Ipv4`] (no brackets).
+/// - All other inputs are returned as [`HostKind::Hostname`].
+///
+/// # Errors
+///
+/// Returns [`BuildError`] for empty input, malformed IPv6 (multi-`::`,
+/// trailing junk, invalid hex groups), or malformed zone identifiers.
+pub(super) fn parse_host_for_ssh(host: &str) -> Result<HostKind, BuildError> {
     if host.is_empty() {
-        return false;
+        return Err(BuildError::EmptyHost);
     }
 
-    if host_is_bracketed(host) {
-        return false;
+    // Strip a single matching set of surrounding brackets, e.g. URL-style
+    // `[2001:db8::1]`. We deliberately do not strip nested brackets; an
+    // input like `[[::1]]` stays intact and falls through to the IPv6
+    // parser, which will reject it.
+    let stripped = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host);
+
+    // Zone identifiers (`%eth0`) only attach to IPv6 literals. A hostname
+    // containing `%` is invalid here -- DNS labels do not permit `%`.
+    if let Some((addr_str, zone_str)) = stripped.split_once('%') {
+        let addr =
+            Ipv6Addr::from_str(addr_str).map_err(|_| BuildError::InvalidIpv6(host.to_string()))?;
+        validate_zone_id(zone_str).map_err(|_| BuildError::InvalidZoneId(host.to_string()))?;
+        return Ok(HostKind::Ipv6 {
+            addr,
+            zone: Some(zone_str.to_string()),
+        });
     }
 
-    host_contains_colon(host)
+    // Any colon-bearing input must parse as a valid IPv6 literal. This is
+    // the load-bearing strictness change vs. the old `host_contains_colon`
+    // heuristic, which accepted any string containing `:`.
+    if stripped.contains(':') {
+        return match Ipv6Addr::from_str(stripped) {
+            Ok(addr) => Ok(HostKind::Ipv6 { addr, zone: None }),
+            Err(_) => Err(BuildError::InvalidIpv6(host.to_string())),
+        };
+    }
+
+    // Dotted-quad IPv4 vs. ordinary hostname. We do not error on invalid
+    // hostnames -- DNS label validation is intentionally out of scope and
+    // SSH itself surfaces resolution failures.
+    if let Ok(addr) = Ipv4Addr::from_str(stripped) {
+        return Ok(HostKind::Ipv4(addr));
+    }
+    Ok(HostKind::Hostname(stripped.to_string()))
 }
 
-fn host_is_bracketed(host: &OsStr) -> bool {
+/// Validates the body of an RFC 4007 zone identifier.
+///
+/// Zone IDs are opaque strings naming a network interface (e.g. `eth0`,
+/// `en0`, numeric scope ids on Windows). We reject only the cases that
+/// would unambiguously break the `[addr%zone]` rendering: empty bodies,
+/// whitespace, and `]` (which would prematurely close the bracket form).
+fn validate_zone_id(zone: &str) -> Result<(), ()> {
+    if zone.is_empty() {
+        return Err(());
+    }
+    if zone.chars().any(|c| c.is_whitespace() || c == ']') {
+        return Err(());
+    }
+    Ok(())
+}
+
+/// Returns the host as a UTF-8 `String` for validation purposes when
+/// possible. Non-UTF-8 hosts cannot be valid IPv4/IPv6 literals or DNS
+/// names, so we skip strict validation for them and fall through to
+/// emitting the bytes unchanged (preserving the prior cross-platform
+/// behaviour for exotic input).
+fn host_str_for_validation(host: &OsStr) -> Option<String> {
     #[cfg(unix)]
     {
-        let bytes = host.as_bytes();
-        bytes.len() >= 2 && bytes.first() == Some(&b'[') && bytes.last() == Some(&b']')
+        std::str::from_utf8(host.as_bytes()).ok().map(str::to_owned)
     }
 
     #[cfg(not(unix))]
     {
-        let text = host.to_string_lossy();
-        text.starts_with('[') && text.ends_with(']')
-    }
-}
-
-fn host_contains_colon(host: &OsStr) -> bool {
-    #[cfg(unix)]
-    {
-        host.as_bytes().contains(&b':')
-    }
-
-    #[cfg(not(unix))]
-    {
-        host.to_string_lossy().contains(':')
+        host.to_str().map(str::to_owned)
     }
 }
