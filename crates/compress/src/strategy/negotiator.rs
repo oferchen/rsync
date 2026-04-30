@@ -473,12 +473,6 @@ mod tests {
         );
     }
 
-    // ---- Protocol version x feature matrix tests ----
-    //
-    // These test the full negotiation matrix: protocol version ranges
-    // (which determine what a remote peer might advertise) combined with
-    // feature-gated local algorithm availability.
-
     #[test]
     fn negotiation_pre_v30_remote_only_zlib() {
         // Protocol < 30: remote peer only supports zlib (no negotiation vstring).
@@ -804,8 +798,6 @@ mod tests {
             "none"
         );
     }
-
-    // ---- ProtocolAwareCompressionNegotiator tests ----
 
     #[test]
     fn protocol_aware_proto_28_supported_only_zlib() {
