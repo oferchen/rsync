@@ -453,7 +453,6 @@ pub fn apply_delta_stream<R: Read>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
     use tempfile::tempdir;
 
     #[test]
