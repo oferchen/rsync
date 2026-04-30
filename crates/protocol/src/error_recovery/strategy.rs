@@ -29,18 +29,16 @@ pub fn classify_error(error: io::Error) -> ErrorSeverity {
     use io::ErrorKind::*;
 
     match error.kind() {
-        // Transient errors - worth retrying
         Interrupted | WouldBlock => ErrorSeverity::Transient,
 
-        // Recoverable errors - skip file and continue
         NotFound | PermissionDenied | AlreadyExists | InvalidInput => ErrorSeverity::Recoverable,
 
-        // Fatal errors - abort transfer
         UnexpectedEof | InvalidData | ConnectionRefused | ConnectionReset | ConnectionAborted
         | BrokenPipe | AddrInUse | AddrNotAvailable | NotConnected | TimedOut
         | ReadOnlyFilesystem | StorageFull => ErrorSeverity::Fatal,
 
-        // Default to fatal for unknown errors
+        // Unknown kinds default to Fatal so unexpected conditions abort rather than silently
+        // skip - matches upstream rsync's conservative receiver.c handling.
         _ => ErrorSeverity::Fatal,
     }
 }
@@ -73,14 +71,11 @@ pub fn classify_error(error: io::Error) -> ErrorSeverity {
 /// ```
 #[must_use]
 pub fn should_retry(error: &TransferError, attempt: u32, max_retries: u32) -> bool {
-    // Don't retry if we've exceeded the limit
     if attempt >= max_retries {
         return false;
     }
 
-    // Determine if the error type is retryable
     match error {
-        // Transient errors worth retrying
         TransferError::Timeout
         | TransferError::ConnectionLost
         | TransferError::Interrupted
@@ -88,13 +83,11 @@ pub fn should_retry(error: &TransferError, attempt: u32, max_retries: u32) -> bo
         | TransferError::Io(io::ErrorKind::WouldBlock)
         | TransferError::Io(io::ErrorKind::TimedOut) => true,
 
-        // Fatal errors that should not be retried
         TransferError::DiskFull
         | TransferError::ProtocolMismatch
         | TransferError::ChecksumMismatch
         | TransferError::PermissionDenied => false,
 
-        // Other I/O errors - check if they're transient
         TransferError::Io(kind) => {
             matches!(kind, io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock)
         }
@@ -131,16 +124,14 @@ pub fn determine_recovery(
     partial: Option<&PartialTransferState>,
 ) -> RecoveryAction {
     match error {
-        // Fatal errors require abort
         TransferError::DiskFull | TransferError::ProtocolMismatch => RecoveryAction::Abort,
 
-        // Checksum mismatch - retry from beginning
         TransferError::ChecksumMismatch => RecoveryAction::Retry,
 
-        // Permission denied - skip this file
         TransferError::PermissionDenied => RecoveryAction::Skip,
 
-        // Transient errors - resume if partial exists, otherwise retry
+        // Transient failures prefer resuming from the partial offset when one exists; without
+        // a resumable partial, fall back to a full retry.
         TransferError::Timeout | TransferError::ConnectionLost | TransferError::Interrupted => {
             if let Some(state) = partial {
                 if state.is_resumable() {
@@ -153,7 +144,6 @@ pub fn determine_recovery(
             }
         }
 
-        // I/O errors - classify and decide
         TransferError::Io(kind) => match kind {
             io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => RecoveryAction::Skip,
             io::ErrorKind::StorageFull => RecoveryAction::Abort,
