@@ -156,7 +156,6 @@ fn parse_perm_spec(perms: &str, op: Operation) -> Result<PermSpec, ChmodError> {
 mod tests {
     use super::*;
 
-    // Tests for parse_spec
     #[test]
     fn parse_spec_single_numeric() {
         let clauses = parse_spec("755").unwrap();
@@ -194,7 +193,6 @@ mod tests {
         assert!(clauses.is_empty());
     }
 
-    // Tests for parse_clause - numeric
     #[test]
     fn parse_clause_numeric_three_digits() {
         let clause = parse_clause("644").unwrap();
@@ -237,7 +235,6 @@ mod tests {
         }
     }
 
-    // Tests for parse_clause - symbolic
     #[test]
     fn parse_clause_symbolic_user_add_read() {
         let clause = parse_clause("u+r").unwrap();
@@ -374,7 +371,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // Tests for parse_numeric_clause
     #[test]
     fn parse_numeric_clause_valid_three_digits() {
         assert_eq!(parse_numeric_clause("755").unwrap(), 0o755);
@@ -407,7 +403,6 @@ mod tests {
         assert!(parse_numeric_clause("789").is_err());
     }
 
-    // Tests for parse_perm_spec
     #[test]
     fn parse_perm_spec_read() {
         let spec = parse_perm_spec("r", Operation::Add).unwrap();
