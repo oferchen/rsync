@@ -1799,3 +1799,110 @@ fn connect_watchdog_error_message_includes_duration() {
         "error should include the timeout duration: {err}"
     );
 }
+
+#[test]
+fn injects_single_jump_host_before_target() {
+    let mut command = SshCommand::new("dest.example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command.set_jump_hosts(Some("bastion.example.com"));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    let jump_index = rendered
+        .iter()
+        .position(|arg| arg == "-J")
+        .expect("-J should be present");
+    assert_eq!(rendered[jump_index + 1], "bastion.example.com");
+
+    let target_index = rendered
+        .iter()
+        .position(|arg| arg == "dest.example.com")
+        .expect("destination should be present");
+    assert!(
+        jump_index + 1 < target_index,
+        "-J value must precede destination: {rendered:?}"
+    );
+}
+
+#[test]
+fn injects_multi_hop_jump_host_chain_verbatim() {
+    let mut command = SshCommand::new("dest.example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command.set_jump_hosts(Some("alice@a.example.com,bob@b.example.com"));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    let jump_index = rendered
+        .iter()
+        .position(|arg| arg == "-J")
+        .expect("-J should be present");
+    assert_eq!(
+        rendered[jump_index + 1],
+        "alice@a.example.com,bob@b.example.com"
+    );
+}
+
+#[test]
+fn injects_jump_host_with_port_verbatim() {
+    let mut command = SshCommand::new("dest.example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command.set_jump_hosts(Some("user@bastion.example.com:2200"));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    let jump_index = rendered
+        .iter()
+        .position(|arg| arg == "-J")
+        .expect("-J should be present");
+    assert_eq!(rendered[jump_index + 1], "user@bastion.example.com:2200");
+}
+
+#[test]
+fn empty_jump_host_value_is_ignored() {
+    let mut command = SshCommand::new("dest.example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command.set_jump_hosts(Some(""));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|arg| arg == "-J"),
+        "empty jump-host value must not emit -J: {rendered:?}"
+    );
+}
+
+#[test]
+fn jump_host_not_injected_for_non_ssh_program() {
+    let mut command = SshCommand::new("dest.example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command.set_program("plink");
+    command.set_jump_hosts(Some("bastion.example.com"));
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|arg| arg == "-J"),
+        "non-ssh program must not receive -J: {rendered:?}"
+    );
+}
+
+#[test]
+fn jump_host_clearable_via_none() {
+    let mut command = SshCommand::new("dest.example.com");
+    command.set_prefer_aes_gcm(Some(false));
+    command.set_jump_hosts(Some("bastion.example.com"));
+    command.set_jump_hosts(None::<&OsStr>);
+
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+
+    assert!(
+        !rendered.iter().any(|arg| arg == "-J"),
+        "clearing jump-hosts must remove -J: {rendered:?}"
+    );
+}

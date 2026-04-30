@@ -110,6 +110,17 @@ impl ClientConfig {
         self.protect_args
     }
 
+    /// Returns the configured OpenSSH ProxyJump hosts, if any.
+    ///
+    /// The returned value is a comma-separated list of `[user@]host[:port]`
+    /// entries forwarded to `ssh -J <value>` before the destination operand.
+    /// `None` (the default) leaves SSH to honour the user's `ssh_config`.
+    #[doc(alias = "--jump-host")]
+    #[doc(alias = "-J")]
+    pub fn jump_hosts(&self) -> Option<&OsStr> {
+        self.jump_hosts.as_deref()
+    }
+
     /// Returns the embedded SSH options, if configured.
     ///
     /// These options override `SshConfig` defaults when the `embedded-ssh`
@@ -236,5 +247,12 @@ mod tests {
     fn protect_args_default_is_none() {
         let config = default_config();
         assert!(config.protect_args().is_none());
+    }
+
+    // Tests for jump_hosts
+    #[test]
+    fn jump_hosts_default_is_none() {
+        let config = default_config();
+        assert!(config.jump_hosts().is_none());
     }
 }
