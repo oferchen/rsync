@@ -11,6 +11,7 @@ use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use fast_io::{DefaultPlatformCopy, PlatformCopy};
 use filters::FilterSet;
+use protocol::iconv::FilenameConverter;
 
 use crate::batch::BatchWriter;
 use crate::local_copy::filter_program::FilterProgram;
@@ -88,6 +89,8 @@ pub struct LocalCopyOptionsBuilder {
 
     pub(super) filters: Option<FilterSet>,
     pub(super) filter_program: Option<FilterProgram>,
+    /// See [`LocalCopyOptions`](crate::local_copy::LocalCopyOptions)::iconv.
+    pub(super) iconv: Option<FilenameConverter>,
 
     pub(super) numeric_ids: bool,
     pub(super) sparse: bool,
@@ -212,6 +215,7 @@ impl LocalCopyOptionsBuilder {
             preserve_acls: false,
             filters: None,
             filter_program: None,
+            iconv: None,
             numeric_ids: false,
             sparse: false,
             checksum: false,
