@@ -47,6 +47,72 @@ fn builds_sender_invocation_no_sender_flag() {
 }
 
 #[test]
+fn ssh_sender_omits_inc_recurse_capability_by_default() {
+    // Default: push transfers must NOT advertise the 'i' capability bit
+    // because sender-side INC_RECURSE has not been validated against
+    // upstream rsync. Tracker #1862.
+    let config = ClientConfig::builder().build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/remote/path");
+
+    let caps = args
+        .iter()
+        .find(|a| a.to_string_lossy().starts_with("-e."))
+        .expect("capability string present");
+    let caps_str = caps.to_string_lossy();
+    assert!(
+        !caps_str.contains('i'),
+        "default sender capability string must not advertise 'i': {caps_str}"
+    );
+    assert_eq!(*caps, *build_capability_string(false));
+}
+
+#[test]
+fn ssh_sender_advertises_inc_recurse_when_flag_set() {
+    // --inc-recursive-send opt-in: push transfers advertise 'i' so the
+    // sender-side INC_RECURSE state machine is exercised against
+    // upstream peers for interop testing. Tracker #1862.
+    let config = ClientConfig::builder().inc_recursive_send(true).build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/remote/path");
+
+    let caps = args
+        .iter()
+        .find(|a| a.to_string_lossy().starts_with("-e."))
+        .expect("capability string present");
+    let caps_str = caps.to_string_lossy();
+    assert!(
+        caps_str.contains('i'),
+        "sender capability string with --inc-recursive-send must advertise 'i': {caps_str}"
+    );
+    assert_eq!(*caps, *build_capability_string(true));
+}
+
+#[test]
+fn ssh_receiver_unaffected_by_inc_recursive_send_flag() {
+    // The flag only governs the sender direction. Pull transfers
+    // (local is receiver) continue to use the existing receiver-side
+    // negotiation and must not change.
+    let config_off = ClientConfig::builder().build();
+    let config_on = ClientConfig::builder().inc_recursive_send(true).build();
+
+    let args_off =
+        RemoteInvocationBuilder::new(&config_off, RemoteRole::Receiver).build("/remote/path");
+    let args_on =
+        RemoteInvocationBuilder::new(&config_on, RemoteRole::Receiver).build("/remote/path");
+
+    let caps_off = args_off
+        .iter()
+        .find(|a| a.to_string_lossy().starts_with("-e."))
+        .expect("capability string present");
+    let caps_on = args_on
+        .iter()
+        .find(|a| a.to_string_lossy().starts_with("-e."))
+        .expect("capability string present");
+    assert_eq!(caps_off, caps_on);
+}
+
+#[test]
 fn includes_recursive_flag_when_enabled() {
     let config = ClientConfig::builder().recursive(true).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);

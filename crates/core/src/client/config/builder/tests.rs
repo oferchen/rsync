@@ -1403,6 +1403,27 @@ fn default_qsort_is_false() {
 }
 
 #[test]
+fn inc_recursive_send_sets_flag() {
+    let config = builder().inc_recursive_send(true).build();
+    assert!(config.inc_recursive_send());
+}
+
+#[test]
+fn inc_recursive_send_false_clears_flag() {
+    let config = builder()
+        .inc_recursive_send(true)
+        .inc_recursive_send(false)
+        .build();
+    assert!(!config.inc_recursive_send());
+}
+
+#[test]
+fn default_inc_recursive_send_is_false() {
+    let config = builder().build();
+    assert!(!config.inc_recursive_send());
+}
+
+#[test]
 fn precise_levels_1_through_9_propagate_correctly() {
     use std::num::NonZeroU8;
     for n in 1u8..=9 {
