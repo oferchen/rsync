@@ -190,7 +190,14 @@ and is opt-in only via `open_mmap` / `open_adaptive`.
 
 ### F1 - Dormant seam: `DeltaApplicator` would expose mmap'd basis to io_uring if wired
 
-- **Severity:** MEDIUM (latent; HIGH if wired without changes)
+- **Status:** ADDRESSED in #1906 (branch
+  `fix/delta-applicator-buffered-basis-with-iouring`). `DeltaApplyConfig`
+  now carries a `BasisWriterKind` field; selecting `IoUring` forces the
+  basis through `MapFile::open_adaptive_buffered` (always `Buffered`
+  variant) regardless of file size, removing the page-fault stall and
+  `SIGBUS`-on-truncate failure modes for any future caller that wires an
+  io_uring writer to the applicator.
+- **Severity (historic):** MEDIUM (latent; HIGH if wired without changes)
 - **Evidence:**
   - `crates/transfer/src/delta_apply/applicator.rs:92` -
     `MapFile::open_adaptive(path)?` (Unix: mmap when size >= 1 MiB).

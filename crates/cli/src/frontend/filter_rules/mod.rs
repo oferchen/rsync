@@ -1,5 +1,6 @@
 //! Utilities for parsing and loading filter rules supplied via the CLI.
 
+mod apple_double;
 mod arguments;
 mod cvs;
 mod directive;
@@ -7,6 +8,7 @@ mod merge;
 mod parsing;
 mod sources;
 
+pub(crate) use apple_double::append_apple_double_exclude_rules;
 pub(crate) use arguments::{collect_filter_arguments, locate_filter_arguments};
 pub(crate) use cvs::append_cvs_exclude_rules;
 pub(crate) use directive::{FilterDirective, merge_directive_options, os_string_to_pattern};

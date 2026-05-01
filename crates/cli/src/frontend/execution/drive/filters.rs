@@ -10,8 +10,9 @@ use logging_sink::MessageSink;
 
 use super::messages::fail_with_message;
 use crate::frontend::filter_rules::{
-    FilterDirective, append_cvs_exclude_rules, append_filter_rules_from_files,
-    apply_merge_directive, merge_directive_options, os_string_to_pattern, parse_filter_directive,
+    FilterDirective, append_apple_double_exclude_rules, append_cvs_exclude_rules,
+    append_filter_rules_from_files, apply_merge_directive, merge_directive_options,
+    os_string_to_pattern, parse_filter_directive,
 };
 
 /// Filter configuration supplied by the command line.
@@ -22,6 +23,7 @@ pub(crate) struct FilterInputs {
     pub(crate) includes: Vec<OsString>,
     pub(crate) filters: Vec<OsString>,
     pub(crate) cvs_exclude: bool,
+    pub(crate) apple_double_skip: bool,
 }
 
 /// Applies CLI-provided filter rules to the [`ClientConfigBuilder`].
@@ -66,6 +68,12 @@ where
 
     if inputs.cvs_exclude
         && let Err(message) = append_cvs_exclude_rules(&mut filter_rules)
+    {
+        return Err(fail_with_message(message, stderr));
+    }
+
+    if inputs.apple_double_skip
+        && let Err(message) = append_apple_double_exclude_rules(&mut filter_rules)
     {
         return Err(fail_with_message(message, stderr));
     }
