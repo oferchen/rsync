@@ -138,6 +138,7 @@ impl LocalCopyOptionsBuilder {
             preserve_acls: self.preserve_acls,
             filters: self.filters,
             filter_program: self.filter_program,
+            iconv: self.iconv,
             numeric_ids: self.numeric_ids,
             sparse: self.sparse,
             checksum: self.checksum,

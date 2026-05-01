@@ -368,9 +368,36 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         options = self.apply_paths_and_backups(options, config);
         options = self.apply_time_and_timeout(options, config);
         options = self.apply_reference_directories(options, config);
+        options = self.apply_iconv(options, config);
         options = self.apply_filter_program(options);
 
         options
+    }
+
+    /// Resolves the user's `--iconv` request into a
+    /// [`FilenameConverter`](protocol::iconv::FilenameConverter) and
+    /// attaches it to the local-copy options.
+    ///
+    /// This is the local-copy mirror of the SSH/daemon path's
+    /// `apply_common_server_flags`
+    /// (`crates/core/src/client/remote/flags.rs:203-228`), which writes the
+    /// converter onto `transfer::config::ConnectionConfig::iconv`. The
+    /// local-copy executor lives in the engine crate and does not traverse
+    /// the SSH/daemon `ServerConfig` builder, so the bridge has to be
+    /// re-applied here.
+    ///
+    /// When `IconvSetting::Unspecified` or `IconvSetting::Disabled`,
+    /// `resolve_converter` returns `None`, leaving the engine's
+    /// pass-through behaviour untouched. This mirrors upstream rsync's
+    /// behaviour when `--iconv` is absent or `--no-iconv` is supplied.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c::iconv_for_local`
+    /// - `options.c::recv_iconv_settings`
+    /// - `compat.c:716-718`
+    fn apply_iconv(&self, options: LocalCopyOptions, config: &ClientConfig) -> LocalCopyOptions {
+        options.with_iconv(config.iconv().resolve_converter())
     }
 
     const fn apply_recursion_and_delete(
@@ -587,4 +614,72 @@ pub fn build_local_copy_options(
     filter_program: Option<FilterProgram>,
 ) -> LocalCopyOptions {
     LocalCopyOptionsBuilder::new(config, filter_program).build()
+}
+
+#[cfg(test)]
+mod iconv_wiring_tests {
+    use std::ffi::OsString;
+
+    use super::build_local_copy_options;
+    use crate::client::config::{ClientConfig, IconvSetting};
+
+    fn config_with_iconv(setting: IconvSetting) -> ClientConfig {
+        ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .iconv(setting)
+            .build()
+    }
+
+    #[test]
+    fn local_copy_options_iconv_unset_yields_none() {
+        let config = ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .build();
+        let options = build_local_copy_options(&config, None);
+        assert!(options.iconv().is_none());
+    }
+
+    #[test]
+    fn local_copy_options_iconv_disabled_yields_none() {
+        let config = config_with_iconv(IconvSetting::Disabled);
+        let options = build_local_copy_options(&config, None);
+        assert!(options.iconv().is_none());
+    }
+
+    #[test]
+    fn local_copy_options_iconv_locale_default_yields_some() {
+        let config = config_with_iconv(IconvSetting::LocaleDefault);
+        let options = build_local_copy_options(&config, None);
+        let converter = options
+            .iconv()
+            .expect("locale-default iconv should produce a converter");
+        // converter_from_locale() currently returns identity; the contract
+        // is that *some* converter is attached, regardless of identity.
+        assert!(converter.is_identity());
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn local_copy_options_iconv_explicit_yields_non_identity_converter() {
+        let config = config_with_iconv(IconvSetting::Explicit {
+            local: "UTF-8".to_owned(),
+            remote: Some("ISO-8859-1".to_owned()),
+        });
+        let options = build_local_copy_options(&config, None);
+        let converter = options
+            .iconv()
+            .expect("explicit iconv pair should produce a converter");
+        assert!(!converter.is_identity());
+        assert_eq!(converter.local_encoding_name(), "UTF-8");
+    }
+
+    #[test]
+    fn local_copy_options_iconv_unsupported_charset_falls_back_to_none() {
+        let config = config_with_iconv(IconvSetting::Explicit {
+            local: "definitely-not-a-real-charset".to_owned(),
+            remote: Some("also-fake".to_owned()),
+        });
+        let options = build_local_copy_options(&config, None);
+        assert!(options.iconv().is_none());
+    }
 }
