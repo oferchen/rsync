@@ -1,17 +1,44 @@
+//! Cross-platform extended-attribute glue.
+//!
+//! Sits above the platform backends and reproduces upstream rsync's xattr
+//! flow:
+//!
+//! - On Unix the [`xattr_unix`](crate::xattr_unix) module wraps the
+//!   `xattr` crate (`get`/`set`/`list`/`remove`).
+//! - On Windows the [`xattr_windows`](crate::xattr_windows) module
+//!   maps every named xattr onto an NTFS Alternate Data Stream
+//!   (`path:name:$DATA`) so the client/daemon surface remains the same.
+//!
+//! The per-attribute primitives all take and return raw byte slices for
+//! attribute names so the wire format (which is byte-oriented) and the
+//! POSIX/NTFS native encodings can both be expressed without lossy
+//! conversions in this layer.
+//!
+//! # Upstream Reference
+//!
+//! - `xattrs.c:rsync_xal_get()` - read xattrs into the wire-list cache.
+//! - `xattrs.c:rsync_xal_set()` - apply received xattrs on the receiver.
+//! - `xattrs.c:64-68, 254-257` - permitted-namespace policy on Linux.
+
 use crate::error::MetadataError;
 use protocol::xattr::XattrList;
 use std::collections::HashSet;
-use std::ffi::{OsStr, OsString};
 use std::io;
-use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+
+#[cfg(unix)]
+use crate::xattr_unix as backend;
+#[cfg(windows)]
+use crate::xattr_windows as backend;
 
 /// Checks whether an xattr name is permitted for the current privilege level.
 ///
 /// Mirrors upstream rsync `xattrs.c:64-68, 254-257`:
 /// - Non-root on Linux: only `user.*` xattrs are accessible.
 /// - Root on Linux: all namespaces except `system.*`.
-/// - On non-Linux Unix (macOS, FreeBSD): no namespace filtering (different model).
+/// - On non-Linux platforms (macOS, FreeBSD, Windows): no namespace
+///   filtering, since those systems use a single flat namespace (NTFS ADS,
+///   `com.apple.*`, FreeBSD `user`-only, etc.).
 #[cfg(target_os = "linux")]
 fn is_xattr_permitted(name: &str) -> bool {
     const USER_PREFIX: &str = "user.";
@@ -33,7 +60,7 @@ fn is_xattr_permitted(name: &str) -> bool {
     }
 }
 
-/// On non-Linux Unix (macOS, FreeBSD), all xattr names are permitted.
+/// On non-Linux platforms (macOS, FreeBSD, Windows), all xattr names are permitted.
 #[cfg(not(target_os = "linux"))]
 fn is_xattr_permitted(_name: &str) -> bool {
     true
@@ -43,56 +70,44 @@ fn map_xattr_error(context: &'static str, path: &Path, error: io::Error) -> Meta
     MetadataError::new(context, path, error)
 }
 
-fn list_attributes(path: &Path, follow_symlinks: bool) -> Result<Vec<OsString>, MetadataError> {
-    let attrs = if follow_symlinks {
-        xattr::list_deref(path)
-    } else {
-        xattr::list(path)
-    }
-    .map_err(|error| map_xattr_error("list extended attributes", path, error))?;
+/// Returns the byte-encoded xattr names present on `path`, filtered by
+/// [`is_xattr_permitted`].
+fn list_attributes(path: &Path, follow_symlinks: bool) -> Result<Vec<Vec<u8>>, MetadataError> {
+    let attrs = backend::list_attributes(path, follow_symlinks)
+        .map_err(|error| map_xattr_error("list extended attributes", path, error))?;
     Ok(attrs
-        .filter(|name| is_xattr_permitted(&name.to_string_lossy()))
+        .into_iter()
+        .map(|name| backend::os_name_to_bytes(&name))
+        .filter(|bytes| is_xattr_permitted(&String::from_utf8_lossy(bytes)))
         .collect())
 }
 
 fn read_attribute(
     path: &Path,
-    name: &OsString,
+    name: &[u8],
     follow_symlinks: bool,
 ) -> Result<Option<Vec<u8>>, MetadataError> {
-    let result = if follow_symlinks {
-        xattr::get_deref(path, name)
-    } else {
-        xattr::get(path, name)
-    };
-    result.map_err(|error| map_xattr_error("read extended attribute", path, error))
+    backend::read_attribute(path, name, follow_symlinks)
+        .map_err(|error| map_xattr_error("read extended attribute", path, error))
 }
 
 fn write_attribute(
     path: &Path,
-    name: &OsString,
+    name: &[u8],
     value: &[u8],
     follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
-    let result = if follow_symlinks {
-        xattr::set_deref(path, name, value)
-    } else {
-        xattr::set(path, name, value)
-    };
-    result.map_err(|error| map_xattr_error("write extended attribute", path, error))
+    backend::write_attribute(path, name, value, follow_symlinks)
+        .map_err(|error| map_xattr_error("write extended attribute", path, error))
 }
 
 fn remove_attribute(
     path: &Path,
-    name: &OsString,
+    name: &[u8],
     follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
-    let result = if follow_symlinks {
-        xattr::remove_deref(path, name)
-    } else {
-        xattr::remove(path, name)
-    };
-    result.map_err(|error| map_xattr_error("remove extended attribute", path, error))
+    backend::remove_attribute(path, name, follow_symlinks)
+        .map_err(|error| map_xattr_error("remove extended attribute", path, error))
 }
 
 /// Reads xattr data from a file and returns it as a wire-format `XattrList`.
@@ -119,9 +134,8 @@ pub fn read_xattrs_for_wire(
     let mut entries = Vec::with_capacity(attrs.len());
 
     for name in &attrs {
-        let local_name = name.as_bytes();
         // upstream: xattrs.c:509-528 - translate local name to wire format
-        let wire_name = match local_to_wire(local_name, am_root) {
+        let wire_name = match local_to_wire(name, am_root) {
             Some(n) => n,
             None => continue, // Filtered out (rsync internal, namespace issue)
         };
@@ -154,11 +168,11 @@ pub fn sync_xattrs(
     filter: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<(), MetadataError> {
     let source_attrs = list_attributes(source, follow_symlinks)?;
-    let mut retained = HashSet::with_capacity(source_attrs.len());
+    let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(source_attrs.len());
 
     for name in &source_attrs {
         retained.insert(name.clone());
-        let allow = filter.is_none_or(|predicate| predicate(&name.to_string_lossy()));
+        let allow = filter.is_none_or(|predicate| predicate(&String::from_utf8_lossy(name)));
 
         if !allow {
             continue;
@@ -177,7 +191,7 @@ pub fn sync_xattrs(
             continue;
         }
 
-        let allow = filter.is_none_or(|predicate| predicate(&name.to_string_lossy()));
+        let allow = filter.is_none_or(|predicate| predicate(&String::from_utf8_lossy(name)));
 
         if allow {
             remove_attribute(destination, name, follow_symlinks)?;
@@ -214,7 +228,7 @@ pub fn apply_xattrs_from_list(
     xattr_list: &XattrList,
     follow_symlinks: bool,
 ) -> Result<(), MetadataError> {
-    let mut applied_names: HashSet<OsString> = HashSet::with_capacity(xattr_list.len());
+    let mut applied_names: HashSet<Vec<u8>> = HashSet::with_capacity(xattr_list.len());
 
     for entry in xattr_list.iter() {
         // Skip abbreviated entries - they only contain a checksum, not the actual value
@@ -227,18 +241,17 @@ pub fn apply_xattrs_from_list(
             continue;
         }
 
-        let os_name = OsStr::from_bytes(entry.name());
-        let os_name_owned = os_name.to_os_string();
+        let name_bytes = entry.name().to_vec();
 
-        write_attribute(destination, &os_name_owned, entry.datum(), follow_symlinks)?;
-        applied_names.insert(os_name_owned);
+        write_attribute(destination, &name_bytes, entry.datum(), follow_symlinks)?;
+        applied_names.insert(name_bytes);
     }
 
     // Remove destination xattrs not in the source list
     let dest_attrs = list_attributes(destination, follow_symlinks)?;
     for name in &dest_attrs {
         if !applied_names.contains(name) {
-            let name_str = name.to_string_lossy();
+            let name_str = String::from_utf8_lossy(name);
             if is_xattr_permitted(&name_str) {
                 remove_attribute(destination, name, follow_symlinks)?;
             }
@@ -252,19 +265,34 @@ pub fn apply_xattrs_from_list(
 mod tests {
     use super::*;
     use protocol::xattr::XattrEntry;
-    use std::ffi::OsStr;
     use std::fs;
     use tempfile::tempdir;
 
     /// Helper to check if xattrs are supported on the current filesystem.
     fn xattrs_supported(path: &Path) -> bool {
-        let test_name = OsStr::new("user.test_support");
-        match xattr::set(path, test_name, b"test") {
+        let test_name = test_xattr_name("test_support");
+        match write_attribute(path, &test_name, b"test", false) {
             Ok(()) => {
-                let _ = xattr::remove(path, test_name);
+                let _ = remove_attribute(path, &test_name, false);
                 true
             }
             Err(_) => false,
+        }
+    }
+
+    /// Returns the expected local xattr name for test entries.
+    ///
+    /// On Linux, names need the `user.` prefix. On other platforms (macOS,
+    /// BSD, Windows ADS), names are used as-is since there is no namespace
+    /// prefix requirement.
+    fn test_xattr_name(base: &str) -> Vec<u8> {
+        #[cfg(target_os = "linux")]
+        {
+            format!("user.{base}").into_bytes()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            base.as_bytes().to_vec()
         }
     }
 
@@ -284,7 +312,7 @@ mod tests {
         assert!(
             attrs
                 .iter()
-                .all(|a| !a.to_string_lossy().contains("user.custom"))
+                .all(|a| !String::from_utf8_lossy(a).contains("user.custom"))
         );
     }
 
@@ -299,7 +327,7 @@ mod tests {
             return;
         }
 
-        let attr_name = OsString::from("user.test_attr");
+        let attr_name = test_xattr_name("test_attr");
         let attr_value = b"test value 123";
 
         write_attribute(&file, &attr_name, attr_value, false).expect("write attr");
@@ -322,7 +350,7 @@ mod tests {
             return;
         }
 
-        let attr_name = OsString::from("user.nonexistent");
+        let attr_name = test_xattr_name("nonexistent");
         let result = read_attribute(&file, &attr_name, false).expect("read attr");
         assert!(result.is_none());
     }
@@ -338,7 +366,7 @@ mod tests {
             return;
         }
 
-        let attr_name = OsString::from("user.to_remove");
+        let attr_name = test_xattr_name("to_remove");
         write_attribute(&file, &attr_name, b"value", false).expect("write attr");
 
         // Verify it exists
@@ -371,8 +399,8 @@ mod tests {
             return;
         }
 
-        let attr1 = OsString::from("user.attr1");
-        let attr2 = OsString::from("user.attr2");
+        let attr1 = test_xattr_name("attr1");
+        let attr2 = test_xattr_name("attr2");
         write_attribute(&source, &attr1, b"value1", false).expect("write attr1");
         write_attribute(&source, &attr2, b"value2", false).expect("write attr2");
 
@@ -406,8 +434,8 @@ mod tests {
         }
 
         // Source has attr1, destination has attr1 and attr2
-        let attr1 = OsString::from("user.attr1");
-        let attr2 = OsString::from("user.extra");
+        let attr1 = test_xattr_name("attr1");
+        let attr2 = test_xattr_name("extra");
         write_attribute(&source, &attr1, b"value1", false).expect("write source attr1");
         write_attribute(&destination, &attr1, b"old_value1", false).expect("write dest attr1");
         write_attribute(&destination, &attr2, b"extra_value", false).expect("write dest attr2");
@@ -442,8 +470,8 @@ mod tests {
             return;
         }
 
-        let allowed = OsString::from("user.allowed");
-        let blocked = OsString::from("user.blocked");
+        let allowed = test_xattr_name("allowed");
+        let blocked = test_xattr_name("blocked");
         write_attribute(&source, &allowed, b"allowed_val", false).expect("write allowed");
         write_attribute(&source, &blocked, b"blocked_val", false).expect("write blocked");
 
@@ -513,8 +541,8 @@ mod tests {
             return;
         }
 
-        let src_attr = OsString::from("user.from_source");
-        let preserved = OsString::from("user.preserved");
+        let src_attr = test_xattr_name("from_source");
+        let preserved = test_xattr_name("preserved");
         write_attribute(&source, &src_attr, b"source_val", false).expect("write source attr");
         write_attribute(&destination, &preserved, b"keep_me", false).expect("write preserved");
 
@@ -536,21 +564,6 @@ mod tests {
                 .expect("preserved"),
             b"keep_me"
         );
-    }
-
-    /// Returns the expected local xattr name for test entries.
-    ///
-    /// On Linux, names need the `user.` prefix. On macOS/BSD, names are used
-    /// as-is since there is no namespace prefix requirement.
-    fn test_xattr_name(base: &str) -> Vec<u8> {
-        #[cfg(target_os = "linux")]
-        {
-            format!("user.{base}").into_bytes()
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            base.as_bytes().to_vec()
-        }
     }
 
     #[test]
@@ -576,17 +589,17 @@ mod tests {
 
         apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
 
-        let attr1_name = OsString::from(String::from_utf8(test_xattr_name("attr1")).unwrap());
-        let attr2_name = OsString::from(String::from_utf8(test_xattr_name("attr2")).unwrap());
+        let attr1 = test_xattr_name("attr1");
+        let attr2 = test_xattr_name("attr2");
 
         assert_eq!(
-            read_attribute(&file, &attr1_name, false)
+            read_attribute(&file, &attr1, false)
                 .expect("read")
                 .expect("attr1"),
             b"value1"
         );
         assert_eq!(
-            read_attribute(&file, &attr2_name, false)
+            read_attribute(&file, &attr2, false)
                 .expect("read")
                 .expect("attr2"),
             b"value2"
@@ -605,8 +618,8 @@ mod tests {
         }
 
         // Pre-set an xattr on the destination that is not in the source list
-        let stale_name = OsString::from(String::from_utf8(test_xattr_name("stale")).unwrap());
-        write_attribute(&file, &stale_name, b"old", false).expect("write stale");
+        let stale = test_xattr_name("stale");
+        write_attribute(&file, &stale, b"old", false).expect("write stale");
 
         let mut list = XattrList::new();
         list.push(XattrEntry::new(
@@ -618,15 +631,15 @@ mod tests {
 
         // Stale attr should be removed
         assert!(
-            read_attribute(&file, &stale_name, false)
+            read_attribute(&file, &stale, false)
                 .expect("read")
                 .is_none()
         );
 
         // New attr should be present
-        let kept_name = OsString::from(String::from_utf8(test_xattr_name("kept")).unwrap());
+        let kept = test_xattr_name("kept");
         assert_eq!(
-            read_attribute(&file, &kept_name, false)
+            read_attribute(&file, &kept, false)
                 .expect("read")
                 .expect("kept"),
             b"new_value"
@@ -660,17 +673,17 @@ mod tests {
         apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
 
         // Abbreviated entry should not be set
-        let abbrev_name = OsString::from(String::from_utf8(test_xattr_name("abbrev")).unwrap());
+        let abbrev = test_xattr_name("abbrev");
         assert!(
-            read_attribute(&file, &abbrev_name, false)
+            read_attribute(&file, &abbrev, false)
                 .expect("read")
                 .is_none()
         );
 
         // Full entry should be set
-        let full_name = OsString::from(String::from_utf8(test_xattr_name("full")).unwrap());
+        let full = test_xattr_name("full");
         assert_eq!(
-            read_attribute(&file, &full_name, false)
+            read_attribute(&file, &full, false)
                 .expect("read")
                 .expect("full"),
             b"full_value"
@@ -689,15 +702,15 @@ mod tests {
         }
 
         // Pre-set xattrs on destination
-        let attr_name = OsString::from(String::from_utf8(test_xattr_name("existing")).unwrap());
-        write_attribute(&file, &attr_name, b"value", false).expect("write existing");
+        let attr = test_xattr_name("existing");
+        write_attribute(&file, &attr, b"value", false).expect("write existing");
 
         let list = XattrList::new();
         apply_xattrs_from_list(&file, &list, false).expect("apply empty list");
 
         // All permitted xattrs should be removed
         assert!(
-            read_attribute(&file, &attr_name, false)
+            read_attribute(&file, &attr, false)
                 .expect("read")
                 .is_none()
         );
@@ -714,9 +727,8 @@ mod tests {
             return;
         }
 
-        let attr_name_str = String::from_utf8(test_xattr_name("shared")).unwrap();
-        let attr_name = OsString::from(&attr_name_str);
-        write_attribute(&file, &attr_name, b"old_value", false).expect("write old");
+        let attr = test_xattr_name("shared");
+        write_attribute(&file, &attr, b"old_value", false).expect("write old");
 
         let mut list = XattrList::new();
         list.push(XattrEntry::new(
@@ -727,7 +739,7 @@ mod tests {
         apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
 
         assert_eq!(
-            read_attribute(&file, &attr_name, false)
+            read_attribute(&file, &attr, false)
                 .expect("read")
                 .expect("shared"),
             b"new_value"
@@ -750,8 +762,8 @@ mod tests {
 
         apply_xattrs_from_list(&file, &list, false).expect("apply xattrs");
 
-        let attr_name = OsString::from(String::from_utf8(test_xattr_name("empty_val")).unwrap());
-        let value = read_attribute(&file, &attr_name, false)
+        let attr = test_xattr_name("empty_val");
+        let value = read_attribute(&file, &attr, false)
             .expect("read")
             .expect("empty_val should exist");
         assert!(value.is_empty());
