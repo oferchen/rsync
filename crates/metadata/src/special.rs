@@ -1,6 +1,5 @@
 use crate::error::MetadataError;
 use std::fs;
-#[cfg(unix)]
 use std::io;
 use std::path::Path;
 
@@ -21,6 +20,98 @@ pub fn create_device_node(
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
     create_device_node_inner(destination, metadata)
+}
+
+/// Creates a FIFO or socket at `destination`, honouring `--fake-super`.
+///
+/// When `fake_super` is `true`, mirrors upstream `syscall.c:do_mknod()`'s
+/// `am_root < 0` branch: instead of issuing `mknod(2)`, a regular `0600`
+/// placeholder file is created so an unprivileged process can preserve the
+/// node's metadata in `user.rsync.%stat` (written separately by
+/// `store_fake_super`). When `fake_super` is `false`, behaviour matches
+/// [`create_fifo`].
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] if the placeholder cannot be created or if the
+/// underlying mknod call fails.
+// upstream: syscall.c:do_mknod() - placeholder substitution when am_root < 0
+pub fn create_fifo_with_fake_super(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    fake_super: bool,
+) -> Result<(), MetadataError> {
+    if fake_super {
+        create_fake_super_placeholder(destination, "create fifo")
+    } else {
+        create_fifo_inner(destination, metadata)
+    }
+}
+
+/// Creates a device node at `destination`, honouring `--fake-super`.
+///
+/// When `fake_super` is `true`, mirrors upstream `syscall.c:do_mknod()`'s
+/// `am_root < 0` branch: instead of issuing `mknod(2)` (which requires
+/// `CAP_MKNOD`), a regular `0600` placeholder file is created so an
+/// unprivileged process can preserve the device's privileged metadata
+/// (mode, uid, gid, rdev) in `user.rsync.%stat` (written separately by
+/// `store_fake_super`). When `fake_super` is `false`, behaviour matches
+/// [`create_device_node`].
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] if the placeholder cannot be created or if the
+/// underlying mknod call fails.
+// upstream: syscall.c:do_mknod() - placeholder substitution when am_root < 0
+pub fn create_device_node_with_fake_super(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    fake_super: bool,
+) -> Result<(), MetadataError> {
+    if fake_super {
+        create_fake_super_placeholder(destination, "create device")
+    } else {
+        create_device_node_inner(destination, metadata)
+    }
+}
+
+/// Creates an empty 0600 regular file used as a fake-super placeholder.
+///
+/// Upstream `do_mknod()` performs the equivalent substitution by routing the
+/// call through `do_open` with `O_CREAT|O_WRONLY|O_EXCL` and mode `0600`. Any
+/// pre-existing entry at `destination` is removed first to mirror the
+/// `unlink + create` semantics used by upstream when overwriting an existing
+/// special-file destination.
+// upstream: syscall.c:90-174 - do_mknod() routes to do_open when am_root < 0
+fn create_fake_super_placeholder(
+    destination: &Path,
+    context: &'static str,
+) -> Result<(), MetadataError> {
+    if let Err(error) = fs::remove_file(destination)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        return Err(MetadataError::new(context, destination, error));
+    }
+
+    let mut open_options = fs::OpenOptions::new();
+    open_options.write(true).create_new(true);
+    apply_placeholder_mode(&mut open_options);
+    open_options
+        .open(destination)
+        .map(drop)
+        .map_err(|error| MetadataError::new(context, destination, error))
+}
+
+#[cfg(unix)]
+fn apply_placeholder_mode(open_options: &mut fs::OpenOptions) {
+    use std::os::unix::fs::OpenOptionsExt;
+    open_options.mode(0o600);
+}
+
+#[cfg(not(unix))]
+fn apply_placeholder_mode(_open_options: &mut fs::OpenOptions) {
+    // On non-Unix targets there is no POSIX mode to apply; the placeholder is
+    // a regular file with platform-default permissions.
 }
 
 #[cfg(all(
@@ -371,5 +462,90 @@ mod tests {
         let device_path = temp.path().join("device");
         let result = create_device_node(&device_path, &metadata);
         assert!(result.is_ok());
+    }
+
+    /// Under `--fake-super`, `create_fifo_with_fake_super` must never call
+    /// `mknod(2)`. Instead it creates a regular 0600 placeholder so the
+    /// destination's would-be metadata can be captured separately in the
+    /// `user.rsync.%stat` xattr.
+    /// // upstream: syscall.c:do_mknod() under am_root < 0
+    #[cfg(unix)]
+    #[test]
+    fn fake_super_replaces_mkfifo_with_regular_placeholder() {
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+        let temp = tempdir().expect("create tempdir");
+        let source_path = temp.path().join("source");
+        fs::File::create(&source_path).expect("create source");
+        let metadata = fs::metadata(&source_path).expect("metadata");
+
+        let dest = temp.path().join("placeholder.fifo");
+        create_fifo_with_fake_super(&dest, &metadata, true).expect("placeholder created");
+
+        let dest_meta = fs::symlink_metadata(&dest).expect("placeholder metadata");
+        assert!(
+            dest_meta.file_type().is_file(),
+            "fake-super must create a regular file, not a fifo"
+        );
+        assert!(!dest_meta.file_type().is_fifo());
+        assert_eq!(dest_meta.permissions().mode() & 0o777, 0o600);
+    }
+
+    /// Same invariant for `create_device_node_with_fake_super`: never
+    /// invoke `mknod(2)` for a device, fall back to a 0600 placeholder.
+    /// // upstream: syscall.c:do_mknod() under am_root < 0
+    #[cfg(unix)]
+    #[test]
+    fn fake_super_replaces_mknod_with_regular_placeholder() {
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+        let temp = tempdir().expect("create tempdir");
+        let source_path = temp.path().join("source");
+        fs::File::create(&source_path).expect("create source");
+        let metadata = fs::metadata(&source_path).expect("metadata");
+
+        let dest = temp.path().join("placeholder.dev");
+        create_device_node_with_fake_super(&dest, &metadata, true)
+            .expect("placeholder created without CAP_MKNOD");
+
+        let dest_meta = fs::symlink_metadata(&dest).expect("placeholder metadata");
+        assert!(
+            dest_meta.file_type().is_file(),
+            "fake-super must create a regular file, not a device node"
+        );
+        assert!(!dest_meta.file_type().is_block_device());
+        assert!(!dest_meta.file_type().is_char_device());
+        assert_eq!(dest_meta.permissions().mode() & 0o777, 0o600);
+    }
+
+    /// When fake-super is disabled, `create_fifo_with_fake_super` falls
+    /// through to the real mknod path (subject to the same platform
+    /// availability as `create_fifo`).
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        ))
+    ))]
+    #[test]
+    fn create_fifo_with_fake_super_disabled_creates_real_fifo() {
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+
+        let temp = tempdir().expect("create tempdir");
+        let source_path = temp.path().join("source");
+        fs::File::create(&source_path).expect("create source");
+        let mut permissions = fs::metadata(&source_path).expect("metadata").permissions();
+        permissions.set_mode(0o640);
+        fs::set_permissions(&source_path, permissions).expect("set permissions");
+        let metadata = fs::metadata(&source_path).expect("metadata after permissions");
+
+        let dest = temp.path().join("real.fifo");
+        create_fifo_with_fake_super(&dest, &metadata, false).expect("real fifo created");
+
+        let dest_meta = fs::symlink_metadata(&dest).expect("fifo metadata");
+        assert!(dest_meta.file_type().is_fifo());
     }
 }
