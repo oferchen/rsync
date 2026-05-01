@@ -9,6 +9,7 @@ use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use fast_io::{DefaultPlatformCopy, PlatformCopy};
 use filters::FilterSet;
+use protocol::iconv::FilenameConverter;
 
 use crate::batch::BatchWriter;
 use crate::local_copy::filter_program::FilterProgram;
@@ -127,6 +128,26 @@ pub struct LocalCopyOptions {
     pub(super) preserve_acls: bool,
     pub(super) filters: Option<FilterSet>,
     pub(super) filter_program: Option<FilterProgram>,
+    /// Optional filename charset converter resolved from the user's
+    /// `--iconv=LOCAL,REMOTE` request.
+    ///
+    /// `None` means raw bytes are passed through verbatim, matching upstream
+    /// rsync's behaviour when `--iconv` is absent or `--no-iconv` is set.
+    /// `Some(converter)` means file-list emit, file-list ingest, and filter
+    /// matching call sites should transcode names through this converter
+    /// when those producers are wired (tracked under #1912, #1913, #1914).
+    ///
+    /// This field is the local-copy mirror of
+    /// `transfer::config::ConnectionConfig::iconv`, populated for SSH and
+    /// daemon transfers via `apply_common_server_flags`. The local-copy
+    /// path bypasses that bridge, so the converter is plumbed here directly
+    /// from `core::client::run::build_local_copy_options`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c::iconv_for_local` (file-list path entry transcode)
+    /// - `options.c::recv_iconv_settings` (parse `--iconv=LOCAL,REMOTE`)
+    pub(super) iconv: Option<FilenameConverter>,
     pub(super) numeric_ids: bool,
     pub(super) sparse: bool,
     pub(super) checksum: bool,
@@ -249,6 +270,7 @@ impl LocalCopyOptions {
             preserve_acls: false,
             filters: None,
             filter_program: None,
+            iconv: None,
             numeric_ids: false,
             sparse: false,
             checksum: false,
