@@ -248,6 +248,24 @@ fn test_cvs_exclude_defaults_to_false() {
 }
 
 #[test]
+fn test_apple_double_skip_defaults_to_false() {
+    let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
+    assert!(
+        !args.apple_double_skip,
+        "apple_double_skip should default to false"
+    );
+}
+
+#[test]
+fn test_apple_double_skip_can_be_enabled() {
+    let args = parse_args(["oc-rsync", "--apple-double-skip", "src", "dest"]).unwrap();
+    assert!(
+        args.apple_double_skip,
+        "apple_double_skip should be true when --apple-double-skip flag is passed"
+    );
+}
+
+#[test]
 fn test_from0_defaults_to_false() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
     assert!(!args.from0, "from0 should default to false");

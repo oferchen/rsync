@@ -5,7 +5,7 @@
 //! application.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use engine::compute_backup_path;
@@ -17,22 +17,34 @@ use crate::pipeline::spsc;
 use crate::temp_guard::{TempFileGuard, open_tmpfile};
 
 use super::config::{BackupConfig, DiskCommitConfig};
-use super::writer::ReusableBufWriter;
+use super::writer::{ReusableBufWriter, Writer};
 
 /// Processes a single file: open, write chunks, commit or abort.
 ///
 /// After writing each chunk, the owned `Vec<u8>` is returned through
 /// `buf_return_tx` for reuse by the network thread.
+///
+/// When `disk_batch` is `Some` and sparse mode is disabled, writes are
+/// submitted via the shared [`fast_io::IoUringDiskBatch`] for batched
+/// io_uring submission. Sparse mode requires `Seek`, which the batch does
+/// not provide, so it always falls back to buffered writes.
 pub(super) fn process_file(
     file_rx: &spsc::Receiver<FileMessage>,
     buf_return_tx: &spsc::Sender<Vec<u8>>,
     config: &DiskCommitConfig,
     mut begin: BeginMessage,
     write_buf: &mut Vec<u8>,
+    disk_batch: Option<&mut fast_io::IoUringDiskBatch>,
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
 
-    let mut output = ReusableBufWriter::new(file, write_buf);
+    let mut output = make_writer(
+        file,
+        write_buf,
+        disk_batch,
+        config.use_sparse,
+        begin.append_offset,
+    )?;
 
     let mut sparse_state = if config.use_sparse {
         Some(SparseWriteState::default())
@@ -64,9 +76,9 @@ pub(super) fn process_file(
                 }
 
                 if let Some(ref mut sparse) = sparse_state {
-                    sparse.write(&mut output, &data)?;
+                    sparse.write(output.buffered_for_sparse(), &data)?;
                 } else {
-                    output.write_all(&data)?;
+                    output.write_chunk(&data)?;
                 }
                 bytes_written += data.len() as u64;
                 // Return the buffer for reuse. Ignore errors - the network
@@ -75,11 +87,11 @@ pub(super) fn process_file(
             }
             FileMessage::Commit => {
                 if let Some(ref mut sparse) = sparse_state {
-                    let _final_pos = sparse.finish(&mut output)?;
+                    let _final_pos = sparse.finish(output.buffered_for_sparse())?;
                 }
 
-                flush_and_sync(&mut output, config.do_fsync, &begin.file_path)?;
-                drop(output);
+                output.flush_and_sync(config.do_fsync, &begin.file_path)?;
+                output.finish(config.do_fsync, &begin.file_path)?;
 
                 commit_file(
                     &begin,
@@ -128,17 +140,26 @@ pub(super) fn process_file(
 /// Processes a single-chunk file in one shot (coalesced Begin+Chunk+Commit).
 ///
 /// Avoids the per-message channel recv loop of [`process_file`], reducing
-/// futex overhead from 3+ sends/recvs to 1 for small files.
+/// futex overhead from 3+ sends/recvs to 1 for small files. When
+/// `disk_batch` is `Some` and sparse mode is disabled, the chunk is
+/// submitted via the shared [`fast_io::IoUringDiskBatch`].
 pub(super) fn process_whole_file(
     buf_return_tx: &spsc::Sender<Vec<u8>>,
     config: &DiskCommitConfig,
     mut begin: BeginMessage,
     data: Vec<u8>,
     write_buf: &mut Vec<u8>,
+    disk_batch: Option<&mut fast_io::IoUringDiskBatch>,
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
 
-    let mut output = ReusableBufWriter::new(file, write_buf);
+    let mut output = make_writer(
+        file,
+        write_buf,
+        disk_batch,
+        config.use_sparse,
+        begin.append_offset,
+    )?;
     let bytes_written = data.len() as u64;
 
     let mut checksum_verifier = begin.checksum_verifier.take();
@@ -148,16 +169,16 @@ pub(super) fn process_whole_file(
 
     if config.use_sparse {
         let mut sparse = SparseWriteState::default();
-        sparse.write(&mut output, &data)?;
-        let _final_pos = sparse.finish(&mut output)?;
+        sparse.write(output.buffered_for_sparse(), &data)?;
+        let _final_pos = sparse.finish(output.buffered_for_sparse())?;
     } else {
-        output.write_all(&data)?;
+        output.write_chunk(&data)?;
     }
 
     let _ = buf_return_tx.send(data);
 
-    flush_and_sync(&mut output, config.do_fsync, &begin.file_path)?;
-    drop(output);
+    output.flush_and_sync(config.do_fsync, &begin.file_path)?;
+    output.finish(config.do_fsync, &begin.file_path)?;
 
     commit_file(
         &begin,
@@ -222,21 +243,41 @@ fn open_output_file(
     }
 }
 
-/// Flushes the writer and optionally calls `sync_all`.
-fn flush_and_sync(
-    output: &mut ReusableBufWriter<'_>,
-    do_fsync: bool,
-    file_path: &Path,
-) -> io::Result<()> {
-    if do_fsync {
-        output
-            .sync()
-            .map_err(|e| io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}")))
-    } else {
-        output
-            .flush()
-            .map_err(|e| io::Error::other(format!("flush failed for {file_path:?}: {e}")))
+/// Constructs the per-file [`Writer`] dispatching between io_uring batched
+/// submission and the buffered fallback.
+///
+/// Selects io_uring when (a) the disk thread holds an active
+/// [`fast_io::IoUringDiskBatch`], (b) sparse mode is disabled, and (c) the
+/// file does not start at a non-zero offset (append mode). Sparse mode
+/// requires `Seek`, which the batch writer does not provide.
+///
+/// Append mode opens the file and seeks past existing content via
+/// [`std::io::Seek::seek`]. The io_uring batch writer issues SQEs with
+/// absolute offsets starting at 0 and ignores the file position, so it would
+/// overwrite the existing prefix with zeros. Append mode therefore always
+/// falls back to the buffered writer, which honors the seek via
+/// `Write::write_all` on the underlying `File`.
+///
+/// On the io_uring path, `batch.begin_file(file)` registers the fd with the
+/// ring; the matching `commit_file` happens via [`Writer::finish`].
+#[allow(unused_variables)] // disk_batch is unused on non-Linux / without feature
+fn make_writer<'a>(
+    file: fs::File,
+    write_buf: &'a mut Vec<u8>,
+    disk_batch: Option<&'a mut fast_io::IoUringDiskBatch>,
+    use_sparse: bool,
+    append_offset: u64,
+) -> io::Result<Writer<'a>> {
+    #[cfg(all(target_os = "linux", feature = "io_uring"))]
+    {
+        if !use_sparse && append_offset == 0 {
+            if let Some(batch) = disk_batch {
+                batch.begin_file(file)?;
+                return Ok(Writer::IoUring { batch });
+            }
+        }
     }
+    Ok(Writer::Buffered(ReusableBufWriter::new(file, write_buf)))
 }
 
 /// Performs backup, atomic rename, and inplace truncation after writing.

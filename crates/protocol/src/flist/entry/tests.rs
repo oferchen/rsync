@@ -1184,7 +1184,7 @@ fn strip_leading_slashes_preserves_extras() {
 #[test]
 fn name_bytes_accessor() {
     let entry = FileEntry::new_file("hello.txt".into(), 100, 0o644);
-    assert_eq!(entry.name_bytes(), b"hello.txt");
+    assert_eq!(&*entry.name_bytes(), b"hello.txt");
 }
 
 /// Extras with unicode user/group names.
