@@ -93,6 +93,15 @@ const MAX_REGISTERED_BUFFERS: usize = 1024;
 ///   this struct. The kernel holds references to these pages until
 ///   `unregister_buffers` is called.
 /// - Buffer indices returned by `checkout()` are guaranteed to be in-bounds.
+///
+/// # Telemetry
+///
+/// The group records `total_acquires` and `total_misses` counters, both
+/// bumped on every [`checkout`](Self::checkout). A miss is a checkout that
+/// returns `None` because every slot is in use, which forces the caller
+/// to fall back to non-registered I/O. The counters are exposed via
+/// [`stats`](Self::stats) and feed the adaptive sizing design described
+/// in `docs/audits/io-uring-adaptive-buffer-sizing.md`.
 pub struct RegisteredBufferGroup {
     /// Raw pointers to page-aligned buffer memory.
     buffers: Vec<*mut u8>,
@@ -105,6 +114,11 @@ pub struct RegisteredBufferGroup {
     /// Atomic bitset tracking which buffer indices are free (1 = free, 0 = in use).
     /// Supports up to 64 buffers per word. Multiple words for larger counts.
     free_bitset: Vec<AtomicU64>,
+    /// Total number of `checkout` calls (whether they succeeded or not).
+    total_acquires: AtomicU64,
+    /// Number of `checkout` calls that returned `None` because every slot
+    /// was in use - a forced fallback to non-registered I/O.
+    total_misses: AtomicU64,
 }
 
 // SAFETY: The raw pointers point to memory exclusively owned by this struct.
@@ -114,6 +128,39 @@ unsafe impl Send for RegisteredBufferGroup {}
 // SAFETY: The atomic bitset provides thread-safe checkout/return. Buffer memory
 // is only accessed by the holder of a checked-out slot index.
 unsafe impl Sync for RegisteredBufferGroup {}
+
+/// Snapshot of [`RegisteredBufferGroup`] telemetry counters.
+///
+/// Returned by [`RegisteredBufferGroup::stats`]. Both fields are plain
+/// integers copied from atomic counters at the time of the call; under
+/// concurrent updates the snapshot is not strictly consistent across the
+/// two fields, but each individual value is accurate.
+///
+/// The miss rate is the fraction of acquire calls that returned `None`
+/// because every slot was in use - a forced fallback to non-registered
+/// `IORING_OP_READ` / `IORING_OP_WRITE`. A high miss rate is the primary
+/// signal driving the adaptive sizing design in
+/// `docs/audits/io-uring-adaptive-buffer-sizing.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegisteredBufferStats {
+    /// Number of `checkout` calls (whether they succeeded or not).
+    pub total_acquires: u64,
+    /// Number of `checkout` calls that returned `None`.
+    pub total_misses: u64,
+}
+
+impl RegisteredBufferStats {
+    /// Returns the miss rate as a fraction in `[0.0, 1.0]`.
+    ///
+    /// Returns `0.0` when no acquires have been recorded yet.
+    #[must_use]
+    pub fn miss_rate(&self) -> f64 {
+        if self.total_acquires == 0 {
+            return 0.0;
+        }
+        self.total_misses as f64 / self.total_acquires as f64
+    }
+}
 
 /// A checked-out buffer slot from a [`RegisteredBufferGroup`].
 ///
@@ -292,6 +339,8 @@ impl RegisteredBufferGroup {
             buffer_size: aligned_size,
             count,
             free_bitset,
+            total_acquires: AtomicU64::new(0),
+            total_misses: AtomicU64::new(0),
         })
     }
 
@@ -331,8 +380,12 @@ impl RegisteredBufferGroup {
     ///
     /// Returns `None` if all slots are currently in use. The returned
     /// [`RegisteredBufferSlot`] automatically returns the slot on drop.
+    ///
+    /// Bumps `total_acquires` on entry and `total_misses` on the `None`
+    /// return path. Both counters are `Relaxed` and feed [`stats`](Self::stats).
     #[must_use]
     pub fn checkout(&self) -> Option<RegisteredBufferSlot<'_>> {
+        self.total_acquires.fetch_add(1, Ordering::Relaxed);
         for (word_idx, word) in self.free_bitset.iter().enumerate() {
             loop {
                 let current = word.load(Ordering::Acquire);
@@ -356,7 +409,27 @@ impl RegisteredBufferGroup {
                 }
             }
         }
+        self.total_misses.fetch_add(1, Ordering::Relaxed);
         None
+    }
+
+    /// Returns a snapshot of acquire / miss counters.
+    ///
+    /// The returned [`RegisteredBufferStats`] reads each atomic counter
+    /// independently with `Relaxed` ordering. Individual values are
+    /// accurate but the snapshot is not strictly consistent across the
+    /// two fields under concurrent updates - identical to the
+    /// `BufferPoolStats` pattern in the engine's local-copy buffer pool.
+    ///
+    /// Used by the adaptive buffer sizer to drive an EMA-smoothed miss-rate
+    /// signal. See `docs/audits/io-uring-adaptive-buffer-sizing.md` for the
+    /// design.
+    #[must_use]
+    pub fn stats(&self) -> RegisteredBufferStats {
+        RegisteredBufferStats {
+            total_acquires: self.total_acquires.load(Ordering::Relaxed),
+            total_misses: self.total_misses.load(Ordering::Relaxed),
+        }
     }
 
     /// Returns a buffer slot to the free pool.
@@ -1147,5 +1220,122 @@ mod tests {
                 let _ = group.unregister(&ring);
             }
         }
+    }
+
+    /// A freshly created group reports zero acquires and zero misses.
+    #[test]
+    fn stats_initially_zero() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 2) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let stats = group.stats();
+        assert_eq!(stats.total_acquires, 0);
+        assert_eq!(stats.total_misses, 0);
+        assert_eq!(stats.miss_rate(), 0.0);
+    }
+
+    /// Successful checkouts bump `total_acquires` but not `total_misses`.
+    #[test]
+    fn stats_count_successful_checkouts() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 4) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        let s0 = group.checkout().expect("slot 0");
+        let s1 = group.checkout().expect("slot 1");
+        let stats = group.stats();
+        assert_eq!(stats.total_acquires, 2);
+        assert_eq!(stats.total_misses, 0);
+        assert_eq!(stats.miss_rate(), 0.0);
+
+        drop(s0);
+        drop(s1);
+    }
+
+    /// `checkout` returning `None` increments both `total_acquires` and
+    /// `total_misses`, and `miss_rate` reflects the ratio.
+    #[test]
+    fn stats_count_misses_on_exhaustion() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 2) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        // Exhaust the pool.
+        let _s0 = group.checkout().expect("slot 0");
+        let _s1 = group.checkout().expect("slot 1");
+
+        // Three forced misses.
+        assert!(group.checkout().is_none());
+        assert!(group.checkout().is_none());
+        assert!(group.checkout().is_none());
+
+        let stats = group.stats();
+        assert_eq!(stats.total_acquires, 5);
+        assert_eq!(stats.total_misses, 3);
+        let mr = stats.miss_rate();
+        assert!(
+            (mr - 3.0 / 5.0).abs() < 1e-12,
+            "expected miss_rate=0.6, got {mr}"
+        );
+    }
+
+    /// Returning a slot does not affect telemetry counters: `total_acquires`
+    /// is the lifetime acquire count, never decremented.
+    #[test]
+    fn stats_not_decremented_on_return() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 2) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        let s = group.checkout().expect("slot");
+        drop(s);
+        assert_eq!(group.stats().total_acquires, 1);
+        assert_eq!(group.stats().total_misses, 0);
+
+        // Re-acquire the same slot bumps acquires again.
+        let s = group.checkout().expect("slot reacquired");
+        assert_eq!(group.stats().total_acquires, 2);
+        drop(s);
+    }
+
+    /// `RegisteredBufferStats::miss_rate` returns 0.0 when no acquires have
+    /// been recorded, matching the `BufferPoolStats::hit_rate` convention.
+    #[test]
+    fn stats_miss_rate_zero_when_no_acquires() {
+        let s = RegisteredBufferStats {
+            total_acquires: 0,
+            total_misses: 0,
+        };
+        assert_eq!(s.miss_rate(), 0.0);
+    }
+
+    /// `miss_rate` is exactly 1.0 when every acquire missed.
+    #[test]
+    fn stats_miss_rate_all_misses() {
+        let s = RegisteredBufferStats {
+            total_acquires: 7,
+            total_misses: 7,
+        };
+        assert!((s.miss_rate() - 1.0).abs() < 1e-12);
     }
 }

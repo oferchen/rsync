@@ -277,9 +277,40 @@ pub mod registered_buffers {
             None
         }
 
+        /// Returns a zeroed snapshot on this platform.
+        ///
+        /// Mirrors the Linux API surface so callers building cross-platform
+        /// adaptive sizing logic compile on every target. The fields are
+        /// always `0` because no checkouts are ever recorded here.
+        #[must_use]
+        pub fn stats(&self) -> RegisteredBufferStats {
+            RegisteredBufferStats {
+                total_acquires: 0,
+                total_misses: 0,
+            }
+        }
+
         /// No-op on this platform.
         pub fn unregister(&self, _ring: &()) -> io::Result<()> {
             Ok(())
+        }
+    }
+
+    /// Stub snapshot of registered-buffer telemetry (always zero on this
+    /// platform). Mirrors the Linux [`RegisteredBufferStats`].
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct RegisteredBufferStats {
+        /// Always 0 on this platform.
+        pub total_acquires: u64,
+        /// Always 0 on this platform.
+        pub total_misses: u64,
+    }
+
+    impl RegisteredBufferStats {
+        /// Always returns `0.0` on this platform.
+        #[must_use]
+        pub fn miss_rate(&self) -> f64 {
+            0.0
         }
     }
 
@@ -316,7 +347,7 @@ pub mod registered_buffers {
 }
 
 pub use buffer_ring::{BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags};
-pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot};
+pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats};
 
 /// Stub batched io_uring disk writer (not available on this platform).
 ///
