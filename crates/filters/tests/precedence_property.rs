@@ -152,7 +152,7 @@ proptest! {
         // Prepend an include that definitely matches this file, followed by
         // an arbitrary tail. The decision must be: allowed.
         let mut inc_rules = vec![FilterRule::include(format!("*.{ext}"))];
-        inc_rules.extend(tail.iter().cloned().map(|pat| FilterRule::exclude(pat)));
+        inc_rules.extend(tail.iter().cloned().map(FilterRule::exclude));
         let inc_set = FilterSet::from_rules(inc_rules).unwrap();
         prop_assert!(
             inc_set.allows(target, false),
@@ -162,7 +162,7 @@ proptest! {
         // Prepend an exclude that definitely matches this file, followed by
         // an arbitrary tail of includes. The decision must be: denied.
         let mut exc_rules = vec![FilterRule::exclude(format!("*.{ext}"))];
-        exc_rules.extend(tail.iter().cloned().map(|pat| FilterRule::include(pat)));
+        exc_rules.extend(tail.iter().cloned().map(FilterRule::include));
         let exc_set = FilterSet::from_rules(exc_rules).unwrap();
         prop_assert!(
             !exc_set.allows(target, false),
@@ -523,7 +523,7 @@ proptest! {
         let mut rules: Vec<FilterRule> = prefix_rules
             .iter()
             .cloned()
-            .map(|pat| FilterRule::exclude(pat))
+            .map(FilterRule::exclude)
             .collect();
         rules.push(FilterRule::clear());
         rules.push(FilterRule::exclude(format!("*.{ext}")));
@@ -538,7 +538,7 @@ proptest! {
         let mut rules2: Vec<FilterRule> = prefix_rules
             .iter()
             .cloned()
-            .map(|pat| FilterRule::exclude(pat))
+            .map(FilterRule::exclude)
             .collect();
         rules2.push(FilterRule::clear());
         rules2.push(FilterRule::include(format!("*.{ext}")));
