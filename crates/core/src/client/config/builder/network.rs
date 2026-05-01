@@ -137,6 +137,20 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures the OpenSSH ProxyJump hosts forwarded to `ssh -J`.
+    ///
+    /// Accepts a comma-separated list of `[user@]host[:port]` entries which is
+    /// forwarded verbatim to the SSH command line before the destination
+    /// operand. `None` (the default) leaves SSH to honour the user's
+    /// `ssh_config` `ProxyJump` settings.
+    #[must_use]
+    #[doc(alias = "--jump-host")]
+    #[doc(alias = "-J")]
+    pub fn set_jump_hosts<S: Into<OsString>>(mut self, value: Option<S>) -> Self {
+        self.jump_hosts = value.map(Into::into).filter(|v| !v.is_empty());
+        self
+    }
+
     /// Sets the early-input file path.
     ///
     /// When set, rsync reads from this file immediately before the transfer

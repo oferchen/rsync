@@ -446,7 +446,7 @@ fn compress_with_sync_flush(input: &[u8], level: Compression) -> Vec<u8> {
 
     let mut compressor = Compress::new(level, false);
     let mut out = vec![0u8; input.len() * 2 + 128];
-    // Feed input with Z_NO_FLUSH (matches upstream chunk feeding)
+    // upstream: chunks are fed with Z_NO_FLUSH between sync flushes.
     let mut consumed = 0;
     while consumed < input.len() {
         let before_in = compressor.total_in() as usize;
@@ -461,7 +461,6 @@ fn compress_with_sync_flush(input: &[u8], level: Compression) -> Vec<u8> {
         consumed += (compressor.total_in() as usize) - before_in;
     }
 
-    // Issue Z_SYNC_FLUSH to produce a decompressible boundary
     loop {
         let before_out = compressor.total_out();
         let status = compressor
@@ -519,11 +518,10 @@ fn each_token_independently_decompressible() {
         assert!(compressed.len() >= 4);
         let stripped = &compressed[..compressed.len() - 4];
 
-        // Re-append the marker (as upstream receiver does)
+        // upstream token.c: receiver re-appends the sync marker before inflating.
         let mut to_inflate = stripped.to_vec();
         to_inflate.extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
 
-        // Inflate independently with a fresh decompressor
         let mut decompressor = Decompress::new(false);
         let mut output = vec![0u8; token_data.len() + 64];
         decompressor
@@ -550,7 +548,6 @@ fn empty_token_produces_valid_sync_flush_output() {
     let mut compressor = Compress::new(Compression::default(), false);
     let mut out = [0u8; 64];
 
-    // Feed nothing, just sync-flush
     loop {
         let before = compressor.total_out();
         let status = compressor
@@ -568,7 +565,6 @@ fn empty_token_produces_valid_sync_flush_output() {
     let total = compressor.total_out() as usize;
     let compressed = &out[..total];
 
-    // Must contain at least the sync marker
     assert!(
         compressed.len() >= 4,
         "empty sync flush should still produce output (got {} bytes)",
@@ -579,7 +575,6 @@ fn empty_token_produces_valid_sync_flush_output() {
         &[0x00, 0x00, 0xFF, 0xFF],
     );
 
-    // Must decompress to empty output
     let mut decompressor = Decompress::new(false);
     let mut decoded = vec![0u8; 64];
     decompressor
@@ -616,7 +611,6 @@ fn token_boundaries_preserved_persistent_stream() {
     for token_data in tokens {
         let mut segment = Vec::new();
 
-        // Feed token data with Z_NO_FLUSH
         let mut consumed = 0;
         while consumed < token_data.len() {
             let before_in = compressor.total_in() as usize;
@@ -635,7 +629,6 @@ fn token_boundaries_preserved_persistent_stream() {
             consumed += (compressor.total_in() as usize) - before_in;
         }
 
-        // Z_SYNC_FLUSH
         loop {
             let before_out = compressor.total_out() as usize;
             let status = compressor
@@ -667,7 +660,6 @@ fn token_boundaries_preserved_persistent_stream() {
     let mut output_buf = vec![0u8; 4096];
 
     for (i, segment) in segments.iter().enumerate() {
-        // Re-append sync marker
         let mut to_inflate = segment.clone();
         to_inflate.extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
 
@@ -719,14 +711,10 @@ fn stripped_sync_marker_roundtrips_all_levels() {
         let compression = Compression::new(level);
         let compressed = compress_with_sync_flush(payload, compression);
 
-        // Strip marker
         assert!(compressed.len() >= 4);
         let mut stripped = compressed[..compressed.len() - 4].to_vec();
-
-        // Restore marker
         stripped.extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
 
-        // Decompress
         let mut decompressor = Decompress::new(false);
         let mut output = vec![0u8; payload.len() + 64];
         decompressor
@@ -756,7 +744,6 @@ fn sync_flush_after_each_write_produces_decompressible_prefix() {
     let mut boundaries: Vec<usize> = Vec::new();
 
     for chunk in chunks {
-        // Feed with NO_FLUSH
         let mut consumed = 0;
         while consumed < chunk.len() {
             let bi = compressor.total_in() as usize;
@@ -771,7 +758,6 @@ fn sync_flush_after_each_write_produces_decompressible_prefix() {
             consumed += (compressor.total_in() as usize) - bi;
         }
 
-        // Sync flush
         loop {
             let bo = compressor.total_out() as usize;
             let status = compressor
@@ -964,7 +950,6 @@ fn single_byte_streaming_roundtrip() {
 
 #[test]
 fn large_data_roundtrip() {
-    // 1 MB of mixed data
     let payload: Vec<u8> = (0..1_048_576u32).map(|i| (i % 251) as u8).collect();
     let compressed =
         compress_to_vec(&payload, CompressionLevel::Default).expect("compress large data");
@@ -1011,7 +996,6 @@ fn decompress_truncated_data_returns_error() {
     let payload = b"test data for truncation".repeat(10);
     let compressed =
         compress_to_vec(&payload, CompressionLevel::Default).expect("compress succeeds");
-    // Truncate to half
     let truncated = &compressed[..compressed.len() / 2];
     let result = decompress_to_vec(truncated);
     // Truncated data may decompress partially or fail - either is acceptable
@@ -1126,7 +1110,6 @@ fn counting_encoder_flush_produces_sync_flush() {
     // flate2::write::DeflateEncoder::flush() triggers Z_SYNC_FLUSH.
     let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
 
-    // Write first token
     encoder
         .write(b"token-one data payload")
         .expect("write token 1");
@@ -1144,7 +1127,6 @@ fn counting_encoder_flush_produces_sync_flush() {
         "CountingZlibEncoder::flush() must produce Z_SYNC_FLUSH marker"
     );
 
-    // Write second token
     encoder
         .write(b"token-two different data")
         .expect("write token 2");

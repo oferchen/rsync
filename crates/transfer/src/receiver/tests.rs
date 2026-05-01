@@ -2831,6 +2831,41 @@ mod sanitize_file_list {
         assert_eq!(removed, 1);
         assert_eq!(ctx.file_list[0].path().to_str().unwrap(), "safe_dir");
     }
+
+    /// On Windows, `Path::has_root()` is false for drive-relative paths such
+    /// as `C:foo`, but `dest_dir.join("C:foo")` discards `dest_dir` entirely
+    /// (`Path::join` semantics). Without an additional check, an untrusted
+    /// sender could escape the destination tree by emitting a wire path
+    /// starting with a drive letter, UNC prefix, or `\\?\` extended prefix.
+    #[cfg(windows)]
+    #[test]
+    fn windows_drive_relative_path_rejected_when_untrusted() {
+        let entries = vec![
+            FileEntry::new_file("safe.txt".into(), 10, 0o644),
+            FileEntry::new_file("C:foo".into(), 20, 0o644),
+            FileEntry::new_file(r"C:\absolute".into(), 30, 0o644),
+            FileEntry::new_file(r"\\server\share\file".into(), 40, 0o644),
+            FileEntry::new_file(r"\\?\C:\verbatim".into(), 50, 0o644),
+        ];
+        let mut ctx = receiver_with_trust(entries, false);
+        let removed = ctx.sanitize_file_list();
+        assert_eq!(removed, 4);
+        assert_eq!(ctx.file_list.len(), 1);
+        assert_eq!(ctx.file_list[0].path().to_str().unwrap(), "safe.txt");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_drive_relative_path_allowed_when_trusted() {
+        let entries = vec![
+            FileEntry::new_file("safe.txt".into(), 10, 0o644),
+            FileEntry::new_file("C:foo".into(), 20, 0o644),
+        ];
+        let mut ctx = receiver_with_trust(entries, true);
+        let removed = ctx.sanitize_file_list();
+        assert_eq!(removed, 0);
+        assert_eq!(ctx.file_list.len(), 2);
+    }
 }
 
 /// Tests for receiver input multiplex activation by mode and protocol version.

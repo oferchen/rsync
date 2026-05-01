@@ -3091,6 +3091,157 @@ test_iconv() {
   return 0
 }
 
+# #1916: --iconv UTF-8/LATIN1 round-trip vs upstream rsync 3.4.1
+# Verifies that upstream rsync 3.4.1 and oc-rsync interoperate when the user
+# requests --iconv=UTF-8,ISO-8859-1. Both directions are exercised:
+#   1. upstream client -> oc-rsync daemon (push)
+#   2. oc-rsync client -> upstream daemon (push)
+# In each direction the source contains UTF-8 filenames whose code points all
+# fit in ISO-8859-1 (Latin-1). With --iconv enabled, the wire encoding is
+# Latin-1 and both peers must transcode back to UTF-8 on disk.
+#
+# References:
+#   upstream: options.c:recv_iconv_settings (parses --iconv=LOCAL,REMOTE)
+#   upstream: flist.c:1579-1603 (sender filename iconvbufs(ic_send, ...))
+#   upstream: flist.c:738-754 (receiver filename iconvbufs(ic_recv, ...))
+#   oc-rsync: docs/audits/iconv-pipeline.md (Findings 1-5)
+#
+# The test is deterministic: same fixture bytes every run, ASCII fallback
+# files act as the always-passing baseline, and Latin-1 representable names
+# are the iconv probe.
+test_iconv_upstream_interop() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local ic_src="${work}/iconv-up-src"
+  local ic_dest_oc="${work}/iconv-up-dest-oc"
+  local ic_dest_up="${work}/iconv-up-dest-up"
+  rm -rf "$ic_src" "$ic_dest_oc" "$ic_dest_up"
+  mkdir -p "$ic_src" "$ic_dest_oc" "$ic_dest_up"
+
+  # ASCII baseline: must always survive any iconv pipeline.
+  echo "ascii body" > "${ic_src}/plain.txt"
+
+  # UTF-8 names whose code points all fit in ISO-8859-1 (Latin-1):
+  # - U+00E9 LATIN SMALL LETTER E WITH ACUTE (cafe)
+  # - U+00FC LATIN SMALL LETTER U WITH DIAERESIS, U+00DF SHARP S
+  # - U+00E5 LATIN SMALL LETTER A WITH RING ABOVE
+  echo "cafe body" > "${ic_src}/café.txt"
+  echo "umlaut body" > "${ic_src}/über.txt"
+  echo "nordic body" > "${ic_src}/ångström.txt"
+
+  # Skip the test gracefully if the host filesystem rejects any UTF-8 names
+  # (e.g. a non-UTF-8 locale or a filesystem that NFC-normalises).
+  for fname in "café.txt" "über.txt" "ångström.txt"; do
+    if [[ ! -f "${ic_src}/${fname}" ]]; then
+      echo "    SKIP: host filesystem cannot store UTF-8 name '${fname}'"
+      return 0
+    fi
+  done
+
+  local -a expected_files=(
+    "plain.txt"
+    "café.txt"
+    "über.txt"
+    "ångström.txt"
+  )
+
+  _ic_verify_round_trip() {
+    local label=$1 dest=$2
+    for fname in "${expected_files[@]}"; do
+      if [[ ! -f "${dest}/${fname}" ]]; then
+        echo "    ${label}: ${fname} missing after iconv transfer"
+        echo "    ${label}: dest contents: $(find "$dest" -type f | sort | tr '\n' ' ')"
+        return 1
+      fi
+      if ! cmp -s "${ic_src}/${fname}" "${dest}/${fname}"; then
+        echo "    ${label}: ${fname} content mismatch after iconv transfer"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # --- Direction 1: upstream client -> oc-rsync daemon ---
+  # Upstream encodes UTF-8 source names into ISO-8859-1 on the wire; oc-rsync
+  # daemon must decode back to UTF-8 (its local charset) on disk.
+  local ic_oc_conf="${work}/iconv-up-oc.conf"
+  local ic_oc_pid="${work}/iconv-up-oc.pid"
+  local ic_oc_log="${work}/iconv-up-oc.log"
+  cat > "$ic_oc_conf" <<CONF
+pid file = ${ic_oc_pid}
+port = ${oc_port}
+use chroot = false
+
+[interop]
+path = ${ic_dest_oc}
+comment = iconv interop test
+read only = false
+numeric ids = yes
+charset = ISO-8859-1
+CONF
+
+  start_oc_daemon_with_retry "$ic_oc_conf" "$ic_oc_log" "$upstream_binary" \
+      "$ic_oc_pid" "$oc_port"
+
+  local rc1=0
+  timeout "$hard_timeout" "$upstream_binary" -av \
+      --iconv=UTF-8,ISO-8859-1 --timeout=10 \
+      "${ic_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
+      >"${log}.iconv-up-oc.out" 2>"${log}.iconv-up-oc.err" || rc1=$?
+  stop_oc_daemon
+
+  if [[ $rc1 -ne 0 ]]; then
+    echo "    upstream -> oc daemon iconv push failed (exit=$rc1)"
+    echo "    stderr: $(head -5 "${log}.iconv-up-oc.err")"
+    echo "    daemon log: $(tail -5 "$ic_oc_log" 2>/dev/null)"
+    return 1
+  fi
+
+  _ic_verify_round_trip "upstream->oc" "$ic_dest_oc" || return 1
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  # oc-rsync encodes UTF-8 source names into ISO-8859-1 on the wire; upstream
+  # daemon decodes back to UTF-8 (its local charset, per `charset =`) on disk.
+  local ic_up_conf="${work}/iconv-up-up.conf"
+  local ic_up_pid="${work}/iconv-up-up.pid"
+  local ic_up_log="${work}/iconv-up-up.log"
+  cat > "$ic_up_conf" <<CONF
+pid file = ${ic_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+
+[interop]
+path = ${ic_dest_up}
+comment = iconv interop test
+read only = false
+numeric ids = yes
+charset = ISO-8859-1
+CONF
+
+  start_upstream_daemon_with_retry "$upstream_binary" "$ic_up_conf" \
+      "$ic_up_log" "$ic_up_pid"
+
+  local rc2=0
+  timeout "$hard_timeout" "$oc_bin" -av \
+      --iconv=UTF-8,ISO-8859-1 --timeout=10 \
+      "${ic_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.iconv-up-up.out" 2>"${log}.iconv-up-up.err" || rc2=$?
+  stop_upstream_daemon
+
+  if [[ $rc2 -ne 0 ]]; then
+    echo "    oc -> upstream daemon iconv push failed (exit=$rc2)"
+    echo "    stderr: $(head -5 "${log}.iconv-up-up.err")"
+    echo "    daemon log: $(tail -5 "$ic_up_log" 2>/dev/null)"
+    return 1
+  fi
+
+  _ic_verify_round_trip "oc->upstream" "$ic_dest_up" || return 1
+
+  return 0
+}
+
 # #885: Comprehensive hardlink interop
 # Tests hardlink scenarios that go beyond the basic -H flag: multiple hardlink
 # groups, chains of 3+ links to the same inode, hardlinks across subdirectories,
@@ -6246,11 +6397,13 @@ CONF
 }
 
 # Risk filter (R) interop test.
-# Upstream rsync pushes to oc-rsync daemon with --delete, P (protect) for *.log
-# and *.sh, then R (risk) overriding protect for *.log only.
+# Upstream rsync pushes to oc-rsync daemon with --delete, R (risk) overriding
+# protect for *.log first, then P (protect) for *.log and *.sh.
 # Verifies *.log files are deleted (risk overrides protect), *.sh files survive.
 # Also tests oc-rsync pushing to upstream daemon (both directions).
-# upstream: exclude.c - 'R' modifier maps to risk rule that overrides protect.
+# upstream: exclude.c:1201-1207 'R' = FILTRULE_INCLUDE|FILTRULE_RECEIVER_SIDE
+# (an include rule allowing deletion). exclude.c:1038-1065 check_filter() uses
+# first-match-wins, so R must be listed BEFORE P to override it.
 test_delete_filter_risk() {
   local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
         oc_port=$6 upstream_port=$7
@@ -6266,7 +6419,8 @@ test_delete_filter_risk() {
   echo "source beta" > "$dr_src/beta.txt"
   echo "source nested" > "$dr_src/subdir/nested.txt"
 
-  # Dest-only files: *.log and *.sh are P-protected, but R overrides for *.log
+  # Dest-only files: R (risk) overrides P (protect) for *.log via first-match-wins;
+  # *.sh remains P-protected because no preceding R rule matches it.
   echo "dest risk log" > "$dr_dest/risky.log"
   echo "dest protected sh" > "$dr_dest/keeper.sh"
   echo "dest unprotected" > "$dr_dest/destonly.txt"
@@ -6289,9 +6443,10 @@ CONF
 
   start_oc_daemon "$dr_conf" "$dr_log" "$upstream_binary" "$dr_pid" "$oc_port"
 
-  # Push with --delete, protect *.log and *.sh, then risk (override) *.log
+  # Push with --delete; R (risk) precedes P (protect) so *.log gets deleted
+  # via first-match-wins, while *.sh stays protected.
   if ! timeout "$hard_timeout" "$upstream_binary" -av --delete --timeout=10 \
-      --filter='P *.log' --filter='P *.sh' --filter='R *.log' \
+      --filter='R *.log' --filter='P *.log' --filter='P *.sh' \
       "${dr_src}/" "rsync://127.0.0.1:${oc_port}/interop" \
       >"${log}.del-risk-up.out" 2>"${log}.del-risk-up.err"; then
     echo "    delete-filter-risk (up->oc) push failed (exit=$?)"
@@ -6361,9 +6516,10 @@ CONF
 
   start_upstream_daemon "$upstream_binary" "$dr_conf2" "$dr_log2" "$dr_pid2"
 
-  # oc-rsync pushes with --delete, protect then risk
+  # oc-rsync pushes with --delete; R (risk) precedes P (protect) so *.log gets
+  # deleted via first-match-wins, while *.sh stays protected.
   if ! timeout "$hard_timeout" "$oc_bin" -av --delete --timeout=10 \
-      --filter='P *.log' --filter='P *.sh' --filter='R *.log' \
+      --filter='R *.log' --filter='P *.log' --filter='P *.sh' \
       "${dr_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
       >"${log}.del-risk-oc.out" 2>"${log}.del-risk-oc.err"; then
     echo "    delete-filter-risk (oc->up) push failed (exit=$?)"
@@ -8711,6 +8867,7 @@ run_standalone_interop_tests() {
     "read-only-module"
     "wrong-password-auth"
     "iconv"
+    "iconv-upstream"
     "hardlinks-comprehensive"
     "inc-recurse-comprehensive"
     "inc-recurse-sender-push"
@@ -8782,6 +8939,7 @@ run_standalone_interop_tests() {
     "test_read_only_module"
     "test_wrong_password_auth"
     "test_iconv"
+    "test_iconv_upstream_interop"
     "test_hardlinks_comprehensive"
     "test_inc_recurse_comprehensive"
     "test_inc_recurse_sender_push"
@@ -8860,6 +9018,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       wrong-password-auth)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      iconv-upstream)
         test_args+=("$oc_port" "$upstream_port")
         ;;
       hardlinks-comprehensive)

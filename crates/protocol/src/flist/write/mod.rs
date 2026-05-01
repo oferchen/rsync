@@ -374,7 +374,7 @@ impl FileListWriter {
     /// See `flist.c:send_file_entry()` lines 470-750 for the complete wire encoding.
     pub fn write_entry<W: Write>(&mut self, writer: &mut W, entry: &FileEntry) -> io::Result<()> {
         let raw_name = entry.name_bytes();
-        let name = self.apply_encoding_conversion(raw_name)?;
+        let name = self.apply_encoding_conversion(&raw_name)?;
 
         let same_len = self.state.calculate_name_prefix_len(&name);
         let suffix_len = name.len() - same_len;

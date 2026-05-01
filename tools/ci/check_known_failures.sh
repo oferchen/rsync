@@ -252,6 +252,45 @@ run_standalone_test_by_name() {
       timeout "$hard_timeout" "$oc_bin" -av --iconv=utf8,latin1 --timeout=10 \
           "${comp_src}/" "${idest}/" >/dev/null 2>&1 || return 1
       ;;
+    iconv-upstream)
+      # Reproducer for #1916: --iconv UTF-8/LATIN1 round-trip vs upstream
+      # rsync 3.4.1. Mirrors the standalone harness scenario but with a
+      # minimal fixture so the dashboard can rerun quickly.
+      local iu_src="${dest}/iconv-up-src"
+      local iu_dest_oc="${dest}/iconv-up-dest-oc"
+      local iu_conf="${dest}/iconv-up-oc.conf"
+      local iu_pid="${dest}/iconv-up-oc.pid"
+      local iu_log="${dest}/iconv-up-oc.log"
+      local iu_port iu_rc=0
+      iu_port=$(alloc_port)
+      mkdir -p "$iu_src" "$iu_dest_oc"
+      echo "ascii body" > "${iu_src}/plain.txt"
+      echo "cafe body" > "${iu_src}/café.txt" 2>/dev/null || return 2
+      [[ -f "${iu_src}/café.txt" ]] || return 2
+      cat > "$iu_conf" <<CONF
+pid file = ${iu_pid}
+port = ${iu_port}
+use chroot = false
+
+[interop]
+path = ${iu_dest_oc}
+read only = false
+numeric ids = yes
+charset = ISO-8859-1
+CONF
+      if ! start_daemon "$oc_bin" "$iu_conf" "$iu_log" "$iu_pid" "$iu_port"; then
+        stop_daemon "$iu_pid"
+        return 1
+      fi
+      timeout "$hard_timeout" "$upstream_binary" -av \
+          --iconv=UTF-8,ISO-8859-1 --timeout=10 \
+          "${iu_src}/" "rsync://127.0.0.1:${iu_port}/interop" \
+          >/dev/null 2>&1 || iu_rc=$?
+      stop_daemon "$iu_pid"
+      [[ $iu_rc -eq 0 ]] || return 1
+      [[ -f "${iu_dest_oc}/café.txt" ]] || return 1
+      cmp -s "${iu_src}/café.txt" "${iu_dest_oc}/café.txt" || return 1
+      ;;
     upstream-compressed-batch-self-roundtrip)
       # upstream rsync 3.4.1 cannot read back its own compressed delta batch
       # files. The batch writer records raw compressed tokens (zlib DEFLATED_DATA)

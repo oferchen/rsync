@@ -527,3 +527,57 @@ fn ssh_port_defaults_to_none() {
     let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
     assert_eq!(parsed.ssh_port, None);
 }
+
+#[test]
+fn jump_host_single_value() {
+    let parsed =
+        parse_test_args(["--jump-host", "bastion.example.com", "src/", "dst/"]).expect("parse");
+    assert_eq!(
+        parsed.jump_host.as_deref(),
+        Some(std::ffi::OsStr::new("bastion.example.com"))
+    );
+}
+
+#[test]
+fn jump_host_multi_hop_value() {
+    let parsed = parse_test_args([
+        "--jump-host",
+        "alice@a.example.com,bob@b.example.com",
+        "src/",
+        "dst/",
+    ])
+    .expect("parse");
+    assert_eq!(
+        parsed.jump_host.as_deref(),
+        Some(std::ffi::OsStr::new(
+            "alice@a.example.com,bob@b.example.com"
+        ))
+    );
+}
+
+#[test]
+fn jump_host_with_port() {
+    let parsed = parse_test_args([
+        "--jump-host",
+        "user@bastion.example.com:2200",
+        "src/",
+        "dst/",
+    ])
+    .expect("parse");
+    assert_eq!(
+        parsed.jump_host.as_deref(),
+        Some(std::ffi::OsStr::new("user@bastion.example.com:2200"))
+    );
+}
+
+#[test]
+fn jump_host_empty_value_filtered() {
+    let parsed = parse_test_args(["--jump-host", "", "src/", "dst/"]).expect("parse");
+    assert!(parsed.jump_host.is_none());
+}
+
+#[test]
+fn jump_host_defaults_to_none() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(parsed.jump_host.is_none());
+}
