@@ -131,14 +131,12 @@ pub fn calculate_block_length(
     protocol_version: u8,
     user_block_size: Option<u32>,
 ) -> u32 {
-    // If user specified a block size, use it (subject to protocol maximum)
     let block_length = if let Some(user_size) = user_block_size {
         user_size
     } else {
         derive_block_length_sqrt(file_size, protocol_version)
     };
 
-    // Clamp to protocol-specific maximum
     let max_block = if protocol_version < 30 {
         MAX_BLOCK_SIZE_OLD
     } else {
@@ -197,17 +195,16 @@ pub fn calculate_checksum_length(
     protocol_version: u8,
     requested_checksum_length: u8,
 ) -> u8 {
-    // Protocol versions < 27 don't support adaptive checksum lengths
+    // Protocol versions < 27 lack adaptive checksum length negotiation.
     if protocol_version < 27 {
         return requested_checksum_length;
     }
 
-    // If requesting the maximum length, use it directly
+    // Phase 2 redo short-circuit: full collision resistance for retransmits.
     if requested_checksum_length == MAX_SUM_LENGTH {
         return MAX_SUM_LENGTH;
     }
 
-    // Calculate bias based on file size
     let mut bias = BLOCKSUM_BIAS;
     let mut l = file_size;
     while l >> 1 != 0 {
@@ -215,17 +212,14 @@ pub fn calculate_checksum_length(
         bias += 2;
     }
 
-    // Adjust bias based on block length
     let mut current = block_length;
     while current >> 1 != 0 && bias > 0 {
         current >>= 1;
         bias -= 1;
     }
 
-    // Compute checksum length from bias
     let mut checksum_len = (bias + 1 - 32 + 7) / 8;
 
-    // Clamp to requested bounds
     let min_len = i32::from(requested_checksum_length);
     if checksum_len < min_len {
         checksum_len = min_len;
@@ -295,7 +289,6 @@ pub fn calculate_checksum_count(file_size: u64, block_length: u32) -> u64 {
 ///
 /// This mirrors `generator.c:sum_sizes_sqroot()` from upstream rsync.
 fn derive_block_length_sqrt(file_size: u64, protocol_version: u8) -> u32 {
-    // Small files use the default block size
     if file_size <= u64::from(DEFAULT_BLOCK_SIZE) * u64::from(DEFAULT_BLOCK_SIZE) {
         return DEFAULT_BLOCK_SIZE;
     }
@@ -306,8 +299,7 @@ fn derive_block_length_sqrt(file_size: u64, protocol_version: u8) -> u32 {
         MAX_BLOCK_SIZE_V30
     };
 
-    // Find the highest bit set in file_size, then compute c = 2^(floor(log2(file_size)/2))
-    // This gives us a power-of-2 upper bound for the square root
+    // c = 2^(floor(log2(file_size)/2)): power-of-2 upper bound for sqrt(file_size).
     let mut c: u64 = 1;
     let mut l = file_size;
     while l >> 2 != 0 {
@@ -315,12 +307,11 @@ fn derive_block_length_sqrt(file_size: u64, protocol_version: u8) -> u32 {
         l >>= 2;
     }
 
-    // If already at max, return it
     if c >= u64::from(max_block_length) {
         return max_block_length;
     }
 
-    // Binary search for the largest block_length where block_length² ≤ file_size
+    // Binary search for the largest block_length where block_length^2 <= file_size.
     let mut block_length = 0u64;
     let mut current = c;
     while current >= 8 {
@@ -332,7 +323,6 @@ fn derive_block_length_sqrt(file_size: u64, protocol_version: u8) -> u32 {
         current >>= 1;
     }
 
-    // Ensure we don't go below the default
     let block_length = block_length.max(u64::from(DEFAULT_BLOCK_SIZE));
 
     #[allow(clippy::cast_possible_truncation)]

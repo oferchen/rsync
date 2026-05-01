@@ -213,7 +213,10 @@ fn delta_apply_config_default_works_for_empty() {
 
 #[test]
 fn delta_apply_config_sparse_mode_for_empty() {
-    let config = DeltaApplyConfig { sparse: true };
+    let config = DeltaApplyConfig {
+        sparse: true,
+        ..DeltaApplyConfig::default()
+    };
     assert!(config.sparse, "sparse mode should be enabled");
 }
 

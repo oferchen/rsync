@@ -46,8 +46,6 @@ mod tests {
     use std::io;
     use std::path::PathBuf;
 
-    // PartialTransferState tests
-
     #[test]
     fn partial_transfer_state_new() {
         let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
@@ -59,19 +57,16 @@ mod tests {
 
     #[test]
     fn partial_transfer_state_is_resumable() {
-        // Partially received - should be resumable
         let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 1024, 2048, None);
         assert!(state.is_resumable());
 
-        // No data received - not resumable
         let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 0, 2048, None);
         assert!(!state.is_resumable());
 
-        // Fully received - not resumable
         let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 2048, 2048, None);
         assert!(!state.is_resumable());
 
-        // Received more than expected (should not happen, but handle gracefully)
+        // Over-received case shouldn't happen in practice but must not panic or report resumable.
         let state = PartialTransferState::new(PathBuf::from("/tmp/file.txt"), 3000, 2048, None);
         assert!(!state.is_resumable());
     }
@@ -100,8 +95,6 @@ mod tests {
         assert_eq!(state.checksum_so_far, Some(checksum));
     }
 
-    // PartialTransferLog tests
-
     #[test]
     fn partial_transfer_log_new() {
         let log = PartialTransferLog::new();
@@ -127,11 +120,9 @@ mod tests {
         let mut log = PartialTransferLog::new();
         let path = PathBuf::from("/tmp/file.txt");
 
-        // Record a non-resumable state (0 bytes received)
         let state = PartialTransferState::new(path.clone(), 0, 2048, None);
         log.record_partial(state);
 
-        // Should return None since it's not resumable
         assert!(log.get_resumable(&path).is_none());
     }
 
@@ -140,15 +131,13 @@ mod tests {
         let mut log = PartialTransferLog::new();
         let path = PathBuf::from("/tmp/file.txt");
 
-        // Record first state
         let state1 = PartialTransferState::new(path.clone(), 1024, 2048, None);
         log.record_partial(state1);
 
-        // Record second state for same path
         let state2 = PartialTransferState::new(path.clone(), 1536, 2048, None);
         log.record_partial(state2);
 
-        // Should have replaced, not added
+        // Re-recording the same path replaces the prior entry rather than appending a duplicate.
         assert_eq!(log.count(), 1);
         assert_eq!(log.get_resumable(&path).unwrap().bytes_received, 1536);
     }
@@ -187,8 +176,6 @@ mod tests {
         assert!(paths.contains(&PathBuf::from("/tmp/file1.txt")));
         assert!(paths.contains(&PathBuf::from("/tmp/file2.txt")));
     }
-
-    // Error classification tests
 
     #[test]
     fn classify_transient_errors() {
@@ -258,15 +245,13 @@ mod tests {
         );
     }
 
-    // Retry logic tests
-
     #[test]
     fn should_retry_timeout() {
         let err = TransferError::Timeout;
         assert!(should_retry(&err, 1, 3));
         assert!(should_retry(&err, 2, 3));
-        assert!(!should_retry(&err, 3, 3)); // At limit
-        assert!(!should_retry(&err, 4, 3)); // Exceeded
+        assert!(!should_retry(&err, 3, 3));
+        assert!(!should_retry(&err, 4, 3));
     }
 
     #[test]
@@ -324,8 +309,6 @@ mod tests {
         assert!(!should_retry(&err, 5, 5));
         assert!(!should_retry(&err, 10, 5));
     }
-
-    // Recovery action tests
 
     #[test]
     fn determine_recovery_disk_full_aborts() {
@@ -404,8 +387,6 @@ mod tests {
         let err = TransferError::Io(io::ErrorKind::Other);
         assert_eq!(determine_recovery(&err, None), RecoveryAction::Abort);
     }
-
-    // Edge cases
 
     #[test]
     fn partial_transfer_state_empty_path() {

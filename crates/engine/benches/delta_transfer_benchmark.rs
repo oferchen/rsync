@@ -70,7 +70,9 @@ fn build_index(
     algorithm: SignatureAlgorithm,
 ) -> DeltaSignatureIndex {
     let strong_sum_len = match algorithm {
-        SignatureAlgorithm::Md4 | SignatureAlgorithm::Md5 { .. } => 16,
+        SignatureAlgorithm::Md4
+        | SignatureAlgorithm::Md4Seeded { .. }
+        | SignatureAlgorithm::Md5 { .. } => 16,
         SignatureAlgorithm::Xxh3 { .. } | SignatureAlgorithm::Xxh64 { .. } => 8,
         SignatureAlgorithm::Xxh3_128 { .. } | SignatureAlgorithm::Sha1 => 16,
     };
