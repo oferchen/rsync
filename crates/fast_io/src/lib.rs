@@ -155,8 +155,8 @@ pub use io_uring::{
     BufferRing, BufferRingConfig, BufferRingError, IoUringConfig, IoUringDiskBatch,
     IoUringKernelInfo, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory,
     IoUringWriter, IoUringWriterFactory, RegisteredBufferGroup, RegisteredBufferSlot,
-    buffer_id_from_cqe_flags, is_io_uring_available, reader_from_path, sqpoll_fell_back,
-    writer_from_file,
+    RegisteredBufferStats, buffer_id_from_cqe_flags, is_io_uring_available, reader_from_path,
+    sqpoll_fell_back, writer_from_file,
 };
 
 pub use iocp::{
