@@ -362,6 +362,33 @@ impl ReceiverContext {
                     return false;
                 }
 
+                // Windows-only: reject any path that carries a Component::Prefix
+                // (drive letter, UNC, `\\?\`, `\\.\`). `Path::has_root()` is
+                // false for drive-relative inputs such as `C:foo`, but joining
+                // such a path onto `dest_dir` on Windows discards `dest_dir`
+                // entirely (`Path::join` semantics), letting a malicious sender
+                // escape the destination tree. Upstream rsync runs only under
+                // Cygwin's POSIX layer where these forms cannot occur, so the
+                // defense lives only on the native-Win32 build. The `--relative`
+                // exemption above does not apply: drive prefixes are never
+                // valid in a wire path.
+                #[cfg(windows)]
+                if path
+                    .components()
+                    .next()
+                    .is_some_and(|c| matches!(c, std::path::Component::Prefix(_)))
+                {
+                    info_log!(
+                        Misc,
+                        1,
+                        "ERROR: rejecting file-list entry with Windows drive or UNC prefix from sender: {} {}{}",
+                        path.display(),
+                        crate::role_trailer::error_location!(),
+                        crate::role_trailer::receiver()
+                    );
+                    return false;
+                }
+
                 // Check for `..` path components (always rejected).
                 // upstream: flist.c:757 `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS) < 0`
                 if path_contains_dot_dot(path) {
