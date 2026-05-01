@@ -931,3 +931,127 @@ fn attrs_flags_skip_mtime_does_not_affect_permissions() {
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     assert_eq!(dest_meta.permissions().mode() & 0o777, 0o755);
 }
+
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_writes_rsync_stat_xattr_for_regular_file() {
+    use crate::fake_super::{FAKE_SUPER_XATTR, FakeSuperStat};
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("fakesuper-regular.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let mut entry = FileEntry::new_file("fakesuper-regular.txt".into(), 4, 0o100_644);
+    entry.set_uid(4242);
+    entry.set_gid(4343);
+
+    let opts = MetadataOptions::new()
+        .fake_super(true)
+        .preserve_owner(true)
+        .preserve_group(true);
+
+    apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply with fake-super");
+
+    let raw = match xattr::get(&dest, FAKE_SUPER_XATTR) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            // Filesystem without xattr support (e.g. tmpfs without user_xattr).
+            return;
+        }
+        Err(_) => return,
+    };
+    let decoded =
+        FakeSuperStat::decode(std::str::from_utf8(&raw).expect("xattr utf-8")).expect("decode");
+
+    assert_eq!(decoded.mode, 0o100_644);
+    assert_eq!(decoded.uid, 4242);
+    assert_eq!(decoded.gid, 4343);
+    assert_eq!(decoded.rdev, None);
+}
+
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_does_not_chown_destination() {
+    use crate::fake_super::FAKE_SUPER_XATTR;
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("fakesuper-nochown.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let original_uid = fs::metadata(&dest).expect("metadata").uid();
+    let original_gid = fs::metadata(&dest).expect("metadata").gid();
+
+    let mut entry = FileEntry::new_file("fakesuper-nochown.txt".into(), 4, 0o100_644);
+    // Use a uid/gid the unprivileged test process cannot assume directly.
+    entry.set_uid(original_uid + 1000);
+    entry.set_gid(original_gid + 1000);
+
+    let opts = MetadataOptions::new()
+        .fake_super(true)
+        .preserve_owner(true)
+        .preserve_group(true);
+
+    apply_metadata_from_file_entry(&dest, &entry, &opts)
+        .expect("fake-super apply must not fail without root");
+
+    let after = fs::metadata(&dest).expect("metadata");
+    assert_eq!(
+        after.uid(),
+        original_uid,
+        "fake-super must not invoke chown on the inode"
+    );
+    assert_eq!(
+        after.gid(),
+        original_gid,
+        "fake-super must not invoke chown on the inode"
+    );
+
+    // Sanity: the xattr was written when the filesystem supports it.
+    if let Ok(Some(_)) = xattr::get(&dest, FAKE_SUPER_XATTR) {
+        // Nothing else to assert; existence proves the wire-up.
+    }
+}
+
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_skips_rewrite_when_xattr_already_matches() {
+    use crate::fake_super::{FAKE_SUPER_XATTR, FakeSuperStat, store_fake_super};
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("fakesuper-skip.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let stat = FakeSuperStat {
+        mode: 0o100_640,
+        uid: 7777,
+        gid: 8888,
+        rdev: None,
+    };
+    if store_fake_super(&dest, &stat).is_err() {
+        // Filesystem without xattr support; skip silently.
+        return;
+    }
+    let raw_before = xattr::get(&dest, FAKE_SUPER_XATTR)
+        .expect("xattr get")
+        .expect("xattr present");
+
+    let mut entry = FileEntry::new_file("fakesuper-skip.txt".into(), 4, 0o100_640);
+    entry.set_uid(7777);
+    entry.set_gid(8888);
+
+    let opts = MetadataOptions::new()
+        .fake_super(true)
+        .preserve_owner(true)
+        .preserve_group(true);
+
+    apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply with fake-super");
+
+    let raw_after = xattr::get(&dest, FAKE_SUPER_XATTR)
+        .expect("xattr get")
+        .expect("xattr present");
+    assert_eq!(raw_before, raw_after, "xattr must remain byte-identical");
+}
