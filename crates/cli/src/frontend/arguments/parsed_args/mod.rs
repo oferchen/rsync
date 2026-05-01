@@ -376,6 +376,9 @@ pub struct ParsedArgs {
     /// `--cvs-exclude`, `-C` - use CVS-style ignore patterns.
     pub cvs_exclude: bool,
 
+    /// `--apple-double-skip` - exclude macOS AppleDouble (`._*`) sidecar files.
+    pub apple_double_skip: bool,
+
     /// `-F` (repeatable) - rsync filter shortcut count.
     pub rsync_filter_shortcuts: usize,
 
@@ -544,4 +547,7 @@ pub struct ParsedArgs {
 
     /// `--ssh-port` - port override for embedded SSH connections.
     pub ssh_port: Option<u16>,
+
+    /// `--jump-host` - comma-separated proxy-jump hosts (forwarded as `ssh -J`).
+    pub jump_host: Option<OsString>,
 }

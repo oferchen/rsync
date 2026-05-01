@@ -28,6 +28,13 @@ xattr = ["core/xattr"]
 acl = ["core/acl"]
 
 # ============================================================================
+# Character Encoding Conversion
+# ============================================================================
+# Filename encoding conversion (--iconv). When disabled, --iconv=LOCAL,REMOTE
+# is rejected at config build with a hard error rather than silently no-opping.
+iconv = ["core/iconv"]
+
+# ============================================================================
 # Performance Optimization Features
 # ============================================================================
 

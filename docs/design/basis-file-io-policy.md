@@ -1,7 +1,11 @@
 # Basis-file I/O policy: mmap vs buffered, with io_uring
 
 Tracking issue: oc-rsync task #1666.
-Companion audit: `docs/audits/mmap-iouring-co-usage.md` (#3440).
+Companion audit: `docs/audits/mmap-iouring-co-usage.md` (#3440, audit
+task #1660).
+Initial implementation (io_uring-pairing axis only):
+oc-rsync task #1906 - "DeltaApplicator: switch basis-file mmap to
+BufferedMap when paired with io_uring writer".
 
 ## Summary
 
@@ -173,6 +177,32 @@ open time proportional to file size, defeating the win.
 
 **Policy:** never use `MAP_POPULATE` to attempt to make mmap "safe."
 Use `B` instead.
+
+## Implementation status
+
+The full `BasisMapInputs` selector remains future work, but the
+io_uring-pairing axis is implemented today (#1906, audit #1660 finding
+F1). `DeltaApplyConfig` now carries a [`BasisWriterKind`] field; when
+the destination writer is io_uring-backed the applicator opens the
+basis via `MapFile::open_adaptive_buffered` (forcing the
+`AdaptiveMapStrategy::Buffered` variant) regardless of file size.
+Standard / std-write writers retain the existing
+`open_adaptive` selection (mmap >= 1 MiB on Unix). This narrows the F1
+hazard from latent-MEDIUM to "unrepresentable in code": no caller can
+construct a `DeltaApplicator` whose io_uring writer sees a
+`MmapStrategy`-backed basis pointer, removing the SQPOLL page-fault
+stall and `SIGBUS`-on-truncate failure modes for the dormant-but-now-
+wireable applicator. The remaining hazard columns from the matrix
+(`--inplace`, `--append`, `--copy-devices`, `sparse_likelihood`,
+`basis_on_network_fs`) still need wiring through `BasisMapInputs`;
+those follow the same pattern.
+
+The implementation entry points:
+
+- `crates/transfer/src/delta_apply/applicator.rs::BasisWriterKind`
+- `crates/transfer/src/delta_apply/applicator.rs::DeltaApplyConfig::writer_kind`
+- `crates/transfer/src/map_file/adaptive.rs::AdaptiveMapStrategy::open_buffered`
+- `crates/transfer/src/map_file/wrapper.rs::MapFile::open_adaptive_buffered`
 
 ## Implementation hooks
 
