@@ -1,10 +1,29 @@
 name: Coverage
 
-# Temporarily disabled: nightly llvm-cov 22.1 SIGSEGVs in
-# llvm::coverage::CoverageMapping::getInstantiationGroups - deterministic
-# regression affecting both PR and master runs. Re-enable once a
-# known-good nightly is pinned in RUSTUP_TOOLCHAIN below.
+# Measures test line + branch coverage with cargo-llvm-cov on Linux.
+# Runs on every push to master and on pull requests touching code paths.
+# This job is informational and non-blocking - it must not gate master.
+# Tracks the CLAUDE.md target of >= 95% line coverage; gate is currently
+# pinned at 84% (see --fail-under-lines below) and tightened incrementally
+# as coverage improves.
 on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/ci/**'
+      - 'Cargo.toml'
+      - '.github/workflows/coverage.yml'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/ci/**'
+      - 'Cargo.toml'
+      - '.github/workflows/coverage.yml'
   workflow_dispatch:
 
 concurrency:
@@ -21,7 +40,11 @@ env:
   CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
   # Override rust-toolchain.toml (which pins 1.88.0) so cargo-llvm-cov can use
   # the unstable -Z coverage-options=branch flag, which requires nightly.
-  RUSTUP_TOOLCHAIN: nightly
+  # Pinned to a known-good nightly: nightly-2026-04-20 was the last working
+  # nightly before llvm-cov 22.1 introduced a SIGSEGV inside
+  # llvm::coverage::CoverageMapping::getInstantiationGroups (see PR #3460).
+  # Bump this date forward only after verifying llvm-cov no longer SIGSEGVs.
+  RUSTUP_TOOLCHAIN: nightly-2026-04-20
 
 jobs:
   coverage:
@@ -33,10 +56,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install Rust (nightly)
+      - name: Install Rust (nightly, pinned)
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-04-20
           components: llvm-tools-preview
 
       - name: Rust cache
@@ -52,9 +75,12 @@ jobs:
       # --branch enables LLVM branch coverage instrumentation (-C instrument-coverage=branch).
       # The profraw data then supports both line and branch coverage reports.
       # --fail-under-lines enforces the line coverage threshold only.
-      # Tightened from 80; raise toward 95 incrementally. See AGENTS.md.
+      # Currently pinned at 84; CLAUDE.md target is >= 95. Raise incrementally.
+      # continue-on-error makes the gate informational - the surrounding job
+      # still uploads artifacts and the step summary even if the threshold trips.
       - name: Generate LCOV coverage report and enforce threshold
         id: coverage
+        continue-on-error: true
         run: cargo llvm-cov nextest --branch --workspace --all-features --lcov --output-path lcov.info --fail-under-lines 84
 
       - name: Generate HTML coverage report
@@ -76,6 +102,7 @@ jobs:
           TOTAL_LINE=$(echo "$SUMMARY" | grep '^TOTAL' || true)
           TOTAL_BRANCH=$(echo "$BRANCH_SUMMARY" | grep '^TOTAL' || true)
           printf '## Coverage Report\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf 'Target: >= 95%% line coverage (CLAUDE.md). Gate: 84%% (informational).\n\n' >> "$GITHUB_STEP_SUMMARY"
           printf '| Metric | Value |\n' >> "$GITHUB_STEP_SUMMARY"
           printf '|--------|-------|\n' >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$TOTAL_LINE" ]; then
@@ -86,9 +113,10 @@ jobs:
             BRANCH_PCT=$(echo "$TOTAL_BRANCH" | awk '{for(i=1;i<=NF;i++) if($i ~ /%/) last=$i; print last}' | tr -d '%')
             printf '| **Branch Coverage** | **%s%%** |\n' "$BRANCH_PCT" >> "$GITHUB_STEP_SUMMARY"
           fi
+          printf '| **Gate outcome** | %s |\n' "${{ steps.coverage.outcome }}" >> "$GITHUB_STEP_SUMMARY"
           printf '\n' >> "$GITHUB_STEP_SUMMARY"
-          printf '<details>\n<summary>Line coverage details</summary>\n\n```\n%s\n```\n</details>\n\n' "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
-          printf '<details>\n<summary>Branch coverage details</summary>\n\n```\n%s\n```\n</details>\n' "$BRANCH_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          printf '<details>\n<summary>Line coverage details (per-crate)</summary>\n\n```\n%s\n```\n</details>\n\n' "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          printf '<details>\n<summary>Branch coverage details (per-crate)</summary>\n\n```\n%s\n```\n</details>\n' "$BRANCH_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload LCOV artifact
         if: always() && steps.coverage.outcome != 'skipped'
