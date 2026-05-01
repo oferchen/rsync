@@ -31,6 +31,7 @@ mod file_factory;
 pub(crate) mod file_reader;
 mod file_writer;
 mod overlapped;
+mod pump;
 
 pub use config::{
     IOCP_MIN_FILE_SIZE, IocpConfig, iocp_availability_reason, is_iocp_available,
@@ -42,3 +43,6 @@ pub use file_factory::{
 };
 pub use file_reader::IocpReader;
 pub use file_writer::IocpWriter;
+pub use pump::{
+    CompletionHandler, CompletionPump, IocpPumpConfig, oneshot_handler, post_completion,
+};
