@@ -814,3 +814,56 @@ fn daemon_chroot_empty_value_errors() {
     assert!(result.is_err());
     assert!(format!("{}", result.unwrap_err()).contains("must not be empty"));
 }
+
+/// Regression test for GitHub issue #1927.
+///
+/// Asserts that a `fake super = yes` directive inside a daemon module
+/// section is parsed into `ModuleConfig::fake_super() == true`. Upstream
+/// rsync treats this directive as the trigger that demotes the receiver's
+/// `am_root` state to the fake-super marker (`am_root = -1` in
+/// `clientserver.c:1080-1107`), so that ownership and special-file
+/// metadata are encoded into the `user.rsync.%stat` xattr instead of
+/// being applied via real-root syscalls and `mknod` is gated off.
+///
+/// Pending #1903: extend this test once `load_fake_super` wiring lands
+/// in the receiver path so it can also assert the deeper invariant
+/// (effective `am_root == false` on the receiver when the module's
+/// `fake_super` flag is set, regardless of the running EUID). The
+/// receiver-side wiring and the matching `am_root()` tri-state demotion
+/// are tracked in `docs/audits/fake-super-privilege.md` (F3, F6); both
+/// must be in place before that assertion is meaningful.
+#[test]
+fn module_fake_super_yes_parses_to_true_for_am_root_demotion() {
+    let file = write_config(
+        "[backups]\n\
+         path = /srv/backups\n\
+         fake super = yes\n",
+    );
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+
+    let module = config
+        .get_module("backups")
+        .expect("backups module is present");
+
+    // Parsing-layer contract: the module records that fake-super is enabled.
+    // This is the input the daemon's connection setup must read in order to
+    // demote the receiver's am_root state, per upstream clientserver.c.
+    assert!(
+        module.fake_super(),
+        "module 'backups' must report fake_super() == true after parsing 'fake super = yes'; \
+         this is the upstream signal (clientserver.c:1080-1107) that demotes the receiver's \
+         am_root to the fake-super marker"
+    );
+
+    // Default-off baseline: a sibling module without the directive must not
+    // inherit fake-super, otherwise the demotion would leak across modules.
+    let default_file = write_config("[plain]\npath = /srv/plain\n");
+    let default_config = RsyncdConfig::from_file(default_file.path()).expect("parse succeeds");
+    let plain = default_config
+        .get_module("plain")
+        .expect("plain module is present");
+    assert!(
+        !plain.fake_super(),
+        "module 'plain' must default to fake_super() == false when the directive is absent"
+    );
+}
