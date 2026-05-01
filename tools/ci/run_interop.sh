@@ -3242,6 +3242,185 @@ CONF
   return 0
 }
 
+# #1916: --iconv UTF-8/LATIN1 SSH/local-mode interop vs upstream rsync 3.4.1.
+#
+# Companion to test_iconv_upstream_interop, which covers the daemon-mode side
+# of the same gap. Daemon-mode iconv interop is still blocked on follow-ups
+# #1911-#1917 (see docs/audits/iconv-pipeline.md and known_failures.conf:
+# "standalone:iconv-upstream"). SSH/local mode, by contrast, was bridged in
+# PR #3458 by wiring IconvSetting -> FilenameConverter through
+# transfer::ServerConfigBuilder::iconv. This test pins that fix in place by
+# exercising the SSH/local code path against upstream rsync 3.4.1, so a
+# regression on the bridge is caught immediately.
+#
+# Two directions are exercised, both running through a fake remote-shell
+# wrapper that discards the host argument and exec's the rest of the command
+# line locally. This forces oc-rsync (or upstream) to spawn the peer as a
+# child process speaking the wire protocol, which is how upstream's own test
+# suite drives "remote" mode without requiring real SSH:
+#   a) oc-rsync sender -> upstream receiver (push)
+#      oc-rsync --rsh=<fake-rsh> --rsync-path=<upstream> --iconv=UTF-8,ISO-8859-1 \
+#               src/ fakehost:dest/
+#   b) upstream sender -> oc-rsync receiver (pull from oc-rsync's POV)
+#      upstream --rsh=<fake-rsh> --rsync-path=<oc-rsync> --iconv=UTF-8,ISO-8859-1 \
+#               src/ fakehost:dest/
+#
+# Source filenames are UTF-8 on disk with code points that all fit in
+# ISO-8859-1 (Latin-1):
+#   - U+00E9 LATIN SMALL LETTER E WITH ACUTE       (cafe)
+#   - U+00FC LATIN SMALL LETTER U WITH DIAERESIS   (uber)
+#   - U+00EF LATIN SMALL LETTER I WITH DIAERESIS   (naive)
+#   - U+00DC LATIN CAPITAL LETTER U WITH DIAERESIS (Zurich)
+# With --iconv=UTF-8,ISO-8859-1 enabled, the wire encoding is Latin-1 and
+# both peers must transcode back to UTF-8 (the local charset) on disk.
+#
+# Pre-checks:
+#   - upstream binary must exist at the requested version.
+#   - upstream binary must be built with iconv support (probed via a
+#     local --iconv=UTF-8,UTF-8 invocation that fails fast if not compiled
+#     in). Upstream rsync auto-detects iconv via configure unless the
+#     packager passed --disable-iconv.
+#   - host filesystem must accept the UTF-8 fixture names.
+#
+# References:
+#   upstream: options.c:recv_iconv_settings (parses --iconv=LOCAL,REMOTE)
+#   upstream: flist.c:1579-1603 (sender filename iconvbufs(ic_send, ...))
+#   upstream: flist.c:738-754  (receiver filename iconvbufs(ic_recv, ...))
+#   oc-rsync: PR #3458 (IconvSetting -> FilenameConverter bridge)
+#   oc-rsync: docs/audits/iconv-pipeline.md (Findings 1-7)
+test_iconv_local_ssh_interop() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5
+
+  local ils_src="${work}/iconv-ssh-src"
+  local ils_dest_oc="${work}/iconv-ssh-dest-oc"
+  local ils_dest_up="${work}/iconv-ssh-dest-up"
+  rm -rf "$ils_src" "$ils_dest_oc" "$ils_dest_up"
+  mkdir -p "$ils_src" "$ils_dest_oc" "$ils_dest_up"
+
+  # Probe upstream iconv support. Upstream rsync built with --disable-iconv
+  # rejects --iconv outright; if so, skip the test rather than report a fake
+  # failure. The probe uses a no-op identity conversion against a temp dir.
+  local probe_src="${work}/iconv-ssh-probe-src"
+  local probe_dest="${work}/iconv-ssh-probe-dest"
+  rm -rf "$probe_src" "$probe_dest"
+  mkdir -p "$probe_src" "$probe_dest"
+  echo "probe" > "${probe_src}/probe.txt"
+  if ! "$upstream_binary" -a --iconv=UTF-8,UTF-8 \
+      "${probe_src}/" "${probe_dest}/" \
+      >"${log}.iconv-ssh-probe.out" 2>"${log}.iconv-ssh-probe.err"; then
+    if grep -qiE 'iconv|not.*compiled|--disable-iconv' \
+        "${log}.iconv-ssh-probe.err" 2>/dev/null; then
+      echo "    SKIP: upstream rsync built without iconv support"
+      return 0
+    fi
+    echo "    iconv probe failed: $(head -5 "${log}.iconv-ssh-probe.err")"
+    return 1
+  fi
+
+  # ASCII baseline: must always survive any iconv pipeline.
+  echo "ascii body" > "${ils_src}/plain.txt"
+
+  # UTF-8 names whose code points all fit in ISO-8859-1 (Latin-1).
+  echo "cafe body"   > "${ils_src}/café.txt"
+  echo "umlaut body" > "${ils_src}/über.txt"
+  echo "naive body"  > "${ils_src}/naïve.txt"
+  echo "zurich body" > "${ils_src}/Zürich.txt"
+
+  # Skip gracefully if the host filesystem rejects UTF-8 names (e.g. a
+  # non-UTF-8 locale or a filesystem that NFC-normalises aggressively).
+  for fname in "café.txt" "über.txt" "naïve.txt" "Zürich.txt"; do
+    if [[ ! -f "${ils_src}/${fname}" ]]; then
+      echo "    SKIP: host filesystem cannot store UTF-8 name '${fname}'"
+      return 0
+    fi
+  done
+
+  local -a expected_files=(
+    "plain.txt"
+    "café.txt"
+    "über.txt"
+    "naïve.txt"
+    "Zürich.txt"
+  )
+
+  # Build the fake remote-shell wrapper. It drops the first argument (the
+  # "host") and exec's the rest, making the spawned rsync think it is running
+  # remotely while actually running locally over a stdio pipe. This mirrors
+  # the technique used by upstream's own testsuite to drive "remote" mode
+  # without requiring a real sshd.
+  local fake_rsh="${work}/iconv-ssh-fake-rsh.sh"
+  cat > "$fake_rsh" <<'WRAPPER'
+#!/bin/sh
+# Fake remote-shell for SSH/local-mode interop tests. Discards the host
+# argument that rsync passes as $1 and exec's the rest of the command line
+# locally. Avoids a sshd dependency while still exercising --rsh /
+# --rsync-path code paths.
+shift  # drop host
+exec "$@"
+WRAPPER
+  chmod +x "$fake_rsh"
+
+  _ils_verify_round_trip() {
+    local label=$1 dest=$2
+    for fname in "${expected_files[@]}"; do
+      if [[ ! -f "${dest}/${fname}" ]]; then
+        echo "    ${label}: ${fname} missing after iconv transfer"
+        echo "    ${label}: dest contents: $(find "$dest" -type f | sort | tr '\n' ' ')"
+        return 1
+      fi
+      if ! cmp -s "${ils_src}/${fname}" "${dest}/${fname}"; then
+        echo "    ${label}: ${fname} content mismatch after iconv transfer"
+        return 1
+      fi
+    done
+    return 0
+  }
+
+  # --- Direction (a): oc-rsync sender -> upstream receiver (SSH/local mode) ---
+  # oc-rsync drives the transfer, spawns upstream as the "remote" rsync, and
+  # encodes UTF-8 source names into ISO-8859-1 on the wire. Upstream decodes
+  # back to UTF-8 (its local charset) on disk. This is the case PR #3458
+  # bridged: failure here is a regression on the IconvSetting ->
+  # FilenameConverter wiring.
+  local rc1=0
+  timeout "$hard_timeout" "$oc_bin" -av \
+      --rsh="$fake_rsh" --rsync-path="$upstream_binary" \
+      --iconv=UTF-8,ISO-8859-1 --timeout=10 \
+      "${ils_src}/" "fakehost:${ils_dest_up}/" \
+      >"${log}.iconv-ssh-oc-up.out" 2>"${log}.iconv-ssh-oc-up.err" || rc1=$?
+
+  if [[ $rc1 -ne 0 ]]; then
+    echo "    oc-rsync -> upstream SSH/local push failed (exit=$rc1)"
+    echo "    stderr: $(head -5 "${log}.iconv-ssh-oc-up.err")"
+    return 1
+  fi
+
+  _ils_verify_round_trip "oc->upstream(local)" "$ils_dest_up" || return 1
+
+  # --- Direction (b): upstream sender -> oc-rsync receiver (SSH/local mode) ---
+  # Upstream rsync drives the transfer and spawns oc-rsync as the "remote"
+  # rsync. Upstream encodes UTF-8 source names into ISO-8859-1 on the wire;
+  # oc-rsync decodes back to UTF-8 on disk. Both --rsh and --rsync-path are
+  # forwarded to the spawned peer, so this exercises the receiver-side
+  # IconvSetting -> FilenameConverter wiring.
+  local rc2=0
+  timeout "$hard_timeout" "$upstream_binary" -av \
+      --rsh="$fake_rsh" --rsync-path="$oc_bin" \
+      --iconv=UTF-8,ISO-8859-1 --timeout=10 \
+      "${ils_src}/" "fakehost:${ils_dest_oc}/" \
+      >"${log}.iconv-ssh-up-oc.out" 2>"${log}.iconv-ssh-up-oc.err" || rc2=$?
+
+  if [[ $rc2 -ne 0 ]]; then
+    echo "    upstream -> oc-rsync SSH/local push failed (exit=$rc2)"
+    echo "    stderr: $(head -5 "${log}.iconv-ssh-up-oc.err")"
+    return 1
+  fi
+
+  _ils_verify_round_trip "upstream->oc(local)" "$ils_dest_oc" || return 1
+
+  return 0
+}
+
 # #885: Comprehensive hardlink interop
 # Tests hardlink scenarios that go beyond the basic -H flag: multiple hardlink
 # groups, chains of 3+ links to the same inode, hardlinks across subdirectories,
@@ -8868,6 +9047,7 @@ run_standalone_interop_tests() {
     "wrong-password-auth"
     "iconv"
     "iconv-upstream"
+    "iconv-local-ssh"
     "hardlinks-comprehensive"
     "inc-recurse-comprehensive"
     "inc-recurse-sender-push"
@@ -8940,6 +9120,7 @@ run_standalone_interop_tests() {
     "test_wrong_password_auth"
     "test_iconv"
     "test_iconv_upstream_interop"
+    "test_iconv_local_ssh_interop"
     "test_hardlinks_comprehensive"
     "test_inc_recurse_comprehensive"
     "test_inc_recurse_sender_push"
