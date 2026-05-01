@@ -107,7 +107,7 @@ pub use file_factory::{
 };
 pub use file_reader::IoUringReader;
 pub use file_writer::IoUringWriter;
-pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot};
+pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats};
 pub use socket_factory::{
     IoUringOrStdSocketReader, IoUringOrStdSocketWriter, socket_reader_from_fd,
     socket_writer_from_fd,
