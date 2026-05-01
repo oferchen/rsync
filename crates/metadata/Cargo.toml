@@ -33,6 +33,16 @@ exacl = { workspace = true, optional = true }
 [target.'cfg(any(target_os = "ios", target_os = "macos", target_os = "tvos", target_os = "watchos"))'.dependencies]
 apple-fs = { path = "../apple-fs" }
 
+# Windows ACL support via Win32 GetSecurityInfo/SetSecurityInfo.
+# Mirrors upstream rsync acls.c semantics over NTFS DACLs.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+] }
+
 [features]
 default = []
 xattr = ["dep:xattr"]
