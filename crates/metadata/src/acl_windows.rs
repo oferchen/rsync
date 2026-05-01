@@ -56,15 +56,17 @@ use windows::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
 use windows::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACCESS_ALLOWED_ACE_TYPE, ACE_HEADER, ACL, ACL_REVISION,
-    ACL_SIZE_INFORMATION, AclSizeInformation, AddAccessAllowedAce, DACL_SECURITY_INFORMATION,
-    GetAce, GetAclInformation, GetSidSubAuthority, GetSidSubAuthorityCount, InitializeAcl,
-    IsValidSid, LookupAccountNameW, LookupAccountSidW, PSECURITY_DESCRIPTOR, PSID, SID_NAME_USE,
-    SidTypeAlias, SidTypeGroup, SidTypeWellKnownGroup,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, AclSizeInformation,
+    AddAccessAllowedAce, DACL_SECURITY_INFORMATION, GetAce, GetAclInformation, GetSidSubAuthority,
+    GetSidSubAuthorityCount, InitializeAcl, IsValidSid, LookupAccountNameW, LookupAccountSidW,
+    PSECURITY_DESCRIPTOR, PSID, SID_NAME_USE, SidTypeAlias, SidTypeGroup, SidTypeWellKnownGroup,
 };
 use windows::Win32::Storage::FileSystem::{
     FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
 };
+// upstream: WinNT.h - ACCESS_ALLOWED_ACE_TYPE is the ACE-type discriminant byte (0x0)
+// for an allow ACE; in windows-rs 0.62 it lives under SystemServices, not Security.
+use windows::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows::core::{PCWSTR, PWSTR};
 
 use crate::MetadataError;
