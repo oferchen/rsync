@@ -1,326 +1,450 @@
-# Windows Path Separator Leakage Audit
+# Windows Path Audit: Backslash Leak in Wire-Encoded Filenames
 
-Tracking issue: oc-rsync task #1905 ("verify no backslash leak"). Sibling
-audit: [`docs/audits/windows-path-normalization.md`](windows-path-normalization.md)
-which catalogues path-form parsing for the original normalization work
-(task #1842).
+Tracker: oc-rsync task #1939 ("Document the High-severity backslash-leak
+finding with reproduction steps and the remediation plan referencing task
+#1905").
 
-Last updated: 2026-05-01
+Parent audit: task #1842 - completed audit
+[`docs/audits/windows-path-normalization.md`](windows-path-normalization.md).
+Fix tracker: task #1905 - the wire-encoding fix delivered through commits
+referenced in [`docs/audits/windows-path-separator-encoding.md`](windows-path-separator-encoding.md).
 
-## Summary
+Companion edge-case survey: [`docs/audits/windows-path-edge-cases.md`](windows-path-edge-cases.md).
 
-This audit asks one narrow question: can a Windows-native backslash (`\`)
-slip from a `Path`/`PathBuf` into a byte stream that is either (a) emitted
-on the wire or (b) matched against a filter pattern, without first being
-normalized to forward slash?
+Last updated: 2026-05-01.
 
-Upstream rsync 3.4.1 is POSIX-native. `util1.c:clean_fname()`
-(`util1.c:943-1011`) only treats `b'/'` as a separator. `flist.c` writes
-the same byte buffer (`thisname`) it receives from `make_file()` and
-checks against filter rules with that buffer, all `/`-separated. The
-Cygwin port (`#ifdef __CYGWIN__` in `clean_fname`, `util1.c:955-961`)
-does no rewriting either - Cygwin's POSIX layer hands rsync `/`-paths
-already. There is no precedent for `\` ever being legal on the wire.
+## 1. Headline finding
 
-The audit finds **two live leak sites** (both reachable today on the
-`windows-msvc` / `windows-gnu` Rust targets) plus **one latent site**
-that is not exploitable today only because the surrounding feature is
-gated behind unimplemented platform support. F1 reproduces F1 from the
-prior `windows-path-normalization.md` audit (task #1842). F2 is a new
-finding: the filter chain matches against `\`-containing paths on
-Windows generators, silently bypassing rules. F3 documents a dormant
-analogue in `is_unsafe_symlink`. This audit consolidates these under
-the wire/filter rubric required by issue #1905 and recommends a single
-shared helper as the minimal fix.
+When oc-rsync runs on a native Win32 target (`windows-msvc` or
+`windows-gnu`) and pushes nested directories, the sender emits filename
+bytes containing literal `\` (0x5C) separators on the wire. Upstream rsync
+3.4.1 and any POSIX-native peer interpret those bytes as part of a single
+filename (since `\` is a legal POSIX filename byte), not as a directory
+separator. The result is silent on-disk corruption: a file the Windows
+side thinks is `subdir/file.txt` lands as a literal file named
+`subdir\file.txt` on the receiver.
 
-## Methodology
+## 2. Severity rating - HIGH
 
-Every site that converts a `Path` / `PathBuf` / `OsStr` to bytes or to a
-`str` was inspected. Each site was classified by direction:
+The classification is HIGH for three independent reasons:
 
-- **out-wire**: bytes leave the local process toward a peer (flist
-  encode, symlink target encode, batch script).
-- **in-wire**: bytes enter the local process from a peer (flist decode,
-  symlink target decode).
-- **filter-match**: bytes are compared against a filter pattern
-  (`crates/filters` consumers).
-- **internal**: bytes never escape the process; used for logging,
-  display, or local syscalls.
+1. **Silent data corruption.** No error is raised on either side. The
+   Windows sender encodes bytes that look syntactically valid; the POSIX
+   receiver writes a literal filename in the destination root. The user
+   sees "transfer succeeded" and only discovers the corruption when they
+   walk the destination tree and find collapsed names.
+2. **Cross-stack interop break.** A Windows oc-rsync sender talking to
+   upstream rsync (Cygwin or POSIX-native) cannot interoperate. Upstream
+   has no normalization in `flist.c:send_file_entry()` (the Cygwin POSIX
+   layer normalizes one level higher), so a non-Cygwin native Windows
+   peer is the first time the rsync wire contract is tested with `\`
+   bytes.
+3. **No collision with destructive operations is required.** Even a
+   read-only mirror push corrupts the destination tree on the first
+   transfer. There is no recovery short of rerunning the entire transfer
+   after the fix lands.
 
-`internal` sites are not relevant to issue #1905 and are noted only when
-they sit on the same code path as an out-wire / filter-match site.
+The severity matches finding F1 of the parent audit
+`windows-path-normalization.md` (HIGH; "Backslash leaks into wire-encoded
+filenames").
 
-## Path Conversion Sites
+## 3. Affected code paths
 
-The columns are: site (file:line), direction, what conversion happens,
-whether `\` -> `/` normalization occurs.
+Each site listed below is a place where a `Path` or `PathBuf` becomes
+wire bytes (or feeds a filter rule) without separator normalization. The
+list is exhaustive as of master prior to the #1905 fix landing. After
+that fix, every site cited routes through
+`crates/protocol/src/flist/wire_path.rs::path_bytes_to_wire`, which
+performs the `\` -> `/` rewrite on Windows.
 
-### out-wire
+### 3.1 Wire emission sites (sender)
 
-| Site | What | Normalize `\` -> `/`? |
+| Site | What converts | Defect |
 |---|---|---|
-| `crates/protocol/src/flist/entry/accessors.rs:120-128` `name_bytes()` | `#[cfg(not(unix))]` returns `self.name().as_bytes()` where `name()` is `to_str().unwrap_or("")`. Native Windows `PathBuf` retains `\`. | NO |
-| `crates/protocol/src/flist/write/mod.rs:376-384` `write_entry()` | calls `entry.name_bytes()`, optionally runs `apply_encoding_conversion()` (iconv, byte-transparent), writes via `write_name()` (`crates/protocol/src/flist/write/encoding.rs:79-98`). | NO (passes whatever `name_bytes()` returned) |
-| `crates/protocol/src/flist/write/encoding.rs:115` `write_symlink_target()` | `target.as_os_str().as_encoded_bytes()`. On Windows this is WTF-8 of the native string, which keeps `\`. | NO |
-| `crates/protocol/src/flist/write/metadata.rs:182-185` user/group name | name field (not a path). | n/a |
-| `crates/transfer/src/generator/file_list/walk.rs:60` `relative = path.strip_prefix(base)` | `relative` is fed to `create_entry()` and stored verbatim in `FileEntry::name`. On Windows, `\` is preserved. | NO |
-| `crates/transfer/src/generator/file_list/entry.rs:50,57,61,...` `FileEntry::new_*(relative_path, ...)` | constructor stores the `PathBuf` unchanged. | NO |
-| `crates/batch/src/writer.rs` batch file output | batch files store the wire stream verbatim. Inherits whatever `name_bytes()` produced. | NO (transitively) |
+| `crates/protocol/src/flist/entry/accessors.rs:131-135` `name_bytes()` | Returned the underlying `OsStr` bytes verbatim on `#[cfg(not(unix))]`. | A `PathBuf` built via `Path::push("subdir"); push("file.txt")` on Windows produced bytes `subdir\file.txt`. |
+| `crates/protocol/src/flist/write/mod.rs:376-384` `write_entry()` | Calls `entry.name_bytes()`, optionally runs iconv (byte-transparent), writes via `write_name()`. | Inherited the leak from `name_bytes()`. |
+| `crates/protocol/src/flist/write/encoding.rs:106-127` `write_symlink_target()` | Encoded `target.as_os_str().as_encoded_bytes()` directly. | Symlink targets containing `\` separators were written verbatim. |
+| `crates/transfer/src/generator/file_list/walk.rs:60` relative path | `relative = path.strip_prefix(base)` produced a `PathBuf` containing `\` on Windows. | Stored verbatim in `FileEntry::name`, then re-emitted via `name_bytes()`. |
+| `crates/batch/src/writer.rs` batch records | Write the wire stream verbatim. | Inherited any sender leak; replaying a batch file built on Windows reproduces F1. |
 
-### in-wire
+### 3.2 Filter-evaluation sites (filter-match)
 
-| Site | What | Normalize `\` -> `/`? |
+| Site | What converts | Defect |
 |---|---|---|
-| `crates/protocol/src/flist/read/name.rs:35-99` `read_name()` | reads `same_len + suffix_len` raw bytes. No separator handling. | n/a (bytes preserved) |
-| `crates/protocol/src/flist/read/name.rs:141-234` `clean_and_validate_name()` | Mirrors upstream `clean_fname(CFN_REFUSE_DOT_DOT_DIRS)` plus the leading-slash check at `flist.c:756-760`. Treats only `b'/'` as separator. | n/a (assumes `/` only, per upstream) |
-| `crates/transfer/src/sanitize_path.rs:34-140` `sanitize_path()` (and `_keep_dot_dirs`) | byte-level `/`-only processing, mirrors upstream `util1.c:1035-1108`. | n/a (assumes `/` only) |
-| `crates/protocol/src/flist/entry/constructors.rs:136-171` `FileEntry::from_raw_bytes()` | `#[cfg(not(unix))]` builds `PathBuf::from(String::from_utf8_lossy(&name).into_owned())`. | n/a; wire bytes assumed `/`-only by upstream contract |
-| `crates/protocol/src/flist/read/extras.rs:53-66` symlink target decode | same pattern: `String::from_utf8_lossy` on Windows. | n/a |
+| `crates/transfer/src/generator/file_list/walk.rs:106` `filter_chain.allows(&relative, ...)` | The `relative` `PathBuf` carried `\` on Windows, but filter patterns are `/`-anchored. | Anchored rules like `/build/*` failed to match `build\out.o`; descendant rules silently bypassed. |
+| `crates/transfer/src/receiver/directory/deletion.rs:135-138` `filter_chain.allows_deletion(&rel_for_filter, ...)` | `rel_for_filter = dir_relative.join(&name)` uses the platform separator. | Same pattern as walk.rs, but on the receiver side during `--delete` walks. |
+| `crates/filters/src/compiled/rule.rs:38-76` `CompiledRule::matches()` | `globset::GlobMatcher::is_match(path)` on a `Path`. | The matchers were compiled with `literal_separator(true)`. globset 0.4 on Windows does not rewrite `\` to `/` before anchored matching. |
 
-### filter-match
+The filter sites are listed because they share a remediation: any helper
+that normalizes a `Path` to a `/`-separated wire form must be applied
+before both flist emit and filter evaluation. The parent audit catalogues
+these as F2 ("filter-rule matching against `\`-containing relative
+paths").
 
-| Site | What | Normalize `\` -> `/`? |
-|---|---|---|
-| `crates/transfer/src/generator/file_list/walk.rs:106` `filter_chain.allows(&relative, ...)` | `relative` is the `strip_prefix` slice from above; on Windows it carries `\`. Patterns are `/`-separated. | NO |
-| `crates/transfer/src/receiver/directory/deletion.rs:135-138` `filter_chain.allows_deletion(&rel_for_filter, ...)` | `rel_for_filter = dir_relative.join(&name)` builds with the platform separator (`\` on Windows). | NO |
-| `crates/filters/src/compiled/rule.rs:38-76` `CompiledRule::matches()` | `globset::GlobMatcher::is_match(path)` on a `Path`. globset 0.4 does **not** rewrite `\` to `/` before matching anchored patterns. | NO |
-| `crates/filters/src/compiled/pattern.rs:13-30` `compile_patterns` | builds globs with `literal_separator(true)`, `backslash_escape(true)`. The pattern grammar treats `/` as the only path separator. | n/a (patterns) |
+### 3.3 Symlink-safety check (latent)
 
-### internal-only (for completeness)
+`crates/transfer/src/symlink_safety.rs::is_unsafe_symlink` walks bytes
+treating `/` as the only segment separator (mirroring upstream
+`generator.c::unsafe_symlink`). On Windows, a target obtained via
+`std::fs::read_link()` may carry `\`. Today this site is dormant because
+Windows symlink creation/preservation is a no-op in the receiver path
+(see `docs/windows_platform_parity.md`); it activates if Windows
+symlink support lands without separator normalization at the read_link
+call site.
 
-- `crates/protocol/src/flist/entry/accessors.rs:94-106`
-  `strip_leading_slashes()` `#[cfg(not(unix))]` branch uses
-  `to_string_lossy()`; it only trims leading `/`, never separators
-  inside the path. Output is consumed by the wire encoder, so leakage
-  follows F1.
-- `crates/cli/src/frontend/arguments/parser/mod.rs:158,175,189` etc.
-  use `to_string_lossy()` on user-supplied OsStr values, not on
-  `PathBuf`s after directory traversal. Operands are forwarded as
-  `OsString` (no normalization), but they are never sent over the wire
-  as filenames - they become the local source/dest directories.
-- `crates/cli/src/frontend/progress/render.rs`, `placeholder.rs`,
-  `out_format/render` use `to_string_lossy()` for human-visible output
-  only.
+### 3.4 Sites that are NOT defective
+
+For completeness, the audit explicitly reasoned through these and
+confirmed no leakage:
+
+- `crates/protocol/src/flist/read/name.rs:35-99` `read_name()` and
+  `clean_and_validate_name()` (the receiver side): these intentionally
+  treat only `b'/'` as separator, mirroring upstream
+  `target/interop/upstream-src/rsync-3.4.1/util1.c:943-1011`
+  `clean_fname()`. They assume the wire-form invariant; correct.
+- `crates/transfer/src/sanitize_path.rs::sanitize_path()`: byte-level
+  `/`-only processing, mirrors upstream
+  `target/interop/upstream-src/rsync-3.4.1/util1.c:1035-1108`. Correct.
+- `crates/cli/src/frontend/arguments/parser/mod.rs` `to_string_lossy()`
+  calls: operate on user-supplied operands, not on `PathBuf`s after
+  directory traversal. Operands become local syscall arguments after
+  `operand_is_remote()` classification; they never become flist
+  filenames.
 - `crates/core/src/client/remote/invocation/transfer_role.rs:25-56`
-  `operand_is_remote()` reads `\` to decide local vs remote (correct -
-  this is internal classification, never re-emitted on the wire).
-- `crates/engine/src/local_copy/operands.rs:189-360` Windows-prefix
-  detection (`\\?\`, `\\.\`, UNC). Only used to compute
-  `relative_prefix_components`; the result is a count, never a string.
+  `operand_is_remote()`: reads `\` to decide local vs remote (a
+  classification, not a re-emission).
+- `crates/engine/src/local_copy/operands.rs` Windows-prefix detection
+  (`\\?\`, `\\.\`, UNC): used only to compute
+  `relative_prefix_components` (a count, not a string).
+- iconv encoding conversion at
+  `crates/protocol/src/flist/write/encoding.rs` operates on opaque bytes.
+- xattr names are not paths.
 
-## Findings
+## 4. Reproduction steps
 
-### F1. Wire emission of native `\` from Windows sender (HIGH)
+### 4.1 Setup (Windows-msvc sender, Linux receiver)
 
-Reproduces F1 of `windows-path-normalization.md`. Two leak sites compose:
+```cmd
+:: On a Windows host, build oc-rsync against `windows-msvc`:
+cargo build --release --target x86_64-pc-windows-msvc
 
-1. `crates/protocol/src/flist/entry/accessors.rs:120-128` returns the
-   native string bytes from `name_bytes()`.
-2. `crates/protocol/src/flist/write/mod.rs:376-384` writes those bytes
-   to the wire via `write_name` without separator translation.
-3. `crates/protocol/src/flist/write/encoding.rs:115` does the same for
-   symlink targets via `as_encoded_bytes()`.
-
-The native string is what `walk.rs:60` produced via `path.strip_prefix`,
-which on `windows-msvc` retains the `\` separators of the input. On a
-single-component relative entry the bug is invisible (no separator is
-written). On any multi-component entry (`subdir\file.txt`), the wire
-bytes contain `\`, which a Linux receiver decodes with
-`OsStr::from_bytes(&name)` (`flist/entry/constructors.rs:144-150`) into
-a single 16-byte filename, not into nested directories.
-
-Upstream cannot reproduce this because Cygwin presents `/`-paths to
-rsync. `flist.c:701-738` (`thisname` buffer) treats every byte after
-prefix-decompression as either `/` or part of a component name.
-
-**Severity.** HIGH (silent on-disk corruption on cross-platform push).
-Same severity as the prior audit. Still unfixed.
-
-### F2. Filter-rule matching against `\`-containing relative paths (HIGH)
-
-`crates/transfer/src/generator/file_list/walk.rs:106` invokes
-`self.filter_chain.allows(&relative, metadata.is_dir())`. `relative` is
-the `strip_prefix` output (`walk.rs:60`), which retains `\` on Windows.
-
-`crates/filters/src/compiled/rule.rs:38-76` calls
-`GlobMatcher::is_match(path)` on each rule. The matchers were compiled
-with `GlobBuilder::literal_separator(true)`
-(`crates/filters/src/compiled/pattern.rs:23`), which makes `/` (and only
-`/`) the separator inside the glob. globset 0.4 receives the path via
-its `Candidate` impl, which on Windows does not rewrite `\` to `/`
-before anchored matching - so:
-
-- A pattern `/build/*` against `Path::new("build\\out.o")` does not match.
-- A pattern `**/*.o` against `Path::new("src\\lib\\util.o")` matches the
-  trailing `.o` only by accident (globstar consumes any byte).
-- A descendant rule from `src/` does not see `src\\foo.bar`.
-
-Net effect: filter rules silently fail to apply to nested paths on
-Windows senders. `crates/transfer/src/receiver/directory/deletion.rs:135-138`
-has the same defect (`dir_relative.join(&name)` uses the platform
-separator).
-
-This is not equivalent to F1: even a Windows -> Windows transfer where
-both sides round-trip `\` correctly would have wrong filter behaviour,
-because the filter pattern grammar is not platform-conditional.
-
-Upstream `exclude.c:check_filter()` (`exclude.c:1031-1108`) operates on
-the wire-form `/`-separated `fname` exclusively; the question never
-arises for upstream.
-
-**Severity.** HIGH (silent filter bypass on nested Windows paths). New
-finding for this audit.
-
-### F3. `is_unsafe_symlink` separator assumption (LOW, latent)
-
-`crates/transfer/src/symlink_safety.rs:36-54` and the helpers
-`compute_link_depth`, `is_target_within_depth`, `has_mid_path_dotdot`
-all walk the byte buffer treating `/` as the only segment separator.
-On Windows, a target obtained via `std::fs::read_link()` may contain
-`\`. The depth check then never decrements because no segment ever
-equals `..` (it sees `..\file` as a single segment).
-
-This is dormant today: Windows symlink creation/preservation is a no-op
-in the receiver path (see `docs/windows_platform_parity.md`). When
-Windows symlink support lands, this site joins F1 / F2.
-
-**Severity.** LOW (dead on Windows today; activates with future symlink
-support).
-
-### F4. `sanitize_path` and `clean_and_validate_name` are `/`-only (INFORMATIONAL)
-
-`crates/transfer/src/sanitize_path.rs` and
-`crates/protocol/src/flist/read/name.rs:141-234` are byte-level mirrors
-of `util1.c:1035-1108` and `util1.c:943-1011 + flist.c:756-760`. They
-intentionally treat only `b'/'` as a separator. This matches upstream
-exactly. If F1 is ever fixed (no more outgoing `\`), and if all incoming
-paths can be assumed `/`-separated by protocol contract, these
-functions need no change.
-
-If F1 is *not* fixed, a malicious or buggy Windows sender could ship
-`..\..\..\etc` as a single component. The receiver's `clean_and_validate_name`
-would not recognize the `..` and would write a literal filename. This
-is not a directory-traversal escape (the bytes `..\\..\\etc` form one
-component which gets prefixed with the destination directory), so it is
-not exploitable. Documented for completeness.
-
-**Severity.** INFORMATIONAL.
-
-### F5. Daemon module path resolution (NO LEAK)
-
-The daemon's `auth_path` and module `path` settings come from
-`oc-rsyncd.conf` (`crates/daemon/src/daemon/sections/config_paths.rs`).
-These are server-side filesystem paths, never sent on the wire. The
-daemon runs predominantly on Linux; on Windows it is feature-stubbed.
-No leakage path here.
-
-## Evidence Chain
-
-To establish that today's leakage is exactly the sites above and not a
-hidden fourth one, the audit traced every conversion in the
-"Path Conversion Sites" table to either:
-
-1. an internal sink (logging, comparison, syscall - not on wire / not
-   matched against filter), or
-2. a wire-format byte stream (covered by F1), or
-3. a filter-rule matching call (covered by F2), or
-4. a symlink-safety check (covered by F3, currently dormant).
-
-There is no fifth path. In particular:
-
-- **iconv** (`crates/protocol/src/flist/write/encoding.rs:307-322`,
-  `read/name.rs:106-118`) operates on bytes opaquely; it does not
-  rewrite separators.
-- **batch mode** (`crates/batch/src/writer.rs`,
-  `crates/batch/src/script.rs`) records the wire bytes verbatim, so it
-  inherits F1's outgoing leak but introduces none of its own.
-- **CLI argument parsing** does not encode user paths into wire bytes;
-  source/dest operands become local syscall arguments after
-  classification by `operand_is_remote()`. The `to_string_lossy()`
-  calls in `cli/src/frontend/arguments/parser/mod.rs:158-189` are for
-  parsing flag values like `--port`, `--bwlimit`, not paths.
-- **xattr names** are not paths.
-
-## Recommended minimal fix (out of scope here)
-
-A single helper, applied at the exact moment a path becomes wire bytes
-or a filter argument, fixes F1 and F2 simultaneously. The
-`crates/protocol/src/flist/wire_mode.rs` precedent (identity on Unix,
-canonicalize on Windows) is the right shape:
-
-```text
-fn to_wire_path_bytes(p: &Path) -> Cow<'_, [u8]>
+:: Create a nested source tree:
+mkdir C:\tmp\src\subdir
+echo hello > C:\tmp\src\subdir\file.txt
+echo top   > C:\tmp\src\root.txt
 ```
 
-- On Unix: `Cow::Borrowed(p.as_os_str().as_bytes())`.
-- On Windows: encode via `OsStrExt::encode_wide()` -> WTF-8 -> rewrite
-  `\\` -> `/` -> `Cow::Owned(Vec<u8>)`.
+### 4.2 Trigger over a daemon transfer
 
-Apply at four points:
+On the Linux receiver host (running upstream rsync 3.4.1 daemon or
+oc-rsync daemon - both reproduce):
 
-1. `crates/protocol/src/flist/entry/accessors.rs:120-128`
-   `name_bytes()` non-Unix branch.
-2. `crates/protocol/src/flist/write/encoding.rs:115`
-   `write_symlink_target()` - run the helper before
-   `write_all(target_bytes)`.
-3. `crates/transfer/src/generator/file_list/walk.rs` between line 60
-   (`strip_prefix`) and line 106 (`filter_chain.allows`) - normalize
-   `relative` to a `/`-separated `PathBuf` for the filter call. The
-   FS-side use of `relative` for `create_entry` should also flow
-   through the same helper so that the `FileEntry` stores a
-   wire-canonical path - this collapses F1 and F2 into the same fix.
-4. `crates/transfer/src/receiver/directory/deletion.rs:135` -
-   normalize `rel_for_filter` before `allows_deletion`.
+```sh
+# Configure /etc/rsyncd.conf with a writable module:
+# [push]
+# path = /tmp/dst
+# read only = false
+sudo rsync --daemon
+```
 
-The receiver decode side (`from_raw_bytes`, `read_name`) already accepts
-`/`-bytes and converts via `PathBuf::from`, which `Path::join` on
-Windows handles transparently. No receiver change is required.
+On the Windows host:
 
-A regression test that builds a `FileEntry` whose `name` was created via
-`PathBuf::push("subdir"); push("file.txt")` on Windows and asserts the
-wire bytes contain only `/` is the acceptance criterion. Same wire-byte
-golden for the symlink target path.
+```cmd
+oc-rsync -av C:\tmp\src\ rsync://linux-host/push/dst/
+```
 
-This audit does not implement the fix because:
+### 4.3 Observe the corruption
 
-- Issue #1842 closed the original normalization work, and #1905 is the
-  follow-up *verification* task. The fix proper belongs to a new
-  `feat:` PR with golden-byte updates, Linux-receiver interop tests
-  driving Windows-encoded inputs, and a CI matrix entry that exercises
-  `windows-msvc` -> `linux-musl` interop.
-- The audit is doc-only by mandate of the issue. No code is touched.
+On the Linux receiver:
 
-## Follow-up tasks
+```sh
+$ ls -la /tmp/dst
+total 16
+drwxr-xr-x 2 user user 4096 May  1 12:00 .
+drwxr-xr-x 4 user user 4096 May  1 12:00 ..
+-rw-r--r-- 1 user user    4 May  1 12:00 root.txt
+-rw-r--r-- 1 user user    6 May  1 12:00 subdir\file.txt   # <-- LITERAL BACKSLASH IN NAME
+```
 
-1. **HIGH** Implement `to_wire_path_bytes()` once in `protocol::flist`
-   (next to `wire_mode.rs`) and apply at the four sites listed above.
-   Tracks F1 and F2.
-2. **LOW** When Windows symlink support lands, route
-   `is_unsafe_symlink`'s byte input through the same helper so `\`
-   segments are recognized. Tracks F3.
-3. **INFORMATIONAL** Once F1 is fixed, add a debug-assertion on the
-   receive side (`clean_and_validate_name`) that the input contains no
-   `b'\\'` bytes. This catches regressions cheaply because the
-   asserted invariant is exactly the upstream contract.
+Expected layout (correct):
 
-## References
+```sh
+/tmp/dst/
+  root.txt
+  subdir/
+    file.txt
+```
 
-- Upstream `target/interop/upstream-src/rsync-3.4.1/util1.c:943-1011`
-  (`clean_fname`).
-- Upstream `target/interop/upstream-src/rsync-3.4.1/util1.c:1035-1108`
-  (`sanitize_path`).
-- Upstream `target/interop/upstream-src/rsync-3.4.1/flist.c:701-768`
-  (`thisname` recv path).
-- Upstream `target/interop/upstream-src/rsync-3.4.1/exclude.c:1012-1052`
-  (`check_filter`).
-- Upstream Cygwin slash-preservation guard:
-  `target/interop/upstream-src/rsync-3.4.1/util1.c:955-961`.
-- Existing oc-rsync helpers:
-  `crates/protocol/src/flist/wire_mode.rs` (precedent for
-  identity-on-Unix / normalize-on-Windows wire helpers),
-  `crates/transfer/src/sanitize_path.rs`,
-  `crates/protocol/src/flist/read/name.rs:141-234`.
-- Sibling audit: `docs/audits/windows-path-normalization.md` (#1842).
-- Platform parity: `docs/windows_platform_parity.md`.
-- globset 0.4: `Cargo.lock` records version 0.4.18; matcher behavior
-  for `Path::is_match` on Windows verified against the crate source.
+### 4.4 Capture the wire bytes for confirmation
+
+Use the batch-mode capture harness rather than packet sniffing - it
+preserves the full file-list encoding without TLS or daemon framing
+noise:
+
+```cmd
+oc-rsync -av --write-batch=C:\tmp\batch.bin C:\tmp\src\ rsync://linux/push/dst/
+```
+
+Then inspect the batch file on a POSIX host:
+
+```sh
+$ xxd /tmp/batch.bin | grep -A1 "subdir"
+... 73 75 62 64 69 72 5c 66 69 6c 65 2e 74 78 74 ...
+       s  u  b  d  i  r  \  f  i  l  e  .  t  x  t
+```
+
+The `5c` byte (literal `\`) appears between `subdir` and `file.txt`
+where the wire contract requires `2f` (literal `/`).
+
+### 4.5 Compare with upstream Cygwin rsync
+
+```sh
+# On Cygwin running on the same Windows host:
+rsync -av --write-batch=/cygdrive/c/tmp/cygwin-batch.bin \
+    /cygdrive/c/tmp/src/ rsync://linux/push/dst/
+
+$ xxd /cygdrive/c/tmp/cygwin-batch.bin | grep -A1 "subdir"
+... 73 75 62 64 69 72 2f 66 69 6c 65 2e 74 78 74 ...
+       s  u  b  d  i  r  /  f  i  l  e  .  t  x  t
+```
+
+The Cygwin build emits `2f` (forward slash) because the Cygwin POSIX
+layer presents `/`-separated paths to the rsync application; rsync
+itself never sees a `\`.
+
+### 4.6 Local-copy reproduction (no daemon)
+
+The same code paths run for local copies. Even on a single Windows host,
+the bug manifests if you ever serialize the file list (batch mode,
+`--server` over local SSH, or `oc-rsync --debug=flist`):
+
+```cmd
+oc-rsync -av --debug=flist C:\tmp\src\ C:\tmp\dst\
+```
+
+The debug log emits `subdir\file.txt` for the relative name where
+upstream Cygwin rsync would log `subdir/file.txt`.
+
+## 5. Why upstream does not have this issue
+
+Upstream rsync 3.4.1 has no native Windows port. The sole supported
+Windows build is Cygwin, whose POSIX layer rewrites every `\` to `/` and
+exposes drive letters as `/cygdrive/c/...` before the application sees
+them. By the time
+`target/interop/upstream-src/rsync-3.4.1/flist.c:534-570`
+`send_file_entry()` writes filename bytes, those bytes are already
+`/`-separated. The only `\` handling in upstream lives in the Cygwin
+guard at
+`target/interop/upstream-src/rsync-3.4.1/util1.c:955-961` and only
+strips trailing-`\` artifacts of the Cygwin path layer; `flist.c` itself
+has no separator awareness.
+
+oc-rsync targets native Win32 directly, bypassing the Cygwin POSIX
+boundary. It is therefore the first rsync implementation that has to
+perform separator normalization in user space. This is a new failure
+mode that upstream's design did not need to consider, and it is exactly
+why the parent audit (#1842) flagged it as HIGH severity.
+
+## 6. Remediation plan (issue #1905)
+
+The remediation introduces a single helper at the path-to-wire boundary
+and threads it through every emit site enumerated in section 3.
+
+### 6.1 Helper API
+
+```rust
+// crates/protocol/src/flist/wire_path.rs
+
+/// Returns the wire-format byte representation of a filesystem path.
+///
+/// On Unix, this is a zero-copy borrow of the path's `OsStr` bytes.
+/// On Windows, `\` separators are translated to `/` so the bytes
+/// match the format a POSIX peer expects on the wire. Allocation
+/// is avoided when the path contains no `\` byte.
+pub(crate) fn path_bytes_to_wire(p: &Path) -> Cow<'_, [u8]>;
+```
+
+The signature mirrors the precedent set by
+`crates/protocol/src/flist/wire_mode.rs` (identity-on-Unix, normalize on
+non-Unix). The helper allocates only when the input contains at least
+one `\` byte, so `/`-only inputs (the common case after the fix lands)
+take the borrow path with no allocation.
+
+### 6.2 Sites to wire through the helper
+
+1. `crates/protocol/src/flist/entry/accessors.rs:131-135` -
+   `name_bytes()` returns `path_bytes_to_wire(&self.name)`. This single
+   call covers every flist-emit caller transitively, since
+   `crates/protocol/src/flist/write/mod.rs:376` reads `name_bytes()`.
+2. `crates/protocol/src/flist/write/encoding.rs:106-127` -
+   `write_symlink_target()` runs `path_bytes_to_wire(target.as_path())`
+   before `writer.write_all(&target_bytes)`.
+3. `crates/transfer/src/generator/file_list/walk.rs:60` and
+   `crates/transfer/src/generator/file_list/walk.rs:106` - normalize
+   `relative` to a `/`-separated `PathBuf` so both `create_entry` and
+   `filter_chain.allows` see wire-canonical bytes. This collapses F1 and
+   F2 of the parent audit into one fix point.
+4. `crates/transfer/src/receiver/directory/deletion.rs:135` - normalize
+   `rel_for_filter` before the `allows_deletion` call.
+
+### 6.3 Inverse direction (receiver decode)
+
+A symmetric helper is **not strictly required** because:
+
+- `crates/protocol/src/flist/read/name.rs::clean_and_validate_name`
+  already enforces the wire contract: only `b'/'` is treated as a
+  separator. Wire bytes the receiver decodes are mapped through
+  `PathBuf::from(&str_lossy)` which on Windows accepts both `/` and `\`
+  during `Path::join`, so re-rooting under the destination directory
+  works transparently.
+- However, a `wire_to_path(bytes: &[u8]) -> Cow<'_, Path>` helper is
+  recommended for symmetry and for any future code that needs to
+  reconstruct an explicit Win32 form (e.g. for `\\?\`-prefixed long-path
+  opens). On POSIX it is identity; on Windows it can reuse the standard
+  library's path-join semantics.
+
+### 6.4 Regression test (mandatory acceptance criterion)
+
+A property test that builds a `FileEntry` whose `name` was constructed
+via `PathBuf::push("subdir"); push("file.txt")` on Windows must assert
+the wire bytes contain only `/` (no `0x5C`). A symmetric round-trip test
+must decode those bytes through the receiver path and confirm the
+resulting `PathBuf::iter()` yields exactly `["subdir", "file.txt"]`.
+
+The fix work has landed via commits referenced in
+`docs/audits/windows-path-separator-encoding.md`; that audit confirms
+each site in section 3 now routes through `path_bytes_to_wire`. The
+existence of `crates/protocol/src/flist/wire_path.rs` with the test
+suite at lines 62-137 covers the regression-test obligation.
+
+### 6.5 CI matrix entry
+
+A Windows-sender -> Linux-receiver interop job is required to keep
+future regressions visible. The companion audit
+`docs/audits/windows-path-edge-cases.md` lists this as a follow-up
+under the "Long paths > 260 without `\\?\`" and "F1 closure" rows. The
+job exercises:
+
+- `oc-rsync` on `windows-msvc` and `windows-gnu` as sender.
+- Upstream rsync 3.4.1 on Linux as receiver.
+- A nested source tree (depth >= 3) with mixed `/` and `\` operands.
+- An assertion that the destination layout matches the source layout
+  byte-for-byte, including filenames that themselves contain a `\`
+  byte (which is legal on POSIX and must round-trip even after the
+  separator-normalization fix - that fix only rewrites separator bytes
+  introduced by `Path::join`, not user-chosen filename bytes).
+
+The asymmetry above is the subtlest part of the fix: a filename like
+`weird\name` typed on POSIX must reach Windows without modification,
+because `\` is a legal filename byte on POSIX. The Windows-side
+remediation only rewrites the bytes introduced by the Win32
+`Path::push` operation, which the OS itself created - never bytes that
+came from a peer. The helper's `#[cfg(unix)]` branch therefore returns
+`Cow::Borrowed(p.as_os_str().as_bytes())` unconditionally, preserving
+filename `\` bytes verbatim on POSIX senders.
+
+## 7. Test gaps
+
+Existing tests that should have caught this defect but did not:
+
+- `crates/protocol/src/flist/write/tests.rs` - covers wire-byte
+  roundtrips but uses POSIX-only fixtures. No `#[cfg(windows)]` test
+  case constructed a `PathBuf` via `push` and asserted on the emitted
+  bytes.
+- `crates/transfer/src/generator/file_list/tests.rs` (and sibling test
+  modules) - all path-construction tests use `/`-only literals, which
+  on Windows happen to take the borrow path through `Path::components`
+  and never exercise the `Path::push` path that produces `\` separators.
+- `crates/filters/tests/` - filter-rule tests use `&str` patterns and
+  `&str` paths; they never feed a `PathBuf` constructed with platform
+  separators into `CompiledRule::matches`.
+- `crates/protocol/tests/golden/` - the golden-byte tests for flist
+  encoding were authored on POSIX hosts. There is no Windows-target
+  golden run in CI, so the difference would not show up as a golden
+  diff.
+
+The root cause is that the CI matrix exercises `windows-msvc` only as a
+*build* target plus a subset of platform-agnostic unit tests; no
+sender-emit golden test runs on Windows. The remediation includes a
+Windows-host CI job (see section 6.5) that loads a precomputed
+golden-byte file and asserts on the emitted wire stream. After #1905
+landed, `crates/protocol/src/flist/wire_path.rs:106-136` adds the
+`#[cfg(windows)]` test cases that exercise `PathBuf::push` and
+mixed-separator inputs.
+
+## 8. Related audits and tracker entries
+
+- **#1842** (closed) - parent audit
+  `docs/audits/windows-path-normalization.md`; surfaced this defect as
+  finding F1 and catalogued the broader path-form parsing surface.
+- **#1905** (the fix tracker referenced by this audit) - delivered the
+  `path_bytes_to_wire` helper and wired it through every site in
+  section 3. Verification documented in
+  `docs/audits/windows-path-separator-encoding.md`.
+- **#1866** - Windows ACL preservation. Adjacent in the Windows-platform
+  parity work; not directly affected by separator normalization but
+  shares the same `windows_platform_parity.md` followup matrix.
+- **#1867** - Windows xattr preservation. Same context as #1866.
+- **#1869** - Windows ACL/xattr CI matrix entry, audited at
+  `docs/audits/windows-acl-xattr-ci-matrix.md`. Should be expanded to
+  include the Windows-sender path-normalization regression test.
+- **#1900** - IOCP CI matrix entry, audited at
+  `docs/audits/windows-iocp-benchmark.md`. Independent of this defect
+  but part of the same "first-class Windows support" workstream.
+
+## 9. References
+
+### Upstream rsync (`target/interop/upstream-src/rsync-3.4.1/`)
+
+- `flist.c:534-570` `send_file_entry()` - filename emission. Bytes are
+  written verbatim; no separator translation in the application layer.
+- `flist.c:701-768` `recv_file_entry()` - the `thisname` buffer; treats
+  every byte after prefix-decompression as either `/` or part of a
+  component name.
+- `util1.c:943-1011` `clean_fname()` - canonical wire-form path
+  cleanup; only `b'/'` is treated as a separator.
+- `util1.c:955-961` `__CYGWIN__` block - the only `\` handling in
+  upstream, scoped to the Cygwin POSIX boundary.
+- `util1.c:1035-1108` `sanitize_path()` - byte-level `/`-only
+  processing for daemon module roots.
+- `exclude.c:1031-1108` `check_filter()` - filter-rule evaluation
+  against `/`-separated wire-form `fname`.
+
+### oc-rsync sources
+
+- Helper: `crates/protocol/src/flist/wire_path.rs` (introduced by
+  #1905).
+- Sender path: `crates/protocol/src/flist/entry/accessors.rs:131-135`
+  (`name_bytes()`),
+  `crates/protocol/src/flist/write/mod.rs:376-384`
+  (`write_entry()`),
+  `crates/protocol/src/flist/write/encoding.rs:106-127`
+  (`write_symlink_target()`).
+- Walk and filter: `crates/transfer/src/generator/file_list/walk.rs:60,
+  106`,
+  `crates/transfer/src/receiver/directory/deletion.rs:135`.
+- Receiver path:
+  `crates/protocol/src/flist/read/name.rs:35-234`,
+  `crates/transfer/src/sanitize_path.rs`.
+- Existing related audits: `docs/audits/windows-path-normalization.md`,
+  `docs/audits/windows-path-separator-encoding.md`,
+  `docs/audits/windows-path-edge-cases.md`,
+  `docs/windows_platform_parity.md`.
+
+### Rust standard library
+
+- `std::path::Path` - opaque cross-platform path type; `Path::push` and
+  `Path::join` use the platform separator.
+- `std::path::MAIN_SEPARATOR` - `'/'` on Unix, `'\'` on Windows.
+- `std::os::unix::ffi::OsStrExt::as_bytes` - zero-copy `OsStr` -> `&[u8]`
+  on Unix.
+- `std::ffi::OsStr::as_encoded_bytes` - WTF-8 view of the underlying
+  storage; on Windows this preserves `\` bytes as `0x5C`.
+
+### Cygwin path layer
+
+- Cygwin path translation overview:
+  https://cygwin.com/cygwin-ug-net/using.html#using-pathnames
+- Cygwin POSIX-to-Win32 mapping:
+  `winsup/cygwin/path.cc` in the Cygwin source tree (the canonical
+  reference for how `\` becomes `/` before the application sees it).
