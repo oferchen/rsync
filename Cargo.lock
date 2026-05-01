@@ -1853,6 +1853,7 @@ dependencies = [
  "tempfile",
  "test-support",
  "thiserror 2.0.18",
+ "windows",
  "xattr",
 ]
 
