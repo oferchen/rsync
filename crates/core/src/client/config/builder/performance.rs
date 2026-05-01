@@ -153,4 +153,21 @@ impl ClientConfigBuilder {
         #[doc(alias = "--qsort")]
         qsort: bool,
     }
+
+    builder_setter! {
+        /// Opt-in: advertise the INC_RECURSE (`'i'`) capability when oc-rsync
+        /// is acting as the sender.
+        ///
+        /// Defaults to `false`. Sender-side incremental recursion has not yet
+        /// been validated against upstream rsync 3.0.9 / 3.1.3 / 3.4.1, so the
+        /// capability is suppressed for push transfers by default. Set this
+        /// flag to enable the negotiation for interop testing.
+        ///
+        /// # Upstream Reference
+        ///
+        /// - `compat.c:720 set_allow_inc_recurse()` - capability gate.
+        /// - `options.c:3003-3050 maybe_add_e_option()` - capability string.
+        #[doc(alias = "--inc-recursive-send")]
+        inc_recursive_send: bool,
+    }
 }

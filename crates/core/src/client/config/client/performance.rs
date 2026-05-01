@@ -131,6 +131,29 @@ impl ClientConfig {
     pub const fn qsort(&self) -> bool {
         self.qsort
     }
+
+    /// Reports whether the sender should advertise the INC_RECURSE (`'i'`)
+    /// capability when negotiating with the peer.
+    ///
+    /// Default `false`. This is an opt-in flag for interop testing of
+    /// sender-side incremental recursion against upstream rsync. When
+    /// enabled, oc-rsync includes `'i'` in the `-e.` capability string for
+    /// push transfers, which causes the peer to set
+    /// `compat_flags |= CF_INC_RECURSE` when the negotiated protocol is
+    /// >= 30 and `--recursive` (`-r`) is in effect.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c:720 set_allow_inc_recurse()` - capability negotiation
+    ///   gate that clears `allow_inc_recurse` when the sender is unwilling
+    ///   to drive segmented file lists.
+    /// - `options.c:3003-3050 maybe_add_e_option()` - capability string
+    ///   construction.
+    #[must_use]
+    #[doc(alias = "--inc-recursive-send")]
+    pub const fn inc_recursive_send(&self) -> bool {
+        self.inc_recursive_send
+    }
 }
 
 #[cfg(test)]
@@ -218,5 +241,12 @@ mod tests {
     fn qsort_default_is_false() {
         let config = default_config();
         assert!(!config.qsort());
+    }
+
+    // Tests for inc_recursive_send
+    #[test]
+    fn inc_recursive_send_default_is_false() {
+        let config = default_config();
+        assert!(!config.inc_recursive_send());
     }
 }

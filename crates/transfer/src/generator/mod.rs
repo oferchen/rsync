@@ -70,14 +70,20 @@
 //! ## Current status
 //!
 //! The sender-side state machine and segment scheduler are implemented
-//! (see `IncrementalState`, `SegmentScheduler`, `PendingSegment`),
-//! but oc-rsync does NOT advertise the `'i'` capability when acting as
-//! sender. [`crate::setup::build_capability_string`] is
-//! invoked with `allow_inc_recurse = !is_sender`, so push transfers
-//! omit `'i'` from the capability string sent to the daemon. This is a
-//! deliberate, documented gate while sender-side interop is validated
+//! (see `IncrementalState`, `SegmentScheduler`, `PendingSegment`).
+//! By default oc-rsync does NOT advertise the `'i'` capability when
+//! acting as sender; [`crate::setup::build_capability_string`] is
+//! invoked with `allow_inc_recurse = false` for push transfers so `'i'`
+//! is omitted from the capability string sent to the peer. This remains
+//! a deliberate, documented gate while sender-side interop is validated
 //! against upstream rsync 3.0.9 / 3.1.3 / 3.4.1; see task #1862.
-//! Pull transfers (oc-rsync as receiver) negotiate INC_RECURSE normally.
+//!
+//! The opt-in `--inc-recursive-send` CLI flag (and the matching
+//! `ClientConfig::inc_recursive_send()` accessor) overrides the gate so
+//! that the existing sender-side code path is exercised end-to-end. The
+//! flag is intended for interop testing only; default behaviour is
+//! unchanged. Pull transfers (oc-rsync as receiver) negotiate
+//! INC_RECURSE normally and are not affected by the flag.
 
 mod delta;
 mod file_list;

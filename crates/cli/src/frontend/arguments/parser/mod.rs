@@ -383,6 +383,7 @@ where
     let config = matches.remove_one::<OsString>("config");
     let force = tri_state_flag_positive_first(&matches, "force", "no-force");
     let qsort = matches.get_flag("qsort");
+    let inc_recursive_send = matches.get_flag("inc-recursive-send");
     let copy_devices = matches.get_flag("copy-devices");
     let archive_devices =
         tri_state_flag_positive_first(&matches, "archive-devices", "no-archive-devices");
@@ -711,6 +712,7 @@ where
         specials,
         force,
         qsort,
+        inc_recursive_send,
         relative,
         one_file_system,
         implied_dirs,

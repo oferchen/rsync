@@ -242,6 +242,16 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("inc-recursive-send")
+                .long("inc-recursive-send")
+                .help(
+                    "Opt-in: advertise INC_RECURSE on the sender capability string \
+                     for interop testing. Sender-side incremental recursion has not \
+                     been validated against upstream rsync; default off.",
+                )
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("mkpath")
                 .long("mkpath")
                 .help("Create destination's missing path components.")

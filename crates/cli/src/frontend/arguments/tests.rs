@@ -759,6 +759,18 @@ mod long_options {
     }
 
     #[test]
+    fn inc_recursive_send_default_is_false() {
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert!(!parsed.inc_recursive_send);
+    }
+
+    #[test]
+    fn inc_recursive_send_long_flag() {
+        let parsed = parse_test_args(["--inc-recursive-send", "src/", "dst/"]).expect("parse");
+        assert!(parsed.inc_recursive_send);
+    }
+
+    #[test]
     fn omit_link_times_long_flag() {
         let parsed = parse_test_args(["--omit-link-times", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.omit_link_times, Some(true));
