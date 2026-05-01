@@ -41,19 +41,21 @@
 #![allow(unsafe_code)]
 
 use std::ffi::OsString;
-use std::io;
+use std::fs::File;
+use std::io::{self, Read, Write};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::io::FromRawHandle;
 use std::path::Path;
 
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND,
-    GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND, GetLastError,
+    HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows::Win32::Storage::FileSystem::{
     CREATE_ALWAYS, CreateFileW, DeleteFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ,
     FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FindClose,
-    FindFirstStreamW, FindNextStreamW, FindStreamInfoStandard, OPEN_EXISTING, ReadFile,
-    WIN32_FIND_STREAM_DATA, WriteFile,
+    FindFirstStreamW, FindNextStreamW, FindStreamInfoStandard, OPEN_EXISTING,
+    WIN32_FIND_STREAM_DATA,
 };
 use windows::core::PCWSTR;
 
@@ -148,20 +150,6 @@ impl Drop for FindStreamHandle {
     }
 }
 
-/// Wraps a file/stream handle so we close it on drop.
-struct OwnedHandle(HANDLE);
-
-impl Drop for OwnedHandle {
-    fn drop(&mut self) {
-        if !self.0.is_invalid() {
-            // SAFETY: handle was returned from a successful `CreateFileW`.
-            unsafe {
-                let _ = CloseHandle(self.0);
-            }
-        }
-    }
-}
-
 /// Returns `true` when an [`io::Error`] indicates the file or stream
 /// simply does not exist, so callers can map it to `Ok(None)`.
 fn io_error_is_missing(error: &io::Error) -> bool {
@@ -209,12 +197,14 @@ pub fn list_attributes(path: &Path, _follow_symlinks: bool) -> io::Result<Vec<Os
     let mut data: WIN32_FIND_STREAM_DATA = unsafe { std::mem::zeroed() };
 
     // SAFETY: `wide` is NUL-terminated; `data` outlives the call.
+    // `dwflags` is documented as reserved-must-be-zero; pass `Some(0)`
+    // because the binding signature is `Option<u32>`.
     let result = unsafe {
         FindFirstStreamW(
             PCWSTR(wide.as_ptr()),
             FindStreamInfoStandard,
             (&mut data as *mut WIN32_FIND_STREAM_DATA).cast(),
-            0,
+            Some(0),
         )
     };
 
@@ -285,9 +275,11 @@ pub fn read_attribute(
             None,
         )
     };
-    let handle = match raw {
+    let mut file = match raw {
         Ok(h) if h == INVALID_HANDLE_VALUE => return Err(io::Error::last_os_error()),
-        Ok(h) => OwnedHandle(h),
+        // SAFETY: `CreateFileW` returned a valid HANDLE which we hand off to
+        // `File`; the `File` takes ownership and closes it on drop.
+        Ok(h) => unsafe { File::from_raw_handle(h.0 as _) },
         Err(error) => {
             let io_err = windows_to_io_error(error);
             if io_error_is_missing(&io_err) {
@@ -298,20 +290,7 @@ pub fn read_attribute(
     };
 
     let mut buffer = Vec::with_capacity(256);
-    let mut chunk = [0u8; 4096];
-    loop {
-        let mut read: u32 = 0;
-        // SAFETY: handle is valid; `chunk` and `read` outlive the call.
-        let res = unsafe { ReadFile(handle.0, Some(&mut chunk), Some(&mut read), None) };
-        if res.is_err() {
-            return Err(io::Error::last_os_error());
-        }
-        if read == 0 {
-            break;
-        }
-        buffer.extend_from_slice(&chunk[..read as usize]);
-    }
-
+    file.read_to_end(&mut buffer)?;
     Ok(Some(buffer))
 }
 
@@ -340,9 +319,11 @@ pub fn write_attribute(
             None,
         )
     };
-    let handle = match raw {
+    let mut file = match raw {
         Ok(h) if h == INVALID_HANDLE_VALUE => return Err(io::Error::last_os_error()),
-        Ok(h) => OwnedHandle(h),
+        // SAFETY: `CreateFileW` returned a valid HANDLE which we hand off to
+        // `File`; the `File` takes ownership and closes it on drop.
+        Ok(h) => unsafe { File::from_raw_handle(h.0 as _) },
         Err(error) => return Err(windows_to_io_error(error)),
     };
 
@@ -352,22 +333,7 @@ pub fn write_attribute(
         return Ok(());
     }
 
-    let mut offset = 0usize;
-    while offset < value.len() {
-        let chunk = &value[offset..];
-        let len = chunk.len().min(u32::MAX as usize);
-        let mut written: u32 = 0;
-        // SAFETY: handle is valid; the slice outlives the call.
-        let res = unsafe { WriteFile(handle.0, Some(&chunk[..len]), Some(&mut written), None) };
-        if res.is_err() {
-            return Err(io::Error::last_os_error());
-        }
-        if written == 0 {
-            return Err(io::Error::other("WriteFile reported zero bytes written"));
-        }
-        offset += written as usize;
-    }
-
+    file.write_all(value)?;
     Ok(())
 }
 
