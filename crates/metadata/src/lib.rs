@@ -190,7 +190,10 @@ pub use mapping_win::{GroupMapping, MappingKind, MappingParseError, NameMapping,
 
 pub use options::{AttrsFlags, MetadataOptions};
 
-pub use special::{create_device_node, create_fifo};
+pub use special::{
+    create_device_node, create_device_node_with_fake_super, create_fifo,
+    create_fifo_with_fake_super,
+};
 
 #[cfg(all(unix, feature = "xattr"))]
 pub use xattr::{apply_xattrs_from_list, read_xattrs_for_wire, sync_xattrs};

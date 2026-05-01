@@ -21,7 +21,7 @@ use crate::local_copy::{
     remove_source_entry_if_requested,
 };
 #[cfg(unix)]
-use ::metadata::create_fifo;
+use ::metadata::create_fifo_with_fake_super;
 use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 
 /// Copies a FIFO (named pipe) from source to destination.
@@ -212,10 +212,13 @@ pub(crate) fn copy_fifo(
         }
     }
 
-    // actually create a FIFO
+    // actually create a FIFO, or a 0600 placeholder when --fake-super is
+    // active (mirrors upstream syscall.c:do_mknod()'s am_root < 0 branch).
     #[cfg(unix)]
     {
-        create_fifo(destination, metadata).map_err(map_metadata_error)?;
+        let fake_super = metadata_options.fake_super_enabled();
+        create_fifo_with_fake_super(destination, metadata, fake_super)
+            .map_err(map_metadata_error)?;
     }
     #[cfg(not(unix))]
     {
@@ -247,6 +250,14 @@ pub(crate) fn copy_fifo(
     #[cfg(all(unix, feature = "acl"))]
     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
 
+    // Under fake-super, capture the would-be FIFO/socket's mode/uid/gid in
+    // the rsync.%stat xattr so the destination can be restored later.
+    // upstream: xattrs.c:set_stat_xattr() under am_root < 0
+    #[cfg(all(unix, feature = "xattr"))]
+    if metadata_options.fake_super_enabled() {
+        store_fake_super_for_local_metadata(destination, metadata)?;
+    }
+
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_fifo();
 
@@ -266,4 +277,22 @@ pub(crate) fn copy_fifo(
     context.register_progress();
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
     Ok(())
+}
+
+/// Stores the would-be FIFO/socket metadata in the `rsync.%stat` xattr.
+///
+/// Encodes mode (with `S_IFMT` bits), uid, and gid so a later fake-super
+/// read can faithfully reconstruct the original node.
+// upstream: xattrs.c:set_stat_xattr()
+#[cfg(all(unix, feature = "xattr"))]
+fn store_fake_super_for_local_metadata(
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), LocalCopyError> {
+    use ::metadata::{FakeSuperStat, store_fake_super};
+
+    let stat = FakeSuperStat::from_metadata(metadata);
+    store_fake_super(destination, &stat).map_err(|error| {
+        LocalCopyError::io("store fake-super metadata", destination.to_path_buf(), error)
+    })
 }

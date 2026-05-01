@@ -21,7 +21,7 @@ use crate::local_copy::{
     remove_source_entry_if_requested,
 };
 #[cfg(unix)]
-use ::metadata::create_device_node;
+use ::metadata::create_device_node_with_fake_super;
 use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 
 /// Copies a device node (block or character) from source to destination.
@@ -208,10 +208,13 @@ pub(crate) fn copy_device(
         }
     }
 
-    // create the actual device node
+    // create the actual device node, or a 0600 placeholder when --fake-super
+    // is active (mirrors upstream syscall.c:do_mknod()'s am_root < 0 branch).
     #[cfg(unix)]
     {
-        create_device_node(destination, metadata).map_err(map_metadata_error)?;
+        let fake_super = metadata_options.fake_super_enabled();
+        create_device_node_with_fake_super(destination, metadata, fake_super)
+            .map_err(map_metadata_error)?;
     }
     #[cfg(not(unix))]
     {
@@ -239,6 +242,17 @@ pub(crate) fn copy_device(
     #[cfg(all(unix, feature = "acl"))]
     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
 
+    // Under fake-super, capture the would-be device's mode/uid/gid/rdev in
+    // the rsync.%stat xattr so the destination can be restored later. This
+    // is the read-side complement of `apply_ownership_via_fake_super` for
+    // the local-copy path, where we have a full `fs::Metadata` rather than
+    // a wire-protocol `FileEntry`.
+    // upstream: xattrs.c:set_stat_xattr() under am_root < 0
+    #[cfg(all(unix, feature = "xattr"))]
+    if metadata_options.fake_super_enabled() {
+        store_fake_super_for_local_metadata(destination, metadata)?;
+    }
+
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_device();
 
@@ -258,4 +272,22 @@ pub(crate) fn copy_device(
     context.register_progress();
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
     Ok(())
+}
+
+/// Stores the would-be device/special metadata in the `rsync.%stat` xattr.
+///
+/// Encodes mode (with `S_IFMT` bits), uid, gid, and rdev so a later
+/// fake-super read can faithfully reconstruct the original node.
+// upstream: xattrs.c:set_stat_xattr()
+#[cfg(all(unix, feature = "xattr"))]
+fn store_fake_super_for_local_metadata(
+    destination: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), LocalCopyError> {
+    use ::metadata::{FakeSuperStat, store_fake_super};
+
+    let stat = FakeSuperStat::from_metadata(metadata);
+    store_fake_super(destination, &stat).map_err(|error| {
+        LocalCopyError::io("store fake-super metadata", destination.to_path_buf(), error)
+    })
 }

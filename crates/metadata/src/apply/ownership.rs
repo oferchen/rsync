@@ -292,9 +292,11 @@ fn apply_ownership_via_fake_super(
     uid: Option<u32>,
     gid: Option<u32>,
 ) -> Result<(), MetadataError> {
-    use crate::fake_super::{FakeSuperStat, store_fake_super};
+    use crate::fake_super::{FakeSuperStat, load_fake_super, store_fake_super};
 
-    let mode = entry.permissions();
+    // upstream: xattrs.c:set_stat_xattr() encodes the full mode (S_IFMT + perms)
+    // so a later read can rebuild the file type, not just the permission bits.
+    let mode = entry.mode();
     let uid = uid.unwrap_or(0);
     let gid = gid.unwrap_or(0);
 
@@ -313,6 +315,15 @@ fn apply_ownership_via_fake_super(
         gid,
         rdev,
     };
+
+    // upstream: xattrs.c:read_stat_xattr() consults the existing xattr so an
+    // unchanged stat skips the rewrite. Mirrors `set_file_attrs()`'s "no-op
+    // when current state already matches" fast path.
+    if let Ok(Some(existing)) = load_fake_super(destination)
+        && existing == stat
+    {
+        return Ok(());
+    }
 
     store_fake_super(destination, &stat)
         .map_err(|error| MetadataError::new("store fake-super metadata", destination, error))
