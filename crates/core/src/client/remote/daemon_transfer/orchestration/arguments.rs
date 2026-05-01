@@ -149,10 +149,16 @@ pub(super) fn build_full_daemon_args(
     // Capability flags for protocol 30+.
     // upstream: options.c:2707-2713 (via maybe_add_e_option appended to argstr)
     // upstream: compat.c:177-178 - daemon checks client_info for 'i' to set allow_inc_recurse
-    // INC_RECURSE ('i') is only advertised for pull (is_sender=true, daemon sends)
-    // because sender-side INC_RECURSE segment handling is not yet implemented.
+    // INC_RECURSE ('i') is advertised for pull (is_sender=true, daemon sends).
+    // For push (is_sender=false, we send), the capability is suppressed by
+    // default while sender-side INC_RECURSE interop is validated against
+    // upstream rsync; the opt-in `--inc-recursive-send` flag advertises the
+    // bit so the existing sender-side state machine in
+    // `crates/transfer/src/generator/` can be exercised.
+    // upstream: compat.c:720 set_allow_inc_recurse() - capability gate.
     if protocol.as_u8() >= 30 {
-        args.push(build_capability_string(is_sender));
+        let advertise_inc_recurse = is_sender || config.inc_recursive_send();
+        args.push(build_capability_string(advertise_inc_recurse));
     }
 
     let we_are_sender = !is_sender;

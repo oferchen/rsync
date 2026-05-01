@@ -78,6 +78,70 @@ mod protect_args_daemon_tests {
     }
 
     #[test]
+    fn build_full_args_push_omits_inc_recurse_capability_by_default() {
+        // Push (is_sender=false, we are sender) must NOT advertise 'i' by
+        // default while sender-side INC_RECURSE is unvalidated. Tracker #1862.
+        let config = ClientConfig::default();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        let caps = args
+            .iter()
+            .find(|a| a.starts_with("-e."))
+            .expect("capability string present");
+        assert!(
+            !caps.contains('i'),
+            "default push capability string must not advertise 'i': {caps}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_push_advertises_inc_recurse_when_flag_set() {
+        // --inc-recursive-send opt-in: push transfers advertise 'i' so the
+        // sender-side INC_RECURSE state machine is exercised against
+        // upstream peers. Tracker #1862.
+        let config = ClientConfig::builder().inc_recursive_send(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        let caps = args
+            .iter()
+            .find(|a| a.starts_with("-e."))
+            .expect("capability string present");
+        assert!(
+            caps.contains('i'),
+            "push capability string with --inc-recursive-send must advertise 'i': {caps}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_pull_advertises_inc_recurse_regardless_of_flag() {
+        // Pull (is_sender=true, daemon is sender) is the receiver-side
+        // direction and continues to advertise 'i' regardless of the
+        // sender-only opt-in flag.
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let request = test_daemon_request();
+
+        let config_off = ClientConfig::default();
+        let args_off = build_full_daemon_args(&config_off, &request, protocol, true);
+        let caps_off = args_off
+            .iter()
+            .find(|a| a.starts_with("-e."))
+            .expect("capability string present");
+        assert!(caps_off.contains('i'));
+
+        let config_on = ClientConfig::builder().inc_recursive_send(true).build();
+        let args_on = build_full_daemon_args(&config_on, &request, protocol, true);
+        let caps_on = args_on
+            .iter()
+            .find(|a| a.starts_with("-e."))
+            .expect("capability string present");
+        assert_eq!(caps_off, caps_on);
+    }
+
+    #[test]
     fn build_full_args_includes_compare_dest() {
         let config = ClientConfig::builder()
             .compare_destination("/tmp/compare")
