@@ -87,6 +87,24 @@ impl MapFile<AdaptiveMapStrategy> {
         })
     }
 
+    /// Opens a file forcing the buffered (non-mmap) variant under the
+    /// `AdaptiveMapStrategy` enum.
+    ///
+    /// Used when the basis file must not be mmap-backed - notably when
+    /// the destination writer is io_uring-backed, where mmap'd pages reaching
+    /// an SQE can stall the SQPOLL kernel thread on cold-page faults or
+    /// raise `SIGBUS` inside the kernel on concurrent truncation. See
+    /// `docs/design/basis-file-io-policy.md`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be opened.
+    pub fn open_adaptive_buffered<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        Ok(Self {
+            strategy: AdaptiveMapStrategy::open_buffered(path)?,
+        })
+    }
+
     /// Returns true if using memory-mapped strategy.
     #[must_use]
     pub fn is_mmap(&self) -> bool {

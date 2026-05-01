@@ -377,6 +377,12 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("apple-double-skip")
+                    .long("apple-double-skip")
+                    .help("Skip macOS AppleDouble (._foo) sidecar files.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("filter")
                     .long("filter")
                     .short('f')

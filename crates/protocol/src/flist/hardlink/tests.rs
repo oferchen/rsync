@@ -55,7 +55,7 @@ mod basic {
         table.find_or_insert(DevIno::new(0, 12345), 0);
         let result = table.find_or_insert(DevIno::new(0, 12345), 5);
         assert_eq!(result, HardlinkLookup::LinkTo(0));
-        assert_eq!(table.len(), 1); // Still only one entry
+        assert_eq!(table.len(), 1);
     }
 
     #[test]
@@ -137,22 +137,17 @@ mod collision {
         let mut table = HardlinkTable::new();
         let dev_ino = DevIno::new(0xFD00, 12345);
 
-        // First file with this dev/ino
         let r1 = table.find_or_insert(dev_ino, 0);
         assert_eq!(r1, HardlinkLookup::First(0));
 
-        // Second file with same dev/ino - should link back
         let r2 = table.find_or_insert(dev_ino, 1);
         assert_eq!(r2, HardlinkLookup::LinkTo(0));
 
-        // Third file with same dev/ino - should also link back to first
         let r3 = table.find_or_insert(dev_ino, 2);
         assert_eq!(r3, HardlinkLookup::LinkTo(0));
 
-        // Only one entry in the table
         assert_eq!(table.len(), 1);
 
-        // Link count should be 3
         let entry = table.get(&dev_ino).unwrap();
         assert_eq!(entry.link_count, 3);
         assert_eq!(entry.first_ndx, 0);
@@ -166,7 +161,6 @@ mod collision {
     fn same_inode_different_device_not_linked() {
         let mut table = HardlinkTable::new();
 
-        // Files from different devices with same inode
         let pairs = [
             (DevIno::new(0, 12345), 0),
             (DevIno::new(1, 12345), 1),
@@ -184,7 +178,6 @@ mod collision {
             );
         }
 
-        // All should be separate entries
         assert_eq!(table.len(), 4);
     }
 
@@ -193,7 +186,6 @@ mod collision {
     fn same_device_different_inode_not_linked() {
         let mut table = HardlinkTable::new();
 
-        // Different inodes on same device
         for i in 0..100u32 {
             let dev_ino = DevIno::new(1, i as u64);
             let result = table.find_or_insert(dev_ino, i);
@@ -215,9 +207,8 @@ mod collision {
     fn hash_collision_distinct_keys_remain_separate() {
         let mut table = HardlinkTable::new();
 
-        // Create pairs that might have hash collisions
-        // FxHash is fast but not cryptographically secure, so collisions are possible
-        // We test by using values that differ only in high/low bits
+        // FxHash is fast but not cryptographically secure, so collisions are possible.
+        // Use values that differ only in high/low bits to stress collision resolution.
         let pairs = [
             DevIno::new(0, 0),
             DevIno::new(0, 1),
@@ -226,7 +217,7 @@ mod collision {
             DevIno::new(u64::MAX, 0),
             DevIno::new(0, u64::MAX),
             DevIno::new(u64::MAX, u64::MAX),
-            // Swapped dev/ino values that might hash similarly
+            // Swapped values exercise asymmetry of the dev/ino hash.
             DevIno::new(12345, 67890),
             DevIno::new(67890, 12345),
         ];
@@ -242,10 +233,8 @@ mod collision {
             );
         }
 
-        // All pairs should remain distinct
         assert_eq!(table.len(), pairs.len());
 
-        // Verify each can be retrieved correctly
         for (ndx, &dev_ino) in pairs.iter().enumerate() {
             let entry = table.get(&dev_ino).unwrap();
             assert_eq!(
@@ -268,17 +257,14 @@ mod collision {
             hasher.finish()
         }
 
-        // Same dev, different ino
         let h1 = hash_dev_ino(DevIno::new(1, 100));
         let h2 = hash_dev_ino(DevIno::new(1, 101));
         assert_ne!(h1, h2, "Different inodes should have different hashes");
 
-        // Different dev, same ino
         let h3 = hash_dev_ino(DevIno::new(1, 100));
         let h4 = hash_dev_ino(DevIno::new(2, 100));
         assert_ne!(h3, h4, "Different devices should have different hashes");
 
-        // Swapped values should hash differently
         let h5 = hash_dev_ino(DevIno::new(12345, 67890));
         let h6 = hash_dev_ino(DevIno::new(67890, 12345));
         assert_ne!(h5, h6, "Swapped dev/ino should have different hashes");
@@ -290,18 +276,15 @@ mod collision {
     fn fxhash_specific_collision_resistance() {
         let mut table = HardlinkTable::new();
 
-        // FxHash uses multiply-rotate, these patterns test edge cases
+        // FxHash uses multiply-rotate; these patterns target known weak-mixing inputs:
+        // zero values, max values, powers of two, and alternating bit patterns.
         let test_cases = [
-            // Zero values
             (DevIno::new(0, 0), 0),
-            // Max values
             (DevIno::new(u64::MAX, u64::MAX), 1),
-            // Powers of two (can cause weak mixing in some hash functions)
             (DevIno::new(1 << 32, 0), 2),
             (DevIno::new(0, 1 << 32), 3),
             (DevIno::new(1 << 63, 0), 4),
             (DevIno::new(0, 1 << 63), 5),
-            // Patterns that might collide under weak hash functions
             (DevIno::new(0x5555_5555_5555_5555, 0xAAAA_AAAA_AAAA_AAAA), 6),
             (DevIno::new(0xAAAA_AAAA_AAAA_AAAA, 0x5555_5555_5555_5555), 7),
         ];
@@ -337,22 +320,18 @@ mod large_scale {
 
         const NUM_LINKS: u32 = 10_000;
 
-        // First occurrence
         let first = table.find_or_insert(dev_ino, 0);
         assert_eq!(first, HardlinkLookup::First(0));
 
-        // Many subsequent links
         for i in 1..NUM_LINKS {
             let result = table.find_or_insert(dev_ino, i);
             assert_eq!(result, HardlinkLookup::LinkTo(0));
         }
 
-        // Verify link count
         let entry = table.get(&dev_ino).unwrap();
         assert_eq!(entry.link_count, NUM_LINKS);
         assert_eq!(entry.first_ndx, 0);
 
-        // Still only one entry
         assert_eq!(table.len(), 1);
     }
 
@@ -366,7 +345,6 @@ mod large_scale {
 
         const NUM_GROUPS: u32 = 10_000;
 
-        // Insert many distinct hardlink groups
         for i in 0..NUM_GROUPS {
             let dev_ino = DevIno::new(i as u64 / 1000, i as u64);
             let result = table.find_or_insert(dev_ino, i);
@@ -375,7 +353,6 @@ mod large_scale {
 
         assert_eq!(table.len(), NUM_GROUPS as usize);
 
-        // Verify lookups still work correctly
         for i in 0..NUM_GROUPS {
             let dev_ino = DevIno::new(i as u64 / 1000, i as u64);
             let entry = table.get(&dev_ino).unwrap();
@@ -393,7 +370,6 @@ mod large_scale {
 
         let mut file_ndx = 0u32;
 
-        // Create groups with varying numbers of links
         for group in 0..NUM_GROUPS {
             let dev_ino = DevIno::new(group as u64 / 100, group as u64);
             let link_count = (group % 10) + 1; // 1-10 links per group
@@ -402,13 +378,10 @@ mod large_scale {
                 let result = table.find_or_insert(dev_ino, file_ndx);
                 if link == 0 {
                     assert_eq!(result, HardlinkLookup::First(file_ndx));
+                } else if let HardlinkLookup::LinkTo(first) = result {
+                    assert_eq!(first, file_ndx - link);
                 } else {
-                    // Should link back to first file in this group
-                    if let HardlinkLookup::LinkTo(first) = result {
-                        assert_eq!(first, file_ndx - link);
-                    } else {
-                        panic!("Expected LinkTo for link {link} in group {group}");
-                    }
+                    panic!("Expected LinkTo for link {link} in group {group}");
                 }
                 file_ndx += 1;
             }
@@ -416,7 +389,6 @@ mod large_scale {
 
         assert_eq!(table.len(), NUM_GROUPS as usize);
 
-        // Verify link counts
         for group in 0..NUM_GROUPS {
             let dev_ino = DevIno::new(group as u64 / 100, group as u64);
             let expected_links = (group % 10) + 1;
@@ -443,7 +415,6 @@ mod large_scale {
             assert_eq!(result, HardlinkLookup::First(ndx));
         }
 
-        // Verify retrieval
         for (i, &expected_ndx) in test_indices.iter().enumerate() {
             let dev_ino = DevIno::new(i as u64, i as u64);
             let entry = table.get(&dev_ino).unwrap();
@@ -470,7 +441,6 @@ mod large_scale {
             assert_eq!(result, HardlinkLookup::First(ndx as u32));
         }
 
-        // Verify all entries are distinct and retrievable
         assert_eq!(table.len(), test_cases.len());
 
         for (ndx, &dev_ino) in test_cases.iter().enumerate() {
@@ -487,11 +457,10 @@ mod large_scale {
         let mut table = HardlinkTable::new();
         let dev_ino = DevIno::new(1, 1);
 
-        // Insert first, then manually verify the counter works for high values
         table.find_or_insert(dev_ino, 0);
 
-        // Simulate many links by inserting repeatedly
-        // (In a real scenario, each insert would be a different file)
+        // Simulate many links by inserting repeatedly; in production each insert
+        // would correspond to a distinct file index sharing this dev/ino pair.
         const ITERATIONS: u32 = 100_000;
         for i in 1..ITERATIONS {
             table.find_or_insert(dev_ino, i);
@@ -514,7 +483,6 @@ mod interleaved_access {
     fn interleaved_inserts_and_lookups() {
         let mut table = HardlinkTable::new();
 
-        // Create some initial entries
         let di1 = DevIno::new(1, 100);
         let di2 = DevIno::new(1, 200);
         let di3 = DevIno::new(2, 100);
@@ -523,19 +491,15 @@ mod interleaved_access {
         table.find_or_insert(di2, 1);
         table.find_or_insert(di3, 2);
 
-        // Interleaved lookups and inserts
         assert_eq!(table.find_or_insert(di1, 3), HardlinkLookup::LinkTo(0));
         assert_eq!(table.find_or_insert(di2, 4), HardlinkLookup::LinkTo(1));
 
-        // New entry
         let di4 = DevIno::new(2, 200);
         assert_eq!(table.find_or_insert(di4, 5), HardlinkLookup::First(5));
 
-        // More links to existing entries
         assert_eq!(table.find_or_insert(di3, 6), HardlinkLookup::LinkTo(2));
         assert_eq!(table.find_or_insert(di1, 7), HardlinkLookup::LinkTo(0));
 
-        // Verify final state
         assert_eq!(table.len(), 4);
         assert_eq!(table.get(&di1).unwrap().link_count, 3);
         assert_eq!(table.get(&di2).unwrap().link_count, 2);
@@ -552,7 +516,6 @@ mod interleaved_access {
         table.find_or_insert(dev_ino, 0);
         table.find_or_insert(dev_ino, 1);
 
-        // Multiple get() calls should not change link_count
         let initial_count = table.get(&dev_ino).unwrap().link_count;
         assert_eq!(initial_count, 2);
 
@@ -561,7 +524,6 @@ mod interleaved_access {
             assert_eq!(entry.link_count, 2);
         }
 
-        // Table state unchanged
         assert_eq!(table.len(), 1);
         assert_eq!(table.get(&dev_ino).unwrap().link_count, 2);
     }
@@ -572,18 +534,15 @@ mod interleaved_access {
         let mut table = HardlinkTable::new();
         let dev_ino = DevIno::new(1, 100);
 
-        // Populate
         table.find_or_insert(dev_ino, 0);
         table.find_or_insert(dev_ino, 1);
         assert_eq!(table.len(), 1);
         assert_eq!(table.get(&dev_ino).unwrap().link_count, 2);
 
-        // Clear
         table.clear();
         assert!(table.is_empty());
         assert!(table.get(&dev_ino).is_none());
 
-        // Reuse with different index
         let result = table.find_or_insert(dev_ino, 100);
         assert_eq!(result, HardlinkLookup::First(100));
         assert_eq!(table.get(&dev_ino).unwrap().first_ndx, 100);
@@ -599,10 +558,8 @@ mod interleaved_access {
         let mut table = HardlinkTable::new();
         let dev_ino = DevIno::new(1, 100);
 
-        // First file at index 42
         table.find_or_insert(dev_ino, 42);
 
-        // Add many more links with different indices
         for i in 0..1000 {
             let result = table.find_or_insert(dev_ino, 1000 + i);
             assert_eq!(
@@ -612,7 +569,6 @@ mod interleaved_access {
             );
         }
 
-        // First index still 42
         let entry = table.get(&dev_ino).unwrap();
         assert_eq!(entry.first_ndx, 42);
         assert_eq!(entry.link_count, 1001);

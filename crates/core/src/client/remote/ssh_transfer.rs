@@ -290,6 +290,7 @@ fn build_ssh_connection(
     }
 
     ssh.set_prefer_aes_gcm(config.prefer_aes_gcm());
+    ssh.set_jump_hosts(config.jump_hosts().map(OsString::from));
 
     // Wire --contimeout to SSH's -o ConnectTimeout.
     // upstream: options.c — contimeout is forwarded as ConnectTimeout when

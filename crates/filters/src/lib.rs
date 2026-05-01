@@ -99,6 +99,8 @@
 //! - [`globset`] for the glob matching primitives used internally.
 
 mod action;
+/// AppleDouble (`._foo`) sidecar exclusion patterns for `--apple-double-skip`.
+pub mod apple_double;
 /// Per-directory scoped filter chain with push/pop semantics.
 pub mod chain;
 mod compiled;
@@ -114,12 +116,15 @@ mod rule;
 mod set;
 
 pub use action::FilterAction;
+pub use apple_double::{
+    DEFAULT_APPLE_DOUBLE_PATTERN, default_patterns as apple_double_default_patterns,
+};
 pub use chain::{DirFilterGuard, DirMergeConfig, FilterChain, FilterChainError};
 pub use cvs::{DEFAULT_CVSIGNORE, default_patterns as cvs_default_patterns};
 pub use error::FilterError;
 pub use merge::{MergeFileError, parse_rules, read_rules, read_rules_recursive};
 pub use rule::FilterRule;
-pub use set::{FilterSet, FilterSetError, cvs_exclusion_rules};
+pub use set::{FilterSet, FilterSetError, apple_double_exclusion_rules, cvs_exclusion_rules};
 
 #[cfg(test)]
 mod tests;

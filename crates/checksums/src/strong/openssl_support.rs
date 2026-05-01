@@ -18,6 +18,8 @@ fn detect() -> Result<(), ()> {
     let md5 = MessageDigest::md5();
 
     Hasher::new(md5).map_err(|_| ())?;
+    // MD4 may be absent on OpenSSL builds that exclude the legacy provider;
+    // the probe is best-effort and detection succeeds as long as MD5 works.
     if let Some(md4) = MessageDigest::from_name("md4") {
         let _ = Hasher::new(md4);
     }

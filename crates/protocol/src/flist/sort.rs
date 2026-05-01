@@ -42,7 +42,7 @@ struct SortKey {
 impl SortKey {
     fn new(index: usize, entry: &FileEntry) -> Self {
         let bytes = entry.name_bytes();
-        let last_slash = memrchr(b'/', bytes).map_or(u32::MAX, |p| p as u32);
+        let last_slash = memrchr(b'/', &bytes).map_or(u32::MAX, |p| p as u32);
         Self {
             index: index as u32,
             is_dir: entry.is_dir(),
@@ -85,7 +85,9 @@ impl SortKey {
 pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
     let key_a = SortKey::new(0, a);
     let key_b = SortKey::new(0, b);
-    compare_with_keys(a.name_bytes(), &key_a, b.name_bytes(), &key_b)
+    let bytes_a = a.name_bytes();
+    let bytes_b = b.name_bytes();
+    compare_with_keys(&bytes_a, &key_a, &bytes_b, &key_b)
 }
 
 /// Protocol < 29 comparison: plain byte-for-byte comparison without
@@ -227,10 +229,9 @@ pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool, protocol_pre
         // Protocol < 29: plain lexicographic sort, no file-before-dir.
         // upstream: flist.c:3223 - t_path = t_ITEM at protocol < 29.
         let cmp = |a: &SortKey, b: &SortKey| {
-            compare_with_keys_pre29(
-                file_list[a.index as usize].name_bytes(),
-                file_list[b.index as usize].name_bytes(),
-            )
+            let bytes_a = file_list[a.index as usize].name_bytes();
+            let bytes_b = file_list[b.index as usize].name_bytes();
+            compare_with_keys_pre29(&bytes_a, &bytes_b)
         };
         if use_qsort {
             keys.sort_unstable_by(cmp);
@@ -239,12 +240,9 @@ pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool, protocol_pre
         }
     } else {
         let cmp = |a: &SortKey, b: &SortKey| {
-            compare_with_keys(
-                file_list[a.index as usize].name_bytes(),
-                a,
-                file_list[b.index as usize].name_bytes(),
-                b,
-            )
+            let bytes_a = file_list[a.index as usize].name_bytes();
+            let bytes_b = file_list[b.index as usize].name_bytes();
+            compare_with_keys(&bytes_a, a, &bytes_b, b)
         };
         if use_qsort {
             keys.sort_unstable_by(cmp);
@@ -760,12 +758,14 @@ mod tests {
     fn pre29_dot_first() {
         let dot = make_dir(".");
         let file = make_file("abc.txt");
+        let dot_bytes = dot.name_bytes();
+        let file_bytes = file.name_bytes();
         assert_eq!(
-            compare_with_keys_pre29(dot.name_bytes(), file.name_bytes()),
+            compare_with_keys_pre29(&dot_bytes, &file_bytes),
             Ordering::Less
         );
         assert_eq!(
-            compare_with_keys_pre29(file.name_bytes(), dot.name_bytes()),
+            compare_with_keys_pre29(&file_bytes, &dot_bytes),
             Ordering::Greater
         );
     }

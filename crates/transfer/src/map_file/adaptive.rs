@@ -53,6 +53,24 @@ impl AdaptiveMapStrategy {
         }
     }
 
+    /// Opens a file forcing the buffered (non-mmap) variant regardless of size.
+    ///
+    /// Used when the basis file pointer must never reach an io_uring submission
+    /// (cold-page faults can stall the SQPOLL kernel thread, and concurrent
+    /// truncation raises `SIGBUS` inside the kernel SQE service path).
+    /// See `docs/design/basis-file-io-policy.md` and audit
+    /// `docs/audits/mmap-iouring-co-usage.md` finding F1.
+    ///
+    /// Mirrors upstream rsync's deliberate avoidance of `mmap(2)` for basis
+    /// files (`fileio.c:214-217`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be opened.
+    pub fn open_buffered<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        Ok(Self::Buffered(BufferedMap::open(path)?))
+    }
+
     /// Returns true if using memory-mapped strategy.
     #[must_use]
     pub const fn is_mmap(&self) -> bool {

@@ -5,8 +5,12 @@
 //! blocks on disk latency.
 //!
 //! When io_uring is available (Linux 5.6+ with the `io_uring` feature), the
-//! thread creates a single [`fast_io::IoUringDiskBatch`] and reuses it across
-//! all file operations, batching writes into `io_uring_enter` syscalls.
+//! thread creates a single [`fast_io::IoUringDiskBatch`] and threads it into
+//! every per-file [`process_file`]/[`process_whole_file`] call so writes are
+//! submitted as batched io_uring SQEs. When the batch is unavailable or sparse
+//! mode is requested, the thread falls back to the buffered writer using a
+//! reusable 256 KB scratch buffer that mirrors upstream's static
+//! `wf_writeBuf` (fileio.c:161).
 
 use std::io;
 use std::thread::{self, JoinHandle};
@@ -124,23 +128,35 @@ fn disk_thread_main(
     config: DiskCommitConfig,
 ) {
     let mut write_buf = Vec::with_capacity(WRITE_BUF_SIZE);
-    let mut _disk_batch = try_create_disk_batch(config.io_uring_policy);
+    let mut disk_batch = try_create_disk_batch(config.io_uring_policy);
 
-    log_io_uring_status(config.io_uring_policy, _disk_batch.is_some());
+    log_io_uring_status(config.io_uring_policy, disk_batch.is_some());
 
     while let Ok(msg) = file_rx.recv() {
         match msg {
             FileMessage::Shutdown => break,
             FileMessage::Begin(begin) => {
-                let result =
-                    process_file(&file_rx, &buf_return_tx, &config, *begin, &mut write_buf);
+                let result = process_file(
+                    &file_rx,
+                    &buf_return_tx,
+                    &config,
+                    *begin,
+                    &mut write_buf,
+                    disk_batch.as_mut(),
+                );
                 if result_tx.send(result).is_err() {
                     break;
                 }
             }
             FileMessage::WholeFile { begin, data } => {
-                let result =
-                    process_whole_file(&buf_return_tx, &config, *begin, data, &mut write_buf);
+                let result = process_whole_file(
+                    &buf_return_tx,
+                    &config,
+                    *begin,
+                    data,
+                    &mut write_buf,
+                    disk_batch.as_mut(),
+                );
                 if result_tx.send(result).is_err() {
                     break;
                 }

@@ -252,7 +252,6 @@ mod numeric_mode {
         assert!(!modifiers.is_empty());
     }
 
-    // Four-digit modes with special bits
     #[test]
     fn mode_4755_setuid() {
         let modifiers = ChmodModifiers::parse("4755").expect("parse 4755");
@@ -283,7 +282,6 @@ mod numeric_mode {
         assert!(!modifiers.is_empty());
     }
 
-    // Invalid numeric modes
     #[test]
     fn invalid_two_digit_mode() {
         let result = ChmodModifiers::parse("75");
@@ -567,9 +565,7 @@ mod apply_mode {
         let file_result = modifiers.apply(0o644, file_type);
         let dir_result = modifiers.apply(0o644, dir_type);
 
-        // File should be unchanged
         assert_eq!(file_result & 0o777, 0o644);
-        // Directory should be changed
         assert_eq!(dir_result & 0o777, 0o755);
     }
 
@@ -588,9 +584,7 @@ mod apply_mode {
         let file_result = modifiers.apply(0o755, file_type);
         let dir_result = modifiers.apply(0o755, dir_type);
 
-        // File should be changed
         assert_eq!(file_result & 0o777, 0o644);
-        // Directory should be unchanged
         assert_eq!(dir_result & 0o777, 0o755);
     }
 
@@ -622,7 +616,6 @@ mod apply_mode {
         let dir_type = get_file_type(&dir_path);
         let modifiers = ChmodModifiers::parse("a+X").expect("parse");
 
-        // Directory should get execute bit
         let result = modifiers.apply(0o600, dir_type);
         assert_eq!(result & 0o111, 0o111);
     }
@@ -824,10 +817,9 @@ mod error_cases {
 }
 
 mod upstream_compatibility {
-    use super::*;
+    //! Tests that document behavior matching upstream rsync's `--chmod` semantics.
 
-    /// Tests that document behavior that should match upstream rsync.
-    /// These tests verify our implementation matches rsync's documented behavior.
+    use super::*;
 
     #[test]
     fn rsync_style_directory_only_execute() {
@@ -878,7 +870,6 @@ mod upstream_compatibility {
     #[cfg(unix)]
     #[test]
     fn upstream_behavior_fgo_minus_w() {
-        // Verify Fgo-w removes group/other write from files, leaves directories alone
         let temp = tempfile::tempdir().expect("tempdir");
         let file_path = temp.path().join("test.txt");
         let dir_path = temp.path().join("testdir");
@@ -894,11 +885,10 @@ mod upstream_compatibility {
 
         let modifiers = ChmodModifiers::parse("Fgo-w").expect("parse");
 
-        // File: 0o666 -> 0o644 (remove g-w and o-w)
+        // File: 0o666 -> 0o644 (remove g-w and o-w); directory unchanged.
         let file_result = modifiers.apply(0o666, file_type);
         assert_eq!(file_result & 0o777, 0o644);
 
-        // Directory: unchanged
         let dir_result = modifiers.apply(0o777, dir_type);
         assert_eq!(dir_result & 0o777, 0o777);
     }
@@ -906,7 +896,6 @@ mod upstream_compatibility {
     #[cfg(unix)]
     #[test]
     fn upstream_behavior_d755_f644() {
-        // Verify D755,F644 sets correct modes for each type
         let temp = tempfile::tempdir().expect("tempdir");
         let file_path = temp.path().join("test.txt");
         let dir_path = temp.path().join("testdir");
@@ -932,7 +921,6 @@ mod upstream_compatibility {
     #[cfg(unix)]
     #[test]
     fn upstream_behavior_ugo_equals_rwx() {
-        // Verify ugo=rwX behavior matches rsync
         let temp = tempfile::tempdir().expect("tempdir");
         let file_path = temp.path().join("test.txt");
         let dir_path = temp.path().join("testdir");

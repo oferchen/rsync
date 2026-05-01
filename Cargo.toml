@@ -52,7 +52,7 @@ acl = ["cli/acl", "core/acl"]
 # Extended attributes (xattr) support on Unix systems
 xattr = ["cli/xattr", "core/xattr"]
 # Character encoding conversion for filenames
-iconv = ["core/iconv"]
+iconv = ["cli/iconv", "core/iconv"]
 
 # ============================================================================
 # Performance Optimization Features

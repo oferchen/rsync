@@ -305,6 +305,9 @@ where
     let ssh_port = matches
         .remove_one::<OsString>("ssh-port")
         .and_then(|v| v.to_string_lossy().parse::<u16>().ok());
+    let jump_host = matches
+        .remove_one::<OsString>("jump-host")
+        .filter(|v| !v.is_empty());
 
     let compress_level_opt = matches.get_one::<OsString>("compress-level").cloned();
     if let Some(ref value) = compress_level_opt
@@ -575,6 +578,7 @@ where
     let rsync_filter_shortcuts = rsync_filter_indices.len();
     let filter_args = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
     let cvs_exclude = matches.get_flag("cvs-exclude");
+    let apple_double_skip = matches.get_flag("apple-double-skip");
     let files_from = matches
         .remove_many::<OsString>("files-from")
         .map(Iterator::collect)
@@ -751,6 +755,7 @@ where
         include_from,
         filters: filter_args,
         cvs_exclude,
+        apple_double_skip,
         rsync_filter_shortcuts,
         files_from,
         from0,
@@ -778,5 +783,6 @@ where
         ssh_strict_host_key_checking,
         ssh_ipv6,
         ssh_port,
+        jump_host,
     })
 }

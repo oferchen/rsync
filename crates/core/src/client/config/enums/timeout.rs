@@ -1,26 +1,28 @@
 use std::num::NonZeroU64;
 use std::time::Duration;
 
-/// Describes the timeout configuration applied to network operations.
+/// Timeout configuration for network operations.
 ///
-/// The variant captures whether the caller requested a custom timeout, disabled
-/// socket timeouts entirely, or asked to rely on the default for the current
-/// operation. Higher layers convert the setting into concrete [`Duration`]
-/// values depending on the transport in use.
+/// Higher layers resolve this into a concrete [`Duration`] (or `None` to
+/// disable) via [`TransferTimeout::effective`], supplying a transport-specific
+/// default.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum TransferTimeout {
-    /// Use the default timeout for the current operation.
+    /// Defer to the caller-supplied default.
     #[default]
     Default,
     /// Disable socket timeouts entirely.
     Disabled,
-    /// Apply a caller-provided timeout expressed in seconds.
+    /// Explicit timeout in seconds. `NonZeroU64` rules out zero, which upstream
+    /// rsync treats as "no timeout" rather than "expire immediately"
+    /// (upstream: io.c:set_io_timeout, options.c:--no-timeout).
     Seconds(NonZeroU64),
 }
 
 impl TransferTimeout {
-    /// Returns the timeout expressed as a [`Duration`] using the provided
-    /// default when the setting is [`TransferTimeout::Default`].
+    /// Resolves to a concrete [`Duration`], or `None` when timeouts are disabled.
+    ///
+    /// `default` is used only for the [`TransferTimeout::Default`] variant.
     pub const fn effective(self, default: Duration) -> Option<Duration> {
         match self {
             TransferTimeout::Default => Some(default),
@@ -29,7 +31,7 @@ impl TransferTimeout {
         }
     }
 
-    /// Convenience helper returning the raw seconds value when specified.
+    /// Returns the configured seconds value, or `None` for `Default`/`Disabled`.
     pub const fn as_seconds(self) -> Option<NonZeroU64> {
         match self {
             TransferTimeout::Seconds(value) => Some(value),

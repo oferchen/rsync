@@ -140,8 +140,23 @@ impl ChecksumFactory {
         let seed_u64 = self.seed as u64;
 
         match self.algorithm {
-            ChecksumAlgorithm::None => SignatureAlgorithm::Md4,
-            ChecksumAlgorithm::MD4 => SignatureAlgorithm::Md4,
+            // upstream: checksum.c:358-396 - MD4 appends the 4-byte LE seed
+            // after the data when `checksum_seed != 0`. A zero seed is the
+            // "no seed" case and produces an unseeded digest.
+            ChecksumAlgorithm::None => {
+                if self.seed == 0 {
+                    SignatureAlgorithm::Md4
+                } else {
+                    SignatureAlgorithm::Md4Seeded { seed: self.seed }
+                }
+            }
+            ChecksumAlgorithm::MD4 => {
+                if self.seed == 0 {
+                    SignatureAlgorithm::Md4
+                } else {
+                    SignatureAlgorithm::Md4Seeded { seed: self.seed }
+                }
+            }
             ChecksumAlgorithm::MD5 => {
                 let seed_config = if self.use_proper_seed_order {
                     Md5Seed::proper(self.seed)
@@ -311,6 +326,38 @@ mod tests {
             factory.signature_algorithm(),
             SignatureAlgorithm::Md4
         ));
+    }
+
+    #[test]
+    fn signature_algorithm_md4_with_seed_returns_md4_seeded() {
+        // upstream: checksum.c:358-396 - MD4 appends checksum_seed when != 0
+        let factory = ChecksumFactory::new(ChecksumAlgorithm::MD4, 0x12345678, false);
+        let sig = factory.signature_algorithm();
+
+        if let SignatureAlgorithm::Md4Seeded { seed } = sig {
+            assert_eq!(seed, 0x12345678);
+        } else {
+            panic!("Expected Md4Seeded signature algorithm, got {sig:?}");
+        }
+    }
+
+    #[test]
+    fn signature_algorithm_md4_with_zero_seed_returns_unseeded_md4() {
+        // upstream: checksum.c:377 - `if (checksum_seed)` skips append when 0
+        let factory = ChecksumFactory::new(ChecksumAlgorithm::MD4, 0, false);
+        assert!(matches!(
+            factory.signature_algorithm(),
+            SignatureAlgorithm::Md4
+        ));
+    }
+
+    #[test]
+    fn signature_algorithm_none_with_seed_returns_md4_seeded() {
+        // ChecksumAlgorithm::None falls back to MD4 semantics; seed must
+        // still be honoured to mirror upstream behaviour.
+        let factory = ChecksumFactory::new(ChecksumAlgorithm::None, 42, false);
+        let sig = factory.signature_algorithm();
+        assert!(matches!(sig, SignatureAlgorithm::Md4Seeded { seed: 42 }));
     }
 
     #[test]

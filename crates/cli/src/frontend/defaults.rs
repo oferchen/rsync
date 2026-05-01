@@ -12,7 +12,7 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--suffix, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-times, --ignore-existing, --existing, ",
     "--ignore-missing-args, --delete-missing-args, --update/-u, --modify-window, --exclude, --exclude-from, ",
     "--include, --include-from, --compare-dest, --copy-dest, --link-dest, --hard-links/-H, --no-hard-links, ",
-    "--cvs-exclude/-C, --filter/-F (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, ",
+    "--cvs-exclude/-C, --apple-double-skip, --filter/-F (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, ",
     "--from0, --no-from0, --bwlimit, --no-bwlimit, --timeout, --contimeout, --stop-after/--time-limit, --stop-at, --sockopts, ",
     "--blocking-io, --no-blocking-io, --protocol, --compress/-z, --no-compress, --compress-level, --compress-choice, ",
     "--skip-compress, --open-noatime, --no-open-noatime, --iconv, --no-iconv, --info, --debug, --verbose/-v, --no-verbose, ",
@@ -75,6 +75,14 @@ pub(super) const CVS_EXCLUDE_PATTERNS: &[&str] = &[
     ".bzr/",
 ];
 
+/// Default patterns excluded by `--apple-double-skip` (macOS AppleDouble sidecars).
+///
+/// These files (`._foo`) carry FinderInfo, resource forks, and extended
+/// attributes for files on filesystems that cannot represent them natively.
+/// They are rarely useful when transferred to other systems and clutter
+/// destinations.
+pub(super) const APPLE_DOUBLE_EXCLUDE_PATTERNS: &[&str] = &["._*"];
+
 /// Timestamp format used for `--list-only` and `--out-format` placeholders.
 pub(crate) const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
     "[year]/[month padding:zero]/[day padding:zero] [hour padding:zero]:[minute padding:zero]:[second padding:zero]"
@@ -130,5 +138,20 @@ mod tests {
     #[test]
     fn list_timestamp_format_not_empty() {
         assert!(!LIST_TIMESTAMP_FORMAT.is_empty());
+    }
+
+    #[test]
+    fn apple_double_exclude_patterns_not_empty() {
+        assert!(!APPLE_DOUBLE_EXCLUDE_PATTERNS.is_empty());
+    }
+
+    #[test]
+    fn apple_double_exclude_patterns_contains_dot_underscore() {
+        assert!(APPLE_DOUBLE_EXCLUDE_PATTERNS.contains(&"._*"));
+    }
+
+    #[test]
+    fn supported_options_list_contains_apple_double_skip() {
+        assert!(SUPPORTED_OPTIONS_LIST.contains("--apple-double-skip"));
     }
 }

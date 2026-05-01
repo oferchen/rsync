@@ -99,8 +99,8 @@ pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Resu
 
     let leading = initial[0];
 
-    // Place the initial data bytes (after the leading tag) into the result
-    // buffer at positions 0..min-1, mirroring `memcpy(u.b, b2+1, min_bytes-1)`.
+    // upstream: io.c:read_varlong() `memcpy(u.b, b2+1, min_bytes-1)` -
+    // initial data bytes (after the leading tag) land at result[0..min-1].
     let mut result = [0u8; 9];
     result[..min - 1].copy_from_slice(&initial[1..min]);
 
@@ -113,10 +113,9 @@ pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Resu
             return Err(invalid_data("overflow in read_varlong"));
         }
         reader.read_exact(&mut result[min - 1..min - 1 + extra])?;
-        // The masked leading byte goes into position min+extra-1
         result[min + extra - 1] = leading & (bit - 1);
     } else {
-        // No extra bytes - all 8 bits of the leading byte are data
+        // No extra bytes: all 8 bits of the leading byte are data, no masking.
         result[min - 1] = leading;
     }
 

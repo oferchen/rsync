@@ -439,7 +439,6 @@ fn value_format_is_s2_high_s1_low() {
     let s1 = value & 0xFFFF;
     let s2 = (value >> 16) & 0xFFFF;
 
-    // Verify components match digest
     let digest = checksum.digest();
     assert_eq!(s1 as u16, digest.sum1());
     assert_eq!(s2 as u16, digest.sum2());
@@ -481,7 +480,6 @@ fn from_rolling_checksum_ref_for_rolling_digest() {
 
 #[test]
 fn simd_acceleration_available_returns_bool() {
-    // Just verify it doesn't panic and returns a boolean
     let _available = simd_acceleration_available();
 }
 
@@ -591,7 +589,6 @@ fn force_state_sets_internal_values() {
 
 #[test]
 fn default_reader_buffer_len_constant() {
-    // Verify constant is reasonable for efficient I/O
     let len = RollingChecksum::DEFAULT_READER_BUFFER_LEN;
     assert_ne!(len, 0);
     assert!(len >= 1024, "buffer should be at least 1KB, got {len}");
@@ -604,12 +601,10 @@ fn x86_cpu_feature_detection_is_cached() {
     assert!(x86::cpu_features_cached_for_tests());
 }
 
-// ==== Inter-architecture compatibility golden tests ====
-//
-// These tests verify the checksum algorithm produces identical results across all
-// supported architectures (x86 SSE2/AVX2, ARM NEON, scalar fallback). The expected
-// values are computed once and hardcoded, ensuring any SIMD optimization changes
-// don't break compatibility.
+// Golden tests below verify that the checksum algorithm produces identical
+// results across all supported architectures (x86 SSE2/AVX2, ARM NEON, scalar
+// fallback). The expected values are hardcoded, so any SIMD optimisation that
+// drifts from upstream `checksum.c:get_checksum1()` will be caught here.
 
 #[test]
 fn golden_test_empty_input() {
@@ -692,8 +687,7 @@ fn golden_test_ascending_bytes() {
 
 #[test]
 fn golden_test_block_length_700() {
-    // rsync commonly uses 700-byte blocks for small files
-    // Create deterministic data pattern
+    // 700-byte block matches the default block size rsync picks for small files.
     let mut data = vec![0u8; 700];
     for (i, byte) in data.iter_mut().enumerate() {
         *byte = ((i * 31) % 256) as u8;
@@ -722,7 +716,6 @@ fn golden_test_block_length_4096() {
 
 #[test]
 fn golden_test_incremental_matches_full() {
-    // Verify incremental updates produce same result as full update
     let data = b"The quick brown fox jumps over the lazy dog";
 
     let mut full = RollingChecksum::new();
@@ -739,18 +732,14 @@ fn golden_test_incremental_matches_full() {
 
 #[test]
 fn golden_test_roll_produces_expected_value() {
-    // Verify rolling produces correct checksum after shift
     let data = b"ABCDEFGH";
     let mut checksum = RollingChecksum::new();
     checksum.update(&data[0..4]); // "ABCD"
 
-    // Verify initial value
     assert_eq!(checksum.value(), 0x0294_010a);
 
-    // Roll: remove 'A', add 'E'
     checksum.roll(b'A', b'E').unwrap();
 
-    // Should match fresh computation of "BCDE"
     let mut fresh = RollingChecksum::new();
     fresh.update(&data[1..5]);
     assert_eq!(checksum.value(), fresh.value());

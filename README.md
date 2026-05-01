@@ -99,6 +99,20 @@ Tested against upstream rsync **3.0.9**, **3.1.3**, and **3.4.1** in CI across p
 
 Threaded architecture replaces upstream's fork-based pipeline while keeping full protocol compatibility, reducing syscall overhead and context switches. Adaptive I/O buffers scale from 8KB to 1MB based on file size. Optional io_uring on Linux 5.6+ with three policies: *auto* (default; probe kernel and fall back to standard I/O), `--io-uring` (require io_uring; error if unavailable), `--no-io-uring` (always use standard buffered I/O). The active backend is reported by `--version` and `-vv` output. See `oc-rsync(1)` for details.
 
+### Known Limitations / Architectural Trade-offs
+
+oc-rsync is wire-compatible with upstream rsync 3.4.1, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
+
+- **io_uring kernel requirement.** Provided buffer rings (PBUF_RING) require Linux **5.19+**; older 5.6-5.18 kernels fall back to standard buffered I/O via runtime probing.
+- **Fixed io_uring buffer pool.** The registered buffer pool is sized at compile time (1024 × 4 KiB = 4 MiB) and does not adapt under sustained I/O pressure. Workloads with very high concurrent file fan-out may see throughput plateau before saturating the device.
+- **bgid namespace.** io_uring buffer-group IDs are a 16-bit namespace; the buffer ring helpers cap at this bound. Long-running daemons that recycle thousands of distinct ring groups should monitor for exhaustion.
+- **Single-thread delta computation.** The delta sender is sequential per file. Rolling-hash fan-out across files is not yet parallelised; large-file workloads fully utilise one CPU per transfer rather than scaling delta CPU horizontally.
+- **SSH compression interaction.** When the SSH cipher already performs compression (e.g., `Compression yes` in `ssh_config`), running `oc-rsync -z` will compress payloads twice. There is currently no auto-detection / auto-disable path; operators should pick one layer.
+- **Daemon TLS.** Native TLS is not built into the daemon. Deploy `oc-rsync --daemon` behind `stunnel`, `ssh -L`, or a reverse proxy that terminates TLS. See [SECURITY.md](./SECURITY.md) for hardening recipes.
+- **Windows IOCP not wired.** IOCP is implemented in `fast_io` but not yet consumed by the transfer pipeline (#1868); Windows uses standard buffered I/O for transfers.
+- **`.rsync-filter` per-directory inheritance.** Inheritance semantics match upstream for the common cases tested in the interop suite, but exhaustive parity against upstream's filter-tree corner cases (deeply nested merges, anchored vs unanchored interactions) is still being validated.
+- **`--checksum-seed` / `--fuzzy` / `--iconv`.** These flags are accepted and exercised in the common path; deeper conformance audits against upstream rsync 3.4.1 are tracked separately.
+
 ---
 
 ## Installation

@@ -219,6 +219,13 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // as --log-format=%i, but the local ServerConfig also needs the flag set so
     // the generator's maybe_emit_itemize() produces client-side output via callback.
     server_config.flags.info_flags.itemize = config.itemize_changes();
+    // upstream: flist.c::iconv_for_local and options.c::recv_iconv_settings -
+    // when --iconv is configured, the local process must transcode file-list
+    // entries between the local and remote charsets. Without this bridge the
+    // CLI parses --iconv, validates it, and forwards it to the remote peer
+    // over SSH/daemon, but the in-process file-list reader and writer never
+    // see a converter and silently pass raw bytes through.
+    server_config.connection.iconv = config.iconv().resolve_converter();
 }
 
 #[cfg(test)]

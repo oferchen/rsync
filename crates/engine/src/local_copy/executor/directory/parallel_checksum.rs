@@ -164,6 +164,23 @@ fn hash_file_contents(
             }
             hasher.finalize().as_ref().to_vec()
         }
+        SignatureAlgorithm::Md4Seeded { seed } => {
+            // upstream: checksum.c:377-380 - append checksum_seed as 4 LE bytes
+            // after the file data when seed != 0. A zero seed degenerates to
+            // unseeded MD4 (preserved here for symmetry with `Md4`).
+            let mut hasher = Md4::new();
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+            }
+            if seed != 0 {
+                hasher.update(&seed.to_le_bytes());
+            }
+            hasher.finalize().as_ref().to_vec()
+        }
         SignatureAlgorithm::Md5 { seed_config } => {
             let mut hasher = Md5::with_seed(seed_config);
             loop {

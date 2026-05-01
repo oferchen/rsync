@@ -2759,3 +2759,92 @@ fn xattr_emission_suppressed_when_peer_lacks_xattr_capability() {
         buf_suppressed.len(),
     );
 }
+
+/// Regression for #1905 / #1939.
+///
+/// On every platform, the wire-encoded filename must NEVER contain a backslash
+/// byte. POSIX peers expect `/` as the only separator (upstream `flist.c`
+/// writes filename bytes verbatim, and upstream's only Windows port runs
+/// under Cygwin which presents `/`-separated paths to the writer).
+#[test]
+fn wire_encoded_filename_never_contains_backslash_byte() {
+    use std::path::PathBuf;
+
+    // Construct a path the same way an enumeration loop would on the host:
+    // `PathBuf::push` uses the native separator on Windows.
+    let mut path = PathBuf::from("subdir");
+    path.push("file.txt");
+
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(test_protocol());
+    let entry = FileEntry::new_file(path, 100, 0o644);
+
+    writer.write_entry(&mut buf, &entry).unwrap();
+
+    assert!(
+        !buf.contains(&b'\\'),
+        "wire-encoded entry must not contain a `\\` byte, got: {buf:?}",
+    );
+    let needle = b"subdir/file.txt";
+    assert!(
+        buf.windows(needle.len()).any(|w| w == needle),
+        "wire-encoded entry must contain the forward-slash form `subdir/file.txt`, got: {buf:?}",
+    );
+}
+
+/// Regression for #1905 / #1939: roundtrip via the reader must yield a
+/// `/`-separated name regardless of the host platform that produced the bytes.
+#[test]
+fn wire_filename_roundtrip_yields_forward_slashes() {
+    use super::super::read::FileListReader;
+    use std::io::Cursor;
+    use std::path::PathBuf;
+
+    let mut path = PathBuf::from("a");
+    path.push("b");
+    path.push("c.txt");
+
+    let protocol = test_protocol();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol);
+    let entry = FileEntry::new_file(path, 42, 0o644);
+
+    writer.write_entry(&mut buf, &entry).unwrap();
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut cursor = Cursor::new(&buf[..]);
+    let mut reader = FileListReader::new(protocol);
+    let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+    assert_eq!(read_entry.name(), "a/b/c.txt");
+    assert_eq!(read_entry.size(), 42);
+}
+
+/// Regression for #1905 / #1939: symlink targets must also be normalised.
+/// A Windows-side relative symlink target like `sub\target.txt` would emit
+/// raw bytes containing `\` without normalisation; this asserts the helper is
+/// applied on the symlink-target write path too.
+#[test]
+fn wire_encoded_symlink_target_never_contains_backslash_byte() {
+    use std::path::PathBuf;
+
+    let mut target = PathBuf::from("sub");
+    target.push("target.txt");
+
+    let mut entry = FileEntry::new_symlink("link".into(), target);
+    entry.set_mtime(0, 0);
+
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(test_protocol()).with_preserve_links(true);
+    writer.write_entry(&mut buf, &entry).unwrap();
+
+    assert!(
+        !buf.contains(&b'\\'),
+        "wire-encoded symlink entry must not contain a `\\` byte, got: {buf:?}",
+    );
+    let needle = b"sub/target.txt";
+    assert!(
+        buf.windows(needle.len()).any(|w| w == needle),
+        "symlink target must be forward-slash form `sub/target.txt`, got: {buf:?}",
+    );
+}

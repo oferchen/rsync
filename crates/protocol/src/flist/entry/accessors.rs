@@ -1,6 +1,8 @@
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use super::super::wire_path::path_bytes_to_wire;
 use super::FileEntry;
 use super::core::extract_dirname;
 use super::extras::FileEntryExtras;
@@ -94,7 +96,11 @@ impl FileEntry {
         #[cfg(not(unix))]
         {
             let s = self.name.to_string_lossy();
-            let trimmed = s.trim_start_matches('/');
+            // Trim both POSIX `/` and native `\` so behaviour matches the
+            // Unix branch when paths arrive in either form (e.g.
+            // `\\share\foo` from a Windows operand). Wire-form paths
+            // always use `/`, but Windows operands may carry `\`.
+            let trimmed = s.trim_start_matches(|c| c == '/' || c == '\\');
             if trimmed.len() != s.len() {
                 self.name = if trimmed.is_empty() {
                     PathBuf::from(".")
@@ -106,25 +112,26 @@ impl FileEntry {
         }
     }
 
-    /// Returns the path as raw bytes without UTF-8 validation.
+    /// Returns the path as wire-format bytes (rsync filename encoding).
     ///
-    /// This is an optimized accessor for protocol operations that work
-    /// with byte sequences. Use this for sorting, comparison, and wire
-    /// encoding to avoid repeated UTF-8 validation via `name().as_bytes()`.
+    /// Used for sorting, comparison, and wire encoding. On Unix, paths are
+    /// already `/`-separated and the underlying `OsStr` bytes are returned
+    /// without copying (`Cow::Borrowed`). On Windows, native `\` separators
+    /// are translated to `/` to match the rsync wire-format invariant
+    /// (upstream `flist.c:send_file_entry()` writes filename bytes
+    /// verbatim, and upstream's only Windows port runs under Cygwin which
+    /// presents `/`-separated paths). When the input already contains no
+    /// `\` byte, the borrow path is taken without allocation.
     ///
-    /// On Unix, paths are inherently byte sequences (OsStr), so this
-    /// provides zero-copy access. On other platforms, it performs UTF-8
-    /// encoding once rather than validating twice (name() then as_bytes()).
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:534-570` `send_file_entry()` filename emission.
+    /// - `util1.c:955-961` Cygwin POSIX boundary - the only `\` handling
+    ///   in upstream lives there, which oc-rsync does not run under.
     #[inline]
     #[must_use]
-    pub fn name_bytes(&self) -> &[u8] {
-        #[cfg(unix)]
-        {
-            use std::os::unix::ffi::OsStrExt;
-            self.name.as_os_str().as_bytes()
-        }
-        #[cfg(not(unix))]
-        self.name().as_bytes()
+    pub fn name_bytes(&self) -> Cow<'_, [u8]> {
+        path_bytes_to_wire(&self.name)
     }
 
     /// Returns the file size in bytes.

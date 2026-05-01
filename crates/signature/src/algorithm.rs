@@ -76,8 +76,19 @@ impl Eq for DigestBuf {}
 /// Strong checksum strategies supported by the signature generator.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SignatureAlgorithm {
-    /// MD4, used by upstream rsync for historical protocol versions.
+    /// MD4 with no seed, used by upstream rsync for historical protocol
+    /// versions when `checksum_seed` is zero.
     Md4,
+    /// MD4 with rsync's checksum seed appended after the data, mirroring
+    /// upstream `get_checksum2()` (`checksum.c:358-396`).
+    ///
+    /// Used by protocol versions below 30 when `checksum_seed != 0`. The
+    /// seed value is encoded as four little-endian bytes appended to the
+    /// hash input, exactly as `SIVAL(buf1, len, checksum_seed)` does.
+    Md4Seeded {
+        /// Checksum seed (`checksum_seed`) negotiated during protocol setup.
+        seed: i32,
+    },
     /// MD5, negotiated when both peers enable the checksum.
     ///
     /// Supports optional seeded hashing with configurable ordering for protocol
@@ -113,7 +124,9 @@ impl SignatureAlgorithm {
     #[must_use]
     pub const fn digest_len(self) -> usize {
         match self {
-            SignatureAlgorithm::Md4 | SignatureAlgorithm::Md5 { .. } => 16,
+            SignatureAlgorithm::Md4
+            | SignatureAlgorithm::Md4Seeded { .. }
+            | SignatureAlgorithm::Md5 { .. } => 16,
             SignatureAlgorithm::Sha1 => Sha1::DIGEST_LEN,
             SignatureAlgorithm::Xxh64 { .. } | SignatureAlgorithm::Xxh3 { .. } => 8,
             SignatureAlgorithm::Xxh3_128 { .. } => 16,
@@ -128,6 +141,9 @@ impl SignatureAlgorithm {
         match self {
             SignatureAlgorithm::Md4 => {
                 DigestBuf::from_slice(Md4::digest(data).as_ref(), effective_len)
+            }
+            SignatureAlgorithm::Md4Seeded { seed } => {
+                DigestBuf::from_slice(Md4::digest_with_seed(seed, data).as_ref(), effective_len)
             }
             SignatureAlgorithm::Md5 { seed_config } => DigestBuf::from_slice(
                 Md5::digest_with_seed(seed_config, data).as_ref(),
@@ -181,7 +197,10 @@ impl SignatureAlgorithm {
                     .collect()
             }
             _ => {
-                // Seeded MD5, SHA1, XXH64, XXH3, XXH3_128: per-element fallback
+                // Seeded MD4, seeded MD5, SHA1, XXH64, XXH3, XXH3_128:
+                // per-element fallback. Seeded MD4 cannot use the SIMD batch
+                // path because the per-block input includes a 4-byte LE seed
+                // suffix appended after the data (upstream: checksum.c:377-380).
                 blocks
                     .iter()
                     .map(|data| self.compute_truncated(data, len))
@@ -206,6 +225,16 @@ impl SignatureAlgorithm {
                 let mut h = Md4::new();
                 h.update(a);
                 h.update(b);
+                DigestBuf::from_slice(h.finalize().as_ref(), effective_len)
+            }
+            SignatureAlgorithm::Md4Seeded { seed } => {
+                let mut h = Md4::new();
+                h.update(a);
+                h.update(b);
+                // upstream: checksum.c:377-380 - append seed as 4 LE bytes
+                if seed != 0 {
+                    h.update(&seed.to_le_bytes());
+                }
                 DigestBuf::from_slice(h.finalize().as_ref(), effective_len)
             }
             SignatureAlgorithm::Md5 { seed_config } => {
@@ -358,6 +387,51 @@ mod tests {
                 "mismatch for {algo:?}"
             );
         }
+    }
+
+    /// Verifies seeded MD4 matches upstream's "append 4 LE seed bytes after
+    /// data" semantics for both the contiguous and split-slice paths.
+    ///
+    /// upstream: `checksum.c:358-396` get_checksum2() MD4 branch.
+    #[test]
+    fn md4_seeded_signature_matches_upstream_format() {
+        let data: &[u8] = b"two-block payload that splits across slices";
+        let seed: i32 = 0x0BADF00Du32 as i32;
+
+        // Reference: append seed bytes manually, then plain MD4.
+        let mut reference_buf = data.to_vec();
+        reference_buf.extend_from_slice(&seed.to_le_bytes());
+        let reference = SignatureAlgorithm::Md4.compute_truncated(&reference_buf, 16);
+
+        // Contiguous path
+        let seeded = SignatureAlgorithm::Md4Seeded { seed }.compute_truncated(data, 16);
+        assert_eq!(seeded.as_slice(), reference.as_slice());
+
+        // Split-slice path must agree with the contiguous result.
+        let (head, tail) = data.split_at(11);
+        let seeded_split =
+            SignatureAlgorithm::Md4Seeded { seed }.compute_truncated_slices(head, tail, 16);
+        assert_eq!(seeded_split.as_slice(), reference.as_slice());
+
+        // Batch path must agree with per-element path.
+        let blocks: Vec<&[u8]> = vec![data, b"second block"];
+        let batch = SignatureAlgorithm::Md4Seeded { seed }.compute_truncated_batch(&blocks, 16);
+        let per_elem: Vec<DigestBuf> = blocks
+            .iter()
+            .map(|d| SignatureAlgorithm::Md4Seeded { seed }.compute_truncated(d, 16))
+            .collect();
+        for (b, s) in batch.iter().zip(per_elem.iter()) {
+            assert_eq!(b.as_slice(), s.as_slice());
+        }
+
+        // Zero seed must agree with unseeded MD4 (upstream: `if (checksum_seed)`).
+        let zero_seed_unseeded =
+            SignatureAlgorithm::Md4Seeded { seed: 0 }.compute_truncated(data, 16);
+        let unseeded = SignatureAlgorithm::Md4.compute_truncated(data, 16);
+        assert_eq!(zero_seed_unseeded.as_slice(), unseeded.as_slice());
+
+        // Non-zero seed must produce a different digest from unseeded MD4.
+        assert_ne!(seeded.as_slice(), unseeded.as_slice());
     }
 
     /// Verifies that `compute_truncated_slices` with an empty second slice

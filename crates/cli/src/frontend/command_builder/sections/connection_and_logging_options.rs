@@ -258,6 +258,15 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("jump-host")
+                .long("jump-host")
+                .value_name("[user@]HOST[:PORT][,...]")
+                .help("Comma-separated proxy-jump hosts (forwarded as ssh -J).")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("args")
                 .action(ArgAction::Append)
                 .num_args(0..)

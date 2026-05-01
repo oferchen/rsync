@@ -355,8 +355,6 @@ fn consistent_results_across_calls() {
     assert_eq!(out1, out2);
 }
 
-// ---- Protocol version x feature flag matrix for selector and kind ----
-
 #[test]
 fn selector_protocol_version_0_returns_zlib() {
     let strategy = CompressionStrategySelector::for_protocol_version(0);
@@ -652,8 +650,6 @@ fn negotiate_local_preference_order_wins() {
     assert_eq!(strategy.algorithm_name(), "zlib");
 }
 
-// ---- Selector roundtrip tests: verify returned strategies compress/decompress ----
-
 #[test]
 fn selector_for_protocol_version_roundtrip() {
     for version in [0, 28, 29, 30, 31, 32, 35, 36, 255] {
@@ -749,8 +745,6 @@ fn selector_for_algorithm_roundtrip_lz4() {
     assert_eq!(&decompressed, TEST_DATA);
 }
 
-// ---- Concrete factory methods with explicit levels ----
-
 #[test]
 fn selector_zlib_with_level() {
     let strategy = CompressionStrategySelector::zlib(CompressionLevel::Fast);
@@ -789,8 +783,6 @@ fn selector_lz4_with_level() {
     assert_eq!(&decompressed, TEST_DATA);
 }
 
-// ---- Negotiate with custom compression level ----
-
 #[test]
 fn negotiate_passes_level_to_strategy() {
     let local = vec![CompressionAlgorithmKind::Zlib];
@@ -822,8 +814,6 @@ fn negotiate_none_kind_roundtrip() {
     strategy.decompress(&compressed, &mut decompressed).unwrap();
     assert_eq!(&decompressed, TEST_DATA);
 }
-
-// ---- Kind edge cases ----
 
 #[test]
 fn kind_for_protocol_version_boundary_29_is_zlib() {

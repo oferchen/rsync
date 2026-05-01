@@ -1,21 +1,10 @@
 name: Coverage
 
+# Temporarily disabled: nightly llvm-cov 22.1 SIGSEGVs in
+# llvm::coverage::CoverageMapping::getInstantiationGroups - deterministic
+# regression affecting both PR and master runs. Re-enable once a
+# known-good nightly is pinned in RUSTUP_TOOLCHAIN below.
 on:
-  push:
-    branches: [ master, main ]
-    paths:
-      - 'crates/**'
-      - 'src/**'
-      - 'tests/**'
-      - 'Cargo.toml'
-      - '.github/workflows/coverage.yml'
-  pull_request:
-    paths:
-      - 'crates/**'
-      - 'src/**'
-      - 'tests/**'
-      - 'Cargo.toml'
-      - '.github/workflows/coverage.yml'
   workflow_dispatch:
 
 concurrency:

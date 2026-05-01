@@ -5,7 +5,7 @@
 
 /// Device and inode pair identifying a unique file.
 ///
-/// // upstream: hlink.c struct idev - dev/ino pair for hardlink tracking
+/// upstream: hlink.c struct idev - dev/ino pair for hardlink tracking
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct DevIno {
     /// Device number.
@@ -24,7 +24,7 @@ impl DevIno {
 
 /// Entry in the hardlink table tracking the first occurrence and link count.
 ///
-/// // upstream: hlink.c struct hlink - tracks first file and nlink count
+/// upstream: hlink.c struct hlink - tracks first file and nlink count
 #[derive(Debug, Clone)]
 pub struct HardlinkEntry {
     /// Index of the first file in the hardlink group.

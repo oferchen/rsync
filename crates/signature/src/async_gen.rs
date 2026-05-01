@@ -92,9 +92,9 @@ pub struct SignatureResult {
 
 /// Message sent to worker threads.
 enum WorkerMessage {
-    /// Generate a signature.
+    /// Request that the worker compute a signature for the given basis file.
     GenerateSignature(SignatureRequest),
-    /// Shutdown signal.
+    /// Tell the worker to exit its receive loop.
     Shutdown,
 }
 
@@ -122,8 +122,7 @@ impl Default for AsyncSignatureConfig {
             .unwrap_or(2);
 
         Self {
-            // Cap at 4 threads - signature generation has diminishing returns
-            // beyond that due to disk I/O bottleneck
+            // Disk I/O bottleneck causes diminishing returns beyond 4 threads.
             num_threads: num_cpus.min(4),
             max_pending: 16,
         }
@@ -146,11 +145,8 @@ impl AsyncSignatureConfig {
     }
 }
 
-/// Async signature generator using a thread pool.
-///
-/// Spawns worker threads that generate signatures in the background,
-/// allowing the main transfer thread to overlap signature computation
-/// with network I/O.
+/// Spawns worker threads that generate signatures in the background, allowing
+/// the main transfer thread to overlap signature computation with network I/O.
 ///
 /// # Example
 ///
@@ -355,7 +351,6 @@ fn worker_thread_main_shared(
                 }
             }
             Ok(WorkerMessage::Shutdown) | Err(_) => {
-                // Shutdown requested or channel closed
                 break;
             }
         }

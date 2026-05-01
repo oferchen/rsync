@@ -294,7 +294,6 @@ mod tests {
         let digest = RollingDigest::from_bytes(data);
         assert_eq!(digest.len(), data.len());
         assert!(!digest.is_empty());
-        // Verify it matches manual computation
         let mut checksum = RollingChecksum::new();
         checksum.update(data);
         assert_eq!(digest, checksum.digest());
@@ -344,7 +343,7 @@ mod tests {
 
     #[test]
     fn rolling_digest_from_value_unpacks_correctly() {
-        // Pack s2 in high 16 bits, s1 in low 16 bits
+        // Mirrors the upstream wire layout: s2 in the high 16 bits, s1 in the low 16 bits.
         let s1: u16 = 0x1234;
         let s2: u16 = 0x5678;
         let packed: u32 = ((s2 as u32) << 16) | (s1 as u32);
@@ -358,7 +357,7 @@ mod tests {
     fn rolling_digest_value_packs_correctly() {
         let digest = RollingDigest::new(0x1234, 0x5678, 100);
         let value = digest.value();
-        // s2 should be in high 16 bits, s1 in low 16 bits
+        // Wire layout: s2 in the high 16 bits, s1 in the low 16 bits.
         assert_eq!(value & 0xFFFF, 0x1234);
         assert_eq!((value >> 16) & 0xFFFF, 0x5678);
     }

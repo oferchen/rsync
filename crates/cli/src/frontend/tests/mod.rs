@@ -119,6 +119,8 @@ mod parse_args_no_tests;
 mod parse_args_reads_tests;
 #[path = "parse_args_recognises_append.rs"]
 mod parse_args_recognises_append_tests;
+#[path = "parse_args_recognises_apple_double.rs"]
+mod parse_args_recognises_apple_double_tests;
 #[path = "parse_args_recognises_archive.rs"]
 mod parse_args_recognises_archive_tests;
 #[path = "parse_args_recognises_batch.rs"]
@@ -294,6 +296,8 @@ mod tracing_integration_tests;
 mod transfer_request_copies_tests;
 #[path = "transfer_request_reports.rs"]
 mod transfer_request_reports_tests;
+#[path = "transfer_request_with_apple_double.rs"]
+mod transfer_request_with_apple_double_tests;
 #[path = "transfer_request_with_archive.rs"]
 mod transfer_request_with_archive_tests;
 #[path = "transfer_request_with_bwlimit.rs"]

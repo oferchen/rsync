@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.5.x   | :white_check_mark: |
+| 0.6.x   | :white_check_mark: |
+| 0.5.x   | :warning: critical fixes only |
 | < 0.5   | :x:                |
 
 ## Reporting a Vulnerability
@@ -96,6 +97,41 @@ cargo +nightly fuzz run fuzz_legacy_greeting
 ```
 
 See `crates/protocol/fuzz/README.md` for detailed fuzzing instructions.
+
+## Hardening Notes
+
+These cover operationally relevant trade-offs in the current code base and how to mitigate them.
+
+### Buffer pool bounds checks
+
+`recycle_buffer(buf_id)` in the io_uring path validates that `buf_id` falls within the registered buffer pool using `debug_assert!`. In release builds the assertion compiles out, so a corrupted or attacker-influenced `buf_id` reaching this code path would index out of range and either produce undefined behaviour inside the io_uring crate or — more likely — be caught by the kernel as an invalid SQE. A defense-in-depth fix to upgrade the check to a release-mode bound is tracked; until it lands, do not expose the io_uring path to untrusted protocol input.
+
+### io_uring buffer-group ID namespace
+
+io_uring buffer-group IDs (`bgid`) live in a 16-bit namespace. The provided-buffer ring helpers in `fast_io` cap allocation at this bound, and exhaustion returns an error rather than wrapping. Long-running daemons that churn ring groups should monitor for the bounded error and recycle.
+
+### SSH double compression
+
+If the SSH transport itself compresses the stream (`Compression yes` in `ssh_config` or a cipher with built-in compression), running `oc-rsync -z` will compress payloads twice. The amplification surface is small in practice but adds CPU and can mask compressor-specific bugs. Disable one layer; the canonical choice is to leave compression to rsync (`-z` / `--compress`) and disable it in SSH.
+
+### Daemon TLS
+
+`oc-rsync --daemon` does not terminate TLS natively. To expose the daemon over an untrusted network, deploy it behind one of:
+
+- **stunnel** in front of `rsync://`-style daemon traffic
+- **SSH tunnel** (`ssh -L` to a localhost-bound daemon)
+- **A reverse proxy** that performs TLS termination (e.g., HAProxy in TCP mode)
+
+Bind the daemon itself to `127.0.0.1` (or a private VPC interface) and route external clients exclusively through the TLS terminator.
+
+### Daemon module hardening
+
+In addition to `use chroot = yes`, prefer:
+
+- `numeric ids = yes` so uid/gid mapping does not depend on the daemon's `passwd`/`group`
+- `refuse options = delete *` for read-only mirrors
+- `hosts allow` / `hosts deny` ACLs at the daemon layer (these run before authentication)
+- `secrets file` permissions of `0600`, owned by the daemon user only
 
 ## Security Best Practices for Users
 
