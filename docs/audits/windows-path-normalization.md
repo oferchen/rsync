@@ -202,9 +202,12 @@ bytes contain only `/` separators - is queued for the follow-up fix.
 
 ## Follow-up Tasks
 
-1. **HIGH** Implement `to_wire_path_bytes()` and apply at every wire
+1. ~~**HIGH** Implement `to_wire_path_bytes()` and apply at every wire
    encode site. Add golden-byte test for nested-directory entries on
-   Windows. Tracks F1.
+   Windows. Tracks F1.~~ **CLOSED** by PR #3456 (helper landed as
+   `path_bytes_to_wire` in `crates/protocol/src/flist/wire_path.rs`)
+   and audit-confirmed in
+   `docs/audits/windows-path-separator-encoding.md`.
 2. **MEDIUM** Promote `engine::local_copy::operand_is_remote` to a
    shared helper and delete the duplicate in `transfer_role.rs`. Tracks
    F2.
