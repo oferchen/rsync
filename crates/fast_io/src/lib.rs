@@ -159,9 +159,12 @@ pub use io_uring::{
     sqpoll_fell_back, writer_from_file,
 };
 
+#[cfg(all(target_os = "windows", feature = "iocp"))]
+pub use iocp::post_completion as iocp_post_completion;
 pub use iocp::{
-    IocpConfig, IocpOrStdReader, IocpOrStdWriter, IocpReader, IocpReaderFactory, IocpWriter,
-    IocpWriterFactory, iocp_availability_reason, is_iocp_available,
+    CompletionHandler, CompletionPump, IocpConfig, IocpOrStdReader, IocpOrStdWriter,
+    IocpPumpConfig, IocpReader, IocpReaderFactory, IocpWriter, IocpWriterFactory,
+    iocp_availability_reason, is_iocp_available, oneshot_handler,
     skip_event_optimization_available,
 };
 pub use iocp::{
