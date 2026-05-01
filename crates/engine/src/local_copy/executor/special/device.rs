@@ -288,6 +288,10 @@ fn store_fake_super_for_local_metadata(
 
     let stat = FakeSuperStat::from_metadata(metadata);
     store_fake_super(destination, &stat).map_err(|error| {
-        LocalCopyError::io("store fake-super metadata", destination.to_path_buf(), error)
+        LocalCopyError::io(
+            "store fake-super metadata",
+            destination.to_path_buf(),
+            error,
+        )
     })
 }
