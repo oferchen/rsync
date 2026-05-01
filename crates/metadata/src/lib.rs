@@ -80,17 +80,23 @@ mod acl_exacl;
 ))]
 mod acl_stub;
 
-#[cfg(not(any(all(
-    feature = "acl",
-    any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "freebsd",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "watchos"
-    )
-),)))]
+#[cfg(all(feature = "acl", windows))]
+mod acl_windows;
+
+#[cfg(not(any(
+    all(
+        feature = "acl",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "freebsd",
+            target_os = "ios",
+            target_os = "tvos",
+            target_os = "watchos"
+        )
+    ),
+    all(feature = "acl", windows),
+)))]
 mod acl_noop;
 
 mod apply;
@@ -156,17 +162,23 @@ pub use acl_exacl::{apply_acls_from_cache, get_rsync_acl, sync_acls};
 ))]
 pub use acl_stub::{apply_acls_from_cache, get_rsync_acl, sync_acls};
 
-#[cfg(not(any(all(
-    feature = "acl",
-    any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "freebsd",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "watchos"
-    )
-),)))]
+#[cfg(all(feature = "acl", windows))]
+pub use acl_windows::{apply_acls_from_cache, get_rsync_acl, sync_acls};
+
+#[cfg(not(any(
+    all(
+        feature = "acl",
+        any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "freebsd",
+            target_os = "ios",
+            target_os = "tvos",
+            target_os = "watchos"
+        )
+    ),
+    all(feature = "acl", windows),
+)))]
 pub use acl_noop::{apply_acls_from_cache, get_rsync_acl, sync_acls};
 
 pub use apply::{
