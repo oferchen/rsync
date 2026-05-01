@@ -101,11 +101,7 @@ fn write_attribute(
         .map_err(|error| map_xattr_error("write extended attribute", path, error))
 }
 
-fn remove_attribute(
-    path: &Path,
-    name: &[u8],
-    follow_symlinks: bool,
-) -> Result<(), MetadataError> {
+fn remove_attribute(path: &Path, name: &[u8], follow_symlinks: bool) -> Result<(), MetadataError> {
     backend::remove_attribute(path, name, follow_symlinks)
         .map_err(|error| map_xattr_error("remove extended attribute", path, error))
 }
@@ -709,11 +705,7 @@ mod tests {
         apply_xattrs_from_list(&file, &list, false).expect("apply empty list");
 
         // All permitted xattrs should be removed
-        assert!(
-            read_attribute(&file, &attr, false)
-                .expect("read")
-                .is_none()
-        );
+        assert!(read_attribute(&file, &attr, false).expect("read").is_none());
     }
 
     #[test]

@@ -242,12 +242,8 @@ pub fn list_attributes(path: &Path, _follow_symlinks: bool) -> io::Result<Vec<Os
     loop {
         // SAFETY: `handle.0` is a live FindFirstStream handle; `data`
         // outlives the call.
-        let next = unsafe {
-            FindNextStreamW(
-                handle.0,
-                (&mut data as *mut WIN32_FIND_STREAM_DATA).cast(),
-            )
-        };
+        let next =
+            unsafe { FindNextStreamW(handle.0, (&mut data as *mut WIN32_FIND_STREAM_DATA).cast()) };
         if next.is_err() {
             // SAFETY: `GetLastError` is always safe.
             let code = unsafe { GetLastError() };
@@ -306,14 +302,7 @@ pub fn read_attribute(
     loop {
         let mut read: u32 = 0;
         // SAFETY: handle is valid; `chunk` and `read` outlive the call.
-        let res = unsafe {
-            ReadFile(
-                handle.0,
-                Some(&mut chunk),
-                Some(&mut read),
-                None,
-            )
-        };
+        let res = unsafe { ReadFile(handle.0, Some(&mut chunk), Some(&mut read), None) };
         if res.is_err() {
             return Err(io::Error::last_os_error());
         }
@@ -369,14 +358,7 @@ pub fn write_attribute(
         let len = chunk.len().min(u32::MAX as usize);
         let mut written: u32 = 0;
         // SAFETY: handle is valid; the slice outlives the call.
-        let res = unsafe {
-            WriteFile(
-                handle.0,
-                Some(&chunk[..len]),
-                Some(&mut written),
-                None,
-            )
-        };
+        let res = unsafe { WriteFile(handle.0, Some(&chunk[..len]), Some(&mut written), None) };
         if res.is_err() {
             return Err(io::Error::last_os_error());
         }
@@ -394,11 +376,7 @@ pub fn write_attribute(
 ///
 /// `_follow_symlinks` is ignored on Windows; reparse-point traversal is
 /// the default behaviour of `DeleteFileW`.
-pub fn remove_attribute(
-    path: &Path,
-    name: &[u8],
-    _follow_symlinks: bool,
-) -> io::Result<()> {
+pub fn remove_attribute(path: &Path, name: &[u8], _follow_symlinks: bool) -> io::Result<()> {
     let wide = stream_path_wide(path, name)?;
     // SAFETY: `wide` is NUL-terminated.
     let res = unsafe { DeleteFileW(PCWSTR(wide.as_ptr())) };
