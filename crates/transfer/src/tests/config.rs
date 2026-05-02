@@ -202,13 +202,13 @@ fn files_from_data_roundtrip_with_protocol_wire_format() {
     let mut wire_data = Vec::new();
     let input = b"alpha.txt\nbeta.txt\ngamma/delta.txt\n";
     let mut reader = Cursor::new(input);
-    protocol::forward_files_from(&mut reader, &mut wire_data, false).unwrap();
+    protocol::forward_files_from(&mut reader, &mut wire_data, false, None).unwrap();
 
     cfg.connection.files_from_data = Some(wire_data.clone());
 
     // Verify the data can be read back using the protocol reader.
     let data = cfg.connection.files_from_data.take().unwrap();
     let mut wire_reader = Cursor::new(&data);
-    let filenames = protocol::read_files_from_stream(&mut wire_reader).unwrap();
+    let filenames = protocol::read_files_from_stream(&mut wire_reader, None).unwrap();
     assert_eq!(filenames, vec!["alpha.txt", "beta.txt", "gamma/delta.txt"]);
 }

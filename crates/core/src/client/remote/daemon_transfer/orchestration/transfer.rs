@@ -261,13 +261,28 @@ pub(super) fn read_files_from_for_forwarding(
     use crate::client::config::FilesFromSource;
 
     let eol_nulls = config.from0();
+    // upstream: compat.c:799-806 — filesfrom_convert is set when
+    // protect_args && files_from && (am_sender ? ic_send : ic_recv) != -1.
+    // For pull, this peer is the receiver writing to the wire; the converter
+    // must transcode from local charset to the UTF-8 wire encoding.
+    let iconv_converter = if config.protect_args().unwrap_or(false) {
+        config.iconv().resolve_converter()
+    } else {
+        None
+    };
     let mut wire_data = Vec::new();
 
     match config.files_from() {
         FilesFromSource::Stdin => {
             let stdin = std::io::stdin();
             let mut reader = stdin.lock();
-            protocol::forward_files_from(&mut reader, &mut wire_data, eol_nulls).map_err(|e| {
+            protocol::forward_files_from(
+                &mut reader,
+                &mut wire_data,
+                eol_nulls,
+                iconv_converter.as_ref(),
+            )
+            .map_err(|e| {
                 invalid_argument_error(&format!("failed to read --files-from stdin: {e}"), 23)
             })?;
         }
@@ -278,7 +293,13 @@ pub(super) fn read_files_from_for_forwarding(
                     23,
                 )
             })?;
-            protocol::forward_files_from(&mut file, &mut wire_data, eol_nulls).map_err(|e| {
+            protocol::forward_files_from(
+                &mut file,
+                &mut wire_data,
+                eol_nulls,
+                iconv_converter.as_ref(),
+            )
+            .map_err(|e| {
                 invalid_argument_error(
                     &format!("failed to read --files-from {}: {e}", path.display()),
                     23,

@@ -73,10 +73,18 @@ pub(crate) fn send_daemon_arguments(
     // Phase 2: when protect-args is active, send the real arguments via
     // the secluded-args wire format (null-separated with empty terminator).
     // upstream: clientserver.c:407-408 - send_protected_args(f_out, sargs)
+    // upstream: rsync.c:283-320 - send_protected_args() applies
+    // iconvbufs(ic_send, ...) per arg when --iconv is configured.
     if protect {
         let mut secluded = vec!["rsync"];
         secluded.extend(full_args.iter().map(String::as_str));
-        protocol::secluded_args::send_secluded_args(stream, &secluded).map_err(|e| {
+        let iconv_converter = config.iconv().resolve_converter();
+        protocol::secluded_args::send_secluded_args(
+            stream,
+            &secluded,
+            iconv_converter.as_ref(),
+        )
+        .map_err(|e| {
             socket_error(
                 "send secluded args to",
                 request.address.socket_addr_display(),

@@ -67,6 +67,17 @@ acl = ["metadata/acl", "engine/acl"]
 xattr = []
 
 # ============================================================================
+# Filename Encoding (iconv)
+# ============================================================================
+
+# Mirrors the upstream `#ifdef ICONV_OPTION` build-time switch in compat.c.
+# When enabled, the capability builder advertises CF_SYMLINK_ICONV ('s') and
+# the file-list reader/writer apply iconv conversion to symlink targets in
+# addition to filenames. Without this feature the negotiation skips 's' so
+# the peer does not run sender_symlink_iconv on our wire output.
+iconv = ["protocol/iconv"]
+
+# ============================================================================
 # I/O Optimization Features
 # ============================================================================
 

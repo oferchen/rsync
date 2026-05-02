@@ -118,6 +118,10 @@ impl FileListWriter {
             // slashes before transmission.
             // upstream: flist.c:send_file_entry() lines 660-670 and util1.c:955-961
             let target_bytes = path_bytes_to_wire(target.as_path());
+            // upstream: flist.c:1606-1621 - when sender_symlink_iconv (CF_SYMLINK_ICONV
+            // negotiated) and a converter is configured, transcode the target through
+            // ic_send (local -> wire / UTF-8) before writing.
+            let target_bytes = self.apply_encoding_conversion(&target_bytes)?;
             let len = target_bytes.len();
             write_varint30_int(writer, len as i32, self.protocol.as_u8())?;
             writer.write_all(&target_bytes)?;

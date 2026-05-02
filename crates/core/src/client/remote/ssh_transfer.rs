@@ -311,11 +311,23 @@ fn build_ssh_connection(
     })?;
 
     // Send secluded args over stdin if enabled.
-    // upstream: main.c — send_protected_args() sends args as null-separated
-    // strings over the pipe before protocol negotiation begins.
+    // upstream: rsync.c:283-320 — send_protected_args() sends args as
+    // null-separated strings over the pipe before protocol negotiation begins,
+    // applying iconvbufs(ic_send, ...) to each arg when iconv is configured
+    // (compat.c:799-806 filesfrom_convert / protect-args iconv gating).
     if !stdin_args.is_empty() {
         let arg_refs: Vec<&str> = stdin_args.iter().map(String::as_str).collect();
-        protocol::secluded_args::send_secluded_args(&mut connection, &arg_refs).map_err(|e| {
+        let iconv_converter = if config.protect_args().unwrap_or(false) {
+            config.iconv().resolve_converter()
+        } else {
+            None
+        };
+        protocol::secluded_args::send_secluded_args(
+            &mut connection,
+            &arg_refs,
+            iconv_converter.as_ref(),
+        )
+        .map_err(|e| {
             invalid_argument_error(
                 &format!("failed to send secluded args: {e}"),
                 super::super::IPC_EXIT_CODE,
