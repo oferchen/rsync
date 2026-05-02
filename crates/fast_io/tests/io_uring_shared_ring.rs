@@ -124,7 +124,7 @@ mod linux_only {
                 SharedCompletion::PollWrite { op_id, revents } => {
                     assert_eq!(op_id, 202, "poll tag must carry the submitted op_id");
                     assert!(
-                        (revents as i32) & libc::POLLOUT != 0,
+                        revents & libc::POLLOUT != 0,
                         "expected POLLOUT in revents, got {revents:#x}"
                     );
                     saw_poll = true;
