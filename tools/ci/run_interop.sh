@@ -3147,15 +3147,28 @@ test_iconv_upstream_interop() {
   )
 
   _ic_verify_round_trip() {
-    local label=$1 dest=$2
+    local label=$1 dest=$2 daemon_log=${3:-}
     for fname in "${expected_files[@]}"; do
       if [[ ! -f "${dest}/${fname}" ]]; then
         echo "    ${label}: ${fname} missing after iconv transfer"
         echo "    ${label}: dest contents: $(find "$dest" -type f | sort | tr '\n' ' ')"
+        if [[ -n "$daemon_log" && -f "$daemon_log" ]]; then
+          echo "    ${label}: daemon log tail:"
+          tail -20 "$daemon_log" | sed 's/^/      /'
+        fi
         return 1
       fi
       if ! cmp -s "${ic_src}/${fname}" "${dest}/${fname}"; then
         echo "    ${label}: ${fname} content mismatch after iconv transfer"
+        echo "    ${label}: dest contents: $(find "$dest" -type f | sort | tr '\n' ' ')"
+        echo "    ${label}: src ${fname} ($(wc -c < "${ic_src}/${fname}") bytes):"
+        hexdump -C "${ic_src}/${fname}" | head -5 | sed 's/^/      /'
+        echo "    ${label}: dest ${fname} ($(wc -c < "${dest}/${fname}") bytes):"
+        hexdump -C "${dest}/${fname}" | head -5 | sed 's/^/      /'
+        if [[ -n "$daemon_log" && -f "$daemon_log" ]]; then
+          echo "    ${label}: daemon log tail:"
+          tail -20 "$daemon_log" | sed 's/^/      /'
+        fi
         return 1
       fi
     done
@@ -3198,7 +3211,7 @@ CONF
     return 1
   fi
 
-  _ic_verify_round_trip "upstream->oc" "$ic_dest_oc" || return 1
+  _ic_verify_round_trip "upstream->oc" "$ic_dest_oc" "$ic_oc_log" || return 1
 
   # --- Direction 2: oc-rsync client -> upstream daemon ---
   # oc-rsync encodes UTF-8 source names into ISO-8859-1 on the wire; upstream
@@ -3237,7 +3250,7 @@ CONF
     return 1
   fi
 
-  _ic_verify_round_trip "oc->upstream" "$ic_dest_up" || return 1
+  _ic_verify_round_trip "oc->upstream" "$ic_dest_up" "$ic_up_log" || return 1
 
   return 0
 }
