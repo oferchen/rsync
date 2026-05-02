@@ -134,10 +134,16 @@ mod special;
 /// would otherwise escape the module root.
 pub mod symlink_munge;
 
-#[cfg(all(unix, feature = "xattr"))]
+#[cfg(all(feature = "xattr", any(unix, windows)))]
 mod xattr;
 
-#[cfg(not(all(unix, feature = "xattr")))]
+#[cfg(all(feature = "xattr", unix))]
+mod xattr_unix;
+
+#[cfg(all(feature = "xattr", windows))]
+mod xattr_windows;
+
+#[cfg(not(all(feature = "xattr", any(unix, windows))))]
 mod xattr_stub;
 
 #[cfg(all(unix, feature = "xattr"))]
@@ -207,10 +213,10 @@ pub use special::{
     create_fifo_with_fake_super,
 };
 
-#[cfg(all(unix, feature = "xattr"))]
+#[cfg(all(feature = "xattr", any(unix, windows)))]
 pub use xattr::{apply_xattrs_from_list, read_xattrs_for_wire, sync_xattrs};
 
-#[cfg(not(all(unix, feature = "xattr")))]
+#[cfg(not(all(feature = "xattr", any(unix, windows))))]
 pub use xattr_stub::{apply_xattrs_from_list, read_xattrs_for_wire, sync_xattrs};
 
 pub use copy_as::{CopyAsGuard, CopyAsIds, parse_copy_as_spec, switch_effective_ids};
