@@ -42,7 +42,7 @@ where
     // upstream: main.c - read_args() reads protected args from stdin.
     let effective_args: Vec<OsString>;
     let effective_slice: &[OsString] = if secluded_args {
-        match protocol::secluded_args::recv_secluded_args(&mut stdin) {
+        match protocol::secluded_args::recv_secluded_args(&mut stdin, None) {
             Ok(received_args) => {
                 effective_args = received_args.into_iter().map(OsString::from).collect();
                 &effective_args

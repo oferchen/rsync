@@ -135,7 +135,7 @@ fn read_and_log_client_args(
     let client_args = if has_secluded {
         // Phase 2: read the real args via secluded-args wire format.
         // upstream: clientserver.c:1068-1071 - read_args with rl_nulls=1
-        match protocol::secluded_args::recv_secluded_args(ctx.reader) {
+        match protocol::secluded_args::recv_secluded_args(ctx.reader, None) {
             Ok(full_args) => {
                 // First element is "rsync" (set by upstream send_protected_args),
                 // skip it to get the actual server arguments.

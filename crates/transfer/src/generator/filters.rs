@@ -122,10 +122,16 @@ impl GeneratorContext {
             // Read from protocol stream (stdin). The client forwards the file
             // list as NUL-separated entries with a double-NUL terminator.
             // upstream: main.c:681 - filesfrom_fd = STDIN_FILENO
-            protocol::read_files_from_stream(reader)?
+            // upstream: io.c:read_line(RL_CONVERT) — wire bytes are UTF-8 and
+            // must be transcoded to the local charset via ic_recv when
+            // protect_args && --iconv are both in effect (compat.c:799-806).
+            protocol::read_files_from_stream(reader, self.config.connection.iconv.as_ref())?
         } else {
             // Read from a local file on the server.
             // upstream: main.c:675-679 - open(files_from, O_RDONLY)
+            // The file lives in the server's local charset, so no wire iconv
+            // applies — read it as-is, mirroring upstream's omission of
+            // RL_CONVERT for the local-file fd.
             let from0 = self.config.file_selection.from0;
             read_files_from_local_path(&files_from_path, from0)?
         };
@@ -315,7 +321,10 @@ pub(super) fn read_files_from_local_path(path: &str, from0: bool) -> io::Result<
 
     if from0 {
         // NUL-delimited: use the wire format reader which handles NUL separators.
-        protocol::read_files_from_stream(&mut reader)
+        // The local file is already in the server's local charset; upstream
+        // reads it without RL_CONVERT (compat.c:799-806 only sets
+        // filesfrom_convert when the file is being forwarded over the wire).
+        protocol::read_files_from_stream(&mut reader, None)
     } else {
         // Line-delimited: read lines, skip comments and empty lines.
         let mut filenames = Vec::new();
