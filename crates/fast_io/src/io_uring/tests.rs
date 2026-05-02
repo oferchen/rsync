@@ -1015,10 +1015,8 @@ fn test_socket_send_no_deadlock_under_backpressure_1872() {
         };
         if n < 0 {
             let err = std::io::Error::last_os_error();
-            if matches!(
-                err.raw_os_error(),
-                Some(libc::EAGAIN) | Some(libc::EWOULDBLOCK)
-            ) {
+            // EWOULDBLOCK == EAGAIN on Linux per POSIX, so a single arm covers both names.
+            if err.raw_os_error() == Some(libc::EAGAIN) {
                 break;
             }
             panic!("prefill write failed: {err}");
