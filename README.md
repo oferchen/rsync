@@ -12,7 +12,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.6.0 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.1 (protocols 28-32).
+**Release:** 0.6.1 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.1 (protocols 28-32).
 
 All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
 
@@ -25,26 +25,26 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 | **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
 | **Compression** | zlib, zstd, lz4 with level control and auto-negotiation |
 | **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
-| **Incremental recursion** | Pull direction; sender-side disabled pending interop validation |
+| **Incremental recursion** | Pull and push directions, enabled by default |
 | **Batch** | `--write-batch` / `--read-batch` roundtrip |
 | **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
 | **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
 | **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
-| **Platforms** | Linux, macOS (full); Windows (partial - no ACLs/xattrs/symlinks/devices) |
+| **Platforms** | Linux, macOS (full); Windows (ACLs, xattrs via NTFS ADS, IOCP socket I/O; no symlinks/devices) |
 
 ### Platform Support
 
-The primary platform is Linux. macOS is well-supported with parity for all metadata, ACL, and xattr features. Windows builds and runs core transfer modes, but several POSIX-specific features are stubbed; ongoing work targets Windows ACL preservation (#1866), Windows xattr (alternate data stream) preservation (#1867), and wiring IOCP into the transfer pipeline (#1868).
+The primary platform is Linux. macOS is well-supported with parity for all metadata, ACL, and xattr features, including AppleDouble (`._foo`) resource-fork preservation. Windows builds and runs core transfer modes with native ACLs (via `windows-rs` `GetSecurityInfo`/`SetSecurityInfo`), xattrs (via NTFS Alternate Data Streams), and IOCP socket I/O (`WSARecv`/`WSASend`); symlinks and POSIX device nodes remain stubbed.
 
 | Feature | Linux | macOS | Windows | Notes |
 |---------|:-----:|:-----:|:-------:|-------|
 | Permissions (`-p`) | ✓ | ✓ | ⚠ | Windows preserves only the read-only flag; POSIX mode bits are not applicable. |
 | Times (`-t`) | ✓ | ✓ | ✓ | Nanosecond precision via the `filetime` crate on all platforms. |
 | File ownership (`-o`/`-g`, uid/gid) | ✓ | ✓ | ✗ | `apply_ownership_from_entry` is a no-op on non-Unix; uid/gid mapping is Unix-only. |
-| ACLs (`-A`) | ✓ | ✓ | ✗ | Uses `exacl` on Linux/macOS/FreeBSD; Windows falls through to a no-op stub with a one-time warning (see #1866). |
-| Extended attributes (`-X`) | ✓ | ✓ | ✗ | Wired only behind `cfg(all(unix, feature = "xattr"))`; non-Unix uses a no-op stub with a one-time warning (see #1867). |
+| ACLs (`-A`) | ✓ | ✓ | ✓ | Uses `exacl` on Linux/macOS/FreeBSD; Windows uses `windows-rs` `GetSecurityInfo`/`SetSecurityInfo` for native NTFS ACL round-trip. |
+| Extended attributes (`-X`) | ✓ | ✓ | ✓ | Linux/macOS via the `xattr` crate (macOS adds AppleDouble resource-fork support); Windows stores xattrs as NTFS Alternate Data Streams. |
 | Hardlinks (`-H`) | ✓ | ✓ | ✓ | Uses portable `std::fs::hard_link`; works on NTFS. |
 | Symbolic links | ✓ | ✓ | ✗ | `create_symlinks` is `cfg(not(unix))` no-op; symlink entries are skipped on Windows. |
 | Devices/specials (`-D`) | ✓ | ✓ | ✗ | `create_fifo` and `create_device_node` are no-ops on non-Unix. |
@@ -55,39 +55,33 @@ The primary platform is Linux. macOS is well-supported with parity for all metad
 
 Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
-### What's New (v0.6.0)
+### What's New (v0.6.1)
 
-**Compression**
-- Zstd auto-negotiation - peers exchange supported codecs, first mutual match wins
-- Continuous zstd/lz4 stream across files matching upstream session-level codec context
-- Per-token compression flush alignment for zlib, zstd, and lz4
+**Protocol & interop**
+- INC_RECURSE sender enabled by default for both push and pull directions
+- `--iconv` server-arg forwarding so remote peers see the same charset translation
+- iconv pipeline wired end-to-end across file list, names, and symlink targets
+- `--jump-host` for multi-hop SSH transports
 
-**Metadata**
-- ACL wire format (`-A`) interop with upstream rsync 3.4.1
-- Xattr wire format (`-X`) with abbreviation encoding for repeated namespace prefixes
-- Hardlink receiver-side inode/device mapping for daemon push transfers
+**Windows platform**
+- Native NTFS ACL round-trip (`-A`) via `windows-rs` `GetSecurityInfo` / `SetSecurityInfo`
+- Extended attributes (`-X`) stored as NTFS Alternate Data Streams
+- IOCP socket I/O via `WSARecv` / `WSASend` for daemon and SSH transports
+
+**macOS platform**
+- AppleDouble (`._` resource-fork sidecars) wire-compatible with upstream rsync
+
+**Compatibility**
+- `--fake-super` mode for unprivileged metadata preservation via xattrs
 
 **Performance**
-- Adaptive I/O buffers (8KB-1MB) scaled to file size
-- `FileEntry` memory reduced via `Box<FileEntryExtras>` for rarely-used fields
-- Lock-free buffer pool (`crossbeam::ArrayQueue`) replaces `Mutex<Vec>`
-- Shared file list via `Arc` eliminates per-file clone overhead
-- Precomputed sort keys remove per-comparison `memrchr` calls
-- Parallel basis file signature computation in pipeline fill
-- Work-stealing deque replaces `par_bridge()` for delta dispatch
-- Rayon-based parallel stat replaces `tokio::spawn_blocking`
+- io_uring shared submission ring across worker pool
+- io_uring SEND-path deadlock eliminated under sustained back-pressure
 
-**Batch mode**
-- Full batch roundtrip with upstream rsync (write + read in both directions)
-- INC_RECURSE interleaving, uid/gid name lists, checksum seed in batch header
-- Protocol stream format replaces custom encoding
-
-**Fixes**
-- SSH transfer deadlocks and protocol compatibility resolved
-- Daemon filter rules applied on receiver side for push transfers
-- INC_RECURSE capability direction corrected for daemon push
-- `--files-from` daemon flag compatibility with upstream
-- 10+ interop known failures resolved across batch, compression, filters, and paths
+**Security & code quality**
+- `SensitiveBytes` zeroizes daemon credentials and authentication secrets on drop
+- Safe `syslog` crate replaces hand-rolled FFI in the logging-sink crate
+- `setsockopt` FFI consolidated into the `fast_io` crate per the unsafe-code policy
 
 ### Interop Testing
 
@@ -109,9 +103,9 @@ oc-rsync is wire-compatible with upstream rsync 3.4.1, but a few architectural c
 - **Single-thread delta computation.** The delta sender is sequential per file. Rolling-hash fan-out across files is not yet parallelised; large-file workloads fully utilise one CPU per transfer rather than scaling delta CPU horizontally.
 - **SSH compression interaction.** When the SSH cipher already performs compression (e.g., `Compression yes` in `ssh_config`), running `oc-rsync -z` will compress payloads twice. There is currently no auto-detection / auto-disable path; operators should pick one layer.
 - **Daemon TLS.** Native TLS is not built into the daemon. Deploy `oc-rsync --daemon` behind `stunnel`, `ssh -L`, or a reverse proxy that terminates TLS. See [`docs/deployment/daemon-tls.md`](./docs/deployment/daemon-tls.md) for runnable terminator configs, hardened systemd units, and host-firewall rules; see [SECURITY.md](./SECURITY.md) for the broader hardening note.
-- **Windows IOCP not wired.** IOCP is implemented in `fast_io` but not yet consumed by the transfer pipeline (#1868); Windows uses standard buffered I/O for transfers.
+- **Windows IOCP scope.** IOCP is wired for socket I/O (daemon and SSH transports); file-system reads and writes still use standard buffered I/O on Windows. Tracking work to extend IOCP to the file pipeline is in flight (#1868).
 - **`.rsync-filter` per-directory inheritance.** Inheritance semantics match upstream for the common cases tested in the interop suite, but exhaustive parity against upstream's filter-tree corner cases (deeply nested merges, anchored vs unanchored interactions) is still being validated.
-- **`--checksum-seed` / `--fuzzy` / `--iconv`.** These flags are accepted and exercised in the common path; deeper conformance audits against upstream rsync 3.4.1 are tracked separately.
+- **`--checksum-seed` / `--fuzzy`.** These flags are accepted and exercised in the common path; deeper conformance audits against upstream rsync 3.4.1 are tracked separately.
 
 ---
 
@@ -255,13 +249,14 @@ Key crates: **cli** (Clap v4), **core** (orchestration facade), **protocol** (wi
 
 ## Security
 
-All crates enforce `#![deny(unsafe_code)]`. Unsafe blocks are only permitted in crates that directly wrap platform FFI:
+All crates enforce `#![deny(unsafe_code)]`. Targeted `#[allow(unsafe_code)]` is permitted only in crates that wrap platform FFI or SIMD intrinsics:
 
-- **checksums** - SIMD intrinsics (AVX2, SSE2, NEON) with scalar fallbacks
-- **fast_io** - io_uring, `copy_file_range`, sendfile, mmap with standard I/O fallbacks
+- **checksums** - SIMD intrinsics (AVX2, AVX-512, SSE2, SSSE3, SSE4.1, NEON, WASM) with scalar fallbacks
+- **fast_io** - io_uring, `copy_file_range`, sendfile, mmap, IOCP, `WSARecv`/`WSASend`, `setsockopt` with standard I/O fallbacks
 - **metadata** - UID/GID lookup, timestamps, ownership, xattrs, ACLs
 - **platform** - Signal handlers, chroot, daemonize, process management
-- **engine** - Buffer pool atomics, deferred fsync, clonefile
+- **engine** - Buffer pool atomics, deferred fsync, clonefile, `CopyFileExW`
+- **protocol** - One isolated allow in `multiplex::helpers` for frame parsing
 - **windows-gnu-eh** - Windows GNU exception handling shims
 
 Not vulnerable to known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747). OS-level race conditions (TOCTOU) remain possible at filesystem boundaries.

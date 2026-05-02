@@ -38,19 +38,19 @@ oc-rsync leverages Rust's memory safety to eliminate entire vulnerability classe
 
 ### Unsafe Code Policy
 
-Protocol-handling crates enforce `#![deny(unsafe_code)]`:
-- `protocol` - Wire format parsing
-- `batch` - Batch file format
-- `signature` - File signatures
-- `matching` - Delta generation
+Crates that enforce `#![deny(unsafe_code)]` with no allow-listed exceptions:
+- `daemon`, `cli`, `core`, `transfer`, `batch`, `filters`, `signature`, `match`, `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`, `compress`, `apple-fs`, `flist` - business logic, parsers, orchestration, and high-level I/O wrappers
 
-Crates with targeted unsafe code:
+Crates with `#![deny(unsafe_code)]` and targeted `#[allow(unsafe_code)]` for documented FFI/SIMD boundaries:
+- `metadata` - Ownership and privilege FFI (UID/GID lookup via `getpwuid_r`/`getgrnam_r`, `setuid`/`setgid`, `setattrlist`)
+- `protocol` - One isolated `#[allow]` in `multiplex::helpers` for performance-critical frame parsing
+- `engine` - Denies unsafe outside tests (`#![cfg_attr(not(test), deny(unsafe_code))]`) with targeted `#[allow(unsafe_code)]` on platform FFI (prefetch, buffer pool, `CopyFileExW`)
+- `platform` - Daemonization, signal handlers, environment isolation, and chroot syscalls
 - `checksums` - SIMD intrinsics for MD4/MD5 and rolling checksums (AVX2, AVX-512, SSE2, SSSE3, SSE4.1, NEON, WASM), with scalar fallbacks and parity tests
-- `fast_io` - Platform I/O syscalls (sendfile, io_uring, mmap, copy_file_range), with standard I/O fallbacks
-- `metadata` - Ownership/privilege FFI (UID/GID lookup via getpwuid_r/getgrnam_r, setuid/setgid, setattrlist), with `#![deny(unsafe_code)]` at crate level and targeted `#[allow(unsafe_code)]` per module
-- `flist` - Batched stat syscalls (fstatat, statx) for file list generation
-- `engine` - Denies unsafe outside tests (`#![cfg_attr(not(test), deny(unsafe_code))]`) with targeted `#[allow(unsafe_code)]` on platform FFI functions (prefetch, buffer pool, CopyFileExW)
+- `fast_io` - Platform I/O syscalls (sendfile, io_uring, mmap, `copy_file_range`, IOCP, `WSARecv`/`WSASend`, `setsockopt`), with standard I/O fallbacks
 - `windows-gnu-eh` - Windows GNU exception handling shims (properly documented)
+
+**Long-term direction.** Unsafe code is being consolidated into `fast_io` as the single crate permitted to wrap platform FFI directly; new unsafe code goes there and is exposed via safe public APIs. New `#[allow(unsafe_code)]` annotations in any other crate require explicit review.
 
 **Note:** OS-level race conditions (TOCTOU) remain possible at filesystem boundaries; Rust's memory safety does not prevent them.
 
