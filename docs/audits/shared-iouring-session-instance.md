@@ -785,13 +785,16 @@ Stage the work in four steps:
    benchmarks confirm it is at least neutral on `1GB_singlefile`,
    extend it to the parallel file fan-out the receiver and generator
    already perform. This is a follow-up; do not bundle it with #1408.
-4. **Reader+writer merge (#1874).** Independent of the pool. With
-   per-ring `bgid` allocation in place
+4. **Reader+writer merge (#1874, shipped).** Independent of the pool.
+   With per-ring `bgid` allocation in place
    (`crates/fast_io/src/io_uring/buffer_ring.rs:147-152`), a single
    leased ring can host both a `READ_FIXED` group and a
-   `WRITE_FIXED` group. This unlocks the
-   `IORING_OP_POLL_ADD` work in #1874 and the `submit_and_wait` fix
-   in #1872 without further infrastructure.
+   `WRITE_FIXED` group. The `IORING_OP_POLL_ADD` work landed in
+   `crates/fast_io/src/io_uring/shared_ring.rs` (the `SharedRing`
+   type with its `OpTag`-based CQE demux); concurrency and fallback
+   coverage live in `crates/fast_io/tests/io_uring_shared_ring.rs`.
+   The `submit_and_wait` fix in #1872 follows this without further
+   infrastructure.
 
 Constraints that must hold across all four steps:
 
