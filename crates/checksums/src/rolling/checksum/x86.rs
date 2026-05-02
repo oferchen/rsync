@@ -50,18 +50,18 @@ use super::accumulate_chunk_scalar_raw;
 #[cfg(target_arch = "x86")]
 use core::arch::x86::{
     __m128i, __m256i, _mm_add_epi32, _mm_cmplt_epi8, _mm_loadu_si128, _mm_madd_epi16,
-    _mm_set1_epi16, _mm_set_epi16, _mm_setzero_si128, _mm_storeu_si128, _mm_unpackhi_epi8,
+    _mm_set_epi16, _mm_set1_epi16, _mm_setzero_si128, _mm_storeu_si128, _mm_unpackhi_epi8,
     _mm_unpacklo_epi8, _mm256_add_epi32, _mm256_castsi256_si128, _mm256_cvtepi8_epi16,
-    _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_set1_epi16,
-    _mm256_set_epi16, _mm256_storeu_si256,
+    _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_set_epi16,
+    _mm256_set1_epi16, _mm256_storeu_si256,
 };
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
     __m128i, __m256i, _mm_add_epi32, _mm_cmplt_epi8, _mm_loadu_si128, _mm_madd_epi16,
-    _mm_set1_epi16, _mm_set_epi16, _mm_setzero_si128, _mm_storeu_si128, _mm_unpackhi_epi8,
+    _mm_set_epi16, _mm_set1_epi16, _mm_setzero_si128, _mm_storeu_si128, _mm_unpackhi_epi8,
     _mm_unpacklo_epi8, _mm256_add_epi32, _mm256_castsi256_si128, _mm256_cvtepi8_epi16,
-    _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_set1_epi16,
-    _mm256_set_epi16, _mm256_storeu_si256,
+    _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_set_epi16,
+    _mm256_set1_epi16, _mm256_storeu_si256,
 };
 
 use std::sync::OnceLock;
