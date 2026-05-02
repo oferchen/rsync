@@ -26,6 +26,8 @@ xattr = ["core/xattr"]
 tracing = ["dep:tracing", "core/tracing"]
 # ACL (Access Control Lists) support on Unix systems
 acl = ["core/acl", "metadata/acl"]
+# Filename charset transcoding via the module `charset =` directive (iconv).
+iconv = ["core/iconv", "protocol/iconv"]
 
 [dependencies]
 clap = { version = "4.5.49", features = ["std"] }

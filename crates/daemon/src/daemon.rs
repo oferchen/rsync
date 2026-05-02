@@ -56,7 +56,8 @@ use core::{
 use logging_sink::MessageSink;
 use protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,
-    filters::FilterRuleWireFormat, format_legacy_daemon_message, parse_legacy_daemon_message,
+    filters::FilterRuleWireFormat, format_legacy_daemon_message, iconv::FilenameConverter,
+    parse_legacy_daemon_message,
 };
 
 use crate::{config::DaemonConfig, error::DaemonError, systemd};
