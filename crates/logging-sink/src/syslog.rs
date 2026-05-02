@@ -1,65 +1,82 @@
 //! Syslog backend for daemon-mode logging.
 //!
-//! Uses libc `openlog`/`syslog`/`closelog` directly rather than pulling in a
-//! dedicated syslog crate, keeping the dependency graph minimal. The
-//! implementation mirrors upstream rsync's `log.c` behaviour: when daemon mode
-//! is active, diagnostics are routed to syslog(3) with the configured facility
+//! Routes daemon diagnostics through the safe `syslog` crate, which speaks the
+//! BSD/RFC 3164 wire protocol over a Unix socket (`/dev/log`, falling back to
+//! `/var/run/syslog` on macOS). No `libc::openlog`/`syslog`/`closelog` FFI is
+//! involved, so the crate continues to satisfy `#![deny(unsafe_code)]`.
+//!
+//! The implementation mirrors upstream rsync's `log.c` behaviour: when daemon
+//! mode is active, diagnostics are sent to syslog with the configured facility
 //! and tag.
 //!
 //! upstream: log.c - `logit()` calls `syslog(priority, "%s", buf)` when
 //! `logfile_was_closed` is false and the daemon is running.
 
-use std::ffi::CString;
 use std::fmt;
-use std::sync::OnceLock;
+use std::process;
+use std::sync::{Mutex, OnceLock};
+
+use syslog::{Facility, Formatter3164, LoggerBackend};
+
+/// Type alias for the concrete `syslog` crate logger we hold open.
+type BsdLogger = syslog::Logger<LoggerBackend, Formatter3164>;
+
+/// Process-wide handle to the currently open syslog connection.
+///
+/// `SyslogConfig::open` populates this slot; dropping the returned
+/// [`SyslogGuard`] clears it, releasing the underlying socket. While the slot
+/// is populated, [`syslog_message`] routes diagnostics through it.
+fn logger_slot() -> &'static Mutex<Option<BsdLogger>> {
+    static SLOT: OnceLock<Mutex<Option<BsdLogger>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
 
 /// Syslog facility codes matching the POSIX syslog(3) constants.
 ///
-/// Each variant corresponds to a `LOG_*` facility from `<syslog.h>`.
-/// The daemon configuration maps string names (e.g., `"daemon"`, `"local0"`)
-/// to these constants via [`SyslogFacility::from_name`].
+/// Each variant corresponds to a `LOG_*` facility from `<syslog.h>`. The
+/// daemon configuration maps string names (e.g., `"daemon"`, `"local0"`) to
+/// these constants via [`SyslogFacility::from_name`].
 ///
 /// upstream: `loadparm.c` - `lp_syslog_facility()` returns an integer facility
 /// code parsed from the `syslog facility` configuration directive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(i32)]
 pub enum SyslogFacility {
     /// Kernel messages (LOG_KERN).
-    Kern = libc::LOG_KERN,
+    Kern,
     /// User-level messages (LOG_USER).
-    User = libc::LOG_USER,
+    User,
     /// Mail system (LOG_MAIL).
-    Mail = libc::LOG_MAIL,
+    Mail,
     /// System daemons (LOG_DAEMON) - the default for rsync daemon mode.
-    Daemon = libc::LOG_DAEMON,
+    Daemon,
     /// Security/authorization messages (LOG_AUTH).
-    Auth = libc::LOG_AUTH,
+    Auth,
     /// Messages generated internally by syslogd (LOG_SYSLOG).
-    Syslog = libc::LOG_SYSLOG,
+    Syslog,
     /// Line printer subsystem (LOG_LPR).
-    Lpr = libc::LOG_LPR,
+    Lpr,
     /// Network news subsystem (LOG_NEWS).
-    News = libc::LOG_NEWS,
+    News,
     /// UUCP subsystem (LOG_UUCP).
-    Uucp = libc::LOG_UUCP,
+    Uucp,
     /// Clock daemon (LOG_CRON).
-    Cron = libc::LOG_CRON,
+    Cron,
     /// Reserved for local use (LOG_LOCAL0).
-    Local0 = libc::LOG_LOCAL0,
+    Local0,
     /// Reserved for local use (LOG_LOCAL1).
-    Local1 = libc::LOG_LOCAL1,
+    Local1,
     /// Reserved for local use (LOG_LOCAL2).
-    Local2 = libc::LOG_LOCAL2,
+    Local2,
     /// Reserved for local use (LOG_LOCAL3).
-    Local3 = libc::LOG_LOCAL3,
+    Local3,
     /// Reserved for local use (LOG_LOCAL4).
-    Local4 = libc::LOG_LOCAL4,
+    Local4,
     /// Reserved for local use (LOG_LOCAL5).
-    Local5 = libc::LOG_LOCAL5,
+    Local5,
     /// Reserved for local use (LOG_LOCAL6).
-    Local6 = libc::LOG_LOCAL6,
+    Local6,
     /// Reserved for local use (LOG_LOCAL7).
-    Local7 = libc::LOG_LOCAL7,
+    Local7,
 }
 
 impl SyslogFacility {
@@ -144,6 +161,30 @@ impl SyslogFacility {
             Self::Local7 => "local7",
         }
     }
+
+    /// Maps to the corresponding [`syslog::Facility`] used on the wire.
+    const fn to_wire(self) -> Facility {
+        match self {
+            Self::Kern => Facility::LOG_KERN,
+            Self::User => Facility::LOG_USER,
+            Self::Mail => Facility::LOG_MAIL,
+            Self::Daemon => Facility::LOG_DAEMON,
+            Self::Auth => Facility::LOG_AUTH,
+            Self::Syslog => Facility::LOG_SYSLOG,
+            Self::Lpr => Facility::LOG_LPR,
+            Self::News => Facility::LOG_NEWS,
+            Self::Uucp => Facility::LOG_UUCP,
+            Self::Cron => Facility::LOG_CRON,
+            Self::Local0 => Facility::LOG_LOCAL0,
+            Self::Local1 => Facility::LOG_LOCAL1,
+            Self::Local2 => Facility::LOG_LOCAL2,
+            Self::Local3 => Facility::LOG_LOCAL3,
+            Self::Local4 => Facility::LOG_LOCAL4,
+            Self::Local5 => Facility::LOG_LOCAL5,
+            Self::Local6 => Facility::LOG_LOCAL6,
+            Self::Local7 => Facility::LOG_LOCAL7,
+        }
+    }
 }
 
 impl Default for SyslogFacility {
@@ -166,10 +207,9 @@ pub const DEFAULT_SYSLOG_TAG: &str = "oc-rsyncd";
 
 /// Configuration for syslog-based logging in daemon mode.
 ///
-/// Encapsulates the facility and tag (ident) parameters passed to
-/// [`openlog(3)`](libc::openlog). Constructing a [`SyslogConfig`] does not
-/// itself open the syslog connection; call [`open`](SyslogConfig::open) to
-/// begin routing messages.
+/// Encapsulates the facility and tag (ident) that the daemon advertises to
+/// syslog. Constructing a [`SyslogConfig`] does not itself open the syslog
+/// connection; call [`open`](SyslogConfig::open) to begin routing messages.
 ///
 /// # Examples
 ///
@@ -210,36 +250,35 @@ impl SyslogConfig {
 
     /// Opens the syslog connection with the configured facility and tag.
     ///
-    /// Returns a [`SyslogGuard`] that closes the connection when dropped.
-    /// Only one syslog connection should be active at a time per process.
+    /// Returns a [`SyslogGuard`] that closes the connection when dropped. The
+    /// daemon should hold the guard for its lifetime; while it is alive,
+    /// [`syslog_message`] routes diagnostics through the configured facility.
     ///
-    /// # Safety
-    ///
-    /// This function calls `libc::openlog` which is not thread-safe with
-    /// respect to concurrent `openlog`/`closelog` calls. The caller must
-    /// ensure no other thread is opening or closing syslog simultaneously.
-    /// In practice the daemon opens syslog once at startup before spawning
-    /// worker threads, matching upstream rsync's single-threaded init pattern.
+    /// Connection failures (e.g. no syslog daemon running) are swallowed so
+    /// that callers never panic - this matches upstream rsync's behaviour of
+    /// logging to syslog opportunistically. Subsequent [`syslog_message`]
+    /// calls become no-ops until the next successful `open`.
     pub fn open(&self) -> SyslogGuard {
-        // The CString must outlive the openlog call because syslog(3) stores
-        // the pointer internally. We leak the allocation intentionally and
-        // store it in a static so closelog() can find a valid pointer. This
-        // matches the process-lifetime semantics of syslog's ident parameter.
-        static IDENT: OnceLock<CString> = OnceLock::new();
-        let ident = IDENT.get_or_init(|| {
-            CString::new(self.tag.as_str()).unwrap_or_else(|_| {
-                CString::new(DEFAULT_SYSLOG_TAG).expect("default tag contains no NUL bytes")
-            })
-        });
+        let tag = if self.tag.is_empty() {
+            DEFAULT_SYSLOG_TAG.to_string()
+        } else {
+            self.tag.clone()
+        };
+
+        let formatter = Formatter3164 {
+            facility: self.facility.to_wire(),
+            hostname: None,
+            process: tag,
+            pid: process::id(),
+        };
 
         // upstream: log.c - openlog(tag, LOG_PID, facility)
-        // LOG_PID includes the PID in each message, matching upstream behaviour.
-        //
-        // SAFETY: openlog is called once at daemon startup before worker threads
-        // are spawned. The ident pointer is valid for the process lifetime because
-        // it is stored in a static `OnceLock<CString>`.
-        unsafe {
-            libc::openlog(ident.as_ptr(), libc::LOG_PID, self.facility as libc::c_int);
+        // The syslog crate's `unix(formatter)` connects to /dev/log on Linux
+        // and falls back to /var/run/syslog on macOS, mirroring openlog(3).
+        let logger = syslog::unix(formatter).ok();
+
+        if let Ok(mut slot) = logger_slot().lock() {
+            *slot = logger;
         }
 
         SyslogGuard { _private: () }
@@ -256,67 +295,60 @@ impl Default for SyslogConfig {
 ///
 /// Used by [`syslog_message`] to set the severity of each log entry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(i32)]
 pub enum SyslogPriority {
     /// System is unusable (LOG_EMERG).
-    Emergency = libc::LOG_EMERG,
+    Emergency,
     /// Action must be taken immediately (LOG_ALERT).
-    Alert = libc::LOG_ALERT,
+    Alert,
     /// Critical conditions (LOG_CRIT).
-    Critical = libc::LOG_CRIT,
+    Critical,
     /// Error conditions (LOG_ERR).
-    Error = libc::LOG_ERR,
+    Error,
     /// Warning conditions (LOG_WARNING).
-    Warning = libc::LOG_WARNING,
+    Warning,
     /// Normal but significant condition (LOG_NOTICE).
-    Notice = libc::LOG_NOTICE,
+    Notice,
     /// Informational messages (LOG_INFO).
-    Info = libc::LOG_INFO,
+    Info,
     /// Debug-level messages (LOG_DEBUG).
-    Debug = libc::LOG_DEBUG,
+    Debug,
 }
 
-/// Sends a message to syslog(3) with the given priority.
+/// Sends a message to syslog with the given priority.
 ///
 /// The message is sent using the facility configured by the most recent
-/// [`SyslogConfig::open`] call. The caller is responsible for ensuring that
-/// syslog has been opened (via [`SyslogConfig::open`]) before calling this
-/// function.
+/// successful [`SyslogConfig::open`] call. If syslog has not been opened, or
+/// if the previous `open` failed to connect, the call is silently dropped.
 ///
-/// # Safety
-///
-/// This function calls `libc::syslog` which requires that `openlog` has been
-/// called previously. The [`SyslogGuard`] returned by [`SyslogConfig::open`]
-/// guarantees this invariant while it is alive.
+/// upstream: log.c - `syslog(priority, "%s", buf)`. The safe `syslog` crate
+/// formats the message according to RFC 3164 before writing to the socket, so
+/// `%` characters in `message` are not interpreted as format specifiers.
 pub fn syslog_message(priority: SyslogPriority, message: &str) {
-    // syslog(3) interprets `%` as a format specifier. Using `%s` with the
-    // message as an argument avoids accidental format string injection.
-    // upstream: log.c - `syslog(priority, "%s", buf)`
-    let c_message = match CString::new(message) {
-        Ok(s) => s,
-        Err(_) => return,
+    let Ok(mut slot) = logger_slot().lock() else {
+        return;
     };
-    let format = c_str_literal(b"%s\0");
-
-    // SAFETY: syslog is safe to call from multiple threads after openlog
-    // has completed. The format string and message are valid C strings.
-    unsafe {
-        libc::syslog(priority as libc::c_int, format, c_message.as_ptr());
-    }
-}
-
-/// Returns a pointer to a static C string literal.
-///
-/// The input must be a NUL-terminated byte slice.
-const fn c_str_literal(bytes: &[u8]) -> *const libc::c_char {
-    bytes.as_ptr().cast::<libc::c_char>()
+    let Some(logger) = slot.as_mut() else {
+        return;
+    };
+    // The syslog crate returns an error when the socket write fails; we ignore
+    // the result so transient logging failures never bring down the daemon.
+    let _ = match priority {
+        SyslogPriority::Emergency => logger.emerg(message),
+        SyslogPriority::Alert => logger.alert(message),
+        SyslogPriority::Critical => logger.crit(message),
+        SyslogPriority::Error => logger.err(message),
+        SyslogPriority::Warning => logger.warning(message),
+        SyslogPriority::Notice => logger.notice(message),
+        SyslogPriority::Info => logger.info(message),
+        SyslogPriority::Debug => logger.debug(message),
+    };
 }
 
 /// RAII guard that closes the syslog connection when dropped.
 ///
 /// Created by [`SyslogConfig::open`]. While this guard is alive, calls to
-/// [`syslog_message`] will route to the configured syslog facility. Dropping
-/// the guard calls `closelog(3)`.
+/// [`syslog_message`] route to the configured syslog facility. Dropping the
+/// guard releases the underlying Unix socket.
 ///
 /// # Examples
 ///
@@ -329,7 +361,7 @@ const fn c_str_literal(bytes: &[u8]) -> *const libc::c_char {
 /// let _guard = config.open();
 ///
 /// syslog_message(SyslogPriority::Info, "daemon started");
-/// // guard dropped here, closelog() called
+/// // guard dropped here, syslog connection released
 /// # }
 /// ```
 #[derive(Debug)]
@@ -339,11 +371,8 @@ pub struct SyslogGuard {
 
 impl Drop for SyslogGuard {
     fn drop(&mut self) {
-        // SAFETY: closelog is safe to call and has no preconditions beyond
-        // openlog having been called previously, which is guaranteed by the
-        // guard construction in SyslogConfig::open.
-        unsafe {
-            libc::closelog();
+        if let Ok(mut slot) = logger_slot().lock() {
+            *slot = None;
         }
     }
 }
@@ -460,12 +489,31 @@ mod tests {
     }
 
     #[test]
-    fn facility_values_match_libc_constants() {
-        assert_eq!(SyslogFacility::Kern as i32, libc::LOG_KERN);
-        assert_eq!(SyslogFacility::User as i32, libc::LOG_USER);
-        assert_eq!(SyslogFacility::Daemon as i32, libc::LOG_DAEMON);
-        assert_eq!(SyslogFacility::Local0 as i32, libc::LOG_LOCAL0);
-        assert_eq!(SyslogFacility::Local7 as i32, libc::LOG_LOCAL7);
+    fn to_wire_covers_all_variants() {
+        // Spot-check every variant maps to a syslog::Facility without panicking.
+        let facilities = [
+            SyslogFacility::Kern,
+            SyslogFacility::User,
+            SyslogFacility::Mail,
+            SyslogFacility::Daemon,
+            SyslogFacility::Auth,
+            SyslogFacility::Syslog,
+            SyslogFacility::Lpr,
+            SyslogFacility::News,
+            SyslogFacility::Uucp,
+            SyslogFacility::Cron,
+            SyslogFacility::Local0,
+            SyslogFacility::Local1,
+            SyslogFacility::Local2,
+            SyslogFacility::Local3,
+            SyslogFacility::Local4,
+            SyslogFacility::Local5,
+            SyslogFacility::Local6,
+            SyslogFacility::Local7,
+        ];
+        for facility in facilities {
+            let _wire = facility.to_wire();
+        }
     }
 
     #[test]
@@ -524,18 +572,6 @@ mod tests {
     }
 
     #[test]
-    fn priority_values_match_libc_constants() {
-        assert_eq!(SyslogPriority::Emergency as i32, libc::LOG_EMERG);
-        assert_eq!(SyslogPriority::Alert as i32, libc::LOG_ALERT);
-        assert_eq!(SyslogPriority::Critical as i32, libc::LOG_CRIT);
-        assert_eq!(SyslogPriority::Error as i32, libc::LOG_ERR);
-        assert_eq!(SyslogPriority::Warning as i32, libc::LOG_WARNING);
-        assert_eq!(SyslogPriority::Notice as i32, libc::LOG_NOTICE);
-        assert_eq!(SyslogPriority::Info as i32, libc::LOG_INFO);
-        assert_eq!(SyslogPriority::Debug as i32, libc::LOG_DEBUG);
-    }
-
-    #[test]
     fn syslog_message_does_not_panic_after_open() {
         let config = SyslogConfig::default();
         let _guard = config.open();
@@ -563,8 +599,37 @@ mod tests {
     fn syslog_message_handles_nul_bytes_gracefully() {
         let config = SyslogConfig::default();
         let _guard = config.open();
-        // CString::new will fail on embedded NUL, syslog_message returns early
+        // The syslog crate's RFC 3164 formatter handles arbitrary content,
+        // so embedded NULs no longer abort the call.
         syslog_message(SyslogPriority::Info, "before\0after");
+    }
+
+    #[test]
+    fn syslog_message_without_open_is_noop() {
+        // Drop any previously opened logger so we hit the cold path.
+        if let Ok(mut slot) = logger_slot().lock() {
+            *slot = None;
+        }
+        syslog_message(SyslogPriority::Info, "no logger configured");
+    }
+
+    #[test]
+    fn priority_covers_all_severity_levels() {
+        // Sanity check: each variant is constructible and Copy/Clone works.
+        let priorities = [
+            SyslogPriority::Emergency,
+            SyslogPriority::Alert,
+            SyslogPriority::Critical,
+            SyslogPriority::Error,
+            SyslogPriority::Warning,
+            SyslogPriority::Notice,
+            SyslogPriority::Info,
+            SyslogPriority::Debug,
+        ];
+        for priority in priorities {
+            let copy = priority;
+            assert_eq!(priority, copy);
+        }
     }
 
     #[test]
