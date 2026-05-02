@@ -282,6 +282,13 @@ fn build_server_config(
             // never apply it, leaving --iconv negotiation a silent no-op.
             cfg.connection.iconv = resolve_module_charset_converter(module.charset.as_deref());
 
+            // upstream: clientserver.c:1106-1107 - `fake super = yes` on the
+            // daemon module demotes the receiver's am_root and forces fake-super
+            // semantics regardless of whether the client requested --fake-super.
+            // The directive is purely daemon-config-driven; client --fake-super
+            // is demoted to --super on the wire and never reaches us.
+            cfg.fake_super = module.fake_super;
+
             Ok(Some(cfg))
         }
         Err(err) => {
