@@ -84,6 +84,7 @@ pub struct ServerConfigBuilder {
     do_stats: bool,
     temp_dir: Option<PathBuf>,
     skip_compress: Option<SkipCompressList>,
+    fake_super: bool,
 }
 
 impl Default for ServerConfigBuilder {
@@ -119,6 +120,7 @@ impl ServerConfigBuilder {
             do_stats: false,
             temp_dir: None,
             skip_compress: None,
+            fake_super: false,
         }
     }
 
@@ -422,6 +424,26 @@ impl ServerConfigBuilder {
         self
     }
 
+    // -- Fake super --
+
+    /// Enables or disables daemon-side fake-super metadata storage.
+    ///
+    /// Sourced from the daemon module's `fake super = yes` directive in
+    /// `rsyncd.conf(5)`. When true, ownership and special-file metadata are
+    /// stored in the `user.rsync.%stat` xattr instead of being applied
+    /// directly to inodes, allowing a non-root daemon receiver to preserve
+    /// privileged metadata.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:1106-1107` - daemon `fake super = yes` demotes
+    ///   `am_root` and forces `--fake-super` semantics on the receiver
+    /// - `loadparm.c` - `fake super` module parameter
+    pub fn fake_super(&mut self, enabled: bool) -> &mut Self {
+        self.fake_super = enabled;
+        self
+    }
+
     // -- Validation and build --
 
     /// Validates the builder configuration.
@@ -499,6 +521,7 @@ impl ServerConfigBuilder {
             do_stats: self.do_stats,
             temp_dir: self.temp_dir.clone(),
             skip_compress: self.skip_compress.clone(),
+            fake_super: self.fake_super,
         }
     }
 }
