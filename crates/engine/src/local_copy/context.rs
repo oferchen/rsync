@@ -19,7 +19,7 @@ use super::filter_program::{
     FilterSegmentLayers, FilterSegmentStack, directory_has_marker,
 };
 
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(any(unix, windows), feature = "acl"))]
 use super::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use super::sync_nfsv4_acls_if_requested;
@@ -182,7 +182,7 @@ pub(crate) struct FinalizeMetadataParams<'a> {
     #[cfg(all(unix, feature = "xattr"))]
     preserve_xattrs: bool,
 
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     preserve_acls: bool,
 }
 
@@ -193,7 +193,7 @@ impl<'a> FinalizeMetadataParams<'a> {
         mode: LocalCopyExecution,
         path_context: MetadataPathContext<'a>,
         #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
-        #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
+        #[cfg(all(any(unix, windows), feature = "acl"))] preserve_acls: bool,
     ) -> Self {
         Self {
             metadata,
@@ -204,7 +204,7 @@ impl<'a> FinalizeMetadataParams<'a> {
             fd: None,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(all(unix, feature = "acl"))]
+            #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls,
         }
     }
@@ -321,7 +321,7 @@ pub(crate) struct DeferredUpdate {
     destination: PathBuf,
     #[cfg(all(unix, feature = "xattr"))]
     preserve_xattrs: bool,
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     preserve_acls: bool,
 }
 
@@ -334,7 +334,7 @@ impl DeferredUpdate {
         path_context: OwnedPathContext,
         destination: PathBuf,
         #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
-        #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
+        #[cfg(all(any(unix, windows), feature = "acl"))] preserve_acls: bool,
     ) -> Self {
         Self {
             guard,
@@ -345,7 +345,7 @@ impl DeferredUpdate {
             destination,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(all(unix, feature = "acl"))]
+            #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls,
         }
     }

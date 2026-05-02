@@ -3,16 +3,22 @@
 use super::LocalCopyError;
 use ::metadata::MetadataError;
 
-#[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+#[cfg(any(
+    all(unix, any(feature = "acl", feature = "xattr")),
+    all(windows, feature = "acl")
+))]
 use std::path::Path;
 
-#[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+#[cfg(any(
+    all(unix, any(feature = "acl", feature = "xattr")),
+    all(windows, feature = "acl")
+))]
 use super::LocalCopyExecution;
 
 #[cfg(all(unix, feature = "xattr"))]
 use super::FilterProgram;
 
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(any(unix, windows), feature = "acl"))]
 use ::metadata::sync_acls;
 
 #[cfg(all(unix, feature = "xattr"))]
@@ -101,7 +107,7 @@ pub(crate) fn sync_xattrs_if_requested(
 /// - **Linux**: POSIX ACLs (access and default)
 /// - **macOS**: Extended ACLs (NFSv4-style)
 /// - **FreeBSD**: POSIX and NFSv4 ACLs
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(any(unix, windows), feature = "acl"))]
 pub(crate) fn sync_acls_if_requested(
     preserve_acls: bool,
     mode: LocalCopyExecution,

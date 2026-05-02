@@ -53,7 +53,7 @@ pub(super) struct TransferFlags {
     #[cfg(all(unix, feature = "xattr"))]
     pub preserve_xattrs: bool,
     /// Whether to preserve ACLs (Unix only).
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     pub preserve_acls: bool,
 }
 
@@ -76,11 +76,11 @@ impl TransferFlags {
     /// accounting for compile-time feature flags.
     #[inline]
     pub(super) const fn acls_enabled(self) -> bool {
-        #[cfg(all(unix, feature = "acl"))]
+        #[cfg(all(any(unix, windows), feature = "acl"))]
         {
             self.preserve_acls
         }
-        #[cfg(not(all(unix, feature = "acl")))]
+        #[cfg(not(all(any(unix, windows), feature = "acl")))]
         {
             false
         }

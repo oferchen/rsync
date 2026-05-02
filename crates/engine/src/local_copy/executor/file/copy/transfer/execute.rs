@@ -15,7 +15,7 @@ use logging::debug_log;
 
 use ::metadata::MetadataOptions;
 
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(any(unix, windows), feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
@@ -75,7 +75,7 @@ pub(in crate::local_copy) fn execute_transfer(
         checksum_enabled: _,
         #[cfg(all(unix, feature = "xattr"))]
         preserve_xattrs,
-        #[cfg(all(unix, feature = "acl"))]
+        #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,
     } = flags;
 
@@ -256,7 +256,7 @@ pub(in crate::local_copy) fn execute_transfer(
                 &mut None,
                 #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
-                #[cfg(all(unix, feature = "acl"))]
+                #[cfg(all(any(unix, windows), feature = "acl"))]
                 preserve_acls,
             )?;
 
@@ -565,7 +565,7 @@ pub(in crate::local_copy) fn execute_transfer(
         &mut writer_for_metadata,
         #[cfg(all(unix, feature = "xattr"))]
         preserve_xattrs,
-        #[cfg(all(unix, feature = "acl"))]
+        #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,
     )?;
 
@@ -652,7 +652,7 @@ fn try_skip_up_to_date(
         true,
         context.filter_program(),
     )?;
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     sync_acls_if_requested(flags.preserve_acls, mode, source, destination, true)?;
 
     context.record_hard_link(metadata, destination);

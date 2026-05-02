@@ -45,7 +45,7 @@ pub(crate) fn copy_file(
 
     #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     let preserve_acls = context.acls_enabled();
 
     let record_path = relative
@@ -191,7 +191,7 @@ pub(crate) fn copy_file(
         mode,
         #[cfg(all(unix, feature = "xattr"))]
         preserve_xattrs,
-        #[cfg(all(unix, feature = "acl"))]
+        #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,
     )?;
 
@@ -212,7 +212,7 @@ pub(crate) fn copy_file(
         checksum_enabled,
         #[cfg(all(unix, feature = "xattr"))]
         preserve_xattrs,
-        #[cfg(all(unix, feature = "acl"))]
+        #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,
     };
 

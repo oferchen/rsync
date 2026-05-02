@@ -98,14 +98,14 @@ impl LocalCopyOptions {
         self.omit_link_times
     }
 
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     /// Returns whether POSIX ACLs should be preserved.
     #[must_use]
     pub const fn preserve_acls(&self) -> bool {
         self.preserve_acls
     }
 
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     /// Reports whether ACL preservation is enabled.
     #[must_use]
     pub const fn acls_enabled(&self) -> bool {

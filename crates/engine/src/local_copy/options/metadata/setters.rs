@@ -145,7 +145,7 @@ impl LocalCopyOptions {
         self
     }
 
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     /// Requests that POSIX ACLs be preserved when applying metadata.
     #[must_use]
     #[doc(alias = "--acls")]

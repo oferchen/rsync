@@ -121,7 +121,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) compare_destinations: Vec<OsString>,
     pub(crate) copy_destinations: Vec<OsString>,
     pub(crate) link_destinations: Vec<OsString>,
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     pub(crate) preserve_acls: bool,
     #[cfg(all(unix, feature = "xattr"))]
     pub(crate) xattrs: bool,
@@ -297,7 +297,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         builder = builder.link_destination(PathBuf::from(path));
     }
 
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     {
         builder = builder.acls(inputs.preserve_acls);
     }

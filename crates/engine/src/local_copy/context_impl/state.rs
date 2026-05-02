@@ -218,7 +218,7 @@ impl<'a> CopyContext<'a> {
             fd,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(all(unix, feature = "acl"))]
+            #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls,
         } = params;
 
@@ -292,12 +292,12 @@ impl<'a> CopyContext<'a> {
             )?;
         }
 
-        #[cfg(all(unix, feature = "acl"))]
+        #[cfg(all(any(unix, windows), feature = "acl"))]
         {
             sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
         }
 
-        #[cfg(not(any(all(unix, feature = "xattr"), all(unix, feature = "acl"))))]
+        #[cfg(not(any(all(unix, feature = "xattr"), all(any(unix, windows), feature = "acl"))))]
         let _ = mode;
 
         self.record_hard_link(metadata, destination);
@@ -603,11 +603,11 @@ impl<'a> CopyContext<'a> {
             destination,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(all(unix, feature = "acl"))]
+            #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls,
         } = update;
 
-        #[cfg(not(any(all(unix, feature = "xattr"), all(unix, feature = "acl"))))]
+        #[cfg(not(any(all(unix, feature = "xattr"), all(any(unix, windows), feature = "acl"))))]
         let _ = &path_context.source;
 
         guard.commit()?;
@@ -628,7 +628,7 @@ impl<'a> CopyContext<'a> {
                 fd: None, // No fd available for deferred updates
                 #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
-                #[cfg(all(unix, feature = "acl"))]
+                #[cfg(all(any(unix, windows), feature = "acl"))]
                 preserve_acls,
             },
         )

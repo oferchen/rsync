@@ -1201,7 +1201,7 @@ fn delete_excluded_is_long_form_not_in_flag_string() {
     );
 }
 
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(any(unix, windows), feature = "acl"))]
 #[test]
 fn includes_acl_flag() {
     let config = ClientConfig::builder().acls(true).build();

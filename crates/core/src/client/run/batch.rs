@@ -80,9 +80,9 @@ pub(crate) fn write_batch_header(
     #[cfg(not(all(unix, feature = "xattr")))]
     let preserve_xattrs = false;
 
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     let preserve_acls = config.preserve_acls();
-    #[cfg(not(all(unix, feature = "acl")))]
+    #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let preserve_acls = false;
 
     let batch_flags = engine::batch::BatchFlags {

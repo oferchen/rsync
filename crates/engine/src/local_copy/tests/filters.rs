@@ -316,7 +316,7 @@ fn deferred_updates_flush_commits_pending_files() {
         final_path,
         #[cfg(all(unix, feature = "xattr"))]
         context.xattrs_enabled(),
-        #[cfg(all(unix, feature = "acl"))]
+        #[cfg(all(any(unix, windows), feature = "acl"))]
         context.acls_enabled(),
     );
 

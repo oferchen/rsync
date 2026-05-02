@@ -141,7 +141,7 @@ pub use hard_links::{HardlinkApplyResult, HardlinkApplyTracker};
 
 pub(crate) use metadata_sync::map_metadata_error;
 
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(any(unix, windows), feature = "acl"))]
 pub(crate) use metadata_sync::sync_acls_if_requested;
 
 #[cfg(all(unix, feature = "xattr"))]

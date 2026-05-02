@@ -348,7 +348,7 @@ where
     };
     let open_noatime_enabled = open_noatime_setting.unwrap_or(false);
 
-    #[allow(unused_variables)] // REASON: used on unix with feature "acl"
+    #[allow(unused_variables)] // REASON: used on unix or windows with feature "acl"
     let preserve_acls = acls.unwrap_or(false);
 
     if let Err(code) = validate_feature_support(preserve_acls, xattrs, stderr) {
@@ -743,7 +743,7 @@ where
         compare_destinations,
         copy_destinations,
         link_destinations,
-        #[cfg(all(unix, feature = "acl"))]
+        #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,
         #[cfg(all(unix, feature = "xattr"))]
         xattrs: xattrs.unwrap_or(false),

@@ -274,7 +274,7 @@ fn archive_does_not_enable_xattrs() {
     );
 }
 
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(any(unix, windows), feature = "acl"))]
 #[test]
 fn archive_does_not_enable_acls() {
     let options = LocalCopyOptions::builder()
