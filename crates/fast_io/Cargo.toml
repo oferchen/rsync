@@ -67,8 +67,9 @@ copy_file_range = []
 syscall_batch = []
 
 [target.'cfg(windows)'.dependencies]
-# CopyFileExW for Windows-optimized file copy with no-buffering support
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
+# CopyFileExW for Windows-optimized file copy with no-buffering support;
+# Win32_Networking_WinSock added for WSARecv/WSASend in iocp::socket (#1928).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
 
 [target.'cfg(not(unix))'.dependencies]
 filetime = "0.2"

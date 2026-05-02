@@ -32,6 +32,7 @@ pub(crate) mod file_reader;
 mod file_writer;
 mod overlapped;
 mod pump;
+pub mod socket;
 
 pub use config::{
     IOCP_MIN_FILE_SIZE, IocpConfig, iocp_availability_reason, is_iocp_available,
