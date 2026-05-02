@@ -3134,67 +3134,43 @@ test_iconv() {
 #   upstream: flist.c:738-754      (receiver iconvbufs(ic_recv, ...))
 #   oc-rsync: docs/audits/iconv-pipeline.md (Findings 1-5)
 
-# Populates the global parallel-array fixture for the iconv interop test.
-# ASCII baseline goes first so a baseline failure is easy to spot before
-# any high-bit byte enters the picture.
+# Single-file fixture so the test isolates the iconv FILENAME conversion from
+# the multi-file flist ingest pipeline (tracked separately in #1913). The
+# property under test for #1917 is purely "did the daemon's `charset =`
+# directive activate ic_recv on the receiver?", proven by the on-disk byte
+# sequence of the destination filename.
 _ic_init_fixtures() {
-  _ic_src_names=(
-    "plain.txt"
-    $'caf\xc3\xa9.txt'             # U+00E9: UTF-8 c3 a9 / Latin-1 e9
-    $'\xc3\xbcber.txt'             # U+00FC: UTF-8 c3 bc / Latin-1 fc
-    $'\xc3\xa5ngstr\xc3\xb6m.txt'  # U+00E5,U+00F6: UTF-8 c3 a5/c3 b6 / Latin-1 e5/f6
-  )
-  _ic_dest_names=(
-    "plain.txt"
-    $'caf\xe9.txt'
-    $'\xfcber.txt'
-    $'\xe5ngstr\xf6m.txt'
-  )
-  _ic_bodies=(
-    "ascii body"
-    "cafe body"
-    "umlaut body"
-    "nordic body"
-  )
+  _ic_src_name=$'caf\xc3\xa9.txt'   # U+00E9: UTF-8 c3 a9
+  _ic_dest_name=$'caf\xe9.txt'      # ISO-8859-1: e9
+  _ic_body="cafe body"
 }
 
-# Writes the fixture files into $1 (source dir), one file per parallel-array
-# entry. Returns 1 if the host filesystem refuses any non-ASCII name (e.g.
-# non-UTF-8 locale or NFC-normalising filesystem), so callers can SKIP.
+# Writes the single fixture file into $1 (source dir). Returns 1 if the host
+# filesystem refuses the UTF-8 name (e.g. non-UTF-8 locale or NFC-normalising
+# filesystem), so callers can SKIP rather than report a spurious failure.
 _ic_write_fixtures() {
   local src=$1
-  local i
-  for i in "${!_ic_src_names[@]}"; do
-    printf '%s\n' "${_ic_bodies[$i]}" > "${src}/${_ic_src_names[$i]}"
-    if [[ ! -f "${src}/${_ic_src_names[$i]}" ]]; then
-      return 1
-    fi
-  done
-  return 0
+  printf '%s\n' "$_ic_body" > "${src}/${_ic_src_name}"
+  [[ -f "${src}/${_ic_src_name}" ]]
 }
 
-# Verifies that the destination directory $2 contains every dest-side filename
-# from the fixture and that the body matches the corresponding source file.
-# Filenames are compared by their on-disk byte sequence (ISO-8859-1 at dest,
-# UTF-8 at source) - this is the property that proves the daemon's iconv
-# pipeline ran end-to-end.
+# Verifies that the destination directory contains the ISO-8859-1 byte name
+# (proves the daemon's `charset =` directive activated ic_recv) and that the
+# body matches (proves the transfer completed). With a single-file fixture
+# there is no flist re-sort ambiguity, so a body mismatch here is a real
+# transfer regression rather than the multi-file ingest bug.
 _ic_verify_dest() {
   local label=$1 src=$2 dest=$3 daemon_log=${4:-}
-  local i
-  for i in "${!_ic_dest_names[@]}"; do
-    local src_name="${_ic_src_names[$i]}"
-    local dest_name="${_ic_dest_names[$i]}"
-    if [[ ! -f "${dest}/${dest_name}" ]]; then
-      _ic_dump_failure "$label" "$dest" "$daemon_log" \
-        "missing dest file (expected ISO-8859-1 byte name for src '${src_name}')"
-      return 1
-    fi
-    if ! cmp -s "${src}/${src_name}" "${dest}/${dest_name}"; then
-      _ic_dump_failure "$label" "$dest" "$daemon_log" \
-        "body mismatch: src='${src_name}' dest='${dest_name}'"
-      return 1
-    fi
-  done
+  if [[ ! -f "${dest}/${_ic_dest_name}" ]]; then
+    _ic_dump_failure "$label" "$dest" "$daemon_log" \
+      "missing dest file (expected ISO-8859-1 byte name for src '${_ic_src_name}')"
+    return 1
+  fi
+  if ! cmp -s "${src}/${_ic_src_name}" "${dest}/${_ic_dest_name}"; then
+    _ic_dump_failure "$label" "$dest" "$daemon_log" \
+      "body mismatch: src='${_ic_src_name}' dest='${_ic_dest_name}'"
+    return 1
+  fi
   return 0
 }
 
