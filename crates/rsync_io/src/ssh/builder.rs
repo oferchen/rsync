@@ -344,7 +344,14 @@ impl SshCommand {
             2 + self.options.len() + self.remote_command.len() + usize::from(self.port.is_some()),
         );
 
-        if self.batch_mode {
+        // Inject `-oBatchMode=yes` only when the program looks like an SSH
+        // client. Upstream rsync does not inject SSH-specific options into a
+        // user-supplied `--rsh` / `-e` wrapper, and neither do we for any
+        // other SSH option (keepalive, ConnectTimeout, AES-GCM ciphers,
+        // ProxyJump). A non-SSH wrapper would otherwise receive
+        // `-oBatchMode=yes` as a positional argument and either reject it or
+        // silently consume it in place of the host argument.
+        if self.batch_mode && self.is_ssh_program() {
             args.push(OsString::from("-oBatchMode=yes"));
         }
 
