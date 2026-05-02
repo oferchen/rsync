@@ -82,9 +82,7 @@ mod linux_only {
         // Socket pair: writer side will be poll/send-driven; reader side
         // verifies the bytes the kernel actually delivered.
         let (writer_sock, peer_sock) = UnixStream::pair().expect("socket pair");
-        peer_sock
-            .set_nonblocking(true)
-            .expect("nonblocking peer");
+        peer_sock.set_nonblocking(true).expect("nonblocking peer");
 
         let cfg = SharedRingConfig::default();
         let mut ring = match SharedRing::try_new(file.as_raw_fd(), writer_sock.as_raw_fd(), &cfg) {
@@ -98,7 +96,8 @@ mod linux_only {
         // Submit one read at offset 0 and one POLL_ADD(POLLOUT) on the
         // writer fd. Distinct op_ids so the demux can be verified.
         let mut read_buf = vec![0u8; payload.len()];
-        ring.submit_read(101, 0, &mut read_buf).expect("submit read");
+        ring.submit_read(101, 0, &mut read_buf)
+            .expect("submit read");
         ring.submit_poll_write(202).expect("submit poll");
 
         // Submit and wait until both completions arrive.
@@ -115,7 +114,10 @@ mod linux_only {
             match *c {
                 SharedCompletion::Read { op_id, result } => {
                     assert_eq!(op_id, 101, "read tag must carry the submitted op_id");
-                    assert!(result >= 0, "read result must be non-negative, got {result}");
+                    assert!(
+                        result >= 0,
+                        "read result must be non-negative, got {result}"
+                    );
                     assert_eq!(result as usize, payload.len(), "expected full read");
                     saw_read = true;
                 }
@@ -174,23 +176,28 @@ mod linux_only {
 
         let (writer_sock, _peer) = UnixStream::pair().expect("socket pair");
 
-        let mut ring =
-            match SharedRing::try_new(file.as_raw_fd(), writer_sock.as_raw_fd(), &SharedRingConfig::default()) {
-                Some(r) => r,
-                None => {
-                    eprintln!("skipping: SharedRing::try_new returned None");
-                    return;
-                }
-            };
+        let mut ring = match SharedRing::try_new(
+            file.as_raw_fd(),
+            writer_sock.as_raw_fd(),
+            &SharedRingConfig::default(),
+        ) {
+            Some(r) => r,
+            None => {
+                eprintln!("skipping: SharedRing::try_new returned None");
+                return;
+            }
+        };
 
         // Allocate four 256-byte buffers, each reading a distinct quarter.
         let mut bufs: Vec<Vec<u8>> = (0..4).map(|_| vec![0u8; 256]).collect();
         // Submit in interleaved order: read, poll, read, poll, read, read.
         for (i, buf) in bufs.iter_mut().enumerate() {
             let offset = (i * 256) as u64;
-            ring.submit_read(1000 + i as u64, offset, buf).expect("submit read");
+            ring.submit_read(1000 + i as u64, offset, buf)
+                .expect("submit read");
             if i < 2 {
-                ring.submit_poll_write(2000 + i as u64).expect("submit poll");
+                ring.submit_poll_write(2000 + i as u64)
+                    .expect("submit poll");
             }
         }
 
