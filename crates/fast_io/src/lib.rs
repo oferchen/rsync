@@ -154,9 +154,10 @@ pub use temp_file_strategy::{
 pub use io_uring::{
     BufferRing, BufferRingConfig, BufferRingError, IoUringConfig, IoUringDiskBatch,
     IoUringKernelInfo, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory,
-    IoUringWriter, IoUringWriterFactory, RegisteredBufferGroup, RegisteredBufferSlot,
-    RegisteredBufferStats, buffer_id_from_cqe_flags, is_io_uring_available, reader_from_path,
-    sqpoll_fell_back, writer_from_file,
+    IoUringWriter, IoUringWriterFactory, OpTag, RegisteredBufferGroup, RegisteredBufferSlot,
+    RegisteredBufferStats, SharedCompletion, SharedRing, SharedRingConfig,
+    buffer_id_from_cqe_flags, is_io_uring_available, reader_from_path, sqpoll_fell_back,
+    writer_from_file,
 };
 
 #[cfg(all(target_os = "windows", feature = "iocp"))]
