@@ -374,6 +374,11 @@ impl FileListWriter {
     /// See `flist.c:send_file_entry()` lines 470-750 for the complete wire encoding.
     pub fn write_entry<W: Write>(&mut self, writer: &mut W, entry: &FileEntry) -> io::Result<()> {
         let raw_name = entry.name_bytes();
+        // upstream: flist.c send_file_entry() iconv_buf(ic_send, ...) - when
+        // --iconv is in effect, the filename is transcoded from local to
+        // remote charset before any prefix-compression bookkeeping or wire
+        // emission, so all downstream xflags and length fields refer to the
+        // converted bytes.
         let name = self.apply_encoding_conversion(&raw_name)?;
 
         let same_len = self.state.calculate_name_prefix_len(&name);
