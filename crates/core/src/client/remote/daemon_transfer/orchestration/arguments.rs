@@ -10,7 +10,7 @@ use std::net::TcpStream;
 use protocol::ProtocolVersion;
 use transfer::setup::build_capability_string;
 
-use crate::client::config::{ClientConfig, DeleteMode, ReferenceDirectoryKind};
+use crate::client::config::{ClientConfig, DeleteMode, IconvSetting, ReferenceDirectoryKind};
 use crate::client::error::{ClientError, socket_error};
 use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
 use crate::client::remote::flags;
@@ -321,6 +321,23 @@ pub(super) fn build_full_daemon_args(
                     args.push("--from0".to_owned());
                 }
             }
+        }
+    }
+
+    // --iconv forwarding to the remote daemon.
+    // upstream: options.c:2716-2723 - when iconv_opt contains a comma, only the
+    // post-comma half (the daemon's local charset) is forwarded; otherwise the
+    // whole string is forwarded as-is. `--iconv=-` (Disabled) and the default
+    // (Unspecified) forward nothing because upstream nulls iconv_opt at
+    // options.c:2052-2054 before this branch runs. Without this the daemon
+    // never enables `ic_recv` and writes wire UTF-8 bytes verbatim instead of
+    // transcoding to its local charset.
+    match config.iconv() {
+        IconvSetting::Unspecified | IconvSetting::Disabled => {}
+        IconvSetting::LocaleDefault => args.push("--iconv=.".to_owned()),
+        IconvSetting::Explicit { local, remote } => {
+            let forwarded = remote.as_deref().unwrap_or(local);
+            args.push(format!("--iconv={forwarded}"));
         }
     }
 
