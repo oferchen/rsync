@@ -200,11 +200,7 @@ pub fn read_files_from_stream<R: Read>(
 /// representation. Upstream's `ICB_INCLUDE_BAD` flag (pass through bad bytes)
 /// is honored only at the iconv layer; the final UTF-8 check is a downstream
 /// limitation of the `Vec<String>` API.
-fn push_decoded_filename(
-    out: &mut Vec<String>,
-    raw: &[u8],
-    iconv: Option<&FilenameConverter>,
-) {
+fn push_decoded_filename(out: &mut Vec<String>, raw: &[u8], iconv: Option<&FilenameConverter>) {
     let bytes: Cow<'_, [u8]> = match iconv {
         Some(converter) => match converter.remote_to_local(raw) {
             Ok(cow) => cow,
@@ -378,8 +374,13 @@ mod tests {
         let mut wire_with = Vec::new();
         let mut wire_without = Vec::new();
 
-        forward_files_from(&mut Cursor::new(input), &mut wire_with, false, Some(&identity))
-            .unwrap();
+        forward_files_from(
+            &mut Cursor::new(input),
+            &mut wire_with,
+            false,
+            Some(&identity),
+        )
+        .unwrap();
         forward_files_from(&mut Cursor::new(input), &mut wire_without, false, None).unwrap();
 
         assert_eq!(wire_with, wire_without);
@@ -424,8 +425,7 @@ mod tests {
         // Reader side uses remote_to_local = UTF-8 → UTF-8 (no-op when local
         // matches wire), so we instead read with a UTF-8/UTF-8 identity to
         // observe the post-write wire bytes as a String.
-        let writer_iconv =
-            FilenameConverter::new("ISO-8859-1", "UTF-8").expect("writer converter");
+        let writer_iconv = FilenameConverter::new("ISO-8859-1", "UTF-8").expect("writer converter");
         let reader_iconv = FilenameConverter::identity();
 
         let input: &[u8] = b"caf\xE9\nna\xEFve\n";
@@ -438,8 +438,7 @@ mod tests {
         )
         .unwrap();
 
-        let files =
-            read_files_from_stream(&mut Cursor::new(&wire), Some(&reader_iconv)).unwrap();
+        let files = read_files_from_stream(&mut Cursor::new(&wire), Some(&reader_iconv)).unwrap();
         assert_eq!(files, vec!["café", "naïve"]);
     }
 }
