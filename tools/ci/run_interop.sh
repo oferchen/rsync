@@ -3091,24 +3091,127 @@ test_iconv() {
   return 0
 }
 
-# #1916: --iconv UTF-8/LATIN1 round-trip vs upstream rsync 3.4.1
-# Verifies that upstream rsync 3.4.1 and oc-rsync interoperate when the user
-# requests --iconv=UTF-8,ISO-8859-1. Both directions are exercised:
-#   1. upstream client -> oc-rsync daemon (push)
-#   2. oc-rsync client -> upstream daemon (push)
-# In each direction the source contains UTF-8 filenames whose code points all
-# fit in ISO-8859-1 (Latin-1). With --iconv enabled, the wire encoding is
-# Latin-1 and both peers must transcode back to UTF-8 on disk.
+# #1916: --iconv daemon round-trip vs upstream rsync 3.4.1
 #
-# References:
-#   upstream: options.c:recv_iconv_settings (parses --iconv=LOCAL,REMOTE)
-#   upstream: flist.c:1579-1603 (sender filename iconvbufs(ic_send, ...))
-#   upstream: flist.c:738-754 (receiver filename iconvbufs(ic_recv, ...))
+# # Wire semantics
+#
+# Per upstream rsync.c:130-140 the wire is always UTF-8 when --iconv is
+# active. The `charset` parameter (whether on the client `--iconv=LOCAL,REMOTE`
+# or on the daemon `charset =` directive) names the *local disk* encoding,
+# not the wire encoding:
+#
+#     ic_send = iconv_open(UTF8_CHARSET, charset)  # disk -> wire
+#     ic_recv = iconv_open(charset, UTF8_CHARSET)  # wire -> disk
+#
+# Per options.c:recv_iconv_settings the comma-separated argument splits as
+# LOCAL,REMOTE. The client uses LOCAL for its own `charset`; the server
+# (daemon) uses REMOTE, but the daemon `charset =` directive overrides REMOTE
+# with the daemon's own configured local-disk encoding.
+#
+# # Test fixture model
+#
+# With client `--iconv=UTF-8,ISO-8859-1` and daemon `charset = ISO-8859-1`:
+#
+#   - Source disk holds UTF-8 byte filenames (e.g. caf\xc3\xa9.txt).
+#   - Sender ic_send (UTF-8 -> UTF-8) is identity; wire bytes are UTF-8.
+#   - Daemon ic_recv (UTF-8 -> ISO-8859-1) maps to single-byte names on
+#     disk (e.g. caf\xe9.txt).
+#
+# So source and destination filenames have *different* byte sequences for the
+# same logical filename. The fixture model uses parallel arrays:
+#
+#   _ic_src_names[i]   UTF-8 bytes for the source-side filename
+#   _ic_dest_names[i]  ISO-8859-1 bytes for the destination-side filename
+#   _ic_bodies[i]      File contents (encoding-agnostic ASCII)
+#
+# # References
+#
+#   upstream: rsync.c:118-140      (charset = LOCAL on client, REMOTE on server)
+#   upstream: rsync.c:130          (ic_send = iconv_open(UTF8, charset))
+#   upstream: rsync.c:136          (ic_recv = iconv_open(charset, UTF8))
+#   upstream: options.c            (recv_iconv_settings: parse LOCAL,REMOTE)
+#   upstream: flist.c:1579-1603    (sender iconvbufs(ic_send, ...))
+#   upstream: flist.c:738-754      (receiver iconvbufs(ic_recv, ...))
 #   oc-rsync: docs/audits/iconv-pipeline.md (Findings 1-5)
-#
-# The test is deterministic: same fixture bytes every run, ASCII fallback
-# files act as the always-passing baseline, and Latin-1 representable names
-# are the iconv probe.
+
+# Populates the global parallel-array fixture for the iconv interop test.
+# ASCII baseline goes first so a baseline failure is easy to spot before
+# any high-bit byte enters the picture.
+_ic_init_fixtures() {
+  _ic_src_names=(
+    "plain.txt"
+    $'caf\xc3\xa9.txt'             # U+00E9: UTF-8 c3 a9 / Latin-1 e9
+    $'\xc3\xbcber.txt'             # U+00FC: UTF-8 c3 bc / Latin-1 fc
+    $'\xc3\xa5ngstr\xc3\xb6m.txt'  # U+00E5,U+00F6: UTF-8 c3 a5/c3 b6 / Latin-1 e5/f6
+  )
+  _ic_dest_names=(
+    "plain.txt"
+    $'caf\xe9.txt'
+    $'\xfcber.txt'
+    $'\xe5ngstr\xf6m.txt'
+  )
+  _ic_bodies=(
+    "ascii body"
+    "cafe body"
+    "umlaut body"
+    "nordic body"
+  )
+}
+
+# Writes the fixture files into $1 (source dir), one file per parallel-array
+# entry. Returns 1 if the host filesystem refuses any non-ASCII name (e.g.
+# non-UTF-8 locale or NFC-normalising filesystem), so callers can SKIP.
+_ic_write_fixtures() {
+  local src=$1
+  local i
+  for i in "${!_ic_src_names[@]}"; do
+    printf '%s\n' "${_ic_bodies[$i]}" > "${src}/${_ic_src_names[$i]}"
+    if [[ ! -f "${src}/${_ic_src_names[$i]}" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Verifies that the destination directory $2 contains every dest-side filename
+# from the fixture and that the body matches the corresponding source file.
+# Filenames are compared by their on-disk byte sequence (ISO-8859-1 at dest,
+# UTF-8 at source) - this is the property that proves the daemon's iconv
+# pipeline ran end-to-end.
+_ic_verify_dest() {
+  local label=$1 src=$2 dest=$3 daemon_log=${4:-}
+  local i
+  for i in "${!_ic_dest_names[@]}"; do
+    local src_name="${_ic_src_names[$i]}"
+    local dest_name="${_ic_dest_names[$i]}"
+    if [[ ! -f "${dest}/${dest_name}" ]]; then
+      _ic_dump_failure "$label" "$dest" "$daemon_log" \
+        "missing dest file (expected ISO-8859-1 byte name for src '${src_name}')"
+      return 1
+    fi
+    if ! cmp -s "${src}/${src_name}" "${dest}/${dest_name}"; then
+      _ic_dump_failure "$label" "$dest" "$daemon_log" \
+        "body mismatch: src='${src_name}' dest='${dest_name}'"
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Single diagnostic dump used by every failure path so reports stay uniform.
+# Lists dest contents via `ls -lab` (octal-escapes high bytes so the report
+# is readable in any locale) and tails the daemon log when available.
+_ic_dump_failure() {
+  local label=$1 dest=$2 daemon_log=$3 reason=$4
+  echo "    ${label}: ${reason}"
+  echo "    ${label}: dest contents (octal-escaped):"
+  ls -lab "$dest" 2>/dev/null | sed 's/^/      /'
+  if [[ -n "$daemon_log" && -f "$daemon_log" ]]; then
+    echo "    ${label}: daemon log tail:"
+    tail -20 "$daemon_log" | sed 's/^/      /'
+  fi
+}
+
 test_iconv_upstream_interop() {
   local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
         oc_port=$6 upstream_port=$7
@@ -3119,65 +3222,15 @@ test_iconv_upstream_interop() {
   rm -rf "$ic_src" "$ic_dest_oc" "$ic_dest_up"
   mkdir -p "$ic_src" "$ic_dest_oc" "$ic_dest_up"
 
-  # ASCII baseline: must always survive any iconv pipeline.
-  echo "ascii body" > "${ic_src}/plain.txt"
-
-  # UTF-8 names whose code points all fit in ISO-8859-1 (Latin-1):
-  # - U+00E9 LATIN SMALL LETTER E WITH ACUTE (cafe)
-  # - U+00FC LATIN SMALL LETTER U WITH DIAERESIS, U+00DF SHARP S
-  # - U+00E5 LATIN SMALL LETTER A WITH RING ABOVE
-  echo "cafe body" > "${ic_src}/café.txt"
-  echo "umlaut body" > "${ic_src}/über.txt"
-  echo "nordic body" > "${ic_src}/ångström.txt"
-
-  # Skip the test gracefully if the host filesystem rejects any UTF-8 names
-  # (e.g. a non-UTF-8 locale or a filesystem that NFC-normalises).
-  for fname in "café.txt" "über.txt" "ångström.txt"; do
-    if [[ ! -f "${ic_src}/${fname}" ]]; then
-      echo "    SKIP: host filesystem cannot store UTF-8 name '${fname}'"
-      return 0
-    fi
-  done
-
-  local -a expected_files=(
-    "plain.txt"
-    "café.txt"
-    "über.txt"
-    "ångström.txt"
-  )
-
-  _ic_verify_round_trip() {
-    local label=$1 dest=$2 daemon_log=${3:-}
-    for fname in "${expected_files[@]}"; do
-      if [[ ! -f "${dest}/${fname}" ]]; then
-        echo "    ${label}: ${fname} missing after iconv transfer"
-        echo "    ${label}: dest contents: $(find "$dest" -type f | sort | tr '\n' ' ')"
-        if [[ -n "$daemon_log" && -f "$daemon_log" ]]; then
-          echo "    ${label}: daemon log tail:"
-          tail -20 "$daemon_log" | sed 's/^/      /'
-        fi
-        return 1
-      fi
-      if ! cmp -s "${ic_src}/${fname}" "${dest}/${fname}"; then
-        echo "    ${label}: ${fname} content mismatch after iconv transfer"
-        echo "    ${label}: dest contents: $(find "$dest" -type f | sort | tr '\n' ' ')"
-        echo "    ${label}: src ${fname} ($(wc -c < "${ic_src}/${fname}") bytes):"
-        hexdump -C "${ic_src}/${fname}" | head -5 | sed 's/^/      /'
-        echo "    ${label}: dest ${fname} ($(wc -c < "${dest}/${fname}") bytes):"
-        hexdump -C "${dest}/${fname}" | head -5 | sed 's/^/      /'
-        if [[ -n "$daemon_log" && -f "$daemon_log" ]]; then
-          echo "    ${label}: daemon log tail:"
-          tail -20 "$daemon_log" | sed 's/^/      /'
-        fi
-        return 1
-      fi
-    done
+  _ic_init_fixtures
+  if ! _ic_write_fixtures "$ic_src"; then
+    echo "    SKIP: host filesystem cannot store UTF-8 fixture names"
     return 0
-  }
+  fi
 
   # --- Direction 1: upstream client -> oc-rsync daemon ---
-  # Upstream encodes UTF-8 source names into ISO-8859-1 on the wire; oc-rsync
-  # daemon must decode back to UTF-8 (its local charset) on disk.
+  # Client charset=UTF-8 (identity ic_send); daemon charset=ISO-8859-1 means
+  # daemon ic_recv writes Latin-1 bytes to disk.
   local ic_oc_conf="${work}/iconv-up-oc.conf"
   local ic_oc_pid="${work}/iconv-up-oc.pid"
   local ic_oc_log="${work}/iconv-up-oc.log"
@@ -3211,11 +3264,11 @@ CONF
     return 1
   fi
 
-  _ic_verify_round_trip "upstream->oc" "$ic_dest_oc" "$ic_oc_log" || return 1
+  _ic_verify_dest "upstream->oc" "$ic_src" "$ic_dest_oc" "$ic_oc_log" \
+      || return 1
 
   # --- Direction 2: oc-rsync client -> upstream daemon ---
-  # oc-rsync encodes UTF-8 source names into ISO-8859-1 on the wire; upstream
-  # daemon decodes back to UTF-8 (its local charset, per `charset =`) on disk.
+  # Same wire semantics as direction 1, just with peer roles swapped.
   local ic_up_conf="${work}/iconv-up-up.conf"
   local ic_up_pid="${work}/iconv-up-up.pid"
   local ic_up_log="${work}/iconv-up-up.log"
@@ -3250,7 +3303,8 @@ CONF
     return 1
   fi
 
-  _ic_verify_round_trip "oc->upstream" "$ic_dest_up" "$ic_up_log" || return 1
+  _ic_verify_dest "oc->upstream" "$ic_src" "$ic_dest_up" "$ic_up_log" \
+      || return 1
 
   return 0
 }
