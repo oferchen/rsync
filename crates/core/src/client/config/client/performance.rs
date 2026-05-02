@@ -139,8 +139,8 @@ impl ClientConfig {
     /// initialization. The capability is included in the `-e.` string sent
     /// in both transfer directions, causing the peer to enable
     /// `compat_flags |= CF_INC_RECURSE` when the negotiated protocol is
-    /// >= 30 and `--recursive` (`-r`) is in effect. Pass
-    /// `--no-inc-recursive` to clear it.
+    /// >= 30 and `--recursive` (`-r`) is in effect. Pass `--no-inc-recursive`
+    /// to clear it.
     ///
     /// # Upstream Reference
     ///
