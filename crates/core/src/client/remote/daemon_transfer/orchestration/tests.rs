@@ -797,13 +797,14 @@ mod iconv_bridge {
             .connection
             .iconv
             .expect("--iconv=utf-8,latin1 must produce a converter on the receiver path");
-        assert!(!converter.is_identity());
+        // upstream: rsync.c:130-140 - wire is always UTF-8. When the local
+        // charset matches the wire charset, this peer's converter is
+        // identity (no transcoding on the local->wire direction). The
+        // `remote` half of LOCAL,REMOTE is the peer's local charset and is
+        // forwarded to the remote CLI separately, not consumed here.
+        assert!(converter.is_identity());
         assert_eq!(converter.local_encoding_name(), "UTF-8");
-        assert_eq!(converter.remote_encoding_name(), "windows-1252");
-        // encoding_rs maps "ISO-8859-1" to "windows-1252" per WHATWG spec.
-        // The contract for this bridge is that a non-identity converter
-        // is wired through; the exact label normalisation is owned by
-        // the protocol crate's iconv module.
+        assert_eq!(converter.remote_encoding_name(), "UTF-8");
     }
 
     #[cfg(feature = "iconv")]
