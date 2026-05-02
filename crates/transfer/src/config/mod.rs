@@ -313,6 +313,28 @@ pub struct ServerConfig {
     /// - `token.c:do_compression` - per-file compression decision
     /// - `loadparm.c` - `dont compress` daemon parameter
     pub skip_compress: Option<SkipCompressList>,
+    /// When true, store privileged metadata (uid/gid, devices, special files) in
+    /// the `user.rsync.%stat` xattr instead of applying it directly to inodes.
+    ///
+    /// Sourced from the daemon module's `fake super = yes` directive in
+    /// `rsyncd.conf(5)`. Lets a non-root daemon receive ownership and special-file
+    /// metadata from a privileged client by recording it in xattrs that a later
+    /// privileged restore can replay.
+    ///
+    /// Mirrors upstream's behaviour where a daemon module with `fake super = yes`
+    /// demotes the receiver's `am_root` to the fake-super marker (`-1`) and
+    /// rewrites a client's `--fake-super` so the daemon honours the directive
+    /// even when the client did not request it. The directive is purely
+    /// daemon-config-driven; this flag is set by the daemon when constructing
+    /// [`ServerConfig`] and is never populated from a client `--fake-super` arg.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:1106-1107` - daemon `fake super = yes` demotes
+    ///   `am_root` and forces `--fake-super` semantics on the receiver
+    /// - `loadparm.c` - `fake super` module parameter
+    /// - `rsync.c:set_file_attrs()` - fake-super stores ownership in xattrs
+    pub fake_super: bool,
 }
 
 impl Default for ServerConfig {
@@ -340,6 +362,7 @@ impl Default for ServerConfig {
             do_stats: false,
             temp_dir: None,
             skip_compress: None,
+            fake_super: false,
         }
     }
 }

@@ -928,7 +928,12 @@ impl ReceiverContext {
             .preserve_crtimes(self.config.flags.crtimes)
             .preserve_owner(self.config.flags.owner)
             .preserve_group(self.config.flags.group)
-            .numeric_ids(self.config.flags.numeric_ids);
+            .numeric_ids(self.config.flags.numeric_ids)
+            // upstream: clientserver.c:1106-1107 - `fake super = yes` on the
+            // daemon module forces fake-super metadata storage on the receiver
+            // (ownership and special-file metadata go to user.rsync.%stat
+            // xattrs instead of being applied to inodes).
+            .fake_super(self.config.fake_super);
 
         let dest_dir = self
             .config
