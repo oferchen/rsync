@@ -3,7 +3,7 @@
 use std::io;
 use std::net::TcpStream;
 
-use super::setsockopt::set_socket_option_int;
+use fast_io::set_socket_int_option;
 
 /// Classifies a socket option by how its value is interpreted.
 #[derive(Clone, Copy)]
@@ -30,7 +30,7 @@ pub(super) enum SocketOptionKind {
 /// A single parsed socket option ready to be applied.
 ///
 /// Decouples parsing from execution: `apply` performs the actual
-/// `setsockopt` call using the platform-specific helper.
+/// `setsockopt` call via the safe `fast_io::set_socket_int_option` wrapper.
 pub(super) struct ParsedSocketOption {
     pub(super) kind: SocketOptionKind,
     pub(super) explicit_value: Option<libc::c_int>,
@@ -49,13 +49,13 @@ impl ParsedSocketOption {
         match self.kind {
             SocketOptionKind::Bool { level, option } | SocketOptionKind::Int { level, option } => {
                 let value = self.explicit_value.unwrap_or(1);
-                set_socket_option_int(stream, level, option, value)
+                set_socket_int_option(stream, level, option, value)
             }
             SocketOptionKind::On {
                 level,
                 option,
                 value,
-            } => set_socket_option_int(stream, level, option, value),
+            } => set_socket_int_option(stream, level, option, value),
         }
     }
 
@@ -68,7 +68,7 @@ impl ParsedSocketOption {
         match self.kind {
             SocketOptionKind::Bool { level, option } | SocketOptionKind::Int { level, option } => {
                 let value = self.explicit_value.unwrap_or(1);
-                set_socket_option_int(stream, level, option, value)
+                set_socket_int_option(stream, level, option, value)
             }
         }
     }
