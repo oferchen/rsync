@@ -280,7 +280,7 @@ fn build_server_config(
             // directive into the iconv handles used for filename transcoding.
             // Without this wiring the daemon would parse `charset = LATIN1` but
             // never apply it, leaving --iconv negotiation a silent no-op.
-            cfg.connection.iconv = resolve_module_charset_converter(module.charset());
+            cfg.connection.iconv = resolve_module_charset_converter(module.charset.as_deref());
 
             Ok(Some(cfg))
         }
