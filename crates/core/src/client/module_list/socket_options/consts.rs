@@ -147,10 +147,3 @@ pub const TCP_NODELAY: libc::c_int = libc::TCP_NODELAY;
 /// Disable Nagle's algorithm (Windows variant).
 #[cfg(target_family = "windows")]
 pub const TCP_NODELAY: libc::c_int = 0x0001;
-
-/// Sentinel value indicating a socket operation error.
-///
-/// On Windows, `setsockopt()` returns `SOCKET_ERROR` (-1) on failure.
-// Only needed on Windows; on Unix we compare against -1 directly.
-#[cfg(windows)]
-pub const SOCKET_ERROR: libc::c_int = -1;

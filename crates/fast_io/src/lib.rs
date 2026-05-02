@@ -90,6 +90,7 @@ pub mod o_tmpfile;
 pub mod platform_copy;
 pub mod refs_detect;
 pub mod sendfile;
+pub mod socket_options;
 pub mod splice;
 pub mod syscall_batch;
 
@@ -138,6 +139,7 @@ pub use kernel_version::{
     IO_URING_MIN_KERNEL, KernelVersion, log_io_uring_probe_result, parse_kernel_version,
 };
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
+pub use socket_options::set_socket_int_option;
 pub use splice::{is_splice_available, recv_fd_to_file, try_splice_to_file};
 
 pub use mmap_reader::MmapReader;

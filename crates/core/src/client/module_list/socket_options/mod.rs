@@ -8,7 +8,6 @@ mod apply;
 mod consts;
 mod errors;
 mod lookup;
-mod setsockopt;
 mod types;
 
 pub(crate) use apply::apply_socket_options;
