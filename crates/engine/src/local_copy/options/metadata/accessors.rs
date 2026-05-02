@@ -127,19 +127,43 @@ impl LocalCopyOptions {
     ///
     /// When `--super` is explicitly set, that value is returned directly.
     /// Otherwise the decision falls back to checking whether the effective
-    /// user is root (UID 0 on Unix).
+    /// user is root (UID 0 on Unix). When `--fake-super` is active, the
+    /// result is forced to `false` so callers route privileged operations
+    /// (chown, mknod, mkfifo) through the fake-super xattr placeholder
+    /// path, mirroring upstream's `am_root < 0` sentinel.
+    // upstream: options.c:89 - am_root tri-state: 0 normal, 1 root, 2 --super,
+    //                          -1 --fake-super (negative is "fake")
+    // upstream: clientserver.c:1102-1105 - daemon `fake super = yes` forces am_root=-1
+    // upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes 0600 placeholder
     #[must_use]
     pub fn am_root(&self) -> bool {
-        match self.super_mode {
-            Some(value) => value,
-            None => is_effective_root(),
-        }
+        effective_am_root(self.super_mode, self.fake_super)
     }
 
     /// Reports whether `--fake-super` mode is enabled.
     #[must_use]
     pub const fn fake_super_enabled(&self) -> bool {
         self.fake_super
+    }
+}
+
+/// Resolves the effective `am_root` boolean for privilege-gated operations.
+///
+/// Mirrors upstream rsync's `am_root` tri-state: when `fake_super` is set,
+/// the result is `false` regardless of `super_mode` (matching upstream's
+/// `am_root = -1` sentinel that demotes privileged paths to the
+/// fake-super xattr placeholder branch). Otherwise the explicit `--super`
+/// flag wins, falling back to the effective UID check.
+// upstream: options.c:89 - am_root tri-state, -1 is "fake-super"
+// upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes 0600 placeholder
+#[must_use]
+pub(super) fn effective_am_root(super_mode: Option<bool>, fake_super: bool) -> bool {
+    if fake_super {
+        return false;
+    }
+    match super_mode {
+        Some(value) => value,
+        None => is_effective_root(),
     }
 }
 

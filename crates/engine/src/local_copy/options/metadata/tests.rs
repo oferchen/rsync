@@ -1,5 +1,5 @@
 use super::super::types::LocalCopyOptions;
-use super::accessors::is_effective_root;
+use super::accessors::{effective_am_root, is_effective_root};
 use ::metadata::CopyAsIds;
 
 #[test]
@@ -145,6 +145,53 @@ fn fake_super_round_trip() {
 
     let disabled = options.fake_super(false);
     assert!(!disabled.fake_super_enabled());
+}
+
+// upstream: options.c:89 - am_root tri-state, -1 is "fake-super"
+// upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes placeholder
+#[test]
+fn effective_am_root_super_true_fake_super_true_is_false() {
+    // --super --fake-super: upstream demotes am_root to -1 regardless of --super.
+    assert!(!effective_am_root(Some(true), true));
+}
+
+#[test]
+fn effective_am_root_super_true_fake_super_false_is_true() {
+    // --super alone keeps the privileged path active.
+    assert!(effective_am_root(Some(true), false));
+}
+
+#[test]
+fn effective_am_root_super_false_fake_super_true_is_false() {
+    // --no-super --fake-super: privileged ops disabled, xattr placeholder used.
+    assert!(!effective_am_root(Some(false), true));
+}
+
+#[test]
+fn effective_am_root_super_false_fake_super_false_is_false() {
+    // --no-super alone disables privileged path even when running as root.
+    assert!(!effective_am_root(Some(false), false));
+}
+
+#[test]
+fn effective_am_root_super_none_fake_super_true_is_false() {
+    // --fake-super alone: forces am_root false even when EUID==0.
+    assert!(!effective_am_root(None, true));
+}
+
+#[test]
+fn effective_am_root_super_none_fake_super_false_defers_to_euid() {
+    // No flags: defers to the effective UID check.
+    assert_eq!(effective_am_root(None, false), is_effective_root());
+}
+
+#[test]
+fn fake_super_demotes_am_root_when_super_explicit() {
+    // Integration check via the public LocalCopyOptions::am_root() accessor.
+    let options = LocalCopyOptions::new()
+        .super_mode(Some(true))
+        .fake_super(true);
+    assert!(!options.am_root());
 }
 
 #[test]

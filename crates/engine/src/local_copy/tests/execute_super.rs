@@ -133,6 +133,10 @@ fn builder_fake_super_set_true() {
 
 #[test]
 fn builder_super_mode_and_fake_super_combined() {
+    // upstream: options.c:89 - --fake-super forces am_root=-1 even after --super.
+    // The tri-state demotion means am_root() must report false whenever
+    // fake_super is set, regardless of super_mode, so privileged ops route
+    // through the xattr placeholder branch.
     let options = LocalCopyOptions::builder()
         .super_mode(Some(true))
         .fake_super(true)
@@ -140,7 +144,7 @@ fn builder_super_mode_and_fake_super_combined() {
         .expect("valid options");
     assert_eq!(options.super_mode_setting(), Some(true));
     assert!(options.fake_super_enabled());
-    assert!(options.am_root());
+    assert!(!options.am_root());
 }
 
 #[test]
@@ -676,13 +680,16 @@ fn super_true_with_group_preserves_gid_when_root() {
 
 #[test]
 fn super_and_fake_super_both_enabled() {
-    // Both flags can be set simultaneously. In upstream rsync, --fake-super
-    // takes precedence for storage, while --super controls attempt behavior.
+    // Both flags can be set simultaneously. Upstream's am_root tri-state
+    // (options.c:89) treats --fake-super (-1) as a hard demotion even after
+    // --super (2), routing privileged ops through the xattr placeholder
+    // branch. am_root() therefore reports false.
+    // upstream: syscall.c do_mknod() - am_root<0 sentinel substitutes placeholder
     let options = LocalCopyOptions::default()
         .super_mode(Some(true))
         .fake_super(true);
 
-    assert!(options.am_root());
+    assert!(!options.am_root());
     assert!(options.fake_super_enabled());
     assert_eq!(options.super_mode_setting(), Some(true));
 }
