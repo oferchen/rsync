@@ -3,6 +3,8 @@ use std::cell::RefCell;
 use std::env;
 use std::io::{BufReader, Write};
 
+use zeroize::{Zeroize, Zeroizing};
+
 use crate::auth::{DaemonAuthDigest, compute_daemon_auth_response};
 
 use super::super::{ClientError, socket_error};
@@ -15,7 +17,7 @@ pub(crate) struct DaemonAuthContext {
 }
 
 impl DaemonAuthContext {
-    pub(crate) const fn new(username: String, secret: Vec<u8>, digest: DaemonAuthDigest) -> Self {
+    pub(crate) fn new(username: String, secret: Vec<u8>, digest: DaemonAuthDigest) -> Self {
         Self {
             username,
             secret: SensitiveBytes::new(secret),
@@ -40,51 +42,35 @@ impl DaemonAuthContext {
 
 /// Wrapper for sensitive byte data that is securely cleared on drop.
 ///
-/// Uses volatile writes and memory fences to ensure the compiler cannot
-/// optimize away the zeroing operation, preventing sensitive data from
-/// lingering in memory after the value is dropped.
-pub(crate) struct SensitiveBytes(Vec<u8>);
+/// Backed by [`zeroize::Zeroizing`], which uses volatile writes and memory
+/// fences to ensure the compiler cannot optimize away the zeroing operation,
+/// preventing sensitive data from lingering in memory after the value is
+/// dropped.
+pub(crate) struct SensitiveBytes(Zeroizing<Vec<u8>>);
 
 impl SensitiveBytes {
-    pub(crate) const fn new(bytes: Vec<u8>) -> Self {
-        Self(bytes)
+    pub(crate) fn new(bytes: Vec<u8>) -> Self {
+        Self(Zeroizing::new(bytes))
     }
 
     pub(crate) fn to_vec(&self) -> Vec<u8> {
-        self.0.clone()
+        self.0.as_slice().to_vec()
     }
 
     pub(crate) fn as_slice(&self) -> &[u8] {
-        &self.0
+        self.0.as_slice()
     }
 
     #[cfg(test)]
-    #[allow(dead_code, unsafe_code)]
+    #[allow(dead_code)]
     pub(crate) fn into_zeroized_vec(mut self) -> Vec<u8> {
-        for byte in &mut self.0 {
-            // SAFETY: Writing to valid memory owned by self.
-            unsafe {
-                std::ptr::write_volatile(byte, 0);
-            }
-        }
-        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
-        std::mem::take(&mut self.0)
-    }
-}
-
-impl Drop for SensitiveBytes {
-    #[allow(unsafe_code)]
-    fn drop(&mut self) {
-        // Use volatile writes to prevent compiler from optimizing away the zeroing.
-        // This mirrors the approach used by the `zeroize` crate without the dependency.
-        for byte in &mut self.0 {
-            // SAFETY: Writing to valid memory owned by self.
-            unsafe {
-                std::ptr::write_volatile(byte, 0);
-            }
-        }
-        // Memory fence to ensure the writes complete before deallocation.
-        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+        // Consume `self` and return its bytes zeroed in place, preserving
+        // the original length. This mirrors the previous semantics where the
+        // returned Vec served as evidence that the storage was scrubbed
+        // before being released.
+        let mut inner = std::mem::take(&mut *self.0);
+        inner.zeroize();
+        inner
     }
 }
 
