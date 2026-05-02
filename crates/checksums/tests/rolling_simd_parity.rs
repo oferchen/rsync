@@ -16,19 +16,21 @@
 //! - `checksum.c:get_checksum1()` - rolling checksum core (CHAR_OFFSET = 0)
 //! - `match.c:hash_search()` - sliding-window consumer
 //!
+//! Bytes are reinterpreted as signed (`schar *buf = (schar *)buf1` in
+//! upstream `checksum.c:285`), so values >= 0x80 contribute `byte - 256`.
 //! The rsync formula over a block of length `n` is:
 //!
 //! ```text
-//! s1 = sum of bytes
-//! s2 = sum of (n - i) * bytes[i]   = sum of prefix sums
-//! value = (s2 << 16) | s1          (both terms masked to 16 bits)
+//! s1 = sum of schar(bytes[i])
+//! s2 = sum of (n - i) * schar(bytes[i])   = sum of prefix sums
+//! value = (s2 << 16) | s1                 (both terms masked to 16 bits)
 //! ```
 //!
 //! Rolling update (remove `out`, add `in`, window length stays `n`):
 //!
 //! ```text
-//! s1 = (s1 - out + in) & 0xFFFF
-//! s2 = (s2 - n * out + s1) & 0xFFFF
+//! s1 = (s1 - schar(out) + schar(in)) & 0xFFFF
+//! s2 = (s2 - n * schar(out) + s1) & 0xFFFF
 //! ```
 
 use checksums::{RollingChecksum, RollingDigest, simd_acceleration_available};
@@ -36,15 +38,20 @@ use proptest::prelude::*;
 
 /// Upstream-faithful scalar reference. Computes `s1`, `s2` exactly the way
 /// `checksum.c:get_checksum1()` does for a fresh window: byte-by-byte
-/// accumulation with 16-bit truncation only at the end.
+/// accumulation with 16-bit truncation only at the end. Bytes are
+/// sign-extended to match upstream's `schar *buf` cast.
 fn reference_digest(data: &[u8]) -> RollingDigest {
-    let mut s1: u64 = 0;
-    let mut s2: u64 = 0;
+    let mut s1: i64 = 0;
+    let mut s2: i64 = 0;
     for &byte in data {
-        s1 = s1.wrapping_add(u64::from(byte));
+        s1 = s1.wrapping_add(i64::from(byte as i8));
         s2 = s2.wrapping_add(s1);
     }
-    RollingDigest::new((s1 & 0xffff) as u16, (s2 & 0xffff) as u16, data.len())
+    RollingDigest::new(
+        (s1 as u64 & 0xffff) as u16,
+        (s2 as u64 & 0xffff) as u16,
+        data.len(),
+    )
 }
 
 /// Upstream-faithful scalar rolling update over a sliding window of length
@@ -60,7 +67,8 @@ fn reference_rolling_digests(data: &[u8], window: usize) -> Vec<RollingDigest> {
     let mut s1: u32 = 0;
     let mut s2: u32 = 0;
     for &byte in &data[..window] {
-        s1 = s1.wrapping_add(u32::from(byte));
+        let sb = ((byte as i8) as i32) as u32;
+        s1 = s1.wrapping_add(sb);
         s2 = s2.wrapping_add(s1);
     }
     s1 &= 0xffff;
@@ -71,8 +79,8 @@ fn reference_rolling_digests(data: &[u8], window: usize) -> Vec<RollingDigest> {
 
     let n = window as u32;
     for start in 1..=data.len() - window {
-        let outgoing = u32::from(data[start - 1]);
-        let incoming = u32::from(data[start + window - 1]);
+        let outgoing = ((data[start - 1] as i8) as i32) as u32;
+        let incoming = ((data[start + window - 1] as i8) as i32) as u32;
 
         s1 = s1.wrapping_sub(outgoing).wrapping_add(incoming) & 0xffff;
         s2 = s2.wrapping_sub(n.wrapping_mul(outgoing)).wrapping_add(s1) & 0xffff;
