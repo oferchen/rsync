@@ -190,7 +190,8 @@ impl RollingChecksum {
     /// ```
     #[inline]
     pub fn update_byte(&mut self, byte: u8) {
-        let b = u32::from(byte);
+        // upstream: checksum.c:285 - schar *buf sign-extends bytes to int
+        let b = ((byte as i8) as i32) as u32;
         self.s1 = (self.s1.wrapping_add(b)) & 0xffff;
         self.s2 = (self.s2.wrapping_add(self.s1)) & 0xffff;
         self.len = self.len.saturating_add(1);
@@ -332,8 +333,9 @@ impl RollingChecksum {
     pub fn roll(&mut self, outgoing: u8, incoming: u8) -> Result<(), RollingError> {
         let window_len = self.window_len_u32()?;
 
-        let out = u32::from(outgoing);
-        let inn = u32::from(incoming);
+        // upstream: checksum.c - schar interpretation sign-extends bytes to int
+        let out = ((outgoing as i8) as i32) as u32;
+        let inn = ((incoming as i8) as i32) as u32;
 
         let new_s1 = self.s1.wrapping_sub(out).wrapping_add(inn) & 0xffff;
         let new_s2 = self
@@ -406,8 +408,9 @@ impl RollingChecksum {
 
         let mut weight = count_i128;
         for (&out_b, &in_b) in outgoing.iter().zip(incoming.iter()) {
-            let outgoing_val = i128::from(out_b);
-            let incoming_val = i128::from(in_b);
+            // upstream: checksum.c - schar interpretation sign-extends bytes
+            let outgoing_val = i128::from(out_b as i8);
+            let incoming_val = i128::from(in_b as i8);
             let delta = incoming_val - outgoing_val;
 
             sum_outgoing += outgoing_val;
@@ -556,6 +559,11 @@ const fn mask_result((s1, s2, len): (u32, u32, usize)) -> (u32, u32, usize) {
 }
 
 /// Scalar fallback matching upstream `checksum.c:get_checksum1()` byte loop.
+///
+/// Upstream casts the buffer to `schar *` (signed char), so each byte contributes
+/// in the range -128..127 rather than 0..255. We replicate that by sign-extending
+/// each byte through `i8` -> `i32` before folding into the accumulators with
+/// wrapping arithmetic.
 #[inline]
 fn accumulate_chunk_scalar_raw(
     mut s1: u32,
@@ -569,25 +577,32 @@ fn accumulate_chunk_scalar_raw(
 
     let mut iter = chunk.chunks_exact(4);
     for block in &mut iter {
-        s1 = s1.wrapping_add(u32::from(block[0]));
+        s1 = s1.wrapping_add(sign_extend_byte(block[0]));
         s2 = s2.wrapping_add(s1);
 
-        s1 = s1.wrapping_add(u32::from(block[1]));
+        s1 = s1.wrapping_add(sign_extend_byte(block[1]));
         s2 = s2.wrapping_add(s1);
 
-        s1 = s1.wrapping_add(u32::from(block[2]));
+        s1 = s1.wrapping_add(sign_extend_byte(block[2]));
         s2 = s2.wrapping_add(s1);
 
-        s1 = s1.wrapping_add(u32::from(block[3]));
+        s1 = s1.wrapping_add(sign_extend_byte(block[3]));
         s2 = s2.wrapping_add(s1);
     }
 
     for &byte in iter.remainder() {
-        s1 = s1.wrapping_add(u32::from(byte));
+        s1 = s1.wrapping_add(sign_extend_byte(byte));
         s2 = s2.wrapping_add(s1);
     }
 
     (s1, s2, len.saturating_add(chunk.len()))
+}
+
+/// Sign-extends a byte to `u32` so it folds into the rolling accumulators with
+/// the same -128..127 contribution that upstream `schar *buf` produces.
+#[inline]
+const fn sign_extend_byte(byte: u8) -> u32 {
+    ((byte as i8) as i32) as u32
 }
 
 /// Flushes accumulated bytes from the scratch buffer into the checksum state.
