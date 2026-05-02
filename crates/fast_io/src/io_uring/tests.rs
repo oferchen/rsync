@@ -926,6 +926,196 @@ fn test_socket_large_payload_roundtrip() {
     assert_eq!(received, payload);
 }
 
+/// Regression test for issue #1872: an `IORING_OP_SEND` on a back-pressured
+/// TCP socket must not stall `submit_and_wait()` and starve concurrent RECV
+/// completions, producing a perceived deadlock.
+///
+/// The test sets up a loopback TCP pair with shrunk socket buffers, pre-fills
+/// the kernel send buffer until a non-blocking write returns `EAGAIN`, then
+/// runs an io_uring SEND on the writer side concurrently with a draining RECV
+/// on the reader side. Each side uses its own io_uring ring (matching how the
+/// daemon-mode bidirectional path is wired). Without the `PollAdd(POLLOUT)`
+/// readiness gate the writer's `submit_and_wait` would only return after the
+/// peer drained enough buffer; with the gate the SEND submission itself is
+/// deferred until the kernel has room. A wall-clock timeout fails the test
+/// if the writer stalls.
+///
+/// upstream: io.c:perform_io -- bidirectional select() drives both directions
+#[cfg(target_os = "linux")]
+#[test]
+fn test_socket_send_no_deadlock_under_backpressure_1872() {
+    use std::net::{TcpListener, TcpStream};
+    use std::os::unix::io::AsRawFd;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    if !is_io_uring_available() {
+        println!("Skipping: io_uring not available on this host");
+        return;
+    }
+
+    // A loopback TCP pair is required to exercise real socket-buffer
+    // backpressure; Unix `socketpair` uses pipe-style flow control that
+    // does not reproduce the issue.
+    let listener = match TcpListener::bind("127.0.0.1:0") {
+        Ok(l) => l,
+        Err(e) => {
+            println!("Skipping: cannot bind loopback ({e})");
+            return;
+        }
+    };
+    let addr = listener.local_addr().unwrap();
+    let connect_thread = std::thread::spawn(move || TcpStream::connect(addr).unwrap());
+    let (server, _peer) = listener.accept().unwrap();
+    let client = connect_thread.join().unwrap();
+
+    // Shrink both kernel buffers so backpressure kicks in below 64 KiB.
+    let small: libc::c_int = 4 * 1024;
+    for fd in [server.as_raw_fd(), client.as_raw_fd()] {
+        // SAFETY: setsockopt on a valid fd with a known-good optval/optlen.
+        unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&small as *const libc::c_int).cast(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUF,
+                (&small as *const libc::c_int).cast(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+        }
+    }
+
+    // Pre-fill the client's kernel send buffer using a non-blocking write
+    // loop until `EAGAIN` confirms the buffer is wedged, then restore
+    // blocking mode for io_uring.
+    let client_fd = client.as_raw_fd();
+    // SAFETY: fcntl on a valid fd; we restore the original flags below.
+    let orig_flags = unsafe { libc::fcntl(client_fd, libc::F_GETFL) };
+    // SAFETY: same fd; setting O_NONBLOCK.
+    unsafe {
+        libc::fcntl(client_fd, libc::F_SETFL, orig_flags | libc::O_NONBLOCK);
+    }
+    const PREFILL_MARKER: u8 = 0xAB;
+    let prefill_chunk = vec![PREFILL_MARKER; 4 * 1024];
+    let mut prefill_total = 0usize;
+    loop {
+        // SAFETY: write into a valid fd from a borrowed slice.
+        let n = unsafe {
+            libc::write(
+                client_fd,
+                prefill_chunk.as_ptr().cast::<libc::c_void>(),
+                prefill_chunk.len(),
+            )
+        };
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+            if matches!(
+                err.raw_os_error(),
+                Some(libc::EAGAIN) | Some(libc::EWOULDBLOCK)
+            ) {
+                break;
+            }
+            panic!("prefill write failed: {err}");
+        }
+        prefill_total += n as usize;
+        // Cap prefill so the test stays bounded even on hosts that grow
+        // SO_SNDBUF beyond the requested size.
+        if prefill_total > 1 << 20 {
+            break;
+        }
+    }
+    // SAFETY: restore original (blocking) flags.
+    unsafe {
+        libc::fcntl(client_fd, libc::F_SETFL, orig_flags);
+    }
+    assert!(prefill_total > 0, "prefill made no progress");
+
+    // Distinct payload bytes (never == PREFILL_MARKER) so the drain side
+    // can recognize the boundary between prefill and payload.
+    let payload: Vec<u8> = (0..64 * 1024).map(|i| ((i % 250) + 1) as u8).collect();
+    debug_assert!(payload.iter().all(|&b| b != PREFILL_MARKER));
+    let payload_len = payload.len();
+    let payload_for_writer = payload.clone();
+
+    let (done_tx, done_rx) = mpsc::channel::<std::io::Result<usize>>();
+
+    let writer_thread = std::thread::spawn(move || {
+        // Keep the TcpStream alive in this scope so the fd stays valid.
+        let _client = client;
+        let mut writer = match socket_writer_from_fd(
+            client_fd,
+            16 * 1024,
+            crate::IoUringPolicy::Enabled,
+        ) {
+            Ok(w) => w,
+            Err(e) => {
+                let _ = done_tx.send(Err(e));
+                return;
+            }
+        };
+        let res = writer.write_all(&payload_for_writer).and_then(|()| {
+            writer.flush()?;
+            Ok(payload_for_writer.len())
+        });
+        let _ = done_tx.send(res);
+        // Drop writer (and ring) before the stream so the writer cannot
+        // outlive the fd.
+        drop(writer);
+    });
+
+    let server_fd = server.as_raw_fd();
+    let drain_thread = std::thread::spawn(move || -> std::io::Result<usize> {
+        let _server = server;
+        let mut reader =
+            socket_reader_from_fd(server_fd, 16 * 1024, crate::IoUringPolicy::Enabled)?;
+        let mut buf = vec![0u8; 8 * 1024];
+        let mut payload_bytes = 0usize;
+        while payload_bytes < payload_len {
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            payload_bytes += buf[..n].iter().filter(|&&b| b != PREFILL_MARKER).count();
+        }
+        Ok(payload_bytes)
+    });
+
+    // Wall-clock liveness check: with the fix the writer finishes within
+    // seconds because the drain thread keeps emptying the kernel buffer.
+    // Without the fix this loops past the deadline.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut writer_result: Option<std::io::Result<usize>> = None;
+    while Instant::now() < deadline {
+        match done_rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(r) => {
+                writer_result = Some(r);
+                break;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let writer_result =
+        writer_result.unwrap_or_else(|| panic!("writer stalled: io_uring SEND deadlocked"));
+    let bytes_sent = writer_result.expect("writer error");
+    assert_eq!(bytes_sent, payload_len, "writer must report full payload");
+
+    // Wait for drain thread to finish before the test ends.
+    let drained = drain_thread.join().expect("drain thread panicked").unwrap();
+    assert!(
+        drained >= payload_len,
+        "drain saw {drained} of {payload_len} payload bytes"
+    );
+    let _ = writer_thread.join();
+}
+
 #[test]
 fn test_socket_reader_disabled_policy() {
     let (fd_a, fd_b) = make_socket_pair();
