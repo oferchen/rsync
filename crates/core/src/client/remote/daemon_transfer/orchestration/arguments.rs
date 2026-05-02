@@ -79,18 +79,14 @@ pub(crate) fn send_daemon_arguments(
         let mut secluded = vec!["rsync"];
         secluded.extend(full_args.iter().map(String::as_str));
         let iconv_converter = config.iconv().resolve_converter();
-        protocol::secluded_args::send_secluded_args(
-            stream,
-            &secluded,
-            iconv_converter.as_ref(),
-        )
-        .map_err(|e| {
-            socket_error(
-                "send secluded args to",
-                request.address.socket_addr_display(),
-                e,
-            )
-        })?;
+        protocol::secluded_args::send_secluded_args(stream, &secluded, iconv_converter.as_ref())
+            .map_err(|e| {
+                socket_error(
+                    "send secluded args to",
+                    request.address.socket_addr_display(),
+                    e,
+                )
+            })?;
     }
 
     stream.flush().map_err(|e| {
