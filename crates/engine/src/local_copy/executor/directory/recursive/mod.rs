@@ -52,9 +52,15 @@ pub(crate) fn copy_directory_recursive(
     relative: Option<&Path>,
     root_device: Option<u64>,
 ) -> Result<bool, LocalCopyError> {
-    #[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+    #[cfg(any(
+        all(unix, any(feature = "acl", feature = "xattr")),
+        all(windows, feature = "acl")
+    ))]
     let mode = context.mode();
-    #[cfg(not(all(unix, any(feature = "acl", feature = "xattr"))))]
+    #[cfg(not(any(
+        all(unix, any(feature = "acl", feature = "xattr")),
+        all(windows, feature = "acl")
+    )))]
     let _mode = context.mode();
 
     #[cfg(all(unix, feature = "xattr"))]
@@ -166,7 +172,10 @@ pub(crate) fn copy_directory_recursive(
                 source,
                 destination,
                 metadata,
-                #[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+                #[cfg(any(
+                    all(unix, any(feature = "acl", feature = "xattr")),
+                    all(windows, feature = "acl")
+                ))]
                 mode,
                 #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,

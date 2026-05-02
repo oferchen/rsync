@@ -7,7 +7,10 @@
 use std::fs;
 use std::path::Path;
 
-#[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+#[cfg(any(
+    all(unix, any(feature = "acl", feature = "xattr")),
+    all(windows, feature = "acl")
+))]
 use crate::local_copy::LocalCopyExecution;
 #[cfg(all(any(unix, windows), feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
@@ -25,7 +28,11 @@ pub(super) fn apply_final_directory_metadata(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
-    #[cfg(all(unix, any(feature = "acl", feature = "xattr")))] mode: LocalCopyExecution,
+    #[cfg(any(
+        all(unix, any(feature = "acl", feature = "xattr")),
+        all(windows, feature = "acl")
+    ))]
+    mode: LocalCopyExecution,
     #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
     #[cfg(all(any(unix, windows), feature = "acl"))] preserve_acls: bool,
 ) -> Result<(), LocalCopyError> {
