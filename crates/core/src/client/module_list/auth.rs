@@ -3,6 +3,8 @@ use std::cell::RefCell;
 use std::env;
 use std::io::{BufReader, Write};
 
+#[cfg(test)]
+use zeroize::Zeroize;
 use zeroize::Zeroizing;
 
 use crate::auth::{DaemonAuthDigest, compute_daemon_auth_response};
