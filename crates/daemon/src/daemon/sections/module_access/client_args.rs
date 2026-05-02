@@ -275,6 +275,13 @@ fn build_server_config(
                 }
             }
 
+            // upstream: clientserver.c:712-716 - `iconv_opt = lp_charset(i);
+            // if (*iconv_opt) setup_iconv();` resolves the module's `charset =`
+            // directive into the iconv handles used for filename transcoding.
+            // Without this wiring the daemon would parse `charset = LATIN1` but
+            // never apply it, leaving --iconv negotiation a silent no-op.
+            cfg.connection.iconv = resolve_module_charset_converter(module.charset.as_deref());
+
             Ok(Some(cfg))
         }
         Err(err) => {
@@ -508,5 +515,160 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
             }
         }
         i += 1;
+    }
+}
+
+/// Resolves the daemon module's `charset =` directive into a
+/// [`FilenameConverter`] that mirrors upstream rsync's iconv setup.
+///
+/// Upstream `clientserver.c:712-716` sets `iconv_opt = lp_charset(i)` and
+/// calls `setup_iconv()` whenever the value is non-empty. `setup_iconv()`
+/// (`rsync.c:87-140`) then opens two iconv handles:
+///
+/// - `ic_send = iconv_open(UTF8, charset)` - convert local-charset bytes to
+///   UTF-8 wire bytes when sending file lists.
+/// - `ic_recv = iconv_open(charset, UTF8)` - convert UTF-8 wire bytes back
+///   to the local charset when receiving file lists.
+///
+/// When the directive includes a comma (`charset = LOCAL,REMOTE`), upstream
+/// honours the server side by using the segment after the comma
+/// (`rsync.c:118-120`, `am_server` branch). When no comma is present, the
+/// whole value is the charset. The literal value `.` and the empty string
+/// both resolve to the locale default per `rsync.c:125-126`.
+///
+/// Our [`FilenameConverter`] models the same direction pair: `local_to_remote`
+/// matches `ic_send` (local -> wire UTF-8), and `remote_to_local` matches
+/// `ic_recv` (wire UTF-8 -> local). Therefore a daemon-side converter is
+/// built with the daemon's local charset on the local side and the literal
+/// `"UTF-8"` on the remote (wire) side.
+///
+/// Returns `None` when the directive is absent, empty, or unrecognised by
+/// `encoding_rs`. An unrecognised charset is treated as a soft failure: we
+/// log via `tracing` (when enabled) and fall through to identity conversion,
+/// matching the lenient behaviour `IconvSetting::resolve_converter` already
+/// uses on the client side.
+///
+/// # Upstream Reference
+///
+/// - `clientserver.c:712-716` - `iconv_opt = lp_charset(i); setup_iconv();`
+/// - `rsync.c:87-140` - `setup_iconv()` opens `ic_send` and `ic_recv`.
+/// - `loadparm.c` - `charset` module parameter.
+fn resolve_module_charset_converter(charset: Option<&str>) -> Option<FilenameConverter> {
+    let raw = charset?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    // upstream: rsync.c:118-120 - on the server side, the segment after the
+    // comma is the effective local charset; the segment before the comma
+    // describes the peer's local charset and is irrelevant to the daemon.
+    let local_part = match raw.split_once(',') {
+        Some((_, remote)) => remote.trim(),
+        None => raw,
+    };
+
+    // upstream: rsync.c:125-126 - empty or "." means "use locale default".
+    // Our converter treats UTF-8 as the locale default, matching
+    // `converter_from_locale`.
+    if local_part.is_empty() || local_part == "." {
+        return Some(FilenameConverter::identity());
+    }
+
+    match FilenameConverter::new(local_part, "UTF-8") {
+        Ok(converter) => Some(converter),
+        Err(_error) => {
+            #[cfg(feature = "tracing")]
+            tracing::warn!(
+                charset = %local_part,
+                error = %_error,
+                "module 'charset' directive: unsupported encoding; daemon will not transcode filenames",
+            );
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod iconv_charset_converter_tests {
+    use super::resolve_module_charset_converter;
+
+    #[test]
+    fn iconv_charset_returns_none_for_missing_directive() {
+        assert!(resolve_module_charset_converter(None).is_none());
+    }
+
+    #[test]
+    fn iconv_charset_returns_none_for_empty_directive() {
+        assert!(resolve_module_charset_converter(Some("")).is_none());
+        assert!(resolve_module_charset_converter(Some("   ")).is_none());
+    }
+
+    #[test]
+    fn iconv_charset_dot_means_locale_default() {
+        let converter =
+            resolve_module_charset_converter(Some(".")).expect("dot should resolve");
+        assert!(converter.is_identity());
+    }
+
+    #[test]
+    fn iconv_charset_comma_with_dot_resolves_to_identity() {
+        // upstream: rsync.c:118-120 - server side honours the post-comma value.
+        // upstream: rsync.c:125-126 - "." means "use locale default".
+        let converter = resolve_module_charset_converter(Some("UTF-8,."))
+            .expect("dot remote should resolve");
+        assert!(converter.is_identity());
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn iconv_charset_resolves_simple_charset() {
+        let converter =
+            resolve_module_charset_converter(Some("ISO-8859-1")).expect("charset should resolve");
+        // encoding_rs aliases ISO-8859-1 to windows-1252 internally.
+        assert_eq!(converter.local_encoding_name(), "windows-1252");
+        assert_eq!(converter.remote_encoding_name(), "UTF-8");
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn iconv_charset_uses_segment_after_comma() {
+        // upstream: rsync.c:118-120 - server side honours the post-comma value.
+        let converter = resolve_module_charset_converter(Some("UTF-8,ISO-8859-1"))
+            .expect("charset should resolve");
+        assert_eq!(converter.local_encoding_name(), "windows-1252");
+        assert_eq!(converter.remote_encoding_name(), "UTF-8");
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn iconv_charset_returns_none_for_unknown_charset() {
+        assert!(resolve_module_charset_converter(Some("not-a-real-charset")).is_none());
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn iconv_charset_trims_whitespace() {
+        let converter = resolve_module_charset_converter(Some("  ISO-8859-1  "))
+            .expect("trimmed charset should resolve");
+        assert_eq!(converter.local_encoding_name(), "windows-1252");
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn iconv_charset_round_trip_latin1_utf8() {
+        // Verify the converter actually transcodes correctly: a Latin-1 byte
+        // sequence containing U+00E9 ('é' as 0xE9) should round-trip through
+        // UTF-8 wire encoding and back.
+        let converter =
+            resolve_module_charset_converter(Some("ISO-8859-1")).expect("charset should resolve");
+
+        let local_bytes = b"caf\xe9.txt"; // 'café.txt' in Latin-1
+        let wire = converter
+            .local_to_remote(local_bytes)
+            .expect("local_to_remote");
+        assert_eq!(wire.as_ref(), "café.txt".as_bytes());
+
+        let round_trip = converter.remote_to_local(&wire).expect("remote_to_local");
+        assert_eq!(round_trip.as_ref(), local_bytes);
     }
 }
