@@ -287,7 +287,7 @@ impl Default for ClientConfig {
             mkpath: false,
             prune_empty_dirs: false,
             qsort: false,
-            inc_recursive_send: false,
+            inc_recursive_send: true,
             verbosity: 0,
             progress: false,
             stats: false,

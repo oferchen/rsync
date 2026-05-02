@@ -459,16 +459,6 @@ pub struct ParsedArgs {
     /// `--qsort` - use qsort instead of merge-sort for file list sorting.
     pub qsort: bool,
 
-    /// `--inc-recursive-send` - opt-in: advertise INC_RECURSE (`'i'`) on the
-    /// sender capability string for interop testing.
-    ///
-    /// Defaults to `false`. Sender-side incremental recursion has not been
-    /// validated against upstream rsync 3.0.9 / 3.1.3 / 3.4.1, so the
-    /// capability is suppressed for push transfers by default. Enabling this
-    /// flag exercises the existing sender-side state machine (see
-    /// `crates/transfer/src/generator/`) against upstream peers.
-    pub inc_recursive_send: bool,
-
     // ── Output / Formatting ──────────────────────────────────────────
     /// `--verbose`, `-v` / `--quiet`, `-q` - output verbosity level.
     pub verbosity: u8,

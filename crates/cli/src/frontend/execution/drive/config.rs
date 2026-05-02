@@ -96,7 +96,12 @@ pub(crate) struct ConfigInputs {
     pub(crate) mkpath: bool,
     pub(crate) prune_empty_dirs: bool,
     pub(crate) qsort: bool,
-    pub(crate) inc_recursive_send: bool,
+    /// Resolved tri-state for `--inc-recursive` / `--no-inc-recursive`.
+    ///
+    /// `None` keeps the upstream default (advertise `'i'`); `Some(false)`
+    /// suppresses it (`--no-inc-recursive`). Mirrors upstream
+    /// `compat.c:720 set_allow_inc_recurse()`.
+    pub(crate) inc_recursive_send: Option<bool>,
     pub(crate) verbosity: u8,
     pub(crate) progress_mode: Option<ProgressMode>,
     pub(crate) stats: bool,
@@ -230,8 +235,14 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .human_readable(inputs.human_readable)
         .mkpath(inputs.mkpath)
         .prune_empty_dirs(inputs.prune_empty_dirs)
-        .qsort(inputs.qsort)
-        .inc_recursive_send(inputs.inc_recursive_send)
+        .qsort(inputs.qsort);
+    // Only override the builder's upstream default when the user supplied
+    // `--inc-recursive` or `--no-inc-recursive`. Mirrors upstream
+    // `compat.c:720 set_allow_inc_recurse()`.
+    if let Some(value) = inputs.inc_recursive_send {
+        builder = builder.inc_recursive_send(value);
+    }
+    builder = builder
         .verbosity(inputs.verbosity)
         .progress(inputs.progress_mode.is_some())
         .stats(inputs.stats)
