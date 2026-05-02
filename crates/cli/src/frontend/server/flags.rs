@@ -51,6 +51,12 @@ pub(super) struct ServerLongFlags {
     pub(super) existing_only: bool,
     /// Maximum deletions allowed (upstream: `--max-delete=NUM`).
     pub(super) max_delete: Option<String>,
+    /// Iconv specification forwarded by the client (upstream: `--iconv=CHARSET`).
+    ///
+    /// upstream: options.c:2716-2723 - client forwards the post-comma half of
+    /// `--iconv=LOCAL,REMOTE` (or the whole spec if no comma) so the server
+    /// opens its own iconv context against the wire's UTF-8 charset.
+    pub(super) iconv: Option<String>,
     /// Reference directories for basis file lookup.
     /// upstream: options.c:2915-2923 - `--compare-dest`, `--copy-dest`, `--link-dest`
     pub(super) reference_directories: Vec<ReferenceDirectory>,
@@ -86,6 +92,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         ignore_existing: false,
         existing_only: false,
         max_delete: None,
+        iconv: None,
         reference_directories: Vec::new(),
     };
 
@@ -141,6 +148,9 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.files_from = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--max-delete=") {
         flags.max_delete = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--iconv=") {
+        // upstream: options.c:2716-2723 - server-side iconv forwarded by client
+        flags.iconv = Some(value.to_owned());
     // upstream: options.c:2915-2923 - reference directory args
     } else if let Some(value) = s.strip_prefix("--compare-dest=") {
         flags.reference_directories.push(ReferenceDirectory::new(
@@ -202,4 +212,5 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--stop-after=")
         || arg.starts_with("--files-from=")
         || arg.starts_with("--max-delete=")
+        || arg.starts_with("--iconv=")
 }
