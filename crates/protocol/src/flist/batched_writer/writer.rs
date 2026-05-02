@@ -9,6 +9,7 @@ use super::config::{BatchConfig, DEFAULT_MAX_BYTES};
 use super::stats::{BatchStats, FlushReason};
 use crate::flist::entry::FileEntry;
 use crate::flist::write::FileListWriter;
+use crate::iconv::FilenameConverter;
 use crate::{CompatibilityFlags, ProtocolVersion};
 
 /// A batched file list writer that accumulates entries before writing.
@@ -168,6 +169,18 @@ impl BatchedFileListWriter {
     #[must_use]
     pub fn with_always_checksum(mut self, csum_len: usize) -> Self {
         self.writer = self.writer.with_always_checksum(csum_len);
+        self
+    }
+
+    /// Sets the filename encoding converter for `--iconv` support.
+    ///
+    /// Mirrors [`FileListWriter::with_iconv`] so that the batched sender
+    /// path transcodes filenames from local to remote charset before
+    /// emission, matching upstream `flist.c send_file_entry()`'s
+    /// `iconv_buf(ic_send, ...)` call.
+    #[must_use]
+    pub fn with_iconv(mut self, converter: FilenameConverter) -> Self {
+        self.writer = self.writer.with_iconv(converter);
         self
     }
 
