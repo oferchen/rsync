@@ -3288,19 +3288,40 @@ CONF
 # #1916: --iconv UTF-8/LATIN1 SSH/local-mode interop vs upstream rsync 3.4.1.
 #
 # Companion to test_iconv_upstream_interop, which covers the daemon-mode side
-# of the same gap. Daemon-mode iconv interop is still blocked on follow-ups
-# #1911-#1917 (see docs/audits/iconv-pipeline.md and known_failures.conf:
-# "standalone:iconv-upstream"). SSH/local mode, by contrast, was bridged in
-# PR #3458 by wiring IconvSetting -> FilenameConverter through
-# transfer::ServerConfigBuilder::iconv. This test pins that fix in place by
-# exercising the SSH/local code path against upstream rsync 3.4.1, so a
-# regression on the bridge is caught immediately.
+# of the same gap. SSH/local mode was bridged in PR #3458 by wiring
+# IconvSetting -> FilenameConverter through transfer::ServerConfigBuilder.
 #
-# Two directions are exercised, both running through a fake remote-shell
-# wrapper that discards the host argument and exec's the rest of the command
-# line locally. This forces oc-rsync (or upstream) to spawn the peer as a
-# child process speaking the wire protocol, which is how upstream's own test
-# suite drives "remote" mode without requiring real SSH:
+# # Wire semantics (mirror of the daemon-test docblock above)
+#
+# Per upstream rsync.c:85-147 setup_iconv():
+#
+#   - The wire is always UTF-8 when --iconv is active.
+#   - The argument splits as LOCAL,REMOTE: the client (am_server=0) keeps
+#     LOCAL and zeroes the comma; the server (am_server=1) keeps REMOTE.
+#   - Each peer's `charset` names the *local disk* encoding. Both peers run
+#     `ic_send = iconv_open(UTF8_CHARSET, charset)` and
+#     `ic_recv = iconv_open(charset, UTF8_CHARSET)`.
+#   - Per options.c:2716-2723 the client's server_options() forwards the
+#     post-comma half (REMOTE) to the spawned peer so the spawned peer's
+#     charset matches what the user requested.
+#
+# With --iconv=UTF-8,ISO-8859-1 over SSH/local mode:
+#   - Driver (sender) charset = UTF-8 -> ic_send is identity, wire = UTF-8.
+#   - Spawned peer (receiver) gets --iconv=ISO-8859-1 forwarded by
+#     options.c:2716-2723, so receiver charset = ISO-8859-1.
+#   - Receiver ic_recv (UTF-8 -> ISO-8859-1) writes single-byte Latin-1
+#     filenames to disk (caf\xe9.txt, not the UTF-8 caf\xc3\xa9.txt).
+#
+# So source and destination filenames have *different* byte sequences for
+# the same logical filename. The fixture reuses the single-file Value Object
+# from the daemon test (_ic_init_fixtures / _ic_write_fixtures /
+# _ic_verify_dest at run_interop.sh:3142-3175): one cafe.txt with U+00E9 is
+# enough to prove the pipeline ran end-to-end without re-introducing the
+# multi-file flist re-sort ambiguity tracked in #1913.
+#
+# Two directions are exercised through a fake remote-shell wrapper that
+# discards the host argument and exec's the rest, mirroring upstream's own
+# testsuite technique for driving "remote" mode without a real sshd:
 #   a) oc-rsync sender -> upstream receiver (push)
 #      oc-rsync --rsh=<fake-rsh> --rsync-path=<upstream> --iconv=UTF-8,ISO-8859-1 \
 #               src/ fakehost:dest/
@@ -3308,27 +3329,19 @@ CONF
 #      upstream --rsh=<fake-rsh> --rsync-path=<oc-rsync> --iconv=UTF-8,ISO-8859-1 \
 #               src/ fakehost:dest/
 #
-# Source filenames are UTF-8 on disk with code points that all fit in
-# ISO-8859-1 (Latin-1):
-#   - U+00E9 LATIN SMALL LETTER E WITH ACUTE       (cafe)
-#   - U+00FC LATIN SMALL LETTER U WITH DIAERESIS   (uber)
-#   - U+00EF LATIN SMALL LETTER I WITH DIAERESIS   (naive)
-#   - U+00DC LATIN CAPITAL LETTER U WITH DIAERESIS (Zurich)
-# With --iconv=UTF-8,ISO-8859-1 enabled, the wire encoding is Latin-1 and
-# both peers must transcode back to UTF-8 (the local charset) on disk.
-#
 # Pre-checks:
 #   - upstream binary must exist at the requested version.
-#   - upstream binary must be built with iconv support (probed via a
-#     local --iconv=UTF-8,UTF-8 invocation that fails fast if not compiled
-#     in). Upstream rsync auto-detects iconv via configure unless the
-#     packager passed --disable-iconv.
-#   - host filesystem must accept the UTF-8 fixture names.
+#   - upstream binary must be built with iconv support (probed via a local
+#     --iconv=UTF-8,UTF-8 invocation that fails fast if not compiled in).
+#   - host filesystem must accept the UTF-8 source name.
 #
 # References:
-#   upstream: options.c:recv_iconv_settings (parses --iconv=LOCAL,REMOTE)
-#   upstream: flist.c:1579-1603 (sender filename iconvbufs(ic_send, ...))
-#   upstream: flist.c:738-754  (receiver filename iconvbufs(ic_recv, ...))
+#   upstream: rsync.c:85-147   (setup_iconv: am_server splits LOCAL,REMOTE)
+#   upstream: rsync.c:130      (ic_send = iconv_open(UTF8, charset))
+#   upstream: rsync.c:136      (ic_recv = iconv_open(charset, UTF8))
+#   upstream: options.c:2716-2723 (server_options forwards REMOTE half)
+#   upstream: flist.c:1579-1603   (sender ic_send on filename emit)
+#   upstream: flist.c:738-754     (receiver ic_recv on filename ingest)
 #   oc-rsync: PR #3458 (IconvSetting -> FilenameConverter bridge)
 #   oc-rsync: docs/audits/iconv-pipeline.md (Findings 1-7)
 test_iconv_local_ssh_interop() {
@@ -3360,31 +3373,14 @@ test_iconv_local_ssh_interop() {
     return 1
   fi
 
-  # ASCII baseline: must always survive any iconv pipeline.
-  echo "ascii body" > "${ils_src}/plain.txt"
-
-  # UTF-8 names whose code points all fit in ISO-8859-1 (Latin-1).
-  echo "cafe body"   > "${ils_src}/café.txt"
-  echo "umlaut body" > "${ils_src}/über.txt"
-  echo "naive body"  > "${ils_src}/naïve.txt"
-  echo "zurich body" > "${ils_src}/Zürich.txt"
-
-  # Skip gracefully if the host filesystem rejects UTF-8 names (e.g. a
-  # non-UTF-8 locale or a filesystem that NFC-normalises aggressively).
-  for fname in "café.txt" "über.txt" "naïve.txt" "Zürich.txt"; do
-    if [[ ! -f "${ils_src}/${fname}" ]]; then
-      echo "    SKIP: host filesystem cannot store UTF-8 name '${fname}'"
-      return 0
-    fi
-  done
-
-  local -a expected_files=(
-    "plain.txt"
-    "café.txt"
-    "über.txt"
-    "naïve.txt"
-    "Zürich.txt"
-  )
+  # Reuse the single-file Value Object from the daemon test. The property
+  # under test is the same: did the receiver's `ic_recv` activate and write
+  # ISO-8859-1 byte filenames to disk for a UTF-8 source name?
+  _ic_init_fixtures
+  if ! _ic_write_fixtures "$ils_src"; then
+    echo "    SKIP: host filesystem cannot store UTF-8 fixture name"
+    return 0
+  fi
 
   # Build the fake remote-shell wrapper. It drops the first argument (the
   # "host") and exec's the rest, making the spawned rsync think it is running
@@ -3403,28 +3399,12 @@ exec "$@"
 WRAPPER
   chmod +x "$fake_rsh"
 
-  _ils_verify_round_trip() {
-    local label=$1 dest=$2
-    for fname in "${expected_files[@]}"; do
-      if [[ ! -f "${dest}/${fname}" ]]; then
-        echo "    ${label}: ${fname} missing after iconv transfer"
-        echo "    ${label}: dest contents: $(find "$dest" -type f | sort | tr '\n' ' ')"
-        return 1
-      fi
-      if ! cmp -s "${ils_src}/${fname}" "${dest}/${fname}"; then
-        echo "    ${label}: ${fname} content mismatch after iconv transfer"
-        return 1
-      fi
-    done
-    return 0
-  }
-
   # --- Direction (a): oc-rsync sender -> upstream receiver (SSH/local mode) ---
-  # oc-rsync drives the transfer, spawns upstream as the "remote" rsync, and
-  # encodes UTF-8 source names into ISO-8859-1 on the wire. Upstream decodes
-  # back to UTF-8 (its local charset) on disk. This is the case PR #3458
-  # bridged: failure here is a regression on the IconvSetting ->
-  # FilenameConverter wiring.
+  # oc-rsync drives the transfer (charset=UTF-8, ic_send identity, wire=UTF-8)
+  # and spawns upstream as the receiver with --iconv=ISO-8859-1 forwarded
+  # per options.c:2716-2723. Upstream's ic_recv writes Latin-1 byte names
+  # to disk. This is the path PR #3458 bridged: failure here is a regression
+  # on the IconvSetting -> FilenameConverter wiring.
   local rc1=0
   timeout "$hard_timeout" "$oc_bin" -av \
       --rsh="$fake_rsh" --rsync-path="$upstream_binary" \
@@ -3438,14 +3418,13 @@ WRAPPER
     return 1
   fi
 
-  _ils_verify_round_trip "oc->upstream(local)" "$ils_dest_up" || return 1
+  _ic_verify_dest "oc->upstream(local)" "$ils_src" "$ils_dest_up" || return 1
 
   # --- Direction (b): upstream sender -> oc-rsync receiver (SSH/local mode) ---
-  # Upstream rsync drives the transfer and spawns oc-rsync as the "remote"
-  # rsync. Upstream encodes UTF-8 source names into ISO-8859-1 on the wire;
-  # oc-rsync decodes back to UTF-8 on disk. Both --rsh and --rsync-path are
-  # forwarded to the spawned peer, so this exercises the receiver-side
-  # IconvSetting -> FilenameConverter wiring.
+  # Upstream drives the transfer and spawns oc-rsync as the receiver with
+  # --iconv=ISO-8859-1 forwarded. oc-rsync's receiver-side ic_recv must
+  # transcode wire UTF-8 to disk Latin-1, exercising the receiver half of
+  # the IconvSetting -> FilenameConverter wiring.
   local rc2=0
   timeout "$hard_timeout" "$upstream_binary" -av \
       --rsh="$fake_rsh" --rsync-path="$oc_bin" \
@@ -3459,7 +3438,7 @@ WRAPPER
     return 1
   fi
 
-  _ils_verify_round_trip "upstream->oc(local)" "$ils_dest_oc" || return 1
+  _ic_verify_dest "upstream->oc(local)" "$ils_src" "$ils_dest_oc" || return 1
 
   return 0
 }
