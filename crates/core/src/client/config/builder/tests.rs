@@ -1418,9 +1418,10 @@ fn inc_recursive_send_false_clears_flag() {
 }
 
 #[test]
-fn default_inc_recursive_send_is_false() {
+fn default_inc_recursive_send_is_true() {
+    // Mirrors upstream `allow_inc_recurse = 1` (compat.c).
     let config = builder().build();
-    assert!(!config.inc_recursive_send());
+    assert!(config.inc_recursive_send());
 }
 
 #[test]

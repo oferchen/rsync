@@ -173,17 +173,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // Order mirrors upstream options.c server_options().
         self.append_long_form_args(&mut args);
 
-        // SSH transfers omit the INC_RECURSE (`'i'`) capability by default
-        // because sender-side incremental recursion has not yet been
-        // validated against upstream rsync. The opt-in `--inc-recursive-send`
-        // flag advertises the bit when oc-rsync is acting as the sender
-        // (i.e., the remote side is the receiver) so that the existing
-        // sender-side state machine can be exercised against upstream peers.
+        // SSH transfers advertise the INC_RECURSE (`'i'`) capability in both
+        // directions by default, mirroring upstream's `allow_inc_recurse = 1`
+        // initialization. `--no-inc-recursive` clears the flag and suppresses
+        // the bit, matching `set_allow_inc_recurse()`.
         // upstream: compat.c:720 set_allow_inc_recurse() - capability gate.
-        let advertise_inc_recurse =
-            self.role == RemoteRole::Sender && self.config.inc_recursive_send();
+        // upstream: options.c:3003-3050 maybe_add_e_option() - capability string.
         args.push(OsString::from(build_capability_string(
-            advertise_inc_recurse,
+            self.config.inc_recursive_send(),
         )));
         args.push(OsString::from("."));
 
