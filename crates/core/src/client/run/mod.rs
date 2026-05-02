@@ -660,7 +660,12 @@ mod iconv_wiring_tests {
 
     #[cfg(feature = "iconv")]
     #[test]
-    fn local_copy_options_iconv_explicit_yields_non_identity_converter() {
+    fn local_copy_options_iconv_explicit_yields_converter() {
+        // upstream: rsync.c:130-140 - wire is always UTF-8. With local=UTF-8,
+        // resolve_converter hands back an identity converter; the `remote`
+        // half is forwarded to the peer CLI separately rather than consumed
+        // on this side. The contract here is that the engine receives
+        // *some* converter (not None) so its iconv-aware paths are wired in.
         let config = config_with_iconv(IconvSetting::Explicit {
             local: "UTF-8".to_owned(),
             remote: Some("ISO-8859-1".to_owned()),
@@ -669,7 +674,7 @@ mod iconv_wiring_tests {
         let converter = options
             .iconv()
             .expect("explicit iconv pair should produce a converter");
-        assert!(!converter.is_identity());
+        assert!(converter.is_identity());
         assert_eq!(converter.local_encoding_name(), "UTF-8");
     }
 
