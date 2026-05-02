@@ -12,8 +12,8 @@
 use std::ffi::OsString;
 
 use super::super::super::config::{
-    ClientConfig, DeleteMode, FilesFromSource, ReferenceDirectoryKind, StrongChecksumAlgorithm,
-    TransferTimeout,
+    ClientConfig, DeleteMode, FilesFromSource, IconvSetting, ReferenceDirectoryKind,
+    StrongChecksumAlgorithm, TransferTimeout,
 };
 use super::{RemoteRole, SecludedInvocation};
 use transfer::setup::build_capability_string;
@@ -430,6 +430,23 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 if self.config.from0() {
                     args.push(OsString::from("--from0"));
                 }
+            }
+        }
+
+        // --iconv forwarding.
+        // upstream: options.c:2716-2723 - when iconv_opt contains a comma, only
+        // the post-comma half (the remote charset) is forwarded; otherwise the
+        // whole string is forwarded as-is. `--iconv=-` (Disabled) and the
+        // default (Unspecified) forward nothing because upstream nulls
+        // iconv_opt at options.c:2052-2054 before this branch runs.
+        match self.config.iconv() {
+            IconvSetting::Unspecified | IconvSetting::Disabled => {}
+            IconvSetting::LocaleDefault => {
+                args.push(OsString::from("--iconv=."));
+            }
+            IconvSetting::Explicit { local, remote } => {
+                let forwarded = remote.as_deref().unwrap_or(local);
+                args.push(OsString::from(format!("--iconv={forwarded}")));
             }
         }
     }

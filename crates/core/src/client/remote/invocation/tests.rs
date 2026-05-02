@@ -8,7 +8,7 @@ use transfer::setup::build_capability_string;
 use super::builder::RemoteInvocationBuilder;
 use super::transfer_role::{determine_transfer_role, operand_is_remote};
 use super::{RemoteOperands, RemoteRole, TransferSpec};
-use crate::client::config::{ClientConfig, TransferTimeout};
+use crate::client::config::{ClientConfig, IconvSetting, TransferTimeout};
 
 #[test]
 fn builds_receiver_invocation_with_sender_flag() {
@@ -2427,4 +2427,91 @@ fn daemon_double_colon_to_local_is_pull() {
     let dest = OsString::from("/tmp/local");
     let spec = determine_transfer_role(&sources, &dest).unwrap();
     assert_eq!(spec.role(), RemoteRole::Receiver);
+}
+
+// --iconv server-arg forwarding tests.
+// upstream: options.c:2716-2723 - the post-comma half of iconv_opt is
+// forwarded; without a comma the whole spec is forwarded; --iconv=- and the
+// default forward nothing because options.c:2052-2054 nulls iconv_opt.
+
+#[test]
+fn iconv_unspecified_omits_iconv_arg() {
+    let config = ClientConfig::builder().build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/remote/path");
+    assert!(
+        !args
+            .iter()
+            .any(|a| a.to_string_lossy().starts_with("--iconv")),
+        "default config must not forward --iconv: {args:?}"
+    );
+}
+
+#[test]
+fn iconv_disabled_omits_iconv_arg() {
+    let config = ClientConfig::builder()
+        .iconv(IconvSetting::Disabled)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/remote/path");
+    assert!(
+        !args
+            .iter()
+            .any(|a| a.to_string_lossy().starts_with("--iconv")),
+        "Disabled iconv must not forward --iconv: {args:?}"
+    );
+}
+
+#[test]
+fn iconv_locale_default_forwards_dot() {
+    let config = ClientConfig::builder()
+        .iconv(IconvSetting::LocaleDefault)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/remote/path");
+    assert!(
+        args.iter().any(|a| a == "--iconv=."),
+        "LocaleDefault must forward --iconv=.: {args:?}"
+    );
+}
+
+#[test]
+fn iconv_explicit_pair_forwards_only_remote_half() {
+    // upstream: options.c:2717-2721 - `set = strchr(iconv_opt, ','); if (set)
+    // set++;` so only the post-comma half (the remote charset) reaches the
+    // server. The local charset stays on the client side.
+    let config = ClientConfig::builder()
+        .iconv(IconvSetting::Explicit {
+            local: "UTF-8".to_owned(),
+            remote: Some("ISO-8859-1".to_owned()),
+        })
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/remote/path");
+    assert!(
+        args.iter().any(|a| a == "--iconv=ISO-8859-1"),
+        "Explicit pair must forward only the remote half: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a == "--iconv=UTF-8,ISO-8859-1"),
+        "Explicit pair must not forward the swapped pair: {args:?}"
+    );
+}
+
+#[test]
+fn iconv_explicit_single_forwards_whole_spec() {
+    // upstream: options.c:2718-2721 - `else set = iconv_opt;` so when there
+    // is no comma the entire spec is forwarded as the remote charset.
+    let config = ClientConfig::builder()
+        .iconv(IconvSetting::Explicit {
+            local: "UTF-8".to_owned(),
+            remote: None,
+        })
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/remote/path");
+    assert!(
+        args.iter().any(|a| a == "--iconv=UTF-8"),
+        "Explicit single must forward the whole spec: {args:?}"
+    );
 }
