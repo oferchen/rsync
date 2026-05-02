@@ -182,7 +182,7 @@ pub struct ClientConfig {
     pub(super) protocol_version: Option<protocol::ProtocolVersion>,
     #[cfg(feature = "embedded-ssh")]
     pub(super) embedded_ssh_config: Option<EmbeddedSshOptions>,
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     pub(super) preserve_acls: bool,
     #[cfg(all(unix, feature = "xattr"))]
     pub(super) preserve_xattrs: bool,
@@ -337,7 +337,7 @@ impl Default for ClientConfig {
             protocol_version: None,
             #[cfg(feature = "embedded-ssh")]
             embedded_ssh_config: None,
-            #[cfg(all(unix, feature = "acl"))]
+            #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls: false,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs: false,

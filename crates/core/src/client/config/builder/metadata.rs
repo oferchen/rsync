@@ -185,7 +185,7 @@ impl ClientConfigBuilder {
         self
     }
 
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     /// Enables or disables POSIX ACL preservation when applying metadata.
     #[must_use]
     #[doc(alias = "--acls")]
@@ -195,7 +195,7 @@ impl ClientConfigBuilder {
         self
     }
 
-    #[cfg(not(all(unix, feature = "acl")))]
+    #[cfg(not(all(any(unix, windows), feature = "acl")))]
     /// No-op on platforms without ACL support.
     #[must_use]
     pub const fn acls(self, _preserve: bool) -> Self {

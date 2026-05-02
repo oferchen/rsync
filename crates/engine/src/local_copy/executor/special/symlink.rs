@@ -12,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use crate::local_copy::remove_existing_destination;
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(any(unix, windows), feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
@@ -120,12 +120,12 @@ pub(crate) fn copy_symlink(
 
     #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     let preserve_acls = context.acls_enabled();
 
     #[cfg(not(all(unix, feature = "xattr")))]
     let _ = context;
-    #[cfg(not(all(unix, feature = "acl")))]
+    #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let _ = mode;
 
     let record_path = relative
@@ -429,7 +429,7 @@ pub(crate) fn copy_symlink(
         false,
         context.filter_program(),
     )?;
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     sync_acls_if_requested(preserve_acls, mode, source, destination, false)?;
 
     context.record_hard_link(metadata, destination);

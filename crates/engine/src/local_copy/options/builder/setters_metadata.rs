@@ -141,7 +141,7 @@ impl LocalCopyOptionsBuilder {
     }
 
     /// Enables ACL preservation.
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     #[must_use]
     pub fn preserve_acls(mut self, enabled: bool) -> Self {
         self.preserve_acls = enabled;
@@ -149,7 +149,7 @@ impl LocalCopyOptionsBuilder {
     }
 
     /// Alias for `preserve_acls` for rsync compatibility.
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     #[must_use]
     pub fn acls(mut self, enabled: bool) -> Self {
         self.preserve_acls = enabled;

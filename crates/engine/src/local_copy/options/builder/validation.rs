@@ -134,7 +134,7 @@ impl LocalCopyOptionsBuilder {
             group_override: self.group_override,
             copy_as: self.copy_as,
             omit_dir_times: self.omit_dir_times,
-            #[cfg(all(unix, feature = "acl"))]
+            #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls: self.preserve_acls,
             filters: self.filters,
             filter_program: self.filter_program,

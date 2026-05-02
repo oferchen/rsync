@@ -7,9 +7,12 @@
 use std::fs;
 use std::path::Path;
 
-#[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+#[cfg(any(
+    all(unix, any(feature = "acl", feature = "xattr")),
+    all(windows, feature = "acl")
+))]
 use crate::local_copy::LocalCopyExecution;
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(any(unix, windows), feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
@@ -25,9 +28,13 @@ pub(super) fn apply_final_directory_metadata(
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
-    #[cfg(all(unix, any(feature = "acl", feature = "xattr")))] mode: LocalCopyExecution,
+    #[cfg(any(
+        all(unix, any(feature = "acl", feature = "xattr")),
+        all(windows, feature = "acl")
+    ))]
+    mode: LocalCopyExecution,
     #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
-    #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
+    #[cfg(all(any(unix, windows), feature = "acl"))] preserve_acls: bool,
 ) -> Result<(), LocalCopyError> {
     let metadata_options = if context.omit_dir_times_enabled() {
         context.metadata_options().preserve_times(false)
@@ -47,7 +54,7 @@ pub(super) fn apply_final_directory_metadata(
         context.filter_program(),
     )?;
 
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
 
     // Suppress unused variable warnings when features are disabled

@@ -112,7 +112,7 @@ fn builder_preserves_hard_links_flag() {
     assert!(!ClientConfig::default().preserve_hard_links());
 }
 
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(any(unix, windows), feature = "acl"))]
 #[test]
 fn builder_preserves_acls_flag() {
     let config = ClientConfig::builder()

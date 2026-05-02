@@ -154,8 +154,8 @@ impl ParsedServerFlags {
         #[allow(unused_mut)] // REASON: mutated when acl or xattr features are not enabled
         let mut cleared = Vec::new();
 
-        // ACL support requires the `acl` feature on Unix.
-        #[cfg(not(all(unix, feature = "acl")))]
+        // ACL support requires the `acl` feature (Unix POSIX/NFSv4 ACLs or Windows DACLs).
+        #[cfg(not(all(any(unix, windows), feature = "acl")))]
         if self.acls {
             self.acls = false;
             cleared.push("ACLs");
@@ -468,13 +468,13 @@ mod tests {
         assert!(flags.acls);
         let cleared = flags.clear_unsupported_features();
 
-        #[cfg(all(unix, feature = "acl"))]
+        #[cfg(all(any(unix, windows), feature = "acl"))]
         {
             assert!(cleared.is_empty());
             assert!(flags.acls);
         }
 
-        #[cfg(not(all(unix, feature = "acl")))]
+        #[cfg(not(all(any(unix, windows), feature = "acl")))]
         {
             assert_eq!(cleared, vec!["ACLs"]);
             assert!(!flags.acls);
@@ -528,9 +528,9 @@ mod tests {
         }
 
         // After clearing, the flag matches whether the feature is available.
-        #[cfg(all(unix, feature = "acl"))]
+        #[cfg(all(any(unix, windows), feature = "acl"))]
         assert!(flags.acls, "ACLs should remain when feature is available");
-        #[cfg(not(all(unix, feature = "acl")))]
+        #[cfg(not(all(any(unix, windows), feature = "acl")))]
         assert!(!flags.acls, "ACLs should be cleared when feature is absent");
 
         #[cfg(all(unix, feature = "xattr"))]

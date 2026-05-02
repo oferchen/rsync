@@ -18,7 +18,7 @@ use crate::local_copy::{
     find_reference_action, map_metadata_error, remove_source_entry_if_requested,
 };
 
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(any(unix, windows), feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
@@ -58,7 +58,7 @@ pub(super) fn process_links(
     checksum_enabled: bool,
     mode: LocalCopyExecution,
     #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
-    #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
+    #[cfg(all(any(unix, windows), feature = "acl"))] preserve_acls: bool,
 ) -> Result<LinkOutcome, LocalCopyError> {
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
     let _ = mode;
@@ -230,11 +230,11 @@ pub(super) fn process_links(
                         }
                     },
                     {
-                        #[cfg(all(unix, feature = "acl"))]
+                        #[cfg(all(any(unix, windows), feature = "acl"))]
                         {
                             preserve_acls
                         }
-                        #[cfg(not(all(unix, feature = "acl")))]
+                        #[cfg(not(all(any(unix, windows), feature = "acl")))]
                         {
                             false
                         }
@@ -311,7 +311,7 @@ pub(super) fn process_links(
                         true,
                         context.filter_program(),
                     )?;
-                    #[cfg(all(unix, feature = "acl"))]
+                    #[cfg(all(any(unix, windows), feature = "acl"))]
                     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
                     context.record_hard_link(metadata, destination);
                     context.summary_mut().record_hard_link();

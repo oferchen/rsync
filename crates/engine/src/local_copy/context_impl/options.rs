@@ -121,7 +121,7 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Reports whether ACL preservation is enabled.
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     pub(super) const fn acls_enabled(&self) -> bool {
         self.options.acls_enabled()
     }

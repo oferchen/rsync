@@ -500,7 +500,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.preserve_hard_links() {
             flags.push('H');
         }
-        #[cfg(all(unix, feature = "acl"))]
+        #[cfg(all(any(unix, windows), feature = "acl"))]
         if self.config.preserve_acls() {
             flags.push('A');
         }

@@ -52,14 +52,20 @@ pub(crate) fn copy_directory_recursive(
     relative: Option<&Path>,
     root_device: Option<u64>,
 ) -> Result<bool, LocalCopyError> {
-    #[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+    #[cfg(any(
+        all(unix, any(feature = "acl", feature = "xattr")),
+        all(windows, feature = "acl")
+    ))]
     let mode = context.mode();
-    #[cfg(not(all(unix, any(feature = "acl", feature = "xattr"))))]
+    #[cfg(not(any(
+        all(unix, any(feature = "acl", feature = "xattr")),
+        all(windows, feature = "acl")
+    )))]
     let _mode = context.mode();
 
     #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     let preserve_acls = context.acls_enabled();
 
     let prune_enabled = context.prune_empty_dirs_enabled();
@@ -166,11 +172,14 @@ pub(crate) fn copy_directory_recursive(
                 source,
                 destination,
                 metadata,
-                #[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+                #[cfg(any(
+                    all(unix, any(feature = "acl", feature = "xattr")),
+                    all(windows, feature = "acl")
+                ))]
                 mode,
                 #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
-                #[cfg(all(unix, feature = "acl"))]
+                #[cfg(all(any(unix, windows), feature = "acl"))]
                 preserve_acls,
             )?;
         }
@@ -263,11 +272,14 @@ pub(crate) fn copy_directory_recursive(
             source,
             destination,
             metadata,
-            #[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+            #[cfg(any(
+                all(unix, any(feature = "acl", feature = "xattr")),
+                all(windows, feature = "acl")
+            ))]
             mode,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(all(unix, feature = "acl"))]
+            #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls,
         )?;
     }

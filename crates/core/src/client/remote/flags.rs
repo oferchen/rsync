@@ -74,7 +74,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.ignore_times() {
         flags.push('I');
     }
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     if config.preserve_acls() {
         flags.push('A');
     }
