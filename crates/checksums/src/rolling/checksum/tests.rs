@@ -663,10 +663,11 @@ fn golden_test_all_ff() {
     let data = [0xFFu8; 16];
     let mut checksum = RollingChecksum::new();
     checksum.update(&data);
-    // s1 = 16 * 255 = 4080 = 0x0ff0
-    // s2 = 255*1 + 255*2 + ... + 255*16 = 255 * (16*17/2) = 255 * 136 = 34680 = 0x8778
-    // value = (s2 << 16) | s1 = 0x8778_0ff0
-    assert_eq!(checksum.value(), 0x8778_0ff0);
+    // upstream: checksum.c:285 reads bytes via `schar *buf`, so 0xFF == -1.
+    // s1 = 16 * (-1) = -16, masked to u16 = 0xfff0
+    // s2 = (-1)*16 + (-1)*15 + ... + (-1)*1 = -136, masked to u16 = 0xff78
+    // value = (s2 << 16) | s1 = 0xff78_fff0
+    assert_eq!(checksum.value(), 0xff78_fff0);
 }
 
 #[test]
@@ -694,9 +695,10 @@ fn golden_test_block_length_700() {
     }
     let mut checksum = RollingChecksum::new();
     checksum.update(&data);
-    // Pre-computed golden value (architecture-independent)
-    // This value was verified against the scalar implementation
-    assert_eq!(checksum.value(), 0xe2ea_5c96);
+    // Pre-computed golden value (architecture-independent), verified against
+    // a signed-Adler reference matching upstream `schar *buf` semantics
+    // (see upstream `checksum.c:285`).
+    assert_eq!(checksum.value(), 0x01ea_fe96);
     assert_eq!(checksum.len(), 700);
 }
 
@@ -709,7 +711,9 @@ fn golden_test_block_length_4096() {
     }
     let mut checksum = RollingChecksum::new();
     checksum.update(&data);
-    // Pre-computed golden value (architecture-independent)
+    // Pre-computed golden value (architecture-independent), reverified against
+    // a signed-Adler reference after the signed-byte fix
+    // (upstream `checksum.c:285` interprets bytes as `schar`).
     assert_eq!(checksum.value(), 0x2000_f800);
     assert_eq!(checksum.len(), 4096);
 }

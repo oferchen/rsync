@@ -9,19 +9,23 @@
 //! ```c
 //! #define CHAR_OFFSET 0  // rsync 3.x uses 0 (no offset)
 //!
-//! // Initial computation over block of length n:
-//! s1 = sum of all bytes
-//! s2 = sum of (n - i) * byte[i] for i in 0..n
-//!    = sum of prefix sums
+//! // upstream: checksum.c:285 - bytes are reinterpreted as signed via
+//! // `schar *buf = (schar *)buf1`, so each byte contributes int(schar(byte))
+//! // (i.e. values >= 0x80 contribute byte - 256).
+//!
+//! // Initial computation over block of length n (s1, s2 are u16, accumulated mod 2^16):
+//! s1 = sum of schar(byte[i]) for i in 0..n
+//! s2 = sum of (n - i) * schar(byte[i]) for i in 0..n
 //! checksum = (s2 << 16) | s1
 //!
 //! // Rolling update (remove old_byte, add new_byte):
-//! s1 = (s1 - old_byte + new_byte) & 0xFFFF
-//! s2 = (s2 - n * old_byte + s1) & 0xFFFF
+//! s1 = (s1 - schar(old_byte) + schar(new_byte)) & 0xFFFF
+//! s2 = (s2 - n * schar(old_byte) + s1) & 0xFFFF
 //! ```
 //!
 //! This is Mark Adler's rolling checksum algorithm, similar to Adler-32
-//! but without the base modulus and with CHAR_OFFSET = 0.
+//! but without the base modulus, with CHAR_OFFSET = 0, and with bytes
+//! interpreted as signed.
 
 use checksums::{RollingChecksum, RollingDigest};
 
@@ -36,19 +40,21 @@ fn char_offset_is_zero() {
 }
 
 /// Test single byte checksum.
-/// For a single byte b with CHAR_OFFSET = 0:
-/// s1 = b
-/// s2 = b (sum of prefix sums = just the first byte)
-/// value = (b << 16) | b
+/// For a single byte b with CHAR_OFFSET = 0 and signed-byte semantics
+/// (upstream `checksum.c:285` casts via `schar *buf`):
+/// s1 = schar(b) mod 2^16
+/// s2 = schar(b) mod 2^16
+/// value = (s2 << 16) | s1
 #[test]
 fn single_byte_matches_formula() {
-    for byte in [0x00, 0x01, 0x42, 0x7F, 0x80, 0xFF] {
+    for byte in [0x00u8, 0x01, 0x42, 0x7F, 0x80, 0xFF] {
         let mut checksum = RollingChecksum::new();
         checksum.update(&[byte]);
 
-        let expected_s1 = byte as u16;
-        let expected_s2 = byte as u16;
-        let expected_value = ((byte as u32) << 16) | (byte as u32);
+        let signed = ((byte as i8) as i32) as u32;
+        let expected_s1 = (signed & 0xFFFF) as u16;
+        let expected_s2 = (signed & 0xFFFF) as u16;
+        let expected_value = ((expected_s2 as u32) << 16) | (expected_s1 as u32);
 
         assert_eq!(
             checksum.digest().sum1(),
@@ -95,8 +101,8 @@ fn components_truncated_to_16_bits() {
     let mut checksum = RollingChecksum::new();
     checksum.update(&data);
 
-    // s1 = 256 * 0xFF = 65280 = 0xFF00 (fits in 16 bits)
-    // s2 will overflow and wrap
+    // upstream signed semantics: schar(0xFF) = -1, so s1 = 256 * (-1) =
+    // -256 mod 2^16 = 0xFF00 (still fits in 16 bits). s2 will overflow and wrap.
     let s1 = checksum.digest().sum1();
     let s2 = checksum.digest().sum2();
 
@@ -197,23 +203,22 @@ fn all_zeros_block() {
 }
 
 /// Test all-ones block (0xFF).
-/// This maximizes s1 and s2 for a given length.
+/// Upstream signed semantics: schar(0xFF) = -1, so this minimises s1/s2.
 #[test]
 fn all_ones_block() {
-    let size = 128;
+    let size: usize = 128;
     let data = vec![0xFF; size];
     let mut checksum = RollingChecksum::new();
     checksum.update(&data);
 
-    // s1 = 128 * 255 = 32640 = 0x7F80
-    let expected_s1 = ((size * 0xFF) & 0xFFFF) as u16;
+    // s1 = 128 * (-1) = -128, masked to u16 = 0xff80
+    let expected_s1 = (((size as i32).wrapping_neg()) as u32 & 0xFFFF) as u16;
     assert_eq!(checksum.digest().sum1(), expected_s1);
 
-    // s2 = sum of prefix sums = 255 * (1 + 2 + ... + 128)
-    //    = 255 * (128 * 129 / 2) = 255 * 8256 = 2105280
-    //    = 0x201FC0, truncated to 16 bits = 0x1FC0
-    let full_s2 = 255u32 * ((size * (size + 1) / 2) as u32);
-    let expected_s2 = (full_s2 & 0xFFFF) as u16;
+    // s2 = sum of prefix sums = (-1) * (1 + 2 + ... + 128)
+    //    = -(128 * 129 / 2) = -8256, masked to u16 = 0xdfc0
+    let triangular = (size * (size + 1) / 2) as i32;
+    let expected_s2 = ((triangular.wrapping_neg()) as u32 & 0xFFFF) as u16;
     assert_eq!(checksum.digest().sum2(), expected_s2);
 }
 

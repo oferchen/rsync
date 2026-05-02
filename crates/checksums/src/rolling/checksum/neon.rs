@@ -38,20 +38,26 @@
 //! # Performance
 //!
 //! NEON processes 16 bytes per iteration using vector multiply-accumulate operations.
-//! The weighted sum computation uses `vmulq_u16` and `vaddvq_u16` for efficient reduction.
+//! Bytes are reinterpreted as `int8x16_t` and sign-extended via `vmovl_s8` so the
+//! accumulators carry the same -128..127 contribution as upstream's `schar *buf`.
+//! The weighted sum uses `vmulq_s16` (safe, max product magnitude 2048 fits in i16)
+//! and `vaddlvq_s16` for widening reduction into i32 to avoid horizontal overflow.
 
 #![allow(unsafe_code)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use super::accumulate_chunk_scalar_raw;
 use core::arch::aarch64::{
-    uint16x8_t, vaddvq_u16, vget_high_u8, vget_low_u8, vld1q_u8, vld1q_u16, vmovl_u8, vmulq_u16,
+    int16x8_t, vaddlvq_s16, vget_high_s8, vget_low_s8, vld1q_s16, vld1q_u8, vmovl_s8, vmulq_s16,
+    vreinterpretq_s8_u8,
 };
 use std::sync::OnceLock;
 
 const BLOCK_LEN: usize = 16;
-const HIGH_WEIGHTS: [u16; 8] = [16, 15, 14, 13, 12, 11, 10, 9];
-const LOW_WEIGHTS: [u16; 8] = [8, 7, 6, 5, 4, 3, 2, 1];
+// upstream: checksum.c:285 - schar *buf treats bytes as signed [-128,127].
+// Weights map byte i to (BLOCK_LEN - i) for the prefix-sum contribution to s2.
+const HIGH_WEIGHTS: [i16; 8] = [16, 15, 14, 13, 12, 11, 10, 9];
+const LOW_WEIGHTS: [i16; 8] = [8, 7, 6, 5, 4, 3, 2, 1];
 
 static NEON_AVAILABLE: OnceLock<bool> = OnceLock::new();
 
@@ -84,21 +90,29 @@ unsafe fn accumulate_chunk_neon_impl(
     mut len: usize,
     mut chunk: &[u8],
 ) -> (u32, u32, usize) {
-    let high_weights: uint16x8_t = vld1q_u16(HIGH_WEIGHTS.as_ptr());
-    let low_weights: uint16x8_t = vld1q_u16(LOW_WEIGHTS.as_ptr());
+    let high_weights: int16x8_t = vld1q_s16(HIGH_WEIGHTS.as_ptr());
+    let low_weights: int16x8_t = vld1q_s16(LOW_WEIGHTS.as_ptr());
 
     while chunk.len() >= BLOCK_LEN {
-        let bytes = vld1q_u8(chunk.as_ptr());
-        let high = vmovl_u8(vget_low_u8(bytes));
-        let low = vmovl_u8(vget_high_u8(bytes));
+        // Load as u8x16 then reinterpret as i8x16 - upstream `schar *buf` cast.
+        let bytes_signed = vreinterpretq_s8_u8(vld1q_u8(chunk.as_ptr()));
+        // Sign-extend each half to int16x8_t so multiplications and weighted
+        // sums stay in the signed [-128,127] domain.
+        let high = vmovl_s8(vget_low_s8(bytes_signed));
+        let low = vmovl_s8(vget_high_s8(bytes_signed));
 
-        let sum_high = vaddvq_u16(high);
-        let sum_low = vaddvq_u16(low);
-        let block_sum = (sum_high + sum_low) as u32;
+        // vaddlvq_s16 widens the reduction to i32, avoiding the i16 overflow
+        // risk inherent in vaddvq_s16 when many lanes share a sign.
+        let sum_high = vaddlvq_s16(high);
+        let sum_low = vaddlvq_s16(low);
+        let block_sum = sum_high.wrapping_add(sum_low) as u32;
 
-        let weighted_high = vmulq_u16(high, high_weights);
-        let weighted_low = vmulq_u16(low, low_weights);
-        let block_prefix = (vaddvq_u16(weighted_high) + vaddvq_u16(weighted_low)) as u32;
+        // vmulq_s16 truncates to i16, but products are in [-2048, 2032]
+        // which fits with margin.
+        let weighted_high = vmulq_s16(high, high_weights);
+        let weighted_low = vmulq_s16(low, low_weights);
+        let block_prefix =
+            vaddlvq_s16(weighted_high).wrapping_add(vaddlvq_s16(weighted_low)) as u32;
 
         s2 = s2.wrapping_add(block_prefix);
         s2 = s2.wrapping_add(s1.wrapping_mul(BLOCK_LEN as u32));

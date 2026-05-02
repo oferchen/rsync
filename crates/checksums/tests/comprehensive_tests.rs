@@ -36,8 +36,10 @@ mod rolling_edge_cases {
             let mut checksum = RollingChecksum::new();
             checksum.update(&[byte]);
             assert_eq!(checksum.len(), 1);
-            // For single byte b: s1 = b, s2 = b, value = (b << 16) | b
-            let expected = ((byte as u32) << 16) | (byte as u32);
+            // upstream: checksum.c:285 `schar *buf` cast - bytes are signed [-128,127].
+            // For single byte b: s1 = schar(b) & 0xFFFF, s2 = same, value = (s2 << 16) | s1.
+            let signed = ((byte as i8) as i32) as u32 & 0xFFFF;
+            let expected = (signed << 16) | signed;
             assert_eq!(checksum.value(), expected, "Failed for byte {byte}");
         }
     }
