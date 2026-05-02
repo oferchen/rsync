@@ -625,6 +625,12 @@ impl FileListReader {
                 )
             };
 
+        // upstream: flist.c recv_file_entry() iconv_buf(ic_recv, ...)
+        // Decode the wire-charset filename bytes to local-charset bytes via
+        // the configured FilenameConverter. With no converter (default), this
+        // is a no-op; the prefix-compression buffer continues to hold the
+        // unconverted wire bytes so subsequent entries share the prefix as the
+        // sender intended (mirrors upstream's `lastname` semantics).
         let converted_name = self.apply_encoding_conversion(name)?;
 
         // upstream: flist.c:756-760 - clean_fname(CFN_REFUSE_DOT_DOT_DIRS)
