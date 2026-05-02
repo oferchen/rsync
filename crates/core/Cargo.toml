@@ -42,6 +42,7 @@ socket2 = "0.6"
 filetime = "0.2"
 branding = { path = "../branding" }
 tokio = { workspace = true, optional = true }
+zeroize = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 checksums = { path = "../checksums" }

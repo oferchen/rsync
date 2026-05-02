@@ -207,6 +207,8 @@ rpassword = "7"
 is-terminal = "0.4"
 # CPU feature detection for cipher selection (x86/x86_64 only)
 raw-cpuid = "11"
+# Secure memory zeroization - audited, widely deployed RAII wrapper
+zeroize = "1"
 
 [workspace.metadata.docs.rs]
 all-features = true
