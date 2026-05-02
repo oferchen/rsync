@@ -203,8 +203,8 @@ mod linux_only {
 
         let mut received = 0usize;
         let target = 6usize; // 4 reads + 2 polls
-        let mut read_seen = vec![false; 4];
-        let mut poll_seen = vec![false; 2];
+        let mut read_seen = [false; 4];
+        let mut poll_seen = [false; 2];
 
         while received < target {
             ring.submit_and_wait(1).expect("submit_and_wait");
