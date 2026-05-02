@@ -1035,8 +1035,15 @@ fn test_socket_send_no_deadlock_under_backpressure_1872() {
     assert!(prefill_total > 0, "prefill made no progress");
 
     // Distinct payload bytes (never == PREFILL_MARKER) so the drain side
-    // can recognize the boundary between prefill and payload.
-    let payload: Vec<u8> = (0..64 * 1024).map(|i| ((i % 250) + 1) as u8).collect();
+    // can recognize the boundary between prefill and payload. The mapping
+    // walks 1..=255 skipping PREFILL_MARKER (0xAB) so every payload byte is
+    // guaranteed != PREFILL_MARKER for any input index.
+    let payload: Vec<u8> = (0..64 * 1024)
+        .map(|i| {
+            let v = ((i % 254) + 1) as u8;
+            if v >= PREFILL_MARKER { v + 1 } else { v }
+        })
+        .collect();
     debug_assert!(payload.iter().all(|&b| b != PREFILL_MARKER));
     let payload_len = payload.len();
     let payload_for_writer = payload.clone();
