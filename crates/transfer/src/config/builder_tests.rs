@@ -196,6 +196,27 @@ mod defaults {
         assert!(!config.do_stats);
         assert!(config.temp_dir.is_none());
         assert!(config.skip_compress.is_none());
+        assert!(!config.fake_super);
+    }
+
+    /// Daemon-side `fake super = yes` flows through the builder into
+    /// `ServerConfig.fake_super`, which the receiver then forwards into
+    /// `MetadataOptions.fake_super` so ownership/special-file metadata is
+    /// stored in the `user.rsync.%stat` xattr instead of being applied to
+    /// inodes (upstream: `clientserver.c:1106-1107`).
+    #[test]
+    fn fake_super_round_trips_through_builder() {
+        let enabled = ServerConfigBuilder::new()
+            .fake_super(true)
+            .build()
+            .expect("valid");
+        assert!(enabled.fake_super);
+
+        let disabled = ServerConfigBuilder::new()
+            .fake_super(false)
+            .build()
+            .expect("valid");
+        assert!(!disabled.fake_super);
     }
 }
 
