@@ -16,7 +16,10 @@ use std::path::{Path, PathBuf};
 use super::super::super::{
     parse_bind_address_argument, parse_protocol_version_arg, parse_timeout_argument,
 };
-#[cfg(any(not(all(unix, feature = "acl")), not(all(unix, feature = "xattr"))))]
+#[cfg(any(
+    not(all(any(unix, windows), feature = "acl")),
+    not(all(unix, feature = "xattr"))
+))]
 use super::super::messages::fail_with_custom_fallback;
 use super::super::messages::fail_with_message;
 
@@ -138,7 +141,7 @@ pub(crate) fn validate_feature_support<Err>(
 where
     Err: Write,
 {
-    #[cfg(not(all(unix, feature = "acl")))]
+    #[cfg(not(all(any(unix, windows), feature = "acl")))]
     if preserve_acls {
         let message =
             rsync_error!(1, "POSIX ACLs are not supported on this client").with_role(Role::Client);
@@ -146,7 +149,7 @@ where
         return Err(fail_with_custom_fallback(message, fallback, stderr));
     }
 
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     let _ = preserve_acls;
 
     #[cfg(not(all(unix, feature = "xattr")))]

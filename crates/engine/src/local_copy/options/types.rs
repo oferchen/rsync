@@ -124,7 +124,7 @@ pub struct LocalCopyOptions {
     pub(super) group_override: Option<u32>,
     pub(super) copy_as: Option<CopyAsIds>,
     pub(super) omit_dir_times: bool,
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     pub(super) preserve_acls: bool,
     pub(super) filters: Option<FilterSet>,
     pub(super) filter_program: Option<FilterProgram>,
@@ -266,7 +266,7 @@ impl LocalCopyOptions {
             copy_as: None,
             omit_dir_times: false,
             omit_link_times: false,
-            #[cfg(all(unix, feature = "acl"))]
+            #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls: false,
             filters: None,
             filter_program: None,

@@ -59,7 +59,7 @@ pub(crate) fn copy_directory_recursive(
 
     #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     let preserve_acls = context.acls_enabled();
 
     let prune_enabled = context.prune_empty_dirs_enabled();
@@ -170,7 +170,7 @@ pub(crate) fn copy_directory_recursive(
                 mode,
                 #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
-                #[cfg(all(unix, feature = "acl"))]
+                #[cfg(all(any(unix, windows), feature = "acl"))]
                 preserve_acls,
             )?;
         }
@@ -267,7 +267,7 @@ pub(crate) fn copy_directory_recursive(
             mode,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(all(unix, feature = "acl"))]
+            #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls,
         )?;
     }

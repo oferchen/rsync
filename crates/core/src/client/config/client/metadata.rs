@@ -125,7 +125,7 @@ impl ClientConfig {
     }
 
     /// Reports whether POSIX ACLs should be preserved.
-    #[cfg(all(unix, feature = "acl"))]
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     #[must_use]
     #[doc(alias = "--acls")]
     #[doc(alias = "-A")]
@@ -134,7 +134,7 @@ impl ClientConfig {
     }
 
     /// Always returns `false` on platforms without ACL support.
-    #[cfg(not(all(unix, feature = "acl")))]
+    #[cfg(not(all(any(unix, windows), feature = "acl")))]
     #[must_use]
     pub const fn preserve_acls(&self) -> bool {
         false

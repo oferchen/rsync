@@ -41,7 +41,7 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
     delay_updates_enabled: bool,
     writer_for_metadata: &mut Option<fs::File>,
     #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
-    #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
+    #[cfg(all(any(unix, windows), feature = "acl"))] preserve_acls: bool,
 ) -> Result<(), LocalCopyError> {
     let relative_for_removal = Some(record_path.to_path_buf());
     if let Some(guard) = guard {
@@ -62,7 +62,7 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
                 destination_path,
                 #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
-                #[cfg(all(unix, feature = "acl"))]
+                #[cfg(all(any(unix, windows), feature = "acl"))]
                 preserve_acls,
             );
             context.register_deferred_update(update);
@@ -88,7 +88,7 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
                 },
                 #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
-                #[cfg(all(unix, feature = "acl"))]
+                #[cfg(all(any(unix, windows), feature = "acl"))]
                 preserve_acls,
             );
             #[cfg(unix)]
@@ -113,7 +113,7 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
             },
             #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(all(unix, feature = "acl"))]
+            #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls,
         );
         #[cfg(unix)]
