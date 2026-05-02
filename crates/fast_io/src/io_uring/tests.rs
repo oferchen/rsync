@@ -1048,17 +1048,14 @@ fn test_socket_send_no_deadlock_under_backpressure_1872() {
     let writer_thread = std::thread::spawn(move || {
         // Keep the TcpStream alive in this scope so the fd stays valid.
         let _client = client;
-        let mut writer = match socket_writer_from_fd(
-            client_fd,
-            16 * 1024,
-            crate::IoUringPolicy::Enabled,
-        ) {
-            Ok(w) => w,
-            Err(e) => {
-                let _ = done_tx.send(Err(e));
-                return;
-            }
-        };
+        let mut writer =
+            match socket_writer_from_fd(client_fd, 16 * 1024, crate::IoUringPolicy::Enabled) {
+                Ok(w) => w,
+                Err(e) => {
+                    let _ = done_tx.send(Err(e));
+                    return;
+                }
+            };
         let res = writer.write_all(&payload_for_writer).and_then(|()| {
             writer.flush()?;
             Ok(payload_for_writer.len())

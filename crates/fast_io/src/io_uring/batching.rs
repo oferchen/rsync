@@ -349,11 +349,9 @@ pub(super) fn submit_send_batch(
                     let err = io::Error::from_raw_os_error(-result);
                     // EAGAIN/EWOULDBLOCK on a non-blocking-style send: rearm
                     // the readiness poll on the next outer loop iteration
-                    // rather than failing.
-                    if matches!(
-                        err.raw_os_error(),
-                        Some(libc::EAGAIN) | Some(libc::EWOULDBLOCK)
-                    ) {
+                    // rather than failing. EWOULDBLOCK == EAGAIN on Linux per
+                    // POSIX, so a single arm covers both names.
+                    if err.raw_os_error() == Some(libc::EAGAIN) {
                         completed += 1;
                         continue;
                     }
