@@ -2292,3 +2292,87 @@ mod xattr_integration {
         assert_eq!(cursor.position() as usize, data.len());
     }
 }
+
+/// Tests for filename encoding conversion (--iconv) on the receiver flist
+/// ingest path.
+///
+/// upstream: flist.c recv_file_entry() iconv_buf(ic_recv, ...)
+#[cfg(feature = "iconv")]
+mod iconv_integration {
+    use super::*;
+    use crate::flist::write::FileListWriter;
+    use crate::iconv::FilenameConverter;
+
+    /// Constructs wire bytes for a single file entry whose on-wire filename is
+    /// the supplied raw byte sequence. Uses a writer with no iconv configured
+    /// so the bytes hit the wire unchanged.
+    #[cfg(unix)]
+    fn write_entry_with_raw_name(wire_name: &[u8]) -> Vec<u8> {
+        use std::os::unix::ffi::OsStrExt;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from(std::ffi::OsStr::from_bytes(wire_name));
+        let mut entry = FileEntry::new_file(path, 100, 0o100644);
+        entry.set_mtime(1_700_000_000, 0);
+
+        let protocol = test_protocol();
+        let mut writer = FileListWriter::new(protocol);
+        let mut data = Vec::new();
+        writer.write_entry(&mut data, &entry).unwrap();
+        data
+    }
+
+    /// Receiver decodes ISO-8859-1 wire bytes into UTF-8 local bytes when an
+    /// `--iconv=UTF-8,ISO-8859-1` converter is wired into the file list reader.
+    #[cfg(unix)]
+    #[test]
+    fn read_entry_converts_latin1_wire_bytes_to_utf8() {
+        // "café" in ISO-8859-1: c(0x63) a(0x61) f(0x66) é(0xe9)
+        let latin1_wire: &[u8] = &[0x63, 0x61, 0x66, 0xe9];
+        // "café" in UTF-8: c(0x63) a(0x61) f(0x66) é(0xc3 0xa9)
+        let utf8_local: &[u8] = &[0x63, 0x61, 0x66, 0xc3, 0xa9];
+
+        let data = write_entry_with_raw_name(latin1_wire);
+
+        let converter = FilenameConverter::new("UTF-8", "ISO-8859-1").unwrap();
+        let protocol = test_protocol();
+        let mut reader = FileListReader::new(protocol).with_iconv(converter);
+
+        let mut cursor = io::Cursor::new(&data[..]);
+        let entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        // Stored filename bytes must be local (UTF-8), not the wire bytes.
+        assert_eq!(entry.name_bytes().as_ref(), utf8_local);
+    }
+
+    /// Without a converter, wire bytes pass through unchanged.
+    #[cfg(unix)]
+    #[test]
+    fn read_entry_without_iconv_preserves_wire_bytes() {
+        let wire: &[u8] = &[0x63, 0x61, 0x66, 0xe9];
+        let data = write_entry_with_raw_name(wire);
+
+        let protocol = test_protocol();
+        let mut reader = FileListReader::new(protocol);
+        let mut cursor = io::Cursor::new(&data[..]);
+        let entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        assert_eq!(entry.name_bytes().as_ref(), wire);
+    }
+
+    /// An identity converter (UTF-8 <-> UTF-8) is a no-op.
+    #[cfg(unix)]
+    #[test]
+    fn read_entry_with_identity_converter_is_noop() {
+        let utf8_wire: &[u8] = &[0x63, 0x61, 0x66, 0xc3, 0xa9];
+        let data = write_entry_with_raw_name(utf8_wire);
+
+        let converter = FilenameConverter::identity();
+        let protocol = test_protocol();
+        let mut reader = FileListReader::new(protocol).with_iconv(converter);
+        let mut cursor = io::Cursor::new(&data[..]);
+        let entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        assert_eq!(entry.name_bytes().as_ref(), utf8_wire);
+    }
+}
