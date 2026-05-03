@@ -96,7 +96,6 @@ fn backpressure_blocks_producer() {
         "producer sent {sent_before_drain} items with capacity 2 - backpressure not working"
     );
 
-    // Now drain everything.
     let items: Vec<u32> = rx.into_iter().map(|w| w.ndx().get()).collect();
     producer.join().unwrap();
     assert_eq!(items, vec![0, 1, 2, 3, 4]);
@@ -131,7 +130,6 @@ fn bounded_respects_in_flight_limit() {
             let collected = &collected;
             s.spawn(move |_| {
                 let current = active_ref.fetch_add(1, Ordering::SeqCst) + 1;
-                // Update max observed concurrency.
                 max_active_ref.fetch_max(current, Ordering::SeqCst);
                 // Simulate work to increase chance of overlapping.
                 thread::sleep(Duration::from_micros(100));
@@ -313,13 +311,11 @@ fn pipeline_with_reorder_buffer() {
     let results: Vec<_> = collected.into_inner().unwrap();
     producer.join().unwrap();
 
-    // Feed out-of-order results into the reorder buffer.
     let mut reorder = ReorderBuffer::new(total as usize);
     for r in results {
         reorder.insert(r.sequence(), r).unwrap();
     }
 
-    // Drain in order and verify sequence.
     let ordered: Vec<u64> = reorder.drain_ready().map(|r| r.sequence()).collect();
     let expected: Vec<u64> = (0..u64::from(total)).collect();
     assert_eq!(ordered, expected);
@@ -408,11 +404,9 @@ fn drain_parallel_into_receiver_drop_stops_workers() {
         rx.drain_parallel_into(|w| w.ndx().get(), result_tx);
     });
 
-    // Take a few results then drop the receiver.
     let _ = result_rx.recv();
     drop(result_rx);
 
-    // Drain thread should complete without hanging.
     let deadline = Instant::now() + Duration::from_secs(5);
     producer.join().unwrap();
     drain_handle.join().unwrap();
@@ -554,7 +548,6 @@ fn drain_parallel_with_reorder_buffer() {
     });
     producer.join().unwrap();
 
-    // Feed into reorder buffer and verify sequential output.
     let mut reorder = ReorderBuffer::new(total as usize);
     for r in results {
         reorder.insert(r.sequence(), r).unwrap();
