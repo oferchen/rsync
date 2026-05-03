@@ -53,6 +53,8 @@ COLOR_PURE_RUST = "#58a6ff"
 COLOR_OPENSSL = "#d2a8ff"
 COLOR_STD_IO = "#da8b45"
 COLOR_IO_URING = "#3fb950"
+COLOR_SSH_SUBPROCESS = "#58a6ff"
+COLOR_SSH_RUSSH = "#ffa657"
 COLOR_TITLE = "#e6edf3"
 COLOR_SUBTITLE = "#8b949e"
 COLOR_MODE_HEADER = "#e6edf3"
@@ -71,7 +73,7 @@ FONT_MONO = "monospace"
 MODE_ORDER = [
     "local", "ssh_pull", "ssh_push", "daemon_pull", "daemon_push",
     "compression", "delta", "large_file", "many_small", "sparse",
-    "memory", "checksum_openssl", "io_uring",
+    "memory", "checksum_openssl", "io_uring", "ssh_transport",
 ]
 MODE_LABELS = {
     "local": "Local Copy",
@@ -87,6 +89,7 @@ MODE_LABELS = {
     "memory": "Memory Usage",
     "checksum_openssl": "Checksum: OpenSSL vs Pure Rust",
     "io_uring": "io_uring vs Standard I/O",
+    "ssh_transport": "SSH Transport: Subprocess vs russh",
 }
 MODE_CLI_HINTS = {
     "local": "rsync -av src/ dst/",
@@ -102,11 +105,13 @@ MODE_CLI_HINTS = {
     "memory": "rsync -av (peak RSS measurement)",
     "checksum_openssl": "rsync -avc src/ dst/",
     "io_uring": "--io-uring vs --no-io-uring",
+    "ssh_transport": "host:path (subprocess) vs ssh://host/path (russh)",
 }
 
 # Modes where bars represent alternative labels instead of upstream vs oc-rsync
 OPENSSL_MODES = {"checksum_openssl"}
 IO_URING_MODES = {"io_uring"}
+SSH_TRANSPORT_MODES = {"ssh_transport"}
 
 CLI_HINT_HEIGHT = 16
 
@@ -212,6 +217,9 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
             elif mode in IO_URING_MODES:
                 bar1_color, bar1_label = COLOR_STD_IO, "standard I/O"
                 bar2_color, bar2_label = COLOR_IO_URING, "io_uring"
+            elif mode in SSH_TRANSPORT_MODES:
+                bar1_color, bar1_label = COLOR_SSH_SUBPROCESS, "subprocess"
+                bar2_color, bar2_label = COLOR_SSH_RUSSH, "russh"
             else:
                 bar1_color, bar1_label = COLOR_UPSTREAM, "upstream"
                 bar2_color, bar2_label = COLOR_OC_RSYNC, "oc-rsync"
@@ -376,6 +384,7 @@ class ChartBuilder:
         y: float,
         has_openssl: bool = False,
         has_io_uring: bool = False,
+        has_ssh_transport: bool = False,
     ) -> None:
         cx = CHART_WIDTH / 2
         self._parts.append(f'<g transform="translate({cx - 160}, {y:.0f})">')
@@ -421,6 +430,21 @@ class ChartBuilder:
             )
             self._parts.append(
                 f'<text x="186" y="{ry + 10}" font-size="11" fill="{COLOR_LABEL}">io_uring</text>'
+            )
+        if has_ssh_transport:
+            row += 1
+            ry = row * 18
+            self._parts.append(
+                f'<rect x="0" y="{ry}" width="12" height="12" rx="2" fill="{COLOR_SSH_SUBPROCESS}"/>'
+            )
+            self._parts.append(
+                f'<text x="16" y="{ry + 10}" font-size="11" fill="{COLOR_LABEL}">SSH subprocess</text>'
+            )
+            self._parts.append(
+                f'<rect x="170" y="{ry}" width="12" height="12" rx="2" fill="{COLOR_SSH_RUSSH}"/>'
+            )
+            self._parts.append(
+                f'<text x="186" y="{ry + 10}" font-size="11" fill="{COLOR_LABEL}">SSH russh (embedded)</text>'
             )
         self._parts.append("</g>")
 
@@ -477,9 +501,10 @@ def generate_chart(data: dict) -> str:
 
     has_openssl = any(m in OPENSSL_MODES for m in tests_by_mode)
     has_io_uring = any(m in IO_URING_MODES for m in tests_by_mode)
+    has_ssh_transport = any(m in SSH_TRANSPORT_MODES for m in tests_by_mode)
     layout = compute_layout(tests_by_mode)
 
-    extra_legend_rows = int(has_openssl) + int(has_io_uring)
+    extra_legend_rows = int(has_openssl) + int(has_io_uring) + int(has_ssh_transport)
     extra_legend = extra_legend_rows * 18
     chart_height = layout.chart_height + extra_legend
 
@@ -498,7 +523,12 @@ def generate_chart(data: dict) -> str:
     for group in layout.groups:
         builder.add_mode_group(group, layout.scale)
 
-    builder.add_legend(chart_height - 30 - extra_legend, has_openssl, has_io_uring)
+    builder.add_legend(
+        chart_height - 30 - extra_legend,
+        has_openssl,
+        has_io_uring,
+        has_ssh_transport,
+    )
 
     return builder.render()
 

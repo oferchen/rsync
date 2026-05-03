@@ -112,9 +112,17 @@ impl IconvSetting {
     ///   `nl_langinfo(CODESET)` for the local side and UTF-8 for the
     ///   remote side.
     /// - [`IconvSetting::Explicit`] resolves via
-    ///   [`FilenameConverter::new`]. When the explicit charsets are
-    ///   not recognised by `encoding_rs`, this returns `None` and emits
-    ///   a `tracing::warn!` (gated on the `tracing` feature) so the
+    ///   [`FilenameConverter::new`] with the local charset paired against
+    ///   the literal wire charset `"UTF-8"`. Upstream rsync always uses
+    ///   UTF-8 on the wire (`rsync.c:130-140` opens
+    ///   `ic_send = iconv_open(UTF8_CHARSET, charset)` and
+    ///   `ic_recv = iconv_open(charset, UTF8_CHARSET)` where `charset` is
+    ///   each peer's local charset); the post-comma half of
+    ///   `--iconv=LOCAL,REMOTE` describes the *peer's* local charset and
+    ///   is forwarded to the remote CLI by the invocation builder, not
+    ///   used for transcoding on this side. When the local charset is not
+    ///   recognised by `encoding_rs`, this returns `None` and emits a
+    ///   `tracing::warn!` (gated on the `tracing` feature) so the
     ///   transfer falls back to verbatim bytes rather than aborting in
     ///   the middle of a file list. The CLI parser already validates
     ///   that the spec is non-empty, so reaching this fallback
@@ -122,6 +130,7 @@ impl IconvSetting {
     ///
     /// # Upstream Reference
     ///
+    /// - `rsync.c:87-140` `setup_iconv()` - wire is always UTF-8.
     /// - `flist.c::iconv_for_local` (file-list path entry transcode)
     /// - `options.c::recv_iconv_settings` (parse `--iconv=LOCAL,REMOTE`)
     /// - `compat.c:716-718` (gates `CF_SYMLINK_ICONV` advertisement on
@@ -131,17 +140,20 @@ impl IconvSetting {
         match self {
             Self::Unspecified | Self::Disabled => None,
             Self::LocaleDefault => Some(converter_from_locale()),
-            Self::Explicit { local, remote } => {
-                let remote_charset = remote.as_deref().unwrap_or(".");
-                match FilenameConverter::new(local, remote_charset) {
+            Self::Explicit { local, .. } => {
+                // upstream: rsync.c:130-140 - wire is always UTF-8; only the
+                // local-side charset matters for this peer's transcoding. The
+                // remote half of --iconv=LOCAL,REMOTE is forwarded to the
+                // remote CLI by remote::invocation::builder so the peer opens
+                // its own iconv context.
+                match FilenameConverter::new(local, "UTF-8") {
                     Ok(converter) => Some(converter),
                     Err(_error) => {
                         #[cfg(feature = "tracing")]
                         tracing::warn!(
                             local = %local,
-                            remote = %remote_charset,
                             error = %_error,
-                            "--iconv: unsupported charset; filenames will not be transcoded locally",
+                            "--iconv: unsupported local charset; filenames will not be transcoded locally",
                         );
                         None
                     }
@@ -262,7 +274,11 @@ mod tests {
 
     #[cfg(feature = "iconv")]
     #[test]
-    fn resolve_converter_explicit_pair_is_some() {
+    fn resolve_converter_explicit_pair_local_utf8_is_identity() {
+        // upstream: rsync.c:130-140 - wire is always UTF-8. When the local
+        // charset matches the wire charset, no transcoding is needed on
+        // this peer (the remote half of LOCAL,REMOTE is the *peer's* local
+        // charset, forwarded to the remote CLI separately).
         let setting = IconvSetting::Explicit {
             local: "UTF-8".to_owned(),
             remote: Some("ISO-8859-1".to_owned()),
@@ -270,16 +286,35 @@ mod tests {
         let converter = setting
             .resolve_converter()
             .expect("explicit pair should resolve to a converter");
-        assert!(!converter.is_identity());
+        assert!(
+            converter.is_identity(),
+            "local=UTF-8 against UTF-8 wire is identity"
+        );
         assert_eq!(converter.local_encoding_name(), "UTF-8");
+        assert_eq!(converter.remote_encoding_name(), "UTF-8");
     }
 
     #[cfg(feature = "iconv")]
     #[test]
-    fn resolve_converter_explicit_single_uses_locale_remote() {
-        // A single charset means "local only"; the remote side defaults
-        // to the locale (UTF-8), matching upstream rsync's behaviour when
-        // only one side of the pair is specified.
+    fn resolve_converter_explicit_pair_non_utf8_local_transcodes() {
+        // Local Latin-1 against the UTF-8 wire requires real transcoding.
+        let setting = IconvSetting::Explicit {
+            local: "ISO-8859-1".to_owned(),
+            remote: Some("UTF-8".to_owned()),
+        };
+        let converter = setting
+            .resolve_converter()
+            .expect("explicit pair should resolve to a converter");
+        assert!(!converter.is_identity());
+        assert_eq!(converter.remote_encoding_name(), "UTF-8");
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn resolve_converter_explicit_single_uses_local_charset() {
+        // A single charset means "local only"; the wire is always UTF-8
+        // (upstream rsync.c:130-140), so a Latin-1 local charset still
+        // requires transcoding to and from the UTF-8 wire.
         let setting = IconvSetting::Explicit {
             local: "ISO-8859-1".to_owned(),
             remote: None,
@@ -288,13 +323,14 @@ mod tests {
             .resolve_converter()
             .expect("single charset should resolve to a converter");
         assert!(!converter.is_identity());
+        assert_eq!(converter.remote_encoding_name(), "UTF-8");
     }
 
     #[test]
-    fn resolve_converter_malformed_explicit_falls_back_to_none() {
+    fn resolve_converter_malformed_local_falls_back_to_none() {
         let setting = IconvSetting::Explicit {
             local: "definitely-not-a-real-charset".to_owned(),
-            remote: Some("also-fake".to_owned()),
+            remote: Some("UTF-8".to_owned()),
         };
         assert!(setting.resolve_converter().is_none());
     }

@@ -80,7 +80,7 @@ xattr = ["transfer/xattr"]
 acl = ["metadata/acl", "engine/acl", "transfer/acl"]
 
 # Character encoding conversion for filenames (iconv)
-iconv = ["protocol/iconv"]
+iconv = ["protocol/iconv", "transfer/iconv"]
 
 # ============================================================================
 # Runtime Features

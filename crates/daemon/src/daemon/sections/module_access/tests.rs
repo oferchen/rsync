@@ -609,7 +609,7 @@ mod module_access_tests {
         assert!(has_secluded_args_flag(&phase1));
 
         // Read phase 2
-        let full_args = protocol::secluded_args::recv_secluded_args(&mut reader)
+        let full_args = protocol::secluded_args::recv_secluded_args(&mut reader, None)
             .expect("should read secluded args");
         assert_eq!(full_args[0], "rsync");
         let effective: Vec<&str> = full_args.iter().skip(1).map(String::as_str).collect();

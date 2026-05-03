@@ -453,7 +453,13 @@ where
             | CompatibilityFlags::INPLACE_PARTIAL_DIR
             | CompatibilityFlags::VARINT_FLIST_FLAGS;
         #[cfg(unix)]
-        let flags = flags | CompatibilityFlags::SYMLINK_TIMES | CompatibilityFlags::SYMLINK_ICONV;
+        let flags = flags | CompatibilityFlags::SYMLINK_TIMES;
+        // upstream: compat.c:716-718 - CF_SYMLINK_ICONV is gated on
+        // `#ifdef ICONV_OPTION`. Mirror that with the `iconv` cargo feature
+        // so batch headers from iconv-less builds do not advertise a
+        // capability the writer cannot honour.
+        #[cfg(all(unix, feature = "iconv"))]
+        let flags = flags | CompatibilityFlags::SYMLINK_ICONV;
         flags.bits() as i32
     };
 

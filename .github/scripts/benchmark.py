@@ -18,6 +18,7 @@ import time
 UPSTREAM = "target/interop/upstream-src/rsync-3.4.1/rsync"
 OC_RSYNC = "target/release/oc-rsync"
 OC_RSYNC_OPENSSL = os.environ.get("OC_RSYNC_OPENSSL", "")
+OC_RSYNC_RUSSH = os.environ.get("OC_RSYNC_RUSSH", "")
 IS_LINUX = sys.platform.startswith("linux")
 
 TESTS = [
@@ -119,6 +120,45 @@ OPENSSL_TESTS = [
         "name": "No-change checksum sync",
         "mode": "checksum_openssl",
         "args": "-avc {src}/ {dst}/",
+        "reset": False,
+    },
+]
+
+# SSH transport comparison: subprocess `ssh` (host:path operand) vs embedded
+# russh (`ssh://` URI operand). Only run if OC_RSYNC_RUSSH is set.
+# The default oc-rsync binary handles the subprocess form; the russh-built
+# binary handles the URI form via the embedded transport.
+RUSSH_TESTS = [
+    {
+        "id": "ssh_transport_pull_initial",
+        "name": "Initial pull",
+        "mode": "ssh_transport",
+        "subprocess_args": "-av --timeout=30 localhost:{src}/ {dst}/",
+        "russh_args": "-av --timeout=30 ssh://localhost{src}/ {dst}/",
+        "reset": True,
+    },
+    {
+        "id": "ssh_transport_pull_nochange",
+        "name": "No-change pull",
+        "mode": "ssh_transport",
+        "subprocess_args": "-av --timeout=30 localhost:{src}/ {dst}/",
+        "russh_args": "-av --timeout=30 ssh://localhost{src}/ {dst}/",
+        "reset": False,
+    },
+    {
+        "id": "ssh_transport_push_initial",
+        "name": "Initial push",
+        "mode": "ssh_transport",
+        "subprocess_args": "-av --timeout=30 {src}/ localhost:{dst}/",
+        "russh_args": "-av --timeout=30 {src}/ ssh://localhost{dst}/",
+        "reset": True,
+    },
+    {
+        "id": "ssh_transport_push_nochange",
+        "name": "No-change push",
+        "mode": "ssh_transport",
+        "subprocess_args": "-av --timeout=30 {src}/ localhost:{dst}/",
+        "russh_args": "-av --timeout=30 {src}/ ssh://localhost{dst}/",
         "reset": False,
     },
 ]
@@ -515,6 +555,76 @@ def main():
         elif OC_RSYNC_OPENSSL:
             print(
                 f"WARNING: OC_RSYNC_OPENSSL={OC_RSYNC_OPENSSL} not found, skipping",
+                file=sys.stderr,
+            )
+
+        # SSH transport: subprocess vs embedded russh
+        if OC_RSYNC_RUSSH and os.path.isfile(OC_RSYNC_RUSSH):
+            print("Running SSH transport (subprocess vs russh)...", file=sys.stderr)
+            dst_sub_pull = f"{tmpdir}/dst_sub_pull"
+            dst_russh_pull = f"{tmpdir}/dst_russh_pull"
+            dst_sub_push = f"{tmpdir}/dst_sub_push"
+            dst_russh_push = f"{tmpdir}/dst_russh_push"
+
+            def reset_transport_pull():
+                shutil.rmtree(dst_sub_pull, ignore_errors=True)
+                shutil.rmtree(dst_russh_pull, ignore_errors=True)
+                os.makedirs(dst_sub_pull, exist_ok=True)
+                os.makedirs(dst_russh_pull, exist_ok=True)
+
+            def reset_transport_push():
+                shutil.rmtree(dst_sub_push, ignore_errors=True)
+                shutil.rmtree(dst_russh_push, ignore_errors=True)
+                os.makedirs(dst_sub_push, exist_ok=True)
+                os.makedirs(dst_russh_push, exist_ok=True)
+
+            for test in RUSSH_TESTS:
+                test_id = test["id"]
+                name = test["name"]
+                mode = test["mode"]
+                is_push = "push" in test_id
+
+                print(f"Running: [{mode}] {name}...", file=sys.stderr)
+
+                if test["reset"]:
+                    if is_push:
+                        reset_transport_push()
+                    else:
+                        reset_transport_pull()
+
+                if is_push:
+                    sub_dst, russh_dst = dst_sub_push, dst_russh_push
+                else:
+                    sub_dst, russh_dst = dst_sub_pull, dst_russh_pull
+
+                sub_args = test["subprocess_args"].format(src=src, dst=sub_dst)
+                russh_args = test["russh_args"].format(src=src, dst=russh_dst)
+
+                sub_result = benchmark(f"{OC_RSYNC} {sub_args}")
+                russh_result = benchmark(f"{OC_RSYNC_RUSSH} {russh_args}")
+
+                ratio = (
+                    russh_result["mean"] / sub_result["mean"]
+                    if sub_result["mean"] > 0
+                    else 0
+                )
+
+                # "upstream" field repurposed as the subprocess baseline so the
+                # report/chart can render this as a two-bar comparison without
+                # special-casing the data shape.
+                results["tests"].append(
+                    {
+                        "id": test_id,
+                        "name": name,
+                        "mode": mode,
+                        "upstream": sub_result,
+                        "oc_rsync": russh_result,
+                        "ratio": round(ratio, 2),
+                    }
+                )
+        elif OC_RSYNC_RUSSH:
+            print(
+                f"WARNING: OC_RSYNC_RUSSH={OC_RSYNC_RUSSH} not found, skipping",
                 file=sys.stderr,
             )
 

@@ -2375,4 +2375,72 @@ mod iconv_integration {
 
         assert_eq!(entry.name_bytes().as_ref(), utf8_wire);
     }
+
+    /// Constructs wire bytes for a single symlink entry whose on-wire target is
+    /// the supplied raw byte sequence. Writer has no iconv configured so the
+    /// bytes hit the wire unchanged.
+    #[cfg(unix)]
+    fn write_symlink_with_raw_target(target_wire: &[u8]) -> Vec<u8> {
+        use std::os::unix::ffi::OsStrExt;
+        use std::path::PathBuf;
+
+        let target = PathBuf::from(std::ffi::OsStr::from_bytes(target_wire));
+        let mut entry = FileEntry::new_symlink("link".into(), target);
+        entry.set_mtime(1_700_000_000, 0);
+
+        let protocol = test_protocol();
+        let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
+        let mut data = Vec::new();
+        writer.write_entry(&mut data, &entry).unwrap();
+        data
+    }
+
+    /// Symlink targets are decoded by `ic_recv` when `--iconv=LOCAL,REMOTE`
+    /// is in effect and CF_SYMLINK_ICONV has been negotiated, mirroring the
+    /// upstream `sender_symlink_iconv` path.
+    ///
+    /// upstream: flist.c:1127-1150 recv_file_entry() - sender_symlink_iconv
+    #[cfg(unix)]
+    #[test]
+    fn read_symlink_target_converts_latin1_wire_bytes_to_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+
+        // "café" target on the wire in ISO-8859-1
+        let latin1_wire: &[u8] = &[0x63, 0x61, 0x66, 0xe9];
+        // "café" decoded into UTF-8 local form
+        let utf8_local: &[u8] = &[0x63, 0x61, 0x66, 0xc3, 0xa9];
+
+        let data = write_symlink_with_raw_target(latin1_wire);
+
+        let converter = FilenameConverter::new("UTF-8", "ISO-8859-1").unwrap();
+        let protocol = test_protocol();
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_links(true)
+            .with_iconv(converter);
+
+        let mut cursor = io::Cursor::new(&data[..]);
+        let entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        let target = entry.link_target().expect("symlink target present");
+        assert_eq!(target.as_os_str().as_bytes(), utf8_local);
+    }
+
+    /// Without a converter, the symlink target wire bytes pass through
+    /// unchanged into the local-side `PathBuf`.
+    #[cfg(unix)]
+    #[test]
+    fn read_symlink_target_without_iconv_preserves_wire_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let wire: &[u8] = &[0x63, 0x61, 0x66, 0xe9];
+        let data = write_symlink_with_raw_target(wire);
+
+        let protocol = test_protocol();
+        let mut reader = FileListReader::new(protocol).with_preserve_links(true);
+        let mut cursor = io::Cursor::new(&data[..]);
+        let entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        let target = entry.link_target().expect("symlink target present");
+        assert_eq!(target.as_os_str().as_bytes(), wire);
+    }
 }

@@ -2906,3 +2906,60 @@ fn write_entry_without_iconv_emits_raw_filename_bytes() {
         "without --iconv, wire bytes must match the original filename, got: {buf:?}",
     );
 }
+
+/// Symlink targets are transcoded by the same `ic_send` converter as
+/// filenames when `--iconv=LOCAL,REMOTE` is in effect and CF_SYMLINK_ICONV
+/// has been negotiated. A UTF-8 local target must appear on the wire as
+/// ISO-8859-1 bytes when the converter is configured `(local=UTF-8,
+/// remote=ISO-8859-1)`.
+///
+/// upstream: flist.c:1606-1621 send_file_entry() - sender_symlink_iconv path
+#[cfg(feature = "iconv")]
+#[test]
+fn write_symlink_target_transcodes_with_iconv_to_remote_charset() {
+    use crate::iconv::FilenameConverter;
+
+    let utf8_target = "café";
+    let latin1_bytes: &[u8] = &[0x63, 0x61, 0x66, 0xe9];
+
+    let converter = FilenameConverter::new("UTF-8", "ISO-8859-1").unwrap();
+    let mut writer = FileListWriter::new(test_protocol())
+        .with_preserve_links(true)
+        .with_iconv(converter);
+
+    let mut entry = FileEntry::new_symlink("link".into(), utf8_target.into());
+    entry.set_mtime(1_700_000_000, 0);
+    let mut buf = Vec::new();
+    writer.write_entry(&mut buf, &entry).unwrap();
+
+    assert!(
+        buf.windows(latin1_bytes.len()).any(|w| w == latin1_bytes),
+        "wire bytes must contain ISO-8859-1 form of the symlink target, got: {buf:?}",
+    );
+    let utf8_target_bytes = utf8_target.as_bytes();
+    assert!(
+        !buf.windows(utf8_target_bytes.len())
+            .any(|w| w == utf8_target_bytes),
+        "wire bytes must not contain UTF-8 form of the symlink target, got: {buf:?}",
+    );
+}
+
+/// Without a converter the symlink target is written verbatim. This pins
+/// the no-iconv default so the new transcoding hook does not regress
+/// existing transfers.
+#[test]
+fn write_symlink_target_without_iconv_emits_raw_bytes() {
+    let utf8_target = "café";
+    let utf8_bytes = utf8_target.as_bytes();
+
+    let mut writer = FileListWriter::new(test_protocol()).with_preserve_links(true);
+    let mut entry = FileEntry::new_symlink("link".into(), utf8_target.into());
+    entry.set_mtime(1_700_000_000, 0);
+    let mut buf = Vec::new();
+    writer.write_entry(&mut buf, &entry).unwrap();
+
+    assert!(
+        buf.windows(utf8_bytes.len()).any(|w| w == utf8_bytes),
+        "without --iconv, symlink target wire bytes must match the original, got: {buf:?}",
+    );
+}

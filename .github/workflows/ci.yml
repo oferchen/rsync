@@ -9,6 +9,7 @@ on:
       - 'tests/**'
       - 'tools/ci/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/ci.yml'
       - '.github/workflows/_test-features.yml'
       - '.github/workflows/_interop.yml'
@@ -21,6 +22,7 @@ on:
       - 'tests/**'
       - 'tools/ci/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/ci.yml'
       - '.github/workflows/_test-features.yml'
       - '.github/workflows/_interop.yml'
@@ -64,6 +66,18 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+
+      # Fail fast with an actionable error before any --locked build runs.
+      # The downstream cargo steps already pass --locked, but their failure
+      # surfaces under a misleading job name (e.g. "Clippy"). This step
+      # produces a clear, named failure pointing the contributor at the fix.
+      - name: Verify Cargo.lock is up to date
+        run: |
+          if ! cargo metadata --locked --format-version 1 > /dev/null 2> metadata.err; then
+            echo "::error title=Stale Cargo.lock::Cargo.lock is out of sync with Cargo.toml. Run 'cargo update --workspace --offline' locally and commit the regenerated Cargo.lock."
+            cat metadata.err >&2
+            exit 1
+          fi
 
       - name: Format check
         run: cargo fmt --all -- --check
