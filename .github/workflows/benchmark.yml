@@ -56,6 +56,11 @@ jobs:
           cargo build --release --features openssl
           cp target/release/oc-rsync target/release/oc-rsync-openssl
 
+      - name: Build oc-rsync with embedded-ssh (release)
+        run: |
+          cargo build --release --features embedded-ssh
+          cp target/release/oc-rsync target/release/oc-rsync-russh
+
       - name: Cache upstream rsync
         id: cache-rsync
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -96,6 +101,7 @@ jobs:
         id: benchmark
         env:
           OC_RSYNC_OPENSSL: target/release/oc-rsync-openssl
+          OC_RSYNC_RUSSH: target/release/oc-rsync-russh
         run: |
           set -euo pipefail
           python3 .github/scripts/benchmark.py > benchmark_results.json
