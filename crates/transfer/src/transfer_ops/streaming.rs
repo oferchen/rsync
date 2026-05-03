@@ -119,7 +119,6 @@ pub fn process_file_response_streaming<R: Read>(
         xattr_list,
     });
 
-    // Open basis file for block references
     let mut basis_map = if let Some(ref path) = header.basis_path {
         Some(MapFile::open(path).map_err(|e| {
             io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
@@ -146,11 +145,9 @@ pub fn process_file_response_streaming<R: Read>(
             let buf = literal_to_buf(literal_data, reader, buf_return_rx)?;
             let len = buf.len();
 
-            // Peek at the next token.
             let next_delta = token_reader.read_token(reader)?;
 
             if matches!(next_delta, DeltaToken::End) {
-                // Single-chunk file - coalesce into WholeFile.
                 total_bytes = len as u64;
                 let checksum_len = checksum_verifier.digest_len();
                 let mut expected_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
