@@ -103,8 +103,6 @@ impl SignalHandler {
 ///
 /// This stub implementation never returns an error.
 pub fn install_signal_handlers() -> io::Result<SignalHandler> {
-    // On Windows, we could use SetConsoleCtrlHandler here
-    // For now, just return a stub handler
     Ok(SignalHandler { _installed: true })
 }
 
