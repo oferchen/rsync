@@ -13,7 +13,15 @@ targets = [
 ]
 
 [advisories]
-ignore = []
+ignore = [
+    # RUSTSEC-2023-0071 - Marvin Attack: timing side-channel in rsa 0.9.x.
+    # Reaches us only via the opt-in `embedded-ssh` feature
+    # (russh-keys 0.45.0 -> rsa 0.9.10). No safe upstream upgrade is
+    # available; RustCrypto/RSA tracks the constant-time rewrite at
+    # https://github.com/RustCrypto/RSA/issues/626. Default builds of
+    # oc-rsync are unaffected. Re-evaluate after russh upgrade (#1851).
+    "RUSTSEC-2023-0071",
+]
 
 [licenses]
 unused-allowed-license = "allow"
