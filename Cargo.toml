@@ -92,6 +92,14 @@ openssl = ["checksums/openssl"]
 openssl-vendored = ["checksums/openssl-vendored"]
 
 # ============================================================================
+# Transport Features
+# ============================================================================
+
+# Embedded SSH transport via russh - removes the runtime dependency on an
+# external `ssh` client. Forwards through `core` to `rsync_io/embedded-ssh`.
+embedded-ssh = ["core/embedded-ssh"]
+
+# ============================================================================
 # Runtime and Debugging Features
 # ============================================================================
 
