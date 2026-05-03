@@ -118,7 +118,7 @@ impl ReceiverContext {
         writer.flush()?;
 
         if self.protocol.supports_extended_goodbye() {
-            // upstream: main.c:875-906 read_final_goodbye() — the sender may
+            // upstream: main.c:875-906 read_final_goodbye() - the sender may
             // send NDX_DEL_STATS before the NDX_DONE echo. Loop to skip it.
             loop {
                 let ndx = ndx_read_codec.read_ndx(reader)?;
