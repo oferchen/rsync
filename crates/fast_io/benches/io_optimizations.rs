@@ -11,6 +11,8 @@
 
 use std::fs::File;
 use std::io::{BufWriter, IoSlice, Read, Write};
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tempfile::{NamedTempFile, tempdir};
@@ -191,17 +193,19 @@ fn bench_io_uring(c: &mut Criterion) {
             });
         });
 
-        // io_uring optimized I/O. Sentinel-allocate one ring up front: the
-        // kernel-level probe (`is_io_uring_available`) does not catch ring
-        // allocation failures from RLIMIT_MEMLOCK, which CI runners often
-        // impose. Skipping here keeps the standard_io baseline measurable.
+        // io_uring optimized I/O. Allocate the ring once per sub-benchmark
+        // and reuse it across iterations: `read_all_batched` reads from
+        // offset 0 and returns registered-buffer slots via Drop, so reuse
+        // is safe. Per-iteration ring allocation in tight read loops
+        // (~6us/iter * thousands of iters during warm-up + measurement)
+        // exhausts RLIMIT_MEMLOCK on CI runners, panicking with ENOMEM.
+        // Hoisting also doubles as the sentinel: a failed open here skips
+        // the sub-bench and keeps the standard_io baseline measurable.
         let config = IoUringConfig::default();
         match IoUringReader::open(path, &config) {
-            Ok(_) => {
-                group.bench_with_input(BenchmarkId::new("io_uring", name), &path, |b, path| {
+            Ok(mut reader) => {
+                group.bench_with_input(BenchmarkId::new("io_uring", name), &path, |b, _path| {
                     b.iter(|| {
-                        let config = IoUringConfig::default();
-                        let mut reader = IoUringReader::open(path, &config).unwrap();
                         let data = reader.read_all_batched().unwrap();
                         black_box(&data);
                         data.len()
@@ -227,6 +231,14 @@ fn bench_io_uring_writes(c: &mut Criterion) {
     }
 
     let mut group = c.benchmark_group("io_uring_writes");
+    // Bound per-iteration ring allocations: each io_uring write iter
+    // allocates a fresh ring via `IoUringWriter::create`, and tight loops
+    // exhaust RLIMIT_MEMLOCK on CI runners. The writer owns its file with
+    // an internal write cursor, so cross-iter reuse would grow the file
+    // unboundedly -- bound iteration count instead.
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_millis(500));
+    group.measurement_time(Duration::from_secs(2));
 
     let test_sizes = [("64kb", 64 * 1024), ("1mb", 1024 * 1024)];
 

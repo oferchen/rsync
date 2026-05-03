@@ -5,6 +5,11 @@ on:
     tags:
       - "v[0-9]*.[0-9]*.[0-9]*"
   workflow_dispatch:
+    inputs:
+      target_tag:
+        description: 'Existing release tag to publish criterion results to (e.g. v0.6.1). Use when re-running benchmarks against a release whose tag-triggered workflow failed.'
+        required: false
+        default: ''
 
 concurrency:
   group: criterion-${{ github.ref }}
@@ -82,13 +87,31 @@ jobs:
             criterion_output.txt
             target/criterion/
 
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.target_tag }}" ]; then
+            TAG="${{ inputs.target_tag }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF##*/}"
+          else
+            TAG=""
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if [ -n "$TAG" ]; then
+            echo "Publishing criterion artifacts to release: $TAG"
+          else
+            echo "No release tag resolved; skipping release publish steps."
+          fi
+
       - name: Append criterion summary to release notes
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.release_tag.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF##*/}"
+          TAG="${{ steps.release_tag.outputs.tag }}"
 
           # Wait for the release to exist (created by release-cross workflow).
           # The release-cross workflow may take 20+ minutes to build all
@@ -140,9 +163,9 @@ jobs:
           gh release edit "$TAG" --notes "$NEW_BODY"
 
       - name: Upload criterion results to release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.release_tag.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${GITHUB_REF##*/}"
+          TAG="${{ steps.release_tag.outputs.tag }}"
           gh release upload "$TAG" criterion_output.txt --clobber
