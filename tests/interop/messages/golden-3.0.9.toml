@@ -35,6 +35,11 @@ text = "protocol version mismatch -- is your shell clean?(see the rsync man page
 scenario = "protocol_version_mismatch"
 optional = true
 
+[[messages]]
+text = "(see the rsync man page for an explanation)protocol version mismatch -- is your shell clean?"
+scenario = "protocol_version_mismatch"
+optional = true
+
 # At least one form of the shell-clean message must appear
 [[message_groups]]
 name = "protocol_mismatch_shell_clean"
@@ -42,6 +47,7 @@ scenario = "protocol_version_mismatch"
 require_at_least = 1
 messages = [
     { text = "protocol version mismatch -- is your shell clean?" },
+    { text = "(see the rsync man page for an explanation)protocol version mismatch -- is your shell clean?" },
     { text = "protocol version mismatch -- is your shell clean?(see the rsync man page for an explanation)" },
 ]
 
