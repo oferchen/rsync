@@ -20,7 +20,9 @@ jobs:
   criterion:
     name: Criterion Benchmark Suite
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Budget: ~30min waiting for release-cross to publish the release,
+    # ~10-15min cold-cache workspace compile, ~15-20min benchmark execution.
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
