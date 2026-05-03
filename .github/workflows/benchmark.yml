@@ -10,6 +10,10 @@ on:
         description: 'Baseline tag/branch to compare against'
         required: false
         default: ''
+      target_tag:
+        description: 'Existing release tag to publish chart and notes to (e.g. v0.6.1). Use when re-running benchmarks against a release whose tag-triggered workflow failed.'
+        required: false
+        default: ''
 
 concurrency:
   group: benchmark-${{ github.ref }}
@@ -137,13 +141,31 @@ jobs:
             cat benchmark_report.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.target_tag }}" ]; then
+            TAG="${{ inputs.target_tag }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF##*/}"
+          else
+            TAG=""
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if [ -n "$TAG" ]; then
+            echo "Publishing benchmark artifacts to release: $TAG"
+          else
+            echo "No release tag resolved; skipping release publish steps."
+          fi
+
       - name: Add benchmark to release notes
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.release_tag.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF##*/}"
+          TAG="${{ steps.release_tag.outputs.tag }}"
 
           # Wait for the release to exist (created by release-cross workflow)
           MAX_ATTEMPTS=60  # 30 minutes at 30-second intervals
@@ -184,9 +206,9 @@ jobs:
           gh release edit "$TAG" --notes "$NEW_BODY"
 
       - name: Upload benchmark assets to release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.release_tag.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${GITHUB_REF##*/}"
+          TAG="${{ steps.release_tag.outputs.tag }}"
           gh release upload "$TAG" benchmark.png benchmark_results.json benchmark_report.md --clobber

@@ -43,6 +43,11 @@ MODE_GAP = 16
 MIN_BAR_WIDTH = 2
 TEXT_INSIDE_THRESHOLD = 60
 
+# Speedup classification thresholds (oc_rsync / upstream timing ratio).
+# < FASTER: oc-rsync clearly faster.  <= SAME_UPPER: within noise.  > SAME_UPPER: slower.
+RATIO_FASTER_BELOW = 0.95
+RATIO_SAME_UPPER = 1.05
+
 # ---------------------------------------------------------------------------
 # Colors
 # ---------------------------------------------------------------------------
@@ -268,11 +273,19 @@ def fmt_time(seconds: float) -> str:
 
 
 def ratio_text(ratio: float) -> tuple[str, str]:
-    """Return (display_text, color) for a speedup annotation."""
-    if ratio < 0.95:
+    """Return (display_text, color) for a speedup annotation.
+
+    A non-positive ratio means timing data was missing or rounded to zero
+    on at least one side of the comparison (benchmark.py rounds ratios to
+    two decimals, collapsing sub-millisecond ratios such as 250x faster
+    to 0.0); render a neutral marker rather than dividing by zero.
+    """
+    if ratio <= 0:
+        return (">100x faster", COLOR_FASTER)
+    if ratio < RATIO_FASTER_BELOW:
         speedup = 1.0 / ratio
         return (f"{speedup:.1f}x faster", COLOR_FASTER)
-    if ratio <= 1.05:
+    if ratio <= RATIO_SAME_UPPER:
         return ("~same", COLOR_SAME)
     return (f"{ratio:.1f}x slower", COLOR_SLOWER)
 
