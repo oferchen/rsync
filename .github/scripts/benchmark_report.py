@@ -24,6 +24,10 @@ IO_URING_MODES = {
     "io_uring": "io_uring vs Standard I/O",
 }
 
+SSH_TRANSPORT_MODES = {
+    "ssh_transport": "SSH Transport: Subprocess vs russh",
+}
+
 EXTRA_MODES = {
     "compression": "Compression",
     "delta": "Delta Transfer",
@@ -115,6 +119,25 @@ def main():
 
         print()
 
+    # SSH transport: subprocess vs embedded russh
+    for mode, label in SSH_TRANSPORT_MODES.items():
+        tests = by_mode.get(mode, [])
+        if not tests:
+            continue
+
+        print(f"### {label}\n")
+        print("| Test | Subprocess (ssh) | Embedded (russh) | Ratio |")
+        print("|------|------------------|------------------|-------|")
+
+        for t in tests:
+            sub = t["upstream"]["mean"]
+            russh = t["oc_rsync"]["mean"]
+            ratio = t["ratio"]
+            ind = ratio_indicator(ratio)
+            print(f"| {t['name']} | {sub:.3f}s | {russh:.3f}s | {ind} {ratio:.2f}x |")
+
+        print()
+
     # Extra benchmark modes (compression, delta, large file, many small, sparse)
     for mode, label in EXTRA_MODES.items():
         tests = by_mode.get(mode, [])
@@ -165,7 +188,13 @@ def main():
 
     print("| Mode | Avg Ratio |")
     print("|------|-----------|")
-    all_labels = {**MODE_LABELS, **OPENSSL_MODES, **IO_URING_MODES, **EXTRA_MODES}
+    all_labels = {
+        **MODE_LABELS,
+        **OPENSSL_MODES,
+        **IO_URING_MODES,
+        **SSH_TRANSPORT_MODES,
+        **EXTRA_MODES,
+    }
     all_labels[MEMORY_MODE] = "Memory Usage"
     for mode, label in all_labels.items():
         if mode in summary.get("by_mode", {}):
