@@ -11,8 +11,6 @@
 
 use std::fs::File;
 use std::io::{BufWriter, IoSlice, Read, Write};
-#[cfg(all(target_os = "linux", feature = "io_uring"))]
-use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tempfile::{NamedTempFile, tempdir};
@@ -231,14 +229,6 @@ fn bench_io_uring_writes(c: &mut Criterion) {
     }
 
     let mut group = c.benchmark_group("io_uring_writes");
-    // Bound per-iteration ring allocations: each io_uring write iter
-    // allocates a fresh ring via `IoUringWriter::create`, and tight loops
-    // exhaust RLIMIT_MEMLOCK on CI runners. The writer owns its file with
-    // an internal write cursor, so cross-iter reuse would grow the file
-    // unboundedly -- bound iteration count instead.
-    group.sample_size(10);
-    group.warm_up_time(Duration::from_millis(500));
-    group.measurement_time(Duration::from_secs(2));
 
     let test_sizes = [("64kb", 64 * 1024), ("1mb", 1024 * 1024)];
 
@@ -259,21 +249,24 @@ fn bench_io_uring_writes(c: &mut Criterion) {
             });
         });
 
-        // io_uring optimized writes. Sentinel-allocate one ring before
-        // measuring: see bench_io_uring for the RLIMIT_MEMLOCK rationale.
-        let sentinel_dir = tempdir().unwrap();
-        let sentinel_path = sentinel_dir.path().join("sentinel.bin");
+        // io_uring optimized writes. Allocate the ring once per sub-benchmark
+        // and reuse it across iterations via `write_all_batched(data, 0)`,
+        // which writes to an explicit offset and bypasses the internal write
+        // cursor -- so the file is overwritten in place rather than growing.
+        // Per-iteration ring allocation in tight write loops exhausts
+        // RLIMIT_MEMLOCK on CI runners (each ring + registered buffers locks
+        // ~512 KB), panicking on the first iter when the prior reader bench's
+        // resources have not yet been reclaimed by the kernel. Hoisting also
+        // doubles as the sentinel: a failed open here skips the sub-bench
+        // and keeps the standard_io baseline measurable.
+        let writer_dir = tempdir().unwrap();
+        let writer_path = writer_dir.path().join("test.bin");
         let config = IoUringConfig::default();
-        match IoUringWriter::create(&sentinel_path, &config) {
-            Ok(_) => {
+        match IoUringWriter::create(&writer_path, &config) {
+            Ok(mut writer) => {
                 group.bench_with_input(BenchmarkId::new("io_uring", name), &data, |b, data| {
                     b.iter(|| {
-                        let dir = tempdir().unwrap();
-                        let path = dir.path().join("test.bin");
-                        let config = IoUringConfig::default();
-                        let mut writer = IoUringWriter::create(&path, &config).unwrap();
-                        writer.write_all(data).unwrap();
-                        writer.flush().unwrap();
+                        writer.write_all_batched(data, 0).unwrap();
                     });
                 });
             }
