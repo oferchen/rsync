@@ -57,6 +57,13 @@ pub(super) struct ServerLongFlags {
     /// `--iconv=LOCAL,REMOTE` (or the whole spec if no comma) so the server
     /// opens its own iconv context against the wire's UTF-8 charset.
     pub(super) iconv: Option<String>,
+    /// I/O timeout in seconds forwarded by the client (upstream: `--timeout=N`).
+    ///
+    /// upstream: options.c - `server_options()` emits `--timeout=%d` whenever
+    /// the client has `io_timeout` set. Recognising it here keeps it out of
+    /// the positional-argument list; without this the value lands in
+    /// `parse_server_flag_string_and_args` and corrupts the destination path.
+    pub(super) timeout: Option<String>,
     /// Reference directories for basis file lookup.
     /// upstream: options.c:2915-2923 - `--compare-dest`, `--copy-dest`, `--link-dest`
     pub(super) reference_directories: Vec<ReferenceDirectory>,
@@ -93,6 +100,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         existing_only: false,
         max_delete: None,
         iconv: None,
+        timeout: None,
         reference_directories: Vec::new(),
     };
 
@@ -151,6 +159,9 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
     } else if let Some(value) = s.strip_prefix("--iconv=") {
         // upstream: options.c:2716-2723 - server-side iconv forwarded by client
         flags.iconv = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--timeout=") {
+        // upstream: options.c - server_options() emits `--timeout=%d` from io_timeout
+        flags.timeout = Some(value.to_owned());
     // upstream: options.c:2915-2923 - reference directory args
     } else if let Some(value) = s.strip_prefix("--compare-dest=") {
         flags.reference_directories.push(ReferenceDirectory::new(
@@ -213,4 +224,5 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--files-from=")
         || arg.starts_with("--max-delete=")
         || arg.starts_with("--iconv=")
+        || arg.starts_with("--timeout=")
 }
