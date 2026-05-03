@@ -997,10 +997,34 @@ fn build_capability_string_without_inc_recurse() {
     let s = build_capability_string(false);
     assert!(s.starts_with("-e."), "must start with -e. prefix");
     assert!(!s.contains('i'), "must not contain 'i' without inc_recurse");
-    // All non-conditional platform chars must be present
-    for ch in ['s', 'f', 'x', 'C', 'I', 'v', 'u'] {
+    // All non-conditional, iconv-independent platform chars must be present
+    for ch in ['f', 'x', 'C', 'I', 'v', 'u'] {
         assert!(s.contains(ch), "missing capability char '{ch}'");
     }
+}
+
+#[cfg(feature = "iconv")]
+#[test]
+fn build_capability_string_includes_symlink_iconv_when_iconv_compiled_in() {
+    // upstream: compat.c:716-718 - CF_SYMLINK_ICONV is gated on
+    // `#ifdef ICONV_OPTION`. With the iconv feature enabled we must
+    // advertise 's' so the peer runs `sender_symlink_iconv` against our
+    // file-list reader's transcoding hook.
+    let s = build_capability_string(false);
+    assert!(s.contains('s'), "must contain 's' when iconv is enabled");
+}
+
+#[cfg(not(feature = "iconv"))]
+#[test]
+fn build_capability_string_omits_symlink_iconv_when_iconv_disabled() {
+    // upstream: compat.c:716-718 - without ICONV_OPTION the build neither
+    // sets nor accepts CF_SYMLINK_ICONV, so the capability string must
+    // not contain 's' either.
+    let s = build_capability_string(false);
+    assert!(
+        !s.contains('s'),
+        "must not contain 's' when iconv feature is disabled: {s}"
+    );
 }
 
 #[test]
@@ -1014,10 +1038,12 @@ fn build_capability_string_with_inc_recurse() {
 fn build_capability_string_matches_mapping_order() {
     let s = build_capability_string(true);
     let chars: String = s.strip_prefix("-e.").unwrap().to_owned();
-    // Verify order matches CAPABILITY_MAPPINGS table
+    // Verify order matches CAPABILITY_MAPPINGS table, applying the same
+    // build-time filters the production builder uses.
     let expected: String = CAPABILITY_MAPPINGS
         .iter()
         .filter(|m| m.platform_ok)
+        .filter(|m| !m.requires_iconv || cfg!(feature = "iconv"))
         .map(|m| m.char)
         .collect();
     assert_eq!(chars, expected);

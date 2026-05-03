@@ -10,7 +10,7 @@ use std::net::TcpStream;
 use protocol::ProtocolVersion;
 use transfer::setup::build_capability_string;
 
-use crate::client::config::{ClientConfig, DeleteMode, ReferenceDirectoryKind};
+use crate::client::config::{ClientConfig, DeleteMode, IconvSetting, ReferenceDirectoryKind};
 use crate::client::error::{ClientError, socket_error};
 use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
 use crate::client::remote::flags;
@@ -73,16 +73,20 @@ pub(crate) fn send_daemon_arguments(
     // Phase 2: when protect-args is active, send the real arguments via
     // the secluded-args wire format (null-separated with empty terminator).
     // upstream: clientserver.c:407-408 - send_protected_args(f_out, sargs)
+    // upstream: rsync.c:283-320 - send_protected_args() applies
+    // iconvbufs(ic_send, ...) per arg when --iconv is configured.
     if protect {
         let mut secluded = vec!["rsync"];
         secluded.extend(full_args.iter().map(String::as_str));
-        protocol::secluded_args::send_secluded_args(stream, &secluded).map_err(|e| {
-            socket_error(
-                "send secluded args to",
-                request.address.socket_addr_display(),
-                e,
-            )
-        })?;
+        let iconv_converter = config.iconv().resolve_converter();
+        protocol::secluded_args::send_secluded_args(stream, &secluded, iconv_converter.as_ref())
+            .map_err(|e| {
+                socket_error(
+                    "send secluded args to",
+                    request.address.socket_addr_display(),
+                    e,
+                )
+            })?;
     }
 
     stream.flush().map_err(|e| {
@@ -317,6 +321,23 @@ pub(super) fn build_full_daemon_args(
                     args.push("--from0".to_owned());
                 }
             }
+        }
+    }
+
+    // --iconv forwarding to the remote daemon.
+    // upstream: options.c:2716-2723 - when iconv_opt contains a comma, only the
+    // post-comma half (the daemon's local charset) is forwarded; otherwise the
+    // whole string is forwarded as-is. `--iconv=-` (Disabled) and the default
+    // (Unspecified) forward nothing because upstream nulls iconv_opt at
+    // options.c:2052-2054 before this branch runs. Without this the daemon
+    // never enables `ic_recv` and writes wire UTF-8 bytes verbatim instead of
+    // transcoding to its local charset.
+    match config.iconv() {
+        IconvSetting::Unspecified | IconvSetting::Disabled => {}
+        IconvSetting::LocaleDefault => args.push("--iconv=.".to_owned()),
+        IconvSetting::Explicit { local, remote } => {
+            let forwarded = remote.as_deref().unwrap_or(local);
+            args.push(format!("--iconv={forwarded}"));
         }
     }
 

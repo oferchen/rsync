@@ -53,6 +53,23 @@ impl FileListReader {
         let mut target_bytes = vec![0u8; len];
         reader.read_exact(&mut target_bytes)?;
 
+        // upstream: flist.c:1127-1150 - when sender_symlink_iconv is set (peer
+        // advertised CF_SYMLINK_ICONV) and ic_recv is configured, run the
+        // target through iconvbufs(ic_recv, ...) so the receiver sees the
+        // local-charset bytes rather than the wire-charset (UTF-8) bytes.
+        let target_bytes: std::borrow::Cow<'_, [u8]> = match self.iconv.as_ref() {
+            Some(converter) => match converter.remote_to_local(&target_bytes) {
+                Ok(converted) => converted,
+                Err(e) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("symlink target encoding conversion failed: {e}"),
+                    ));
+                }
+            },
+            None => std::borrow::Cow::Borrowed(target_bytes.as_slice()),
+        };
+
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStrExt;

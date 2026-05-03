@@ -955,6 +955,39 @@ fn omits_keepalive_for_absolute_path_non_ssh_program() {
 }
 
 #[test]
+fn omits_batch_mode_for_non_ssh_program() {
+    // Regression: a custom --rsh wrapper (e.g., a fake_rsh.sh shim that
+    // does `shift; exec "$@"`) used to receive `-oBatchMode=yes` as its
+    // first positional argument, then `shift` would consume it instead of
+    // the host argument and `exec "$@"` would try to launch the literal
+    // host name as a command. Real `ssh` silently consumes the option, so
+    // the bug only surfaced in interop tests with non-SSH wrappers.
+    //
+    // Upstream rsync does not inject SSH-specific options into a
+    // user-supplied --rsh; mirror that behaviour for parity.
+    let mut command = SshCommand::new("example.com");
+    command.set_program("plink");
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    assert!(
+        !rendered.iter().any(|a| a == "-oBatchMode=yes"),
+        "BatchMode should not be injected for non-SSH program: {rendered:?}"
+    );
+}
+
+#[test]
+fn omits_batch_mode_for_absolute_path_non_ssh_program() {
+    let mut command = SshCommand::new("example.com");
+    command.set_program("/tmp/fake_rsh.sh");
+    let (_, args) = command.command_parts_for_testing();
+    let rendered = args_to_strings(&args);
+    assert!(
+        !rendered.iter().any(|a| a == "-oBatchMode=yes"),
+        "BatchMode should not be injected for non-SSH absolute path: {rendered:?}"
+    );
+}
+
+#[test]
 fn keepalive_injected_between_port_and_user_options() {
     let mut command = SshCommand::new("example.com");
     command.set_port(2222);

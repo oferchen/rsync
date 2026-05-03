@@ -221,8 +221,11 @@ fn build_our_flags<'a>(
             flags |= CompatibilityFlags::SYMLINK_TIMES;
         }
 
-        // upstream: ICONV_OPTION at compat.c:715-716
-        #[cfg(unix)]
+        // upstream: compat.c:715-716 - CF_SYMLINK_ICONV is gated on
+        // `#ifdef ICONV_OPTION`. Mirror that with the `iconv` cargo feature
+        // so SSH/client builds without iconv neither set the flag locally
+        // nor advertise 's' to the peer (see capability::CAPABILITY_MAPPINGS).
+        #[cfg(all(unix, feature = "iconv"))]
         {
             flags |= CompatibilityFlags::SYMLINK_ICONV;
         }

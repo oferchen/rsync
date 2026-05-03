@@ -23,6 +23,14 @@ pub(crate) struct CapabilityMapping {
     pub(crate) platform_ok: bool,
     /// Whether this capability requires allow_inc_recurse to be true
     pub(crate) requires_inc_recurse: bool,
+    /// Whether this capability requires the iconv feature to be compiled in.
+    ///
+    /// Mirrors upstream `#ifdef ICONV_OPTION` gating (compat.c:716-718) for
+    /// CF_SYMLINK_ICONV. The runtime caller must skip mappings whose
+    /// `requires_iconv` is true when the `iconv` cargo feature is disabled,
+    /// otherwise the peer will run `sender_symlink_iconv` against a stream
+    /// that has no transcoding hooks attached.
+    pub(crate) requires_iconv: bool,
 }
 
 /// Table-driven capability to flag mappings.
@@ -36,6 +44,7 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         flag: CompatibilityFlags::INC_RECURSE,
         platform_ok: true,
         requires_inc_recurse: true,
+        requires_iconv: false,
     },
     // SYMLINK_TIMES: 'L' - Unix only (CAN_SET_SYMLINK_TIMES)
     CapabilityMapping {
@@ -46,13 +55,19 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         #[cfg(not(unix))]
         platform_ok: false,
         requires_inc_recurse: false,
+        requires_iconv: false,
     },
-    // SYMLINK_ICONV: 's'
+    // SYMLINK_ICONV: 's' - gated on the `iconv` cargo feature, mirroring
+    // upstream's `#ifdef ICONV_OPTION` (compat.c:716-718). Without the
+    // feature the runtime filter in `iconv_capability_compiled_in()` skips
+    // this row so we neither advertise CF_SYMLINK_ICONV in `-e.<...>` nor
+    // accept it from the peer.
     CapabilityMapping {
         char: 's',
         flag: CompatibilityFlags::SYMLINK_ICONV,
         platform_ok: true,
         requires_inc_recurse: false,
+        requires_iconv: true,
     },
     // SAFE_FILE_LIST: 'f'
     CapabilityMapping {
@@ -60,6 +75,7 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         flag: CompatibilityFlags::SAFE_FILE_LIST,
         platform_ok: true,
         requires_inc_recurse: false,
+        requires_iconv: false,
     },
     // AVOID_XATTR_OPTIMIZATION: 'x' - disables xattr hardlink optimization
     CapabilityMapping {
@@ -67,6 +83,7 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         flag: CompatibilityFlags::AVOID_XATTR_OPTIMIZATION,
         platform_ok: true,
         requires_inc_recurse: false,
+        requires_iconv: false,
     },
     // CHECKSUM_SEED_FIX: 'C' - proper seed ordering for MD5
     CapabilityMapping {
@@ -74,6 +91,7 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         flag: CompatibilityFlags::CHECKSUM_SEED_FIX,
         platform_ok: true,
         requires_inc_recurse: false,
+        requires_iconv: false,
     },
     // INPLACE_PARTIAL_DIR: 'I' - --inplace behavior for partial dir
     CapabilityMapping {
@@ -81,6 +99,7 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         flag: CompatibilityFlags::INPLACE_PARTIAL_DIR,
         platform_ok: true,
         requires_inc_recurse: false,
+        requires_iconv: false,
     },
     // VARINT_FLIST_FLAGS: 'v'
     CapabilityMapping {
@@ -88,6 +107,7 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         flag: CompatibilityFlags::VARINT_FLIST_FLAGS,
         platform_ok: true,
         requires_inc_recurse: false,
+        requires_iconv: false,
     },
     // ID0_NAMES: 'u' - include uid/gid 0 names
     CapabilityMapping {
@@ -95,8 +115,20 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         flag: CompatibilityFlags::ID0_NAMES,
         platform_ok: true,
         requires_inc_recurse: false,
+        requires_iconv: false,
     },
 ];
+
+/// Returns whether the iconv capability ('s' / CF_SYMLINK_ICONV) is
+/// compiled into this build.
+///
+/// Mirrors upstream's `#ifdef ICONV_OPTION` (compat.c:716-718) which
+/// gates the advertisement and recognition of CF_SYMLINK_ICONV on
+/// build-time iconv availability.
+#[inline]
+const fn iconv_capability_compiled_in() -> bool {
+    cfg!(feature = "iconv")
+}
 
 /// Builds the `-e.xxx` capability string from [`CAPABILITY_MAPPINGS`].
 ///
@@ -112,6 +144,9 @@ pub fn build_capability_string(allow_inc_recurse: bool) -> String {
             continue;
         }
         if mapping.requires_inc_recurse && !allow_inc_recurse {
+            continue;
+        }
+        if mapping.requires_iconv && !iconv_capability_compiled_in() {
             continue;
         }
         result.push(mapping.char);
@@ -206,6 +241,13 @@ pub(crate) fn build_compat_flags_from_client_info(
 
         // Skip if requires inc_recurse but not allowed
         if mapping.requires_inc_recurse && !allow_inc_recurse {
+            continue;
+        }
+
+        // Skip if the build lacks iconv support; mirrors upstream's
+        // `#ifdef ICONV_OPTION` so we never set CF_SYMLINK_ICONV for a
+        // peer who advertises 's' if we cannot transcode our own stream.
+        if mapping.requires_iconv && !iconv_capability_compiled_in() {
             continue;
         }
 

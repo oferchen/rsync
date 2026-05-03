@@ -658,3 +658,39 @@ fn parse_server_args_skips_files_from_and_from0() {
     assert_eq!(flags, "-logDtpr");
     assert_eq!(pos_args, vec![OsString::from("dest/")]);
 }
+
+#[test]
+fn long_flags_timeout_extracts_value() {
+    // upstream: options.c - server_options() emits `--timeout=%d` from io_timeout.
+    let args = vec![OsString::from("--server"), OsString::from("--timeout=10")];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.timeout.as_deref(), Some("10"));
+}
+
+#[test]
+fn known_flag_detects_timeout() {
+    assert!(is_known_server_long_flag("--timeout=0"));
+    assert!(is_known_server_long_flag("--timeout=10"));
+    assert!(is_known_server_long_flag("--timeout=300"));
+}
+
+#[test]
+fn parse_server_args_iconv_and_timeout_strip_to_dest() {
+    // Regression: iconv-local-ssh CI failure. Before the fix, `--timeout=10`
+    // was unrecognised by `is_known_server_long_flag` and was consumed as a
+    // positional argument, so the destination directory `dest/` ended up as
+    // `--timeout=10/` (verified via strace `mkdirat` / `renameat` calls).
+    // The exact arg sequence here mirrors what upstream rsync emits when the
+    // client runs `oc-rsync --iconv=UTF-8,ISO-8859-1 --timeout=10 src/ host:dest/`.
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-vlogDtpre.iLsfxCIvu"),
+        OsString::from("--iconv=ISO-8859-1"),
+        OsString::from("--timeout=10"),
+        OsString::from("."),
+        OsString::from("dest/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-vlogDtpre.iLsfxCIvu");
+    assert_eq!(pos_args, vec![OsString::from("dest/")]);
+}
