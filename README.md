@@ -59,9 +59,20 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
 **Protocol & interop**
 - INC_RECURSE sender enabled by default for both push and pull directions
-- `--iconv` server-arg forwarding so remote peers see the same charset translation
-- iconv pipeline wired end-to-end across file list, names, and symlink targets
-- `--jump-host` for multi-hop SSH transports
+- Rolling checksum now sign-extends bytes to match upstream's `schar` semantics, fixing block-match parity at protocol >= 30
+- `--jump-host` for multi-hop SSH transports, with a dedicated proxy-jump interop test against upstream 3.4.1
+
+**Charset translation (`--iconv`)**
+- End-to-end iconv pipeline: file list ingest (receiver) and emit (sender), symlink targets, `--files-from`, and secluded args all flow through `FilenameConverter`
+- Client-side resolver now uses UTF-8 as the wire charset, matching upstream `rsync.c:130-140`
+- `--iconv` forwarded to remote rsync server args (SSH) and to daemon args (`rsync://`), mirroring upstream `options.c:2716-2723`
+- Server-mode flag parser recognises `--iconv=` and `--timeout=` so they no longer leak into positional args and corrupt the destination path
+- Daemon module `charset =` directive wires per-module iconv into the runtime
+- Golden byte tests for iconv-converted filenames; live interop test against upstream 3.4.1
+
+**Daemon**
+- `fake super = yes` module directive consumed by daemon and transfer paths
+- `charset =` module directive wired into the iconv runtime
 
 **Windows platform**
 - Native NTFS ACL round-trip (`-A`) via `windows-rs` `GetSecurityInfo` / `SetSecurityInfo`
@@ -72,16 +83,27 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 - AppleDouble (`._` resource-fork sidecars) wire-compatible with upstream rsync
 
 **Compatibility**
-- `--fake-super` mode for unprivileged metadata preservation via xattrs
+- `--fake-super` mode for unprivileged metadata preservation via xattrs, with `am_root` forced false so ownership is encoded in `user.rsync.%stat` rather than applied
+- `-oBatchMode=yes` injection now gated on `is_ssh_program()` so non-OpenSSH transports (e.g. `rsh`) are no longer corrupted
 
 **Performance**
-- io_uring shared submission ring across worker pool
-- io_uring SEND-path deadlock eliminated under sustained back-pressure
+- io_uring shared submission ring across reader and writer worker pools
+- io_uring SEND-path deadlock eliminated under sustained TCP back-pressure
 
 **Security & code quality**
-- `SensitiveBytes` zeroizes daemon credentials and authentication secrets on drop
+- `SensitiveBytes` uses the `zeroize` crate to scrub daemon credentials and auth secrets on drop
 - Safe `syslog` crate replaces hand-rolled FFI in the logging-sink crate
 - `setsockopt` FFI consolidated into the `fast_io` crate per the unsafe-code policy
+
+**Testing & CI**
+- Property tests added for compress codec round-trip, rolling-checksum SIMD/scalar parity, FilterChain precedence/anchoring, and bwlimit rate/burst pacing
+- CI fail-fast guard rejects stale `Cargo.lock`
+- `standalone:delta-stats` and `iconv-local-ssh` cleared from `KNOWN_FAILURES`
+
+**Documentation**
+- SSH transport timeout coverage matrix
+- Eliminate-path matrix for `tools/ci/known_failures.conf`
+- Audit confirming filter rules match upstream's iconv policy
 
 ### Interop Testing
 
