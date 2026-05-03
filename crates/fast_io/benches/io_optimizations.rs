@@ -191,16 +191,29 @@ fn bench_io_uring(c: &mut Criterion) {
             });
         });
 
-        // io_uring optimized I/O
-        group.bench_with_input(BenchmarkId::new("io_uring", name), &path, |b, path| {
-            b.iter(|| {
-                let config = IoUringConfig::default();
-                let mut reader = IoUringReader::open(path, &config).unwrap();
-                let data = reader.read_all_batched().unwrap();
-                black_box(&data);
-                data.len()
-            });
-        });
+        // io_uring optimized I/O. Sentinel-allocate one ring up front: the
+        // kernel-level probe (`is_io_uring_available`) does not catch ring
+        // allocation failures from RLIMIT_MEMLOCK, which CI runners often
+        // impose. Skipping here keeps the standard_io baseline measurable.
+        let config = IoUringConfig::default();
+        match IoUringReader::open(path, &config) {
+            Ok(_) => {
+                group.bench_with_input(BenchmarkId::new("io_uring", name), &path, |b, path| {
+                    b.iter(|| {
+                        let config = IoUringConfig::default();
+                        let mut reader = IoUringReader::open(path, &config).unwrap();
+                        let data = reader.read_all_batched().unwrap();
+                        black_box(&data);
+                        data.len()
+                    });
+                });
+            }
+            Err(e) => {
+                eprintln!(
+                    "Skipping io_uring read sub-benchmark for {name}: ring allocation failed ({e})"
+                );
+            }
+        }
     }
 
     group.finish();
@@ -234,17 +247,30 @@ fn bench_io_uring_writes(c: &mut Criterion) {
             });
         });
 
-        // io_uring optimized writes
-        group.bench_with_input(BenchmarkId::new("io_uring", name), &data, |b, data| {
-            b.iter(|| {
-                let dir = tempdir().unwrap();
-                let path = dir.path().join("test.bin");
-                let config = IoUringConfig::default();
-                let mut writer = IoUringWriter::create(&path, &config).unwrap();
-                writer.write_all(data).unwrap();
-                writer.flush().unwrap();
-            });
-        });
+        // io_uring optimized writes. Sentinel-allocate one ring before
+        // measuring: see bench_io_uring for the RLIMIT_MEMLOCK rationale.
+        let sentinel_dir = tempdir().unwrap();
+        let sentinel_path = sentinel_dir.path().join("sentinel.bin");
+        let config = IoUringConfig::default();
+        match IoUringWriter::create(&sentinel_path, &config) {
+            Ok(_) => {
+                group.bench_with_input(BenchmarkId::new("io_uring", name), &data, |b, data| {
+                    b.iter(|| {
+                        let dir = tempdir().unwrap();
+                        let path = dir.path().join("test.bin");
+                        let config = IoUringConfig::default();
+                        let mut writer = IoUringWriter::create(&path, &config).unwrap();
+                        writer.write_all(data).unwrap();
+                        writer.flush().unwrap();
+                    });
+                });
+            }
+            Err(e) => {
+                eprintln!(
+                    "Skipping io_uring write sub-benchmark for {name}: ring allocation failed ({e})"
+                );
+            }
+        }
     }
 
     group.finish();
