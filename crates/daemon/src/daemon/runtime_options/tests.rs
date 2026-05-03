@@ -19,8 +19,6 @@ mod runtime_options_tests {
     #[cfg(not(unix))]
     fn set_owner_only_permissions(_path: &Path) {}
 
-    // ==== Default value tests ====
-
     #[test]
     fn default_has_expected_bind_address() {
         let options = RuntimeOptions::default();
@@ -83,8 +81,6 @@ mod runtime_options_tests {
         assert!(options.motd_lines().is_empty());
     }
 
-    // ==== Port parsing tests ====
-
     #[test]
     fn parse_port_option() {
         let args = vec![OsString::from("--port"), OsString::from("8873")];
@@ -98,8 +94,6 @@ mod runtime_options_tests {
         let options = RuntimeOptions::parse(&args).expect("parse");
         assert_eq!(options.port, DEFAULT_PORT);
     }
-
-    // ==== Address family tests ====
 
     #[test]
     fn parse_ipv4_option_sets_address_family() {
@@ -128,8 +122,6 @@ mod runtime_options_tests {
         let result = RuntimeOptions::parse(&args);
         assert!(result.is_err());
     }
-
-    // ==== Bind address tests ====
 
     #[test]
     fn parse_bind_address_option() {
@@ -173,8 +165,6 @@ mod runtime_options_tests {
         assert!(result.is_err());
     }
 
-    // ==== Max sessions tests ====
-
     #[test]
     fn parse_once_sets_max_sessions_to_one() {
         let args = vec![OsString::from("--once")];
@@ -188,8 +178,6 @@ mod runtime_options_tests {
         let options = RuntimeOptions::parse(&args).expect("parse");
         assert_eq!(options.max_sessions, Some(NonZeroUsize::new(10).unwrap()));
     }
-
-    // ==== Bandwidth limit tests ====
 
     #[test]
     fn parse_bwlimit_option() {
@@ -219,8 +207,6 @@ mod runtime_options_tests {
         assert!(result.is_err());
     }
 
-    // ==== Log file tests ====
-
     #[test]
     fn parse_log_file_option() {
         let args = vec![
@@ -245,8 +231,6 @@ mod runtime_options_tests {
         let result = RuntimeOptions::parse(&args);
         assert!(result.is_err());
     }
-
-    // ==== Lock file tests ====
 
     #[test]
     fn parse_lock_file_option() {
@@ -273,8 +257,6 @@ mod runtime_options_tests {
         assert!(result.is_err());
     }
 
-    // ==== PID file tests ====
-
     #[test]
     fn parse_pid_file_option() {
         let args = vec![
@@ -299,8 +281,6 @@ mod runtime_options_tests {
         let result = RuntimeOptions::parse(&args);
         assert!(result.is_err());
     }
-
-    // ==== Detach option tests ====
 
     #[test]
     fn parse_detach_sets_flag() {
@@ -335,8 +315,6 @@ mod runtime_options_tests {
         let options = RuntimeOptions::parse(&args).expect("parse");
         assert!(options.detach());
     }
-
-    // ==== Config file tests ====
 
     #[test]
     fn parse_config_loads_modules_from_file() {
@@ -409,16 +387,12 @@ mod runtime_options_tests {
         assert_eq!(options.modules()[0].name, "files");
     }
 
-    // ==== Unsupported option tests ====
-
     #[test]
     fn unsupported_option_is_rejected() {
         let args = vec![OsString::from("--unknown-option")];
         let result = RuntimeOptions::parse(&args);
         assert!(result.is_err());
     }
-
-    // ==== MOTD tests ====
 
     #[test]
     fn parse_motd_line_adds_to_motd() {
@@ -457,8 +431,6 @@ mod runtime_options_tests {
         assert_eq!(options.motd_lines()[0], "Hello");
         assert_eq!(options.motd_lines()[1], "World");
     }
-
-    // ==== Secrets file tests ====
 
     #[test]
     fn cli_secrets_file_sets_global_default_for_inline_modules() {
@@ -503,8 +475,6 @@ mod runtime_options_tests {
         assert!(result.is_err());
     }
 
-    // ==== Module tests ====
-
     #[test]
     fn parse_inline_module() {
         let module_root = TempDir::new().expect("module path");
@@ -538,8 +508,6 @@ mod runtime_options_tests {
         assert!(result.is_err());
     }
 
-    // ==== Clone/Debug tests ====
-
     #[test]
     fn runtime_options_clone_preserves_values() {
         let args = vec![OsString::from("--port"), OsString::from("9999")];
@@ -562,8 +530,6 @@ mod runtime_options_tests {
         let b = RuntimeOptions::default();
         assert_eq!(a, b);
     }
-
-    // ==== Syslog config tests ====
 
     #[test]
     fn default_has_no_syslog_config() {
@@ -603,8 +569,6 @@ mod runtime_options_tests {
         assert!(options.syslog_facility.is_none());
         assert!(options.syslog_tag.is_none());
     }
-
-    // ==== Config address directive tests ====
 
     #[test]
     fn address_from_config_sets_bind_address() {
