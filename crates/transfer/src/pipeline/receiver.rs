@@ -1,4 +1,4 @@
-//! `PipelinedReceiver` — mediator between network and disk threads.
+//! `PipelinedReceiver` - mediator between network and disk threads.
 //!
 //! Owns the channels and the disk commit thread, coordinating lifecycle,
 //! error collection, and graceful shutdown. Supports upstream rsync's
@@ -8,9 +8,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `receiver.c:970-976` — `send_msg_int(MSG_REDO, ndx)` on checksum failure
-//! - `generator.c:2160-2199` — `check_for_finished_files()` processes redo queue
-//! - `receiver.c:580-587` — phase transition on `NDX_DONE`
+//! - `receiver.c:970-976` - `send_msg_int(MSG_REDO, ndx)` on checksum failure
+//! - `generator.c:2160-2199` - `check_for_finished_files()` processes redo queue
+//! - `receiver.c:580-587` - phase transition on `NDX_DONE`
 
 use std::collections::VecDeque;
 use std::io;
@@ -255,11 +255,11 @@ impl PipelinedReceiver {
     /// in submission order).
     ///
     /// When `redo_enabled` is true (phase 1), checksum mismatches queue the file
-    /// index into `redo_indices` and log a warning — mirroring upstream
+    /// index into `redo_indices` and log a warning - mirroring upstream
     /// `receiver.c:960-973` which sends `MSG_REDO` and continues.
     ///
     /// When `redo_enabled` is false (phase 2), checksum mismatches are logged
-    /// as errors but do not abort the transfer — mirroring upstream
+    /// as errors but do not abort the transfer - mirroring upstream
     /// `receiver.c:948-957` where `redoing=1` uses `FERROR_XFER`.
     fn verify_checksum(&mut self, result: &CommitResult) -> io::Result<()> {
         let pending = match self.expected_checksums.pop_front() {
@@ -571,7 +571,7 @@ mod tests {
             file_index: 5,
         });
 
-        // Same checksum — should succeed without redo.
+        // Same checksum - should succeed without redo.
         let result = CommitResult {
             bytes_written: 50,
             file_entry_index: 0,

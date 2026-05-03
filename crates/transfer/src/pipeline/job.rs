@@ -4,11 +4,11 @@
 //! and [`FileJob`] (a unit of work dispatched through a bounded channel with
 //! backpressure). Together they implement the two-phase pipeline:
 //!
-//! **Phase 1 — File List**: Build, sort, and freeze the file list into an `Arc`.
+//! **Phase 1 - File List**: Build, sort, and freeze the file list into an `Arc`.
 //! The NDX (0-based index into the sorted vector) remains stable and is used as
 //! the protocol index for all subsequent wire communication.
 //!
-//! **Phase 2 — Transfer Dispatch**: A producer iterates the file list creating
+//! **Phase 2 - Transfer Dispatch**: A producer iterates the file list creating
 //! `FileJob` values, a consumer pulls them in FIFO order and executes transfers.
 //! Bounded channel capacity provides natural backpressure.
 
@@ -25,7 +25,7 @@ pub const MAX_RETRY_COUNT: u8 = 2;
 /// Immutable, sorted file list shared between producer and consumer tasks.
 ///
 /// Wraps a `Vec<FileEntry>` in `Arc` for zero-copy sharing across tokio tasks.
-/// After construction (receiving from wire + sorting), the list is frozen — no
+/// After construction (receiving from wire + sorting), the list is frozen - no
 /// entries are added, removed, or reordered. NDX indices are the `Vec` positions,
 /// which remain stable after sort.
 ///
