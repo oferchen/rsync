@@ -185,11 +185,9 @@ mod tests {
         let small = format_list_size(1, HumanReadableMode::Disabled);
         let large = format_list_size(1_000_000, HumanReadableMode::Disabled);
 
-        // Both should be 15 chars
         assert_eq!(small.len(), 15);
         assert_eq!(large.len(), 15);
 
-        // Small value should have more leading spaces
         let small_spaces = small.len() - small.trim_start().len();
         let large_spaces = large.len() - large.trim_start().len();
         assert!(
