@@ -288,7 +288,7 @@ def wait_for_port(port, timeout=10):
     return False
 
 
-PER_RUN_TIMEOUT = 120  # seconds per individual rsync invocation
+PER_RUN_TIMEOUT = 600  # seconds per individual rsync invocation
 
 
 def parse_peak_rss_kb(stderr_text):
