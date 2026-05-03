@@ -112,6 +112,27 @@ where
     config.flags.delete = long_flags.delete;
     config.reference_directories = long_flags.reference_directories;
 
+    // upstream: rsync.c:85-147 setup_iconv() - server opens iconv against the
+    // wire's UTF-8 charset using the local-side spec forwarded by the client
+    // (options.c:2716-2723). Without this wiring the receiver/generator skip
+    // the iconv hook and write/read raw bytes verbatim, breaking transfers
+    // with --iconv=LOCAL,REMOTE where the on-disk filenames differ between
+    // the two sides.
+    if let Some(spec) = &long_flags.iconv {
+        use core::client::IconvSetting;
+        match IconvSetting::parse(spec) {
+            Ok(setting) => config.connection.iconv = setting.resolve_converter(),
+            Err(e) => {
+                write_server_error(
+                    stderr,
+                    program_brand,
+                    format!("invalid --iconv value '{spec}': {e}"),
+                );
+                return 1;
+            }
+        }
+    }
+
     // Run native server with stdio
     match run_server_stdio(config, &mut stdin, stdout, None) {
         Ok(_stats) => 0,
