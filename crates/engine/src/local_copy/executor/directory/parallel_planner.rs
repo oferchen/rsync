@@ -80,7 +80,6 @@ pub(crate) fn prefetch_entry_metadata(
     config: PrefetchConfig,
 ) -> Vec<PrefetchedEntryData> {
     if !config.needs_prefetch() {
-        // Fast path: no prefetching needed, return empty prefetch data
         return entries
             .iter()
             .enumerate()
@@ -106,22 +105,19 @@ pub(crate) fn prefetch_entry_metadata(
             #[cfg(unix)]
             let is_dir = entry_type.is_dir();
 
-            // Prefetch symlink target metadata if needed
-            // Use fs::metadata which follows symlinks (unlike symlink_metadata)
+            // fs::metadata follows symlinks (unlike symlink_metadata).
             let symlink_target_metadata = if is_symlink && config.follow_symlinks {
                 Some(fs::metadata(&entry.path))
             } else {
                 None
             };
 
-            // Prefetch symlink target path if needed for safe_links
             let symlink_target = if is_symlink && config.read_symlink_targets {
                 Some(fs::read_link(&entry.path))
             } else {
                 None
             };
 
-            // Prefetch device ID if needed for one-file-system
             #[cfg(unix)]
             let device_id = if (is_dir || is_symlink) && config.check_devices {
                 get_device_id(&entry.path, &entry.metadata)
@@ -145,7 +141,6 @@ pub(crate) fn prefetch_entry_metadata(
 fn get_device_id(path: &Path, metadata: &fs::Metadata) -> Option<u64> {
     use std::os::unix::fs::MetadataExt;
 
-    // For symlinks, we need to get the target's device
     if metadata.file_type().is_symlink() {
         fs::metadata(path).ok().map(|m| m.dev())
     } else {
