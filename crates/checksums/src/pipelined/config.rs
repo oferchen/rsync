@@ -30,8 +30,8 @@ pub struct PipelineConfig {
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
-            block_size: 64 * 1024,     // 64 KiB
-            min_file_size: 256 * 1024, // 256 KiB
+            block_size: 64 * 1024,
+            min_file_size: 256 * 1024,
             enabled: true,
         }
     }
