@@ -12,9 +12,9 @@
 //! - No overflow errors occur at the boundary
 
 use filetime::{FileTime, set_file_times};
-use metadata::{apply_directory_metadata, apply_file_metadata};
 #[cfg(unix)]
 use metadata::apply_symlink_metadata;
+use metadata::{apply_directory_metadata, apply_file_metadata};
 use std::fs;
 use tempfile::tempdir;
 
