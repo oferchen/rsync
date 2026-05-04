@@ -74,7 +74,7 @@ io_uring = ["transfer/io_uring", "fast_io/io_uring"]
 # Requirements: Windows Vista+ (runtime detection, automatic fallback)
 # Benefits: Overlapped async reads/writes via kernel completion ports
 # Trade-offs: Windows-only, adds complexity for async file operations
-iocp = ["fast_io/iocp"]
+iocp = ["transfer/iocp", "fast_io/iocp"]
 
 # copy_file_range syscall - zero-copy file transfers on same filesystem
 # Requirements: Linux 4.5+ for same-fs, 5.3+ for cross-fs (automatic fallback)
