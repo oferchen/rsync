@@ -8,7 +8,7 @@ version.workspace = true
 
 [dependencies]
 libc = "0.2"
-nix = { version = "0.29", default-features = false, features = ["fs"] }
+nix = { version = "0.31", default-features = false, features = ["fs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 unicode-normalization = "0.1"
