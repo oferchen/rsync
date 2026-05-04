@@ -61,7 +61,7 @@ sha2 = { version = "0.10", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 proptest = "1.4"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 tempfile = "3.14"
 

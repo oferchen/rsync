@@ -62,7 +62,7 @@ windows = { version = "0.62", features = [
 
 [dev-dependencies]
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 filetime = "0.2"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 

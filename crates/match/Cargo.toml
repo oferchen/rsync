@@ -36,7 +36,7 @@ tracing = ["dep:tracing"]
 parallel = ["dep:rayon"]
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 protocol = { path = "../protocol" }
 tempfile = "3.15"
 

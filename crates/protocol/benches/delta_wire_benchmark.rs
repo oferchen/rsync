@@ -10,7 +10,8 @@
 
 use std::io::Cursor;
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 
 use protocol::wire::{
     DeltaOp, read_delta, read_delta_op, read_int, read_token, write_delta, write_delta_op,
