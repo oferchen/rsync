@@ -162,7 +162,6 @@ impl NdxCodec for ModernNdxCodec {
         let mut buf = [0u8; 6];
         let mut cnt = 0;
 
-        // Compute diff and update state based on sign
         let (diff, ndx_positive) = if ndx >= 0 {
             let diff = ndx - self.prev_positive;
             self.prev_positive = ndx;
@@ -185,7 +184,6 @@ impl NdxCodec for ModernNdxCodec {
         // Encode the diff value
         // Upstream io.c:2270-2285
         if diff > 0 && diff < 0xFE {
-            // Simple single-byte diff
             buf[cnt] = diff as u8;
             cnt += 1;
         } else if !(0..=0x7FFF).contains(&diff) {
@@ -249,13 +247,11 @@ impl NdxCodec for ModernNdxCodec {
                 reader.read_exact(&mut b[..3])?;
                 (high << 24) | (b[0] as i32) | ((b[1] as i32) << 8) | ((b[2] as i32) << 16)
             } else {
-                // 2-byte diff
                 reader.read_exact(&mut b[1..2])?;
                 let diff = ((b[0] as i32) << 8) | (b[1] as i32);
                 prev_val + diff
             }
         } else {
-            // Simple single-byte diff
             let diff = b[0] as i32;
             prev_val + diff
         };
