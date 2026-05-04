@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use is_terminal::IsTerminal;
-use russh_keys::key::PublicKey;
+use russh::keys::{HashAlg, PublicKey, known_hosts};
 
 use super::error::SshError;
 use super::types::StrictHostKeyChecking;
@@ -30,7 +30,7 @@ impl SshClientHandler {
     /// Create a new handler for the given host and port.
     ///
     /// When `known_hosts_file` is `None`, the default `~/.ssh/known_hosts`
-    /// location is used (via `russh_keys::check_known_hosts`).
+    /// location is used (via `russh::keys::known_hosts::check_known_hosts`).
     pub fn new(
         host: String,
         port: u16,
@@ -51,16 +51,19 @@ impl SshClientHandler {
     /// for key mismatches (potential MITM).
     fn verify_host_key(&self, server_public_key: &PublicKey) -> Result<bool, SshError> {
         let check_result = match &self.known_hosts_file {
-            Some(path) => {
-                russh_keys::check_known_hosts_path(&self.host, self.port, server_public_key, path)
-            }
-            None => russh_keys::check_known_hosts(&self.host, self.port, server_public_key),
+            Some(path) => known_hosts::check_known_hosts_path(
+                &self.host,
+                self.port,
+                server_public_key,
+                path,
+            ),
+            None => known_hosts::check_known_hosts(&self.host, self.port, server_public_key),
         };
 
         match check_result {
             Ok(true) => Ok(true),
             Ok(false) => self.handle_unknown_host(server_public_key),
-            Err(russh_keys::Error::KeyChanged { line }) => {
+            Err(russh::keys::Error::KeyChanged { line }) => {
                 emit_key_changed_warning(&self.host, self.port, server_public_key, line);
                 Err(SshError::HostKeyMismatch {
                     host: self.host.clone(),
@@ -91,7 +94,7 @@ impl SshClientHandler {
                 eprintln!(
                     "Warning: Permanently added '{}' ({}) to the list of known hosts.",
                     self.host,
-                    server_public_key.name(),
+                    server_public_key.algorithm(),
                 );
                 self.learn_host_key(server_public_key)?;
                 Ok(true)
@@ -112,14 +115,14 @@ impl SshClientHandler {
             });
         }
 
-        let fingerprint = server_public_key.fingerprint();
+        let fingerprint = server_public_key.fingerprint(HashAlg::Sha256);
         eprint!(
             "The authenticity of host '{}' ({}) can't be established.\n\
              {} key fingerprint is {}.\n\
              Are you sure you want to continue connecting (yes/no)? ",
             self.host,
             format_host_port(&self.host, self.port),
-            server_public_key.name(),
+            server_public_key.algorithm(),
             fingerprint,
         );
         std::io::stderr().flush().ok();
@@ -134,7 +137,7 @@ impl SshClientHandler {
             eprintln!(
                 "Warning: Permanently added '{}' ({}) to the list of known hosts.",
                 self.host,
-                server_public_key.name(),
+                server_public_key.algorithm(),
             );
             self.learn_host_key(server_public_key)?;
             Ok(true)
@@ -147,20 +150,22 @@ impl SshClientHandler {
     fn learn_host_key(&self, server_public_key: &PublicKey) -> Result<(), SshError> {
         match &self.known_hosts_file {
             Some(path) => {
-                russh_keys::learn_known_hosts_path(&self.host, self.port, server_public_key, path)
+                known_hosts::learn_known_hosts_path(&self.host, self.port, server_public_key, path)
                     .map_err(|e| SshError::Io(std::io::Error::other(e.to_string())))
             }
-            None => russh_keys::learn_known_hosts(&self.host, self.port, server_public_key)
+            None => known_hosts::learn_known_hosts(&self.host, self.port, server_public_key)
                 .map_err(|e| SshError::Io(std::io::Error::other(e.to_string()))),
         }
     }
 }
 
-#[async_trait::async_trait]
 impl russh::client::Handler for SshClientHandler {
     type Error = SshError;
 
-    async fn check_server_key(&mut self, server_public_key: &PublicKey) -> Result<bool, SshError> {
+    async fn check_server_key(
+        &mut self,
+        server_public_key: &PublicKey,
+    ) -> Result<bool, SshError> {
         self.verify_host_key(server_public_key)
     }
 }
@@ -190,8 +195,8 @@ fn emit_key_changed_warning(host: &str, port: u16, key: &PublicKey, line: usize)
          Offending key in known_hosts:{}\n\
          Host key for {} has changed and you have requested strict checking.\n\
          Host key verification failed.",
-        key.name(),
-        key.fingerprint(),
+        key.algorithm(),
+        key.fingerprint(HashAlg::Sha256),
         line,
         format_host_port(host, port),
     );
@@ -200,6 +205,8 @@ fn emit_key_changed_warning(host: &str, port: u16, key: &PublicKey, line: usize)
 #[cfg(test)]
 mod tests {
     use std::io::Write;
+
+    use russh::keys::{Algorithm, PrivateKey};
 
     use super::*;
 
@@ -233,15 +240,11 @@ mod tests {
         assert_eq!(format_host_port("example.com", 2222), "[example.com]:2222");
     }
 
-    /// Generate a deterministic Ed25519 keypair for tests.
+    /// Generate an Ed25519 public key for tests.
     fn test_ed25519_pubkey() -> PublicKey {
-        let keypair = russh_keys::key::KeyPair::generate_ed25519();
-        match keypair {
-            Some(kp) => kp
-                .clone_public_key()
-                .expect("ed25519 key should have public key"),
-            None => panic!("failed to generate test ed25519 keypair"),
-        }
+        let private = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)
+            .expect("ed25519 keypair generation");
+        private.public_key().clone()
     }
 
     /// Known host entry matches - verification should succeed.
@@ -251,7 +254,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let kh_path = dir.path().join("known_hosts");
 
-        russh_keys::learn_known_hosts_path("testhost.example", 22, &pubkey, &kh_path)
+        known_hosts::learn_known_hosts_path("testhost.example", 22, &pubkey, &kh_path)
             .expect("learn");
 
         let handler = SshClientHandler::new(
@@ -312,7 +315,7 @@ mod tests {
         assert!(result.unwrap());
 
         // Verify the key was persisted.
-        let check = russh_keys::check_known_hosts_path("auto.example", 22, &pubkey, &kh_path);
+        let check = known_hosts::check_known_hosts_path("auto.example", 22, &pubkey, &kh_path);
         assert!(check.is_ok());
         assert!(check.unwrap());
     }
@@ -327,7 +330,7 @@ mod tests {
         let kh_path = dir.path().join("known_hosts");
 
         // Learn the original key.
-        russh_keys::learn_known_hosts_path("mismatch.example", 22, &original_key, &kh_path)
+        known_hosts::learn_known_hosts_path("mismatch.example", 22, &original_key, &kh_path)
             .expect("learn");
 
         // Verify with a different key - should fail even with No mode.
@@ -353,7 +356,7 @@ mod tests {
         let kh_path = dir.path().join("known_hosts");
 
         // Learn on port 2222.
-        russh_keys::learn_known_hosts_path("porttest.example", 2222, &pubkey, &kh_path)
+        known_hosts::learn_known_hosts_path("porttest.example", 2222, &pubkey, &kh_path)
             .expect("learn");
 
         // Should match on port 2222.
