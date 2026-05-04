@@ -238,7 +238,7 @@ impl GeneratorContext {
             }
 
             if !iflags.needs_transfer() {
-                // upstream: sender.c:287 — maybe_log_item() for non-transfer items
+                // upstream: sender.c:287 - maybe_log_item() for non-transfer items
                 self.maybe_emit_itemize(writer, &iflags, ndx, itemize)?;
                 continue;
             }
@@ -387,7 +387,7 @@ impl GeneratorContext {
             }
             files_transferred += 1;
 
-            // upstream: sender.c:430 — log_item(log_code, file, iflags, NULL)
+            // upstream: sender.c:430 - log_item(log_code, file, iflags, NULL)
             self.maybe_emit_itemize(writer, &iflags, ndx, itemize)?;
 
             if let Some(cb) = progress.as_mut() {

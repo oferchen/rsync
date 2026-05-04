@@ -753,7 +753,7 @@ fn item_flags_constants() {
 
 #[test]
 fn significant_item_flags_masks_framing_and_internal_bits() {
-    // upstream rsync.h:235-236 — strips BASIS_TYPE_FOLLOWS, XNAME_FOLLOWS, LOCAL_CHANGE
+    // upstream rsync.h:235-236 - strips BASIS_TYPE_FOLLOWS, XNAME_FOLLOWS, LOCAL_CHANGE
     let mask = ItemFlags::SIGNIFICANT_ITEM_FLAGS;
     assert_eq!(mask & ItemFlags::ITEM_BASIS_TYPE_FOLLOWS, 0);
     assert_eq!(mask & ItemFlags::ITEM_XNAME_FOLLOWS, 0);
