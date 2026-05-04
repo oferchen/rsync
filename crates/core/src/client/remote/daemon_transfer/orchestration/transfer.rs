@@ -39,22 +39,21 @@ pub(crate) fn run_pull_transfer(
 
     let filter_rules = flags::build_wire_format_rules(config.filter_rules())?;
 
-    // Protocol was negotiated via @RSYNCD text exchange, not binary 4-byte exchange.
-    // setup_protocol() will skip the binary exchange because remote_protocol != 0
-    // upstream: compat.c:599 - if (remote_protocol == 0) { ... }
+    // upstream: compat.c:599 - protocol was negotiated via @RSYNCD text exchange,
+    // setup_protocol() skips the binary exchange because remote_protocol != 0.
     let handshake = build_daemon_handshake(config, protocol);
 
     let mut server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
 
-    // upstream: main.c:1354-1356 - when pulling with --files-from pointing to
-    // a local file or stdin, the client reads the file list locally and forwards
+    // upstream: main.c:1354-1356 - when pulling with --files-from pointing to a
+    // local file or stdin, the client reads the file list locally and forwards
     // it to the daemon's generator over the protocol stream.
     if config.files_from().is_local_forwarded() {
         let data = read_files_from_for_forwarding(config)?;
         server_config.connection.files_from_data = Some(data);
     }
 
-    // Pull: local side is Receiver, batch records incoming data (is_sender=false)
+    // Pull: local side is Receiver; batch records incoming data (is_sender=false).
     let batch_recording = batch_ctx
         .as_ref()
         .map(|ctx| build_batch_recording(ctx, false));
@@ -100,21 +99,21 @@ pub(crate) fn run_push_transfer(
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
     let dry_run = config.dry_run();
 
-    // Push: local side is Generator (sender), batch records outgoing data (is_sender=true)
+    // Push: local side is Generator (sender); batch records outgoing data (is_sender=true).
     let batch_recording = batch_ctx
         .as_ref()
         .map(|ctx| build_batch_recording(ctx, true));
 
     let start = Instant::now();
 
-    // Call the server directly (not the error-wrapping helper) so we can
-    // inspect the raw io::Error kind for dry-run graceful close handling.
+    // Call the server directly (not the error-wrapping helper) to inspect the
+    // raw io::Error kind for dry-run graceful close handling.
     let mut reader = stream
         .try_clone()
         .map_err(|e| invalid_argument_error(&format!("failed to clone stream: {e}"), 23))?;
 
     // upstream: log.c:330-340 - when !am_server, rwrite() sends itemize to
-    // FCLIENT (stdout). Build a callback that writes directly to process stdout.
+    // FCLIENT (stdout); the callback writes directly to process stdout.
     let wants_itemize = config.itemize_changes();
     let stdout_handle = std::io::stdout();
     let mut itemize_cb = move |line: &str| {
@@ -144,8 +143,7 @@ pub(crate) fn run_push_transfer(
         }
         Err(ref e) if dry_run && is_dry_run_remote_close(e) => {
             // upstream: clientserver.c - during --dry-run push, the daemon closes
-            // its socket early after receiving the file list since no actual data
-            // transfer is needed.
+            // its socket early after receiving the file list.
             Ok(ClientSummary::default())
         }
         Err(e) => Err(invalid_argument_error(&format!("transfer failed: {e}"), 23)),
@@ -261,10 +259,10 @@ pub(super) fn read_files_from_for_forwarding(
     use crate::client::config::FilesFromSource;
 
     let eol_nulls = config.from0();
-    // upstream: compat.c:799-806 — filesfrom_convert is set when
+    // upstream: compat.c:799-806 - filesfrom_convert is set when
     // protect_args && files_from && (am_sender ? ic_send : ic_recv) != -1.
     // For pull, this peer is the receiver writing to the wire; the converter
-    // must transcode from local charset to the UTF-8 wire encoding.
+    // transcodes from local charset to the UTF-8 wire encoding.
     let iconv_converter = if config.protect_args().unwrap_or(false) {
         config.iconv().resolve_converter()
     } else {

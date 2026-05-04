@@ -2165,10 +2165,6 @@ fn all_flags_enabled_produces_valid_invocation() {
     assert!(args.contains(&"/path".to_owned()));
 }
 
-// ---------------------------------------------------------------------------
-// operand_is_remote: local path classification
-// ---------------------------------------------------------------------------
-
 #[test]
 fn local_absolute_path_is_not_remote() {
     assert!(!operand_is_remote(OsStr::new("/tmp/foo")));
@@ -2211,10 +2207,6 @@ fn local_parent_path_is_not_remote() {
     assert!(!operand_is_remote(OsStr::new("..")));
 }
 
-// ---------------------------------------------------------------------------
-// operand_is_remote: Windows drive letter handling
-// ---------------------------------------------------------------------------
-
 #[cfg(windows)]
 #[test]
 fn windows_drive_letter_is_not_remote() {
@@ -2235,10 +2227,6 @@ fn single_letter_colon_on_unix_is_remote() {
     assert!(operand_is_remote(OsStr::new("C:")));
 }
 
-// ---------------------------------------------------------------------------
-// operand_is_remote: rsync:// URL detection
-// ---------------------------------------------------------------------------
-
 #[test]
 fn rsync_url_is_remote() {
     assert!(operand_is_remote(OsStr::new("rsync://host/module/path")));
@@ -2253,10 +2241,6 @@ fn rsync_url_with_user_is_remote() {
 fn rsync_url_bare_host_is_remote() {
     assert!(operand_is_remote(OsStr::new("rsync://host")));
 }
-
-// ---------------------------------------------------------------------------
-// operand_is_remote: ssh:// URL detection
-// ---------------------------------------------------------------------------
 
 #[test]
 fn ssh_url_is_remote() {
@@ -2278,10 +2262,6 @@ fn ssh_url_bare_host_is_remote() {
     assert!(operand_is_remote(OsStr::new("ssh://host")));
 }
 
-// ---------------------------------------------------------------------------
-// operand_is_remote: traditional remote-shell syntax (host:path)
-// ---------------------------------------------------------------------------
-
 #[test]
 fn host_colon_path_is_remote() {
     assert!(operand_is_remote(OsStr::new("host:path")));
@@ -2302,10 +2282,6 @@ fn ip_colon_path_is_remote() {
     assert!(operand_is_remote(OsStr::new("192.168.1.1:/data")));
 }
 
-// ---------------------------------------------------------------------------
-// operand_is_remote: double-colon daemon syntax (host::module)
-// ---------------------------------------------------------------------------
-
 #[test]
 fn host_double_colon_module_is_remote() {
     assert!(operand_is_remote(OsStr::new("host::module")));
@@ -2320,10 +2296,6 @@ fn user_at_host_double_colon_module_is_remote() {
 fn host_double_colon_module_path_is_remote() {
     assert!(operand_is_remote(OsStr::new("host::module/subdir")));
 }
-
-// ---------------------------------------------------------------------------
-// operand_is_remote: edge cases
-// ---------------------------------------------------------------------------
 
 #[test]
 fn empty_string_is_not_remote() {
@@ -2370,10 +2342,6 @@ fn path_with_single_colon_only_is_remote() {
     // '/' or '\', so it falls through to remote classification.
     assert!(operand_is_remote(OsStr::new(":")));
 }
-
-// ---------------------------------------------------------------------------
-// operand_is_remote integration with determine_transfer_role
-// ---------------------------------------------------------------------------
 
 #[test]
 fn local_to_ssh_url_is_push() {

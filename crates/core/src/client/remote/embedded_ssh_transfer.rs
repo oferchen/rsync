@@ -204,7 +204,6 @@ fn parse_remote_operands_urls(
             for url in urls {
                 let (cfg, path) = parse_ssh_url(url, config)?;
                 if let Some(ref existing) = ssh_config {
-                    // Validate same host/port/user
                     let existing: &SshConfig = existing;
                     if cfg.host != existing.host
                         || cfg.port != existing.port
@@ -290,7 +289,6 @@ fn run_transfer_over_embedded_ssh(
 ) -> Result<ClientSummary, ClientError> {
     let remote_command = build_remote_command(invocation_args);
 
-    // Build stdin data for secluded-args delivery.
     let stdin_data = if stdin_args.is_empty() {
         None
     } else {
@@ -299,7 +297,7 @@ fn run_transfer_over_embedded_ssh(
             data.extend_from_slice(arg.as_bytes());
             data.push(0);
         }
-        data.push(0); // Terminal empty string
+        data.push(0);
         Some(data)
     };
 
@@ -310,7 +308,6 @@ fn run_transfer_over_embedded_ssh(
     )
     .map_err(|e| invalid_argument_error(&format!("embedded SSH connection failed: {e}"), 5))?;
 
-    // From here, the flow is identical to the system SSH path.
     let start = Instant::now();
     let batch_recording = batch_ctx.as_ref().map(|ctx| {
         let is_sender = server_config.role == ServerRole::Generator;

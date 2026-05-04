@@ -30,7 +30,6 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     let effective_recursive = config.recursive() && !files_from_active;
     let effective_relative = config.relative_paths() || files_from_active;
 
-    // Order matches upstream server_options().
     if config.links() {
         flags.push('l');
     }
@@ -122,8 +121,8 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('L');
     }
 
-    // Note: itemize-changes is forwarded via --log-format=%i in the
-    // long-form args, not as a compact flag - upstream: options.c:2750-2762
+    // upstream: options.c:2750-2762 - itemize-changes is forwarded via
+    // --log-format=%i in the long-form args, not as a compact flag.
 
     flags
 }
@@ -146,8 +145,8 @@ pub(crate) fn build_wire_format_rules(
             FilterRuleKind::Risk => RuleType::Risk,
             FilterRuleKind::DirMerge => RuleType::DirMerge,
             FilterRuleKind::ExcludeIfPresent => {
-                // ExcludeIfPresent is transmitted as Exclude with 'e' flag
-                // (FILTRULE_EXCLUDE_SELF in upstream rsync)
+                // upstream: ExcludeIfPresent is transmitted as Exclude with 'e' flag
+                // (FILTRULE_EXCLUDE_SELF).
                 wire_rules.push(FilterRuleWireFormat {
                     rule_type: RuleType::Exclude,
                     pattern: spec.pattern().to_owned(),
@@ -156,7 +155,8 @@ pub(crate) fn build_wire_format_rules(
                     no_inherit: false,
                     cvs_exclude: false,
                     word_split: false,
-                    exclude_from_merge: true, // 'e' flag = EXCLUDE_SELF
+                    // upstream: 'e' flag = FILTRULE_EXCLUDE_SELF.
+                    exclude_from_merge: true,
                     xattr_only: spec.is_xattr_only(),
                     sender_side: spec.applies_to_sender(),
                     receiver_side: spec.applies_to_receiver(),
@@ -426,13 +426,11 @@ mod tests {
 
         let rules = build_wire_format_rules(&specs).expect("should transmit ExcludeIfPresent");
 
-        // ExcludeIfPresent is now transmitted as Exclude with 'e' flag
         assert_eq!(rules.len(), 3);
         assert_eq!(rules[0].rule_type, RuleType::Exclude);
         assert_eq!(rules[0].pattern, "*.log");
         assert!(!rules[0].exclude_from_merge);
 
-        // ExcludeIfPresent becomes Exclude with exclude_from_merge (EXCLUDE_SELF)
         assert_eq!(rules[1].rule_type, RuleType::Exclude);
         assert_eq!(rules[1].pattern, ".git");
         assert!(rules[1].exclude_from_merge);
@@ -455,9 +453,9 @@ mod tests {
 
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].rule_type, RuleType::DirMerge);
-        assert!(rules[0].no_inherit); // inherit(false) -> no_inherit(true)
-        assert!(rules[0].exclude_from_merge); // exclude_filter_file(true)
-        assert!(rules[0].word_split); // use_whitespace()
+        assert!(rules[0].no_inherit);
+        assert!(rules[0].exclude_from_merge);
+        assert!(rules[0].word_split);
     }
 
     #[test]

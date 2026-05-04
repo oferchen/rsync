@@ -20,7 +20,8 @@ use crate::map_file::BufferedMap;
 use crate::map_file::MapFile;
 use crate::token_buffer::TokenBuffer;
 
-// The strategy type used for basis file mapping
+/// Basis-file mapping strategy: adaptive (mmap above 1 MiB) on Unix,
+/// buffered sliding window elsewhere.
 #[cfg(unix)]
 type BasisMapStrategy = AdaptiveMapStrategy;
 #[cfg(not(unix))]
@@ -218,7 +219,6 @@ impl<'a> DeltaApplicator<'a> {
 
     /// Applies literal data.
     pub fn apply_literal(&mut self, data: &[u8]) -> io::Result<()> {
-        // DEBUG_DELTASUM level 3: Log literal token details
         debug_log!(
             Deltasum,
             3,
@@ -271,7 +271,6 @@ impl<'a> DeltaApplicator<'a> {
         let block_len = layout.block_length().get() as u64;
         let block_count = layout.block_count() as usize;
 
-        // Validate block index bounds
         if block_idx >= block_count {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -292,7 +291,6 @@ impl<'a> DeltaApplicator<'a> {
             block_len as usize
         };
 
-        // DEBUG_DELTASUM level 3: Log block reference details
         debug_log!(
             Deltasum,
             3,
@@ -330,7 +328,6 @@ impl<'a> DeltaApplicator<'a> {
         reader.read_exact(&mut buf)?;
         let token = i32::from_le_bytes(buf);
 
-        // DEBUG_DELTASUM level 4: Per-token tracking (very verbose)
         debug_log!(
             Deltasum,
             4,
@@ -341,7 +338,6 @@ impl<'a> DeltaApplicator<'a> {
 
         match token.cmp(&0) {
             std::cmp::Ordering::Equal => {
-                // DEBUG_DELTASUM level 2: Token stream end marker
                 debug_log!(
                     Deltasum,
                     2,
@@ -355,7 +351,6 @@ impl<'a> DeltaApplicator<'a> {
                 self.token_buffer.resize_for(len);
                 reader.read_exact(self.token_buffer.as_mut_slice())?;
 
-                // DEBUG_DELTASUM level 3: Log literal token details
                 debug_log!(
                     Deltasum,
                     3,
@@ -401,7 +396,6 @@ impl<'a> DeltaApplicator<'a> {
         let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         let computed_len = self.checksum_verifier.finalize_into(&mut computed);
 
-        // DEBUG_DELTASUM level 3: Log checksum verification details
         debug_log!(
             Deltasum,
             3,
@@ -421,7 +415,7 @@ impl<'a> DeltaApplicator<'a> {
             ));
         }
 
-        // DEBUG_DELTASUM level 1: Basic summary (mirrors upstream receive_data)
+        // upstream: receiver.c:240 receive_data() emits the same summary line.
         debug_log!(
             Deltasum,
             1,
@@ -443,7 +437,7 @@ pub fn apply_delta_stream<R: Read>(
     reader: &mut R,
     applicator: &mut DeltaApplicator<'_>,
 ) -> io::Result<()> {
-    // DEBUG_DELTASUM level 2: Log delta application start (mirrors upstream receive_data)
+    // upstream: receiver.c:240 receive_data() logs the same start marker.
     debug_log!(Deltasum, 2, "recv delta stream start");
 
     while applicator.apply_token(reader)? {}

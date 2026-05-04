@@ -69,9 +69,7 @@ mod tests {
     use std::ffi::{OsStr, OsString};
     use std::sync::Mutex;
 
-    // Environment variables are process-global, so serialize access to avoid
-    // cross-test interference when multiple threads run this module's tests in
-    // parallel.
+    // Process-global env state - serialize access across parallel test threads.
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     struct EnvGuard {
@@ -182,7 +180,7 @@ mod tests {
         let value = {
             use std::os::windows::ffi::OsStringExt;
 
-            // Use an unpaired surrogate to produce a non-UTF-16 value.
+            // Unpaired surrogate produces a non-UTF-16 value.
             OsString::from_wide(&[0xD800])
         };
 

@@ -63,13 +63,12 @@ impl SensitiveBytes {
         self.0.as_slice()
     }
 
+    /// Consumes `self` and returns its bytes zeroed in place, preserving
+    /// the original length. The returned `Vec` is evidence that the storage
+    /// was scrubbed before release.
     #[cfg(test)]
     #[allow(dead_code)]
     pub(crate) fn into_zeroized_vec(mut self) -> Vec<u8> {
-        // Consume `self` and return its bytes zeroed in place, preserving
-        // the original length. This mirrors the previous semantics where the
-        // returned Vec served as evidence that the storage was scrubbed
-        // before being released.
         let mut inner = std::mem::take(&mut *self.0);
         inner.zeroize();
         inner
