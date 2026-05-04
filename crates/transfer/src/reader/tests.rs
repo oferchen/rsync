@@ -571,8 +571,6 @@ fn multiplex_reader_redo_and_no_send_interleaved() {
     assert_eq!(mux.no_send_indices, vec![7]);
 }
 
-// Batch recorder tests
-
 #[test]
 fn multiplex_reader_batch_recorder_captures_demuxed_data() {
     // Verify that the batch recorder captures post-demux MSG_DATA payloads.
@@ -601,7 +599,6 @@ fn multiplex_reader_batch_recorder_skips_control_messages() {
     // Verify that control messages (MSG_IO_ERROR) are NOT recorded -
     // only MSG_DATA payloads go to the batch recorder.
     let mut stream = Vec::new();
-    // Send an IO_ERROR control message followed by a DATA payload
     protocol::send_msg(
         &mut stream,
         protocol::MessageCode::IoError,
@@ -719,8 +716,6 @@ fn batch_recorder_roundtrip_writer_reader_capture_same_data() {
     assert_eq!(&*write_recorded, b"roundtrip test data");
 }
 
-// Batch recorder + compression tests
-//
 // upstream: io.c:read_buf() tees data to batch_fd BEFORE decompression.
 // The batch recorder must stay on MultiplexReader (not CompressedReader)
 // so it captures compressed wire bytes. The batch header stores
