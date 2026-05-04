@@ -97,11 +97,10 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     config: &RequestConfig<'_>,
     xattr_list: Option<&XattrList>,
 ) -> io::Result<PendingTransfer> {
-    // Send file index using NDX encoding
     ndx_codec.write_ndx(writer, ndx)?;
 
-    // For protocol >= 29, sender expects iflags after NDX
-    // ITEM_TRANSFER (0x8000) tells sender to read sum_head and send delta
+    // For protocol >= 29, sender expects iflags after NDX.
+    // ITEM_TRANSFER (0x8000) tells sender to read sum_head and send delta.
     // upstream: generator.c - ITEM_REPORT_XATTR set when xattr_diff() detects changes
     if config.write_iflags {
         let has_xattr_request = xattr_list.is_some_and(|list| {
@@ -122,14 +121,12 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         }
     }
 
-    // Send sum_head (signature header)
     let sum_head = match signature {
         Some(ref sig) => SumHead::from_signature(sig),
         None => SumHead::empty(),
     };
     sum_head.write(writer)?;
 
-    // Write signature blocks if we have a signature.
     // upstream: generator.c:775-776 - in append mode, generator skips writing
     // signature blocks after sum_head. The sender's receive_sums() (sender.c:87-92)
     // returns early without reading blocks, using sum_head to calculate existing length.
@@ -142,7 +139,6 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     // reads. Per-file flushes defeat buffer batching, causing 1 sendto per
     // ~20-byte request instead of upstream's batched iobuf_out pattern.
 
-    // Create pending transfer for response processing
     let pending = match (signature, basis_path) {
         (Some(sig), Some(basis)) => {
             PendingTransfer::new_delta_transfer(ndx, file_path, basis, sig, target_size)

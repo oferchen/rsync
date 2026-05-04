@@ -108,14 +108,12 @@ pub fn process_file_response<R: Read>(
     let mut output = fast_io::writer_from_file(file, writer_capacity, ctx.config.io_uring_policy)?;
     let mut total_bytes: u64 = 0;
 
-    // Sparse file support
     let mut sparse_state = if ctx.config.use_sparse {
         Some(SparseWriteState::default())
     } else {
         None
     };
 
-    // Open basis file if delta transfer
     let mut basis_map = if let Some(ref path) = basis_path {
         Some(MapFile::open(path).map_err(|e| {
             io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
@@ -132,8 +130,7 @@ pub fn process_file_response<R: Read>(
     loop {
         match token_reader.read_token(reader)? {
             DeltaToken::End => {
-                // End of file - verify checksum using stack buffers.
-                // Use mem::replace to consume the verifier for finalization while
+                // mem::replace consumes the verifier for finalization while
                 // resetting it for the next file (avoids per-file construction).
                 let checksum_len = checksum_verifier.digest_len();
                 let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
@@ -168,7 +165,6 @@ pub fn process_file_response<R: Read>(
                 break;
             }
             DeltaToken::Literal(literal) => {
-                // Write literal data to output and update checksum.
                 // LiteralData::Ready = decompressed data from compressed stream.
                 // LiteralData::Pending = plain mode, caller reads data from stream.
                 match literal {
@@ -183,7 +179,6 @@ pub fn process_file_response<R: Read>(
                         total_bytes += len as u64;
                     }
                     LiteralData::Pending(len) => {
-                        // Plain token: read data from stream.
                         if let Some(data) = reader.try_borrow_exact(len)? {
                             if let Some(ref mut sparse) = sparse_state {
                                 sparse.write(&mut output, data)?;
@@ -258,12 +253,11 @@ pub fn process_file_response<R: Read>(
         }
     }
 
-    // Finalize sparse writing if active
     if let Some(ref mut sparse) = sparse_state {
         let _final_pos = sparse.finish(&mut output)?;
     }
 
-    // Flush and optionally sync (uses io_uring fsync op when available)
+    // Uses io_uring fsync op when available.
     if ctx.config.do_fsync {
         output.sync().map_err(|e| {
             io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
