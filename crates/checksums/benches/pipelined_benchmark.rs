@@ -5,8 +5,8 @@
 //! Run with: `cargo bench -p checksums -- pipelined`
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use std::hint::black_box;
 use rand::Rng;
+use std::hint::black_box;
 use std::io::{Cursor, Read};
 
 use checksums::RollingDigest;

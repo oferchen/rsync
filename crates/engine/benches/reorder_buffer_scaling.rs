@@ -16,8 +16,8 @@
 use std::collections::BTreeMap;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use std::hint::black_box;
 use engine::concurrent_delta::ReorderBuffer;
+use std::hint::black_box;
 
 /// Generates a deterministic shuffled permutation of `0..count` using a simple
 /// linear congruential generator. Produces small local out-of-order gaps that

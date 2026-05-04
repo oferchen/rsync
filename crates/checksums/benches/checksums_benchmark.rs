@@ -5,8 +5,8 @@
 //! Run with: `cargo bench -p checksums`
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use std::hint::black_box;
 use rand::Rng;
+use std::hint::black_box;
 
 use checksums::RollingChecksum;
 use checksums::strong::{Md4, Md5, Sha1, Sha256, Sha512, Xxh3, Xxh64};
