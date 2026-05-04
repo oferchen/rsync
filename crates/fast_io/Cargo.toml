@@ -71,7 +71,7 @@ syscall_batch = []
 # Win32_Networking_WinSock added for WSARecv/WSASend in iocp::socket (#1928);
 # Win32_System_Pipes added for CreatePipe-based tests of anonymous-handle
 # rejection in writer_from_file (#1929).
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
 
 [target.'cfg(not(unix))'.dependencies]
 filetime = "0.2"
