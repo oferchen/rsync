@@ -143,7 +143,8 @@ impl CompressionDecider {
 
     /// Sets the sample size for auto-detection.
     pub fn set_sample_size(&mut self, size: usize) {
-        self.sample_size = size.max(64); // Minimum 64 bytes for meaningful detection
+        // 64 bytes is the smallest sample that yields meaningful ratio measurements.
+        self.sample_size = size.max(64);
     }
 
     /// Byte count sampled from each file for auto-detection.
@@ -170,14 +171,13 @@ impl CompressionDecider {
     /// `AutoDetect` when no content is available for analysis.
     #[must_use]
     pub fn should_compress(&self, path: &Path, first_block: Option<&[u8]>) -> CompressionDecision {
-        // Check extension first (fastest path)
+        // Extension lookup is the fastest path; check it before any content inspection.
         if let Some(ext) = Self::extract_extension(path) {
             if self.skip_extensions.contains(ext.as_str()) {
                 return CompressionDecision::Skip;
             }
         }
 
-        // Check magic bytes if available and enabled
         if self.use_magic_detection {
             if let Some(data) = first_block {
                 if let Some(category) = self.detect_category_by_magic(data) {
@@ -188,12 +188,11 @@ impl CompressionDecider {
             }
         }
 
-        // If we have content but couldn't determine the type, suggest auto-detection
         if first_block.is_some() {
             return CompressionDecision::Compress;
         }
 
-        // Without content, we can't make a definitive decision
+        // No content available; defer to caller's auto-detection pass.
         CompressionDecision::AutoDetect
     }
 
@@ -215,15 +214,15 @@ impl CompressionDecider {
     /// ```
     pub fn auto_detect_compressible(&self, sample: &[u8]) -> io::Result<bool> {
         if sample.is_empty() {
-            return Ok(true); // Empty files are trivially compressible
+            // Empty input has nothing to skip and is trivially "compressible".
+            return Ok(true);
         }
 
-        // Use fast compression level for auto-detection
+        // Use the fastest level: detection only needs ratio, not optimal output.
         let mut encoder = CountingZlibEncoder::new(CompressionLevel::Fast);
         encoder.write_all(sample)?;
         let compressed_len = encoder.finish()? as usize;
 
-        // Calculate compression ratio
         let ratio = compressed_len as f64 / sample.len() as f64;
 
         Ok(ratio < self.compression_threshold)
@@ -231,18 +230,17 @@ impl CompressionDecider {
 
     /// Extracts and normalizes the file extension from a path.
     pub(crate) fn extract_extension(path: &Path) -> Option<Suffix> {
-        // Handle compound extensions like .tar.gz
         let file_name = path.file_name()?.to_str()?;
         let lower = file_name.to_ascii_lowercase();
 
-        // Check for known compound extensions
+        // Compound suffixes like `.tar.gz` must match the full filename to win
+        // over the trailing simple extension (`gz`).
         for compound in COMPOUND_EXTENSIONS {
             if lower.ends_with(compound) {
                 return Some(Suffix::new(compound.trim_start_matches('.')));
             }
         }
 
-        // Fall back to simple extension
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(Suffix::new)
