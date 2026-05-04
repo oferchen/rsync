@@ -172,8 +172,8 @@ async fn connect_and_exec_async(
     let channel_id = channel.id();
     let mut channel_for_read = channel;
 
-    // Handle is not Clone in russh 0.45, so share via Arc<Mutex<_>> to allow
-    // the async bridge task to write while the caller still holds a reference.
+    // Handle is not Clone in russh, so share via Arc<Mutex<_>> to allow the
+    // async bridge task to write while the caller still holds a reference.
     let handle_shared = Arc::new(tokio::sync::Mutex::new(handle));
     let handle_for_write = handle_shared.clone();
 
@@ -197,13 +197,7 @@ async fn connect_and_exec_async(
                     match write_data {
                         Some(data) => {
                             let h = handle_for_write.lock().await;
-                            if h.data(
-                                channel_id,
-                                russh::CryptoVec::from_slice(&data),
-                            )
-                            .await
-                            .is_err()
-                            {
+                            if h.data(channel_id, data).await.is_err() {
                                 break;
                             }
                         }
