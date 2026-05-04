@@ -4,11 +4,12 @@
 //! matching upstream rsync's static `wf_writeBuf` (fileio.c:161). Large
 //! chunks bypass the buffer entirely via `write_all_vectored`.
 //!
-//! The [`Writer`] enum dispatches between `ReusableBufWriter` and
-//! [`fast_io::IoUringDiskBatch`] so the disk-commit hot path can use batched
-//! io_uring submissions when available (Linux 5.6+ with the `io_uring`
-//! feature) while preserving identical semantics for sparse mode and
-//! non-Linux platforms.
+//! The [`Writer`] enum dispatches between `ReusableBufWriter`,
+//! [`fast_io::IoUringDiskBatch`] (Linux 5.6+ with the `io_uring` feature),
+//! and [`fast_io::IocpDiskBatch`] (Windows with the `iocp` feature) so the
+//! disk-commit hot path can use batched async submissions when available
+//! while preserving identical semantics for sparse mode and platforms
+//! without a batched backend.
 
 use std::fs;
 use std::io::{self, IoSlice, Seek, Write};
@@ -132,15 +133,20 @@ impl Seek for ReusableBufWriter<'_> {
 /// `Buffered` uses [`ReusableBufWriter`] backed by the thread's reusable
 /// 256 KB buffer. `IoUring` borrows the disk thread's persistent
 /// [`fast_io::IoUringDiskBatch`] which has already been registered with the
-/// active file via `begin_file`.
+/// active file via `begin_file`. `Iocp` is the Windows analogue, borrowing
+/// the persistent [`fast_io::IocpDiskBatch`].
 ///
-/// Sparse mode requires `Seek`, which `IoUringDiskBatch` does not provide,
-/// so callers must select `Buffered` whenever `use_sparse` is set.
+/// Sparse mode requires `Seek`, which neither batch writer provides, so
+/// callers must select `Buffered` whenever `use_sparse` is set.
 pub(super) enum Writer<'a> {
     Buffered(ReusableBufWriter<'a>),
     #[cfg(all(target_os = "linux", feature = "io_uring"))]
     IoUring {
         batch: &'a mut fast_io::IoUringDiskBatch,
+    },
+    #[cfg(all(target_os = "windows", feature = "iocp"))]
+    Iocp {
+        batch: &'a mut fast_io::IocpDiskBatch,
     },
 }
 
@@ -148,14 +154,19 @@ impl<'a> Writer<'a> {
     /// Returns a `Write + Seek` view of the buffered writer for sparse mode.
     ///
     /// Sparse writes require `Seek` to punch holes via `seek(Current(n))`,
-    /// which io_uring's batch writer does not support. Sparse mode therefore
-    /// always uses the buffered variant; this accessor enforces that at the
-    /// type level.
+    /// which neither the io_uring nor IOCP batch writer supports. Sparse
+    /// mode therefore always uses the buffered variant; this accessor
+    /// enforces that at the type level.
     pub(super) fn buffered_for_sparse(&mut self) -> &mut ReusableBufWriter<'a> {
         match self {
             Writer::Buffered(w) => w,
             #[cfg(all(target_os = "linux", feature = "io_uring"))]
             Writer::IoUring { .. } => {
+                debug_assert!(false, "sparse mode must select buffered writer");
+                unreachable!("sparse mode must select buffered writer")
+            }
+            #[cfg(all(target_os = "windows", feature = "iocp"))]
+            Writer::Iocp { .. } => {
                 debug_assert!(false, "sparse mode must select buffered writer");
                 unreachable!("sparse mode must select buffered writer")
             }
@@ -168,14 +179,16 @@ impl<'a> Writer<'a> {
             Writer::Buffered(w) => w.write_all(data),
             #[cfg(all(target_os = "linux", feature = "io_uring"))]
             Writer::IoUring { batch } => batch.write_data(data),
+            #[cfg(all(target_os = "windows", feature = "iocp"))]
+            Writer::Iocp { batch } => batch.write_data(data),
         }
     }
 
     /// Flushes pending data and, when requested, fsyncs the underlying file.
     ///
-    /// For the io_uring variant this is a no-op: both flush and fsync are
-    /// performed atomically by [`Self::finish`] via the batch's
-    /// `commit_file(do_fsync)`, avoiding a redundant ring submission.
+    /// For the io_uring and IOCP variants this is a no-op: both flush and
+    /// fsync are performed atomically by [`Self::finish`] via the batch's
+    /// `commit_file(do_fsync)`, avoiding a redundant submission.
     pub(super) fn flush_and_sync(&mut self, do_fsync: bool, file_path: &Path) -> io::Result<()> {
         match self {
             Writer::Buffered(w) => {
@@ -191,17 +204,23 @@ impl<'a> Writer<'a> {
             }
             #[cfg(all(target_os = "linux", feature = "io_uring"))]
             Writer::IoUring { .. } => Ok(()),
+            #[cfg(all(target_os = "windows", feature = "iocp"))]
+            Writer::Iocp { .. } => Ok(()),
         }
     }
 
-    /// Releases the writer and, for io_uring, commits the active file (with
-    /// optional fsync) so its file handle can be used for rename/truncate.
+    /// Releases the writer and, for the batched variants, commits the active
+    /// file (with optional fsync) so its file handle can be used for
+    /// rename/truncate.
     ///
-    /// The buffered variant simply drops, closing the file. The io_uring
-    /// variant calls `commit_file` to flush, optionally fsync, and detach the
-    /// file from the batch.
+    /// The buffered variant simply drops, closing the file. The batched
+    /// variants call `commit_file` to flush, optionally fsync, and detach
+    /// the file from the batch.
     #[cfg_attr(
-        not(all(target_os = "linux", feature = "io_uring")),
+        not(any(
+            all(target_os = "linux", feature = "io_uring"),
+            all(target_os = "windows", feature = "iocp")
+        )),
         allow(unused_variables)
     )]
     pub(super) fn finish(self, do_fsync: bool, file_path: &Path) -> io::Result<()> {
@@ -212,6 +231,13 @@ impl<'a> Writer<'a> {
                 io::Error::new(
                     e.kind(),
                     format!("io_uring commit failed for {file_path:?}: {e}"),
+                )
+            }),
+            #[cfg(all(target_os = "windows", feature = "iocp"))]
+            Writer::Iocp { batch } => batch.commit_file(do_fsync).map(|_| ()).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!("IOCP commit failed for {file_path:?}: {e}"),
                 )
             }),
         }
