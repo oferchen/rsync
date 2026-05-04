@@ -45,7 +45,6 @@ mod tests {
     #[test]
     fn oc_rsync_as_str_returns_oc_rsync() {
         let result = ProgramName::OcRsync.as_str();
-        // Should be the oc branded name
         assert!(!result.is_empty());
     }
 
@@ -61,7 +60,6 @@ mod tests {
 
     #[test]
     fn detect_with_none_returns_program_name() {
-        // With None, it should return a valid program name
         let result = detect_program_name(None);
         assert!(result == ProgramName::Rsync || result == ProgramName::OcRsync);
     }

@@ -26,7 +26,6 @@ use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
 #[allow(private_interfaces)] // ProgramName, BandwidthArgument are pub(crate) but exposed for tests
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedArgs {
-    // ── General ──────────────────────────────────────────────────────
     /// Program name detected from `argv[0]`.
     pub program_name: ProgramName,
 
@@ -48,7 +47,6 @@ pub struct ParsedArgs {
     /// Remaining non-option arguments (sources and destination).
     pub remainder: Vec<OsString>,
 
-    // ── Connection / Transport ───────────────────────────────────────
     /// `--rsh`, `-e` - remote shell command.
     pub remote_shell: Option<OsString>,
 
@@ -97,7 +95,6 @@ pub struct ParsedArgs {
     /// `--stop-at` - stop transfer at the specified wall-clock time.
     pub stop_at: Option<OsString>,
 
-    // ── Server / Daemon ──────────────────────────────────────────────
     /// `--server` - run in server mode (internal, set by remote invocation).
     pub server_mode: bool,
 
@@ -122,7 +119,6 @@ pub struct ParsedArgs {
     /// `--password-file` - file containing daemon authentication password.
     pub password_file: Option<OsString>,
 
-    // ── Recursion / Traversal ────────────────────────────────────────
     /// `--archive`, `-a` - shorthand for `-rlptgoD`.
     pub archive: bool,
 
@@ -155,7 +151,6 @@ pub struct ParsedArgs {
     /// `--prune-empty-dirs`, `-m` / `--no-prune-empty-dirs`.
     pub prune_empty_dirs: Option<bool>,
 
-    // ── Transfer Behavior ────────────────────────────────────────────
     /// `--checksum`, `-c` / `--no-checksum` - skip based on checksum, not mtime+size.
     pub checksum: Option<bool>,
 
@@ -209,7 +204,6 @@ pub struct ParsedArgs {
     /// `--trust-sender` - trust the sending side's file list.
     pub trust_sender: bool,
 
-    // ── Delete ───────────────────────────────────────────────────────
     /// `--delete`, `--delete-before`, `--delete-during`, `--delete-delay`,
     /// `--delete-after` - scheduling mode for extraneous file deletion.
     pub delete_mode: DeleteMode,
@@ -229,7 +223,6 @@ pub struct ParsedArgs {
     /// `--force` / `--no-force` - force deletion of non-empty directories.
     pub force: Option<bool>,
 
-    // ── Metadata / Permissions ───────────────────────────────────────
     /// `--owner`, `-o` / `--no-owner` - preserve file owner.
     pub owner: Option<bool>,
 
@@ -287,7 +280,6 @@ pub struct ParsedArgs {
     /// `--numeric-ids` / `--no-numeric-ids` - use numeric uid/gid instead of names.
     pub numeric_ids: Option<bool>,
 
-    // ── Symlinks / Links ─────────────────────────────────────────────
     /// `--hard-links`, `-H` / `--no-hard-links` - preserve hard links.
     pub hard_links: Option<bool>,
 
@@ -312,7 +304,6 @@ pub struct ParsedArgs {
     /// `--munge-links` / `--no-munge-links` - munge symlinks for safety.
     pub munge_links: Option<bool>,
 
-    // ── Devices / Specials ───────────────────────────────────────────
     /// `--devices` / `--no-devices` - preserve device files.
     pub devices: Option<bool>,
 
@@ -325,7 +316,6 @@ pub struct ParsedArgs {
     /// `--write-devices` / `--no-write-devices` - allow writing to device files.
     pub write_devices: Option<bool>,
 
-    // ── Compression ──────────────────────────────────────────────────
     /// `--compress`, `-z` - enable transfer compression.
     pub compress: bool,
 
@@ -347,7 +337,6 @@ pub struct ParsedArgs {
     /// `--skip-compress` - file suffixes to skip compression for.
     pub skip_compress: Option<OsString>,
 
-    // ── Backup ───────────────────────────────────────────────────────
     /// `--backup`, `-b` - make backups before overwriting.
     pub backup: bool,
 
@@ -357,7 +346,6 @@ pub struct ParsedArgs {
     /// `--suffix` - suffix for backup file names (default `~`).
     pub backup_suffix: Option<OsString>,
 
-    // ── Filters / Patterns ───────────────────────────────────────────
     /// `--exclude` - patterns for excluding files.
     pub excludes: Vec<OsString>,
 
@@ -388,7 +376,6 @@ pub struct ParsedArgs {
     /// `--from0`, `-0` - use NUL as line separator in files-from.
     pub from0: bool,
 
-    // ── Destination References ────────────────────────────────────────
     /// `--compare-dest` - directories to compare against when deciding transfers.
     pub compare_destinations: Vec<OsString>,
 
@@ -401,7 +388,6 @@ pub struct ParsedArgs {
     /// Resolved `--link-dest` paths for internal processing.
     pub link_dests: Vec<PathBuf>,
 
-    // ── I/O / Performance ────────────────────────────────────────────
     /// `--bwlimit` - bandwidth limit (supports K, M, G suffixes).
     pub bwlimit: Option<BandwidthArgument>,
 
@@ -459,7 +445,6 @@ pub struct ParsedArgs {
     /// `--qsort` - use qsort instead of merge-sort for file list sorting.
     pub qsort: bool,
 
-    // ── Output / Formatting ──────────────────────────────────────────
     /// `--verbose`, `-v` / `--quiet`, `-q` - output verbosity level.
     pub verbosity: u8,
 
@@ -505,7 +490,6 @@ pub struct ParsedArgs {
     /// `--log-file-format` - format string for log file entries.
     pub log_file_format: Option<OsString>,
 
-    // ── Batch ────────────────────────────────────────────────────────
     /// `--write-batch` - write a batch file for later replay.
     pub write_batch: Option<OsString>,
 
@@ -518,12 +502,10 @@ pub struct ParsedArgs {
     /// `--early-input` - input file for early protocol stages.
     pub early_input: Option<OsString>,
 
-    // ── SSH ──────────────────────────────────────────────────────────
     /// `--aes` - force AES-GCM cipher selection for SSH connections.
     /// `None` = use runtime hardware detection.
     pub prefer_aes_gcm: Option<bool>,
 
-    // ── Embedded SSH ────────────────────────────────────────────────
     /// `--ssh-cipher` - comma-separated cipher preference list for embedded SSH.
     pub ssh_cipher: Vec<String>,
 

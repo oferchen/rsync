@@ -1605,7 +1605,6 @@ mod path_operands {
 
     #[test]
     fn paths_with_options_before_operands() {
-        // Options must come before operands
         let parsed = parse_test_args(["-a", "-v", "src/", "dst/"]).expect("parse");
         assert!(parsed.archive);
         assert_eq!(parsed.verbosity, 1);
@@ -2148,7 +2147,6 @@ mod checksum_choice_tests {
 
     #[test]
     fn checksum_seed_with_checksum_flag() {
-        // --checksum and --checksum-seed can be combined
         let parsed = parse_test_args(["-c", "--checksum-seed=42", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.checksum, Some(true));
         assert_eq!(parsed.checksum_seed, Some(42));
@@ -2705,7 +2703,6 @@ mod timeout_tests {
     fn no_timeout_option() {
         let parsed =
             parse_test_args(["--timeout=30", "--no-timeout", "src/", "dst/"]).expect("parse");
-        // --no-timeout should override --timeout
         assert_eq!(parsed.timeout, None);
     }
 
@@ -2713,7 +2710,6 @@ mod timeout_tests {
     fn no_contimeout_option() {
         let parsed =
             parse_test_args(["--contimeout=10", "--no-contimeout", "src/", "dst/"]).expect("parse");
-        // --no-contimeout should override --contimeout
         assert_eq!(parsed.contimeout, None);
     }
 }
