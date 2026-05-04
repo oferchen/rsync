@@ -11,7 +11,8 @@
 use std::io::Cursor;
 use std::num::{NonZeroU8, NonZeroU32};
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 
 use matching::{DeltaSignatureIndex, apply_delta, generate_delta};
 use protocol::ProtocolVersion;

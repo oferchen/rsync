@@ -15,7 +15,8 @@
 
 use std::num::{NonZeroU8, NonZeroU32};
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 
 use checksums::RollingChecksum;
 use matching::{DeltaGenerator, DeltaSignatureIndex, generate_delta};

@@ -11,7 +11,8 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 
 use protocol::flist::{FileEntry, FileListReader, FileListWriter};
 use protocol::wire::{

@@ -5,7 +5,8 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use tempfile::NamedTempFile;
 use transfer::map_file::MapFile;
 
