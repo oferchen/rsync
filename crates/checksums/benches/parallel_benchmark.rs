@@ -4,7 +4,8 @@
 //!
 //! Run with: `cargo bench -p checksums --features parallel`
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use rand::Rng;
 
 use checksums::RollingChecksum;

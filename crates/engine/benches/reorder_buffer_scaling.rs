@@ -15,7 +15,8 @@
 
 use std::collections::BTreeMap;
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use engine::concurrent_delta::ReorderBuffer;
 
 /// Generates a deterministic shuffled permutation of `0..count` using a simple

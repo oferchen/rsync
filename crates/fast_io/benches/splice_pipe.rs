@@ -34,7 +34,8 @@ fn bench_splice_pipe(c: &mut Criterion) {
     use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
     use std::thread;
 
-    use criterion::{BenchmarkId, Throughput, black_box};
+    use criterion::{BenchmarkId, Throughput};
+    use std::hint::black_box;
     use tempfile::NamedTempFile;
 
     /// Payload sizes exercised by the bench. 64 KiB matches the default

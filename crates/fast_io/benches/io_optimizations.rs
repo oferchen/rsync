@@ -12,7 +12,8 @@
 use std::fs::File;
 use std::io::{BufWriter, IoSlice, Read, Write};
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use tempfile::{NamedTempFile, tempdir};
 
 #[cfg(all(unix, not(all(target_os = "linux", feature = "io_uring"))))]
