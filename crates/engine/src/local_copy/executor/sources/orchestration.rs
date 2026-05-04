@@ -147,8 +147,7 @@ fn process_single_source(
     destination_behaves_like_directory: bool,
     multiple_sources: bool,
 ) -> Result<(), LocalCopyError> {
-    // Reset safety depth offset for each source. Directory copy handlers
-    // will set the correct value before recursing.
+    // Directory copy handlers set the correct offset before recursing.
     context.set_safety_depth_offset(0);
     context.enforce_timeout()?;
 

@@ -404,7 +404,6 @@ mod tests {
         let results = prefetch_checksums(&pairs, algorithm);
         let result = results.get(&source).unwrap();
 
-        // Size mismatch means no checksums computed
         assert!(result.source_checksum.is_none());
         assert!(result.destination_checksum.is_none());
         assert!(!result.checksums_match());
@@ -442,7 +441,6 @@ mod tests {
         let dir = create_tempdir();
         let mut pairs = Vec::new();
 
-        // Create 100 file pairs
         for i in 0..100 {
             let source = dir.path().join(format!("source_{i}.txt"));
             let destination = dir.path().join(format!("dest_{i}.txt"));

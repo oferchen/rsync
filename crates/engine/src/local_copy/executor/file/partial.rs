@@ -62,7 +62,6 @@ impl PartialMode {
         }
 
         if partial {
-            // Check environment variable
             if let Ok(env_dir) = env::var("RSYNC_PARTIAL_DIR") {
                 if !env_dir.is_empty() {
                     return Self::PartialDir(PathBuf::from(env_dir));
@@ -371,7 +370,6 @@ mod tests {
         let dest = dir.path().join("file.txt");
         let partial = dir.path().join(".rsync-partial-file.txt");
 
-        // Create partial file
         fs::write(&partial, b"partial data").expect("write partial");
 
         let manager = PartialFileManager::new(PartialMode::Keep);
@@ -398,7 +396,6 @@ mod tests {
         let dest = dir.path().join("file.txt");
         let partial = partial_dir.join("file.txt");
 
-        // Create partial file in partial dir
         fs::write(&partial, b"partial data").expect("write partial");
 
         let manager = PartialFileManager::new(PartialMode::PartialDir(partial_dir));
@@ -424,12 +421,10 @@ mod tests {
         let partial_dir = base_dir.path().join("global-partial");
         fs::create_dir(&partial_dir).expect("create partial dir");
 
-        // Destination in different directory
         let dest_dir = base_dir.path().join("data");
         fs::create_dir(&dest_dir).expect("create dest dir");
         let dest = dest_dir.join("file.txt");
 
-        // Partial file in absolute partial dir
         let partial = partial_dir.join("file.txt");
         fs::write(&partial, b"partial data").expect("write partial");
 
@@ -474,14 +469,12 @@ mod tests {
         let dest = dir.path().join("file.txt");
         let partial = dir.path().join(".rsync-partial-file.txt");
 
-        // Create partial file
         fs::write(&partial, b"partial data").expect("write partial");
         assert!(partial.exists());
 
         let manager = PartialFileManager::new(PartialMode::Keep);
         manager.cleanup_partial(&dest).expect("cleanup");
 
-        // Partial should be removed
         assert!(!partial.exists());
     }
 
@@ -504,14 +497,12 @@ mod tests {
         let dest = dir.path().join("file.txt");
         let partial = partial_dir.join("file.txt");
 
-        // Create partial file
         fs::write(&partial, b"partial data").expect("write partial");
         assert!(partial.exists());
 
         let manager = PartialFileManager::new(PartialMode::PartialDir(partial_dir));
         manager.cleanup_partial(&dest).expect("cleanup");
 
-        // Partial should be removed
         assert!(!partial.exists());
     }
 

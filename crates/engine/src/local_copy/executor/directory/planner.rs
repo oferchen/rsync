@@ -379,17 +379,14 @@ pub(crate) fn plan_directory_entries_parallel<'a>(
 ) -> Result<DirectoryPlan<'a>, LocalCopyError> {
     use super::parallel_planner::{PrefetchConfig, prefetch_entry_metadata};
 
-    // Determine what needs to be prefetched based on context options
     let config = PrefetchConfig {
         follow_symlinks: context.copy_links_enabled() || context.copy_dirlinks_enabled(),
         read_symlink_targets: context.copy_unsafe_links_enabled(),
         check_devices: context.one_file_system_enabled() && root_device.is_some(),
     };
 
-    // Prefetch metadata in parallel
     let prefetched = prefetch_entry_metadata(entries, config);
 
-    // Now run the sequential planning with prefetched data
     plan_directory_entries_with_prefetch(context, entries, relative, root_device, &prefetched)
 }
 
@@ -433,7 +430,6 @@ fn plan_directory_entries_with_prefetch<'a>(
         let mut metadata_override = None;
         let mut effective_type = entry_type;
 
-        // Use prefetched symlink metadata if available
         if entry_type.is_symlink()
             && (context.copy_links_enabled() || context.copy_dirlinks_enabled())
         {
@@ -554,7 +550,6 @@ fn plan_directory_entries_with_prefetch<'a>(
             }
         }
 
-        // Use prefetched device ID for one-file-system check
         #[cfg(unix)]
         if matches!(action, EntryAction::CopyDirectory)
             && context.one_file_system_enabled()
@@ -625,7 +620,6 @@ mod tests {
     fn entry_action_copy() {
         let action = EntryAction::CopyDirectory;
         let copied = action;
-        // Original still usable
         assert!(matches!(action, EntryAction::CopyDirectory));
         assert!(matches!(copied, EntryAction::CopyDirectory));
     }

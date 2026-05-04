@@ -175,7 +175,6 @@ pub(crate) fn copy_symlink(
         }
     }
 
-    // --existing handling
     if context.existing_only_enabled() && destination_metadata.is_none() {
         if let Some(relative_path) = record_path.as_ref() {
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
@@ -191,8 +190,6 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    // build a "relative" path to check symlink safety
-    //
     // When copying a directory without a trailing slash, the `relative` path
     // starts with the source directory name (e.g. "source/a/b/link").  That
     // first component is the transfer root itself, not an actual depth level,
@@ -291,7 +288,6 @@ pub(crate) fn copy_symlink(
         remove_existing_destination(destination)?;
     }
 
-    // dedupe via hard links if we saw an identical symlink before
     if let Some(existing_target) = context.existing_hard_link_target(metadata) {
         if mode.is_dry_run() {
             context.summary_mut().record_symlink();
@@ -372,7 +368,6 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    // dry-run: just record
     if mode.is_dry_run() {
         context.summary_mut().record_symlink();
         if let Some(path) = &record_path {
