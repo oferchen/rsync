@@ -15,6 +15,7 @@ mod integration;
 
 use integration::helpers::*;
 use std::fs;
+#[cfg(unix)]
 use std::io::{Seek, SeekFrom, Write};
 
 #[cfg(unix)]
