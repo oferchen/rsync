@@ -69,7 +69,6 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         requires_inc_recurse: false,
         requires_iconv: true,
     },
-    // SAFE_FILE_LIST: 'f'
     CapabilityMapping {
         char: 'f',
         flag: CompatibilityFlags::SAFE_FILE_LIST,
@@ -101,7 +100,6 @@ pub(crate) const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
         requires_inc_recurse: false,
         requires_iconv: false,
     },
-    // VARINT_FLIST_FLAGS: 'v'
     CapabilityMapping {
         char: 'v',
         flag: CompatibilityFlags::VARINT_FLIST_FLAGS,
@@ -183,30 +181,24 @@ pub fn build_capability_string(allow_inc_recurse: bool) -> String {
 /// - `["-efxCIvu"]` -> "fxCIvu"
 /// - `["-vvde.LsfxCIvu"]` -> ".LsfxCIvu" (combined short options)
 pub(crate) fn parse_client_info(client_args: &[String]) -> Cow<'_, str> {
-    // Look for -e followed by capability string
     for i in 0..client_args.len() {
         let arg = &client_args[i];
 
-        // Check for combined short options like "-vvde.LsfxCIvu"
-        // The -e option may appear in the middle of other short options
+        // Combined short options like "-vvde.LsfxCIvu" embed -e in the middle.
         if arg.starts_with('-')
             && !arg.starts_with("--")
             && let Some(e_pos) = arg.find('e')
+            && e_pos + 1 < arg.len()
         {
-            // Found 'e' in the argument
-            // Everything after 'e' is the capability string
-            if e_pos + 1 < arg.len() {
-                let caps = &arg[e_pos + 1..];
-                // Skip leading '.' which is a version placeholder
-                // (upstream puts '.' when protocol_version != PROTOCOL_VERSION)
-                if caps.starts_with('.') && caps.len() > 1 {
-                    return Cow::Borrowed(&caps[1..]);
-                }
-                return Cow::Borrowed(caps);
+            let caps = &arg[e_pos + 1..];
+            // Skip leading '.' version placeholder.
+            // upstream: options.c puts '.' when protocol_version != PROTOCOL_VERSION
+            if caps.starts_with('.') && caps.len() > 1 {
+                return Cow::Borrowed(&caps[1..]);
             }
+            return Cow::Borrowed(caps);
         }
 
-        // Check for "-e" "fxCIvu" (separate args)
         if arg == "-e" && i + 1 < client_args.len() {
             return Cow::Borrowed(&client_args[i + 1]);
         }
@@ -234,24 +226,21 @@ pub(crate) fn build_compat_flags_from_client_info(
     let mut flags = CompatibilityFlags::from_bits(0);
 
     for mapping in CAPABILITY_MAPPINGS {
-        // Skip if platform doesn't support this capability
         if !mapping.platform_ok {
             continue;
         }
 
-        // Skip if requires inc_recurse but not allowed
         if mapping.requires_inc_recurse && !allow_inc_recurse {
             continue;
         }
 
-        // Skip if the build lacks iconv support; mirrors upstream's
-        // `#ifdef ICONV_OPTION` so we never set CF_SYMLINK_ICONV for a
-        // peer who advertises 's' if we cannot transcode our own stream.
+        // Mirror upstream's `#ifdef ICONV_OPTION` so we never set
+        // CF_SYMLINK_ICONV for a peer who advertises 's' if we cannot
+        // transcode our own stream.
         if mapping.requires_iconv && !iconv_capability_compiled_in() {
             continue;
         }
 
-        // Enable flag if client advertises the capability
         if client_info.contains(mapping.char) {
             flags |= mapping.flag;
         }

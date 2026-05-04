@@ -97,10 +97,5 @@ pub fn exchange_compat_flags_direct(
     // CRITICAL: Flush immediately to ensure data leaves application buffers
     stream.flush()?;
 
-    // NOTE: In daemon mode, the server does NOT read anything back!
-    // The upstream code shows that when am_server=true, only write_varint is called.
-    // The client (am_server=false) reads the flags but doesn't send anything back.
-    // This is a UNIDIRECTIONAL send from server to client.
-
     Ok(Some(final_flags))
 }
