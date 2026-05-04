@@ -612,7 +612,6 @@ mod tests {
 
     #[test]
     fn decode_proxy_component_invalid_utf8_returns_error() {
-        // %FF %FE are not valid UTF-8 sequence starters
         let result = decode_proxy_component("%FF%FE", "field");
         assert!(result.is_err());
     }
@@ -620,14 +619,12 @@ mod tests {
     #[test]
     fn proxy_credentials_authorization_value_basic_auth() {
         let creds = ProxyCredentials::new("user".to_owned(), "pass".to_owned());
-        // user:pass base64 encoded should be "dXNlcjpwYXNz"
         assert_eq!(creds.authorization_value(), "dXNlcjpwYXNz");
     }
 
     #[test]
     fn proxy_credentials_authorization_value_empty_password() {
         let creds = ProxyCredentials::new("user".to_owned(), "".to_owned());
-        // user: base64 encoded should be "dXNlcjo="
         assert_eq!(creds.authorization_value(), "dXNlcjo=");
     }
 
@@ -687,10 +684,9 @@ mod tests {
 
     #[test]
     fn parse_proxy_spec_colon_in_password() {
-        // Password containing colons should work (only first colon splits user:pass)
+        // Only first colon splits user:pass; remaining colons are part of the password.
         let config = parse_proxy_spec("user:pass:with:colons@proxy.example.com:8080").unwrap();
         assert!(config.credentials.is_some());
-        // The password should be "pass:with:colons"
         let decoded = STANDARD
             .decode(config.credentials.unwrap().authorization_value())
             .unwrap();

@@ -47,35 +47,30 @@ mod tests {
         ClientConfig::default()
     }
 
-    // Tests for transfer_args
     #[test]
     fn transfer_args_default_is_empty() {
         let config = default_config();
         assert!(config.transfer_args().is_empty());
     }
 
-    // Tests for reference_directories
     #[test]
     fn reference_directories_default_is_empty() {
         let config = default_config();
         assert!(config.reference_directories().is_empty());
     }
 
-    // Tests for list_only
     #[test]
     fn list_only_default_is_false() {
         let config = default_config();
         assert!(!config.list_only());
     }
 
-    // Tests for has_transfer_request
     #[test]
     fn has_transfer_request_default_is_false() {
         let config = default_config();
         assert!(!config.has_transfer_request());
     }
 
-    // Tests for batch_config
     #[test]
     fn batch_config_default_is_none() {
         let config = default_config();
