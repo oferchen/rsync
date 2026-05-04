@@ -76,30 +76,25 @@ pub(crate) fn copy_directory_recursive(
         None
     };
 
-    // Check destination state and determine if we need to create it
     let destination_state = check_destination_state(context, destination, relative)?;
     let destination_missing = destination_state == DestinationState::Missing;
 
-    // Handle existing_only mode early exit
     if destination_missing && context.existing_only_enabled() {
         record_skipped_missing_destination(context, metadata, relative);
         return Ok(false);
     }
 
-    // Read and sort source directory entries
     let list_start = Instant::now();
     let entries = read_directory_entries_sorted(source)?;
     context.record_file_list_generation(list_start.elapsed());
     context.register_progress();
 
-    // Enter directory for filter processing
     let dir_merge_guard = context.enter_directory(source)?;
     if dir_merge_guard.is_excluded() {
         return Ok(false);
     }
     let _dir_merge_guard = dir_merge_guard;
 
-    // Setup directory creation state
     let directory_ready = Cell::new(!destination_missing);
     let mut created_directory_on_disk = false;
     let creation_record_pending = destination_missing && relative.is_some();
@@ -113,7 +108,6 @@ pub(crate) fn copy_directory_recursive(
 
     let mut kept_any = !prune_enabled;
 
-    // Closure to ensure the destination directory exists when needed
     let mut ensure_directory = |context: &mut CopyContext| -> Result<(), LocalCopyError> {
         if directory_ready.get() {
             return Ok(());
@@ -162,7 +156,6 @@ pub(crate) fn copy_directory_recursive(
         Ok(())
     };
 
-    // Handle non-recursive mode: just create the directory without descending
     if !context.recursive_enabled() {
         ensure_directory(context)?;
         record_directory_completion(context, creation_record_pending, pending_record.take());
@@ -186,16 +179,13 @@ pub(crate) fn copy_directory_recursive(
         return Ok(true);
     }
 
-    // Ensure directory exists if not pruning
     if !directory_ready.get() && !prune_enabled {
         ensure_directory(context)?;
     }
 
-    // Plan directory entries and apply pre-transfer deletions
     let plan = plan_directory_entries(context, &entries, relative, root_device)?;
     apply_pre_transfer_deletions(context, destination, relative, &plan)?;
 
-    // Prefetch checksums in parallel when checksum mode is enabled
     {
         let cache = prefetch_directory_checksums(context, &plan, destination);
         if !cache.is_empty() {
@@ -203,7 +193,6 @@ pub(crate) fn copy_directory_recursive(
         }
     }
 
-    // Process each planned entry
     let mut first_entry_io_error: Option<LocalCopyError> = None;
     for planned in &plan.planned_entries {
         let result = process_planned_entry(
@@ -241,10 +230,8 @@ pub(crate) fn copy_directory_recursive(
         }
     }
 
-    // Clear checksum cache to free memory
     context.clear_checksum_cache();
 
-    // Handle post-transfer deletions
     handle_post_transfer_deletions(
         context,
         destination,
@@ -254,7 +241,6 @@ pub(crate) fn copy_directory_recursive(
         &plan.keep_names,
     )?;
 
-    // Handle empty directory pruning
     if prune_enabled && !kept_any {
         handle_empty_directory_pruning(context, destination, created_directory_on_disk)?;
         if let Some(error) = first_entry_io_error {
@@ -263,7 +249,6 @@ pub(crate) fn copy_directory_recursive(
         return Ok(false);
     }
 
-    // Record completion and apply final metadata
     record_directory_completion(context, creation_record_pending, pending_record);
 
     if !context.mode().is_dry_run() {
@@ -304,7 +289,6 @@ mod tests {
     use test_support::create_tempdir;
 
     fn create_test_entry(path: PathBuf, file_name: &str, size: u64) -> DirectoryEntry {
-        // Create the actual file so we can get metadata
         std::fs::write(&path, vec![0u8; size as usize]).expect("create test file");
         let metadata = std::fs::metadata(&path).expect("get metadata");
         DirectoryEntry {
@@ -322,12 +306,10 @@ mod tests {
         std::fs::create_dir_all(&source_dir).unwrap();
         std::fs::create_dir_all(&dest_dir).unwrap();
 
-        // Create source files
         let entry1 = create_test_entry(source_dir.join("file1.txt"), "file1.txt", 100);
         let entry2 = create_test_entry(source_dir.join("file2.txt"), "file2.txt", 200);
         let entry3 = create_test_entry(source_dir.join("dir"), "dir", 0);
 
-        // Create destination files with same sizes
         std::fs::write(dest_dir.join("file1.txt"), vec![0u8; 100]).unwrap();
         std::fs::write(dest_dir.join("file2.txt"), vec![0u8; 200]).unwrap();
         std::fs::create_dir(dest_dir.join("dir")).unwrap();
@@ -363,7 +345,6 @@ mod tests {
 
         let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir);
 
-        // Should only include CopyFile entries (2 files, not the directory)
         assert_eq!(pairs.len(), 2);
         assert!(pairs.iter().any(|p| p.source.ends_with("file1.txt")));
         assert!(pairs.iter().any(|p| p.source.ends_with("file2.txt")));
@@ -377,10 +358,7 @@ mod tests {
         std::fs::create_dir_all(&source_dir).unwrap();
         std::fs::create_dir_all(&dest_dir).unwrap();
 
-        // Create source file
         let entry = create_test_entry(source_dir.join("file.txt"), "file.txt", 100);
-
-        // Don't create destination file
 
         let entries = [entry];
         let planned: Vec<PlannedEntry> = vec![PlannedEntry {
@@ -399,7 +377,6 @@ mod tests {
 
         let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir);
 
-        // Should be empty because destination doesn't exist
         assert!(pairs.is_empty());
     }
 
@@ -411,10 +388,8 @@ mod tests {
         std::fs::create_dir_all(&source_dir).unwrap();
         std::fs::create_dir_all(&dest_dir).unwrap();
 
-        // Create source file (100 bytes)
         let entry = create_test_entry(source_dir.join("file.txt"), "file.txt", 100);
 
-        // Create destination file with different size (50 bytes)
         std::fs::write(dest_dir.join("file.txt"), vec![0u8; 50]).unwrap();
 
         let entries = [entry];
@@ -434,7 +409,6 @@ mod tests {
 
         let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir);
 
-        // Should be empty because sizes don't match
         assert!(pairs.is_empty());
     }
 
@@ -446,10 +420,8 @@ mod tests {
         std::fs::create_dir_all(&source_dir).unwrap();
         std::fs::create_dir_all(&dest_dir).unwrap();
 
-        // Create source file (100 bytes)
         let entry = create_test_entry(source_dir.join("file.txt"), "file.txt", 100);
 
-        // Create destination file with same size (100 bytes)
         std::fs::write(dest_dir.join("file.txt"), vec![0u8; 100]).unwrap();
 
         let entries = [entry];

@@ -68,7 +68,7 @@ jobs:
           shared-key: ci-${{ runner.os }}-coverage-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Install cargo-llvm-cov and cargo-nextest
-        uses: taiki-e/install-action@1329c298aa20c3257846c9b2e0e55967df3e3c37 # v2
+        uses: taiki-e/install-action@db5fb34fa772531a3ece57ca434f579eb334e0fb # v2
         with:
           tool: cargo-llvm-cov,cargo-nextest
 

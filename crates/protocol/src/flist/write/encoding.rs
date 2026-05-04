@@ -33,8 +33,8 @@ impl FileListWriter {
         is_dir: bool,
     ) -> io::Result<()> {
         if self.use_varint_flags() {
-            // Varint mode: avoid xflags=0 which looks like end marker.
-            // Upstream flist.c line 550: write_varint(f, xflags ? xflags : XMIT_EXTENDED_FLAGS)
+            // Varint mode: avoid xflags=0 which collides with the end marker.
+            // upstream: flist.c:550 write_varint(f, xflags ? xflags : XMIT_EXTENDED_FLAGS)
             let flags_to_write = if xflags == 0 {
                 XMIT_EXTENDED_FLAGS as u32
             } else {
@@ -42,7 +42,6 @@ impl FileListWriter {
             };
             write_varint(writer, flags_to_write as i32)?;
         } else if self.protocol.supports_extended_flags() {
-            // Protocol 28-29: two-byte encoding if needed
             let mut xflags_to_write = xflags;
             if xflags_to_write == 0 && !is_dir {
                 xflags_to_write |= XMIT_TOP_DIR as u32;
@@ -55,7 +54,6 @@ impl FileListWriter {
                 writer.write_all(&[xflags_to_write as u8])?;
             }
         } else {
-            // Protocol < 28: single byte
             // upstream: flist.c:559-562 - dirs use XMIT_LONG_NAME, non-dirs use XMIT_TOP_DIR
             let flags_to_write = if (xflags & 0xFF) == 0 {
                 if is_dir {
@@ -163,7 +161,7 @@ impl FileListWriter {
                 entry.rdev_minor().unwrap_or(0),
             )
         } else {
-            // Special file: dummy rdev (0, 0)
+            // Special file: dummy rdev (0, 0).
             (0, 0)
         };
 
@@ -174,7 +172,6 @@ impl FileListWriter {
         if self.protocol.as_u8() >= 30 {
             write_varint(writer, minor as i32)?;
         } else {
-            // Protocol 28-29: check XMIT_RDEV_MINOR_8_PRE30 flag
             let minor_8_bit = (xflags & ((XMIT_RDEV_MINOR_8_PRE30 as u32) << 8)) != 0;
             if minor_8_bit {
                 writer.write_all(&[minor as u8])?;
@@ -233,7 +230,6 @@ impl FileListWriter {
         entry: &FileEntry,
         xflags: u32,
     ) -> io::Result<()> {
-        // Only for protocol 28-29, non-directories with hardlink info
         if !self.preserve.hard_links
             || self.protocol.as_u8() >= 30
             || self.protocol.as_u8() < 28
@@ -279,8 +275,8 @@ impl FileListWriter {
 
         let is_regular = entry.is_file();
 
-        // For protocol < 28, non-regular files also get a checksum (empty_sum)
-        // For protocol >= 28, only regular files get checksums
+        // Protocol < 28 also writes empty_sum for non-regular files; protocol >= 28
+        // restricts checksums to regular files.
         if !is_regular && self.protocol.as_u8() >= 28 {
             return Ok(());
         }
@@ -293,16 +289,14 @@ impl FileListWriter {
             if let Some(sum) = entry.checksum() {
                 let len = sum.len().min(self.flist_csum_len);
                 writer.write_all(&sum[..len])?;
-                // Pad with zeros if checksum is shorter than expected
                 if len < self.flist_csum_len {
                     writer.write_all(&zeros[..self.flist_csum_len - len])?;
                 }
             } else {
-                // No checksum set, write zeros
                 writer.write_all(&zeros[..self.flist_csum_len])?;
             }
         } else {
-            // Non-regular file (proto < 28): write empty_sum (all zeros)
+            // Non-regular file on proto < 28: empty_sum (all zeros).
             writer.write_all(&zeros[..self.flist_csum_len])?;
         }
 
@@ -356,7 +350,6 @@ impl FileListWriter {
         io_error: Option<i32>,
     ) -> io::Result<()> {
         if self.use_varint_flags() {
-            // Varint mode: zero flags + error code
             write_varint(writer, 0)?;
             write_varint(writer, io_error.unwrap_or(0))?;
             return Ok(());
@@ -365,7 +358,6 @@ impl FileListWriter {
         if let Some(error) = io_error
             && self.use_safe_file_list()
         {
-            // Error marker + code
             let marker_lo = XMIT_EXTENDED_FLAGS;
             let marker_hi = XMIT_IO_ERROR_ENDLIST;
             writer.write_all(&[marker_lo, marker_hi])?;
@@ -373,7 +365,6 @@ impl FileListWriter {
             return Ok(());
         }
 
-        // Normal end marker
         writer.write_all(&[0u8])
     }
 
@@ -388,7 +379,7 @@ impl FileListWriter {
             self.stats.total_size += entry.size();
         } else if entry.is_symlink() {
             self.stats.num_symlinks += 1;
-            // Symlinks contribute their target length to total_size in rsync
+            // Upstream sums symlink target lengths into total_size.
             if let Some(target) = entry.link_target() {
                 self.stats.total_size += target.as_os_str().len() as u64;
             }

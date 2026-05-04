@@ -58,7 +58,6 @@ pub(in crate::local_copy) fn execute_transfer(
     mode: LocalCopyExecution,
     copy_source_override: Option<PathBuf>,
 ) -> Result<(), LocalCopyError> {
-    // Suppress unused-variable warning on platforms without xattr/acl features
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
     let _ = mode;
 
@@ -127,7 +126,6 @@ pub(in crate::local_copy) fn execute_transfer(
     // results, so finalize_guard_and_metadata works identically for both paths.
     #[cfg(target_os = "macos")]
     let clonefile_eligible = {
-        // Transfer mode: new file, whole-file, no conflicting options
         let transfer_ok = existing_metadata.is_none()
             && whole_file_enabled
             && !inplace_enabled
@@ -192,7 +190,6 @@ pub(in crate::local_copy) fn execute_transfer(
                 file_size
             );
 
-            // Batch capture for whole-file clones
             context.capture_batch_whole_file(source, file_size)?;
             context.finalize_batch_file_delta(source)?;
 
@@ -504,7 +501,7 @@ pub(in crate::local_copy) fn execute_transfer(
         elapsed.as_secs_f64()
     );
 
-    // Record throughput sample for EMA-based dynamic buffer sizing.
+    // EMA throughput sample feeds dynamic buffer sizing.
     if context.use_buffer_pool() {
         let pool = context.buffer_pool();
         pool.record_transfer(outcome.literal_bytes() as usize, elapsed);
