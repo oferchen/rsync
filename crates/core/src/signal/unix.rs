@@ -127,14 +127,11 @@ static SIGNAL_COUNT: AtomicBool = AtomicBool::new(false);
 /// First signal: Sets graceful shutdown flag.
 /// Second signal: Sets abort flag for immediate termination.
 extern "C" fn handle_sigint(_signum: libc::c_int) {
-    // Check if this is the first or second signal
     let already_signaled = SIGNAL_COUNT.swap(true, Ordering::SeqCst);
 
     if already_signaled {
-        // Second signal - abort immediately
         super::request_abort();
     } else {
-        // First signal - graceful shutdown
         super::request_shutdown(ShutdownReason::Interrupted);
     }
 }
@@ -267,8 +264,6 @@ pub fn wait_for_signal() -> ShutdownReason {
             return reason;
         }
 
-        // Sleep briefly to avoid busy-waiting
-        // In a real implementation, this would use sigwait() or similar
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
@@ -356,7 +351,6 @@ mod tests {
 
     #[test]
     fn install_signal_handlers_succeeds() {
-        // This test actually installs signal handlers
         let result = install_signal_handlers();
         assert!(result.is_ok());
 
@@ -366,16 +360,13 @@ mod tests {
 
     #[test]
     fn signal_count_tracks_multiple_signals() {
-        // Reset state
         SIGNAL_COUNT.store(false, Ordering::SeqCst);
         super::super::reset_for_testing();
 
-        // Simulate first SIGINT
         handle_sigint(libc::SIGINT);
         assert!(super::super::is_shutdown_requested());
         assert!(!super::super::is_abort_requested());
 
-        // Simulate second SIGINT
         handle_sigint(libc::SIGINT);
         assert!(super::super::is_abort_requested());
     }
