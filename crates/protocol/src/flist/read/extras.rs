@@ -21,7 +21,7 @@ impl FileListReader {
     ///
     /// Wire format: varint30(len) + raw bytes
     ///
-    /// // upstream: flist.c:recv_file_entry() lines 920-935
+    /// upstream: flist.c:recv_file_entry() lines 920-935
     pub(super) fn read_symlink_target<R: Read + ?Sized>(
         &self,
         reader: &mut R,
@@ -91,7 +91,7 @@ impl FileListReader {
     /// - Major: varint30 (omitted if XMIT_SAME_RDEV_MAJOR set)
     /// - Minor: varint (protocol 30+) or byte/int (protocol 28-29)
     ///
-    /// // upstream: flist.c:recv_file_entry() lines 936-970
+    /// upstream: flist.c:recv_file_entry() lines 936-970
     pub(super) fn read_rdev<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -149,7 +149,7 @@ impl FileListReader {
     /// - If XMIT_HLINKED is set but not XMIT_HLINK_FIRST: read varint index
     /// - If XMIT_HLINK_FIRST is also set: return u32::MAX (this is the first/leader)
     ///
-    /// // upstream: flist.c:recv_file_entry() lines 800-815
+    /// upstream: flist.c:recv_file_entry() lines 800-815
     pub(super) fn read_hardlink_idx<R: Read + ?Sized>(
         &self,
         reader: &mut R,
@@ -183,8 +183,8 @@ impl FileListReader {
     /// - If not XMIT_SAME_DEV_PRE30: read longint as dev (stored as dev + 1)
     /// - Always read longint as ino
     ///
-    /// // upstream: flist.c:recv_file_entry() - dev/ino read is gated on
-    /// // `preserve_hard_links && xflags & XMIT_HLINKED`
+    /// upstream: flist.c:recv_file_entry() - dev/ino read is gated on
+    /// `preserve_hard_links && xflags & XMIT_HLINKED`
     pub(super) fn read_hardlink_dev_ino<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -225,7 +225,7 @@ impl FileListReader {
     ///
     /// Wire format: raw bytes of length flist_csum_len
     ///
-    /// // upstream: flist.c:recv_file_entry() lines 1010-1030
+    /// upstream: flist.c:recv_file_entry() lines 1010-1030
     pub(super) fn read_checksum<R: Read + ?Sized>(
         &self,
         reader: &mut R,
@@ -259,7 +259,7 @@ impl FileListReader {
     /// Tracks counts of files, directories, symlinks, devices, and special files,
     /// as well as total size for files and symlink targets.
     ///
-    /// // upstream: flist.c:recv_file_list() stat accumulation at end of loop
+    /// upstream: flist.c:recv_file_list() stat accumulation at end of loop
     pub(super) fn update_stats(&mut self, entry: &FileEntry) {
         if entry.is_dir() {
             self.stats.num_dirs += 1;

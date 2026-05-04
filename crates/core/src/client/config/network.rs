@@ -33,7 +33,6 @@ mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    // Tests for BindAddress::new
     #[test]
     fn new_creates_bind_address() {
         let raw = OsString::from("192.168.1.1");
@@ -43,7 +42,6 @@ mod tests {
         assert_eq!(bind.socket(), socket);
     }
 
-    // Tests for BindAddress::raw
     #[test]
     fn raw_returns_original_string() {
         let raw = OsString::from("10.0.0.1");
@@ -52,7 +50,6 @@ mod tests {
         assert_eq!(bind.raw(), "10.0.0.1");
     }
 
-    // Tests for BindAddress::socket
     #[test]
     fn socket_returns_address() {
         let raw = OsString::from("127.0.0.1");
@@ -70,7 +67,6 @@ mod tests {
         assert_eq!(bind.socket().ip(), IpAddr::V6(Ipv6Addr::LOCALHOST));
     }
 
-    // Tests for trait implementations
     #[test]
     fn bind_address_is_clone() {
         let raw = OsString::from("192.168.1.1");
