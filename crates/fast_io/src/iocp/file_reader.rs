@@ -17,6 +17,7 @@ use windows_sys::Win32::System::IO::GetQueuedCompletionStatus;
 
 use super::completion_port::CompletionPort;
 use super::config::IocpConfig;
+use super::error::classify_overlapped_error;
 use super::overlapped::OverlappedOp;
 use crate::traits::FileReader;
 
@@ -123,7 +124,10 @@ impl IocpReader {
         // ERROR_IO_PENDING (997) is the documented "operation queued" status;
         // any other error is fatal.
         if err.raw_os_error() != Some(997) {
-            return Err(err);
+            // Issue #1930: upgrade ERROR_INVALID_PARAMETER to a typed error
+            // pointing at the most likely cause - handle not opened with
+            // FILE_FLAG_OVERLAPPED.
+            return Err(classify_overlapped_error(err, "ReadFile"));
         }
 
         let mut transferred: u32 = 0;
@@ -145,7 +149,10 @@ impl IocpReader {
         };
 
         if wait_ok != TRUE {
-            return Err(io::Error::last_os_error());
+            return Err(classify_overlapped_error(
+                io::Error::last_os_error(),
+                "GetQueuedCompletionStatus(ReadFile)",
+            ));
         }
 
         let n = transferred as usize;
@@ -205,7 +212,7 @@ impl IocpReader {
                 if success != TRUE {
                     let err = io::Error::last_os_error();
                     if err.raw_os_error() != Some(997) {
-                        return Err(err);
+                        return Err(classify_overlapped_error(err, "ReadFile(batched)"));
                     }
                 }
             }
@@ -229,7 +236,10 @@ impl IocpReader {
                 };
 
                 if wait_ok != TRUE {
-                    return Err(io::Error::last_os_error());
+                    return Err(classify_overlapped_error(
+                        io::Error::last_os_error(),
+                        "GetQueuedCompletionStatus(ReadFile batched)",
+                    ));
                 }
 
                 // Completions are processed in submission order rather than by
