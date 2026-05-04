@@ -54,17 +54,25 @@ pub fn become_daemon() -> io::Result<()> {
 pub fn redirect_stdio_to_devnull() -> io::Result<()> {
     use nix::fcntl::OFlag;
     use nix::sys::stat::Mode;
+    use std::os::fd::{AsFd, AsRawFd, IntoRawFd};
 
     let nix_to_io = |e: nix::Error| io::Error::from_raw_os_error(e as i32);
 
     for fd in 0..=2_i32 {
-        // nix::unistd::close is safe
         let _ = nix::unistd::close(fd);
         let new_fd =
             nix::fcntl::open(c"/dev/null", OFlag::O_RDWR, Mode::empty()).map_err(nix_to_io)?;
-        if new_fd != fd {
-            nix::unistd::dup2(new_fd, fd).map_err(nix_to_io)?;
-            let _ = nix::unistd::close(new_fd);
+        if new_fd.as_raw_fd() == fd {
+            // open() returned the slot we just closed; release ownership so
+            // OwnedFd's Drop does not close the descriptor we want to keep.
+            let _ = new_fd.into_raw_fd();
+        } else {
+            match fd {
+                0 => nix::unistd::dup2_stdin(new_fd.as_fd()).map_err(nix_to_io)?,
+                1 => nix::unistd::dup2_stdout(new_fd.as_fd()).map_err(nix_to_io)?,
+                2 => nix::unistd::dup2_stderr(new_fd.as_fd()).map_err(nix_to_io)?,
+                _ => unreachable!(),
+            }
         }
     }
 
