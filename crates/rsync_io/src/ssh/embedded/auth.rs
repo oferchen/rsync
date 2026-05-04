@@ -8,7 +8,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use is_terminal::IsTerminal;
-use russh_keys::key::KeyPair;
+use russh::keys::PrivateKey;
+use russh::keys::key::PrivateKeyWithHashAlg;
 
 use super::config::SshConfig;
 use super::error::SshError;
@@ -35,14 +36,15 @@ fn effective_username(config: &SshConfig) -> Result<String, SshError> {
 
 /// Try authentication via the SSH agent.
 ///
-/// Connects to the agent using `SSH_AUTH_SOCK`, enumerates all keys, and tries
-/// `authenticate_future()` with each until one succeeds. Returns `Ok(true)` on
-/// success, `Ok(false)` when the agent is unavailable or no key works.
+/// Connects to the agent using `SSH_AUTH_SOCK`, enumerates all identities, and
+/// signs each via `authenticate_publickey_with()` until one succeeds. Returns
+/// `Ok(true)` on success, `Ok(false)` when the agent is unavailable or no
+/// identity works.
 async fn try_agent_auth(
     session: &mut russh::client::Handle<SshClientHandler>,
     username: &str,
 ) -> Result<bool, SshError> {
-    let agent = match russh_keys::agent::client::AgentClient::connect_env().await {
+    let mut agent = match russh::keys::agent::client::AgentClient::connect_env().await {
         Ok(agent) => agent,
         Err(e) => {
             logging::debug_log!(Io, 1, "SSH agent unavailable: {}", e);
@@ -50,7 +52,6 @@ async fn try_agent_auth(
         }
     };
 
-    let mut agent = agent;
     let identities = match agent.request_identities().await {
         Ok(ids) => ids,
         Err(e) => {
@@ -64,14 +65,14 @@ async fn try_agent_auth(
         return Ok(false);
     }
 
-    for pubkey in &identities {
-        let (returned_agent, result) = session
-            .authenticate_future(username, pubkey.clone(), agent)
-            .await;
-        agent = returned_agent;
-        match result {
-            Ok(true) => return Ok(true),
-            Ok(false) => continue,
+    for identity in identities {
+        let pubkey = identity.public_key().into_owned();
+        match session
+            .authenticate_publickey_with(username, pubkey, None, &mut agent)
+            .await
+        {
+            Ok(result) if result.success() => return Ok(true),
+            Ok(_) => continue,
             Err(e) => {
                 logging::debug_log!(Io, 1, "SSH agent auth attempt failed: {}", e);
                 continue;
@@ -97,12 +98,13 @@ async fn try_identity_file_auth(
             Some(k) => k,
             None => continue,
         };
+        let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(key), None);
         match session
-            .authenticate_publickey(username, Arc::new(key))
+            .authenticate_publickey(username, key_with_hash)
             .await
         {
-            Ok(true) => return Ok(true),
-            Ok(false) => continue,
+            Ok(result) if result.success() => return Ok(true),
+            Ok(_) => continue,
             Err(e) => {
                 logging::debug_log!(
                     Io,
@@ -122,13 +124,13 @@ async fn try_identity_file_auth(
 ///
 /// Returns `None` when the file is missing, unreadable, or the user declines
 /// to enter a passphrase for an encrypted key.
-fn load_identity_key(path: &Path) -> Option<KeyPair> {
+fn load_identity_key(path: &Path) -> Option<PrivateKey> {
     if !path.is_file() {
         return None;
     }
 
     // First attempt without a passphrase.
-    match russh_keys::load_secret_key(path, None) {
+    match russh::keys::load_secret_key(path, None) {
         Ok(key) => return Some(key),
         Err(e) => {
             // Check if the error indicates an encrypted key.
@@ -161,7 +163,7 @@ fn load_identity_key(path: &Path) -> Option<KeyPair> {
         }
     };
 
-    match russh_keys::load_secret_key(path, Some(&passphrase)) {
+    match russh::keys::load_secret_key(path, Some(&passphrase)) {
         Ok(key) => Some(key),
         Err(e) => {
             eprintln!("Could not load key '{}': {}", path.display(), e);
@@ -198,8 +200,7 @@ async fn try_password_auth(
     };
 
     match session.authenticate_password(username, &password).await {
-        Ok(true) => Ok(true),
-        Ok(false) => Ok(false),
+        Ok(result) => Ok(result.success()),
         Err(e) => Err(SshError::Connect(e)),
     }
 }
@@ -312,10 +313,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let key_path = dir.path().join("id_ed25519");
 
-        // Generate a keypair and write it in PKCS8 PEM format.
-        let keypair = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
+        // Generate a private key and write it in PKCS8 PEM format.
+        let private =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         let mut buf = Vec::new();
-        russh_keys::encode_pkcs8_pem(&keypair, &mut buf).expect("encode pem");
+        russh::keys::encode_pkcs8_pem(&private, &mut buf).expect("encode pem");
         std::fs::write(&key_path, &buf).expect("write key");
 
         let result = load_identity_key(&key_path);
@@ -405,8 +407,6 @@ mod tests {
         assert_eq!(user, "explicit");
     }
 
-    use std::sync::Arc;
-
     use russh::server::Server as _;
     use tokio::net::TcpListener;
 
@@ -414,7 +414,7 @@ mod tests {
     #[derive(Clone)]
     struct MockAuthPolicy {
         /// Public keys the server accepts.
-        accepted_keys: Vec<russh_keys::key::PublicKey>,
+        accepted_keys: Vec<russh::keys::PublicKey>,
         /// Password the server accepts (if any).
         accepted_password: Option<String>,
     }
@@ -429,7 +429,6 @@ mod tests {
         policy: MockAuthPolicy,
     }
 
-    #[async_trait::async_trait]
     impl russh::server::Handler for MockServerHandler {
         type Error = russh::Error;
 
@@ -444,18 +443,16 @@ mod tests {
         async fn auth_publickey(
             &mut self,
             _user: &str,
-            public_key: &russh_keys::key::PublicKey,
+            public_key: &russh::keys::PublicKey,
         ) -> Result<russh::server::Auth, Self::Error> {
             for accepted in &self.policy.accepted_keys {
-                if accepted.fingerprint() == public_key.fingerprint() {
+                if accepted.fingerprint(russh::keys::HashAlg::Sha256)
+                    == public_key.fingerprint(russh::keys::HashAlg::Sha256)
+                {
                     return Ok(russh::server::Auth::Accept);
                 }
             }
-            Ok(russh::server::Auth::Reject {
-                proceed_with_methods: Some(
-                    russh::MethodSet::PASSWORD | russh::MethodSet::PUBLICKEY,
-                ),
-            })
+            Ok(russh::server::Auth::reject())
         }
 
         async fn auth_password(
@@ -468,11 +465,7 @@ mod tests {
                     return Ok(russh::server::Auth::Accept);
                 }
             }
-            Ok(russh::server::Auth::Reject {
-                proceed_with_methods: Some(
-                    russh::MethodSet::PASSWORD | russh::MethodSet::PUBLICKEY,
-                ),
-            })
+            Ok(russh::server::Auth::reject())
         }
     }
 
@@ -488,28 +481,27 @@ mod tests {
 
     /// Generate a russh server config with a fresh host key.
     fn mock_server_config() -> Arc<russh::server::Config> {
-        let keypair = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
+        let host_key =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         Arc::new(russh::server::Config {
-            keys: vec![keypair],
+            keys: vec![host_key],
             ..Default::default()
         })
     }
 
     /// Start a mock SSH server on an ephemeral port and return the port number.
     /// The server runs in the background until the runtime is dropped.
-    async fn start_mock_server(policy: MockAuthPolicy) -> (u16, russh_keys::key::PublicKey) {
+    async fn start_mock_server(policy: MockAuthPolicy) -> (u16, russh::keys::PublicKey) {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let port = listener.local_addr().expect("local_addr").port();
 
         let server_config = mock_server_config();
-        let host_pubkey = server_config.keys[0]
-            .clone_public_key()
-            .expect("clone pubkey");
+        let host_pubkey = server_config.keys[0].public_key().clone();
 
         let mut server = MockSshServer { policy };
 
         tokio::spawn(async move {
-            server.run_on_socket(server_config, &listener).await.ok();
+            let _ = server.run_on_socket(server_config, &listener).await;
         });
 
         (port, host_pubkey)
@@ -538,7 +530,7 @@ mod tests {
     /// Connect to the mock server and return a client handle.
     async fn connect_to_mock(
         port: u16,
-        host_pubkey: &russh_keys::key::PublicKey,
+        host_pubkey: &russh::keys::PublicKey,
     ) -> russh::client::Handle<SshClientHandler> {
         let handler = SshClientHandler::new(
             "127.0.0.1".to_owned(),
@@ -560,11 +552,12 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let key_path = dir.path().join("id_ed25519");
 
-        // Generate a keypair and write the private key.
-        let keypair = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
-        let pubkey = keypair.clone_public_key().expect("pubkey");
+        // Generate a private key and write it.
+        let private =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
+        let pubkey = private.public_key().clone();
         let mut buf = Vec::new();
-        russh_keys::encode_pkcs8_pem(&keypair, &mut buf).expect("encode pem");
+        russh::keys::encode_pkcs8_pem(&private, &mut buf).expect("encode pem");
         std::fs::write(&key_path, &buf).expect("write key");
 
         let policy = MockAuthPolicy {
@@ -704,15 +697,17 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let key_path = dir.path().join("id_ed25519");
 
-        // Generate a keypair the server does NOT accept.
-        let wrong_key = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
+        // Generate a private key the server does NOT accept.
+        let wrong_key =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         let mut buf = Vec::new();
-        russh_keys::encode_pkcs8_pem(&wrong_key, &mut buf).expect("encode pem");
+        russh::keys::encode_pkcs8_pem(&wrong_key, &mut buf).expect("encode pem");
         std::fs::write(&key_path, &buf).expect("write key");
 
         // Server accepts a different key and password.
-        let accepted_key = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
-        let accepted_pubkey = accepted_key.clone_public_key().expect("pubkey");
+        let accepted_key =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
+        let accepted_pubkey = accepted_key.public_key().clone();
         let policy = MockAuthPolicy {
             accepted_keys: vec![accepted_pubkey],
             accepted_password: Some("backup".to_owned()),
@@ -759,20 +754,22 @@ mod tests {
     async fn authenticate_multiple_identity_files_tries_in_order() {
         let dir = tempfile::tempdir().expect("tempdir");
 
-        // Generate two keypairs - server accepts the second one.
-        let wrong_key = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
-        let right_key = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
-        let right_pubkey = right_key.clone_public_key().expect("pubkey");
+        // Generate two private keys - server accepts the second one.
+        let wrong_key =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
+        let right_key =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
+        let right_pubkey = right_key.public_key().clone();
 
         let wrong_path = dir.path().join("id_wrong");
         let right_path = dir.path().join("id_right");
 
         let mut buf = Vec::new();
-        russh_keys::encode_pkcs8_pem(&wrong_key, &mut buf).expect("encode");
+        russh::keys::encode_pkcs8_pem(&wrong_key, &mut buf).expect("encode");
         std::fs::write(&wrong_path, &buf).expect("write");
 
         buf.clear();
-        russh_keys::encode_pkcs8_pem(&right_key, &mut buf).expect("encode");
+        russh::keys::encode_pkcs8_pem(&right_key, &mut buf).expect("encode");
         std::fs::write(&right_path, &buf).expect("write");
 
         let policy = MockAuthPolicy {
@@ -826,9 +823,10 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let key_path = dir.path().join("id_ed25519");
 
-        let keypair = russh_keys::key::KeyPair::generate_ed25519().expect("keygen");
+        let private =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         let mut buf = Vec::new();
-        russh_keys::encode_pkcs8_pem(&keypair, &mut buf).expect("encode");
+        russh::keys::encode_pkcs8_pem(&private, &mut buf).expect("encode");
         std::fs::write(&key_path, &buf).expect("write key");
 
         // Server rejects everything.

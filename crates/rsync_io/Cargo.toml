@@ -19,10 +19,7 @@ protocol = { path = "../protocol" }
 logging = { path = "../logging" }
 memchr = "2.7"
 shell-words = "1.1"
-async-trait = { workspace = true, optional = true }
 russh = { workspace = true, optional = true }
-russh-keys = { workspace = true, optional = true }
-ssh-key = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 rpassword = { workspace = true, optional = true }
 is-terminal = { workspace = true, optional = true }
@@ -32,9 +29,10 @@ tokio = { workspace = true, optional = true }
 raw-cpuid = { workspace = true, optional = true }
 
 [features]
-embedded-ssh = ["dep:async-trait", "dep:russh", "dep:russh-keys", "dep:ssh-key", "dep:url", "dep:rpassword", "dep:is-terminal", "dep:tokio"]
+embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep:tokio"]
 
 [dev-dependencies]
 proptest = "1.4"
+rand = "0.10"
 tempfile = "3.15"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }

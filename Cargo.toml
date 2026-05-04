@@ -200,13 +200,11 @@ crossbeam = "0.8"
 crossbeam-channel = "0.5"
 # Concurrent hash map - for shared state across daemon sessions
 dashmap = "6.1"
-# Async trait compat for russh client::Handler (russh uses #[async_trait])
-async-trait = "0.1"
-# Pure-Rust SSH client - embedded SSH transport alternative to system ssh binary
-russh = "0.45"
-russh-keys = "0.45"
-# SSH key parsing and manipulation
-ssh-key = { version = "0.6", features = ["std"] }
+# Pure-Rust SSH client - embedded SSH transport alternative to system ssh binary.
+# 0.60+ retires GHSA-f5v4-2wr6-hqmg / RUSTSEC-2023-0071 (Marvin Attack on rsa
+# 0.9.x) by upgrading to rsa 0.10 with the constant-time rewrite. The keys
+# helpers (formerly russh-keys) are now re-exported under russh::keys.
+russh = "0.60.1"
 # URL parsing for ssh:// URIs
 url = "2"
 # Secure password input from terminal
