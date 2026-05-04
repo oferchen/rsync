@@ -9,6 +9,7 @@
 //! Run with: `cargo bench -p fast_io -- platform_copy`
 
 use std::fs;
+use std::hint::black_box;
 use std::io::Write;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
@@ -63,7 +64,7 @@ fn bench_platform_copy_dispatch(c: &mut Criterion) {
                 // Remove destination so clonefile (which requires non-existent target) works
                 let _ = fs::remove_file(&dst);
                 let result = copier.copy_file(&src, &dst, size as u64).unwrap();
-                criterion::black_box(result)
+                black_box(result)
             });
         });
     }
@@ -86,7 +87,7 @@ fn bench_std_fs_copy(c: &mut Criterion) {
 
             b.iter(|| {
                 let bytes = fs::copy(&src, &dst).unwrap();
-                criterion::black_box(bytes)
+                black_box(bytes)
             });
         });
     }
@@ -114,10 +115,10 @@ fn bench_macos_paths(c: &mut Criterion) {
                 b.iter(|| {
                     let _ = fs::remove_file(&dst);
                     match fast_io::try_clonefile(&src, &dst) {
-                        Ok(()) => criterion::black_box(size as u64),
+                        Ok(()) => black_box(size as u64),
                         Err(_) => {
                             // Fallback if not on APFS - still measure the attempt cost
-                            criterion::black_box(0u64)
+                            black_box(0u64)
                         }
                     }
                 });
@@ -143,8 +144,8 @@ fn bench_macos_paths(c: &mut Criterion) {
                 b.iter(|| {
                     let _ = fs::remove_file(&dst);
                     match fast_io::try_fcopyfile(&src, &dst) {
-                        Ok(()) => criterion::black_box(size as u64),
-                        Err(_) => criterion::black_box(0u64),
+                        Ok(()) => black_box(size as u64),
+                        Err(_) => black_box(0u64),
                     }
                 });
             });
@@ -180,7 +181,7 @@ fn bench_linux_paths(c: &mut Criterion) {
                         size as u64,
                     )
                     .unwrap();
-                    criterion::black_box(copied)
+                    black_box(copied)
                 });
             });
         }
@@ -215,7 +216,7 @@ fn bench_linux_paths(c: &mut Criterion) {
                             size as u64,
                         )
                         .unwrap();
-                        criterion::black_box(copied)
+                        black_box(copied)
                     });
                 });
             }

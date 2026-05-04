@@ -153,12 +153,14 @@ fn bench_splice_pipe(c: &mut Criterion) {
 
 #[cfg(not(target_os = "linux"))]
 fn bench_splice_pipe(c: &mut Criterion) {
+    use std::hint::black_box;
+
     // splice(2) is Linux-only. Define an empty group on other targets so the
     // criterion harness still emits a report and the bench binary compiles.
     let mut group = c.benchmark_group("splice_pipe");
     group.sample_size(10);
     group.bench_function("noop_non_linux", |b| {
-        b.iter(|| criterion::black_box(0u64));
+        b.iter(|| black_box(0u64));
     });
     group.finish();
 }
