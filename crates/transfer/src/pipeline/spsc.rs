@@ -1,7 +1,7 @@
 //! Lock-free SPSC (single-producer, single-consumer) channel.
 //!
 //! Built on [`crossbeam_queue::ArrayQueue`] with [`AtomicBool`] disconnection
-//! flags and [`std::hint::spin_loop`] for waiting.  Zero syscalls — pure
+//! flags and [`std::hint::spin_loop`] for waiting.  Zero syscalls - pure
 //! userspace synchronization with no futex, no `thread::park`, no condvar.
 //!
 //! Designed for the network → disk thread pipeline where exactly one producer
@@ -113,7 +113,7 @@ impl<T> Receiver<T> {
                 return Ok(item);
             }
             if !self.0.producer_alive.load(Ordering::Acquire) {
-                // Producer is gone — drain one last time.
+                // Producer is gone - drain one last time.
                 return self.0.queue.pop().ok_or(RecvError);
             }
             std::hint::spin_loop();
