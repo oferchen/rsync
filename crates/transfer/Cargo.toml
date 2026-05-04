@@ -85,6 +85,10 @@ iconv = ["protocol/iconv"]
 # Benefits: Batched async I/O for 20-40% better throughput
 io_uring = ["fast_io/io_uring"]
 
+# IOCP (I/O Completion Ports) for Windows with automatic fallback
+# Benefits: Overlapped async file I/O via kernel completion ports
+iocp = ["fast_io/iocp"]
+
 # ============================================================================
 # Protocol Features
 # ============================================================================

@@ -78,6 +78,15 @@ pub struct DiskCommitConfig {
     /// batching multiple writes into a single `io_uring_enter` call.
     /// Falls back to standard buffered I/O on non-Linux or older kernels.
     pub io_uring_policy: fast_io::IoUringPolicy,
+    /// Policy controlling IOCP usage for disk writes on Windows.
+    ///
+    /// When `Auto` (default), the disk thread attempts to create an
+    /// `IocpDiskBatch` for batched overlapped writes. On Windows with the
+    /// `iocp` feature enabled, this submits multiple `WriteFile` calls
+    /// concurrently and drains completions via
+    /// `GetQueuedCompletionStatusEx`. Falls back to standard buffered
+    /// I/O on non-Windows targets or when the policy is `Disabled`.
+    pub iocp_policy: fast_io::IocpPolicy,
 }
 
 impl Default for DiskCommitConfig {
@@ -92,6 +101,7 @@ impl Default for DiskCommitConfig {
             acl_cache: None,
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
+            iocp_policy: fast_io::IocpPolicy::Auto,
         }
     }
 }

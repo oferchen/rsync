@@ -29,6 +29,26 @@ fn config_io_uring_policy_disabled() {
 }
 
 #[test]
+fn config_iocp_policy_disabled() {
+    let config = DiskCommitConfig {
+        iocp_policy: fast_io::IocpPolicy::Disabled,
+        ..DiskCommitConfig::default()
+    };
+    assert_eq!(config.iocp_policy, fast_io::IocpPolicy::Disabled);
+}
+
+#[test]
+fn spawn_with_iocp_disabled() {
+    let config = DiskCommitConfig {
+        iocp_policy: fast_io::IocpPolicy::Disabled,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+#[test]
 fn spawn_with_io_uring_disabled() {
     let config = DiskCommitConfig {
         io_uring_policy: fast_io::IoUringPolicy::Disabled,
