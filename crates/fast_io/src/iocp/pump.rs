@@ -52,13 +52,15 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use windows_sys::Win32::Foundation::{
-    ERROR_ABANDONED_WAIT_0, ERROR_HANDLE_EOF, FALSE, HANDLE, TRUE, WAIT_TIMEOUT,
+    ERROR_ABANDONED_WAIT_0, ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER, FALSE, HANDLE, TRUE,
+    WAIT_TIMEOUT,
 };
 use windows_sys::Win32::System::IO::{
     GetQueuedCompletionStatusEx, OVERLAPPED, OVERLAPPED_ENTRY, PostQueuedCompletionStatus,
 };
 
 use super::completion_port::CompletionPort;
+use super::error::classify_overlapped_error;
 
 /// Reserved completion key used to signal pump shutdown.
 ///
@@ -74,6 +76,16 @@ const SHUTDOWN_KEY: usize = usize::MAX;
 /// increase per-call latency. 64 matches the io_uring CQE batch sizing used
 /// by `crates/fast_io/src/io_uring/disk_batch.rs`.
 const DEFAULT_BATCH_SIZE: usize = 64;
+
+/// Hard cap on dynamic batch growth when the drain loop encounters
+/// [`ERROR_INSUFFICIENT_BUFFER`] (issue #1930).
+///
+/// The drain buffer doubles in size each time the kernel signals that more
+/// completions are available than fit in the current array, up to this cap.
+/// 8192 entries at `sizeof(OVERLAPPED_ENTRY) == 32` bytes is 256 KiB - a
+/// reasonable upper bound that prevents pathological cases (a buggy producer
+/// flooding the port) from exhausting memory.
+const MAX_BATCH_SIZE: usize = 8192;
 
 /// Wait timeout for a single drain call, in milliseconds.
 ///
@@ -329,14 +341,18 @@ impl Drop for CompletionPump {
 // Manual impls are not needed because Arc<PumpInner> is auto-Send/Sync.
 
 fn drain_loop(inner: Arc<PumpInner>) -> io::Result<()> {
-    let batch_size = inner.config.batch_size.max(1);
-    let mut entries: Vec<OVERLAPPED_ENTRY> = vec![zeroed_entry(); batch_size];
+    let initial_batch_size = inner.config.batch_size.max(1).min(MAX_BATCH_SIZE);
+    // The batch buffer can grow at runtime if the kernel reports
+    // ERROR_INSUFFICIENT_BUFFER (issue #1930). It never shrinks; a single
+    // burst of completions warrants keeping the larger buffer alive for the
+    // remainder of the pump's lifetime.
+    let mut entries: Vec<OVERLAPPED_ENTRY> = vec![zeroed_entry(); initial_batch_size];
 
     while inner.running.load(Ordering::Acquire) {
         let mut removed: u32 = 0;
 
         // SAFETY: `inner.port` outlives the call (held via Arc); `entries`
-        // backing storage is valid for `batch_size` elements; `removed` is
+        // backing storage is valid for `entries.len()` elements; `removed` is
         // a stack-local u32. Documentation:
         // https://learn.microsoft.com/windows/win32/api/ioapiset/nf-ioapiset-getqueuedcompletionstatusex
         #[allow(unsafe_code)]
@@ -344,7 +360,7 @@ fn drain_loop(inner: Arc<PumpInner>) -> io::Result<()> {
             GetQueuedCompletionStatusEx(
                 inner.port.handle(),
                 entries.as_mut_ptr(),
-                batch_size as u32,
+                entries.len() as u32,
                 &mut removed,
                 DRAIN_TIMEOUT_MS,
                 FALSE,
@@ -360,7 +376,34 @@ fn drain_loop(inner: Arc<PumpInner>) -> io::Result<()> {
                 // The port handle was closed while we were waiting; treat as
                 // graceful shutdown.
                 Some(c) if c as u32 == ERROR_ABANDONED_WAIT_0 => break,
-                _ => return Err(err),
+                // Issue #1930: the kernel signalled that more completions
+                // were available than our array could hold. Double the buffer
+                // (capped at MAX_BATCH_SIZE) and retry on the next iteration
+                // - completions remain queued on the port until drained.
+                Some(c) if c as u32 == ERROR_INSUFFICIENT_BUFFER => {
+                    if entries.len() < MAX_BATCH_SIZE {
+                        let new_size =
+                            (entries.len().saturating_mul(2)).min(MAX_BATCH_SIZE);
+                        entries.resize(new_size, zeroed_entry());
+                        continue;
+                    }
+                    // Already at the cap - propagate the typed error so the
+                    // pump owner can diagnose a runaway producer.
+                    return Err(super::error::IocpError::InsufficientBuffer {
+                        requested: 0,
+                        capacity: entries.len() as u32,
+                    }
+                    .into());
+                }
+                // Upgrade ERROR_INVALID_PARAMETER to a typed error pointing
+                // at the most likely cause - a handle associated with the
+                // pump that was not opened with FILE_FLAG_OVERLAPPED.
+                _ => {
+                    return Err(classify_overlapped_error(
+                        err,
+                        "GetQueuedCompletionStatusEx",
+                    ));
+                }
             }
         }
 
@@ -678,5 +721,62 @@ mod tests {
         unsafe {
             std::mem::zeroed()
         }
+    }
+
+    /// Issue #1930: posting more completions than the initial batch size must
+    /// be handled by the drain loop without losing any. With the dynamic
+    /// growth introduced for ERROR_INSUFFICIENT_BUFFER, the kernel can never
+    /// surface that error to user code at the default batch size; verifying
+    /// that no completion is dropped exercises the same code path.
+    #[test]
+    fn pump_drains_burst_larger_than_batch_size() {
+        let pump = CompletionPump::new().unwrap();
+        let burst = DEFAULT_BATCH_SIZE * 4;
+
+        let mut allocations: Vec<*mut OVERLAPPED> = Vec::with_capacity(burst);
+        let mut receivers = Vec::with_capacity(burst);
+
+        for _ in 0..burst {
+            let fake: Box<OVERLAPPED> = Box::new(zeroed_overlapped());
+            let raw = Box::into_raw(fake);
+            let (handler, rx) = oneshot_handler();
+            pump.register(raw, handler);
+            allocations.push(raw);
+            receivers.push(rx);
+            post_completion(&pump, 1, 5, raw).unwrap();
+        }
+
+        for rx in receivers {
+            let value = rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("every burst entry must dispatch")
+                .expect("entry must report success");
+            assert_eq!(value, 1);
+        }
+
+        for raw in allocations {
+            // SAFETY: raw came from Box::into_raw above and every handler has
+            // fired, so no completion still references this pointer.
+            #[allow(unsafe_code)]
+            unsafe {
+                drop(Box::from_raw(raw));
+            }
+        }
+
+        pump.shutdown().unwrap();
+    }
+
+    #[test]
+    fn iocp_error_insufficient_buffer_round_trips() {
+        // The typed error mapping is exercised here independently of the
+        // pump because reproducing ERROR_INSUFFICIENT_BUFFER from the kernel
+        // requires sustained pressure beyond a unit test's reach.
+        let err = super::super::error::IocpError::InsufficientBuffer {
+            requested: 256,
+            capacity: 64,
+        };
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::OutOfMemory);
+        assert!(io_err.to_string().contains("256"));
     }
 }

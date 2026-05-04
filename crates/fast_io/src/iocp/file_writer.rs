@@ -10,12 +10,13 @@ use std::path::Path;
 use windows_sys::Win32::Foundation::{HANDLE, TRUE};
 use windows_sys::Win32::Storage::FileSystem::{
     CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED, FILE_GENERIC_WRITE,
-    FILE_SHARE_READ, FlushFileBuffers, SetEndOfFile, SetFilePointerEx, WriteFile,
+    FILE_SHARE_READ, FlushFileBuffers, OPEN_EXISTING, SetEndOfFile, SetFilePointerEx, WriteFile,
 };
 use windows_sys::Win32::System::IO::GetQueuedCompletionStatus;
 
 use super::completion_port::CompletionPort;
 use super::config::IocpConfig;
+use super::error::classify_overlapped_error;
 use super::overlapped::OverlappedOp;
 use crate::traits::FileWriter;
 
@@ -36,10 +37,42 @@ pub struct IocpWriter {
 impl IocpWriter {
     /// Creates a file for overlapped writing via IOCP.
     pub fn create<P: AsRef<Path>>(path: P, config: &IocpConfig) -> io::Result<Self> {
-        let wide_path = super::file_reader::to_wide_path(path.as_ref())?;
+        Self::open_with_disposition(path.as_ref(), config, CREATE_ALWAYS)
+    }
+
+    /// Reopens an existing file for overlapped writing via IOCP.
+    ///
+    /// Used by [`super::file_factory::writer_from_file`] when the caller hands
+    /// us a `std::fs::File` opened without `FILE_FLAG_OVERLAPPED` (issue #1929).
+    /// Unlike [`Self::create`], this preserves the existing file contents and
+    /// positions the writer at offset 0 - callers that need to append must
+    /// seek to the desired offset before writing.
+    ///
+    /// `_buffer_capacity` is currently informational; the IOCP writer uses
+    /// `config.buffer_size` for its internal buffer. The argument is kept for
+    /// API symmetry with `StdFileWriter::from_file_with_capacity`.
+    pub fn create_for_append<P: AsRef<Path>>(
+        path: P,
+        _buffer_capacity: usize,
+        config: &IocpConfig,
+    ) -> io::Result<Self> {
+        Self::open_with_disposition(path.as_ref(), config, OPEN_EXISTING)
+    }
+
+    /// Shared open implementation that varies only the creation disposition.
+    ///
+    /// `disposition` matches the `dwCreationDisposition` argument of
+    /// `CreateFileW`: pass `CREATE_ALWAYS` to truncate or `OPEN_EXISTING` to
+    /// reopen the file in place. Other values (`OPEN_ALWAYS`, `CREATE_NEW`,
+    /// `TRUNCATE_EXISTING`) work as documented but are not exercised by the
+    /// crate today.
+    fn open_with_disposition(path: &Path, config: &IocpConfig, disposition: u32) -> io::Result<Self> {
+        let wide_path = super::file_reader::to_wide_path(path)?;
 
         // SAFETY: CreateFileW with valid path and standard write flags.
-        // FILE_FLAG_OVERLAPPED enables async I/O.
+        // FILE_FLAG_OVERLAPPED enables async I/O. The caller-controlled
+        // disposition selects between truncation (CREATE_ALWAYS) and reopening
+        // an existing file (OPEN_EXISTING).
         #[allow(unsafe_code)]
         let handle = unsafe {
             CreateFileW(
@@ -47,7 +80,7 @@ impl IocpWriter {
                 FILE_GENERIC_WRITE,
                 FILE_SHARE_READ,
                 std::ptr::null(),
-                CREATE_ALWAYS,
+                disposition,
                 FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
                 std::ptr::null_mut(),
             )
@@ -129,7 +162,10 @@ impl IocpWriter {
         let err = io::Error::last_os_error();
         // ERROR_IO_PENDING (997) means the write is queued; any other error is fatal.
         if err.raw_os_error() != Some(997) {
-            return Err(err);
+            // Issue #1930: upgrade ERROR_INVALID_PARAMETER to a typed error
+            // pointing at the most likely cause - handle not opened with
+            // FILE_FLAG_OVERLAPPED. Other errors pass through unchanged.
+            return Err(classify_overlapped_error(err, "WriteFile"));
         }
 
         let mut transferred: u32 = 0;
@@ -150,7 +186,10 @@ impl IocpWriter {
         };
 
         if wait_ok != TRUE {
-            return Err(io::Error::last_os_error());
+            return Err(classify_overlapped_error(
+                io::Error::last_os_error(),
+                "GetQueuedCompletionStatus(WriteFile)",
+            ));
         }
 
         Ok(transferred as usize)

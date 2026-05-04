@@ -23,6 +23,42 @@ use crate::traits::{
 /// Minimum file size threshold (informational only on this platform).
 pub const IOCP_MIN_FILE_SIZE: u64 = 64 * 1024;
 
+/// Typed IOCP error variants.
+///
+/// On non-Windows platforms the IOCP backend is never constructed, so this
+/// type exists purely to keep cross-platform callers compiling. Both variants
+/// implement `From<IocpError> for io::Error` to match the Windows surface.
+#[derive(Debug, thiserror::Error)]
+pub enum IocpError {
+    /// Mirrors the Windows `ERROR_INVALID_PARAMETER` mapping.
+    #[error("IOCP overlapped operation rejected with ERROR_INVALID_PARAMETER: {context}")]
+    InvalidOperation {
+        /// Free-form context describing the call site.
+        context: &'static str,
+    },
+    /// Mirrors the Windows `ERROR_INSUFFICIENT_BUFFER` mapping.
+    #[error(
+        "IOCP completion drain ran out of buffer space ({requested} entries requested, capacity {capacity})"
+    )]
+    InsufficientBuffer {
+        /// Number of completion entries the kernel wanted to deliver.
+        requested: u32,
+        /// Number of entries the buffer could hold.
+        capacity: u32,
+    },
+}
+
+impl From<IocpError> for io::Error {
+    fn from(err: IocpError) -> Self {
+        match err {
+            IocpError::InvalidOperation { .. } => io::Error::new(io::ErrorKind::InvalidInput, err),
+            IocpError::InsufficientBuffer { .. } => {
+                io::Error::new(io::ErrorKind::OutOfMemory, err)
+            }
+        }
+    }
+}
+
 /// Check whether IOCP is available (always `false` on this platform).
 #[must_use]
 pub fn is_iocp_available() -> bool {
