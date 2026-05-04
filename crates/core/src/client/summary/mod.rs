@@ -75,8 +75,7 @@ impl ClientSummary {
         }
     }
 
-    // Allow large_types_passed_by_value: constructor intentionally takes ownership
-    #[allow(clippy::large_types_passed_by_value)]
+    #[allow(clippy::large_types_passed_by_value)] // REASON: constructor takes ownership
     pub(crate) const fn from_summary(summary: LocalCopySummary) -> Self {
         Self {
             stats: summary,

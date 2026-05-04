@@ -82,16 +82,13 @@ pub fn run_remote_to_remote_transfer(
     remote_sources: RemoteOperands,
     remote_dest: String,
 ) -> Result<ClientSummary, ClientError> {
-    // Parse remote operands
     let (source_host, source_user, source_port, source_paths) =
         parse_source_operands(&remote_sources)?;
     let (dest_host, dest_user, dest_port, dest_path) = parse_dest_operand(&remote_dest)?;
 
-    // Build invocation arguments for both sides
     let source_invocation = build_source_invocation(config, &source_paths);
     let dest_invocation = build_dest_invocation(config, &dest_path);
 
-    // Spawn SSH connections
     let source_conn = spawn_ssh_connection(
         &source_user,
         &source_host,
@@ -102,10 +99,8 @@ pub fn run_remote_to_remote_transfer(
     let dest_conn =
         spawn_ssh_connection(&dest_user, &dest_host, dest_port, &dest_invocation, config)?;
 
-    // Run bidirectional relay
     let stats = run_bidirectional_relay(source_conn, dest_conn)?;
 
-    // Convert stats to client summary
     Ok(build_proxy_summary(stats))
 }
 
@@ -193,7 +188,6 @@ fn spawn_ssh_connection(
         ssh.set_port(port);
     }
 
-    // Configure custom remote shell if specified
     if let Some(shell_args) = config.remote_shell()
         && !shell_args.is_empty()
     {
@@ -203,14 +197,12 @@ fn spawn_ssh_connection(
         }
     }
 
-    // Forward --address to SSH as -o BindAddress=<addr>.
     if let Some(bind_addr) = config.bind_address() {
         ssh.set_bind_address(Some(bind_addr.socket().ip()));
     }
 
     ssh.set_prefer_aes_gcm(config.prefer_aes_gcm());
 
-    // Wire --contimeout to SSH's -o ConnectTimeout.
     let connect_timeout = config
         .connect_timeout()
         .effective(std::time::Duration::from_secs(30));
@@ -250,7 +242,6 @@ fn run_bidirectional_relay(
     source: SshConnection,
     dest: SshConnection,
 ) -> Result<ProxyStats, ClientError> {
-    // Split connections into read/write halves for thread-safe operation
     let (source_reader, source_writer, source_handle) = source.split().map_err(|e| {
         invalid_argument_error(&format!("failed to split source connection: {e}"), 23)
     })?;
@@ -258,14 +249,11 @@ fn run_bidirectional_relay(
         invalid_argument_error(&format!("failed to split destination connection: {e}"), 23)
     })?;
 
-    // Shared flag to signal shutdown
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    // Channels for receiving thread completion (enables timeout)
     let (s2d_tx, s2d_rx) = mpsc::channel();
     let (d2s_tx, d2s_rx) = mpsc::channel();
 
-    // Thread 1: source → destination (file data, file list)
     let shutdown_s2d = Arc::clone(&shutdown);
     thread::spawn(move || {
         let result =
@@ -273,7 +261,6 @@ fn run_bidirectional_relay(
         let _ = s2d_tx.send(result);
     });
 
-    // Thread 2: destination → source (checksums, acks)
     let shutdown_d2s = Arc::clone(&shutdown);
     thread::spawn(move || {
         let result =
@@ -281,7 +268,6 @@ fn run_bidirectional_relay(
         let _ = d2s_tx.send(result);
     });
 
-    // Wait for both threads with timeout
     let s2d_result = s2d_rx
         .recv_timeout(RELAY_THREAD_TIMEOUT)
         .map_err(|e| match e {
@@ -306,8 +292,7 @@ fn run_bidirectional_relay(
             }
         })??;
 
-    // Wait for child processes and check exit status.
-    // Mirror upstream: propagate the worst exit code from either child.
+    // upstream: propagate the worst exit code from either child.
     let (source_exit, source_stderr) = match source_handle.wait_with_stderr() {
         Ok((status, stderr_bytes)) => (
             super::ssh_transfer::map_child_exit_status(status),
@@ -323,7 +308,6 @@ fn run_bidirectional_relay(
         Err(_) => (ExitCode::WaitChild, Vec::new()),
     };
 
-    // Take the worst (highest) exit code from either child.
     let worst_exit = if source_exit.as_i32() >= dest_exit.as_i32() {
         source_exit
     } else {
@@ -331,7 +315,6 @@ fn run_bidirectional_relay(
     };
 
     if !worst_exit.is_success() {
-        // Combine stderr from both sides for the error message.
         let mut combined_stderr = source_stderr;
         if !combined_stderr.is_empty() && !dest_stderr.is_empty() {
             combined_stderr.push(b'\n');
@@ -372,7 +355,6 @@ fn run_relay_with_panic_guard(
     match result {
         Ok(inner_result) => inner_result,
         Err(panic_info) => {
-            // Ensure shutdown is signaled on panic
             shutdown_clone.store(true, Ordering::SeqCst);
             let message = if let Some(s) = panic_info.downcast_ref::<&str>() {
                 format!("{direction} relay thread panicked: {s}")
@@ -407,14 +389,12 @@ fn relay_data(
     let mut total_bytes = 0u64;
 
     loop {
-        // Check for shutdown signal
         if shutdown.load(Ordering::Relaxed) {
             break;
         }
 
         match reader.read(&mut buf) {
             Ok(0) => {
-                // EOF reached - signal shutdown and close writer
                 shutdown.store(true, Ordering::Relaxed);
                 let _ = writer.close();
                 break;
@@ -432,7 +412,6 @@ fn relay_data(
             }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                // Non-blocking I/O - yield and retry
                 thread::yield_now();
                 continue;
             }
@@ -453,7 +432,6 @@ fn relay_data(
 fn build_proxy_summary(stats: ProxyStats) -> ClientSummary {
     use engine::local_copy::LocalCopySummary;
 
-    // Create a summary with the bytes relayed
     let summary =
         LocalCopySummary::from_proxy_stats(stats.bytes_source_to_dest, stats.bytes_dest_to_source);
 

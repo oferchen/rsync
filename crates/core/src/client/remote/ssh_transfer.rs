@@ -185,10 +185,7 @@ pub fn run_ssh_transfer(
         TransferSpec::Proxy {
             remote_sources,
             remote_dest,
-        } => {
-            // Proxy: remote → remote (via local)
-            run_proxy_transfer(config, remote_sources, remote_dest, observer)
-        }
+        } => run_proxy_transfer(config, remote_sources, remote_dest, observer),
     }
 }
 
@@ -222,7 +219,6 @@ fn parse_remote_operands(
     match remote_operands {
         RemoteOperands::Single(operand_str) => parse_single_remote(operand_str, config, role),
         RemoteOperands::Multiple(operand_strs) => {
-            // Multiple sources (pull operation)
             let first_operand = parse_ssh_operand(OsStr::new(&operand_strs[0]))
                 .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
 
@@ -272,19 +268,17 @@ fn build_ssh_connection(
         ssh.set_port(port);
     }
 
-    // Configure custom remote shell if specified
     if let Some(shell_args) = config.remote_shell()
         && !shell_args.is_empty()
     {
         ssh.set_program(&shell_args[0]);
-        // Remaining arguments are SSH options
         for arg in &shell_args[1..] {
             ssh.push_option(arg.clone());
         }
     }
 
-    // Forward --address to SSH as -o BindAddress=<addr>.
-    // upstream: clientserver.c — start_socket_client() binds the local address.
+    // upstream: clientserver.c start_socket_client() binds the local address;
+    // forward --address to SSH as -o BindAddress=<addr>.
     if let Some(bind_addr) = config.bind_address() {
         ssh.set_bind_address(Some(bind_addr.socket().ip()));
     }
@@ -292,17 +286,13 @@ fn build_ssh_connection(
     ssh.set_prefer_aes_gcm(config.prefer_aes_gcm());
     ssh.set_jump_hosts(config.jump_hosts().map(OsString::from));
 
-    // Wire --contimeout to SSH's -o ConnectTimeout.
-    // upstream: options.c — contimeout is forwarded as ConnectTimeout when
-    // spawning the remote shell.
+    // upstream: options.c - contimeout is forwarded as SSH's -o ConnectTimeout.
     let connect_timeout = config.connect_timeout().effective(Duration::from_secs(30));
     ssh.set_connect_timeout(connect_timeout);
 
-    // Set the remote command (rsync --server ...)
     ssh.set_remote_command(invocation_args);
 
-    // Spawn the SSH process
-    // Mirror upstream: SSH spawn failures return IPC error code (pipe.c:85)
+    // upstream: pipe.c:85 - SSH spawn failures return IPC error code.
     let mut connection = ssh.spawn().map_err(|e| {
         invalid_argument_error(
             &format!("failed to spawn SSH connection: {e}"),
@@ -310,8 +300,7 @@ fn build_ssh_connection(
         )
     })?;
 
-    // Send secluded args over stdin if enabled.
-    // upstream: rsync.c:283-320 — send_protected_args() sends args as
+    // upstream: rsync.c:283-320 send_protected_args() sends args as
     // null-separated strings over the pipe before protocol negotiation begins,
     // applying iconvbufs(ic_send, ...) to each arg when iconv is configured
     // (compat.c:799-806 filesfrom_convert / protect-args iconv gating).
@@ -349,10 +338,9 @@ fn run_pull_transfer(
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
-    // Build server config for receiver role with client_mode enabled.
-    // client_mode = true tells the server flow to send the filter list at the
-    // correct point in the protocol (after handshake + compat exchange), matching
-    // upstream main.c:1258 where recv_filter_list() is called inside the server.
+    // upstream: main.c:1258 - client_mode=true tells the server flow to send the
+    // filter list after handshake + compat exchange (where recv_filter_list() is
+    // called inside the server).
     let mut server_config = build_server_config_for_receiver(config, local_paths)?;
     server_config.connection.client_mode = true;
     server_config.connection.filter_rules = flags::build_wire_format_rules(config.filter_rules())
@@ -386,9 +374,8 @@ fn run_push_transfer(
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
-    // Build server config for generator (sender) role with client_mode enabled.
-    // client_mode = true ensures the filter list is sent at the correct point
-    // in the protocol flow (after handshake + compat exchange).
+    // upstream: client_mode=true ensures the filter list is sent after
+    // handshake + compat exchange.
     let mut server_config = build_server_config_for_generator(config, local_paths)?;
     server_config.connection.client_mode = true;
     server_config.connection.filter_rules = flags::build_wire_format_rules(config.filter_rules())
@@ -472,14 +459,13 @@ pub(super) fn convert_server_stats_to_summary(
 
     let mut summary = ClientSummary::from_summary(local_summary);
 
-    // Map accumulated I/O error flags to an exit code.
-    // upstream: log.c - log_exit() converts io_error bitfield to RERR_* codes.
+    // upstream: log.c log_exit() - convert io_error bitfield to RERR_* codes.
     let exit_code = io_error_flags::to_exit_code(io_error);
     if exit_code != 0 {
         summary.set_io_error_exit_code(exit_code);
     } else if error_count > 0 {
-        // Remote sender reported errors via MSG_ERROR - treat as partial transfer.
-        summary.set_io_error_exit_code(23); // RERR_PARTIAL
+        // Remote sender reported errors via MSG_ERROR - treat as RERR_PARTIAL.
+        summary.set_io_error_exit_code(23);
     }
 
     summary
@@ -499,7 +485,6 @@ pub(super) fn map_child_exit_status(status: std::process::ExitStatus) -> ExitCod
         return ExitCode::Ok;
     }
 
-    // On Unix, check if killed by signal
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
@@ -511,10 +496,7 @@ pub(super) fn map_child_exit_status(status: std::process::ExitStatus) -> ExitCod
     match status.code() {
         Some(127) => ExitCode::CommandNotFound,
         Some(255) => ExitCode::CommandFailed,
-        Some(code) => {
-            // Try to interpret as a known rsync exit code from the remote side.
-            ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer)
-        }
+        Some(code) => ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer),
         None => ExitCode::WaitChild,
     }
 }
@@ -538,7 +520,6 @@ pub(super) fn format_stderr_context(stderr_bytes: &[u8]) -> String {
 }
 
 /// Batch recording context passed through the SSH transfer chain.
-// Batch support types are shared with the daemon transfer path.
 use super::batch_support::{BatchContext, build_batch_context, build_batch_recording};
 
 /// Runs server over an SSH connection using split read/write halves.
@@ -575,8 +556,8 @@ fn run_server_over_ssh_connection(
     let handshake = match crate::server::perform_handshake(&mut reader, &mut writer) {
         Ok(h) => h,
         Err(e) => {
-            // Capture SSH stderr before returning - the remote process likely wrote
-            // diagnostic output (e.g., "Connection refused") that explains the failure.
+            // Capture SSH stderr - the remote process likely wrote diagnostic
+            // output (e.g., "Connection refused") that explains the failure.
             drop(writer);
             let stderr_text = match child_handle.wait_with_stderr() {
                 Ok((_, stderr_bytes)) => format_stderr_context(&stderr_bytes),
@@ -589,9 +570,8 @@ fn run_server_over_ssh_connection(
         }
     };
 
-    // Connection established - disarm the connect watchdog. If the watchdog
-    // already fired (timeout expired during handshake), map to exit code 35
-    // (RERR_CONTIMEOUT) matching upstream rsync's --contimeout behavior.
+    // upstream: --contimeout - if watchdog already fired (timeout expired during
+    // handshake), map to exit code 35 (RERR_CONTIMEOUT).
     if let Err(e) = child_handle.cancel_connect_watchdog() {
         return Err(invalid_argument_error(
             &format!("{e}"),
@@ -608,11 +588,10 @@ fn run_server_over_ssh_connection(
         None,
     );
 
-    // Close the writer to signal EOF to the remote process, allowing it to exit.
+    // Close the writer to signal EOF so the remote process can exit.
     drop(writer);
 
-    // Wait for SSH child and map its exit status.
-    // Mirror upstream: wait_process_with_flush() in main.c
+    // upstream: main.c wait_process_with_flush() - wait for child and map status.
     let (child_exit_code, stderr_text) = match child_handle.wait_with_stderr() {
         Ok((status, stderr_bytes)) => {
             let stderr_text = format_stderr_context(&stderr_bytes);
@@ -767,7 +746,6 @@ mod tests {
         assert!(output.contains("error:"));
     }
 
-    // Tests for map_child_exit_status
     #[cfg(unix)]
     mod child_exit_status_tests {
         use super::*;

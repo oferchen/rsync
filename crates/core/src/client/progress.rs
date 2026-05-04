@@ -374,7 +374,6 @@ mod tests {
     fn event_returns_reference() {
         let update = create_test_update(10, 5, 5, false);
         let _event = update.event();
-        // Just verify we can access the event
     }
 
     #[test]
