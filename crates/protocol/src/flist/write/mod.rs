@@ -424,7 +424,6 @@ impl FileListWriter {
                 &mut self.acl_cache,
             )?;
         } else {
-            // Discard unused pending ACL
             self.pending_acl = None;
         }
 

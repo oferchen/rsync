@@ -131,7 +131,6 @@ impl FileListWriter {
             writer.write_all(&(entry_uid as i32).to_le_bytes())?;
         } else {
             write_varint(writer, entry_uid as i32)?;
-            // User name follows UID (protocol 30+)
             if (xflags & ((XMIT_USER_NAME_FOLLOWS as u32) << 8)) != 0 {
                 self.write_owner_name(writer, entry.user_name())?;
             }
@@ -157,7 +156,6 @@ impl FileListWriter {
             writer.write_all(&(entry_gid as i32).to_le_bytes())?;
         } else {
             write_varint(writer, entry_gid as i32)?;
-            // Group name follows GID (protocol 30+)
             if (xflags & ((XMIT_GROUP_NAME_FOLLOWS as u32) << 8)) != 0 {
                 self.write_owner_name(writer, entry.group_name())?;
             }
