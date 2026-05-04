@@ -46,7 +46,6 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
                 level: _,
                 message,
             } => {
-                // Debug always goes to stderr with flag prefix
                 writeln!(err, "[{flag:?}] {message}")?;
             }
         }
@@ -186,14 +185,12 @@ mod tests {
 
     #[test]
     fn test_flush_diagnostics_drains_events() {
-        // Emit some events to the thread-local queue
         logging::emit_info(InfoFlag::Progress, 1, "test info".to_owned());
         logging::emit_debug(DebugFlag::Filter, 1, "test debug".to_owned());
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
-        // Flush should drain and render them
         flush_diagnostics(&mut stdout, &mut stderr, false).unwrap();
 
         let stdout_output = String::from_utf8(stdout).unwrap();
@@ -202,7 +199,6 @@ mod tests {
         let stderr_output = String::from_utf8(stderr).unwrap();
         assert!(stderr_output.contains("[Filter] test debug"));
 
-        // Second flush should be empty
         let mut stdout2 = Vec::new();
         let mut stderr2 = Vec::new();
         flush_diagnostics(&mut stdout2, &mut stderr2, false).unwrap();
