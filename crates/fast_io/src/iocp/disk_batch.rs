@@ -48,8 +48,8 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_HANDLE_EOF, FALSE, HANDLE, INVALID_HANDLE_VALUE, TRUE, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    FILE_FLAG_OVERLAPPED, FILE_GENERIC_WRITE, FILE_SHARE_READ, FlushFileBuffers, ReOpenFile,
-    WriteFile,
+    FILE_FLAG_OVERLAPPED, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FlushFileBuffers, ReOpenFile, WriteFile,
 };
 use windows_sys::Win32::System::IO::{GetQueuedCompletionStatusEx, OVERLAPPED, OVERLAPPED_ENTRY};
 
@@ -370,7 +370,7 @@ fn reopen_overlapped(handle: HANDLE) -> io::Result<HANDLE> {
         ReOpenFile(
             handle,
             FILE_GENERIC_WRITE,
-            FILE_SHARE_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             FILE_FLAG_OVERLAPPED,
         )
     };

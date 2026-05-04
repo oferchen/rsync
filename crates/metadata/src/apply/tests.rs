@@ -449,6 +449,9 @@ fn group_override_takes_precedence() {
     assert_eq!(dest_meta.gid(), 1000);
 }
 
+// Sub-100ns nanosecond preservation requires filesystem granularity finer than
+// NTFS's 100ns FILETIME, so the exact-equality assertion is Unix-only.
+#[cfg(unix)]
 #[test]
 fn apply_metadata_from_file_entry_with_timestamps() {
     use protocol::flist::FileEntry;
@@ -761,7 +764,7 @@ fn attrs_flags_empty_applies_mtime_normally() {
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_mtime.seconds(), 1_700_000_000);
+    assert_eq!(dest_mtime.unix_seconds(), 1_700_000_000);
 }
 
 #[test]
@@ -806,7 +809,7 @@ fn attrs_flags_skip_crtime_prevents_crtime_application() {
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_mtime.seconds(), 1_700_000_000);
+    assert_eq!(dest_mtime.unix_seconds(), 1_700_000_000);
 }
 
 #[test]
@@ -907,7 +910,7 @@ fn attrs_flags_skip_atime_alone_does_not_affect_mtime() {
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_mtime.seconds(), 1_700_000_000);
+    assert_eq!(dest_mtime.unix_seconds(), 1_700_000_000);
 }
 
 #[cfg(unix)]
