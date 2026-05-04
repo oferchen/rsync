@@ -546,7 +546,6 @@ impl<'a> CopyContext<'a> {
             None => return Ok(()),
         };
 
-        // Encode the end-of-list marker into a buffer
         let mut buf = Vec::with_capacity(4);
         flist_writer.write_end(&mut buf, None).map_err(|e| {
             crate::local_copy::LocalCopyError::io(
@@ -556,7 +555,6 @@ impl<'a> CopyContext<'a> {
             )
         })?;
 
-        // Write to the batch file
         let batch_writer_arc = match self.options.get_batch_writer() {
             Some(w) => w.clone(),
             None => return Ok(()),
@@ -595,7 +593,6 @@ impl<'a> CopyContext<'a> {
         // Without xmit_id0_names (ID0_NAMES not in compat_flags), the
         // terminator is just varint30(0) for each list.
         let mut buf = Vec::with_capacity(2);
-        // uid list terminator
         protocol::write_varint30_int(&mut buf, 0, proto as u8).map_err(|e| {
             crate::local_copy::LocalCopyError::io(
                 "write batch uid list terminator",
@@ -603,7 +600,6 @@ impl<'a> CopyContext<'a> {
                 e,
             )
         })?;
-        // gid list terminator
         protocol::write_varint30_int(&mut buf, 0, proto as u8).map_err(|e| {
             crate::local_copy::LocalCopyError::io(
                 "write batch gid list terminator",
@@ -647,12 +643,11 @@ impl<'a> CopyContext<'a> {
             None => return Ok(()),
         };
 
-        // Reset per-file buffer for the new file.
         delta_file.get_mut().clear();
         delta_file.set_position(0);
 
-        // Record traversal index for this file. NDX will be remapped to
-        // sorted order at flush time.
+        // NDX is remapped to sorted order at flush time; record the
+        // traversal index here.
         self.batch_current_delta_idx = self.batch_flist_index - 1;
 
         // upstream: rsync.c:383 - write iflags (u16 LE) for protocol >= 29.
@@ -905,7 +900,6 @@ impl<'a> CopyContext<'a> {
                 .copied()
                 .unwrap_or(*traversal_idx);
 
-            // Write NDX via the protocol-versioned codec.
             let mut ndx_buf = Vec::with_capacity(4);
             protocol::codec::NdxCodec::write_ndx(codec, &mut ndx_buf, sorted_idx).map_err(
                 |e| {

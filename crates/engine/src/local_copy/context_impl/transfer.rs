@@ -306,7 +306,7 @@ impl<'a> CopyContext<'a> {
         let mut sparse_state = SparseWriteState::default();
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress: u64 = 0;
-        // Check timeout every 1MB to reduce clock_gettime syscalls
+        // 1MB interval amortizes clock_gettime syscalls across the copy loop.
         const TIMEOUT_CHECK_INTERVAL: u64 = 1024 * 1024;
         let mut bytes_since_timeout_check: u64 = 0;
 
@@ -314,7 +314,6 @@ impl<'a> CopyContext<'a> {
             if total_bytes >= expected_remaining {
                 break;
             }
-            // Only check timeout periodically to reduce syscall overhead
             if bytes_since_timeout_check >= TIMEOUT_CHECK_INTERVAL {
                 self.enforce_timeout()?;
                 bytes_since_timeout_check = 0;
