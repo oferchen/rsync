@@ -37,6 +37,7 @@ const YEAR_2100: i64 = 4_102_444_800;
 /// Corresponds to: 3000-01-01 00:00:00 UTC
 const YEAR_3000: i64 = 32_503_680_000;
 
+#[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_at_2038_boundary() {
     let temp = tempdir().expect("tempdir");
@@ -67,6 +68,7 @@ fn file_metadata_preserves_timestamp_at_2038_boundary() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_before_2038() {
     let temp = tempdir().expect("tempdir");
@@ -91,6 +93,7 @@ fn file_metadata_preserves_timestamp_before_2038() {
     assert_eq!(dest_mtime, mtime, "mtime should be preserved before 2038");
 }
 
+#[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_after_2038() {
     let temp = tempdir().expect("tempdir");
@@ -115,6 +118,7 @@ fn file_metadata_preserves_timestamp_after_2038() {
     assert_eq!(dest_mtime, mtime, "mtime should be preserved after 2038");
 }
 
+#[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_year_2100() {
     let temp = tempdir().expect("tempdir");
@@ -139,6 +143,7 @@ fn file_metadata_preserves_timestamp_year_2100() {
     assert_eq!(dest_mtime, mtime, "mtime should be preserved for year 2100");
 }
 
+#[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_year_3000() {
     let temp = tempdir().expect("tempdir");
@@ -174,6 +179,7 @@ fn file_metadata_preserves_timestamp_year_3000() {
     assert_eq!(dest_mtime, mtime, "mtime should be preserved for year 3000");
 }
 
+#[cfg(unix)]
 #[test]
 fn directory_metadata_preserves_timestamp_beyond_2038() {
     let temp = tempdir().expect("tempdir");
@@ -238,6 +244,7 @@ fn symlink_metadata_preserves_timestamp_beyond_2038() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn round_trip_preserves_timestamps_across_2038_boundary() {
     let temp = tempdir().expect("tempdir");
@@ -282,6 +289,7 @@ fn round_trip_preserves_timestamps_across_2038_boundary() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn no_overflow_at_i32_max_boundary() {
     let temp = tempdir().expect("tempdir");
@@ -339,6 +347,7 @@ fn no_overflow_just_past_i32_max() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn nanosecond_precision_preserved_beyond_2038() {
     let temp = tempdir().expect("tempdir");
@@ -454,6 +463,7 @@ fn negative_timestamps_are_handled_correctly() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn extreme_range_64bit_timestamps() {
     let temp = tempdir().expect("tempdir");
