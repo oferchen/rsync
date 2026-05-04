@@ -14,16 +14,13 @@ fn test_acquire_returns_buffer() {
 fn test_buffer_reuse() {
     let pool = BufferPool::new(4);
 
-    // Acquire and release a buffer.
     {
         let mut buffer = pool.acquire();
         buffer[0] = 42;
     }
 
-    // Buffer was returned to TLS (first return on this thread goes to
-    // the thread-local cache, not the central pool).
-
-    // Acquire again - should get the reused buffer from TLS with correct length.
+    // First return on this thread goes to the thread-local cache, not the
+    // central pool. Re-acquire should get the reused buffer from TLS.
     let buffer = pool.acquire();
     assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
 }
@@ -32,17 +29,15 @@ fn test_buffer_reuse() {
 fn test_pool_capacity_limit() {
     let pool = BufferPool::new(2);
 
-    // Acquire 3 buffers
     let b1 = pool.acquire();
     let b2 = pool.acquire();
     let b3 = pool.acquire();
 
-    // Release all
     drop(b1);
     drop(b2);
     drop(b3);
 
-    // Only 2 should be retained
+    // Pool capacity is 2, so only 2 of the 3 returned buffers are retained.
     assert_eq!(pool.available(), 2);
 }
 
@@ -57,7 +52,6 @@ fn test_concurrent_access() {
             for _ in 0..100 {
                 let mut buffer = pool.acquire();
                 buffer[0] = 1;
-                // Buffer returned on drop
             }
         }));
     }
@@ -66,7 +60,6 @@ fn test_concurrent_access() {
         handle.join().expect("thread panicked");
     }
 
-    // Pool should have at most max_buffers
     assert!(pool.available() <= 8);
 }
 
@@ -75,15 +68,12 @@ fn test_buffer_guard_deref() {
     let pool = BufferPool::new(4);
     let mut buffer = pool.acquire();
 
-    // Write through DerefMut
     buffer[0] = 100;
     buffer[1] = 200;
 
-    // Read through Deref
     assert_eq!(buffer[0], 100);
     assert_eq!(buffer[1], 200);
 
-    // Use as slice
     let slice: &[u8] = &buffer;
     assert_eq!(slice[0], 100);
 }
@@ -120,14 +110,13 @@ fn test_buffer_length_restored_on_return() {
 
     {
         let mut buffer = pool.acquire();
-        // Fill with non-zero data
         for byte in buffer.iter_mut() {
             *byte = 0xFF;
         }
     }
 
-    // Acquire again - length should be restored (contents are stale but
-    // will be overwritten by Read::read before consumption).
+    // Length should be restored on re-acquire (contents are stale but will
+    // be overwritten by Read::read before consumption).
     let buffer = pool.acquire();
     assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
 }
@@ -348,11 +337,9 @@ fn acquire_adaptive_from_returns_buffer_to_pool() {
 
     {
         let _buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 1024);
-        // tiny buffer is active
     }
-    // Buffer returned to TLS (resized to pool default).
 
-    // Next acquire should get the resized buffer from TLS.
+    // Buffer returned to TLS (resized to pool default); re-acquire gets it.
     let buffer = BufferPool::acquire_from(Arc::clone(&pool));
     assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
 }
@@ -365,9 +352,8 @@ fn acquire_adaptive_from_large_buffer_returns_resized() {
         let buffer = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 100 * 1024 * 1024);
         assert_eq!(buffer.len(), ADAPTIVE_BUFFER_LARGE);
     }
-    // Buffer returned to TLS (resized to pool default).
 
-    // Re-acquire should get the resized buffer from TLS.
+    // Buffer returned to TLS (resized to pool default); re-acquire gets it.
     let buffer = BufferPool::acquire_from(Arc::clone(&pool));
     assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
 }
@@ -399,10 +385,9 @@ fn pool_size_stays_bounded_under_burst_allocation() {
         .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
         .collect();
 
-    // While all 64 buffers are checked out the pool is empty.
     assert_eq!(pool.available(), 0);
 
-    // Drop all guards - only max_buffers should be retained.
+    // After dropping all guards only max_buffers should be retained.
     drop(guards);
     assert_eq!(pool.available(), max);
 }
@@ -471,11 +456,10 @@ fn concurrent_checkout_return_from_multiple_threads() {
             thread::spawn(move || {
                 for i in 0..iterations {
                     let mut buf = BufferPool::acquire_from(Arc::clone(&pool));
-                    // Write a recognizable pattern to detect cross-thread corruption.
+                    // Recognizable pattern to detect cross-thread corruption.
                     buf[0] = (id & 0xFF) as u8;
                     buf[1] = (i & 0xFF) as u8;
                     assert_eq!(buf[0], (id & 0xFF) as u8);
-                    // Guard dropped here - buffer returns to pool.
                 }
             })
         })
@@ -496,7 +480,6 @@ fn concurrent_mixed_guard_types() {
     // and sequential borrow-based access both work correctly.
     let pool = Arc::new(BufferPool::new(4));
 
-    // Spawn threads using Arc-based acquire_from.
     let handles: Vec<_> = (0..4)
         .map(|_| {
             let pool = Arc::clone(&pool);
@@ -514,12 +497,11 @@ fn concurrent_mixed_guard_types() {
 
     assert!(pool.available() <= 4);
 
-    // Now use borrowed guard on the main thread.
     let available_before = pool.available();
     {
         let _buf = pool.acquire();
     }
-    // Buffer was returned; available count should be at least what it was.
+    // After return, available count should be at least what it was before.
     assert!(pool.available() >= available_before);
 }
 
@@ -935,7 +917,6 @@ fn memory_cap_with_concurrent_pressure() {
                 for _ in 0..100 {
                     let mut buf = BufferPool::acquire_from(Arc::clone(&pool));
                     buf[0] = 0xAB;
-                    // Guard dropped here - returns buffer.
                 }
             })
         })
@@ -1180,7 +1161,6 @@ fn sequential_returns_respect_soft_capacity() {
     // to central pool up to soft_capacity. Excess is deallocated.
     let pool = BufferPool::new(2);
 
-    // Acquire 8 buffers, then drop them one at a time.
     let buffers: Vec<_> = (0..8).map(|_| pool.acquire()).collect();
     drop(buffers);
 
@@ -1271,7 +1251,6 @@ fn tls_per_thread_isolation() {
             let pool = Arc::clone(&pool);
             let barrier = Arc::clone(&barrier);
             thread::spawn(move || {
-                // Each thread acquires and returns a buffer.
                 {
                     let mut buf = BufferPool::acquire_from(Arc::clone(&pool));
                     buf[0] = id as u8;
@@ -1280,7 +1259,7 @@ fn tls_per_thread_isolation() {
 
                 barrier.wait();
 
-                // Re-acquire: should get own buffer from TLS, not other thread's.
+                // Re-acquire must get own buffer from TLS, not another thread's.
                 let buf = BufferPool::acquire_from(pool);
                 assert_eq!(buf[0], id as u8);
             })
@@ -1860,7 +1839,6 @@ fn lock_free_acquire_release_under_scoped_concurrency() {
                     for (n, slot) in guards.iter_mut().enumerate() {
                         let mut g = slot.take().expect("guard present");
                         g[0] = ((i + n) & 0xFF) as u8;
-                        // Drop in inverse order to vary the return pattern.
                     }
                 }
             });
