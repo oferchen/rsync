@@ -197,12 +197,9 @@ mod tests {
 
     #[test]
     fn with_thread_local_reuses_buffer() {
-        // First call modifies the thread-local buffer
         MessageScratch::with_thread_local(|scratch| {
             scratch.code_digits[0] = 99;
         });
-        // Second call may or may not see the modification depending on reuse
-        // Just verify it executes successfully
         let result = MessageScratch::with_thread_local(|_scratch| true);
         assert!(result);
     }
