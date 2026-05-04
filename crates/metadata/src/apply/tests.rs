@@ -579,6 +579,9 @@ fn epoch_timestamp_with_nanoseconds_is_preserved() {
     );
 }
 
+// NTFS FILETIME has 100ns granularity, so 999_999_999ns truncates to
+// 999_999_900ns and breaks the equality round-trip on Windows.
+#[cfg(unix)]
 #[test]
 fn epoch_timestamp_round_trip_file() {
     let temp = tempdir().expect("tempdir");
@@ -684,6 +687,9 @@ fn epoch_timestamp_from_file_entry() {
     );
 }
 
+// NTFS FILETIME has 100ns granularity, so 987_654_321ns truncates to
+// 987_654_300ns and breaks the equality assertion on Windows.
+#[cfg(unix)]
 #[test]
 fn epoch_timestamp_from_file_entry_with_nanoseconds() {
     use protocol::flist::FileEntry;
@@ -744,7 +750,7 @@ fn epoch_timestamp_edge_case_one_nanosecond() {
 
     // Some filesystems may not support nanosecond precision,
     // so we check that we at least preserved the second (0)
-    assert_eq!(dest_mtime.seconds(), 0, "seconds should be zero");
+    assert_eq!(dest_mtime.unix_seconds(), 0, "seconds should be zero");
 }
 
 #[test]
@@ -863,7 +869,7 @@ fn attrs_flags_skip_mtime_with_atime_still_applies_atime() {
     assert_eq!(dest_mtime, original_mtime);
 
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    assert_eq!(dest_atime.seconds(), 1_650_000_000);
+    assert_eq!(dest_atime.unix_seconds(), 1_650_000_000);
 }
 
 #[test]
