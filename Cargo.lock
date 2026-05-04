@@ -163,7 +163,7 @@ name = "apple-fs"
 version = "0.6.1"
 dependencies = [
  "libc",
- "nix 0.29.0",
+ "nix",
  "tempfile",
  "unicode-normalization",
  "xattr",
@@ -732,7 +732,7 @@ dependencies = [
  "libc",
  "logging",
  "metadata",
- "nix 0.29.0",
+ "nix",
  "protocol",
  "rsync_io",
  "rustix 1.1.4",
@@ -2309,18 +2309,6 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
-dependencies = [
- "bitflags",
- "cfg-if",
- "cfg_aliases",
- "libc",
-]
-
-[[package]]
-name = "nix"
 version = "0.31.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d6d0705320c1e6ba1d912b5e37cf18071b6c2e9b7fa8215a1e8a7651966f5d3"
@@ -2693,7 +2681,7 @@ name = "platform"
 version = "0.6.1"
 dependencies = [
  "libc",
- "nix 0.29.0",
+ "nix",
  "signal-hook",
  "tempfile",
  "thiserror 2.0.18",
@@ -3249,7 +3237,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36140e8a20297bc2e8338807c3d9ca911f7fa49d7539cbcd6d48d3befd70efd8"
 dependencies = [
  "log",
- "nix 0.31.2",
+ "nix",
  "ssh-encoding",
  "windows-sys 0.61.2",
 ]
