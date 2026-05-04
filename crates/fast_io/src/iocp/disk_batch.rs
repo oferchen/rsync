@@ -635,7 +635,8 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_READ,
+        CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE,
     };
 
     fn to_wide(path: &std::path::Path) -> Vec<u16> {
@@ -649,14 +650,18 @@ mod tests {
     fn open_writable(path: &std::path::Path) -> File {
         let wide = to_wide(path);
         // SAFETY: Standard Win32 open: zero-terminated wide string, generic
-        // write, create-always. The returned handle is wrapped into a
-        // std::fs::File via FromRawHandle so Drop closes it.
+        // write, create-always. The handle permits shared read/write/delete
+        // so that `ReOpenFile` (called from `begin_file`) can acquire a
+        // second overlapped write handle without ERROR_SHARING_VIOLATION,
+        // and so the enclosing tempdir can be cleaned up. The returned
+        // handle is wrapped into a std::fs::File via FromRawHandle so Drop
+        // closes it.
         #[allow(unsafe_code)]
         let handle = unsafe {
             CreateFileW(
                 wide.as_ptr(),
                 FILE_GENERIC_WRITE,
-                FILE_SHARE_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 std::ptr::null(),
                 CREATE_ALWAYS,
                 FILE_ATTRIBUTE_NORMAL,
