@@ -188,16 +188,15 @@ pub(crate) fn parse_client_info(client_args: &[String]) -> Cow<'_, str> {
         if arg.starts_with('-')
             && !arg.starts_with("--")
             && let Some(e_pos) = arg.find('e')
+            && e_pos + 1 < arg.len()
         {
-            if e_pos + 1 < arg.len() {
-                let caps = &arg[e_pos + 1..];
-                // Skip leading '.' version placeholder.
-                // upstream: options.c puts '.' when protocol_version != PROTOCOL_VERSION
-                if caps.starts_with('.') && caps.len() > 1 {
-                    return Cow::Borrowed(&caps[1..]);
-                }
-                return Cow::Borrowed(caps);
+            let caps = &arg[e_pos + 1..];
+            // Skip leading '.' version placeholder.
+            // upstream: options.c puts '.' when protocol_version != PROTOCOL_VERSION
+            if caps.starts_with('.') && caps.len() > 1 {
+                return Cow::Borrowed(&caps[1..]);
             }
+            return Cow::Borrowed(caps);
         }
 
         if arg == "-e" && i + 1 < client_args.len() {
