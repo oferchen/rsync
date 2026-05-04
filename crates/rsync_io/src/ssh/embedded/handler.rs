@@ -51,12 +51,9 @@ impl SshClientHandler {
     /// for key mismatches (potential MITM).
     fn verify_host_key(&self, server_public_key: &PublicKey) -> Result<bool, SshError> {
         let check_result = match &self.known_hosts_file {
-            Some(path) => known_hosts::check_known_hosts_path(
-                &self.host,
-                self.port,
-                server_public_key,
-                path,
-            ),
+            Some(path) => {
+                known_hosts::check_known_hosts_path(&self.host, self.port, server_public_key, path)
+            }
             None => known_hosts::check_known_hosts(&self.host, self.port, server_public_key),
         };
 
@@ -162,10 +159,7 @@ impl SshClientHandler {
 impl russh::client::Handler for SshClientHandler {
     type Error = SshError;
 
-    async fn check_server_key(
-        &mut self,
-        server_public_key: &PublicKey,
-    ) -> Result<bool, SshError> {
+    async fn check_server_key(&mut self, server_public_key: &PublicKey) -> Result<bool, SshError> {
         self.verify_host_key(server_public_key)
     }
 }

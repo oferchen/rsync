@@ -314,8 +314,8 @@ mod tests {
         let key_path = dir.path().join("id_ed25519");
 
         // Generate a private key and write it in PKCS8 PEM format.
-        let private = PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
-            .expect("keygen");
+        let private =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         let mut buf = Vec::new();
         russh::keys::encode_pkcs8_pem(&private, &mut buf).expect("encode pem");
         std::fs::write(&key_path, &buf).expect("write key");
@@ -481,8 +481,8 @@ mod tests {
 
     /// Generate a russh server config with a fresh host key.
     fn mock_server_config() -> Arc<russh::server::Config> {
-        let host_key = PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
-            .expect("keygen");
+        let host_key =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         Arc::new(russh::server::Config {
             keys: vec![host_key],
             ..Default::default()
@@ -553,8 +553,8 @@ mod tests {
         let key_path = dir.path().join("id_ed25519");
 
         // Generate a private key and write it.
-        let private = PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
-            .expect("keygen");
+        let private =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         let pubkey = private.public_key().clone();
         let mut buf = Vec::new();
         russh::keys::encode_pkcs8_pem(&private, &mut buf).expect("encode pem");
@@ -698,15 +698,15 @@ mod tests {
         let key_path = dir.path().join("id_ed25519");
 
         // Generate a private key the server does NOT accept.
-        let wrong_key = PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
-            .expect("keygen");
+        let wrong_key =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         let mut buf = Vec::new();
         russh::keys::encode_pkcs8_pem(&wrong_key, &mut buf).expect("encode pem");
         std::fs::write(&key_path, &buf).expect("write key");
 
         // Server accepts a different key and password.
-        let accepted_key = PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
-            .expect("keygen");
+        let accepted_key =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         let accepted_pubkey = accepted_key.public_key().clone();
         let policy = MockAuthPolicy {
             accepted_keys: vec![accepted_pubkey],
@@ -755,10 +755,10 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
 
         // Generate two private keys - server accepts the second one.
-        let wrong_key = PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
-            .expect("keygen");
-        let right_key = PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
-            .expect("keygen");
+        let wrong_key =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
+        let right_key =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         let right_pubkey = right_key.public_key().clone();
 
         let wrong_path = dir.path().join("id_wrong");
@@ -823,8 +823,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let key_path = dir.path().join("id_ed25519");
 
-        let private = PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
-            .expect("keygen");
+        let private =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
         let mut buf = Vec::new();
         russh::keys::encode_pkcs8_pem(&private, &mut buf).expect("encode");
         std::fs::write(&key_path, &buf).expect("write key");
