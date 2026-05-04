@@ -220,7 +220,6 @@ pub async fn authenticate(
     let username = effective_username(config)?;
     let mut tried = Vec::new();
 
-    // 1. SSH agent.
     if config.use_agent {
         if try_agent_auth(session, &username).await? {
             return Ok(());
@@ -228,7 +227,6 @@ pub async fn authenticate(
         tried.push("agent");
     }
 
-    // 2. Identity files.
     if !config.identity_files.is_empty() {
         if try_identity_file_auth(session, &username, &config.identity_files).await? {
             return Ok(());
@@ -236,7 +234,6 @@ pub async fn authenticate(
         tried.push("publickey");
     }
 
-    // 3. Password.
     if try_password_auth(session, &username, config).await? {
         return Ok(());
     }

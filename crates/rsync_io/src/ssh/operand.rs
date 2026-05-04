@@ -114,9 +114,6 @@ pub fn parse_ssh_operand(operand: &OsStr) -> Result<RemoteOperand, RemoteOperand
         return Err(RemoteOperandParseError::Empty);
     }
 
-    // Parse the operand: [user@][host]:path
-    // IPv6 hosts may be in brackets: [::1]:path or user@[::1]:path
-
     let (user, rest) = extract_user(&text);
     let (host, path) = extract_host_and_path(rest)?;
 
