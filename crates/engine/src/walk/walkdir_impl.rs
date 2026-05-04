@@ -131,9 +131,10 @@ impl WalkdirWalker {
         }
     }
 
+    /// Non-Unix platforms lack POSIX device IDs, so the one-file-system
+    /// constraint is a no-op.
     #[cfg(not(unix))]
     fn should_skip_for_filesystem(&self, _metadata: &fs::Metadata) -> bool {
-        // Windows doesn't have device IDs in the same way
         false
     }
 }
@@ -198,8 +199,8 @@ impl DirectoryWalker for WalkdirWalker {
     }
 
     fn skip_current_dir(&mut self) {
-        // jwalk lacks native skip_current_dir; approximate by skipping
-        // entries deeper than the last returned depth
+        // jwalk lacks native skip_current_dir; approximate by dropping
+        // entries deeper than the last returned depth.
         self.skip_dir_depth = Some(self.last_depth);
     }
 }
@@ -228,19 +229,16 @@ mod tests {
 
         let entries: Vec<_> = walker.flatten().collect();
 
-        // Root + 3 files + 1 subdir + 1 nested file = 6 entries
+        // Root + 3 files + 1 subdir + 1 nested file = 6 entries.
         assert_eq!(entries.len(), 6);
 
-        // Check sorting: root, then a.txt, b.txt, c.txt, subdir, subdir/nested.txt
         let names: Vec<_> = entries
             .iter()
             .filter_map(|e| e.file_name().map(|n| n.to_string_lossy().to_string()))
             .collect();
 
-        // First entry is root (no file_name)
         assert_eq!(entries[0].depth(), 0);
 
-        // Files should be sorted
         let file_names: Vec<_> = names
             .iter()
             .filter(|n| n.ends_with(".txt") && !n.contains("nested"))
@@ -256,7 +254,6 @@ mod tests {
 
         let entries: Vec<_> = walker.flatten().collect();
 
-        // Should only get root level entries, not nested.txt
         let has_nested = entries.iter().any(|e| {
             e.file_name()
                 .map(|n| n.to_string_lossy().contains("nested"))
@@ -273,7 +270,6 @@ mod tests {
 
         let entries: Vec<_> = walker.flatten().collect();
 
-        // All entries should have depth > 0
         assert!(entries.iter().all(|e| e.depth() > 0));
     }
 
@@ -293,8 +289,8 @@ mod tests {
         }
 
         assert!(found_subdir);
-        // Note: Due to parallel traversal, skip_current_dir may not prevent
-        // already-queued entries from being returned
+        // Parallel traversal may have already queued deeper entries before
+        // skip_current_dir runs, so we cannot assert their absence here.
     }
 
     #[test]
@@ -327,14 +323,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn one_file_system_skips_different_devices() {
-        // This test requires a mounted filesystem with different device ID
-        // We can at least verify the config is respected
+        // Exercising the cross-device skip would require an extra mount point;
+        // here we only verify the config flag survives and same-device walks
+        // still produce entries.
         let dir = TempDir::new().unwrap();
         let config = WalkConfig::default().one_file_system(true);
         let walker = WalkdirWalker::new(dir.path(), config);
 
         assert!(walker.config().is_one_file_system());
-        // Should still work for same-device traversal
         let entries: Vec<_> = walker.flatten().collect();
         assert!(!entries.is_empty());
     }

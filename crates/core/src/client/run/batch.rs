@@ -198,7 +198,6 @@ pub(crate) fn finalize_batch(
         }
     }
 
-    // Generate the .sh replay script
     if let Err(e) = engine::batch::script::generate_script(batch_cfg) {
         let msg = format!("failed to generate batch script: {e}");
         return Err(ClientError::new(
@@ -294,12 +293,10 @@ mod tests {
 
         let writer_arc = create_batch_writer(&batch_cfg).unwrap();
 
-        // Even when compress=true, the header must say do_compression=false
         let config = config_with_compress(true);
         write_batch_header(&writer_arc, &config).unwrap();
         drop(writer_arc);
 
-        // Read back and verify
         let read_cfg = BatchConfig::new(BatchMode::Read, path.to_string_lossy().to_string(), 31);
         let mut reader = engine::batch::BatchReader::new(read_cfg).unwrap();
         let flags = reader.read_header().unwrap();

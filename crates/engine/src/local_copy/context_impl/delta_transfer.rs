@@ -20,14 +20,12 @@ impl<'a> CopyContext<'a> {
         initial_bytes: u64,
         start: Instant,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
-        // Check if we're doing inplace writes by comparing file descriptors
-        // For inplace mode, the writer IS the destination file (opened for write)
-        // For normal mode, the writer is a temp file
-        // We detect this by checking if we can successfully open another handle to destination
+        // In inplace mode the writer IS the destination file; matched blocks
+        // are already in place so no separate reader is needed. In normal mode
+        // the writer is a temp file and we read matched blocks from the old
+        // destination.
         let inplace_mode = self.inplace_enabled();
 
-        // For inplace mode, we don't need a separate reader - the matched blocks are already there
-        // For normal mode, we open the old destination to read matched blocks
         let mut destination_reader = if !inplace_mode {
             Some(fs::File::open(destination).map_err(|error| {
                 LocalCopyError::io(
@@ -52,15 +50,14 @@ impl<'a> CopyContext<'a> {
         let mut read_buffer = vec![0u8; buffer.len().max(index.block_length())];
         let mut buffer_len = 0usize;
         let mut buffer_pos = 0usize;
-        // Track output position for inplace mode (where we seek to write each block)
+        // Inplace mode seeks to this position before each literal write.
         let mut output_position = 0u64;
-        // Check timeout every 256KB to reduce clock_gettime syscalls
-        // (smaller interval than regular copy since delta is more CPU-intensive)
+        // 256KB interval - smaller than regular copy since delta is more
+        // CPU-intensive, but still amortizes clock_gettime syscalls.
         const TIMEOUT_CHECK_INTERVAL: usize = 256 * 1024;
         let mut bytes_since_timeout_check: usize = 0;
 
         loop {
-            // Only check timeout periodically
             if bytes_since_timeout_check >= TIMEOUT_CHECK_INTERVAL {
                 self.enforce_timeout()?;
                 bytes_since_timeout_check = 0;
@@ -101,7 +98,6 @@ impl<'a> CopyContext<'a> {
             if let Some(block_index) = index.find_match_window(digest, &window, &mut scratch) {
                 if !pending_literals.is_empty() {
                     let flushed_len = pending_literals.len();
-                    // For inplace mode, seek to the output position before writing
                     if inplace_mode {
                         writer.seek(SeekFrom::Start(output_position)).map_err(|error| {
                             LocalCopyError::io("seek destination file", destination.to_path_buf(), error)
@@ -138,14 +134,12 @@ impl<'a> CopyContext<'a> {
                 let block = index.block(block_index);
                 let block_len = block.len();
 
-                // For inplace mode, matched blocks are already in place - just skip them!
-                // For normal mode, copy them from old destination to new temp file
+                // Inplace: matched blocks are already at the correct file
+                // position, so advance the tracker without copying. Normal
+                // mode: copy from the old destination into the temp file.
                 if inplace_mode {
-                    // Matched block is already at the correct position in the file
-                    // Just advance our output position tracker
                     output_position = output_position.saturating_add(block_len as u64);
                 } else {
-                    // Normal mode: copy the matched block from old destination to temp file
                     let matched = MatchedBlock::new(block, index.block_length());
                     self.copy_matched_block(
                         destination_reader.as_mut().expect("destination reader required for normal delta mode"),
@@ -181,7 +175,6 @@ impl<'a> CopyContext<'a> {
 
         if !pending_literals.is_empty() {
             let flushed_len = pending_literals.len();
-            // For inplace mode, seek to the output position before writing final literals
             if inplace_mode {
                 writer.seek(SeekFrom::Start(output_position)).map_err(|error| {
                     LocalCopyError::io("seek destination file", destination.to_path_buf(), error)
@@ -220,8 +213,8 @@ impl<'a> CopyContext<'a> {
             })?;
             self.register_progress();
         } else if inplace_mode {
-            // For inplace mode without sparse, truncate the file to the final output size
-            // This handles the case where the new file is smaller than the old one
+            // Truncate to the final output size in case the new file is
+            // smaller than the old one.
             writer.set_len(output_position).map_err(|error| {
                 LocalCopyError::io(
                     "truncate destination file",

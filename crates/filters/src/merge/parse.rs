@@ -236,7 +236,7 @@ impl ShortFormAction {
 ///
 /// Returns `Some(rule)` if the line matches a short-form pattern, `None` otherwise.
 ///
-/// // upstream: exclude.c:parse_filter_str() - short-form prefix handling
+/// upstream: exclude.c:parse_filter_str() - short-form prefix handling
 fn try_parse_short_form(line: &str) -> Option<FilterRule> {
     let (rest, action) = if let Some(r) = line.strip_prefix('+') {
         (r, ShortFormAction::Include)
@@ -275,7 +275,7 @@ fn try_parse_short_form(line: &str) -> Option<FilterRule> {
 ///
 /// Returns `Some(rule)` if the line matches a long-form pattern, `None` otherwise.
 ///
-/// // upstream: exclude.c:parse_filter_str() - long-form keyword handling
+/// upstream: exclude.c:parse_filter_str() - long-form keyword handling
 fn try_parse_long_form(line: &str) -> Option<FilterRule> {
     let lower = line.to_ascii_lowercase();
 

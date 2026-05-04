@@ -203,7 +203,6 @@ mod tests {
     #[test]
     fn write_to_empty_segments_succeeds() {
         let mut scratch = MessageScratch::new();
-        // Create empty segments by not adding any content
         let msg = Message::info("");
         let segments = msg.as_segments(&mut scratch, false);
         let mut buffer = Vec::new();

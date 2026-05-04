@@ -165,8 +165,8 @@ pub use io_uring::{
 #[cfg(all(target_os = "windows", feature = "iocp"))]
 pub use iocp::post_completion as iocp_post_completion;
 pub use iocp::{
-    CompletionHandler, CompletionPump, IocpConfig, IocpDiskBatch, IocpOrStdReader, IocpOrStdWriter,
-    IocpPumpConfig, IocpReader, IocpReaderFactory, IocpWriter, IocpWriterFactory,
+    CompletionHandler, CompletionPump, IocpConfig, IocpDiskBatch, IocpError, IocpOrStdReader,
+    IocpOrStdWriter, IocpPumpConfig, IocpReader, IocpReaderFactory, IocpWriter, IocpWriterFactory,
     iocp_availability_reason, is_iocp_available, oneshot_handler,
     skip_event_optimization_available,
 };

@@ -16,11 +16,9 @@ use super::types::{AckBatcherConfig, AckBatcherStats, AckEntry};
 ///
 /// let mut batcher = AckBatcher::new(AckBatcherConfig::default());
 ///
-/// // Queue successful ACKs
 /// batcher.queue(AckEntry::success(0));
 /// batcher.queue(AckEntry::success(1));
 ///
-/// // Check if flush is needed
 /// if batcher.should_flush() {
 ///     let batch = batcher.take_batch();
 ///     send_batch_to_network(batch);

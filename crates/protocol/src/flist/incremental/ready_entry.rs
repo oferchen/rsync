@@ -150,7 +150,6 @@ where
         return ReadyEntryAction::SkipFiltered(entry);
     }
 
-    // Dispatch by entry type.
     if entry.is_dir() {
         ReadyEntryAction::CreateDirectory(entry)
     } else if entry.is_file() {
