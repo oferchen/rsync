@@ -556,6 +556,9 @@ fn epoch_timestamp_zero_seconds_is_preserved() {
     assert_eq!(dest_mtime, epoch_time, "mtime should be preserved at epoch");
 }
 
+// NTFS FILETIME has 100ns granularity, so 123_456_789ns truncates to
+// 123_456_700ns and breaks the equality round-trip on Windows.
+#[cfg(unix)]
 #[test]
 fn epoch_timestamp_with_nanoseconds_is_preserved() {
     let temp = tempdir().expect("tempdir");
