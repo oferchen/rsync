@@ -219,7 +219,7 @@ impl FileListReader {
 /// value unchanged. Otherwise reads the ID using fixed or varint encoding,
 /// and optionally reads a name string if `name_follows` is set.
 ///
-/// // upstream: flist.c:recv_file_entry() lines 880-910 - uid/gid reading
+/// upstream: flist.c:recv_file_entry() lines 880-910 - uid/gid reading
 fn read_owner_id<R: Read + ?Sized>(
     reader: &mut R,
     same: bool,

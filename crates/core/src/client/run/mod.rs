@@ -182,7 +182,6 @@ fn run_client_internal(
         return Err(missing_operands_error());
     }
 
-    // Handle batch mode configuration
     let batch_writer = if let Some(batch_cfg) = config.batch_config() {
         if let Some(result) = batch::handle_batch_read(batch_cfg, &config) {
             return result;
@@ -192,13 +191,11 @@ fn run_client_internal(
         None
     };
 
-    // Check for remote operands and dispatch appropriately
     let has_daemon_url = config.transfer_args().iter().any(|arg| {
         arg.to_string_lossy().starts_with("rsync://") || arg.to_string_lossy().contains("::")
     });
 
     if has_daemon_url {
-        // Daemon data transfer via rsync:// URLs
         return remote::run_daemon_transfer(&config, observer, batch_writer);
     }
 
@@ -208,9 +205,8 @@ fn run_client_internal(
         .any(|arg| remote::operand_is_remote(arg));
 
     if has_remote {
-        // When the embedded-ssh feature is enabled and any operand uses an
-        // ssh:// URL, dispatch to the embedded SSH transport instead of
-        // spawning the system ssh binary.
+        // ssh:// operands dispatch to the embedded SSH transport instead of
+        // spawning the system ssh binary when embedded-ssh is enabled.
         #[cfg(feature = "embedded-ssh")]
         {
             let has_ssh_url = config
@@ -234,7 +230,6 @@ fn run_client_internal(
 
         let summary = remote::run_ssh_transfer(&config, observer, batch_writer.clone())?;
 
-        // Finalize batch file if batch mode was active
         if let Some(ref writer_arc) = batch_writer
             && let Some(batch_cfg) = config.batch_config()
         {
@@ -244,15 +239,14 @@ fn run_client_internal(
         return Ok(summary);
     }
 
-    // Local copy path
     let plan = match LocalCopyPlan::from_operands(config.transfer_args()) {
         Ok(plan) => plan,
         Err(error) => return Err(map_local_copy_error(error)),
     };
 
-    // Mirror upstream: validate destination directory access early (main.c:751)
-    // This returns FILE_SELECTION error (3) instead of PARTIAL_TRANSFER (23)
-    // Check the destination itself if it's a directory, otherwise check its parent
+    // upstream: main.c:751 validates destination directory access early,
+    // returning FILE_SELECTION (3) for PermissionDenied instead of
+    // PARTIAL_TRANSFER (23). Other errors (e.g. NotFound) proceed normally.
     use std::fs;
     let dest_to_check = if plan.destination().is_dir() {
         plan.destination()
@@ -262,10 +256,7 @@ fn run_client_internal(
         plan.destination()
     };
 
-    // Try to read the directory - this will fail with Permission Denied if not accessible
     if let Err(error) = fs::read_dir(dest_to_check) {
-        // Only return FILE_SELECTION error for permission denied
-        // Other errors (like NotFound) should proceed normally
         if error.kind() == std::io::ErrorKind::PermissionDenied {
             return Err(super::error::destination_access_error(dest_to_check, error));
         }
@@ -274,7 +265,6 @@ fn run_client_internal(
     let filter_program = filters::compile_filter_program(config.filter_rules())?;
     let mut options = build_local_copy_options(&config, filter_program);
 
-    // Attach batch writer to options if in batch write mode
     let batch_writer_for_options = if let Some(ref writer) = batch_writer {
         batch::write_batch_header(writer, &config)?;
         Some(writer.clone())
@@ -324,7 +314,6 @@ fn run_client_internal(
 
     let summary = summary.map_err(map_local_copy_error)?;
 
-    // Finalize batch file if batch mode was active
     if let Some(ref writer_arc) = batch_writer
         && let Some(batch_cfg) = config.batch_config()
     {
@@ -450,11 +439,10 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         options: LocalCopyOptions,
         config: &ClientConfig,
     ) -> LocalCopyOptions {
-        // When writing batch files, force zlib compression for cross-tool
-        // interop. The batch header records do_compression but not which
-        // algorithm was used, so upstream rsync (which defaults to zlib)
-        // cannot decode zstd/lz4 batch data. Force zlib to match upstream.
         // upstream: batch.c tees compressed wire bytes using zlib by default.
+        // The batch header records do_compression but not which algorithm,
+        // so upstream rsync cannot decode zstd/lz4 batch data; force zlib for
+        // cross-tool interop.
         let algorithm = if config.batch_config().is_some_and(|bc| bc.is_write_mode()) {
             compress::algorithm::CompressionAlgorithm::Zlib
         } else {
@@ -473,7 +461,6 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         mut options: LocalCopyOptions,
         config: &ClientConfig,
     ) -> LocalCopyOptions {
-        // Resolve --copy-as USER[:GROUP] specification into numeric IDs
         let copy_as_ids = config
             .copy_as()
             .and_then(|spec| ::metadata::parse_copy_as_spec(spec).ok());
@@ -503,9 +490,8 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             options = options.acls(config.preserve_acls());
         }
 
-        // IMPORTANT: LocalCopyOptions::xattrs is only implemented on Unix.
-        // Match the engine crate's cfg so Windows builds with the `xattr`
-        // feature do not try to call a non-existent method.
+        // LocalCopyOptions::xattrs is Unix-only; match the engine crate's cfg
+        // so Windows builds with the `xattr` feature do not call a missing method.
         #[cfg(all(feature = "xattr", unix))]
         {
             options = options.xattrs(config.preserve_xattrs());
@@ -653,8 +639,6 @@ mod iconv_wiring_tests {
         let converter = options
             .iconv()
             .expect("locale-default iconv should produce a converter");
-        // converter_from_locale() currently returns identity; the contract
-        // is that *some* converter is attached, regardless of identity.
         assert!(converter.is_identity());
     }
 

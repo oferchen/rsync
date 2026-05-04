@@ -111,7 +111,6 @@ impl FromStr for Role {
 mod tests {
     use super::*;
 
-    // Tests for Role::ALL constant
     #[test]
     fn all_contains_six_roles() {
         assert_eq!(Role::ALL.len(), 6);
@@ -127,7 +126,6 @@ mod tests {
         assert_eq!(Role::ALL[5], Role::Daemon);
     }
 
-    // Tests for Role::as_str
     #[test]
     fn sender_as_str() {
         assert_eq!(Role::Sender.as_str(), "sender");
@@ -158,7 +156,6 @@ mod tests {
         assert_eq!(Role::Daemon.as_str(), "daemon");
     }
 
-    // Tests for Display trait
     #[test]
     fn display_matches_as_str() {
         for role in Role::ALL {
@@ -166,7 +163,6 @@ mod tests {
         }
     }
 
-    // Tests for FromStr trait
     #[test]
     fn parse_sender() {
         assert_eq!("sender".parse::<Role>().unwrap(), Role::Sender);
@@ -212,7 +208,6 @@ mod tests {
         assert!("SENDER".parse::<Role>().is_err());
     }
 
-    // Tests for trait implementations
     #[test]
     fn role_is_clone() {
         let role = Role::Sender;
@@ -242,7 +237,6 @@ mod tests {
         assert_eq!(set.len(), 2);
     }
 
-    // Tests for ParseRoleError
     #[test]
     fn parse_role_error_display() {
         let err = "invalid".parse::<Role>().unwrap_err();

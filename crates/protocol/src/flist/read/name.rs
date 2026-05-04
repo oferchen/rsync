@@ -108,10 +108,9 @@ impl FileListReader {
     ///
     /// `flist.c:738-754` `recv_file_entry()` runs the freshly-read filename
     /// through `iconvbufs(ic_recv, ...)` before `clean_fname()`. The
-    /// prefix-compression buffer (`lastname` / `state.prev_name()`) intentionally
-    /// retains the wire bytes so subsequent entries can share the prefix
-    /// before any conversion is applied.
-    // upstream: flist.c recv_file_entry() iconv_buf(ic_recv, ...)
+    /// prefix-compression buffer (`lastname` / `state.prev_name()`)
+    /// intentionally retains the wire bytes so subsequent entries can share
+    /// the prefix before any conversion is applied.
     pub(super) fn apply_encoding_conversion(&self, name: Vec<u8>) -> io::Result<Vec<u8>> {
         if let Some(ref converter) = self.iconv {
             match converter.remote_to_local(&name) {

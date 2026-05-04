@@ -13,8 +13,3 @@ mod io;
 
 pub use base::MessageSegments;
 pub use error::CopyToSliceError;
-
-// The public API is re-exported from [`super`] so callers only interact with
-// `crate::message::segments` rather than the internal file layout. The helper
-// modules above provide `impl MessageSegments` blocks that extend the core
-// behaviour defined in [`base`].
