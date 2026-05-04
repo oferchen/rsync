@@ -264,7 +264,6 @@ impl<R: Read> MultiplexReader<R> {
 
 impl<R: Read> Read for MultiplexReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // If we have buffered data, copy it out first
         if self.pos < self.buffer.len() {
             let available = self.buffer.len() - self.pos;
             let to_copy = available.min(buf.len());
