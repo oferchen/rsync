@@ -20,9 +20,6 @@ mod test_support;
 #[cfg(test)]
 mod tests;
 
-// Re-export all public items to preserve the existing API surface.
-// All items were previously inlined into the daemon module via include!().
-
 pub(crate) use auth::{AuthUser, UserAccessLevel};
 pub(crate) use connection_limiter::{ConnectionLimiter, ConnectionLockGuard};
 pub(crate) use definition::ModuleDefinition;
