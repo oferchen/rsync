@@ -633,7 +633,6 @@ fn zeroed_entry() -> OVERLAPPED_ENTRY {
 mod tests {
     use super::*;
     use std::fs;
-    use std::io::Write as _;
     use tempfile::tempdir;
     use windows_sys::Win32::Storage::FileSystem::{
         CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_READ,
