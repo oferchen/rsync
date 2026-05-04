@@ -118,7 +118,6 @@ pub fn write_acl_definition<W: io::Write>(
     use super::super::wire::send_ida_entries;
     use crate::varint::write_varint;
 
-    // Build the wire-level RsyncAcl from the definition
     let mut user_obj: Option<u8> = None;
     let mut group_obj: Option<u8> = None;
     let mut mask_obj: Option<u8> = None;
@@ -140,7 +139,6 @@ pub fn write_acl_definition<W: io::Write>(
         }
     }
 
-    // Compute flags byte
     let mut flags = 0u8;
     if user_obj.is_some() {
         flags |= XMIT_USER_OBJ;
