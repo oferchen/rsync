@@ -40,6 +40,13 @@ fn effective_username(config: &SshConfig) -> Result<String, SshError> {
 /// signs each via `authenticate_publickey_with()` until one succeeds. Returns
 /// `Ok(true)` on success, `Ok(false)` when the agent is unavailable or no
 /// identity works.
+///
+/// `russh::keys::agent::client::AgentClient::connect_env` is gated to
+/// `cfg(unix)` upstream (Pageant / named-pipe support is a separate Windows
+/// path we have not validated). On non-Unix targets this method short-circuits
+/// to `Ok(false)` so the caller falls through to identity-file and password
+/// auth.
+#[cfg(unix)]
 async fn try_agent_auth(
     session: &mut russh::client::Handle<SshClientHandler>,
     username: &str,
@@ -80,6 +87,15 @@ async fn try_agent_auth(
         }
     }
 
+    Ok(false)
+}
+
+#[cfg(not(unix))]
+async fn try_agent_auth(
+    _session: &mut russh::client::Handle<SshClientHandler>,
+    _username: &str,
+) -> Result<bool, SshError> {
+    logging::debug_log!(Io, 1, "SSH agent auth is not supported on this platform");
     Ok(false)
 }
 
