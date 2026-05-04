@@ -4,7 +4,8 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use tempfile::tempdir;
 
 use checksums::strong::{Md5, Md5Seed, StrongDigest};
