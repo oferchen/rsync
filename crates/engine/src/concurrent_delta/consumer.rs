@@ -373,8 +373,6 @@ mod tests {
         producer.join().unwrap();
 
         assert_eq!(results.len(), 10);
-        // join() requires ownership, so we reconstruct via into_iter on a new consumer.
-        // For this test, just verify iter() completion works correctly.
     }
 
     #[test]
@@ -383,7 +381,6 @@ mod tests {
         let producer = std::thread::spawn(move || send_items(&tx, 5));
 
         let consumer = DeltaConsumer::spawn(rx, 16);
-        // Consume via join after explicit iter.
         for r in consumer.iter() {
             assert!(r.is_success());
         }
@@ -504,10 +501,8 @@ mod tests {
         });
 
         let consumer = DeltaConsumer::spawn(rx, 16);
-        // Drop immediately without consuming any results.
         drop(consumer);
         producer.join().unwrap();
-        // Test passes if it completes without hanging.
     }
 
     #[test]
@@ -542,14 +537,12 @@ mod tests {
         let (tx, rx) = work_queue::bounded_with_capacity(8);
         let consumer = DeltaConsumer::spawn(rx, 16);
 
-        // No items sent yet - try_recv should return None.
         assert!(consumer.try_recv().is_none());
 
         // Send items so the consumer thread can finish.
         send_items(&tx, 3);
         drop(tx);
 
-        // Eventually all results arrive via blocking iter.
         let results: Vec<DeltaResult> = consumer.iter().collect();
         assert_eq!(results.len(), 3);
     }
@@ -558,13 +551,11 @@ mod tests {
     fn try_recv_returns_results_when_available() {
         let (tx, rx) = work_queue::bounded_with_capacity(8);
 
-        // Send all items and close the channel before spawning the consumer.
         send_items(&tx, 5);
         drop(tx);
 
         let consumer = DeltaConsumer::spawn(rx, 16);
 
-        // Collect all results using try_recv with a polling loop.
         let mut results = Vec::new();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
@@ -592,14 +583,13 @@ mod tests {
     #[test]
     fn try_recv_on_empty_queue_returns_none() {
         let (tx, rx) = work_queue::bounded_with_capacity(4);
-        drop(tx); // Close immediately.
+        drop(tx);
 
         let consumer = DeltaConsumer::spawn(rx, 8);
 
         // Give the consumer thread a moment to finish.
         std::thread::sleep(std::time::Duration::from_millis(50));
 
-        // No items were sent, so try_recv should always return None.
         assert!(consumer.try_recv().is_none());
         consumer.join().unwrap();
     }

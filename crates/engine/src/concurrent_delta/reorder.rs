@@ -462,7 +462,6 @@ mod tests {
     #[test]
     fn out_of_order_reordering() {
         let mut buf = ReorderBuffer::new(8);
-        // Arrive: 2, 0, 1
         buf.insert(2, "c").unwrap();
         assert_eq!(buf.next_in_order(), None); // waiting for 0
 
@@ -523,7 +522,6 @@ mod tests {
         // Seq 2 has offset 2 from next_expected=0, which equals capacity
         assert_eq!(buf.insert(2, 30), Err(CapacityExceeded));
 
-        // Drain the ready items
         assert_eq!(buf.next_in_order(), Some(10));
         // Now there is room (next_expected=1, seq 2 has offset 1)
         buf.insert(2, 30).unwrap();
@@ -684,7 +682,6 @@ mod tests {
     #[test]
     fn reverse_order_insertion() {
         let mut buf = ReorderBuffer::new(8);
-        // Insert in reverse: 4, 3, 2, 1, 0
         for i in (0..5).rev() {
             buf.insert(i, i).unwrap();
         }
@@ -772,12 +769,10 @@ mod tests {
             collected.extend(buf.drain_ready());
         }
 
-        // Wait for all producers.
         for p in producers {
             p.join().expect("producer panicked");
         }
 
-        // Final drain of any remaining buffered items.
         collected.extend(buf.drain_ready());
 
         assert_eq!(
@@ -1012,13 +1007,11 @@ mod tests {
             perm.swap(i, j);
         }
 
-        // Insert in shuffled order, draining opportunistically.
         let mut collected: Vec<u64> = Vec::with_capacity(N);
         for &seq in &perm {
             buf.insert(seq, seq).unwrap();
             collected.extend(buf.drain_ready());
         }
-        // Final drain for any remaining items.
         collected.extend(buf.drain_ready());
 
         assert_eq!(collected.len(), N);
