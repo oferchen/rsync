@@ -485,8 +485,6 @@ mod tests {
         assert_eq!(buffer, "dir/nested/file");
     }
 
-    // Tests for file_basename
-
     #[test]
     fn file_basename_extracts_filename_from_unix_path() {
         assert_eq!(
@@ -530,8 +528,6 @@ mod tests {
         assert_eq!(file_basename(""), "");
     }
 
-    // Tests for error_location! macro
-
     #[test]
     fn error_location_starts_with_at() {
         let location = crate::error_location!();
@@ -562,7 +558,6 @@ mod tests {
     #[test]
     fn error_location_uses_basename_not_full_path() {
         let location = crate::error_location!();
-        // Should not contain path separators before the filename
         let after_at = &location["at ".len()..];
         let paren_pos = after_at.find('(').expect("missing '('");
         let basename = &after_at[..paren_pos];

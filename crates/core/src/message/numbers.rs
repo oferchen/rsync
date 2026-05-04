@@ -66,7 +66,6 @@ pub(super) fn encode_unsigned_decimal_into(mut value: u64, buf: &mut [u8]) -> us
 mod tests {
     use super::*;
 
-    // Tests for encode_unsigned_decimal
     #[test]
     fn encode_unsigned_decimal_zero() {
         let mut buf = [0u8; 20];
@@ -110,7 +109,6 @@ mod tests {
         assert_eq!(encode_unsigned_decimal(1000, &mut buf), "1000");
     }
 
-    // Tests for encode_signed_decimal
     #[test]
     fn encode_signed_decimal_zero() {
         let mut buf = [0u8; 21];
@@ -167,12 +165,11 @@ mod tests {
         assert_eq!(result, "-1");
     }
 
-    // Tests for encode_unsigned_decimal_into
     #[test]
     fn encode_unsigned_decimal_into_returns_correct_start_index() {
         let mut buf = [0u8; 10];
         let start = encode_unsigned_decimal_into(42, &mut buf);
-        assert_eq!(start, 8); // "42" is 2 digits, so starts at index 8 of 10
+        assert_eq!(start, 8);
     }
 
     #[test]
@@ -191,7 +188,6 @@ mod tests {
         assert_eq!(&buf, b"123");
     }
 
-    // Edge case tests
     #[test]
     fn encode_unsigned_decimal_exact_buffer_size() {
         let mut buf = [0u8; 1];
@@ -217,6 +213,6 @@ mod tests {
     #[should_panic(expected = "decimal representation does not fit")]
     fn encode_unsigned_decimal_into_buffer_too_small_panics() {
         let mut buf = [0u8; 2];
-        encode_unsigned_decimal_into(999, &mut buf); // 3 digits don't fit in 2 bytes
+        encode_unsigned_decimal_into(999, &mut buf);
     }
 }
