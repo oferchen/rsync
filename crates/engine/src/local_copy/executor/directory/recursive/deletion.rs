@@ -3,7 +3,8 @@
 //! Implements the `--delete-after` and `--delete-during` phases that remove
 //! extraneous destination entries. Also handles `--prune-empty-dirs`.
 //!
-//! // upstream: generator.c:delete_in_dir() - post-transfer deletion
+//! upstream: generator.c:delete_in_dir() - post-transfer deletion
+
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;

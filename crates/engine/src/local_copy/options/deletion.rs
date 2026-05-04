@@ -103,12 +103,10 @@ impl LocalCopyOptions {
     /// the rename sweep runs, corrupting the transfer.  We therefore promote
     /// `During` to `After` whenever `delay_updates` is set.
     ///
-    /// upstream: generator.c — delete_in_dir() is only invoked after the
+    /// upstream: generator.c - delete_in_dir() is only invoked after the
     /// receiver rename sweep completes when delay_updates is active.
     pub const fn delete_timing(&self) -> Option<DeleteTiming> {
         if self.delete {
-            // Promote During → After when --delay-updates is active so that
-            // staged .~tmp~ files are not treated as extraneous mid-transfer.
             if self.delay_updates && matches!(self.delete_timing, DeleteTiming::During) {
                 Some(DeleteTiming::After)
             } else {
