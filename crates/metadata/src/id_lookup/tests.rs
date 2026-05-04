@@ -238,9 +238,8 @@ fn clear_id_caches_empties_both_caches() {
     assert_eq!(gid_cache_size(), 0, "GID cache should be empty after clear");
 }
 
-// UID/GID 0 bypass tests - upstream invariant:
-// "The special uid 0 and the special group 0 are never mapped via user/group
-// names even if the --numeric-ids option is not specified."
+// upstream invariant: "The special uid 0 and the special group 0 are never
+// mapped via user/group names even if the --numeric-ids option is not specified."
 
 #[cfg(unix)]
 #[test]
@@ -324,8 +323,6 @@ fn non_zero_ids_still_use_name_lookup_when_numeric_ids_false() {
         "Non-zero GID should populate cache via name lookup path"
     );
 }
-
-// Non-Unix stub tests - map_uid/map_gid return the raw value unchanged.
 
 #[cfg(not(unix))]
 #[test]
