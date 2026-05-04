@@ -124,8 +124,6 @@ impl ServerConfigBuilder {
         }
     }
 
-    // -- Role and protocol --
-
     /// Sets the server-side role (receiver or generator).
     pub fn role(&mut self, role: ServerRole) -> &mut Self {
         self.role = role;
@@ -155,8 +153,6 @@ impl ServerConfigBuilder {
         self.args = args;
         self
     }
-
-    // -- Connection --
 
     /// Sets the full connection configuration.
     pub fn connection(&mut self, connection: ConnectionConfig) -> &mut Self {
@@ -206,8 +202,6 @@ impl ServerConfigBuilder {
         self
     }
 
-    // -- Deletion --
-
     /// Sets the full deletion configuration.
     pub fn deletion(&mut self, deletion: DeletionConfig) -> &mut Self {
         self.deletion = deletion;
@@ -231,8 +225,6 @@ impl ServerConfigBuilder {
         self.deletion.late_delete = enabled;
         self
     }
-
-    // -- Write behavior --
 
     /// Sets the full write configuration.
     pub fn write(&mut self, write: WriteConfig) -> &mut Self {
@@ -276,15 +268,11 @@ impl ServerConfigBuilder {
         self
     }
 
-    // -- Reference directories --
-
     /// Sets the reference directories for basis file lookup.
     pub fn reference_directories(&mut self, dirs: Vec<ReferenceDirectory>) -> &mut Self {
         self.reference_directories = dirs;
         self
     }
-
-    // -- Checksum --
 
     /// Sets an optional user-specified checksum seed.
     pub fn checksum_seed(&mut self, seed: Option<u32>) -> &mut Self {
@@ -298,15 +286,11 @@ impl ServerConfigBuilder {
         self
     }
 
-    // -- Security --
-
     /// Enables or disables `--trust-sender`.
     pub fn trust_sender(&mut self, enabled: bool) -> &mut Self {
         self.trust_sender = enabled;
         self
     }
-
-    // -- Scheduling --
 
     /// Sets an optional wall-clock deadline for the transfer.
     pub fn stop_at(&mut self, deadline: Option<SystemTime>) -> &mut Self {
@@ -320,15 +304,11 @@ impl ServerConfigBuilder {
         self
     }
 
-    // -- Partial --
-
     /// Sets whether `--partial-dir` is configured.
     pub fn has_partial_dir(&mut self, enabled: bool) -> &mut Self {
         self.has_partial_dir = enabled;
         self
     }
-
-    // -- Backup --
 
     /// Sets the backup directory path (`--backup-dir`).
     pub fn backup_dir(&mut self, dir: Option<String>) -> &mut Self {
@@ -342,15 +322,11 @@ impl ServerConfigBuilder {
         self
     }
 
-    // -- Daemon filters --
-
     /// Sets daemon-side filter rules from module configuration.
     pub fn daemon_filter_rules(&mut self, rules: Vec<FilterRuleWireFormat>) -> &mut Self {
         self.daemon_filter_rules = rules;
         self
     }
-
-    // -- File selection --
 
     /// Sets the full file selection configuration.
     pub fn file_selection(&mut self, config: FileSelectionConfig) -> &mut Self {
@@ -400,15 +376,11 @@ impl ServerConfigBuilder {
         self
     }
 
-    // -- Stats --
-
     /// Enables or disables detailed transfer statistics.
     pub fn do_stats(&mut self, enabled: bool) -> &mut Self {
         self.do_stats = enabled;
         self
     }
-
-    // -- Temp dir --
 
     /// Sets the temporary directory for receiving files.
     pub fn temp_dir(&mut self, dir: Option<PathBuf>) -> &mut Self {
@@ -416,15 +388,11 @@ impl ServerConfigBuilder {
         self
     }
 
-    // -- Skip compress --
-
     /// Sets the file suffixes that should skip per-file compression.
     pub fn skip_compress(&mut self, list: Option<SkipCompressList>) -> &mut Self {
         self.skip_compress = list;
         self
     }
-
-    // -- Fake super --
 
     /// Enables or disables daemon-side fake-super metadata storage.
     ///
@@ -444,8 +412,6 @@ impl ServerConfigBuilder {
         self
     }
 
-    // -- Validation and build --
-
     /// Validates the builder configuration.
     fn validate(&self) -> Result<(), BuilderError> {
         // upstream: options.c:2934 - --inplace and --delay-updates are mutually exclusive
@@ -464,7 +430,6 @@ impl ServerConfigBuilder {
             });
         }
 
-        // Validate file size range
         if let (Some(min), Some(max)) = (
             self.file_selection.min_file_size,
             self.file_selection.max_file_size,
