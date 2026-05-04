@@ -34,7 +34,6 @@ pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::
     const CFR_THRESHOLD: u64 = 64 * 1024;
 
     if size_hint >= CFR_THRESHOLD {
-        // Attempt zero-copy via copy_file_range
         let source = File::open(src)?;
         let destination = File::create(dst)?;
         match crate::copy_file_range::copy_file_contents(&source, &destination, size_hint) {
@@ -91,7 +90,6 @@ pub(super) fn platform_copy_impl(
         }
     }
 
-    // Final fallback to standard buffered copy
     let bytes = std::fs::copy(src, dst)?;
     Ok(CopyResult::new(bytes, CopyMethod::StandardCopy))
 }
@@ -107,7 +105,6 @@ pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::
     /// Threshold above which `COPY_FILE_NO_BUFFERING` is used (4MB).
     const NO_BUFFERING_THRESHOLD: u64 = 4 * 1024 * 1024;
 
-    // Check if destination is on ReFS and attempt reflink if so
     let is_refs =
         crate::refs_detect::is_refs_filesystem(dst.parent().unwrap_or(dst)).unwrap_or(false);
 
@@ -364,7 +361,6 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
         ));
     }
 
-    // Get source file size
     let file_size = std::fs::metadata(src)?.len();
 
     if file_size == 0 {
