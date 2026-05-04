@@ -473,12 +473,13 @@ impl SshChildHandle {
 
 impl Drop for SshChildHandle {
     fn drop(&mut self) {
-        // Drop the watchdog first to stop the background thread.
+        // Drop the watchdog first so its background thread exits before we
+        // touch the child handle.
         drop(self.connect_watchdog.take());
 
-        // Reap the child process to prevent zombies.
-        // Unlike SshConnection::Drop, stdin is not owned here (it lives in
-        // SshWriter) so we skip the close_stdin step.
+        // Reap the child to prevent zombies. Unlike SshConnection::Drop,
+        // stdin is not owned here (it lives in SshWriter) so we skip the
+        // close_stdin step.
         if let Ok(None) = self.child.try_wait() {
             let _ = self.child.kill();
         }
@@ -542,7 +543,8 @@ impl Write for SshConnection {
 
 impl Drop for SshConnection {
     fn drop(&mut self) {
-        // Drop the watchdog first to stop the background thread.
+        // Drop the watchdog first so its background thread exits before we
+        // touch the child handle.
         drop(self.connect_watchdog.take());
 
         let _ = self.close_stdin();

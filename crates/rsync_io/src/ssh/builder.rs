@@ -102,7 +102,7 @@ impl SshCommand {
     /// before connecting to the remote host. This mirrors upstream rsync's
     /// `--address` handling for SSH transports.
     ///
-    /// upstream: clientserver.c — `--address` is forwarded to SSH as
+    /// upstream: clientserver.c - `--address` is forwarded to SSH as
     /// `-o BindAddress=<addr>`.
     pub const fn set_bind_address(&mut self, addr: Option<IpAddr>) -> &mut Self {
         self.bind_address = addr;

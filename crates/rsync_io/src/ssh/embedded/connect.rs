@@ -127,7 +127,6 @@ async fn connect_and_exec_async(
     remote_command: &str,
     stdin_data: Option<&[u8]>,
 ) -> Result<(ChannelReader, ChannelWriter), SshError> {
-    // Resolve host
     let addrs = resolve_host(&ssh_config.host, ssh_config.port, ssh_config.ip_preference).await?;
 
     let addr = addrs
@@ -147,7 +146,6 @@ async fn connect_and_exec_async(
         ssh_config.known_hosts_file.clone(),
     );
 
-    // Connect with timeout
     let mut handle = tokio::time::timeout(ssh_config.connect_timeout, async {
         russh::client::connect(client_config, addr, handler).await
     })
@@ -156,10 +154,8 @@ async fn connect_and_exec_async(
         secs: ssh_config.connect_timeout.as_secs(),
     })??;
 
-    // Authenticate
     authenticate(&mut handle, ssh_config).await?;
 
-    // Open session channel and exec
     let channel = handle
         .channel_open_session()
         .await
@@ -170,19 +166,17 @@ async fn connect_and_exec_async(
         .await
         .map_err(SshError::Connect)?;
 
-    // Set up sync/async bridge channels
     let (data_tx, data_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
     let (write_tx, mut write_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
 
     let channel_id = channel.id();
     let mut channel_for_read = channel;
 
-    // We need a separate handle for writing data. Since Handle may not be
-    // Clone in russh 0.45, we share via Arc<Mutex<_>>.
+    // Handle is not Clone in russh 0.45, so share via Arc<Mutex<_>> to allow
+    // the async bridge task to write while the caller still holds a reference.
     let handle_shared = Arc::new(tokio::sync::Mutex::new(handle));
     let handle_for_write = handle_shared.clone();
 
-    // Spawn a task to bridge async SSH channel I/O to sync channels.
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -220,7 +214,6 @@ async fn connect_and_exec_async(
         }
     });
 
-    // Send initial stdin data (secluded args) if provided
     if let Some(data) = stdin_data {
         write_tx
             .send(data.to_vec())
