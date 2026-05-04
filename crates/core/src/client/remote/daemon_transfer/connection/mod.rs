@@ -274,14 +274,13 @@ pub(crate) fn perform_daemon_handshake(
             ));
         }
 
-        // MOTD output - mirrors upstream rprintf(FINFO, "%s\n", line)
+        // upstream: rprintf(FINFO, "%s\n", line) - MOTD output.
         if output_motd {
             println!("{trimmed}");
         }
     }
 
-    // Negotiate to minimum of our version and daemon's version.
-    // upstream: exchange_protocols lines 211-227
+    // upstream: exchange_protocols:211-227 - negotiate to minimum of our and daemon version.
     let negotiated = if our_version.as_u8() < remote_protocol.as_u8() {
         our_version
     } else {

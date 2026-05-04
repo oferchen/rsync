@@ -9,9 +9,6 @@ use crate::message::{Message, Role};
 use crate::rsync_error;
 use engine::local_copy::{LocalCopyError, LocalCopyErrorKind};
 
-// Re-export exit code constants for backward compatibility.
-// These map directly to ExitCode variants and should be preferred
-// when type safety is important.
 // upstream: errcode.h - Exit code definitions
 
 /// Exit code returned when client functionality is unavailable.
@@ -89,8 +86,6 @@ impl HasExitCode for ClientError {
 
 impl ErrorCodification for ClientError {
     fn error_code(&self) -> u32 {
-        // Map exit codes to unique error codes
-        // Use exit code as base (multiplied by 100) for namespace separation
         match self.exit_code {
             ExitCode::Ok => 0,
             ExitCode::Syntax => 100,
@@ -161,13 +156,13 @@ impl ErrorCodification for ClientError {
 
 #[cold]
 pub(crate) fn missing_operands_error() -> ClientError {
+    // upstream: exit code 23 (RERR_PARTIAL) for missing source operands.
     let code = ExitCode::PartialTransfer;
     let message = rsync_error!(
         code.as_i32(),
         "missing source operands: supply at least one source and a destination"
     )
     .with_role(Role::Client);
-    // Mirror upstream: return exit code 23 for missing source operands
     ClientError::with_code(code, message)
 }
 
@@ -258,11 +253,11 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
 
 #[cold]
 pub(crate) fn destination_access_error(path: &Path, error: io::Error) -> ClientError {
+    // upstream: main.c:751 change_dir validation returns FileSelect (3) for
+    // destination directory access errors.
     let code = ExitCode::FileSelect;
     let path_display = path.display();
     let text = format!("failed to access destination directory '{path_display}': {error}");
-    // Mirror upstream: destination directory access errors return FileSelect (3)
-    // This matches upstream main.c:751 change_dir validation
     let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
     ClientError::with_code(code, message)
 }
@@ -395,7 +390,6 @@ mod tests {
 
             assert_eq!(error.exit_code(), code.as_i32());
             assert_eq!(error.code(), code);
-            // Verify message is accessible
             let _ = error.message();
         }
 
@@ -437,7 +431,6 @@ mod tests {
             let message = rsync_error!(999, "unknown code").with_role(Role::Client);
             let error = ClientError::new(999, message);
 
-            // Unknown exit codes fall back to PartialTransfer
             assert_eq!(error.code(), ExitCode::PartialTransfer);
         }
 
@@ -447,7 +440,6 @@ mod tests {
             let message = rsync_error!(code.as_i32(), "test").with_role(Role::Client);
             let error = ClientError::with_code(code, message);
 
-            // Test the HasExitCode trait
             let trait_code: ExitCode = HasExitCode::exit_code(&error);
             assert_eq!(trait_code, code);
         }
@@ -457,8 +449,8 @@ mod tests {
             let local_error = LocalCopyError::missing_operands();
             let client_error: ClientError = local_error.into();
 
-            // Note: missing_operands maps to PartialTransfer (23) in ClientError
-            // to match upstream rsync behavior, even though LocalCopyError uses Syntax (1)
+            // upstream: missing_operands maps to PartialTransfer (23) in
+            // ClientError, even though LocalCopyError uses Syntax (1).
             assert_eq!(client_error.code(), ExitCode::PartialTransfer);
         }
 
@@ -608,7 +600,6 @@ mod tests {
             assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
             let msg = error.to_string();
             assert!(msg.contains("daemon requires authentication for module listing"));
-            // When reason is empty, the message should not have a reason suffix
             assert!(!msg.contains("module listing: "));
         }
 
@@ -628,7 +619,6 @@ mod tests {
             assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
             let msg = error.to_string();
             assert!(msg.contains("daemon rejected provided credentials"));
-            // When reason is None, message should not have a reason suffix
             assert!(!msg.contains("credentials: "));
         }
 
@@ -639,7 +629,6 @@ mod tests {
             assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
             let msg = error.to_string();
             assert!(msg.contains("daemon rejected provided credentials"));
-            // When reason is empty, message should not have a reason suffix
             assert!(!msg.contains("credentials: "));
         }
 
@@ -659,7 +648,6 @@ mod tests {
             assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
             let msg = error.to_string();
             assert!(msg.contains("daemon denied access to module listing"));
-            // When reason is empty, message should not have a reason suffix
             assert!(!msg.contains("listing: "));
         }
 
@@ -679,7 +667,6 @@ mod tests {
             assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
             let msg = error.to_string();
             assert!(msg.contains("daemon refused module listing"));
-            // When reason is empty, message should not have a reason suffix
             assert!(!msg.contains("listing: "));
         }
 
@@ -690,7 +677,6 @@ mod tests {
             assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
             let msg = error.to_string();
             assert!(msg.contains("daemon refused module listing"));
-            // When reason is whitespace only, message should not have a reason suffix
             assert!(!msg.contains("listing: "));
         }
 

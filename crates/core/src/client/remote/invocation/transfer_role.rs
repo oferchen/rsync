@@ -41,7 +41,7 @@ pub fn operand_is_remote(path: &OsStr) -> bool {
                 .next()
                 .map_or(false, |c| c.is_ascii_alphabetic())
         {
-            return false; // Windows drive letter
+            return false;
         }
 
         let before = &text[..colon_index];
@@ -68,7 +68,6 @@ pub fn operand_is_remote(path: &OsStr) -> bool {
 fn parse_remote_operand(operand: &str) -> Result<RemoteOperandParsed, ClientError> {
     let operand_str = operand.to_owned();
 
-    // Split on first colon to separate host part from path
     let colon_pos = operand.rfind(':').ok_or_else(|| {
         invalid_argument_error(
             &format!("invalid remote operand: missing ':' in {operand}"),
@@ -78,7 +77,6 @@ fn parse_remote_operand(operand: &str) -> Result<RemoteOperandParsed, ClientErro
 
     let host_part = &operand[..colon_pos];
 
-    // Check for user@host format
     let (user, host_with_port) = if let Some(at_pos) = host_part.find('@') {
         let user = host_part[..at_pos].to_string();
         let host = &host_part[at_pos + 1..];
@@ -87,8 +85,6 @@ fn parse_remote_operand(operand: &str) -> Result<RemoteOperandParsed, ClientErro
         (None, host_part)
     };
 
-    // For now, we don't parse port from host (would need more complex parsing for IPv6)
-    // Port parsing can be added later if needed
     let host = host_with_port.to_owned();
     let port = None;
 
@@ -116,7 +112,6 @@ fn validate_same_host(operands: &[RemoteOperandParsed]) -> Result<(), ClientErro
     let first = &operands[0];
 
     for operand in &operands[1..] {
-        // Validate host consistency
         if operand.host != first.host {
             return Err(invalid_argument_error(
                 &format!(
@@ -127,7 +122,6 @@ fn validate_same_host(operands: &[RemoteOperandParsed]) -> Result<(), ClientErro
             ));
         }
 
-        // Validate user consistency
         match (&operand.user, &first.user) {
             (Some(u1), Some(u2)) if u1 != u2 => {
                 return Err(invalid_argument_error(
@@ -144,7 +138,6 @@ fn validate_same_host(operands: &[RemoteOperandParsed]) -> Result<(), ClientErro
             _ => {}
         }
 
-        // Validate port consistency
         if operand.port != first.port {
             return Err(invalid_argument_error(
                 "remote sources must use the same port",
@@ -182,7 +175,6 @@ pub fn determine_transfer_role(
 ) -> Result<TransferSpec, ClientError> {
     let dest_is_remote = operand_is_remote(destination);
 
-    // Check if any sources are remote
     let remote_sources: Vec<_> = sources.iter().filter(|s| operand_is_remote(s)).collect();
 
     let has_remote_source = !remote_sources.is_empty();
@@ -190,7 +182,6 @@ pub fn determine_transfer_role(
 
     match (has_remote_source, dest_is_remote) {
         (true, true) => {
-            // Remote-to-remote: proxy between two remote hosts
             if !all_sources_remote {
                 return Err(invalid_argument_error(
                     "mixing remote and local sources is not supported",
@@ -198,17 +189,14 @@ pub fn determine_transfer_role(
                 ));
             }
 
-            // Parse all remote sources
             let parsed_sources: Result<Vec<_>, _> = sources
                 .iter()
                 .map(|s| parse_remote_operand(&s.to_string_lossy()))
                 .collect();
             let parsed_sources = parsed_sources?;
 
-            // Validate all sources are from the same host
             validate_same_host(&parsed_sources)?;
 
-            // Build remote source operands
             let remote_sources = if sources.len() > 1 {
                 RemoteOperands::Multiple(
                     sources
@@ -225,12 +213,8 @@ pub fn determine_transfer_role(
                 remote_dest: destination.to_string_lossy().to_string(),
             })
         }
-        (false, false) => {
-            // Neither is remote - should use local copy
-            Err(invalid_argument_error("no remote operand found", 1))
-        }
+        (false, false) => Err(invalid_argument_error("no remote operand found", 1)),
         (true, false) => {
-            // Pull: remote source(s) -> local destination
             if !all_sources_remote {
                 return Err(invalid_argument_error(
                     "mixing remote and local sources is not supported",
@@ -238,19 +222,16 @@ pub fn determine_transfer_role(
                 ));
             }
 
-            // Parse all remote sources
             let parsed_sources: Result<Vec<_>, _> = sources
                 .iter()
                 .map(|s| parse_remote_operand(&s.to_string_lossy()))
                 .collect();
             let parsed_sources = parsed_sources?;
 
-            // Validate all sources are from the same host
             validate_same_host(&parsed_sources)?;
 
             let local_dest = destination.to_string_lossy().to_string();
 
-            // Return Multiple if > 1 source, Single otherwise
             let remote_sources = if sources.len() > 1 {
                 RemoteOperands::Multiple(
                     sources
@@ -268,7 +249,6 @@ pub fn determine_transfer_role(
             })
         }
         (false, true) => {
-            // Push: local source(s) -> remote destination
             let local_sources: Vec<String> = sources
                 .iter()
                 .map(|s| s.to_string_lossy().to_string())

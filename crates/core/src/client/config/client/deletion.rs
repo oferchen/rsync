@@ -77,63 +77,54 @@ mod tests {
         ClientConfig::default()
     }
 
-    // Tests for dry_run
     #[test]
     fn dry_run_default_is_false() {
         let config = default_config();
         assert!(!config.dry_run());
     }
 
-    // Tests for delete_mode
     #[test]
     fn delete_mode_default_is_disabled() {
         let config = default_config();
         assert_eq!(config.delete_mode(), DeleteMode::Disabled);
     }
 
-    // Tests for delete
     #[test]
     fn delete_default_is_false() {
         let config = default_config();
         assert!(!config.delete());
     }
 
-    // Tests for delete_before
     #[test]
     fn delete_before_default_is_false() {
         let config = default_config();
         assert!(!config.delete_before());
     }
 
-    // Tests for delete_after
     #[test]
     fn delete_after_default_is_false() {
         let config = default_config();
         assert!(!config.delete_after());
     }
 
-    // Tests for delete_delay
     #[test]
     fn delete_delay_default_is_false() {
         let config = default_config();
         assert!(!config.delete_delay());
     }
 
-    // Tests for delete_excluded
     #[test]
     fn delete_excluded_default_is_false() {
         let config = default_config();
         assert!(!config.delete_excluded());
     }
 
-    // Tests for max_delete
     #[test]
     fn max_delete_default_is_none() {
         let config = default_config();
         assert!(config.max_delete().is_none());
     }
 
-    // Tests for ignore_errors
     #[test]
     fn ignore_errors_default_is_false() {
         let config = default_config();

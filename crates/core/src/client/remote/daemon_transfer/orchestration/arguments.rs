@@ -36,10 +36,9 @@ pub(crate) fn send_daemon_arguments(
 
     let full_args = build_full_daemon_args(config, request, protocol, is_sender);
 
-    // Phase 1: send args over the daemon text protocol.
-    // With protect-args, only send the minimal set so the daemon detects `-s`
-    // and expects a phase-2 secluded-args payload.
-    // upstream: clientserver.c:393-405 - stops at the NULL marker in sargs
+    // upstream: clientserver.c:393-405 - phase 1 sends args over the daemon text
+    // protocol; with protect-args, only the minimal set is sent so the daemon
+    // detects `-s` and stops at the NULL marker, expecting phase-2 secluded args.
     let phase1_args = if protect {
         build_minimal_daemon_args(is_sender)
     } else {
@@ -61,7 +60,7 @@ pub(crate) fn send_daemon_arguments(
         })?;
     }
 
-    // Empty string signals end of phase-1 argument list.
+    // upstream: empty string signals end of phase-1 argument list.
     stream.write_all(&[terminator]).map_err(|e| {
         socket_error(
             "send final terminator to",
@@ -70,11 +69,10 @@ pub(crate) fn send_daemon_arguments(
         )
     })?;
 
-    // Phase 2: when protect-args is active, send the real arguments via
-    // the secluded-args wire format (null-separated with empty terminator).
-    // upstream: clientserver.c:407-408 - send_protected_args(f_out, sargs)
-    // upstream: rsync.c:283-320 - send_protected_args() applies
-    // iconvbufs(ic_send, ...) per arg when --iconv is configured.
+    // upstream: clientserver.c:407-408 send_protected_args(f_out, sargs) +
+    // rsync.c:283-320 send_protected_args() - phase 2 sends the real arguments
+    // via the secluded-args wire format (null-separated with empty terminator),
+    // applying iconvbufs(ic_send, ...) per arg when --iconv is configured.
     if protect {
         let mut secluded = vec!["rsync"];
         secluded.extend(full_args.iter().map(String::as_str));
@@ -143,36 +141,32 @@ pub(super) fn build_full_daemon_args(
         args.push(format!("--checksum-choice={}", override_algo.as_str()));
     }
 
-    // Single-character flag string (e.g., "-logDtprzc").
-    // upstream: options.c:2594-2713
+    // upstream: options.c:2594-2713 - single-character flag string (e.g., "-logDtprzc").
     let flag_string = flags::build_server_flag_string(config);
     if !flag_string.is_empty() {
         args.push(flag_string);
     }
 
-    // Capability flags for protocol 30+.
-    // upstream: options.c:2707-2713 (via maybe_add_e_option appended to argstr)
-    // upstream: compat.c:177-178 - daemon checks client_info for 'i' to set allow_inc_recurse
-    // INC_RECURSE ('i') is advertised in both directions by default, mirroring
-    // upstream's `allow_inc_recurse = 1` initialization. `--no-inc-recursive`
-    // clears the gate and suppresses the bit.
-    // upstream: compat.c:720 set_allow_inc_recurse() - capability gate.
+    // upstream: options.c:2707-2713 maybe_add_e_option, compat.c:177-178 daemon
+    // 'i' check, compat.c:720 set_allow_inc_recurse() - capability flags for
+    // protocol 30+; INC_RECURSE ('i') is advertised in both directions by
+    // default and `--no-inc-recursive` clears the gate.
     if protocol.as_u8() >= 30 {
         args.push(build_capability_string(config.inc_recursive_send()));
     }
 
     let we_are_sender = !is_sender;
 
-    // upstream: options.c:2750-2762 - server needs to know about log-format
-    // so it can generate itemize output via MSG_INFO frames.
-    // Only sent when client is sender (push) - matches upstream am_sender guard.
+    // upstream: options.c:2750-2762 - server needs the log-format to generate
+    // itemize output via MSG_INFO frames. Only sent when client is sender
+    // (push), matching upstream am_sender guard.
     if we_are_sender && config.itemize_changes() {
         args.push("--log-format=%i".to_owned());
     }
 
-    // upstream: options.c:2800-2805 - compress choice forwarding.
-    // Only sent when the user explicitly specified --compress-choice,
-    // --new-compress, or --old-compress.
+    // upstream: options.c:2800-2805 - compress choice is only forwarded when
+    // the user explicitly specified --compress-choice, --new-compress, or
+    // --old-compress.
     if config.explicit_compress_choice() {
         let algo = config.compression_algorithm();
         let name = algo.name();
@@ -183,8 +177,7 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
-    // --compress-level=N
-    // upstream: options.c:2737-2740
+    // upstream: options.c:2737-2740 - --compress-level=N
     if let Some(level) = config.compression_level() {
         args.push(format!(
             "--compress-level={}",
@@ -192,8 +185,7 @@ pub(super) fn build_full_daemon_args(
         ));
     }
 
-    // Sender-specific args
-    // upstream: options.c:2807-2839
+    // upstream: options.c:2807-2839 - sender-specific args.
     if we_are_sender {
         if let Some(max_delete) = config.max_delete() {
             if max_delete > 0 {
@@ -249,8 +241,7 @@ pub(super) fn build_full_daemon_args(
         args.push("--use-qsort".to_owned());
     }
 
-    // Sender-only long-form args
-    // upstream: options.c:2893-2925
+    // upstream: options.c:2893-2925 - sender-only long-form args.
     if we_are_sender {
         if config.ignore_existing() {
             args.push("--ignore-existing".to_owned());
@@ -262,8 +253,8 @@ pub(super) fn build_full_daemon_args(
             args.push("--fsync".to_owned());
         }
 
-        // --compare-dest=DIR, --copy-dest=DIR, --link-dest=DIR
-        // upstream: options.c:2915-2923 - sent only when client is sender (push).
+        // upstream: options.c:2915-2923 - --compare-dest/copy-dest/link-dest
+        // sent only when client is sender (push).
         for ref_dir in config.reference_directories() {
             let flag = match ref_dir.kind() {
                 ReferenceDirectoryKind::Compare => "--compare-dest=",
@@ -301,8 +292,7 @@ pub(super) fn build_full_daemon_args(
         args.push("--remove-source-files".to_owned());
     }
 
-    // --files-from
-    // upstream: options.c:2944-2956
+    // upstream: options.c:2944-2956 - --files-from
     {
         use crate::client::config::FilesFromSource;
         let client_is_sender = !is_sender;
@@ -310,7 +300,6 @@ pub(super) fn build_full_daemon_args(
             FilesFromSource::None => {}
             FilesFromSource::Stdin | FilesFromSource::LocalFile(_) => {
                 if !client_is_sender {
-                    // Pull: daemon is sender and needs the file list from us.
                     args.push("--files-from=-".to_owned());
                     args.push("--from0".to_owned());
                 }
@@ -324,14 +313,13 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
-    // --iconv forwarding to the remote daemon.
-    // upstream: options.c:2716-2723 - when iconv_opt contains a comma, only the
-    // post-comma half (the daemon's local charset) is forwarded; otherwise the
+    // upstream: options.c:2716-2723, options.c:2052-2054 - --iconv forwarding
+    // to the remote daemon. When iconv_opt contains a comma, only the
+    // post-comma half (daemon's local charset) is forwarded; otherwise the
     // whole string is forwarded as-is. `--iconv=-` (Disabled) and the default
     // (Unspecified) forward nothing because upstream nulls iconv_opt at
     // options.c:2052-2054 before this branch runs. Without this the daemon
-    // never enables `ic_recv` and writes wire UTF-8 bytes verbatim instead of
-    // transcoding to its local charset.
+    // never enables `ic_recv` and writes wire UTF-8 bytes verbatim.
     match config.iconv() {
         IconvSetting::Unspecified | IconvSetting::Disabled => {}
         IconvSetting::LocaleDefault => args.push("--iconv=.".to_owned()),
@@ -341,10 +329,9 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
-    // Dummy argument (upstream requirement - represents CWD)
+    // upstream: dummy argument representing CWD.
     args.push(".".to_owned());
 
-    // Module path
     let module_path = format!("{}/{}", request.module, request.path);
     args.push(module_path);
 

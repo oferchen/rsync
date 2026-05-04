@@ -36,28 +36,24 @@ mod tests {
         ClientConfig::default()
     }
 
-    // Tests for link_dest_paths
     #[test]
     fn link_dest_paths_default_is_empty() {
         let config = default_config();
         assert!(config.link_dest_paths().is_empty());
     }
 
-    // Tests for backup
     #[test]
     fn backup_default_is_false() {
         let config = default_config();
         assert!(!config.backup());
     }
 
-    // Tests for backup_directory
     #[test]
     fn backup_directory_default_is_none() {
         let config = default_config();
         assert!(config.backup_directory().is_none());
     }
 
-    // Tests for backup_suffix
     #[test]
     fn backup_suffix_default_is_none() {
         let config = default_config();

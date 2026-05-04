@@ -505,7 +505,6 @@ fn connect_direct_applies_io_timeout() {
     assert_eq!(stream.read_timeout().expect("read timeout"), timeout);
     assert_eq!(stream.write_timeout().expect("write timeout"), timeout);
 
-    // Wake the accept loop and close cleanly.
     let _ = stream.write_all(&[0]);
     handle.join().expect("listener thread");
 }

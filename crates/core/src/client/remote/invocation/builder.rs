@@ -71,7 +71,6 @@ impl<'a> RemoteInvocationBuilder<'a> {
     pub fn build_with_paths(&self, remote_paths: &[&str]) -> Vec<OsString> {
         let mut args = Vec::new();
 
-        // Use custom rsync path if specified, otherwise default to "rsync"
         if let Some(rsync_path) = self.config.rsync_path() {
             args.push(OsString::from(rsync_path));
         } else {
@@ -103,11 +102,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
             };
         }
 
-        // Build the full argument list as if secluded args were off -
-        // these are what we will send over stdin.
+        // Build the full argument list as if secluded args were off; these
+        // are what we will send over stdin.
         let full_args = self.build_full_args_for_stdin(remote_paths);
 
-        // Build the minimal command line: rsync --server [-s] [--sender]
         let mut cmd_args = Vec::new();
         if let Some(rsync_path) = self.config.rsync_path() {
             cmd_args.push(OsString::from(rsync_path));
@@ -118,10 +116,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.role == RemoteRole::Receiver {
             cmd_args.push(OsString::from("--sender"));
         }
-        // The `-s` flag tells the remote server to read args from stdin.
-        // upstream: options.c - protect_args flag sent as `-s` in server mode
+        // upstream: options.c - protect_args flag sent as `-s` in server
+        // mode tells the remote server to read args from stdin.
         cmd_args.push(OsString::from("-s"));
-        // Dummy argument required by upstream
+        // upstream: dummy argument required after the flag string.
         cmd_args.push(OsString::from("."));
 
         SecludedInvocation {
@@ -197,8 +195,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// `--key=value` tokens rather than single-character flags. The order mirrors
     /// upstream for predictable interop testing.
     fn append_long_form_args(&self, args: &mut Vec<OsString>) {
-        // --delete-* timing variants
-        // upstream: options.c - delete_mode forwarded as --delete-before/during/after/delay
+        // upstream: options.c - delete_mode forwarded as
+        // --delete-before/during/after/delay timing variants.
         match self.config.delete_mode() {
             DeleteMode::Disabled => {}
             DeleteMode::Before => args.push(OsString::from("--delete-before")),
@@ -215,12 +213,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--force"));
         }
 
-        // --max-delete=N
         if let Some(max) = self.config.max_delete() {
             args.push(OsString::from(format!("--max-delete={max}")));
         }
 
-        // --max-size / --min-size
         if let Some(max) = self.config.max_file_size() {
             args.push(OsString::from(format!("--max-size={max}")));
         }
@@ -228,13 +224,12 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(format!("--min-size={min}")));
         }
 
-        // --modify-window=N
         if let Some(window) = self.config.modify_window() {
             args.push(OsString::from(format!("--modify-window={window}")));
         }
 
-        // --compress-level=N
-        // upstream: options.c - compress_level sent to server when explicitly set
+        // upstream: options.c - compress_level sent to server when
+        // explicitly set.
         if let Some(level) = self.config.compression_level() {
             let numeric = compression_level_to_numeric(level);
             args.push(OsString::from(format!("--compress-level={numeric}")));
@@ -258,8 +253,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // --checksum-choice=ALGO
-        // upstream: options.c - checksum_choice forwarded when not auto
+        // upstream: options.c - checksum_choice forwarded as
+        // --checksum-choice=ALGO when not auto.
         let checksum_choice = self.config.checksum_choice();
         if checksum_choice.transfer() != StrongChecksumAlgorithm::Auto
             || checksum_choice.file() != StrongChecksumAlgorithm::Auto
@@ -270,32 +265,27 @@ impl<'a> RemoteInvocationBuilder<'a> {
             )));
         }
 
-        // --block-size=N
         if let Some(bs) = self.config.block_size_override() {
             args.push(OsString::from(format!("--block-size={}", bs.get())));
         }
 
-        // --timeout=N
         if let TransferTimeout::Seconds(secs) = self.config.timeout() {
             args.push(OsString::from(format!("--timeout={}", secs.get())));
         }
 
-        // --bwlimit=N
-        // upstream: options.c - bwlimit forwarded as bytes-per-second
+        // upstream: options.c - bwlimit forwarded as bytes-per-second.
         if let Some(bwlimit) = self.config.bandwidth_limit() {
             let mut arg = OsString::from("--bwlimit=");
             arg.push(bwlimit.fallback_argument());
             args.push(arg);
         }
 
-        // --partial-dir=DIR
         if let Some(dir) = self.config.partial_directory() {
             let mut arg = OsString::from("--partial-dir=");
             arg.push(dir.as_os_str());
             args.push(arg);
         }
 
-        // --temp-dir=DIR
         if let Some(dir) = self.config.temp_directory() {
             let mut arg = OsString::from("--temp-dir=");
             arg.push(dir.as_os_str());
@@ -312,7 +302,6 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--append-verify"));
         }
 
-        // --copy-unsafe-links, --safe-links, --munge-links
         if self.config.copy_unsafe_links() {
             args.push(OsString::from("--copy-unsafe-links"));
         }
@@ -323,7 +312,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--munge-links"));
         }
 
-        // --numeric-ids - upstream: options.c:2887-2888 (long-form only)
+        // upstream: options.c:2887-2888 - --numeric-ids is long-form only.
         if self.config.numeric_ids() {
             args.push(OsString::from("--numeric-ids"));
         }
@@ -364,7 +353,6 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--delay-updates"));
         }
 
-        // --backup, --backup-dir=DIR, --suffix=SUFFIX
         if self.config.backup() {
             args.push(OsString::from("--backup"));
             if let Some(dir) = self.config.backup_directory() {
@@ -379,7 +367,6 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // --compare-dest, --copy-dest, --link-dest
         for ref_dir in self.config.reference_directories() {
             let flag = match ref_dir.kind() {
                 ReferenceDirectoryKind::Compare => "--compare-dest=",
@@ -414,11 +401,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--log-format=%i"));
         }
 
-        // --files-from forwarding.
-        // upstream: options.c:2944-2956 - when the file is local (or stdin),
-        // the client reads it and forwards content over the socket, so we tell
-        // the server `--files-from=- --from0`. When the file is remote, we
-        // send `--files-from=<path>` and optionally `--from0`.
+        // upstream: options.c:2944-2956 - --files-from forwarding. When the
+        // file is local (or stdin), the client reads it and forwards content
+        // over the socket, so we tell the server `--files-from=- --from0`.
+        // When the file is remote, we send `--files-from=<path>` and
+        // optionally `--from0`.
         match self.config.files_from() {
             FilesFromSource::None => {}
             FilesFromSource::LocalFile(_) | FilesFromSource::Stdin => {
@@ -433,12 +420,12 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // --iconv forwarding.
-        // upstream: options.c:2716-2723 - when iconv_opt contains a comma, only
-        // the post-comma half (the remote charset) is forwarded; otherwise the
-        // whole string is forwarded as-is. `--iconv=-` (Disabled) and the
-        // default (Unspecified) forward nothing because upstream nulls
-        // iconv_opt at options.c:2052-2054 before this branch runs.
+        // upstream: options.c:2716-2723 - --iconv forwarding. When iconv_opt
+        // contains a comma, only the post-comma half (the remote charset) is
+        // forwarded; otherwise the whole string is forwarded as-is.
+        // `--iconv=-` (Disabled) and the default (Unspecified) forward
+        // nothing because upstream nulls iconv_opt at options.c:2052-2054
+        // before this branch runs.
         match self.config.iconv() {
             IconvSetting::Unspecified | IconvSetting::Disabled => {}
             IconvSetting::LocaleDefault => {
@@ -466,7 +453,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         let effective_recursive = self.config.recursive() && !files_from_active;
         let effective_relative = self.config.relative_paths() || files_from_active;
 
-        // Transfer flags (order matches upstream server_options())
+        // upstream: options.c:server_options() - transfer flag order.
         if self.config.links() {
             flags.push('l');
         }
@@ -570,8 +557,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
             flags.push('v');
         }
 
-        // Note: itemize-changes is forwarded via --log-format=%i in
-        // append_long_form_args(), not as a compact flag - upstream: options.c:2750-2762
+        // upstream: options.c:2750-2762 - itemize-changes is forwarded via
+        // --log-format=%i in append_long_form_args(), not as a compact flag.
 
         flags
     }
