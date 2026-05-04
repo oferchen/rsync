@@ -1,0 +1,54 @@
+[package]
+name = "metadata"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Metadata preservation helpers for the Rust rsync implementation"
+repository.workspace = true
+build = "build.rs"
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+filetime = "0.2"
+protocol = { path = "../protocol" }
+rustix = { version = "1.1", features = ["fs", "process"] }
+libc = "0.2"
+thiserror = "2.0"
+
+[target.'cfg(unix)'.dependencies]
+xattr = { version = "1.6", optional = true }
+
+# Cross-platform ACL support (Linux, macOS, FreeBSD)
+# Replaces custom FFI bindings for cleaner, safer implementation
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))'.dependencies]
+exacl = { workspace = true, optional = true }
+
+[target.'cfg(any(target_os = "ios", target_os = "macos", target_os = "tvos", target_os = "watchos"))'.dependencies]
+apple-fs = { path = "../apple-fs" }
+
+# Windows ACL support via Win32 GetSecurityInfo/SetSecurityInfo.
+# Mirrors upstream rsync acls.c semantics over NTFS DACLs.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemServices",
+] }
+
+[features]
+default = []
+xattr = ["dep:xattr"]
+acl = ["dep:exacl"]
+
+[dev-dependencies]
+tempfile = "3.15"
+test-support = { path = "../test-support" }

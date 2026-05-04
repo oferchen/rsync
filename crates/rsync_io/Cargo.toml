@@ -1,0 +1,38 @@
+[package]
+name = "rsync_io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Socket and pipe I/O utilities for the Rust rsync implementation (mirrors upstream io.c)"
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+thiserror = "2.0"
+protocol = { path = "../protocol" }
+logging = { path = "../logging" }
+memchr = "2.7"
+shell-words = "1.1"
+russh = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+rpassword = { workspace = true, optional = true }
+is-terminal = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
+raw-cpuid = { workspace = true, optional = true }
+
+[features]
+embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep:tokio"]
+
+[dev-dependencies]
+proptest = "1.4"
+rand = "0.10"
+tempfile = "3.15"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }

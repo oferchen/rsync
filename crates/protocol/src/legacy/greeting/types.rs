@@ -1,0 +1,615 @@
+use crate::error::NegotiationError;
+use crate::version::ProtocolVersion;
+use std::borrow::ToOwned;
+
+use super::super::LEGACY_DAEMON_PREFIX;
+use super::tokens::DigestListTokens;
+
+/// Owned representation of a legacy ASCII daemon greeting.
+///
+/// [`LegacyDaemonGreeting`] borrows the buffer that backed the parsed line,
+/// which is convenient for streaming parsers but cumbersome for higher layers
+/// that need to retain the metadata beyond the lifetime of the temporary
+/// buffer. The owned variant stores the advertised protocol number, optional
+/// subprotocol suffix, and digest list without tying them to an external
+/// allocation. The structure intentionally mirrors the borrowed API so call
+/// sites can switch between the two with minimal friction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LegacyDaemonGreetingOwned {
+    protocol: ProtocolVersion,
+    advertised_protocol: u32,
+    subprotocol: Option<u32>,
+    digest_list: Option<String>,
+}
+
+/// Detailed representation of a legacy ASCII daemon greeting.
+///
+/// Legacy daemons announce their protocol support via lines such as
+/// `@RSYNCD: 31.0 md4 md5`. Besides the major protocol number the banner may
+/// contain a fractional component (known as the "subprotocol") and an optional
+/// digest list used for challenge/response authentication. Upstream rsync
+/// retains all of this metadata during negotiation so the Rust implementation
+/// mirrors that structure to avoid lossy parsing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LegacyDaemonGreeting<'a> {
+    protocol: ProtocolVersion,
+    advertised_protocol: u32,
+    subprotocol: Option<u32>,
+    digest_list: Option<&'a str>,
+}
+
+impl<'a> LegacyDaemonGreeting<'a> {
+    /// Returns the negotiated protocol version after clamping unsupported
+    /// advertisements to the newest supported release.
+    #[must_use]
+    pub const fn protocol(self) -> ProtocolVersion {
+        self.protocol
+    }
+
+    /// Returns the protocol number advertised by the peer before clamping.
+    ///
+    /// Future peers may announce versions newer than we support. Upstream rsync
+    /// still records the advertised value, so the helper exposes it for higher
+    /// layers that mirror that behaviour.
+    #[must_use]
+    pub const fn advertised_protocol(self) -> u32 {
+        self.advertised_protocol
+    }
+
+    /// Returns the parsed subprotocol value or zero when it was absent.
+    #[must_use]
+    pub const fn subprotocol(self) -> u32 {
+        match self.subprotocol {
+            Some(value) => value,
+            None => 0,
+        }
+    }
+
+    /// Returns the optional subprotocol suffix without normalizing missing values to zero.
+    ///
+    /// Upstream rsync distinguishes between greetings that included an explicit fractional
+    /// component (for example `@RSYNCD: 31.0`) and those that omitted it entirely. The Rust
+    /// implementation previously required callers to pair [`Self::has_subprotocol`] with
+    /// [`Self::subprotocol`] to retain that distinction. Exposing the raw optional value keeps the
+    /// API expressive while preserving the zero-default helper used by code paths that only need the
+    /// numeric suffix.
+    pub const fn subprotocol_raw(self) -> Option<u32> {
+        self.subprotocol
+    }
+
+    /// Reports whether the greeting explicitly supplied a subprotocol suffix.
+    #[must_use]
+    pub const fn has_subprotocol(self) -> bool {
+        self.subprotocol.is_some()
+    }
+
+    /// Returns the digest list announced by the daemon, if any.
+    pub const fn digest_list(self) -> Option<&'a str> {
+        self.digest_list
+    }
+
+    /// Reports whether the daemon advertised a digest list used for challenge/response authentication.
+    #[must_use]
+    pub const fn has_digest_list(self) -> bool {
+        self.digest_list.is_some()
+    }
+
+    pub(super) const fn new(
+        protocol: ProtocolVersion,
+        advertised_protocol: u32,
+        subprotocol: Option<u32>,
+        digest_list: Option<&'a str>,
+    ) -> Self {
+        Self {
+            protocol,
+            advertised_protocol,
+            subprotocol,
+            digest_list,
+        }
+    }
+
+    /// Returns an iterator over the whitespace-separated digest tokens announced by the daemon.
+    ///
+    /// Upstream rsync uses the digest list to negotiate challenge/response algorithms during the
+    /// legacy ASCII handshake. The iterator splits the stored list on ASCII whitespace while
+    /// preserving the original token order, allowing higher layers to check for specific digests
+    /// without allocating intermediate buffers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::parse_legacy_daemon_greeting_details;
+    ///
+    /// let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0 md5 md4\n")?;
+    /// let tokens: Vec<_> = greeting.digest_tokens().collect();
+    ///
+    /// assert_eq!(tokens, ["md5", "md4"]);
+    /// # Ok::<_, protocol::NegotiationError>(())
+    /// ```
+    #[must_use]
+    pub fn digest_tokens(&self) -> DigestListTokens<'_> {
+        DigestListTokens::new(self.digest_list())
+    }
+
+    /// Reports whether the daemon advertised support for the specified digest algorithm.
+    ///
+    /// The comparison follows upstream rsync's behaviour by matching ASCII tokens without
+    /// allocating new strings. Whitespace surrounding the query is ignored and matching is
+    /// case-insensitive because the daemon may emit lowercase names while callers often
+    /// canonicalise constants using uppercase letters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::parse_legacy_daemon_greeting_details;
+    ///
+    /// let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0 md5 md4\n")?;
+    /// assert!(greeting.supports_digest("md5"));
+    /// assert!(greeting.supports_digest("MD4"));
+    /// assert!(!greeting.supports_digest("sha1"));
+    /// # Ok::<_, protocol::NegotiationError>(())
+    /// ```
+    #[must_use]
+    pub fn supports_digest(&self, name: &str) -> bool {
+        let trimmed = name.trim_matches(|ch: char| ch.is_ascii_whitespace());
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        self.digest_tokens()
+            .any(|token| token.eq_ignore_ascii_case(trimmed))
+    }
+
+    /// Converts the borrowed greeting into an owned representation.
+    ///
+    /// Legacy negotiation flows often parse the greeting while the underlying
+    /// buffer is still borrowed from a network reader. Higher layers may need
+    /// to retain the metadata after the buffer is recycled, in which case the
+    /// owned variant avoids cloning individual fields one by one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::{
+    ///     parse_legacy_daemon_greeting_details, LegacyDaemonGreetingOwned,
+    /// };
+    ///
+    /// let borrowed = parse_legacy_daemon_greeting_details("@RSYNCD: 29.1 md4\n")?;
+    /// let owned: LegacyDaemonGreetingOwned = borrowed.into_owned();
+    ///
+    /// assert_eq!(owned.advertised_protocol(), 29);
+    /// assert_eq!(owned.subprotocol_raw(), Some(1));
+    /// assert_eq!(owned.digest_list(), Some("md4"));
+    /// # Ok::<_, protocol::NegotiationError>(())
+    /// ```
+    #[must_use]
+    pub fn into_owned(self) -> LegacyDaemonGreetingOwned {
+        self.into()
+    }
+}
+
+impl LegacyDaemonGreetingOwned {
+    /// Returns the negotiated protocol version after clamping unsupported
+    /// advertisements to the newest supported release.
+    #[must_use]
+    pub const fn protocol(&self) -> ProtocolVersion {
+        self.protocol
+    }
+
+    /// Returns the protocol number advertised by the peer before clamping.
+    #[must_use]
+    pub const fn advertised_protocol(&self) -> u32 {
+        self.advertised_protocol
+    }
+
+    /// Returns the parsed subprotocol value or zero when it was absent.
+    #[must_use]
+    pub const fn subprotocol(&self) -> u32 {
+        match self.subprotocol {
+            Some(value) => value,
+            None => 0,
+        }
+    }
+
+    /// Returns the optional subprotocol suffix without normalizing missing values to zero.
+    pub const fn subprotocol_raw(&self) -> Option<u32> {
+        self.subprotocol
+    }
+
+    /// Reports whether the greeting explicitly supplied a subprotocol suffix.
+    #[must_use]
+    pub const fn has_subprotocol(&self) -> bool {
+        self.subprotocol.is_some()
+    }
+
+    /// Constructs an owned legacy daemon greeting from its parsed components.
+    ///
+    /// The helper mirrors [`crate::parse_legacy_daemon_greeting_details`] by clamping
+    /// future protocol advertisements, normalising digest lists, and enforcing
+    /// the rule that protocol 31 and newer must include a fractional suffix.
+    /// This is primarily useful in tests that want to exercise higher layers
+    /// without round-tripping through string formatting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NegotiationError::UnsupportedVersion`] when the advertised
+    /// protocol falls outside the upstream range and
+    /// [`NegotiationError::MalformedLegacyGreeting`] when a required
+    /// subprotocol suffix is missing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::{LegacyDaemonGreetingOwned, ProtocolVersion};
+    ///
+    /// let greeting = LegacyDaemonGreetingOwned::from_parts(
+    ///     31,
+    ///     Some(0),
+    ///     Some(String::from("  md4 md5  ")),
+    /// )?;
+    ///
+    /// assert_eq!(
+    ///     greeting.protocol(),
+    ///     ProtocolVersion::from_supported(31).unwrap()
+    /// );
+    /// assert_eq!(greeting.digest_list(), Some("md4 md5"));
+    /// assert!(greeting.has_digest_list());
+    /// # Ok::<_, protocol::NegotiationError>(())
+    /// ```
+    #[doc(alias = "@RSYNCD")]
+    pub fn from_parts(
+        advertised_protocol: u32,
+        subprotocol: Option<u32>,
+        digest_list: Option<String>,
+    ) -> Result<Self, NegotiationError> {
+        let digest_list = digest_list.and_then(|list| {
+            let trimmed = list.trim();
+            if trimmed.is_empty() {
+                None
+            } else if trimmed.len() == list.len() {
+                Some(list)
+            } else {
+                Some(trimmed.to_owned())
+            }
+        });
+
+        if advertised_protocol >= 31 && subprotocol.is_none() {
+            let mut rendered = format!("{LEGACY_DAEMON_PREFIX} {advertised_protocol}");
+            if let Some(ref digest) = digest_list {
+                rendered.push(' ');
+                rendered.push_str(digest);
+            }
+            return Err(NegotiationError::MalformedLegacyGreeting { input: rendered });
+        }
+
+        let protocol = ProtocolVersion::from_peer_advertisement(advertised_protocol)?;
+
+        Ok(Self {
+            protocol,
+            advertised_protocol,
+            subprotocol,
+            digest_list,
+        })
+    }
+
+    /// Returns the digest list announced by the daemon, if any.
+    pub fn digest_list(&self) -> Option<&str> {
+        self.digest_list.as_deref()
+    }
+
+    /// Reports whether the daemon advertised a digest list used for challenge/response authentication.
+    #[must_use]
+    pub const fn has_digest_list(&self) -> bool {
+        self.digest_list.is_some()
+    }
+
+    /// Returns an iterator over the whitespace-separated digest tokens announced by the daemon.
+    ///
+    /// This mirrors [`LegacyDaemonGreeting::digest_tokens`] while borrowing from the owned string,
+    /// making it convenient to inspect digest capabilities after the greeting has been detached from
+    /// the parsing buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::{LegacyDaemonGreetingOwned, NegotiationError};
+    ///
+    /// let greeting = LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4\tmd5".into()))?;
+    /// let tokens: Vec<_> = greeting.digest_tokens().collect();
+    ///
+    /// assert_eq!(tokens, ["md4", "md5"]);
+    /// # Ok::<_, NegotiationError>(())
+    /// ```
+    #[must_use]
+    pub fn digest_tokens(&self) -> DigestListTokens<'_> {
+        DigestListTokens::new(self.digest_list())
+    }
+
+    /// Reports whether the daemon advertised support for the specified digest algorithm.
+    ///
+    /// This mirrors [`LegacyDaemonGreeting::supports_digest`] while borrowing from the owned
+    /// string, allowing callers that retain the parsed metadata to perform capability checks
+    /// without re-parsing the original banner.
+    #[must_use]
+    pub fn supports_digest(&self, name: &str) -> bool {
+        let trimmed = name.trim_matches(|ch: char| ch.is_ascii_whitespace());
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        self.digest_tokens()
+            .any(|token| token.eq_ignore_ascii_case(trimmed))
+    }
+
+    /// Returns a borrowed representation of the greeting.
+    #[must_use]
+    pub fn as_borrowed(&self) -> LegacyDaemonGreeting<'_> {
+        LegacyDaemonGreeting {
+            protocol: self.protocol,
+            advertised_protocol: self.advertised_protocol,
+            subprotocol: self.subprotocol,
+            digest_list: self.digest_list.as_deref(),
+        }
+    }
+
+    /// Decomposes the greeting into its individual fields without cloning.
+    ///
+    /// The helper is useful when higher layers need to stash the advertised
+    /// protocol, subprotocol, and digest list separately. Consuming `self`
+    /// allows the digest list to be moved out of the structure rather than
+    /// cloned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::{parse_legacy_daemon_greeting_owned, ProtocolVersion};
+    ///
+    /// let owned = parse_legacy_daemon_greeting_owned("@RSYNCD: 30.5 md5\n")?;
+    /// let (protocol, advertised, subprotocol, digest) = owned.into_parts();
+    ///
+    /// assert_eq!(protocol, ProtocolVersion::from_supported(30).unwrap());
+    /// assert_eq!(advertised, 30);
+    /// assert_eq!(subprotocol, Some(5));
+    /// assert_eq!(digest, Some(String::from("md5")));
+    /// # Ok::<_, protocol::NegotiationError>(())
+    /// ```
+    #[must_use]
+    pub fn into_parts(self) -> (ProtocolVersion, u32, Option<u32>, Option<String>) {
+        let Self {
+            protocol,
+            advertised_protocol,
+            subprotocol,
+            digest_list,
+        } = self;
+
+        (protocol, advertised_protocol, subprotocol, digest_list)
+    }
+
+    /// Consumes the greeting and returns the optional digest list without
+    /// cloning.
+    ///
+    /// When the caller only needs the digest list, this convenience helper
+    /// avoids unpacking the rest of the fields via [`Self::into_parts`].
+    pub fn into_digest_list(self) -> Option<String> {
+        let Self { digest_list, .. } = self;
+        digest_list
+    }
+}
+
+impl<'a> From<LegacyDaemonGreeting<'a>> for LegacyDaemonGreetingOwned {
+    fn from(greeting: LegacyDaemonGreeting<'a>) -> Self {
+        Self {
+            protocol: greeting.protocol(),
+            advertised_protocol: greeting.advertised_protocol(),
+            subprotocol: greeting.subprotocol_raw(),
+            digest_list: greeting.digest_list().map(ToOwned::to_owned),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_borrowed<'a>(
+        protocol: ProtocolVersion,
+        advertised: u32,
+        subprotocol: Option<u32>,
+        digest_list: Option<&'a str>,
+    ) -> LegacyDaemonGreeting<'a> {
+        LegacyDaemonGreeting::new(protocol, advertised, subprotocol, digest_list)
+    }
+
+    #[test]
+    fn borrowed_greeting_protocol() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, None);
+        assert_eq!(greeting.protocol(), proto);
+    }
+
+    #[test]
+    fn borrowed_greeting_advertised_protocol() {
+        let proto = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = make_borrowed(proto, 32, Some(0), None);
+        assert_eq!(greeting.advertised_protocol(), 32);
+    }
+
+    #[test]
+    fn borrowed_greeting_subprotocol_present() {
+        let proto = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = make_borrowed(proto, 31, Some(5), None);
+        assert_eq!(greeting.subprotocol(), 5);
+        assert!(greeting.has_subprotocol());
+        assert_eq!(greeting.subprotocol_raw(), Some(5));
+    }
+
+    #[test]
+    fn borrowed_greeting_subprotocol_absent() {
+        let proto = ProtocolVersion::from_supported(29).unwrap();
+        let greeting = make_borrowed(proto, 29, None, None);
+        assert_eq!(greeting.subprotocol(), 0);
+        assert!(!greeting.has_subprotocol());
+        assert_eq!(greeting.subprotocol_raw(), None);
+    }
+
+    #[test]
+    fn borrowed_greeting_digest_list_present() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, Some("md4 md5"));
+        assert_eq!(greeting.digest_list(), Some("md4 md5"));
+        assert!(greeting.has_digest_list());
+    }
+
+    #[test]
+    fn borrowed_greeting_digest_list_absent() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, None);
+        assert_eq!(greeting.digest_list(), None);
+        assert!(!greeting.has_digest_list());
+    }
+
+    #[test]
+    fn borrowed_greeting_supports_digest_case_insensitive() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, Some("md4 MD5"));
+        assert!(greeting.supports_digest("md4"));
+        assert!(greeting.supports_digest("MD4"));
+        assert!(greeting.supports_digest("md5"));
+        assert!(greeting.supports_digest("MD5"));
+        assert!(!greeting.supports_digest("sha1"));
+    }
+
+    #[test]
+    fn borrowed_greeting_supports_digest_empty_query() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, Some("md4"));
+        assert!(!greeting.supports_digest(""));
+        assert!(!greeting.supports_digest("   "));
+    }
+
+    #[test]
+    fn borrowed_greeting_digest_tokens() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, Some("md4 md5 sha1"));
+        let tokens: Vec<_> = greeting.digest_tokens().collect();
+        assert_eq!(tokens, vec!["md4", "md5", "sha1"]);
+    }
+
+    #[test]
+    fn borrowed_greeting_into_owned() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let borrowed = make_borrowed(proto, 30, Some(5), Some("md4"));
+        let owned = borrowed.into_owned();
+        assert_eq!(owned.protocol(), proto);
+        assert_eq!(owned.advertised_protocol(), 30);
+        assert_eq!(owned.subprotocol(), 5);
+        assert_eq!(owned.digest_list(), Some("md4"));
+    }
+
+    #[test]
+    fn owned_greeting_from_parts_valid() {
+        let owned =
+            LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4 md5".into())).unwrap();
+        assert_eq!(owned.advertised_protocol(), 30);
+        assert_eq!(owned.subprotocol(), 5);
+        assert!(owned.has_subprotocol());
+        assert_eq!(owned.digest_list(), Some("md4 md5"));
+    }
+
+    #[test]
+    fn owned_greeting_from_parts_trims_digest_list() {
+        let owned =
+            LegacyDaemonGreetingOwned::from_parts(29, None, Some("  md4 md5  ".into())).unwrap();
+        assert_eq!(owned.digest_list(), Some("md4 md5"));
+    }
+
+    #[test]
+    fn owned_greeting_from_parts_empty_digest_becomes_none() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(29, None, Some("   ".into())).unwrap();
+        assert!(owned.digest_list().is_none());
+        assert!(!owned.has_digest_list());
+    }
+
+    #[test]
+    fn owned_greeting_from_parts_protocol_31_requires_subprotocol() {
+        let result = LegacyDaemonGreetingOwned::from_parts(31, None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn owned_greeting_from_parts_protocol_31_with_subprotocol_ok() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).unwrap();
+        assert_eq!(owned.advertised_protocol(), 31);
+        assert_eq!(owned.subprotocol(), 0);
+    }
+
+    #[test]
+    fn owned_greeting_supports_digest() {
+        let owned =
+            LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4 md5".into())).unwrap();
+        assert!(owned.supports_digest("md4"));
+        assert!(owned.supports_digest("MD5"));
+        assert!(!owned.supports_digest("sha256"));
+    }
+
+    #[test]
+    fn owned_greeting_digest_tokens() {
+        let owned =
+            LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4\tmd5".into())).unwrap();
+        let tokens: Vec<_> = owned.digest_tokens().collect();
+        assert_eq!(tokens, vec!["md4", "md5"]);
+    }
+
+    #[test]
+    fn owned_greeting_as_borrowed() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4".into())).unwrap();
+        let borrowed = owned.as_borrowed();
+        assert_eq!(borrowed.advertised_protocol(), 30);
+        assert_eq!(borrowed.subprotocol(), 5);
+        assert_eq!(borrowed.digest_list(), Some("md4"));
+    }
+
+    #[test]
+    fn owned_greeting_into_parts() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4".into())).unwrap();
+        let (protocol, advertised, subprotocol, digest) = owned.into_parts();
+        assert_eq!(protocol, ProtocolVersion::from_supported(30).unwrap());
+        assert_eq!(advertised, 30);
+        assert_eq!(subprotocol, Some(5));
+        assert_eq!(digest, Some("md4".into()));
+    }
+
+    #[test]
+    fn owned_greeting_into_digest_list() {
+        let owned =
+            LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4 md5".into())).unwrap();
+        let digest = owned.into_digest_list();
+        assert_eq!(digest, Some("md4 md5".into()));
+    }
+
+    #[test]
+    fn borrowed_greeting_eq() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let a = make_borrowed(proto, 30, Some(5), Some("md4"));
+        let b = make_borrowed(proto, 30, Some(5), Some("md4"));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn owned_greeting_eq() {
+        let a = LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4".into())).unwrap();
+        let b = LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4".into())).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn from_borrowed_to_owned_conversion() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let borrowed = make_borrowed(proto, 30, Some(5), Some("md4"));
+        let owned: LegacyDaemonGreetingOwned = borrowed.into();
+        assert_eq!(owned.protocol(), proto);
+        assert_eq!(owned.advertised_protocol(), 30);
+        assert_eq!(owned.subprotocol_raw(), Some(5));
+        assert_eq!(owned.digest_list(), Some("md4"));
+    }
+}

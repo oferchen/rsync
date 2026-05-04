@@ -1,0 +1,78 @@
+[package]
+name = "checksums"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+# Default: pure-Rust implementations with automatic hardware acceleration
+# (SHA-NI on x86_64, crypto extensions on aarch64 via cpufeatures)
+# SIMD features enabled by default for best performance
+default = []
+
+# ============================================================================
+# Parallel Computation (always compiled)
+# ============================================================================
+# Parallel checksum computation using rayon is always available.
+# This feature alias is kept for backward compatibility with dependents.
+parallel = []
+
+# ============================================================================
+# Legacy OpenSSL Features (optional)
+# ============================================================================
+# OpenSSL-based checksums (fallback for platforms without native acceleration)
+openssl = ["dep:openssl"]
+openssl-vendored = ["openssl", "openssl/vendored"]
+
+[dependencies]
+md4 = { version = "0.10", default-features = false, features = ["std"] }
+digest = { version = "0.10", default-features = false, features = ["std"] }
+xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64", "xxh3"] }
+# xxh3 crate provides runtime SIMD detection (AVX2 on x86_64, NEON on aarch64)
+xxh3 = { version = "0.1" }
+crc32c = { version = "0.6" }
+thiserror = "2.0"
+openssl = { version = "0.10", optional = true }
+rayon = { version = "1.10" }
+fast_io = { path = "../fast_io", default-features = false }
+logging = { path = "../logging" }
+
+# *-asm crates require NASM on Windows and fail under MSVC; enable asm only on unix.
+# On unix, the `asm` feature on sha1/sha2 enables sha2-asm which provides assembly
+# fallbacks; the pure-Rust backend already auto-detects SHA-NI (x86_64) and
+# crypto extensions (aarch64) via `cpufeatures` regardless of this feature.
+[target.'cfg(unix)'.dependencies]
+md-5 = { version = "0.10", default-features = false, features = ["std", "asm"] }
+sha1 = { version = "0.10", default-features = false, features = ["std", "asm"] }
+sha2 = { version = "0.10", default-features = false, features = ["std", "asm"] }
+
+[target.'cfg(not(unix))'.dependencies]
+md-5 = { version = "0.10", default-features = false, features = ["std"] }
+sha1 = { version = "0.10", default-features = false, features = ["std"] }
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+proptest = "1.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+tempfile = "3.14"
+
+[[bench]]
+name = "checksums_benchmark"
+harness = false
+
+[[bench]]
+name = "parallel_benchmark"
+harness = false
+
+[[bench]]
+name = "pipelined_benchmark"
+harness = false

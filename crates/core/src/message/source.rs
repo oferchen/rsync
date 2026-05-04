@@ -1,0 +1,598 @@
+use std::borrow::Cow;
+use std::ffi::{OsStr, OsString};
+use std::fmt;
+use std::fs;
+use std::path::{Path, PathBuf, PrefixComponent};
+use std::sync::OnceLock;
+
+/// Source location associated with a message.
+///
+/// # Examples
+///
+/// ```
+/// use core::message::SourceLocation;
+///
+/// let location = SourceLocation::from_parts(
+///     env!("CARGO_MANIFEST_DIR"),
+///     "src/lib.rs",
+///     120,
+/// );
+///
+/// assert_eq!(location.line(), 120);
+/// assert!(location.path().ends_with("src/lib.rs"));
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct SourceLocation {
+    path: Cow<'static, str>,
+    line: u32,
+}
+
+impl SourceLocation {
+    /// Creates a source location from workspace paths.
+    #[must_use]
+    pub fn from_parts(manifest_dir: &'static str, file: &'static str, line: u32) -> Self {
+        let manifest_path = Path::new(manifest_dir);
+        let file_path = Path::new(file);
+
+        let absolute = if file_path.is_absolute() {
+            file_path.to_path_buf()
+        } else if let Some(workspace_path) = workspace_root_path() {
+            if let Ok(manifest_relative) = manifest_path.strip_prefix(workspace_path) {
+                if manifest_relative.as_os_str().is_empty() {
+                    manifest_path.join(file_path)
+                } else if file_path.starts_with(manifest_relative) {
+                    workspace_path.join(file_path)
+                } else {
+                    manifest_path.join(file_path)
+                }
+            } else {
+                manifest_path.join(file_path)
+            }
+        } else {
+            manifest_path.join(file_path)
+        };
+
+        let canonical = canonicalize_or_fallback(&absolute);
+        let normalized = normalize_path(&canonical);
+        let repo_relative =
+            canonicalize_virtual_test_path(strip_workspace_prefix_owned(normalized));
+
+        Self {
+            path: Cow::Owned(repo_relative),
+            line,
+        }
+    }
+
+    /// Returns the repo-relative path stored in the source location.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Reports whether the stored path is relative to the workspace root.
+    ///
+    /// Paths pointing to files within the repository are normalised to a
+    /// workspace-relative representation, matching upstream rsync's practice of
+    /// omitting redundant prefixes in diagnostics. When the path escapes the
+    /// workspace (for example when the caller provides an absolute path outside
+    /// the repository), the method returns `false` to signal that the location is
+    /// already absolute.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use core::message::SourceLocation;
+    ///
+    /// let inside = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), "src/lib.rs", 12);
+    /// assert!(inside.is_workspace_relative());
+    ///
+    /// let outside = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), "/tmp/outside.rs", 7);
+    /// assert!(!outside.is_workspace_relative());
+    /// ```
+    #[must_use]
+    pub fn is_workspace_relative(&self) -> bool {
+        let path = Path::new(self.path());
+        !path.has_root()
+    }
+
+    /// Returns the line number recorded for the message.
+    #[must_use]
+    pub const fn line(&self) -> u32 {
+        self.line
+    }
+}
+
+impl fmt::Display for SourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.path, self.line)
+    }
+}
+
+/// Extracts the file basename from a path string.
+///
+/// Returns the portion after the last `/` or `\` separator. When the path
+/// contains no separators the entire string is returned. This mirrors how
+/// upstream rsync prints source file names in diagnostics - e.g. `io.c`
+/// rather than the full repository-relative path.
+///
+/// The function is designed to work with the compile-time strings produced by
+/// `file!()`, so it accepts `&str` and returns a `&str` slice into the same
+/// storage.
+///
+/// # Examples
+///
+/// ```
+/// use core::message::file_basename;
+///
+/// assert_eq!(file_basename("crates/core/src/message/source.rs"), "source.rs");
+/// assert_eq!(file_basename("lib.rs"), "lib.rs");
+/// assert_eq!(file_basename("src\\main.rs"), "main.rs");
+/// ```
+#[must_use]
+pub fn file_basename(path: &str) -> &str {
+    let last_fwd = path.rfind('/');
+    let last_back = path.rfind('\\');
+    let last_sep = match (last_fwd, last_back) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+    match last_sep {
+        Some(pos) => &path[pos + 1..],
+        None => path,
+    }
+}
+
+/// Removes the workspace root prefix from a normalized path when possible.
+///
+/// The input string must already be normalised via [`normalize_path`]. When the path lives outside
+/// the workspace root (or the root is unknown), the original string is returned unchanged.
+fn strip_workspace_prefix_owned(normalized_path: String) -> String {
+    if let Some(stripped) = normalized_workspace_root()
+        .and_then(|root| strip_normalized_workspace_prefix(&normalized_path, root))
+    {
+        return stripped;
+    }
+
+    normalized_path
+}
+
+fn canonicalize_virtual_test_path(path: String) -> String {
+    if let Some(rewritten) = rewrite_test_shard(&path) {
+        return rewritten;
+    }
+
+    path
+}
+
+fn rewrite_test_shard(path: &str) -> Option<String> {
+    let segments: Vec<&str> = path.split('/').collect();
+    if segments.len() < 2 {
+        return None;
+    }
+
+    let last = segments[segments.len() - 1];
+    let digits = last.strip_prefix("part")?.strip_suffix(".rs")?;
+
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+
+    if segments[segments.len() - 2] != "tests" {
+        return None;
+    }
+
+    let mut rewritten = segments[..segments.len() - 2].join("/");
+    if !rewritten.is_empty() {
+        rewritten.push('/');
+    }
+    rewritten.push_str("tests.rs");
+    Some(rewritten)
+}
+
+/// Returns the workspace-relative representation of `path` when it shares the provided root.
+///
+/// Both arguments must use forward slashes, matching the representation produced by
+/// [`normalize_path`]. The helper enforces segment boundaries to avoid stripping prefixes from
+/// directories that merely share the same leading byte sequence.
+pub(super) fn strip_normalized_workspace_prefix(path: &str, root: &str) -> Option<String> {
+    if !path.starts_with(root) {
+        return None;
+    }
+
+    let mut suffix = &path[root.len()..];
+
+    if suffix.is_empty() {
+        return Some(String::from("."));
+    }
+
+    if !root.ends_with('/') {
+        let stripped_suffix = suffix.strip_prefix('/')?;
+        if stripped_suffix.is_empty() {
+            return Some(String::from("."));
+        }
+
+        suffix = stripped_suffix;
+    }
+
+    Some(suffix.to_owned())
+}
+
+/// Lazily computes the normalized workspace root used for source remapping.
+pub(super) fn normalized_workspace_root() -> Option<&'static str> {
+    static NORMALIZED: OnceLock<Option<String>> = OnceLock::new();
+
+    NORMALIZED
+        .get_or_init(|| workspace_root_path().map(normalize_path))
+        .as_deref()
+}
+
+/// Returns the absolute workspace root configured at build time, if available.
+pub(super) fn workspace_root_path() -> Option<&'static Path> {
+    static WORKSPACE_ROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+    WORKSPACE_ROOT
+        .get_or_init(|| {
+            compute_workspace_root(
+                option_env!("RSYNC_WORKSPACE_ROOT"),
+                option_env!("CARGO_WORKSPACE_DIR"),
+            )
+        })
+        .as_deref()
+}
+
+pub(super) fn compute_workspace_root(
+    explicit_root: Option<&str>,
+    workspace_dir: Option<&str>,
+) -> Option<PathBuf> {
+    if let Some(root) = explicit_root {
+        return Some(PathBuf::from(root));
+    }
+
+    fallback_workspace_root(workspace_dir)
+}
+
+fn fallback_workspace_root(workspace_dir: Option<&str>) -> Option<PathBuf> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    if let Some(dir) = workspace_dir {
+        let candidate = Path::new(dir);
+        let candidate = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            manifest_dir.join(candidate)
+        };
+
+        if candidate.is_dir() {
+            return Some(canonicalize_or_fallback(&candidate));
+        }
+    }
+
+    for ancestor in manifest_dir.ancestors() {
+        if ancestor.join("Cargo.lock").is_file() {
+            return Some(canonicalize_or_fallback(ancestor));
+        }
+    }
+
+    Some(canonicalize_or_fallback(manifest_dir))
+}
+
+pub(super) fn canonicalize_or_fallback(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub(super) fn normalize_path(path: &Path) -> String {
+    use std::path::Component;
+
+    let mut prefix: Option<String> = None;
+    let is_absolute = path.is_absolute();
+    let mut segments: Vec<OsString> = Vec::new();
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(value) => {
+                prefix = Some(normalize_prefix_component(value));
+            }
+            Component::RootDir => {
+                // Root components are handled via the `is_absolute` flag to avoid
+                // reintroducing platform-specific separators when reconstructing the path.
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if segments.last().is_some_and(|last| last != "..") {
+                    segments.pop();
+                    continue;
+                }
+
+                if !is_absolute {
+                    segments.push(OsString::from(".."));
+                }
+            }
+            Component::Normal(value) => segments.push(value.to_os_string()),
+        }
+    }
+
+    let mut normalized = String::new();
+
+    if let Some(prefix) = prefix {
+        normalized.push_str(&prefix);
+    }
+
+    if is_absolute && !normalized.ends_with('/') {
+        normalized.push('/');
+    }
+
+    for (index, segment) in segments.iter().enumerate() {
+        if !(normalized.is_empty()
+            || normalized.ends_with('/')
+            || (index == 0 && normalized.ends_with(':')))
+        {
+            normalized.push('/');
+        }
+
+        append_normalized_os_str(&mut normalized, segment);
+    }
+
+    if normalized.is_empty() {
+        String::from(".")
+    } else {
+        normalized
+    }
+}
+
+fn normalize_prefix_component(prefix: PrefixComponent<'_>) -> String {
+    use std::path::Prefix;
+
+    match prefix.kind() {
+        Prefix::VerbatimDisk(disk) | Prefix::Disk(disk) => {
+            let mut rendered = String::with_capacity(2);
+            let letter = char::from(disk).to_ascii_uppercase();
+            rendered.push(letter);
+            rendered.push(':');
+            rendered
+        }
+        Prefix::VerbatimUNC(server, share) | Prefix::UNC(server, share) => {
+            let mut rendered = String::from("//");
+            append_normalized_os_str(&mut rendered, server);
+            rendered.push('/');
+            append_normalized_os_str(&mut rendered, share);
+            rendered
+        }
+        Prefix::DeviceNS(ns) => {
+            let mut rendered = String::from("//./");
+            append_normalized_os_str(&mut rendered, ns);
+            rendered
+        }
+        Prefix::Verbatim(component) => {
+            let mut rendered = String::new();
+            append_normalized_os_str(&mut rendered, component);
+            rendered
+        }
+    }
+}
+
+pub(super) fn append_normalized_os_str(target: &mut String, value: &OsStr) {
+    let lossy = value.to_string_lossy();
+    let text = lossy.as_ref();
+
+    if let Some(first_backslash) = text.find('\\') {
+        let (prefix, remainder) = text.split_at(first_backslash);
+        target.push_str(prefix);
+
+        for ch in remainder.chars() {
+            target.push(if ch == '\\' { '/' } else { ch });
+        }
+    } else {
+        target.push_str(text);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+    use std::path::Path;
+
+    // file!() returns backslashes on Windows but normalize_path uses forward slashes
+    #[cfg(unix)]
+    #[test]
+    fn source_location_normalises_workspace_paths() {
+        let location = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), file!(), 123);
+
+        assert!(location.is_workspace_relative());
+        assert!(location.path().ends_with(file!()));
+        assert_eq!(location.line(), 123);
+        assert_eq!(location.to_string(), format!("{}:{}", location.path(), 123));
+    }
+
+    #[test]
+    fn source_location_preserves_absolute_paths_outside_workspace() {
+        #[cfg(windows)]
+        const OUTSIDE: &str = "C:/outside/example.rs";
+        #[cfg(not(windows))]
+        const OUTSIDE: &str = "/tmp/outside/example.rs";
+
+        let location = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), OUTSIDE, 7);
+        let expected = normalize_path(Path::new(OUTSIDE));
+
+        assert!(!location.is_workspace_relative());
+        assert_eq!(location.path(), expected);
+        assert_eq!(location.line(), 7);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn source_location_handles_manifest_case_mismatch() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let toggled: String = manifest
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_lowercase() {
+                    ch.to_ascii_uppercase()
+                } else if ch.is_ascii_uppercase() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    ch
+                }
+            })
+            .collect();
+        let leaked: &'static str = Box::leak(toggled.into_boxed_str());
+
+        let location = SourceLocation::from_parts(leaked, "src/lib.rs", 11);
+
+        assert!(location.is_workspace_relative());
+        assert_eq!(location.path(), "crates/core/src/lib.rs");
+    }
+
+    #[test]
+    fn canonicalize_virtual_test_path_rewrites_test_shards() {
+        let rewritten = canonicalize_virtual_test_path("module/tests/part2.rs".to_owned());
+        assert_eq!(rewritten, "module/tests.rs");
+
+        let untouched = canonicalize_virtual_test_path("module/tests.rs".to_owned());
+        assert_eq!(untouched, "module/tests.rs");
+    }
+
+    #[test]
+    fn rewrite_test_shard_rejects_unexpected_patterns() {
+        assert_eq!(rewrite_test_shard("tests/helper.rs"), None);
+        assert_eq!(rewrite_test_shard("tests/partX.rs"), None);
+        assert_eq!(rewrite_test_shard("other/part1.rs"), None);
+    }
+
+    #[test]
+    fn strip_normalized_workspace_prefix_handles_exact_and_nested_matches() {
+        let (root, path) = if cfg!(windows) {
+            ("C:/workspace", "C:/workspace/crates/core/src/lib.rs")
+        } else {
+            ("/workspace", "/workspace/crates/core/src/lib.rs")
+        };
+
+        let stripped = strip_normalized_workspace_prefix(path, root).expect("path shares root");
+        assert_eq!(stripped, "crates/core/src/lib.rs");
+
+        let self_root = strip_normalized_workspace_prefix(root, root).expect("root maps to dot");
+        assert_eq!(self_root, ".");
+
+        assert_eq!(strip_normalized_workspace_prefix(path, "other/root"), None);
+    }
+
+    #[test]
+    fn append_normalized_os_str_replaces_backslashes() {
+        let mut buffer = String::new();
+        append_normalized_os_str(&mut buffer, OsStr::new("dir\\nested\\file"));
+        assert_eq!(buffer, "dir/nested/file");
+    }
+
+    #[test]
+    fn file_basename_extracts_filename_from_unix_path() {
+        assert_eq!(
+            file_basename("crates/core/src/message/source.rs"),
+            "source.rs"
+        );
+    }
+
+    #[test]
+    fn file_basename_extracts_filename_from_windows_path() {
+        assert_eq!(file_basename("crates\\core\\src\\main.rs"), "main.rs");
+    }
+
+    #[test]
+    fn file_basename_returns_input_when_no_separator() {
+        assert_eq!(file_basename("lib.rs"), "lib.rs");
+    }
+
+    #[test]
+    fn file_basename_handles_trailing_separator() {
+        assert_eq!(file_basename("src/"), "");
+    }
+
+    #[test]
+    fn file_basename_handles_single_component() {
+        assert_eq!(file_basename("main.rs"), "main.rs");
+    }
+
+    #[test]
+    fn file_basename_handles_deeply_nested_path() {
+        assert_eq!(file_basename("a/b/c/d/e/transfer.rs"), "transfer.rs");
+    }
+
+    #[test]
+    fn file_basename_handles_mixed_separators() {
+        assert_eq!(file_basename("src/subdir\\file.rs"), "file.rs");
+    }
+
+    #[test]
+    fn file_basename_handles_empty_string() {
+        assert_eq!(file_basename(""), "");
+    }
+
+    #[test]
+    fn error_location_starts_with_at() {
+        let location = crate::error_location!();
+        assert!(
+            location.starts_with("at "),
+            "expected 'at ' prefix, got: {location}"
+        );
+    }
+
+    #[test]
+    fn error_location_contains_rs_extension() {
+        let location = crate::error_location!();
+        assert!(
+            location.contains(".rs("),
+            "expected '.rs(' in location, got: {location}"
+        );
+    }
+
+    #[test]
+    fn error_location_ends_with_closing_paren() {
+        let location = crate::error_location!();
+        assert!(
+            location.ends_with(')'),
+            "expected ')' suffix, got: {location}"
+        );
+    }
+
+    #[test]
+    fn error_location_uses_basename_not_full_path() {
+        let location = crate::error_location!();
+        let after_at = &location["at ".len()..];
+        let paren_pos = after_at.find('(').expect("missing '('");
+        let basename = &after_at[..paren_pos];
+        assert!(
+            !basename.contains('/') && !basename.contains('\\'),
+            "expected basename without separators, got: {basename}"
+        );
+    }
+
+    #[test]
+    fn error_location_contains_valid_line_number() {
+        let location = crate::error_location!();
+        let paren_start = location.find('(').expect("missing '('");
+        let paren_end = location.find(')').expect("missing ')'");
+        let line_str = &location[paren_start + 1..paren_end];
+        let line_num: u32 = line_str.parse().expect("line number should be a valid u32");
+        assert!(line_num > 0, "line number should be positive");
+    }
+
+    #[test]
+    fn error_location_matches_upstream_format() {
+        let location = crate::error_location!();
+        // Upstream format: "at <basename>(<line>)"
+        // Example: "at io.c(234)" or "at source.rs(42)"
+        assert!(location.starts_with("at "));
+        let after_at = &location["at ".len()..];
+        let paren_pos = after_at.find('(').expect("missing '('");
+        let basename = &after_at[..paren_pos];
+        assert!(!basename.is_empty(), "basename should not be empty");
+        assert!(!basename.contains('/'), "basename should not contain '/'");
+        assert!(after_at.ends_with(')'), "should end with ')'");
+        let line_str = &after_at[paren_pos + 1..after_at.len() - 1];
+        assert!(
+            line_str.chars().all(|c| c.is_ascii_digit()),
+            "line number should be all digits, got: {line_str}"
+        );
+    }
+}

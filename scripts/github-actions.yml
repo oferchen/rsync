@@ -1,0 +1,5 @@
+- name: rsync interop
+  run: |
+    chmod +x scripts/rsync-*.sh
+    scripts/rsync-interop-orchestrator.sh
+

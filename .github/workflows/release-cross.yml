@@ -1,0 +1,1078 @@
+name: Release-cross
+
+# =============================================================================
+# Release Workflow
+# =============================================================================
+# This workflow handles the complete release process:
+#   1. Validates tag matches Cargo.toml version (fail-fast)
+#   2. Builds release artifacts for all platforms (parallelized)
+#   3. Creates Alpine APK packages from musl static binaries
+#   4. Uploads artifacts to GitHub Release
+#   5. Updates Homebrew formula and creates PR
+#   6. Builds and pushes multi-arch Docker image to GHCR
+#
+# Trigger: Push a tag matching vX.Y.Z (e.g., v0.5.1)
+# Prerequisites: Cargo.toml version MUST match the tag (without 'v' prefix)
+# =============================================================================
+
+on:
+  push:
+    tags:
+      # Semantic versioning: v0.5.0, v1.0.0, v1.2.3
+      - "v[0-9]*.[0-9]*.[0-9]*"
+      # Legacy branded: v3.4.1-rust, v3.4.1a-rust
+      - "v[0-9]*.[0-9]*.[0-9]*-rust"
+      - "v[0-9]*.[0-9]*.[0-9]*[a-z]-rust"
+  workflow_dispatch:
+
+# Cancel in-progress runs when a new run is triggered for the same tag
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+  FORMULA_PATH: Formula/oc-rsync.rb
+  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
+
+jobs:
+  # ===========================================================================
+  # Version Validation (fail-fast gate)
+  # ===========================================================================
+  validate-version:
+    name: validate tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      tag: ${{ steps.extract.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Extract and validate version
+        id: extract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Extract tag from ref (refs/tags/v0.5.1 -> v0.5.1)
+          TAG="${GITHUB_REF##*/}"
+          VERSION="${TAG#v}"  # Strip leading 'v'
+
+          # Extract version from Cargo.toml
+          CARGO_VERSION="$(grep -E '^version\s*=' Cargo.toml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"
+
+          printf 'Tag: %s\n' "${TAG}"
+          printf 'Tag version: %s\n' "${VERSION}"
+          printf 'Cargo.toml version: %s\n' "${CARGO_VERSION}"
+
+          # Validate versions match
+          if [ "${VERSION}" != "${CARGO_VERSION}" ]; then
+            printf '::error::Version mismatch! Tag %s does not match Cargo.toml version %s\n' "${TAG}" "${CARGO_VERSION}"
+            printf '\nTo fix this:\n'
+            printf '  1. Update Cargo.toml: version = "%s"\n' "${VERSION}"
+            printf '  2. Commit and push\n'
+            printf '  3. Delete and recreate tag: git tag -d %s && git tag %s && git push origin %s --force\n' "${TAG}" "${TAG}" "${TAG}"
+            exit 1
+          fi
+
+          printf '::notice::Version validated: %s\n' "${VERSION}"
+          printf 'version=%s\n' "${VERSION}" >> "${GITHUB_OUTPUT}"
+          printf 'tag=%s\n' "${TAG}" >> "${GITHUB_OUTPUT}"
+
+  # ===========================================================================
+  # Linux GNU Builds (matrix: parallel x86_64 and aarch64, all toolchains)
+  # ===========================================================================
+  linux-gnu:
+    name: linux-gnu-${{ matrix.arch }}-${{ matrix.toolchain }}
+    runs-on: ubuntu-latest
+    needs: validate-version
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            target: x86_64-unknown-linux-gnu
+            deb_arch: amd64
+            rpm_arch: x86_64
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
+            deb_arch: arm64
+            rpm_arch: aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: release-linux-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
+          key: ${{ matrix.arch }}
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            # Enable arm64 multiarch for cross-compilation
+            sudo dpkg --add-architecture arm64
+
+            # Discover codename (e.g. noble)
+            . /etc/os-release
+            codename="${UBUNTU_CODENAME:-${VERSION_CODENAME}}"
+            printf 'Ubuntu codename: %s\n' "${codename}"
+
+            # If deb822 ubuntu.sources exists (24.04+), make it amd64-only
+            if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+              sudo awk '
+                BEGIN { in_stanza = 0; had_arch = 0 }
+                /^Types:/ { in_stanza = 1; had_arch = 0 }
+                /^$/     { in_stanza = 0; had_arch = 0 }
+                /^Architectures:/ { had_arch = 1 }
+                {
+                  print
+                  if (in_stanza && /^Components:/ && !had_arch) {
+                    print "Architectures: amd64"
+                    had_arch = 1
+                  }
+                }
+              ' /etc/apt/sources.list.d/ubuntu.sources \
+                | sudo tee /etc/apt/sources.list.d/ubuntu.sources.new >/dev/null
+              sudo mv /etc/apt/sources.list.d/ubuntu.sources.new /etc/apt/sources.list.d/ubuntu.sources
+            fi
+
+            # Add ports.ubuntu.com for arm64
+            sudo sh -c '
+              codename="$1"
+              {
+                printf "Types: deb\n"
+                printf "URIs: http://ports.ubuntu.com/ubuntu-ports/\n"
+                printf "Suites: %s %s-updates %s-backports\n" "$codename" "$codename" "$codename"
+                printf "Components: main restricted universe multiverse\n"
+                printf "Architectures: arm64\n"
+                printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+                printf "\n"
+                printf "Types: deb\n"
+                printf "URIs: http://ports.ubuntu.com/ubuntu-ports/\n"
+                printf "Suites: %s-security\n" "$codename"
+                printf "Components: main restricted universe multiverse\n"
+                printf "Architectures: arm64\n"
+                printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+              } > /etc/apt/sources.list.d/ubuntu-ports-arm64.sources
+            ' sh "$codename"
+
+            sudo apt-get update
+            sudo apt-get -y install \
+              pkg-config \
+              libssl-dev \
+              libacl1-dev \
+              libattr1-dev \
+              libzstd-dev \
+              zlib1g-dev \
+              libxxhash-dev \
+              gcc-aarch64-linux-gnu \
+              libssl-dev:arm64 \
+              libacl1-dev:arm64 \
+              libattr1-dev:arm64 \
+              libzstd-dev:arm64 \
+              zlib1g-dev:arm64 \
+              libxxhash-dev:arm64
+          else
+            sudo apt-get update
+            sudo apt-get -y install \
+              pkg-config \
+              libssl-dev \
+              libacl1-dev \
+              libattr1-dev \
+              libzstd-dev \
+              zlib1g-dev \
+              libxxhash-dev
+          fi
+
+      - name: Install cargo-deb and cargo-generate-rpm
+        uses: taiki-e/install-action@db5fb34fa772531a3ece57ca434f579eb334e0fb # v2
+        with:
+          tool: cargo-deb,cargo-generate-rpm
+
+      - name: Build binary
+        shell: bash
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_SYSROOT_DIR: ${{ matrix.arch == 'arm64' && '/' || '' }}
+          PKG_CONFIG_PATH: ${{ matrix.arch == 'arm64' && '/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig' || '' }}
+        run: |
+          set -euo pipefail
+          printf 'Building %s binary...\n' "${{ matrix.target }}"
+          cargo build --profile dist --target ${{ matrix.target }} --features openssl
+
+      - name: Build .deb package
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Building %s .deb...\n' "${{ matrix.target }}"
+          cargo deb --target ${{ matrix.target }} --no-build --profile dist
+
+      - name: Build .rpm package
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Building %s .rpm...\n' "${{ matrix.target }}"
+          cargo generate-rpm --profile dist --target ${{ matrix.target }} -o target/dist/
+
+      - name: Rename packages with toolchain suffix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          DEB_ARCH="${{ matrix.deb_arch }}"
+          RPM_ARCH="${{ matrix.rpm_arch }}"
+          TOOLCHAIN="${{ matrix.toolchain }}"
+          TARGET="${{ matrix.target }}"
+
+          # Stable keeps original naming, beta/nightly get suffix
+          DEB_PATH="target/${TARGET}/debian"
+          DEB_FILE=$(find "${DEB_PATH}" -name "oc-rsync_*_${DEB_ARCH}.deb" | head -1)
+          if [ -n "${DEB_FILE}" ]; then
+            if [ "${TOOLCHAIN}" = "stable" ]; then
+              # Keep original name for stable
+              printf 'Keeping .deb name: %s\n' "$(basename "${DEB_FILE}")"
+            else
+              NEW_DEB="${DEB_PATH}/oc-rsync_${VERSION}-1-${TOOLCHAIN}_${DEB_ARCH}.deb"
+              mv "${DEB_FILE}" "${NEW_DEB}"
+              printf 'Renamed .deb to: %s\n' "$(basename "${NEW_DEB}")"
+            fi
+          fi
+
+          RPM_FILE=$(find target/dist -name "oc-rsync-*.${RPM_ARCH}.rpm" | head -1)
+          if [ -n "${RPM_FILE}" ]; then
+            if [ "${TOOLCHAIN}" = "stable" ]; then
+              # Keep original name for stable
+              printf 'Keeping .rpm name: %s\n' "$(basename "${RPM_FILE}")"
+            else
+              NEW_RPM="target/dist/oc-rsync-${VERSION}-1-${TOOLCHAIN}.${RPM_ARCH}.rpm"
+              mv "${RPM_FILE}" "${NEW_RPM}"
+              printf 'Renamed .rpm to: %s\n' "$(basename "${NEW_RPM}")"
+            fi
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-linux-gnu-${{ matrix.arch }}-${{ matrix.toolchain }}
+          retention-days: 7
+          path: |
+            target/${{ matrix.target }}/debian/oc-rsync_*_${{ matrix.deb_arch }}.deb
+            target/dist/oc-rsync-*.${{ matrix.rpm_arch }}.rpm
+
+  # ===========================================================================
+  # Linux musl static tarballs (matrix: parallel x86_64 and aarch64, all toolchains)
+  # ===========================================================================
+  linux-musl:
+    name: linux-musl-${{ matrix.arch }}-${{ matrix.toolchain }}
+    runs-on: ubuntu-latest
+    needs: validate-version
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+        arch: [x86_64, aarch64]
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+          - arch: aarch64
+            target: aarch64-unknown-linux-musl
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        uses: taiki-e/install-action@db5fb34fa772531a3ece57ca434f579eb334e0fb # v2
+        with:
+          tool: cross
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: release-linux-musl-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
+          key: ${{ matrix.arch }}
+
+      - name: Build static musl binary (pure Rust)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'Building %s static binary (pure Rust)...\n' "${{ matrix.target }}"
+
+          # Custom Dockerfiles in docker/ directory provide musl-compatible
+          # libacl and libattr from Alpine packages for full feature parity
+          cross build \
+            --profile dist \
+            --target ${{ matrix.target }}
+
+      - name: Build static musl binary (OpenSSL vendored)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf 'Building %s static binary (OpenSSL vendored)...\n' "${{ matrix.target }}"
+
+          # Save pure-Rust binary before rebuilding with OpenSSL
+          cp "target/${{ matrix.target }}/dist/oc-rsync" "/tmp/oc-rsync-pure"
+
+          cross build \
+            --profile dist \
+            --target ${{ matrix.target }} \
+            --features openssl-vendored
+
+          # Move OpenSSL binary aside, restore pure-Rust binary
+          cp "target/${{ matrix.target }}/dist/oc-rsync" "/tmp/oc-rsync-openssl"
+          cp "/tmp/oc-rsync-pure" "target/${{ matrix.target }}/dist/oc-rsync"
+
+      - name: Create tarballs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          ARCH="${{ matrix.arch }}"
+          TOOLCHAIN="${{ matrix.toolchain }}"
+
+          mkdir -p target/dist
+
+          # Pure Rust tarball
+          if [ "${TOOLCHAIN}" = "stable" ]; then
+            TARBALL_NAME="oc-rsync-${VERSION}-linux-${ARCH}-musl.tar.gz"
+          else
+            TARBALL_NAME="oc-rsync-${VERSION}-linux-${ARCH}-musl-${TOOLCHAIN}.tar.gz"
+          fi
+
+          mkdir -p staging/bin
+          cp "target/${TARGET}/dist/oc-rsync" staging/bin/
+          tar -czf "target/dist/${TARBALL_NAME}" -C staging bin
+          printf 'Created tarball: %s\n' "${TARBALL_NAME}"
+          rm -rf staging
+
+          # OpenSSL tarball
+          if [ "${TOOLCHAIN}" = "stable" ]; then
+            SSL_TARBALL="oc-rsync-${VERSION}-linux-${ARCH}-musl-openssl.tar.gz"
+          else
+            SSL_TARBALL="oc-rsync-${VERSION}-linux-${ARCH}-musl-openssl-${TOOLCHAIN}.tar.gz"
+          fi
+
+          mkdir -p staging/bin
+          cp /tmp/oc-rsync-openssl staging/bin/oc-rsync
+          tar -czf "target/dist/${SSL_TARBALL}" -C staging bin
+          printf 'Created tarball: %s\n' "${SSL_TARBALL}"
+          rm -rf staging
+
+          ls -la target/dist/oc-rsync-*-linux-${ARCH}-musl*.tar.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-linux-musl-${{ matrix.arch }}-${{ matrix.toolchain }}
+          retention-days: 7
+          path: target/dist/oc-rsync-*-linux-${{ matrix.arch }}-musl*.tar.gz
+
+  # ===========================================================================
+  # Alpine APK Packages (uses pre-built musl static binaries)
+  # ===========================================================================
+  # Creates .apk packages from pre-built musl static binaries for Alpine Linux.
+  # Packages include OpenRC init scripts and default configuration.
+  # ===========================================================================
+  linux-alpine:
+    name: alpine-apk-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    needs:
+      - validate-version
+      - linux-musl
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download stable musl artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist-linux-musl-${{ matrix.arch }}-stable
+          path: dist-musl
+
+      - name: Build APK package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          PKGVER="${VERSION}-r0"
+
+          # Extract pre-built static binary from musl tarball
+          mkdir -p /tmp/musl-extract
+          tar -xzf "dist-musl/oc-rsync-${VERSION}-linux-${ARCH}-musl.tar.gz" \
+            -C /tmp/musl-extract --strip-components=1
+
+          BINARY="/tmp/musl-extract/oc-rsync"
+          chmod +x "${BINARY}"
+
+          # --- Build data tarball (installed files) ---
+          DATA_DIR="$(mktemp -d)"
+
+          install -Dm755 "${BINARY}" "${DATA_DIR}/usr/bin/oc-rsync"
+          install -Dm644 packaging/alpine/oc-rsyncd.conf.default \
+            "${DATA_DIR}/etc/oc-rsyncd/oc-rsyncd.conf"
+          install -Dm755 packaging/alpine/oc-rsyncd.initd \
+            "${DATA_DIR}/etc/init.d/oc-rsyncd"
+          install -Dm644 packaging/alpine/oc-rsyncd.confd \
+            "${DATA_DIR}/etc/conf.d/oc-rsyncd"
+
+          # Calculate installed size (in bytes)
+          INSTALLED_SIZE=$(du -sb "${DATA_DIR}" | awk '{print $1}')
+
+          tar -czf /tmp/data.tar.gz -C "${DATA_DIR}" .
+          DATA_HASH=$(sha256sum /tmp/data.tar.gz | awk '{print $1}')
+
+          # --- Build control tarball (.PKGINFO + install scripts) ---
+          CONTROL_DIR="$(mktemp -d)"
+
+          {
+            printf 'pkgname = oc-rsync\n'
+            printf 'pkgver = %s\n' "${PKGVER}"
+            printf 'pkgdesc = Pure-Rust implementation of rsync, wire-compatible with upstream 3.4.1\n'
+            printf 'url = https://github.com/oferchen/rsync\n'
+            printf 'builddate = %s\n' "$(date +%s)"
+            printf 'packager = oc-rsync CI <ci@github.com>\n'
+            printf 'size = %s\n' "${INSTALLED_SIZE}"
+            printf 'arch = %s\n' "${ARCH}"
+            printf 'license = MIT\n'
+            printf 'origin = oc-rsync\n'
+            printf 'datahash = %s\n' "${DATA_HASH}"
+          } > "${CONTROL_DIR}/.PKGINFO"
+
+          cp packaging/alpine/oc-rsync.pre-install "${CONTROL_DIR}/.pre-install"
+          cp packaging/alpine/oc-rsync.post-install "${CONTROL_DIR}/.post-install"
+          cp packaging/alpine/oc-rsync.pre-deinstall "${CONTROL_DIR}/.pre-deinstall"
+
+          tar -czf /tmp/control.tar.gz -C "${CONTROL_DIR}" .
+
+          # --- Assemble APK (control + data concatenation) ---
+          mkdir -p target/dist
+          APK_NAME="oc-rsync-${PKGVER}-${ARCH}.apk"
+          cat /tmp/control.tar.gz /tmp/data.tar.gz > "target/dist/${APK_NAME}"
+
+          printf 'Built APK: %s (%s bytes)\n' "${APK_NAME}" "$(stat -c %s "target/dist/${APK_NAME}")"
+
+          # Cleanup
+          rm -rf "${DATA_DIR}" "${CONTROL_DIR}" /tmp/data.tar.gz /tmp/control.tar.gz /tmp/musl-extract
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-alpine-${{ matrix.arch }}
+          retention-days: 7
+          path: target/dist/oc-rsync-*.apk
+
+  # ===========================================================================
+  # macOS Builds (matrix: parallel x86_64 and aarch64, all toolchains)
+  # ===========================================================================
+  macos:
+    name: macos-${{ matrix.arch }}-${{ matrix.toolchain }}
+    runs-on: ${{ matrix.runner }}
+    needs: validate-version
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+        arch: [x86_64, aarch64]
+        include:
+          - arch: x86_64
+            target: x86_64-apple-darwin
+            runner: macos-15
+          - arch: aarch64
+            target: aarch64-apple-darwin
+            runner: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: release-macos-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
+          key: ${{ matrix.arch }}
+
+      - name: Install OpenSSL (native arch only)
+        if: matrix.arch == 'aarch64'
+        shell: bash
+        run: |
+          brew update
+          brew install openssl@3 || true
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      - name: Build tarball
+        shell: bash
+        run: cargo xtask package --tarball --tarball-target ${{ matrix.target }} --profile dist
+
+      - name: Rename tarball with toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          TOOLCHAIN="${{ matrix.toolchain }}"
+
+          TARBALL=$(find target/dist -name "oc-rsync-*-darwin-*.tar.gz" | head -1)
+          if [ -z "${TARBALL}" ]; then
+            echo "::error::Expected macOS tarball to exist"
+            exit 1
+          fi
+
+          # Stable keeps original naming (for Homebrew), beta/nightly get suffix
+          if [ "${TOOLCHAIN}" = "stable" ]; then
+            NEW_NAME="oc-rsync-${VERSION}-darwin-${ARCH}.tar.gz"
+          else
+            NEW_NAME="oc-rsync-${VERSION}-darwin-${ARCH}-${TOOLCHAIN}.tar.gz"
+          fi
+          mv "${TARBALL}" "target/dist/${NEW_NAME}"
+          echo "Renamed tarball to: ${NEW_NAME}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-macos-${{ matrix.arch }}-${{ matrix.toolchain }}
+          retention-days: 7
+          path: target/dist/oc-rsync-*-darwin-${{ matrix.arch }}*.tar.gz
+
+  # ===========================================================================
+  # Windows Builds (matrix: all toolchains)
+  # ===========================================================================
+  windows:
+    name: windows-${{ matrix.toolchain }}
+    runs-on: windows-latest
+    needs: validate-version
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: release-windows-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
+
+      - name: Disable rustc wrapper if configured
+        shell: pwsh
+        run: |
+          $configPath = ".cargo/config.toml"
+          if (Test-Path $configPath) {
+            $content = Get-Content -Path $configPath -Encoding UTF8
+            $filtered = $content | Where-Object { $_ -notmatch '^\s*rustc-wrapper\s*=' }
+            $filtered | Set-Content -Path $configPath -Encoding UTF8
+          }
+          "RUSTC_WRAPPER=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CARGO_BUILD_RUSTC_WRAPPER=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build Windows tarball
+        shell: pwsh
+        run: |
+          $env:OC_RSYNC_PACKAGE_DEFAULT_FEATURES = "0"
+          $env:OC_RSYNC_PACKAGE_FEATURES = "zstd lz4 iconv"
+          cargo xtask package --tarball --tarball-target x86_64-pc-windows-msvc --profile dist
+
+      - name: Rename tarball with toolchain
+        shell: pwsh
+        run: |
+          $version = "${{ needs.validate-version.outputs.version }}"
+          $toolchain = "${{ matrix.toolchain }}"
+          $tarball = Get-ChildItem -Path "target\dist" -Filter "oc-rsync-*-windows-*.tar.gz" | Select-Object -First 1
+          if ($null -eq $tarball) {
+            throw "expected windows tarball to exist"
+          }
+          # Stable keeps original naming, beta/nightly get suffix
+          if ($toolchain -eq "stable") {
+            $newName = "oc-rsync-${version}-windows-x86_64.tar.gz"
+          } else {
+            $newName = "oc-rsync-${version}-windows-x86_64-${toolchain}.tar.gz"
+          }
+          $newPath = Join-Path $tarball.DirectoryName $newName
+          Move-Item -Path $tarball.FullName -Destination $newPath -Force
+          Write-Host "Renamed tarball to: $newName"
+
+      - name: Create Windows zip archive
+        shell: pwsh
+        run: |
+          $version = "${{ needs.validate-version.outputs.version }}"
+          $toolchain = "${{ matrix.toolchain }}"
+          $distDir = Join-Path (Get-Location) "dist"
+          if (-not (Test-Path $distDir)) {
+            New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+          }
+          $profileDir = Join-Path (Get-Location) "target\x86_64-pc-windows-msvc\dist"
+          $binaries = Get-ChildItem -Path $profileDir -Filter "*.exe" | Where-Object { $_.Name -match '^(oc-rsync|rsync)' }
+          if ($binaries.Count -eq 0) {
+            throw "no Windows binaries found for zip packaging"
+          }
+          # Stable keeps original naming, beta/nightly get suffix
+          if ($toolchain -eq "stable") {
+            $zipName = "oc-rsync-${version}-windows-x86_64.zip"
+          } else {
+            $zipName = "oc-rsync-${version}-windows-x86_64-${toolchain}.zip"
+          }
+          $zipPath = Join-Path $distDir $zipName
+          Compress-Archive -Path $binaries.FullName -DestinationPath $zipPath -Force
+          Write-Host "Created zip: $zipName"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-windows-${{ matrix.toolchain }}
+          retention-days: 7
+          path: |
+            target/dist/oc-rsync-*-windows-x86_64*.tar.gz
+            dist/*.zip
+
+  # ===========================================================================
+  # Release Artifacts - Collect and upload to GitHub Release
+  # ===========================================================================
+  release-artifacts:
+    name: create GitHub Release and upload assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - validate-version
+      - linux-gnu
+      - linux-musl
+      - linux-alpine
+      - macos
+      - windows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: .github/RELEASE_TEMPLATE.md
+          sparse-checkout-cone-mode: false
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          sed "s/{{VERSION}}/${VERSION}/g" .github/RELEASE_TEMPLATE.md > release_body.md
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        shell: bash
+        run: |
+          echo "=== All downloaded artifacts ==="
+          find dist -type f | sort
+
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== Verifying all expected artifacts are present ==="
+
+          # Count expected artifacts (3 toolchains: stable, beta, nightly)
+          # Each architecture × 3 toolchains (except alpine: stable only)
+          EXPECTED_DEB=6      # 2 arch (amd64, arm64) × 3 toolchains
+          EXPECTED_RPM=6      # 2 arch (x86_64, aarch64) × 3 toolchains
+          EXPECTED_MUSL=12    # 2 arch × 3 toolchains × 2 variants (pure + openssl)
+          EXPECTED_APK=2      # 2 arch (x86_64, aarch64) × 1 (stable only)
+          EXPECTED_MACOS=6    # 2 arch (x86_64, aarch64) × 3 toolchains
+          EXPECTED_WIN_TGZ=3  # 1 arch (x86_64) x 3 toolchains
+          EXPECTED_WIN_ZIP=3  # 1 arch (x86_64) x 3 toolchains
+
+          # Count actual artifacts (stable has no suffix, beta/nightly have suffix)
+          DEB_COUNT=$(find dist -name "*.deb" | wc -l)
+          RPM_COUNT=$(find dist -name "*.rpm" | wc -l)
+          MUSL_COUNT=$(find dist -name "*-musl*.tar.gz" | wc -l)
+          APK_COUNT=$(find dist -name "*.apk" | wc -l)
+          MACOS_COUNT=$(find dist -name "*darwin*.tar.gz" | wc -l)
+          # WINDOWS_COUNT=$(find dist -name "*windows*.tar.gz" | wc -l)
+          WIN_TGZ_COUNT=$(find dist -name "*windows*.tar.gz" | wc -l)
+          WIN_ZIP_COUNT=$(find dist -name "*windows*.zip" | wc -l)
+
+          ERRORS=0
+
+          check() {
+            local label="$1" actual="$2" expected="$3"
+            if [ "${actual}" -lt "${expected}" ]; then
+              echo "::error::Expected ${expected} ${label}, found ${actual}"
+              ERRORS=$((ERRORS + 1))
+            else
+              echo "✓ Found ${actual} ${label} (expected ${expected})"
+            fi
+          }
+
+          check ".deb packages"        "${DEB_COUNT}"     "${EXPECTED_DEB}"
+          check ".rpm packages"        "${RPM_COUNT}"     "${EXPECTED_RPM}"
+          check "musl tarballs"        "${MUSL_COUNT}"    "${EXPECTED_MUSL}"
+          check "Alpine .apk packages" "${APK_COUNT}"     "${EXPECTED_APK}"
+          check "macOS tarballs"       "${MACOS_COUNT}"   "${EXPECTED_MACOS}"
+          check "Windows tarballs"     "${WIN_TGZ_COUNT}" "${EXPECTED_WIN_TGZ}"
+          check "Windows zips"         "${WIN_ZIP_COUNT}" "${EXPECTED_WIN_ZIP}"
+
+          if [ $ERRORS -gt 0 ]; then
+            echo "::error::$ERRORS validation checks failed!"
+            exit 1
+          fi
+
+          echo "=== All required artifacts verified ==="
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body_path: release_body.md
+          generate_release_notes: true
+          files: |
+            dist/**/*.tar.gz
+            dist/**/*.deb
+            dist/**/*.rpm
+            dist/**/*.apk
+            dist/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ===========================================================================
+  # Homebrew Formula Update
+  # ===========================================================================
+  brew-formula:
+    name: update Homebrew formula
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - validate-version
+      - macos
+      - release-artifacts  # Formula references release URLs, must wait for upload
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: dist-macos-*
+          path: dist-macos
+          merge-multiple: true
+
+      - name: Extract branding metadata
+        id: branding
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Extract upstream_version from workspace metadata for formula description
+          UPSTREAM_VERSION="$(grep -E '^\s*upstream_version\s*=' Cargo.toml | head -1 | sed 's/.*=\s*"\([^"]*\)".*/\1/')"
+          printf 'upstream_version=%s\n' "${UPSTREAM_VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Generate Homebrew formulas
+        shell: bash
+        env:
+          UPSTREAM_VERSION: ${{ steps.branding.outputs.upstream_version }}
+        run: |
+          set -euo pipefail
+
+          TAG="${{ needs.validate-version.outputs.tag }}"
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          REPO="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+
+          mkdir -p Formula
+
+          # Generate formula for each toolchain
+          for TOOLCHAIN in stable beta nightly; do
+            # Determine file pattern and formula name
+            if [ "${TOOLCHAIN}" = "stable" ]; then
+              PATTERN_SUFFIX=""
+              FORMULA_FILE="Formula/oc-rsync.rb"
+              CLASS_NAME="OcRsync"
+              DESC_SUFFIX=""
+            else
+              PATTERN_SUFFIX="-${TOOLCHAIN}"
+              FORMULA_FILE="Formula/oc-rsync@${TOOLCHAIN}.rb"
+              # Ruby class names: OcRsyncAT<toolchain> (capitalize first letter)
+              TC_CAP="$(printf '%s' "${TOOLCHAIN}" | cut -c1 | tr '[:lower:]' '[:upper:]')$(printf '%s' "${TOOLCHAIN}" | cut -c2-)"
+              CLASS_NAME="OcRsyncAT${TC_CAP}"
+              DESC_SUFFIX=" (${TOOLCHAIN} toolchain)"
+            fi
+
+            # Find macOS tarballs for this toolchain
+            if [ "${TOOLCHAIN}" = "stable" ]; then
+              AMD64_PATH="$(find dist-macos -maxdepth 1 -type f -name 'oc-rsync-*-darwin-x86_64.tar.gz' ! -name '*-beta*' ! -name '*-nightly*' | sort | head -n1 || true)"
+              ARM64_PATH="$(find dist-macos -maxdepth 1 -type f -name 'oc-rsync-*-darwin-aarch64.tar.gz' ! -name '*-beta*' ! -name '*-nightly*' | sort | head -n1 || true)"
+            else
+              AMD64_PATH="$(find dist-macos -maxdepth 1 -type f -name "oc-rsync-*-darwin-x86_64-${TOOLCHAIN}.tar.gz" | sort | head -n1 || true)"
+              ARM64_PATH="$(find dist-macos -maxdepth 1 -type f -name "oc-rsync-*-darwin-aarch64-${TOOLCHAIN}.tar.gz" | sort | head -n1 || true)"
+            fi
+
+            if [ -z "${AMD64_PATH}" ] || [ -z "${ARM64_PATH}" ]; then
+              printf 'Could not locate both macOS amd64 and arm64 tarballs for %s in dist-macos\n' "${TOOLCHAIN}" >&2
+              ls -R dist-macos || true
+              exit 1
+            fi
+
+            AMD64_TARBALL="$(basename "${AMD64_PATH}")"
+            ARM64_TARBALL="$(basename "${ARM64_PATH}")"
+
+            AMD64_SHA256="$(shasum -a 256 "${AMD64_PATH}" | awk '{print $1}')"
+            ARM64_SHA256="$(shasum -a 256 "${ARM64_PATH}" | awk '{print $1}')"
+
+            {
+              echo "class ${CLASS_NAME} < Formula"
+              echo "  desc \"Pure-Rust rsync ${UPSTREAM_VERSION}-compatible implementation${DESC_SUFFIX}\""
+              echo '  homepage "https://github.com/oferchen/rsync"'
+              echo '  license "GPL-3.0-or-later"'
+              echo "  version \"${VERSION}\""
+              echo
+              echo "  on_macos do"
+              echo "    on_intel do"
+              echo "      url \"${REPO}/${AMD64_TARBALL}\""
+              echo "      sha256 \"${AMD64_SHA256}\""
+              echo "    end"
+              echo
+              echo "    on_arm do"
+              echo "      url \"${REPO}/${ARM64_TARBALL}\""
+              echo "      sha256 \"${ARM64_SHA256}\""
+              echo "    end"
+              echo "  end"
+              echo
+              echo "  def install"
+              echo "    bin.install \"bin/oc-rsync\""
+              echo "  end"
+              echo
+              echo "  test do"
+              echo "    system \"#{bin}/oc-rsync\", \"--version\""
+              echo "  end"
+              echo "end"
+            } > "${FORMULA_FILE}"
+
+            printf 'Formula generated at %s\n' "${FORMULA_FILE}"
+          done
+
+          echo "=== All formulas generated ==="
+          ls -la Formula/
+
+      - name: Commit and push formula branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ needs.validate-version.outputs.tag }}"
+          BRANCH="ci/brew-formula-${TAG}"
+
+          # Save the generated formulas before any git operations
+          cp -r Formula /tmp/Formula
+
+          git config user.name "oc-rsync-bot"
+          git config user.email "actions@github.com"
+
+          # Configure git to use the PAT for push operations
+          git remote set-url origin "https://x-access-token:${BREW_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Fetch master branch explicitly (refs/heads/master) to avoid ambiguity in shallow tag checkouts
+          git fetch origin refs/heads/master --depth=1
+
+          # Force checkout to discard local changes from formula generation step
+          git checkout --force -B "${BRANCH}" FETCH_HEAD
+
+          # Restore the generated formula files
+          mkdir -p Formula
+          cp /tmp/Formula/*.rb Formula/
+
+          git add Formula/
+
+          if git diff --cached --quiet; then
+            printf 'No changes to commit; skipping push.\n'
+            exit 0
+          fi
+
+          git commit -m "chore: update Homebrew formulas for ${TAG}"
+          git push --force origin "${BRANCH}"
+
+          printf 'Pushed branch %s\n' "${BRANCH}"
+        env:
+          BREW_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create pull request
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ needs.validate-version.outputs.tag }}"
+          BRANCH="ci/brew-formula-${TAG}"
+
+          # Check if PR already exists
+          PR_URL=$(gh pr list --head "${BRANCH}" --json url --jq '.[0].url' 2>/dev/null || true)
+          if [ -n "${PR_URL}" ]; then
+            printf 'PR already exists: %s\n' "${PR_URL}"
+            exit 0
+          fi
+
+          # Create the pull request
+          BODY="## Formulas Updated
+          - \`oc-rsync.rb\` - stable toolchain (default)
+          - \`oc-rsync@beta.rb\` - beta toolchain
+          - \`oc-rsync@nightly.rb\` - nightly toolchain
+
+          ## Changes
+          - Updates formulas with new version and SHA256 checksums
+          - Auto-generated by CI on tag push
+
+          ## Installation
+          \`\`\`bash
+          brew install --build-from-source ./Formula/oc-rsync.rb
+          brew install --build-from-source ./Formula/oc-rsync@beta.rb
+          brew install --build-from-source ./Formula/oc-rsync@nightly.rb
+          \`\`\`"
+
+          gh pr create \
+            --title "chore: update Homebrew formulas for ${TAG}" \
+            --body "${BODY}" \
+            --base master \
+            --head "${BRANCH}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ===========================================================================
+  # Docker Multi-arch Image
+  # ===========================================================================
+  # Uses pre-built musl static binaries from the linux-musl job to create
+  # multi-platform Docker images (amd64 + arm64) without QEMU compilation.
+  # Pushes to ghcr.io/<owner>/oc-rsync with version and latest tags.
+  # ===========================================================================
+  docker:
+    name: build and push Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - validate-version
+      - linux-musl
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download stable musl artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: dist-linux-musl-*-stable
+          path: dist-musl
+          merge-multiple: true
+
+      - name: Prepare binaries for multi-arch build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate-version.outputs.version }}"
+
+          # Extract binaries into buildx-expected directory structure
+          mkdir -p bin/amd64 bin/arm64
+
+          tar -xzf dist-musl/oc-rsync-${VERSION}-linux-x86_64-musl.tar.gz \
+            -C bin/amd64 --strip-components=1
+          tar -xzf dist-musl/oc-rsync-${VERSION}-linux-aarch64-musl.tar.gz \
+            -C bin/arm64 --strip-components=1
+
+          chmod +x bin/amd64/oc-rsync bin/arm64/oc-rsync
+
+          echo "=== Prepared binaries ==="
+          file bin/amd64/oc-rsync
+          file bin/arm64/oc-rsync
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: docker/Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/oc-rsync:${{ needs.validate-version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/oc-rsync:latest
+          labels: |
+            org.opencontainers.image.title=oc-rsync
+            org.opencontainers.image.description=Pure-Rust rsync implementation
+            org.opencontainers.image.version=${{ needs.validate-version.outputs.version }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}

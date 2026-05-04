@@ -1,0 +1,33 @@
+# Clippy Configuration
+# This file provides fine-grained control over clippy lint behavior
+
+# Raise the cyclomatic complexity threshold for complex protocol handlers
+# Default is 25, we allow up to 30 for state machines and protocol logic
+cognitive-complexity-threshold = 30
+
+# Allow longer type names - rsync protocol has descriptive type names
+type-complexity-threshold = 250
+
+# Allow more than the default 7 arguments - protocol structures are complex
+too-many-arguments-threshold = 8
+
+# Don't warn about single-char variable names in these contexts
+single-char-binding-names-threshold = 4
+
+# Allow verbose bit mask names for clarity in protocol code
+verbose-bit-mask-threshold = 1
+
+# Accept longer function signatures for protocol handlers
+max-fn-params-bools = 3
+
+# Increase max suggested function length before warning
+too-many-lines-threshold = 200
+
+# Array size threshold for suggesting a reference instead of array copy
+array-size-threshold = 512000
+
+# Maximum number of bools in a struct before warning
+max-struct-bools = 8
+
+# Threshold for struct field names similarity
+struct-field-name-threshold = 20

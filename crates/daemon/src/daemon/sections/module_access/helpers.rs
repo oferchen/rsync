@@ -1,0 +1,517 @@
+// Helpers for module access - logging, sanitization, bandwidth formatting,
+// filter rules, and utilities.
+//
+// Contains shared functions used across the module access submodules:
+// bandwidth limit application, log file management, module identifier
+// sanitization, human-readable bandwidth formatting, and daemon-side
+// filter rule construction from module config directives.
+
+/// Applies the module-specific bandwidth directives to the active limiter.
+///
+/// The helper mirrors upstream rsync's precedence rules: a module `bwlimit`
+/// directive overrides the daemon-wide limit with the strictest rate while
+/// honouring explicitly configured bursts. When a module omits the directive
+/// the limiter remains in the state established by the daemon scope, ensuring
+/// clients observe inherited throttling exactly as the C implementation does.
+/// The function returns the [`LimiterChange`] reported by
+/// [`apply_effective_limit`], allowing callers and tests to verify whether the
+/// limiter configuration changed as a result of the module overrides.
+pub(crate) fn apply_module_bandwidth_limit(
+    limiter: &mut Option<BandwidthLimiter>,
+    module_limit: Option<NonZeroU64>,
+    module_limit_specified: bool,
+    module_limit_configured: bool,
+    module_burst: Option<NonZeroU64>,
+    module_burst_specified: bool,
+) -> LimiterChange {
+    if module_limit_configured && module_limit.is_none() {
+        let burst_only_override =
+            module_burst_specified && module_burst.is_some() && limiter.is_some();
+        if !burst_only_override {
+            return if limiter.take().is_some() {
+                LimiterChange::Disabled
+            } else {
+                LimiterChange::Unchanged
+            };
+        }
+    }
+
+    let limit_specified =
+        module_limit_specified || (module_limit_configured && module_limit.is_some());
+    let burst_specified =
+        module_burst_specified && (module_limit_configured || module_limit_specified);
+
+    BandwidthLimitComponents::new_with_flags(
+        module_limit,
+        module_burst,
+        limit_specified,
+        burst_specified,
+    )
+    .apply_to_limiter(limiter)
+}
+
+/// Opens or creates a log file and wraps it in a shared message sink.
+///
+/// The log file is opened in append mode, creating it if it doesn't exist.
+/// Returns a thread-safe [`SharedLogSink`] for concurrent logging.
+pub(crate) fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, DaemonError> {
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|error| log_file_error(path, error))?;
+    Ok(Arc::new(Mutex::new(MessageSink::with_brand(file, brand))))
+}
+
+/// Creates a [`DaemonError`] for log file open failures.
+fn log_file_error(path: &Path, error: io::Error) -> DaemonError {
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            format!("failed to open log file '{}': {}", path.display(), error)
+        )
+        .with_role(Role::Daemon),
+    )
+}
+
+/// Creates a [`DaemonError`] for PID file write failures.
+fn pid_file_error(path: &Path, error: io::Error) -> DaemonError {
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            format!("failed to write pid file '{}': {}", path.display(), error)
+        )
+        .with_role(Role::Daemon),
+    )
+}
+
+/// Creates a [`DaemonError`] for lock file open failures.
+#[cfg(test)]
+fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            format!("failed to open lock file '{}': {}", path.display(), error)
+        )
+        .with_role(Role::Daemon),
+    )
+}
+
+/// Writes a message to the shared log sink with proper locking.
+fn log_message(log: &SharedLogSink, message: &Message) {
+    if let Ok(mut sink) = log.lock()
+        && sink.write(message).is_ok()
+    {
+        let _ = sink.flush();
+    }
+}
+
+/// Formats a host for logging, using the IP address as fallback.
+fn format_host(host: Option<&str>, fallback: IpAddr) -> String {
+    host.map_or_else(|| fallback.to_string(), str::to_string)
+}
+
+/// Returns a sanitised view of a module identifier suitable for diagnostics.
+///
+/// Module names originate from user input (daemon operands) or configuration
+/// files. When composing diagnostics the value must not embed control
+/// characters, otherwise adversarial requests could smuggle terminal control
+/// sequences or split log lines. The helper replaces ASCII control characters
+/// with a visible `'?'` marker while borrowing clean identifiers to avoid
+/// unnecessary allocations.
+pub(crate) fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
+    if input.chars().all(|ch| !ch.is_control()) {
+        return Cow::Borrowed(input);
+    }
+
+    let mut sanitized = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_control() {
+            sanitized.push('?');
+        } else {
+            sanitized.push(ch);
+        }
+    }
+
+    Cow::Owned(sanitized)
+}
+
+/// Formats a bandwidth rate in human-readable units (bytes/s, KiB/s, etc.).
+///
+/// Chooses the largest unit that divides evenly into the rate, falling back
+/// to raw bytes/s for values that don't align to a power-of-1024 boundary.
+pub(crate) fn format_bandwidth_rate(value: NonZeroU64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+    const TIB: u64 = GIB * 1024;
+    const PIB: u64 = TIB * 1024;
+
+    let bytes = value.get();
+    if bytes.is_multiple_of(PIB) {
+        let rate = bytes / PIB;
+        format!("{rate} PiB/s")
+    } else if bytes.is_multiple_of(TIB) {
+        let rate = bytes / TIB;
+        format!("{rate} TiB/s")
+    } else if bytes.is_multiple_of(GIB) {
+        let rate = bytes / GIB;
+        format!("{rate} GiB/s")
+    } else if bytes.is_multiple_of(MIB) {
+        let rate = bytes / MIB;
+        format!("{rate} MiB/s")
+    } else if bytes.is_multiple_of(KIB) {
+        let rate = bytes / KIB;
+        format!("{rate} KiB/s")
+    } else {
+        format!("{bytes} bytes/s")
+    }
+}
+
+/// Parses the daemon `dont compress` parameter into a `SkipCompressList`.
+///
+/// The daemon format uses space-separated glob-style suffixes (e.g., `"*.gz *.zip *.jpg"`).
+/// Each suffix is stripped of its `*.` prefix and converted to the slash-separated
+/// format that `SkipCompressList::parse` expects. Bare suffixes without `*.` prefix
+/// are also accepted.
+///
+/// Returns `None` if the input is empty or contains no valid suffixes.
+///
+/// # Upstream Reference
+///
+/// - `loadparm.c` - `dont compress` parameter, space-separated globs
+/// - `exclude.c:set_dont_compress_re()` - converts to regex for per-file matching
+fn parse_daemon_dont_compress(value: &str) -> Option<SkipCompressList> {
+    let suffixes: Vec<&str> = value
+        .split_whitespace()
+        .filter_map(|token| {
+            // Strip `*.` prefix used in daemon config notation
+            if let Some(suffix) = token.strip_prefix("*.") {
+                if !suffix.is_empty() {
+                    return Some(suffix);
+                }
+            }
+            // Accept bare suffixes without glob prefix
+            let bare = token.trim_start_matches('.');
+            if !bare.is_empty() { Some(bare) } else { None }
+        })
+        .collect();
+
+    if suffixes.is_empty() {
+        return None;
+    }
+
+    let spec = suffixes.join("/");
+    SkipCompressList::parse(&spec).ok()
+}
+
+/// Builds daemon-side filter rules from the module's filter configuration.
+///
+/// Upstream rsync's `clientserver.c:rsync_module()` builds `daemon_filter_list` from:
+/// 1. `filter` - parsed with `FILTRULE_WORD_SPLIT` (full filter rule syntax)
+/// 2. `include` - parsed with `FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT`
+/// 3. `exclude` - parsed with `FILTRULE_WORD_SPLIT`
+/// 4. `include_from` - read from file, one pattern per line (include)
+/// 5. `exclude_from` - read from file, one pattern per line (exclude)
+///
+/// The order matches upstream: filter, include_from, include, exclude_from, exclude.
+///
+/// upstream: clientserver.c:874-893 - `rsync_module()` builds `daemon_filter_list`.
+fn build_daemon_filter_rules(
+    module: &ModuleRuntime,
+) -> Result<Vec<FilterRuleWireFormat>, io::Error> {
+    let mut rules = Vec::new();
+
+    // 1. filter rules - full filter syntax (e.g., "- *.tmp", "+ *.rs")
+    // upstream: clientserver.c:874 - parse_filter_str(&daemon_filter_list, lp_filter(i),
+    //           rule_template(FILTRULE_WORD_SPLIT), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3)
+    // FILTRULE_WORD_SPLIT means a single filter line can contain multiple
+    // space-separated rules: "+ *.txt + *.rs - *" is three rules.
+    for filter_str in &module.filter {
+        for token in split_filter_tokens(filter_str.trim()) {
+            if let Some(rule) = parse_daemon_filter_token(&token) {
+                rules.push(rule);
+            }
+        }
+    }
+
+    // 2. include_from - read patterns from file, one per line
+    // upstream: clientserver.c:878 - parse_filter_file(&daemon_filter_list, lp_include_from(i),
+    //           rule_template(FILTRULE_INCLUDE), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | ...)
+    if let Some(ref path) = module.include_from {
+        let patterns = read_patterns_from_file(path)?;
+        for pattern in patterns {
+            rules.push(build_pattern_rule(&pattern, true));
+        }
+    }
+
+    // 3. include rules - bare patterns, word-split on whitespace
+    // upstream: clientserver.c:882 - parse_filter_str(&daemon_filter_list, lp_include(i),
+    //           rule_template(FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT), XFLG_ABS_IF_SLASH | ...)
+    for include_str in &module.include {
+        for pattern in include_str.split_whitespace() {
+            rules.push(build_pattern_rule(pattern, true));
+        }
+    }
+
+    // 4. exclude_from - read patterns from file, one per line
+    // upstream: clientserver.c:887 - parse_filter_file(&daemon_filter_list, lp_exclude_from(i),
+    //           rule_template(0), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | ...)
+    if let Some(ref path) = module.exclude_from {
+        let patterns = read_patterns_from_file(path)?;
+        for pattern in patterns {
+            rules.push(build_pattern_rule(&pattern, false));
+        }
+    }
+
+    // 5. exclude rules - bare patterns, word-split on whitespace
+    // upstream: clientserver.c:891 - parse_filter_str(&daemon_filter_list, lp_exclude(i),
+    //           rule_template(FILTRULE_WORD_SPLIT), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | ...)
+    for exclude_str in &module.exclude {
+        for pattern in exclude_str.split_whitespace() {
+            rules.push(build_pattern_rule(pattern, false));
+        }
+    }
+
+    Ok(rules)
+}
+
+/// Reads patterns from a file, one per line.
+///
+/// Skips empty lines and comment lines (starting with `#` or `;`).
+/// This matches upstream rsync's `parse_filter_file()` behavior for
+/// `exclude_from` and `include_from` daemon parameters.
+fn read_patterns_from_file(path: &Path) -> Result<Vec<String>, io::Error> {
+    let content = fs::read_to_string(path).map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!("failed to read filter file '{}': {e}", path.display()),
+        )
+    })?;
+
+    let patterns = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with(';'))
+        .map(str::to_string)
+        .collect();
+
+    Ok(patterns)
+}
+
+/// Splits a filter string with `FILTRULE_WORD_SPLIT` semantics into individual
+/// rule tokens.
+///
+/// A single `filter` line in rsyncd.conf can contain multiple space-separated
+/// rules: `"+ *.txt + *.rs - *"` becomes `["+ *.txt", "+ *.rs", "- *"]`.
+///
+/// Each rule starts with a prefix (`+`, `-`, or a keyword like `include`,
+/// `exclude`, `hide`, `show`, `protect`, `risk`, `clear`, `merge`, `dir-merge`)
+/// followed by a pattern. The function scans for rule boundaries by looking for
+/// these prefixes after whitespace.
+///
+/// upstream: exclude.c:parse_filter_str() with FILTRULE_WORD_SPLIT flag
+fn split_filter_tokens(s: &str) -> Vec<String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Vec::new();
+    }
+
+    // Prefixes that start a new rule token when found after whitespace.
+    const SHORT_PREFIXES: &[&str] = &["+ ", "- ", "+/", "-/"];
+    const KEYWORD_PREFIXES: &[&str] = &[
+        "include ", "exclude ", "hide ", "show ", "protect ", "risk ", "clear ", "merge ",
+        "dir-merge ",
+    ];
+
+    /// Returns true if `s` starts with a filter rule prefix.
+    fn starts_with_rule_prefix(s: &str) -> bool {
+        for &p in SHORT_PREFIXES {
+            if s.starts_with(p) {
+                return true;
+            }
+        }
+        for &kw in KEYWORD_PREFIXES {
+            if s.starts_with(kw) {
+                return true;
+            }
+        }
+        false
+    }
+
+    let mut tokens = Vec::new();
+    let mut start = 0;
+
+    // Walk through the string looking for rule boundaries.
+    // A new rule starts when we see whitespace followed by a rule prefix.
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b' ' || bytes[i] == b'\t' {
+            // Found whitespace - check if what follows is a new rule prefix
+            let rest = &s[i..].trim_start();
+            if !rest.is_empty() && starts_with_rule_prefix(rest) {
+                // Save current token
+                let token = s[start..i].trim();
+                if !token.is_empty() {
+                    tokens.push(token.to_string());
+                }
+                // Advance past whitespace
+                let ws_len = s[i..].len() - rest.len();
+                start = i + ws_len;
+                i = start;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    // Push the last token
+    let token = s[start..].trim();
+    if !token.is_empty() {
+        tokens.push(token.to_string());
+    }
+
+    tokens
+}
+
+/// Parses a single daemon filter token in filter rule syntax.
+///
+/// Supports both short-form prefixes (`+`, `-`) and long-form keyword
+/// prefixes (`include`, `exclude`, `hide`, `show`, `protect`, `risk`,
+/// `clear`, `dir-merge`, `merge`). The pattern follows the prefix after
+/// optional whitespace.
+///
+/// Returns `None` for unrecognised tokens (silently skipped, matching
+/// upstream's lenient parsing of daemon filter strings).
+///
+/// # Upstream Reference
+///
+/// - `exclude.c:1134-1178` - long-form keyword to short-form char mapping
+fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
+    // Short-form prefixes: +, -
+    if let Some(pattern) = token.strip_prefix("+ ").or_else(|| token.strip_prefix('+')) {
+        return non_empty_pattern_rule(pattern, true);
+    }
+    if let Some(pattern) = token.strip_prefix("- ").or_else(|| token.strip_prefix('-')) {
+        return non_empty_pattern_rule(pattern, false);
+    }
+
+    // upstream: exclude.c:1134-1178 - keyword-to-short-form mapping.
+    // (keyword, is_include, sender_side, receiver_side)
+    const KEYWORDS: &[(&str, bool, bool, bool)] = &[
+        ("exclude", false, false, false),
+        ("include", true, false, false),
+        ("hide", false, true, false),  // sender-side exclude
+        ("show", true, true, false),   // sender-side include
+        ("protect", false, false, true), // receiver-side exclude
+        ("risk", true, false, true),   // receiver-side include
+    ];
+
+    for &(keyword, is_include, sender, receiver) in KEYWORDS {
+        if let Some(pattern) = strip_keyword_prefix(token, keyword) {
+            let pattern = pattern.trim();
+            if pattern.is_empty() {
+                return None;
+            }
+            let mut rule = build_pattern_rule(pattern, is_include);
+            rule.sender_side = sender;
+            rule.receiver_side = receiver;
+            return Some(rule);
+        }
+    }
+
+    if strip_keyword_prefix(token, "clear").is_some() {
+        return Some(FilterRuleWireFormat {
+            rule_type: protocol::filters::RuleType::Clear,
+            pattern: String::new(),
+            anchored: false,
+            directory_only: false,
+            no_inherit: false,
+            cvs_exclude: false,
+            word_split: false,
+            exclude_from_merge: false,
+            xattr_only: false,
+            sender_side: false,
+            receiver_side: false,
+            perishable: false,
+            negate: false,
+        });
+    }
+
+    // Bare pattern defaults to exclude (upstream behaviour)
+    if token.is_empty() {
+        return None;
+    }
+    Some(build_pattern_rule(token, false))
+}
+
+/// Returns a rule if the trimmed pattern is non-empty, `None` otherwise.
+fn non_empty_pattern_rule(pattern: &str, is_include: bool) -> Option<FilterRuleWireFormat> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return None;
+    }
+    Some(build_pattern_rule(pattern, is_include))
+}
+
+/// Strips a keyword prefix from a token, returning the remainder.
+///
+/// The keyword must be followed by whitespace or a comma separator.
+/// Returns `None` if the token doesn't start with the keyword.
+///
+/// upstream: exclude.c:1134 - RULE_STRCMP advances past the keyword and
+/// any following separator (space, comma).
+fn strip_keyword_prefix<'a>(token: &'a str, keyword: &str) -> Option<&'a str> {
+    let rest = token.strip_prefix(keyword)?;
+    if rest.is_empty() {
+        return Some(rest);
+    }
+    let first = rest.as_bytes()[0];
+    if first == b' ' || first == b',' {
+        Some(rest[1..].trim_start())
+    } else {
+        None
+    }
+}
+
+/// Constructs a `FilterRuleWireFormat` from a pattern string.
+///
+/// Handles anchored patterns (leading `/`) and directory-only patterns
+/// (trailing `/`). For daemon exclude rules on directory-only patterns,
+/// applies the `XFLG_DIR2WILD3` transformation: the trailing `/` is replaced
+/// with `/***` to recursively exclude the directory and all its contents.
+///
+/// upstream: exclude.c:211-217 - when `XFLG_DIR2WILD3` is set and the rule is
+/// a directory-only exclude (not include), the `FILTRULE_DIRECTORY` flag is
+/// cleared and `/***` is appended to the pattern.
+fn build_pattern_rule(pattern: &str, is_include: bool) -> FilterRuleWireFormat {
+    // upstream: exclude.c:200-202 - XFLG_ABS_IF_SLASH sets FILTRULE_ABS_PATH
+    // when the pattern starts with '/' or contains any embedded '/'. Patterns
+    // like "subdir/file.txt" are anchored relative to the module root.
+    let anchored = pattern.starts_with('/') || pattern.contains('/');
+    let directory_only = pattern.ends_with('/');
+
+    // upstream: exclude.c:212-213 - XFLG_DIR2WILD3 applies only to
+    // directory-only exclude rules (BITS_SETnUNSET(FILTRULE_DIRECTORY, FILTRULE_INCLUDE)).
+    if directory_only && !is_include {
+        let wild3_pattern = format!("{pattern}***");
+        let mut rule = FilterRuleWireFormat::exclude(wild3_pattern);
+        rule.anchored = anchored;
+        rule.directory_only = false;
+        rule
+    } else if is_include {
+        let mut rule = FilterRuleWireFormat::include(pattern.to_string());
+        rule.anchored = anchored;
+        rule.directory_only = directory_only;
+        rule
+    } else {
+        let mut rule = FilterRuleWireFormat::exclude(pattern.to_string());
+        rule.anchored = anchored;
+        rule.directory_only = directory_only;
+        rule
+    }
+}

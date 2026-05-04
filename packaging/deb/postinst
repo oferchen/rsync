@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+
+# The oc-rsync packages intentionally avoid registering update-alternatives
+# entries so the system-provided /usr/bin/rsync remains untouched. This
+# maintainer script is kept as a no-op hook for future side-by-side specific
+# logic.
+
+exit 0

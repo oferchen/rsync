@@ -1,0 +1,45 @@
+# Nextest defaults: keep full workspace filter while relying on CLI flags for package selection.
+[profile.default]
+default-filter = "all()"
+status-level = "fail"
+final-status-level = "fail"
+failure-output = "immediate-final"
+
+[profile.ci]
+default-filter = "all()"
+status-level = "fail"
+final-status-level = "fail"
+failure-output = "immediate-final"
+success-output = "never"
+# Per-test timeout: fail individual tests that hang rather than hitting CI job timeout.
+slow-timeout = { period = "120s", terminate-after = 3 }
+# Generate JUnit XML for CI dashboards (optional, not currently used)
+# junit.path = "junit.xml"
+
+# Retry policies for tests with inherent race conditions (port binding TOCTOU,
+# slow CI runner timing).
+[[profile.ci.overrides]]
+filter = "package(daemon) | test(execute_sparse) | binary_id(~integration_daemon)"
+retries = 2
+
+# SSH integration tests must run serially - parallel SSH sessions on the CI
+# runner cause pipe corruption (garbled data, zero-length filenames, broken
+# connections). Retries handle transient SSH pipe failures.
+[[profile.default.overrides]]
+filter = "test(test_ssh)"
+test-group = "ssh-serial"
+retries = 2
+
+[test-groups.ssh-serial]
+max-threads = 1
+
+# Buffer pool global singleton tests share a process-wide OnceLock.
+# Parallel execution causes init_global_buffer_pool to see already-initialized
+# state from another test, leading to non-deterministic failures.
+# Env var tests mutate OC_RSYNC_BUFFER_POOL_SIZE and must not run concurrently.
+[[profile.default.overrides]]
+filter = "test(global_pool) | test(env_var)"
+test-group = "global-pool-serial"
+
+[test-groups.global-pool-serial]
+max-threads = 1

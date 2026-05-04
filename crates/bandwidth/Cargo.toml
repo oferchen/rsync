@@ -1,0 +1,51 @@
+[package]
+name = "bandwidth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Bandwidth parsing and pacing utilities for the Rust rsync implementation"
+repository.workspace = true
+readme = "README.md"
+publish = false
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = []
+test-support = []
+async = ["dep:tokio"]
+
+[dependencies]
+memchr = "2.7"
+thiserror = "2.0"
+tokio = { workspace = true, optional = true, features = ["time"] }
+
+[dev-dependencies]
+proptest = "1.8"
+tokio = { workspace = true, features = ["rt", "macros", "time"] }
+
+[[test]]
+name = "bwlimit_rate_limiting"
+required-features = ["test-support"]
+
+[[test]]
+name = "comprehensive_coverage"
+required-features = ["test-support"]
+
+[[test]]
+name = "bwlimit_comprehensive"
+required-features = ["test-support"]
+
+[[test]]
+name = "bwlimit_scenarios"
+required-features = ["test-support"]
+
+[[test]]
+name = "limiter_property"
+required-features = ["test-support"]

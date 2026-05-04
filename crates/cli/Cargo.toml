@@ -1,0 +1,88 @@
+[package]
+name = "cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = ["zstd", "lz4", "xattr"]
+
+# ============================================================================
+# Compression Features
+# ============================================================================
+zstd = ["core/zstd", "compress/zstd"]
+lz4 = ["core/lz4", "compress/lz4"]
+
+# ============================================================================
+# Metadata Features
+# ============================================================================
+xattr = ["core/xattr"]
+acl = ["core/acl"]
+
+# ============================================================================
+# Character Encoding Conversion
+# ============================================================================
+# Filename encoding conversion (--iconv). When disabled, --iconv=LOCAL,REMOTE
+# is rejected at config build with a hard error rather than silently no-opping.
+iconv = ["core/iconv"]
+
+# ============================================================================
+# Performance Optimization Features
+# ============================================================================
+
+# Parallel file operations - enables rayon-based parallelism for checksum mode
+# Also enables engine optimization features for maximum performance
+parallel = ["engine/lazy-metadata", "checksums/parallel"]
+
+[dependencies]
+clap = { version = "4.5.17", features = ["std"] }
+core = { path = "../core", default-features = false }
+engine = { path = "../engine", default-features = false }
+logging = { path = "../logging", features = ["tracing"] }
+logging-sink = { path = "../logging-sink" }
+protocol = { path = "../protocol" }
+compress = { path = "../compress", default-features = false }
+metadata = { path = "../metadata", default-features = false }
+rsync_io = { path = "../rsync_io", package = "rsync_io" }
+fast_io = { path = "../fast_io", default-features = false }
+time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
+tempfile = "3.15"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+uzers = "0.12"
+xattr = "1.6"
+daemon = { path = "../daemon" }
+
+[target.'cfg(not(windows))'.dependencies]
+checksums = { path = "../checksums" }
+
+[target.'cfg(windows)'.dependencies]
+checksums = { path = "../checksums", default-features = false }
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+filetime = "0.2"
+tempfile = "3.15"
+test-support = { path = "../test-support" }
+filters = { path = "../filters" }
+rustix = { version = "1.1", features = ["fs"] }
+base64 = "0.22"
+libc = "0.2"
+apple-fs = { path = "../apple-fs" }
+serial_test = "3.1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "startup_benchmark"
+harness = false

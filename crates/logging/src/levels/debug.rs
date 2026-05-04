@@ -1,0 +1,486 @@
+//! Debug verbosity flags and per-flag level storage.
+//!
+//! This module defines [`DebugFlag`] and [`DebugLevels`], mirroring upstream
+//! rsync's `DEBUG_*` constants and `debug_levels[]` array
+//! (upstream: rsync.h, options.c:237).
+
+/// Debug flags for developer-oriented diagnostic categories.
+///
+/// These flags control detailed internal output - protocol negotiation,
+/// delta-sum calculations, I/O tracing. They are first activated at `-vv`
+/// (verbose level 2) and increase through `-vvvvv` (level 5). Upstream
+/// defines these in `rsync.h` as `DEBUG_*` constants and indexes into
+/// the `debug_levels[]` array.
+// upstream: rsync.h DEBUG_ACL..DEBUG_TIME, options.c:237 debug_verbosity[]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum DebugFlag {
+    /// ACL processing.
+    Acl,
+    /// Backup file creation.
+    Backup,
+    /// Socket binding.
+    Bind,
+    /// Directory changes.
+    Chdir,
+    /// Connection establishment.
+    Connect,
+    /// Command execution.
+    Cmd,
+    /// Deletion operations.
+    Del,
+    /// Delta sum calculations.
+    Deltasum,
+    /// Duplicate detection.
+    Dup,
+    /// Exit status and cleanup.
+    Exit,
+    /// Filter rule processing.
+    Filter,
+    /// File list operations.
+    Flist,
+    /// Fuzzy basis file matching.
+    Fuzzy,
+    /// Generator operations.
+    Genr,
+    /// Hash calculations.
+    Hash,
+    /// Hard link detection.
+    Hlink,
+    /// Character encoding conversion.
+    Iconv,
+    /// I/O operations.
+    Io,
+    /// Namespace operations.
+    Nstr,
+    /// Ownership changes.
+    Own,
+    /// Protocol negotiation.
+    Proto,
+    /// Receiver operations.
+    Recv,
+    /// Sender operations.
+    Send,
+    /// Timing information.
+    Time,
+}
+
+/// Per-flag debug verbosity levels.
+///
+/// Each field holds the current verbosity level for its corresponding
+/// [`DebugFlag`]. A value of 0 means the flag is disabled. Upstream rsync
+/// stores these in the global `debug_levels[]` array (upstream: rsync.h).
+// upstream: rsync.h debug_levels[]
+#[derive(Clone, Default, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DebugLevels {
+    /// ACL processing level.
+    pub acl: u8,
+    /// Backup file creation level.
+    pub backup: u8,
+    /// Socket binding level.
+    pub bind: u8,
+    /// Directory changes level.
+    pub chdir: u8,
+    /// Connection establishment level.
+    pub connect: u8,
+    /// Command execution level.
+    pub cmd: u8,
+    /// Deletion operations level.
+    pub del: u8,
+    /// Delta sum calculations level.
+    pub deltasum: u8,
+    /// Duplicate detection level.
+    pub dup: u8,
+    /// Exit status level.
+    pub exit: u8,
+    /// Filter rule processing level.
+    pub filter: u8,
+    /// File list operations level.
+    pub flist: u8,
+    /// Fuzzy basis matching level.
+    pub fuzzy: u8,
+    /// Generator operations level.
+    pub genr: u8,
+    /// Hash calculations level.
+    pub hash: u8,
+    /// Hard link detection level.
+    pub hlink: u8,
+    /// Character encoding level.
+    pub iconv: u8,
+    /// I/O operations level.
+    pub io: u8,
+    /// Namespace operations level.
+    pub nstr: u8,
+    /// Ownership changes level.
+    pub own: u8,
+    /// Protocol negotiation level.
+    pub proto: u8,
+    /// Receiver operations level.
+    pub recv: u8,
+    /// Sender operations level.
+    pub send: u8,
+    /// Timing information level.
+    pub time: u8,
+}
+
+impl DebugLevels {
+    /// Get the level for a specific flag.
+    #[must_use]
+    pub const fn get(&self, flag: DebugFlag) -> u8 {
+        match flag {
+            DebugFlag::Acl => self.acl,
+            DebugFlag::Backup => self.backup,
+            DebugFlag::Bind => self.bind,
+            DebugFlag::Chdir => self.chdir,
+            DebugFlag::Connect => self.connect,
+            DebugFlag::Cmd => self.cmd,
+            DebugFlag::Del => self.del,
+            DebugFlag::Deltasum => self.deltasum,
+            DebugFlag::Dup => self.dup,
+            DebugFlag::Exit => self.exit,
+            DebugFlag::Filter => self.filter,
+            DebugFlag::Flist => self.flist,
+            DebugFlag::Fuzzy => self.fuzzy,
+            DebugFlag::Genr => self.genr,
+            DebugFlag::Hash => self.hash,
+            DebugFlag::Hlink => self.hlink,
+            DebugFlag::Iconv => self.iconv,
+            DebugFlag::Io => self.io,
+            DebugFlag::Nstr => self.nstr,
+            DebugFlag::Own => self.own,
+            DebugFlag::Proto => self.proto,
+            DebugFlag::Recv => self.recv,
+            DebugFlag::Send => self.send,
+            DebugFlag::Time => self.time,
+        }
+    }
+
+    /// Set the level for a specific flag.
+    pub const fn set(&mut self, flag: DebugFlag, level: u8) {
+        match flag {
+            DebugFlag::Acl => self.acl = level,
+            DebugFlag::Backup => self.backup = level,
+            DebugFlag::Bind => self.bind = level,
+            DebugFlag::Chdir => self.chdir = level,
+            DebugFlag::Connect => self.connect = level,
+            DebugFlag::Cmd => self.cmd = level,
+            DebugFlag::Del => self.del = level,
+            DebugFlag::Deltasum => self.deltasum = level,
+            DebugFlag::Dup => self.dup = level,
+            DebugFlag::Exit => self.exit = level,
+            DebugFlag::Filter => self.filter = level,
+            DebugFlag::Flist => self.flist = level,
+            DebugFlag::Fuzzy => self.fuzzy = level,
+            DebugFlag::Genr => self.genr = level,
+            DebugFlag::Hash => self.hash = level,
+            DebugFlag::Hlink => self.hlink = level,
+            DebugFlag::Iconv => self.iconv = level,
+            DebugFlag::Io => self.io = level,
+            DebugFlag::Nstr => self.nstr = level,
+            DebugFlag::Own => self.own = level,
+            DebugFlag::Proto => self.proto = level,
+            DebugFlag::Recv => self.recv = level,
+            DebugFlag::Send => self.send = level,
+            DebugFlag::Time => self.time = level,
+        }
+    }
+
+    /// Set all flags to the specified level.
+    pub const fn set_all(&mut self, level: u8) {
+        self.acl = level;
+        self.backup = level;
+        self.bind = level;
+        self.chdir = level;
+        self.connect = level;
+        self.cmd = level;
+        self.del = level;
+        self.deltasum = level;
+        self.dup = level;
+        self.exit = level;
+        self.filter = level;
+        self.flist = level;
+        self.fuzzy = level;
+        self.genr = level;
+        self.hash = level;
+        self.hlink = level;
+        self.iconv = level;
+        self.io = level;
+        self.nstr = level;
+        self.own = level;
+        self.proto = level;
+        self.recv = level;
+        self.send = level;
+        self.time = level;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod debug_flag_tests {
+        use super::*;
+
+        #[test]
+        fn debug_flag_clone_and_copy() {
+            let flag = DebugFlag::Acl;
+            let cloned = flag;
+            let copied = flag;
+            assert_eq!(flag, cloned);
+            assert_eq!(flag, copied);
+        }
+
+        #[test]
+        fn debug_flag_debug_format() {
+            assert_eq!(format!("{:?}", DebugFlag::Acl), "Acl");
+            assert_eq!(format!("{:?}", DebugFlag::Backup), "Backup");
+            assert_eq!(format!("{:?}", DebugFlag::Bind), "Bind");
+            assert_eq!(format!("{:?}", DebugFlag::Chdir), "Chdir");
+            assert_eq!(format!("{:?}", DebugFlag::Connect), "Connect");
+            assert_eq!(format!("{:?}", DebugFlag::Cmd), "Cmd");
+            assert_eq!(format!("{:?}", DebugFlag::Del), "Del");
+            assert_eq!(format!("{:?}", DebugFlag::Deltasum), "Deltasum");
+            assert_eq!(format!("{:?}", DebugFlag::Dup), "Dup");
+            assert_eq!(format!("{:?}", DebugFlag::Exit), "Exit");
+            assert_eq!(format!("{:?}", DebugFlag::Filter), "Filter");
+            assert_eq!(format!("{:?}", DebugFlag::Flist), "Flist");
+            assert_eq!(format!("{:?}", DebugFlag::Fuzzy), "Fuzzy");
+            assert_eq!(format!("{:?}", DebugFlag::Genr), "Genr");
+            assert_eq!(format!("{:?}", DebugFlag::Hash), "Hash");
+            assert_eq!(format!("{:?}", DebugFlag::Hlink), "Hlink");
+            assert_eq!(format!("{:?}", DebugFlag::Iconv), "Iconv");
+            assert_eq!(format!("{:?}", DebugFlag::Io), "Io");
+            assert_eq!(format!("{:?}", DebugFlag::Nstr), "Nstr");
+            assert_eq!(format!("{:?}", DebugFlag::Own), "Own");
+            assert_eq!(format!("{:?}", DebugFlag::Proto), "Proto");
+            assert_eq!(format!("{:?}", DebugFlag::Recv), "Recv");
+            assert_eq!(format!("{:?}", DebugFlag::Send), "Send");
+            assert_eq!(format!("{:?}", DebugFlag::Time), "Time");
+        }
+
+        #[test]
+        fn debug_flag_equality() {
+            assert_eq!(DebugFlag::Acl, DebugFlag::Acl);
+            assert_ne!(DebugFlag::Acl, DebugFlag::Backup);
+        }
+    }
+
+    mod debug_levels_tests {
+        use super::*;
+
+        #[test]
+        fn default_debug_levels_are_zero() {
+            let levels = DebugLevels::default();
+            assert_eq!(levels.acl, 0);
+            assert_eq!(levels.backup, 0);
+            assert_eq!(levels.bind, 0);
+            assert_eq!(levels.chdir, 0);
+            assert_eq!(levels.connect, 0);
+            assert_eq!(levels.cmd, 0);
+            assert_eq!(levels.del, 0);
+            assert_eq!(levels.deltasum, 0);
+            assert_eq!(levels.dup, 0);
+            assert_eq!(levels.exit, 0);
+            assert_eq!(levels.filter, 0);
+            assert_eq!(levels.flist, 0);
+            assert_eq!(levels.fuzzy, 0);
+            assert_eq!(levels.genr, 0);
+            assert_eq!(levels.hash, 0);
+            assert_eq!(levels.hlink, 0);
+            assert_eq!(levels.iconv, 0);
+            assert_eq!(levels.io, 0);
+            assert_eq!(levels.nstr, 0);
+            assert_eq!(levels.own, 0);
+            assert_eq!(levels.proto, 0);
+            assert_eq!(levels.recv, 0);
+            assert_eq!(levels.send, 0);
+            assert_eq!(levels.time, 0);
+        }
+
+        #[test]
+        fn get_returns_correct_level_for_each_flag() {
+            let levels = DebugLevels {
+                acl: 1,
+                backup: 2,
+                bind: 3,
+                chdir: 4,
+                connect: 5,
+                cmd: 6,
+                del: 7,
+                deltasum: 8,
+                dup: 9,
+                exit: 10,
+                filter: 11,
+                flist: 12,
+                fuzzy: 13,
+                genr: 14,
+                hash: 15,
+                hlink: 16,
+                iconv: 17,
+                io: 18,
+                nstr: 19,
+                own: 20,
+                proto: 21,
+                recv: 22,
+                send: 23,
+                time: 24,
+            };
+
+            assert_eq!(levels.get(DebugFlag::Acl), 1);
+            assert_eq!(levels.get(DebugFlag::Backup), 2);
+            assert_eq!(levels.get(DebugFlag::Bind), 3);
+            assert_eq!(levels.get(DebugFlag::Chdir), 4);
+            assert_eq!(levels.get(DebugFlag::Connect), 5);
+            assert_eq!(levels.get(DebugFlag::Cmd), 6);
+            assert_eq!(levels.get(DebugFlag::Del), 7);
+            assert_eq!(levels.get(DebugFlag::Deltasum), 8);
+            assert_eq!(levels.get(DebugFlag::Dup), 9);
+            assert_eq!(levels.get(DebugFlag::Exit), 10);
+            assert_eq!(levels.get(DebugFlag::Filter), 11);
+            assert_eq!(levels.get(DebugFlag::Flist), 12);
+            assert_eq!(levels.get(DebugFlag::Fuzzy), 13);
+            assert_eq!(levels.get(DebugFlag::Genr), 14);
+            assert_eq!(levels.get(DebugFlag::Hash), 15);
+            assert_eq!(levels.get(DebugFlag::Hlink), 16);
+            assert_eq!(levels.get(DebugFlag::Iconv), 17);
+            assert_eq!(levels.get(DebugFlag::Io), 18);
+            assert_eq!(levels.get(DebugFlag::Nstr), 19);
+            assert_eq!(levels.get(DebugFlag::Own), 20);
+            assert_eq!(levels.get(DebugFlag::Proto), 21);
+            assert_eq!(levels.get(DebugFlag::Recv), 22);
+            assert_eq!(levels.get(DebugFlag::Send), 23);
+            assert_eq!(levels.get(DebugFlag::Time), 24);
+        }
+
+        #[test]
+        fn set_updates_correct_level_for_each_flag() {
+            let mut levels = DebugLevels::default();
+
+            levels.set(DebugFlag::Acl, 1);
+            assert_eq!(levels.acl, 1);
+
+            levels.set(DebugFlag::Backup, 2);
+            assert_eq!(levels.backup, 2);
+
+            levels.set(DebugFlag::Bind, 3);
+            assert_eq!(levels.bind, 3);
+
+            levels.set(DebugFlag::Chdir, 4);
+            assert_eq!(levels.chdir, 4);
+
+            levels.set(DebugFlag::Connect, 5);
+            assert_eq!(levels.connect, 5);
+
+            levels.set(DebugFlag::Cmd, 6);
+            assert_eq!(levels.cmd, 6);
+
+            levels.set(DebugFlag::Del, 7);
+            assert_eq!(levels.del, 7);
+
+            levels.set(DebugFlag::Deltasum, 8);
+            assert_eq!(levels.deltasum, 8);
+
+            levels.set(DebugFlag::Dup, 9);
+            assert_eq!(levels.dup, 9);
+
+            levels.set(DebugFlag::Exit, 10);
+            assert_eq!(levels.exit, 10);
+
+            levels.set(DebugFlag::Filter, 11);
+            assert_eq!(levels.filter, 11);
+
+            levels.set(DebugFlag::Flist, 12);
+            assert_eq!(levels.flist, 12);
+
+            levels.set(DebugFlag::Fuzzy, 13);
+            assert_eq!(levels.fuzzy, 13);
+
+            levels.set(DebugFlag::Genr, 14);
+            assert_eq!(levels.genr, 14);
+
+            levels.set(DebugFlag::Hash, 15);
+            assert_eq!(levels.hash, 15);
+
+            levels.set(DebugFlag::Hlink, 16);
+            assert_eq!(levels.hlink, 16);
+
+            levels.set(DebugFlag::Iconv, 17);
+            assert_eq!(levels.iconv, 17);
+
+            levels.set(DebugFlag::Io, 18);
+            assert_eq!(levels.io, 18);
+
+            levels.set(DebugFlag::Nstr, 19);
+            assert_eq!(levels.nstr, 19);
+
+            levels.set(DebugFlag::Own, 20);
+            assert_eq!(levels.own, 20);
+
+            levels.set(DebugFlag::Proto, 21);
+            assert_eq!(levels.proto, 21);
+
+            levels.set(DebugFlag::Recv, 22);
+            assert_eq!(levels.recv, 22);
+
+            levels.set(DebugFlag::Send, 23);
+            assert_eq!(levels.send, 23);
+
+            levels.set(DebugFlag::Time, 24);
+            assert_eq!(levels.time, 24);
+        }
+
+        #[test]
+        fn set_all_updates_all_levels() {
+            let mut levels = DebugLevels::default();
+            levels.set_all(7);
+
+            assert_eq!(levels.acl, 7);
+            assert_eq!(levels.backup, 7);
+            assert_eq!(levels.bind, 7);
+            assert_eq!(levels.chdir, 7);
+            assert_eq!(levels.connect, 7);
+            assert_eq!(levels.cmd, 7);
+            assert_eq!(levels.del, 7);
+            assert_eq!(levels.deltasum, 7);
+            assert_eq!(levels.dup, 7);
+            assert_eq!(levels.exit, 7);
+            assert_eq!(levels.filter, 7);
+            assert_eq!(levels.flist, 7);
+            assert_eq!(levels.fuzzy, 7);
+            assert_eq!(levels.genr, 7);
+            assert_eq!(levels.hash, 7);
+            assert_eq!(levels.hlink, 7);
+            assert_eq!(levels.iconv, 7);
+            assert_eq!(levels.io, 7);
+            assert_eq!(levels.nstr, 7);
+            assert_eq!(levels.own, 7);
+            assert_eq!(levels.proto, 7);
+            assert_eq!(levels.recv, 7);
+            assert_eq!(levels.send, 7);
+            assert_eq!(levels.time, 7);
+        }
+
+        #[test]
+        fn debug_levels_clone() {
+            let levels = DebugLevels {
+                acl: 3,
+                bind: 7,
+                ..Default::default()
+            };
+
+            let cloned = levels;
+            assert_eq!(cloned.acl, 3);
+            assert_eq!(cloned.bind, 7);
+        }
+
+        #[test]
+        fn debug_levels_debug_format() {
+            let levels = DebugLevels::default();
+            let debug_str = format!("{levels:?}");
+            assert!(debug_str.contains("DebugLevels"));
+            assert!(debug_str.contains("acl"));
+            assert!(debug_str.contains("bind"));
+        }
+    }
+}

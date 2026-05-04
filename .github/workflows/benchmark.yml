@@ -1,0 +1,214 @@
+name: Benchmark
+
+on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+  workflow_dispatch:
+    inputs:
+      baseline_tag:
+        description: 'Baseline tag/branch to compare against'
+        required: false
+        default: ''
+      target_tag:
+        description: 'Existing release tag to publish chart and notes to (e.g. v0.6.1). Use when re-running benchmarks against a release whose tag-triggered workflow failed.'
+        required: false
+        default: ''
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  benchmark:
+    name: Performance Benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: benchmark
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake libtool \
+            libacl1-dev libattr1-dev zlib1g-dev libxxhash-dev libzstd-dev liblz4-dev \
+            openssh-server libssl-dev
+
+      - name: Build oc-rsync (release)
+        run: cargo build --release --workspace
+
+      - name: Build oc-rsync with OpenSSL (release)
+        run: |
+          cargo build --release --features openssl
+          cp target/release/oc-rsync target/release/oc-rsync-openssl
+
+      - name: Build oc-rsync with embedded-ssh (release)
+        run: |
+          cargo build --release --features embedded-ssh
+          cp target/release/oc-rsync target/release/oc-rsync-russh
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: target/interop/upstream-src/rsync-3.4.1
+          key: upstream-rsync-3.4.1-${{ runner.os }}-full
+
+      - name: Build upstream rsync 3.4.1
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p target/interop/upstream-src
+          cd target/interop/upstream-src
+
+          if [ ! -d rsync-3.4.1 ]; then
+            curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz | tar xz
+          fi
+
+          cd rsync-3.4.1
+          if [ ! -f rsync ]; then
+            ./configure
+            make -j$(nproc)
+          fi
+
+      - name: Set up SSH loopback
+        run: |
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=no localhost true
+
+      - name: Install upstream rsync to PATH
+        run: sudo cp target/interop/upstream-src/rsync-3.4.1/rsync /usr/local/bin/rsync
+
+      - name: Run benchmark
+        id: benchmark
+        env:
+          OC_RSYNC_OPENSSL: target/release/oc-rsync-openssl
+          OC_RSYNC_RUSSH: target/release/oc-rsync-russh
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/benchmark.py > benchmark_results.json
+          python3 .github/scripts/benchmark_report.py > benchmark_report.md
+          cat benchmark_report.md
+
+      - name: Generate benchmark chart
+        run: |
+          pip install cairosvg
+          python3 .github/scripts/benchmark_chart.py --input benchmark_results.json --output benchmark.svg
+          python3 -c "import cairosvg; cairosvg.svg2png(url='benchmark.svg', write_to='benchmark.png', output_width=1600)"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-results
+          retention-days: 90
+          path: |
+            benchmark_results.json
+            benchmark_report.md
+            benchmark.svg
+            benchmark.png
+
+      - name: Generate step summary
+        run: |
+          {
+            echo "## Performance Benchmark Results"
+            echo ""
+            echo "**Tag:** \`${GITHUB_REF##*/}\`"
+            echo "**Commit:** \`${GITHUB_SHA::8}\`"
+            echo "**Runner:** \`$(uname -m)\` on \`$(lsb_release -ds 2>/dev/null || echo 'Ubuntu')\`"
+            echo ""
+            cat benchmark_report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.target_tag }}" ]; then
+            TAG="${{ inputs.target_tag }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF##*/}"
+          else
+            TAG=""
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if [ -n "$TAG" ]; then
+            echo "Publishing benchmark artifacts to release: $TAG"
+          else
+            echo "No release tag resolved; skipping release publish steps."
+          fi
+
+      - name: Add benchmark to release notes
+        if: steps.release_tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.release_tag.outputs.tag }}"
+
+          # Wait for the release to exist (created by release-cross workflow)
+          MAX_ATTEMPTS=60  # 30 minutes at 30-second intervals
+          for i in $(seq 1 "$MAX_ATTEMPTS"); do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release $TAG found after $((i * 30 - 30)) seconds."
+              break
+            fi
+            if [ "$i" -eq "$MAX_ATTEMPTS" ]; then
+              echo "::error::Release $TAG not found after 30 minutes. Failing."
+              exit 1
+            fi
+            echo "Waiting for release $TAG to be created... (attempt $i/$MAX_ATTEMPTS)"
+            sleep 30
+          done
+
+          CURRENT_BODY=$(gh release view "$TAG" --json body -q .body)
+
+          # Avoid duplicate sections on re-runs
+          if echo "${CURRENT_BODY:-}" | grep -q "Performance Benchmark"; then
+            echo "Performance benchmark section already present in release notes, skipping."
+            exit 0
+          fi
+
+          REPORT=$(cat benchmark_report.md)
+
+          NEW_BODY=$(cat <<EOF
+          ${CURRENT_BODY}
+
+          ---
+
+          ${REPORT}
+          EOF
+          )
+          # Strip leading whitespace from heredoc indentation
+          NEW_BODY=$(echo "$NEW_BODY" | sed 's/^          //')
+
+          gh release edit "$TAG" --notes "$NEW_BODY"
+
+      - name: Upload benchmark assets to release
+        if: steps.release_tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.release_tag.outputs.tag }}"
+          gh release upload "$TAG" benchmark.png benchmark_results.json benchmark_report.md --clobber

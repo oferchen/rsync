@@ -1,0 +1,439 @@
+//! MD4 hashing implementations with optional SIMD batch acceleration.
+//!
+//! MD4 is a predecessor to MD5 with a simpler structure:
+//! - 3 rounds of 16 operations each (vs MD5's 4 rounds of 16)
+//! - Only 3 constants (vs MD5's 64)
+//! - Simpler round functions
+//!
+//! Used by upstream rsync for protocol versions < 30.
+//! See upstream `checksum.c:get_checksum2()` for algorithm selection.
+//!
+//! # Runtime Dispatch Ladder
+//!
+//! [`Md4Dispatcher`] probes CPU features once at first use and selects the
+//! widest available SIMD backend. The dispatch order is:
+//!
+//! 1. **AVX-512** (16 lanes) - `is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw")`
+//! 2. **AVX2** (8 lanes) - `is_x86_feature_detected!("avx2")`
+//! 3. **SSE2** (4 lanes) - always true on `x86_64`
+//! 4. **NEON** (4 lanes) - always true on `aarch64`
+//! 5. **WASM SIMD** (4 lanes) - `wasm32` with `simd128`
+//! 6. **Scalar** (1 lane) - portable fallback
+//!
+//! Note: unlike MD5, MD4's batch dispatcher does not expose dedicated SSSE3
+//! or SSE4.1 paths because the simpler round functions do not benefit from
+//! `pshufb` / `blendv`; the SSE2 path is reused for all SSE-family CPUs.
+//!
+//! Parity between every backend and the scalar reference is enforced by
+//! `simd_parity_tests::md4_simd_parity` via RFC 1320 vectors, lane-boundary
+//! sweeps, partial-batch coverage, large inputs (up to 100 KiB), and proptest
+//! property checks against arbitrary byte vectors.
+
+pub mod scalar;
+
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "wasm32"
+))]
+pub mod simd;
+
+use super::{Digest, md5_dispatcher::Backend};
+
+/// Compute MD4 digests for multiple inputs in parallel.
+///
+/// Uses SIMD instructions when available to process multiple hashes
+/// simultaneously. Returns digests in the same order as inputs.
+pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<Digest> {
+    md4_dispatcher().digest_batch(inputs)
+}
+
+/// Computes an MD4 digest for a single input using the scalar path.
+///
+/// For multiple inputs, prefer [`digest_batch`] to benefit from SIMD parallelism.
+#[allow(dead_code)] // REASON: public API exercised by simd_parity_tests
+pub fn digest(input: &[u8]) -> Digest {
+    scalar::digest(input)
+}
+
+/// MD4 dispatcher that selects the optimal backend at runtime.
+struct Md4Dispatcher {
+    backend: Backend,
+}
+
+impl Md4Dispatcher {
+    /// Detect CPU features and select the best available backend.
+    fn detect() -> Self {
+        let backend = Self::detect_backend();
+        Self { backend }
+    }
+
+    /// Dual-path feature detection: all variants are compiled on all platforms.
+    fn detect_backend() -> Backend {
+        if Self::has_avx512() {
+            return Backend::Avx512;
+        }
+        if Self::has_avx2() {
+            return Backend::Avx2;
+        }
+        if Self::has_sse2() {
+            return Backend::Sse2;
+        }
+        if Self::has_neon() {
+            return Backend::Neon;
+        }
+        if Self::has_wasm_simd() {
+            return Backend::Wasm;
+        }
+        Backend::Scalar
+    }
+
+    fn has_avx512() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
+
+    fn has_avx2() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            is_x86_feature_detected!("avx2")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
+
+    fn has_sse2() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            true
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
+
+    fn has_neon() -> bool {
+        #[cfg(target_arch = "aarch64")]
+        {
+            true
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            false
+        }
+    }
+
+    fn has_wasm_simd() -> bool {
+        #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+        {
+            true
+        }
+        #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+        {
+            false
+        }
+    }
+
+    /// Compute MD4 digests for multiple inputs.
+    ///
+    /// All match arms compile on all platforms with scalar fallback.
+    fn digest_batch<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
+        if inputs.is_empty() {
+            return Vec::new();
+        }
+
+        match self.backend {
+            Backend::Avx512 => {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    self.digest_batch_avx512(inputs)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Avx2 => {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    self.digest_batch_avx2(inputs)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Sse41 | Backend::Ssse3 | Backend::Sse2 => {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    self.digest_batch_sse2(inputs)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Neon => {
+                #[cfg(target_arch = "aarch64")]
+                {
+                    self.digest_batch_neon(inputs)
+                }
+                #[cfg(not(target_arch = "aarch64"))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Wasm => {
+                #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+                {
+                    self.digest_batch_wasm(inputs)
+                }
+                #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+                {
+                    Self::digest_batch_scalar(inputs)
+                }
+            }
+            Backend::Scalar => Self::digest_batch_scalar(inputs),
+        }
+    }
+
+    fn digest_batch_scalar<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<Digest> {
+        inputs.iter().map(|i| scalar::digest(i.as_ref())).collect()
+    }
+
+    /// AVX-512 batched digest implementation.
+    #[cfg(target_arch = "x86_64")]
+    fn digest_batch_avx512<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
+        let mut results = Vec::with_capacity(inputs.len());
+        let chunks = inputs.chunks(16);
+
+        for chunk in chunks {
+            if chunk.len() == 16 {
+                let batch: [&[u8]; 16] = [
+                    chunk[0].as_ref(),
+                    chunk[1].as_ref(),
+                    chunk[2].as_ref(),
+                    chunk[3].as_ref(),
+                    chunk[4].as_ref(),
+                    chunk[5].as_ref(),
+                    chunk[6].as_ref(),
+                    chunk[7].as_ref(),
+                    chunk[8].as_ref(),
+                    chunk[9].as_ref(),
+                    chunk[10].as_ref(),
+                    chunk[11].as_ref(),
+                    chunk[12].as_ref(),
+                    chunk[13].as_ref(),
+                    chunk[14].as_ref(),
+                    chunk[15].as_ref(),
+                ];
+                // SAFETY: We verified AVX-512 is available in detect_backend()
+                let digests = unsafe { simd::avx512::digest_x16(&batch) };
+                results.extend_from_slice(&digests);
+            } else {
+                // Partial batch - pad with empty inputs
+                let mut batch: [&[u8]; 16] = [&[]; 16];
+                for (i, input) in chunk.iter().enumerate() {
+                    batch[i] = input.as_ref();
+                }
+                // SAFETY: We verified AVX-512 is available in detect_backend()
+                let digests = unsafe { simd::avx512::digest_x16(&batch) };
+                results.extend_from_slice(&digests[..chunk.len()]);
+            }
+        }
+
+        results
+    }
+
+    /// AVX2 batched digest implementation.
+    #[cfg(target_arch = "x86_64")]
+    fn digest_batch_avx2<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
+        let mut results = Vec::with_capacity(inputs.len());
+        let chunks = inputs.chunks(8);
+
+        for chunk in chunks {
+            if chunk.len() == 8 {
+                let batch: [&[u8]; 8] = [
+                    chunk[0].as_ref(),
+                    chunk[1].as_ref(),
+                    chunk[2].as_ref(),
+                    chunk[3].as_ref(),
+                    chunk[4].as_ref(),
+                    chunk[5].as_ref(),
+                    chunk[6].as_ref(),
+                    chunk[7].as_ref(),
+                ];
+                // SAFETY: We verified AVX2 is available in detect_backend()
+                let digests = unsafe { simd::avx2::digest_x8(&batch) };
+                results.extend_from_slice(&digests);
+            } else {
+                // Partial batch - pad with empty inputs
+                let mut batch: [&[u8]; 8] = [&[]; 8];
+                for (i, input) in chunk.iter().enumerate() {
+                    batch[i] = input.as_ref();
+                }
+                // SAFETY: We verified AVX2 is available in detect_backend()
+                let digests = unsafe { simd::avx2::digest_x8(&batch) };
+                results.extend_from_slice(&digests[..chunk.len()]);
+            }
+        }
+
+        results
+    }
+
+    /// SSE2 batched digest implementation.
+    #[cfg(target_arch = "x86_64")]
+    fn digest_batch_sse2<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
+        let mut results = Vec::with_capacity(inputs.len());
+        let chunks = inputs.chunks(4);
+
+        for chunk in chunks {
+            if chunk.len() == 4 {
+                let batch: [&[u8]; 4] = [
+                    chunk[0].as_ref(),
+                    chunk[1].as_ref(),
+                    chunk[2].as_ref(),
+                    chunk[3].as_ref(),
+                ];
+                // SAFETY: SSE2 is baseline for x86_64
+                let digests = unsafe { simd::sse2::digest_x4(&batch) };
+                results.extend_from_slice(&digests);
+            } else {
+                let mut batch: [&[u8]; 4] = [&[]; 4];
+                for (i, input) in chunk.iter().enumerate() {
+                    batch[i] = input.as_ref();
+                }
+                // SAFETY: SSE2 is baseline for x86_64
+                let digests = unsafe { simd::sse2::digest_x4(&batch) };
+                results.extend_from_slice(&digests[..chunk.len()]);
+            }
+        }
+
+        results
+    }
+
+    /// NEON batched digest implementation.
+    #[cfg(target_arch = "aarch64")]
+    fn digest_batch_neon<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
+        let mut results = Vec::with_capacity(inputs.len());
+        let chunks = inputs.chunks(4);
+
+        for chunk in chunks {
+            if chunk.len() == 4 {
+                let batch: [&[u8]; 4] = [
+                    chunk[0].as_ref(),
+                    chunk[1].as_ref(),
+                    chunk[2].as_ref(),
+                    chunk[3].as_ref(),
+                ];
+                // SAFETY: NEON is mandatory on aarch64
+                let digests = unsafe { simd::neon::digest_x4(&batch) };
+                results.extend_from_slice(&digests);
+            } else {
+                // Partial batch - pad with empty inputs
+                let mut batch: [&[u8]; 4] = [&[]; 4];
+                for (i, input) in chunk.iter().enumerate() {
+                    batch[i] = input.as_ref();
+                }
+                // SAFETY: NEON is mandatory on aarch64
+                let digests = unsafe { simd::neon::digest_x4(&batch) };
+                results.extend_from_slice(&digests[..chunk.len()]);
+            }
+        }
+
+        results
+    }
+
+    /// WASM SIMD batched digest implementation.
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    fn digest_batch_wasm<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
+        let mut results = Vec::with_capacity(inputs.len());
+        let chunks = inputs.chunks(4);
+
+        for chunk in chunks {
+            if chunk.len() == 4 {
+                let batch: [&[u8]; 4] = [
+                    chunk[0].as_ref(),
+                    chunk[1].as_ref(),
+                    chunk[2].as_ref(),
+                    chunk[3].as_ref(),
+                ];
+                let digests = simd::wasm::digest_x4(&batch);
+                results.extend_from_slice(&digests);
+            } else {
+                let mut batch: [&[u8]; 4] = [&[]; 4];
+                for (i, input) in chunk.iter().enumerate() {
+                    batch[i] = input.as_ref();
+                }
+                let digests = simd::wasm::digest_x4(&batch);
+                results.extend_from_slice(&digests[..chunk.len()]);
+            }
+        }
+
+        results
+    }
+}
+
+/// Global MD4 dispatcher instance, initialized on first use.
+fn md4_dispatcher() -> &'static Md4Dispatcher {
+    use std::sync::OnceLock;
+    static DISPATCHER: OnceLock<Md4Dispatcher> = OnceLock::new();
+    DISPATCHER.get_or_init(Md4Dispatcher::detect)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn to_hex(bytes: &[u8]) -> String {
+        use std::fmt::Write;
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            write!(s, "{b:02x}").unwrap();
+        }
+        s
+    }
+
+    #[test]
+    fn md4_digest_batch_matches_scalar() {
+        let inputs: Vec<&[u8]> = vec![
+            b"",
+            b"a",
+            b"abc",
+            b"message digest",
+            b"abcdefghijklmnopqrstuvwxyz",
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+            b"12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+            b"test",
+            b"another test",
+            b"third test",
+        ];
+
+        let results = digest_batch(&inputs);
+
+        for (i, input) in inputs.iter().enumerate() {
+            let expected = scalar::digest(input);
+            assert_eq!(
+                results[i],
+                expected,
+                "Mismatch at index {i} for input {:?}",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn md4_single_digest_works() {
+        let result = digest(b"abc");
+        assert_eq!(to_hex(&result), "a448017aaf21d8525fc10ae87aa6729d");
+    }
+}

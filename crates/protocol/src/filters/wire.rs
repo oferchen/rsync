@@ -1,0 +1,585 @@
+//! Wire format encoding and decoding for filter rules.
+
+use crate::ProtocolVersion;
+use std::io::{self, Read, Write};
+
+/// Rule type prefix character.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuleType {
+    /// Include rule (`+` prefix).
+    Include,
+    /// Exclude rule (`-` prefix).
+    Exclude,
+    /// Clear previously defined rules (`!` prefix).
+    Clear,
+    /// Merge rules from file (`.` prefix).
+    Merge,
+    /// Directory merge rules (`:` prefix).
+    DirMerge,
+    /// Protect from deletion (`P` prefix).
+    Protect,
+    /// Risk (allow deletion) (`R` prefix).
+    Risk,
+}
+
+impl RuleType {
+    /// Returns the prefix character for this rule type.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1137-1214` - prefix character to rule type mapping
+    pub const fn prefix_char(self) -> char {
+        match self {
+            RuleType::Include => '+',
+            RuleType::Exclude => '-',
+            RuleType::Clear => '!',
+            RuleType::Merge => '.',
+            RuleType::DirMerge => ':',
+            RuleType::Protect => 'P',
+            RuleType::Risk => 'R',
+        }
+    }
+
+    /// Parses a rule type from its prefix character.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1137-1214` - prefix character to rule type mapping
+    pub const fn from_prefix_char(c: char) -> Option<Self> {
+        match c {
+            '+' => Some(RuleType::Include),
+            '-' => Some(RuleType::Exclude),
+            '!' => Some(RuleType::Clear),
+            '.' => Some(RuleType::Merge),
+            ':' => Some(RuleType::DirMerge),
+            'P' => Some(RuleType::Protect),
+            'R' => Some(RuleType::Risk),
+            _ => None,
+        }
+    }
+}
+
+/// Filter rule in wire format representation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilterRuleWireFormat {
+    /// Rule type (Include/Exclude/Clear/etc.).
+    pub rule_type: RuleType,
+    /// Glob pattern.
+    pub pattern: String,
+    /// Anchored pattern (`/` modifier).
+    pub anchored: bool,
+    /// Directory-only pattern (trailing `/`).
+    pub directory_only: bool,
+    /// No-inherit modifier (`n` flag).
+    pub no_inherit: bool,
+    /// CVS exclude modifier (`C` flag).
+    pub cvs_exclude: bool,
+    /// Word-split modifier (`w` flag).
+    pub word_split: bool,
+    /// Exclude from merge (`e` flag).
+    pub exclude_from_merge: bool,
+    /// XAttr only (`x` flag).
+    pub xattr_only: bool,
+    /// Apply sender-side (`s` flag, protocol v29+).
+    pub sender_side: bool,
+    /// Apply receiver-side (`r` flag, protocol v29+).
+    pub receiver_side: bool,
+    /// Perishable (`p` flag, protocol v30+).
+    pub perishable: bool,
+    /// No-match-with-this negates (`!` modifier).
+    pub negate: bool,
+}
+
+impl FilterRuleWireFormat {
+    /// Creates a simple exclude rule with default modifiers.
+    pub const fn exclude(pattern: String) -> Self {
+        Self {
+            rule_type: RuleType::Exclude,
+            pattern,
+            anchored: false,
+            directory_only: false,
+            no_inherit: false,
+            cvs_exclude: false,
+            word_split: false,
+            exclude_from_merge: false,
+            xattr_only: false,
+            sender_side: false,
+            receiver_side: false,
+            perishable: false,
+            negate: false,
+        }
+    }
+
+    /// Creates a simple include rule with default modifiers.
+    pub const fn include(pattern: String) -> Self {
+        Self {
+            rule_type: RuleType::Include,
+            pattern,
+            anchored: false,
+            directory_only: false,
+            no_inherit: false,
+            cvs_exclude: false,
+            word_split: false,
+            exclude_from_merge: false,
+            xattr_only: false,
+            sender_side: false,
+            receiver_side: false,
+            perishable: false,
+            negate: false,
+        }
+    }
+
+    /// Sets the anchored flag.
+    pub const fn with_anchored(mut self, anchored: bool) -> Self {
+        self.anchored = anchored;
+        self
+    }
+
+    /// Sets the directory-only flag.
+    pub const fn with_directory_only(mut self, directory_only: bool) -> Self {
+        self.directory_only = directory_only;
+        self
+    }
+
+    /// Sets sender and receiver side flags.
+    pub const fn with_sides(mut self, sender: bool, receiver: bool) -> Self {
+        self.sender_side = sender;
+        self.receiver_side = receiver;
+        self
+    }
+
+    /// Sets the perishable flag.
+    pub const fn with_perishable(mut self, perishable: bool) -> Self {
+        self.perishable = perishable;
+        self
+    }
+}
+
+/// Reads a 4-byte little-endian integer from the stream.
+///
+/// This mirrors upstream rsync's `read_int()` function in io.c:1774,
+/// which reads 4 bytes and interprets them as a little-endian int32.
+fn read_i32_le(reader: &mut dyn Read) -> io::Result<i32> {
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)?;
+    Ok(i32::from_le_bytes(buf))
+}
+
+/// Writes a 4-byte little-endian integer to the stream.
+///
+/// This mirrors upstream rsync's `write_int()` function in io.c:1815,
+/// which writes 4 bytes as a little-endian int32.
+fn write_i32_le(writer: &mut dyn Write, value: i32) -> io::Result<()> {
+    writer.write_all(&value.to_le_bytes())
+}
+
+/// Reads filter list from wire format.
+///
+/// Reads a sequence of filter rules terminated by a 4-byte integer 0.
+/// Upstream uses `read_int()` / `write_int()` which are 4-byte little-endian integers,
+/// NOT varints. This matches upstream's send_filter_list() in exclude.c:1658.
+pub fn read_filter_list(
+    reader: &mut dyn Read,
+    protocol: ProtocolVersion,
+) -> io::Result<Vec<FilterRuleWireFormat>> {
+    let mut rules = Vec::new();
+
+    loop {
+        // Read 4-byte little-endian integer (matches upstream read_int())
+        let len = read_i32_le(reader)?;
+
+        if len == 0 {
+            break; // Terminator
+        }
+
+        if len < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid filter rule length: {len}"),
+            ));
+        }
+
+        let mut buf = vec![0u8; len as usize];
+        reader.read_exact(&mut buf)?;
+
+        let rule = parse_wire_rule(&buf, protocol)?;
+        rules.push(rule);
+    }
+
+    Ok(rules)
+}
+
+/// Writes filter list to wire format.
+///
+/// Writes a sequence of filter rules followed by a 4-byte zero terminator.
+/// Upstream uses `write_int()` which is a 4-byte little-endian integer, NOT varint.
+/// This matches upstream's send_filter_list() in exclude.c:1658.
+pub fn write_filter_list<W: Write>(
+    writer: &mut W,
+    rules: &[FilterRuleWireFormat],
+    protocol: ProtocolVersion,
+) -> io::Result<()> {
+    for rule in rules {
+        let bytes = serialize_rule(rule, protocol)?;
+        write_i32_le(writer, bytes.len() as i32)?;
+        writer.write_all(&bytes)?;
+    }
+
+    write_i32_le(writer, 0)?; // Terminator
+    Ok(())
+}
+
+/// Parses a single filter rule from wire format bytes.
+///
+/// For protocol < 29, only old-style prefixes are accepted: `"+ "`, `"- "`,
+/// or `"!"`. No modifier characters are parsed. This matches upstream
+/// `exclude.c:1119-1133` where `XFLG_OLD_PREFIXES` restricts parsing to
+/// these three forms.
+fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRuleWireFormat> {
+    if buf.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "empty filter rule",
+        ));
+    }
+
+    let text = std::str::from_utf8(buf).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid UTF-8 in filter rule: {e}"),
+        )
+    })?;
+
+    // upstream: exclude.c:1675 - protocol < 29 uses XFLG_OLD_PREFIXES
+    if protocol.uses_old_prefixes() {
+        return parse_wire_rule_old_prefix(text);
+    }
+
+    parse_wire_rule_modern(text, protocol)
+}
+
+/// Parses a wire rule using old-style prefix rules (protocol < 29).
+///
+/// Only three forms are valid:
+/// - `"- pattern"` - exclude
+/// - `"+ pattern"` - include
+/// - `"!"` - clear list
+///
+/// No modifier flags are parsed. The pattern is the raw text after the
+/// 2-character prefix.
+///
+/// # Upstream Reference
+///
+/// `exclude.c:1119-1133` - `XFLG_OLD_PREFIXES` branch
+fn parse_wire_rule_old_prefix(text: &str) -> io::Result<FilterRuleWireFormat> {
+    if text == "!" {
+        return Ok(FilterRuleWireFormat {
+            rule_type: RuleType::Clear,
+            pattern: String::new(),
+            anchored: false,
+            directory_only: false,
+            no_inherit: false,
+            cvs_exclude: false,
+            word_split: false,
+            exclude_from_merge: false,
+            xattr_only: false,
+            sender_side: false,
+            receiver_side: false,
+            perishable: false,
+            negate: false,
+        });
+    }
+
+    let (rule_type, pattern_text) = if let Some(pat) = text.strip_prefix("- ") {
+        (RuleType::Exclude, pat)
+    } else if let Some(pat) = text.strip_prefix("+ ") {
+        (RuleType::Include, pat)
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid old-style filter prefix in: {text:?}"),
+        ));
+    };
+
+    let mut rule = FilterRuleWireFormat {
+        rule_type,
+        pattern: String::new(),
+        anchored: false,
+        directory_only: false,
+        no_inherit: false,
+        cvs_exclude: false,
+        word_split: false,
+        exclude_from_merge: false,
+        xattr_only: false,
+        sender_side: false,
+        receiver_side: false,
+        perishable: false,
+        negate: false,
+    };
+
+    if let Some(stripped) = pattern_text.strip_suffix('/') {
+        rule.directory_only = true;
+        stripped.clone_into(&mut rule.pattern);
+    } else {
+        pattern_text.clone_into(&mut rule.pattern);
+    }
+
+    Ok(rule)
+}
+
+/// Parses a wire rule using modern prefix rules (protocol >= 29).
+///
+/// Supports full modifier parsing including `/`, `!`, `C`, `n`, `w`, `e`,
+/// `x`, `s`, `r`, `p` flags.
+fn parse_wire_rule_modern(
+    text: &str,
+    protocol: ProtocolVersion,
+) -> io::Result<FilterRuleWireFormat> {
+    let mut chars = text.chars();
+    let first = chars
+        .next()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty filter rule"))?;
+
+    let rule_type = RuleType::from_prefix_char(first).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid rule type prefix: '{first}'"),
+        )
+    })?;
+
+    let mut rule = FilterRuleWireFormat {
+        rule_type,
+        pattern: String::new(),
+        anchored: false,
+        directory_only: false,
+        no_inherit: false,
+        cvs_exclude: false,
+        word_split: false,
+        exclude_from_merge: false,
+        xattr_only: false,
+        sender_side: false,
+        receiver_side: false,
+        perishable: false,
+        negate: false,
+    };
+
+    // Parse modifier flags
+    let mut pattern_start = 1;
+    for (i, c) in chars.enumerate() {
+        match c {
+            '/' if i == 0 => {
+                rule.anchored = true;
+                pattern_start += 1;
+            }
+            '!' => {
+                rule.negate = true;
+                pattern_start += 1;
+            }
+            'C' => {
+                rule.cvs_exclude = true;
+                pattern_start += 1;
+            }
+            'n' => {
+                rule.no_inherit = true;
+                pattern_start += 1;
+            }
+            'w' => {
+                rule.word_split = true;
+                pattern_start += 1;
+            }
+            'e' => {
+                rule.exclude_from_merge = true;
+                pattern_start += 1;
+            }
+            'x' => {
+                rule.xattr_only = true;
+                pattern_start += 1;
+            }
+            's' if protocol.supports_sender_receiver_modifiers() => {
+                rule.sender_side = true;
+                pattern_start += 1;
+            }
+            'r' if protocol.supports_sender_receiver_modifiers() => {
+                rule.receiver_side = true;
+                pattern_start += 1;
+            }
+            'p' if protocol.supports_perishable_modifier() => {
+                rule.perishable = true;
+                pattern_start += 1;
+            }
+            ' ' => {
+                pattern_start += 1;
+                break; // Trailing space ends modifiers
+            }
+            _ => break, // Start of pattern
+        }
+    }
+
+    // Extract pattern (remaining text)
+    let pattern_text = &text[pattern_start..];
+
+    // Check for trailing slash (directory-only)
+    if let Some(stripped) = pattern_text.strip_suffix('/') {
+        rule.directory_only = true;
+        stripped.clone_into(&mut rule.pattern);
+    } else {
+        pattern_text.clone_into(&mut rule.pattern);
+    }
+
+    Ok(rule)
+}
+
+/// Serializes a filter rule to wire format bytes.
+///
+/// Returns an error if the rule cannot be represented in the current
+/// protocol version (e.g., dir-merge or modifier-bearing rules for proto < 29).
+///
+/// # Upstream Reference
+///
+/// `exclude.c:1623-1627` - sender exits with RERR_PROTOCOL when prefix is NULL
+fn serialize_rule(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> io::Result<Vec<u8>> {
+    let prefix = super::prefix::build_rule_prefix(rule, protocol).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "filter rules are too modern for remote rsync",
+        )
+    })?;
+    let mut bytes = prefix.into_bytes();
+    bytes.extend_from_slice(rule.pattern.as_bytes());
+
+    if rule.directory_only {
+        bytes.push(b'/');
+    }
+
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_filter_list_roundtrip() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let mut buf = Vec::new();
+
+        write_filter_list(&mut buf, &[], protocol).unwrap();
+
+        // Should be 4-byte little-endian zero (upstream write_int(0))
+        assert_eq!(buf, vec![0, 0, 0, 0]);
+
+        let rules = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(rules, vec![]);
+    }
+
+    #[test]
+    fn simple_exclude_pattern() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat::exclude("*.log".to_owned());
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].rule_type, RuleType::Exclude);
+        assert_eq!(parsed[0].pattern, "*.log");
+    }
+
+    #[test]
+    fn simple_include_pattern() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat::include("*.txt".to_owned());
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].rule_type, RuleType::Include);
+        assert_eq!(parsed[0].pattern, "*.txt");
+    }
+
+    #[test]
+    fn anchored_pattern() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat::exclude("/tmp".to_owned()).with_anchored(true);
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert!(parsed[0].anchored);
+        assert_eq!(parsed[0].pattern, "/tmp");
+    }
+
+    #[test]
+    fn directory_only_pattern() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat::exclude("cache".to_owned()).with_directory_only(true);
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert!(parsed[0].directory_only);
+        assert_eq!(parsed[0].pattern, "cache");
+    }
+
+    #[test]
+    fn sender_side_filter_v29() {
+        let protocol = ProtocolVersion::from_supported(29).unwrap();
+        let rule = FilterRuleWireFormat::exclude("*.tmp".to_owned()).with_sides(true, false);
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert!(parsed[0].sender_side);
+        assert!(!parsed[0].receiver_side);
+    }
+
+    #[test]
+    fn receiver_side_filter_v29() {
+        let protocol = ProtocolVersion::from_supported(29).unwrap();
+        let rule = FilterRuleWireFormat::exclude("*.bak".to_owned()).with_sides(false, true);
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert!(!parsed[0].sender_side);
+        assert!(parsed[0].receiver_side);
+    }
+
+    #[test]
+    fn perishable_filter_v30() {
+        let protocol = ProtocolVersion::from_supported(30).unwrap();
+        let rule = FilterRuleWireFormat::exclude("*.swp".to_owned()).with_perishable(true);
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert!(parsed[0].perishable);
+    }
+
+    #[test]
+    fn protocol_downgrade_rejects_unrepresentable_rules() {
+        // Create rule with v30 features (s/r/p modifiers)
+        let rule = FilterRuleWireFormat::exclude("test".to_owned())
+            .with_sides(true, false)
+            .with_perishable(true);
+
+        // v28 uses old prefixes which cannot encode modifiers - write fails
+        let protocol_v28 = ProtocolVersion::from_supported(28).unwrap();
+        let mut buf = Vec::new();
+        let result = write_filter_list(&mut buf, &[rule], protocol_v28);
+        assert!(result.is_err());
+    }
+}

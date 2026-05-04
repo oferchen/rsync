@@ -1,0 +1,362 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/ci/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/_test-features.yml'
+      - '.github/workflows/_interop.yml'
+      - 'docker/**'
+      - 'Cross.toml'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/ci/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/_test-features.yml'
+      - '.github/workflows/_interop.yml'
+      - 'docker/**'
+      - 'Cross.toml'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
+
+jobs:
+  # ===========================================================================
+  # Lint Job - Fast feedback on formatting and clippy issues
+  # ===========================================================================
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+
+      # Fail fast with an actionable error before any --locked build runs.
+      # The downstream cargo steps already pass --locked, but their failure
+      # surfaces under a misleading job name (e.g. "Clippy"). This step
+      # produces a clear, named failure pointing the contributor at the fix.
+      - name: Verify Cargo.lock is up to date
+        run: |
+          if ! cargo metadata --locked --format-version 1 > /dev/null 2> metadata.err; then
+            echo "::error title=Stale Cargo.lock::Cargo.lock is out of sync with Cargo.toml. Run 'cargo update --workspace --offline' locally and commit the regenerated Cargo.lock."
+            cat metadata.err >&2
+            exit 1
+          fi
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features --no-deps
+
+  # ===========================================================================
+  # Test Job - Full test suite on Linux with toolchain matrix
+  # ===========================================================================
+  test:
+    name: nextest (${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          key: test
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@db5fb34fa772531a3ece57ca434f579eb334e0fb # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build
+        run: cargo build --locked --workspace --all-features
+
+      - name: Run tests
+        run: cargo nextest run --locked --workspace --all-features
+
+      - name: Set up SSH loopback
+        if: matrix.toolchain == 'stable'
+        run: |
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=no localhost true
+
+      - name: Run SSH integration tests
+        if: matrix.toolchain == 'stable'
+        continue-on-error: true
+        run: cargo nextest run --locked --workspace --all-features --run-ignored ignored-only -E 'test(ssh)'
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-linux-${{ matrix.toolchain }}
+          path: |
+            target/debug/oc-rsync
+            target/debug/xtask
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ===========================================================================
+  # Feature Flags - Test various feature combinations (reusable workflow)
+  # ===========================================================================
+  feature-flags:
+    name: Feature flag combinations
+    needs: lint
+    uses: ./.github/workflows/_test-features.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+
+  # ===========================================================================
+  # Windows Test - Platform-specific testing with toolchain matrix
+  # ===========================================================================
+  windows-test:
+    name: Windows (${{ matrix.toolchain }})
+    runs-on: windows-latest
+    needs: lint
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-windows-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@db5fb34fa772531a3ece57ca434f579eb334e0fb # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build
+        run: cargo build --locked --workspace --all-features
+
+      - name: Test
+        run: |
+          # Run Windows-specific crates only (core, engine, cli have platform code)
+          # Full test suite runs on Linux; Windows validates platform-specific paths
+          cargo nextest run --locked -p core -p engine -p cli --all-features
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-windows-${{ matrix.toolchain }}
+          path: |
+            target/debug/oc-rsync.exe
+            target/debug/xtask.exe
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ===========================================================================
+  # Windows GNU Cross-Check - Validate x86_64-pc-windows-gnu compilation
+  # ===========================================================================
+  windows-gnu-cross-check:
+    name: Windows GNU cross-check
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Install mingw-w64
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-windows-gnu-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Check compilation
+        run: cargo check --locked --workspace --target x86_64-pc-windows-gnu
+
+  # ===========================================================================
+  # macOS Test - Platform-specific testing with toolchain matrix
+  # ===========================================================================
+  macos-test:
+    name: macOS (${{ matrix.toolchain }})
+    runs-on: macos-latest
+    needs: lint
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-macos-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@db5fb34fa772531a3ece57ca434f579eb334e0fb # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build
+        run: cargo build --locked --workspace --all-features
+
+      - name: Test
+        run: |
+          # Run macOS-specific crates only (core, engine, cli have platform code)
+          # Full test suite runs on Linux; macOS validates platform-specific paths
+          cargo nextest run --locked -p core -p engine -p cli --all-features
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-macos-${{ matrix.toolchain }}
+          path: |
+            target/debug/oc-rsync
+            target/debug/xtask
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ===========================================================================
+  # Linux musl Test - Static musl binary build and test with toolchain matrix
+  # ===========================================================================
+  linux-musl:
+    name: Linux musl (${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: x86_64-unknown-linux-musl
+
+      - name: Ensure musl target on active toolchain
+        run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-musl-x86_64-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@db5fb34fa772531a3ece57ca434f579eb334e0fb # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build
+        run: cargo build --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
+
+      - name: Test
+        run: cargo nextest run --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
+
+      - name: Verify static linking
+        run: |
+          set -euo pipefail
+          BINARY="target/x86_64-unknown-linux-musl/debug/oc-rsync"
+          if [ -f "${BINARY}" ]; then
+            file "${BINARY}"
+            if ldd "${BINARY}" 2>&1 | grep -q "not a dynamic executable"; then
+              printf 'Binary is statically linked\n'
+            else
+              printf 'Warning: binary may not be fully statically linked\n'
+              ldd "${BINARY}" || true
+            fi
+          fi
+
+  # ===========================================================================
+  # Interop Tests - Compatibility with upstream rsync (reusable workflow)
+  # ===========================================================================
+  interop-upstream:
+    name: interop
+    needs: lint
+    uses: ./.github/workflows/_interop.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.1' }}
+      timeout_minutes: 30

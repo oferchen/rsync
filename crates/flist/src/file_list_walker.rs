@@ -1,0 +1,538 @@
+use crate::entry::FileListEntry;
+use crate::error::FileListError;
+use logging::debug_log;
+use std::collections::HashSet;
+use std::env;
+use std::ffi::OsString;
+use std::fs;
+use std::path::PathBuf;
+
+/// Depth-first iterator over filesystem entries.
+pub struct FileListWalker {
+    pub(crate) root: PathBuf,
+    pub(crate) follow_symlinks: bool,
+    pub(crate) copy_links: bool,
+    pub(crate) safe_links: bool,
+    pub(crate) yielded_root: bool,
+    pub(crate) root_metadata: Option<fs::Metadata>,
+    pub(crate) stack: Vec<DirectoryState>,
+    pub(crate) visited: HashSet<PathBuf>,
+    pub(crate) finished: bool,
+}
+
+impl FileListWalker {
+    pub(crate) fn new(
+        root: PathBuf,
+        follow_symlinks: bool,
+        copy_links: bool,
+        include_root: bool,
+        safe_links: bool,
+    ) -> Result<Self, FileListError> {
+        let root = absolutize(root)?;
+        debug_log!(Flist, 1, "building file list from {:?}", root);
+
+        // upstream: flist.c:readlink_stat() - use stat() when copy_links is
+        // set, lstat() otherwise.
+        let metadata = if copy_links {
+            fs::metadata(&root)
+        } else {
+            fs::symlink_metadata(&root)
+        }
+        .map_err(|error| FileListError::root_metadata(root.clone(), error))?;
+
+        let mut walker = Self {
+            root,
+            follow_symlinks,
+            copy_links,
+            safe_links,
+            yielded_root: !include_root,
+            root_metadata: Some(metadata),
+            stack: Vec::new(),
+            visited: HashSet::new(),
+            finished: false,
+        };
+
+        if let Some(metadata) = walker.root_metadata.as_ref() {
+            let file_type = metadata.file_type();
+            if file_type.is_dir() {
+                walker.push_directory(walker.root.clone(), PathBuf::new(), 0)?;
+            } else if file_type.is_symlink() && walker.follow_symlinks {
+                match fs::metadata(&walker.root) {
+                    Ok(target) if target.is_dir() => {
+                        walker.push_directory(walker.root.clone(), PathBuf::new(), 0)?;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        return Err(FileListError::metadata(walker.root.clone(), error));
+                    }
+                }
+            }
+        }
+
+        Ok(walker)
+    }
+
+    fn push_directory(
+        &mut self,
+        fs_path: PathBuf,
+        relative_prefix: PathBuf,
+        depth: usize,
+    ) -> Result<(), FileListError> {
+        let canonical = fs::canonicalize(&fs_path)
+            .map_err(|error| FileListError::canonicalize(fs_path.clone(), error))?;
+
+        if !self.visited.insert(canonical) {
+            debug_log!(Dup, 1, "skipping already visited directory: {:?}", fs_path);
+            return Ok(());
+        }
+
+        debug_log!(Flist, 2, "entering directory: {:?}", fs_path);
+        let state = DirectoryState::new(fs_path, relative_prefix, depth)?;
+        self.stack.push(state);
+        Ok(())
+    }
+
+    fn prepare_entry(
+        &mut self,
+        full_path: PathBuf,
+        relative_path: PathBuf,
+        depth: usize,
+    ) -> Result<Option<FileListEntry>, FileListError> {
+        debug_log!(Flist, 3, "processing entry: {:?}", relative_path);
+
+        // upstream: flist.c:readlink_stat() - use stat() when copy_links is
+        // set, lstat() otherwise. stat() follows symlinks so the metadata
+        // reflects the target file/directory, not the symlink itself.
+        let metadata = if self.copy_links {
+            fs::metadata(&full_path)
+        } else {
+            fs::symlink_metadata(&full_path)
+        }
+        .map_err(|error| FileListError::metadata(full_path.clone(), error))?;
+
+        // upstream: flist.c:send_file_name() - skip unsafe symlinks when
+        // --safe-links is active, excluding them from the file list before
+        // sending to prevent symlinks that escape the module root.
+        if self.safe_links && metadata.file_type().is_symlink() {
+            if let Ok(target) = fs::read_link(&full_path) {
+                if crate::symlink_safety::is_unsafe_symlink(target.as_os_str(), &relative_path) {
+                    debug_log!(
+                        Flist,
+                        1,
+                        "skipping unsafe symlink: {:?} -> {:?}",
+                        relative_path,
+                        target
+                    );
+                    return Ok(None);
+                }
+            } else {
+                // Cannot read symlink target - skip it as unsafe.
+                debug_log!(Flist, 1, "skipping unreadable symlink: {:?}", relative_path);
+                return Ok(None);
+            }
+        }
+
+        let mut next_state = None;
+
+        if metadata.file_type().is_dir() {
+            next_state = Some((full_path.clone(), relative_path.clone(), depth));
+        } else if metadata.file_type().is_symlink() && self.follow_symlinks {
+            match fs::metadata(&full_path) {
+                Ok(target) if target.is_dir() => {
+                    let canonical = fs::canonicalize(&full_path)
+                        .map_err(|error| FileListError::canonicalize(full_path.clone(), error))?;
+                    next_state = Some((canonical, relative_path.clone(), depth));
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(FileListError::metadata(full_path, error));
+                }
+            }
+        }
+
+        if let Some((dir_path, rel_prefix, dir_depth)) = next_state {
+            self.push_directory(dir_path, rel_prefix, dir_depth)?;
+        }
+
+        Ok(Some(FileListEntry {
+            full_path,
+            relative_path,
+            metadata,
+            depth,
+            is_root: false,
+        }))
+    }
+}
+
+impl Iterator for FileListWalker {
+    type Item = Result<FileListEntry, FileListError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.finished {
+            return None;
+        }
+
+        if !self.yielded_root {
+            self.yielded_root = true;
+            if let Some(metadata) = self.root_metadata.take() {
+                let entry = FileListEntry {
+                    full_path: self.root.clone(),
+                    relative_path: PathBuf::new(),
+                    metadata,
+                    depth: 0,
+                    is_root: true,
+                };
+                return Some(Ok(entry));
+            }
+        }
+
+        loop {
+            let (full_path, relative_path, depth) = {
+                let state = self.stack.last_mut()?;
+
+                if let Some(name) = state.next_name() {
+                    let full_path = state.fs_path.join(&name);
+                    let relative_path = state.relative_prefix.join(&name);
+                    (full_path, relative_path, state.depth + 1)
+                } else {
+                    self.stack.pop();
+                    continue;
+                }
+            };
+
+            match self.prepare_entry(full_path, relative_path, depth) {
+                Ok(Some(entry)) => return Some(Ok(entry)),
+                Ok(None) => continue,
+                Err(error) => {
+                    self.finished = true;
+                    return Some(Err(error));
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DirectoryState {
+    fs_path: PathBuf,
+    relative_prefix: PathBuf,
+    entries: Vec<OsString>,
+    index: usize,
+    depth: usize,
+}
+
+impl DirectoryState {
+    fn new(
+        fs_path: PathBuf,
+        relative_prefix: PathBuf,
+        depth: usize,
+    ) -> Result<Self, FileListError> {
+        let read_dir = fs::read_dir(&fs_path)
+            .map_err(|error| FileListError::read_dir(fs_path.clone(), error))?;
+
+        let mut entries = Vec::new();
+        for entry in read_dir {
+            let entry =
+                entry.map_err(|error| FileListError::read_dir_entry(fs_path.clone(), error))?;
+            entries.push(entry.file_name());
+        }
+        crate::sort::sort_os_strings(&mut entries);
+
+        debug_log!(Flist, 3, "found {} entries in {:?}", entries.len(), fs_path);
+
+        Ok(Self {
+            fs_path,
+            relative_prefix,
+            entries,
+            index: 0,
+            depth,
+        })
+    }
+
+    /// Returns the next entry name, taking ownership to avoid cloning.
+    fn next_name(&mut self) -> Option<OsString> {
+        if self.index < self.entries.len() {
+            let name = std::mem::take(&mut self.entries[self.index]);
+            self.index += 1;
+            Some(name)
+        } else {
+            None
+        }
+    }
+}
+
+fn absolutize(path: PathBuf) -> Result<PathBuf, FileListError> {
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        let cwd = env::current_dir()
+            .map_err(|error| FileListError::canonicalize(PathBuf::from("."), error))?;
+        Ok(cwd.join(path))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absolutize_returns_absolute_path_unchanged() {
+        let path = PathBuf::from("/some/absolute/path");
+        let result = absolutize(path.clone());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), path);
+    }
+
+    #[test]
+    fn absolutize_returns_absolute_path_unchanged_root() {
+        let path = PathBuf::from("/");
+        let result = absolutize(path.clone());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), path);
+    }
+
+    #[test]
+    fn absolutize_converts_relative_path_to_absolute() {
+        let path = PathBuf::from("relative/path");
+        let result = absolutize(path);
+        assert!(result.is_ok());
+        let abs = result.unwrap();
+        assert!(abs.is_absolute());
+        assert!(abs.ends_with("relative/path"));
+    }
+
+    #[test]
+    fn absolutize_handles_dot_path() {
+        let path = PathBuf::from(".");
+        let result = absolutize(path);
+        assert!(result.is_ok());
+        let abs = result.unwrap();
+        assert!(abs.is_absolute());
+    }
+
+    #[test]
+    fn absolutize_handles_empty_path() {
+        let path = PathBuf::from("");
+        let result = absolutize(path);
+        assert!(result.is_ok());
+        let abs = result.unwrap();
+        assert!(abs.is_absolute());
+    }
+
+    #[test]
+    fn directory_state_next_name_returns_none_when_empty() {
+        let mut state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::new(),
+            entries: Vec::new(),
+            index: 0,
+            depth: 0,
+        };
+        assert!(state.next_name().is_none());
+    }
+
+    #[test]
+    fn directory_state_next_name_returns_entries_in_order() {
+        let mut state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::new(),
+            entries: vec![
+                OsString::from("a"),
+                OsString::from("b"),
+                OsString::from("c"),
+            ],
+            index: 0,
+            depth: 0,
+        };
+        assert_eq!(state.next_name(), Some(OsString::from("a")));
+        assert_eq!(state.next_name(), Some(OsString::from("b")));
+        assert_eq!(state.next_name(), Some(OsString::from("c")));
+        assert!(state.next_name().is_none());
+    }
+
+    #[test]
+    fn directory_state_next_name_advances_index() {
+        let mut state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::new(),
+            entries: vec![OsString::from("first"), OsString::from("second")],
+            index: 0,
+            depth: 0,
+        };
+        let _ = state.next_name();
+        assert_eq!(state.index, 1);
+        let _ = state.next_name();
+        assert_eq!(state.index, 2);
+    }
+
+    #[test]
+    fn directory_state_next_name_returns_none_after_exhaustion() {
+        let mut state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::new(),
+            entries: vec![OsString::from("only")],
+            index: 0,
+            depth: 0,
+        };
+        assert_eq!(state.next_name(), Some(OsString::from("only")));
+        assert!(state.next_name().is_none());
+        assert!(state.next_name().is_none()); // Repeated calls still return None
+    }
+
+    #[test]
+    fn directory_state_clone() {
+        let state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::from("rel"),
+            entries: vec![OsString::from("entry")],
+            index: 0,
+            depth: 5,
+        };
+        let cloned = state.clone();
+        assert_eq!(cloned.fs_path, state.fs_path);
+        assert_eq!(cloned.relative_prefix, state.relative_prefix);
+        assert_eq!(cloned.depth, state.depth);
+    }
+
+    #[test]
+    fn directory_state_debug() {
+        let state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::new(),
+            entries: Vec::new(),
+            index: 0,
+            depth: 0,
+        };
+        let debug = format!("{state:?}");
+        assert!(debug.contains("DirectoryState"));
+        assert!(debug.contains("/test"));
+    }
+
+    #[test]
+    fn file_list_walker_walks_temp_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("test.txt");
+        std::fs::write(&file_path, b"content").expect("write");
+
+        let walker = FileListWalker::new(temp.path().to_path_buf(), false, false, true, false)
+            .expect("create walker");
+
+        let entries: Vec<_> = walker.collect();
+        assert!(!entries.is_empty());
+
+        // Should have at least the root directory and one file
+        let mut found_file = false;
+        for result in entries {
+            let entry = result.expect("entry");
+            if entry.relative_path.to_string_lossy().contains("test.txt") {
+                found_file = true;
+            }
+        }
+        assert!(found_file);
+    }
+
+    #[test]
+    fn file_list_walker_empty_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let walker = FileListWalker::new(temp.path().to_path_buf(), false, false, true, false)
+            .expect("create walker");
+
+        let entries: Vec<_> = walker.collect();
+        // Should have just the root directory
+        assert_eq!(entries.len(), 1);
+        let entry = entries[0].as_ref().expect("entry");
+        assert!(entry.is_root);
+    }
+
+    #[test]
+    fn file_list_walker_single_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("single.txt");
+        std::fs::write(&file_path, b"content").expect("write");
+
+        let walker = FileListWalker::new(file_path.clone(), false, false, true, false)
+            .expect("create walker");
+
+        let entries: Vec<_> = walker.collect();
+        assert_eq!(entries.len(), 1);
+        let entry = entries[0].as_ref().expect("entry");
+        assert!(entry.is_root);
+        assert_eq!(entry.full_path, file_path);
+    }
+
+    /// Verifies that DirectoryState sorts entries correctly when the
+    /// filesystem returns them in reverse order.
+    #[test]
+    fn directory_state_sorts_reverse_ordered_entries() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("reverse");
+        std::fs::create_dir(&dir).expect("create dir");
+
+        // Create files named z, y, x, ... a to encourage reverse-order readdir
+        for ch in ('a'..='z').rev() {
+            std::fs::write(dir.join(format!("{ch}.txt")), b"").expect("write");
+        }
+
+        let state = DirectoryState::new(dir, PathBuf::new(), 0).expect("new state");
+
+        // Verify entries are sorted ascending
+        for i in 0..state.entries.len() - 1 {
+            assert!(
+                state.entries[i] < state.entries[i + 1],
+                "entries[{}] = {:?} should be < entries[{}] = {:?}",
+                i,
+                state.entries[i],
+                i + 1,
+                state.entries[i + 1]
+            );
+        }
+    }
+
+    /// Verifies that DirectoryState sorts a large number of entries correctly.
+    #[test]
+    fn directory_state_sorts_large_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("large");
+        std::fs::create_dir(&dir).expect("create dir");
+
+        for i in 0..500 {
+            std::fs::write(dir.join(format!("file_{i:04}.txt")), b"").expect("write");
+        }
+
+        let state = DirectoryState::new(dir, PathBuf::new(), 0).expect("new state");
+        assert_eq!(state.entries.len(), 500);
+
+        for i in 0..state.entries.len() - 1 {
+            assert!(
+                state.entries[i] < state.entries[i + 1],
+                "entries not sorted at index {i}"
+            );
+        }
+    }
+
+    /// Verifies sorting when all entries share a long common prefix,
+    /// stressing the string comparison path.
+    #[test]
+    fn directory_state_sorts_entries_with_long_common_prefix() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("prefix");
+        std::fs::create_dir(&dir).expect("create dir");
+
+        let prefix = "a_very_long_common_prefix_shared_by_all_entries_in_this_dir_";
+        for i in (0..100).rev() {
+            std::fs::write(dir.join(format!("{prefix}{i:03}")), b"").expect("write");
+        }
+
+        let state = DirectoryState::new(dir, PathBuf::new(), 0).expect("new state");
+        assert_eq!(state.entries.len(), 100);
+
+        for i in 0..state.entries.len() - 1 {
+            assert!(
+                state.entries[i] < state.entries[i + 1],
+                "entries not sorted at index {i}: {:?} vs {:?}",
+                state.entries[i],
+                state.entries[i + 1]
+            );
+        }
+    }
+}

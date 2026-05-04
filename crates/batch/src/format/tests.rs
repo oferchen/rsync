@@ -1,0 +1,626 @@
+use super::*;
+use std::io::Cursor;
+
+#[test]
+fn test_write_read_i32() {
+    let values = [0, 1, -1, i32::MAX, i32::MIN, 12345, -67890];
+    for &val in &values {
+        let mut buf = Vec::new();
+        wire::write_i32(&mut buf, val).unwrap();
+        let mut cursor = Cursor::new(buf);
+        let read_val = wire::read_i32(&mut cursor).unwrap();
+        assert_eq!(val, read_val);
+    }
+}
+
+#[test]
+fn test_write_read_varint() {
+    let values: &[i32] = &[0, 1, 127, 128, 255, 256, 16383, 16384, i32::MAX];
+    for &val in values {
+        let mut buf = Vec::new();
+        wire::write_varint(&mut buf, val).unwrap();
+        let mut cursor = Cursor::new(buf);
+        let read_val = wire::read_varint(&mut cursor).unwrap();
+        assert_eq!(val, read_val);
+    }
+}
+
+#[test]
+fn test_batch_flags_bitmap_roundtrip() {
+    let flags = BatchFlags {
+        recurse: true,
+        preserve_uid: true,
+        preserve_links: true,
+        preserve_hard_links: true,
+        always_checksum: true,
+        ..Default::default()
+    };
+
+    let bitmap = flags.to_bitmap(30);
+    let restored = BatchFlags::from_bitmap(bitmap, 30);
+    assert_eq!(flags, restored);
+}
+
+#[test]
+fn test_batch_flags_protocol_29() {
+    let flags = BatchFlags {
+        xfer_dirs: true,
+        do_compression: true,
+        ..Default::default()
+    };
+
+    let bitmap = flags.to_bitmap(29);
+    let restored = BatchFlags::from_bitmap(bitmap, 29);
+    assert_eq!(flags, restored);
+
+    // Protocol 28 should not include these flags
+    let bitmap_28 = flags.to_bitmap(28);
+    let restored_28 = BatchFlags::from_bitmap(bitmap_28, 28);
+    assert!(!restored_28.xfer_dirs);
+    assert!(!restored_28.do_compression);
+}
+
+#[test]
+fn test_batch_header_write_read() {
+    let mut header = BatchHeader::new(30, 12345);
+    header.compat_flags = Some(42);
+    header.stream_flags.recurse = true;
+    header.stream_flags.preserve_uid = true;
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchHeader::read_from(&mut cursor).unwrap();
+
+    assert_eq!(header.protocol_version, restored.protocol_version);
+    assert_eq!(header.compat_flags, restored.compat_flags);
+    assert_eq!(header.checksum_seed, restored.checksum_seed);
+    assert_eq!(header.stream_flags.recurse, restored.stream_flags.recurse);
+    assert_eq!(
+        header.stream_flags.preserve_uid,
+        restored.stream_flags.preserve_uid
+    );
+}
+
+#[test]
+fn test_batch_header_protocol_28() {
+    let header = BatchHeader::new(28, 99999);
+    assert!(header.compat_flags.is_none());
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchHeader::read_from(&mut cursor).unwrap();
+
+    assert_eq!(28, restored.protocol_version);
+    assert!(restored.compat_flags.is_none());
+    assert_eq!(99999, restored.checksum_seed);
+}
+
+#[test]
+fn test_batch_flags_default() {
+    let flags = BatchFlags::default();
+    assert!(!flags.recurse);
+    assert!(!flags.preserve_uid);
+    assert!(!flags.preserve_gid);
+    assert!(!flags.preserve_links);
+    assert!(!flags.preserve_devices);
+    assert!(!flags.preserve_hard_links);
+    assert!(!flags.always_checksum);
+}
+
+#[test]
+fn test_batch_flags_protocol_30_features() {
+    let flags = BatchFlags {
+        iconv: true,
+        preserve_acls: true,
+        preserve_xattrs: true,
+        inplace: true,
+        append: true,
+        append_verify: true,
+        ..Default::default()
+    };
+
+    let bitmap = flags.to_bitmap(30);
+    let restored = BatchFlags::from_bitmap(bitmap, 30);
+
+    assert_eq!(flags.iconv, restored.iconv);
+    assert_eq!(flags.preserve_acls, restored.preserve_acls);
+    assert_eq!(flags.preserve_xattrs, restored.preserve_xattrs);
+    assert_eq!(flags.inplace, restored.inplace);
+    assert_eq!(flags.append, restored.append);
+    assert_eq!(flags.append_verify, restored.append_verify);
+}
+
+#[test]
+fn test_batch_flags_protocol_30_not_in_28() {
+    let flags = BatchFlags {
+        iconv: true,
+        preserve_acls: true,
+        preserve_xattrs: true,
+        ..Default::default()
+    };
+
+    let bitmap = flags.to_bitmap(28);
+    let restored = BatchFlags::from_bitmap(bitmap, 28);
+
+    assert!(!restored.iconv);
+    assert!(!restored.preserve_acls);
+    assert!(!restored.preserve_xattrs);
+}
+
+#[test]
+fn test_batch_flags_write_read_roundtrip() {
+    let flags = BatchFlags {
+        recurse: true,
+        preserve_uid: false,
+        preserve_gid: true,
+        preserve_links: false,
+        preserve_devices: true,
+        preserve_hard_links: false,
+        always_checksum: true,
+        xfer_dirs: false,
+        do_compression: true,
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    flags.write_to_versioned(&mut buf, 30).unwrap();
+
+    let mut cursor = Cursor::new(&buf);
+    let raw = BatchFlags::read_raw(&mut cursor).unwrap();
+    let restored = BatchFlags::from_bitmap(raw, 30);
+
+    assert_eq!(flags.to_bitmap(30), restored.to_bitmap(30));
+}
+
+#[test]
+fn test_batch_header_new_creates_compat_flags_for_protocol_30() {
+    let header = BatchHeader::new(30, 42);
+    assert_eq!(header.compat_flags, Some(0));
+}
+
+#[test]
+fn test_batch_header_new_no_compat_flags_for_protocol_29() {
+    let header = BatchHeader::new(29, 42);
+    assert!(header.compat_flags.is_none());
+}
+
+#[test]
+fn test_batch_flags_clone() {
+    let flags = BatchFlags {
+        recurse: true,
+        preserve_uid: true,
+        ..Default::default()
+    };
+    let cloned = flags;
+    assert_eq!(flags, cloned);
+}
+
+#[test]
+fn test_batch_header_clone() {
+    let header = BatchHeader::new(30, 12345);
+    let cloned = header.clone();
+    assert_eq!(header.protocol_version, cloned.protocol_version);
+    assert_eq!(header.checksum_seed, cloned.checksum_seed);
+}
+
+#[test]
+fn test_varint_edge_cases() {
+    let values: &[i32] = &[0, 127, 128, 16383, 16384, 2097151, 2097152];
+    for &val in values {
+        let mut buf = Vec::new();
+        wire::write_varint(&mut buf, val).unwrap();
+        let mut cursor = Cursor::new(buf);
+        let read_val = wire::read_varint(&mut cursor).unwrap();
+        assert_eq!(val, read_val, "Failed for value {val}");
+    }
+}
+
+#[test]
+fn test_batch_flags_all_set() {
+    let flags = BatchFlags {
+        recurse: true,
+        preserve_uid: true,
+        preserve_gid: true,
+        preserve_links: true,
+        preserve_devices: true,
+        preserve_hard_links: true,
+        always_checksum: true,
+        xfer_dirs: true,
+        do_compression: true,
+        iconv: true,
+        preserve_acls: true,
+        preserve_xattrs: true,
+        inplace: true,
+        append: true,
+        append_verify: true,
+    };
+
+    let bitmap = flags.to_bitmap(30);
+    let restored = BatchFlags::from_bitmap(bitmap, 30);
+    assert_eq!(flags, restored);
+}
+
+#[test]
+fn test_batch_flags_debug_format() {
+    let flags = BatchFlags::default();
+    let debug = format!("{flags:?}");
+    assert!(debug.contains("BatchFlags"));
+}
+
+#[test]
+fn test_batch_header_debug_format() {
+    let header = BatchHeader::new(30, 42);
+    let debug = format!("{header:?}");
+    assert!(debug.contains("BatchHeader"));
+    assert!(debug.contains("30"));
+}
+
+#[test]
+fn test_batch_header_protocol28_masks_high_bits() {
+    let mut header = BatchHeader::new(28, 42);
+    header.stream_flags.xfer_dirs = true; // bit 7 - protocol 29+
+    header.stream_flags.preserve_acls = true; // bit 10 - protocol 30+
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchHeader::read_from(&mut cursor).unwrap();
+
+    assert!(!restored.stream_flags.xfer_dirs);
+    assert!(!restored.stream_flags.preserve_acls);
+    assert_eq!(restored.protocol_version, 28);
+}
+
+#[test]
+fn test_batch_header_protocol29_includes_bits_7_8() {
+    let mut header = BatchHeader::new(29, 100);
+    header.stream_flags.xfer_dirs = true; // bit 7
+    header.stream_flags.do_compression = true; // bit 8
+    header.stream_flags.preserve_acls = true; // bit 10 - protocol 30+
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchHeader::read_from(&mut cursor).unwrap();
+
+    assert!(restored.stream_flags.xfer_dirs);
+    assert!(restored.stream_flags.do_compression);
+    assert!(!restored.stream_flags.preserve_acls); // masked out for proto 29
+}
+
+#[test]
+fn test_batch_flags_write_versioned_roundtrip() {
+    let flags = BatchFlags {
+        recurse: true,
+        preserve_uid: true,
+        xfer_dirs: true,
+        preserve_acls: true,
+        ..Default::default()
+    };
+
+    // Write with protocol 30 - all bits preserved
+    let mut buf30 = Vec::new();
+    flags.write_to_versioned(&mut buf30, 30).unwrap();
+    let raw30 = BatchFlags::read_raw(&mut Cursor::new(&buf30)).unwrap();
+    let restored30 = BatchFlags::from_bitmap(raw30, 30);
+    assert!(restored30.xfer_dirs);
+    assert!(restored30.preserve_acls);
+
+    // Write with protocol 28 - bits 7+ masked
+    let mut buf28 = Vec::new();
+    flags.write_to_versioned(&mut buf28, 28).unwrap();
+    let raw28 = BatchFlags::read_raw(&mut Cursor::new(&buf28)).unwrap();
+    let restored28 = BatchFlags::from_bitmap(raw28, 28);
+    assert!(!restored28.xfer_dirs);
+    assert!(!restored28.preserve_acls);
+}
+
+#[test]
+fn test_batch_stats_roundtrip_protocol_30() {
+    let stats = BatchStats {
+        total_read: 1024,
+        total_written: 2048,
+        total_size: 10_000_000,
+        flist_buildtime: Some(42),
+        flist_xfertime: Some(100),
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, 30).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchStats::read_from(&mut cursor, 30).unwrap();
+
+    assert_eq!(stats, restored);
+}
+
+#[test]
+fn test_batch_stats_roundtrip_protocol_28() {
+    let stats = BatchStats {
+        total_read: 500,
+        total_written: 1000,
+        total_size: 5_000,
+        flist_buildtime: None,
+        flist_xfertime: None,
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, 28).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchStats::read_from(&mut cursor, 28).unwrap();
+
+    assert_eq!(stats.total_read, restored.total_read);
+    assert_eq!(stats.total_written, restored.total_written);
+    assert_eq!(stats.total_size, restored.total_size);
+    assert!(restored.flist_buildtime.is_none());
+    assert!(restored.flist_xfertime.is_none());
+}
+
+#[test]
+fn test_batch_stats_default() {
+    let stats = BatchStats::default();
+    assert_eq!(stats.total_read, 0);
+    assert_eq!(stats.total_written, 0);
+    assert_eq!(stats.total_size, 0);
+    assert!(stats.flist_buildtime.is_none());
+    assert!(stats.flist_xfertime.is_none());
+}
+
+#[test]
+fn test_batch_stats_large_values() {
+    let stats = BatchStats {
+        total_read: 10_000_000_000_000,   // ~10 TB
+        total_written: 5_000_000_000_000, // ~5 TB
+        total_size: 50_000_000_000_000,   // ~50 TB
+        flist_buildtime: Some(3_600_000), // 1 hour in ms
+        flist_xfertime: Some(86_400_000), // 1 day in ms
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, 31).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchStats::read_from(&mut cursor, 31).unwrap();
+
+    assert_eq!(stats, restored);
+}
+
+#[test]
+fn test_batch_stats_zero_values() {
+    let stats = BatchStats {
+        total_read: 0,
+        total_written: 0,
+        total_size: 0,
+        flist_buildtime: Some(0),
+        flist_xfertime: Some(0),
+    };
+
+    let mut buf = Vec::new();
+    stats.write_to(&mut buf, 30).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchStats::read_from(&mut cursor, 30).unwrap();
+
+    assert_eq!(stats, restored);
+}
+
+/// Verify the exact byte layout of a batch header matches upstream rsync.
+///
+/// upstream: batch.c:write_stream_flags() writes the flags bitmap (i32 LE),
+/// then io.c:start_write_batch() writes protocol_version (i32 LE),
+/// compat_flags (varint), and checksum_seed (i32 LE).
+#[test]
+fn test_batch_header_upstream_byte_layout_protocol_31() {
+    let mut header = BatchHeader::new(31, 0x1234_5678);
+    header.compat_flags = Some(0x3F); // fits in single varint byte
+    header.stream_flags = BatchFlags {
+        recurse: true,
+        preserve_uid: true,
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // stream_flags bitmap = 0b0000_0011 = 3 as i32 LE
+    assert_eq!(&buf[0..4], &3_i32.to_le_bytes());
+    // protocol_version = 31 as i32 LE
+    assert_eq!(&buf[4..8], &31_i32.to_le_bytes());
+    // compat_flags = 0x3F as varint (single byte for values < 0x80)
+    assert_eq!(buf[8], 0x3F);
+    // checksum_seed = 0x12345678 as i32 LE
+    assert_eq!(&buf[9..13], &0x1234_5678_i32.to_le_bytes());
+    assert_eq!(buf.len(), 13);
+}
+
+/// Verify protocol 28 header omits compat_flags.
+#[test]
+fn test_batch_header_upstream_byte_layout_protocol_28() {
+    let header = BatchHeader::new(28, 42);
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // stream_flags bitmap = 0 as i32 LE
+    assert_eq!(&buf[0..4], &0_i32.to_le_bytes());
+    // protocol_version = 28 as i32 LE
+    assert_eq!(&buf[4..8], &28_i32.to_le_bytes());
+    // No compat_flags for protocol < 30
+    // checksum_seed = 42 as i32 LE
+    assert_eq!(&buf[8..12], &42_i32.to_le_bytes());
+    assert_eq!(buf.len(), 12);
+}
+
+/// Verify read_from correctly parses a hand-crafted upstream-format header.
+#[test]
+fn test_batch_header_read_upstream_bytes() {
+    // Build raw bytes matching upstream rsync format:
+    // stream_flags = 0x45 (bits 0,2,6 = recurse + preserve_gid + always_checksum)
+    // protocol_version = 32
+    // compat_flags = 0x0A (varint, single byte)
+    // checksum_seed = 0xAABBCCDD
+    let mut raw = Vec::new();
+    raw.extend_from_slice(&0x45_i32.to_le_bytes()); // stream_flags
+    raw.extend_from_slice(&32_i32.to_le_bytes()); // protocol_version
+    raw.push(0x0A); // compat_flags varint
+    raw.extend_from_slice(&0xAABB_CCDD_u32.to_le_bytes()); // checksum_seed
+
+    let mut cursor = Cursor::new(raw);
+    let header = BatchHeader::read_from(&mut cursor).unwrap();
+
+    assert_eq!(header.protocol_version, 32);
+    assert_eq!(header.compat_flags, Some(0x0A));
+    assert_eq!(header.checksum_seed, 0xAABB_CCDDu32 as i32);
+    assert!(header.stream_flags.recurse);
+    assert!(!header.stream_flags.preserve_uid);
+    assert!(header.stream_flags.preserve_gid);
+    assert!(!header.stream_flags.preserve_links);
+    assert!(header.stream_flags.always_checksum);
+}
+
+/// Verify protocol 29 header: has bits 7-8 (xfer_dirs, do_compression) but
+/// no compat_flags field.
+///
+/// upstream: batch.c:125-128 - protocol < 29 truncates at flag_ptr[7],
+/// protocol 29 includes bits 7-8 but stops at flag_ptr[9] for protocol < 30.
+#[test]
+fn test_batch_header_upstream_byte_layout_protocol_29() {
+    let mut header = BatchHeader::new(29, 0xDEAD);
+    header.stream_flags = BatchFlags {
+        recurse: true,
+        xfer_dirs: true,      // bit 7 - included for protocol 29
+        do_compression: true, // bit 8 - included for protocol 29
+        preserve_acls: true,  // bit 10 - should be masked out for protocol 29
+        ..Default::default()
+    };
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // stream_flags: bits 0,7,8 set = 0x0000_0181 (acls bit 10 masked by to_bitmap)
+    let expected_bitmap = 0x0000_0181_i32;
+    assert_eq!(&buf[0..4], &expected_bitmap.to_le_bytes());
+    // protocol_version = 29
+    assert_eq!(&buf[4..8], &29_i32.to_le_bytes());
+    // No compat_flags for protocol < 30
+    // checksum_seed = 0xDEAD
+    assert_eq!(&buf[8..12], &0xDEAD_i32.to_le_bytes());
+    assert_eq!(buf.len(), 12);
+
+    // Verify roundtrip
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchHeader::read_from(&mut cursor).unwrap();
+    assert_eq!(restored.protocol_version, 29);
+    assert!(restored.compat_flags.is_none());
+    assert!(restored.stream_flags.recurse);
+    assert!(restored.stream_flags.xfer_dirs);
+    assert!(restored.stream_flags.do_compression);
+    assert!(!restored.stream_flags.preserve_acls); // masked out
+}
+
+/// Verify header with all 15 stream flag bits set (protocol 30+).
+///
+/// upstream: batch.c:59-76 - all 15 flag_ptr entries active for protocol >= 30.
+#[test]
+fn test_batch_header_all_flags_byte_layout() {
+    let mut header = BatchHeader::new(30, 0);
+    header.compat_flags = Some(0);
+    header.stream_flags = BatchFlags {
+        recurse: true,
+        preserve_uid: true,
+        preserve_gid: true,
+        preserve_links: true,
+        preserve_devices: true,
+        preserve_hard_links: true,
+        always_checksum: true,
+        xfer_dirs: true,
+        do_compression: true,
+        iconv: true,
+        preserve_acls: true,
+        preserve_xattrs: true,
+        inplace: true,
+        append: true,
+        append_verify: true,
+    };
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // All 15 bits set: 0x7FFF
+    let expected_bitmap = 0x7FFF_i32;
+    assert_eq!(&buf[0..4], &expected_bitmap.to_le_bytes());
+}
+
+/// Verify multi-byte varint compat_flags encoding.
+///
+/// upstream: io.c:2448 write_varint(batch_fd, compat_flags) - uses the
+/// same varint encoding as io.c:write_varint() where values >= 0x80 use
+/// multiple bytes.
+#[test]
+fn test_batch_header_multi_byte_compat_flags() {
+    let mut header = BatchHeader::new(31, 42);
+    // 0xFF requires 2 varint bytes (high bit set in first byte)
+    header.compat_flags = Some(0xFF);
+    header.stream_flags = BatchFlags::default();
+
+    let mut buf = Vec::new();
+    header.write_to(&mut buf).unwrap();
+
+    // stream_flags = 0 (4 bytes)
+    // protocol = 31 (4 bytes)
+    // compat_flags = 0xFF as varint (2 bytes for rsync varint encoding)
+    // checksum_seed = 42 (4 bytes)
+    // Total: 4 + 4 + 2 + 4 = 14 bytes
+    assert_eq!(buf.len(), 14);
+
+    // Verify roundtrip
+    let mut cursor = Cursor::new(buf);
+    let restored = BatchHeader::read_from(&mut cursor).unwrap();
+    assert_eq!(restored.compat_flags, Some(0xFF));
+    assert_eq!(restored.checksum_seed, 42);
+}
+
+/// Verify that write_to followed by read_from is byte-exact for the
+/// typical upstream rsync 3.4.1 configuration: protocol 32, typical
+/// compat flags, and a realistic checksum seed.
+#[test]
+fn test_batch_header_typical_rsync_341_config() {
+    // Typical rsync 3.4.1 compat flags: CF_INC_RECURSE | CF_SYMLINK_TIMES
+    // | CF_SAFE_FLIST | CF_CHKSUM_SEED_FIX | CF_VARINT_FLIST_FLAGS
+    // = 0x01 | 0x02 | 0x08 | 0x10 | 0x40 = 0x5B
+    let mut header = BatchHeader::new(32, 0x12AB_CD34);
+    header.compat_flags = Some(0x5B);
+    header.stream_flags = BatchFlags {
+        recurse: true,
+        preserve_uid: true,
+        preserve_gid: true,
+        preserve_links: true,
+        ..Default::default()
+    };
+
+    let mut written = Vec::new();
+    header.write_to(&mut written).unwrap();
+
+    let mut cursor = Cursor::new(&written);
+    let restored = BatchHeader::read_from(&mut cursor).unwrap();
+
+    assert_eq!(header.protocol_version, restored.protocol_version);
+    assert_eq!(header.compat_flags, restored.compat_flags);
+    assert_eq!(header.checksum_seed, restored.checksum_seed);
+    assert_eq!(header.stream_flags, restored.stream_flags);
+
+    // Verify exact byte output
+    let mut rewritten = Vec::new();
+    restored.write_to(&mut rewritten).unwrap();
+    assert_eq!(
+        written, rewritten,
+        "write->read->write must be byte-identical"
+    );
+}

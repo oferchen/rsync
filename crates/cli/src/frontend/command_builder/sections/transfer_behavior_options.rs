@@ -1,0 +1,723 @@
+use super::super::{Arg, ArgAction, ClapCommand, OsStringValueParser};
+
+pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand {
+    command
+            .arg(
+                Arg::new("partial-dir")
+                    .long("partial-dir")
+                    .value_name("DIR")
+                    .help("Store partially transferred files in DIR.")
+                    .value_parser(OsStringValueParser::new())
+                    .overrides_with("no-partial"),
+            )
+            .arg(
+                Arg::new("temp-dir")
+                    .long("temp-dir")
+                    .short('T')
+                    .visible_alias("tmp-dir")
+                    .value_name("DIR")
+                    .help("Store temporary files in DIR while transferring.")
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("log-file")
+                    .long("log-file")
+                    .value_name("FILE")
+                    .help("Write per-file transfer information to FILE.")
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("log-file-format")
+                    .long("log-file-format")
+                    .value_name("FORMAT")
+                    .help("Customise the format used when appending to --log-file.")
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("write-batch")
+                    .long("write-batch")
+                    .value_name("PREFIX")
+                    .help("Store updated data in batch files named PREFIX for later replay. \
+                           Compression (--compress) is not supported with batch mode at protocol 28 \
+                           (rsync 2.x servers).")
+                    .value_parser(OsStringValueParser::new())
+                    .conflicts_with_all(["read-batch", "only-write-batch"]),
+            )
+            .arg(
+                Arg::new("only-write-batch")
+                    .long("only-write-batch")
+                    .value_name("PREFIX")
+                    .help("Write batch files named PREFIX without applying the updates locally.")
+                    .value_parser(OsStringValueParser::new())
+                    .conflicts_with_all(["read-batch", "write-batch"]),
+            )
+            .arg(
+                Arg::new("read-batch")
+                    .long("read-batch")
+                    .value_name("PREFIX")
+                    .help("Apply updates stored in batch files named PREFIX.")
+                    .value_parser(OsStringValueParser::new())
+                    .conflicts_with_all(["write-batch", "only-write-batch"]),
+            )
+            .arg(
+                Arg::new("early-input")
+                    .long("early-input")
+                    .value_name("FILE")
+                    .help("Read FILE early in the transfer (before file list).")
+                    .value_parser(OsStringValueParser::new())
+                    .num_args(1),
+            )
+            .arg(
+                Arg::new("whole-file")
+                    .long("whole-file")
+                    .short('W')
+                    .help("Copy files without using the delta-transfer algorithm.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-whole-file"),
+            )
+            .arg(
+                Arg::new("no-whole-file")
+                    .long("no-whole-file")
+                    .visible_alias("no-W")
+                    .help("Enable the delta-transfer algorithm (disable whole-file copies).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("whole-file"),
+            )
+            .arg(
+                Arg::new("remove-source-files")
+                    .long("remove-source-files")
+                    .help("Remove source files after a successful transfer.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("remove-sent-files"),
+            )
+            .arg(
+                Arg::new("remove-sent-files")
+                    .long("remove-sent-files")
+                    .help("Alias of --remove-source-files.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("remove-source-files"),
+            )
+            .arg(
+                Arg::new("append")
+                    .long("append")
+                    .help(
+                        "Append data to existing destination files without rewriting preserved bytes.",
+                    )
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-append")
+                    .overrides_with("append-verify"),
+            )
+            .arg(
+                Arg::new("no-append")
+                    .long("no-append")
+                    .help("Disable append mode for destination updates.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("append")
+                    .overrides_with("append-verify"),
+            )
+            .arg(
+                Arg::new("append-verify")
+                    .long("append-verify")
+                    .help("Append data while verifying that existing bytes match the sender.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("append")
+                    .overrides_with("no-append"),
+            )
+            .arg(
+                Arg::new("preallocate")
+                    .long("preallocate")
+                    .help("Preallocate destination files before writing.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("fsync")
+                    .long("fsync")
+                    .help("Fsync updated destination files after writing.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("io-uring")
+                    .long("io-uring")
+                    .help(
+                        "Force io_uring for file I/O (policy=enabled); \
+                         error if unavailable. Default policy is auto: \
+                         probe kernel and fall back to standard I/O.",
+                    )
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-io-uring"),
+            )
+            .arg(
+                Arg::new("no-io-uring")
+                    .long("no-io-uring")
+                    .help(
+                        "Disable io_uring (policy=disabled); always use \
+                         standard buffered I/O even when the kernel \
+                         supports io_uring.",
+                    )
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("io-uring"),
+            )
+            .arg(
+                Arg::new("inplace")
+                    .long("inplace")
+                    .help("Write updated data directly to destination files.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-inplace"),
+            )
+            .arg(
+                Arg::new("no-inplace")
+                    .long("no-inplace")
+                    .help("Use temporary files when updating regular files.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("inplace"),
+            )
+            .arg(
+                Arg::new("partial-progress")
+                    .short('P')
+                    .help("Equivalent to --partial --progress.")
+                    .action(ArgAction::Count)
+                    .overrides_with("no-partial")
+                    .overrides_with("no-progress"),
+            )
+            .arg(
+                Arg::new("delete")
+                    .long("delete")
+                    .help("Remove destination files that are absent from the source.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("delete-before")
+                    .long("delete-before")
+                    .help("Remove destination files that are absent from the source before transfers start.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("delete-during")
+                    .long("delete-during")
+                    .visible_alias("del")
+                    .help("Remove destination files that are absent from the source during directory traversal.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("delete-delay")
+                    .long("delete-delay")
+                    .help("Compute deletions during the transfer and prune them once the run completes.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("delete-after")
+                    .long("delete-after")
+                    .help("Remove destination files after transfers complete.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("ignore-missing-args")
+                    .long("ignore-missing-args")
+                    .help("Skip missing source arguments without reporting an error.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("delete-missing-args")
+                    .long("delete-missing-args")
+                    .help("Remove destination entries when their source argument is missing.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("delete-excluded")
+                    .long("delete-excluded")
+                    .help("Remove excluded destination files during deletion sweeps.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("ignore-errors")
+                    .long("ignore-errors")
+                    .help("Continue deleting files even when there are I/O errors.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-ignore-errors"),
+            )
+            .arg(
+                Arg::new("no-ignore-errors")
+                    .long("no-ignore-errors")
+                    .help("Stop deleting if I/O errors occur (default).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("ignore-errors"),
+            )
+            .arg(
+                Arg::new("max-delete")
+                    .long("max-delete")
+                    .value_name("NUM")
+                    .help("Limit the number of deletions that may occur.")
+                    .num_args(1)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("min-size")
+                    .long("min-size")
+                    .value_name("SIZE")
+                    .help("Skip files smaller than the specified size.")
+                    .num_args(1)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("max-size")
+                    .long("max-size")
+                    .value_name("SIZE")
+                    .help("Skip files larger than the specified size.")
+                    .num_args(1)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("block-size")
+                    .long("block-size")
+                    .value_name("SIZE")
+                    .help("Force the delta-transfer block size to SIZE bytes.")
+                    .num_args(1)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("backup")
+                    .long("backup")
+                    .short('b')
+                    .help("Create backups before overwriting or deleting existing entries.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-backup"),
+            )
+            .arg(
+                Arg::new("no-backup")
+                    .long("no-backup")
+                    .visible_alias("no-b")
+                    .help("Disable backup creation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("backup"),
+            )
+            .arg(
+                Arg::new("backup-dir")
+                    .long("backup-dir")
+                    .value_name("DIR")
+                    .help("Store backups inside DIR instead of alongside the destination.")
+                    .num_args(1)
+                    .action(ArgAction::Set)
+                    .allow_hyphen_values(true)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("suffix")
+                    .long("suffix")
+                    .value_name("SUFFIX")
+                    .help("Append SUFFIX to backup names (default '~').")
+                    .num_args(1)
+                    .action(ArgAction::Set)
+                    .allow_hyphen_values(true)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("exclude")
+                    .long("exclude")
+                    .value_name("PATTERN")
+                    .help("Skip files matching PATTERN.")
+                    .value_parser(OsStringValueParser::new())
+                    .action(ArgAction::Append),
+            )
+            .arg(
+                Arg::new("exclude-from")
+                    .long("exclude-from")
+                    .value_name("FILE")
+                    .help("Read exclude patterns from FILE.")
+                    .value_parser(OsStringValueParser::new())
+                    .action(ArgAction::Append),
+            )
+            .arg(
+                Arg::new("include")
+                    .long("include")
+                    .value_name("PATTERN")
+                    .help("Re-include files matching PATTERN after exclusions.")
+                    .value_parser(OsStringValueParser::new())
+                    .action(ArgAction::Append),
+            )
+            .arg(
+                Arg::new("include-from")
+                    .long("include-from")
+                    .value_name("FILE")
+                    .help("Read include patterns from FILE.")
+                    .value_parser(OsStringValueParser::new())
+                    .action(ArgAction::Append),
+            )
+            .arg(
+                Arg::new("compare-dest")
+                    .long("compare-dest")
+                    .value_name("DIR")
+                    .help("Skip creating destination files that match DIR.")
+                    .value_parser(OsStringValueParser::new())
+                    .action(ArgAction::Append)
+                    .conflicts_with_all(["copy-dest", "link-dest"]),
+            )
+            .arg(
+                Arg::new("copy-dest")
+                    .long("copy-dest")
+                    .value_name("DIR")
+                    .help("Copy matching files from DIR instead of the source.")
+                    .value_parser(OsStringValueParser::new())
+                    .action(ArgAction::Append)
+                    .conflicts_with_all(["compare-dest", "link-dest"]),
+            )
+            .arg(
+                Arg::new("link-dest")
+                    .long("link-dest")
+                    .value_name("DIR")
+                    .help("Hard-link matching files from DIR into the destination.")
+                    .value_parser(OsStringValueParser::new())
+                    .action(ArgAction::Append)
+                    .conflicts_with_all(["compare-dest", "copy-dest"]),
+            )
+            .arg(
+                Arg::new("cvs-exclude")
+                    .long("cvs-exclude")
+                    .short('C')
+                    .help("Auto-ignore files using CVS-style ignore rules.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("apple-double-skip")
+                    .long("apple-double-skip")
+                    .help("Skip macOS AppleDouble (._foo) sidecar files.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("filter")
+                    .long("filter")
+                    .short('f')
+                    .value_name("RULE")
+                    .help("Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'protect PATTERN', 'risk PATTERN', 'merge[,MODS] FILE' or '.[,MODS] FILE', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE').")
+                    .value_parser(OsStringValueParser::new())
+                    .action(ArgAction::Append),
+            )
+            .arg(
+                Arg::new("rsync-filter")
+                    .short('F')
+                    .help("Shortcut for per-directory .rsync-filter handling (repeat to also load receiver-side files).")
+                    .action(ArgAction::Count),
+            )
+            .arg(
+                Arg::new("files-from")
+                    .long("files-from")
+                    .value_name("FILE")
+                    .help("Read additional source operands from FILE.")
+                    .value_parser(OsStringValueParser::new())
+                    .action(ArgAction::Append),
+            )
+            .arg(
+                Arg::new("password-file")
+                    .long("password-file")
+                    .value_name("FILE")
+                    .help("Read daemon passwords from FILE when contacting rsync:// daemons.")
+                    .value_parser(OsStringValueParser::new())
+                    .action(ArgAction::Set),
+            )
+            .arg(
+                Arg::new("motd")
+                    .long("motd")
+                    .help("Display daemon MOTD lines when listing rsync:// modules.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-motd"),
+            )
+            .arg(
+                Arg::new("no-motd")
+                    .long("no-motd")
+                    .help("Suppress daemon MOTD lines when listing rsync:// modules.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("motd"),
+            )
+            .arg(
+                Arg::new("from0")
+                    .long("from0")
+                    .short('0')
+                    .help("Treat file list entries as NUL-terminated records.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-from0"),
+            )
+            .arg(
+                Arg::new("no-from0")
+                    .long("no-from0")
+                    .help("Disable NUL-terminated file list handling.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("from0"),
+            )
+            .arg(
+                Arg::new("owner")
+                    .long("owner")
+                    .short('o')
+                    .help("Preserve file ownership (requires super-user).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-owner"),
+            )
+            .arg(
+                Arg::new("no-owner")
+                    .long("no-owner")
+                    .visible_alias("no-o")
+                    .help("Disable ownership preservation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("owner"),
+            )
+            .arg(
+                Arg::new("group")
+                    .long("group")
+                    .short('g')
+                    .help("Preserve file group (requires suitable privileges).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-group"),
+            )
+            .arg(
+                Arg::new("no-group")
+                    .long("no-group")
+                    .visible_alias("no-g")
+                    .help("Disable group preservation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("group"),
+            )
+            .arg(
+                Arg::new("chown")
+                    .long("chown")
+                    .value_name("USER:GROUP")
+                    .help("Set destination ownership to USER and/or GROUP.")
+                    .value_parser(OsStringValueParser::new())
+                    .num_args(1),
+            )
+            .arg(
+                Arg::new("copy-as")
+                    .long("copy-as")
+                    .value_name("USER[:GROUP]")
+                    .help("Run receiver with specified USER and optional GROUP for privileged copy.")
+                    .value_parser(OsStringValueParser::new())
+                    .num_args(1),
+            )
+            .arg(
+                Arg::new("usermap")
+                    .long("usermap")
+                    .value_name("STRING")
+                    .help("Apply custom user ID mapping rules.")
+                    .action(ArgAction::Append)
+                    .value_parser(OsStringValueParser::new())
+                    .num_args(1),
+            )
+            .arg(
+                Arg::new("groupmap")
+                    .long("groupmap")
+                    .value_name("STRING")
+                    .help("Apply custom group ID mapping rules.")
+                    .action(ArgAction::Append)
+                    .value_parser(OsStringValueParser::new())
+                    .num_args(1),
+            )
+            .arg(
+                Arg::new("chmod")
+                    .long("chmod")
+                    .value_name("SPEC")
+                    .help("Apply chmod-style SPEC modifiers to received files.")
+                    .action(ArgAction::Append)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("executability")
+                    .long("executability")
+                    .short('E')
+                    .help("Preserve executability without altering other permission bits.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("perms")
+                    .long("perms")
+                    .short('p')
+                    .help("Preserve file permissions.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-perms"),
+            )
+            .arg(
+                Arg::new("no-perms")
+                    .long("no-perms")
+                    .visible_alias("no-p")
+                    .help("Disable permission preservation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("perms"),
+            )
+            .arg(
+                Arg::new("times")
+                    .long("times")
+                    .short('t')
+                    .help("Preserve modification times.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-times"),
+            )
+            .arg(
+                Arg::new("no-times")
+                    .long("no-times")
+                    .visible_alias("no-t")
+                    .help("Disable modification time preservation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("times"),
+            )
+            .arg(
+                Arg::new("omit-dir-times")
+                    .long("omit-dir-times")
+                    .short('O')
+                    .help("Skip preserving directory modification times.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-omit-dir-times"),
+            )
+            .arg(
+                Arg::new("no-omit-dir-times")
+                    .long("no-omit-dir-times")
+                    .visible_alias("no-O")
+                    .help("Preserve directory modification times.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("omit-dir-times"),
+            )
+            .arg(
+                Arg::new("omit-link-times")
+                    .long("omit-link-times")
+                    .short('J')
+                    .help("Skip preserving symlink modification times.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-omit-link-times"),
+            )
+            .arg(
+                Arg::new("no-omit-link-times")
+                    .long("no-omit-link-times")
+                    .visible_alias("no-J")
+                    .help("Preserve symlink modification times.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("omit-link-times"),
+            )
+            .arg(
+                Arg::new("atimes")
+                    .long("atimes")
+                    .short('U')
+                    .help("Preserve access times.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-atimes"),
+            )
+            .arg(
+                Arg::new("no-atimes")
+                    .long("no-atimes")
+                    .visible_alias("no-U")
+                    .help("Disable access time preservation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("atimes"),
+            )
+            .arg(
+                Arg::new("crtimes")
+                    .long("crtimes")
+                    .short('N')
+                    .help("Preserve creation times (macOS/Windows).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-crtimes"),
+            )
+            .arg(
+                Arg::new("no-crtimes")
+                    .long("no-crtimes")
+                    .visible_alias("no-N")
+                    .help("Disable creation time preservation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("crtimes"),
+            )
+            .arg(
+                Arg::new("acls")
+                    .long("acls")
+                    .short('A')
+                    .help("Preserve POSIX ACLs when supported.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-acls"),
+            )
+            .arg(
+                Arg::new("no-acls")
+                    .long("no-acls")
+                    .visible_alias("no-A")
+                    .help("Disable POSIX ACL preservation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("acls"),
+            )
+            .arg(
+                Arg::new("xattrs")
+                    .long("xattrs")
+                    .short('X')
+                    .help("Preserve extended attributes when supported.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-xattrs"),
+            )
+            .arg(
+                Arg::new("no-xattrs")
+                    .long("no-xattrs")
+                    .visible_alias("no-X")
+                    .help("Disable extended attribute preservation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("xattrs"),
+            )
+            .arg(
+                Arg::new("numeric-ids")
+                    .long("numeric-ids")
+                    .help("Preserve numeric UID/GID values.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-numeric-ids"),
+            )
+            .arg(
+                Arg::new("no-numeric-ids")
+                    .long("no-numeric-ids")
+                    .help("Map UID/GID values to names when possible.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("numeric-ids"),
+            )
+            .arg(
+                Arg::new("bwlimit")
+                    .long("bwlimit")
+                    .value_name("RATE")
+                    .help("Limit I/O bandwidth in KiB/s (0 disables the limit).")
+                    .num_args(1)
+                    .action(ArgAction::Set)
+                    .overrides_with("no-bwlimit")
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("no-bwlimit")
+                    .long("no-bwlimit")
+                    .help("Disable any configured bandwidth limit.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("bwlimit"),
+            )
+            .arg(
+                Arg::new("timeout")
+                    .long("timeout")
+                    .value_name("SECS")
+                    .help("Set I/O timeout in seconds (0 disables the timeout).")
+                    .num_args(1)
+                    .action(ArgAction::Set)
+                    .value_parser(OsStringValueParser::new())
+                    .overrides_with("no-timeout"),
+            )
+            .arg(
+                Arg::new("no-timeout")
+                    .long("no-timeout")
+                    .help("Disable I/O timeout.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("timeout"),
+            )
+            .arg(
+                Arg::new("stop-after")
+                    .long("stop-after")
+                    .alias("time-limit")
+                    .value_name("MINS")
+                    .help("Stop the transfer after running for the specified number of minutes.")
+                    .num_args(1)
+                    .action(ArgAction::Set)
+                    .value_parser(OsStringValueParser::new())
+                    .conflicts_with("stop-at"),
+            )
+            .arg(
+                Arg::new("stop-at")
+                    .long("stop-at")
+                    .value_name("WHEN")
+                    .help("Stop the transfer at the specified local time (e.g. HH:MM or YYYY-MM-DDTHH:MM).")
+                    .num_args(1)
+                    .action(ArgAction::Set)
+                    .value_parser(OsStringValueParser::new())
+                    .conflicts_with("stop-after"),
+            )
+}

@@ -1,0 +1,93 @@
+[package]
+name = "fast_io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "High-performance I/O abstractions for rsync"
+repository.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+rayon = { workspace = true }
+logging = { path = "../logging" }
+thiserror = "2.0"
+
+# Cached sorting with Schwartzian transform
+permutation = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+# Memory-mapped I/O (unix-only; runtime fallback to buffered I/O)
+memmap2 = "0.9"
+
+# libc is used for copy_file_range syscall on Linux (always compiled, runtime detection)
+libc = "0.2"
+
+# rustix is used for statx syscall on Linux (always compiled, runtime detection)
+rustix = { version = "1.1", features = ["fs"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Optional: io_uring support (Linux 5.6+)
+io-uring = { version = "0.7", optional = true }
+
+[features]
+default = ["io_uring", "iocp"]
+
+# ============================================================================
+# I/O Optimization Features
+# ============================================================================
+
+# io_uring support for Linux 5.6+ with automatic fallback to standard I/O
+# Requirements: Linux 5.6+ kernel (runtime detection and fallback)
+# Benefits: 20-40% faster I/O via batched syscalls
+# Trade-offs: Linux-only, adds dependency on io-uring crate
+io_uring = ["dep:io-uring"]
+
+# Windows I/O Completion Ports for async file reads and writes
+# Requirements: Windows Vista+ (runtime detection and fallback)
+# Benefits: Overlapped async I/O with completion port batching
+# Trade-offs: Windows-only, adds complexity for async file operations
+iocp = []
+
+# copy_file_range: Always compiled with runtime detection (no longer a feature gate)
+# The copy_file_range module is always available; it uses runtime detection on Linux
+# and automatic fallback to read/write on other platforms or when syscall fails.
+# This feature is kept as an empty alias for compatibility.
+copy_file_range = []
+
+# syscall_batch: Always compiled with runtime detection (no longer a feature gate)
+# The syscall_batch module is always available; it uses runtime detection for
+# batching threshold and platform-specific syscalls (statx on Linux).
+# This feature is kept as an empty alias for compatibility.
+syscall_batch = []
+
+[target.'cfg(windows)'.dependencies]
+# CopyFileExW for Windows-optimized file copy with no-buffering support;
+# Win32_Networking_WinSock added for WSARecv/WSASend in iocp::socket (#1928);
+# Win32_System_Pipes added for CreatePipe-based tests of anonymous-handle
+# rejection in writer_from_file (#1929).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
+
+[target.'cfg(not(unix))'.dependencies]
+filetime = "0.2"
+
+[dev-dependencies]
+tempfile = "3.15"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "io_optimizations"
+harness = false
+
+[[bench]]
+name = "platform_copy"
+harness = false
+
+[[bench]]
+name = "splice_pipe"
+harness = false

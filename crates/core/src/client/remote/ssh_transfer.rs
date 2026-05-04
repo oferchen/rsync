@@ -1,0 +1,817 @@
+//! SSH transfer orchestration.
+//!
+//! This module coordinates SSH-based remote transfers by spawning SSH connections,
+//! negotiating the rsync protocol, and executing transfers using the server
+//! infrastructure. It mirrors the flow in upstream `main.c:do_cmd()` where the
+//! client forks the remote shell, sets up pipes, and dispatches to the sender
+//! or receiver role.
+//!
+//! # Architecture
+//!
+//! Transfers use the [`SshConnection::split`] method to obtain separate read/write
+//! halves, which are then passed to the server infrastructure for protocol handling.
+//!
+//! # Upstream Reference
+//!
+//! - `main.c:do_cmd()` - SSH fork/exec and pipe setup
+//! - `main.c:client_run()` - Role dispatch after SSH connection
+//! - `options.c:server_options()` - Remote `--server` argument construction
+
+use std::ffi::{OsStr, OsString};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+#[cfg(feature = "tracing")]
+use tracing::instrument;
+
+use engine::batch::BatchWriter;
+use rsync_io::ssh::{SshCommand, SshConnection, parse_ssh_operand};
+
+use super::super::config::ClientConfig;
+use super::super::error::{ClientError, invalid_argument_error, invalid_argument_error_typed};
+use super::super::progress::ClientProgressObserver;
+use super::super::summary::ClientSummary;
+use super::flags;
+use super::invocation::{
+    RemoteInvocationBuilder, RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role,
+};
+use crate::exit_code::ExitCode;
+use crate::server::{ServerConfig, ServerRole, TransferProgressCallback, TransferProgressEvent};
+
+/// Adapts a [`ClientProgressObserver`] to [`TransferProgressCallback`].
+///
+/// Converts server-side per-file progress events into client-side progress
+/// updates, enabling live progress display during SSH and daemon transfers.
+struct ServerProgressAdapter<'a> {
+    observer: &'a mut dyn ClientProgressObserver,
+    start: Instant,
+    overall_transferred: u64,
+}
+
+impl<'a> ServerProgressAdapter<'a> {
+    fn new(observer: &'a mut dyn ClientProgressObserver, start: Instant) -> Self {
+        Self {
+            observer,
+            start,
+            overall_transferred: 0,
+        }
+    }
+}
+
+impl TransferProgressCallback for ServerProgressAdapter<'_> {
+    fn on_file_transferred(&mut self, event: &TransferProgressEvent<'_>) {
+        use std::path::Path;
+        use std::sync::Arc;
+
+        self.overall_transferred += event.file_bytes;
+
+        let client_event = super::super::summary::ClientEvent::from_progress(
+            event.path,
+            event.file_bytes,
+            event.total_file_bytes,
+            self.start.elapsed(),
+            Arc::from(Path::new("")),
+        );
+
+        let update = super::super::progress::ClientProgressUpdate::from_transfer_event(
+            client_event,
+            event.files_done,
+            event.total_files,
+            event.total_file_bytes,
+            self.overall_transferred,
+            self.start.elapsed(),
+        );
+
+        self.observer.on_progress(&update);
+    }
+}
+
+/// SSH invocation result containing args, host, optional user, optional port, and stdin args.
+///
+/// Used by `parse_single_remote` and `parse_remote_operands` to return parsed
+/// remote connection information along with the rsync invocation arguments.
+/// The final `Vec<String>` contains arguments to send over stdin when
+/// secluded-args is active (empty when disabled).
+type SshInvocationResult = (
+    Vec<OsString>,
+    String,
+    Option<String>,
+    Option<u16>,
+    Vec<String>,
+);
+
+/// Executes a transfer over SSH transport.
+///
+/// This is the main entry point for SSH-based remote transfers, mirroring
+/// upstream `main.c:do_cmd()`. It:
+/// 1. Determines push vs pull from operand positions
+/// 2. Parses the remote operand
+/// 3. Builds the remote rsync invocation (upstream: `options.c:server_options()`)
+/// 4. Spawns an SSH connection (upstream: `main.c:do_cmd()`)
+/// 5. Negotiates the protocol
+/// 6. Executes the transfer using server infrastructure
+///
+/// # Arguments
+///
+/// * `config` - Client configuration with transfer options
+/// * `observer` - Optional progress observer
+///
+/// # Returns
+///
+/// A summary of the transfer on success, or an error if any step fails.
+///
+/// # Errors
+///
+/// Returns error if:
+/// - Remote operand parsing fails
+/// - SSH connection fails
+/// - Protocol negotiation fails
+/// - Transfer execution fails
+#[cfg_attr(
+    feature = "tracing",
+    instrument(skip(config, observer), name = "ssh_transfer")
+)]
+pub fn run_ssh_transfer(
+    config: &ClientConfig,
+    observer: Option<&mut dyn ClientProgressObserver>,
+    batch_writer: Option<Arc<Mutex<BatchWriter>>>,
+) -> Result<ClientSummary, ClientError> {
+    let args = config.transfer_args();
+    if args.len() < 2 {
+        return Err(invalid_argument_error(
+            "need at least one source and one destination",
+            1,
+        ));
+    }
+
+    let (sources, destination) = args.split_at(args.len() - 1);
+    let destination = &destination[0];
+
+    let transfer_spec = determine_transfer_role(sources, destination)?;
+
+    match transfer_spec {
+        TransferSpec::Push {
+            local_sources,
+            remote_dest,
+        } => {
+            let (invocation_args, ssh_host, ssh_user, ssh_port, stdin_args) =
+                parse_single_remote(&remote_dest, config, RemoteRole::Sender)?;
+            let connection = build_ssh_connection(
+                &ssh_user,
+                &ssh_host,
+                ssh_port,
+                &invocation_args,
+                config,
+                &stdin_args,
+            )?;
+            run_push_transfer(config, connection, &local_sources, observer, batch_writer)
+        }
+        TransferSpec::Pull {
+            remote_sources,
+            local_dest,
+        } => {
+            let (invocation_args, ssh_host, ssh_user, ssh_port, stdin_args) =
+                parse_remote_operands(&remote_sources, config, RemoteRole::Receiver)?;
+            let connection = build_ssh_connection(
+                &ssh_user,
+                &ssh_host,
+                ssh_port,
+                &invocation_args,
+                config,
+                &stdin_args,
+            )?;
+            run_pull_transfer(config, connection, &[local_dest], observer, batch_writer)
+        }
+        TransferSpec::Proxy {
+            remote_sources,
+            remote_dest,
+        } => run_proxy_transfer(config, remote_sources, remote_dest, observer),
+    }
+}
+
+/// Parses a single remote operand and builds the invocation args.
+fn parse_single_remote(
+    operand_str: &str,
+    config: &ClientConfig,
+    role: RemoteRole,
+) -> Result<SshInvocationResult, ClientError> {
+    let operand = parse_ssh_operand(OsStr::new(operand_str))
+        .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
+
+    let invocation_builder = RemoteInvocationBuilder::new(config, role);
+    let secluded = invocation_builder.build_secluded(&[operand.path()]);
+
+    Ok((
+        secluded.command_line_args,
+        operand.host().to_owned(),
+        operand.user().map(String::from),
+        operand.port(),
+        secluded.stdin_args,
+    ))
+}
+
+/// Parses remote operand(s) and builds the invocation args.
+fn parse_remote_operands(
+    remote_operands: &RemoteOperands,
+    config: &ClientConfig,
+    role: RemoteRole,
+) -> Result<SshInvocationResult, ClientError> {
+    match remote_operands {
+        RemoteOperands::Single(operand_str) => parse_single_remote(operand_str, config, role),
+        RemoteOperands::Multiple(operand_strs) => {
+            let first_operand = parse_ssh_operand(OsStr::new(&operand_strs[0]))
+                .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
+
+            let mut paths = Vec::new();
+            for operand_str in operand_strs {
+                let operand = parse_ssh_operand(OsStr::new(operand_str)).map_err(|e| {
+                    invalid_argument_error(&format!("invalid remote operand: {e}"), 1)
+                })?;
+                paths.push(operand.path().to_owned());
+            }
+
+            let invocation_builder = RemoteInvocationBuilder::new(config, role);
+            let path_refs: Vec<&str> = paths.iter().map(|s| s.as_ref()).collect();
+            let secluded = invocation_builder.build_secluded(&path_refs);
+
+            Ok((
+                secluded.command_line_args,
+                first_operand.host().to_owned(),
+                first_operand.user().map(String::from),
+                first_operand.port(),
+                secluded.stdin_args,
+            ))
+        }
+    }
+}
+
+/// Builds and spawns an SSH connection with the remote rsync invocation.
+///
+/// When `stdin_args` is non-empty (secluded-args mode), the arguments are
+/// sent over stdin immediately after spawning the SSH process, before
+/// returning the connection for protocol negotiation.
+fn build_ssh_connection(
+    user: &Option<String>,
+    host: &str,
+    port: Option<u16>,
+    invocation_args: &[OsString],
+    config: &ClientConfig,
+    stdin_args: &[String],
+) -> Result<SshConnection, ClientError> {
+    let mut ssh = SshCommand::new(host);
+
+    if let Some(user) = user {
+        ssh.set_user(user);
+    }
+
+    if let Some(port) = port {
+        ssh.set_port(port);
+    }
+
+    if let Some(shell_args) = config.remote_shell()
+        && !shell_args.is_empty()
+    {
+        ssh.set_program(&shell_args[0]);
+        for arg in &shell_args[1..] {
+            ssh.push_option(arg.clone());
+        }
+    }
+
+    // upstream: clientserver.c start_socket_client() binds the local address;
+    // forward --address to SSH as -o BindAddress=<addr>.
+    if let Some(bind_addr) = config.bind_address() {
+        ssh.set_bind_address(Some(bind_addr.socket().ip()));
+    }
+
+    ssh.set_prefer_aes_gcm(config.prefer_aes_gcm());
+    ssh.set_jump_hosts(config.jump_hosts().map(OsString::from));
+
+    // upstream: options.c - contimeout is forwarded as SSH's -o ConnectTimeout.
+    let connect_timeout = config.connect_timeout().effective(Duration::from_secs(30));
+    ssh.set_connect_timeout(connect_timeout);
+
+    ssh.set_remote_command(invocation_args);
+
+    // upstream: pipe.c:85 - SSH spawn failures return IPC error code.
+    let mut connection = ssh.spawn().map_err(|e| {
+        invalid_argument_error(
+            &format!("failed to spawn SSH connection: {e}"),
+            super::super::IPC_EXIT_CODE,
+        )
+    })?;
+
+    // upstream: rsync.c:283-320 send_protected_args() sends args as
+    // null-separated strings over the pipe before protocol negotiation begins,
+    // applying iconvbufs(ic_send, ...) to each arg when iconv is configured
+    // (compat.c:799-806 filesfrom_convert / protect-args iconv gating).
+    if !stdin_args.is_empty() {
+        let arg_refs: Vec<&str> = stdin_args.iter().map(String::as_str).collect();
+        let iconv_converter = if config.protect_args().unwrap_or(false) {
+            config.iconv().resolve_converter()
+        } else {
+            None
+        };
+        protocol::secluded_args::send_secluded_args(
+            &mut connection,
+            &arg_refs,
+            iconv_converter.as_ref(),
+        )
+        .map_err(|e| {
+            invalid_argument_error(
+                &format!("failed to send secluded args: {e}"),
+                super::super::IPC_EXIT_CODE,
+            )
+        })?;
+    }
+
+    Ok(connection)
+}
+
+/// Executes a pull transfer (remote → local).
+///
+/// In a pull transfer, the local side acts as the receiver and the remote side
+/// acts as the sender/generator. We reuse the server receiver infrastructure.
+fn run_pull_transfer(
+    config: &ClientConfig,
+    connection: SshConnection,
+    local_paths: &[String],
+    observer: Option<&mut dyn ClientProgressObserver>,
+    batch_writer: Option<Arc<Mutex<BatchWriter>>>,
+) -> Result<ClientSummary, ClientError> {
+    // upstream: main.c:1258 - client_mode=true tells the server flow to send the
+    // filter list after handshake + compat exchange (where recv_filter_list() is
+    // called inside the server).
+    let mut server_config = build_server_config_for_receiver(config, local_paths)?;
+    server_config.connection.client_mode = true;
+    server_config.connection.filter_rules = flags::build_wire_format_rules(config.filter_rules())
+        .map_err(|e| {
+        invalid_argument_error(&format!("failed to build filter rules: {e}"), 12)
+    })?;
+    server_config.stop_at = config.stop_at();
+
+    let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
+
+    let start = Instant::now();
+    let mut adapter = observer.map(|obs| ServerProgressAdapter::new(obs, start));
+    let progress: Option<&mut dyn TransferProgressCallback> = adapter
+        .as_mut()
+        .map(|a| a as &mut dyn TransferProgressCallback);
+    let server_stats =
+        run_server_over_ssh_connection(server_config, connection, progress, batch_ctx)?;
+    let elapsed = start.elapsed();
+
+    Ok(convert_server_stats_to_summary(server_stats, elapsed))
+}
+
+/// Executes a push transfer (local → remote).
+///
+/// In a push transfer, the local side acts as the sender/generator and the
+/// remote side acts as the receiver. We reuse the server generator infrastructure.
+fn run_push_transfer(
+    config: &ClientConfig,
+    connection: SshConnection,
+    local_paths: &[String],
+    observer: Option<&mut dyn ClientProgressObserver>,
+    batch_writer: Option<Arc<Mutex<BatchWriter>>>,
+) -> Result<ClientSummary, ClientError> {
+    // upstream: client_mode=true ensures the filter list is sent after
+    // handshake + compat exchange.
+    let mut server_config = build_server_config_for_generator(config, local_paths)?;
+    server_config.connection.client_mode = true;
+    server_config.connection.filter_rules = flags::build_wire_format_rules(config.filter_rules())
+        .map_err(|e| {
+        invalid_argument_error(&format!("failed to build filter rules: {e}"), 12)
+    })?;
+    server_config.stop_at = config.stop_at();
+
+    let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
+
+    let start = Instant::now();
+    let mut adapter = observer.map(|obs| ServerProgressAdapter::new(obs, start));
+    let progress: Option<&mut dyn TransferProgressCallback> = adapter
+        .as_mut()
+        .map(|a| a as &mut dyn TransferProgressCallback);
+    let server_stats =
+        run_server_over_ssh_connection(server_config, connection, progress, batch_ctx)?;
+    let elapsed = start.elapsed();
+
+    Ok(convert_server_stats_to_summary(server_stats, elapsed))
+}
+
+/// Executes a proxy transfer (remote → remote via local).
+///
+/// In a proxy transfer, the local machine relays protocol messages between
+/// two remote hosts. We spawn two SSH connections:
+/// 1. To the source with `rsync --server --sender` (acts as generator)
+/// 2. To the destination with `rsync --server` (acts as receiver)
+///
+/// Data flows: source → local (relay) → destination
+fn run_proxy_transfer(
+    config: &ClientConfig,
+    remote_sources: RemoteOperands,
+    remote_dest: String,
+    _observer: Option<&mut dyn ClientProgressObserver>,
+) -> Result<ClientSummary, ClientError> {
+    use super::remote_to_remote::run_remote_to_remote_transfer;
+
+    run_remote_to_remote_transfer(config, remote_sources, remote_dest)
+}
+
+/// Converts server-side statistics to a client summary.
+///
+/// Maps the statistics returned by the server (receiver or generator) into the
+/// format expected by the client summary. Uses the available server statistics
+/// (files listed, files transferred, and bytes sent/received) to create a
+/// LocalCopySummary with the most relevant fields populated. The elapsed time
+/// is used to calculate the transfer rate (bytes/sec) shown in the summary output.
+pub(super) fn convert_server_stats_to_summary(
+    stats: crate::server::ServerStats,
+    elapsed: Duration,
+) -> ClientSummary {
+    use crate::server::ServerStats;
+    use engine::local_copy::LocalCopySummary;
+    use transfer::io_error_flags;
+
+    let (local_summary, io_error, error_count) = match stats {
+        ServerStats::Receiver(ref transfer_stats) => {
+            let s = LocalCopySummary::from_receiver_stats(
+                transfer_stats.files_listed,
+                transfer_stats.files_transferred,
+                transfer_stats.bytes_received,
+                transfer_stats.bytes_sent,
+                transfer_stats.total_source_bytes,
+                elapsed,
+                transfer_stats.literal_data,
+                transfer_stats.matched_data,
+            );
+            (s, transfer_stats.io_error, transfer_stats.error_count)
+        }
+        ServerStats::Generator(ref generator_stats) => {
+            let s = LocalCopySummary::from_generator_stats(
+                generator_stats.files_listed,
+                generator_stats.files_transferred,
+                generator_stats.bytes_sent,
+                elapsed,
+            );
+            (s, generator_stats.io_error, 0u32)
+        }
+    };
+
+    let mut summary = ClientSummary::from_summary(local_summary);
+
+    // upstream: log.c log_exit() - convert io_error bitfield to RERR_* codes.
+    let exit_code = io_error_flags::to_exit_code(io_error);
+    if exit_code != 0 {
+        summary.set_io_error_exit_code(exit_code);
+    } else if error_count > 0 {
+        // Remote sender reported errors via MSG_ERROR - treat as RERR_PARTIAL.
+        summary.set_io_error_exit_code(23);
+    }
+
+    summary
+}
+
+/// Maps an SSH child process exit status to an rsync exit code.
+///
+/// Mirrors upstream rsync's `wait_process_with_flush()` logic in `main.c`:
+/// - Exit 0: success
+/// - Exit 127: command not found (`RERR_CMD_NOTFOUND`)
+/// - Exit 255: SSH connection failure (`RERR_CMD_FAILED`)
+/// - Killed by signal: `RERR_CMD_KILLED`
+/// - Other rsync exit codes: passed through directly
+/// - Unknown codes: fall back to `PartialTransfer`
+pub(super) fn map_child_exit_status(status: std::process::ExitStatus) -> ExitCode {
+    if status.success() {
+        return ExitCode::Ok;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if status.signal().is_some() {
+            return ExitCode::CommandKilled;
+        }
+    }
+
+    match status.code() {
+        Some(127) => ExitCode::CommandNotFound,
+        Some(255) => ExitCode::CommandFailed,
+        Some(code) => ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer),
+        None => ExitCode::WaitChild,
+    }
+}
+
+/// Formats captured SSH stderr output as a suffix for error messages.
+///
+/// Returns an empty string when `stderr_bytes` is empty. Otherwise returns
+/// a newline-separated block prefixed with "SSH stderr:" that gives the user
+/// visibility into what the remote process wrote to stderr before exiting.
+/// The output is trimmed to remove trailing whitespace.
+pub(super) fn format_stderr_context(stderr_bytes: &[u8]) -> String {
+    if stderr_bytes.is_empty() {
+        return String::new();
+    }
+    let text = String::from_utf8_lossy(stderr_bytes);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    format!("\nSSH stderr:\n{trimmed}")
+}
+
+/// Batch recording context passed through the SSH transfer chain.
+use super::batch_support::{BatchContext, build_batch_context, build_batch_recording};
+
+/// Runs server over an SSH connection using split read/write halves.
+///
+/// This uses [`SshConnection::split`] to obtain separate reader and writer handles,
+/// avoiding the need for unsafe aliased mutable references.
+///
+/// When `batch_writer` is provided, the handshake is performed first, then the
+/// batch header is written with negotiated protocol info, and the appropriate
+/// I/O side is wrapped with a tee to record protocol bytes to the batch file.
+///
+/// upstream: `io.c:start_write_batch()` activates the tee after handshake,
+/// recording either incoming (receiver) or outgoing (sender) protocol data.
+///
+/// After the transfer completes, the SSH child process is waited on and its exit
+/// status is mapped to an rsync exit code. The worst (highest) exit code from the
+/// transfer result and the child exit status is propagated, mirroring upstream
+/// rsync's `wait_process_with_flush()` behavior.
+fn run_server_over_ssh_connection(
+    config: ServerConfig,
+    connection: SshConnection,
+    progress: Option<&mut dyn crate::server::TransferProgressCallback>,
+    batch_ctx: Option<BatchContext>,
+) -> Result<crate::server::ServerStats, ClientError> {
+    let (mut reader, mut writer, mut child_handle) = connection
+        .split()
+        .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
+
+    let batch_recording = batch_ctx.as_ref().map(|ctx| {
+        let is_sender = config.role == ServerRole::Generator;
+        build_batch_recording(ctx, is_sender)
+    });
+
+    let handshake = match crate::server::perform_handshake(&mut reader, &mut writer) {
+        Ok(h) => h,
+        Err(e) => {
+            // Capture SSH stderr - the remote process likely wrote diagnostic
+            // output (e.g., "Connection refused") that explains the failure.
+            drop(writer);
+            let stderr_text = match child_handle.wait_with_stderr() {
+                Ok((_, stderr_bytes)) => format_stderr_context(&stderr_bytes),
+                Err(_) => String::new(),
+            };
+            return Err(invalid_argument_error(
+                &format!("handshake failed: {e}{stderr_text}"),
+                5,
+            ));
+        }
+    };
+
+    // upstream: --contimeout - if watchdog already fired (timeout expired during
+    // handshake), map to exit code 35 (RERR_CONTIMEOUT).
+    if let Err(e) = child_handle.cancel_connect_watchdog() {
+        return Err(invalid_argument_error(
+            &format!("{e}"),
+            crate::exit_code::ExitCode::ConnectionTimeout.as_i32(),
+        ));
+    }
+    let transfer_result = crate::server::run_server_with_handshake(
+        config,
+        handshake,
+        &mut reader,
+        &mut writer,
+        progress,
+        batch_recording,
+        None,
+    );
+
+    // Close the writer to signal EOF so the remote process can exit.
+    drop(writer);
+
+    // upstream: main.c wait_process_with_flush() - wait for child and map status.
+    let (child_exit_code, stderr_text) = match child_handle.wait_with_stderr() {
+        Ok((status, stderr_bytes)) => {
+            let stderr_text = format_stderr_context(&stderr_bytes);
+            (map_child_exit_status(status), stderr_text)
+        }
+        Err(_) => (ExitCode::WaitChild, String::new()),
+    };
+
+    match transfer_result {
+        Ok(stats) => {
+            // upstream: take MAX of transfer and child exit codes.
+            if child_exit_code.is_success() {
+                Ok(stats)
+            } else {
+                Err(invalid_argument_error_typed(
+                    &format!(
+                        "remote process exited with error: {}{stderr_text}",
+                        child_exit_code.description()
+                    ),
+                    child_exit_code,
+                ))
+            }
+        }
+        Err(transfer_error) => {
+            let transfer_exit = ExitCode::from_io_error(&transfer_error);
+            if child_exit_code.as_i32() > transfer_exit.as_i32() {
+                Err(invalid_argument_error_typed(
+                    &format!(
+                        "transfer failed and remote process exited with error: {}{stderr_text}",
+                        child_exit_code.description()
+                    ),
+                    child_exit_code,
+                ))
+            } else {
+                Err(invalid_argument_error(
+                    &format!("transfer failed: {transfer_error}{stderr_text}"),
+                    transfer_exit.as_i32(),
+                ))
+            }
+        }
+    }
+}
+
+/// Builds server configuration for receiver role (pull transfer).
+fn build_server_config_for_receiver(
+    config: &ClientConfig,
+    local_paths: &[String],
+) -> Result<ServerConfig, ClientError> {
+    let flag_string = flags::build_server_flag_string(config);
+    let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
+
+    let mut server_config =
+        ServerConfig::from_flag_string_and_args(ServerRole::Receiver, flag_string, args)
+            .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
+
+    // Propagate long-form-only flags that aren't part of the compact flag string.
+    // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
+    server_config.flags.numeric_ids = config.numeric_ids();
+    server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
+    server_config.file_selection.size_only = config.size_only();
+
+    flags::apply_common_server_flags(config, &mut server_config);
+    Ok(server_config)
+}
+
+/// Builds server configuration for generator role (push transfer).
+fn build_server_config_for_generator(
+    config: &ClientConfig,
+    local_paths: &[String],
+) -> Result<ServerConfig, ClientError> {
+    let flag_string = flags::build_server_flag_string(config);
+    let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
+
+    let mut server_config =
+        ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
+            .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
+
+    // Propagate long-form-only flags that aren't part of the compact flag string.
+    // upstream: numeric_ids and delete are --numeric-ids / --delete-* long-form args only.
+    server_config.flags.numeric_ids = config.numeric_ids();
+    server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
+    server_config.file_selection.size_only = config.size_only();
+
+    flags::apply_common_server_flags(config, &mut server_config);
+    Ok(server_config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_receiver_server_config() {
+        let config = ClientConfig::builder().recursive(true).times(true).build();
+
+        let result = build_server_config_for_receiver(&config, &["dest/".to_owned()]);
+        assert!(result.is_ok());
+
+        let server_config = result.unwrap();
+        assert_eq!(server_config.role, ServerRole::Receiver);
+        assert_eq!(server_config.args.len(), 1);
+        assert_eq!(server_config.args[0], "dest/");
+    }
+
+    #[test]
+    fn builds_generator_server_config() {
+        let config = ClientConfig::builder().recursive(true).times(true).build();
+
+        let result = build_server_config_for_generator(
+            &config,
+            &["file1.txt".to_owned(), "file2.txt".to_owned()],
+        );
+        assert!(result.is_ok());
+
+        let server_config = result.unwrap();
+        assert_eq!(server_config.role, ServerRole::Generator);
+        assert_eq!(server_config.args.len(), 2);
+        assert_eq!(server_config.args[0], "file1.txt");
+        assert_eq!(server_config.args[1], "file2.txt");
+    }
+
+    #[test]
+    fn format_stderr_context_empty_input() {
+        assert_eq!(format_stderr_context(&[]), "");
+    }
+
+    #[test]
+    fn format_stderr_context_whitespace_only() {
+        assert_eq!(format_stderr_context(b"  \n\n  "), "");
+    }
+
+    #[test]
+    fn format_stderr_context_single_line() {
+        let output = format_stderr_context(b"Permission denied (publickey).\n");
+        assert_eq!(output, "\nSSH stderr:\nPermission denied (publickey).");
+    }
+
+    #[test]
+    fn format_stderr_context_multi_line() {
+        let input = b"Warning: Permanently added 'host' to known hosts.\nrsync error: some error\n";
+        let output = format_stderr_context(input);
+        assert!(output.starts_with("\nSSH stderr:\n"));
+        assert!(output.contains("Warning: Permanently added"));
+        assert!(output.contains("rsync error: some error"));
+    }
+
+    #[test]
+    fn format_stderr_context_invalid_utf8() {
+        let input = b"error: \xff\xfe bad bytes\n";
+        let output = format_stderr_context(input);
+        assert!(output.starts_with("\nSSH stderr:\n"));
+        assert!(output.contains("error:"));
+    }
+
+    #[cfg(unix)]
+    mod child_exit_status_tests {
+        use super::*;
+        use crate::exit_code::ExitCode;
+
+        #[cfg(unix)]
+        fn exit_status_for_code(code: i32) -> std::process::ExitStatus {
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("exit {code}"))
+                .status()
+                .expect("failed to run sh")
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_success_to_ok() {
+            let status = exit_status_for_code(0);
+            assert_eq!(map_child_exit_status(status), ExitCode::Ok);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_exit_127_to_command_not_found() {
+            let status = exit_status_for_code(127);
+            assert_eq!(map_child_exit_status(status), ExitCode::CommandNotFound);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_exit_255_to_command_failed() {
+            let status = exit_status_for_code(255);
+            assert_eq!(map_child_exit_status(status), ExitCode::CommandFailed);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_rsync_exit_code_23_to_partial_transfer() {
+            let status = exit_status_for_code(23);
+            assert_eq!(map_child_exit_status(status), ExitCode::PartialTransfer);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_rsync_exit_code_24_to_vanished() {
+            let status = exit_status_for_code(24);
+            assert_eq!(map_child_exit_status(status), ExitCode::Vanished);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_unknown_exit_code_to_partial_transfer() {
+            let status = exit_status_for_code(42);
+            assert_eq!(map_child_exit_status(status), ExitCode::PartialTransfer);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_signal_killed_to_command_killed() {
+            let mut child = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("kill -9 $$")
+                .spawn()
+                .expect("spawn");
+            let status = child.wait().expect("wait");
+            assert_eq!(map_child_exit_status(status), ExitCode::CommandKilled);
+        }
+    }
+}

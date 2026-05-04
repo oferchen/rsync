@@ -1,0 +1,74 @@
+[package]
+name = "protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Protocol negotiation utilities for the Rust rsync implementation"
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+# Compression algorithm features (match compress crate features)
+default = ["zlib-ng"]
+lz4 = ["compress/lz4", "dep:lz4_flex"]
+zstd = ["compress/zstd", "dep:zstd"]
+# zlib-ng backend (C library with SIMD: SSE2, AVX2, NEON) - matches upstream rsync performance
+zlib-ng = ["flate2/zlib-ng", "compress/zlib-ng"]
+# Pure Rust fallback - no C compiler required, slower than zlib-ng
+zlib-rs = ["flate2/zlib-rs"]
+# Filename encoding conversion (iconv)
+iconv = ["encoding_rs"]
+# Async codec support using tokio-util
+async = ["bytes", "tokio", "tokio-util"]
+# Serialization support for protocol types
+serde = ["dep:serde"]
+# Structured tracing for I/O operations
+tracing = ["dep:tracing"]
+
+[dependencies]
+bytes = { version = "1.9", optional = true }
+compress = { path = "../compress" }
+encoding_rs = { version = "0.8", optional = true }
+# Default: miniz_oxide (pure Rust fallback). zlib-ng/zlib-rs override via features.
+flate2 = "1.0"
+logging = { path = "../logging" }
+md-5 = { version = "0.10", default-features = false, features = ["std"] }
+memchr = "2.7"
+rustc-hash = { workspace = true }
+serde = { workspace = true, optional = true }
+thiserror = "2.0"
+lz4_flex = { version = "0.13", optional = true, default-features = false, features = ["safe-encode", "safe-decode"] }
+zstd = { version = "0.13", optional = true }
+tokio = { version = "1.43", features = ["io-util"], optional = true }
+tokio-util = { version = "0.7", features = ["codec"], optional = true }
+tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+serde_json = { workspace = true }
+tempfile = "3.15"
+tokio = { version = "1.43", features = ["macros", "rt"] }
+
+[[bench]]
+name = "delta_wire_benchmark"
+harness = false
+
+[[bench]]
+name = "flist_benchmark"
+harness = false
+
+[[bench]]
+name = "file_entry_memory"
+harness = false
+
+[[bench]]
+name = "wire_protocol_bench"
+harness = false

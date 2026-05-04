@@ -1,0 +1,832 @@
+#![deny(unsafe_code)]
+
+use super::operands::ensure_transfer_operands_present;
+use super::preflight::{
+    maybe_print_help_or_version, resolve_bind_address, resolve_desired_protocol, resolve_timeout,
+    validate_feature_support, validate_stdin_sources_conflict,
+};
+use crate::frontend::execution::drive::messages::fail_with_message;
+use crate::frontend::execution::drive::metadata::MetadataSettings;
+use crate::frontend::execution::drive::module_listing::{
+    ModuleListingInputs, maybe_handle_module_listing,
+};
+use crate::frontend::execution::drive::{config, filters, metadata, options, summary, validation};
+use crate::frontend::progress::StderrMode;
+use crate::frontend::{
+    arguments::{ParsedArgs, StopRequest},
+    execution::{
+        chown::ParsedChown, extract_operands, load_file_list_operands, operand_is_remote,
+        parse_chown_argument, resolve_file_list_entries, resolve_files_from_source,
+        resolve_iconv_setting,
+    },
+};
+use core::client::{BatchConfig, BatchMode, HumanReadableMode};
+use core::{message::Role, rsync_error};
+use logging::VerbosityConfig;
+use logging_sink::MessageSink;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Write};
+use std::path::PathBuf;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
+use crate::frontend::execution::{parse_stop_after_argument, parse_stop_at_argument};
+
+/// Main entry point for CLI-driven transfers: parses all arguments, builds config, and runs.
+pub(crate) fn execute<Out, Err>(
+    parsed: ParsedArgs,
+    stdout: &mut Out,
+    stderr: &mut MessageSink<Err>,
+) -> i32
+where
+    Out: Write,
+    Err: Write,
+{
+    let ParsedArgs {
+        program_name,
+        show_help,
+        show_version,
+        human_readable,
+        dry_run,
+        list_only,
+        remote_shell: _,
+        connect_program,
+        daemon_port,
+        remote_options,
+        rsync_path: _,
+        protect_args,
+        old_args: _,
+        address_mode,
+        bind_address: bind_address_raw,
+        sockopts,
+        blocking_io,
+        archive,
+        recursive: _recursive,
+        recursive_override,
+        inc_recursive,
+        dirs,
+        delete_mode,
+        delete_excluded,
+        delete_missing_args,
+        ignore_errors,
+        backup,
+        backup_dir,
+        backup_suffix,
+        checksum,
+        checksum_choice,
+        checksum_choice_arg: _,
+        checksum_seed,
+        size_only,
+        ignore_times,
+        ignore_existing,
+        existing,
+        ignore_missing_args,
+        update,
+        remainder: raw_remainder,
+        bwlimit,
+        max_delete,
+        min_size,
+        max_size,
+        block_size,
+        modify_window,
+        compress: compress_flag,
+        no_compress,
+        compress_level,
+        compress_choice,
+        old_compress: _,
+        new_compress: _,
+        skip_compress,
+        open_noatime,
+        no_open_noatime,
+        iconv,
+        owner,
+        group,
+        chown,
+        copy_as,
+        usermap,
+        groupmap,
+        chmod,
+        perms,
+        executability,
+        super_mode,
+        fake_super,
+        times,
+        omit_dir_times,
+        omit_link_times,
+        atimes,
+        crtimes,
+        acls,
+        excludes,
+        includes,
+        compare_destinations,
+        copy_destinations,
+        link_destinations,
+        exclude_from,
+        include_from,
+        filters,
+        cvs_exclude,
+        apple_double_skip,
+        rsync_filter_shortcuts: _,
+        files_from,
+        from0,
+        info,
+        debug,
+        numeric_ids,
+        hard_links,
+        links,
+        sparse,
+        fuzzy,
+        copy_links,
+        copy_dirlinks,
+        copy_unsafe_links,
+        keep_dirlinks,
+        safe_links,
+        munge_links,
+        trust_sender,
+        server_mode: _,
+        sender_mode: _,
+        detach: _,
+        daemon_mode: _,
+        config: _,
+        write_devices,
+        devices,
+        copy_devices,
+        specials,
+        force,
+        qsort,
+        relative,
+        one_file_system,
+        implied_dirs,
+        mkpath,
+        prune_empty_dirs,
+        verbosity,
+        progress: initial_progress,
+        name_level: initial_name_level,
+        name_overridden: initial_name_overridden,
+        stats,
+        eight_bit_output: _,
+        partial,
+        preallocate,
+        fsync: fsync_option,
+        io_uring_policy,
+        delay_updates,
+        partial_dir,
+        temp_dir,
+        log_file,
+        log_file_format,
+        write_batch,
+        only_write_batch,
+        read_batch,
+        early_input,
+        link_dests,
+        remove_source_files,
+        inplace,
+        append,
+        append_verify,
+        msgs_to_stderr: msgs_to_stderr_option,
+        stderr_mode,
+        outbuf: _,
+        max_alloc,
+        itemize_changes,
+        whole_file,
+        xattrs,
+        no_motd,
+        password_file,
+        protocol,
+        timeout,
+        contimeout,
+        stop_after,
+        stop_at,
+        out_format,
+        dparam,
+        no_iconv,
+        prefer_aes_gcm,
+        ssh_cipher: _ssh_cipher,
+        ssh_connect_timeout: _ssh_connect_timeout,
+        ssh_keepalive: _ssh_keepalive,
+        ssh_identity: _ssh_identity,
+        ssh_no_agent: _ssh_no_agent,
+        ssh_strict_host_key_checking: _ssh_strict_host_key_checking,
+        ssh_ipv6: _ssh_ipv6,
+        ssh_port: _ssh_port,
+        jump_host,
+    } = parsed;
+
+    let password_file = password_file.map(PathBuf::from);
+    let human_readable_setting = human_readable;
+    let human_readable_mode = human_readable_setting.unwrap_or(HumanReadableMode::Disabled);
+    let human_readable_enabled = human_readable_mode.is_enabled();
+    let stderr_mode_setting = stderr_mode
+        .as_ref()
+        .and_then(|s| s.to_str())
+        .and_then(StderrMode::from_str)
+        .unwrap_or_default();
+
+    let msgs_to_stderr_enabled = match stderr_mode_setting {
+        StderrMode::All => true,
+        StderrMode::Errors | StderrMode::Client => msgs_to_stderr_option.unwrap_or(false),
+    };
+
+    let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
+    logging::init(verbosity_config);
+
+    if let Err(code) = validate_stdin_sources_conflict(&password_file, &files_from, stderr) {
+        return code;
+    }
+
+    let desired_protocol = match resolve_desired_protocol(protocol.as_ref(), stderr) {
+        Ok(protocol) => protocol,
+        Err(code) => return code,
+    };
+
+    let timeout_setting = match resolve_timeout(timeout.as_ref(), stderr) {
+        Ok(setting) => setting,
+        Err(code) => return code,
+    };
+
+    let connect_timeout_setting = match resolve_timeout(contimeout.as_ref(), stderr) {
+        Ok(setting) => setting,
+        Err(code) => return code,
+    };
+
+    let stop_request = if let Some(value) = stop_after.as_ref() {
+        match parse_stop_after_argument(value.as_os_str()) {
+            Ok(deadline) => Some(StopRequest::new_stop_after(value.clone(), deadline)),
+            Err(message) => return fail_with_message(message, stderr),
+        }
+    } else if let Some(value) = stop_at.as_ref() {
+        match parse_stop_at_argument(value.as_os_str()) {
+            Ok(deadline) => Some(StopRequest::new_stop_at(value.clone(), deadline)),
+            Err(message) => return fail_with_message(message, stderr),
+        }
+    } else {
+        None
+    };
+
+    let iconv_setting = match resolve_iconv_setting(iconv.as_deref(), no_iconv) {
+        Ok(setting) => setting,
+        Err(message) => return fail_with_message(message, stderr),
+    };
+
+    if let Some(code) = maybe_print_help_or_version(show_help, show_version, program_name, stdout) {
+        return code;
+    }
+
+    let bind_address = match resolve_bind_address(bind_address_raw.as_ref(), stderr) {
+        Ok(address) => address,
+        Err(code) => return code,
+    };
+
+    let remainder = match extract_operands(raw_remainder) {
+        Ok(operands) => operands,
+        Err(unsupported) => return fail_with_message(unsupported.to_message(), stderr),
+    };
+
+    let settings_inputs = options::SettingsInputs {
+        info: &info,
+        debug: &debug,
+        itemize_changes,
+        out_format: out_format.as_ref(),
+        initial_progress,
+        initial_stats: stats,
+        initial_name_level,
+        initial_name_overridden,
+        bwlimit: &bwlimit,
+        max_delete: &max_delete,
+        min_size: &min_size,
+        max_size: &max_size,
+        block_size: &block_size,
+        max_alloc: &max_alloc,
+        modify_window: &modify_window,
+        compress_flag,
+        no_compress,
+        compress_level: &compress_level,
+        compress_choice: &compress_choice,
+        skip_compress: &skip_compress,
+        log_file: log_file.as_ref(),
+        log_file_format: log_file_format.as_ref(),
+    };
+
+    let options::DerivedSettings {
+        out_format_template,
+        progress_mode,
+        stats,
+        name_level,
+        name_overridden,
+        debug_flags_list,
+        bandwidth_limit,
+        max_delete_limit,
+        min_size_limit,
+        max_size_limit,
+        block_size_override,
+        max_alloc_limit,
+        modify_window_setting,
+        compress,
+        compression_level_override,
+        skip_compress_list,
+        compression_setting,
+        compression_algorithm,
+        log_file_path,
+        log_file_template,
+    } = match options::derive_settings(stdout, stderr, settings_inputs) {
+        options::SettingsOutcome::Proceed(settings) => *settings,
+        options::SettingsOutcome::Exit(code) => return code,
+    };
+
+    let log_file_path_buf = log_file_path.as_ref().map(PathBuf::from);
+
+    let numeric_ids_option = numeric_ids;
+    let whole_file_option = whole_file;
+    let open_noatime_setting = if open_noatime {
+        Some(true)
+    } else if no_open_noatime {
+        Some(false)
+    } else {
+        None
+    };
+    let open_noatime_enabled = open_noatime_setting.unwrap_or(false);
+
+    #[allow(unused_variables)] // REASON: used on unix or windows with feature "acl"
+    let preserve_acls = acls.unwrap_or(false);
+
+    if let Err(code) = validate_feature_support(preserve_acls, xattrs, stderr) {
+        return code;
+    }
+
+    let parsed_chown = match chown.as_ref() {
+        Some(value) => match parse_chown_argument(value.as_os_str()) {
+            Ok(parsed) => Some(parsed),
+            Err(message) => return fail_with_message(message, stderr),
+        },
+        None => None,
+    };
+
+    let owner_override_value = parsed_chown
+        .as_ref()
+        .and_then(|value: &ParsedChown| value.owner());
+    let group_override_value = parsed_chown
+        .as_ref()
+        .and_then(|value: &ParsedChown| value.group());
+
+    let mut file_list_operands = match load_file_list_operands(&files_from, from0) {
+        Ok(operands) => operands,
+        Err(message) => return fail_with_message(message, stderr),
+    };
+
+    let files_from_active = !files_from.is_empty();
+
+    resolve_file_list_entries(
+        &mut file_list_operands,
+        &remainder,
+        relative.unwrap_or(false),
+        files_from_active,
+    );
+
+    if let Some(exit_code) = maybe_handle_module_listing(
+        stdout,
+        stderr,
+        ModuleListingInputs {
+            file_list_operands: &file_list_operands,
+            remainder: &remainder,
+            daemon_port,
+            desired_protocol,
+            password_file: password_file.as_deref(),
+            no_motd,
+            address_mode,
+            bind_address: bind_address.as_ref(),
+            connect_program: connect_program.as_ref(),
+            timeout_setting,
+            connect_timeout_setting,
+            sockopts: sockopts.as_ref(),
+            blocking_io,
+        },
+    ) {
+        return exit_code;
+    }
+
+    let implied_dirs_option = implied_dirs;
+
+    // upstream: options.c:2169-2177 - --files-from disables default recursion,
+    // enables xfer_dirs, and implies --relative.
+    let recursive_effective = if files_from_active {
+        false // upstream: options.c:2174 - if (recurse == 1) recurse = 0
+    } else {
+        !matches!(recursive_override, Some(false))
+    };
+
+    // upstream: options.c:2176-2177 - xfer_dirs = 1 when files_from is active
+    let dirs = if files_from_active { Some(true) } else { dirs };
+
+    let implied_dirs = implied_dirs_option.unwrap_or(true);
+
+    // upstream: compat.c:710-748 - local transfers negotiate compat_flags
+    // between sender and receiver. For protocol 32 with full capability
+    // string (`.LsfxCIvu`), the flags include SAFE_FILE_LIST,
+    // AVOID_XATTR_OPTIMIZATION, CHECKSUM_SEED_FIX, INPLACE_PARTIAL_DIR,
+    // ID0_NAMES, and VARINT_FLIST_FLAGS. These flags must be written to
+    // the batch header so upstream rsync can decode the file list and
+    // delta stream.
+    //
+    // upstream: batch.c - batch files record the compat_flags used during the
+    // transfer. INC_RECURSE must be set: without it, upstream's reader calls
+    // recv_id_list() after the flist end marker, consuming delta bytes as ID
+    // list data and causing "File-list index N not in range" errors. With
+    // INC_RECURSE, recv_id_list() is skipped (names are inline in flist).
+    // Our flat flist (all entries in the initial segment) is compatible with
+    // INC_RECURSE - the reader simply finds no sub-list segments.
+    // upstream: compat.c:712-738 - compat_flags written to batch header.
+    // CF_INC_RECURSE is deliberately omitted because upstream's --read-batch
+    // calls set_allow_inc_recurse() which may disable inc_recurse, causing
+    // "Incompatible options specified for inc-recursive batch file" (compat.c:773).
+    // Upstream's own -a --write-batch produces unreadable batches for this reason.
+    // Match upstream --no-inc-recursive --write-batch behavior.
+    let local_batch_compat_flags = {
+        use protocol::CompatibilityFlags;
+        // ID0_NAMES is omitted because without INC_RECURSE, uid/gid name
+        // mappings go through post-flist ID lists (uidlist.c:send_id_lists).
+        // Empty ID lists with simple varint30(0) terminators are written;
+        // keeping ID0_NAMES off avoids the need to look up id=0 names.
+        let flags = CompatibilityFlags::SAFE_FILE_LIST
+            | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
+            | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::INPLACE_PARTIAL_DIR
+            | CompatibilityFlags::VARINT_FLIST_FLAGS;
+        #[cfg(unix)]
+        let flags = flags | CompatibilityFlags::SYMLINK_TIMES;
+        // upstream: compat.c:716-718 - CF_SYMLINK_ICONV is gated on
+        // `#ifdef ICONV_OPTION`. Mirror that with the `iconv` cargo feature
+        // so batch headers from iconv-less builds do not advertise a
+        // capability the writer cannot honour.
+        #[cfg(all(unix, feature = "iconv"))]
+        let flags = flags | CompatibilityFlags::SYMLINK_ICONV;
+        flags.bits() as i32
+    };
+
+    // upstream: compat.c:750 - checksum_seed = (int32)time(NULL) ^ (getpid() << 6)
+    // Batch files record the seed so the receiver can verify checksums during
+    // replay. Without a proper seed, upstream's --read-batch rejects the file.
+    let batch_checksum_seed = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i32;
+        let pid = std::process::id() as i32;
+        timestamp ^ (pid << 6)
+    };
+
+    let batch_config = if let Some(ref path) = write_batch {
+        Some(
+            BatchConfig::new(BatchMode::Write, path.to_string_lossy().into_owned(), 32)
+                .with_compat_flags(local_batch_compat_flags)
+                .with_checksum_seed(batch_checksum_seed),
+        )
+    } else if let Some(ref path) = only_write_batch {
+        Some(
+            BatchConfig::new(
+                BatchMode::OnlyWrite,
+                path.to_string_lossy().into_owned(),
+                32,
+            )
+            .with_compat_flags(local_batch_compat_flags)
+            .with_checksum_seed(batch_checksum_seed),
+        )
+    } else {
+        read_batch.as_ref().map(|path| {
+            BatchConfig::new(
+                BatchMode::Read,
+                path.to_string_lossy().into_owned(),
+                32, // Default protocol version
+            )
+        })
+    };
+
+    let numeric_ids = numeric_ids_option.unwrap_or(false);
+
+    let mut log_file_for_local = None;
+    if let (Some(path), Some(template)) = (log_file_path_buf.as_ref(), log_file_template.as_ref()) {
+        match open_log_file(path) {
+            Ok(file) => {
+                log_file_for_local = Some(summary::LogFileConfig {
+                    file,
+                    format: template.clone(),
+                });
+            }
+            Err(error) => {
+                let message =
+                    rsync_error!(1, "failed to open log file {}: {error}", path.display())
+                        .with_role(Role::Client);
+                let _ = stderr.write(&message);
+            }
+        }
+    }
+
+    // Build transfer operands early so we can check if this is a daemon transfer.
+    // upstream: main.c:780-790 - source dir is chdir target, not a transfer source
+    let has_remote_operand = remainder.iter().any(|op| operand_is_remote(op));
+    let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
+    if files_from_active && !file_list_operands.is_empty() {
+        if has_remote_operand {
+            // Daemon transfer with --files-from: pass the source directory and
+            // destination as operands. The generator reads the file list from
+            // files_from_path and uses the source dir as base_dir for resolving
+            // relative filenames. Individual file entries must NOT be operands -
+            // they corrupt the generator's base_dir derivation (paths.first()).
+            // upstream: main.c:1292-1339 - client_run() uses argv[0] as chdir
+            // target, filesfrom_fd is a separate channel.
+            transfer_operands.extend(remainder);
+        } else {
+            // Local copy with --files-from: file entries are the source operands.
+            // The source dir served only as the base for resolving entries.
+            transfer_operands.append(&mut file_list_operands);
+            if let Some(dest) = remainder.last() {
+                transfer_operands.push(dest.clone());
+            }
+        }
+    } else {
+        // No --files-from, or --files-from with empty list: use the
+        // original positional args (source + dest). An empty file list
+        // with --files-from still needs source+dest operands so the
+        // transfer engine can validate them and succeed with zero work.
+        transfer_operands.append(&mut file_list_operands);
+        transfer_operands.extend(remainder);
+    }
+
+    let is_daemon_transfer = transfer_operands.iter().any(|op| operand_is_remote(op));
+    if !is_daemon_transfer {
+        if let Some(exit_code) = validation::validate_local_only_options(
+            desired_protocol,
+            password_file.as_ref(),
+            connect_program.as_ref(),
+            parsed.rsync_path.as_ref(),
+            &remote_options,
+            stderr,
+        ) {
+            return exit_code;
+        }
+    }
+
+    if let Err(code) =
+        ensure_transfer_operands_present(&transfer_operands, program_name, stdout, stderr)
+    {
+        return code;
+    }
+
+    // upstream: options.c:2187-2188 - relative_paths defaults to 1 when files_from
+    let effective_relative = if files_from_active && relative.is_none() {
+        Some(true)
+    } else {
+        relative
+    };
+
+    let metadata = match metadata::compute_metadata_settings(metadata::MetadataInputs {
+        archive,
+        parsed_chown: parsed_chown.as_ref(),
+        owner,
+        group,
+        executability,
+        usermap: usermap.as_ref(),
+        groupmap: groupmap.as_ref(),
+        perms,
+        super_mode,
+        times,
+        atimes,
+        crtimes,
+        omit_dir_times,
+        omit_link_times,
+        devices,
+        specials,
+        hard_links,
+        links,
+        sparse,
+        copy_links,
+        copy_unsafe_links,
+        keep_dirlinks,
+        relative: effective_relative,
+        one_file_system,
+        chmod: &chmod,
+    }) {
+        Ok(settings) => settings,
+        Err(message) => return fail_with_message(message, stderr),
+    };
+
+    let MetadataSettings {
+        preserve_owner,
+        preserve_group,
+        preserve_executability,
+        preserve_permissions,
+        preserve_times,
+        preserve_atimes,
+        preserve_crtimes,
+        omit_dir_times: omit_dir_times_setting,
+        omit_link_times: omit_link_times_setting,
+        preserve_devices,
+        preserve_specials,
+        preserve_hard_links,
+        preserve_symlinks,
+        sparse,
+        copy_links,
+        copy_unsafe_links,
+        keep_dirlinks: keep_dirlinks_flag,
+        relative,
+        one_file_system,
+        chmod_modifiers,
+        user_mapping,
+        group_mapping,
+    } = metadata;
+
+    let prune_empty_dirs_flag = prune_empty_dirs.unwrap_or(false);
+    let fsync_flag = fsync_option.unwrap_or(false);
+    let inplace_enabled = inplace.unwrap_or(false);
+    let append_enabled = append.unwrap_or(false);
+    let whole_file_enabled = whole_file_option;
+
+    let checksum_for_config = checksum.unwrap_or(false);
+    let fuzzy_level_value = fuzzy.unwrap_or(0);
+
+    let config_inputs = config::ConfigInputs {
+        transfer_operands,
+        address_mode,
+        connect_program: connect_program.clone(),
+        bind_address,
+        sockopts: sockopts.clone(),
+        blocking_io,
+        dry_run,
+        list_only,
+        recursive: recursive_effective,
+        dirs,
+        delete_mode,
+        delete_excluded,
+        delete_missing_args,
+        ignore_errors: ignore_errors.unwrap_or(false),
+        max_delete_limit,
+        min_size_limit,
+        max_size_limit,
+        block_size_override,
+        max_alloc: max_alloc_limit,
+        backup,
+        backup_dir: backup_dir.map(PathBuf::from),
+        backup_suffix,
+        bandwidth_limit,
+        compression_setting,
+        compress,
+        compression_level_override,
+        compression_algorithm,
+        open_noatime: open_noatime_enabled,
+        owner: preserve_owner,
+        owner_override: owner_override_value,
+        group: preserve_group,
+        group_override: group_override_value,
+        copy_as,
+        chmod_modifiers,
+        user_mapping,
+        group_mapping,
+        executability: preserve_executability,
+        permissions: preserve_permissions,
+        fake_super: fake_super.unwrap_or(false),
+        times: preserve_times,
+        atimes: preserve_atimes,
+        crtimes: preserve_crtimes,
+        modify_window_setting,
+        omit_dir_times: omit_dir_times_setting,
+        omit_link_times: omit_link_times_setting,
+        devices: preserve_devices,
+        copy_devices,
+        write_devices: write_devices.unwrap_or(false),
+        specials: preserve_specials,
+        force_replacements: force.unwrap_or(false),
+        checksum: checksum_for_config,
+        checksum_seed,
+        size_only,
+        ignore_times,
+        ignore_existing,
+        existing_only: existing,
+        ignore_missing_args,
+        update,
+        numeric_ids,
+        hard_links: preserve_hard_links,
+        sparse,
+        copy_links,
+        copy_dirlinks,
+        copy_unsafe_links,
+        keep_dirlinks: keep_dirlinks_flag,
+        safe_links,
+        munge_links: munge_links.unwrap_or(false),
+        trust_sender,
+        fuzzy_level: fuzzy_level_value,
+        links: preserve_symlinks,
+        relative_paths: relative,
+        one_file_system,
+        implied_dirs,
+        human_readable: human_readable_enabled,
+        mkpath,
+        prune_empty_dirs: prune_empty_dirs_flag,
+        qsort,
+        inc_recursive_send: inc_recursive,
+        verbosity,
+        progress_mode,
+        stats,
+        debug_flags_list,
+        partial,
+        preallocate,
+        fsync: fsync_flag,
+        io_uring_policy,
+        partial_dir,
+        temp_dir,
+        delay_updates,
+        link_dests,
+        remove_source_files,
+        inplace: inplace_enabled,
+        append: append_enabled,
+        append_verify,
+        whole_file: whole_file_enabled, // Pass Option<bool> through for tri-state semantics
+        timeout: timeout_setting,
+        connect_timeout: connect_timeout_setting,
+        stop_deadline: stop_request.as_ref().map(StopRequest::deadline),
+        checksum_choice,
+        compare_destinations,
+        copy_destinations,
+        link_destinations,
+        #[cfg(all(any(unix, windows), feature = "acl"))]
+        preserve_acls,
+        #[cfg(all(unix, feature = "xattr"))]
+        xattrs: xattrs.unwrap_or(false),
+        skip_compress_list,
+        itemize_changes,
+        out_format_template: out_format_template.clone(),
+        log_file_template,
+        name_level,
+        iconv: iconv_setting,
+        remote_shell: parsed.remote_shell.clone(),
+        rsync_path: parsed.rsync_path.clone(),
+        early_input: early_input.map(PathBuf::from),
+        prefer_aes_gcm,
+        protect_args,
+        jump_hosts: jump_host,
+        batch_config,
+        no_motd,
+        daemon_params: dparam
+            .into_iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect(),
+        files_from: resolve_files_from_source(&files_from),
+        from0,
+    };
+
+    let builder = config::build_base_config(config_inputs);
+
+    let filter_inputs = filters::FilterInputs {
+        exclude_from,
+        include_from,
+        excludes,
+        includes,
+        filters,
+        cvs_exclude,
+        apple_double_skip,
+    };
+
+    let builder = match filters::apply_filters(builder, filter_inputs, stderr) {
+        Ok(builder) => builder,
+        Err(code) => return code,
+    };
+
+    if let Err(conflict) = builder.validate() {
+        let message = rsync_error!(1, "{}", conflict).with_role(Role::Client);
+        return fail_with_message(message, stderr);
+    }
+
+    let config = builder.build();
+
+    summary::execute_transfer(
+        stdout,
+        stderr,
+        summary::TransferExecutionInputs {
+            config,
+            msgs_to_stderr: msgs_to_stderr_enabled,
+            stderr_mode: stderr_mode_setting,
+            progress_mode,
+            human_readable_mode,
+            itemize_changes,
+            stats,
+            verbosity,
+            list_only,
+            dry_run,
+            out_format_template: out_format_template.as_ref(),
+            name_level,
+            name_overridden,
+            log_file: log_file_for_local,
+        },
+    )
+}
+
+/// Opens a log file for appending, creating it if it does not exist.
+fn open_log_file(path: &PathBuf) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o666);
+    }
+    options.open(path)
+}

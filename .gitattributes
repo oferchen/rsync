@@ -1,0 +1,7 @@
+# Git attributes for rsync project
+
+# Ensure shell scripts have LF line endings on all platforms
+*.sh text eol=lf
+
+# Ensure Makefiles have LF line endings
+Makefile text eol=lf

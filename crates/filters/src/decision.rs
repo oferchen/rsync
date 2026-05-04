@@ -1,0 +1,303 @@
+use std::path::Path;
+
+use logging::debug_log;
+
+use crate::{FilterAction, compiled::CompiledRule};
+
+/// Internal rule storage shared by [`FilterSet`](crate::FilterSet) instances.
+///
+/// Maintains two independent rule chains following the Chain of Responsibility
+/// pattern. Each chain is evaluated with first-match-wins semantics, mirroring
+/// upstream rsync's `check_filter()` in `exclude.c`.
+#[derive(Debug, Default)]
+pub(crate) struct FilterSetInner {
+    pub(crate) include_exclude: Vec<CompiledRule>,
+    pub(crate) protect_risk: Vec<CompiledRule>,
+}
+
+impl FilterSetInner {
+    /// Evaluates a path against both the include/exclude and protect/risk
+    /// chains, returning a composite decision.
+    ///
+    /// The evaluation context determines which side's rules are consulted:
+    /// - `Transfer` checks sender-side include/exclude rules.
+    /// - `Deletion` checks receiver-side rules with perishable rules excluded.
+    ///
+    // upstream: exclude.c:check_filter()
+    pub(crate) fn decision(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        context: DecisionContext,
+    ) -> FilterDecision {
+        let mut decision = FilterDecision::default();
+
+        let transfer_rule = match context {
+            DecisionContext::Transfer => first_matching_rule(
+                &self.include_exclude,
+                path,
+                is_dir,
+                |rule| rule.applies_to_sender,
+                true,
+            ),
+            DecisionContext::Deletion => first_matching_rule(
+                &self.include_exclude,
+                path,
+                is_dir,
+                |rule| rule.applies_to_receiver,
+                false,
+            ),
+        };
+
+        if matches!(context, DecisionContext::Deletion)
+            && let Some(rule) = first_matching_rule(
+                &self.include_exclude,
+                path,
+                is_dir,
+                |rule| rule.applies_to_receiver,
+                true,
+            )
+        {
+            decision.excluded_for_delete_excluded = matches!(rule.action, FilterAction::Exclude);
+        }
+
+        if let Some(rule) = transfer_rule {
+            let allowed = matches!(rule.action, FilterAction::Include);
+            decision.transfer_allowed = allowed;
+
+            if allowed {
+                debug_log!(Filter, 1, "including {:?} (matched rule)", path);
+            } else {
+                debug_log!(Filter, 1, "excluding {:?} (matched rule)", path);
+            }
+        }
+
+        let protection_rule = match context {
+            DecisionContext::Transfer => first_matching_rule(
+                &self.protect_risk,
+                path,
+                is_dir,
+                |rule| rule.applies_to_sender,
+                true,
+            ),
+            DecisionContext::Deletion => first_matching_rule(
+                &self.protect_risk,
+                path,
+                is_dir,
+                |rule| rule.applies_to_receiver,
+                false,
+            ),
+        };
+
+        if let Some(rule) = protection_rule {
+            match rule.action {
+                FilterAction::Protect => decision.protect(),
+                FilterAction::Risk => decision.unprotect(),
+                FilterAction::Include
+                | FilterAction::Exclude
+                | FilterAction::Clear
+                | FilterAction::Merge
+                | FilterAction::DirMerge => {}
+            }
+        }
+
+        decision
+    }
+
+    /// Checks whether a directory is excluded by a non-directory-specific rule.
+    ///
+    /// When `--prune-empty-dirs` is active, directories excluded by generic
+    /// patterns (e.g., `exclude("*")`) should still be descended into so that
+    /// file-level include rules can be evaluated. Only directory-specific
+    /// exclude patterns (trailing `/`) should prevent traversal outright.
+    ///
+    /// Returns `true` when the first matching sender-side include/exclude rule
+    /// is an exclude rule whose pattern is NOT directory-only.
+    pub(crate) fn excluded_dir_by_non_dir_rule(&self, path: &Path) -> bool {
+        if let Some(rule) = first_matching_rule(
+            &self.include_exclude,
+            path,
+            true,
+            |rule| rule.applies_to_sender,
+            true,
+        ) {
+            matches!(rule.action, FilterAction::Exclude) && !rule.is_directory_only()
+        } else {
+            false
+        }
+    }
+}
+
+/// Finds the first matching rule in the list (first-match-wins semantics).
+///
+/// This matches upstream rsync's `check_filter()` in exclude.c which iterates
+/// from the head of the filter list and returns on the first match.
+///
+/// # Arguments
+///
+/// * `rules` - Compiled rules to search, evaluated in order
+/// * `path` - File path to match against rule patterns
+/// * `is_dir` - Whether the path is a directory (affects trailing-slash patterns)
+/// * `applies` - Predicate filtering which rules are considered (e.g., sender-only rules)
+/// * `include_perishable` - Whether to consider perishable rules (marked with `p` modifier)
+///
+/// # Returns
+///
+/// The first rule where all conditions are met:
+/// 1. `include_perishable` is true OR the rule is not perishable
+/// 2. `applies(rule)` returns true
+/// 3. The rule's pattern matches `path` considering `is_dir`
+fn first_matching_rule<'a, F>(
+    rules: &'a [CompiledRule],
+    path: &Path,
+    is_dir: bool,
+    mut applies: F,
+    include_perishable: bool,
+) -> Option<&'a CompiledRule>
+where
+    F: FnMut(&CompiledRule) -> bool,
+{
+    rules.iter().find(|rule| {
+        (include_perishable || !rule.perishable) && applies(rule) && rule.matches(path, is_dir)
+    })
+}
+
+/// Whether a filter evaluation is for the transfer or deletion phase.
+///
+/// Transfer checks use sender-side rules and include perishable rules.
+/// Deletion checks use receiver-side rules and skip perishable rules,
+/// matching upstream rsync's `--delete` semantics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DecisionContext {
+    Transfer,
+    Deletion,
+}
+
+/// Outcome of evaluating a path against the compiled filter rules.
+///
+/// Captures both the transfer decision (include or exclude) and the deletion
+/// protection state. The default allows both transfer and deletion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FilterDecision {
+    transfer_allowed: bool,
+    protected: bool,
+    excluded_for_delete_excluded: bool,
+}
+
+impl FilterDecision {
+    /// Returns `true` if the path should be included in the transfer.
+    pub(crate) const fn allows_transfer(self) -> bool {
+        self.transfer_allowed
+    }
+
+    /// Returns `true` if the path may be deleted on the receiver.
+    ///
+    /// Deletion requires both that the path is included (not excluded by
+    /// receiver-side rules) and that no protect rule matches.
+    pub(crate) const fn allows_deletion(self) -> bool {
+        self.transfer_allowed && !self.protected
+    }
+
+    /// Returns `true` if the path may be removed during `--delete-excluded`.
+    ///
+    /// Unlike `allows_deletion`, this checks whether the path is excluded
+    /// rather than included, supporting the `--delete-excluded` flag.
+    pub(crate) const fn allows_deletion_when_excluded_removed(self) -> bool {
+        self.excluded_for_delete_excluded && !self.protected
+    }
+
+    /// Marks this path as protected from deletion.
+    pub(crate) const fn protect(&mut self) {
+        self.protected = true;
+    }
+
+    /// Removes deletion protection from this path.
+    pub(crate) const fn unprotect(&mut self) {
+        self.protected = false;
+    }
+}
+
+impl Default for FilterDecision {
+    fn default() -> Self {
+        Self {
+            transfer_allowed: true,
+            protected: false,
+            excluded_for_delete_excluded: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_decision_default() {
+        let decision = FilterDecision::default();
+        assert!(decision.allows_transfer());
+        assert!(decision.allows_deletion());
+        assert!(!decision.allows_deletion_when_excluded_removed());
+    }
+
+    #[test]
+    fn filter_decision_protect() {
+        let mut decision = FilterDecision::default();
+        decision.protect();
+        assert!(decision.allows_transfer());
+        assert!(!decision.allows_deletion());
+    }
+
+    #[test]
+    fn filter_decision_unprotect() {
+        let mut decision = FilterDecision::default();
+        decision.protect();
+        decision.unprotect();
+        assert!(decision.allows_transfer());
+        assert!(decision.allows_deletion());
+    }
+
+    #[test]
+    fn filter_decision_transfer_not_allowed() {
+        let decision = FilterDecision {
+            transfer_allowed: false,
+            protected: false,
+            excluded_for_delete_excluded: false,
+        };
+        assert!(!decision.allows_transfer());
+        assert!(!decision.allows_deletion());
+    }
+
+    #[test]
+    fn filter_decision_excluded_for_delete_excluded() {
+        let decision = FilterDecision {
+            transfer_allowed: false,
+            protected: false,
+            excluded_for_delete_excluded: true,
+        };
+        assert!(decision.allows_deletion_when_excluded_removed());
+    }
+
+    #[test]
+    fn filter_decision_protected_blocks_excluded_removal() {
+        let decision = FilterDecision {
+            transfer_allowed: false,
+            protected: true,
+            excluded_for_delete_excluded: true,
+        };
+        assert!(!decision.allows_deletion_when_excluded_removed());
+    }
+
+    #[test]
+    fn decision_context_eq() {
+        assert_eq!(DecisionContext::Transfer, DecisionContext::Transfer);
+        assert_eq!(DecisionContext::Deletion, DecisionContext::Deletion);
+        assert_ne!(DecisionContext::Transfer, DecisionContext::Deletion);
+    }
+
+    #[test]
+    fn filter_set_inner_default_is_empty() {
+        let inner = FilterSetInner::default();
+        assert!(inner.include_exclude.is_empty());
+        assert!(inner.protect_risk.is_empty());
+    }
+}

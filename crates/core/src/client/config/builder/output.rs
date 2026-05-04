@@ -1,0 +1,70 @@
+use super::*;
+
+impl ClientConfigBuilder {
+    /// Sets the verbosity level requested by the caller.
+    #[must_use]
+    #[doc(alias = "--verbose")]
+    #[doc(alias = "-v")]
+    pub const fn verbosity(mut self, verbosity: u8) -> Self {
+        self.verbosity = verbosity;
+        self
+    }
+
+    /// Enables or disables progress reporting for the transfer.
+    #[must_use]
+    #[doc(alias = "--progress")]
+    #[doc(alias = "--no-progress")]
+    pub const fn progress(mut self, progress: bool) -> Self {
+        self.progress = progress;
+        self
+    }
+
+    /// Enables or disables statistics reporting for the transfer.
+    #[must_use]
+    #[doc(alias = "--stats")]
+    pub const fn stats(mut self, stats: bool) -> Self {
+        self.stats = stats;
+        self
+    }
+
+    /// Enables or disables human-readable output formatting.
+    #[must_use]
+    #[doc(alias = "--human-readable")]
+    pub const fn human_readable(mut self, enabled: bool) -> Self {
+        self.human_readable = enabled;
+        self
+    }
+
+    /// Enables or disables itemize-changes output.
+    ///
+    /// When true, per-file change summaries are emitted. For remote transfers,
+    /// this flag is forwarded to the server via the `.i` info flag.
+    #[must_use]
+    #[doc(alias = "--itemize-changes")]
+    #[doc(alias = "-i")]
+    pub const fn itemize_changes(mut self, enabled: bool) -> Self {
+        self.itemize_changes = enabled;
+        self
+    }
+
+    /// Suppresses daemon MOTD (message of the day) output.
+    #[must_use]
+    #[doc(alias = "--no-motd")]
+    pub const fn no_motd(mut self, no_motd: bool) -> Self {
+        self.no_motd = no_motd;
+        self
+    }
+
+    /// Configures daemon parameter overrides sent during the daemon handshake.
+    ///
+    /// Each entry should be a `key=value` string that overrides a module-level
+    /// configuration directive on the daemon. Mirrors upstream rsync's
+    /// `--dparam` / `-M` option (clientserver.c).
+    #[must_use]
+    #[doc(alias = "--dparam")]
+    #[doc(alias = "-M")]
+    pub fn daemon_params(mut self, params: Vec<String>) -> Self {
+        self.daemon_params = params;
+        self
+    }
+}

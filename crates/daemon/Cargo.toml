@@ -1,0 +1,75 @@
+[package]
+name = "daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = []
+sd-notify = ["dep:sd-notify", "core/sd-notify"]
+# Async runtime support - enables tokio-based async I/O for daemon operations
+async = ["dep:tokio", "core/async"]
+# Concurrent session tracking - enables efficient shared state for multi-session daemons
+concurrent-sessions = ["dep:dashmap"]
+# Extended attributes (xattr) preservation during transfers
+xattr = ["core/xattr"]
+# Structured logging instrumentation for daemon diagnostics
+tracing = ["dep:tracing", "core/tracing"]
+# ACL (Access Control Lists) support on Unix systems
+acl = ["core/acl", "metadata/acl"]
+# Filename charset transcoding via the module `charset =` directive (iconv).
+iconv = ["core/iconv", "protocol/iconv"]
+
+[dependencies]
+clap = { version = "4.5.49", features = ["std"] }
+base64 = "0.22"
+dns-lookup = "2.0"
+compress = { path = "../compress" }
+core = { path = "../core", default-features = false }
+metadata = { path = "../metadata", default-features = false }
+platform = { path = "../platform" }
+protocol = { path = "../protocol" }
+logging-sink = { path = "../logging-sink" }
+fs2 = "0.4"
+socket2 = { version = "0.6", features = ["all"] }
+tempfile = "3.15"
+tokio = { workspace = true, optional = true, features = ["net", "io-util", "sync", "rt", "time"] }
+dashmap = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+
+[target.'cfg(not(windows))'.dependencies]
+checksums = { path = "../checksums" }
+libc = "0.2"
+
+# sd-notify is Linux-only (systemd notification)
+[target.'cfg(target_os = "linux")'.dependencies]
+sd-notify = { version = "0.5.0", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+checksums = { path = "../checksums", default-features = false }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+] }
+
+[dev-dependencies]
+bandwidth = { path = "../bandwidth", features = ["test-support"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+filetime = "0.2"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+xattr = "1.6"
+exacl = { workspace = true }
+
+[[bench]]
+name = "daemon_benchmark"
+harness = false

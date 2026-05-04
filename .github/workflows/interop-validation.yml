@@ -1,0 +1,526 @@
+name: Interop Validation
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/ci/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/interop-validation.yml'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/ci/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/interop-validation.yml'
+  workflow_dispatch:
+  schedule:
+    # Run nightly to catch drift in upstream versions
+    - cron: '0 2 * * *'
+
+concurrency:
+  group: interop-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
+  UPSTREAM_RSYNC_VERSION: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.1' }}
+
+jobs:
+  validate-exit-codes:
+    name: Exit Code Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: exit-codes
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
+
+      - name: Build upstream rsync binaries
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Validate exit codes
+        id: validate-exit-codes
+        run: |
+          cargo xtask interop exit-codes --verbose
+        continue-on-error: true
+
+      - name: Upload validation report
+        if: failure() && steps.validate-exit-codes.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: exit-code-validation-report
+          path: |
+            tests/interop/exit_codes/golden-*.toml
+          retention-days: 7
+
+      - name: Fail if validation failed
+        if: steps.validate-exit-codes.outcome == 'failure'
+        run: exit 1
+
+  validate-messages:
+    name: Message Format Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: messages
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
+
+      - name: Build upstream rsync binaries
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Validate messages
+        id: validate-messages
+        run: |
+          cargo xtask interop messages --verbose
+        continue-on-error: true
+
+      - name: Upload validation report
+        if: failure() && steps.validate-messages.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: message-validation-report
+          path: |
+            tests/interop/messages/golden-*.toml
+          retention-days: 7
+
+      - name: Fail if validation failed
+        if: steps.validate-messages.outcome == 'failure'
+        run: exit 1
+
+  validate-behavior:
+    name: Behavior Comparison
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: behavior
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
+
+      - name: Build upstream rsync binaries
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Run behavior comparison
+        id: validate-behavior
+        run: |
+          cargo xtask interop behavior --verbose
+        continue-on-error: true
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## Behavior Comparison Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.validate-behavior.outcome }}" = "success" ]; then
+            echo "All behavior comparison scenarios passed." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Some behavior scenarios failed. Check the logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail if validation failed
+        if: steps.validate-behavior.outcome == 'failure'
+        run: exit 1
+
+  validate-batch:
+    name: Batch Mode Interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: batch
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
+
+      - name: Build upstream rsync binaries
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Run batch interop tests
+        run: bash tests/batch_interop_test.sh
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## Batch Mode Interop Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tests batch file compatibility between oc-rsync and upstream rsync." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Directions tested:" >> $GITHUB_STEP_SUMMARY
+          echo "- oc-rsync --write-batch -> upstream --read-batch" >> $GITHUB_STEP_SUMMARY
+          echo "- upstream --write-batch -> oc-rsync --read-batch" >> $GITHUB_STEP_SUMMARY
+
+  validate-filters:
+    name: Filter Rules Interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: filters
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync-filters
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
+
+      - name: Build upstream rsync binaries
+        if: steps.cache-rsync-filters.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Run filter interop tests
+        run: bash tests/filter_interop_test.sh
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## Filter Rules Interop Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tests filter rule compatibility between oc-rsync and upstream rsync." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scenarios tested:" >> $GITHUB_STEP_SUMMARY
+          echo "- \`--exclude '*.log'\` pattern matching" >> $GITHUB_STEP_SUMMARY
+          echo "- \`--include/--exclude\` precedence" >> $GITHUB_STEP_SUMMARY
+          echo "- \`--filter 'merge .rsync-filter'\` merge file" >> $GITHUB_STEP_SUMMARY
+          echo "- \`--delete --exclude '*.keep'\` delete with filters" >> $GITHUB_STEP_SUMMARY
+
+  validate-compress:
+    name: Compression Codec Interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: compress
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync-compress
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-compress-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-compress-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
+
+      - name: Build upstream rsync binaries
+        if: steps.cache-rsync-compress.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Run compress interop tests
+        run: bash tests/compress_interop_test.sh
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## Compression Codec Interop Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tests compression codec compatibility between oc-rsync and upstream rsync." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Codecs tested:" >> $GITHUB_STEP_SUMMARY
+          echo "- zlibx (baseline, default \`-z\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- zstd (\`--compress=zstd\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- lz4 (\`--compress=lz4\`)" >> $GITHUB_STEP_SUMMARY
+          echo "- Auto-negotiation (protocol picks best common codec)" >> $GITHUB_STEP_SUMMARY
+
+  validate-inc-recurse:
+    name: INC_RECURSE Interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: inc-recurse
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync-inc-recurse
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
+
+      - name: Build upstream rsync binaries
+        if: steps.cache-rsync-inc-recurse.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Run INC_RECURSE interop tests
+        run: bash tests/inc_recurse_interop_test.sh
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "## INC_RECURSE Interop Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tests incremental recursion compatibility between oc-rsync and upstream rsync." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Scenarios tested:" >> $GITHUB_STEP_SUMMARY
+          echo "- oc-rsync push deep tree (5 levels)" >> $GITHUB_STEP_SUMMARY
+          echo "- upstream client with --rsync-path=oc-rsync" >> $GITHUB_STEP_SUMMARY
+          echo "- Incremental update (add files, re-sync)" >> $GITHUB_STEP_SUMMARY
+          echo "- Delete propagation with --delete" >> $GITHUB_STEP_SUMMARY
+          echo "- Large directory count (100 dirs, 1000 files)" >> $GITHUB_STEP_SUMMARY
+
+  regenerate-goldens:
+    name: Regenerate Golden Files (Manual)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Only run on workflow_dispatch
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: regenerate
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
+
+      - name: Build upstream rsync binaries
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Regenerate exit code goldens
+        run: cargo xtask interop exit-codes --regenerate --verbose
+
+      - name: Regenerate message goldens
+        run: cargo xtask interop messages --regenerate --verbose
+
+      - name: Upload regenerated goldens
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: regenerated-golden-files
+          path: |
+            tests/interop/exit_codes/golden-*.toml
+            tests/interop/messages/golden-*.toml
+          retention-days: 30
+
+      - name: Create summary
+        run: |
+          echo "## Regenerated Golden Files" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Exit code goldens:" >> $GITHUB_STEP_SUMMARY
+          ls -1 tests/interop/exit_codes/golden-*.toml | while read f; do
+            echo "- $f" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Message goldens:" >> $GITHUB_STEP_SUMMARY
+          ls -1 tests/interop/messages/golden-*.toml 2>/dev/null | while read f; do
+            echo "- $f" >> $GITHUB_STEP_SUMMARY
+          done || echo "- (none found)" >> $GITHUB_STEP_SUMMARY

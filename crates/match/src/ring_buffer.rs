@@ -1,0 +1,529 @@
+//! Fixed-capacity ring buffer optimized for rsync's sliding window.
+//!
+//! This implementation is specifically designed for delta generation where:
+//! - The buffer is always filled to capacity during steady-state operation
+//! - A contiguous slice view is needed frequently for checksum computation
+//! - Push/pop operations happen once per byte processed
+//!
+//! Unlike [`std::collections::VecDeque`], this ring buffer:
+//! - Uses a single pre-allocated contiguous buffer
+//! - Provides O(1) contiguous slice access when full (no copying)
+//! - Has lower memory overhead (no capacity/head/tail tracking beyond what's needed)
+
+/// A fixed-capacity ring buffer optimized for sliding window operations.
+///
+/// The buffer maintains a contiguous view when full, eliminating the need for
+/// scratch buffer copies during strong checksum computation.
+///
+/// # Example
+///
+/// ```ignore
+/// let mut buf = RingBuffer::with_capacity(3);
+///
+/// // Fill the buffer
+/// assert_eq!(buf.push_back(1), None);  // No overflow
+/// assert_eq!(buf.push_back(2), None);
+/// assert_eq!(buf.push_back(3), None);
+/// assert!(buf.is_full());
+///
+/// // Sliding window: new bytes push out old ones
+/// assert_eq!(buf.push_back(4), Some(1));  // 1 is pushed out
+/// assert_eq!(buf.push_back(5), Some(2));  // 2 is pushed out
+/// ```
+#[derive(Clone, Debug)]
+pub struct RingBuffer {
+    /// The backing storage, always exactly `capacity` bytes.
+    buffer: Vec<u8>,
+    /// Write position (next byte will be written here when full).
+    head: usize,
+    /// Number of bytes currently in the buffer.
+    len: usize,
+}
+
+#[allow(dead_code)] // REASON: some methods only used in tests; impl block covers full API
+impl RingBuffer {
+    /// Creates a new ring buffer with the specified capacity.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `capacity` is zero.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        assert!(capacity > 0, "ring buffer capacity must be non-zero");
+        Self {
+            buffer: vec![0u8; capacity],
+            head: 0,
+            len: 0,
+        }
+    }
+
+    /// Returns the maximum capacity of the buffer.
+    #[inline]
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Returns the number of bytes currently in the buffer.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns `true` if the buffer contains no bytes.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns `true` if the buffer is at capacity.
+    #[inline]
+    #[must_use]
+    pub fn is_full(&self) -> bool {
+        self.len == self.buffer.len()
+    }
+
+    /// Adds a byte to the back of the buffer.
+    ///
+    /// If the buffer is full, the oldest byte is overwritten and returned.
+    /// Returns `None` if the buffer was not full.
+    #[inline]
+    pub fn push_back(&mut self, byte: u8) -> Option<u8> {
+        if self.len < self.buffer.len() {
+            let pos = (self.head + self.len) % self.buffer.len();
+            self.buffer[pos] = byte;
+            self.len += 1;
+            None
+        } else {
+            // Buffer full: overwrite the oldest byte (at head) and return it.
+            let outgoing = self.buffer[self.head];
+            self.buffer[self.head] = byte;
+            self.head = (self.head + 1) % self.buffer.len();
+            Some(outgoing)
+        }
+    }
+
+    /// Removes and returns the oldest byte from the buffer.
+    ///
+    /// Returns `None` if the buffer is empty.
+    #[inline]
+    pub fn pop_front(&mut self) -> Option<u8> {
+        if self.len == 0 {
+            None
+        } else {
+            let byte = self.buffer[self.head];
+            self.head = (self.head + 1) % self.buffer.len();
+            self.len -= 1;
+            Some(byte)
+        }
+    }
+
+    /// Clears the buffer, removing all bytes.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.head = 0;
+        self.len = 0;
+    }
+
+    /// Returns a contiguous slice view of the buffer contents.
+    ///
+    /// When the buffer hasn't wrapped (head == 0), this returns a direct slice
+    /// with no copying (O(1)). Otherwise, it rotates the internal buffer to make
+    /// the contents contiguous (O(n)).
+    ///
+    /// # Performance Note
+    ///
+    /// For hot paths where rotation overhead matters, use [`Self::as_slices`]
+    /// or [`Self::copy_to_slice`] to avoid mutation.
+    #[must_use]
+    pub fn as_slice(&mut self) -> &[u8] {
+        if self.len == 0 {
+            return &[];
+        }
+
+        // Fast path: already contiguous from the start of the backing buffer.
+        if self.head == 0 {
+            return &self.buffer[..self.len];
+        }
+
+        // Fast path: contiguous starting from a non-zero head, no wrap-around.
+        let end = self.head + self.len;
+        if end <= self.buffer.len() {
+            return &self.buffer[self.head..end];
+        }
+
+        // Slow path: data wraps; rotate the backing buffer to make it contiguous.
+        self.buffer.rotate_left(self.head);
+        self.head = 0;
+        &self.buffer[..self.len]
+    }
+
+    /// Returns a contiguous slice if available, without mutation.
+    ///
+    /// Returns `Some(slice)` if the buffer contents are already contiguous,
+    /// or `None` if the buffer has wrapped and rotation would be needed.
+    ///
+    /// This is useful in hot paths where avoiding mutation is critical.
+    #[inline]
+    pub fn try_as_slice(&self) -> Option<&[u8]> {
+        if self.len == 0 {
+            return Some(&[]);
+        }
+
+        let end = self.head + self.len;
+        if end <= self.buffer.len() {
+            Some(&self.buffer[self.head..end])
+        } else {
+            None
+        }
+    }
+
+    /// Returns a contiguous slice if possible without rotation, or two slices if wrapped.
+    ///
+    /// This is useful when the caller can handle non-contiguous data.
+    #[must_use]
+    pub fn as_slices(&self) -> (&[u8], &[u8]) {
+        if self.len == 0 {
+            return (&[], &[]);
+        }
+
+        let end = self.head + self.len;
+        if end <= self.buffer.len() {
+            (&self.buffer[self.head..end], &[])
+        } else {
+            let first_len = self.buffer.len() - self.head;
+            let second_len = self.len - first_len;
+            (&self.buffer[self.head..], &self.buffer[..second_len])
+        }
+    }
+
+    /// Bulk-appends bytes from a slice without eviction.
+    ///
+    /// Copies up to `remaining_capacity` bytes from `src` into the buffer.
+    /// Returns the number of bytes written. Does not evict existing data;
+    /// callers must ensure the buffer has sufficient free space.
+    ///
+    /// After [`clear`](Self::clear), the internal layout is contiguous, so
+    /// this reduces to a single `copy_from_slice`.
+    pub fn extend_from_slice(&mut self, src: &[u8]) -> usize {
+        let remaining = self.buffer.len() - self.len;
+        let n = src.len().min(remaining);
+        if n == 0 {
+            return 0;
+        }
+        let write_pos = (self.head + self.len) % self.buffer.len();
+        let to_end = self.buffer.len() - write_pos;
+        if n <= to_end {
+            self.buffer[write_pos..write_pos + n].copy_from_slice(&src[..n]);
+        } else {
+            self.buffer[write_pos..].copy_from_slice(&src[..to_end]);
+            self.buffer[..n - to_end].copy_from_slice(&src[to_end..n]);
+        }
+        self.len += n;
+        n
+    }
+
+    /// Copies the buffer contents into a contiguous destination slice.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `dest.len() < self.len()`.
+    pub fn copy_to_slice(&self, dest: &mut [u8]) {
+        assert!(dest.len() >= self.len, "destination too small");
+        let (first, second) = self.as_slices();
+        dest[..first.len()].copy_from_slice(first);
+        if !second.is_empty() {
+            dest[first.len()..first.len() + second.len()].copy_from_slice(second);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_buffer_is_empty() {
+        let buf = RingBuffer::with_capacity(10);
+        assert!(buf.is_empty());
+        assert!(!buf.is_full());
+        assert_eq!(buf.len(), 0);
+        assert_eq!(buf.capacity(), 10);
+    }
+
+    #[test]
+    fn push_increases_len() {
+        let mut buf = RingBuffer::with_capacity(5);
+        assert_eq!(buf.push_back(1), None);
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf.push_back(2), None);
+        assert_eq!(buf.len(), 2);
+    }
+
+    #[test]
+    fn push_when_full_returns_outgoing() {
+        let mut buf = RingBuffer::with_capacity(3);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+        assert!(buf.is_full());
+
+        assert_eq!(buf.push_back(4), Some(1));
+        assert_eq!(buf.push_back(5), Some(2));
+    }
+
+    #[test]
+    fn pop_decreases_len() {
+        let mut buf = RingBuffer::with_capacity(5);
+        buf.push_back(1);
+        buf.push_back(2);
+        assert_eq!(buf.pop_front(), Some(1));
+        assert_eq!(buf.len(), 1);
+    }
+
+    #[test]
+    fn pop_empty_returns_none() {
+        let mut buf = RingBuffer::with_capacity(5);
+        assert_eq!(buf.pop_front(), None);
+    }
+
+    #[test]
+    fn clear_resets_buffer() {
+        let mut buf = RingBuffer::with_capacity(5);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.clear();
+        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn as_slice_returns_correct_content() {
+        let mut buf = RingBuffer::with_capacity(5);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+        assert_eq!(buf.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn as_slice_after_wrap() {
+        let mut buf = RingBuffer::with_capacity(3);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+        buf.push_back(4);
+        buf.push_back(5);
+
+        // Backing buffer is [5, 3, 4] with head=2; logical order is [3, 4, 5].
+        assert_eq!(buf.as_slice(), &[3, 4, 5]);
+    }
+
+    #[test]
+    fn as_slices_no_wrap() {
+        let buf = {
+            let mut b = RingBuffer::with_capacity(5);
+            b.push_back(1);
+            b.push_back(2);
+            b.push_back(3);
+            b
+        };
+        let (first, second) = buf.as_slices();
+        assert_eq!(first, &[1, 2, 3]);
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn as_slices_with_wrap() {
+        let mut buf = RingBuffer::with_capacity(3);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+        // Backing layout becomes [4, 2, 3] with head=1.
+        buf.push_back(4);
+
+        let (first, second) = buf.as_slices();
+        assert_eq!(first, &[2, 3]);
+        assert_eq!(second, &[4]);
+    }
+
+    #[test]
+    fn copy_to_slice_works() {
+        let mut buf = RingBuffer::with_capacity(3);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+        buf.push_back(4);
+
+        let mut dest = [0u8; 3];
+        buf.copy_to_slice(&mut dest);
+        assert_eq!(dest, [2, 3, 4]);
+    }
+
+    #[test]
+    fn fifo_order_preserved() {
+        let mut buf = RingBuffer::with_capacity(3);
+        for i in 0..10u8 {
+            buf.push_back(i);
+        }
+        // 10 pushes into a capacity-3 buffer leave the last three values.
+        assert_eq!(buf.pop_front(), Some(7));
+        assert_eq!(buf.pop_front(), Some(8));
+        assert_eq!(buf.pop_front(), Some(9));
+        assert_eq!(buf.pop_front(), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "capacity must be non-zero")]
+    fn zero_capacity_panics() {
+        let _ = RingBuffer::with_capacity(0);
+    }
+
+    #[test]
+    fn sliding_window_simulation() {
+        let mut buf = RingBuffer::with_capacity(4);
+        let data = b"hello world";
+
+        let mut outgoing_bytes = Vec::new();
+        for &byte in data {
+            if let Some(out) = buf.push_back(byte) {
+                outgoing_bytes.push(out);
+            }
+        }
+
+        assert_eq!(buf.as_slice(), b"orld");
+        assert_eq!(outgoing_bytes, b"hello w");
+    }
+
+    #[test]
+    fn try_as_slice_no_wrap() {
+        let mut buf = RingBuffer::with_capacity(5);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+
+        assert_eq!(buf.try_as_slice(), Some(&[1u8, 2, 3][..]));
+    }
+
+    #[test]
+    fn try_as_slice_wrapped() {
+        let mut buf = RingBuffer::with_capacity(3);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+        // The fourth push wraps the buffer; try_as_slice must not paper over it.
+        buf.push_back(4);
+
+        assert_eq!(buf.try_as_slice(), None);
+    }
+
+    #[test]
+    fn try_as_slice_empty() {
+        let buf = RingBuffer::with_capacity(5);
+        assert_eq!(buf.try_as_slice(), Some(&[][..]));
+    }
+
+    #[test]
+    fn as_slice_contiguous_middle() {
+        // Exercise the contiguous-with-non-zero-head fast path: the data
+        // sits in the middle of the backing buffer with no wrap-around.
+        let mut buf = RingBuffer::with_capacity(5);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+        buf.pop_front();
+        buf.pop_front();
+
+        assert_eq!(buf.as_slice(), &[3]);
+    }
+
+    #[test]
+    fn capacity_one_buffer() {
+        let mut buf = RingBuffer::with_capacity(1);
+        assert!(buf.is_empty());
+        assert_eq!(buf.capacity(), 1);
+
+        assert_eq!(buf.push_back(42), None);
+        assert!(buf.is_full());
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf.as_slice(), &[42]);
+
+        // Pushing into a full capacity-1 buffer evicts and returns the prior byte.
+        assert_eq!(buf.push_back(99), Some(42));
+        assert!(buf.is_full());
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf.as_slice(), &[99]);
+
+        assert_eq!(buf.pop_front(), Some(99));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "ring buffer capacity must be non-zero")]
+    fn capacity_zero_panics() {
+        let _ = RingBuffer::with_capacity(0);
+    }
+
+    #[test]
+    fn extend_from_slice_fills_empty_buffer() {
+        let mut buf = RingBuffer::with_capacity(5);
+        let written = buf.extend_from_slice(&[1, 2, 3]);
+        assert_eq!(written, 3);
+        assert_eq!(buf.len(), 3);
+        assert_eq!(buf.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn extend_from_slice_appends_to_partial() {
+        let mut buf = RingBuffer::with_capacity(5);
+        buf.extend_from_slice(&[1, 2]);
+        buf.extend_from_slice(&[3, 4, 5]);
+        assert!(buf.is_full());
+        assert_eq!(buf.as_slice(), &[1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn extend_from_slice_caps_at_capacity() {
+        let mut buf = RingBuffer::with_capacity(3);
+        let written = buf.extend_from_slice(&[1, 2, 3, 4, 5]);
+        assert_eq!(written, 3);
+        assert!(buf.is_full());
+        assert_eq!(buf.as_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn extend_from_slice_after_clear() {
+        let mut buf = RingBuffer::with_capacity(4);
+        buf.push_back(10);
+        buf.push_back(20);
+        buf.push_back(30);
+        buf.push_back(40);
+        buf.clear();
+        let written = buf.extend_from_slice(&[1, 2, 3, 4]);
+        assert_eq!(written, 4);
+        assert!(buf.is_full());
+        assert_eq!(buf.as_slice(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn extend_from_slice_returns_zero_when_full() {
+        let mut buf = RingBuffer::with_capacity(2);
+        buf.extend_from_slice(&[1, 2]);
+        let written = buf.extend_from_slice(&[3]);
+        assert_eq!(written, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "destination too small")]
+    fn copy_to_slice_insufficient_capacity_panics() {
+        let mut buf = RingBuffer::with_capacity(5);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+
+        let mut dest = [0u8; 2];
+        buf.copy_to_slice(&mut dest);
+    }
+}

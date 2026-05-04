@@ -1,0 +1,183 @@
+name: Interop Tests
+
+on:
+  workflow_call:
+    inputs:
+      cache_version:
+        description: 'Cache version for invalidation'
+        type: string
+        default: 'v1'
+      upstream_rsync_version:
+        description: 'Upstream rsync version for cache key'
+        type: string
+        default: '3.4.1'
+      rust_toolchain:
+        description: 'Rust toolchain version'
+        type: string
+        default: 'stable'
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        type: number
+        default: 30
+
+permissions:
+  contents: read
+
+jobs:
+  interop:
+    name: interop with upstream rsync
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ inputs.rust_toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
+          key: interop
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ inputs.cache_version }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-
+
+      - name: Build upstream rsync
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          echo "Building upstream rsync ${{ inputs.upstream_rsync_version }}..."
+          bash tools/ci/run_interop.sh build-only
+
+      - name: Set up SSH loopback
+        run: |
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=no localhost true
+
+      - name: Install upstream rsync to PATH
+        run: |
+          UPSTREAM="target/interop/upstream-src/rsync-3.4.1/rsync"
+          if [ -f "$UPSTREAM" ]; then
+            sudo cp "$UPSTREAM" /usr/local/bin/rsync
+          fi
+
+      - name: Run interop tests
+        run: bash tools/ci/run_interop.sh
+
+      - name: Run SSH interop tests
+        run: |
+          set -euo pipefail
+          OC_RSYNC="target/dist/oc-rsync"
+          SRC=$(mktemp -d)
+          DST=$(mktemp -d)
+          DST2=$(mktemp -d)
+          trap 'rm -rf "$SRC" "$DST" "$DST2"' EXIT
+
+          # Create test data
+          for i in $(seq 1 10); do
+            dd if=/dev/urandom of="$SRC/file_$i.bin" bs=1024 count=10 2>/dev/null
+          done
+          mkdir -p "$SRC/subdir"
+          echo "nested" > "$SRC/subdir/nested.txt"
+
+          # Verify binaries
+          echo "oc-rsync: $($OC_RSYNC --version 2>&1 | head -1)"
+          echo "upstream rsync: $(rsync --version 2>&1 | head -1)"
+          echo "upstream rsync path: $(which rsync)"
+
+          # Baseline: upstream rsync → upstream rsync via SSH
+          echo "=== Baseline: upstream rsync SSH pull ==="
+          timeout 60 rsync -av --timeout=30 "localhost:$SRC/" "$DST2/" 2>&1
+          diff -r "$SRC" "$DST2"
+          echo "PASS: upstream SSH pull baseline"
+
+          # SSH push: oc-rsync client → upstream rsync server
+          echo "=== SSH push: oc-rsync → upstream rsync ==="
+          timeout 60 "$OC_RSYNC" -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || {
+            RC=$?
+            echo "SSH push failed with exit $RC"
+
+            # Show oc-rsync diagnostic output (eprintln goes to stderr)
+            echo "--- Attempting push with verbose stderr capture ---"
+            timeout 60 "$OC_RSYNC" -avvv --timeout=30 "$SRC/" "localhost:$DST/" > /tmp/oc_push_stdout.txt 2>/tmp/oc_push_stderr.txt || true
+            echo "=== oc-rsync stderr ==="
+            cat /tmp/oc_push_stderr.txt || true
+            echo "=== oc-rsync stdout ==="
+            cat /tmp/oc_push_stdout.txt || true
+
+            # Diagnostic: manually invoke remote rsync with strace to see what it reads
+            echo "--- Remote rsync manual test ---"
+            echo "Remote rsync args that oc-rsync would send:"
+            "$OC_RSYNC" -av --timeout=30 --dry-run "$SRC/" "localhost:$DST/" 2>&1 | head -5 || true
+
+            # Test: upstream rsync client → upstream rsync server (same args)
+            echo "--- Baseline upstream push for comparison ---"
+            timeout 60 rsync -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || true
+
+            # Capture what upstream rsync server sees from oc-rsync via raw pipe
+            echo "--- Raw protocol capture ---"
+            ARGS=$(echo "--server -logDtprv -e.LsfxCIvu . $DST/")
+            echo "Remote rsync args: rsync $ARGS"
+            # Send oc-rsync's output through a pipe to see what the server gets
+            timeout 30 ssh localhost "strace -e trace=read,write -f rsync $ARGS" < /dev/null > /tmp/strace_out.txt 2>&1 || true
+            echo "=== strace output (first 100 lines) ==="
+            head -100 /tmp/strace_out.txt || true
+
+            exit 1
+          }
+          diff -r "$SRC" "$DST"
+          echo "PASS: SSH push initial sync"
+
+          # SSH pull: oc-rsync client ← upstream rsync server
+          rm -rf "$DST"/*
+          echo "=== SSH pull: oc-rsync ← upstream rsync ==="
+          timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" 2>&1 || {
+            RC=$?
+            echo "SSH pull failed with exit $RC"
+
+            # Show oc-rsync diagnostic output
+            echo "--- Attempting pull with verbose stderr capture ---"
+            timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" > /tmp/oc_pull_stdout.txt 2>/tmp/oc_pull_stderr.txt || true
+            echo "=== oc-rsync stderr ==="
+            cat /tmp/oc_pull_stderr.txt || true
+            echo "=== oc-rsync stdout ==="
+            cat /tmp/oc_pull_stdout.txt || true
+
+            exit 1
+          }
+          diff -r "$SRC" "$DST"
+          echo "PASS: SSH pull initial sync"
+
+          # SSH pull no-change
+          timeout 60 "$OC_RSYNC" -av --timeout=30 "localhost:$SRC/" "$DST/"
+          echo "PASS: SSH pull no-change sync"
+
+          echo "All SSH interop tests passed."

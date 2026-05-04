@@ -1,0 +1,13 @@
+[package]
+name = "test-support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Shared test utilities for the oc-rsync workspace"
+
+[dependencies]
+tempfile = "3.15"

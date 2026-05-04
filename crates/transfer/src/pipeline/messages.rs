@@ -1,0 +1,119 @@
+//! Channel messages for the decoupled receiver architecture.
+//!
+//! Defines the streaming protocol between the network ingest thread and the
+//! disk commit thread. Each file follows the sequence:
+//! `Begin -> N x Chunk -> Commit` (or `Abort` on error).
+//!
+//! The `Shutdown` message terminates the disk thread after all files are
+//! processed.
+
+use std::path::PathBuf;
+
+use protocol::xattr::XattrList;
+
+use crate::delta_apply::ChecksumVerifier;
+
+/// Messages from the network thread to the disk commit thread.
+///
+/// Follows a per-file protocol: `Begin -> Chunk* -> Commit | Abort`.
+/// Small single-chunk files may use the coalesced `WholeFile` variant.
+/// The `Shutdown` variant terminates the disk thread.
+pub enum FileMessage {
+    /// Start writing a new file.
+    Begin(Box<BeginMessage>),
+    /// A chunk of file data to write.
+    Chunk(Vec<u8>),
+    /// Finalize the current file (flush, fsync, rename).
+    Commit,
+    /// Coalesced message for single-chunk files: combines Begin + one Chunk +
+    /// Commit into a single channel send, reducing futex overhead from 3+
+    /// sends to 1. Used when the sender transmits the entire file as a single
+    /// literal token (common for small files).
+    WholeFile {
+        /// File metadata and configuration.
+        begin: Box<BeginMessage>,
+        /// Complete file data.
+        data: Vec<u8>,
+    },
+    /// Abort the current file due to an error.
+    Abort {
+        /// Human-readable reason for the abort.
+        reason: String,
+    },
+    /// Shut down the disk commit thread.
+    Shutdown,
+}
+
+/// Metadata for starting a new file write on the disk thread.
+///
+/// Per-transfer invariants (`use_sparse`, `temp_dir`) live in
+/// `DiskCommitConfig` to avoid per-file cloning.
+pub struct BeginMessage {
+    /// Destination path for the file.
+    pub file_path: PathBuf,
+    /// Target file size (used for adaptive buffer sizing).
+    pub target_size: u64,
+    /// Index into the file list (for metadata application).
+    pub file_entry_index: usize,
+    /// Checksum verifier for computing per-file integrity digest on the disk
+    /// thread. When `Some`, the disk thread hashes every chunk it writes and
+    /// returns the final digest in [`CommitResult::computed_checksum`].
+    /// When `None`, no checksum is computed (legacy path).
+    pub checksum_verifier: Option<ChecksumVerifier>,
+    /// When true, the target is a device file opened with `O_WRONLY`.
+    ///
+    /// Device files cannot use temp file + rename (you cannot rename onto a
+    /// device node) and should not have permissions/ownership changed after
+    /// writing. Metadata application is skipped for device targets.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)`
+    pub is_device_target: bool,
+    /// When true, writes directly to the destination file (`--inplace`).
+    ///
+    /// Bypasses temp-file + rename: the destination is opened for writing
+    /// (created if absent) and truncated to target size after delta
+    /// application. Preserves the destination inode.
+    pub is_inplace: bool,
+    /// Byte offset at which to start writing in append mode.
+    ///
+    /// When non-zero, the output file is seeked to this offset before writing
+    /// delta data. The sender only sends bytes beyond this offset.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:307-308` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
+    pub append_offset: u64,
+    /// Xattr list resolved from the wire protocol cache for this file.
+    ///
+    /// When `Some`, the disk thread applies these xattrs after metadata
+    /// application. Populated by looking up the file entry's `xattr_ndx` in
+    /// the `XattrCache` during begin message construction.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `xattrs.c:set_xattr()` called from `set_file_attrs()` in
+    /// `receiver.c` after file transfer completes.
+    pub xattr_list: Option<XattrList>,
+}
+
+/// Computed checksum digest returned by the disk thread.
+pub struct ComputedChecksum {
+    /// Digest bytes (only `len` bytes are valid).
+    pub bytes: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
+    /// Number of valid bytes in `bytes`.
+    pub len: usize,
+}
+
+/// Result of committing a file to disk, sent back from the disk thread.
+pub struct CommitResult {
+    /// Number of bytes written to the file.
+    pub bytes_written: u64,
+    /// Index into the file list (correlates with `BeginMessage::file_entry_index`).
+    pub file_entry_index: usize,
+    /// Non-fatal metadata error, if any (path, description).
+    pub metadata_error: Option<(PathBuf, String)>,
+    /// Computed per-file checksum, if verification was deferred to the disk thread.
+    pub computed_checksum: Option<ComputedChecksum>,
+}

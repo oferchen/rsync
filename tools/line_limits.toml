@@ -1,0 +1,64 @@
+# Per-file line count configuration for cargo xtask enforce-limits.
+# Files listed below are legacy ports of the upstream C implementation and
+# intentionally exceed the workspace-wide 600 line limit. Each entry grants a
+# modest buffer above the current line count so future cleanups continue to be
+# encouraged.
+
+default_max_lines = 650
+default_warn_lines = 400
+
+[[overrides]]
+path = "crates/cli/src/frontend/mod.rs"
+max_lines = 5700
+warn_lines = 5580
+
+[[overrides]]
+path = "crates/core/src/client/mod.rs"
+max_lines = 5800
+warn_lines = 5600
+
+[[overrides]]
+path = "crates/daemon/src/lib.rs"
+max_lines = 5500
+warn_lines = 5400
+
+[[overrides]]
+path = "crates/daemon/src/tests.rs"
+max_lines = 600
+warn_lines = 500
+
+[[overrides]]
+path = "crates/transport/src/negotiation/mod.rs"
+max_lines = 6400
+warn_lines = 6300
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/tests/detector.rs"
+max_lines = 480
+warn_lines = 440
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/tests/detector_sniffer.rs"
+max_lines = 530
+warn_lines = 500
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/tests/sniffer_read.rs"
+max_lines = 580
+warn_lines = 550
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/tests/sniffer_reset.rs"
+max_lines = 585
+warn_lines = 550
+
+[[overrides]]
+path = "crates/protocol/src/negotiation/tests/sniffer_take.rs"
+max_lines = 570
+warn_lines = 530
+
+[[overrides]]
+path = "crates/engine/src/local_copy/buffer_pool/pool.rs"
+max_lines = 950
+warn_lines = 900
+

@@ -1,0 +1,448 @@
+[package]
+name = "bin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Pure-Rust implementation of the rsync client and daemon"
+repository.workspace = true
+publish = true
+autobins = false
+
+[[bin]]
+name = "oc-rsync"
+path = "src/bin/oc-rsync.rs"
+
+[features]
+# ============================================================================
+# Default Features
+# ============================================================================
+# Optimized for best performance on modern systems.
+# io_uring auto-detects Linux 5.6+ at runtime and falls back to standard I/O.
+# IOCP auto-detects Windows Vista+ at runtime and falls back to synchronous I/O.
+default = [
+    "zstd",
+    "lz4",
+    "acl",
+    "xattr",
+    "iconv",
+    "parallel",
+    "copy_file_range",
+    "io_uring",
+    "iocp",
+    "async",
+]
+
+# ============================================================================
+# Compression Features
+# ============================================================================
+# zstd compression (recommended) - Better compression than gzip, ~3x faster
+zstd = ["core/zstd"]
+# lz4 compression - Extremely fast, lower compression ratio
+lz4 = ["core/lz4"]
+# zlib-ng backend (C library with SIMD: SSE2, AVX2, NEON) - faster than pure Rust zlib-rs
+zlib-ng = ["core/zlib-ng"]
+
+# ============================================================================
+# Metadata Features
+# ============================================================================
+# ACL (Access Control Lists) support on Unix systems
+acl = ["cli/acl", "core/acl"]
+# Extended attributes (xattr) support on Unix systems
+xattr = ["cli/xattr", "core/xattr"]
+# Character encoding conversion for filenames
+iconv = ["cli/iconv", "core/iconv"]
+
+# ============================================================================
+# Performance Optimization Features
+# ============================================================================
+
+# Parallel processing with rayon - enables multi-core file operations
+# Requirements: None (pure Rust)
+# Benefits: 2-8x faster on multi-core systems for batch operations
+# Trade-offs: Minimal overhead on single-core systems
+parallel = ["cli/parallel", "checksums/parallel"]
+
+# io_uring support for Linux 5.6+ - batched async I/O syscalls
+# Requirements: Linux kernel 5.6+ (runtime fallback on older kernels)
+# Benefits: 20-40% faster I/O on supported systems via syscall batching
+# Trade-offs: Linux-only, requires modern kernel, adds ~100KB to binary
+io_uring = ["transfer/io_uring", "fast_io/io_uring"]
+
+# IOCP (I/O Completion Ports) for Windows - async file I/O
+# Requirements: Windows Vista+ (runtime detection, automatic fallback)
+# Benefits: Overlapped async reads/writes via kernel completion ports
+# Trade-offs: Windows-only, adds complexity for async file operations
+iocp = ["fast_io/iocp"]
+
+# copy_file_range syscall - zero-copy file transfers on same filesystem
+# Requirements: Linux 4.5+ for same-fs, 5.3+ for cross-fs (automatic fallback)
+# Benefits: 30-50% faster local copies by avoiding userspace buffer
+# Trade-offs: Linux-only optimization
+copy_file_range = ["fast_io/copy_file_range"]
+
+# ============================================================================
+# OpenSSL Features
+# ============================================================================
+
+# OpenSSL-accelerated checksums (MD4, MD5) — links to system libssl
+openssl = ["checksums/openssl"]
+# Vendored OpenSSL — statically compiled, no system dependency
+openssl-vendored = ["checksums/openssl-vendored"]
+
+# ============================================================================
+# Transport Features
+# ============================================================================
+
+# Embedded SSH transport via russh - removes the runtime dependency on an
+# external `ssh` client. Forwards through `core` to `rsync_io/embedded-ssh`.
+embedded-ssh = ["core/embedded-ssh"]
+
+# ============================================================================
+# Runtime and Debugging Features
+# ============================================================================
+
+# Async runtime support - enables tokio-based async I/O throughout the codebase
+async = ["daemon/async", "core/async"]
+
+# systemd sd-notify integration for daemon
+sd-notify = ["daemon/sd-notify"]
+
+[dependencies]
+cli = { path = "crates/cli", default-features = false }
+daemon = { path = "crates/daemon", default-features = false }
+core = { path = "crates/core", default-features = false }
+engine = { path = "crates/engine", default-features = false }
+checksums = { path = "crates/checksums", default-features = false }
+transfer = { path = "crates/transfer", default-features = false }
+fast_io = { path = "crates/fast_io", default-features = false }
+mimalloc = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = "2.0"
+core = { path = "crates/core" }
+filetime = "0.2"
+libc = "0.2"
+tempfile = "3.15"
+checksums = { path = "crates/checksums" }
+protocol = { path = "crates/protocol" }
+
+# Extra deps only for Windows + GNU
+[target.'cfg(all(windows, target_env = "gnu"))'.dependencies]
+windows-gnu-eh = { path = "crates/windows-gnu-eh" }
+
+[workspace]
+members = [
+    "crates/cli",
+    "crates/bandwidth",
+    "crates/batch",
+    "crates/branding",
+    "crates/checksums",
+    "crates/core",
+    "crates/daemon",
+    "crates/embedding",
+    "crates/engine",
+    "crates/filters",
+    "crates/logging",
+    "crates/logging-sink",
+    "crates/match",
+    "crates/compress",
+    "crates/metadata",
+    "crates/protocol",
+    "crates/flist",
+    "crates/rsync_io",
+    "crates/signature",
+    "crates/transfer",
+    "crates/windows-gnu-eh",
+    "xtask",
+    "crates/apple-fs",
+    "crates/fast_io",
+    "crates/platform",
+    "crates/test-support",
+]
+exclude = [
+    "crates/protocol/fuzz",
+    "tools/dhat-profile",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
+license = "GPL-3.0-or-later"
+version = "0.6.1"
+repository = "https://github.com/oferchen/rsync"
+
+[workspace.dependencies]
+# High-performance memory allocator - 8-50% faster than system allocator
+mimalloc = "0.1"
+# Fast non-cryptographic hash for HashMap/HashSet - 2-5x faster for integer keys
+rustc-hash = "2.1"
+# Parallel directory walking - ~4x faster than walkdir
+jwalk = "0.8"
+# Cross-platform ACL support (Linux, macOS, FreeBSD)
+exacl = "0.12"
+# Async runtime - feature-gated for optional async support
+tokio = { version = "1.45", features = ["rt-multi-thread", "io-util", "net", "fs", "sync", "time", "process", "macros"] }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
+# Serialization framework - feature-gated for JSON config and data export
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Structured logging - feature-gated for instrumentation and diagnostics
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Parallel computation - feature-gated for parallel file operations
+rayon = "1.10"
+# Crossbeam concurrency primitives - bounded channels with lower overhead than std
+crossbeam = "0.8"
+crossbeam-channel = "0.5"
+# Concurrent hash map - for shared state across daemon sessions
+dashmap = "6.1"
+# Pure-Rust SSH client - embedded SSH transport alternative to system ssh binary.
+# 0.60+ retires GHSA-f5v4-2wr6-hqmg / RUSTSEC-2023-0071 (Marvin Attack on rsa
+# 0.9.x) by upgrading to rsa 0.10 with the constant-time rewrite. The keys
+# helpers (formerly russh-keys) are now re-exported under russh::keys.
+russh = "0.60.1"
+# URL parsing for ssh:// URIs
+url = "2"
+# Secure password input from terminal
+rpassword = "7"
+# Terminal detection for interactive prompts
+is-terminal = "0.4"
+# CPU feature detection for cipher selection (x86/x86_64 only)
+raw-cpuid = "11"
+# Secure memory zeroization - audited, widely deployed RAII wrapper
+zeroize = "1"
+
+[workspace.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+# ============================================================================
+# Clippy Lints - Strict Code Quality Configuration
+# ============================================================================
+
+[workspace.lints.clippy]
+# Enable pedantic and nursery lint groups for high code quality standards
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# ---- Pedantic lints that are too noisy or inappropriate for this codebase ----
+
+# Allow single-character names in loops and common mathematical contexts (i, j, x, y)
+single_char_pattern = "allow"
+
+# Allow module inception (e.g., foo/foo.rs) - common pattern in Rust projects
+module_inception = "allow"
+
+# Allow missing errors in doc comments - many internal functions don't need full documentation
+missing_errors_doc = "allow"
+
+# Allow missing panics in doc comments - not all panic conditions need documentation
+missing_panics_doc = "allow"
+
+# Allow inline always - performance-critical code needs fine-grained control
+inline_always = "allow"
+
+# Allow must_use_candidate - too many false positives on builder methods
+must_use_candidate = "allow"
+
+# Allow return_self_not_must_use - builder pattern doesn't always need must_use
+return_self_not_must_use = "allow"
+
+# Allow struct_excessive_bools - sometimes multiple flags are the clearest design
+struct_excessive_bools = "allow"
+
+# Allow fn_params_excessive_bools - sometimes multiple flags are necessary
+fn_params_excessive_bools = "allow"
+
+# Allow too_many_lines - some functions handle complex state machines
+too_many_lines = "allow"
+
+# Allow module_name_repetitions - e.g., error::ErrorKind is clear and idiomatic
+module_name_repetitions = "allow"
+
+# Allow similar_names - variable names like src/dst, old/new are clear in context
+similar_names = "allow"
+
+# Allow unreadable_literal - hex constants and bit patterns don't need separators
+unreadable_literal = "allow"
+
+# Allow cast_precision_loss - we handle this explicitly where needed
+cast_precision_loss = "allow"
+
+# Allow cast_possible_truncation - explicit truncation is intentional
+cast_possible_truncation = "allow"
+
+# Allow cast_sign_loss - explicit sign loss is intentional
+cast_sign_loss = "allow"
+
+# Allow cast_possible_wrap - wrapping behavior is sometimes desired
+cast_possible_wrap = "allow"
+
+# Allow items_after_statements - sometimes local type definitions improve clarity
+items_after_statements = "allow"
+
+# Allow doc_markdown - false positives on technical terms and identifiers
+doc_markdown = "allow"
+
+# ---- Nursery lints that are too experimental or noisy ----
+
+# Allow missing_const_for_fn - too many false positives with complex initialization
+missing_const_for_fn = "allow"
+
+# Allow cognitive_complexity - some protocol handling is inherently complex
+cognitive_complexity = "allow"
+
+# Allow future_not_send - async code doesn't always need Send bounds
+future_not_send = "allow"
+
+# Allow option_if_let_else - sometimes if-let is clearer than map/unwrap_or
+option_if_let_else = "allow"
+
+# ---- Enable additional strict lints for correctness and safety ----
+
+# Deny deprecated APIs to catch outdated code early
+deprecated = "deny"
+
+# Warn on inefficient string operations
+inefficient_to_string = "warn"
+
+# Warn on unnecessary unwraps that could panic
+unnecessary_unwrap = "warn"
+
+# Warn on manual implementations of Iterator methods
+manual_filter_map = "warn"
+manual_find_map = "warn"
+
+# Warn on potentially incorrect comparisons
+double_comparisons = "warn"
+
+# Warn on inefficient vector initialization
+useless_vec = "warn"
+
+# ============================================================================
+# Build Profiles
+# ============================================================================
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = false
+
+[profile.dhat]
+inherits = "release"
+debug = true
+strip = false
+
+# ============================================================================
+# Workspace Metadata
+# ============================================================================
+
+[workspace.metadata.oc_rsync]
+brand = "oc"
+upstream_version = "3.4.1"
+rust_version = "0.6.1"
+protocol = 32
+client_bin = "oc-rsync"
+daemon_bin = "oc-rsync"
+legacy_client_bin = "rsync"
+legacy_daemon_bin = "rsync"
+daemon_config_dir = "/etc/oc-rsyncd"
+daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
+daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
+legacy_daemon_config_dir = "/etc"
+legacy_daemon_config = "/etc/rsyncd.conf"
+legacy_daemon_secrets = "/etc/rsyncd.secrets"
+source = "https://github.com/oferchen/rsync"
+
+[workspace.metadata.oc_rsync.cross_compile]
+linux = ["x86_64", "aarch64"]
+macos = ["x86_64", "aarch64"]
+windows = ["x86_64"]
+
+[workspace.metadata.oc_rsync.cross_compile_matrix]
+"linux-x86_64-musl" = true
+"linux-aarch64-musl" = true
+"linux-x86_64-gnu" = true
+"linux-aarch64-gnu" = true
+"darwin-x86_64" = true
+"darwin-aarch64" = true
+"windows-x86_64" = true
+"windows-x86" = false
+
+[package.metadata.deb]
+name = "oc-rsync"
+section = "utils"
+priority = "optional"
+maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
+depends = "libc6 (>= 2.34), libgcc-s1"
+extended-description = "Pure-Rust implementation of the rsync-compatible client and daemon"
+conflicts = []
+replaces = []
+
+assets = [
+    ["target/dist/oc-rsync", "usr/bin/oc-rsync", "755"],
+    ["LICENSE", "usr/share/doc/oc-rsync/LICENSE", "644"],
+    ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
+    ["packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
+    ["packaging/etc/oc-rsyncd/oc-rsyncd.secrets", "/etc/oc-rsyncd/oc-rsyncd.secrets", "600"],
+    ["packaging/default/oc-rsyncd", "/etc/default/oc-rsyncd", "644"],
+    ["packaging/examples/oc-rsyncd.conf", "usr/share/doc/oc-rsync/examples/oc-rsyncd.conf", "644"],
+]
+conf-files = [
+    "etc/oc-rsyncd/oc-rsyncd.conf",
+    "etc/oc-rsyncd/oc-rsyncd.secrets",
+    "etc/default/oc-rsyncd",
+]
+maintainer-scripts = "packaging/deb"
+
+[package.metadata.deb.variants.focal]
+depends = "libc6 (>= 2.31), libgcc-s1"
+
+# RPM package configuration for cargo-generate-rpm
+# See: https://github.com/cat-in-136/cargo-generate-rpm
+[package.metadata.generate-rpm]
+name = "oc-rsync"
+summary = "Rust implementation of the rsync-compatible client/daemon"
+assets = [
+    { source = "target/release/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "755" },
+    { source = "packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "644" },
+    { source = "packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "644", config = true },
+    { source = "packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "600", config = true },
+    { source = "packaging/default/oc-rsyncd", dest = "/etc/default/oc-rsyncd", mode = "644", config = true },
+    { source = "packaging/examples/oc-rsyncd.conf", dest = "/usr/share/doc/oc-rsync/examples/oc-rsyncd.conf", mode = "644", doc = true },
+]
+post_install_script = "#!/bin/sh\nset -e\n# oc-rsync installs dedicated oc-* binaries and deliberately avoids\n# update-alternatives integration so the system rsync package remains untouched.\nexit 0"
+pre_uninstall_script = "#!/bin/sh\nset -e\nexit 0"
+post_uninstall_script = "#!/bin/sh\nset -e\nexit 0"
+
+[package.metadata.generate-rpm.requires]
+glibc = "*"
+
+# Release profile with maximum optimizations
+[profile.release]
+lto = "fat"               # Full link-time optimization for maximum performance
+codegen-units = 1         # Single codegen unit for maximum optimization
+panic = "abort"           # Remove unwinding code for smaller binary
+opt-level = 3             # Maximum optimization level
+strip = true              # Strip symbols from binary
+
+[profile.dist]
+inherits = "release"
+opt-level = "z"           # Optimize for size
+lto = "fat"               # Full link-time optimization
+codegen-units = 1         # Single codegen unit for maximum optimization
+panic = "abort"           # Remove unwinding code (~10% smaller)
+strip = "symbols"         # Strip symbols from binary
+debug = false             # No debug symbols in dist
+
+# Optimize dependencies for size in dist builds
+[profile.dist.package."*"]
+opt-level = "z"
+codegen-units = 16        # Faster dependency compilation
+strip = "symbols"

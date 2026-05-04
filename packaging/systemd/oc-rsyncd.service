@@ -1,0 +1,35 @@
+[Unit]
+Description=oc-rsyncd daemon providing rsync protocol services
+Documentation=https://github.com/oferchen/rsync
+After=network.target
+
+[Service]
+Type=simple
+Environment="OC_RSYNC_CONFIG=/etc/oc-rsyncd/oc-rsyncd.conf"
+Environment="OC_RSYNC_SECRETS=/etc/oc-rsyncd/oc-rsyncd.secrets"
+Environment="RSYNCD_CONFIG=/etc/oc-rsyncd/oc-rsyncd.conf"
+Environment="RSYNCD_SECRETS=/etc/oc-rsyncd/oc-rsyncd.secrets"
+EnvironmentFile=-/etc/default/oc-rsyncd
+ExecStart=/usr/bin/oc-rsync --daemon --config ${RSYNCD_CONFIG} $RSYNCD_ARGS
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID CAP_MKNOD CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LimitNOFILE=16384
+UMask=0077
+
+# Intentionally omit legacy aliases (such as rsyncd.service) so oc-rsync can
+# be installed alongside upstream packages without unit-name conflicts.
+[Install]
+WantedBy=multi-user.target

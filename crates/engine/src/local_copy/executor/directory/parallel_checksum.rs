@@ -1,0 +1,530 @@
+//! Parallel checksum computation using rayon.
+//!
+//! This module provides parallel checksum prefetching for directory entries,
+//! significantly improving performance when using `--checksum` mode on directories
+//! with many files.
+//!
+//! # Design
+//!
+//! When checksum comparison is enabled, computing checksums is typically the
+//! bottleneck (see profiling: ~98% of CPU time in md5_compress). By computing
+//! checksums for multiple files in parallel, we can utilize multiple CPU cores.
+//!
+//! The prefetch is split into two phases:
+//!
+//! 1. **Parallel checksum**: File checksums are computed concurrently using rayon.
+//!    Each file is hashed independently, allowing linear scaling with CPU cores.
+//!
+//! 2. **Sequential comparison**: The actual skip/copy decision uses the prefetched
+//!    checksums, maintaining correct ordering.
+
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use rayon::prelude::*;
+
+use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
+
+use crate::local_copy::buffer_pool::{BufferPool, global_buffer_pool};
+use crate::signature::SignatureAlgorithm;
+
+/// Precomputed checksum for a file.
+#[derive(Debug, Clone)]
+pub(crate) struct FileChecksum {
+    /// The computed checksum bytes.
+    pub(crate) digest: Vec<u8>,
+    /// File size at time of checksum (for validation).
+    pub(crate) size: u64,
+}
+
+/// Result of checksum prefetching for a file pair.
+#[derive(Debug)]
+pub(crate) struct ChecksumPrefetchResult {
+    /// Source checksum, if successfully computed.
+    pub(crate) source_checksum: Option<FileChecksum>,
+    /// Destination checksum, if successfully computed.
+    pub(crate) destination_checksum: Option<FileChecksum>,
+}
+
+impl ChecksumPrefetchResult {
+    /// Returns true if both checksums were computed and match.
+    pub(crate) fn checksums_match(&self) -> bool {
+        match (&self.source_checksum, &self.destination_checksum) {
+            (Some(src), Some(dst)) => src.size == dst.size && src.digest == dst.digest,
+            _ => false,
+        }
+    }
+}
+
+/// A pair of files to compare checksums.
+#[derive(Debug, Clone)]
+pub(crate) struct FilePair {
+    /// Source file path.
+    pub(crate) source: PathBuf,
+    /// Destination file path.
+    pub(crate) destination: PathBuf,
+    /// Expected source size (for early filtering).
+    pub(crate) source_size: u64,
+    /// Expected destination size (for early filtering).
+    pub(crate) destination_size: u64,
+}
+
+/// Computes checksums for multiple file pairs in parallel.
+///
+/// This function uses rayon to parallelize checksum computation across
+/// multiple files, significantly improving throughput on multi-core systems.
+///
+/// # Arguments
+///
+/// * `pairs` - File pairs to compute checksums for
+/// * `algorithm` - Checksum algorithm to use
+///
+/// # Returns
+///
+/// A HashMap mapping source paths to their prefetch results for quick lookup.
+pub(crate) fn prefetch_checksums(
+    pairs: &[FilePair],
+    algorithm: SignatureAlgorithm,
+) -> HashMap<PathBuf, ChecksumPrefetchResult> {
+    let buffer_pool = global_buffer_pool();
+
+    let results: Vec<_> = pairs
+        .par_iter()
+        .map(|pair| {
+            if pair.source_size != pair.destination_size {
+                return (
+                    pair.source.clone(),
+                    ChecksumPrefetchResult {
+                        source_checksum: None,
+                        destination_checksum: None,
+                    },
+                );
+            }
+
+            let pool_src = Arc::clone(&buffer_pool);
+            let pool_dst = Arc::clone(&buffer_pool);
+
+            let (source_checksum, destination_checksum) = rayon::join(
+                || compute_file_checksum(&pair.source, algorithm, &pool_src),
+                || compute_file_checksum(&pair.destination, algorithm, &pool_dst),
+            );
+
+            (
+                pair.source.clone(),
+                ChecksumPrefetchResult {
+                    source_checksum,
+                    destination_checksum,
+                },
+            )
+        })
+        .collect();
+
+    let mut map = HashMap::with_capacity(results.len());
+    for (path, result) in results {
+        map.insert(path, result);
+    }
+    map
+}
+
+/// Computes the checksum of a single file.
+fn compute_file_checksum(
+    path: &Path,
+    algorithm: SignatureAlgorithm,
+    buffer_pool: &Arc<BufferPool>,
+) -> Option<FileChecksum> {
+    let file = File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    let size = metadata.len();
+
+    let digest = hash_file_contents(file, algorithm, buffer_pool).ok()?;
+
+    Some(FileChecksum { digest, size })
+}
+
+/// Hashes file contents using the specified algorithm.
+fn hash_file_contents(
+    mut file: File,
+    algorithm: SignatureAlgorithm,
+    buffer_pool: &Arc<BufferPool>,
+) -> io::Result<Vec<u8>> {
+    let mut buffer = BufferPool::acquire_from(Arc::clone(buffer_pool));
+
+    let digest = match algorithm {
+        SignatureAlgorithm::Md4 => {
+            let mut hasher = Md4::new();
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+            }
+            hasher.finalize().as_ref().to_vec()
+        }
+        SignatureAlgorithm::Md4Seeded { seed } => {
+            // upstream: checksum.c:377-380 - append checksum_seed as 4 LE bytes
+            // after the file data when seed != 0. A zero seed degenerates to
+            // unseeded MD4 (preserved here for symmetry with `Md4`).
+            let mut hasher = Md4::new();
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+            }
+            if seed != 0 {
+                hasher.update(&seed.to_le_bytes());
+            }
+            hasher.finalize().as_ref().to_vec()
+        }
+        SignatureAlgorithm::Md5 { seed_config } => {
+            let mut hasher = Md5::with_seed(seed_config);
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+            }
+            hasher.finalize().as_ref().to_vec()
+        }
+        SignatureAlgorithm::Sha1 => {
+            let mut hasher = Sha1::new();
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+            }
+            hasher.finalize().as_ref().to_vec()
+        }
+        SignatureAlgorithm::Xxh64 { seed } => {
+            let mut hasher = Xxh64::new(seed);
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+            }
+            hasher.finalize().as_ref().to_vec()
+        }
+        SignatureAlgorithm::Xxh3 { seed } => {
+            let mut hasher = Xxh3::new(seed);
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+            }
+            hasher.finalize().as_ref().to_vec()
+        }
+        SignatureAlgorithm::Xxh3_128 { seed } => {
+            let mut hasher = Xxh3_128::new(seed);
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+            }
+            hasher.finalize().as_ref().to_vec()
+        }
+    };
+
+    Ok(digest)
+}
+
+/// Checks if a file pair should be skipped based on prefetched checksums.
+///
+/// This is a fast lookup that uses previously computed checksums.
+#[allow(dead_code)] // Convenience wrapper, prefer ChecksumCache::lookup
+pub(crate) fn should_skip_with_prefetched_checksum(
+    prefetched: &HashMap<PathBuf, ChecksumPrefetchResult>,
+    source: &Path,
+) -> Option<bool> {
+    prefetched
+        .get(source)
+        .map(|result| result.checksums_match())
+}
+
+/// Cache for prefetched file checksums during directory traversal.
+///
+/// This wrapper around `HashMap` provides a clean interface for managing
+/// prefetched checksums within a single directory's processing context.
+/// The cache is populated once per directory via [`prefetch_checksums`]
+/// and queried during file copy decisions.
+///
+/// # Example
+///
+/// ```ignore
+/// let pairs = collect_file_pairs(&planned_entries);
+/// let cache = ChecksumCache::from_prefetch(&pairs, algorithm);
+///
+/// // Later, during copy decision:
+/// if let Some(matches) = cache.lookup(source_path) {
+///     if matches { /* skip copy */ }
+/// }
+/// ```
+#[derive(Debug, Default)]
+pub(crate) struct ChecksumCache {
+    inner: HashMap<PathBuf, ChecksumPrefetchResult>,
+}
+
+impl ChecksumCache {
+    /// Creates a new empty checksum cache.
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: HashMap::new(),
+        }
+    }
+
+    /// Creates a checksum cache by prefetching checksums for the given file pairs.
+    ///
+    /// This is the primary constructor, computing all checksums in parallel
+    /// using rayon.
+    pub(crate) fn from_prefetch(pairs: &[FilePair], algorithm: SignatureAlgorithm) -> Self {
+        Self {
+            inner: prefetch_checksums(pairs, algorithm),
+        }
+    }
+
+    /// Looks up a source path in the cache and returns whether checksums match.
+    ///
+    /// Returns `Some(true)` if checksums match (skip copy), `Some(false)` if
+    /// checksums differ (need copy), or `None` if the path wasn't prefetched.
+    pub(crate) fn lookup(&self, source: &Path) -> Option<bool> {
+        self.inner
+            .get(source)
+            .map(|result| result.checksums_match())
+    }
+
+    /// Returns the number of entries in the cache.
+    #[allow(dead_code)] // API completeness with is_empty
+    pub(crate) fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns true if the cache is empty.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Clears all entries from the cache.
+    pub(crate) fn clear(&mut self) {
+        self.inner.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use test_support::create_tempdir;
+
+    #[test]
+    fn prefetch_checksums_matches_identical_files() {
+        let dir = create_tempdir();
+        let source = dir.path().join("source.txt");
+        let destination = dir.path().join("dest.txt");
+
+        let content = b"identical content for both files";
+        fs::write(&source, content).unwrap();
+        fs::write(&destination, content).unwrap();
+
+        let pairs = vec![FilePair {
+            source: source.clone(),
+            destination: destination.clone(),
+            source_size: content.len() as u64,
+            destination_size: content.len() as u64,
+        }];
+
+        let algorithm = SignatureAlgorithm::Md5 {
+            seed_config: checksums::strong::Md5Seed::none(),
+        };
+
+        let results = prefetch_checksums(&pairs, algorithm);
+        let result = results.get(&source).unwrap();
+
+        assert!(result.checksums_match());
+    }
+
+    #[test]
+    fn prefetch_checksums_detects_different_files() {
+        let dir = create_tempdir();
+        let source = dir.path().join("source.txt");
+        let destination = dir.path().join("dest.txt");
+
+        fs::write(&source, b"source content").unwrap();
+        fs::write(&destination, b"dest content!!").unwrap();
+
+        let pairs = vec![FilePair {
+            source: source.clone(),
+            destination: destination.clone(),
+            source_size: 14,
+            destination_size: 14,
+        }];
+
+        let algorithm = SignatureAlgorithm::Md5 {
+            seed_config: checksums::strong::Md5Seed::none(),
+        };
+
+        let results = prefetch_checksums(&pairs, algorithm);
+        let result = results.get(&source).unwrap();
+
+        assert!(!result.checksums_match());
+    }
+
+    #[test]
+    fn prefetch_checksums_skips_size_mismatch() {
+        let dir = create_tempdir();
+        let source = dir.path().join("source.txt");
+        let destination = dir.path().join("dest.txt");
+
+        fs::write(&source, b"short").unwrap();
+        fs::write(&destination, b"much longer content").unwrap();
+
+        let pairs = vec![FilePair {
+            source: source.clone(),
+            destination: destination.clone(),
+            source_size: 5,
+            destination_size: 19,
+        }];
+
+        let algorithm = SignatureAlgorithm::Md5 {
+            seed_config: checksums::strong::Md5Seed::none(),
+        };
+
+        let results = prefetch_checksums(&pairs, algorithm);
+        let result = results.get(&source).unwrap();
+
+        assert!(result.source_checksum.is_none());
+        assert!(result.destination_checksum.is_none());
+        assert!(!result.checksums_match());
+    }
+
+    #[test]
+    fn prefetch_checksums_handles_missing_destination() {
+        let dir = create_tempdir();
+        let source = dir.path().join("source.txt");
+        let destination = dir.path().join("nonexistent.txt");
+
+        fs::write(&source, b"content").unwrap();
+
+        let pairs = vec![FilePair {
+            source: source.clone(),
+            destination,
+            source_size: 7,
+            destination_size: 7,
+        }];
+
+        let algorithm = SignatureAlgorithm::Md5 {
+            seed_config: checksums::strong::Md5Seed::none(),
+        };
+
+        let results = prefetch_checksums(&pairs, algorithm);
+        let result = results.get(&source).unwrap();
+
+        assert!(result.source_checksum.is_some());
+        assert!(result.destination_checksum.is_none());
+        assert!(!result.checksums_match());
+    }
+
+    #[test]
+    fn prefetch_checksums_parallel_multiple_files() {
+        let dir = create_tempdir();
+        let mut pairs = Vec::new();
+
+        for i in 0..100 {
+            let source = dir.path().join(format!("source_{i}.txt"));
+            let destination = dir.path().join(format!("dest_{i}.txt"));
+            let content = format!("content for file {i}");
+
+            fs::write(&source, &content).unwrap();
+            fs::write(&destination, &content).unwrap();
+
+            pairs.push(FilePair {
+                source,
+                destination,
+                source_size: content.len() as u64,
+                destination_size: content.len() as u64,
+            });
+        }
+
+        let algorithm = SignatureAlgorithm::Md5 {
+            seed_config: checksums::strong::Md5Seed::none(),
+        };
+
+        let results = prefetch_checksums(&pairs, algorithm);
+
+        assert_eq!(results.len(), 100);
+        for pair in &pairs {
+            let result = results.get(&pair.source).unwrap();
+            assert!(result.checksums_match());
+        }
+    }
+
+    #[test]
+    fn prefetch_checksums_works_with_xxh3() {
+        let dir = create_tempdir();
+        let source = dir.path().join("source.txt");
+        let destination = dir.path().join("dest.txt");
+
+        let content = b"test content";
+        fs::write(&source, content).unwrap();
+        fs::write(&destination, content).unwrap();
+
+        let pairs = vec![FilePair {
+            source: source.clone(),
+            destination: destination.clone(),
+            source_size: content.len() as u64,
+            destination_size: content.len() as u64,
+        }];
+
+        let algorithm = SignatureAlgorithm::Xxh3 { seed: 0 };
+
+        let results = prefetch_checksums(&pairs, algorithm);
+        let result = results.get(&source).unwrap();
+
+        assert!(result.checksums_match());
+    }
+
+    #[test]
+    fn should_skip_with_prefetched_returns_none_for_unknown() {
+        let prefetched = HashMap::new();
+        let result = should_skip_with_prefetched_checksum(&prefetched, Path::new("/unknown"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn should_skip_with_prefetched_returns_match_status() {
+        let dir = create_tempdir();
+        let source = dir.path().join("source.txt");
+        let destination = dir.path().join("dest.txt");
+
+        fs::write(&source, b"same").unwrap();
+        fs::write(&destination, b"same").unwrap();
+
+        let pairs = vec![FilePair {
+            source: source.clone(),
+            destination,
+            source_size: 4,
+            destination_size: 4,
+        }];
+
+        let algorithm = SignatureAlgorithm::Md5 {
+            seed_config: checksums::strong::Md5Seed::none(),
+        };
+
+        let prefetched = prefetch_checksums(&pairs, algorithm);
+        let result = should_skip_with_prefetched_checksum(&prefetched, &source);
+
+        assert_eq!(result, Some(true));
+    }
+}

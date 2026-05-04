@@ -1,0 +1,175 @@
+name: Criterion Benchmarks
+
+on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: 'Existing release tag to publish criterion results to (e.g. v0.6.1). Use when re-running benchmarks against a release whose tag-triggered workflow failed.'
+        required: false
+        default: ''
+
+concurrency:
+  group: criterion-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  criterion:
+    name: Criterion Benchmark Suite
+    runs-on: ubuntu-24.04
+    # Budget: ~30min waiting for release-cross to publish the release,
+    # ~10-15min cold-cache workspace compile, ~60-90min benchmark execution
+    # across all 7 crates (checksums, core, engine, fast_io, match, protocol,
+    # transfer). Empirical: full suite at default criterion sample sizes hits
+    # ~110min on ubuntu-24.04 runners. Bumped from 90 -> 180 after run
+    # 25287815060 was wall-cancelled mid-run.
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: criterion-benchmark
+
+      - name: Run criterion benchmarks
+        run: |
+          set -euo pipefail
+          cargo bench --workspace 2>&1 | tee criterion_output.txt
+
+      - name: Generate step summary
+        run: |
+          set -euo pipefail
+          {
+            echo "## Criterion Benchmark Results"
+            echo ""
+            echo "**Tag:** \`${GITHUB_REF##*/}\`"
+            echo "**Commit:** \`${GITHUB_SHA::8}\`"
+            echo "**Runner:** \`$(uname -m)\` on \`$(lsb_release -ds 2>/dev/null || echo 'Ubuntu')\`"
+            echo ""
+            echo "### Benchmark Groups"
+            echo ""
+            echo "| Crate | Benchmark | Target |"
+            echo "|-------|-----------|--------|"
+            echo "| checksums | checksums_benchmark, parallel_benchmark, pipelined_benchmark | Checksum algorithms (Adler32, MD4, MD5, XXH3), SIMD vs scalar |"
+            echo "| core | transfer_benchmark | End-to-end transfer pipeline |"
+            echo "| engine | optimizations_benchmark, parallel_checksum, delta_transfer_benchmark | Delta engine, parallel checksumming |"
+            echo "| fast_io | io_optimizations | I/O strategies (mmap, buffered, sparse) |"
+            echo "| match | delta_matching_benchmark, profiling_analysis | Block matching, rolling hash |"
+            echo "| protocol | delta_wire_benchmark, flist_benchmark, file_entry_memory | Wire encoding, file list serialization |"
+            echo "| transfer | map_file_benchmark, token_buffer_benchmark | Memory-mapped file access, token buffering |"
+            echo ""
+            echo "### Raw Output (excerpt)"
+            echo ""
+            echo '```'
+            # Extract lines with benchmark timing results
+            grep -E '(^Benchmarking|^[a-zA-Z_/]+\s+time:)' criterion_output.txt | tail -100 || true
+            echo '```'
+            echo ""
+            echo "Full results available in the uploaded artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload criterion output
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: criterion-results
+          retention-days: 90
+          path: |
+            criterion_output.txt
+            target/criterion/
+
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.target_tag }}" ]; then
+            TAG="${{ inputs.target_tag }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF##*/}"
+          else
+            TAG=""
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if [ -n "$TAG" ]; then
+            echo "Publishing criterion artifacts to release: $TAG"
+          else
+            echo "No release tag resolved; skipping release publish steps."
+          fi
+
+      - name: Append criterion summary to release notes
+        if: steps.release_tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.release_tag.outputs.tag }}"
+
+          # Wait for the release to exist (created by release-cross workflow).
+          # The release-cross workflow may take 20+ minutes to build all
+          # platform artifacts before creating the GitHub release.
+          MAX_ATTEMPTS=60  # 30 minutes at 30-second intervals
+          for i in $(seq 1 "$MAX_ATTEMPTS"); do
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release $TAG found after $((i * 30 - 30)) seconds."
+              break
+            fi
+            if [ "$i" -eq "$MAX_ATTEMPTS" ]; then
+              echo "::error::Release $TAG not found after 30 minutes. Failing."
+              exit 1
+            fi
+            echo "Waiting for release $TAG to be created... (attempt $i/$MAX_ATTEMPTS)"
+            sleep 30
+          done
+
+          CURRENT_BODY=$(gh release view "$TAG" --json body -q .body)
+
+          # Avoid duplicate sections on re-runs
+          if echo "${CURRENT_BODY:-}" | grep -q "Criterion Microbenchmarks"; then
+            echo "Criterion section already present in release notes, skipping."
+            exit 0
+          fi
+
+          # Build criterion summary section
+          TIMING_LINES=$(grep -E '(time:|thrpt:)' criterion_output.txt | head -50 || echo 'See CI artifacts for full results.')
+          CRITERION_SECTION=$(cat <<EOF
+          ## Criterion Microbenchmarks
+
+          Benchmark suite ran on \`ubuntu-24.04\` (\`x86_64\`), commit \`${GITHUB_SHA::8}\`.
+
+          ${TIMING_LINES}
+          EOF
+          )
+          CRITERION_SECTION=$(echo "$CRITERION_SECTION" | sed 's/^          //')
+
+          NEW_BODY=$(cat <<EOF
+          ${CURRENT_BODY}
+
+          ---
+
+          ${CRITERION_SECTION}
+          EOF
+          )
+          NEW_BODY=$(echo "$NEW_BODY" | sed 's/^          //')
+
+          gh release edit "$TAG" --notes "$NEW_BODY"
+
+      - name: Upload criterion results to release
+        if: steps.release_tag.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.release_tag.outputs.tag }}"
+          gh release upload "$TAG" criterion_output.txt --clobber

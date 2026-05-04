@@ -1,0 +1,69 @@
+name: Known Failures Dashboard
+
+on:
+  schedule:
+    # Run weekly on Monday at 06:00 UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: known-failures-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check-known-failures:
+    name: Track known failure status
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: known-failures
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          version: v1
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-3.4.1-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-3.4.1-${{ runner.os }}-
+
+      - name: Build upstream rsync
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Build oc-rsync
+        run: |
+          cargo build --release
+          mkdir -p target/dist
+          cp target/release/oc-rsync target/dist/oc-rsync
+
+      - name: Run known failures check
+        run: bash tools/ci/check_known_failures.sh

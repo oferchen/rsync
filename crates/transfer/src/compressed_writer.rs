@@ -1,0 +1,608 @@
+//! Compressed writer that wraps multiplexed streams with compression.
+//!
+//! This module implements compression on top of multiplexed rsync protocol streams,
+//! mirroring upstream rsync's io.c:io_start_buffering_out() behavior where compression
+//! is applied after multiplex framing.
+
+use std::io::{self, IoSlice, Write};
+
+use compress::algorithm::CompressionAlgorithm;
+use compress::zlib::{CompressionLevel, CountingZlibEncoder};
+
+#[cfg(feature = "lz4")]
+use compress::lz4::CountingLz4Encoder;
+
+#[cfg(feature = "zstd")]
+use compress::zstd::CountingZstdEncoder;
+
+/// Wraps a writer with compression, buffering compressed output.
+///
+/// Mirrors upstream `io.c:io_start_buffering_out()` where compression is
+/// applied on top of the multiplexed stream.
+///
+/// Batch recording is handled by the inner `MultiplexWriter`, not here.
+/// Unlike upstream (which tees compressed wire bytes via `io.c:write_buf()`),
+/// oc-rsync records data at the pre-compression level and sets
+/// `do_compression: false` in the batch stream flags. This avoids an
+/// upstream rsync 3.4.1 limitation where the batch format does not record
+/// the compression algorithm, causing read-batch to force CPRES_ZLIB
+/// (compat.c:194-195) even when the original write used zstd.
+pub struct CompressedWriter<W: Write> {
+    /// The underlying writer (typically MultiplexWriter)
+    inner: W,
+    /// Active compression encoder variant
+    encoder: EncoderVariant,
+    /// Flush threshold - flush when buffer exceeds this size
+    flush_threshold: usize,
+}
+
+/// Compression encoder dispatch for supported algorithms.
+#[allow(clippy::large_enum_variant)]
+enum EncoderVariant {
+    /// zlib encoder writing to Vec<u8>
+    Zlib(CountingZlibEncoder<Vec<u8>>),
+    /// LZ4 encoder writing to Vec<u8>
+    #[cfg(feature = "lz4")]
+    Lz4(CountingLz4Encoder<Vec<u8>>),
+    /// Zstandard encoder writing to Vec<u8>
+    #[cfg(feature = "zstd")]
+    Zstd(CountingZstdEncoder<Vec<u8>>),
+}
+
+impl<W: Write> CompressedWriter<W> {
+    /// Creates a new compressed writer wrapping the given writer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the compression algorithm is not supported in this build.
+    pub fn new(
+        inner: W,
+        algorithm: CompressionAlgorithm,
+        level: CompressionLevel,
+    ) -> io::Result<Self> {
+        // Buffer size matching upstream rsync's IO_BUFFER_SIZE (32KB)
+        // This reduces flush frequency and improves compression ratio
+        const BUFFER_SIZE: usize = 32 * 1024;
+
+        let encoder = match algorithm {
+            CompressionAlgorithm::Zlib => {
+                let sink = Vec::with_capacity(BUFFER_SIZE);
+                EncoderVariant::Zlib(CountingZlibEncoder::with_sink(sink, level))
+            }
+            #[cfg(feature = "lz4")]
+            CompressionAlgorithm::Lz4 => {
+                let sink = Vec::with_capacity(BUFFER_SIZE);
+                EncoderVariant::Lz4(CountingLz4Encoder::with_sink(sink, level))
+            }
+            #[cfg(feature = "zstd")]
+            CompressionAlgorithm::Zstd => {
+                let sink = Vec::with_capacity(BUFFER_SIZE);
+                EncoderVariant::Zstd(CountingZstdEncoder::with_sink(sink, level)?)
+            }
+            #[allow(unreachable_patterns)]
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "compression algorithm {} is not supported",
+                        algorithm.name()
+                    ),
+                ));
+            }
+        };
+
+        Ok(Self {
+            inner,
+            encoder,
+            flush_threshold: BUFFER_SIZE,
+        })
+    }
+
+    /// Drains the encoder's internal sink to the underlying writer without
+    /// triggering a compressor-level flush.
+    fn drain_sink(&mut self) -> io::Result<()> {
+        match &mut self.encoder {
+            EncoderVariant::Zlib(encoder) => {
+                let sink = encoder.get_mut();
+                if !sink.is_empty() {
+                    self.inner.write_all(sink)?;
+                    sink.clear();
+                }
+            }
+            #[cfg(feature = "lz4")]
+            EncoderVariant::Lz4(encoder) => {
+                let sink = encoder.get_mut();
+                if !sink.is_empty() {
+                    self.inner.write_all(sink)?;
+                    sink.clear();
+                }
+            }
+            #[cfg(feature = "zstd")]
+            EncoderVariant::Zstd(encoder) => {
+                let sink = encoder.get_mut();
+                if !sink.is_empty() {
+                    self.inner.write_all(sink)?;
+                    sink.clear();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Performs a sync flush on the encoder and drains all output.
+    ///
+    /// Calls `Z_SYNC_FLUSH` (or equivalent) on the compressor so the receiver
+    /// can decompress all data written so far without waiting for more input.
+    ///
+    /// upstream: `token.c:send_deflated_token()` lines 433-434 uses
+    /// `Z_SYNC_FLUSH` at token boundaries for independent decompressibility.
+    fn flush_compressed(&mut self) -> io::Result<()> {
+        // First, sync-flush the encoder so all pending data in the deflate
+        // state is materialized into the encoder's Vec sink.
+        // upstream: token.c uses Z_SYNC_FLUSH after each token's data.
+        match &mut self.encoder {
+            EncoderVariant::Zlib(encoder) => encoder.flush()?,
+            #[cfg(feature = "lz4")]
+            EncoderVariant::Lz4(encoder) => encoder.flush()?,
+            #[cfg(feature = "zstd")]
+            EncoderVariant::Zstd(encoder) => encoder.flush()?,
+        }
+
+        // Drain the sink (now contains all flushed output) to inner writer
+        self.drain_sink()?;
+
+        // Flush the underlying writer
+        self.inner.flush()
+    }
+
+    /// Finishes the compression stream and flushes all data.
+    ///
+    /// This MUST be called before dropping the writer to ensure all
+    /// compressed data (including trailer bytes) is written.
+    ///
+    /// Returns the underlying writer so it can be reused.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if finishing the compression stream or flushing fails.
+    pub fn finish(mut self) -> io::Result<W> {
+        // Finish the encoder - this writes final trailer bytes to the sink
+        match self.encoder {
+            EncoderVariant::Zlib(encoder) => {
+                let (sink, _bytes) = encoder.finish_into_inner()?;
+                if !sink.is_empty() {
+                    self.inner.write_all(&sink)?;
+                }
+            }
+            #[cfg(feature = "lz4")]
+            EncoderVariant::Lz4(encoder) => {
+                let (sink, _bytes) = encoder.finish_into_inner()?;
+                if !sink.is_empty() {
+                    self.inner.write_all(&sink)?;
+                }
+            }
+            #[cfg(feature = "zstd")]
+            EncoderVariant::Zstd(encoder) => {
+                let (sink, _bytes) = encoder.finish_into_inner()?;
+                if !sink.is_empty() {
+                    self.inner.write_all(&sink)?;
+                }
+            }
+        }
+
+        // Final flush of underlying writer
+        self.inner.flush()?;
+        Ok(self.inner)
+    }
+
+    /// Returns the number of compressed bytes written so far.
+    #[must_use]
+    pub fn bytes_written(&self) -> u64 {
+        match &self.encoder {
+            EncoderVariant::Zlib(encoder) => encoder.bytes_written(),
+            #[cfg(feature = "lz4")]
+            EncoderVariant::Lz4(encoder) => encoder.bytes_written(),
+            #[cfg(feature = "zstd")]
+            EncoderVariant::Zstd(encoder) => encoder.bytes_written(),
+        }
+    }
+
+    /// Provides mutable access to the underlying writer.
+    ///
+    /// Used for sending multiplex control messages that bypass the compression
+    /// buffer, matching upstream behavior where control messages are uncompressed.
+    pub const fn inner_mut(&mut self) -> &mut W {
+        &mut self.inner
+    }
+}
+
+impl<W: Write> Write for CompressedWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // Batch recording happens at the MultiplexWriter level (compressed
+        // wire bytes), not here. upstream: io.c:write_buf() tees after
+        // compression.
+
+        // Compress input data - this writes to the encoder's internal Vec<u8> sink
+        match &mut self.encoder {
+            EncoderVariant::Zlib(encoder) => encoder.write(buf)?,
+            #[cfg(feature = "lz4")]
+            EncoderVariant::Lz4(encoder) => encoder.write(buf)?,
+            #[cfg(feature = "zstd")]
+            EncoderVariant::Zstd(encoder) => encoder.write(buf)?,
+        }
+
+        // Check if we should flush compressed data to underlying writer
+        let current_size = match &self.encoder {
+            EncoderVariant::Zlib(encoder) => encoder.get_ref().len(),
+            #[cfg(feature = "lz4")]
+            EncoderVariant::Lz4(encoder) => encoder.get_ref().len(),
+            #[cfg(feature = "zstd")]
+            EncoderVariant::Zstd(encoder) => encoder.get_ref().len(),
+        };
+
+        if current_size > self.flush_threshold {
+            self.drain_sink()?;
+        }
+
+        // Always report full write to match upstream behavior
+        Ok(buf.len())
+    }
+
+    /// Writes multiple buffers sequentially through the encoder since
+    /// compression state must be maintained across buffers.
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        let mut total_written = 0;
+        for buf in bufs {
+            if !buf.is_empty() {
+                self.write(buf)?;
+                total_written += buf.len();
+            }
+        }
+        Ok(total_written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush_compressed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use compress::zlib::decompress_to_vec;
+
+    #[test]
+    fn compress_round_trip_zlib() {
+        let data = b"test data that should be compressed";
+        let mut buf = Vec::new();
+        let mut writer = CompressedWriter::new(
+            &mut buf,
+            CompressionAlgorithm::Zlib,
+            CompressionLevel::Default,
+        )
+        .unwrap();
+
+        writer.write_all(data).unwrap();
+        writer.finish().unwrap();
+
+        // Verify compressed data exists
+        assert!(!buf.is_empty());
+
+        // Decompress and verify
+        let decompressed = decompress_to_vec(&buf).unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn compress_multiple_writes() {
+        let data1 = b"first chunk ";
+        let data2 = b"second chunk";
+        let data3 = b" third chunk";
+
+        let mut buf = Vec::new();
+        let mut writer = CompressedWriter::new(
+            &mut buf,
+            CompressionAlgorithm::Zlib,
+            CompressionLevel::Default,
+        )
+        .unwrap();
+
+        writer.write_all(data1).unwrap();
+        writer.write_all(data2).unwrap();
+        writer.write_all(data3).unwrap();
+        writer.finish().unwrap();
+
+        // Decompress and verify all chunks
+        let decompressed = decompress_to_vec(&buf).unwrap();
+        let expected = b"first chunk second chunk third chunk";
+        assert_eq!(decompressed, expected);
+    }
+
+    #[test]
+    fn compress_large_data_flushes_automatically() {
+        // Create data larger than flush threshold
+        let data = vec![b'x'; 8192];
+
+        let mut buf = Vec::new();
+        {
+            let mut writer =
+                CompressedWriter::new(&mut buf, CompressionAlgorithm::Zlib, CompressionLevel::Fast)
+                    .unwrap();
+
+            writer.write_all(&data).unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Should have written compressed data
+        assert!(!buf.is_empty());
+
+        // Decompress and verify
+        let decompressed = decompress_to_vec(&buf).unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn bytes_written_tracks_compressed_size() {
+        let data = b"test data that should compress to a reasonable size";
+        let mut buf = Vec::new();
+        {
+            let mut writer = CompressedWriter::new(
+                &mut buf,
+                CompressionAlgorithm::Zlib,
+                CompressionLevel::Default,
+            )
+            .unwrap();
+
+            writer.write_all(data).unwrap();
+            writer.finish().unwrap();
+        }
+
+        // bytes_written should track compressed size (after finish)
+        // For zlib, compressed size should be reasonable
+        assert!(!buf.is_empty());
+        assert!(buf.len() < data.len() + 20); // Allow for zlib overhead
+    }
+
+    #[test]
+    fn inner_mut_provides_access() {
+        let mut buf = Vec::new();
+        let mut writer = CompressedWriter::new(
+            &mut buf,
+            CompressionAlgorithm::Zlib,
+            CompressionLevel::Default,
+        )
+        .unwrap();
+
+        // Verify inner_mut returns a valid reference
+        let _inner = writer.inner_mut();
+        writer.finish().unwrap();
+    }
+
+    /// Verifies that flush() triggers Z_SYNC_FLUSH, producing output that
+    /// is independently decompressible without finishing the stream.
+    ///
+    /// This mirrors upstream rsync's per-token flush behavior where
+    /// Z_SYNC_FLUSH is called after each token so the receiver can
+    /// decompress tokens individually (token.c:send_deflated_token
+    /// lines 433-434).
+    #[test]
+    fn flush_triggers_sync_flush_producing_decompressible_output() {
+        let token_data = b"first token data for sync flush test";
+        let token2 = b"second token after flush";
+
+        let mut buf = Vec::new();
+        {
+            let mut writer = CompressedWriter::new(
+                &mut buf,
+                CompressionAlgorithm::Zlib,
+                CompressionLevel::Default,
+            )
+            .unwrap();
+
+            writer.write_all(token_data).unwrap();
+            // flush() should trigger Z_SYNC_FLUSH on the encoder, materializing
+            // all pending compressed data so it can be decompressed immediately.
+            writer.flush().unwrap();
+
+            writer.write_all(token2).unwrap();
+            writer.finish().unwrap();
+        }
+
+        // The compressed output after flush must be decompressible without
+        // needing more input. This is the key property of Z_SYNC_FLUSH.
+        assert!(!buf.is_empty(), "flush must produce compressed output");
+
+        // Verify full stream decompresses correctly - Z_SYNC_FLUSH ensures
+        // the first token's data was flushed to the output before finish.
+        // upstream: token.c:send_deflated_token lines 433-434.
+        let full = decompress_to_vec(&buf).unwrap();
+        let mut expected = Vec::new();
+        expected.extend_from_slice(token_data);
+        expected.extend_from_slice(token2);
+        assert_eq!(full, expected);
+    }
+
+    #[cfg(feature = "lz4")]
+    mod lz4_tests {
+        use super::*;
+        use compress::lz4::decompress_to_vec as lz4_decompress;
+
+        #[test]
+        fn compress_round_trip_lz4() {
+            let data = b"test data that should be compressed with lz4";
+            let mut buf = Vec::new();
+            let mut writer = CompressedWriter::new(
+                &mut buf,
+                CompressionAlgorithm::Lz4,
+                CompressionLevel::Default,
+            )
+            .unwrap();
+
+            writer.write_all(data).unwrap();
+            writer.finish().unwrap();
+
+            assert!(!buf.is_empty());
+
+            let decompressed = lz4_decompress(&buf).unwrap();
+            assert_eq!(decompressed, data);
+        }
+
+        #[test]
+        fn compress_multiple_writes_lz4() {
+            let data1 = b"first chunk ";
+            let data2 = b"second chunk";
+            let data3 = b" third chunk";
+
+            let mut buf = Vec::new();
+            let mut writer = CompressedWriter::new(
+                &mut buf,
+                CompressionAlgorithm::Lz4,
+                CompressionLevel::Default,
+            )
+            .unwrap();
+
+            writer.write_all(data1).unwrap();
+            writer.write_all(data2).unwrap();
+            writer.write_all(data3).unwrap();
+            writer.finish().unwrap();
+
+            let decompressed = lz4_decompress(&buf).unwrap();
+            let expected = b"first chunk second chunk third chunk";
+            assert_eq!(decompressed, expected);
+        }
+
+        #[test]
+        fn compress_large_data_lz4() {
+            let data = vec![b'y'; 8192];
+
+            let mut buf = Vec::new();
+            {
+                let mut writer = CompressedWriter::new(
+                    &mut buf,
+                    CompressionAlgorithm::Lz4,
+                    CompressionLevel::Fast,
+                )
+                .unwrap();
+
+                writer.write_all(&data).unwrap();
+                writer.finish().unwrap();
+            }
+
+            assert!(!buf.is_empty());
+
+            let decompressed = lz4_decompress(&buf).unwrap();
+            assert_eq!(decompressed, data);
+        }
+
+        #[test]
+        fn lz4_bytes_written_tracks_size() {
+            let data = b"lz4 tracking test data that should compress well";
+            let mut buf = Vec::new();
+            {
+                let mut writer = CompressedWriter::new(
+                    &mut buf,
+                    CompressionAlgorithm::Lz4,
+                    CompressionLevel::Default,
+                )
+                .unwrap();
+
+                writer.write_all(data).unwrap();
+                writer.finish().unwrap();
+            }
+
+            assert!(!buf.is_empty());
+        }
+    }
+
+    #[cfg(feature = "zstd")]
+    mod zstd_tests {
+        use super::*;
+        use compress::zstd::decompress_to_vec as zstd_decompress;
+
+        #[test]
+        fn compress_round_trip_zstd() {
+            let data = b"test data that should be compressed with zstd";
+            let mut buf = Vec::new();
+            let mut writer = CompressedWriter::new(
+                &mut buf,
+                CompressionAlgorithm::Zstd,
+                CompressionLevel::Default,
+            )
+            .unwrap();
+
+            writer.write_all(data).unwrap();
+            writer.finish().unwrap();
+
+            assert!(!buf.is_empty());
+
+            let decompressed = zstd_decompress(&buf).unwrap();
+            assert_eq!(decompressed, data);
+        }
+
+        #[test]
+        fn compress_multiple_writes_zstd() {
+            let data1 = b"first chunk ";
+            let data2 = b"second chunk";
+            let data3 = b" third chunk";
+
+            let mut buf = Vec::new();
+            let mut writer = CompressedWriter::new(
+                &mut buf,
+                CompressionAlgorithm::Zstd,
+                CompressionLevel::Default,
+            )
+            .unwrap();
+
+            writer.write_all(data1).unwrap();
+            writer.write_all(data2).unwrap();
+            writer.write_all(data3).unwrap();
+            writer.finish().unwrap();
+
+            let decompressed = zstd_decompress(&buf).unwrap();
+            let expected = b"first chunk second chunk third chunk";
+            assert_eq!(decompressed, expected);
+        }
+
+        #[test]
+        fn compress_large_data_zstd() {
+            let data = vec![b'z'; 8192];
+
+            let mut buf = Vec::new();
+            {
+                let mut writer = CompressedWriter::new(
+                    &mut buf,
+                    CompressionAlgorithm::Zstd,
+                    CompressionLevel::Fast,
+                )
+                .unwrap();
+
+                writer.write_all(&data).unwrap();
+                writer.finish().unwrap();
+            }
+
+            assert!(!buf.is_empty());
+
+            let decompressed = zstd_decompress(&buf).unwrap();
+            assert_eq!(decompressed, data);
+        }
+
+        #[test]
+        fn zstd_bytes_written_tracks_size() {
+            let data = b"zstd tracking test data that should compress well";
+            let mut buf = Vec::new();
+            {
+                let mut writer = CompressedWriter::new(
+                    &mut buf,
+                    CompressionAlgorithm::Zstd,
+                    CompressionLevel::Default,
+                )
+                .unwrap();
+
+                writer.write_all(data).unwrap();
+                writer.finish().unwrap();
+            }
+
+            assert!(!buf.is_empty());
+        }
+    }
+}

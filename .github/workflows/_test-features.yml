@@ -1,0 +1,86 @@
+name: Test Feature Combinations
+
+on:
+  workflow_call:
+    inputs:
+      cache_version:
+        description: 'Cache version for invalidation'
+        type: string
+        default: 'v1'
+      rust_toolchain:
+        description: 'Rust toolchain version'
+        type: string
+        default: 'stable'
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        type: number
+        default: 45
+
+permissions:
+  contents: read
+
+jobs:
+  feature-flags:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: no-default-features
+            args: "--workspace --no-default-features"
+          - name: parallel
+            args: "-p checksums -p flist --features parallel"
+          - name: async
+            args: "-p daemon -p core -p protocol -p engine --features async"
+          - name: concurrent-sessions
+            args: "-p daemon --features concurrent-sessions"
+          - name: tracing
+            args: "-p daemon -p core -p engine --features tracing"
+          - name: serde
+            args: "-p logging -p protocol -p flist --features serde"
+          - name: incremental-flist
+            args: "-p transfer --features incremental-flist"
+          - name: compression
+            args: "-p compress -p protocol -p engine -p transfer --features zstd,lz4"
+          - name: io_uring
+            args: "-p transfer -p fast_io --features io_uring"
+            linux_only: true
+          - name: copy_file_range
+            args: "-p fast_io --features copy_file_range"
+            linux_only: true
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ inputs.rust_toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
+          key: features-${{ matrix.name }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@db5fb34fa772531a3ece57ca434f579eb334e0fb # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build (${{ matrix.name }})
+        if: ${{ !matrix.linux_only || runner.os == 'Linux' }}
+        run: cargo build --locked ${{ matrix.args }}
+
+      - name: Test (${{ matrix.name }})
+        if: ${{ !matrix.linux_only || runner.os == 'Linux' }}
+        run: cargo nextest run --locked --profile ci ${{ matrix.args }}

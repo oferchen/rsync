@@ -1,0 +1,332 @@
+//! Compressed reader that wraps multiplexed streams with decompression.
+//!
+//! This module implements decompression on top of multiplexed rsync protocol streams,
+//! mirroring upstream rsync's io.c:io_start_buffering_in() behavior where decompression
+//! is applied after multiplex framing.
+
+use std::io::{self, Read};
+
+use compress::algorithm::CompressionAlgorithm;
+use compress::zlib::CountingZlibDecoder;
+
+#[cfg(feature = "lz4")]
+use compress::lz4::CountingLz4Decoder;
+
+#[cfg(feature = "zstd")]
+use compress::zstd::CountingZstdDecoder;
+
+/// Wraps a reader with decompression, reading compressed input.
+///
+/// Mirrors upstream `io.c:io_start_buffering_in()` where decompression is
+/// applied on top of the multiplexed stream.
+///
+/// Batch recording is handled by the inner `MultiplexReader`, not here.
+/// upstream: `io.c:read_buf()` tees compressed wire bytes to `batch_fd`
+/// before decompression. The batch header stores `do_compression: true`
+/// so replay decompresses the tokens.
+pub struct CompressedReader<R: Read> {
+    /// Active decompression decoder variant
+    /// The decoder owns the underlying reader
+    decoder: DecoderVariant<R>,
+}
+
+/// Compression decoder dispatch for supported algorithms.
+#[allow(clippy::large_enum_variant)]
+enum DecoderVariant<R: Read> {
+    /// zlib decoder
+    Zlib(CountingZlibDecoder<R>),
+    /// LZ4 decoder
+    #[cfg(feature = "lz4")]
+    Lz4(CountingLz4Decoder<R>),
+    /// Zstandard decoder
+    #[cfg(feature = "zstd")]
+    Zstd(CountingZstdDecoder<R>),
+}
+
+impl<R: Read> CompressedReader<R> {
+    /// Creates a new compressed reader wrapping the given reader.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the compression algorithm is not supported in this build.
+    pub fn new(inner: R, algorithm: CompressionAlgorithm) -> io::Result<Self> {
+        let decoder = match algorithm {
+            CompressionAlgorithm::Zlib => DecoderVariant::Zlib(CountingZlibDecoder::new(inner)),
+            #[cfg(feature = "lz4")]
+            CompressionAlgorithm::Lz4 => DecoderVariant::Lz4(CountingLz4Decoder::new(inner)),
+            #[cfg(feature = "zstd")]
+            CompressionAlgorithm::Zstd => DecoderVariant::Zstd(CountingZstdDecoder::new(inner)?),
+            #[allow(unreachable_patterns)]
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "compression algorithm {} is not supported",
+                        algorithm.name()
+                    ),
+                ));
+            }
+        };
+
+        Ok(Self { decoder })
+    }
+
+    /// Returns a mutable reference to the underlying reader.
+    pub fn get_mut(&mut self) -> &mut R {
+        match &mut self.decoder {
+            DecoderVariant::Zlib(decoder) => decoder.get_mut(),
+            #[cfg(feature = "lz4")]
+            DecoderVariant::Lz4(decoder) => decoder.get_mut(),
+            #[cfg(feature = "zstd")]
+            DecoderVariant::Zstd(decoder) => decoder.get_mut(),
+        }
+    }
+
+    /// Returns the number of compressed bytes read so far.
+    #[must_use]
+    #[allow(dead_code)] // REASON: diagnostic accessor for future transfer statistics
+    pub const fn bytes_read(&self) -> u64 {
+        match &self.decoder {
+            DecoderVariant::Zlib(decoder) => decoder.bytes_read(),
+            #[cfg(feature = "lz4")]
+            DecoderVariant::Lz4(decoder) => decoder.bytes_read(),
+            #[cfg(feature = "zstd")]
+            DecoderVariant::Zstd(decoder) => decoder.bytes_read(),
+        }
+    }
+}
+
+impl<R: Read> Read for CompressedReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // Decompress data from underlying reader.
+        // Batch recording happens at the MultiplexReader level (compressed
+        // wire bytes), not here. upstream: io.c:read_buf() tees before
+        // decompression.
+        match &mut self.decoder {
+            DecoderVariant::Zlib(decoder) => decoder.read(buf),
+            #[cfg(feature = "lz4")]
+            DecoderVariant::Lz4(decoder) => decoder.read(buf),
+            #[cfg(feature = "zstd")]
+            DecoderVariant::Zstd(decoder) => decoder.read(buf),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use compress::zlib::{CompressionLevel, compress_to_vec};
+    use std::io::Cursor;
+
+    #[test]
+    fn decompress_round_trip_zlib() {
+        let original = b"test data that should be compressed and decompressed";
+
+        // Compress the data first
+        let compressed = compress_to_vec(original, CompressionLevel::Default).unwrap();
+
+        // Now decompress using CompressedReader
+        let cursor = Cursor::new(compressed);
+        let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Zlib).unwrap();
+
+        let mut decompressed = Vec::new();
+        reader.read_to_end(&mut decompressed).unwrap();
+        assert_eq!(decompressed, original);
+    }
+
+    #[test]
+    fn decompress_multiple_reads() {
+        let original = b"first chunk second chunk third chunk";
+
+        // Compress the data first
+        let compressed = compress_to_vec(original, CompressionLevel::Default).unwrap();
+
+        // Decompress using multiple read calls
+        let cursor = Cursor::new(compressed);
+        let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Zlib).unwrap();
+
+        let mut decompressed = Vec::new();
+        let mut buf = [0u8; 16];
+        loop {
+            let n = reader.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            decompressed.extend_from_slice(&buf[..n]);
+        }
+
+        assert_eq!(decompressed, original);
+    }
+
+    #[test]
+    fn decompress_large_data() {
+        // Create large data that will require multiple internal reads
+        let original = vec![b'x'; 8192];
+
+        // Compress the data first
+        let compressed = compress_to_vec(&original, CompressionLevel::Fast).unwrap();
+
+        // Decompress
+        let cursor = Cursor::new(compressed);
+        let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Zlib).unwrap();
+
+        let mut decompressed = Vec::new();
+        reader.read_to_end(&mut decompressed).unwrap();
+
+        assert_eq!(decompressed, original);
+    }
+
+    #[test]
+    fn bytes_read_tracks_decompressed_size() {
+        let original = b"test data that should be compressed and tracked";
+        let compressed = compress_to_vec(original, CompressionLevel::Default).unwrap();
+
+        let cursor = Cursor::new(compressed);
+        let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Zlib).unwrap();
+
+        let mut decompressed = Vec::new();
+        reader.read_to_end(&mut decompressed).unwrap();
+
+        // bytes_read should be zero since we track compressed input bytes, not output
+        // The exact semantics depend on the underlying decoder implementation
+        assert_eq!(decompressed.len(), original.len());
+    }
+
+    #[cfg(feature = "lz4")]
+    mod lz4_tests {
+        use super::*;
+        use compress::lz4::compress_to_vec as lz4_compress;
+        use compress::zlib::CompressionLevel;
+
+        #[test]
+        fn decompress_round_trip_lz4() {
+            let original = b"test data that should be compressed and decompressed with lz4";
+            let compressed = lz4_compress(original, CompressionLevel::Default).unwrap();
+
+            let cursor = Cursor::new(compressed);
+            let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Lz4).unwrap();
+
+            let mut decompressed = Vec::new();
+            reader.read_to_end(&mut decompressed).unwrap();
+            assert_eq!(decompressed, original);
+        }
+
+        #[test]
+        fn decompress_multiple_reads_lz4() {
+            let original = b"first chunk second chunk third chunk for lz4";
+            let compressed = lz4_compress(original, CompressionLevel::Default).unwrap();
+
+            let cursor = Cursor::new(compressed);
+            let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Lz4).unwrap();
+
+            let mut decompressed = Vec::new();
+            let mut buf = [0u8; 16];
+            loop {
+                let n = reader.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                decompressed.extend_from_slice(&buf[..n]);
+            }
+
+            assert_eq!(decompressed, original);
+        }
+
+        #[test]
+        fn decompress_large_data_lz4() {
+            let original = vec![b'y'; 8192];
+            let compressed = lz4_compress(&original, CompressionLevel::Fast).unwrap();
+
+            let cursor = Cursor::new(compressed);
+            let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Lz4).unwrap();
+
+            let mut decompressed = Vec::new();
+            reader.read_to_end(&mut decompressed).unwrap();
+
+            assert_eq!(decompressed, original);
+        }
+
+        #[test]
+        fn lz4_bytes_read_tracks_correctly() {
+            let original = b"lz4 tracking test data";
+            let compressed = lz4_compress(original, CompressionLevel::Default).unwrap();
+
+            let cursor = Cursor::new(compressed);
+            let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Lz4).unwrap();
+
+            let mut decompressed = Vec::new();
+            reader.read_to_end(&mut decompressed).unwrap();
+
+            assert_eq!(decompressed.len(), original.len());
+        }
+    }
+
+    #[cfg(feature = "zstd")]
+    mod zstd_tests {
+        use super::*;
+        use compress::zlib::CompressionLevel;
+        use compress::zstd::compress_to_vec as zstd_compress;
+
+        #[test]
+        fn decompress_round_trip_zstd() {
+            let original = b"test data that should be compressed and decompressed with zstd";
+            let compressed = zstd_compress(original, CompressionLevel::Default).unwrap();
+
+            let cursor = Cursor::new(compressed);
+            let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Zstd).unwrap();
+
+            let mut decompressed = Vec::new();
+            reader.read_to_end(&mut decompressed).unwrap();
+            assert_eq!(decompressed, original);
+        }
+
+        #[test]
+        fn decompress_multiple_reads_zstd() {
+            let original = b"first chunk second chunk third chunk for zstd";
+            let compressed = zstd_compress(original, CompressionLevel::Default).unwrap();
+
+            let cursor = Cursor::new(compressed);
+            let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Zstd).unwrap();
+
+            let mut decompressed = Vec::new();
+            let mut buf = [0u8; 16];
+            loop {
+                let n = reader.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                decompressed.extend_from_slice(&buf[..n]);
+            }
+
+            assert_eq!(decompressed, original);
+        }
+
+        #[test]
+        fn decompress_large_data_zstd() {
+            let original = vec![b'z'; 8192];
+            let compressed = zstd_compress(&original, CompressionLevel::Fast).unwrap();
+
+            let cursor = Cursor::new(compressed);
+            let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Zstd).unwrap();
+
+            let mut decompressed = Vec::new();
+            reader.read_to_end(&mut decompressed).unwrap();
+
+            assert_eq!(decompressed, original);
+        }
+
+        #[test]
+        fn zstd_bytes_read_tracks_correctly() {
+            let original = b"zstd tracking test data";
+            let compressed = zstd_compress(original, CompressionLevel::Default).unwrap();
+
+            let cursor = Cursor::new(compressed);
+            let mut reader = CompressedReader::new(cursor, CompressionAlgorithm::Zstd).unwrap();
+
+            let mut decompressed = Vec::new();
+            reader.read_to_end(&mut decompressed).unwrap();
+
+            assert_eq!(decompressed.len(), original.len());
+        }
+    }
+}

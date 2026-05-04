@@ -1,0 +1,26 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anstyle = "1"
+anyhow = "1"
+camino = "1"
+clap = { version = "4.5", features = ["derive"] }
+branding = { path = "../crates/branding" }
+toml = "1.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cargo_metadata = "0.18"
+flate2 = "1.0.28"
+tar = "0.4"
+walkdir = "2"
+which = "6"
+toml_edit = "0.25"
+tempfile = "3.15"
+regex = "1"

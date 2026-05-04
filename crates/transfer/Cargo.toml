@@ -1,0 +1,126 @@
+[package]
+name = "transfer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Server-side transfer engine for the Rust rsync implementation"
+repository.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+protocol = { path = "../protocol" }
+metadata = { path = "../metadata", default-features = false }
+engine = { path = "../engine", default-features = false }
+signature = { path = "../signature" }
+filters = { path = "../filters" }
+compress = { path = "../compress" }
+logging = { path = "../logging" }
+fast_io = { path = "../fast_io", default-features = false }
+crossbeam-queue = "0.3"
+getrandom = "0.4"
+thiserror = "2.0"
+tracing = { workspace = true, optional = true }
+rayon = { workspace = true }
+tokio = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-fs = { path = "../apple-fs" }
+
+[target.'cfg(unix)'.dependencies]
+checksums = { path = "../checksums" }
+
+[target.'cfg(windows)'.dependencies]
+checksums = { path = "../checksums", default-features = false }
+
+[target.'cfg(unix)'.dependencies.metadata]
+path = "../metadata"
+default-features = false
+features = ["xattr"]
+
+[target.'cfg(unix)'.dependencies.engine]
+path = "../engine"
+default-features = false
+features = ["xattr"]
+
+[features]
+default = ["zstd", "lz4", "xattr", "incremental-flist"]
+
+# ============================================================================
+# Compression Features
+# ============================================================================
+zstd = ["engine/zstd", "compress/zstd", "protocol/zstd"]
+lz4 = ["engine/lz4", "compress/lz4", "protocol/lz4"]
+zlib-ng = ["engine/zlib-ng", "compress/zlib-ng", "protocol/zlib-ng"]
+
+# ============================================================================
+# Metadata Features
+# ============================================================================
+acl = ["metadata/acl", "engine/acl"]
+xattr = []
+
+# ============================================================================
+# Filename Encoding (iconv)
+# ============================================================================
+
+# Mirrors the upstream `#ifdef ICONV_OPTION` build-time switch in compat.c.
+# When enabled, the capability builder advertises CF_SYMLINK_ICONV ('s') and
+# the file-list reader/writer apply iconv conversion to symlink targets in
+# addition to filenames. Without this feature the negotiation skips 's' so
+# the peer does not run sender_symlink_iconv on our wire output.
+iconv = ["protocol/iconv"]
+
+# ============================================================================
+# I/O Optimization Features
+# ============================================================================
+
+# io_uring support for Linux 5.6+ with automatic fallback
+# Benefits: Batched async I/O for 20-40% better throughput
+io_uring = ["fast_io/io_uring"]
+
+# ============================================================================
+# Protocol Features
+# ============================================================================
+
+# Incremental file list processing with failed directory tracking
+incremental-flist = []
+
+# ============================================================================
+# Runtime Features
+# ============================================================================
+
+# Async runtime support - enables tokio-based async pipeline for transfers
+async = ["dep:tokio", "dep:tokio-util"]
+
+# ============================================================================
+# Debugging Features
+# ============================================================================
+
+# Structured logging instrumentation
+tracing = ["dep:tracing"]
+
+[dev-dependencies]
+tempfile = "3.15"
+test-support = { path = "../test-support" }
+criterion = "0.5"
+proptest = "1.4"
+rand = "0.9"
+
+[[bench]]
+name = "map_file_benchmark"
+harness = false
+
+[[bench]]
+name = "token_buffer_benchmark"
+harness = false
+
+[[bench]]
+name = "reorder_buffer_benchmark"
+harness = false
