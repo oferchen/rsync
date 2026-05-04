@@ -51,9 +51,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_FLAG_OVERLAPPED, FILE_GENERIC_WRITE, FILE_SHARE_READ, FlushFileBuffers, ReOpenFile,
     WriteFile,
 };
-use windows_sys::Win32::System::IO::{
-    GetQueuedCompletionStatusEx, OVERLAPPED, OVERLAPPED_ENTRY,
-};
+use windows_sys::Win32::System::IO::{GetQueuedCompletionStatusEx, OVERLAPPED, OVERLAPPED_ENTRY};
 
 use super::completion_port::CompletionPort;
 use super::config::IocpConfig;
@@ -446,10 +444,9 @@ fn submit_write_batch(
 
         in_flight.retain_mut(|op| {
             let ptr = pinned_overlapped_addr(op);
-            if let Some(transferred) =
-                completions
-                    .iter()
-                    .find_map(|(p, n)| if *p == ptr { Some(*n) } else { None })
+            if let Some(transferred) = completions
+                .iter()
+                .find_map(|(p, n)| if *p == ptr { Some(*n) } else { None })
             {
                 let chunk_len = op.buffer.len();
                 if transferred == chunk_len {
