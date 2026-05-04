@@ -118,8 +118,6 @@ fn write_end_with_protocol_31_enables_safe_mode_automatically() {
     assert_eq!(error_code, 42);
 }
 
-// Tests for extracted helper methods
-
 #[test]
 fn calculate_xflags_mode_comparison() {
     let mut writer = FileListWriter::new(test_protocol());
@@ -1114,8 +1112,6 @@ fn special_file_no_rdev_in_protocol_31() {
     assert!(read_entry.is_special());
 }
 
-// Protocol boundary tests
-
 #[test]
 fn protocol_28_is_oldest_supported() {
     // Protocol 28 is the oldest supported version
@@ -1725,8 +1721,6 @@ fn directory_content_dir_flag_round_trip() {
     assert_eq!(read2.name(), "no_content");
     assert!(!read2.content_dir(), "second dir should not have content");
 }
-// These tests verify the wire format encoding for XMIT_EXTENDED_FLAGS
-// across different protocol versions and flag combinations.
 
 #[test]
 fn extended_flags_two_byte_encoding_protocol_28() {
