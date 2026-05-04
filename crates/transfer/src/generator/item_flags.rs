@@ -32,7 +32,7 @@ pub struct ItemFlags {
 }
 
 impl ItemFlags {
-    // Wire flags (bits 0-15) — upstream rsync.h:214-229
+    // Wire flags (bits 0-15) - upstream rsync.h:214-229
     /// Item reports access time change.
     pub const ITEM_REPORT_ATIME: u32 = 1 << 0; // 0x0001
     /// Item reports generic change (itemized output).
@@ -72,7 +72,7 @@ impl ItemFlags {
     /// Item needs data transfer (file content differs).
     pub const ITEM_TRANSFER: u32 = 1 << 15; // 0x8000
 
-    // Log-only flags (bits 16-18) — never sent on wire
+    // Log-only flags (bits 16-18) - never sent on wire
     /// Item is missing data (log formatting only).
     pub const ITEM_MISSING_DATA: u32 = 1 << 16; // 0x1_0000
     /// Item was deleted (log formatting only).

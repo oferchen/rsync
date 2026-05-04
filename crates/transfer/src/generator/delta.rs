@@ -217,7 +217,7 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     let mut verifier = ChecksumVerifier::for_algorithm(checksum_algorithm);
 
     // Read buffer sized for fewer syscalls (up to 256KB per read).
-    // Buffer is reused across files — no allocation after the first large file.
+    // Buffer is reused across files - no allocation after the first large file.
     const MAX_READ_SIZE: usize = 256 * 1024;
     let read_size = (file_size as usize).clamp(1, MAX_READ_SIZE);
 

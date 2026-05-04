@@ -126,7 +126,7 @@ pub mod io_error_flags {
     /// Converts an accumulated `io_error` bitfield into the corresponding rsync
     /// exit code.
     ///
-    /// Mirrors upstream `log.c` — `log_exit()` which maps the io_error flags to
+    /// Mirrors upstream `log.c` - `log_exit()` which maps the io_error flags to
     /// `RERR_*` exit codes. Returns 0 when no error bits are set.
     ///
     /// # Exit code mapping
@@ -424,7 +424,7 @@ impl GeneratorContext {
     /// [`run`](Self::run) to execute the transfer.
     #[must_use]
     pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
-        // upstream: flist.c:2923 — ndx_start = inc_recurse ? 1 : 0
+        // upstream: flist.c:2923 - ndx_start = inc_recurse ? 1 : 0
         let inc_recurse = handshake
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
@@ -470,7 +470,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2321` — `ndx = i + cur_flist->ndx_start`
+    /// - `generator.c:2321` - `ndx = i + cur_flist->ndx_start`
     fn flat_to_wire_ndx(&self, flat_idx: usize) -> i32 {
         let seg_idx = self
             .incremental
@@ -548,7 +548,7 @@ impl GeneratorContext {
         .with_preserve_xattrs(self.config.flags.xattrs)
         .with_checksum_seed(self.checksum_seed);
 
-        // upstream: flist.c — always_checksum includes per-file checksums in the file list
+        // upstream: flist.c - always_checksum includes per-file checksums in the file list
         if self.config.flags.checksum {
             let factory = ChecksumFactory::from_negotiation(
                 self.negotiated_algorithms.as_ref(),
