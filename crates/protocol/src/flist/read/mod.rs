@@ -719,7 +719,6 @@ impl FileListReader {
             entry.set_xattr_ndx(xattr_ndx);
         }
 
-        // Update statistics
         self.update_stats(&entry);
 
         debug_log!(

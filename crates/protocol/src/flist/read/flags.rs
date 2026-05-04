@@ -19,7 +19,7 @@ use crate::flist::flags::{FileFlags, XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST}
 /// The first byte of each file entry encodes transmission flags that control
 /// which metadata fields follow. A zero byte signals end-of-list.
 ///
-/// // upstream: flist.c:recv_file_entry() lines 760-780
+/// upstream: flist.c:recv_file_entry() lines 760-780
 #[derive(Debug)]
 pub enum FlagsResult {
     /// End of file list reached (zero flags byte).
@@ -52,7 +52,7 @@ impl FileListReader {
     /// `FlagsResult::IoError` for I/O error markers, or
     /// `FlagsResult::Flags` for valid entry flags.
     ///
-    /// // upstream: flist.c:recv_file_entry() lines 2625-2670
+    /// upstream: flist.c:recv_file_entry() lines 2625-2670
     pub(super) fn read_flags<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<FlagsResult> {
         let use_varint = self.use_varint_flags();
 
@@ -144,7 +144,7 @@ impl FileListReader {
     /// Returns `Some(error_code)` if an error marker is detected,
     /// `None` if flags represent a valid entry.
     ///
-    /// // upstream: flist.c:recv_file_entry() safe_flist error check
+    /// upstream: flist.c:recv_file_entry() safe_flist error check
     fn check_error_marker<R: Read + ?Sized>(
         &self,
         primary: u8,
