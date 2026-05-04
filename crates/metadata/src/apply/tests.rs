@@ -7,6 +7,7 @@ use filetime::{FileTime, set_file_times};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
 use std::path::Path;
 use tempfile::tempdir;
 
