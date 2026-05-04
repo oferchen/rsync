@@ -186,7 +186,6 @@ fn read_response_header<R: Read>(
 ) -> io::Result<ResponseHeader> {
     let expected_ndx = pending.ndx();
 
-    // Read sender attributes (echoed NDX + iflags + optional xattr data)
     let (echoed_ndx, sender_attrs) = SenderAttrs::read_with_codec_xattr(
         reader,
         ndx_codec,
@@ -194,7 +193,7 @@ fn read_response_header<R: Read>(
         ctx.config.want_xattr_optim,
     )?;
 
-    // Verify NDX matches - protocol requires in-order responses
+    // Protocol requires in-order responses.
     if echoed_ndx != expected_ndx {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -204,10 +203,9 @@ fn read_response_header<R: Read>(
         ));
     }
 
-    // Read echoed sum_head - needed for append mode offset calculation.
+    // Echoed sum_head provides the existing file length for append mode offset.
     let echoed_sum_head = SumHead::read(reader)?;
 
-    // Decompose pending transfer
     let (file_path, basis_path, signature, target_size) = pending.into_parts();
 
     // upstream: receiver.c:797 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
@@ -270,7 +268,6 @@ mod tests {
 
     #[test]
     fn request_config_debug() {
-        // Verify RequestConfig is debuggable
         let protocol = ProtocolVersion::from_supported(31).expect("31 is supported");
         let config = RequestConfig {
             protocol,
