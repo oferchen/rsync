@@ -261,13 +261,12 @@ mod tests {
         let payload = b"test data for checksum verification";
         let mut compressed = compress_to_vec(payload, CompressionLevel::Default).expect("compress");
 
-        // Corrupt a byte in the middle of the frame (after the header)
-        // LZ4 frames have: magic (4) + frame descriptor (2-15) + blocks + checksum (4)
+        // LZ4 frames have: magic (4) + frame descriptor (2-15) + blocks + checksum (4).
+        // Corrupting byte 8 lands inside the compressed block payload.
         if compressed.len() > 10 {
             compressed[8] ^= 0xFF;
         }
 
-        // Decompression should fail due to corruption
         let result = decompress_to_vec(&compressed);
         assert!(result.is_err(), "corrupted frame should fail decompression");
     }
@@ -277,12 +276,12 @@ mod tests {
         let payload = b"sufficient data for a complete frame with checksum";
         let compressed = compress_to_vec(payload, CompressionLevel::Default).expect("compress");
 
-        // Truncate only the last byte of the checksum
-        // The frame has content_checksum(true), so it needs the 4-byte checksum at the end
+        // Frame uses content_checksum(true), so the trailing 4-byte checksum
+        // is required for successful validation; lopping off the last byte
+        // either errors or yields different bytes.
         if compressed.len() > 5 {
             let truncated = &compressed[..compressed.len() - 1];
             let result = decompress_to_vec(truncated);
-            // Either error or wrong data - truncated checksums should fail validation
             if let Ok(decoded) = result {
                 assert_ne!(decoded, payload, "truncated checksum should not match");
             }
@@ -309,21 +308,19 @@ mod tests {
         assert!(restored.is_empty(), "empty input should round-trip");
     }
 
-    // Per-token flush tests - verify that flush produces output enabling
-    // incremental decompression, matching the upstream per-token pattern
-    // (token.c:send_deflated_token).
+    // upstream: token.c:send_deflated_token() flushes the compressor after each
+    // token so the receiver can decompress incrementally; the tests below
+    // exercise that contract.
 
     #[test]
     fn flush_emits_compressed_block() {
         let mut encoder = CountingLz4Encoder::with_sink(Vec::new(), CompressionLevel::Default);
         encoder.write(b"token payload data").expect("write");
 
-        // Before flush, the encoder may buffer data internally
         let before_flush = encoder.get_ref().len();
 
         encoder.flush().expect("flush");
 
-        // After flush, compressed data must appear in the sink
         let after_flush = encoder.get_ref().len();
         assert!(
             after_flush > before_flush,
@@ -345,7 +342,6 @@ mod tests {
         let (compressed, bytes) = encoder.finish_into_inner().expect("finish");
         assert!(bytes > 0, "should have produced compressed output");
 
-        // The entire stream must decompress to both tokens concatenated
         let decompressed = decompress_to_vec(&compressed).expect("decompress");
         let mut expected = Vec::new();
         expected.extend_from_slice(token1);
@@ -355,8 +351,7 @@ mod tests {
 
     #[test]
     fn flush_after_each_token_all_data_recoverable() {
-        // Simulates upstream per-token pattern: write data, flush, repeat.
-        // Verifies that all tokens are recoverable after stream finalization.
+        // upstream: token.c per-token pattern - write data, flush, repeat.
         let tokens: &[&[u8]] = &[
             b"token one: file header metadata",
             b"token two: delta literal run",
@@ -373,7 +368,6 @@ mod tests {
 
         let (compressed, _bytes) = encoder.finish_into_inner().expect("finish");
 
-        // All tokens must decompress correctly
         let decompressed = decompress_to_vec(&compressed).expect("decompress");
         let expected: Vec<u8> = tokens.iter().flat_map(|t| t.iter().copied()).collect();
         assert_eq!(decompressed, expected);
@@ -383,16 +377,13 @@ mod tests {
     fn flush_on_empty_buffer_is_noop() {
         let mut encoder = CountingLz4Encoder::with_sink(Vec::new(), CompressionLevel::Default);
 
-        // Flush with no data written should not error
         encoder.flush().expect("flush on empty");
 
         let before = encoder.get_ref().len();
 
-        // Another flush should also be fine
         encoder.flush().expect("second flush on empty");
         let after = encoder.get_ref().len();
 
-        // No data should have been emitted (or at most frame header bytes)
         assert_eq!(
             before, after,
             "empty flush should not produce additional output"
@@ -401,17 +392,15 @@ mod tests {
 
     #[test]
     fn flush_produces_incrementally_decompressible_output() {
-        // Key test: after writing token1 and flushing, the compressed output
-        // so far (once finalized into a complete frame) must contain token1's
-        // data. This validates that flush materializes buffered data rather
-        // than holding it in the encoder's internal state.
+        // Verifies flush materializes buffered data into the sink rather than
+        // holding it in the encoder's internal state, so the finalized frame
+        // contains token1 even though the test interleaves writes around it.
         let mut encoder = CountingLz4Encoder::with_sink(Vec::new(), CompressionLevel::Default);
 
         let token1 = b"incremental decompression test - token one data payload";
         encoder.write(token1).expect("write token 1");
         encoder.flush().expect("flush after token 1");
 
-        // Capture sink state after flush - this has compressed blocks
         let after_token1_len = encoder.get_ref().len();
         assert!(
             after_token1_len > 0,
@@ -448,29 +437,25 @@ mod tests {
 
     #[test]
     fn multiple_flush_cycles_with_varying_sizes() {
-        // Test flush with different token sizes to exercise block boundaries
         let mut encoder = CountingLz4Encoder::with_sink(Vec::new(), CompressionLevel::Fast);
         let mut expected = Vec::new();
 
-        // Small token
         let small = b"x";
         encoder.write(small).expect("write small");
         encoder.flush().expect("flush small");
         expected.extend_from_slice(small);
 
-        // Medium token
         let medium = vec![b'M'; 4096];
         encoder.write(&medium).expect("write medium");
         encoder.flush().expect("flush medium");
         expected.extend_from_slice(&medium);
 
-        // Large token (exceeds typical block size)
+        // Exceeds the default frame block size to exercise block boundaries.
         let large = vec![b'L'; 65536];
         encoder.write(&large).expect("write large");
         encoder.flush().expect("flush large");
         expected.extend_from_slice(&large);
 
-        // Empty write + flush
         encoder.write(b"").expect("write empty");
         encoder.flush().expect("flush empty");
 
@@ -481,7 +466,6 @@ mod tests {
 
     #[test]
     fn counting_sink_encoder_flush() {
-        // Verify flush works with the CountingSink (discard) variant
         let mut encoder = CountingLz4Encoder::new(CompressionLevel::Default);
         encoder
             .write(b"data for counting sink flush")

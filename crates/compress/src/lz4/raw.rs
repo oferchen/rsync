@@ -359,11 +359,11 @@ mod tests {
 
     #[test]
     fn invalid_header_rejected() {
-        // TOKEN_REL flag (0x80) should not be decoded as compressed data
+        // upstream: token.c TOKEN_REL flag (0x80) is not compressed data.
         let header = [0x80, 0x00];
         assert!(decode_header(header).is_none());
 
-        // END_FLAG (0x00) should not be decoded as compressed data
+        // upstream: token.c END_FLAG (0x00) is not compressed data.
         let header = [0x00, 0x00];
         assert!(decode_header(header).is_none());
     }
@@ -381,7 +381,6 @@ mod tests {
 
     #[test]
     fn compress_decompress_large_block() {
-        // Test near max block size
         let input = vec![b'x'; 16000];
         let compressed = compress_block_to_vec(&input).expect("compress");
         let decompressed = decompress_block_to_vec(&compressed, input.len()).expect("decompress");
@@ -390,11 +389,9 @@ mod tests {
 
     #[test]
     fn compress_decompress_compressible_data() {
-        // Highly compressible data
         let input = vec![0u8; 10000];
         let compressed = compress_block_to_vec(&input).expect("compress");
 
-        // Should compress well
         assert!(
             compressed.len() < input.len() / 2,
             "zeros should compress significantly"
@@ -449,7 +446,6 @@ mod tests {
 
     #[test]
     fn decompress_truncated_input() {
-        // Valid header but missing compressed data
         let header = encode_header(100);
         let result = decompress_block(&header, &mut [0u8; 1000]);
         assert!(matches!(result, Err(RawLz4Error::BufferTooSmall { .. })));
@@ -457,7 +453,7 @@ mod tests {
 
     #[test]
     fn decompress_invalid_header_token_rel() {
-        // TOKEN_REL flag (0x80) should fail
+        // upstream: token.c TOKEN_REL flag (0x80).
         let input = [0x80, 0x00, 0x00, 0x00];
         let result = decompress_block(&input, &mut [0u8; 100]);
         assert!(matches!(result, Err(RawLz4Error::InvalidHeader(0x80))));
@@ -465,7 +461,7 @@ mod tests {
 
     #[test]
     fn decompress_invalid_header_end_flag() {
-        // END_FLAG (0x00) should fail
+        // upstream: token.c END_FLAG (0x00).
         let input = [0x00, 0x00, 0x00, 0x00];
         let result = decompress_block(&input, &mut [0u8; 100]);
         assert!(matches!(result, Err(RawLz4Error::InvalidHeader(0x00))));
@@ -473,7 +469,6 @@ mod tests {
 
     #[test]
     fn decompress_corrupted_data() {
-        // Valid header but corrupted compressed data
         let header = encode_header(10);
         let mut input = Vec::from(header);
         input.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
@@ -485,7 +480,7 @@ mod tests {
     #[test]
     fn compress_buffer_too_small() {
         let input = b"test data that needs compression space";
-        let mut output = [0u8; 5]; // Way too small
+        let mut output = [0u8; 5];
 
         let result = compress_block(input, &mut output);
         assert!(matches!(result, Err(RawLz4Error::BufferTooSmall { .. })));
@@ -493,7 +488,6 @@ mod tests {
 
     #[test]
     fn error_to_io_error_conversion() {
-        // Test that RawLz4Error converts to io::Error correctly
         let err = RawLz4Error::InputTooLarge(20000);
         let io_err: std::io::Error = err.into();
         assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidData);
@@ -501,7 +495,6 @@ mod tests {
 
     #[test]
     fn error_display_messages() {
-        // Verify error messages are descriptive
         let err = RawLz4Error::InputTooLarge(20000);
         let msg = err.to_string();
         assert!(msg.contains("20000"));
@@ -522,7 +515,6 @@ mod tests {
 
     #[test]
     fn compress_at_exact_max_size() {
-        // Test compressing exactly MAX_BLOCK_SIZE bytes
         let input = vec![b'x'; MAX_BLOCK_SIZE];
         let result = compress_block_to_vec(&input);
         assert!(result.is_ok());
@@ -530,7 +522,6 @@ mod tests {
 
     #[test]
     fn header_max_size_encoding() {
-        // Test header encoding for maximum size
         let header = encode_header(MAX_BLOCK_SIZE);
         let decoded = decode_header(header).expect("valid header");
         assert_eq!(decoded, MAX_BLOCK_SIZE);
@@ -538,10 +529,10 @@ mod tests {
 
     #[test]
     fn read_compressed_block_io_error() {
-        // Test I/O error propagation
         use std::io::Cursor;
 
-        let mut cursor = Cursor::new(vec![0x40, 0x10]); // Header for 16 bytes but no data
+        // Header advertises 16 bytes of payload that the cursor never supplies.
+        let mut cursor = Cursor::new(vec![0x40, 0x10]);
         let result = read_compressed_block(&mut cursor, 1000);
         assert!(matches!(result, Err(RawLz4Error::Io(_))));
     }
@@ -551,16 +542,16 @@ mod tests {
         assert!(is_deflated_data(0x40));
         assert!(is_deflated_data(0x41));
         assert!(is_deflated_data(0x7F));
-        assert!(!is_deflated_data(0x00)); // END_FLAG
-        assert!(!is_deflated_data(0x80)); // TOKEN_REL
-        assert!(!is_deflated_data(0xC0)); // TOKENRUN_REL
+        // upstream: token.c flags - END_FLAG, TOKEN_REL, TOKENRUN_REL.
+        assert!(!is_deflated_data(0x00));
+        assert!(!is_deflated_data(0x80));
+        assert!(!is_deflated_data(0xC0));
     }
 
     #[test]
     fn read_compressed_block_eof_in_header() {
         use std::io::Cursor;
 
-        // Only one byte when header needs two
         let mut cursor = Cursor::new(vec![0x40]);
         let result = read_compressed_block(&mut cursor, 1000);
         assert!(matches!(result, Err(RawLz4Error::Io(_))));
@@ -573,10 +564,9 @@ mod tests {
     fn read_compressed_block_eof_in_data() {
         use std::io::Cursor;
 
-        // Header says 100 bytes but only 5 present
         let header = encode_header(100);
         let mut data = Vec::from(header);
-        data.extend_from_slice(&[0x00, 0x01, 0x02, 0x03, 0x04]); // Only 5 bytes
+        data.extend_from_slice(&[0x00, 0x01, 0x02, 0x03, 0x04]);
         let mut cursor = Cursor::new(data);
         let result = read_compressed_block(&mut cursor, 1000);
         assert!(matches!(result, Err(RawLz4Error::Io(_))));
@@ -593,7 +583,6 @@ mod tests {
 
     #[test]
     fn decompress_block_to_vec_max_size_exceeded() {
-        // Test that decompression rejects sizes exceeding MAX_DECOMPRESSED_SIZE
         let input = b"test";
         let compressed = compress_block_to_vec(input).expect("compress");
 
@@ -629,40 +618,35 @@ mod tests {
 
     #[test]
     fn compressed_size_from_header_helper() {
-        // Direct test of the public helper function
         let header = encode_header(1234);
         assert_eq!(compressed_size_from_header(header), Some(1234));
 
-        // Invalid header returns None
         assert_eq!(compressed_size_from_header([0x00, 0x00]), None);
         assert_eq!(compressed_size_from_header([0x80, 0x00]), None);
     }
 
     #[test]
     fn compress_incompressible_data_near_max() {
-        // Generate pseudo-random incompressible data using a simple pattern
-        // that LZ4 cannot compress well. This tests the expansion case.
+        // Pseudo-random fill exercises the expansion case where LZ4 output
+        // can grow past the input size.
         let mut input = Vec::with_capacity(MAX_BLOCK_SIZE);
         let mut state: u32 = 0xDEAD_BEEF;
         for _ in 0..MAX_BLOCK_SIZE {
-            // Simple LCG-like scramble to generate non-compressible bytes
+            // LCG (Numerical Recipes constants) yields non-compressible bytes.
             state = state.wrapping_mul(1664525).wrapping_add(1013904223);
             input.push((state >> 24) as u8);
         }
 
-        // This data may expand slightly but should still fit
+        // Either outcome is valid - the LCG output may or may not exceed
+        // MAX_BLOCK_SIZE once compressed.
         let result = compress_block_to_vec(&input);
-        // Either succeeds or fails with CompressedTooLarge - both are valid outcomes
-        // depending on how the random data compresses
         match result {
             Ok(compressed) => {
-                // Verify roundtrip works
                 let decompressed =
                     decompress_block_to_vec(&compressed, MAX_BLOCK_SIZE).expect("decompress");
                 assert_eq!(decompressed, input);
             }
             Err(RawLz4Error::CompressedTooLarge(size)) => {
-                // Valid failure - compressed size exceeded MAX_BLOCK_SIZE
                 assert!(size > MAX_BLOCK_SIZE);
             }
             Err(e) => panic!("Unexpected error: {e}"),
@@ -680,7 +664,6 @@ mod tests {
 
     #[test]
     fn decompress_block_header_only_input() {
-        // Input is exactly HEADER_SIZE but indicates non-zero compressed length
         let header = encode_header(50);
         let result = decompress_block(&header, &mut [0u8; 1000]);
         assert!(matches!(result, Err(RawLz4Error::BufferTooSmall { .. })));
@@ -692,7 +675,6 @@ mod tests {
 
     #[test]
     fn compress_block_exact_buffer_fit() {
-        // Test compression into a buffer that's exactly the right size
         let input = b"some test data for compression";
         let max_size = HEADER_SIZE + get_maximum_output_size(input.len());
         let mut output = vec![0u8; max_size];
