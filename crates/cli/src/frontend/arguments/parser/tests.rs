@@ -403,8 +403,6 @@ fn human_readable_two_separate_short_flags_is_combined() {
     assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
 }
 
-// ── Embedded SSH arguments ──────────────────────────────────────────
-
 #[test]
 fn ssh_cipher_parses_comma_separated_list() {
     let parsed = parse_test_args([
