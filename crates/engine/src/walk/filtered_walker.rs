@@ -165,7 +165,7 @@ mod tests {
         let walker = FilteredWalker::new(inner, filters);
 
         let entries: Vec<_> = walker.flatten().collect();
-        // Should have all entries: root + file.txt + file.bak + subdir + nested.txt + .git + config + src + main.rs
+        // root + file.txt + file.bak + subdir + nested.txt + .git + config + src + main.rs.
         assert_eq!(entries.len(), 9);
     }
 
@@ -197,7 +197,6 @@ mod tests {
 
         let entries: Vec<_> = walker.flatten().collect();
 
-        // Should not have .git directory or its contents
         let has_git = entries
             .iter()
             .any(|e| e.path().components().any(|c| c.as_os_str() == ".git"));
@@ -208,7 +207,7 @@ mod tests {
     fn include_overrides_exclude() {
         let dir = setup_test_tree();
         let inner = WalkdirWalker::new(dir.path(), WalkConfig::default());
-        // Exclude all .txt files except those in src/
+        // Exclude every *.txt except those reached via src/.
         let rules = vec![
             FilterRule::exclude("*.txt".to_owned()),
             FilterRule::include("src/**".to_owned()),
@@ -218,11 +217,9 @@ mod tests {
 
         let entries: Vec<_> = walker.flatten().collect();
 
-        // file.txt and subdir/nested.txt should be excluded
         let has_root_txt = entries.iter().any(|e| e.path().ends_with("file.txt"));
         assert!(!has_root_txt);
 
-        // src/ and src/main.rs should be included
         let has_src = entries
             .iter()
             .any(|e| e.path().file_name().map(|n| n == "src").unwrap_or(false));
@@ -303,7 +300,6 @@ mod tests {
 
     #[test]
     fn handles_errors_from_inner_walker() {
-        // Test that errors from the inner walker are propagated
         let walker =
             WalkdirWalker::new(Path::new("/nonexistent/path/12345"), WalkConfig::default());
         let filters = FilterSet::default();
@@ -328,7 +324,7 @@ mod tests {
 
         let entries: Vec<_> = walker.flatten().collect();
 
-        // Should only have: root, file.txt, src/, src/main.rs
+        // Survivors: root, file.txt, src/, src/main.rs.
         let names: Vec<_> = entries
             .iter()
             .filter_map(|e| e.file_name().map(|n| n.to_string_lossy().to_string()))
