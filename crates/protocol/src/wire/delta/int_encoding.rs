@@ -25,7 +25,7 @@ use std::io::{self, Read, Write};
 ///
 /// let mut buf = Vec::new();
 /// write_int(&mut buf, 0x12345678).unwrap();
-/// assert_eq!(buf, [0x78, 0x56, 0x34, 0x12]); // Little-endian
+/// assert_eq!(buf, [0x78, 0x56, 0x34, 0x12]);
 /// ```
 ///
 /// Reference: `io.c:write_int()` line ~2082

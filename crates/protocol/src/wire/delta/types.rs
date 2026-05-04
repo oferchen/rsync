@@ -17,10 +17,8 @@ pub const CHUNK_SIZE: usize = 32 * 1024;
 /// ```
 /// use protocol::wire::DeltaOp;
 ///
-/// // Create a literal operation
 /// let lit = DeltaOp::Literal(vec![1, 2, 3, 4, 5]);
 ///
-/// // Create a copy operation
 /// let copy = DeltaOp::Copy {
 ///     block_index: 0,
 ///     length: 4096,
