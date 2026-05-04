@@ -90,22 +90,18 @@ impl FileListWriter {
     fn calculate_basic_flags(&self, entry: &FileEntry, same_len: usize, suffix_len: usize) -> u32 {
         let mut xflags: u32 = 0;
 
-        // Directory with top_dir flag
         if entry.is_dir() && entry.flags().top_dir() {
             xflags |= XMIT_TOP_DIR as u32;
         }
 
-        // Mode comparison
         if entry.mode() == self.state.prev_mode() {
             xflags |= XMIT_SAME_MODE as u32;
         }
 
-        // Time comparison
         if entry.mtime() == self.state.prev_mtime() {
             xflags |= XMIT_SAME_TIME as u32;
         }
 
-        // UID comparison
         // upstream: flist.c:463 - set XMIT_SAME_UID when !preserve_uid OR
         // (uid matches previous AND not the first entry). The *lastname guard
         // prevents false "same" on the first entry where prev_uid is zero.
@@ -115,14 +111,12 @@ impl FileListWriter {
             xflags |= XMIT_SAME_UID as u32;
         }
 
-        // GID comparison
         // upstream: flist.c:473 - same pattern as UID
         let entry_gid = entry.gid().unwrap_or(0);
         if !self.preserve.gid || (entry_gid == self.state.prev_gid() && not_first_entry) {
             xflags |= XMIT_SAME_GID as u32;
         }
 
-        // Name compression
         if same_len > 0 {
             xflags |= XMIT_SAME_NAME as u32;
         }
@@ -163,12 +157,11 @@ impl FileListWriter {
                 xflags |= (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8;
             }
         } else {
-            // Device files: compare major with previous
             let major = entry.rdev_major().unwrap_or(0);
             if major == self.state.prev_rdev_major() {
                 xflags |= (XMIT_SAME_RDEV_MAJOR as u32) << 8;
             }
-            // Set XMIT_RDEV_MINOR_8_PRE30 flag if minor fits in byte (protocol 28-29)
+            // Protocol 28-29: set XMIT_RDEV_MINOR_8_PRE30 when minor fits in a byte.
             if self.protocol.as_u8() >= 28 && self.protocol.as_u8() < 30 {
                 let minor = entry.rdev_minor().unwrap_or(0);
                 if minor <= 0xFF {
@@ -193,7 +186,6 @@ impl FileListWriter {
         }
 
         if self.protocol.as_u8() >= 30 {
-            // Protocol 30+: Use XMIT_HLINKED / XMIT_HLINK_FIRST
             if let Some(idx) = entry.hardlink_idx() {
                 xflags |= (XMIT_HLINKED as u32) << 8;
                 if idx == u32::MAX {
@@ -201,7 +193,6 @@ impl FileListWriter {
                 }
             }
         } else if self.protocol.as_u8() >= 28 {
-            // Protocol 28-29: Use XMIT_SAME_DEV_PRE30 for hardlink dev compression
             if let Some(dev) = entry.hardlink_dev() {
                 // upstream: flist.c:530 - XMIT_HLINKED set for ALL hardlink entries,
                 // not just protocol 30+. Protocol 28-29 also sets this flag.
@@ -227,7 +218,6 @@ impl FileListWriter {
             return xflags;
         }
 
-        // User name follows flag
         if self.preserve.uid
             && entry.user_name().is_some()
             && (current_flags & (XMIT_SAME_UID as u32)) == 0
@@ -235,7 +225,6 @@ impl FileListWriter {
             xflags |= (XMIT_USER_NAME_FOLLOWS as u32) << 8;
         }
 
-        // Group name follows flag
         if self.preserve.gid
             && entry.group_name().is_some()
             && (current_flags & (XMIT_SAME_GID as u32)) == 0
@@ -253,21 +242,19 @@ impl FileListWriter {
     fn calculate_time_flags(&self, entry: &FileEntry) -> u32 {
         let mut xflags: u32 = 0;
 
-        // Same atime flag (non-directories only, when preserving atimes)
         if self.preserve.atimes && !entry.is_dir() && entry.atime() == self.state.prev_atime() {
             xflags |= (XMIT_SAME_ATIME as u32) << 8;
         }
 
-        // Creation time equals mtime flag (bit 17, varint mode only)
-        // This flag occupies bit 17 which is only transmitted in varint flag encoding.
-        // In non-varint mode (protocol 28-29 two-byte flags), bits 16+ are not on the wire,
-        // so setting this flag would cause the writer to skip crtime while the reader
-        // still expects it - leading to deserialization misalignment.
+        // XMIT_CRTIME_EQ_MTIME occupies bit 17, which is only transmitted in varint
+        // flag encoding. In non-varint mode (protocol 28-29 two-byte flags), bits 16+
+        // are not on the wire, so setting this flag would cause the writer to skip
+        // crtime while the reader still expects it - leading to deserialization
+        // misalignment.
         if self.use_varint_flags() && self.preserve.crtimes && entry.crtime() == entry.mtime() {
             xflags |= (XMIT_CRTIME_EQ_MTIME as u32) << 16;
         }
 
-        // Modification time nanoseconds flag (protocol 31+)
         if self.protocol.as_u8() >= 31 && entry.mtime_nsec() != 0 {
             xflags |= (XMIT_MOD_NSEC as u32) << 8;
         }
@@ -283,8 +270,8 @@ impl FileListWriter {
     fn calculate_directory_flags(&self, entry: &FileEntry) -> u32 {
         let mut xflags: u32 = 0;
 
-        // No content directory flag (protocol 30+, directories only)
-        // Note: shares bit position with XMIT_SAME_RDEV_MAJOR (devices vs dirs)
+        // XMIT_NO_CONTENT_DIR shares its bit position with XMIT_SAME_RDEV_MAJOR
+        // (directories vs devices), so the flag is gated on entry.is_dir().
         if entry.is_dir() && self.protocol.as_u8() >= 30 && !entry.content_dir() {
             xflags |= (XMIT_NO_CONTENT_DIR as u32) << 8;
         }
