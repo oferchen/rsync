@@ -442,7 +442,6 @@ impl RsyncAcl {
             return false;
         }
 
-        // Compare named entries element-by-element
         for (a, b) in self.names.iter().zip(other.names.iter()) {
             if a.id != b.id || a.access != b.access {
                 return false;
@@ -452,9 +451,9 @@ impl RsyncAcl {
         // upstream: acls.c:309-331 - mask and group_obj comparison depends
         // on whether named entries exist
         if self.names.is_empty() {
-            // No named entries - mask is irrelevant, compare group_obj directly.
-            // upstream: acls.c:310-315 - when no named entries, only group_obj
-            // matters regardless of mask presence
+            // upstream: acls.c:310-315 - without named entries, mask is
+            // irrelevant; the effective group is mask_obj if present, else
+            // group_obj
             let self_group = if self.has_mask_obj() {
                 self.mask_obj
             } else {
@@ -467,8 +466,8 @@ impl RsyncAcl {
             };
             self_group == other_group
         } else {
-            // Named entries present - both mask and group must match exactly
-            // upstream: acls.c:325-331
+            // upstream: acls.c:325-331 - with named entries, both mask and
+            // group must match exactly
             self.group_obj == other.group_obj && self.mask_obj == other.mask_obj
         }
     }

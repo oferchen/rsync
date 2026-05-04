@@ -28,7 +28,6 @@ mod id_access_tests {
     fn permissions_mask_removes_name_is_user() {
         let entry = IdAccess::user(1000, 0x07);
         assert_eq!(entry.permissions(), 0x07);
-        // Access field has the flag
         assert_eq!(entry.access & NAME_IS_USER, NAME_IS_USER);
     }
 
@@ -74,7 +73,6 @@ mod ida_entries_tests {
     fn computed_mask_bits_excludes_no_entry() {
         let mut entries = IdaEntries::new();
         entries.push(IdAccess::user(1000, 0x07 | NO_ENTRY as u32));
-        // NO_ENTRY bits should be excluded from the mask
         let mask = entries.computed_mask_bits();
         assert_eq!(mask & NO_ENTRY, 0);
     }
@@ -581,16 +579,13 @@ mod edge_cases {
         let acl2 = {
             let mut a = RsyncAcl::new();
             a.user_obj = 0x07;
-            a.group_obj = 0x04; // Different!
+            a.group_obj = 0x04;
             a
         };
 
         let _ = cache.store_access(acl1.clone());
 
-        // acl2 should not match acl1
         assert!(cache.find_access(&acl2).is_none());
-
-        // But acl1 should still match
         assert_eq!(cache.find_access(&acl1), Some(0));
     }
 }

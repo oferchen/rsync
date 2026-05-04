@@ -91,7 +91,6 @@ pub fn send_rsync_acl<W: Write>(
     cache: &mut AclCache,
     include_names: bool,
 ) -> io::Result<()> {
-    // Check cache for matching ACL
     let cached_index = match acl_type {
         AclType::Access => cache.find_access(acl),
         AclType::Default => cache.find_default(acl),
