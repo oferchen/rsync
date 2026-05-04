@@ -27,6 +27,7 @@
 
 mod completion_port;
 pub mod config;
+mod disk_batch;
 mod file_factory;
 pub(crate) mod file_reader;
 mod file_writer;
@@ -38,6 +39,7 @@ pub use config::{
     IOCP_MIN_FILE_SIZE, IocpConfig, iocp_availability_reason, is_iocp_available,
     skip_event_optimization_available,
 };
+pub use disk_batch::IocpDiskBatch;
 pub use file_factory::{
     IocpOrStdReader, IocpOrStdWriter, IocpReaderFactory, IocpWriterFactory, reader_from_path,
     writer_from_file,

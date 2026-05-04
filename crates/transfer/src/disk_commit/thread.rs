@@ -7,10 +7,12 @@
 //! When io_uring is available (Linux 5.6+ with the `io_uring` feature), the
 //! thread creates a single [`fast_io::IoUringDiskBatch`] and threads it into
 //! every per-file [`process_file`]/[`process_whole_file`] call so writes are
-//! submitted as batched io_uring SQEs. When the batch is unavailable or sparse
-//! mode is requested, the thread falls back to the buffered writer using a
-//! reusable 256 KB scratch buffer that mirrors upstream's static
-//! `wf_writeBuf` (fileio.c:161).
+//! submitted as batched io_uring SQEs. The Windows analogue is
+//! [`fast_io::IocpDiskBatch`], which uses overlapped `WriteFile` + a
+//! completion port drained with `GetQueuedCompletionStatusEx`. When neither
+//! batch is available or sparse mode is requested, the thread falls back to
+//! the buffered writer using a reusable 256 KB scratch buffer that mirrors
+//! upstream's static `wf_writeBuf` (fileio.c:161).
 
 use std::io;
 use std::thread::{self, JoinHandle};
@@ -81,6 +83,21 @@ fn try_create_disk_batch(policy: fast_io::IoUringPolicy) -> Option<fast_io::IoUr
     }
 }
 
+/// Attempts to create an IOCP batch writer based on the configured policy.
+///
+/// Returns `Some` on Windows when the `iocp` feature is enabled and the
+/// policy is `Auto` or `Enabled`. Returns `None` when IOCP is unavailable
+/// or the policy is `Disabled`. The Windows IOCP path is the per-platform
+/// analogue of [`try_create_disk_batch`] for io_uring.
+fn try_create_iocp_batch(policy: fast_io::IocpPolicy) -> Option<fast_io::IocpDiskBatch> {
+    match policy {
+        fast_io::IocpPolicy::Disabled => None,
+        fast_io::IocpPolicy::Auto | fast_io::IocpPolicy::Enabled => {
+            fast_io::IocpDiskBatch::try_new(&fast_io::IocpConfig::default())
+        }
+    }
+}
+
 /// Logs io_uring availability at debug I/O level 1 (activated at `-vv`).
 ///
 /// Reports whether io_uring is being used for disk writes and, if not, why.
@@ -115,6 +132,29 @@ fn log_io_uring_status(policy: fast_io::IoUringPolicy, batch_created: bool) {
     }
 }
 
+/// Logs IOCP availability at debug I/O level 1 (activated at `-vv`).
+///
+/// Mirrors [`log_io_uring_status`] for the Windows path.
+fn log_iocp_status(policy: fast_io::IocpPolicy, batch_created: bool) {
+    match policy {
+        fast_io::IocpPolicy::Disabled => {
+            debug_log!(Io, 1, "IOCP disabled by policy, using standard I/O");
+        }
+        fast_io::IocpPolicy::Auto | fast_io::IocpPolicy::Enabled => {
+            if batch_created {
+                debug_log!(Io, 1, "disk I/O: {}", fast_io::iocp_availability_reason());
+            } else {
+                debug_log!(
+                    Io,
+                    1,
+                    "disk I/O: {}, using standard I/O fallback",
+                    fast_io::iocp_availability_reason()
+                );
+            }
+        }
+    }
+}
+
 /// Main loop of the disk commit thread.
 ///
 /// Allocates a single 256KB write buffer reused across all files, matching
@@ -129,8 +169,17 @@ fn disk_thread_main(
 ) {
     let mut write_buf = Vec::with_capacity(WRITE_BUF_SIZE);
     let mut disk_batch = try_create_disk_batch(config.io_uring_policy);
+    // io_uring takes precedence on Linux; only attempt IOCP if io_uring is
+    // not active. In practice the two backends are mutually exclusive by
+    // platform, but this keeps the invariant explicit.
+    let mut iocp_batch = if disk_batch.is_none() {
+        try_create_iocp_batch(config.iocp_policy)
+    } else {
+        None
+    };
 
     log_io_uring_status(config.io_uring_policy, disk_batch.is_some());
+    log_iocp_status(config.iocp_policy, iocp_batch.is_some());
 
     while let Ok(msg) = file_rx.recv() {
         match msg {
@@ -143,6 +192,7 @@ fn disk_thread_main(
                     *begin,
                     &mut write_buf,
                     disk_batch.as_mut(),
+                    iocp_batch.as_mut(),
                 );
                 if result_tx.send(result).is_err() {
                     break;
@@ -156,6 +206,7 @@ fn disk_thread_main(
                     data,
                     &mut write_buf,
                     disk_batch.as_mut(),
+                    iocp_batch.as_mut(),
                 );
                 if result_tx.send(result).is_err() {
                     break;

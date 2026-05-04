@@ -24,10 +24,11 @@ use super::writer::{ReusableBufWriter, Writer};
 /// After writing each chunk, the owned `Vec<u8>` is returned through
 /// `buf_return_tx` for reuse by the network thread.
 ///
-/// When `disk_batch` is `Some` and sparse mode is disabled, writes are
-/// submitted via the shared [`fast_io::IoUringDiskBatch`] for batched
-/// io_uring submission. Sparse mode requires `Seek`, which the batch does
-/// not provide, so it always falls back to buffered writes.
+/// When `disk_batch` is `Some` (Linux/io_uring) or `iocp_batch` is `Some`
+/// (Windows/IOCP) and sparse mode is disabled, writes are submitted via the
+/// shared batched writer. Sparse mode requires `Seek`, which neither batch
+/// writer provides, so it always falls back to buffered writes. Only one of
+/// the two batched writers can be active at a time.
 pub(super) fn process_file(
     file_rx: &spsc::Receiver<FileMessage>,
     buf_return_tx: &spsc::Sender<Vec<u8>>,
@@ -35,6 +36,7 @@ pub(super) fn process_file(
     mut begin: BeginMessage,
     write_buf: &mut Vec<u8>,
     disk_batch: Option<&mut fast_io::IoUringDiskBatch>,
+    iocp_batch: Option<&mut fast_io::IocpDiskBatch>,
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
 
@@ -42,6 +44,7 @@ pub(super) fn process_file(
         file,
         write_buf,
         disk_batch,
+        iocp_batch,
         config.use_sparse,
         begin.append_offset,
     )?;
@@ -141,8 +144,8 @@ pub(super) fn process_file(
 ///
 /// Avoids the per-message channel recv loop of [`process_file`], reducing
 /// futex overhead from 3+ sends/recvs to 1 for small files. When
-/// `disk_batch` is `Some` and sparse mode is disabled, the chunk is
-/// submitted via the shared [`fast_io::IoUringDiskBatch`].
+/// `disk_batch` (io_uring) or `iocp_batch` (IOCP) is `Some` and sparse mode
+/// is disabled, the chunk is submitted via the shared batched writer.
 pub(super) fn process_whole_file(
     buf_return_tx: &spsc::Sender<Vec<u8>>,
     config: &DiskCommitConfig,
@@ -150,6 +153,7 @@ pub(super) fn process_whole_file(
     data: Vec<u8>,
     write_buf: &mut Vec<u8>,
     disk_batch: Option<&mut fast_io::IoUringDiskBatch>,
+    iocp_batch: Option<&mut fast_io::IocpDiskBatch>,
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
 
@@ -157,6 +161,7 @@ pub(super) fn process_whole_file(
         file,
         write_buf,
         disk_batch,
+        iocp_batch,
         config.use_sparse,
         begin.append_offset,
     )?;
@@ -243,28 +248,29 @@ fn open_output_file(
     }
 }
 
-/// Constructs the per-file [`Writer`] dispatching between io_uring batched
-/// submission and the buffered fallback.
+/// Constructs the per-file [`Writer`] dispatching between batched async
+/// submission (io_uring on Linux, IOCP on Windows) and the buffered fallback.
 ///
-/// Selects io_uring when (a) the disk thread holds an active
-/// [`fast_io::IoUringDiskBatch`], (b) sparse mode is disabled, and (c) the
-/// file does not start at a non-zero offset (append mode). Sparse mode
-/// requires `Seek`, which the batch writer does not provide.
+/// Selects a batched backend when (a) the disk thread holds an active batch,
+/// (b) sparse mode is disabled, and (c) the file does not start at a non-zero
+/// offset (append mode). Sparse mode requires `Seek`, which the batch writers
+/// do not provide.
 ///
 /// Append mode opens the file and seeks past existing content via
-/// [`std::io::Seek::seek`]. The io_uring batch writer issues SQEs with
-/// absolute offsets starting at 0 and ignores the file position, so it would
+/// [`std::io::Seek::seek`]. The batch writers issue submissions with absolute
+/// offsets starting at 0 and ignore the file position, so they would
 /// overwrite the existing prefix with zeros. Append mode therefore always
 /// falls back to the buffered writer, which honors the seek via
 /// `Write::write_all` on the underlying `File`.
 ///
-/// On the io_uring path, `batch.begin_file(file)` registers the fd with the
-/// ring; the matching `commit_file` happens via [`Writer::finish`].
-#[allow(unused_variables)] // disk_batch is unused on non-Linux / without feature
+/// On the batched paths, `batch.begin_file(file)` registers the file with the
+/// backend; the matching `commit_file` happens via [`Writer::finish`].
+#[allow(unused_variables)] // batch params are unused on platforms without their backend
 fn make_writer<'a>(
     file: fs::File,
     write_buf: &'a mut Vec<u8>,
     disk_batch: Option<&'a mut fast_io::IoUringDiskBatch>,
+    iocp_batch: Option<&'a mut fast_io::IocpDiskBatch>,
     use_sparse: bool,
     append_offset: u64,
 ) -> io::Result<Writer<'a>> {
@@ -274,6 +280,15 @@ fn make_writer<'a>(
             if let Some(batch) = disk_batch {
                 batch.begin_file(file)?;
                 return Ok(Writer::IoUring { batch });
+            }
+        }
+    }
+    #[cfg(all(target_os = "windows", feature = "iocp"))]
+    {
+        if !use_sparse && append_offset == 0 {
+            if let Some(batch) = iocp_batch {
+                batch.begin_file(file)?;
+                return Ok(Writer::Iocp { batch });
             }
         }
     }
