@@ -46,7 +46,7 @@ pub async fn produce_file_jobs(
         let job = FileJob::new(ndx as u32, dest_path, entry_arc);
 
         if tx.send(job).await.is_err() {
-            // Consumer dropped — stop producing.
+            // Consumer dropped - stop producing.
             break;
         }
         dispatched += 1;
@@ -139,7 +139,7 @@ mod tests {
         let list = FileList::new(entries);
         let (tx, rx) = mpsc::channel(1);
 
-        // Drop the receiver immediately — producer should stop gracefully.
+        // Drop the receiver immediately - producer should stop gracefully.
         drop(rx);
         let count = produce_file_jobs(&list, Path::new("/dst"), tx).await;
 
