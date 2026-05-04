@@ -68,9 +68,7 @@ impl From<IocpError> for io::Error {
     fn from(err: IocpError) -> Self {
         match err {
             IocpError::InvalidOperation { .. } => io::Error::new(io::ErrorKind::InvalidInput, err),
-            IocpError::InsufficientBuffer { .. } => {
-                io::Error::new(io::ErrorKind::OutOfMemory, err)
-            }
+            IocpError::InsufficientBuffer { .. } => io::Error::new(io::ErrorKind::OutOfMemory, err),
         }
     }
 }

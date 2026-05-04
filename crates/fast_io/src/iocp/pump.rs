@@ -382,8 +382,7 @@ fn drain_loop(inner: Arc<PumpInner>) -> io::Result<()> {
                 // - completions remain queued on the port until drained.
                 Some(c) if c as u32 == ERROR_INSUFFICIENT_BUFFER => {
                     if entries.len() < MAX_BATCH_SIZE {
-                        let new_size =
-                            (entries.len().saturating_mul(2)).min(MAX_BATCH_SIZE);
+                        let new_size = (entries.len().saturating_mul(2)).min(MAX_BATCH_SIZE);
                         entries.resize(new_size, zeroed_entry());
                         continue;
                     }

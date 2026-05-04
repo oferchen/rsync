@@ -66,7 +66,11 @@ impl IocpWriter {
     /// reopen the file in place. Other values (`OPEN_ALWAYS`, `CREATE_NEW`,
     /// `TRUNCATE_EXISTING`) work as documented but are not exercised by the
     /// crate today.
-    fn open_with_disposition(path: &Path, config: &IocpConfig, disposition: u32) -> io::Result<Self> {
+    fn open_with_disposition(
+        path: &Path,
+        config: &IocpConfig,
+        disposition: u32,
+    ) -> io::Result<Self> {
         let wide_path = super::file_reader::to_wide_path(path)?;
 
         // SAFETY: CreateFileW with valid path and standard write flags.

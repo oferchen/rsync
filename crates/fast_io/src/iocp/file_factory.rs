@@ -319,18 +319,22 @@ pub fn writer_from_file(
             // recovered above stays valid because the kernel keeps the file
             // alive through the still-live handle until this drop.
             drop(file);
-            let writer = IocpWriter::create_for_append(&path, buffer_capacity, &IocpConfig::default())
-                .map_err(|err| {
-                    io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        format!(
-                            "IOCP requested but FILE_FLAG_OVERLAPPED reopen of {} failed: {err}. \
+            let writer = IocpWriter::create_for_append(
+                &path,
+                buffer_capacity,
+                &IocpConfig::default(),
+            )
+            .map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    format!(
+                        "IOCP requested but FILE_FLAG_OVERLAPPED reopen of {} failed: {err}. \
                              The handle's underlying object may not support overlapped I/O \
                              (named pipes, console handles, character devices).",
-                            path.display()
-                        ),
-                    )
-                })?;
+                        path.display()
+                    ),
+                )
+            })?;
             Ok(IocpOrStdWriter::Iocp(writer))
         }
         crate::IocpPolicy::Auto => {
@@ -347,13 +351,15 @@ pub fn writer_from_file(
                 }
                 // Reopen failed - the original file is gone, so reopen with
                 // standard I/O. We cannot recover the handle we dropped.
-                return Ok(IocpOrStdWriter::Std(StdFileWriter::from_file_with_capacity(
-                    std::fs::OpenOptions::new()
-                        .write(true)
-                        .read(true)
-                        .open(&path)?,
-                    buffer_capacity,
-                )));
+                return Ok(IocpOrStdWriter::Std(
+                    StdFileWriter::from_file_with_capacity(
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .read(true)
+                            .open(&path)?,
+                        buffer_capacity,
+                    ),
+                ));
             }
             Ok(IocpOrStdWriter::Std(
                 StdFileWriter::from_file_with_capacity(file, buffer_capacity),
