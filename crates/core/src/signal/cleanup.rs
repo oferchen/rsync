@@ -211,12 +211,11 @@ impl CleanupManagerState {
     }
 
     fn cleanup(&mut self) {
-        // Run cleanup callbacks in reverse order (LIFO)
+        // Run cleanup callbacks in reverse order (LIFO).
         while let Some(callback) = self.cleanup_callbacks.pop() {
             callback();
         }
 
-        // Clean up temp files
         self.cleanup_temp_files();
     }
 
@@ -265,7 +264,6 @@ mod tests {
         let path1 = dir.path().join("test1_cleanup.tmp");
         let path2 = dir.path().join("test2_cleanup.tmp");
 
-        // Create temp files
         fs::write(&path1, b"data1").expect("write file 1");
         fs::write(&path2, b"data2").expect("write file 2");
 
@@ -278,7 +276,6 @@ mod tests {
 
         manager.cleanup_temp_files();
 
-        // Files should be removed
         assert!(!path1.exists());
         assert!(!path2.exists());
         assert_eq!(manager.temp_file_count(), 0);
