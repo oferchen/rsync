@@ -34,7 +34,8 @@ fn bench_splice_pipe(c: &mut Criterion) {
     use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
     use std::thread;
 
-    use criterion::{BenchmarkId, Throughput, black_box};
+    use criterion::{BenchmarkId, Throughput};
+    use std::hint::black_box;
     use tempfile::NamedTempFile;
 
     /// Payload sizes exercised by the bench. 64 KiB matches the default
@@ -152,12 +153,14 @@ fn bench_splice_pipe(c: &mut Criterion) {
 
 #[cfg(not(target_os = "linux"))]
 fn bench_splice_pipe(c: &mut Criterion) {
+    use std::hint::black_box;
+
     // splice(2) is Linux-only. Define an empty group on other targets so the
     // criterion harness still emits a report and the bench binary compiles.
     let mut group = c.benchmark_group("splice_pipe");
     group.sample_size(10);
     group.bench_function("noop_non_linux", |b| {
-        b.iter(|| criterion::black_box(0u64));
+        b.iter(|| black_box(0u64));
     });
     group.finish();
 }

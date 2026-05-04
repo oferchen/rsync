@@ -115,7 +115,7 @@ proptest = "1.8"
 [target.'cfg(unix)'.dev-dependencies]
 xattr = "1.6"
 libc = "0.2"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
 name = "optimizations_benchmark"

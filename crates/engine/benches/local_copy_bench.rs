@@ -10,7 +10,8 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use tempfile::TempDir;
 
 use engine::local_copy::{LocalCopyPlan, LocalCopySummary};

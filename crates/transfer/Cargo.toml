@@ -113,7 +113,7 @@ tracing = ["dep:tracing"]
 [dev-dependencies]
 tempfile = "3.15"
 test-support = { path = "../test-support" }
-criterion = "0.5"
+criterion = "0.8"
 proptest = "1.4"
 rand = "0.9"
 

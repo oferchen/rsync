@@ -4,10 +4,11 @@
 
 #![deny(unsafe_code)]
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
+use std::hint::black_box;
 use transfer::reorder_buffer::BoundedReorderBuffer;
 
 /// Fisher-Yates shuffle with a seeded RNG for reproducible benchmarks.
