@@ -13,28 +13,35 @@
 
 use filetime::{FileTime, set_file_times};
 #[cfg(unix)]
+use metadata::apply_directory_metadata;
+use metadata::apply_file_metadata;
+#[cfg(unix)]
 use metadata::apply_symlink_metadata;
-use metadata::{apply_directory_metadata, apply_file_metadata};
 use std::fs;
 use tempfile::tempdir;
 
 /// The Year 2038 overflow boundary for 32-bit signed Unix timestamps.
 /// This is 2^31 - 1 = 2,147,483,647 seconds since Unix epoch.
 /// Corresponds to: 2038-01-19 03:14:07 UTC
+#[cfg(unix)]
 const YEAR_2038_BOUNDARY: i64 = 2_147_483_647;
 
 /// A timestamp just before the 2038 boundary (one day before).
+#[cfg(unix)]
 const BEFORE_2038: i64 = YEAR_2038_BOUNDARY - 86_400;
 
 /// A timestamp just after the 2038 boundary (one day after).
+#[cfg(unix)]
 const AFTER_2038: i64 = YEAR_2038_BOUNDARY + 86_400;
 
 /// A timestamp far in the future (year 2100).
 /// Corresponds to: 2100-01-01 00:00:00 UTC
+#[cfg(unix)]
 const YEAR_2100: i64 = 4_102_444_800;
 
 /// A timestamp far in the future (year 3000).
 /// Corresponds to: 3000-01-01 00:00:00 UTC
+#[cfg(unix)]
 const YEAR_3000: i64 = 32_503_680_000;
 
 #[cfg(unix)]

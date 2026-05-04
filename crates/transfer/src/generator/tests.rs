@@ -2327,7 +2327,7 @@ fn generator_merge_filters_properly_scoped() {
     let names: Vec<String> = ctx
         .file_list()
         .iter()
-        .map(|e| e.path().display().to_string())
+        .map(|e| e.path().display().to_string().replace('\\', "/"))
         .collect();
 
     // a/file.a should be excluded by a/.rsync-filter
