@@ -18,7 +18,7 @@ use super::progress::CopyResult;
 /// Each copy holds 2 fds; 64 workers = 128 fds, well within typical `ulimit -n`.
 const MAX_CONCURRENT_UPPER_BOUND: usize = 64;
 
-/// Minimum concurrency — always at least one worker.
+/// Minimum concurrency - always at least one worker.
 const MAX_CONCURRENT_LOWER_BOUND: usize = 1;
 
 /// Resolves the effective `max_concurrent` value.
