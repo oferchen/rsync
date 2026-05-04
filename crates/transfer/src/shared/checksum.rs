@@ -366,7 +366,6 @@ mod tests {
         let sig = factory.signature_algorithm();
 
         if let SignatureAlgorithm::Md5 { seed_config } = sig {
-            // Legacy seed order
             assert!(!seed_config.proper_order);
         } else {
             panic!("Expected Md5 signature algorithm");
@@ -379,7 +378,6 @@ mod tests {
         let sig = factory.signature_algorithm();
 
         if let SignatureAlgorithm::Md5 { seed_config } = sig {
-            // Proper seed order
             assert!(seed_config.proper_order);
         } else {
             panic!("Expected Md5 signature algorithm");
@@ -527,7 +525,6 @@ mod tests {
             let factory = ChecksumFactory::new(algo, 42, false);
             let _sig = factory.signature_algorithm();
             let _len = factory.digest_length();
-            // Just verify no panics occur
         }
     }
 
