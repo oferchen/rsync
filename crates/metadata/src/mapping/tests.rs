@@ -5,7 +5,6 @@ use parse::{parse_matcher, parse_numeric_range, parse_target};
 use types::{MappingMatcher, MappingTarget};
 use wildcard::{match_bracket, wildcard_matches};
 
-// MappingKind tests
 #[test]
 fn mapping_kind_user_flag() {
     assert_eq!(MappingKind::User.flag(), "--usermap");
@@ -36,7 +35,6 @@ fn mapping_kind_debug() {
     assert!(debug.contains("User"));
 }
 
-// MappingParseError tests
 #[test]
 fn mapping_parse_error_kind() {
     let error = MappingParseError::new(MappingKind::Group, "test error");
@@ -63,7 +61,6 @@ fn mapping_parse_error_clone() {
     assert_eq!(cloned, error);
 }
 
-// NameMapping parsing tests
 #[test]
 fn parse_numeric_usermap() {
     let mapping = NameMapping::parse(MappingKind::User, "100:200").expect("parse mapping");
@@ -151,7 +148,6 @@ fn parse_target_as_name() {
     assert_eq!(mapping.len(), 1);
 }
 
-// parse_numeric_range tests
 #[test]
 fn numeric_range_single_value() {
     assert_eq!(parse_numeric_range("100"), Some((100, 100)));
@@ -197,7 +193,6 @@ fn numeric_range_triple_range_fails() {
     assert_eq!(parse_numeric_range("100-200-300"), None);
 }
 
-// wildcard_matches tests
 #[test]
 fn wildcard_matches_pattern() {
     assert!(wildcard_matches("ab*", "abc"));
@@ -276,7 +271,6 @@ fn wildcard_no_match_shorter_text() {
     assert!(!wildcard_matches("abcd", "abc"));
 }
 
-// match_bracket tests
 #[test]
 fn match_bracket_simple() {
     assert_eq!(match_bracket(b"[abc]", 0, b'a'), Some((true, 5)));
@@ -322,7 +316,6 @@ fn match_bracket_escaped_in_range() {
     assert_eq!(match_bracket(b"[a-\\z]", 0, b'z'), Some((true, 6)));
 }
 
-// UserMapping tests
 #[test]
 fn user_mapping_parse() {
     let mapping = UserMapping::parse("100:200").expect("parse");
@@ -348,7 +341,6 @@ fn user_mapping_from_name_mapping() {
     assert!(!user_mapping.is_empty());
 }
 
-// GroupMapping tests
 #[test]
 fn group_mapping_parse() {
     let mapping = GroupMapping::parse("100:200").expect("parse");
@@ -374,7 +366,6 @@ fn group_mapping_from_name_mapping() {
     assert!(!group_mapping.is_empty());
 }
 
-// NameMapping clone and debug
 #[test]
 fn name_mapping_clone() {
     let mapping = NameMapping::parse(MappingKind::User, "100:200").unwrap();
@@ -396,7 +387,6 @@ fn name_mapping_default() {
     assert_eq!(mapping.len(), 0);
 }
 
-// MappingTarget tests
 #[test]
 fn mapping_target_id() {
     let target = MappingTarget::Id(100);
@@ -411,7 +401,6 @@ fn mapping_target_id_as_gid() {
     assert_eq!(gid, 100);
 }
 
-// MappingMatcher tests
 #[test]
 fn mapping_matcher_any() {
     let matcher = MappingMatcher::Any;
@@ -509,7 +498,6 @@ fn mapping_matcher_debug() {
     assert!(debug.contains("Any"));
 }
 
-// parse_matcher tests
 #[test]
 fn parse_matcher_star() {
     let matcher = parse_matcher(MappingKind::User, "*", "*:0").unwrap();
@@ -564,7 +552,6 @@ fn parse_matcher_empty_fails() {
     assert!(error.to_string().contains("must specify a source"));
 }
 
-// parse_target tests
 #[test]
 fn parse_target_numeric() {
     let target = parse_target(MappingKind::User, "100", "x:100").unwrap();
