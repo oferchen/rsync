@@ -263,11 +263,10 @@ fn check_timeout_flush() {
     let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
     writer.add_entry(&mut output, &entry).unwrap();
 
-    // Before expiry: timeout has not elapsed yet
     assert!(!writer.check_timeout_flush(&mut output).unwrap());
     assert!(!writer.is_empty());
 
-    // Simulate timeout expiry by backdating the batch start
+    // Backdate batch start so the timeout has elapsed deterministically.
     writer.expire_batch_timeout();
 
     assert!(writer.check_timeout_flush(&mut output).unwrap());
