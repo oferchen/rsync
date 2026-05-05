@@ -1,3 +1,7 @@
+//! Setters and accessors for change-detection options on
+//! [`LocalCopyOptions`]: checksum mode, size-only, time-related toggles,
+//! existence filters, block-size override, and modify-window tolerance.
+
 use std::num::NonZeroU32;
 use std::time::Duration;
 

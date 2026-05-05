@@ -1,3 +1,6 @@
+//! Unit tests for the metadata setters and accessors and the
+//! `effective_am_root` privilege helper.
+
 use super::super::types::LocalCopyOptions;
 use super::accessors::{effective_am_root, is_effective_root};
 use ::metadata::CopyAsIds;

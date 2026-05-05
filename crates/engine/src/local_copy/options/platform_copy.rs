@@ -60,7 +60,6 @@ mod tests {
     #[test]
     fn default_platform_copy_is_set() {
         let opts = LocalCopyOptions::new();
-        // The default strategy is callable.
         assert_eq!(
             opts.platform_copy().preferred_method(0),
             DefaultPlatformCopy::new().preferred_method(0)

@@ -1,3 +1,5 @@
+//! Error type returned by [`super::LocalCopyOptionsBuilder::build`].
+
 /// Errors that can occur when building [`super::LocalCopyOptionsBuilder`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BuilderError {

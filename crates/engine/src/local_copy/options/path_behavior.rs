@@ -1,3 +1,6 @@
+//! Setters and accessors for path traversal, symlink handling, and
+//! whole-file transfer behaviour on [`LocalCopyOptions`].
+
 use super::types::LocalCopyOptions;
 
 impl LocalCopyOptions {

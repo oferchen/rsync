@@ -1,3 +1,10 @@
+//! Core type definitions for the [`LocalCopyOptions`] configuration surface.
+//!
+//! Defines the `LocalCopyOptions` struct, its defaults, and the supporting
+//! enums (`DeleteTiming`, `ReferenceDirectoryKind`) and helper structs
+//! (`ReferenceDirectory`, `LinkDestEntry`) used by the per-concern setter
+//! and accessor submodules.
+
 use std::ffi::OsString;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
