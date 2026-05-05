@@ -6,7 +6,7 @@ use std::time::Duration;
 pub const DEFAULT_MAX_ENTRIES: usize = 64;
 
 /// Default maximum batch size in bytes before auto-flush.
-pub const DEFAULT_MAX_BYTES: usize = 64 * 1024; // 64KB
+pub const DEFAULT_MAX_BYTES: usize = 64 * 1024;
 
 /// Default timeout for flush-on-timeout behavior.
 pub const DEFAULT_FLUSH_TIMEOUT: Duration = Duration::from_millis(100);
