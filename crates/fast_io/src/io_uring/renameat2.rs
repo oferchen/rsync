@@ -178,12 +178,10 @@ pub fn renameat2_blocking(args: RenameAt2Args<'_>) -> io::Result<i32> {
             .map_err(|_| io::Error::other("submission queue full"))?;
     }
     ring.submit_and_wait(1)?;
-    let cqe = ring.completion().next().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            "submit_and_wait(1) returned but no CQE was reaped",
-        )
-    })?;
+    let cqe = ring
+        .completion()
+        .next()
+        .ok_or_else(|| io::Error::other("submit_and_wait(1) returned but no CQE was reaped"))?;
     Ok(cqe.result())
 }
 
