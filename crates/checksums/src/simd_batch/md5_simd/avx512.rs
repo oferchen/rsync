@@ -1,9 +1,9 @@
 //! AVX-512 16-lane parallel MD5 implementation.
 //!
 //! Processes 16 independent MD5 computations simultaneously using 512-bit ZMM
-//! registers. Requires both AVX-512F (foundation) and AVX-512BW (byte/word)
-//! - Intel Skylake-X 2017+, AMD Zen 4 2022+ - and the caller must verify both
-//! via `is_x86_feature_detected!` before invoking [`digest_x16`].
+//! registers. Requires both AVX-512F (foundation) and AVX-512BW (byte/word),
+//! available on Intel Skylake-X 2017+ and AMD Zen 4 2022+; the caller must
+//! verify both via `is_x86_feature_detected!` before invoking [`digest_x16`].
 //!
 //! Uses inline assembly rather than intrinsics because AVX-512 intrinsics still
 //! require nightly Rust. The kernel exploits `vprold` for native rotates,
