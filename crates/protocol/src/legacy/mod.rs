@@ -1,3 +1,10 @@
+//! Legacy ASCII `@RSYNCD:` negotiation helpers shared by daemon clients and servers.
+//!
+//! The legacy path is used when either peer is limited to protocols older than 30. This
+//! module groups the prefix constants together with the byte-, string-, and structured
+//! parsers that mirror upstream rsync's wire formatting for greetings, error banners,
+//! and warning lines.
+
 use crate::error::NegotiationError;
 
 /// Canonical ASCII prefix that identifies the legacy `@RSYNCD:` negotiation style.

@@ -1,3 +1,10 @@
+//! Legacy daemon greeting parsing, formatting, and structured representations.
+//!
+//! Splits the `@RSYNCD: <version>` greeting helpers across focused submodules:
+//! `format` renders the canonical banner, `parse` validates incoming bytes,
+//! `tokens` iterates digest lists, and `types` exposes borrowed and owned views
+//! of the parsed metadata.
+
 mod format;
 mod parse;
 mod tokens;
