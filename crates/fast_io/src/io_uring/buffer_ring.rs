@@ -24,13 +24,42 @@
 //! - **Linux 5.19+** for `IORING_REGISTER_PBUF_RING` support.
 //! - The kernel must not block io_uring via seccomp.
 //!
+//! # Runtime probe
+//!
+//! [`pbuf_ring_supported`] returns whether the running kernel can register a
+//! provided buffer ring. The first call performs the `uname(2)` parse; the
+//! result is cached in a process-wide [`OnceLock`] so subsequent calls are a
+//! single relaxed atomic load. The check is necessary but not sufficient -
+//! seccomp profiles, `IOSQE_REGISTER_PBUF_RING` rejection, or `-ENOMEM` can
+//! still cause [`BufferRing::new`] to fail; callers should prefer
+//! [`BufferRing::try_new`] for speculative use.
+//!
+//! # Fallback chain
+//!
+//! Each layer degrades independently so that PBUF_RING usage is best-effort:
+//!
+//! 1. **PBUF_RING** (Linux 5.19+, opcode 22) - completion-time buffer
+//!    selection, the path documented in this module.
+//! 2. **Classic provide-buffers** (Linux 5.6+, `IORING_OP_PROVIDE_BUFFERS`
+//!    opcode 31, or `IORING_REGISTER_BUFFERS` opcode 0) - pre-registered
+//!    buffer pool with per-SQE selection. See
+//!    [`super::registered_buffers::RegisteredBufferGroup`].
+//! 3. **Standard `read(2)` / `write(2)`** (any kernel) - the
+//!    `traits::StdFileReader` / `traits::StdFileWriter` fallback used when
+//!    io_uring is unavailable entirely.
+//! 4. **Non-Linux io_uring stub** (`io_uring_stub.rs`) - returns `false` from
+//!    [`pbuf_ring_supported`], `Err(Unsupported)` from [`BufferRing::new`],
+//!    and `None` from [`BufferRing::try_new`].
+//!
 //! # References
 //!
 //! - `io_uring_register(2)` - `IORING_REGISTER_PBUF_RING` / `IORING_UNREGISTER_PBUF_RING`
 //! - kernel source: `io_uring/kbuf.c` - `io_register_pbuf_ring()`
+//! - audit: `docs/audits/iouring-pbuf-ring.md` (task #2043)
 
 use std::io;
 use std::ptr;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU16, Ordering};
 
 use io_uring::IoUring as RawIoUring;
@@ -192,13 +221,40 @@ impl BufferRingConfig {
     }
 }
 
+/// Process-wide cache for the PBUF_RING support probe.
+///
+/// Populated by the first call to [`is_supported`] / [`pbuf_ring_supported`]
+/// and reused for the lifetime of the process. Caching avoids repeating
+/// the `uname(2)` syscall and version parse on every speculative call site.
+static PBUF_RING_SUPPORTED: OnceLock<bool> = OnceLock::new();
+
 /// Returns `true` if the kernel supports PBUF_RING (>= 5.19).
 ///
 /// Checks the kernel version via `uname(2)`. This is a necessary but not
 /// sufficient condition - the actual `IORING_REGISTER_PBUF_RING` call may
 /// still fail if seccomp blocks it.
+///
+/// The result is cached in a process-wide [`OnceLock`], so repeated calls
+/// after the first are a single relaxed atomic load. Use
+/// [`BufferRing::try_new`] when you also need to verify that registration
+/// will actually succeed.
 #[must_use]
 pub fn is_supported() -> bool {
+    *PBUF_RING_SUPPORTED.get_or_init(probe_pbuf_ring_support)
+}
+
+/// Alias for [`is_supported`] matching the cross-crate naming used by
+/// [`crate::pbuf_ring_supported`].
+///
+/// Provided so callers that import this module directly can use the
+/// crate-wide name without going through the top-level re-export.
+#[must_use]
+pub fn pbuf_ring_supported() -> bool {
+    is_supported()
+}
+
+/// Performs the actual kernel-version check used by [`is_supported`].
+fn probe_pbuf_ring_support() -> bool {
     let release = match config::config_detail::get_kernel_release_string() {
         Some(r) => r,
         None => return false,
