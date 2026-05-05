@@ -154,8 +154,6 @@ fn is_no_attr(error: &io::Error) -> bool {
     error.raw_os_error() == Some(ENOATTR_DARWIN)
 }
 
-// -- non-macOS stubs ---------------------------------------------------------
-
 /// Stub: returns `Ok(None)`. The host has no resource-fork concept.
 #[cfg(not(target_os = "macos"))]
 pub fn read_resource_fork(_path: &Path) -> io::Result<Option<Vec<u8>>> {

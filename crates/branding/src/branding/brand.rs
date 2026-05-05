@@ -379,7 +379,6 @@ mod tests {
 
         #[test]
         fn from_str_parses_program_names() {
-            // Use actual program names from profiles
             let oc = super::oc_profile();
             let upstream = super::upstream_profile();
 
