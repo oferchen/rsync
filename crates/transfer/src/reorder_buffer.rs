@@ -436,10 +436,7 @@ mod tests {
         // returns a `()`-tagged discriminator and the test bodies materialise
         // a fresh `io::Error` at use time.
         fn payload_strategy() -> impl Strategy<Value = Result<u64, ()>> {
-            prop_oneof![
-                any::<u64>().prop_map(Ok),
-                Just(Err(())),
-            ]
+            prop_oneof![any::<u64>().prop_map(Ok), Just(Err(())),]
         }
 
         /// Deterministic permutation of `0..n` seeded from a proptest u64.
