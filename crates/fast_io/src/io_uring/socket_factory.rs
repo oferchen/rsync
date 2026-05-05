@@ -57,7 +57,7 @@ impl Write for IoUringOrStdSocketWriter {
 /// falls back to `BufReader` wrapping a standard `Read`.
 ///
 /// The `fd` must be a valid socket file descriptor. The caller retains
-/// ownership — this function does not close the fd.
+/// ownership - this function does not close the fd.
 pub fn socket_reader_from_fd(
     fd: RawFd,
     buffer_capacity: usize,
@@ -108,7 +108,7 @@ pub fn socket_reader_from_fd(
 /// falls back to a standard `Write` wrapper.
 ///
 /// The `fd` must be a valid socket file descriptor. The caller retains
-/// ownership — this function does not close the fd.
+/// ownership - this function does not close the fd.
 pub fn socket_writer_from_fd(
     fd: RawFd,
     buffer_capacity: usize,
