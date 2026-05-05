@@ -149,7 +149,7 @@ pub fn writer_from_file(
     match policy {
         crate::IoUringPolicy::Auto => {
             if is_io_uring_available() {
-                // Build ring first — if this fails, `file` is still ours.
+                // Build ring first - if this fails, `file` is still ours.
                 if let Ok(ring) = config.build_ring() {
                     let fixed_fd_slot =
                         try_register_fd(&ring, file.as_raw_fd(), config.register_files);

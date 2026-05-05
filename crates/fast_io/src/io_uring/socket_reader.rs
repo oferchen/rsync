@@ -27,7 +27,7 @@ impl IoUringSocketReader {
     /// Creates a socket reader from a raw file descriptor.
     ///
     /// The caller must ensure `fd` remains valid for the lifetime of this reader.
-    /// The reader does NOT take ownership of the fd — it will not close it on drop.
+    /// The reader does NOT take ownership of the fd - it will not close it on drop.
     pub fn from_raw_fd(fd: RawFd, config: &IoUringConfig) -> io::Result<Self> {
         let ring = config.build_ring()?;
         let fixed_fd_slot = try_register_fd(&ring, fd, config.register_files);
