@@ -221,10 +221,6 @@ fn test_reader_seek() {
     assert_eq!(&buf, b"world");
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Comprehensive io_uring tests with graceful fallback
-// ─────────────────────────────────────────────────────────────────────────
-
 #[test]
 fn test_basic_read_with_io_uring_or_fallback() {
     let dir = tempdir().unwrap();
@@ -850,10 +846,6 @@ fn test_drop_flushes_writer() {
     assert_eq!(written, b"data to flush on drop");
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Socket I/O tests (exercises io_uring path on Linux, fallback elsewhere)
-// ─────────────────────────────────────────────────────────────────────────
-
 /// Creates a Unix socket pair suitable for testing socket read/write.
 fn make_socket_pair() -> (RawFd, RawFd) {
     let mut fds = [0i32; 2];
@@ -898,7 +890,7 @@ fn test_socket_large_payload_roundtrip() {
     let mut writer = socket_writer_from_fd(fd_a, 8 * 1024, policy).unwrap();
     let mut reader = socket_reader_from_fd(fd_b, 8 * 1024, policy).unwrap();
 
-    // 128KB payload — larger than internal buffer, forces multiple batches.
+    // 128KB payload - larger than internal buffer, forces multiple batches.
     let payload: Vec<u8> = (0..128 * 1024).map(|i| (i % 251) as u8).collect();
 
     // Write in a separate thread to avoid deadlock on blocking socket pair.
@@ -1154,10 +1146,6 @@ fn test_fd_reader_writer_basic() {
     close_fd(fd_b);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// IoUringPolicy tests for writer_from_file / reader_from_path
-// ─────────────────────────────────────────────────────────────────────────
-
 #[test]
 fn test_policy_disabled_writer_uses_std() {
     let dir = tempdir().unwrap();
@@ -1367,10 +1355,6 @@ fn test_empty_file_roundtrip_via_policy() {
     assert!(data.is_empty());
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Registered buffer configuration tests
-// ────────────────────────────────────────────────────────────────────────────
-
 #[test]
 fn test_config_register_buffers_defaults() {
     let config = IoUringConfig::default();
@@ -1397,10 +1381,6 @@ fn test_config_register_buffers_disabled() {
     };
     assert!(!config.register_buffers);
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Registered buffer group tests (require io_uring availability)
-// ────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn test_registered_buffer_group_via_writer() {
