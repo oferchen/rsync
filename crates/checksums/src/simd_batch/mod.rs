@@ -14,7 +14,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-mod md5_dispatcher;
+pub(crate) mod md5_dispatcher;
 mod md5_scalar;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod md5_simd;

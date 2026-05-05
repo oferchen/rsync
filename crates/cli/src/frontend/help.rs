@@ -144,6 +144,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --io-uring   Force io_uring for file I/O (policy=enabled); error if unavailable. Default policy is auto: probe kernel and fall back to standard I/O.\n",
             "      --no-io-uring  Disable io_uring (policy=disabled); always use standard buffered I/O even when the kernel supports io_uring.\n",
             "      --io-uring-depth=N  Override io_uring submission queue depth (default 64); must be a power of two between 1 and 32768.\n",
+            "      --simd=LEVEL Force the SIMD level used by checksum dispatch (auto, avx512, avx2, sse4, neon, none).\n",
             "      --cow        Allow copy-on-write reflinks for whole-file copies (default).\n",
             "      --no-cow     Disable copy-on-write reflinks; always use the portable std::fs::copy fallback.\n",
             "      --zero-copy  Allow I/O-level zero-copy (sendfile, splice, copy_file_range, io_uring SEND_ZC) when supported by the kernel. This is the default (policy=auto/enabled).\n",
