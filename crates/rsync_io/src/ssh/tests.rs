@@ -2120,3 +2120,68 @@ fn jump_host_clearable_via_none() {
         "clearing jump-hosts must remove -J: {rendered:?}"
     );
 }
+
+#[test]
+fn has_ssh_compression_detects_dash_c() {
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-C");
+    assert!(command.has_ssh_compression());
+}
+
+#[test]
+fn has_ssh_compression_detects_combined_option_yes() {
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-oCompression=yes");
+    assert!(command.has_ssh_compression());
+}
+
+#[test]
+fn has_ssh_compression_detects_split_option_yes() {
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-o");
+    command.push_option("Compression=yes");
+    assert!(command.has_ssh_compression());
+}
+
+#[test]
+fn has_ssh_compression_truthy_aliases() {
+    for value in ["yes", "YES", "Yes", "true", "TRUE", "1"] {
+        let mut command = SshCommand::new("example.com");
+        command.push_option(format!("-oCompression={value}"));
+        assert!(
+            command.has_ssh_compression(),
+            "expected detection for value {value:?}"
+        );
+    }
+}
+
+#[test]
+fn has_ssh_compression_case_insensitive_key() {
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-ocompression=yes");
+    assert!(command.has_ssh_compression());
+}
+
+#[test]
+fn has_ssh_compression_rejects_falsey_and_unrelated() {
+    for value in ["no", "NO", "false", "0", "off"] {
+        let mut command = SshCommand::new("example.com");
+        command.push_option(format!("-oCompression={value}"));
+        assert!(
+            !command.has_ssh_compression(),
+            "value {value:?} must not enable compression"
+        );
+    }
+
+    let mut command = SshCommand::new("example.com");
+    command.push_option("-oBatchMode=yes");
+    command.push_option("-c");
+    command.push_option("aes128-gcm@openssh.com");
+    assert!(!command.has_ssh_compression());
+}
+
+#[test]
+fn has_ssh_compression_default_is_false() {
+    let command = SshCommand::new("example.com");
+    assert!(!command.has_ssh_compression());
+}

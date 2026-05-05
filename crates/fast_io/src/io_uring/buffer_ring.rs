@@ -109,6 +109,22 @@ pub enum BufferRingError {
     /// Buffer memory allocation failed.
     #[error("buffer allocation failed: {0}")]
     AllocationFailed(io::Error),
+
+    /// `buf_id` argument is outside the configured ring range.
+    ///
+    /// Returned by [`BufferRing::recycle_buffer`] when the caller supplies a
+    /// buffer ID that does not correspond to any entry in the ring. Acting on
+    /// such an ID would advance the ring tail past valid entries and write a
+    /// bogus `IoUringBuf` into kernel-shared memory, which can corrupt
+    /// subsequent buffer selection or trigger undefined behaviour in
+    /// downstream io_uring submissions, so the recycle is refused instead.
+    #[error("buf_id {buf_id} out of range for ring size {ring_size}")]
+    BufferIdOutOfRange {
+        /// Offending buffer ID supplied by the caller.
+        buf_id: u16,
+        /// Configured ring size at the time of the call.
+        ring_size: u32,
+    },
 }
 
 impl From<BufferRingError> for io::Error {
@@ -117,7 +133,9 @@ impl From<BufferRingError> for io::Error {
             BufferRingError::KernelTooOld { .. } | BufferRingError::KernelVersionUnknown => {
                 io::Error::new(io::ErrorKind::Unsupported, e)
             }
-            BufferRingError::InvalidRingSize(_) | BufferRingError::InvalidBufferSize => {
+            BufferRingError::InvalidRingSize(_)
+            | BufferRingError::InvalidBufferSize
+            | BufferRingError::BufferIdOutOfRange { .. } => {
                 io::Error::new(io::ErrorKind::InvalidInput, e)
             }
             BufferRingError::MmapFailed(_)
@@ -469,12 +487,22 @@ impl BufferRing {
     ///
     /// The ring tail is advanced atomically, making this safe to call from
     /// any thread.
-    pub fn recycle_buffer(&self, buf_id: u16) {
-        debug_assert!(
-            u32::from(buf_id) < self.config.ring_size,
-            "buf_id {buf_id} out of range for ring size {}",
-            self.config.ring_size
-        );
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferRingError::BufferIdOutOfRange`] if `buf_id` is outside
+    /// the configured ring range. The check runs in both debug and release
+    /// builds, and the recycle is refused before any state is mutated so a
+    /// bogus `buf_id` cannot advance the ring tail or write into
+    /// kernel-shared memory. Callers may safely log and ignore the error or
+    /// surface it via the `From<BufferRingError> for io::Error` conversion.
+    pub fn recycle_buffer(&self, buf_id: u16) -> Result<(), BufferRingError> {
+        if u32::from(buf_id) >= self.config.ring_size {
+            return Err(BufferRingError::BufferIdOutOfRange {
+                buf_id,
+                ring_size: self.config.ring_size,
+            });
+        }
 
         let mask = self.config.ring_size - 1; // ring_size is power of 2
         let tail = self.tail.fetch_add(1, Ordering::AcqRel);
@@ -503,6 +531,7 @@ impl BufferRing {
         let tail_ptr = unsafe { self.ring_ptr.add(tail_offset).cast::<AtomicU16>() };
         let new_tail = tail.wrapping_add(1);
         unsafe { &*tail_ptr }.store(new_tail, Ordering::Release);
+        Ok(())
     }
 
     /// Returns the configuration used to create this ring.
@@ -800,13 +829,66 @@ mod tests {
             Err(_) => return,
         };
 
-        // Recycling buffer 0 should not panic.
-        buf_ring.recycle_buffer(0);
-        buf_ring.recycle_buffer(1);
-        buf_ring.recycle_buffer(2);
-        buf_ring.recycle_buffer(3);
+        // Recycling each buffer in range must succeed.
+        buf_ring.recycle_buffer(0).expect("recycle 0");
+        buf_ring.recycle_buffer(1).expect("recycle 1");
+        buf_ring.recycle_buffer(2).expect("recycle 2");
+        buf_ring.recycle_buffer(3).expect("recycle 3");
 
         drop(buf_ring);
+    }
+
+    #[test]
+    fn buffer_ring_recycle_rejects_out_of_range_buf_id() {
+        if !is_supported() {
+            return;
+        }
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        let config = BufferRingConfig {
+            ring_size: 4,
+            buffer_size: 4096,
+            bgid: 2,
+        };
+
+        let buf_ring = match BufferRing::new(&ring, config) {
+            Ok(br) => br,
+            Err(_) => return,
+        };
+
+        // First out-of-range id is ring_size; this must be rejected without
+        // mutating the shared ring tail or panicking.
+        match buf_ring.recycle_buffer(4) {
+            Err(BufferRingError::BufferIdOutOfRange { buf_id, ring_size }) => {
+                assert_eq!(buf_id, 4);
+                assert_eq!(ring_size, 4);
+            }
+            other => panic!("expected BufferIdOutOfRange, got {other:?}"),
+        }
+
+        // Far-out-of-range id (u16::MAX) must also be rejected.
+        assert!(matches!(
+            buf_ring.recycle_buffer(u16::MAX),
+            Err(BufferRingError::BufferIdOutOfRange { .. })
+        ));
+
+        drop(buf_ring);
+    }
+
+    #[test]
+    fn buffer_ring_error_out_of_range_converts_to_invalid_input() {
+        let err: io::Error = BufferRingError::BufferIdOutOfRange {
+            buf_id: 9,
+            ring_size: 4,
+        }
+        .into();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        let msg = format!("{err}");
+        assert!(msg.contains("buf_id 9"));
+        assert!(msg.contains("ring size 4"));
     }
 
     #[test]
