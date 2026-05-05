@@ -1,3 +1,9 @@
+//! Per-directory merge file (`.rsync-filter`) parsing and loading.
+//!
+//! Provides recursive loaders for filter files that follow upstream rsync's
+//! `dir-merge` semantics, including modifier handling, list-clearing, and
+//! propagation of `clear_inherited` to parent scopes.
+
 mod load;
 mod parse;
 
