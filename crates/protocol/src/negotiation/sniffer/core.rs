@@ -225,8 +225,6 @@ impl Default for NegotiationPrologueSniffer {
 mod tests {
     use super::*;
 
-    // ==== new() tests ====
-
     #[test]
     fn new_creates_empty_sniffer() {
         let sniffer = NegotiationPrologueSniffer::new();
@@ -250,8 +248,6 @@ mod tests {
         let sniffer = NegotiationPrologueSniffer::new();
         assert!(sniffer.buffered_storage().capacity() >= LEGACY_DAEMON_PREFIX_LEN);
     }
-
-    // ==== with_buffer() tests ====
 
     #[test]
     fn with_buffer_reuses_allocation() {
@@ -284,8 +280,6 @@ mod tests {
         assert!(sniffer.buffered_storage().capacity() <= LEGACY_DAEMON_PREFIX_LEN * 2);
     }
 
-    // ==== buffered() tests ====
-
     #[test]
     fn buffered_empty_initially() {
         let sniffer = NegotiationPrologueSniffer::new();
@@ -298,8 +292,6 @@ mod tests {
         sniffer.observe(b"@RSY").unwrap();
         assert_eq!(sniffer.buffered(), b"@RSY");
     }
-
-    // ==== buffered_remainder() tests ====
 
     #[test]
     fn buffered_remainder_empty_when_no_remainder() {
@@ -324,8 +316,6 @@ mod tests {
         // Binary prefix is 1 byte, remainder is the rest of buffered data
         assert_eq!(sniffer.sniffed_prefix_len(), 1);
     }
-
-    // ==== buffered_split() tests ====
 
     #[test]
     fn buffered_split_with_remainder() {
@@ -354,8 +344,6 @@ mod tests {
         assert!(remainder.is_empty());
     }
 
-    // ==== is_decided() tests ====
-
     #[test]
     fn is_decided_false_initially() {
         let sniffer = NegotiationPrologueSniffer::new();
@@ -375,8 +363,6 @@ mod tests {
         sniffer.observe(b"@RSYNCD:").unwrap();
         assert!(sniffer.is_decided());
     }
-
-    // ==== requires_more_data() tests ====
 
     #[test]
     fn requires_more_data_true_initially() {
@@ -405,8 +391,6 @@ mod tests {
         assert!(sniffer.requires_more_data());
     }
 
-    // ==== buffered_len() tests ====
-
     #[test]
     fn buffered_len_zero_initially() {
         let sniffer = NegotiationPrologueSniffer::new();
@@ -428,8 +412,6 @@ mod tests {
         assert_eq!(sniffer.buffered_len(), 13);
     }
 
-    // ==== try_reserve_buffered() tests ====
-
     #[test]
     fn try_reserve_buffered_ensures_capacity() {
         let mut sniffer = NegotiationPrologueSniffer::new();
@@ -445,8 +427,6 @@ mod tests {
         // Even after capacity normalization, should be able to reserve more
         sniffer.try_reserve_buffered(50).unwrap();
     }
-
-    // ==== sniffed_prefix_len() tests ====
 
     #[test]
     fn sniffed_prefix_len_zero_initially() {
@@ -475,8 +455,6 @@ mod tests {
         assert_eq!(sniffer.sniffed_prefix_len(), 4);
     }
 
-    // ==== sniffed_prefix() tests ====
-
     #[test]
     fn sniffed_prefix_empty_initially() {
         let sniffer = NegotiationPrologueSniffer::new();
@@ -498,8 +476,6 @@ mod tests {
         // sniffed_prefix() should not include the remainder
         assert_eq!(sniffer.sniffed_prefix(), b"@RSYNCD:");
     }
-
-    // ==== rehydrate_from_parts() tests ====
 
     #[test]
     fn rehydrate_from_parts_restores_binary() {
@@ -559,8 +535,6 @@ mod tests {
         assert!(sniffer.is_legacy());
     }
 
-    // ==== into_buffered() tests ====
-
     #[test]
     fn into_buffered_returns_buffer() {
         let mut sniffer = NegotiationPrologueSniffer::new();
@@ -579,8 +553,6 @@ mod tests {
         // Should shrink to reasonable capacity
         assert!(buffer.capacity() <= LEGACY_DAEMON_PREFIX_LEN * 2);
     }
-
-    // ==== into_parts() tests ====
 
     #[test]
     fn into_parts_returns_binary_decision() {
@@ -611,8 +583,6 @@ mod tests {
         assert!(buffer.is_empty());
     }
 
-    // ==== decision() tests ====
-
     #[test]
     fn decision_none_initially() {
         let sniffer = NegotiationPrologueSniffer::new();
@@ -632,8 +602,6 @@ mod tests {
         sniffer.observe(b"@").unwrap();
         assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
     }
-
-    // ==== is_legacy() tests ====
 
     #[test]
     fn is_legacy_false_initially() {
@@ -655,8 +623,6 @@ mod tests {
         assert!(!sniffer.is_legacy());
     }
 
-    // ==== is_binary() tests ====
-
     #[test]
     fn is_binary_false_initially() {
         let sniffer = NegotiationPrologueSniffer::new();
@@ -677,8 +643,6 @@ mod tests {
         assert!(!sniffer.is_binary());
     }
 
-    // ==== Default impl tests ====
-
     #[test]
     fn default_matches_new() {
         let default_sniffer = NegotiationPrologueSniffer::default();
@@ -690,8 +654,6 @@ mod tests {
         assert!(default_sniffer.decision().is_none());
         assert!(new_sniffer.decision().is_none());
     }
-
-    // ==== Clone/Debug tests ====
 
     #[test]
     fn clone_preserves_state() {
