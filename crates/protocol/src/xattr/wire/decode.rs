@@ -181,7 +181,6 @@ pub fn recv_xattr_request<R: Read>(reader: &mut R, list: &mut XattrList) -> io::
 
         // upstream: ndx = read_varint(f) + prior_req (1-based)
         let num = prior_req + rel;
-        // Convert 1-based wire num to 0-based index
         let idx = (num - 1) as usize;
         if idx < list.len() {
             list.mark_todo(idx);
