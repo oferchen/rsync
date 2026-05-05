@@ -197,19 +197,13 @@ impl<R: Read> MplexReader<R> {
         let code = header.code();
         let len = header.payload_len_usize();
 
-        // Clear buffer and read payload
         self.buffer.clear();
         self.pos = 0;
         read_payload_into(&mut self.inner, &mut self.buffer, len)?;
 
-        // Handle based on message type
         match code {
-            MessageCode::Data => {
-                // DATA messages are buffered for reading
-                Ok(true)
-            }
+            MessageCode::Data => Ok(true),
             other => {
-                // Out-of-band message: invoke handler if set
                 if let Some(ref mut handler) = self.message_handler {
                     handler(other, &self.buffer);
                 }
@@ -221,7 +215,6 @@ impl<R: Read> MplexReader<R> {
 
 impl<R: Read> Read for MplexReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // If we have buffered data, copy it out first
         if self.pos < self.buffer.len() {
             let available = self.buffer.len() - self.pos;
             let to_copy = available.min(buf.len());
@@ -230,17 +223,15 @@ impl<R: Read> Read for MplexReader<R> {
             return Ok(to_copy);
         }
 
-        // Buffer is exhausted - read next message
-        // Loop until we get a DATA message
+        // Buffer exhausted: pump out-of-band frames through the handler until
+        // the next DATA frame arrives, then return its bytes to the caller.
         loop {
             if self.read_message()? {
-                // Got a DATA message, buffer is now filled
                 let to_copy = self.buffer.len().min(buf.len());
                 buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
                 self.pos = to_copy;
                 return Ok(to_copy);
             }
-            // Non-DATA message handled, continue loop
         }
     }
 }
@@ -358,12 +349,12 @@ mod tests {
 
         let mut buf = [0u8; 10];
 
-        // First read: processes Info, then returns Data
         let n = reader.read(&mut buf).unwrap();
         assert_eq!(n, 4);
         assert_eq!(&buf[..4], b"data");
 
-        // After first read, only Info should be captured
+        // The Info frame ahead of the first DATA frame should have been
+        // dispatched to the handler before the read returns.
         {
             let captured = messages.lock().unwrap();
             assert_eq!(captured.len(), 1);
@@ -371,12 +362,10 @@ mod tests {
             assert_eq!(captured[0].1, b"info");
         }
 
-        // Second read: processes Warning, then returns more Data
         let n = reader.read(&mut buf).unwrap();
         assert_eq!(n, 4);
         assert_eq!(&buf[..4], b"more");
 
-        // Now both Info and Warning should be captured
         let captured = messages.lock().unwrap();
         assert_eq!(captured.len(), 2);
         assert_eq!(captured[0].0, MessageCode::Info);
@@ -458,10 +447,12 @@ mod tests {
 
         let mut buf = [0u8; 5];
         let _ = reader.read(&mut buf).unwrap();
-        assert_eq!(reader.buffered(), 6); // "hello world" - "hello" = " world"
+        // 11-byte payload, 5 consumed -> 6 remaining (" world").
+        assert_eq!(reader.buffered(), 6);
 
         let _ = reader.read(&mut buf).unwrap();
-        assert_eq!(reader.buffered(), 1); // " world" - " worl" = "d"
+        // Another 5 bytes consumed (" worl") -> 1 remaining ("d").
+        assert_eq!(reader.buffered(), 1);
     }
 
     #[test]
@@ -503,12 +494,11 @@ mod tests {
         let mut result = Vec::new();
         let mut buf = [0u8; 10];
 
-        // Read all data messages
         loop {
             match reader.read(&mut buf) {
-                Ok(0) => break, // Empty frame
+                Ok(0) => break,
                 Ok(n) => result.extend_from_slice(&buf[..n]),
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break, // EOF
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
                 Err(e) => panic!("unexpected error: {e}"),
             }
         }
