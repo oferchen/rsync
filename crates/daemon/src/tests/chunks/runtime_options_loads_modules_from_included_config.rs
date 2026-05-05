@@ -4,7 +4,7 @@ fn runtime_options_loads_modules_from_included_config() {
     let include_path = dir.path().join("modules.conf");
     writeln!(
         File::create(&include_path).expect("create include"),
-        "[docs]\npath = /srv/docs\n"
+        "[docs]\npath = /srv/docs\nuse chroot = no\n"
     )
     .expect("write include");
 

@@ -211,6 +211,120 @@ jobs:
           retention-days: 7
 
   # ===========================================================================
+  # Windows IOCP - Explicit `--features iocp` coverage (issue #1900)
+  # ---------------------------------------------------------------------------
+  # Default features already include `iocp` so the main `windows-test` job
+  # exercises it implicitly. This job pins the feature explicitly to guarantee
+  # beta-grade Windows confidence: the IOCP code path (PRs #1717-#1721) must
+  # build and pass tests on its own without relying on other default features
+  # masking regressions. Tests target `fast_io` (the crate that owns IOCP) and
+  # `transfer` (the primary consumer of fast_io's async file I/O).
+  # ===========================================================================
+  windows-iocp:
+    name: Windows IOCP (--features iocp)
+    runs-on: windows-latest
+    needs: lint
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-windows-iocp-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          key: windows-iocp
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@1329c298aa20c3257846c9b2e0e55967df3e3c37 # v2
+        with:
+          tool: cargo-nextest
+
+      # Build the workspace with iocp explicitly enabled. The feature is in
+      # defaults but pinning it here protects against future default changes
+      # silently dropping iocp coverage from CI.
+      - name: Build workspace (--features iocp)
+        run: cargo build --locked --workspace --features iocp
+
+      # Build fast_io with only iocp enabled (no other default features) so
+      # the IOCP code path is verified in isolation.
+      - name: Build fast_io (--no-default-features --features iocp)
+        run: cargo build --locked -p fast_io --no-default-features --features iocp
+
+      # Run the iocp test suite. fast_io owns the IOCP modules; transfer
+      # exercises the consumer side via fast_io's path dependency.
+      - name: Test fast_io (--features iocp)
+        run: cargo nextest run --locked -p fast_io --no-default-features --features iocp
+
+      # transfer has no own iocp feature; it picks up iocp transitively
+      # through fast_io's default features (which include iocp). Running with
+      # `--all-features` here ensures the full transfer surface compiles and
+      # passes against the iocp-enabled fast_io.
+      - name: Test transfer (iocp via fast_io defaults)
+        run: cargo nextest run --locked -p transfer --all-features
+
+  # ===========================================================================
+  # Windows ACL/xattr - Explicit ACL and xattr coverage (issue #1869)
+  # ---------------------------------------------------------------------------
+  # The main `windows-test` job runs only `core`, `engine`, `cli`, so the
+  # `metadata` crate (which owns Windows ACL via Win32 GetSecurityInfo and
+  # Windows xattr via NTFS Alternate Data Streams) is never exercised on
+  # `windows-latest`. This job adds explicit coverage for those code paths so
+  # master CI catches Windows ACL/ADS regressions.
+  # ===========================================================================
+  windows-acl-xattr:
+    name: Windows ACL/xattr
+    runs-on: windows-latest
+    needs: lint
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-windows-acl-xattr-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          key: windows-acl-xattr
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@1329c298aa20c3257846c9b2e0e55967df3e3c37 # v2
+        with:
+          tool: cargo-nextest
+
+      # Build metadata with ACL + xattr explicitly enabled so the Win32
+      # GetSecurityInfo / SetSecurityInfo and ADS code paths are exercised.
+      - name: Build metadata (--features acl,xattr)
+        run: cargo build --locked -p metadata --features acl,xattr
+
+      # Run the full metadata test suite with both features enabled. This
+      # covers acl_windows::tests (DACL round-trip) and xattr_windows::tests
+      # (NTFS Alternate Data Streams).
+      - name: Test metadata (--features acl,xattr)
+        run: cargo nextest run --locked -p metadata --features acl,xattr
+
+      # Filtered workspace run that pins the ACL/ADS test sets in case future
+      # tests land outside the metadata crate. Uses nextest expression syntax
+      # to match `acl`, `xattr`, `ads`, and `stream` (NTFS ADS test names).
+      # `shell: bash` is required so the single-quoted -E expression survives
+      # without PowerShell-specific escaping.
+      - name: Test ACL/xattr/ADS filter (workspace)
+        shell: bash
+        run: cargo nextest run --locked --workspace --features acl,xattr -E 'test(acl) | test(xattr) | test(ads) | test(stream)'
+
+  # ===========================================================================
   # Windows GNU Cross-Check - Validate x86_64-pc-windows-gnu compilation
   # ===========================================================================
   windows-gnu-cross-check:

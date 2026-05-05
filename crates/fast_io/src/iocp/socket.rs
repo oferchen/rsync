@@ -466,7 +466,9 @@ mod tests {
         server.join().unwrap();
 
         // Holding `client` keeps the SOCKET alive until after the reader
-        // finishes its last recv.
+        // finishes its last recv. Drop the reader before unwrapping the
+        // pump Arc so the pump is uniquely owned at shutdown.
+        drop(reader);
         drop(client);
         Arc::try_unwrap(pump)
             .ok()
@@ -541,6 +543,7 @@ mod tests {
         assert_eq!(n, 0, "recv after peer shutdown must report EOF");
 
         server.join().unwrap();
+        drop(reader);
         drop(client);
         Arc::try_unwrap(pump)
             .ok()
@@ -566,6 +569,7 @@ mod tests {
         assert_eq!(reader.recv_async(&mut empty).unwrap(), 0);
         assert_eq!(pump.pending_ops(), 0, "no handler should remain registered");
 
+        drop(reader);
         drop(client);
         server.join().unwrap();
         Arc::try_unwrap(pump)
@@ -592,6 +596,7 @@ mod tests {
         assert_eq!(writer.send_async(&empty).unwrap(), 0);
         assert_eq!(pump.pending_ops(), 0);
 
+        drop(writer);
         drop(client);
         server.join().unwrap();
         Arc::try_unwrap(pump)

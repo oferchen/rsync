@@ -4,7 +4,7 @@ fn runtime_options_loads_syslog_tag_from_config() {
     let config_path = dir.path().join("rsyncd.conf");
     writeln!(
         File::create(&config_path).expect("create config"),
-        "syslog tag = mybackup\n[docs]\npath = /srv/docs\n"
+        "syslog tag = mybackup\n[docs]\npath = /srv/docs\nuse chroot = no\n"
     )
     .expect("write config");
 
