@@ -168,7 +168,7 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
 /// Returns `true` when two timestamps differ by no more than `window`.
 ///
 /// With a zero window, only exact equality matches.
-/// // upstream: generator.c:unchanged_file() - modify window comparison
+// upstream: generator.c:unchanged_file() - modify window comparison
 pub(crate) fn system_time_within_window(a: SystemTime, b: SystemTime, window: Duration) -> bool {
     if window.is_zero() {
         return a.eq(&b);
