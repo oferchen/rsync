@@ -1,9 +1,6 @@
 use super::*;
 use std::io::{self, Cursor};
 
-/// Tests for multiplexing correctness covering message framing, type distinction,
-/// large messages, and error message parsing.
-
 #[test]
 fn message_framing_single_message_roundtrip() {
     let mut buffer = Vec::new();
@@ -40,7 +37,6 @@ fn message_framing_multiple_messages_in_sequence() {
 
 #[test]
 fn message_framing_preserves_exact_payload_boundaries() {
-    // Test that payload boundaries are preserved even with varying lengths
     let payloads = [
         b"" as &[u8],
         b"a",
@@ -92,7 +88,8 @@ fn message_framing_header_encodes_payload_length_correctly() {
         let mut buffer = Vec::new();
         send_msg(&mut buffer, MessageCode::Data, payload).expect("send succeeds");
 
-        // Extract length from header (lower 3 bytes of little-endian u32)
+        // Wire format: low 24 bits of the LE header word carry payload length;
+        // the high byte carries tag = MPLEX_BASE + code.
         let header_word = u32::from_le_bytes([
             buffer[0], buffer[1], buffer[2], buffer[3]
         ]);
@@ -200,7 +197,6 @@ fn message_types_error_variants_are_distinct() {
         MessageCode::ErrorExit,
     ];
 
-    // Verify each error code is distinct
     for (i, code1) in error_codes.iter().enumerate() {
         for (j, code2) in error_codes.iter().enumerate() {
             if i != j {
@@ -215,7 +211,6 @@ fn message_types_error_variants_are_distinct() {
         }
     }
 
-    // Verify they roundtrip correctly
     for code in error_codes {
         let mut buffer = Vec::new();
         send_msg(&mut buffer, code, b"error message").expect("send succeeds");
@@ -240,7 +235,6 @@ fn message_types_control_messages_have_unique_codes() {
         MessageCode::NoSend,
     ];
 
-    // Verify all control codes are unique
     for (i, code1) in control_codes.iter().enumerate() {
         for (j, code2) in control_codes.iter().enumerate() {
             if i != j {
@@ -304,7 +298,6 @@ fn message_types_flush_alias_equals_info() {
     assert_eq!(MessageCode::FLUSH, MessageCode::Info);
     assert_eq!(MessageCode::FLUSH.as_u8(), MessageCode::Info.as_u8());
 
-    // Verify they serialize identically
     let mut buffer1 = Vec::new();
     send_msg(&mut buffer1, MessageCode::FLUSH, b"test").expect("send flush");
 
@@ -387,7 +380,9 @@ fn large_messages_recv_into_reuses_buffer_capacity() {
     recv_msg_into(&mut cursor, &mut buffer).expect("receive succeeds");
 
     assert_eq!(buffer.len(), 64 * 1024);
-    assert_eq!(buffer.capacity(), capacity_before, "should reuse existing capacity");
+    // Existing capacity must be reused; recv_msg_into never reallocates when
+    // the buffer is already large enough for the incoming payload.
+    assert_eq!(buffer.capacity(), capacity_before);
 }
 
 #[test]
@@ -559,8 +554,9 @@ fn error_parsing_io_error_and_io_timeout_distinguished() {
 
 #[test]
 fn error_parsing_unknown_code_rejected() {
-    // Construct a header with an unknown message code
-    let unknown_code = 11u8; // Not in MessageCode::ALL
+    // 11 is above the highest currently-defined offset in MessageCode::ALL,
+    // so the resulting tag should be rejected as unknown.
+    let unknown_code = 11u8;
     let tag = u32::from(MPLEX_BASE) + u32::from(unknown_code);
     let raw_header = (tag << 24).to_le_bytes();
 
@@ -656,7 +652,6 @@ fn correctness_zero_length_messages_at_various_positions() {
 
 #[test]
 fn correctness_message_boundaries_with_identical_payloads() {
-    // Verify that identical payloads don't cause messages to merge
     let identical_payload = b"same payload";
     let codes = [
         MessageCode::Info,
