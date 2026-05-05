@@ -49,7 +49,6 @@ pub struct FilterProgram {
     dir_merge_rules: Vec<DirMergeRule>,
     exclude_if_present_rules: Vec<ExcludeIfPresentRule>,
 
-    // XAttr filter strategy – present only where meaningful.
     #[cfg(all(unix, feature = "xattr"))]
     xattr_rules: Vec<XattrRule>,
 }
@@ -263,7 +262,6 @@ impl FilterProgram {
         Ok(false)
     }
 
-    // XAttr filtering strategy – only compiled where supported.
     #[cfg(all(unix, feature = "xattr"))]
     pub(crate) const fn has_xattr_rules(&self) -> bool {
         !self.xattr_rules.is_empty()
@@ -427,7 +425,6 @@ mod tests {
         let program = FilterProgram::new(std::iter::empty()).unwrap();
         let path = Path::new("test.txt");
         let outcome = program.evaluate(path, false, &[], None, FilterContext::Transfer);
-        // Default outcome allows transfer
         assert!(outcome.allows_transfer());
     }
 
