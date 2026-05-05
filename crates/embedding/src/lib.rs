@@ -519,7 +519,6 @@ mod tests {
 
     #[test]
     fn server_config_can_be_constructed() {
-        // Verify that ServerConfig can be constructed from flag string and args
         let config = ServerConfig::from_flag_string_and_args(
             ServerRole::Receiver,
             "-logDtpre.iLsfxC".to_string(),
@@ -539,7 +538,6 @@ mod tests {
 
     #[test]
     fn server_config_rejects_empty_inputs() {
-        // Empty flag string and no args should be rejected
         let config =
             ServerConfig::from_flag_string_and_args(ServerRole::Receiver, String::new(), vec![]);
 
@@ -751,7 +749,6 @@ mod tests {
         let mut stderr = Vec::new();
         run_daemon_with(args, &mut stdout, &mut stderr).expect("--help succeeds");
 
-        // Verify we got some output
         assert!(
             !stdout.is_empty() || !stderr.is_empty(),
             "daemon --help should produce output"

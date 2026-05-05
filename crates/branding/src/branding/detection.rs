@@ -101,7 +101,6 @@ mod tests {
         manifest().client_program_name_for(Brand::Upstream)
     }
 
-    // classify_program_name tests
     #[test]
     fn classify_oc_client() {
         assert_eq!(classify_program_name(oc_client()), Some(Brand::Oc));
@@ -130,7 +129,6 @@ mod tests {
         assert_eq!(classify_program_name(""), None);
     }
 
-    // brand_for_program_name tests
     #[test]
     fn brand_for_program_name_oc() {
         assert_eq!(brand_for_program_name(oc_client()), Brand::Oc);
@@ -146,7 +144,6 @@ mod tests {
         assert_eq!(brand_for_program_name("unknown"), default_brand());
     }
 
-    // brand_for_program_path tests
     #[test]
     fn brand_for_path_with_extension() {
         let path_str = format!("/usr/bin/{}.exe", oc_client());
@@ -173,7 +170,6 @@ mod tests {
         assert_eq!(brand_for_program_path(Path::new("/usr/bin/unknown")), None);
     }
 
-    // brand_for_program_os_str tests
     #[test]
     fn brand_for_os_str_oc() {
         let os_str = OsStr::new(oc_client());
@@ -187,12 +183,11 @@ mod tests {
         assert_eq!(brand_for_program_os_str(os_str), Some(Brand::Upstream));
     }
 
-    // detect_brand tests
     #[test]
     fn detect_brand_from_program_arg() {
         let program = OsString::from(oc_client());
         let brand = detect_brand(Some(program.as_os_str()));
-        // May return Oc or be overridden by env, but should not panic
+        // May return Oc or be overridden by env, but should not panic.
         assert!(brand == Brand::Oc || brand == Brand::Upstream);
     }
 
@@ -202,7 +197,6 @@ mod tests {
         assert!(brand == Brand::Oc || brand == Brand::Upstream);
     }
 
-    // resolve_brand_profile tests
     #[test]
     fn resolve_brand_profile_returns_profile() {
         let program = OsString::from(upstream_client());
