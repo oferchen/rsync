@@ -14,6 +14,8 @@ use super::known::KnownCompatibilityFlag;
 /// after version 30. The flags are transmitted using the variable-length
 /// integer codec implemented in the `varint` module, making the bitfield compact
 /// while retaining forward compatibility when new bits are defined.
+///
+/// Bit definitions mirror upstream `compat.c:117` (`CF_*` macros).
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
