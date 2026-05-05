@@ -1,3 +1,11 @@
+//! Immutable workspace metadata snapshot derived from `Cargo.toml`.
+//!
+//! [`metadata()`] returns a [`Metadata`] value that aggregates the brand,
+//! version, protocol, and packaging path constants emitted by the build
+//! script. Callers preferring a single accessor over individual constants use
+//! this module to render banners, locate configuration files, and report
+//! diagnostics without re-reading the manifest.
+
 use super::constants::{
     BRAND, CLIENT_PROGRAM_NAME, DAEMON_CONFIG_DIR, DAEMON_CONFIG_PATH, DAEMON_PROGRAM_NAME,
     DAEMON_SECRETS_PATH, LEGACY_CLIENT_PROGRAM_NAME, LEGACY_DAEMON_CONFIG_DIR,
