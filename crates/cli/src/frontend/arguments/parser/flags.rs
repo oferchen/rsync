@@ -1,3 +1,8 @@
+//! Tri-state flag resolution for paired `--foo` / `--no-foo` options.
+//!
+//! When both flags appear on the command line the one that occurs later wins,
+//! matching upstream rsync's left-to-right option processing.
+
 /// Resolves a tri-state flag pair where the positive flag takes precedence on tie.
 ///
 /// Returns `Some(true)` if the positive flag is set (and appears last),

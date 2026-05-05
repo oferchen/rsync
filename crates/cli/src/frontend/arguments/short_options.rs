@@ -1,5 +1,8 @@
 #![deny(unsafe_code)]
 
+//! Expands clusters of short options (e.g. `-avz`) before they reach `clap`,
+//! mirroring upstream rsync's parsing semantics.
+
 use std::collections::HashSet;
 use std::ffi::OsString;
 

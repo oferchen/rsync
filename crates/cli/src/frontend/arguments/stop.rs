@@ -1,12 +1,20 @@
 use std::ffi::OsString;
 use std::time::SystemTime;
 
+/// Distinguishes which user-facing flag produced a [`StopRequest`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StopRequestKind {
+    /// Produced by `--stop-after=DURATION`.
     StopAfter,
+    /// Produced by `--stop-at=TIME`.
     StopAt,
 }
 
+/// Captures a parsed `--stop-after` or `--stop-at` request.
+///
+/// Holds the originating CLI text alongside the resolved absolute deadline so
+/// the transfer can both honour the cut-off and forward the original argument
+/// to remote peers verbatim.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StopRequest {
     kind: StopRequestKind,
@@ -15,6 +23,7 @@ pub(crate) struct StopRequest {
 }
 
 impl StopRequest {
+    /// Builds a [`StopRequest`] for `--stop-after=DURATION`.
     pub(crate) const fn new_stop_after(value: OsString, deadline: SystemTime) -> Self {
         Self {
             kind: StopRequestKind::StopAfter,
@@ -23,6 +32,7 @@ impl StopRequest {
         }
     }
 
+    /// Builds a [`StopRequest`] for `--stop-at=TIME`.
     pub(crate) const fn new_stop_at(value: OsString, deadline: SystemTime) -> Self {
         Self {
             kind: StopRequestKind::StopAt,
@@ -31,16 +41,19 @@ impl StopRequest {
         }
     }
 
+    /// Returns which CLI flag produced this request.
     #[allow(dead_code)] // REASON: accessor used in unit tests
     pub(crate) const fn kind(&self) -> StopRequestKind {
         self.kind
     }
 
+    /// Returns the original CLI text supplied by the user.
     #[allow(dead_code)] // REASON: accessor used in unit tests
     pub(crate) const fn cli_value(&self) -> &OsString {
         &self.value
     }
 
+    /// Returns the absolute wall-clock deadline at which the transfer stops.
     pub(crate) const fn deadline(&self) -> SystemTime {
         self.deadline
     }

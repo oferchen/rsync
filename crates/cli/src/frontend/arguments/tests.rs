@@ -1918,7 +1918,6 @@ mod default_values {
     fn minimal_args_have_sensible_defaults() {
         let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
 
-        // Boolean defaults
         assert!(!parsed.archive);
         assert!(!parsed.recursive);
         assert!(!parsed.dry_run);
@@ -1951,7 +1950,6 @@ mod default_values {
         assert!(!parsed.remove_source_files);
         assert!(!parsed.eight_bit_output);
 
-        // Tri-state defaults (None means unspecified)
         assert_eq!(parsed.perms, None);
         assert_eq!(parsed.times, None);
         assert_eq!(parsed.owner, None);
@@ -1984,7 +1982,6 @@ mod default_values {
         assert_eq!(parsed.crtimes, None);
         assert_eq!(parsed.executability, None);
 
-        // Optional values default to None
         assert_eq!(parsed.bwlimit, None);
         assert_eq!(parsed.daemon_port, None);
         assert_eq!(parsed.remote_shell, None);
@@ -2006,7 +2003,6 @@ mod default_values {
         assert_eq!(parsed.chown, None);
         assert_eq!(parsed.iconv, None);
 
-        // Vec defaults to empty
         assert!(parsed.excludes.is_empty());
         assert!(parsed.includes.is_empty());
         assert!(parsed.filters.is_empty());
@@ -2021,19 +2017,13 @@ mod default_values {
         assert!(parsed.info.is_empty());
         assert!(parsed.debug.is_empty());
 
-        // Verbosity defaults to 0
         assert_eq!(parsed.verbosity, 0);
-
-        // Delete mode defaults to disabled
         assert_eq!(parsed.delete_mode, DeleteMode::Disabled);
-
-        // Address mode defaults to default
         assert_eq!(parsed.address_mode, AddressMode::Default);
     }
 
     #[test]
     fn no_operands_is_valid() {
-        // Just help flag should work
         let parsed = parse_test_args(["--help"]).expect("parse");
         assert!(parsed.show_help);
         assert!(parsed.remainder.is_empty());

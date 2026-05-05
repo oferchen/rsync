@@ -1,3 +1,10 @@
+//! CLI argument parsing for the rsync frontend.
+//!
+//! Hosts the [`ParsedArgs`] structure produced by [`parse_args`] together with
+//! supporting helpers for environment defaults, short-option cluster expansion,
+//! tri-state flag resolution, program-name detection, bandwidth arguments, and
+//! `--stop-*` deadline parsing.
+
 mod bandwidth;
 mod env;
 mod parsed_args;
