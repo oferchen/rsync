@@ -146,7 +146,6 @@ fn windows_impersonate(account_name: &str) -> io::Result<()> {
     };
     use windows::core::PCWSTR;
 
-    // Split DOMAIN\user if present.
     let (domain, user) = match account_name.split_once('\\') {
         Some((d, u)) => (Some(d), u),
         None => (None, account_name),
