@@ -226,10 +226,12 @@ where
     {
         let message = rsync_error!(
             1,
-            "--simd: cannot change SIMD level after initialization \
-             (was {previous}, requested {level})",
-            previous = previous.as_cli_str(),
-            level = level.as_cli_str(),
+            format!(
+                "--simd: cannot change SIMD level after initialization \
+                 (was {}, requested {})",
+                previous.as_cli_str(),
+                level.as_cli_str(),
+            )
         )
         .with_role(Role::Client);
         return fail_with_message(message, stderr);
