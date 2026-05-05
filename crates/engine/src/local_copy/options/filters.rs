@@ -1,3 +1,6 @@
+//! Setters and accessors for filter rules, filter programs, and the
+//! `--iconv` filename charset converter on [`LocalCopyOptions`].
+
 use filters::FilterSet;
 use protocol::iconv::FilenameConverter;
 

@@ -1,3 +1,6 @@
+//! Setters and accessors for `--backup`, `--backup-dir`, and `--suffix` on
+//! [`LocalCopyOptions`].
+
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 

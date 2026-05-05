@@ -1,3 +1,7 @@
+//! Setters and accessors for hard-link preservation, `--link-dest` entries,
+//! and reference directories (`--compare-dest`, `--copy-dest`, `--link-dest`)
+//! on [`LocalCopyOptions`].
+
 use std::path::{Path, PathBuf};
 
 use super::types::{LinkDestEntry, LocalCopyOptions, ReferenceDirectory};
