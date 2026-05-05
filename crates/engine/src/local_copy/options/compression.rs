@@ -1,3 +1,7 @@
+//! Setters and accessors for compression-related options (`--compress`,
+//! `--compress-choice`, `--compress-level`, skip-compress suffix list) on
+//! [`LocalCopyOptions`].
+
 use std::path::Path;
 
 use compress::algorithm::CompressionAlgorithm;

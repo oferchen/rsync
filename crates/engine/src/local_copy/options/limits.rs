@@ -1,3 +1,6 @@
+//! Setters and accessors for size filters, source removal, preallocation,
+//! bandwidth limits, and timeout/deadline options on [`LocalCopyOptions`].
+
 use std::num::NonZeroU64;
 use std::time::{Duration, SystemTime};
 

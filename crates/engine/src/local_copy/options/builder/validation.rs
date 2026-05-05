@@ -23,7 +23,6 @@ impl LocalCopyOptionsBuilder {
             });
         }
 
-        // Validate size limits
         if let (Some(min), Some(max)) = (self.min_file_size, self.max_file_size) {
             if min > max {
                 return Err(BuilderError::InvalidCombination {

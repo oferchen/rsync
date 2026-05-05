@@ -1,3 +1,8 @@
+//! Setters and accessors for staging-related options on
+//! [`LocalCopyOptions`]: sparse handling, partial transfers,
+//! `--temp-dir`/`--partial-dir`, `--delay-updates`, `--inplace`, `--append`,
+//! `--append-verify`, fsync, and event collection.
+
 use std::path::{Path, PathBuf};
 
 use super::types::LocalCopyOptions;

@@ -1,3 +1,6 @@
+//! Unit tests for [`super::LocalCopyOptionsBuilder`] covering presets,
+//! per-concern setters, validation rules, and error display.
+
 use std::num::NonZeroU64;
 use std::time::{Duration, SystemTime};
 
