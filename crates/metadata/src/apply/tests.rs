@@ -7,6 +7,7 @@ use filetime::{FileTime, set_file_times};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
 use std::path::Path;
 use tempfile::tempdir;
 
@@ -448,6 +449,9 @@ fn group_override_takes_precedence() {
     assert_eq!(dest_meta.gid(), 1000);
 }
 
+// Sub-100ns nanosecond preservation requires filesystem granularity finer than
+// NTFS's 100ns FILETIME, so the exact-equality assertion is Unix-only.
+#[cfg(unix)]
 #[test]
 fn apply_metadata_from_file_entry_with_timestamps() {
     use protocol::flist::FileEntry;
@@ -552,6 +556,9 @@ fn epoch_timestamp_zero_seconds_is_preserved() {
     assert_eq!(dest_mtime, epoch_time, "mtime should be preserved at epoch");
 }
 
+// NTFS FILETIME has 100ns granularity, so 123_456_789ns truncates to
+// 123_456_700ns and breaks the equality round-trip on Windows.
+#[cfg(unix)]
 #[test]
 fn epoch_timestamp_with_nanoseconds_is_preserved() {
     let temp = tempdir().expect("tempdir");
@@ -575,6 +582,9 @@ fn epoch_timestamp_with_nanoseconds_is_preserved() {
     );
 }
 
+// NTFS FILETIME has 100ns granularity, so 999_999_999ns truncates to
+// 999_999_900ns and breaks the equality round-trip on Windows.
+#[cfg(unix)]
 #[test]
 fn epoch_timestamp_round_trip_file() {
     let temp = tempdir().expect("tempdir");
@@ -680,6 +690,9 @@ fn epoch_timestamp_from_file_entry() {
     );
 }
 
+// NTFS FILETIME has 100ns granularity, so 987_654_321ns truncates to
+// 987_654_300ns and breaks the equality assertion on Windows.
+#[cfg(unix)]
 #[test]
 fn epoch_timestamp_from_file_entry_with_nanoseconds() {
     use protocol::flist::FileEntry;
@@ -740,7 +753,7 @@ fn epoch_timestamp_edge_case_one_nanosecond() {
 
     // Some filesystems may not support nanosecond precision,
     // so we check that we at least preserved the second (0)
-    assert_eq!(dest_mtime.seconds(), 0, "seconds should be zero");
+    assert_eq!(dest_mtime.unix_seconds(), 0, "seconds should be zero");
 }
 
 #[test]
@@ -760,7 +773,7 @@ fn attrs_flags_empty_applies_mtime_normally() {
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_mtime.seconds(), 1_700_000_000);
+    assert_eq!(dest_mtime.unix_seconds(), 1_700_000_000);
 }
 
 #[test]
@@ -805,7 +818,7 @@ fn attrs_flags_skip_crtime_prevents_crtime_application() {
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_mtime.seconds(), 1_700_000_000);
+    assert_eq!(dest_mtime.unix_seconds(), 1_700_000_000);
 }
 
 #[test]
@@ -859,7 +872,7 @@ fn attrs_flags_skip_mtime_with_atime_still_applies_atime() {
     assert_eq!(dest_mtime, original_mtime);
 
     let dest_atime = FileTime::from_last_access_time(&dest_meta);
-    assert_eq!(dest_atime.seconds(), 1_650_000_000);
+    assert_eq!(dest_atime.unix_seconds(), 1_650_000_000);
 }
 
 #[test]
@@ -906,7 +919,7 @@ fn attrs_flags_skip_atime_alone_does_not_affect_mtime() {
 
     let dest_meta = fs::metadata(&dest).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-    assert_eq!(dest_mtime.seconds(), 1_700_000_000);
+    assert_eq!(dest_mtime.unix_seconds(), 1_700_000_000);
 }
 
 #[cfg(unix)]

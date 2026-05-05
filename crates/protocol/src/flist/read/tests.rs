@@ -2296,8 +2296,12 @@ mod xattr_integration {
 /// Tests for filename encoding conversion (--iconv) on the receiver flist
 /// ingest path.
 ///
+/// Gated to unix: every helper and test inside builds non-UTF8 bytes via
+/// `OsStrExt::from_bytes`, which has no Windows equivalent. Without the unix
+/// gate the inner `use` items become unused on Windows under `-D warnings`.
+///
 /// upstream: flist.c recv_file_entry() iconv_buf(ic_recv, ...)
-#[cfg(feature = "iconv")]
+#[cfg(all(feature = "iconv", unix))]
 mod iconv_integration {
     use super::*;
     use crate::flist::write::FileListWriter;

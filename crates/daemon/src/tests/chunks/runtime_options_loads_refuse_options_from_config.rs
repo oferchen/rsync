@@ -3,7 +3,7 @@ fn runtime_options_loads_refuse_options_from_config() {
     let mut file = NamedTempFile::new().expect("config file");
     writeln!(
         file,
-        "[docs]\npath = /srv/docs\nrefuse options = delete, compress progress\n"
+        "[docs]\npath = /srv/docs\nuse chroot = no\nrefuse options = delete, compress progress\n"
     )
     .expect("write config");
 

@@ -12,29 +12,39 @@
 //! - No overflow errors occur at the boundary
 
 use filetime::{FileTime, set_file_times};
-use metadata::{apply_directory_metadata, apply_file_metadata, apply_symlink_metadata};
+#[cfg(unix)]
+use metadata::apply_directory_metadata;
+use metadata::apply_file_metadata;
+#[cfg(unix)]
+use metadata::apply_symlink_metadata;
 use std::fs;
 use tempfile::tempdir;
 
 /// The Year 2038 overflow boundary for 32-bit signed Unix timestamps.
 /// This is 2^31 - 1 = 2,147,483,647 seconds since Unix epoch.
 /// Corresponds to: 2038-01-19 03:14:07 UTC
+#[cfg(unix)]
 const YEAR_2038_BOUNDARY: i64 = 2_147_483_647;
 
 /// A timestamp just before the 2038 boundary (one day before).
+#[cfg(unix)]
 const BEFORE_2038: i64 = YEAR_2038_BOUNDARY - 86_400;
 
 /// A timestamp just after the 2038 boundary (one day after).
+#[cfg(unix)]
 const AFTER_2038: i64 = YEAR_2038_BOUNDARY + 86_400;
 
 /// A timestamp far in the future (year 2100).
 /// Corresponds to: 2100-01-01 00:00:00 UTC
+#[cfg(unix)]
 const YEAR_2100: i64 = 4_102_444_800;
 
 /// A timestamp far in the future (year 3000).
 /// Corresponds to: 3000-01-01 00:00:00 UTC
+#[cfg(unix)]
 const YEAR_3000: i64 = 32_503_680_000;
 
+#[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_at_2038_boundary() {
     let temp = tempdir().expect("tempdir");
@@ -65,6 +75,7 @@ fn file_metadata_preserves_timestamp_at_2038_boundary() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_before_2038() {
     let temp = tempdir().expect("tempdir");
@@ -89,6 +100,7 @@ fn file_metadata_preserves_timestamp_before_2038() {
     assert_eq!(dest_mtime, mtime, "mtime should be preserved before 2038");
 }
 
+#[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_after_2038() {
     let temp = tempdir().expect("tempdir");
@@ -113,6 +125,7 @@ fn file_metadata_preserves_timestamp_after_2038() {
     assert_eq!(dest_mtime, mtime, "mtime should be preserved after 2038");
 }
 
+#[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_year_2100() {
     let temp = tempdir().expect("tempdir");
@@ -137,6 +150,7 @@ fn file_metadata_preserves_timestamp_year_2100() {
     assert_eq!(dest_mtime, mtime, "mtime should be preserved for year 2100");
 }
 
+#[cfg(unix)]
 #[test]
 fn file_metadata_preserves_timestamp_year_3000() {
     let temp = tempdir().expect("tempdir");
@@ -172,6 +186,7 @@ fn file_metadata_preserves_timestamp_year_3000() {
     assert_eq!(dest_mtime, mtime, "mtime should be preserved for year 3000");
 }
 
+#[cfg(unix)]
 #[test]
 fn directory_metadata_preserves_timestamp_beyond_2038() {
     let temp = tempdir().expect("tempdir");
@@ -236,6 +251,7 @@ fn symlink_metadata_preserves_timestamp_beyond_2038() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn round_trip_preserves_timestamps_across_2038_boundary() {
     let temp = tempdir().expect("tempdir");
@@ -280,6 +296,7 @@ fn round_trip_preserves_timestamps_across_2038_boundary() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn no_overflow_at_i32_max_boundary() {
     let temp = tempdir().expect("tempdir");
@@ -337,6 +354,7 @@ fn no_overflow_just_past_i32_max() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn nanosecond_precision_preserved_beyond_2038() {
     let temp = tempdir().expect("tempdir");
@@ -452,6 +470,7 @@ fn negative_timestamps_are_handled_correctly() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn extreme_range_64bit_timestamps() {
     let temp = tempdir().expect("tempdir");

@@ -4,7 +4,7 @@ fn runtime_options_loads_lock_file_from_config() {
     let config_path = dir.path().join("rsyncd.conf");
     writeln!(
         File::create(&config_path).expect("create config"),
-        "lock file = daemon.lock\n[docs]\npath = /srv/docs\n"
+        "lock file = daemon.lock\n[docs]\npath = /srv/docs\nuse chroot = no\n"
     )
     .expect("write config");
 

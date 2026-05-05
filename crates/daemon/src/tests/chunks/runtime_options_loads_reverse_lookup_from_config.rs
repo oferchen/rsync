@@ -4,7 +4,7 @@ fn runtime_options_loads_reverse_lookup_from_config() {
     let config_path = dir.path().join("rsyncd.conf");
     fs::write(
         &config_path,
-        "reverse lookup = no\n[docs]\npath = /srv/docs\n",
+        "reverse lookup = no\n[docs]\npath = /srv/docs\nuse chroot = no\n",
     )
     .expect("write config");
 

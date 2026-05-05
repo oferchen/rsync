@@ -113,6 +113,7 @@ fn alignment_respected() {
     assert_eq!(map.window_start, 1024);
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_strategy_open_and_read() {
     let temp = create_test_file(1000);
@@ -124,6 +125,7 @@ fn mmap_strategy_open_and_read() {
     assert_eq!(data, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_strategy_mid_file_read() {
     let temp = create_test_file(1000);
@@ -134,6 +136,7 @@ fn mmap_strategy_mid_file_read() {
     assert_eq!(data, &expected[..]);
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_strategy_zero_length_read() {
     let temp = create_test_file(1000);
@@ -143,6 +146,7 @@ fn mmap_strategy_zero_length_read() {
     assert!(data.is_empty());
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_strategy_past_eof_fails() {
     let temp = create_test_file(1000);
@@ -152,6 +156,7 @@ fn mmap_strategy_past_eof_fails() {
     assert!(result.is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_strategy_window_size_is_file_size() {
     let temp = create_test_file(5000);
@@ -160,6 +165,7 @@ fn mmap_strategy_window_size_is_file_size() {
     assert_eq!(strategy.window_size(), 5000);
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_strategy_as_slice() {
     let temp = create_test_file(100);
@@ -171,6 +177,7 @@ fn mmap_strategy_as_slice() {
     assert_eq!(slice[99], 99);
 }
 
+#[cfg(unix)]
 #[test]
 fn map_file_open_mmap() {
     let temp = create_test_file(1000);
@@ -182,6 +189,7 @@ fn map_file_open_mmap() {
     assert_eq!(data, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_uses_buffered_for_small_files() {
     let temp = create_test_file(100);
@@ -191,6 +199,7 @@ fn adaptive_strategy_uses_buffered_for_small_files() {
     assert!(!strategy.is_mmap());
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_uses_mmap_for_large_files() {
     let temp = create_test_file(2000);
@@ -200,6 +209,7 @@ fn adaptive_strategy_uses_mmap_for_large_files() {
     assert!(!strategy.is_buffered());
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_threshold_boundary() {
     let temp = create_test_file(1000);
@@ -208,6 +218,7 @@ fn adaptive_strategy_threshold_boundary() {
     assert!(strategy.is_mmap());
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_reads_correctly_buffered() {
     let temp = create_test_file(100);
@@ -218,6 +229,7 @@ fn adaptive_strategy_reads_correctly_buffered() {
     assert_eq!(data, &expected[..]);
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_reads_correctly_mmap() {
     let temp = create_test_file(2000);
@@ -228,6 +240,7 @@ fn adaptive_strategy_reads_correctly_mmap() {
     assert_eq!(data, &expected[..]);
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_file_size() {
     let temp = create_test_file(5000);
@@ -236,6 +249,7 @@ fn adaptive_strategy_file_size() {
     assert_eq!(strategy.file_size(), 5000);
 }
 
+#[cfg(unix)]
 #[test]
 fn map_file_open_adaptive() {
     let temp = create_test_file(100);
@@ -245,6 +259,7 @@ fn map_file_open_adaptive() {
     assert!(map.is_buffered());
 }
 
+#[cfg(unix)]
 #[test]
 fn map_file_open_adaptive_with_threshold() {
     let temp = create_test_file(100);
@@ -253,6 +268,7 @@ fn map_file_open_adaptive_with_threshold() {
     assert!(map.is_mmap());
 }
 
+#[cfg(unix)]
 #[test]
 fn map_file_adaptive_data_access() {
     let temp = create_test_file(1000);
@@ -262,6 +278,7 @@ fn map_file_adaptive_data_access() {
     assert_eq!(data, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_default_threshold() {
     let temp = create_test_file(500_000);
@@ -278,6 +295,7 @@ fn empty_file_open_buffered() {
     assert_eq!(map.window_size(), MAX_MAP_SIZE);
 }
 
+#[cfg(unix)]
 #[test]
 fn empty_file_open_mmap() {
     let temp = create_test_file(0);
@@ -286,6 +304,7 @@ fn empty_file_open_mmap() {
     assert_eq!(map.window_size(), 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn empty_file_open_adaptive() {
     let temp = create_test_file(0);
@@ -316,6 +335,7 @@ fn empty_file_map_ptr_nonzero_length_fails() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn empty_file_mmap_zero_length_succeeds() {
     let temp = create_test_file(0);
@@ -325,6 +345,7 @@ fn empty_file_mmap_zero_length_succeeds() {
     assert!(data.is_empty());
 }
 
+#[cfg(unix)]
 #[test]
 fn empty_file_mmap_nonzero_length_fails() {
     let temp = create_test_file(0);
@@ -358,6 +379,7 @@ fn large_file_exceeds_single_window_buffered() {
     assert_eq!(data3[0], (end_offset % 256) as u8);
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_mmap_strategy() {
     let size = MMAP_THRESHOLD as usize + 1024;
@@ -378,6 +400,7 @@ fn large_file_mmap_strategy() {
     assert_eq!(data3[0], (end_offset % 256) as u8);
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_adaptive_uses_mmap() {
     let size = MMAP_THRESHOLD as usize + 1024;
@@ -582,6 +605,7 @@ fn file_not_found_error_buffered() {
     assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
 }
 
+#[cfg(unix)]
 #[test]
 fn file_not_found_error_mmap() {
     let result = MapFile::<MmapStrategy>::open_mmap("/nonexistent/path/to/file.txt");
@@ -589,6 +613,7 @@ fn file_not_found_error_mmap() {
     assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
 }
 
+#[cfg(unix)]
 #[test]
 fn file_not_found_error_adaptive() {
     let result = MapFile::<AdaptiveMapStrategy>::open_adaptive("/nonexistent/path/to/file.txt");
@@ -603,6 +628,7 @@ fn buffered_map_file_not_found() {
     assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_strategy_file_not_found() {
     let result = MmapStrategy::open("/nonexistent/path/to/file.txt");
@@ -610,6 +636,7 @@ fn mmap_strategy_file_not_found() {
     assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_file_not_found() {
     let result = AdaptiveMapStrategy::open("/nonexistent/path/to/file.txt");
@@ -700,6 +727,7 @@ fn map_ptr_read_extends_past_eof() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_map_ptr_offset_past_eof() {
     let temp = create_test_file(1000);
@@ -726,6 +754,7 @@ fn single_byte_file_buffered() {
     assert_eq!(data, &[42]);
 }
 
+#[cfg(unix)]
 #[test]
 fn single_byte_file_mmap() {
     let mut file = NamedTempFile::new().unwrap();
@@ -809,6 +838,7 @@ fn all_byte_values() {
     assert_eq!(read_data, &data[..]);
 }
 
+#[cfg(unix)]
 #[test]
 fn binary_data_mmap() {
     let mut file = NamedTempFile::new().unwrap();
@@ -846,6 +876,7 @@ fn map_file_with_strategy_buffered() {
     assert_eq!(data, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 }
 
+#[cfg(unix)]
 #[test]
 fn map_file_with_strategy_mmap() {
     let temp = create_test_file(1000);
@@ -873,6 +904,7 @@ fn stress_alternating_start_end_reads_buffered() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn stress_alternating_start_end_reads_mmap() {
     let size = MAX_MAP_SIZE * 2;
@@ -902,6 +934,7 @@ fn stress_many_window_reloads() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn threshold_boundary_one_below() {
     let threshold = 1000u64;
@@ -911,6 +944,7 @@ fn threshold_boundary_one_below() {
     assert!(strategy.is_buffered());
 }
 
+#[cfg(unix)]
 #[test]
 fn threshold_boundary_exactly_at() {
     let threshold = 1000u64;
@@ -920,6 +954,7 @@ fn threshold_boundary_exactly_at() {
     assert!(strategy.is_mmap());
 }
 
+#[cfg(unix)]
 #[test]
 fn threshold_boundary_one_above() {
     let threshold = 1000u64;
@@ -934,6 +969,7 @@ fn default_threshold_value() {
     assert_eq!(MMAP_THRESHOLD, 1024 * 1024);
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_2mb_mmap_sequential_access() {
     let size = 2 * 1024 * 1024;
@@ -954,6 +990,7 @@ fn large_file_2mb_mmap_sequential_access() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_5mb_mmap_random_access() {
     let size = 5 * 1024 * 1024;
@@ -968,6 +1005,7 @@ fn large_file_5mb_mmap_random_access() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_8mb_adaptive_uses_mmap() {
     let size = 8 * 1024 * 1024;
@@ -978,6 +1016,7 @@ fn large_file_8mb_adaptive_uses_mmap() {
     assert_eq!(map.file_size(), size as u64);
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_buffered_vs_mmap_correctness() {
     let size = 3 * 1024 * 1024;
@@ -997,6 +1036,7 @@ fn large_file_buffered_vs_mmap_correctness() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_mmap_read_last_page() {
     let size = 4 * 1024 * 1024;
@@ -1009,6 +1049,7 @@ fn large_file_mmap_read_last_page() {
     assert_eq!(data[0], (last_page_offset % 256) as u8);
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_mmap_strided_access() {
     let size = 2 * 1024 * 1024;
@@ -1029,6 +1070,7 @@ fn large_file_mmap_strided_access() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_send_trait() {
     fn assert_send<T: Send>() {}
@@ -1041,12 +1083,14 @@ fn buffered_send_trait() {
     assert_send::<BufferedMap>();
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_send_trait() {
     fn assert_send<T: Send>() {}
     assert_send::<AdaptiveMapStrategy>();
 }
 
+#[cfg(unix)]
 #[test]
 fn multiple_readers_same_file_mmap() {
     let size = 1024 * 1024;
@@ -1085,6 +1129,7 @@ fn multiple_readers_same_file_buffered() {
     assert_eq!(d2[0], ((size / 2) % 256) as u8);
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_borrowed_slice_lifetime() {
     let temp = create_test_file(1000);
@@ -1109,6 +1154,7 @@ fn buffered_borrowed_slice_lifetime() {
     assert_eq!(data2[0], 100);
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_slice_bounds_checking() {
     let temp = create_test_file(1000);
@@ -1134,6 +1180,7 @@ fn buffered_slice_bounds_checking() {
     assert!(map.map_ptr(500, 501).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_no_window_sliding_overhead() {
     let size = 2 * 1024 * 1024;
@@ -1162,6 +1209,7 @@ fn buffered_sequential_access_efficiency() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_switches_at_threshold() {
     let below = MMAP_THRESHOLD - 1;
@@ -1181,6 +1229,7 @@ fn adaptive_switches_at_threshold() {
     assert!(map_above.is_mmap());
 }
 
+#[cfg(unix)]
 #[test]
 fn sparse_access_pattern_mmap() {
     let size = 4 * 1024 * 1024;
@@ -1219,6 +1268,7 @@ fn reverse_sequential_access_buffered() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn zigzag_access_pattern() {
     let size = 2 * 1024 * 1024;
@@ -1237,6 +1287,7 @@ fn zigzag_access_pattern() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_exact_page_boundaries() {
     let size = 4 * 1024 * 1024;
@@ -1254,6 +1305,7 @@ fn large_file_exact_page_boundaries() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_unaligned_access_mmap() {
     let size = 2 * 1024 * 1024;
@@ -1267,6 +1319,7 @@ fn large_file_unaligned_access_mmap() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_single_byte_reads_across_file() {
     let size = 1024 * 1024;
@@ -1279,6 +1332,7 @@ fn large_file_single_byte_reads_across_file() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn large_file_maximum_single_read_mmap() {
     let size = 2 * 1024 * 1024;
@@ -1291,6 +1345,7 @@ fn large_file_maximum_single_read_mmap() {
     assert_eq!(data[size - 1], ((size - 1) % 256) as u8);
 }
 
+#[cfg(unix)]
 #[test]
 fn map_file_strategy_type_safety() {
     let temp = create_test_file(1000);
@@ -1312,6 +1367,7 @@ fn custom_strategy_with_map_file() {
     assert_eq!(data[0], 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_after_error_recovery() {
     let temp = create_test_file(1000);
@@ -1336,6 +1392,7 @@ fn buffered_after_error_recovery() {
     assert_eq!(data[0], 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_after_error_recovery() {
     let temp = create_test_file(1000);
@@ -1348,6 +1405,7 @@ fn adaptive_after_error_recovery() {
     assert_eq!(data[0], 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_small_file_uses_buffered() {
     let small_size = 512 * 1024;
@@ -1359,6 +1417,7 @@ fn adaptive_strategy_selection_small_file_uses_buffered() {
     assert_eq!(strategy.file_size(), small_size as u64);
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_large_file_uses_mmap() {
     let large_size = 2 * 1024 * 1024;
@@ -1370,6 +1429,7 @@ fn adaptive_strategy_selection_large_file_uses_mmap() {
     assert_eq!(strategy.file_size(), large_size as u64);
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_boundary_below_threshold() {
     let size = (MMAP_THRESHOLD - 1) as usize;
@@ -1382,6 +1442,7 @@ fn adaptive_strategy_selection_boundary_below_threshold() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_boundary_exactly_at_threshold() {
     let size = MMAP_THRESHOLD as usize;
@@ -1394,6 +1455,7 @@ fn adaptive_strategy_selection_boundary_exactly_at_threshold() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_boundary_above_threshold() {
     let size = (MMAP_THRESHOLD + 1) as usize;
@@ -1406,6 +1468,7 @@ fn adaptive_strategy_selection_boundary_above_threshold() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_empty_file_uses_buffered() {
     let temp = create_test_file(0);
@@ -1415,6 +1478,7 @@ fn adaptive_strategy_selection_empty_file_uses_buffered() {
     assert_eq!(strategy.file_size(), 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_tiny_file_uses_buffered() {
     let temp = create_test_file(1);
@@ -1424,6 +1488,7 @@ fn adaptive_strategy_selection_tiny_file_uses_buffered() {
     assert_eq!(strategy.file_size(), 1);
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_custom_threshold_zero() {
     let temp = create_test_file(100);
@@ -1432,6 +1497,7 @@ fn adaptive_strategy_selection_custom_threshold_zero() {
     assert!(strategy.is_mmap());
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_custom_threshold_max() {
     let temp = create_test_file(1000);
@@ -1440,6 +1506,7 @@ fn adaptive_strategy_selection_custom_threshold_max() {
     assert!(strategy.is_buffered());
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_window_size_differs() {
     let small_temp = create_test_file(1000);
@@ -1456,6 +1523,7 @@ fn adaptive_strategy_selection_window_size_differs() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_data_consistency() {
     let size = 10000;
@@ -1478,6 +1546,7 @@ fn adaptive_strategy_selection_data_consistency() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_map_file_convenience_methods() {
     let small_temp = create_test_file(1000);
@@ -1493,6 +1562,7 @@ fn adaptive_strategy_selection_map_file_convenience_methods() {
     assert!(!large_map.is_buffered());
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_map_file_with_custom_threshold() {
     let temp = create_test_file(500);
@@ -1504,6 +1574,7 @@ fn adaptive_strategy_selection_map_file_with_custom_threshold() {
     assert!(map_high.is_buffered());
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_multiple_threshold_boundaries() {
     let boundaries = [
@@ -1532,6 +1603,7 @@ fn adaptive_strategy_selection_multiple_threshold_boundaries() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_read_after_strategy_check() {
     let temp = create_test_file(1000);
@@ -1546,6 +1618,7 @@ fn adaptive_strategy_selection_read_after_strategy_check() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn adaptive_strategy_selection_file_size_preserved() {
     let sizes = [
@@ -1570,6 +1643,7 @@ fn adaptive_strategy_selection_file_size_preserved() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_as_slice_full_file() {
     let size = 1024;
@@ -1584,6 +1658,7 @@ fn mmap_as_slice_full_file() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_as_slice_vs_map_ptr() {
     let size = 1000;
@@ -1596,6 +1671,7 @@ fn mmap_as_slice_vs_map_ptr() {
     assert_eq!(slice, &via_map_ptr[..]);
 }
 
+#[cfg(unix)]
 #[test]
 fn mmap_as_slice_empty_file() {
     let temp = create_test_file(0);
@@ -1609,6 +1685,7 @@ fn mmap_as_slice_empty_file() {
 /// adaptive selector would otherwise place on `mmap` (>= MMAP_THRESHOLD).
 /// This is the seam used by `DeltaApplicator` when paired with an io_uring
 /// writer (#1906, audit F1).
+#[cfg(unix)]
 #[test]
 fn adaptive_open_buffered_forces_buffered_for_large_file() {
     // Above MMAP_THRESHOLD (1 MiB) - the adaptive default would pick mmap.
@@ -1625,6 +1702,7 @@ fn adaptive_open_buffered_forces_buffered_for_large_file() {
 
 /// `MapFile::open_adaptive_buffered` is the wrapper-level entry point that
 /// `DeltaApplicator::new` calls when `BasisWriterKind::IoUring` is selected.
+#[cfg(unix)]
 #[test]
 fn map_file_open_adaptive_buffered_is_buffered() {
     let temp = create_test_file((MMAP_THRESHOLD as usize) + 4096);

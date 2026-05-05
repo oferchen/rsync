@@ -1,7 +1,11 @@
 #[test]
 fn runtime_options_loads_bwlimit_from_config() {
     let mut file = NamedTempFile::new().expect("config file");
-    writeln!(file, "[docs]\npath = /srv/docs\nbwlimit = 4M\n").expect("write config");
+    writeln!(
+        file,
+        "[docs]\npath = /srv/docs\nuse chroot = no\nbwlimit = 4M\n"
+    )
+    .expect("write config");
 
     let options = RuntimeOptions::parse(&[
         OsString::from("--config"),

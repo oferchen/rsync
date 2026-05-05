@@ -451,6 +451,7 @@ mod tests {
         assert!(FakeSuperStat::decode("100644 0,0 1000,1000").is_err()); // Wrong separator for uid/gid
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_is_device_file() {
         assert!(!is_device_file(0o100644)); // Regular file
