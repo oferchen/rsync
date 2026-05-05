@@ -31,7 +31,11 @@ const M3: [usize; 16] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
 /// Maximum input size supported.
 const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 
-/// Rotate left macro for SSE2 (requires compile-time constant).
+/// Rotate-left helper for SSE2 (requires a compile-time shift constant).
+///
+/// SSE2 has no native rotate; each arm pairs `_mm_slli_epi32` with
+/// `_mm_srli_epi32` and OR. Arms cover only the MD4 shift amounts
+/// `{3, 5, 7, 9, 11, 13, 15, 19}`.
 macro_rules! rotl {
     ($x:expr, 3) => {
         _mm_or_si128(_mm_slli_epi32($x, 3), _mm_srli_epi32($x, 29))
@@ -59,10 +63,16 @@ macro_rules! rotl {
     };
 }
 
-/// Compute MD4 digests for up to 4 inputs in parallel using SSE2.
+/// Compute MD4 digests for 4 inputs in parallel using SSE2.
+///
+/// Returns digests in the same order as `inputs`. Lanes with shorter inputs
+/// are masked off via AND/ANDNOT/OR after their final block. Inputs larger
+/// than 1 MiB fall back to scalar to cap padding allocations.
 ///
 /// # Safety
-/// Caller must ensure SSE2 is available (always true on x86_64).
+///
+/// Caller must ensure SSE2 is available; SSE2 is part of the x86_64
+/// baseline so this is always satisfied on 64-bit Intel/AMD.
 #[target_feature(enable = "sse2")]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);

@@ -11,10 +11,6 @@ use std::arch::asm;
 use super::super::super::Digest;
 
 /// MD4 initial state constants (RFC 1320).
-///
-/// These magic constants initialize the MD4 hash state. They represent
-/// the first 32 bits of the fractional parts of the cube roots of the
-/// first four prime numbers (2, 3, 5, 7).
 const INIT_A: u32 = 0x6745_2301;
 const INIT_B: u32 = 0xefcd_ab89;
 const INIT_C: u32 = 0x98ba_dcfe;
@@ -22,98 +18,38 @@ const INIT_D: u32 = 0x1032_5476;
 
 /// Round constants for MD4 (RFC 1320).
 ///
-/// MD4 uses three round constants:
-/// - Round 1 (steps 0-15): 0 (no constant added)
-/// - Round 2 (steps 16-31): 0x5A827999 (sqrt(2) fractional part scaled)
-/// - Round 3 (steps 32-47): 0x6ED9EBA1 (sqrt(3) fractional part scaled)
+/// Round 1 (steps 0-15) adds 0; round 2 (16-31) adds `0x5A827999` (scaled
+/// sqrt(2)); round 3 (32-47) adds `0x6ED9EBA1` (scaled sqrt(3)).
 const K: [u32; 3] = [
     0x0000_0000, // Round 1
     0x5A82_7999, // Round 2
     0x6ED9_EBA1, // Round 3
 ];
 
-// Message word indices for round 2 (used in round macros below):
-// [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15]
-// Maps to zmm registers: [8, 12, 16, 20, 9, 13, 17, 21, 10, 14, 18, 22, 11, 15, 19, 23]
+// Message schedules consumed inside the round! macros below:
+// M2 = [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15]
+// M3 = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15]
 
-// Message word indices for round 3 (used in round macros below):
-// [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15]
-// Maps to zmm registers: [8, 16, 12, 20, 10, 18, 14, 22, 9, 17, 13, 21, 11, 19, 15, 23]
-
-/// 64-byte aligned storage for 16 u32 values.
+/// 64-byte aligned 16x u32 storage for ZMM register loads/stores.
 ///
-/// This type ensures proper 64-byte alignment required for efficient AVX-512 operations.
-/// Each instance holds 16 32-bit values that are accessed by a single ZMM register load/store.
-///
-/// The 64-byte alignment matches cache line boundaries on most modern CPUs, reducing
-/// the risk of cache line splits and improving memory access performance.
+/// AVX-512 ZMM moves perform best on 64-byte-aligned addresses, which also
+/// matches the cache line on most modern CPUs.
 #[repr(C, align(64))]
 struct Aligned512([u32; 16]);
 
 /// Compute MD4 digests for 16 inputs in parallel using AVX-512.
 ///
-/// This function processes 16 independent MD4 hash computations simultaneously using
-/// AVX-512 SIMD instructions, providing significant performance improvements over
-/// sequential hashing when multiple inputs need to be processed.
-///
-/// # Algorithm
-///
-/// Uses 512-bit ZMM registers to compute 16 MD4 hashes in parallel through data-level
-/// parallelism. The implementation uses inline assembly to access AVX-512F and AVX-512BW
-/// instructions on stable Rust. Data is organized in a "transposed" layout where each
-/// ZMM register holds the same field (e.g., message word 0) from all 16 inputs.
-///
-/// # Performance
-///
-/// - **Throughput**: Processes 16 hashes with only ~16x the latency of a single hash
-/// - **Best for**: Batches of similarly-sized inputs (e.g., legacy protocol checksums)
-/// - **Fallback**: Inputs larger than 1MB automatically fall back to scalar implementation
-///   to avoid excessive memory allocation
-/// - **Requirements**: Requires AVX-512F and AVX-512BW CPU features (Intel Skylake-X or later,
-///   AMD Zen 4 or later)
-///
-/// # Parameters
-///
-/// * `inputs` - Array of exactly 16 byte slices to hash. Each slice can be any length,
-///   though performance is optimal when all inputs are similar in size.
-///
-/// # Returns
-///
-/// Array of 16 MD4 digests (16-byte arrays) corresponding to each input in the same order.
+/// Inputs are padded to 64-byte block boundaries and processed in lockstep
+/// across 16 lanes; per-lane opmask handling keeps short lanes inactive while
+/// longer lanes continue. Inputs larger than 1 MiB fall back to scalar to
+/// cap padding allocations. Implements the full RFC 1320 48-round MD4
+/// compression function.
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX-512F and AVX-512BW CPU features are available at runtime.
-/// The dispatcher module verifies this before calling this function. Calling this
-/// function on a CPU without these features will result in an illegal instruction fault.
-///
-/// # Security Warning
-///
-/// MD4 is cryptographically broken and should not be used for security purposes.
-/// This implementation is provided for compatibility with legacy systems only.
-/// For secure hashing, use SHA-2 or SHA-3 family algorithms.
-///
-/// # Examples
-///
-/// ```ignore
-/// // Prepare 16 inputs to hash in parallel
-/// let inputs: [&[u8]; 16] = [
-///     b"input 0", b"input 1", b"input 2", b"input 3",
-///     b"input 4", b"input 5", b"input 6", b"input 7",
-///     b"input 8", b"input 9", b"input 10", b"input 11",
-///     b"input 12", b"input 13", b"input 14", b"input 15",
-/// ];
-///
-/// // Safety: Caller must ensure AVX-512F and AVX-512BW are available.
-/// let digests = unsafe { digest_x16(&inputs) };
-/// ```
-///
-/// # Implementation Notes
-///
-/// - Handles variable-length inputs by padding each to the nearest 64-byte block boundary
-/// - Processes blocks in lockstep, using masking to handle inputs of different lengths
-/// - Uses transposed data layout for efficient SIMD processing
-/// - Implements full MD4 specification (RFC 1320) including all 48 rounds (3 rounds of 16 steps)
+/// Caller must verify AVX-512F and AVX-512BW are available at runtime.
+/// Invoking this on a CPU without these features triggers an illegal-
+/// instruction fault.
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
     // Find the maximum length to determine block count
@@ -202,40 +138,20 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
     results
 }
 
-/// Process a single MD4 block for 16 lanes using AVX-512 inline assembly.
+/// Apply one MD4 block in parallel across 16 lanes via AVX-512 inline assembly.
 ///
-/// This is the core computation kernel that implements the MD4 compression function
-/// for 16 independent hash states in parallel. It processes one 64-byte block for
-/// each of the 16 lanes simultaneously.
+/// Implements the RFC 1320 48-round compression function: round 1 (F, K=0),
+/// round 2 (G, K=0x5A827999), round 3 (H, K=0x6ED9EBA1). `mask_bits` is a
+/// 16-bit lane mask (bit i selects lane i) used through `vpblendmd` so
+/// short-input lanes are not advanced past their final block.
 ///
-/// # Algorithm
-///
-/// Implements the 48-round MD4 compression function (RFC 1320):
-/// - Round 1 (0-15): F function with message schedule [0..15], no added constant
-/// - Round 2 (16-31): G function with permuted message schedule, K = 0x5A827999
-/// - Round 3 (32-47): H function with permuted message schedule, K = 0x6ED9EBA1
-///
-/// # Parameters
-///
-/// * `state_a`, `state_b`, `state_c`, `state_d` - MD4 state registers for all 16 lanes
-/// * `m` - Transposed message words (16 arrays of 16 u32 values each)
-/// * `mask_bits` - Bitmask indicating which lanes are active (bit i = lane i)
-///
-/// # Implementation
-///
-/// Uses inline assembly to efficiently utilize AVX-512 instructions including:
-/// - `vpternlogd` for computing MD4 auxiliary functions
-/// - `vprold` for rotation operations
-/// - `vpblendmd` for conditional updates based on lane mask
-/// - `vmovdqa32/vmovdqu32` for aligned/unaligned loads and stores
-///
-/// The function is marked `#[inline(never)]` to reduce code size, as it contains
-/// substantial inline assembly that doesn't benefit from inlining.
+/// Marked `#[inline(never)]` because the asm body is large enough that
+/// inlining bloats call sites without speedup.
 ///
 /// # Safety
 ///
-/// Requires AVX-512F and AVX-512BW to be available. Violating this precondition
-/// results in undefined behavior (illegal instruction fault).
+/// Caller must guarantee AVX-512F and AVX-512BW are available; violating
+/// this triggers an illegal-instruction fault.
 #[cfg(target_arch = "x86_64")]
 #[inline(never)]
 unsafe fn process_block_avx512(
