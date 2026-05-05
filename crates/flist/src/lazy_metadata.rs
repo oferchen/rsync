@@ -96,7 +96,6 @@ impl LazyMetadata {
     ///
     /// Returns the cached error if metadata fetch previously failed.
     pub fn get(&mut self) -> Result<&fs::Metadata, &io::Error> {
-        // Resolve if pending
         if let Self::Pending {
             path,
             follow_symlinks,
@@ -114,7 +113,6 @@ impl LazyMetadata {
             };
         }
 
-        // Return cached result
         match self {
             Self::Resolved(metadata) => Ok(metadata),
             Self::Error(error) => Err(error),
@@ -149,7 +147,6 @@ impl LazyMetadata {
     ///
     /// Returns the error if metadata fetch failed.
     pub fn into_metadata(mut self) -> Result<fs::Metadata, io::Error> {
-        // Ensure resolved
         let _ = self.get();
 
         match self {
@@ -222,7 +219,6 @@ mod tests {
         assert!(result.is_err());
         assert!(meta.is_error());
 
-        // Error is cached
         let result2 = meta.get();
         assert!(result2.is_err());
     }
@@ -264,13 +260,10 @@ mod tests {
         let (_dir, path) = create_test_file();
         let mut meta = LazyMetadata::new(path, false);
 
-        // Not resolved yet
         assert!(meta.get_if_resolved().is_none());
 
-        // Resolve it
         let _ = meta.get();
 
-        // Now should return Some
         assert!(meta.get_if_resolved().is_some());
     }
 

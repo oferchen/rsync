@@ -123,7 +123,6 @@ pub fn collect_paths_then_metadata_parallel(
     root: PathBuf,
     follow_symlinks: bool,
 ) -> Result<Vec<FileListEntry>, Vec<(PathBuf, std::io::Error)>> {
-    // Collect all paths first using std::fs::read_dir recursively
     let paths = collect_paths_recursive(&root, &root, follow_symlinks);
 
     // Ordering: wire protocol requires file list sorted by name for deterministic indices.
@@ -151,7 +150,6 @@ pub fn collect_paths_then_metadata_parallel(
         })
         .collect();
 
-    // Partition into successes and failures
     let mut entries = Vec::new();
     let mut errors = Vec::new();
 
@@ -198,10 +196,8 @@ pub fn collect_lazy_parallel(
     root: PathBuf,
     follow_symlinks: bool,
 ) -> Result<Vec<LazyFileListEntry>, std::io::Error> {
-    // Collect paths without metadata
     let paths = collect_paths_recursive(&root, &root, follow_symlinks);
 
-    // Convert to lazy entries
     let entries: Vec<LazyFileListEntry> = paths
         .into_iter()
         .map(|(full_path, relative_path, depth, is_root)| {
@@ -241,42 +237,34 @@ pub fn collect_with_batched_stats(
     root: PathBuf,
     follow_symlinks: bool,
 ) -> Result<Vec<FileListEntry>, Vec<(PathBuf, std::io::Error)>> {
-    // Collect all paths first
     let paths = collect_paths_recursive(&root, &root, follow_symlinks);
 
-    // Create batched stat cache
     let cache = BatchedStatCache::with_capacity(paths.len());
 
-    // Batch fetch metadata in parallel
     let path_refs: Vec<&PathBuf> = paths.iter().map(|(p, _, _, _)| p).collect();
     let path_slices: Vec<&std::path::Path> = path_refs.iter().map(|p| p.as_path()).collect();
     let metadata_results = cache.stat_batch(&path_slices, follow_symlinks);
 
-    // Combine paths and metadata
     let results: Vec<_> = paths
         .into_iter()
         .zip(metadata_results)
         .map(
-            |((full_path, relative_path, depth, is_root), metadata_result)| {
-                match metadata_result {
-                    Ok(metadata) => {
-                        // Extract metadata from Arc
-                        let metadata = (*metadata).clone();
-                        Ok(FileListEntry {
-                            full_path,
-                            relative_path,
-                            metadata,
-                            depth,
-                            is_root,
-                        })
-                    }
-                    Err(e) => Err((full_path, e)),
+            |((full_path, relative_path, depth, is_root), metadata_result)| match metadata_result {
+                Ok(metadata) => {
+                    let metadata = (*metadata).clone();
+                    Ok(FileListEntry {
+                        full_path,
+                        relative_path,
+                        metadata,
+                        depth,
+                        is_root,
+                    })
                 }
+                Err(e) => Err((full_path, e)),
             },
         )
         .collect();
 
-    // Partition into successes and failures
     let mut entries = Vec::new();
     let mut errors = Vec::new();
 
@@ -434,7 +422,6 @@ fn collect_paths_recursive(
     let mut paths = Vec::new();
     let is_root = current == root;
 
-    // Calculate relative path and depth
     let relative_path = if is_root {
         PathBuf::new()
     } else {
@@ -444,7 +431,6 @@ fn collect_paths_recursive(
 
     paths.push((current.clone(), relative_path, depth, is_root));
 
-    // Check if we should recurse
     let should_recurse = if let Ok(metadata) = fs::symlink_metadata(current) {
         metadata.is_dir() || (follow_symlinks && metadata.is_symlink())
     } else {
