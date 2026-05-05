@@ -543,7 +543,8 @@ mod tests {
                 });
 
                 for _ in 0..abort_after {
-                    rx.recv_timeout(Duration::from_secs(5))
+                    let _ = rx
+                        .recv_timeout(Duration::from_secs(5))
                         .expect("producer must deliver before timeout");
                 }
                 drop(rx);
