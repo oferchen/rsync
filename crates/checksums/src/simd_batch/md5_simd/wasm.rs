@@ -1,46 +1,11 @@
 //! WebAssembly SIMD 4-lane parallel MD5 implementation.
 //!
-//! Processes 4 independent MD5 computations simultaneously using 128-bit WASM SIMD.
-//!
-//! # CPU Feature Requirements
-//!
-//! - **WASM SIMD (simd128)**: WebAssembly SIMD proposal
-//! - Widely supported in modern browsers and runtimes
-//! - Feature must be enabled at compile time with `target_feature = "simd128"`
-//!
-//! # Platform Support
-//!
-//! WASM SIMD is supported in:
-//! - Chrome/Edge 91+ (May 2021)
-//! - Firefox 89+ (June 2021)
-//! - Safari 16.4+ (March 2023)
-//! - Node.js 16.4+ with V8 9.1+
-//! - Wasmtime, Wasmer (modern versions)
-//!
-//! # SIMD Strategy
-//!
-//! WASM SIMD provides 128-bit vectors similar to SSE2, but with a portable
-//! instruction set that works across all architectures (x86, ARM, RISC-V).
-//!
-//! The implementation uses:
-//! - `v128` type for 128-bit SIMD values
-//! - `i32x4` operations for 32-bit integer lanes
-//! - `v128_bitselect` for efficient lane masking (similar to SSE4.1's blendv)
-//! - Manual rotation using shifts and OR (no native rotate instruction)
-//!
-//! # Performance Characteristics
-//!
-//! - **Throughput**: ~4x scalar performance (similar to SSE2/NEON)
-//! - **Portability**: Same code runs on x86, ARM, and other architectures
-//! - **Best use case**: Web applications, serverless functions, portable libraries
-//!
-//! # Differences from Native SIMD
-//!
-//! Unlike native x86/ARM SIMD, WASM SIMD:
-//! - Has no alignment requirements (but alignment can improve performance)
-//! - Always uses little-endian regardless of host
-//! - Provides `v128_bitselect` which is cleaner than SSE2 masking
-//! - Lacks specialized instructions like `pshufb` or hardware rotate
+//! Processes 4 independent MD5 computations simultaneously using 128-bit
+//! `v128` vectors. The `simd128` target feature must be enabled at compile
+//! time. Uses `i32x4` arithmetic, `v128_bitselect` for lane masking, and
+//! manual rotation via paired shifts plus OR (WASM SIMD has no native
+//! rotate). WASM SIMD is always little-endian and has no alignment
+//! requirements.
 
 #[cfg(target_arch = "wasm32")]
 use std::arch::wasm32::*;
@@ -124,54 +89,24 @@ const K: [u32; 64] = [
 /// Maximum input size supported.
 const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 
-/// Rotate left for WASM SIMD (requires runtime shift amount).
+/// 32-bit rotate-left for WASM SIMD; shift may be a runtime value.
 ///
-/// WASM SIMD lacks a native rotate instruction, so rotation is implemented
-/// using shifts and OR. Unlike SSE2, WASM SIMD supports runtime shift amounts
-/// without requiring compile-time constants.
-///
-/// This is a safe function (not `unsafe`) because WASM SIMD operations are
-/// inherently safe - they cannot cause undefined behavior.
+/// WASM SIMD has no native rotate, so this pairs `i32x4_shl` with
+/// `u32x4_shr` and OR. WASM SIMD operations cannot cause undefined
+/// behavior, so this function is safe rather than `unsafe`.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn rotl(x: v128, n: u32) -> v128 {
     v128_or(i32x4_shl(x, n), u32x4_shr(x, 32 - n))
 }
 
-/// Compute MD5 digests for up to 4 inputs in parallel using WASM SIMD.
+/// Compute MD5 digests for 4 inputs in parallel using WASM SIMD.
 ///
-/// Processes 4 independent byte slices in parallel, computing their MD5 digests
-/// simultaneously using WebAssembly SIMD instructions.
-///
-/// # Arguments
-///
-/// * `inputs` - Array of 4 byte slices to hash
-///
-/// # Returns
-///
-/// Array of 4 MD5 digests (16 bytes each) in the same order as the inputs
-///
-/// # Performance
-///
-/// WASM SIMD performance varies by runtime:
-/// - Browser engines: Near-native performance on modern V8/SpiderMonkey/JavaScriptCore
-/// - Standalone runtimes: Performance depends on JIT quality and host architecture
-/// - Generally achieves 3-4x speedup over scalar WASM code
-///
-/// # Platform Requirements
-///
-/// This function is only available when:
-/// - Compiling for `wasm32` target
-/// - The `simd128` target feature is enabled
-///
-/// Unlike native SIMD implementations, this is a **safe** function (not `unsafe`)
-/// because WASM SIMD operations cannot cause undefined behavior - they're
-/// sandboxed and validated by the WASM runtime.
-///
-/// # Availability
-///
-/// The function has a fallback for WASM without SIMD support that processes
-/// inputs sequentially using the scalar implementation.
+/// Returns digests in the same order as `inputs`. Lanes with shorter inputs
+/// are masked off via `v128_bitselect` after their final block. Inputs
+/// larger than 1 MiB fall back to the scalar path. Available only when
+/// compiling for `wasm32` with the `simd128` target feature; the
+/// non-SIMD WASM build falls through to a scalar `digest_x4` below.
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);

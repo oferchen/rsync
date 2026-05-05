@@ -1,36 +1,13 @@
 //! AVX2 8-lane parallel MD5 implementation.
 //!
-//! Processes 8 independent MD5 computations simultaneously using 256-bit YMM registers.
-//!
-//! # CPU Feature Requirements
-//!
-//! - **AVX2**: Intel Haswell (2013+), AMD Excavator (2015+) or newer
-//! - Must be verified at runtime using `is_x86_feature_detected!("avx2")`
-//!
-//! # SIMD Strategy
-//!
-//! Similar to SSE2 but with twice the parallelism using 256-bit YMM registers.
-//! Each YMM register holds 8 lanes of 32-bit values, allowing 8 parallel MD5
-//! computations to proceed in lockstep.
+//! Processes 8 independent MD5 computations simultaneously using 256-bit YMM
+//! registers. AVX2 provides variable-shift instructions (`vpsllvd`/`vpsrlvd`)
+//! for efficient rotation and `vpblendvb` for cleaner lane masking compared to
+//! SSE2. CPU feature must be verified at runtime via
+//! `is_x86_feature_detected!("avx2")` (Intel Haswell 2013+, AMD Excavator 2015+).
+//! Inputs exceeding 1 MB fall back to scalar to avoid excessive padding allocation.
 
 #![allow(unsafe_op_in_unsafe_fn)]
-//!
-//! AVX2 provides significant advantages over SSE2:
-//! - Variable-shift instructions (`vpsllvd`/`vpsrlvd`) for efficient rotation
-//! - Native blend instruction (`vpblendvb`) for cleaner lane masking
-//! - 256-bit loads/stores for better memory bandwidth
-//!
-//! # Performance Characteristics
-//!
-//! - **Throughput**: ~8x scalar performance when all 8 lanes are active
-//! - **Latency**: Similar to scalar for single input
-//! - **Best use case**: Processing 8 or more inputs of similar lengths
-//! - **Efficiency**: ~2x throughput vs SSE2 with comparable energy
-//!
-//! # Input Size Limits
-//!
-//! Falls back to scalar implementation for inputs exceeding 1 MB to avoid
-//! excessive memory allocation for padding buffers.
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -121,58 +98,33 @@ const K: [u32; 64] = [
 /// Maximum input size supported (can be increased if needed).
 const MAX_INPUT_SIZE: usize = 1_024 * 1_024; // 1MB per input
 
-/// Rotate left helper - AVX2 doesn't have a rotate instruction.
+/// 32-bit rotate-left for AVX2 using variable-shift intrinsics.
 ///
-/// Implements 32-bit rotate-left using AVX2's variable shift instructions.
-/// Unlike SSE2, AVX2 supports variable shift amounts via `vpsllvd`/`vpsrlvd`,
-/// allowing the shift amount to be a runtime value.
+/// AVX2 has no native rotate, so this pairs `_mm256_sllv_epi32` with
+/// `_mm256_srlv_epi32` and OR. Variable shifts let the shift amount be a
+/// runtime value, unlike the compile-time-constant requirement on SSE2.
 ///
 /// # Safety
 ///
-/// Requires AVX2 support. This is enforced by the `#[target_feature]` attribute.
+/// Requires AVX2; enforced by the `#[target_feature]` attribute.
 #[target_feature(enable = "avx2")]
 unsafe fn rotl(x: __m256i, n: i32) -> __m256i {
-    // Use variable shift for runtime values
     _mm256_or_si256(
         _mm256_sllv_epi32(x, _mm256_set1_epi32(n)),
         _mm256_srlv_epi32(x, _mm256_set1_epi32(32 - n)),
     )
 }
 
-/// Compute MD5 digests for up to 8 inputs in parallel using AVX2.
+/// Compute MD5 digests for 8 inputs in parallel using AVX2.
 ///
-/// Processes 8 independent byte slices in parallel, computing their MD5 digests
-/// simultaneously using 256-bit YMM registers.
-///
-/// # Arguments
-///
-/// * `inputs` - Array of 8 byte slices to hash
-///
-/// # Returns
-///
-/// Array of 8 MD5 digests (16 bytes each) in the same order as the inputs
-///
-/// # Performance
-///
-/// Best performance is achieved when:
-/// - All 8 input slots are used
-/// - Inputs have similar lengths (minimizes masked blocks)
-/// - Input sizes are reasonable (< 1 MB)
-/// - CPU supports AVX2 (Haswell/2013 or newer)
+/// Returns digests in the same order as `inputs`. Lanes with shorter inputs
+/// are masked off after their final block via `_mm256_blendv_epi8`. Inputs
+/// larger than 1 MiB fall back to the scalar path to cap padding allocations.
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX2 is available. Use runtime detection before calling:
-///
-/// ```ignore
-/// if is_x86_feature_detected!("avx2") {
-///     let digests = unsafe { digest_x8(&inputs) };
-/// }
-/// ```
-///
-/// This function uses `unsafe` internally for:
-/// - AVX2 intrinsics (`_mm256_*` functions)
-/// - Aligned memory access via `_mm256_store_si256`
+/// Caller must ensure AVX2 is available; verify at runtime with
+/// `is_x86_feature_detected!("avx2")` before calling.
 #[target_feature(enable = "avx2")]
 pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
     // Find the maximum length to determine block count
