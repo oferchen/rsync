@@ -108,7 +108,11 @@ fn source_non_planted_byte(offset: usize) -> u8 {
 /// offsets and every other source byte comes from
 /// [`source_non_planted_byte`]. Source length matches basis length
 /// exactly, satisfying the "within one block" constraint trivially.
-fn build_sparse_pair(basis_len: usize, block_size: usize, planted_blocks: usize) -> (Vec<u8>, Vec<u8>) {
+fn build_sparse_pair(
+    basis_len: usize,
+    block_size: usize,
+    planted_blocks: usize,
+) -> (Vec<u8>, Vec<u8>) {
     assert!(basis_len >= planted_blocks * block_size);
     let mut basis = Vec::with_capacity(basis_len);
     for offset in 0..basis_len {
@@ -131,7 +135,11 @@ fn build_sparse_pair(basis_len: usize, block_size: usize, planted_blocks: usize)
 /// because the heuristic in `calculate_signature_layout` would otherwise
 /// pick a different size for each fixture scale and obscure the test
 /// invariants.
-fn build_index(basis: &[u8], block_size: u32, algorithm: SignatureAlgorithm) -> DeltaSignatureIndex {
+fn build_index(
+    basis: &[u8],
+    block_size: u32,
+    algorithm: SignatureAlgorithm,
+) -> DeltaSignatureIndex {
     let params = SignatureLayoutParams::new(
         basis.len() as u64,
         Some(NonZeroU32::new(block_size).expect("block size must be non-zero")),
@@ -232,8 +240,7 @@ fn exercise_matrix(basis_len: usize, block_size: u32, enforce_budget: bool) {
     let block_size_usize = block_size as usize;
     for &planted in &[0usize, 1, 2] {
         for &algo in &[md5_algo(), xxh3_algo()] {
-            let (basis, source) =
-                build_sparse_pair(basis_len, block_size_usize, planted);
+            let (basis, source) = build_sparse_pair(basis_len, block_size_usize, planted);
             let (matched, literal, total, copy_tokens, elapsed) =
                 run_pipeline(&basis, &source, block_size, algo);
             assert_sparse_match_invariants(
@@ -315,10 +322,7 @@ fn sparse_match_16mb_block4096() {
 fn byte_ranges_are_disjoint_between_basis_and_source_non_planted() {
     let (basis, source) = build_sparse_pair(64 * 1024, 1024, 0);
     for &b in &basis {
-        assert!(
-            b < 0x80,
-            "basis bytes must stay below 0x80 (got {b:#04x})"
-        );
+        assert!(b < 0x80, "basis bytes must stay below 0x80 (got {b:#04x})");
     }
     for &s in &source {
         assert!(
@@ -352,8 +356,7 @@ fn k_zero_construction_has_no_byte_in_common_with_basis() {
 #[test]
 fn k_zero_smallest_fixture_emits_only_literals() {
     let (basis, source) = build_sparse_pair(64 * 1024, 1024, 0);
-    let (matched, literal, total, copy_tokens, _) =
-        run_pipeline(&basis, &source, 1024, md5_algo());
+    let (matched, literal, total, copy_tokens, _) = run_pipeline(&basis, &source, 1024, md5_algo());
     assert_eq!(matched, 0, "K=0 must produce zero matched bytes");
     assert_eq!(
         literal,
@@ -384,7 +387,11 @@ fn k_two_smallest_fixture_emits_two_copy_tokens_then_literal() {
             DeltaToken::Literal(_) => None,
         })
         .collect();
-    assert_eq!(copy_indices, vec![0, 1], "copy tokens must reference basis blocks 0 and 1 in order");
+    assert_eq!(
+        copy_indices,
+        vec![0, 1],
+        "copy tokens must reference basis blocks 0 and 1 in order"
+    );
 
     let literal_bytes_emitted: usize = script
         .tokens()
