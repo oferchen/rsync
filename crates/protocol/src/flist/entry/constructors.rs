@@ -1,4 +1,6 @@
-// upstream: flist.c:make_file() - creates file_struct from stat data
+//! Constructors for [`FileEntry`].
+//!
+//! upstream: `flist.c:make_file()` - creates `file_struct` from stat data.
 
 use std::path::PathBuf;
 
@@ -141,7 +143,6 @@ impl FileEntry {
         mtime_nsec: u32,
         flags: super::super::flags::FileFlags,
     ) -> Self {
-        // Convert bytes to PathBuf without UTF-8 validation
         #[cfg(unix)]
         let path = {
             use std::ffi::OsStr;
@@ -150,7 +151,8 @@ impl FileEntry {
         };
         #[cfg(not(unix))]
         let path = {
-            // On non-Unix, we need UTF-8 validation
+            // Non-Unix targets cannot use `OsStr::from_bytes`; lossy UTF-8
+            // conversion preserves displayability for non-UTF-8 names.
             PathBuf::from(String::from_utf8_lossy(&name).into_owned())
         };
 

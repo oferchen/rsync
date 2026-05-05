@@ -28,12 +28,11 @@ pub enum FileType {
 impl FileType {
     /// Extracts the file type from Unix mode bits.
     ///
-    /// The file type is encoded in the upper 4 bits of the mode (S_IFMT mask).
-    /// Returns `None` for unrecognized mode patterns.
+    /// The file type is encoded in the upper 4 bits of the mode (S_IFMT mask
+    /// `0o170000`). Returns `None` for unrecognized mode patterns.
     ///
-    /// // upstream: rsync.h S_IFMT mask (0o170000)
+    /// upstream: rsync.h S_IFMT mask (`0o170000`).
     pub const fn from_mode(mode: u32) -> Option<Self> {
-        // S_IFMT = 0o170000
         match mode & 0o170000 {
             0o100000 => Some(Self::Regular),     // S_IFREG
             0o040000 => Some(Self::Directory),   // S_IFDIR
