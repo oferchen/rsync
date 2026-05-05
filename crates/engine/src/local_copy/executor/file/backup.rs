@@ -2,8 +2,8 @@
 //!
 //! Computes backup paths (with optional suffix and directory prefix) and
 //! creates the backup copy or symlink before the destination is overwritten.
-//!
-//! // upstream: backup.c:make_backup() - backup path computation and creation
+
+// upstream: backup.c:make_backup() - backup path computation and creation
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -75,8 +75,7 @@ pub fn compute_backup_path(
 }
 
 /// Copies a file or recreates a symlink at the backup path.
-///
-/// // upstream: backup.c:make_backup() - backup creation
+// upstream: backup.c:make_backup() - backup creation
 pub(crate) fn copy_entry_to_backup(
     source: &Path,
     backup_path: &Path,

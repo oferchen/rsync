@@ -2,8 +2,8 @@
 //!
 //! Uses `fallocate(2)` on Linux to reserve contiguous disk space before
 //! writing file data, falling back to a no-op on other platforms.
-//!
-//! // upstream: receiver.c - preallocate support via --preallocate
+
+// upstream: receiver.c - preallocate support via --preallocate
 
 use std::fs;
 #[cfg(unix)]
@@ -23,8 +23,7 @@ use crate::local_copy::LocalCopyError;
 ///
 /// Skips preallocation when disabled, when `total_len` is zero, or when the
 /// file already has at least `total_len` bytes allocated.
-///
-/// // upstream: receiver.c:recv_files() - preallocate_file()
+// upstream: receiver.c:recv_files() - preallocate_file()
 pub(crate) fn maybe_preallocate_destination(
     file: &mut fs::File,
     path: &Path,

@@ -23,8 +23,7 @@ pub(crate) enum AppendMode {
 /// Returns `Disabled` when append is off, `Skip` when the destination is
 /// already at least as large, or `Append(offset)` when the destination is
 /// shorter and the transfer should resume from that offset.
-///
-/// // upstream: receiver.c:recv_files() - append mode size comparison
+// upstream: receiver.c:recv_files() - append mode size comparison
 pub(crate) fn determine_append_mode(
     append_allowed: bool,
     append_verify: bool,
