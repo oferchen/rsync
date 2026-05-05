@@ -417,9 +417,9 @@ mod tests {
     #[test]
     fn include_directory_only_no_descendant_match() {
         let rule = CompiledRule::new(FilterRule::include("*/".to_owned())).unwrap();
-        // Directories match
         assert!(rule.matches(Path::new("subdir"), true));
-        // Files do NOT match - even inside directories
+        // Files inside an included directory must still match a separate rule;
+        // include never expands to descendants. See `CompiledRule::new`.
         assert!(!rule.matches(Path::new("file.txt"), false));
         assert!(!rule.matches(Path::new("subdir/debug.log"), false));
         assert!(!rule.matches(Path::new("subdir/report.csv"), false));
@@ -429,9 +429,9 @@ mod tests {
     #[test]
     fn exclude_directory_only_has_descendant_match() {
         let rule = CompiledRule::new(FilterRule::exclude("*/".to_owned())).unwrap();
-        // Directories match
         assert!(rule.matches(Path::new("subdir"), true));
-        // Files inside excluded directories also match via descendants
+        // Excluded directories also match descendants so their contents are
+        // skipped without a separate rule per file.
         assert!(rule.matches(Path::new("subdir/debug.log"), false));
     }
 
