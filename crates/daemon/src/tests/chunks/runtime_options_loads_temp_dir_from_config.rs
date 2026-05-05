@@ -3,7 +3,7 @@ fn runtime_options_loads_temp_dir_from_config() {
     let mut file = NamedTempFile::new().expect("config file");
     writeln!(
         file,
-        "[staging]\npath = /srv/staging\ntemp dir = /tmp/rsync-temp\n"
+        "[staging]\npath = /srv/staging\nuse chroot = no\ntemp dir = /tmp/rsync-temp\n"
     )
     .expect("write config");
 

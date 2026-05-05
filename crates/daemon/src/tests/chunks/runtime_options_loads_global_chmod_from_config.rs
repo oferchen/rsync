@@ -3,7 +3,7 @@ fn runtime_options_loads_global_chmod_from_config() {
     let mut file = NamedTempFile::new().expect("config file");
     writeln!(
         file,
-        "incoming chmod = Duog\noutgoing chmod = Fugo\n[docs]\npath = /srv/docs\n"
+        "incoming chmod = Duog\noutgoing chmod = Fugo\n[docs]\npath = /srv/docs\nuse chroot = no\n"
     )
     .expect("write config");
 

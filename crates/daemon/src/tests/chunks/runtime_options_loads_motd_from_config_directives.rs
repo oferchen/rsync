@@ -7,7 +7,7 @@ fn runtime_options_loads_motd_from_config_directives() {
 
     fs::write(
         &config_path,
-        "motd file = motd.txt\nmotd = Inline note\n[docs]\npath = /srv/docs\n",
+        "motd file = motd.txt\nmotd = Inline note\n[docs]\npath = /srv/docs\nuse chroot = no\n",
     )
     .expect("write config");
 
