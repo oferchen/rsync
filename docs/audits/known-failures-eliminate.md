@@ -52,8 +52,8 @@ For each surface this audit produces one section that records:
     version gate; the feature is by definition unavailable at that
     negotiated protocol. Removing the conf entry would require shipping
     a wire feature upstream itself does not implement, which the project
-    has explicitly declined (see CLAUDE.md "no wire protocol features"
-    feedback).
+    has explicitly declined (per the "no wire protocol features"
+    policy).
 - Estimated complexity for fixable items (S, M, L).
 
 A change is not credited toward criterion #3 until both the conf entry
@@ -189,8 +189,8 @@ needing to install older upstream binaries on every runner.
   --protocol=29` exits with code 2.
 - **Eliminate path:** Permanent: protocol-version-locked. There is no
   oc-rsync change that can encode ACLs over a protocol version that
-  defines no wire encoding for them. Project policy in CLAUDE.md
-  forbids inventing wire features absent from upstream.
+  defines no wire encoding for them. Project policy forbids inventing
+  wire features absent from upstream.
 
 ### 2.2 Protocol <= 29: `up:xattrs`
 

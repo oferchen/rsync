@@ -253,7 +253,7 @@ Phase plan, sized to land one PR each:
    `tempfile`-backed regular files. New dependency: `block2 = "0.5"` under
    `[target.'cfg(target_os = "macos")'.dependencies]`. `fast_io` already has
    `#[allow(unsafe_code)]` on specific functions (`fast_io` is one of the
-   five crates listed in CLAUDE.md's "Unsafe Code Policy" as permitted to
+   five crates the project's unsafe-code policy lists as permitted to
    contain unsafe), so no policy change is required.
 2. **`FileWriter` impl.** Add `DispatchIoWriter` and the `DispatchIoOrStdWriter`
    factory enum, mirroring `IocpOrStdWriter`. Wire into the `FileWriterFactory`
@@ -289,13 +289,13 @@ builds because of the cfg gate.
   first transitive ObjC dependency on macOS. Open question: is the
   maintenance cost of pulling `block2` into `fast_io` acceptable, or does
   the team prefer a hand-rolled `BlockLiteral` (smaller surface, more risk)?
-  CLAUDE.md's "Standard library first" rule weighs against `block2`; the
+  The project's "Standard library first" rule weighs against `block2`; the
   "no deprecated APIs" and unsafe-confined-to-`fast_io` rules weigh for it.
 - **`dispatch_data_t` lifetime vs `BufferPool`.** The most attractive design
   hands `dispatch_io_write` a `dispatch_data_t` whose destructor returns the
   buffer to oc-rsync's `BufferPool`. The `BufferPool` is a
-  `Mutex<Vec<Vec<u8>>>` (per CLAUDE.md "Buffer pool contention" note), and
-  the destructor block runs on a libdispatch-managed queue, not on the
+  `Mutex<Vec<Vec<u8>>>` (per the project's "Buffer pool contention" note),
+  and the destructor block runs on a libdispatch-managed queue, not on the
   receiver thread. Open question: does the destructor's queue reentrancy
   interact poorly with the existing pool's `Mutex`? Worth a microbenchmark
   before phase 2 lands.
@@ -320,8 +320,9 @@ builds because of the cfg gate.
   trait shape from #1655. Phases 1-4 and 6 can land before #1655.
 - **Benchmark gap.** The benchmark scripts (`scripts/benchmark.sh`,
   `scripts/benchmark_hyperfine.sh`) only run inside the
-  `localhost/oc-rsync-bench:latest` Linux container per CLAUDE.md
-  "Containers (Podman)". A macOS-host benchmark harness will need to be
+  `localhost/oc-rsync-bench:latest` Linux container described in the
+  project's "Containers (Podman)" conventions. A macOS-host benchmark
+  harness will need to be
   added in `xtask` to validate that `dispatch_io` actually wins against
   `BufWriter` on APFS - an unbenched optimization is not one we should land.
 

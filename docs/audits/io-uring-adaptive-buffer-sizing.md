@@ -274,8 +274,8 @@ encoding pattern in `throughput.rs:53-60`.
     io::Result<()>` which actually performs the unregister-and-reregister
     cycle. `RegisteredBufferOwner` is a small trait implemented by
     `IoUringReader` and `IoUringWriter` so the sizer can call into them
-    without depending on either concretely (Dependency Inversion - see
-    CLAUDE.md "Design Patterns").
+    without depending on either concretely (Dependency Inversion, per
+    the project's design-patterns guidance).
 - Extend `IoUringReader` and `IoUringWriter` with an
   `Option<AdaptiveBufferSizer>` and call `observe` after each batch.
 - Resize executes off-hot-path: between `submit_and_wait` calls, never

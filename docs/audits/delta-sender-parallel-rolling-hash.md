@@ -431,7 +431,8 @@ receiver-side concurrent_delta footprint.
 ## 5. Benchmarking plan (not executed in this PR)
 
 Two workloads, both runnable inside the `rsync-profile` podman
-container per `CLAUDE.md`. The container has upstream rsync 3.4.1 and
+container described in the project's container conventions. The
+container has upstream rsync 3.4.1 and
 oc-rsync-dev pre-built; the workspace bind-mount exposes the source
 tree at `/workspace`.
 

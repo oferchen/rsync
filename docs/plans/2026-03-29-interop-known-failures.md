@@ -1,6 +1,6 @@
 # Interop Known Failures Fix Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For implementers:** Work through this plan task-by-task; complete each before moving to the next.
 
 **Goal:** Eliminate all fixable interop KNOWN_FAILURES, reducing the list from 15 to 5 (environment-dependent only).
 

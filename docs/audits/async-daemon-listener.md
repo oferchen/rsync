@@ -163,9 +163,8 @@ in #1935, not here.
 
 ### tokio dependency-scope policy
 
-Per the project's tokio dependency-scope policy (CLAUDE.md "Audit
-tokio dependency scope" pair, tasks #1818 and #1779), tokio MUST NOT
-leak into other crates. The boundary held by this RFC:
+Per the project's tokio dependency-scope policy (tasks #1818 and #1779),
+tokio MUST NOT leak into other crates. The boundary held by this RFC:
 
 - `crates/daemon/Cargo.toml` adds `tokio` only behind the
   `async-daemon` feature (already optional at `Cargo.toml:43`).
@@ -334,9 +333,9 @@ implementation:
   any observable on-the-wire behaviour. This is a daemon-internal
   scheduling change.
 - Touching other crates' dependency graphs. `tokio` stays daemon-
-  only and feature-gated. Per CLAUDE.md, no new tokio leakage into
-  `cli`, `core`, `transfer`, `protocol`, `engine`, or anywhere
-  else.
+  only and feature-gated. Per the project's tokio-scope policy, no
+  new tokio leakage into `cli`, `core`, `transfer`, `protocol`,
+  `engine`, or anywhere else.
 - Replacing `catch_unwind`-based panic isolation. Tokio's
   `JoinHandle` returns `Err(JoinError)` on panic
   (`crates/daemon/src/daemon/async_session/listener.rs:211-215`);
@@ -383,9 +382,8 @@ implementation:
   `docs/DAEMON_PROCESS_MODEL.md`.
 - #1367: related daemon-scaling input from the prior audit;
   informs the motivation.
-- CLAUDE.md "Audit tokio dependency scope" pair (#1818, #1779):
-  policy enforced by the "tokio dependency-scope policy"
-  section.
+- Tokio dependency-scope policy pair (#1818, #1779): policy enforced
+  by the "tokio dependency-scope policy" section.
 
 ## References
 

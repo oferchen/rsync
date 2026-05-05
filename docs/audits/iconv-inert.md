@@ -950,7 +950,7 @@ sections 1-3 above. Quick index of the load-bearing entries:
 ### 8.3 Upstream rsync 3.4.1
 
 Source tree: `target/interop/upstream-src/rsync-3.4.1/`. Fetch
-instructions live in `/Users/ofer/devel/CLAUDE.md`.
+instructions live in the project conventions document.
 
 - `options.c:219` - `iconv_opt` global.
 - `options.c:814` - popt entry.
