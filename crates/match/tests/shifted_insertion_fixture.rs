@@ -129,7 +129,10 @@ fn assert_round_trip(
     let mut basis_cursor = Cursor::new(basis.to_vec());
     let mut output = Vec::with_capacity(source.len());
     matching::apply_delta(&mut basis_cursor, &mut output, index, script).expect("apply");
-    assert_eq!(output, source, "round-trip reconstruction must match source");
+    assert_eq!(
+        output, source,
+        "round-trip reconstruction must match source"
+    );
 }
 
 /// Returns the strong-checksum strategies the matrix iterates. MD5 with
@@ -337,7 +340,12 @@ fn tail_edge_insertion_round_trips() {
     let n = 7;
     let source = make_source_with_insertion(&basis, m, n);
 
-    let (index, script) = run_pipeline(&basis, &source, block_len, SignatureAlgorithm::Xxh3 { seed: 0 });
+    let (index, script) = run_pipeline(
+        &basis,
+        &source,
+        block_len,
+        SignatureAlgorithm::Xxh3 { seed: 0 },
+    );
     assert_round_trip(&basis, &source, &index, &script);
 
     assert_eq!(script.total_bytes(), source.len() as u64);
