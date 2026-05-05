@@ -33,6 +33,32 @@ const DEFAULT_BUFFER_LEN: usize = 128 * 1024;
 /// upstream: rsync.h:158, match.c:339
 const CHUNK_SIZE: usize = 32 * 1024;
 
+/// Emits a coalesced `DeltaToken::Copy` covering an open seq-match run.
+///
+/// The seq-match optimization tracks `(start_basis_idx, run_len)` while the
+/// chain loop confirms adjacent matches. When the run breaks - either at a
+/// non-adjacent match, a literal break, or chain end - this helper flushes
+/// the accumulated run as a single fat Copy token (`len = run_len *
+/// block_len`) and resets the tracking state. The wire layer expands fat
+/// Copy tokens into one wire op per basis block, preserving wire-format
+/// byte-equality with the no-coalesce baseline.
+fn flush_seq_match_run(
+    tokens: &mut Vec<DeltaToken>,
+    start: &mut Option<u64>,
+    run_len: &mut usize,
+    block_len: usize,
+) {
+    if let Some(start_idx) = start.take() {
+        if *run_len > 0 {
+            tokens.push(DeltaToken::Copy {
+                index: start_idx,
+                len: *run_len * block_len,
+            });
+        }
+    }
+    *run_len = 0;
+}
+
 /// Produces rsync-style delta tokens by comparing an input stream against a signature index.
 #[derive(Clone, Debug)]
 pub struct DeltaGenerator {
@@ -191,6 +217,15 @@ impl DeltaGenerator {
                 // rolling checksum via SIMD-accelerated update() instead of
                 // block_len individual push_back()+update_byte() calls. Chained
                 // adjacent matches stay in this inner loop.
+                //
+                // zsync seq-match (`docs/design/zsync-seq-match.md`): when the
+                // chain finds blocks N, N+1, N+2 ... in the basis matched at
+                // consecutive target offsets, coalesce them into a single fat
+                // COPY token of `len = run * block_len`. The wire layer expands
+                // this back into one wire token per block, preserving wire
+                // byte-equality with the no-coalesce baseline.
+                let mut run_start_idx: Option<u64> = None;
+                let mut run_len: usize = 0;
                 loop {
                     matches += 1;
 
@@ -204,6 +239,15 @@ impl DeltaGenerator {
                     );
 
                     if !pending_literals.is_empty() {
+                        // Adjacency invariant: literals between runs always
+                        // break the seq-match streak, so flush any pending run
+                        // before emitting the literal.
+                        flush_seq_match_run(
+                            &mut tokens,
+                            &mut run_start_idx,
+                            &mut run_len,
+                            block_len,
+                        );
                         literal_bytes += pending_literals.len() as u64;
                         total_bytes += pending_literals.len() as u64;
                         let filled =
@@ -212,10 +256,23 @@ impl DeltaGenerator {
                     }
 
                     let block = index.block(match_idx);
-                    tokens.push(DeltaToken::Copy {
-                        index: block.index(),
-                        len: block.len(),
-                    });
+                    let block_basis_idx = block.index();
+
+                    match run_start_idx {
+                        Some(start_idx) if start_idx + run_len as u64 == block_basis_idx => {
+                            run_len += 1;
+                        }
+                        _ => {
+                            flush_seq_match_run(
+                                &mut tokens,
+                                &mut run_start_idx,
+                                &mut run_len,
+                                block_len,
+                            );
+                            run_start_idx = Some(block_basis_idx);
+                            run_len = 1;
+                        }
+                    }
                     total_bytes += block.len() as u64;
 
                     want_i = if match_idx + 1 < index.block_count() {
@@ -278,6 +335,7 @@ impl DeltaGenerator {
                         break;
                     }
                 }
+                flush_seq_match_run(&mut tokens, &mut run_start_idx, &mut run_len, block_len);
                 continue;
             } else {
                 false_alarms += 1;

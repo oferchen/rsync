@@ -267,4 +267,72 @@ impl DeltaSignatureIndex {
         scratch.extend_from_slice(back);
         self.find_match_bytes(digest, scratch.as_slice())
     }
+
+    /// Extends a confirmed block match into a run of consecutive matching blocks.
+    ///
+    /// After the matcher confirms that block `start_block_index` matches some
+    /// target window, this helper probes the immediately following indexed
+    /// blocks (`start_block_index + 1`, `+ 2`, ...) against the target bytes
+    /// that follow. It returns the count of consecutive blocks, starting at
+    /// `start_block_index`, whose rolling and strong checksums match the
+    /// corresponding `block_length`-sized chunk of `target`.
+    ///
+    /// `target` must be a contiguous slice of the source data starting at the
+    /// byte offset where block `start_block_index` is expected to match.
+    /// `max_blocks` caps the run length so callers can bound buffering.
+    ///
+    /// The returned count is at least 1 when block `start_block_index` is a
+    /// valid full-length basis block and its checksum matches the first
+    /// `block_length` bytes of `target`. When the start block is the last
+    /// indexed block, the run cannot extend beyond it. The helper does not
+    /// change which basis indices are picked, only how many adjacent matches
+    /// are confirmed in one call.
+    ///
+    /// upstream: zsync `librcksum/rsum.c:262` advances `next_match` after
+    /// each confirmed match, the same effect this helper realizes in one
+    /// call. See `docs/design/zsync-seq-match.md` for the wire-compat
+    /// invariant.
+    #[must_use]
+    pub fn extend_run(&self, start_block_index: usize, target: &[u8], max_blocks: usize) -> usize {
+        if max_blocks == 0 || self.block_length == 0 {
+            return 0;
+        }
+
+        let block_len = self.block_length;
+        let mut run = 0usize;
+        let mut offset = 0usize;
+        while run < max_blocks {
+            let block_idx = start_block_index + run;
+            if block_idx >= self.blocks.len() {
+                break;
+            }
+            let end = match offset.checked_add(block_len) {
+                Some(end) if end <= target.len() => end,
+                _ => break,
+            };
+            let chunk = &target[offset..end];
+
+            let block = &self.blocks[block_idx];
+            if block.len() != block_len {
+                break;
+            }
+
+            let chunk_digest = RollingDigest::from_bytes(chunk);
+            let block_digest = block.rolling();
+            if chunk_digest.sum1() != block_digest.sum1()
+                || chunk_digest.sum2() != block_digest.sum2()
+            {
+                break;
+            }
+
+            let strong = self.algorithm.compute_truncated(chunk, self.strong_length);
+            if strong.as_slice() != block.strong() {
+                break;
+            }
+
+            run += 1;
+            offset = end;
+        }
+        run
+    }
 }

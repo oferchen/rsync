@@ -710,15 +710,20 @@ fn matching_at_exact_block_boundaries() {
         "exact block boundaries should have zero literals"
     );
 
-    let copy_count = script
+    // Seq-match coalesces the contiguous run of basis blocks into a single
+    // fat Copy token; verify total covered bytes equal `num_blocks` worth.
+    let copy_bytes: usize = script
         .tokens()
         .iter()
-        .filter(|t| matches!(t, DeltaToken::Copy { .. }))
-        .count();
-
+        .map(|t| match t {
+            DeltaToken::Copy { len, .. } => *len,
+            DeltaToken::Literal(_) => 0,
+        })
+        .sum();
     assert_eq!(
-        copy_count, num_blocks,
-        "should have exactly {num_blocks} copy tokens for {num_blocks} blocks"
+        copy_bytes,
+        num_blocks * block_len,
+        "should copy exactly {num_blocks} blocks worth of bytes"
     );
 }
 
@@ -837,14 +842,19 @@ fn statistical_matching_accuracy() {
 
         let script = generate_delta(&input[..], &index).expect("should generate delta");
 
-        // Count matches
-        let copy_count = script
+        // Count basis blocks matched. Seq-match coalesces consecutive
+        // matched basis blocks into one fat Copy, so a fat Copy of length
+        // `K * block_len` represents K matched basis blocks.
+        let matched_blocks: usize = script
             .tokens()
             .iter()
-            .filter(|t| matches!(t, DeltaToken::Copy { .. }))
-            .count();
+            .map(|t| match t {
+                DeltaToken::Copy { len, .. } => len / block_len,
+                DeltaToken::Literal(_) => 0,
+            })
+            .sum();
 
-        total_correct_matches += copy_count;
+        total_correct_matches += matched_blocks;
         total_expected_matches += num_matching;
     }
 

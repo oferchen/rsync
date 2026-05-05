@@ -413,3 +413,81 @@ fn find_match_slices_wrong_length_returns_none() {
             .is_none()
     );
 }
+
+fn build_index_for_extend_run(data: &[u8]) -> DeltaSignatureIndex {
+    let params = SignatureLayoutParams::new(
+        data.len() as u64,
+        None,
+        ProtocolVersion::NEWEST,
+        NonZeroU8::new(16).unwrap(),
+    );
+    let layout = calculate_signature_layout(params).expect("layout");
+    let signature =
+        generate_file_signature(data, layout, SignatureAlgorithm::Md4).expect("signature");
+    DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4).expect("index")
+}
+
+/// `extend_run` extends through every consecutive matching block.
+#[test]
+fn extend_run_walks_full_basis() {
+    let data: Vec<u8> = (0..16384).map(|i| ((i * 11 + 3) % 251) as u8).collect();
+    let index = build_index_for_extend_run(&data);
+    let block_count = index.block_count();
+    let block_len = index.block_length();
+    let target = data[..block_count * block_len].to_vec();
+
+    let count = index.extend_run(0, &target, block_count);
+    assert_eq!(count, block_count, "every basis block must extend the run");
+}
+
+/// `extend_run` halts at the first non-matching block in the target.
+#[test]
+fn extend_run_stops_at_first_mismatch() {
+    let data: Vec<u8> = (0..16384).map(|i| ((i * 11 + 3) % 251) as u8).collect();
+    let index = build_index_for_extend_run(&data);
+    let block_len = index.block_length();
+    let target_blocks = 4;
+    let mut target = data[..target_blocks * block_len].to_vec();
+    // Corrupt the third block.
+    target[2 * block_len + 5] ^= 0x55;
+
+    let count = index.extend_run(0, &target, target_blocks);
+    assert_eq!(count, 2, "run must stop at the corrupted block");
+}
+
+/// `extend_run` returns 0 when the start block is out of range.
+#[test]
+fn extend_run_rejects_start_out_of_range() {
+    let data: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
+    let index = build_index_for_extend_run(&data);
+    let block_len = index.block_length();
+    let count = index.block_count();
+    let target = vec![0u8; block_len];
+
+    assert_eq!(index.extend_run(count, &target, 1), 0);
+    assert_eq!(index.extend_run(count + 5, &target, 4), 0);
+}
+
+/// `extend_run` honours `max_blocks` even when more would match.
+#[test]
+fn extend_run_respects_max_blocks() {
+    let data: Vec<u8> = (0..16384).map(|i| ((i * 11 + 3) % 251) as u8).collect();
+    let index = build_index_for_extend_run(&data);
+    let block_len = index.block_length();
+    let target = data[..4 * block_len].to_vec();
+
+    assert_eq!(index.extend_run(0, &target, 4), 4);
+    assert_eq!(index.extend_run(0, &target, 2), 2);
+    assert_eq!(index.extend_run(0, &target, 0), 0);
+}
+
+/// `extend_run` returns 0 when target is shorter than one block.
+#[test]
+fn extend_run_rejects_short_target() {
+    let data: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
+    let index = build_index_for_extend_run(&data);
+    let block_len = index.block_length();
+    let target = vec![0u8; block_len - 1];
+
+    assert_eq!(index.extend_run(0, &target, 4), 0);
+}
