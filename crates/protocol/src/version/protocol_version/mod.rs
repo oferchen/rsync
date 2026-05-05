@@ -67,8 +67,6 @@ use super::iter::{SupportedProtocolNumbersIter, SupportedVersionsIter};
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct ProtocolVersion(NonZeroU8);
 
-// Supported protocol declarations (macro-generated constants)
-
 macro_rules! declare_supported_protocols {
     ($($ver:literal),+ $(,)?) => {
         /// Number of protocol versions supported by the Rust implementation.
@@ -117,8 +115,6 @@ pub const SUPPORTED_PROTOCOL_BITMAP: u64 = {
 
     bitmap
 };
-
-// Core impl block: constructors, accessors, supported-protocol queries
 
 impl ProtocolVersion {
     pub(crate) const fn new_const(value: u8) -> Self {
