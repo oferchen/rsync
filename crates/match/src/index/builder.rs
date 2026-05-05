@@ -2,21 +2,23 @@
 //!
 //! Provides [`from_signature`](DeltaSignatureIndex::from_signature) and
 //! [`rebuild`](DeltaSignatureIndex::rebuild) methods that populate the tag
-//! table and lookup map from a [`FileSignature`].
+//! table, bithash prefilter, and lookup map from a [`FileSignature`].
 
 use rustc_hash::FxHashMap;
 
 use signature::{FileSignature, SignatureAlgorithm, SignatureBlock};
 
-use super::{DeltaSignatureIndex, TAG_TABLE_SIZE};
+use super::{BitHash, DeltaSignatureIndex, TAG_TABLE_SIZE};
 
-/// Shared helper that indexes full-length blocks into the tag table and lookup map.
+/// Shared helper that indexes full-length blocks into the tag table, bithash,
+/// and lookup map.
 ///
 /// Returns `true` if at least one full-length block was indexed.
 fn populate_index(
     blocks: &[SignatureBlock],
     block_length: usize,
     tag_table: &mut [bool],
+    bithash: &mut BitHash,
     lookup: &mut FxHashMap<(u16, u16), Vec<usize>>,
 ) -> bool {
     let mut has_full_blocks = false;
@@ -27,6 +29,7 @@ fn populate_index(
         has_full_blocks = true;
         let digest = block.rolling();
         tag_table[digest.sum1() as usize] = true;
+        bithash.insert(digest.value());
         lookup
             .entry((digest.sum1(), digest.sum2()))
             .or_default()
@@ -53,8 +56,15 @@ impl DeltaSignatureIndex {
         let mut lookup: FxHashMap<(u16, u16), Vec<usize>> =
             FxHashMap::with_capacity_and_hasher(blocks.len(), Default::default());
         let mut tag_table = vec![false; TAG_TABLE_SIZE];
+        let mut bithash = BitHash::with_block_count(blocks.len());
 
-        if !populate_index(&blocks, block_length, &mut tag_table, &mut lookup) {
+        if !populate_index(
+            &blocks,
+            block_length,
+            &mut tag_table,
+            &mut bithash,
+            &mut lookup,
+        ) {
             return None;
         }
 
@@ -65,6 +75,7 @@ impl DeltaSignatureIndex {
             blocks,
             lookup,
             tag_table,
+            bithash,
         })
     }
 
@@ -88,11 +99,13 @@ impl DeltaSignatureIndex {
         self.blocks.extend_from_slice(signature.blocks());
         self.lookup.clear();
         self.tag_table.iter_mut().for_each(|v| *v = false);
+        self.bithash.clear();
 
         populate_index(
             &self.blocks,
             block_length,
             &mut self.tag_table,
+            &mut self.bithash,
             &mut self.lookup,
         )
     }
