@@ -2,8 +2,8 @@
 //!
 //! Recreates block and character device nodes at the destination using
 //! `mknod(2)`, with optional hard-link deduplication to earlier devices.
-//!
-//! // upstream: receiver.c - device node handling, syscall.c:do_mknod()
+
+// upstream: receiver.c - device node handling, syscall.c:do_mknod()
 
 use std::fs;
 use std::io;
@@ -28,8 +28,7 @@ use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 ///
 /// Handles hard-link deduplication, `--existing`, directory replacement via
 /// `--force`, backup, and dry-run mode.
-///
-/// // upstream: receiver.c - device node handling
+// upstream: receiver.c - device node handling
 pub(crate) fn copy_device(
     context: &mut CopyContext,
     source: &Path,

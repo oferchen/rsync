@@ -159,8 +159,7 @@ fn decide_entry_action(
 /// Iterates over pre-sorted directory entries, applies filter rules,
 /// resolves symlinks when `--copy-links` or `--copy-dirlinks` is active,
 /// and determines the appropriate action for each entry.
-///
-/// // upstream: flist.c:send_directory() - builds file list from directory
+// upstream: flist.c:send_directory() - builds file list from directory
 pub(crate) fn plan_directory_entries<'a>(
     context: &mut CopyContext,
     entries: &'a [DirectoryEntry],
@@ -345,8 +344,7 @@ pub(crate) fn plan_directory_entries<'a>(
 }
 
 /// Applies pre-transfer deletions when `--delete-before` is active.
-///
-/// // upstream: generator.c:do_delete_pass() - pre-transfer deletion
+// upstream: generator.c:do_delete_pass() - pre-transfer deletion
 pub(crate) fn apply_pre_transfer_deletions(
     context: &mut CopyContext,
     destination: &Path,

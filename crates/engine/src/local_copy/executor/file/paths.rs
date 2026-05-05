@@ -2,8 +2,8 @@
 //!
 //! Generates temp file paths (`.~tmp~` prefix with PID), partial transfer
 //! paths (`--partial-dir`), and resolves the final destination for each file.
-//!
-//! // upstream: receiver.c - temp file naming, util1.c:partial_dir_fname()
+
+// upstream: receiver.c - temp file naming, util1.c:partial_dir_fname()
 
 use std::ffi::OsStr;
 use std::fs;
@@ -54,7 +54,7 @@ pub(crate) fn partial_directory_destination_path(
 /// Computes the temporary file path used during atomic writes.
 ///
 /// The name includes the PID and a unique counter to prevent collisions.
-/// // upstream: receiver.c:get_tmpname()
+// upstream: receiver.c:get_tmpname()
 pub(crate) fn temporary_destination_path(
     destination: &Path,
     unique: usize,

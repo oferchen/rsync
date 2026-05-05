@@ -2,8 +2,9 @@
 //!
 //! Applies ownership, permissions, timestamps, ACLs, and extended attributes
 //! to directories after all their contents have been transferred.
-//!
-//! // upstream: receiver.c - directory metadata finalization after recv_files()
+
+// upstream: receiver.c - directory metadata finalization after recv_files()
+
 use std::fs;
 use std::path::Path;
 

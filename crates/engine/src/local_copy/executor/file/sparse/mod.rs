@@ -4,8 +4,8 @@
 //! file data and writes them as filesystem holes rather than allocating blocks.
 //! Uses `SEEK_HOLE`/`SEEK_DATA` for reading and `fallocate(PUNCH_HOLE)` on
 //! Linux for post-write hole creation.
-//!
-//! // upstream: fileio.c:write_sparse() - sparse write with seek-past-zeros
+
+// upstream: fileio.c:write_sparse() - sparse write with seek-past-zeros
 
 mod detect;
 mod hole_punch;

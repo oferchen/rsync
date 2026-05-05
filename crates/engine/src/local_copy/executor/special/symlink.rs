@@ -3,8 +3,8 @@
 //! Recreates symlinks at the destination, optionally munging unsafe targets
 //! (absolute paths or `..` escapes) when `--safe-links` or `--munge-links`
 //! is active.
-//!
-//! // upstream: receiver.c - symlink handling, syscall.c:do_symlink()
+
+// upstream: receiver.c - symlink handling, syscall.c:do_symlink()
 
 use std::fs;
 use std::io;
@@ -31,7 +31,7 @@ use super::{device::copy_device, fifo::copy_fifo};
 ///
 /// Rejects absolute paths, empty targets, and targets whose `..` components
 /// would escape above the directory depth implied by `link_relative`.
-/// // upstream: clientserver.c - safe symlink checking
+// upstream: clientserver.c - safe symlink checking
 pub(crate) fn symlink_target_is_safe(target: &Path, link_relative: &Path) -> bool {
     if target.as_os_str().is_empty() || target.has_root() {
         return false;
@@ -103,8 +103,7 @@ pub(crate) fn symlink_target_is_safe(target: &Path, link_relative: &Path) -> boo
 /// Handles `--safe-links`, `--copy-unsafe-links`, `--munge-links`, hard-link
 /// deduplication, and dry-run mode. When `--copy-unsafe-links` is active and
 /// the target is unsafe, the link target is copied as a regular entry instead.
-///
-/// // upstream: receiver.c:recv_files() - symlink handling
+// upstream: receiver.c:recv_files() - symlink handling
 pub(crate) fn copy_symlink(
     context: &mut CopyContext,
     source: &Path,
