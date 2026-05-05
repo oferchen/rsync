@@ -1,5 +1,3 @@
-//! crates/protocol/src/multiplex/codec.rs
-//!
 //! Async codec for multiplexed rsync protocol frames using tokio-util.
 //!
 //! This module provides [`MultiplexCodec`], a [`tokio_util::codec::Decoder`] and
@@ -103,12 +101,12 @@ impl Decoder for MultiplexCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        // Need at least the header to proceed
         if src.len() < HEADER_LEN {
             return Ok(None);
         }
 
-        // Peek at header without consuming (in case payload isn't ready)
+        // Peek at the header without consuming so a partial-payload read can
+        // be retried once more bytes arrive.
         let header_bytes: [u8; HEADER_LEN] = src[..HEADER_LEN].try_into().map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "failed to read header bytes")
         })?;
@@ -116,7 +114,6 @@ impl Decoder for MultiplexCodec {
         let header = MessageHeader::decode(&header_bytes).map_err(map_envelope_error)?;
         let payload_len = header.payload_len();
 
-        // Validate payload length against our limit
         if payload_len > self.max_payload_len {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -129,20 +126,13 @@ impl Decoder for MultiplexCodec {
 
         let total_len = HEADER_LEN + payload_len as usize;
 
-        // Check if we have the complete frame
         if src.len() < total_len {
-            // Reserve space for the rest of the frame
             src.reserve(total_len - src.len());
             return Ok(None);
         }
 
-        // Consume the header
         src.advance(HEADER_LEN);
-
-        // Extract the payload
         let payload = src.split_to(payload_len as usize).to_vec();
-
-        // MessageFrame::new already returns io::Error
         let frame = MessageFrame::new(header.code(), payload)?;
 
         Ok(Some(frame))
@@ -156,20 +146,15 @@ impl Encoder<MessageFrame> for MultiplexCodec {
         let header = item.header()?;
         let payload = item.payload();
 
-        // Reserve space for header + payload
         dst.reserve(HEADER_LEN + payload.len());
-
-        // Write header
         dst.put_slice(&header.encode());
-
-        // Write payload
         dst.put_slice(payload);
 
         Ok(())
     }
 }
 
-/// Encoder implementation for borrowed frames to avoid cloning.
+/// Encodes borrowed frames without cloning the payload.
 impl Encoder<&MessageFrame> for MultiplexCodec {
     type Error = io::Error;
 
@@ -185,7 +170,8 @@ impl Encoder<&MessageFrame> for MultiplexCodec {
     }
 }
 
-/// Encoder implementation for (MessageCode, &[u8]) tuples for zero-copy sending.
+/// Encodes a `(MessageCode, &[u8])` tuple directly, avoiding an owned `MessageFrame` allocation
+/// when the caller already has a borrowed payload.
 impl Encoder<(MessageCode, &[u8])> for MultiplexCodec {
     type Error = io::Error;
 
@@ -222,7 +208,6 @@ mod tests {
         let mut codec = MultiplexCodec::new();
         let mut buf = BytesMut::new();
 
-        // Encode a frame with empty payload
         let header = MessageHeader::new(MessageCode::NoOp, 0).unwrap();
         buf.extend_from_slice(&header.encode());
 
@@ -253,11 +238,11 @@ mod tests {
         let mut codec = MultiplexCodec::new();
         let mut buf = BytesMut::new();
 
-        buf.extend_from_slice(&[0x07, 0x00]); // Only 2 bytes of header
+        buf.extend_from_slice(&[0x07, 0x00]);
 
         let result = codec.decode(&mut buf).unwrap();
         assert!(result.is_none());
-        assert_eq!(buf.len(), 2); // Buffer unchanged
+        assert_eq!(buf.len(), 2);
     }
 
     #[test]
@@ -265,14 +250,13 @@ mod tests {
         let mut codec = MultiplexCodec::new();
         let mut buf = BytesMut::new();
 
-        // Header says 10 bytes payload, but only 5 available
         let header = MessageHeader::new(MessageCode::Data, 10).unwrap();
         buf.extend_from_slice(&header.encode());
         buf.extend_from_slice(b"hello");
 
         let result = codec.decode(&mut buf).unwrap();
         assert!(result.is_none());
-        assert_eq!(buf.len(), HEADER_LEN + 5); // Buffer unchanged
+        assert_eq!(buf.len(), HEADER_LEN + 5);
     }
 
     #[test]
@@ -280,12 +264,10 @@ mod tests {
         let mut codec = MultiplexCodec::new();
         let mut buf = BytesMut::new();
 
-        // First frame
         let header1 = MessageHeader::new(MessageCode::Info, 3).unwrap();
         buf.extend_from_slice(&header1.encode());
         buf.extend_from_slice(b"abc");
 
-        // Second frame
         let header2 = MessageHeader::new(MessageCode::Data, 2).unwrap();
         buf.extend_from_slice(&header2.encode());
         buf.extend_from_slice(b"xy");
@@ -306,7 +288,6 @@ mod tests {
         let mut codec = MultiplexCodec::with_max_payload_len(100);
         let mut buf = BytesMut::new();
 
-        // Header claims 200 bytes payload
         let header = MessageHeader::new(MessageCode::Data, 200).unwrap();
         buf.extend_from_slice(&header.encode());
 
@@ -326,7 +307,6 @@ mod tests {
 
         assert_eq!(buf.len(), HEADER_LEN + 4);
 
-        // Verify we can decode what we encoded
         let decoded = codec.decode(&mut buf).unwrap().unwrap();
         assert_eq!(decoded.code(), MessageCode::Info);
         assert_eq!(decoded.payload(), b"test");
