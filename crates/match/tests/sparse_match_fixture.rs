@@ -255,11 +255,7 @@ fn exercise_matrix(basis_len: usize, block_size: u32, enforce_budget: bool) {
             if enforce_budget {
                 assert!(
                     elapsed < SMALL_FIXTURE_BUDGET,
-                    "smallest fixture must finish under {:?}, took {:?} for K={} algo={:?}",
-                    SMALL_FIXTURE_BUDGET,
-                    elapsed,
-                    planted,
-                    algo,
+                    "smallest fixture must finish under {SMALL_FIXTURE_BUDGET:?}, took {elapsed:?} for K={planted} algo={algo:?}"
                 );
             }
         }
