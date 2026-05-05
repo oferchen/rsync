@@ -34,9 +34,7 @@ pub trait BufferAllocator: Send + Sync + std::fmt::Debug {
     ///
     /// Called when the pool is at capacity and cannot accept a returned buffer.
     /// The default implementation drops the buffer, freeing the heap allocation.
-    fn deallocate(&self, _buffer: Vec<u8>) {
-        // Default: drop the buffer (release memory back to the system allocator).
-    }
+    fn deallocate(&self, _buffer: Vec<u8>) {}
 }
 
 /// The default allocation strategy - zero-initialized heap `Vec<u8>`.
