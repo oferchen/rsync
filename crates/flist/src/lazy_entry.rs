@@ -172,13 +172,10 @@ impl LazyFileListEntry {
     ///
     /// Returns an error if metadata cannot be fetched.
     pub fn into_resolved(mut self) -> Result<FileListEntry, io::Error> {
-        // Ensure metadata is resolved
         if let Err(e) = self.metadata.get() {
-            // Return owned error
             return Err(io::Error::new(e.kind(), e.to_string()));
         }
 
-        // Now we can extract the metadata
         let metadata = self.metadata.into_metadata()?;
 
         Ok(FileListEntry {
@@ -310,13 +307,10 @@ mod tests {
         let (_dir, path) = create_test_file();
         let mut entry = LazyFileListEntry::new(path, PathBuf::from("test.txt"), 1, false, false);
 
-        // Not resolved yet
         assert!(entry.metadata_if_resolved().is_none());
 
-        // Resolve it
         let _ = entry.metadata();
 
-        // Now should return Some
         assert!(entry.metadata_if_resolved().is_some());
     }
 
@@ -353,7 +347,6 @@ mod tests {
         let (_dir, path) = create_test_file();
         let entry = LazyFileListEntry::new(path, PathBuf::from("test.txt"), 1, false, false);
 
-        // Not resolved, should return None
         assert!(entry.try_into_resolved().is_none());
     }
 
@@ -364,7 +357,6 @@ mod tests {
         let entry =
             LazyFileListEntry::with_metadata(path, PathBuf::from("test.txt"), metadata, 1, false);
 
-        // Already resolved, should return Some
         let result = entry.try_into_resolved();
         assert!(result.is_some());
         assert!(result.unwrap().is_ok());
@@ -374,10 +366,8 @@ mod tests {
     fn test_filtering_without_stat() {
         let (_dir, path) = create_test_file();
 
-        // Create entry
         let entry = LazyFileListEntry::new(path, PathBuf::from("test.txt"), 1, false, false);
 
-        // Filter by extension without fetching metadata
         let should_process = entry
             .relative_path()
             .extension()
@@ -385,7 +375,6 @@ mod tests {
             .unwrap_or(true);
 
         assert!(should_process);
-        // Metadata was never fetched
         assert!(!entry.is_resolved());
     }
 }
