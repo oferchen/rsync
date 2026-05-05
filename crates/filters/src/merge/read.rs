@@ -72,7 +72,6 @@ fn read_rules_recursive_impl(
     let mut expanded = Vec::with_capacity(rules.len());
     for rule in rules {
         if rule.action() == FilterAction::Merge {
-            // Resolve the merge file path relative to the current file's directory
             let merge_path = if rule.pattern().starts_with('/') {
                 Path::new(rule.pattern()).to_path_buf()
             } else if let Some(base) = base_dir {

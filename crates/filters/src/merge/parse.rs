@@ -170,7 +170,7 @@ impl RuleModifiers {
 /// Returns the parsed modifiers and the remaining string (pattern).
 /// Modifiers are single characters that can appear in any order before the pattern.
 ///
-/// Reference: upstream rsync `exclude.c` lines 1220-1288 handles modifiers.
+/// upstream: exclude.c lines 1220-1288 - modifier character handling
 pub(crate) fn parse_modifiers(s: &str) -> (RuleModifiers, &str) {
     let mut mods = RuleModifiers::default();
 
