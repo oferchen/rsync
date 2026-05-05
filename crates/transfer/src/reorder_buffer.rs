@@ -432,10 +432,13 @@ mod tests {
 
         type Payload = Result<u64, io::Error>;
 
-        fn payload_strategy() -> impl Strategy<Value = Payload> {
+        // `io::Error` is not `Clone`, which `Just` requires, so the strategy
+        // returns a `()`-tagged discriminator and the test bodies materialise
+        // a fresh `io::Error` at use time.
+        fn payload_strategy() -> impl Strategy<Value = Result<u64, ()>> {
             prop_oneof![
                 any::<u64>().prop_map(Ok),
-                Just(Err(io::Error::other("simulated network failure"))),
+                Just(Err(())),
             ]
         }
 
