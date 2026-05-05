@@ -4,7 +4,7 @@
 
 //! # Overview
 //!
-//! `transport` houses the transport adapters used by the Rust `rsync`
+//! `rsync_io` houses the transport adapters used by the Rust `rsync`
 //! implementation. The crate currently focuses on handshake detection and
 //! exposes wrappers that preserve bytes consumed while deciding between legacy
 //! ASCII and binary negotiations.
