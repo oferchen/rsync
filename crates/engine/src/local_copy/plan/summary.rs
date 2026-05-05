@@ -373,7 +373,7 @@ impl LocalCopySummary {
         self.file_list_generation = self.file_list_generation.saturating_add(elapsed);
     }
 
-    #[allow(dead_code)] // symmetric with record_file_list_generation - will be used when file list transfer timing is wired in
+    #[allow(dead_code)] // symmetric with record_file_list_generation
     pub(in crate::local_copy) const fn record_file_list_transfer(&mut self, elapsed: Duration) {
         self.file_list_transfer = self.file_list_transfer.saturating_add(elapsed);
     }
