@@ -187,6 +187,9 @@ where
         None => None,
     };
 
+    let rayon_threads = parse_thread_count(&mut matches, "rayon-threads")?;
+    let tokio_threads = parse_thread_count(&mut matches, "tokio-threads")?;
+
     let modify_window = match matches.remove_one::<OsString>("modify-window") {
         Some(value) => {
             let s = value.to_string_lossy();
@@ -793,5 +796,47 @@ where
         ssh_ipv6,
         ssh_port,
         jump_host,
+        rayon_threads,
+        tokio_threads,
     })
+}
+
+/// Maximum thread count accepted by `--rayon-threads` / `--tokio-threads`.
+///
+/// Mirrors the sanity ceiling applied by the broader thread-tunable surface
+/// (`crossbeam`/`tokio` historically reject very large pools at runtime).
+const MAX_THREAD_COUNT: u32 = 1024;
+
+/// Parses a thread-count CLI option (`--rayon-threads`, `--tokio-threads`).
+///
+/// Accepts a positive base-10 integer in the inclusive range `1..=1024`.
+/// Returns `Ok(None)` when the option was not supplied, allowing callers
+/// to keep the runtime's own default thread count.
+fn parse_thread_count(
+    matches: &mut clap::ArgMatches,
+    flag: &'static str,
+) -> Result<Option<u32>, clap::Error> {
+    let Some(value) = matches.remove_one::<OsString>(flag) else {
+        return Ok(None);
+    };
+    let raw = value.to_string_lossy();
+    match raw.parse::<u32>() {
+        Ok(0) => Err(clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            format!(
+                "invalid --{flag} value '{raw}': must be a positive integer (1-{MAX_THREAD_COUNT})\n"
+            ),
+        )),
+        Ok(n) if n > MAX_THREAD_COUNT => Err(clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            format!("invalid --{flag} value '{raw}': must not exceed {MAX_THREAD_COUNT}\n"),
+        )),
+        Ok(n) => Ok(Some(n)),
+        Err(_) => Err(clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            format!(
+                "invalid --{flag} value '{raw}': must be a positive integer (1-{MAX_THREAD_COUNT})\n"
+            ),
+        )),
+    }
 }

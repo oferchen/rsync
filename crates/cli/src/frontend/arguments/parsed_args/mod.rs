@@ -542,4 +542,15 @@ pub struct ParsedArgs {
 
     /// `--jump-host` - comma-separated proxy-jump hosts (forwarded as `ssh -J`).
     pub jump_host: Option<OsString>,
+
+    /// `--rayon-threads` - cap rayon worker pool to N threads (1-1024).
+    ///
+    /// `None` keeps rayon's default (one worker per logical CPU).
+    pub rayon_threads: Option<u32>,
+
+    /// `--tokio-threads` - cap async (tokio) runtime to N threads (1-1024).
+    ///
+    /// `None` keeps tokio's default. Only effective when async features are
+    /// enabled at build time; otherwise the value is parsed and discarded.
+    pub tokio_threads: Option<u32>,
 }

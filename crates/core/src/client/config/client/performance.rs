@@ -1,5 +1,5 @@
 use super::*;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 
 impl ClientConfig {
     /// Reports whether compression was requested for transfers.
@@ -113,6 +113,24 @@ impl ClientConfig {
         self.block_size_override
     }
 
+    /// Returns the requested rayon worker count, if any.
+    ///
+    /// `None` keeps rayon's default (one worker per logical CPU). Applied
+    /// once during process startup via `rayon::ThreadPoolBuilder::build_global`.
+    #[doc(alias = "--rayon-threads")]
+    pub const fn rayon_threads(&self) -> Option<NonZeroUsize> {
+        self.rayon_threads
+    }
+
+    /// Returns the requested tokio worker count, if any.
+    ///
+    /// `None` keeps tokio's defaults. Honoured only when async transports
+    /// are enabled at build time.
+    #[doc(alias = "--tokio-threads")]
+    pub const fn tokio_threads(&self) -> Option<NonZeroUsize> {
+        self.tokio_threads
+    }
+
     /// Returns the configured `--max-alloc` cap in bytes, if any.
     ///
     /// When set, the global buffer pool tracks outstanding (checked-out)
@@ -219,6 +237,18 @@ mod tests {
     fn block_size_override_default_is_none() {
         let config = default_config();
         assert!(config.block_size_override().is_none());
+    }
+
+    #[test]
+    fn rayon_threads_default_is_none() {
+        let config = default_config();
+        assert!(config.rayon_threads().is_none());
+    }
+
+    #[test]
+    fn tokio_threads_default_is_none() {
+        let config = default_config();
+        assert!(config.tokio_threads().is_none());
     }
 
     #[test]

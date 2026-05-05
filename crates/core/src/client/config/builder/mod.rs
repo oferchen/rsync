@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fmt;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -145,6 +145,8 @@ pub struct ClientConfigBuilder {
     min_file_size: Option<u64>,
     max_file_size: Option<u64>,
     block_size_override: Option<NonZeroU32>,
+    rayon_threads: Option<NonZeroUsize>,
+    tokio_threads: Option<NonZeroUsize>,
     max_alloc: Option<u64>,
     modify_window: Option<u64>,
     remove_source_files: bool,
@@ -305,6 +307,8 @@ impl ClientConfigBuilder {
             min_file_size: self.min_file_size,
             max_file_size: self.max_file_size,
             block_size_override: self.block_size_override,
+            rayon_threads: self.rayon_threads,
+            tokio_threads: self.tokio_threads,
             max_alloc: self.max_alloc,
             modify_window: self.modify_window,
             remove_source_files: self.remove_source_files,

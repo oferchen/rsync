@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 
 use std::ffi::OsString;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -37,6 +37,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) min_size_limit: Option<u64>,
     pub(crate) max_size_limit: Option<u64>,
     pub(crate) block_size_override: Option<NonZeroU32>,
+    pub(crate) rayon_threads: Option<NonZeroUsize>,
+    pub(crate) tokio_threads: Option<NonZeroUsize>,
     pub(crate) max_alloc: Option<u64>,
     pub(crate) backup: bool,
     pub(crate) backup_dir: Option<PathBuf>,
@@ -179,6 +181,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .min_file_size(inputs.min_size_limit)
         .max_file_size(inputs.max_size_limit)
         .block_size_override(inputs.block_size_override)
+        .rayon_threads(inputs.rayon_threads)
+        .tokio_threads(inputs.tokio_threads)
         .max_alloc(inputs.max_alloc)
         .backup(inputs.backup)
         .backup_directory(inputs.backup_dir.clone())
