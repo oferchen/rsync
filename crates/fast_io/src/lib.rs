@@ -130,8 +130,8 @@ pub mod iocp;
 pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use platform_copy::{
-    CopyMethod, CopyResult, DefaultPlatformCopy, PlatformCopy, try_clonefile, try_fcopyfile,
-    try_ficlone, try_refs_reflink,
+    CopyMethod, CopyResult, DefaultPlatformCopy, NoCowPlatformCopy, PlatformCopy, try_clonefile,
+    try_fcopyfile, try_ficlone, try_refs_reflink,
 };
 pub use traits::{FileReader, FileWriter};
 
@@ -422,6 +422,38 @@ pub enum IoUringPolicy {
     Disabled,
 }
 
+/// Policy controlling copy-on-write reflink usage for whole-file copies.
+///
+/// This enum allows callers to disable CoW (`FICLONE`/`copy_file_range` on
+/// Linux, `clonefile`/`fcopyfile` on macOS, `FSCTL_DUPLICATE_EXTENTS`/
+/// `CopyFileExW` on Windows) and force the portable `std::fs::copy`
+/// fallback. Useful for benchmarking, diagnostics, or when downstream
+/// tooling does not handle reflinks correctly.
+///
+/// The `--cow` (default) and `--no-cow` CLI flags map onto this enum:
+/// - `--cow` selects [`CowPolicy::Auto`].
+/// - `--no-cow` selects [`CowPolicy::Disabled`].
+///
+/// The default is [`CowPolicy::Auto`], which delegates to
+/// [`super::DefaultPlatformCopy`] and uses the best available reflink
+/// mechanism with portable fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CowPolicy {
+    /// Auto-detect reflink support and use it when available (default).
+    ///
+    /// Delegates to [`super::DefaultPlatformCopy`] which selects the best
+    /// available copy mechanism per platform with portable fallback.
+    #[default]
+    Auto,
+    /// Disable copy-on-write reflinks; always use portable `std::fs::copy`.
+    ///
+    /// Forces every whole-file copy through the standard buffered fallback,
+    /// bypassing `FICLONE`, `copy_file_range`, `clonefile`, `fcopyfile`,
+    /// `FSCTL_DUPLICATE_EXTENTS`, and `CopyFileExW`. Useful when destination
+    /// filesystems mishandle reflinks or for measuring CoW performance gains.
+    Disabled,
+}
+
 /// Policy controlling IOCP usage for file I/O on Windows.
 ///
 /// This enum allows callers to explicitly enable, disable, or auto-detect
@@ -548,6 +580,16 @@ mod tests {
         for cap in &caps {
             assert!(seen.insert(cap), "duplicate capability: {cap}");
         }
+    }
+
+    #[test]
+    fn cow_policy_default_is_auto() {
+        assert_eq!(CowPolicy::default(), CowPolicy::Auto);
+    }
+
+    #[test]
+    fn cow_policy_variants_are_distinct() {
+        assert_ne!(CowPolicy::Auto, CowPolicy::Disabled);
     }
 }
 

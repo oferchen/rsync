@@ -140,6 +140,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --fsync    Fsync updated files after writing completes.\n",
             "      --io-uring   Force io_uring for file I/O (policy=enabled); error if unavailable. Default policy is auto: probe kernel and fall back to standard I/O.\n",
             "      --no-io-uring  Disable io_uring (policy=disabled); always use standard buffered I/O even when the kernel supports io_uring.\n",
+            "      --cow        Allow copy-on-write reflinks for whole-file copies (default).\n",
+            "      --no-cow     Disable copy-on-write reflinks; always use the portable std::fs::copy fallback.\n",
             "      --inplace    Write updated data directly to destination files.\n",
             "      --no-inplace Use temporary files when updating regular files.\n",
             "  -h, --human-readable  Output numbers in a human-readable format.\n",
