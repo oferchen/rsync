@@ -750,8 +750,8 @@ Recommended landing sequence for #1655:
 
 ### Unsafe boundary
 
-Per `feedback_unsafe_code_policy.md` and the `[Unsafe Code Policy]` in
-`/Users/ofer/devel/CLAUDE.md`, the trait must stay in `fast_io` - the only
+Per `feedback_unsafe_code_policy.md` and the project's unsafe-code
+policy, the trait must stay in `fast_io` - the only
 crate that may currently contain `unsafe`. Every backend that touches
 io_uring, OVERLAPPED, libdispatch, or `writev` keeps its `#[allow(unsafe_code)]`
 inside `crates/fast_io/src/`. Engine and transfer hold only the
@@ -762,9 +762,10 @@ new trait is what makes the boundary practically enforceable.
 
 ### Long-term consolidation
 
-CLAUDE.md states: "Consolidate all unsafe code into `fast_io` as the
-single crate permitted to contain unsafe code. New unsafe code should go
-into `fast_io` and expose safe public APIs." `AsyncFileWriter` is exactly
+The project's unsafe-code policy states: "Consolidate all unsafe code
+into `fast_io` as the single crate permitted to contain unsafe code. New
+unsafe code should go into `fast_io` and expose safe public APIs."
+`AsyncFileWriter` is exactly
 this pattern: every io_uring SQE, every OVERLAPPED, every
 `dispatch_io_write` is wrapped behind a single safe trait method. After
 phase 4, `crates/transfer` and `crates/engine` no longer reference any

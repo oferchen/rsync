@@ -3,7 +3,7 @@ name: Coverage
 # Measures test line + branch coverage with cargo-llvm-cov on Linux.
 # Runs on every push to master and on pull requests touching code paths.
 # This job is informational and non-blocking - it must not gate master.
-# Tracks the CLAUDE.md target of >= 95% line coverage; gate is currently
+# Tracks the project's >= 95% line coverage target; gate is currently
 # pinned at 84% (see --fail-under-lines below) and tightened incrementally
 # as coverage improves.
 on:
@@ -75,7 +75,7 @@ jobs:
       # --branch enables LLVM branch coverage instrumentation (-C instrument-coverage=branch).
       # The profraw data then supports both line and branch coverage reports.
       # --fail-under-lines enforces the line coverage threshold only.
-      # Currently pinned at 84; CLAUDE.md target is >= 95. Raise incrementally.
+      # Currently pinned at 84; project target is >= 95. Raise incrementally.
       # continue-on-error makes the gate informational - the surrounding job
       # still uploads artifacts and the step summary even if the threshold trips.
       - name: Generate LCOV coverage report and enforce threshold
@@ -102,7 +102,7 @@ jobs:
           TOTAL_LINE=$(echo "$SUMMARY" | grep '^TOTAL' || true)
           TOTAL_BRANCH=$(echo "$BRANCH_SUMMARY" | grep '^TOTAL' || true)
           printf '## Coverage Report\n\n' >> "$GITHUB_STEP_SUMMARY"
-          printf 'Target: >= 95%% line coverage (CLAUDE.md). Gate: 84%% (informational).\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf 'Target: >= 95%% line coverage (project policy). Gate: 84%% (informational).\n\n' >> "$GITHUB_STEP_SUMMARY"
           printf '| Metric | Value |\n' >> "$GITHUB_STEP_SUMMARY"
           printf '|--------|-------|\n' >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$TOTAL_LINE" ]; then

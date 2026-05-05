@@ -683,7 +683,8 @@ observable effect on the bytes that go on the wire. The protocol crate
 confirms this: a workspace search for `io_uring` or `IoUring` in
 `crates/protocol/src/` returns no matches. The protocol layer does not
 import `fast_io` at all - it depends only on `checksums`, `filters`,
-`compress`, and `bandwidth` (see the dependency graph in `CLAUDE.md`).
+`compress`, and `bandwidth` (see the workspace dependency graph in the
+project conventions document).
 
 This is consistent with `feedback_no_wire_protocol_features.md`:
 sharing rings is a `fast_io`-internal optimisation, not a wire feature.
@@ -802,8 +803,8 @@ Constraints that must hold across all four steps:
   `feedback_no_wire_protocol_features.md` and confirmed by the empty
   search for `io_uring` in `crates/protocol/src/`.
 - **All unsafe code stays in `fast_io`.** Per
-  `feedback_unsafe_code_policy.md` and the unsafe-code policy in
-  `CLAUDE.md`. The pool is a `fast_io` concern; `transfer` and
+  `feedback_unsafe_code_policy.md` and the project's unsafe-code policy.
+  The pool is a `fast_io` concern; `transfer` and
   `core` only see `Send`-safe handles.
 - **Fallback chain unchanged from the user's perspective.**
   `IoUringPolicy::Auto` continues to mean "best-effort"; the only

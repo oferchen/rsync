@@ -491,8 +491,8 @@ Recommendation: stay on `encoding_rs`. Detailed rationale lives in
 | Thread-safe converter | `&'static Encoding`: free `Sync` | `iconv_t`: not safe across threads in glibc | inherits system iconv constraints |
 | Already a dependency | yes | no | no |
 
-The unsafe-code policy in `/Users/ofer/devel/CLAUDE.md` forbids unsafe
-in `protocol`. A direct `iconv` FFI binding is therefore not an
+The project's unsafe-code policy forbids unsafe in `protocol`. A direct
+`iconv` FFI binding is therefore not an
 option. The `iconv` Rust crate wraps `libiconv` with a safer API but
 still requires linking system iconv on Windows (via `win-iconv`)
 and on musl-static builds. `encoding_rs` is pure Rust, ships with

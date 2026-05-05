@@ -37,9 +37,9 @@ What this RFC does NOT change:
   `transfer`, `compress`, `checksums`, `signature`, `bandwidth`,
   `filters`, `metadata`, and `rsync_io` crates do not gain any tokio
   dependency or become async. Per the project's tokio-scope policy
-  (CLAUDE.md "Audit tokio dependency scope" pair, tasks #1779 and
-  #1818), tokio MUST stay confined to `daemon` (and behind `core`'s
-  optional `async` feature, which we reuse without changes).
+  (tasks #1779 and #1818), tokio MUST stay confined to `daemon` (and
+  behind `core`'s optional `async` feature, which we reuse without
+  changes).
 - No wire protocol change. No new capability flag. No new option on
   `oc-rsyncd.conf` beyond an opt-in toggle wired in #1935. No
   observable on-the-wire behaviour difference vs the synchronous

@@ -297,7 +297,7 @@ and document task.
 
 Source tree (when present):
 `target/interop/upstream-src/rsync-3.4.1/`. Fetch instructions live in
-`/Users/ofer/devel/CLAUDE.md`.
+the project conventions document.
 
 - `flist.c::iconv_filename` and the `iconvbufs(ic_send/ic_recv, ...)`
   call-outs at `flist.c:738-754, 1127-1150, 1579-1603, 1605-1621` -

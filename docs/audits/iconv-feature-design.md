@@ -11,8 +11,8 @@ is in PR #1840 (`docs/audits/iconv-pipeline.md`) and PR #1996.
 `target/interop/upstream-src/rsync-3.4.1/`; that tree is absent from
 this checkout, so file/line references below come from
 `docs/audits/iconv-pipeline.md` (PR #1840, written with the tarball
-unpacked). The fetch command in `/Users/ofer/devel/CLAUDE.md` rehydrates
-it. Behavioural prose is cross-checked against
+unpacked). The repo-root project conventions document a fetch command
+that rehydrates it. Behavioural prose is cross-checked against
 `docs/oc-rsync.1.md:688-693` and the upstream `rsync.1` section
 "USING --iconv FOR CHARACTER SET CONVERSIONS".
 

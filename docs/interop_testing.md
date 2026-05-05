@@ -360,7 +360,6 @@ grep -c "^fn test_" crates/core/tests/upstream_client_to_oc_daemon_interop.rs
 
 ## Related Documentation
 
-- [CLAUDE.md](../CLAUDE.md) - Overall architecture and conventions
 - [Protocol Documentation](../crates/protocol/README.md) - Wire protocol details
 - [Daemon Implementation](../crates/daemon/README.md) - Daemon internals
 

@@ -92,8 +92,8 @@ bits 0-23) is documented inline at `crates/protocol/src/multiplex/mod.rs:9-14`.
 
 ### Client orchestration entry points
 
-CLAUDE.md references `core::session()`, but the actual public entry points on
-master are:
+The project conventions document references `core::session()`, but the actual
+public entry points on master are:
 
 - `crates/core/src/client/run/mod.rs:113` - `pub fn run_client(config: ClientConfig)`
 - `crates/core/src/client/run/mod.rs:166` - `pub fn run_client_with_observer(...)`
@@ -287,7 +287,7 @@ and the daemon path. The orchestration entry point
 not need a new injection point - the test seam is one layer down, where the
 `Read+Write` is constructed.
 
-This honours the project's design pattern guidance from CLAUDE.md:
+This honours the project's design-pattern guidance:
 
 - **Strategy Pattern.** `ReplayMode::Strict` vs `ReplayMode::Structural`
   are interchangeable strategies behind one type.
@@ -410,7 +410,7 @@ understands with a clear error pointing at the recorder's version. The
 - Existing env-var patterns: `crates/cli/src/frontend/execution/drive/options.rs:374`
   (`OC_RSYNC_FORCE_NO_COMPRESS`), `crates/branding/build.rs:14`
   (`OC_RSYNC_BUILD_OVERRIDE`).
-- Design pattern guidance: CLAUDE.md "Strategy Pattern" and "Dependency
+- Design-pattern guidance: project's "Strategy Pattern" and "Dependency
   Inversion" notes - both directly applicable here.
 
 ## Summary

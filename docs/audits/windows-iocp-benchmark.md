@@ -348,8 +348,9 @@ For each invocation of `scripts/benchmark_windows.ps1`:
 - Each measurement run runs in its own destination directory and deletes
   the directory afterward. **Never use `Remove-Item -Recurse -Force` on a
   variable-expanded path that could be empty - it has bitten this project
-  before (per `CLAUDE.md` "Containers & Bind Mounts" pitfall).** The xtask
-  runner uses a typed `PathBuf` and refuses to delete the workspace root.
+  before (per the project's "Containers & Bind Mounts" pitfall).** The
+  xtask runner uses a typed `PathBuf` and refuses to delete the workspace
+  root.
 
 ## 4. Parity with existing scripts
 

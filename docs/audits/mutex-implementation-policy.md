@@ -6,7 +6,8 @@ Tracking issue: oc-rsync task #1781.
 
 This audit verifies that the oc-rsync workspace honours the project policy
 "prefer `std` unless a well-supported external crate provides a substantial,
-documented advantage" (CLAUDE.md, Code Quality section) for synchronisation
+documented advantage" (Code Quality section of the project conventions) for
+synchronisation
 primitives. The conclusion is that no first-party code in the workspace uses
 `parking_lot::Mutex`, `parking_lot::RwLock`, `parking_lot_core`, or `spin`
 directly. There are no `use parking_lot` imports, no `parking_lot::` paths in
@@ -143,7 +144,7 @@ uses (classifications (a) and (b)). The two classification (b) entries are:
   not on the byte path). The session registry is touched at session
   start/end. None of this is on the bytes-per-second hot path for a
   transfer.
-- Note: the policy in CLAUDE.md is about `std::sync::Mutex` /
+- Note: the project policy is about `std::sync::Mutex` /
   `std::sync::RwLock` versus `parking_lot::Mutex` /
   `parking_lot::RwLock`. `dashmap` is a sharded concurrent map, not a
   parking_lot wrapper; the `parking_lot_core` use is internal to the crate
@@ -272,8 +273,8 @@ Concrete TODOs, in priority order:
 
 ## References
 
-- Policy source: `CLAUDE.md` "Code Quality" section ("prefer std unless a
-  well-supported external crate provides a substantial, documented
+- Policy source: project conventions, "Code Quality" section ("prefer std
+  unless a well-supported external crate provides a substantial, documented
   advantage").
 - Workspace dependencies block: `Cargo.toml:180-209` (no `parking_lot`
   entry).

@@ -1,6 +1,6 @@
 # ServerConfig Decomposition Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For implementers:** Work through this plan task-by-task; complete each before moving to the next.
 
 **Goal:** Break ServerConfig (27 fields) into focused sub-configs using the Parameter Object pattern, reducing construction boilerplate from 27 fields to ~5 grouped structs, each with `Default`.
 
