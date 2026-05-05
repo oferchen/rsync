@@ -65,12 +65,8 @@ impl DeleteStats {
 
     /// Writes the delete stats to a stream in wire format.
     ///
-    /// Wire format (all varint):
-    /// - files (excluding dirs/symlinks/devices/specials)
-    /// - dirs
-    /// - symlinks
-    /// - devices
-    /// - specials
+    /// Encodes the five counters (files, dirs, symlinks, devices, specials)
+    /// in order, each as a varint.
     ///
     /// # Errors
     ///
