@@ -1,3 +1,7 @@
+//! `FilterProgram` aggregate: ordered filter instructions plus per-directory
+//! merge and exclude-if-present rules, along with the upstream-mapped exit
+//! code constants surfaced when filter evaluation aborts a transfer.
+
 use std::path::Path;
 
 #[cfg(all(unix, feature = "xattr"))]
@@ -29,7 +33,7 @@ pub(crate) const TIMEOUT_EXIT_CODE: i32 = 30;
 /// Exit code returned when the connection setup exceeds the configured timeout.
 ///
 /// Maps to upstream rsync's `RERR_CONTIMEOUT` (35) and `core::exit_code::ExitCode::ConnectionTimeout`.
-#[allow(dead_code)] // upstream exit code constant - will be used when filter program handles connection timeouts
+#[allow(dead_code)] // upstream exit code constant; reserved for connection-timeout reporting
 pub(crate) const CONNECTION_TIMEOUT_EXIT_CODE: i32 = 35;
 
 /// Exit code returned when source files vanished during transfer.
