@@ -1,9 +1,15 @@
 //! Legacy ASCII `@RSYNCD:` negotiation helpers shared by daemon clients and servers.
 //!
-//! The legacy path is used when either peer is limited to protocols older than 30. This
-//! module groups the prefix constants together with the byte-, string-, and structured
-//! parsers that mirror upstream rsync's wire formatting for greetings, error banners,
-//! and warning lines.
+//! The legacy path is the only daemon handshake before the binary multiplex stream
+//! takes over. It is the sole negotiation form for peers limited to protocols older
+//! than 30, and remains the bootstrap exchange even at protocol 32: the version
+//! line, optional subprotocol suffix, and digest list are all transported as ASCII
+//! `@RSYNCD:` records before the connection switches to framed I/O. This module
+//! groups the prefix constants together with the byte-, string-, and structured
+//! parsers that mirror upstream rsync's wire formatting for greetings, error
+//! banners, and warning lines.
+//!
+//! upstream: clientserver.c:read_line / start_inband_exchange (rsync 3.4.1)
 
 use crate::error::NegotiationError;
 
@@ -51,12 +57,23 @@ pub use lines::{
     parse_legacy_error_message, parse_legacy_warning_message, write_legacy_daemon_message,
 };
 
+/// Builds a [`NegotiationError::MalformedLegacyGreeting`] from a trimmed legacy line.
+///
+/// Captures the offending input verbatim so diagnostics can echo what the daemon sent,
+/// matching upstream rsync's `@ERROR: protocol startup error` flow that includes the
+/// greeting bytes verbatim.
+///
+/// upstream: clientserver.c:read_line (`@ERROR: protocol startup error`)
 pub(super) fn malformed_legacy_greeting(trimmed: &str) -> NegotiationError {
     NegotiationError::MalformedLegacyGreeting {
         input: trimmed.to_owned(),
     }
 }
 
+/// Renders a possibly invalid byte sequence into a trimmed lossy [`String`] for diagnostics.
+///
+/// Trailing CR/LF terminators are removed so error messages match the canonical
+/// trimmed form that upstream rsync echoes back to the user when rejecting a greeting.
 pub(super) fn lossy_trimmed_input(bytes: &[u8]) -> String {
     let mut owned = String::from_utf8_lossy(bytes).into_owned();
     let trimmed_len = owned.trim_end_matches(['\r', '\n']).len();
