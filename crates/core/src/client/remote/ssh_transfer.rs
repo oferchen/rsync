@@ -292,6 +292,10 @@ fn build_ssh_connection(
 
     ssh.set_remote_command(invocation_args);
 
+    if config.compress() && ssh.has_ssh_compression() {
+        warn_double_compression_once();
+    }
+
     // upstream: pipe.c:85 - SSH spawn failures return IPC error code.
     let mut connection = ssh.spawn().map_err(|e| {
         invalid_argument_error(
@@ -677,6 +681,25 @@ fn build_server_config_for_generator(
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
+}
+
+/// Emits a one-time warning to stderr when SSH built-in compression and
+/// rsync `--compress` are both active.
+///
+/// Compressing twice wastes CPU and may expand already-compressed data.
+/// Upstream rsync does not detect this case; this is an oc-rsync usability
+/// enhancement. Detection is conservative: it only inspects the SSH
+/// command-line arguments built up from `-e`/`--rsh` and friends and does
+/// not parse `~/.ssh/config`, since that file is merged at spawn time and
+/// we cannot reliably read it.
+fn warn_double_compression_once() {
+    static EMITTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    EMITTED.get_or_init(|| {
+        eprintln!(
+            "rsync warning: SSH compression (-C / -o Compression=yes) and rsync --compress \
+             both enabled; double compression wastes CPU. Disable one."
+        );
+    });
 }
 
 #[cfg(test)]
