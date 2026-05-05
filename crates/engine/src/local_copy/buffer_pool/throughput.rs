@@ -246,6 +246,7 @@ impl ThroughputTracker {
 }
 
 impl Default for ThroughputTracker {
+    /// Creates a tracker with the default smoothing factor ([`DEFAULT_ALPHA`]).
     fn default() -> Self {
         Self::new()
     }
