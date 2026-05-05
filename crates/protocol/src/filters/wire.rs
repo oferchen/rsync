@@ -185,11 +185,11 @@ pub fn read_filter_list(
     let mut rules = Vec::new();
 
     loop {
-        // Read 4-byte little-endian integer (matches upstream read_int())
         let len = read_i32_le(reader)?;
 
         if len == 0 {
-            break; // Terminator
+            // Wire-format terminator (zero-length record).
+            break;
         }
 
         if len < 0 {
@@ -225,7 +225,8 @@ pub fn write_filter_list<W: Write>(
         writer.write_all(&bytes)?;
     }
 
-    write_i32_le(writer, 0)?; // Terminator
+    // Wire-format terminator (zero-length record).
+    write_i32_le(writer, 0)?;
     Ok(())
 }
 
@@ -363,7 +364,6 @@ fn parse_wire_rule_modern(
         negate: false,
     };
 
-    // Parse modifier flags
     let mut pattern_start = 1;
     for (i, c) in chars.enumerate() {
         match c {
@@ -408,17 +408,17 @@ fn parse_wire_rule_modern(
                 pattern_start += 1;
             }
             ' ' => {
+                // Trailing space terminates the modifier section per upstream
+                // exclude.c parser.
                 pattern_start += 1;
-                break; // Trailing space ends modifiers
+                break;
             }
-            _ => break, // Start of pattern
+            _ => break,
         }
     }
 
-    // Extract pattern (remaining text)
     let pattern_text = &text[pattern_start..];
 
-    // Check for trailing slash (directory-only)
     if let Some(stripped) = pattern_text.strip_suffix('/') {
         rule.directory_only = true;
         stripped.clone_into(&mut rule.pattern);
