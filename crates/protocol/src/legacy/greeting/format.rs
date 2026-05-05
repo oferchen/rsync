@@ -108,7 +108,6 @@ mod tests {
     #[test]
     fn greeting_contains_version_and_minor() {
         let greeting = format_legacy_daemon_greeting(ProtocolVersion::V32);
-        // Format is "@RSYNCD: 32.0\n"
         assert!(greeting.contains(".0"));
     }
 }
