@@ -1,6 +1,5 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
-// Note: unsafe code is used in batched_stat for syscall optimizations
 
 //! # Overview
 //!
