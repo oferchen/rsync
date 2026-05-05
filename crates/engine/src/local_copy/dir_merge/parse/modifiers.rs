@@ -9,6 +9,12 @@ fn trim_short_rule_remainder(remainder: &str) -> &str {
     remainder
 }
 
+/// Splits the modifier prefix of a short-form `+`/`-` rule from its pattern.
+///
+/// Returns `(modifiers, pattern)` where `modifiers` is the contiguous run of
+/// modifier characters following the rule sigil and `pattern` is the
+/// remaining text with separating commas, underscores, and whitespace
+/// stripped. A leading separator yields empty modifiers.
 pub(super) fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
     if text.is_empty() {
         return ("", "");
@@ -37,6 +43,12 @@ pub(super) fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
     ("", text)
 }
 
+/// Splits the modifier prefix of a short-form merge directive (`.`/`:`).
+///
+/// Only the characters valid as merge modifiers are consumed. The base set is
+/// `+`, `-`, `c`, `w`, `s`, `r`, `p`, `/`; passing `allow_extended` true
+/// additionally accepts `e` and `n` (the `dir-merge`-only modifiers). Stops
+/// at the first non-modifier character, separator, or end of input.
 pub(super) fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (&str, &str) {
     if text.is_empty() {
         return ("", "");
@@ -79,6 +91,14 @@ pub(super) fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (
     (&text[..end], "")
 }
 
+/// Parses the modifier characters of a `merge` or `dir-merge` directive into
+/// concrete `DirMergeOptions` plus an `assume_cvsignore` flag.
+///
+/// `allow_extended` selects between plain `merge` semantics (only `+`, `-`,
+/// `c` accepted) and `dir-merge` semantics (all modifiers accepted). Errors
+/// on unsupported characters and on conflicting `+`/`-` or `+`/`c`
+/// combinations. Plain `merge` directives implicitly enable list-clearing to
+/// match upstream behaviour.
 pub(super) fn parse_merge_modifiers(
     modifiers: &str,
     directive: &str,
