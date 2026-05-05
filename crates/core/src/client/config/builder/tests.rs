@@ -1418,10 +1418,11 @@ fn inc_recursive_send_false_clears_flag() {
 }
 
 #[test]
-fn default_inc_recursive_send_is_true() {
-    // Mirrors upstream `allow_inc_recurse = 1` (compat.c).
+fn default_inc_recursive_send_is_false() {
+    // Sender-side INC_RECURSE is opt-in until the sender state machine is
+    // validated against upstream rsync 3.0.9 / 3.1.3 / 3.4.1. Tracker #1862.
     let config = builder().build();
-    assert!(config.inc_recursive_send());
+    assert!(!config.inc_recursive_send());
 }
 
 #[test]

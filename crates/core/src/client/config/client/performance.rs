@@ -231,10 +231,12 @@ mod tests {
         assert!(!config.qsort());
     }
 
-    // upstream: allow_inc_recurse = 1 (default).
+    // Sender-side INC_RECURSE is opt-in: defaults to false until the sender-side
+    // state machine is validated against upstream rsync 3.0.9 / 3.1.3 / 3.4.1.
+    // See tracker #1862. Pull transfers are unaffected.
     #[test]
-    fn inc_recursive_send_default_is_true() {
+    fn inc_recursive_send_default_is_false() {
         let config = default_config();
-        assert!(config.inc_recursive_send());
+        assert!(!config.inc_recursive_send());
     }
 }

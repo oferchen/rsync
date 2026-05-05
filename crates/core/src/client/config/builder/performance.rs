@@ -157,10 +157,11 @@ impl ClientConfigBuilder {
     /// Sets whether oc-rsync advertises the INC_RECURSE (`'i'`) capability
     /// during connection setup.
     ///
-    /// Mirrors upstream's `allow_inc_recurse` global, which defaults to `1`
-    /// and is cleared by `--no-inc-recursive`. When unset (the default at
-    /// build time), the capability is advertised in both transfer
-    /// directions, matching upstream rsync 3.4.1.
+    /// Defaults to `false` while sender-side incremental recursion is
+    /// validated against upstream rsync 3.0.9 / 3.1.3 / 3.4.1; pass `true`
+    /// (or `--inc-recursive` on the CLI) to opt in. `--no-inc-recursive`
+    /// also clears the flag, matching upstream `set_allow_inc_recurse()`
+    /// when `--no-inc-recursive` is the only signal.
     ///
     /// # Upstream Reference
     ///

@@ -22,7 +22,7 @@ fn builds_receiver_invocation_with_sender_flag() {
     assert_eq!(args[2], "--sender");
     let flags = args[3].to_string_lossy();
     assert!(flags.starts_with('-'), "flags should start with -: {flags}");
-    let expected_caps = build_capability_string(true);
+    let expected_caps = build_capability_string(false);
     assert_eq!(args[4], *expected_caps);
     assert_eq!(args[5], ".");
     assert_eq!(args[6], "/remote/path");
@@ -40,16 +40,17 @@ fn builds_sender_invocation_no_sender_flag() {
     // No --sender flag for push - flags come next
     let flags = args[2].to_string_lossy();
     assert!(flags.starts_with('-'), "flags should start with -: {flags}");
-    let expected_caps = build_capability_string(true);
+    let expected_caps = build_capability_string(false);
     assert_eq!(args[3], *expected_caps);
     assert_eq!(args[4], ".");
     assert_eq!(args[5], "/remote/path");
 }
 
 #[test]
-fn ssh_sender_advertises_inc_recurse_capability_by_default() {
-    // Default: SSH push transfers advertise the 'i' capability bit, mirroring
-    // upstream rsync's `allow_inc_recurse = 1` initialization. Tracker #1862.
+fn ssh_sender_omits_inc_recurse_capability_by_default() {
+    // Sender-side INC_RECURSE is opt-in: SSH push transfers omit the 'i'
+    // capability bit by default while the sender-side state machine is
+    // validated against upstream rsync. Tracker #1862.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/remote/path");
@@ -60,10 +61,10 @@ fn ssh_sender_advertises_inc_recurse_capability_by_default() {
         .expect("capability string present");
     let caps_str = caps.to_string_lossy();
     assert!(
-        caps_str.contains('i'),
-        "default sender capability string must advertise 'i': {caps_str}"
+        !caps_str.contains('i'),
+        "default sender capability string must omit 'i': {caps_str}"
     );
-    assert_eq!(*caps, *build_capability_string(true));
+    assert_eq!(*caps, *build_capability_string(false));
 }
 
 #[test]
@@ -87,9 +88,10 @@ fn ssh_sender_omits_inc_recurse_when_no_inc_recursive_set() {
 }
 
 #[test]
-fn ssh_receiver_advertises_inc_recurse_capability_by_default() {
-    // Pull transfers (local is receiver) also advertise 'i' by default so the
-    // remote sender's `set_allow_inc_recurse()` keeps `allow_inc_recurse = 1`.
+fn ssh_receiver_omits_inc_recurse_capability_by_default() {
+    // Sender-side INC_RECURSE is gated by `inc_recursive_send` which defaults
+    // to false; the SSH capability builder reads only that flag, so pull
+    // transfers also omit 'i' by default. Tracker #1862.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/remote/path");
@@ -100,8 +102,8 @@ fn ssh_receiver_advertises_inc_recurse_capability_by_default() {
         .expect("capability string present");
     let caps_str = caps.to_string_lossy();
     assert!(
-        caps_str.contains('i'),
-        "default receiver capability string must advertise 'i': {caps_str}"
+        !caps_str.contains('i'),
+        "default receiver capability string must omit 'i': {caps_str}"
     );
 }
 
