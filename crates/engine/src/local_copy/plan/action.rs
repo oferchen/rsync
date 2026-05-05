@@ -80,7 +80,6 @@ mod tests {
             LocalCopyAction::SourceRemoved,
         ];
 
-        // Each action should be equal only to itself
         for (i, a) in actions.iter().enumerate() {
             for (j, b) in actions.iter().enumerate() {
                 if i == j {
