@@ -60,21 +60,18 @@ where
         &args[1..]
     };
 
-    // Parse all long-form flags from the argument list.
     let long_flags = parse_server_long_flags(effective_slice);
 
-    // Extract the compact flag string and positional args.
     let (flag_string, positional_args) = parse_server_flag_string_and_args(effective_slice);
 
-    // Determine role from --sender flag. Default is Receiver when neither
-    // --sender nor --receiver is specified (upstream: main.c server_sender check).
+    // upstream: main.c server_sender check - default to Receiver when neither
+    // --sender nor --receiver is specified.
     let role = if long_flags.is_sender {
         ServerRole::Generator
     } else {
         ServerRole::Receiver
     };
 
-    // Build server configuration
     let mut config =
         match ServerConfig::from_flag_string_and_args(role, flag_string, positional_args) {
             Ok(cfg) => cfg,
@@ -94,7 +91,7 @@ where
         return code;
     }
 
-    // Apply boolean and move flags after value parsing borrows long_flags.
+    // Boolean and move-only flags applied after value parsing releases its borrow.
     config.deletion.ignore_errors = long_flags.ignore_errors;
     config.write.fsync = long_flags.fsync;
     config.write.io_uring_policy = long_flags.io_uring_policy;
@@ -133,7 +130,6 @@ where
         }
     }
 
-    // Run native server with stdio
     match run_server_stdio(config, &mut stdin, stdout, None) {
         Ok(_stats) => 0,
         Err(e) => {

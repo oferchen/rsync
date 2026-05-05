@@ -18,24 +18,21 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
     for arg in args {
         let arg_str = arg.to_string_lossy();
 
-        // Skip known long-form arguments and secluded-args flag
         if is_known_server_long_flag(&arg_str) {
             continue;
         }
 
-        // First arg starting with '-' is the flag string
         if !found_flags && arg_str.starts_with('-') {
             flag_string = arg_str.into_owned();
             found_flags = true;
             continue;
         }
 
-        // Skip the "." separator if present (upstream uses this as a placeholder)
+        // upstream uses "." as a placeholder separator between flags and paths
         if found_flags && arg_str == "." {
             continue;
         }
 
-        // Everything else is a positional argument
         if found_flags {
             positional_args.push(arg.clone());
         }
