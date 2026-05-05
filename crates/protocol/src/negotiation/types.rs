@@ -423,7 +423,6 @@ pub const fn detect_negotiation_prologue(buffer: &[u8]) -> NegotiationPrologue {
 mod tests {
     use super::*;
 
-    // Tests for BufferedPrefixTooSmall
     #[test]
     fn buffered_prefix_too_small_new() {
         let err = BufferedPrefixTooSmall::new(100, 50);
@@ -439,7 +438,6 @@ mod tests {
 
     #[test]
     fn buffered_prefix_too_small_missing_saturates() {
-        // When available exceeds required, missing should be 0
         let err = BufferedPrefixTooSmall::new(50, 100);
         assert_eq!(err.missing(), 0);
     }
@@ -478,7 +476,6 @@ mod tests {
         assert_eq!(err, copy);
     }
 
-    // Tests for ParseNegotiationPrologueError
     #[test]
     fn parse_error_empty_kind() {
         let err = ParseNegotiationPrologueError::new(ParseNegotiationPrologueErrorKind::Empty);
@@ -511,7 +508,6 @@ mod tests {
         assert_eq!(err.clone(), err);
     }
 
-    // Tests for NegotiationPrologue
     #[test]
     fn negotiation_prologue_as_str() {
         assert_eq!(NegotiationPrologue::NeedMoreData.as_str(), "need-more-data");
@@ -675,7 +671,6 @@ mod tests {
         assert!(set.contains(&NegotiationPrologue::LegacyAscii));
     }
 
-    // Tests for detect_negotiation_prologue
     #[test]
     fn detect_negotiation_prologue_empty() {
         assert_eq!(

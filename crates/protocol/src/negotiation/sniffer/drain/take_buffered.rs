@@ -147,8 +147,6 @@ mod tests {
         NegotiationPrologueSniffer::new()
     }
 
-    // ==== take_buffered tests ====
-
     #[test]
     fn take_buffered_returns_vec_for_binary() {
         let mut sniffer = create_binary_sniffer();
@@ -186,8 +184,6 @@ mod tests {
         assert!(buffered.len() > 8);
     }
 
-    // ==== take_buffered_into tests ====
-
     #[test]
     fn take_buffered_into_fills_target() {
         let mut sniffer = create_binary_sniffer();
@@ -223,8 +219,6 @@ mod tests {
         assert!(target.starts_with(b"@RSYNCD:"));
     }
 
-    // ==== take_buffered_into_slice tests ====
-
     #[test]
     fn take_buffered_into_slice_copies_all() {
         let mut sniffer = create_binary_sniffer();
@@ -248,8 +242,6 @@ mod tests {
         let len = sniffer.take_buffered_into_slice(&mut buf).unwrap();
         assert_eq!(len, 0);
     }
-
-    // ==== take_buffered_into_vectored tests ====
 
     #[test]
     fn take_buffered_into_vectored_copies_across_slices() {
@@ -281,8 +273,6 @@ mod tests {
         assert_eq!(len, 0);
     }
 
-    // ==== take_buffered_into_array tests ====
-
     #[test]
     fn take_buffered_into_array_copies_all() {
         let mut sniffer = create_binary_sniffer();
@@ -290,8 +280,6 @@ mod tests {
         let len = sniffer.take_buffered_into_array(&mut buf).unwrap();
         assert!(len > 0);
     }
-
-    // ==== take_buffered_into_writer tests ====
 
     #[test]
     fn take_buffered_into_writer_writes_all() {
@@ -309,8 +297,6 @@ mod tests {
         let len = sniffer.take_buffered_into_writer(&mut writer).unwrap();
         assert_eq!(len, 0);
     }
-
-    // ==== Edge cases ====
 
     #[test]
     fn take_operations_on_partial_legacy_prefix() {

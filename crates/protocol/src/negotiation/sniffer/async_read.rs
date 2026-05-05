@@ -1,8 +1,6 @@
-//! crates/protocol/src/negotiation/sniffer/async_read.rs
-//!
 //! Async I/O extensions for [`NegotiationPrologueSniffer`].
 //!
-//! This module provides async read functionality using tokio's [`AsyncRead`] trait,
+//! Provides async read functionality using tokio's [`AsyncRead`] trait,
 //! enabling non-blocking negotiation detection in async contexts.
 
 use std::io;
@@ -54,7 +52,6 @@ impl NegotiationPrologueSniffer {
     where
         R: AsyncRead + Unpin,
     {
-        // Check if we already have a decision
         match self.detector.decision() {
             Some(decision) if !self.needs_more_legacy_prefix_bytes(decision) => {
                 return Ok(decision);
@@ -118,7 +115,6 @@ mod tests {
     use std::io::Cursor;
     use tokio::io::AsyncRead;
 
-    /// Wrapper to make Cursor implement tokio's AsyncRead via read_buf
     struct AsyncCursor(Cursor<Vec<u8>>);
 
     impl AsyncRead for AsyncCursor {
@@ -150,7 +146,6 @@ mod tests {
 
     #[tokio::test]
     async fn async_read_detects_binary() {
-        // Binary protocol starts with non-@ byte
         let data = vec![0x00, 0x1f, 0x00, 0x00];
         let mut reader = AsyncCursor(Cursor::new(data));
         let mut sniffer = NegotiationPrologueSniffer::new();
@@ -178,7 +173,6 @@ mod tests {
 
         let result = sniffer.read_from_async(&mut reader).await.unwrap();
         assert_eq!(result, NegotiationPrologue::LegacyAscii);
-        // Sniffer should have buffered the prefix
         assert!(!sniffer.buffered().is_empty());
     }
 }

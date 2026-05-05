@@ -162,8 +162,6 @@ mod tests {
         NegotiationPrologueSniffer::new()
     }
 
-    // ==== take_buffered_remainder tests ====
-
     #[test]
     fn take_buffered_remainder_returns_remainder_only() {
         let mut sniffer = create_sniffer_with_remainder();
@@ -185,8 +183,6 @@ mod tests {
         assert_eq!(sniffer.buffered(), b"@RSYNCD:");
     }
 
-    // ==== take_buffered_remainder_into tests ====
-
     #[test]
     fn take_buffered_remainder_into_fills_target() {
         let mut sniffer = create_sniffer_with_remainder();
@@ -203,8 +199,6 @@ mod tests {
         let len = sniffer.take_buffered_remainder_into(&mut target).unwrap();
         assert_eq!(len, 0);
     }
-
-    // ==== take_buffered_remainder_into_slice tests ====
 
     #[test]
     fn take_buffered_remainder_into_slice_copies_remainder() {
@@ -235,8 +229,6 @@ mod tests {
         assert_eq!(len, 0);
     }
 
-    // ==== take_buffered_remainder_into_vectored tests ====
-
     #[test]
     fn take_buffered_remainder_into_vectored_copies_remainder() {
         let mut sniffer = create_sniffer_with_remainder();
@@ -259,8 +251,6 @@ mod tests {
         assert_eq!(len, 0);
     }
 
-    // ==== take_buffered_remainder_into_array tests ====
-
     #[test]
     fn take_buffered_remainder_into_array_copies_remainder() {
         let mut sniffer = create_sniffer_with_remainder();
@@ -270,8 +260,6 @@ mod tests {
             .unwrap();
         assert!(len > 0);
     }
-
-    // ==== take_buffered_remainder_into_writer tests ====
 
     #[test]
     fn take_buffered_remainder_into_writer_writes_remainder() {
@@ -293,8 +281,6 @@ mod tests {
             .unwrap();
         assert_eq!(len, 0);
     }
-
-    // ==== take_buffered_split_into tests ====
 
     #[test]
     fn take_buffered_split_into_separates_prefix_and_remainder() {
@@ -334,8 +320,6 @@ mod tests {
         assert_eq!(remainder_len, 0);
         assert!(remainder.is_empty());
     }
-
-    // ==== Cross-submodule edge case ====
 
     #[test]
     fn multiple_drain_calls_work_correctly() {

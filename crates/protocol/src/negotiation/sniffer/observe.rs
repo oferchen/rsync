@@ -207,8 +207,6 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    // ==== observe tests ====
-
     #[test]
     fn observe_binary_first_byte() {
         let mut sniffer = NegotiationPrologueSniffer::new();
@@ -292,8 +290,6 @@ mod tests {
         assert_eq!(consumed, 0);
     }
 
-    // ==== observe_byte tests ====
-
     #[test]
     fn observe_byte_binary() {
         let mut sniffer = NegotiationPrologueSniffer::new();
@@ -320,8 +316,6 @@ mod tests {
         assert_eq!(decision, NegotiationPrologue::LegacyAscii);
     }
 
-    // ==== reset tests ====
-
     #[test]
     fn reset_clears_state() {
         let mut sniffer = NegotiationPrologueSniffer::new();
@@ -341,8 +335,6 @@ mod tests {
         sniffer.observe(b"@RSYNCD:").unwrap();
         assert!(sniffer.is_legacy());
     }
-
-    // ==== read_from tests ====
 
     #[test]
     fn read_from_binary() {
@@ -387,8 +379,6 @@ mod tests {
         assert_eq!(decision, NegotiationPrologue::Binary);
     }
 
-    // ==== legacy_prefix_complete tests ====
-
     #[test]
     fn legacy_prefix_complete_false_initially() {
         let sniffer = NegotiationPrologueSniffer::new();
@@ -408,8 +398,6 @@ mod tests {
         sniffer.observe(b"@RSYNCD:").unwrap();
         assert!(sniffer.legacy_prefix_complete());
     }
-
-    // ==== legacy_prefix_remaining tests ====
 
     #[test]
     fn legacy_prefix_remaining_none_before_start() {
@@ -434,8 +422,6 @@ mod tests {
         // (it only returns Some(n) while prefix is incomplete)
         assert!(sniffer.legacy_prefix_remaining().is_none());
     }
-
-    // ==== State transition tests ====
 
     #[test]
     fn is_decided_false_initially() {
