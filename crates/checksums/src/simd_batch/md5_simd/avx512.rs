@@ -1,46 +1,17 @@
 //! AVX-512 16-lane parallel MD5 implementation.
 //!
-//! Processes 16 independent MD5 computations simultaneously using 512-bit ZMM registers.
+//! Processes 16 independent MD5 computations simultaneously using 512-bit ZMM
+//! registers. Requires both AVX-512F (foundation) and AVX-512BW (byte/word)
+//! - Intel Skylake-X 2017+, AMD Zen 4 2022+ - and the caller must verify both
+//! via `is_x86_feature_detected!` before invoking [`digest_x16`].
 //!
-//! # CPU Feature Requirements
-//!
-//! - **AVX-512F**: Foundation instructions (Intel Skylake-X/2017+, AMD Zen 4/2022+)
-//! - **AVX-512BW**: Byte/word instructions (same CPU generations)
-//! - Must be verified at runtime using `is_x86_feature_detected!`
-//!
-//! # Implementation Strategy
-//!
-//! This implementation uses **inline assembly** rather than intrinsics because AVX-512
-//! intrinsics require nightly Rust. Inline assembly is stable as of Rust 1.59 and provides
-//! full access to AVX-512 instructions.
+//! Uses inline assembly rather than intrinsics because AVX-512 intrinsics still
+//! require nightly Rust. The kernel exploits `vprold` for native rotates,
+//! `vpternlogd` for the MD5 auxiliary functions, and opmask register `k1` for
+//! per-lane masking. AVX-512 can throttle CPU frequency on older Skylake-X;
+//! prefer the AVX2 backend if 16-wide parallelism is not warranted.
 
 #![allow(unsafe_op_in_unsafe_fn)]
-//!
-//! The assembly implementation:
-//! - Uses ZMM registers (zmm0-zmm30) for 512-bit operations
-//! - Leverages `vprold` for efficient rotation (AVX-512F native rotate)
-//! - Uses `vpternlogd` for computing MD5 round functions efficiently
-//! - Employs opmask registers (k1) for lane masking
-//!
-//! # Performance Characteristics
-//!
-//! - **Throughput**: ~16x scalar performance when all 16 lanes are active
-//! - **Latency**: Similar to scalar for single input
-//! - **Best use case**: High-throughput scenarios with 16+ inputs
-//! - **Efficiency**: Best on Ice Lake and newer (improved AVX-512 execution)
-//!
-//! # Power Considerations
-//!
-//! AVX-512 can cause CPU frequency throttling on some processors (Skylake-X).
-//! Modern CPUs (Ice Lake, Zen 4) have improved this significantly. Consider
-//! using AVX2 for workloads that don't benefit from 16-wide parallelism.
-//!
-//! # Safety
-//!
-//! All AVX-512 operations are performed via inline assembly, which is stable in Rust.
-//! The `digest_x16` function requires AVX-512F and AVX-512BW to be available, which
-//! must be verified at runtime by the caller before invoking this function.
-
 #![allow(unsafe_code)]
 
 #[cfg(target_arch = "x86_64")]
@@ -49,20 +20,12 @@ use std::arch::asm;
 use super::super::Digest;
 
 /// MD5 initial state constants (RFC 1321).
-///
-/// These magic constants initialize the MD5 hash state. They represent
-/// the first 32 bits of the fractional parts of the cube roots of the
-/// first four prime numbers (2, 3, 5, 7).
 const INIT_A: u32 = 0x6745_2301;
 const INIT_B: u32 = 0xefcd_ab89;
 const INIT_C: u32 = 0x98ba_dcfe;
 const INIT_D: u32 = 0x1032_5476;
 
-/// Pre-computed K constants for MD5 rounds (RFC 1321).
-///
-/// These 64 constants are derived from the sine function and are used as
-/// additive constants in the MD5 compression function. Specifically,
-/// K[i] = floor(2^32 × abs(sin(i + 1))).
+/// Pre-computed K constants (RFC 1321): `K[i] = floor(2^32 * abs(sin(i + 1)))`.
 const K: [u32; 64] = [
     0xd76a_a478,
     0xe8c7_b756,
@@ -130,81 +93,29 @@ const K: [u32; 64] = [
     0xeb86_d391,
 ];
 
-/// Maximum input size supported for parallel processing.
-///
-/// Inputs larger than this threshold automatically fall back to scalar processing
-/// to avoid excessive memory allocation for padded buffers. This limit balances
-/// memory usage with the benefits of parallel processing.
+/// Inputs larger than this fall back to scalar to cap padding allocations.
 const MAX_INPUT_SIZE: usize = 1_024 * 1_024; // 1MB per input
 
-/// Aligned storage for 512-bit (16 × 32-bit) values.
+/// 64-byte aligned 16x u32 storage for ZMM register loads/stores.
 ///
-/// This type ensures proper 64-byte alignment required for efficient AVX-512 operations.
-/// Each instance holds 16 32-bit values that are accessed by a single ZMM register load/store.
-///
-/// The 64-byte alignment matches cache line boundaries on most modern CPUs, reducing
-/// the risk of cache line splits and improving memory access performance.
+/// AVX-512 ZMM moves perform best on 64-byte-aligned addresses, which also
+/// matches the cache line on most modern CPUs.
 #[repr(C, align(64))]
 struct Aligned512([u32; 16]);
 
 /// Compute MD5 digests for 16 inputs in parallel using AVX-512.
 ///
-/// This function processes 16 independent MD5 hash computations simultaneously using
-/// AVX-512 SIMD instructions, providing significant performance improvements over
-/// sequential hashing when multiple inputs need to be processed.
-///
-/// # Algorithm
-///
-/// Uses 512-bit ZMM registers to compute 16 MD5 hashes in parallel through data-level
-/// parallelism. The implementation uses inline assembly to access AVX-512F and AVX-512BW
-/// instructions on stable Rust. Data is organized in a "transposed" layout where each
-/// ZMM register holds the same field (e.g., message word 0) from all 16 inputs.
-///
-/// # Performance
-///
-/// - **Throughput**: Processes 16 hashes with only ~16x the latency of a single hash
-/// - **Best for**: Batches of similarly-sized inputs (e.g., file checksums, password hashing)
-/// - **Fallback**: Inputs larger than 1MB automatically fall back to scalar implementation
-///   to avoid excessive memory allocation
-/// - **Requirements**: Requires AVX-512F and AVX-512BW CPU features (Intel Skylake-X or later,
-///   AMD Zen 4 or later)
-///
-/// # Parameters
-///
-/// * `inputs` - Array of exactly 16 byte slices to hash. Each slice can be any length,
-///   though performance is optimal when all inputs are similar in size.
-///
-/// # Returns
-///
-/// Array of 16 MD5 digests (16-byte arrays) corresponding to each input in the same order.
+/// Inputs are padded to 64-byte block boundaries and processed in lockstep
+/// across 16 lanes; per-lane opmask handling keeps short lanes inactive while
+/// longer lanes continue. Inputs larger than 1 MiB fall back to scalar to
+/// cap padding allocations. Implements the full RFC 1321 64-round MD5
+/// compression function.
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX-512F and AVX-512BW CPU features are available at runtime.
-/// The dispatcher module verifies this before calling this function. Calling this
-/// function on a CPU without these features will result in an illegal instruction fault.
-///
-/// # Examples
-///
-/// ```ignore
-/// // Prepare 16 inputs to hash in parallel
-/// let inputs: [&[u8]; 16] = [
-///     b"input 0", b"input 1", b"input 2", b"input 3",
-///     b"input 4", b"input 5", b"input 6", b"input 7",
-///     b"input 8", b"input 9", b"input 10", b"input 11",
-///     b"input 12", b"input 13", b"input 14", b"input 15",
-/// ];
-///
-/// // Safety: Caller must ensure AVX-512F and AVX-512BW are available.
-/// let digests = unsafe { digest_x16(&inputs) };
-/// ```
-///
-/// # Implementation Notes
-///
-/// - Handles variable-length inputs by padding each to the nearest 64-byte block boundary
-/// - Processes blocks in lockstep, using masking to handle inputs of different lengths
-/// - Uses transposed data layout for efficient SIMD processing
-/// - Implements full MD5 specification (RFC 1321) including all 64 rounds
+/// Caller must verify AVX-512F and AVX-512BW are available at runtime.
+/// Invoking this on a CPU without these features triggers an illegal-
+/// instruction fault.
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
     // Find the maximum length to determine block count
@@ -294,41 +205,20 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
     })
 }
 
-/// Process a single MD5 block for 16 lanes using AVX-512 inline assembly.
+/// Apply one MD5 block in parallel across 16 lanes via AVX-512 inline assembly.
 ///
-/// This is the core computation kernel that implements the MD5 compression function
-/// for 16 independent hash states in parallel. It processes one 64-byte block for
-/// each of the 16 lanes simultaneously.
+/// Implements the RFC 1321 64-round compression function: rounds 0-15 use F
+/// with message schedule [0..15], 16-31 use G, 32-47 use H, 48-63 use I.
+/// `mask_bits` is a 16-bit lane mask (bit i selects lane i) used through
+/// `vpblendmd` so short-input lanes are not advanced past their final block.
 ///
-/// # Algorithm
-///
-/// Implements the 64-round MD5 compression function (RFC 1321):
-/// - Rounds 0-15: F function with message schedule [0..15]
-/// - Rounds 16-31: G function with permuted message schedule
-/// - Rounds 32-47: H function with permuted message schedule
-/// - Rounds 48-63: I function with permuted message schedule
-///
-/// # Parameters
-///
-/// * `state_a`, `state_b`, `state_c`, `state_d` - MD5 state registers for all 16 lanes
-/// * `m` - Transposed message words (16 arrays of 16 u32 values each)
-/// * `mask_bits` - Bitmask indicating which lanes are active (bit i = lane i)
-///
-/// # Implementation
-///
-/// Uses inline assembly to efficiently utilize AVX-512 instructions including:
-/// - `vpternlogd` for computing MD5 auxiliary functions
-/// - `vprold` for rotation operations
-/// - `vpblendmd` for conditional updates based on lane mask
-/// - `vmovdqa32/vmovdqu32` for aligned/unaligned loads and stores
-///
-/// The function is marked `#[inline(never)]` to reduce code size, as it contains
-/// substantial inline assembly that doesn't benefit from inlining.
+/// Marked `#[inline(never)]` because the asm body is large enough that
+/// inlining bloats call sites without speedup.
 ///
 /// # Safety
 ///
-/// Requires AVX-512F and AVX-512BW to be available. Violating this precondition
-/// results in undefined behavior (illegal instruction fault).
+/// Caller must guarantee AVX-512F and AVX-512BW are available; violating
+/// this triggers an illegal-instruction fault.
 #[cfg(target_arch = "x86_64")]
 #[inline(never)]
 unsafe fn process_block_avx512(

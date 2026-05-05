@@ -1,40 +1,14 @@
 //! SSE2 4-lane parallel MD5 implementation.
 //!
-//! Processes 4 independent MD5 computations simultaneously using 128-bit XMM registers.
-//!
-//! # CPU Feature Requirements
-//!
-//! - **SSE2**: Always available on x86_64 (baseline requirement)
-//! - No runtime feature detection needed on 64-bit platforms
-//!
-//! # SIMD Strategy
-//!
-//! This implementation uses a transposed data layout where each XMM register holds
-//! the same state variable (A, B, C, or D) for all 4 parallel computations. The MD5
-//! algorithm's 64 rounds are executed in parallel across all lanes.
+//! Processes 4 independent MD5 computations simultaneously using 128-bit XMM
+//! registers. SSE2 is the x86_64 baseline, so no runtime feature detection is
+//! required. Each XMM register holds the same MD5 state variable (A, B, C, or D)
+//! for all 4 lanes; message words are loaded transposed (word N from all 4
+//! inputs) so the 64 MD5 rounds run in lockstep across lanes. SSE2 lacks a
+//! blend instruction, so lane masking uses AND/ANDNOT/OR. Inputs exceeding 1 MB
+//! fall back to scalar to avoid excessive padding allocation.
 
 #![allow(unsafe_op_in_unsafe_fn)]
-//!
-//! Message words are loaded in transposed order: for each of the 16 message words,
-//! we load word N from all 4 inputs into a single XMM register. This allows efficient
-//! parallel processing of the MD5 rounds.
-//!
-//! # Performance Characteristics
-//!
-//! - **Throughput**: ~4x scalar performance when all 4 lanes are active
-//! - **Latency**: Similar to scalar for single input
-//! - **Best use case**: Processing 4 or more inputs of similar lengths
-//!
-//! # Lane Masking
-//!
-//! When inputs have different lengths (requiring different numbers of blocks), inactive
-//! lanes are masked out using bitwise operations. The implementation uses SSE2's AND/ANDNOT/OR
-//! instructions for masking since SSE2 lacks dedicated blend instructions.
-//!
-//! # Input Size Limits
-//!
-//! Falls back to scalar implementation for inputs exceeding 1 MB to avoid excessive
-//! memory allocation for padding buffers.
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -118,11 +92,11 @@ const K: [u32; 64] = [
 /// Maximum input size supported.
 const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 
-/// Rotate left macro for SSE2 (requires compile-time constant).
+/// Rotate-left helper for SSE2 (requires a compile-time shift constant).
 ///
-/// SSE2 lacks a rotate instruction, so rotation is implemented using
-/// logical left shift combined with logical right shift and OR.
-/// The shift amounts must be compile-time constants.
+/// SSE2 has no native rotate, so each arm pairs `_mm_slli_epi32` with
+/// `_mm_srli_epi32` and OR. Each MD5 shift amount used by the four rounds
+/// gets its own arm.
 macro_rules! rotl {
     ($x:expr, 4) => {
         _mm_or_si128(_mm_slli_epi32($x, 4), _mm_srli_epi32($x, 28))
@@ -174,43 +148,16 @@ macro_rules! rotl {
     };
 }
 
-/// Compute MD5 digests for up to 4 inputs in parallel using SSE2.
+/// Compute MD5 digests for 4 inputs in parallel using SSE2.
 ///
-/// Processes 4 independent byte slices in parallel, computing their MD5 digests
-/// simultaneously. The implementation handles inputs of varying lengths by using
-/// lane masking for blocks that don't exist in shorter inputs.
-///
-/// # Arguments
-///
-/// * `inputs` - Array of 4 byte slices to hash
-///
-/// # Returns
-///
-/// Array of 4 MD5 digests (16 bytes each) in the same order as the inputs
-///
-/// # Performance
-///
-/// Best performance is achieved when:
-/// - All 4 input slots are used
-/// - Inputs have similar lengths (minimizes masked blocks)
-/// - Input sizes are reasonable (< 1 MB)
+/// Returns digests in the same order as `inputs`. Lanes with shorter inputs
+/// are masked off after their final block via AND/ANDNOT/OR. Inputs larger
+/// than 1 MiB fall back to the scalar path to cap padding allocations.
 ///
 /// # Safety
 ///
-/// Caller must ensure SSE2 is available. On x86_64, SSE2 is always available
-/// as it's part of the baseline ISA, so this function is always safe to call
-/// on 64-bit platforms.
-///
-/// This function uses `unsafe` internally for:
-/// - SSE2 intrinsics (`_mm_*` functions)
-/// - Aligned memory access via `_mm_store_si128`
-///
-/// # Examples
-///
-/// ```ignore
-/// let inputs = [b"hello", b"world", b"foo", b"bar"];
-/// let digests = unsafe { digest_x4(&inputs) };
-/// ```
+/// Caller must ensure SSE2 is available. SSE2 is part of the x86_64 baseline,
+/// so this is always satisfied on 64-bit Intel/AMD platforms.
 #[target_feature(enable = "sse2")]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);

@@ -1,38 +1,11 @@
 //! ARM NEON 4-lane parallel MD5 implementation.
 //!
-//! Processes 4 independent MD5 computations simultaneously using 128-bit NEON registers.
-//!
-//! # CPU Feature Requirements
-//!
-//! - **NEON**: Mandatory on aarch64 (ARMv8-A baseline)
-//! - No runtime feature detection needed on 64-bit ARM
-//!
-//! # SIMD Strategy
-//!
-//! NEON provides 128-bit registers similar to SSE2, but with different instruction
-//! semantics. The implementation uses NEON's efficient bitwise operations:
-//!
-//! - `vbic` (bit clear) for AND-NOT operations
-//! - `vorn` (OR-NOT) for the I-function in round 4
-//! - `vbsl` (bit select) for efficient lane masking
-//!
-//! Rotation is implemented using compile-time constant shifts (`vshlq_n_u32`/`vshrq_n_u32`)
-//! combined with OR, similar to SSE2 but with unsigned types for cleaner semantics.
-//!
-//! # Performance Characteristics
-//!
-//! - **Throughput**: ~4x scalar performance when all 4 lanes are active
-//! - **Latency**: Similar to scalar for single input
-//! - **Best use case**: Processing 4 or more inputs on ARM servers or mobile devices
-//! - **Power efficiency**: Excellent for ARM-based cloud instances
-//!
-//! # Platform Availability
-//!
-//! This backend is used on:
-//! - AWS Graviton (ARMv8.2+)
-//! - Apple Silicon M1/M2 (ARMv8.5+)
-//! - Ampere Altra (ARMv8.2+)
-//! - Mobile devices (Android, iOS)
+//! Processes 4 independent MD5 computations simultaneously using 128-bit NEON
+//! registers. NEON is mandatory on aarch64 (ARMv8-A baseline), so no runtime
+//! feature detection is required. The kernel uses `vbic` (bit clear) for
+//! AND-NOT, `vorn` for the I round 4 function, and `vbsl` for lane masking.
+//! Rotation uses paired `vshlq_n_u32` / `vshrq_n_u32` with OR (compile-time
+//! shift constants), since NEON has no native rotate.
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::*;
@@ -129,35 +102,16 @@ macro_rules! rotl_const {
     }};
 }
 
-/// Compute MD5 digests for up to 4 inputs in parallel using NEON.
+/// Compute MD5 digests for 4 inputs in parallel using ARM NEON.
 ///
-/// Processes 4 independent byte slices in parallel, computing their MD5 digests
-/// simultaneously using ARM NEON 128-bit registers.
-///
-/// # Arguments
-///
-/// * `inputs` - Array of 4 byte slices to hash
-///
-/// # Returns
-///
-/// Array of 4 MD5 digests (16 bytes each) in the same order as the inputs
-///
-/// # Performance
-///
-/// Best performance is achieved when:
-/// - All 4 input slots are used
-/// - Inputs have similar lengths (minimizes masked blocks)
-/// - Running on modern ARM processors (ARMv8+)
+/// Returns digests in the same order as `inputs`. Lanes with shorter inputs
+/// are masked off via `vbslq_u32` after their final block. Inputs larger
+/// than 1 MiB fall back to the scalar path to cap padding allocations.
 ///
 /// # Safety
 ///
-/// Caller must ensure NEON is available. On aarch64, NEON is mandatory
-/// (part of the ARMv8-A baseline), so this function is always safe to
-/// call on 64-bit ARM platforms.
-///
-/// This function uses `unsafe` internally for:
-/// - NEON intrinsics (`v*` functions from `std::arch::aarch64`)
-/// - Aligned memory access via `vst1q_u32`
+/// Caller must ensure NEON is available. NEON is mandatory on aarch64
+/// (ARMv8-A baseline), so this is always satisfied on 64-bit ARM.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 #[allow(unsafe_op_in_unsafe_fn)]
