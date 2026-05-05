@@ -15,6 +15,7 @@
 //! - Unicode boundary conditions
 
 use flist::{FileListBuilder, FileListEntry, FileListError};
+#[cfg(unix)]
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -5,6 +5,13 @@
 //! encoding, or path manipulation.
 //!
 //! Reference: rsync 3.4.1 flist.c, io.c for protocol encoding
+//!
+//! The suite is unix-only: it builds non-UTF8 filenames via
+//! `OsStr::from_bytes` (a `std::os::unix::ffi::OsStrExt` extension) which
+//! has no Windows equivalent, and Windows filesystems forbid most of the
+//! bytes exercised here at the kernel level.
+
+#![cfg(unix)]
 
 use flist::{FileListBuilder, FileListEntry, FileListError};
 use std::ffi::OsStr;

@@ -178,7 +178,7 @@ fn install_windows_name_converter() -> NameConverterGuard {
     NameConverterGuard
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod name_converter_tests {
     use super::*;
 

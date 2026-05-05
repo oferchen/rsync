@@ -136,6 +136,7 @@ fn daemon_fuzzy_level2_pulls_basis_from_sibling_directories() {
 ///
 /// Files with the same seed produce identical bytes, enabling delta-transfer
 /// efficiency when the receiver finds them as basis files.
+#[cfg(unix)]
 fn fuzzy2_generate_content(size: usize, seed: u8) -> Vec<u8> {
     (0..size)
         .map(|i| seed.wrapping_add((i % 251) as u8))

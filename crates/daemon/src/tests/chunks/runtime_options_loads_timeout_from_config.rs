@@ -1,7 +1,11 @@
 #[test]
 fn runtime_options_loads_timeout_from_config() {
     let mut file = NamedTempFile::new().expect("config file");
-    writeln!(file, "[docs]\npath = /srv/docs\ntimeout = 120\n").expect("write config");
+    writeln!(
+        file,
+        "[docs]\npath = /srv/docs\nuse chroot = no\ntimeout = 120\n"
+    )
+    .expect("write config");
 
     let options = RuntimeOptions::parse(&[
         OsString::from("--config"),

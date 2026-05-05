@@ -1,3 +1,4 @@
+#[cfg(unix)]
 #[test]
 fn runtime_options_loads_boolean_and_id_directives_from_config() {
     let mut file = NamedTempFile::new().expect("config file");
