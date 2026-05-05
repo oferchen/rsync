@@ -130,8 +130,8 @@ pub mod iocp;
 pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use platform_copy::{
-    CopyMethod, CopyResult, DefaultPlatformCopy, NoCowPlatformCopy, PlatformCopy, try_clonefile,
-    try_fcopyfile, try_ficlone, try_refs_reflink,
+    CopyMethod, CopyResult, DefaultPlatformCopy, NoZeroCopyPlatformCopy, PlatformCopy,
+    try_clonefile, try_fcopyfile, try_ficlone, try_refs_reflink,
 };
 pub use traits::{FileReader, FileWriter};
 
@@ -139,8 +139,9 @@ pub use kernel_version::{
     IO_URING_MIN_KERNEL, KernelVersion, log_io_uring_probe_result, parse_kernel_version,
 };
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
+pub use sendfile::send_file_to_fd_with_policy;
 pub use socket_options::set_socket_int_option;
-pub use splice::{is_splice_available, recv_fd_to_file, try_splice_to_file};
+pub use splice::{is_splice_available, is_splice_enabled, recv_fd_to_file, try_splice_to_file};
 
 pub use mmap_reader::MmapReader;
 pub use o_tmpfile::{
@@ -487,6 +488,59 @@ pub enum IocpPolicy {
     Disabled,
 }
 
+/// Policy controlling I/O-level zero-copy syscalls (`sendfile`, `splice`,
+/// `copy_file_range`, io_uring `IORING_OP_SEND_ZC`).
+///
+/// This enum gates kernel zero-copy data movement between file descriptors
+/// and sockets. It is orthogonal to filesystem-level reflink/CoW cloning
+/// (controlled by the separate cow policy). When [`ZeroCopyPolicy::Disabled`]
+/// is in effect, callers route through standard userspace `read`/`write`
+/// loops; the wrapped [`DefaultPlatformCopy`] strategy is replaced by
+/// [`NoZeroCopyPlatformCopy`] which forces a portable buffered copy.
+///
+/// # Precedence with the cow policy
+///
+/// `--cow` controls FS-level extent sharing (`FICLONE`, `clonefile`, ReFS
+/// `FSCTL_DUPLICATE_EXTENTS_TO_FILE`). `--zero-copy` controls IO-level
+/// kernel-side data movement (`sendfile`, `splice`, `copy_file_range`,
+/// `SEND_ZC`). The two are independent: a transfer can use reflink without
+/// `sendfile` (whole-file CoW clone) or `sendfile` without reflink (network
+/// send of a file). Disabling either does not affect the other.
+///
+/// # Runtime fallback chain
+///
+/// When set to [`ZeroCopyPolicy::Auto`], the platform fallback chain in
+/// [`platform_copy::DefaultPlatformCopy`] selects the best mechanism. When
+/// set to [`ZeroCopyPolicy::Disabled`], the chain is bypassed and callers
+/// use [`std::fs::copy`] (which still uses kernel optimizations on some
+/// platforms but skips `copy_file_range`/`sendfile`/`splice` direct calls).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ZeroCopyPolicy {
+    /// Auto-detect zero-copy availability at runtime (default).
+    ///
+    /// Uses `sendfile`, `splice`, `copy_file_range`, and io_uring `SEND_ZC`
+    /// when the kernel supports them. Falls back to standard buffered I/O
+    /// otherwise. This is the recommended setting for production use.
+    #[default]
+    Auto,
+    /// Force zero-copy usage where supported.
+    ///
+    /// Useful for testing or benchmarking the zero-copy code paths.
+    /// On platforms or filesystems that do not support a particular
+    /// syscall, the call still falls back to standard I/O - this policy
+    /// does not error, it simply opts in to the optimization where
+    /// possible.
+    Enabled,
+    /// Disable zero-copy; always use standard buffered read/write.
+    ///
+    /// Useful for benchmarking, diagnosing zero-copy related issues,
+    /// or working around kernels where `sendfile`/`splice` are blocked
+    /// by seccomp filters. When set, callers route through portable
+    /// userspace copy loops and io_uring socket sends fall back from
+    /// `IORING_OP_SEND_ZC` to `IORING_OP_SEND`.
+    Disabled,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,13 +640,28 @@ mod tests {
     }
 
     #[test]
-    fn cow_policy_default_is_auto() {
-        assert_eq!(CowPolicy::default(), CowPolicy::Auto);
+    fn zero_copy_policy_default_is_auto() {
+        assert_eq!(ZeroCopyPolicy::default(), ZeroCopyPolicy::Auto);
     }
 
     #[test]
-    fn cow_policy_variants_are_distinct() {
-        assert_ne!(CowPolicy::Auto, CowPolicy::Disabled);
+    fn zero_copy_policy_variants_are_distinct() {
+        assert_ne!(ZeroCopyPolicy::Auto, ZeroCopyPolicy::Enabled);
+        assert_ne!(ZeroCopyPolicy::Auto, ZeroCopyPolicy::Disabled);
+        assert_ne!(ZeroCopyPolicy::Enabled, ZeroCopyPolicy::Disabled);
+    }
+
+    #[test]
+    fn is_splice_enabled_respects_disabled_policy() {
+        assert!(!is_splice_enabled(ZeroCopyPolicy::Disabled));
+    }
+
+    #[test]
+    fn is_splice_enabled_auto_matches_availability() {
+        assert_eq!(
+            is_splice_enabled(ZeroCopyPolicy::Auto),
+            is_splice_available()
+        );
     }
 }
 

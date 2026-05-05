@@ -403,24 +403,27 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         options = self.apply_iconv(options, config);
         options = Self::apply_cow_policy(options, config);
         options = self.apply_filter_program(options);
+        options = Self::apply_zero_copy_policy(options, config);
 
         options
     }
 
-    /// Swaps the platform copy strategy when `--no-cow` is in effect.
+    /// Swaps in [`fast_io::NoZeroCopyPlatformCopy`] when the user passed
+    /// `--no-zero-copy`, forcing whole-file copies through the portable
+    /// `std::fs::copy` fallback.
     ///
-    /// `CowPolicy::Auto` keeps the default [`fast_io::DefaultPlatformCopy`]
-    /// strategy that opportunistically uses CoW reflinks. `CowPolicy::Disabled`
-    /// installs [`fast_io::NoCowPlatformCopy`], which forces every whole-file
-    /// copy through `std::fs::copy` and reports `CopyMethod::StandardCopy` so
-    /// that downstream fast paths (such as the macOS clonefile shortcut) skip
-    /// the reflink branch.
-    fn apply_cow_policy(options: LocalCopyOptions, config: &ClientConfig) -> LocalCopyOptions {
-        match config.cow_policy() {
-            fast_io::CowPolicy::Auto => options,
-            fast_io::CowPolicy::Disabled => {
-                options.with_platform_copy(std::sync::Arc::new(fast_io::NoCowPlatformCopy::new()))
-            }
+    /// `Auto` and `Enabled` leave the engine's default platform copy
+    /// strategy in place so the platform fallback chain
+    /// (`FICLONE`/`copy_file_range` on Linux, `clonefile`/`fcopyfile` on
+    /// macOS, `CopyFileExW`/ReFS on Windows) remains active.
+    fn apply_zero_copy_policy(
+        options: LocalCopyOptions,
+        config: &ClientConfig,
+    ) -> LocalCopyOptions {
+        if matches!(config.zero_copy_policy(), fast_io::ZeroCopyPolicy::Disabled) {
+            options.with_platform_copy(std::sync::Arc::new(fast_io::NoZeroCopyPlatformCopy::new()))
+        } else {
+            options
         }
     }
 

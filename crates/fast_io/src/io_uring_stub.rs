@@ -68,6 +68,8 @@ pub struct IoUringConfig {
     pub register_buffers: bool,
     /// Number of fixed buffers to register (no-op on non-Linux).
     pub registered_buffer_count: usize,
+    /// Zero-copy policy for socket sends (no-op on non-Linux).
+    pub zero_copy_policy: crate::ZeroCopyPolicy,
 }
 
 impl Default for IoUringConfig {
@@ -81,6 +83,7 @@ impl Default for IoUringConfig {
             sqpoll_idle_ms: 1000,
             register_buffers: true,
             registered_buffer_count: 8,
+            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
         }
     }
 }
@@ -98,6 +101,7 @@ impl IoUringConfig {
             sqpoll_idle_ms: 1000,
             register_buffers: true,
             registered_buffer_count: 16,
+            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
         }
     }
 
@@ -113,7 +117,15 @@ impl IoUringConfig {
             sqpoll_idle_ms: 1000,
             register_buffers: true,
             registered_buffer_count: 8,
+            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
         }
+    }
+
+    /// Returns whether `SEND_ZC` opcodes may be attempted (always `false` on
+    /// the stub since io_uring is unavailable on this platform).
+    #[must_use]
+    pub fn allow_send_zc(&self) -> bool {
+        false
     }
 }
 

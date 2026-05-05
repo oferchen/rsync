@@ -95,6 +95,7 @@ fn apply_common_daemon_config(
 
     server_config.write.fsync = config.fsync();
     server_config.write.io_uring_policy = config.io_uring_policy();
+    server_config.write.zero_copy_policy = config.zero_copy_policy();
     server_config.checksum_choice = config.checksum_protocol_override();
     server_config.connection.compression_level = config.compression_level();
 
