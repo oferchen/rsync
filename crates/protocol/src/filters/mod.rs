@@ -1,31 +1,36 @@
 //! Filter list wire protocol encoding and decoding.
 //!
-//! This module implements the rsync filter list exchange protocol, which allows
-//! clients to send include/exclude patterns to servers for server-side filtering
-//! during file list generation.
+//! Implements rsync's filter list exchange so clients can push
+//! include/exclude patterns to servers for server-side filtering during file
+//! list generation.
 //!
 //! ## Wire Format
 //!
 //! Each filter rule is encoded as:
-//! 1. **Length** (varint): Total bytes for prefix + pattern + optional `/`
-//! 2. **Prefix** (variable): Modifier flags as ASCII characters
-//! 3. **Pattern** (string): The glob pattern
-//! 4. **Trailing `/`** (optional): If DIRECTORY flag set
+//! 1. **Length** (4-byte little-endian `int32`): bytes for prefix + pattern +
+//!    optional trailing `/`.
+//! 2. **Prefix** (variable): rule-type character followed by modifier flags
+//!    as ASCII.
+//! 3. **Pattern** (UTF-8 bytes): the glob pattern.
+//! 4. **Trailing `/`** (optional): present when the directory-only flag is
+//!    set.
 //!
-//! The list is terminated with a 4-byte zero (varint encoding of 0).
+//! The list is terminated by a 4-byte little-endian zero. Upstream uses
+//! `write_int()` / `read_int()` here, not the protocol's varint encoding -
+//! see `exclude.c:1658 send_filter_list()` and `exclude.c:1675
+//! recv_filter_list()`.
 //!
 //! ## Prefix Format
 //!
-//! `[+/-/:][/][!][C][n][w][e][x][s][r][p][ ]`
+//! Layout: rule-type character, optional modifier characters, optional
+//! trailing space, then the pattern. The leading rule-type character is one
+//! of `+`, `-`, `!`, `.`, `:`, `P`, `R` (see `RuleType`). Modifier flags
+//! follow:
 //!
 //! | Char | Meaning | Protocol |
 //! |------|---------|----------|
-//! | `+` | Include rule | All |
-//! | `-` | Exclude rule | All |
-//! | `:` | Per-dir merge (dir-merge) | v29+ |
-//! | `!` | Clear rules | All |
 //! | `/` | Anchored pattern | All |
-//! | `!` | No-match-with-this negates | All |
+//! | `!` | Negate (no-match-with-this) | All |
 //! | `C` | CVS exclude | All |
 //! | `n` | No-inherit | All |
 //! | `w` | Word-split | All |
@@ -34,7 +39,7 @@
 //! | `s` | Apply sender-side | v29+ |
 //! | `r` | Apply receiver-side | v29+ |
 //! | `p` | Perishable | v30+ |
-//! | ` ` | Trailing space if needed | All |
+//! | ` ` | Trailing space separator | All |
 
 mod prefix;
 mod wire;

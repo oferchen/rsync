@@ -44,7 +44,7 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
         return None;
     }
 
-    // Check if any modifiers are set - they would exceed legal_len = 1
+    // upstream: exclude.c:1530 - any modifier exceeds legal_len = 1 and is unsendable
     let has_modifiers = rule.anchored
         || rule.negate
         || rule.cvs_exclude
@@ -60,13 +60,12 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
         return None;
     }
 
-    // Include rules always get "+ " prefix
     if matches!(rule.rule_type, RuleType::Include) {
         return Some("+ ".to_owned());
     }
 
-    // Exclude rules: check if pattern needs disambiguation
-    // upstream: exclude.c:1538 - only write "-" if pattern starts with "- " or "+ "
+    // upstream: exclude.c:1538 - only emit "- " when the pattern would otherwise
+    // be ambiguous with another prefix; else send the bare pattern (legal_len = 0).
     if matches!(rule.rule_type, RuleType::Exclude) {
         let pat = &rule.pattern;
         let needs_prefix = (pat.starts_with("- ") || pat.starts_with("+ "))
@@ -77,12 +76,10 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
         if needs_prefix {
             return Some("- ".to_owned());
         }
-        // No prefix needed - raw pattern only (legal_len set to 0)
         return Some(String::new());
     }
 
-    // Other rule types (Protect, Risk, Merge, Clear) cannot be sent for proto < 29
-    // because their prefix chars would exceed legal_len = 1
+    // Protect/Risk/Merge/Clear use prefix chars that exceed legal_len = 1 for proto < 29.
     None
 }
 
@@ -103,13 +100,12 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
 fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> String {
     use super::wire::RuleType;
 
-    // Maximum prefix length: type(1) + modifiers(10) + space(1) = 12 chars
+    // Worst case: type(1) + modifiers(10) + trailing space(1) = 12 bytes.
     let mut prefix = String::with_capacity(12);
 
-    // First character: rule type, with Protect/Risk normalized to upstream's
-    // wire format. The receiver-side flag (set on FilterRuleSpec::protect /
-    // FilterRuleSpec::risk via applies_to_receiver) is emitted as the `r`
-    // modifier below, matching upstream's send_filter_list().
+    // upstream: exclude.c:1536-1572 send_filter_list() - Protect/Risk are encoded
+    // as `-`/`+` plus the `r` modifier (driven by FILTRULE_RECEIVER_SIDE), never
+    // as literal `P`/`R` on the wire.
     let prefix_char = match rule.rule_type {
         RuleType::Protect => '-',
         RuleType::Risk => '+',
@@ -117,7 +113,7 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
     };
     prefix.push(prefix_char);
 
-    // Modifiers (order matters for compatibility)
+    // Modifier emission order is part of the wire contract; do not reorder.
     if rule.anchored {
         prefix.push('/');
     }
@@ -146,10 +142,8 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
         prefix.push('x');
     }
 
-    // Protocol version gated modifiers. Protect/Risk rule types always emit
-    // the `r` modifier because upstream's wire encoding represents them
-    // exclusively via FILTRULE_RECEIVER_SIDE on a plain exclude/include rule.
-    // upstream: exclude.c:1569-1572 - `r` modifier on rules with RECEIVER_SIDE.
+    // upstream: exclude.c:1569-1572 - `r` is forced for Protect/Risk because
+    // their wire encoding relies on FILTRULE_RECEIVER_SIDE on a plain `-`/`+`.
     if protocol.supports_sender_receiver_modifiers() {
         if rule.sender_side {
             prefix.push('s');
@@ -164,7 +158,6 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
         prefix.push('p');
     }
 
-    // Trailing space separator
     prefix.push(' ');
 
     prefix
