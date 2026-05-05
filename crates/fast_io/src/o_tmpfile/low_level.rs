@@ -81,8 +81,6 @@ mod linux {
         O_TMPFILE_STATUS.store(STATUS_UNKNOWN, Ordering::Relaxed);
     }
 
-    /// Performs the actual `O_TMPFILE` probe by opening and immediately closing
-    /// an anonymous file.
     fn probe_o_tmpfile(dir: &Path) -> bool {
         // O_TMPFILE requires O_WRONLY or O_RDWR
         let dir_cstr = match CString::new(dir.as_os_str().as_bytes()) {
@@ -233,7 +231,6 @@ mod linux {
             reset_probe_cache();
             let dir = tempfile::tempdir().unwrap();
             let first = o_tmpfile_available(dir.path());
-            // Second call should use cache and return the same result
             let second = o_tmpfile_available(dir.path());
             assert_eq!(first, second);
         }
@@ -251,7 +248,6 @@ mod linux {
             let result = open_anonymous_tmpfile(dir.path(), 0o644);
             // O_TMPFILE may not be supported on all filesystems (e.g., tmpfs in CI)
             if let Ok(file) = result {
-                // File is open and writable
                 drop(file);
             }
         }
@@ -264,16 +260,13 @@ mod linux {
                 Err(_) => return, // O_TMPFILE not supported on this filesystem
             };
 
-            // Write some data
             let mut file = file;
             file.write_all(b"hello anonymous tmpfile").unwrap();
             file.flush().unwrap();
 
-            // Materialize at a destination path
             let dest = dir.path().join("materialized.txt");
             match link_anonymous_tmpfile(&file, &dest) {
                 Ok(()) => {
-                    // Verify the file appeared with correct contents
                     let contents = std::fs::read_to_string(&dest).unwrap();
                     assert_eq!(contents, "hello anonymous tmpfile");
                 }
@@ -298,7 +291,6 @@ mod linux {
             let result = link_anonymous_tmpfile(&file, &dest);
             assert!(result.is_err());
             if let Err(e) = result {
-                // EEXIST
                 assert_eq!(e.raw_os_error(), Some(libc::EEXIST));
             }
         }
