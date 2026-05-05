@@ -1,4 +1,7 @@
 #![deny(unsafe_code)]
+//! UID/GID decoding plus optional owner-name strings (protocol 30+).
+//!
+//! upstream: flist.c:recv_file_entry() user/group branches.
 
 use std::io::{self, Read};
 

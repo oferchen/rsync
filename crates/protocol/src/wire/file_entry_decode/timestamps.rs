@@ -1,4 +1,8 @@
 #![deny(unsafe_code)]
+//! Mtime/atime/crtime decoding plus protocol-31 nanosecond extension.
+//!
+//! upstream: flist.c:recv_file_entry() time branches (lines 858-862),
+//! XMIT_MOD_NSEC and XMIT_CRTIME_EQ_MTIME handling.
 
 use std::io::{self, Read};
 
@@ -69,7 +73,7 @@ pub fn decode_mtime_nsec<R: Read>(reader: &mut R, flags: u32) -> io::Result<Opti
         // New mtime without XMIT_MOD_NSEC: upstream defines nsec = 0,
         // NOT "carry forward the previous nsec". Returning Some(0)
         // prevents callers from accidentally inheriting a stale nsec.
-        // Upstream: flist.c recv_file_entry() -- nsec absent => 0.
+        // upstream: flist.c:recv_file_entry() - nsec absent => 0.
         Ok(Some(0))
     }
 }

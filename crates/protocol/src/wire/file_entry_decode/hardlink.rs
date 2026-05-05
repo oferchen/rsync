@@ -1,4 +1,8 @@
 #![deny(unsafe_code)]
+//! Hardlink association decoding.
+//!
+//! Protocol 30+ uses a flist-relative index; protocols 28-29 use a (dev, ino)
+//! pair. upstream: flist.c:recv_file_entry() hardlink branches (lines 950-975).
 
 use std::io::{self, Read};
 
