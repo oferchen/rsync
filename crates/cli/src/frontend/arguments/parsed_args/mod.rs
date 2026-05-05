@@ -1,3 +1,5 @@
+//! Strongly-typed view of every recognised CLI option after parsing.
+
 use std::ffi::OsString;
 use std::path::PathBuf;
 

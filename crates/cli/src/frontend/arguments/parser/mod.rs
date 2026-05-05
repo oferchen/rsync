@@ -1,3 +1,6 @@
+//! Translates `clap` matches into the strongly-typed [`ParsedArgs`] struct
+//! consumed by the rest of the frontend.
+
 mod flags;
 mod values;
 

@@ -2,13 +2,21 @@ use std::ffi::OsStr;
 
 use core::branding::{self, Brand};
 
+/// Identifies which program the binary is being invoked as.
+///
+/// The frontend selects help text, default behaviour, and diagnostic strings
+/// based on whether the user invoked the upstream-compatible `rsync` name or
+/// the project's own branded name.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProgramName {
+    /// Invoked as upstream-compatible `rsync`.
     Rsync,
+    /// Invoked under the project's branded name.
     OcRsync,
 }
 
 impl ProgramName {
+    /// Returns the textual program name corresponding to this brand.
     #[inline]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -17,6 +25,7 @@ impl ProgramName {
         }
     }
 
+    /// Returns the [`Brand`] associated with this program name.
     #[inline]
     pub(crate) const fn brand(self) -> Brand {
         match self {
@@ -26,6 +35,10 @@ impl ProgramName {
     }
 }
 
+/// Detects the program name from `argv[0]` for branding-aware behaviour.
+///
+/// Falls back to the project default when the argument is missing or does not
+/// match a known brand prefix.
 pub(crate) fn detect_program_name(program: Option<&OsStr>) -> ProgramName {
     match branding::detect_brand(program) {
         Brand::Oc => ProgramName::OcRsync,
