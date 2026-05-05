@@ -315,7 +315,6 @@ mod tests {
         ));
     }
 
-    // Protocol validation
     #[test]
     fn validate_protocol_version_accepts_valid() {
         assert!(validate_protocol_version(28).is_ok());
@@ -339,7 +338,6 @@ mod tests {
         ));
     }
 
-    // Brand validation
     #[test]
     fn validate_brand_name_accepts_oc() {
         assert!(validate_brand_name("oc").is_ok());
@@ -358,7 +356,6 @@ mod tests {
         ));
     }
 
-    // Revision sanitization
     #[test]
     fn sanitize_revision_trims_whitespace() {
         assert_eq!(sanitize_revision("  abc123  "), "abc123");

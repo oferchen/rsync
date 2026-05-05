@@ -106,7 +106,6 @@ mod tests {
 
     #[test]
     fn all_brand_variants_covered() {
-        // Ensure encode covers all Brand variants
         for brand in [Brand::Oc, Brand::Upstream] {
             let encoded = encode_brand_override(Some(brand));
             let decoded = decode_brand_override(encoded);
