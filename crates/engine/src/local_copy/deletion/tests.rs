@@ -287,7 +287,6 @@ mod build_keep_set_tests {
             OsString::from("other.txt"),
         ];
         let set = build_keep_set(&entries);
-        // Set deduplicates
         assert_eq!(set.len(), 2);
         assert!(set.contains(OsStr::new("file.txt")));
         assert!(set.contains(OsStr::new("other.txt")));
