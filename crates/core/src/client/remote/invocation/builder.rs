@@ -224,6 +224,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(format!("--min-size={min}")));
         }
 
+        // upstream: options.c:2845-2846 - `--max-alloc=arg` is forwarded to
+        // the server when the user supplied a non-default value. Each side
+        // owns its own cap, so forwarding lets the remote enforce the same
+        // budget the client requested.
+        if let Some(limit) = self.config.max_alloc() {
+            args.push(OsString::from(format!("--max-alloc={limit}")));
+        }
+
         if let Some(window) = self.config.modify_window() {
             args.push(OsString::from(format!("--modify-window={window}")));
         }

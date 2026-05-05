@@ -1290,6 +1290,28 @@ fn includes_min_size_long_arg() {
 }
 
 #[test]
+fn includes_max_alloc_long_arg() {
+    let config = ClientConfig::builder()
+        .max_alloc(Some(512 * 1024 * 1024))
+        .build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--max-alloc=536870912"),
+        "expected --max-alloc=536870912 in args: {args:?}"
+    );
+}
+
+#[test]
+fn omits_max_alloc_when_none() {
+    let config = ClientConfig::builder().build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a.starts_with("--max-alloc=")),
+        "should not emit --max-alloc= when none: {args:?}"
+    );
+}
+
+#[test]
 fn includes_modify_window_long_arg() {
     let config = ClientConfig::builder().modify_window(Some(2)).build();
     let args = build_sender_args(&config);

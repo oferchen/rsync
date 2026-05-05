@@ -435,7 +435,12 @@ pub struct ParsedArgs {
     /// `--temp-dir`, `-T` - directory for temporary files during transfer.
     pub temp_dir: Option<PathBuf>,
 
-    /// `--max-alloc` - maximum memory allocation limit.
+    /// `--max-alloc=SIZE` - hard cap on outstanding buffer-pool memory.
+    ///
+    /// Stored as the raw user-supplied string. The downstream parser in
+    /// `execution::options` resolves the K/M/G/T/P/E suffixes, rejects zero
+    /// and out-of-range values, and forwards the resulting byte count to the
+    /// global buffer pool's `MemoryCap`.
     pub max_alloc: Option<OsString>,
 
     /// `--iconv` - character set conversion specification.
