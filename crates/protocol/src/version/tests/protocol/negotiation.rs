@@ -65,7 +65,6 @@ fn negotiation_succeeds_for_all_supported_versions() {
 /// Verifies negotiation selects the highest mutual version.
 #[test]
 fn negotiation_selects_highest_mutual_version() {
-    // When peer offers multiple supported versions, select highest
     let result = select_highest_mutual([28, 29, 30]).unwrap();
     assert_eq!(result.as_u8(), 30);
 
@@ -79,12 +78,10 @@ fn negotiation_selects_highest_mutual_version() {
 /// Verifies the version range boundaries are correctly handled.
 #[test]
 fn negotiation_boundary_versions() {
-    // Minimum boundary
     let min_result = select_highest_mutual([28]);
     assert!(min_result.is_ok());
     assert_eq!(min_result.unwrap(), ProtocolVersion::OLDEST);
 
-    // Maximum boundary
     let max_result = select_highest_mutual([32]);
     assert!(max_result.is_ok());
     assert_eq!(max_result.unwrap(), ProtocolVersion::NEWEST);
@@ -93,7 +90,7 @@ fn negotiation_boundary_versions() {
 /// Verifies versions between NEWEST and MAXIMUM_PROTOCOL_ADVERTISEMENT are clamped.
 #[test]
 fn future_versions_clamp_to_newest() {
-    // Versions 33-40 should clamp to NEWEST (32)
+    // Versions 33-40 fall within the upstream tolerance window and clamp to NEWEST.
     for version in 33..=40 {
         let result = select_highest_mutual([version]);
         assert!(result.is_ok(), "version {version} should clamp to NEWEST");
@@ -108,7 +105,6 @@ fn future_versions_clamp_to_newest() {
 /// Verifies mixed clamped and supported versions select NEWEST.
 #[test]
 fn mixed_clamped_and_supported_versions() {
-    // Mix of supported and clamped versions
     let result = select_highest_mutual([28, 35]).unwrap();
     assert_eq!(result, ProtocolVersion::NEWEST);
 
@@ -173,7 +169,6 @@ fn empty_version_list_returns_no_mutual_protocol() {
 /// Verifies only-too-old versions report the oldest rejected version.
 #[test]
 fn reports_oldest_rejected_version() {
-    // When all versions are too old, report the oldest
     let result = select_highest_mutual([25_u8, 26, 27]);
     match result.unwrap_err() {
         NegotiationError::UnsupportedVersion(v) => {
@@ -186,15 +181,12 @@ fn reports_oldest_rejected_version() {
 /// Verifies mixed valid and invalid versions succeed with valid version.
 #[test]
 fn mixed_valid_and_invalid_versions_succeeds() {
-    // Too old + valid
     let result = select_highest_mutual([27_u8, 30]).unwrap();
     assert_eq!(result.as_u8(), 30);
 
-    // Zero + valid
     let result = select_highest_mutual([0_u32, 31]).unwrap();
     assert_eq!(result.as_u8(), 31);
 
-    // Too old + clamped
     let result = select_highest_mutual([27_u8, 35]).unwrap();
     assert_eq!(result, ProtocolVersion::NEWEST);
 }

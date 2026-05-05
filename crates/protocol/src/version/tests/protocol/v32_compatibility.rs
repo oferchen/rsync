@@ -68,8 +68,7 @@ fn v32_is_within_supported_range() {
 /// Verifies protocol 32 handshake with mixed valid and invalid versions.
 #[test]
 fn v32_handshake_ignores_invalid_versions() {
-    // Mix of too old, valid, and within clamping range
-    // Version 35 is clamped to NEWEST (32)
+    // 35 falls within the upstream tolerance window and clamps to NEWEST.
     let result = select_highest_mutual([0, 27, 32, 35]).unwrap();
     assert_eq!(result, ProtocolVersion::NEWEST);
 }
