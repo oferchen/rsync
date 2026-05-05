@@ -1,5 +1,11 @@
 use std::env;
 
+/// Returns the default for `--protect-args` derived from `RSYNC_PROTECT_ARGS`.
+///
+/// Returns `None` when the variable is unset, `Some(false)` for the recognised
+/// disable values (`0`, `no`, `false`, `off`, case-insensitive), and
+/// `Some(true)` otherwise. Mirrors upstream rsync's environment handling so
+/// CLI defaults match.
 pub(crate) fn env_protect_args_default() -> Option<bool> {
     let value = env::var_os("RSYNC_PROTECT_ARGS")?;
     if value.is_empty() {

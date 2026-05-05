@@ -1,3 +1,5 @@
+//! Helpers for combining repeatable `OsString` argument values.
+
 use std::ffi::OsString;
 
 /// Joins multiple `OsString` values with commas into a single `OsString`.
