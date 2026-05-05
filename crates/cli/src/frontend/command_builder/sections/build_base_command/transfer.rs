@@ -206,6 +206,20 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
                 .conflicts_with("sparse"),
         )
         .arg(
+            Arg::new("sparse-detect")
+                .long("sparse-detect")
+                .value_name("STRATEGY")
+                .help(
+                    "Choose how source files are scanned for holes when --sparse is active. \
+                     Values: auto (default, prefer SEEK_HOLE then fall back), seek (force \
+                     SEEK_HOLE/SEEK_DATA), map (use FIEMAP on Linux, seek elsewhere), none \
+                     (write zero runs verbatim).",
+                )
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("fuzzy")
                 .long("fuzzy")
                 .short('y')

@@ -494,6 +494,57 @@ mod long_options {
     }
 
     #[test]
+    fn sparse_detect_default_is_unset() {
+        let parsed = parse_test_args(["--sparse", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.sparse_detect, None);
+    }
+
+    #[test]
+    fn sparse_detect_auto_variant() {
+        let parsed = parse_test_args(["--sparse-detect=auto", "src/", "dst/"]).expect("parse");
+        assert_eq!(
+            parsed.sparse_detect,
+            Some(engine::SparseDetectStrategy::Auto)
+        );
+    }
+
+    #[test]
+    fn sparse_detect_seek_variant() {
+        let parsed = parse_test_args(["--sparse-detect=seek", "src/", "dst/"]).expect("parse");
+        assert_eq!(
+            parsed.sparse_detect,
+            Some(engine::SparseDetectStrategy::Seek)
+        );
+    }
+
+    #[test]
+    fn sparse_detect_map_variant() {
+        let parsed = parse_test_args(["--sparse-detect=map", "src/", "dst/"]).expect("parse");
+        assert_eq!(
+            parsed.sparse_detect,
+            Some(engine::SparseDetectStrategy::Map)
+        );
+    }
+
+    #[test]
+    fn sparse_detect_none_variant() {
+        let parsed = parse_test_args(["--sparse-detect=none", "src/", "dst/"]).expect("parse");
+        assert_eq!(
+            parsed.sparse_detect,
+            Some(engine::SparseDetectStrategy::None)
+        );
+    }
+
+    #[test]
+    fn sparse_detect_is_case_insensitive() {
+        let parsed = parse_test_args(["--sparse-detect=SEEK", "src/", "dst/"]).expect("parse");
+        assert_eq!(
+            parsed.sparse_detect,
+            Some(engine::SparseDetectStrategy::Seek)
+        );
+    }
+
+    #[test]
     fn checksum_long_flag() {
         let parsed = parse_test_args(["--checksum", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.checksum, Some(true));
@@ -1495,6 +1546,14 @@ mod error_handling {
     #[test]
     fn invalid_checksum_choice_fails() {
         let result = parse_test_args(["--checksum-choice=invalid", "src/", "dst/"]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn invalid_sparse_detect_fails() {
+        let result = parse_test_args(["--sparse-detect=bogus", "src/", "dst/"]);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);

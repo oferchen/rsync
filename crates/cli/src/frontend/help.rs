@@ -150,6 +150,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "  -P              Equivalent to --partial --progress.\n",
             "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
             "      --no-sparse/--no-S Disable sparse file handling.\n",
+            "      --sparse-detect=STRATEGY  Choose how source files are scanned for holes (auto, seek, map, none). --sparse controls whether sparse handling is active; --sparse-detect controls how detection works.\n",
             "  -L, --copy-links     Transform symlinks into referent files/directories.\n",
             "      --copy-unsafe-links  Transform unsafe symlinks into referent files/directories.\n",
             "      --safe-links     Skip symlinks that point outside the transfer root.\n",

@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use super::types::LocalCopyOptions;
+use crate::local_copy::executor::SparseDetectStrategy;
 
 /// Subdirectory name used by upstream rsync for staging files when
 /// `--delay-updates` is active and no explicit `--partial-dir` is given.
@@ -15,11 +16,34 @@ pub const DELAY_UPDATES_PARTIAL_DIR: &str = ".~tmp~";
 
 impl LocalCopyOptions {
     /// Enables sparse file handling during copies.
+    ///
+    /// Mirrors upstream `--sparse` / `-S`: this controls *whether* zero runs
+    /// in the source should be turned into filesystem holes on the
+    /// destination. The companion [`Self::sparse_detect_strategy`] setter
+    /// chooses *how* the source is scanned for those zero runs.
     #[must_use]
     #[doc(alias = "--sparse")]
     pub const fn sparse(mut self, sparse: bool) -> Self {
         self.sparse = sparse;
         self
+    }
+
+    /// Selects the sparse hole-detection strategy used when reading sources.
+    ///
+    /// Independent of [`Self::sparse`]: the strategy still applies to read
+    /// paths that consult [`crate::SparseReader::detect_holes_with`], but it
+    /// only affects the destination when sparse writing is enabled.
+    #[must_use]
+    #[doc(alias = "--sparse-detect")]
+    pub const fn sparse_detect_strategy(mut self, strategy: SparseDetectStrategy) -> Self {
+        self.sparse_detect_strategy = strategy;
+        self
+    }
+
+    /// Returns the configured sparse hole-detection strategy.
+    #[must_use]
+    pub const fn sparse_detect_strategy_setting(&self) -> SparseDetectStrategy {
+        self.sparse_detect_strategy
     }
 
     /// Requests that partial transfers leave temporary files.
@@ -190,6 +214,28 @@ mod tests {
     fn sparse_disables() {
         let opts = LocalCopyOptions::new().sparse(true).sparse(false);
         assert!(!opts.sparse_enabled());
+    }
+
+    #[test]
+    fn sparse_detect_strategy_default_is_auto() {
+        let opts = LocalCopyOptions::new();
+        assert_eq!(
+            opts.sparse_detect_strategy_setting(),
+            SparseDetectStrategy::Auto
+        );
+    }
+
+    #[test]
+    fn sparse_detect_strategy_round_trips_each_variant() {
+        for strategy in [
+            SparseDetectStrategy::Auto,
+            SparseDetectStrategy::Seek,
+            SparseDetectStrategy::Map,
+            SparseDetectStrategy::None,
+        ] {
+            let opts = LocalCopyOptions::new().sparse_detect_strategy(strategy);
+            assert_eq!(opts.sparse_detect_strategy_setting(), strategy);
+        }
     }
 
     #[test]
