@@ -1,618 +1,649 @@
-# Incremental Async Migration Plan (#1594)
+# Async Migration Plan for the Transfer Pipeline (#1594)
 
-Status: Design (TODO #1594)
+Status: Design proposal for #1594, supersedes the prior 5-phase sketch.
 Audience: maintainers across `crates/transfer`, `crates/daemon`,
-`crates/rsync_io`, `crates/engine`, `crates/bandwidth`, and CI.
-Scope: a single roadmap that sequences oc-rsync's move from a
-predominantly synchronous concurrency model to a hybrid sync/async
-model without breaking the wire protocol, the criterion benchmark
-suite, or the upstream interop matrix.
+`crates/rsync_io`, `crates/engine`, `crates/bandwidth`,
+`crates/protocol`, and `crates/core`; CI owners; release engineers.
+Scope: a single roadmap that sequences oc-rsync's hybrid sync/async
+model from today's seven-crate tokio surface to a stable end-state,
+without breaking the wire protocol, the criterion benchmark suite,
+or the upstream interop matrix.
 
-## 1. Summary
+This revision aligns the migration narrative with
+`docs/audits/tokio-dependency-boundary-2026.md` (PR #3706, the
+re-verification of the #1779 boundary) and
+`docs/audits/daemon-thread-per-connection-scalability.md`
+(PR #3705, the daemon scalability ceiling Phase 2 addresses).
+Together they replace the rougher framing the earlier roadmap
+inherited from #1779.
 
-oc-rsync is wire-compatible with upstream rsync 3.4.1 (protocol 32).
-The transfer hot path is synchronous and rayon-driven; the daemon
-listener and the embedded SSH transport are the only places where
-async (tokio) leaks into the codebase today. Three merged design
-notes specified individual async sub-systems in isolation:
+## 1. Motivation
 
-- `docs/design/async-channel-abstraction.md` (#1591) - the
-  `TransferChannel` trait and the choice of `flume` for sync/async
-  bridges.
-- `docs/design/daemon-async-accept-sync-workers.md` (#1674) - the
-  hybrid async-accept + sync-worker model for the daemon.
-- `docs/design/io-uring-rayon-composition.md` (#1283) - the rule
-  that io_uring submissions never block a rayon worker.
+### 1.1 What is broken today
 
-This plan sequences those pieces. It defines five phases, the
-per-phase exit criteria, and the rollback path at every step. The
-migration is wire-compatible at every phase: zero protocol changes,
-zero capability flags added, zero new MSG types. The async
-migration is a purely internal concurrency model change.
+The synchronous accept loop
+(`crates/daemon/src/daemon/sections/server_runtime/connection.rs:106-141`)
+spawns one OS thread per connection, with a hard ceiling near
+`max_connections * (8MB stack + per-thread state)`. Idle daemon
+RSS grows linearly in concurrent connections; the scalability
+audit (`docs/audits/daemon-thread-per-connection-scalability.md`)
+documents the headroom we lose at 1k-10k idle connections.
 
-## 2. Status Quo Audit
+The CLI client side sees a related cost: the SSH transport
+(`crates/rsync_io/src/ssh/connection.rs:30-178`) exposes a sync
+`Read`/`Write` facade, but its embedded backend
+(`crates/rsync_io/src/ssh/embedded/connect.rs:107-122`) already
+builds a tokio current-thread runtime and bridges sync I/O over a
+russh channel. The runtime is paid for; only the surface stays
+sync.
 
-### 2.1 Already async (tokio-only)
+### 1.2 What we lose if we do nothing
 
-- **Embedded SSH transport (russh-based)**.
-  `crates/rsync_io/src/ssh/embedded/connect.rs`,
-  `crates/rsync_io/src/ssh/embedded/auth.rs`, and
-  `crates/rsync_io/src/ssh/embedded/handler.rs` are async by
-  construction because `russh = "0.60.1"` (`Cargo.toml:207`) is a
-  tokio-native client. Gated by the `embedded-ssh` feature in
-  `crates/rsync_io/Cargo.toml:26-38`.
-- **Daemon async listener sketch (#1934 / #1674)**.
-  `crates/daemon/src/daemon/async_session/listener.rs`
-  (`AsyncDaemonListener`) is the async accept loop. Gated by the
-  `async` feature in `crates/daemon/Cargo.toml:16-30`. Not the
-  production default. Today's production path is the synchronous
-  `serve_connections` in
-  `crates/daemon/src/daemon/sections/server_runtime/accept_loop.rs`.
-- **Bandwidth limiter async wrapper (#1737)**.
-  `crates/bandwidth/src/async_limiter.rs` wraps the sync
-  `BandwidthLimiter`. Gated by the `async` feature in
-  `crates/bandwidth/Cargo.toml:22-31`.
-- **Async file-job dispatcher prototypes**.
-  `crates/transfer/src/pipeline/async_dispatch.rs` and
-  `crates/transfer/src/pipeline/async_pipeline.rs` exist behind
-  the `async` feature in `crates/transfer/Cargo.toml:31-32,103`.
-  Not wired into the production receiver loop.
+- The daemon stays bound by thread-per-connection at exactly the
+  workloads (high-fanout backups, archive distribution) where it
+  is most useful as a long-running service.
+- Async-capable callers cannot drive oc-rsync without spinning
+  their own threads, because the public APIs do not expose async
+  surfaces beyond the seven feature-gated crates.
+- Each new feature that wants async ergonomics has to invent its
+  own bridge, which is how we drifted from "tokio in 2 crates" to
+  "tokio in 7 crates" without an explicit design pass (per the
+  audit at `docs/audits/tokio-dependency-boundary-2026.md`).
 
-### 2.2 Synchronous (the entire transfer hot path)
+### 1.3 Why a plan exists at all
 
-- **Receiver pipeline**.
-  `crates/transfer/src/receiver/transfer/pipeline.rs:31-200`
-  (`run_pipeline_loop_decoupled`) is the production receiver entry
-  point. Fully blocking: `Read`/`Write` trait bounds, no `.await`.
-- **Delta apply**.
-  `crates/transfer/src/delta_pipeline.rs:324` sizes the parallel
-  delta pipeline by `rayon::current_num_threads()`. The whole
-  `delta_apply` family is sync.
-- **ReorderBuffer**.
-  `crates/transfer/src/reorder_buffer.rs` is a sync ordered queue
-  consumed by the disk-commit thread.
-- **Network-to-disk SPSC**.
-  `crates/transfer/src/pipeline/spsc.rs` is a hand-rolled lock-free
-  SPSC over `crossbeam_queue::ArrayQueue`. No syscalls on the hot
-  path.
-- **Buffer pool**.
-  `BufferPool` / `PooledBuffer` in the transfer crate is a
-  `Mutex<Vec<Vec<u8>>>` allocator. Sync per #1781.
-- **Parallel stat / signature / match**.
-  `crates/transfer/src/parallel_io.rs:107-125`,
-  `crates/signature/src/parallel.rs:11-86`, and
-  `crates/match/src/index/mod.rs:131-217` use rayon directly.
-- **Daemon production accept loop**.
-  `crates/daemon/src/daemon/sections/server_runtime/connection.rs:216-274`
-  is one blocking `accept` followed by `std::thread::spawn` per
-  connection.
+The seven-crate tokio surface has already been reached. The
+question this plan answers is not "should we adopt tokio" but
+"how do we sequence the remaining work and keep wire-compat,
+benchmark comparability, and rollback at every step."
 
-### 2.3 Workspace runtime invariant
+## 2. Current State Inventory
 
-Tokio is the only async runtime. `Cargo.toml:188` declares the
-workspace tokio dependency; `Cargo.toml:189` declares `tokio-util`.
-The decision to standardise on tokio (and to reject async-std and
-smol) was resolved in #1779 and reaffirmed in #1780; this plan does
-not reopen it (section 8).
+### 2.1 Async surfaces that exist today
 
-## 3. Why Incremental
+Every `pub async fn` and `pub fn -> impl Future` in the workspace
+is feature-gated. Citations are file:LINE in the current tree.
 
-Rip-and-replace is not viable. The transfer code, daemon code, test
-corpus, criterion benchmarks, and interop golden captures were all
-written against the sync model. Flipping every crate to async
-simultaneously would:
+- `bandwidth`: `AsyncRateLimiter::consume`
+  (`crates/bandwidth/src/async_limiter.rs:77`),
+  `AsyncRateLimiter::reset` (`async_limiter.rs:107`).
+- `transfer`: `produce_file_jobs`
+  (`crates/transfer/src/pipeline/async_dispatch.rs:29`),
+  `run_pipeline` returning `impl Future`
+  (`crates/transfer/src/pipeline/async_pipeline.rs:137`).
+- `protocol`: `NegotiationPrologueSniffer::read_from_async`
+  (`crates/protocol/src/negotiation/sniffer/async_read.rs:53`).
+- `daemon`: `AsyncSession::handle`
+  (`crates/daemon/src/daemon/async_session/session.rs:68`),
+  `AsyncSession::acquire` (`session.rs:247`),
+  `AsyncDaemonListener::bind`
+  (`crates/daemon/src/daemon/async_session/listener.rs:128`),
+  `AsyncDaemonListener::serve` (`listener.rs:180`),
+  `AsyncDaemonListener::accept_one` (`listener.rs:264`).
+- `engine`: `AsyncFileCopier::copy_file`
+  (`crates/engine/src/async_io/copier.rs:91`),
+  `AsyncFileCopier::copy_file_with_progress` (`copier.rs:108`),
+  `AsyncBatchCopier::copy_files`
+  (`crates/engine/src/async_io/batch.rs:113`).
+- `rsync_io`: `resolve_host`
+  (`crates/rsync_io/src/ssh/embedded/resolve.rs:26`),
+  `authenticate` (`auth.rs:233`).
 
-- Invalidate every integration test in one commit. The golden byte
-  tests in `crates/protocol/tests/golden/` exercise wire output
-  produced by sync code paths; replacing the producer in one sweep
-  yields one colossal unreviewable diff.
-- Break the criterion benchmarks (`benchmarks/`, #1285-#1289) for
-  the duration of the migration. Regressions hide under noise.
-- Force every interop run (`tools/ci/run_interop.sh` against
-  upstream 3.0.9, 3.1.3, 3.4.1) to either pass on an untuned path
-  or fail in ways hard to bisect.
-- Eliminate rollback. The only recovery from a regression would be
-  a full revert.
+The seven crates that own these surfaces - `bandwidth`, `core`,
+`daemon`, `engine`, `protocol`, `rsync_io`, `transfer` - are
+exactly the allowed set per the audit. Items outside this set
+remain forbidden.
 
-Incremental keeps wire-compat, bench comparability, and single-flip
-rollback at every step, and lets the project stop indefinitely at
-any phase: phases 4 and 5 are explicitly "if benchmarks justify"
-(section 11).
+### 2.2 Workspace runtime knobs
 
-## 4. Five-Phase Roadmap
+- `Cargo.toml:107` defines the bin-level `async = ["daemon/async",
+  "core/async"]` umbrella feature; it sits in the default feature
+  list at `Cargo.toml:24-35`.
+- `Cargo.toml:188` pins the workspace tokio version with features
+  `rt-multi-thread, io-util, net, sync, time, macros`.
+- `Cargo.toml:189` pins `tokio-util` at version 0.7 with `codec`
+  and `io` features.
+- Each per-crate gate threads `dep:tokio`:
+  `crates/bandwidth/Cargo.toml:22,27`,
+  `crates/core/Cargo.toml:44,90,93`,
+  `crates/daemon/Cargo.toml:20,45`,
+  `crates/engine/Cargo.toml:37,97`,
+  `crates/protocol/Cargo.toml:29,49-50`,
+  `crates/rsync_io/Cargo.toml:26,32`,
+  `crates/transfer/Cargo.toml:31-32,104`.
+
+### 2.3 Sync hot-path surfaces (intentionally not async)
+
+- Production daemon accept loop: `serve_connections`
+  (`crates/daemon/src/daemon/sections/server_runtime/accept_loop.rs:11`),
+  `spawn_connection_worker`
+  (`.../server_runtime/connection.rs:106-141`),
+  `run_single_listener_loop` (`connection.rs:216`).
+- Sync receiver pipeline: `run_pipeline_loop_decoupled`
+  (`crates/transfer/src/receiver/transfer/pipeline.rs:38`).
+- Lock-free SPSC: `Sender`/`Receiver`
+  (`crates/transfer/src/pipeline/spsc.rs:68,103`).
+- Bounded reorder buffer: `BoundedReorderBuffer`
+  (`crates/transfer/src/reorder_buffer.rs:57,79`).
+- Rayon CPU paths: `parallel_io.rs:124`,
+  `crates/signature/src/parallel.rs:84,207`,
+  `crates/match/src/index/mod.rs:135,208`.
+- Sync bandwidth limiter: `BandwidthLimiter`
+  (`crates/bandwidth/src/limiter/core/limiter.rs:34`).
+- Sync SSH facade: `SshConnection`
+  (`crates/rsync_io/src/ssh/connection.rs:30,178`).
+- Buffer pool: `BufferPool::acquire`/`try_acquire`
+  (`crates/engine/src/local_copy/buffer_pool/pool.rs:459,488`).
+
+### 2.4 The boundary the audit pins
+
+`docs/audits/tokio-dependency-boundary-2026.md` recommends a CI
+guardrail `tools/ci/check_tokio_boundary.sh` that enforces:
+tokio appears only in the seven crates listed in 2.1, every direct
+dep is `optional = true`, and no other workspace crate names tokio
+in `[dependencies]` or `[target.cfg(...)]`. This plan treats that
+guardrail as a Phase 0 prerequisite (section 4.1).
+
+## 3. Target End-State
+
+### 3.1 What goes async
+
+- Daemon accept layer: socket bind, accept, per-connection handoff,
+  reverse DNS, proxy-protocol parsing. Per
+  `docs/design/daemon-async-accept-sync-workers.md` (#1674).
+- SSH transport bytestream: connect, key exchange, authentication,
+  per-channel send/recv. Already true on the `embedded-ssh` path;
+  Phase 3 promotes it to the default for that feature.
+- Transfer pipeline orchestration: file-job production, retry
+  scheduling, cancellation, progress aggregation. The
+  `run_pipeline` future at
+  `crates/transfer/src/pipeline/async_pipeline.rs:137` is the
+  vehicle; Phase 4 wires it into the production receiver.
+- Rate limiting: token-bucket sleep on the I/O path. Already
+  implemented at `crates/bandwidth/src/async_limiter.rs:30-77`;
+  Phase 1 ratifies the public surface.
+- Multiplex codec: framing on the wire side. `MultiplexCodec`
+  exists in `crates/protocol/src/multiplex/`; Phase 3 makes it the
+  default for async-built transports.
+
+### 3.2 What stays synchronous
+
+- All CPU-bound compute. Rolling and strong checksums, delta
+  matching, signature generation, compression frame encoding,
+  filter rule evaluation. These run on rayon's pool.
+- Platform fast-path I/O. The `fast_io` crate stays tokio-free;
+  io_uring (`#[cfg(all(target_os = "linux", feature = "io_uring"))]`),
+  IOCP, `copy_file_range`, `clonefile`, `CopyFileExW`. Async layers
+  call into `fast_io` via `spawn_blocking` when they need an
+  fd-bound operation.
+- Lock-free SPSC at
+  `crates/transfer/src/pipeline/spsc.rs:68,103`. The wakeup
+  cost of `tokio::sync::mpsc` exceeds the spin-wait cost we
+  measure, and the SPSC is one consumer one producer by
+  construction.
+- Buffer pool and other contention-sensitive shared state. Per the
+  hot-path mutex policy (no `tokio::sync::Mutex` in hot paths).
+
+### 3.3 The dividing line
+
+Async owns scheduling (when work runs, who runs it next, when to
+cancel). Synchronous owns computation (CPU-heavy, fd-bound, or
+SPSC-paced steps). The bridge is `spawn_blocking` for one-shot
+CPU jumps, `block_in_place` for in-task CPU jumps, and the
+`TransferChannel` trait of #1591 for sustained traffic in either
+direction.
+
+## 4. Migration Phases
 
 ```
-Phase 1  boundary-only async       (today)        [DONE / steady state]
-Phase 2  daemon listener flip      (#1674)        [feature: async-daemon]
-Phase 3  SSH transport async       (#1890)        [feature: async-ssh, Linux]
-Phase 4  receiver pipeline async   (#1079, #1591) [feature: async-transfer]
-Phase 5  rayon retreat             (#1283)        [feature: async-default]
+Phase 0  boundary guardrail        [tools/ci/check_tokio_boundary.sh]
+Phase 1  ratify the seven crates   [no code change, policy update]
+Phase 2  daemon listener default   [feature: async-daemon, env kill switch]
+Phase 3  SSH transport default     [feature: async-ssh, Linux first]
+Phase 4  receiver pipeline default [feature: async-transfer]
+Phase 5  rayon-tokio composition   [feature: async-default, master kill switch]
 ```
 
-Each phase is gated behind a feature flag. The flag is default-off
-until the per-phase exit criteria in section 5 are met. The flag
-remains a runtime kill switch (env var or daemon config) even after
-default-on, so any phase can be disabled in production without a
-rebuild. See section 6 for rollback.
+Each phase ships behind a build-time feature and a runtime kill
+switch. The flag stays default-off until the four exit gates of
+section 7 are all green.
 
-### 4.1 Phase 1 - boundary-only async (today)
+### 4.1 Phase 0 - boundary guardrail
 
-End-of-phase state:
+Scope: add `tools/ci/check_tokio_boundary.sh` (30-50 lines of
+bash). Wire it into the existing CI lint job alongside
+`tools/no_placeholders.sh` and `tools/enforce_limits.sh`. No code
+change in `crates/`.
 
-- Tokio spans only the daemon connection-accept layer (when
-  `--features async-daemon` is built) and the embedded SSH client.
-  Hot transfer code is entirely sync.
-- Sync/async bridge is the `TransferChannel` trait from #1591,
-  with `flume` as the default. Hot paths keep `crossbeam_channel`
-  and the lock-free SPSC.
-- `tokio::task::spawn_blocking` is used at exactly one place per
-  bridge: the async listener pushes `(TcpStream, SocketAddr)`
-  through a `flume::bounded` channel to a sync worker pool.
-  `handle_session` is unchanged.
+Entry point: the audit at
+`docs/audits/tokio-dependency-boundary-2026.md:352-368` already
+specifies the script's contract. The script reads each
+`crates/*/Cargo.toml`, scopes to `[dependencies]` and
+`[target.'cfg(...)'.dependencies]`, greps for `^tokio` or
+`^tokio-util`, and compares the resulting crate set against the
+seven-crate allow-list.
 
-Ships in Phase 1:
+Exit criteria: the script exits zero against the current tree,
+exits nonzero on a synthetic violation (a test fixture that adds
+tokio to `crates/cli/Cargo.toml`), and runs in under 5 seconds on
+the existing CI runners.
 
-- `TransferChannel` / `TransferSender` / `TransferReceiver` traits
-  and a flume-backed implementation in
-  `crates/transfer/src/channel.rs`, gated by the existing `async`
-  feature.
-- Guardrail docs ("no second runtime", "no `tokio::sync::Mutex` in
-  hot paths") so subsequent phases inherit them.
+Blast radius: zero code, one new tool. The only failure mode is a
+PR that drifts the boundary, which is exactly the failure the
+script catches.
 
-Does not ship in Phase 1: no production path takes a tokio
-dependency unless explicitly opted in; no CLI default mode
-requires a runtime. Phase 1 exit gates are met today (section 5.1).
+### 4.2 Phase 1 - ratify the seven crates
 
-### 4.2 Phase 2 - daemon listener flip
+Scope: codify in this document and in workspace policy notes that
+the seven-crate boundary is the steady state. No code change.
 
-Enable the tokio async accept loop (#1674) behind build-time
-`--features async-daemon`. Sync transfer workers unchanged.
+Entry point: the audit's "Recommendation" section at
+`docs/audits/tokio-dependency-boundary-2026.md:316-348` enumerates
+the corrected policy text. Phase 1 lands that text and removes the
+stale "tokio: only daemon and core" framing from #1779.
 
-Changes:
+Exit criteria: every `docs/` reference to "tokio in daemon and
+core" updated; unsafe-code policy stays disjoint from the tokio
+policy. Blast radius: documentation only.
 
-- `crates/daemon/Cargo.toml`: `async-daemon = ["async"]`,
-  default-off.
-- `crates/daemon/src/daemon/sections/server_runtime/accept_loop.rs`:
-  when `async-daemon` is on, dispatch to
-  `crates/daemon/src/daemon/async_session/listener.rs` instead of
-  `run_single_listener_loop`. Accept-to-worker hand-off uses the
-  Phase 1 flume bridge.
-- Sync worker pool sized at `max_connections`, pre-spawned at
-  startup. Workers run the existing `handle_session` byte for byte.
-- `OC_RSYNC_DAEMON_ASYNC=0` disables the async path at startup
-  even on a `--features async-daemon` build.
+### 4.3 Phase 2 - daemon listener default
 
-Safety: the transfer state machine is unchanged; the async layer
-touches only bind, accept, socket options, optional reverse DNS,
-and the hand-off, none of which mutate wire output. `catch_unwind`
-panic isolation is preserved at the sync worker boundary. A
-saturated worker pool stalls accept and the kernel SYN backlog
-absorbs the burst.
+Scope: flip the production daemon path from sync accept
+(`crates/daemon/src/daemon/sections/server_runtime/accept_loop.rs:11`)
+to the async listener
+(`crates/daemon/src/daemon/async_session/listener.rs:128-264`)
+when built with `--features async-daemon`. Sync transfer workers
+unchanged; the bridge follows
+`docs/design/daemon-async-accept-sync-workers.md` (#1674).
 
-Default-off until benchmarks at 100 / 1k / 10k concurrent
-connections show the async accept layer matches or exceeds
-`thread::spawn`-per-connection on listings throughput, short-
-transfer throughput, and steady-state RSS at 1k idle connections.
-Harness lives next to `scripts/benchmark.sh`.
+Entry point: `AsyncDaemonListener::serve` already spawns a
+per-connection async handler at `listener.rs:216`. Phase 2 adds a
+build-time selector in `accept_loop.rs` that picks between
+`run_single_listener_loop` (sync) and `AsyncDaemonListener::serve`
+(async) based on the `async-daemon` feature.
 
-### 4.3 Phase 3 - SSH transport async
+Exit criteria: section 7 gates green; concurrency tests at 100,
+1k, and 10k idle connections show async accept matches or exceeds
+sync on listings throughput, short-transfer throughput, and
+steady-state RSS; `OC_RSYNC_DAEMON_ASYNC=0` reverts to sync on the
+next process start without a rebuild.
 
-Make the SSH transport path async on Linux behind feature
-`async-ssh`. The synchronous facade is preserved for non-Linux
-callers and any caller that does not want a runtime.
+Blast radius: the daemon binary only. CLI client paths unchanged.
+The transfer state machine is unchanged; the async layer touches
+bind, accept, socket options, optional reverse DNS, and the
+sync-worker handoff, none of which mutate wire output.
 
-Changes:
+### 4.4 Phase 3 - SSH transport default on Linux
 
-- `crates/rsync_io/src/ssh/embedded/` already speaks tokio via
-  russh. Phase 3 promotes this to default for SSH transports when
-  built with `--features async-ssh` on Linux. macOS, Windows, and
-  *BSD keep the system `ssh` subprocess path unless the user opts
-  in explicitly. #1890 owns the embedded-ssh validation matrix.
-- The sync caller surface (`SshConnection::split()`,
-  `SshChildHandle`) is preserved. The runtime is internal to
-  `rsync_io`; transfer crates see the same byte pipes.
-- The bridge between async socket and sync transfer worker uses
-  the Phase 1 `TransferChannel` (`flume::bounded(16)`, per
-  `docs/design/async-channel-abstraction.md`). Sync rayon sender
-  pushes via `send_blocking`; async forwarder task does
-  `recv_async` and `socket.write_all().await`.
+Scope: when built with `--features async-ssh` on Linux, route SSH
+through the embedded backend at
+`crates/rsync_io/src/ssh/embedded/connect.rs:107-122` (which
+already builds a tokio current-thread runtime) instead of exec-ing
+the system `ssh` binary. macOS, Windows, and BSDs keep the
+subprocess path unless explicitly opted in.
 
-Wire bytes are unchanged. The remote-invocation capability string
-`-e.LsfxCIvu` is byte-identical to the sync path; `transport::ssh`
-changes only how bytes are pushed, not what bytes are pushed.
+Entry point: `connect_and_exec` is the sync facade
+(`connect.rs:107`); `connect_and_exec_async` (`connect.rs:125`) is
+the async core. Phase 3 lifts the async core to a top-level
+public surface for callers that already own a runtime, keeps the
+sync facade for callers that do not.
 
-Default-off until embedded-SSH parity passes against OpenSSH 8.x
-and 9.x (#1890), localhost-loop SSH throughput matches sync within
-5%, and cipher and KEX stay byte-identical under tcpdump.
+Exit criteria: embedded-SSH parity per #1890 (OpenSSH 8.x and 9.x,
+byte-identical KEX and cipher under tcpdump); localhost throughput
+within 5% of system-ssh; `OC_RSYNC_SSH_ASYNC=0` reverts to
+subprocess.
 
-Env var rollback: `OC_RSYNC_SSH_ASYNC=0`.
+Blast radius: SSH transport only. Wire bytes unchanged; the
+capability string `-e.LsfxCIvu` is byte-identical on both paths.
 
-### 4.4 Phase 4 - receiver pipeline async
+### 4.5 Phase 4 - receiver pipeline default
 
-The first phase that touches the transfer hot path. The delta-apply
-pipeline runs in async tasks on the same tokio runtime as the
-daemon and SSH transport. ReorderBuffer either becomes a
-`tokio::sync::mpsc` / `tokio::sync::oneshot` composite or stays on
-crossbeam behind a thin wrapper - benchmark-driven, per
-`docs/design/multi-file-delta-apply-pipeline.md` (#1079).
+Scope: replace the sync receiver pipeline at
+`crates/transfer/src/receiver/transfer/pipeline.rs:38`
+(`run_pipeline_loop_decoupled`) with the async pipeline at
+`crates/transfer/src/pipeline/async_pipeline.rs:137` (`run_pipeline`)
+when built with `--features async-transfer`. The sync variant
+stays as the fallback for builds without `async`.
 
-Changes:
+Entry point: `run_pipeline` already accepts a closure mapping
+`FileJob` to a future. Phase 4 wires its caller (the receiver
+context site) to provide that closure. The `PipelineHandle`
+carries a `tokio_util::sync::CancellationToken`; cancellation
+matches #1079's wire-order ack pattern.
 
-- `crates/transfer/src/pipeline/async_pipeline.rs` becomes the
-  production receiver pipeline when `async-transfer` is on,
-  replacing `run_pipeline_loop_decoupled` in
-  `crates/transfer/src/receiver/transfer/pipeline.rs`. Sync
-  variant kept as fallback for CLI mode without SSH/daemon.
-- Wire-order acks follow #1079: one oneshot per outstanding file,
-  producer registers, consumer resolves in send order.
-- The disk-commit task is owned by the runtime, not a manually
-  spawned `std::thread`. Backpressure uses the Phase 1 bridge.
+Exit criteria: section 7 gates green; cancellation kill-test
+(receiver cancelled at random points in 1000 transfers leaves a
+consistent tree, no half-applied temp files); #1079 ordering
+tests green; `OC_RSYNC_RECEIVER_ASYNC=0` reverts on next call.
 
-Risk surface:
+Blast radius: the entire transfer hot path. Highest-risk phase;
+mitigations in section 9.
 
-- Cancellation. Sync transfers either run to completion or abort
-  via `Result::Err`. An async task can be cancelled by a `select!`
-  arm dropping its future. We adopt explicit
-  `tokio_util::sync::CancellationToken` propagation: the
-  `ReceiverContext` owns a token, every spawned task receives a
-  clone, and a `Drop` guard in the disk-commit task finalises or
-  unlinks the temp file.
-- Performance. The lock-free SPSC at
-  `crates/transfer/src/pipeline/spsc.rs` is currently 12ns per
-  item; any async replacement must match that or we keep crossbeam
-  under the bridge.
+### 4.6 Phase 5 - rayon-tokio composition
 
-Default-off until: all wire-format goldens in
-`crates/protocol/tests/golden/` green; criterion benchmarks for
-delta-apply, multi-file pipeline, and ReorderBuffer within 5% of
-sync baseline (#1285-#1289); `tools/ci/run_interop.sh` exits 0
-against upstream 3.0.9, 3.1.3, and 3.4.1 with async receiver on.
+Scope: finalise the bridge rules from
+`docs/design/io-uring-rayon-composition.md` (#1283). Rayon owns
+CPU compute (signature generation, candidate verification at
+`crates/match/src/index/mod.rs:135,208`); tokio owns I/O
+scheduling. The pools are sized independently, do not steal from
+each other, and exchange work only through `spawn_blocking` or
+`TransferChannel` (#1591).
 
-Env var rollback: `OC_RSYNC_RECEIVER_ASYNC=0`.
+Entry point: `crates/transfer/src/parallel_io.rs:124` and
+`crates/signature/src/parallel.rs:84,207` keep their rayon
+surfaces; new async wrappers sit beside them gated by
+`async-default`. See `docs/design/adaptive-thread-pool-sizing.md`
+for #1751's worker-count heuristics.
 
-### 4.5 Phase 5 - rayon retreat
+Exit criteria: Phase 4 default-on for one minor release without
+field regressions; cross-pool stress tests show no rayon
+starvation under tokio I/O load; a tuning runbook ships with the
+PR; `OC_RSYNC_ASYNC=0` master kill switch covers all paths.
 
-Finalise the model. Rayon stays for pure-CPU compute (signature
-generation, strong-checksum batches); I/O is pure tokio on
-async-default builds. The bridge follows
-`docs/design/io-uring-rayon-composition.md` (#1283):
+Blast radius: workspace-wide. Final consolidation; not a
+correctness or wire-compat change.
 
-- A rayon worker that needs I/O submits non-blocking to the async
-  layer, never via a blocking syscall.
-- The async layer dispatches CPU-heavy work back to rayon via
-  `spawn_blocking` (one-shot, bounded) or `block_in_place` (when
-  the worker is already on a runtime thread).
-- Rayon pool has a bounded thread count separate from tokio's
-  worker pool to avoid mutual starvation, per #1283.
+## 5. The Sync/Async Bridge Problem
 
-Changes:
+### 5.1 Five bridge primitives, one rule per direction
 
-- `crates/transfer/src/parallel_io.rs:107-125` and
-  `crates/signature/src/parallel.rs:11-86` keep their rayon
-  surfaces but expose async wrappers via `spawn_blocking`.
-- `crates/match/src/index/mod.rs` candidate verification stays
-  rayon-internal; the caller is async-blind.
-- Daemon, SSH transport, and receiver share one tokio runtime.
+- **Sustained sync to async**: `flume::bounded(N)` via
+  `TransferChannel` (#1591). Network-to-disk, signature-to-pipeline.
+- **Sustained async to sync**: same, `recv_async` on the async
+  side. Job dispatch to rayon.
+- **One-shot async to sync**: `tokio::task::spawn_blocking`. Per-file
+  CPU compute.
+- **One-shot sync to async**: `Handle::block_on`, only in CLI
+  startup, driving a single async call from `main()`.
+- **In-task sync burst**: `tokio::task::block_in_place`. Short
+  rayon op inside an async task.
 
-Default-off until: Phase 4 has been default-on for at least one
-minor release without field regressions; rayon pool sizing tuned
-against tokio worker count on the criterion suite (CI exercises
-1, 4, 8, 16, 32 logical CPUs); a runbook for tuning the two pools
-ships with the Phase 5 PR.
+The rule is: pick the primitive on the call's lifetime, not on the
+calling crate. A signature pass per file is `spawn_blocking`; a
+per-byte token-bucket sleep is `await` on the async limiter; a
+sustained network-to-disk feed is `TransferChannel`.
 
-Env var rollback: `OC_RSYNC_ASYNC=0` is the master kill switch
-across daemon, SSH, and receiver paths.
+### 5.2 Where #1751 fits
 
-## 5. Per-Phase Exit Criteria
+#1751 governs the one-shot bridge: when an async task needs a
+rayon-sized burst, the bridge is `spawn_blocking` returning a
+`JoinHandle<T>`. The blocking pool is separate from the worker
+pool, so the worker is never parked on rayon. The opposite
+direction (a rayon worker pushing to the async layer) goes through
+the `TransferChannel` trait at the caller of
+`crates/transfer/src/pipeline/async_dispatch.rs:29`, not through
+`Handle::block_on`. Calling `block_on` from a rayon worker is a
+deadlock if the worker holds any runtime resource.
 
-Each phase has the same four exit gates. The phase does not flip
-default-on until all four are green simultaneously.
+### 5.3 What we do not bridge
 
-1. **Wire compatibility.** The golden byte tests in
-   `crates/protocol/tests/golden/` stay green. A `tcpdump`
-   capture against upstream rsync 3.4.1 replays byte-identical
-   for the new async path on the matrix of:
-   - protocol negotiation (versions 28-32),
-   - file-list transfer (with and without INC_RECURSE),
-   - delta-apply for at least one binary file and one text file,
-   - itemize output for create / update / delete cases.
-2. **Performance.** No regression on the criterion suite under
-   `benchmarks/` (the suite added in #1285-#1289). The threshold
-   is +5% on any individual benchmark and +2% on the geometric
-   mean across all benchmarks. CI fails the phase rollout if
-   either threshold is exceeded.
-3. **Coverage.** No drop below 95% line coverage measured by
-   `cargo llvm-cov`. The current line coverage targets are
-   tracked in #1107 and #1774; the phase rollout PR includes a
-   coverage report as a CI artefact.
-4. **Interop.** `tools/ci/run_interop.sh` exits 0 against
-   upstream rsync 3.0.9, 3.1.3, and 3.4.1, in both client and
-   server roles, in both push and pull directions, against the
-   daemon with each phase's feature flag enabled.
+`crates/transfer/src/pipeline/spsc.rs:68,103` stays sync at both
+ends; wrapping it in async would force a wakeup-per-item cost
+~10x the spin-wait cost. If either side ever moves to tokio, the
+SPSC consumer becomes a `block_in_place` boundary on the async
+side, never a `tokio::sync::mpsc` replacement.
 
-### 5.1 Phase 1 status (already met)
+## 6. Backwards-Compatibility Constraints
 
-- Wire-compat: phase 1 ships no production code path that
-  produces wire bytes; the boundary async only touches accept
-  and the SSH socket. All goldens green at HEAD.
-- Performance: no production hot path changed. Bench numbers
-  identical to the sync baseline.
-- Coverage: above 95% at HEAD.
-- Interop: green on all three upstream versions.
+### 6.1 Wire protocol
 
-Phase 1 is the steady state today.
+Zero changes across all phases. Concretely:
 
-## 6. Rollback at Each Phase
-
-Every phase is feature-gated at build time and kill-switched at
-runtime:
-
-| Phase | Build feature      | Runtime kill switch                   |
-|-------|--------------------|---------------------------------------|
-| 1     | n/a (always on)    | n/a (no production hot path uses it)  |
-| 2     | `async-daemon`     | `OC_RSYNC_DAEMON_ASYNC=0` env or daemon config `async = false` |
-| 3     | `async-ssh`        | `OC_RSYNC_SSH_ASYNC=0` env            |
-| 4     | `async-transfer`   | `OC_RSYNC_RECEIVER_ASYNC=0` env       |
-| 5     | `async-default`    | `OC_RSYNC_ASYNC=0` (master kill)      |
-
-A user who hits a regression in production sets the env var (or
-edits `oc-rsyncd.conf` for the daemon) and the binary falls back to
-the sync path on the next process start. No rebuild is required.
-The runtime kill switch is checked once at startup, not per
-request, so the cost is zero on the hot path.
-
-The build-time feature lets distributors ship oc-rsync with async
-disabled entirely if they want to minimise the dependency surface
-(no tokio in the binary). The default Cargo build for end users
-includes the async features once each phase has flipped default-on.
-
-## 7. Wire-Compat Invariant
-
-**Zero protocol changes across all five phases.** The async
-migration is a purely internal concurrency model change. To make
-this concrete:
-
-- No new MSG_ frame types in `crates/protocol/src/messages/`.
-- No new capability flags in
-  `crates/transfer/src/setup.rs::build_capability_string` (the
-  current value is `-e.LsfxCIvu` and stays that way).
+- No new `MSG_*` frame types in `crates/protocol/src/messages/`.
+- No new capability-string flags. The current value
+  `-e.LsfxCIvu` (built in `crates/transfer/src/setup.rs::build_capability_string`)
+  stays exactly that.
 - No new daemon `@RSYNCD:` greeting variants.
 - No new exit codes in `crates/core/src/exit_code.rs`.
 - The varint and 4-byte LE legacy framing in `crates/protocol/src`
   is unchanged.
-- The `tcpdump` replay test ships with each phase rollout PR and
-  must produce byte-identical output to the sync path.
 
-A change that requires a wire-format extension is by definition
-out of scope for this plan and must be proposed in a separate
-design note. The async migration is not a vehicle for protocol
-extensions; the project rule is that wire-format work is rare and
-explicit (see the user-feedback rule on no wire protocol features
-for niche performance gains).
+A `tcpdump` replay test ships with each phase rollout PR and must
+produce byte-identical output to the sync path. Wire-level
+extensions are explicitly out of scope; this plan is a concurrency
+refactor, not a protocol vehicle.
 
-## 8. Risk Register
+### 6.2 CLI flags
 
-### 8.1 Dual-runtime overhead and CLI startup latency
+- No new flags introduced by this plan. The async path is opt-in
+  via build features and opt-out via env vars; users who do not
+  want a runtime build with `--no-default-features`.
+- `--no-default-features` builds remain tokio-free per the audit's
+  feature graph. Distributors who want a minimal binary keep that
+  path.
+- All existing flags retain their meaning. The async receiver
+  honours `--bwlimit`, `--timeout`, `--contimeout`, and
+  `--partial-dir` byte-for-byte against the sync receiver.
+
+### 6.3 Public API
+
+- The seven async-bearing crates already publish their
+  feature-gated async items. Phase 1 ratifies the surface; later
+  phases do not add new public types beyond what the existing
+  `crates/*/src/lib.rs` files already export under
+  `#[cfg(feature = "async")]`.
+- The 18 crates outside the seven-crate allow-list stay tokio-free
+  (full list in `docs/audits/tokio-dependency-boundary-2026.md:181-185`).
+  Phase 0's CI guardrail enforces this.
+
+## 7. Test Strategy Per Phase
+
+Every phase ships with new tests; existing tests are not modified
+so the sync path stays under continuous coverage even after the
+async path becomes default-on.
+
+### 7.1 Per-phase exit gates (applied to phases 2-5)
+
+Each phase has the same four gates and does not flip default-on
+until all four are green simultaneously.
+
+1. **Wire compatibility.** Golden byte tests in
+   `crates/protocol/tests/golden/` stay green. A `tcpdump`
+   capture against upstream rsync 3.4.1 replays byte-identical
+   for the async path on the matrix of: protocol negotiation
+   (versions 28-32), file-list transfer (with and without
+   INC_RECURSE), delta-apply for at least one binary file and
+   one text file, itemize output for create / update / delete.
+2. **Performance.** No regression on the criterion suite under
+   `benchmarks/`. Threshold: +5% on any individual benchmark and
+   +2% on the geometric mean. CI fails the rollout if either
+   threshold is exceeded.
+3. **Coverage.** No drop below 95% line coverage measured by
+   `cargo llvm-cov`. The phase rollout PR includes a coverage
+   report as a CI artefact.
+4. **Interop.** `tools/ci/run_interop.sh` exits 0 against
+   upstream rsync 3.0.9, 3.1.3, and 3.4.1 in both client and
+   server roles, in both push and pull directions, with the
+   feature flag enabled.
+
+### 7.2 Phase-specific tests
+
+- **Phase 0**: fixture `tools/ci/test_check_tokio_boundary.sh`
+  feeds a synthetic violation (tokio in a forbidden crate),
+  asserts nonzero; clean tree asserts zero.
+- **Phase 1**: lint check on `docs/` for stale "tokio in daemon
+  and core" wording.
+- **Phase 2**: daemon integration tests asserting byte parity
+  with sync accept for module listing, auth handshake, small
+  file transfer. Concurrency tests at 100, 1k, 10k connections.
+- **Phase 3**: embedded-SSH parity against OpenSSH 8.x and 9.x
+  per #1890; KEX and cipher byte-equivalence under tcpdump.
+- **Phase 4**: full receiver async integration over delta-apply;
+  cancellation kill-tests (section 9.2); multi-file ordering
+  per #1079.
+- **Phase 5**: cross-pool stress; signature under tokio I/O load;
+  no starvation under `block_in_place`.
+
+The criterion suite runs on every default-flipping PR; the
+per-phase performance gate blocks the merge.
+
+## 8. Rollout and Feature Flag Plan
+
+### 8.1 Build-time features
+
+| Phase | Build feature | Default | Pulls |
+|-------|---------------|---------|-------|
+| 0 | n/a | always | tools/ci script only |
+| 1 | n/a | always | docs only |
+| 2 | `async-daemon` | off until exit gates | `daemon/async`, `core/async` |
+| 3 | `async-ssh` | off until exit gates | `rsync_io/embedded-ssh` plus `core/async` |
+| 4 | `async-transfer` | off until exit gates | `transfer/async`, `engine/async` |
+| 5 | `async-default` | off until exit gates | umbrella; all of the above |
+
+The bin-level umbrella `async = ["daemon/async", "core/async"]` at
+`Cargo.toml:107` already exists and stays default-on. Phase
+features compose on top; e.g. `async-daemon` enables
+`AsyncDaemonListener` as the production accept loop, not just as
+a feature-gated type.
+
+### 8.2 Runtime kill switches
+
+| Phase | Env var | Effect |
+|-------|---------|--------|
+| 2 | `OC_RSYNC_DAEMON_ASYNC=0` | Daemon falls back to thread-per-connection |
+| 3 | `OC_RSYNC_SSH_ASYNC=0` | SSH transport falls back to subprocess |
+| 4 | `OC_RSYNC_RECEIVER_ASYNC=0` | Receiver falls back to sync pipeline |
+| 5 | `OC_RSYNC_ASYNC=0` | Master kill switch across all paths |
+
+The kill switch is checked once at startup, not per request, so
+it costs zero on the hot path. A user who hits a regression sets
+the env var (or edits `oc-rsyncd.conf` for the daemon) and the
+binary falls back on the next process start; no rebuild needed.
+
+### 8.3 Distributor builds
+
+`--no-default-features` plus the non-async perf and metadata
+features yields a tokio-free binary. The audit confirms the
+feature graph supports this; the guardrail script keeps it true.
+
+## 9. Risks
+
+### 9.1 Executor starvation
+
+A long-running blocking call inside an async task starves the
+worker pool. Mitigation: every CPU-heavy step on the async side
+goes through `spawn_blocking` or `block_in_place` per section 5.
+Phase 4 rolls out with a CI lint that greps for `std::fs::*` and
+`rayon::scope` inside `async fn` in `crates/transfer/src/pipeline/`.
+
+### 9.2 Cancellation semantics differ from sync abort
+
+Sync transfers abort via `Result::Err`. An async task can be
+cancelled by a parent dropping its future, leaving no opportunity
+for cleanup unless the task holds a `Drop` guard. Mitigation:
+explicit `tokio_util::sync::CancellationToken` propagation. The
+`PipelineHandle` at
+`crates/transfer/src/pipeline/async_pipeline.rs:151-155` already
+carries one; Phase 4 extends to per-file tasks. The disk-commit
+`Drop` impl finalises or unlinks the temp file. Phase 4 exit
+criteria include a kill-test (section 7.2).
+
+### 9.3 Deadlock across the bridge
+
+Two failure modes: (a) a rayon worker calls `Handle::block_on`
+while holding a buffer lease at
+`crates/engine/src/local_copy/buffer_pool/pool.rs:459`, the
+async task tries to take another buffer, both park; (b) an async
+task does `block_in_place` while holding a tokio mutex, another
+task takes the same mutex, the worker parks. Mitigation: section
+5 forbids `block_on` from a rayon worker and forbids holding a
+tokio resource across `block_in_place`. Phase 4 enforces with a
+clippy `disallowed_methods` lint on `Handle::block_on` inside
+`async_pipeline.rs`.
+
+### 9.4 Livelock on retry storms
+
+The async pipeline's retry path
+(`async_pipeline.rs:161,178`) can re-enqueue a deterministically
+failing job indefinitely. Mitigation: bounded retry per
+`AsyncPipelineConfig.retry_enabled`; exponential backoff with cap;
+the cancellation token at `async_pipeline.rs:147` aborts the
+pipeline if backoff exceeds the per-session timeout.
+
+### 9.5 Dual-runtime startup cost
 
 Tokio at startup costs a thread pool, a reactor, and a timer
-wheel - roughly 100-300 microseconds and a few MB of RSS even on
-an idle process. CLI mode for local-only transfers
-(`oc-rsync src/ dst/`) does not need a runtime.
+wheel - roughly 100-300 microseconds and a few MB of RSS. CLI
+mode for local-only transfers does not need it. Mitigation: lazy
+runtime construction; build only when the SSH transport, daemon,
+or `rsync://` scheme is invoked. CLI uses one `current_thread`
+runtime; multi-thread is reserved for the daemon. CI fails if
+`oc-rsync --version` startup regresses by more than 10ms.
 
-Mitigation: lazy runtime construction. The runtime is built only
-if the CLI invokes the SSH transport, the daemon, or the
-`rsync://` scheme. Local-only transfers stay sync end-to-end. CLI
-uses a single current-thread runtime; multi-thread is reserved for
-the daemon. The runtime is built once and reused for the process
-lifetime. CI fails if `oc-rsync --version` startup regresses by
-more than 10ms.
+### 9.6 Bridge crate stability and io_uring composition
 
-### 8.2 Async cancellation semantics differ from sync abort
+The migration depends on `flume` and
+`tokio_util::sync::CancellationToken`. Both pinned in workspace
+`Cargo.toml`. Phase rollout PRs require `cargo audit` clean. A
+future RustSec advisory on either crate freezes the affected
+phase until resolved.
 
-A sync transfer aborts via `Result::Err` propagation. An async
-task can be cancelled by its parent dropping the future, leaving
-no opportunity for cleanup unless the task holds a `Drop` guard
-or explicitly handles cancellation.
+io_uring lives in `fast_io` behind
+`#[cfg(all(target_os = "linux", feature = "io_uring"))]` and
+stays sync. The interaction surface is the disk-commit path that
+Phase 4 migrates: an async task hands a buffer to a
+`spawn_blocking` closure that calls into `fast_io::io_uring::*`.
+The closure runs on the blocking pool, so the io_uring syscall
+never pre-empts runtime workers. Tracked in #1595; see
+`docs/design/io-uring-rayon-composition.md` for the boundary
+diagram.
 
-Mitigation: explicit `tokio_util::sync::CancellationToken`
-propagation; the `ReceiverContext` owns a token, every spawned
-task receives a child token. Half-applied state lives behind RAII
-guards: the disk-commit task's `Drop` impl finalises or unlinks
-the temp file. Phase 4 exit criteria include a kill-test - the
-receiver is cancelled at random points in 1000 transfers and
-every result must leave a consistent destination tree.
+## 10. Open Questions and Tracked Tasks
 
-### 8.3 Rayon pool starvation under `block_in_place`
+### 10.1 Open questions
 
-`block_in_place` lets a tokio worker run sync work while the
-runtime steals other tasks. Two failure modes: the rayon pool
-fans back out to tokio via channels and the parked worker
-deadlocks the pool below its minimum; or rayon's global pool and
-tokio's workers fight over the same CPUs.
+- **Q1**: should the CLI's optional async path accept user jobs as
+  `Future` factories, or stay sync at `main()`? Open until Phase 3
+  ships and the embedded-SSH adoption curve is clear.
+- **Q2**: when Phase 5 moves rayon and tokio to independent pool
+  sizing, what is the heuristic? `num_cpus::get()` for rayon and
+  half for tokio is a starting point;
+  `docs/design/adaptive-thread-pool-sizing.md` is the vehicle.
+- **Q3**: do we ever expose `tokio::sync::Notify` on a public
+  API? Today no; reopens only if a future audit revisits the
+  hot-path mutex policy.
+- **Q4**: the embedded-SSH bridge is the only reason `rsync_io`
+  ships an optional tokio dep
+  (`crates/rsync_io/Cargo.toml:26,32`). The audit suggests
+  hoisting it to a dedicated `embedded_ssh` crate; out of scope
+  here, tracked separately.
 
-Mitigation: rayon pool has a bounded thread count separate from
-tokio's worker pool, per #1283. `block_in_place` is reserved for
-one-shot CPU-heavy compute (signature, strong-checksum batch); it
-is never used to bridge channels. The cross-pool bridge is
-`spawn_blocking`, which uses tokio's separate blocking-pool.
+### 10.2 Tracked tasks
 
-### 8.4 Bridge crate stability
+- **#1590** tokio vs async-std: closed, superseded by #3706.
+- **#1591** channel abstraction: Phase 1 prerequisite.
+- **#1592** sync channel profiling: Phase 5 input
+  (`docs/audits/transfer-hot-path-channel-overhead-static.md`).
+- **#1593** async SSH evaluation: Phase 3 vehicle
+  (`docs/audits/ssh-transport-async-evaluation.md`).
+- **#1594** this plan.
+- **#1595** async impact on io_uring: Phase 5 (section 9.6;
+  `docs/audits/async-io-uring-interaction.md`).
+- **#1737** async bandwidth limiter: shipped; ratified in Phase 1.
+- **#1750** no sync/async API duplication: ratified.
+- **#1751** `spawn_blocking` for rayon CPU work: Phase 5 (5.2).
+- **#1779** original tokio scope audit: superseded by #3706.
+- **#1934** async listener RFC: completed.
+- **#1935** tokio listener implementation: Phase 2 promotes to default.
+- **#3705** daemon scalability audit: cited in section 1.1.
+- **#3706** tokio boundary re-verification: provides the
+  seven-crate allow-list and the Phase 0 guardrail contract.
 
-The migration depends on `flume` (Phase 1) and
-`tokio_util::sync::CancellationToken` (Phase 4). Both pinned in
-the workspace `Cargo.toml` (`flume = "=0.11.x"`,
-`tokio-util = "0.7"` at `Cargo.toml:189`). Phase rollout PRs
-require `cargo audit` clean.
+## 11. References
 
-## 9. Pinned External Decisions
+Audits:
 
-The following are settled and not re-litigated by this plan.
+- `docs/audits/tokio-dependency-boundary-2026.md` - PR #3706.
+- `docs/audits/daemon-thread-per-connection-scalability.md` - PR #3705.
 
-- **No second async runtime.** Tokio is the only async runtime
-  in the workspace (`Cargo.toml:188`). #1779 verified this and
-  #1780 confirmed scope. We do not introduce `async-std`,
-  `smol`, `monoio`, `glommio`, or `embassy`. A future need for
-  one of these would be a separate design note with explicit
-  re-evaluation of the trade-offs.
-- **No `tokio::sync::Mutex` in hot paths.** Per #1781, the hot
-  paths use `std::sync::Arc<Mutex<T>>`. `tokio::sync::Mutex` is
-  permitted only in async-only state (e.g. the listener's
-  `max_connections` semaphore in
-  `crates/daemon/src/daemon/async_session/listener.rs`). The
-  `BufferPool` stays on `std::sync::Mutex<Vec<Vec<u8>>>` even
-  when the receiver pipeline is async (Phase 4).
-- **`flume` for sync/async bridges.** Per
-  `docs/design/async-channel-abstraction.md` (#1591), the
-  bridge crate is `flume` with the `TransferChannel` trait
-  abstraction. `crossbeam_channel` stays on the pure-sync hot
-  paths. `tokio::sync::mpsc` is permitted only inside fully
-  async sub-graphs (e.g. the listener's internal control plane).
+Adjacent design notes:
 
-## 10. Test Strategy Per Phase
+- `docs/design/async-channel-abstraction.md` - #1591.
+- `docs/design/daemon-async-accept-sync-workers.md` - #1674.
+- `docs/design/io-uring-rayon-composition.md` - #1283.
+- `docs/design/multi-file-delta-apply-pipeline.md` - #1079.
+- `docs/design/adaptive-thread-pool-sizing.md` - Phase 5 input.
 
-Each phase ships with new integration tests; existing tests are
-not modified (so the existing sync path stays under continuous
-test coverage even after the async path becomes default-on).
-
-- **Phase 1**. Unit tests for the `TransferChannel` trait and the
-  flume implementation. Round-trip tests for sync producer / async
-  consumer and the reverse direction. Already shipped under #1591.
-- **Phase 2**. Daemon-level integration tests that drive the
-  async accept layer and assert byte-for-byte parity with the
-  sync accept layer for module listing, auth handshake, and a
-  small file transfer. Concurrency tests at 100 / 1k / 10k
-  connections.
-- **Phase 3**. Embedded-SSH parity tests against OpenSSH 8.x and
-  9.x. Cipher and KEX byte-equivalence under tcpdump. Throughput
-  benchmarks on localhost loop. (#1890 specifies the matrix.)
-- **Phase 4**. Receiver async pipeline integration tests
-  exercising the full delta-apply path. Cancellation kill-tests
-  (section 8.3). Multi-file pipeline ordering tests per #1079.
-- **Phase 5**. Cross-pool stress tests (signature generation
-  under high tokio I/O load). Rayon-tokio interaction tests
-  validating no starvation under `block_in_place`.
-
-The criterion suite (`benchmarks/`) is run on every PR that
-flips a phase default-on and the per-phase performance gate
-(section 5) blocks the merge if it regresses.
-
-## 11. Migration Sequencing
-
-The dependency graph is strict:
-
-```
-Phase 1
-  |
-  +--> Phase 2 (needs the flume bridge)
-  |       |
-  |       +--> Phase 3 (needs Phase 2's daemon flip stable)
-  |               |
-  |               +--> Phase 4 (needs Phases 2 and 3 stable)
-  |                       |
-  |                       +--> Phase 5 (after Phase 4 default-on for
-  |                                     one minor release)
-```
-
-- Phase 2 cannot ship without Phase 1's `TransferChannel`. The
-  bridge crate is a build-time prerequisite.
-- Phase 3 needs Phase 2 default-on long enough to verify the
-  daemon does not regress; embedded SSH shares the same tokio
-  runtime, so any pool-starvation bug must surface on the
-  simpler daemon path first.
-- Phase 4 needs both 2 and 3 stable, because the receiver runs
-  inside the same runtime as the daemon listener and the SSH
-  transport.
-- Phase 5 cannot start until Phase 4 has been default-on for one
-  minor release with clean field reports.
-
-Phase 4 needing both 2 and 3 is the only branch; otherwise the
-order is linear.
-
-## 12. Exit at Any Phase
-
-The plan supports stopping indefinitely at the end of any phase.
-
-- Phase 1 is the current steady state. We can stay here forever
-  if Phase 2's benchmarks do not justify the daemon flip.
-- Phase 2 alone is operationally complete: it solves the 1k-10k
-  concurrent-connection use case (#1674) without touching the
-  transfer hot path.
-- Phase 3 alone is operationally complete for users who care
-  about embedded-SSH performance on Linux.
-- Phase 4 is explicitly "if benchmarks justify". If the sync
-  receiver continues to meet the performance targets, the
-  cancellation-semantics complexity is not worth it.
-- Phase 5 is final consolidation - desirable for code
-  cleanliness but not for correctness or performance.
-
-The plan is not a one-way door. The sync path remains supported
-at every phase.
-
-## 13. Tracking
-
-This plan sequences existing pending TODOs. It does not introduce
-new ones.
-
-- **#1590** - tokio vs async-std. Resolved to tokio per #1779;
-  this plan codifies that (section 9) and closes #1590 as
-  superseded.
-- **#1591** - async-compatible channel abstraction. Phase 1.
-  Already shipped; `docs/design/async-channel-abstraction.md`.
-- **#1593** - async I/O for SSH transport. Phase 3.
-  Implementation vehicle is `crates/rsync_io/src/ssh/embedded/`;
-  bridge is the Phase 1 `TransferChannel`.
-- **#1594** - this plan.
-- **#1595** - async impact on io_uring. Folded into Phase 5;
-  the io_uring + rayon composition rule is already specified at
-  `docs/design/io-uring-rayon-composition.md`.
-- **#1674** - daemon async accept + sync workers. Phase 2.
-  Design at `docs/design/daemon-async-accept-sync-workers.md`.
-- **#1779**, **#1780**, **#1818** - sole-runtime audits. Closed;
-  cited in section 9.
-- **#1781** - hot-path mutex policy. Cited in section 9.
-- **#1782-#1814** - embedded SSH series. Phase 3 enabling work.
-- **#1890** - embedded SSH validation matrix. Phase 3 gate.
-- **#1934** - async daemon listener implementation. Phase 2.
-- **#1283 / #1284** - io_uring + rayon composition. Phase 5
-  prerequisite (rule already exists; Phase 5 adopts it).
-- **#1285-#1289** - criterion benchmark suite that gates each
-  phase rollout.
-- **#1107**, **#1774** - line coverage targets that gate each
-  phase rollout.
-- **#1079** - multi-file delta-apply pipeline; supplies the
-  wire-order ack pattern Phase 4 reuses.
-- **#1737** - bandwidth limiter async wrapper. Phase 1
-  prerequisite, already shipped.
-
-## 14. References
-
-- `docs/design/async-channel-abstraction.md` (#1591).
-- `docs/design/daemon-async-accept-sync-workers.md` (#1674).
-- `docs/design/io-uring-rayon-composition.md` (#1283).
-- `docs/design/multi-file-delta-apply-pipeline.md` (#1079).
-- `Cargo.toml:188-200` - workspace tokio, tokio-util, rayon,
-  crossbeam, dashmap pins.
-- `crates/daemon/Cargo.toml:16-30` - daemon `async` feature.
-- `crates/transfer/Cargo.toml:31-32,103` - transfer `async`
-  feature.
-- `crates/bandwidth/Cargo.toml:22-31` - bandwidth `async`
-  feature.
-- `crates/rsync_io/Cargo.toml:26-38` - rsync_io `embedded-ssh`
-  feature.
-- `crates/daemon/src/daemon/async_session/listener.rs` - async
-  accept implementation.
-- `crates/daemon/src/daemon/sections/server_runtime/connection.rs:106,216-281`
-  - sync accept loop (today's production path).
-- `crates/transfer/src/receiver/transfer/pipeline.rs:31-200` -
-  sync receiver pipeline.
-- `crates/transfer/src/pipeline/spsc.rs` - lock-free SPSC, stays
-  sync.
-- `crates/transfer/src/pipeline/async_pipeline.rs`,
-  `crates/transfer/src/pipeline/async_dispatch.rs` - async
-  prototypes Phase 4 promotes.
-- `crates/transfer/src/reorder_buffer.rs` - sync ordered queue
-  reconsidered in Phase 4.
-- `crates/transfer/src/parallel_io.rs:107-125`,
-  `crates/signature/src/parallel.rs:11-86`,
-  `crates/match/src/index/mod.rs:131-217` - rayon CPU-bound
-  paths that stay rayon in Phase 5.
+Manifest pins: `Cargo.toml:24-35,107,188-189`. Per-crate gates are
+listed in section 2.2. Source citations for every async surface
+are in section 2.1; sync hot-path citations are in section 2.3.
