@@ -133,16 +133,13 @@ fn flag_constants_match_upstream() {
 fn encoder_see_token_updates_dictionary() {
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
 
-    // Feeding data through see_token should not fail
     let block_data = b"This is block data that gets fed to the compressor dictionary";
     encoder.see_token(block_data).unwrap();
 
-    // Should be able to continue encoding after see_token
     let mut output = Vec::new();
     encoder.send_literal(&mut output, b"more data").unwrap();
     encoder.finish(&mut output).unwrap();
 
-    // Output should be valid
     assert!(!output.is_empty());
 }
 
@@ -150,7 +147,6 @@ fn encoder_see_token_updates_dictionary() {
 fn decoder_see_token_updates_dictionary() {
     let mut decoder = CompressedTokenDecoder::new();
 
-    // Feeding data through see_token should not fail
     let block_data = b"This is block data that gets fed to the decompressor dictionary";
     decoder.see_token(block_data).unwrap();
 }
@@ -184,11 +180,11 @@ fn encode_decode_with_see_token_roundtrip() {
     let mut encoded = Vec::new();
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
 
-    // Send literal, then block match
     encoder.send_literal(&mut encoded, literal_data).unwrap();
     encoder.send_block_match(&mut encoded, 0).unwrap();
 
-    // CRITICAL: Feed block data to encoder's dictionary after sending match
+    // Feed block data to encoder's dictionary after sending the match so
+    // back-references in subsequent literals resolve against the basis block.
     encoder.see_token(block_data).unwrap();
 
     // Send more literal data (may use back-references to block_data)
@@ -197,7 +193,6 @@ fn encode_decode_with_see_token_roundtrip() {
         .unwrap();
     encoder.finish(&mut encoded).unwrap();
 
-    // Decode
     let mut cursor = Cursor::new(&encoded);
     let mut decoder = CompressedTokenDecoder::new();
 
@@ -229,7 +224,8 @@ fn encode_decode_with_see_token_roundtrip() {
             CompressedToken::Literal(data) => literals.push(data),
             CompressedToken::BlockMatch(idx) => {
                 blocks.push(idx);
-                // CRITICAL: Feed block data to decoder's dictionary after receiving match
+                // Mirror the encoder's see_token call so the inflate
+                // dictionary stays in sync with the deflate dictionary.
                 decoder.see_token(block_data).unwrap();
             }
             CompressedToken::End => break,
@@ -243,16 +239,14 @@ fn encode_decode_with_see_token_roundtrip() {
 
 #[test]
 fn encoder_protocol_version_31_advances_offset() {
-    // Protocol >= 31 properly advances through data in see_token
+    // Protocol >= 31 advances the offset between 0xFFFF chunks in see_token,
+    // matching upstream's data-duplicating bug fix.
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
 
-    // Large data that spans multiple 0xFFFF chunks
-    let large_data = vec![0xABu8; 0x20000]; // 128KB
+    let large_data = vec![0xABu8; 0x20000];
 
-    // Should succeed and process all data correctly
     encoder.see_token(&large_data).unwrap();
 
-    // Verify encoder still works
     let mut output = Vec::new();
     encoder.send_literal(&mut output, b"test").unwrap();
     encoder.finish(&mut output).unwrap();
@@ -261,14 +255,13 @@ fn encoder_protocol_version_31_advances_offset() {
 
 #[test]
 fn encoder_protocol_version_30_has_data_duplicating_bug() {
-    // Protocol < 31 has bug where offset is not advanced in see_token
-    // This doesn't cause failure, just different dictionary state
+    // Protocol < 31 leaves the offset un-advanced in see_token. The resulting
+    // dictionary state differs but the encoder still functions.
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 30);
 
     let large_data = vec![0xCDu8; 0x20000];
     encoder.see_token(&large_data).unwrap();
 
-    // Should still be able to encode
     let mut output = Vec::new();
     encoder.send_literal(&mut output, b"test").unwrap();
     encoder.finish(&mut output).unwrap();
@@ -278,7 +271,7 @@ fn encoder_protocol_version_30_has_data_duplicating_bug() {
 #[test]
 fn encoder_protocol_version_affects_see_token_behavior() {
     // Different protocol versions should produce different compressor states
-    // after see_token due to the data-duplicating bug fix
+    // after see_token due to the data-duplicating bug fix.
 
     let test_data = vec![0x55u8; 0x10001]; // Just over 0xFFFF to trigger chunking
 
@@ -288,7 +281,6 @@ fn encoder_protocol_version_affects_see_token_behavior() {
     encoder_30.see_token(&test_data).unwrap();
     encoder_31.see_token(&test_data).unwrap();
 
-    // Both should be able to continue working
     let mut output_30 = Vec::new();
     let mut output_31 = Vec::new();
 
@@ -302,8 +294,6 @@ fn encoder_protocol_version_affects_see_token_behavior() {
     encoder_30.finish(&mut output_30).unwrap();
     encoder_31.finish(&mut output_31).unwrap();
 
-    // Outputs will differ due to different dictionary states
-    // (But this test just verifies both work without crashing)
     assert!(!output_30.is_empty());
     assert!(!output_31.is_empty());
 }
@@ -312,7 +302,6 @@ fn encoder_protocol_version_affects_see_token_behavior() {
 fn encoder_reset_clears_state() {
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
 
-    // Use the encoder
     let mut output = Vec::new();
     encoder
         .send_literal(&mut output, b"first file data")
@@ -320,7 +309,6 @@ fn encoder_reset_clears_state() {
     encoder.send_block_match(&mut output, 5).unwrap();
     encoder.finish(&mut output).unwrap();
 
-    // Reset should allow reuse for a new file
     encoder.reset();
 
     let mut output2 = Vec::new();
@@ -329,7 +317,6 @@ fn encoder_reset_clears_state() {
         .unwrap();
     encoder.finish(&mut output2).unwrap();
 
-    // Both outputs should be valid and decodable
     assert!(!output.is_empty());
     assert!(!output2.is_empty());
 }
@@ -338,7 +325,6 @@ fn encoder_reset_clears_state() {
 fn encoder_reset_clears_token_run_state() {
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
 
-    // Build up token run state
     let mut output = Vec::new();
     encoder.send_block_match(&mut output, 10).unwrap();
     encoder.send_block_match(&mut output, 11).unwrap();
@@ -346,15 +332,13 @@ fn encoder_reset_clears_token_run_state() {
 
     encoder.reset();
 
-    // After reset, token numbering should restart
+    // After reset, token numbering restarts from a fresh run.
     let mut output2 = Vec::new();
     encoder.send_block_match(&mut output2, 0).unwrap();
     encoder.finish(&mut output2).unwrap();
 
-    // Verify both can be decoded
     let mut decoder = CompressedTokenDecoder::new();
 
-    // Decode first
     let mut cursor = Cursor::new(&output);
     let mut blocks1 = Vec::new();
     loop {
@@ -365,7 +349,6 @@ fn encoder_reset_clears_token_run_state() {
         }
     }
 
-    // Reset decoder and decode second
     decoder.reset();
     let mut cursor2 = Cursor::new(&output2);
     let mut blocks2 = Vec::new();
@@ -385,7 +368,6 @@ fn encoder_reset_clears_token_run_state() {
 fn decoder_reset_clears_state() {
     let mut decoder = CompressedTokenDecoder::new();
 
-    // Build encoded data for two separate files
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
     let mut encoded1 = Vec::new();
     encoder.send_literal(&mut encoded1, b"file one").unwrap();
@@ -396,7 +378,6 @@ fn decoder_reset_clears_state() {
     encoder.send_literal(&mut encoded2, b"file two").unwrap();
     encoder.finish(&mut encoded2).unwrap();
 
-    // Decode first file
     let mut cursor1 = Cursor::new(&encoded1);
     let mut decoded1 = Vec::new();
     loop {
@@ -407,7 +388,6 @@ fn decoder_reset_clears_state() {
         }
     }
 
-    // Reset and decode second file
     decoder.reset();
     let mut cursor2 = Cursor::new(&encoded2);
     let mut decoded2 = Vec::new();
@@ -428,13 +408,11 @@ fn encode_consecutive_blocks_as_run() {
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
     let mut encoded = Vec::new();
 
-    // Send 10 consecutive blocks
     for i in 0..10 {
         encoder.send_block_match(&mut encoded, i).unwrap();
     }
     encoder.finish(&mut encoded).unwrap();
 
-    // Decode and verify
     let mut decoder = CompressedTokenDecoder::new();
     let mut cursor = Cursor::new(&encoded);
     let mut blocks = Vec::new();
@@ -455,13 +433,11 @@ fn encode_non_consecutive_blocks_separately() {
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
     let mut encoded = Vec::new();
 
-    // Send non-consecutive blocks
     encoder.send_block_match(&mut encoded, 0).unwrap();
     encoder.send_block_match(&mut encoded, 10).unwrap();
     encoder.send_block_match(&mut encoded, 20).unwrap();
     encoder.finish(&mut encoded).unwrap();
 
-    // Decode and verify
     let mut decoder = CompressedTokenDecoder::new();
     let mut cursor = Cursor::new(&encoded);
     let mut blocks = Vec::new();
@@ -479,16 +455,15 @@ fn encode_non_consecutive_blocks_separately() {
 
 #[test]
 fn encode_long_run_with_rollover() {
-    // Test run that exceeds relative encoding range (> 63)
+    // Exercise a run that exceeds relative encoding range (> 63), forcing
+    // the encoder to switch from TOKEN_REL to TOKEN_LONG framing.
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
     let mut encoded = Vec::new();
 
-    // Send blocks that create a large relative offset
     encoder.send_block_match(&mut encoded, 100).unwrap();
     encoder.send_block_match(&mut encoded, 101).unwrap();
     encoder.finish(&mut encoded).unwrap();
 
-    // Decode and verify
     let mut decoder = CompressedTokenDecoder::new();
     let mut cursor = Cursor::new(&encoded);
     let mut blocks = Vec::new();
@@ -513,7 +488,6 @@ fn encoder_fast_compression() {
     encoder.send_literal(&mut encoded, data).unwrap();
     encoder.finish(&mut encoded).unwrap();
 
-    // Verify decodable
     let mut decoder = CompressedTokenDecoder::new();
     let mut cursor = Cursor::new(&encoded);
     let mut decoded = Vec::new();
@@ -538,7 +512,6 @@ fn encoder_best_compression() {
     encoder.send_literal(&mut encoded, data).unwrap();
     encoder.finish(&mut encoded).unwrap();
 
-    // Verify decodable
     let mut decoder = CompressedTokenDecoder::new();
     let mut cursor = Cursor::new(&encoded);
     let mut decoded = Vec::new();
@@ -565,7 +538,6 @@ fn encoder_precise_compression_level() {
     encoder.send_literal(&mut encoded, data).unwrap();
     encoder.finish(&mut encoded).unwrap();
 
-    // Verify decodable
     let mut decoder = CompressedTokenDecoder::new();
     let mut cursor = Cursor::new(&encoded);
     let mut decoded = Vec::new();
@@ -585,7 +557,6 @@ fn encoder_precise_compression_level() {
 fn encoder_default_uses_default_compression_and_protocol_31() {
     let encoder = CompressedTokenEncoder::default();
 
-    // Default should work normally
     let mut encoded = Vec::new();
     let mut encoder = encoder;
     encoder.send_literal(&mut encoded, b"default test").unwrap();
@@ -608,7 +579,7 @@ fn encode_empty_literal() {
     encoder.send_literal(&mut encoded, b"").unwrap();
     encoder.finish(&mut encoded).unwrap();
 
-    // Should just have end marker
+    // An empty literal followed by finish() yields only the END_FLAG marker.
     let mut decoder = CompressedTokenDecoder::new();
     let mut cursor = Cursor::new(&encoded);
 
@@ -646,7 +617,7 @@ fn encode_large_literal_multiple_chunks() {
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
     let mut encoded = Vec::new();
 
-    // Create data larger than CHUNK_SIZE (32KB)
+    // Exceed CHUNK_SIZE (32 KiB) to trigger multi-chunk compression.
     let large_data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
 
     encoder.send_literal(&mut encoded, &large_data).unwrap();
@@ -669,8 +640,7 @@ fn encode_large_literal_multiple_chunks() {
 
 #[test]
 fn decode_invalid_flag_byte() {
-    // Flag byte that doesn't match any valid pattern
-    // 0x01-0x1F are invalid (not END_FLAG, not TOKEN_*, not DEFLATED_DATA)
+    // Flag bytes 0x01-0x1F do not match END_FLAG, TOKEN_*, or DEFLATED_DATA.
     let invalid_data = [0x01u8];
     let mut decoder = CompressedTokenDecoder::new();
     let mut cursor = Cursor::new(&invalid_data[..]);
@@ -684,14 +654,13 @@ fn see_token_empty_data() {
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
     let mut decoder = CompressedTokenDecoder::new();
 
-    // Empty data should be no-op
     encoder.see_token(&[]).unwrap();
     decoder.see_token(&[]).unwrap();
 }
 
 #[test]
 fn see_token_exact_chunk_boundary() {
-    // Test data that is exactly 0xFFFF bytes (chunk boundary)
+    // 0xFFFF bytes lands exactly on the see_token chunk boundary.
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
     let mut decoder = CompressedTokenDecoder::new();
 
@@ -751,7 +720,7 @@ fn compressed_token_clone() {
 #[test]
 fn recv_token_eof_reading_flag_byte() {
     let mut decoder = CompressedTokenDecoder::new();
-    let mut cursor = Cursor::new(Vec::<u8>::new()); // Empty stream
+    let mut cursor = Cursor::new(Vec::<u8>::new());
 
     let result = decoder.recv_token(&mut cursor);
     assert!(result.is_err());
@@ -1089,7 +1058,6 @@ fn dictionary_sync_across_file_boundaries() {
         .unwrap();
     encoder.finish(&mut encoded_1).unwrap();
 
-    // Decode file 1
     let mut decoder = CompressedTokenDecoder::new();
     let mut cursor_1 = Cursor::new(&encoded_1);
     let mut file1_literals = Vec::new();
@@ -1336,7 +1304,6 @@ fn compressed_batch_delta_roundtrip() {
     encoder.send_literal(&mut encoded, lit_2).unwrap();
     encoder.finish(&mut encoded).unwrap();
 
-    // Decode - simulating batch replay
     let mut cursor = Cursor::new(&encoded);
     let mut decoder = CompressedTokenDecoder::new();
     let mut decoded_literals = Vec::new();
@@ -1392,7 +1359,6 @@ fn compressed_batch_multi_file_delta_roundtrip() {
     let f2_block_0: Vec<u8> = (0..block_size).map(|i| ((i * 7) % 256) as u8).collect();
     let f2_lit = b"file2 different literal data here";
 
-    // Encode file 1
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
     let mut encoded_f1 = Vec::new();
     encoder.send_block_match(&mut encoded_f1, 0).unwrap();
@@ -1402,7 +1368,6 @@ fn compressed_batch_multi_file_delta_roundtrip() {
     encoder.see_token(&f1_block_1).unwrap();
     encoder.finish(&mut encoded_f1).unwrap();
 
-    // Reset and encode file 2
     encoder.reset();
     let mut encoded_f2 = Vec::new();
     encoder.send_literal(&mut encoded_f2, f2_lit).unwrap();
@@ -1410,7 +1375,6 @@ fn compressed_batch_multi_file_delta_roundtrip() {
     encoder.see_token(&f2_block_0).unwrap();
     encoder.finish(&mut encoded_f2).unwrap();
 
-    // Decode file 1
     let mut decoder = CompressedTokenDecoder::new();
     let mut cursor_f1 = Cursor::new(&encoded_f1);
     let mut f1_literals = Vec::new();
@@ -1445,7 +1409,6 @@ fn compressed_batch_multi_file_delta_roundtrip() {
     assert_eq!(f1_blocks, vec![0, 1]);
     assert_eq!(f1_literals, f1_lit);
 
-    // Reset decoder for file 2
     decoder.reset();
     let mut cursor_f2 = Cursor::new(&encoded_f2);
     let mut f2_literals = Vec::new();
