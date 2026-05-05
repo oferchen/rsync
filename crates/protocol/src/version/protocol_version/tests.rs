@@ -545,8 +545,6 @@ fn supported_protocols_display_is_not_empty() {
     assert!(display.contains("28"));
 }
 
-// ProtocolCapabilities tests
-
 #[test]
 fn capabilities_from_protocol_version() {
     use super::ProtocolCapabilities;

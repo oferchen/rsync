@@ -40,7 +40,6 @@ pub const SUPPORTED_PROTOCOL_BOUNDS: (u8, u8) =
 mod tests {
     use super::*;
 
-    // Tests for protocol version constants
     #[test]
     fn oldest_supported_protocol_is_28() {
         assert_eq!(OLDEST_SUPPORTED_PROTOCOL, 28);
@@ -61,7 +60,6 @@ mod tests {
         assert_eq!(MAXIMUM_PROTOCOL_ADVERTISEMENT, 40);
     }
 
-    // Tests for range consistency
     #[test]
     fn oldest_is_less_than_newest() {
         assert!(OLDEST_SUPPORTED_PROTOCOL < NEWEST_SUPPORTED_PROTOCOL);
@@ -78,7 +76,6 @@ mod tests {
         assert!(MAXIMUM_PROTOCOL_ADVERTISEMENT > NEWEST_SUPPORTED_PROTOCOL);
     }
 
-    // Tests for upstream_protocol_range
     #[test]
     fn upstream_protocol_range_start_is_oldest() {
         assert_eq!(*UPSTREAM_PROTOCOL_RANGE.start(), OLDEST_SUPPORTED_PROTOCOL);
@@ -94,7 +91,6 @@ mod tests {
         assert!(UPSTREAM_PROTOCOL_RANGE.contains(&FIRST_BINARY_NEGOTIATION_PROTOCOL));
     }
 
-    // Tests for supported_protocol_range
     #[test]
     fn supported_protocol_range_start_is_oldest() {
         assert_eq!(*SUPPORTED_PROTOCOL_RANGE.start(), OLDEST_SUPPORTED_PROTOCOL);
@@ -110,7 +106,6 @@ mod tests {
         assert_eq!(SUPPORTED_PROTOCOL_RANGE, UPSTREAM_PROTOCOL_RANGE);
     }
 
-    // Tests for supported_protocol_bounds
     #[test]
     fn supported_protocol_bounds_oldest() {
         assert_eq!(SUPPORTED_PROTOCOL_BOUNDS.0, OLDEST_SUPPORTED_PROTOCOL);
