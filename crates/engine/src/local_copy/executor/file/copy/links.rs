@@ -3,9 +3,9 @@
 //!
 //! Attempts to satisfy a file transfer via hard link or reference copy before
 //! falling back to a full data transfer.
-//!
-//! // upstream: generator.c - hard_link_one(), do_hard_links logic
-//! // upstream: generator.c - find_fuzzy(), compare_dest handling
+
+// upstream: generator.c - hard_link_one(), do_hard_links logic
+// upstream: generator.c - find_fuzzy(), compare_dest handling
 
 use std::fs;
 use std::path::{Path, PathBuf};

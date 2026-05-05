@@ -2,8 +2,8 @@
 //!
 //! Recreates FIFOs at the destination using `mkfifo(3)`, with optional
 //! hard-link deduplication to earlier FIFOs.
-//!
-//! // upstream: receiver.c - FIFO handling, syscall.c:do_mknod()
+
+// upstream: receiver.c - FIFO handling, syscall.c:do_mknod()
 
 use std::fs;
 use std::io;
@@ -28,8 +28,7 @@ use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 ///
 /// Handles hard-link deduplication, `--existing`, directory replacement via
 /// `--force`, backup, and dry-run mode.
-///
-/// // upstream: receiver.c - FIFO handling
+// upstream: receiver.c - FIFO handling
 pub(crate) fn copy_fifo(
     context: &mut CopyContext,
     source: &Path,
