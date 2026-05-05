@@ -595,7 +595,6 @@ fn roundtrip_flags_and_name() {
     encode_flags(&mut buf, xflags, 32, false, false).unwrap();
     encode_name(&mut buf, b"dir/file2.txt", 8, xflags, 32).unwrap();
 
-    // Verify structure
     assert_eq!(buf[0], xflags as u8); // flags byte
     assert_eq!(buf[1], 8); // same_len
     assert_eq!(buf[2], 5); // suffix_len ("2.txt")
@@ -606,7 +605,6 @@ fn roundtrip_flags_and_name() {
 fn roundtrip_full_entry_modern() {
     let mut buf = Vec::new();
 
-    // Encode a complete file entry
     let xflags = 0u32; // All fields different from previous
     encode_flags(&mut buf, xflags, 32, false, false).unwrap();
     encode_name(&mut buf, b"test.txt", 0, xflags, 32).unwrap();
@@ -614,6 +612,5 @@ fn roundtrip_full_entry_modern() {
     encode_mtime(&mut buf, 1700000000, 32).unwrap();
     encode_mode(&mut buf, 0o100644).unwrap();
 
-    // Should have produced a valid byte sequence
     assert!(!buf.is_empty());
 }

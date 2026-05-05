@@ -36,7 +36,6 @@ mod flags;
 #[cfg(test)]
 mod tests;
 
-// Re-export all constants
 pub use self::constants::{
     XMIT_CRTIME_EQ_MTIME, XMIT_EXTENDED_FLAGS, XMIT_GROUP_NAME_FOLLOWS, XMIT_HLINK_FIRST,
     XMIT_HLINKED, XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_MOD_NSEC, XMIT_NO_CONTENT_DIR,
@@ -45,14 +44,12 @@ pub use self::constants::{
     XMIT_TOP_DIR, XMIT_USER_NAME_FOLLOWS,
 };
 
-// Re-export encoding functions
 pub use self::encode::{
     encode_atime, encode_checksum, encode_crtime, encode_end_marker, encode_flags, encode_gid,
     encode_hardlink_dev_ino, encode_hardlink_idx, encode_mode, encode_mtime, encode_mtime_nsec,
     encode_name, encode_owner_name, encode_rdev, encode_size, encode_symlink_target, encode_uid,
 };
 
-// Re-export flag calculation helpers
 pub use self::flags::{
     calculate_basic_flags, calculate_device_flags, calculate_hardlink_flags,
     calculate_name_prefix_len, calculate_time_flags,
