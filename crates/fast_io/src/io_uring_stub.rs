@@ -201,8 +201,11 @@ pub mod buffer_ring {
             None
         }
 
-        /// No-op on this platform.
-        pub fn recycle_buffer(&self, _buf_id: u16) {}
+        /// No-op on this platform; mirrors the real signature so cross-platform
+        /// callers can use `?` without `cfg`-gating.
+        pub fn recycle_buffer(&self, _buf_id: u16) -> Result<(), BufferRingError> {
+            Ok(())
+        }
 
         /// Returns the configuration (never called on this platform).
         #[must_use]
