@@ -1,11 +1,12 @@
 name: Coverage
 
 # Measures test line + branch coverage with cargo-llvm-cov on Linux.
-# Runs on every push to master and on pull requests touching code paths.
-# This job is informational and non-blocking - it must not gate master.
-# Tracks the project's >= 95% line coverage target; gate is currently
-# pinned at 84% (see --fail-under-lines below) and tightened incrementally
-# as coverage improves.
+# Runs on every push to master, nightly via schedule, on demand via
+# workflow_dispatch, and on PRs that explicitly opt in via the
+# `coverage-required` label. This job is informational and non-blocking -
+# it must not gate master. Tracks the project's >= 95% line coverage
+# target; gate is currently pinned at 84% (see --fail-under-lines below)
+# and tightened incrementally as coverage improves.
 on:
   push:
     branches: [ master, main ]
@@ -17,6 +18,7 @@ on:
       - 'Cargo.toml'
       - '.github/workflows/coverage.yml'
   pull_request:
+    types: [labeled, synchronize]
     paths:
       - 'crates/**'
       - 'src/**'
@@ -24,6 +26,10 @@ on:
       - 'tools/ci/**'
       - 'Cargo.toml'
       - '.github/workflows/coverage.yml'
+  schedule:
+    # Nightly run at 03:17 UTC keeps the master baseline current without
+    # blocking PR queues. Off-peak time minimises hosted-runner contention.
+    - cron: '17 3 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -49,6 +55,11 @@ env:
 jobs:
   coverage:
     name: llvm-cov
+    # PR runs only when the `coverage-required` label is present. Push,
+    # schedule, and manual dispatch always run.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'coverage-required')
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
