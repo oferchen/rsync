@@ -133,7 +133,8 @@ impl DynamicProtocolState {
                 Ok(Phase::Finalize)
             }
             Phase::Finalize => {
-                // Already in final state, return current phase
+                // Terminal phase: advancing is a no-op so callers may invoke
+                // advance() unconditionally without special-casing the end state.
                 Ok(Phase::Finalize)
             }
         }

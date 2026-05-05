@@ -60,8 +60,6 @@ pub use typestate::ProtocolState;
 mod tests {
     use super::*;
 
-    // Typestate tests
-
     #[test]
     fn test_new_starts_in_negotiation() {
         let state = ProtocolState::<Negotiation>::new();
@@ -183,46 +181,36 @@ mod tests {
 
     #[test]
     fn test_full_lifecycle() {
-        // Start in negotiation
         let mut state = ProtocolState::<Negotiation>::new();
         assert_eq!(state.phase.name(), "negotiation");
 
-        // Set negotiation parameters
         state.set_protocol_version(31);
         state.set_checksum_seed(12345);
 
-        // Transition to file list
         let mut state = state.begin_file_list().unwrap();
         assert_eq!(state.phase.name(), "file_list");
         assert_eq!(state.phase.protocol_version, 31);
         assert_eq!(state.phase.checksum_seed, 12345);
 
-        // Set file count
         state.set_file_count(50);
 
-        // Transition to transfer
         let mut state = state.begin_transfer().unwrap();
         assert_eq!(state.phase.name(), "transfer");
         assert_eq!(state.phase.file_count, 50);
 
-        // Record some transfers
         for _ in 0..10 {
             state.record_transfer();
         }
         assert_eq!(state.files_transferred(), 10);
 
-        // Transition to finalize
         let state = state.begin_finalize();
         assert_eq!(state.phase.name(), "finalize");
 
-        // Check summary
         let summary = state.summary();
         assert_eq!(summary.protocol_version, 31);
         assert_eq!(summary.total_files, 50);
         assert_eq!(summary.files_transferred, 10);
     }
-
-    // Dynamic state tests
 
     #[test]
     fn test_dynamic_new() {
@@ -235,27 +223,25 @@ mod tests {
     fn test_dynamic_advance() {
         let mut state = DynamicProtocolState::new();
 
-        // Negotiation -> FileList
         state.set_protocol_version(31);
         state.set_checksum_seed(12345);
         let phase = state.advance().unwrap();
         assert_eq!(phase, Phase::FileList);
         assert_eq!(state.phase(), Phase::FileList);
 
-        // FileList -> Transfer
         state.set_file_count(100);
         let phase = state.advance().unwrap();
         assert_eq!(phase, Phase::Transfer);
         assert_eq!(state.phase(), Phase::Transfer);
 
-        // Transfer -> Finalize
         state.record_transfer();
         state.record_transfer();
         let phase = state.advance().unwrap();
         assert_eq!(phase, Phase::Finalize);
         assert_eq!(state.phase(), Phase::Finalize);
 
-        // Finalize -> Finalize (stays in final state)
+        // Finalize is terminal: advancing again returns the same phase rather
+        // than erroring, so callers can call advance() unconditionally.
         let phase = state.advance().unwrap();
         assert_eq!(phase, Phase::Finalize);
         assert_eq!(state.phase(), Phase::Finalize);
@@ -265,7 +251,6 @@ mod tests {
     fn test_dynamic_advance_without_prerequisites() {
         let mut state = DynamicProtocolState::new();
 
-        // Missing protocol version
         state.set_checksum_seed(12345);
         let result = state.advance();
         assert!(matches!(
@@ -273,18 +258,15 @@ mod tests {
             Err(TransitionError::MissingProtocolVersion)
         ));
 
-        // Set protocol version, still missing checksum seed
         state.set_protocol_version(31);
-        state.checksum_seed = None; // Clear it
+        state.checksum_seed = None;
         let result = state.advance();
         assert!(matches!(result, Err(TransitionError::MissingChecksumSeed)));
 
-        // Complete negotiation and advance
         state.set_checksum_seed(12345);
         state.advance().unwrap();
         assert_eq!(state.phase(), Phase::FileList);
 
-        // Missing file count
         let result = state.advance();
         assert!(matches!(result, Err(TransitionError::MissingFileCount)));
     }
@@ -301,10 +283,8 @@ mod tests {
     fn test_dynamic_summary() {
         let mut state = DynamicProtocolState::new();
 
-        // Summary not available before finalize
         assert_eq!(state.summary(), None);
 
-        // Advance to finalize
         state.set_protocol_version(31);
         state.set_checksum_seed(12345);
         state.advance().unwrap();
@@ -315,7 +295,6 @@ mod tests {
         state.record_transfer();
         state.advance().unwrap();
 
-        // Summary available in finalize
         let summary = state.summary().unwrap();
         assert_eq!(summary.protocol_version, 31);
         assert_eq!(summary.total_files, 100);
