@@ -27,14 +27,21 @@ const M3: [usize; 16] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
 
 const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 
-/// Rotate left for WASM SIMD.
+/// 32-bit rotate-left for WASM SIMD; shift may be a runtime value.
+///
+/// WASM SIMD has no native rotate, so this pairs `i32x4_shl` with
+/// `u32x4_shr` and OR.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn rotl(x: v128, n: u32) -> v128 {
     v128_or(i32x4_shl(x, n), u32x4_shr(x, 32 - n))
 }
 
-/// Compute MD4 digests for up to 4 inputs in parallel using WASM SIMD.
+/// Compute MD4 digests for 4 inputs in parallel using WASM SIMD.
+///
+/// Returns digests in the same order as `inputs`. Available only when
+/// compiling for `wasm32` with the `simd128` target feature; the
+/// non-SIMD WASM build falls through to the scalar `digest_x4` below.
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);

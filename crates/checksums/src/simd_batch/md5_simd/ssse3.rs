@@ -1,37 +1,12 @@
 //! SSSE3 4-lane parallel MD5 implementation.
 //!
-//! Processes 4 independent MD5 computations simultaneously using 128-bit XMM registers.
-//!
-//! # CPU Feature Requirements
-//!
-//! - **SSSE3**: Supplemental SSE3 (Intel Core 2/2006+, AMD Bulldozer/2011+)
-//! - Must be verified at runtime using `is_x86_feature_detected!("ssse3")`
-//!
-//! # SIMD Strategy
-//!
-//! SSSE3 adds the `pshufb` (packed shuffle bytes) instruction which enables
-//! efficient byte reordering within XMM registers. While this implementation
-//! currently uses the same structure as SSE2, SSSE3 could be leveraged for:
+//! Processes 4 independent MD5 computations simultaneously using 128-bit XMM
+//! registers. SSSE3 (Intel Core 2 2006+, AMD Bulldozer 2011+) must be verified
+//! at runtime via `is_x86_feature_detected!("ssse3")`. The current code reuses
+//! the SSE2 structure; the dedicated SSSE3 backend exists so future revisions
+//! can leverage `pshufb` for byte reordering without disturbing the SSE2 path.
 
 #![allow(unsafe_op_in_unsafe_fn)]
-//!
-//! - More efficient byte swapping for endianness conversion
-//! - Optimized message word extraction from packed buffers
-//! - Potential improvements to the transposition step
-//!
-//! The current implementation serves as a baseline that can be enhanced with
-//! SSSE3-specific optimizations in the future.
-//!
-//! # Performance Characteristics
-//!
-//! - **Throughput**: ~4x scalar performance (similar to SSE2)
-//! - **Latency**: Similar to SSE2
-//! - **Best use case**: CPUs with SSSE3 but not SSE4.1 (older processors)
-//!
-//! # Availability
-//!
-//! SSSE3 is available on most modern processors but not guaranteed on all x86_64.
-//! Always use runtime detection before calling this implementation.
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -166,33 +141,16 @@ macro_rules! rotl {
     };
 }
 
-/// Compute MD5 digests for up to 4 inputs in parallel using SSSE3.
+/// Compute MD5 digests for 4 inputs in parallel using SSSE3.
 ///
-/// Processes 4 independent byte slices in parallel, computing their MD5 digests
-/// simultaneously. The implementation is currently similar to SSE2 but targets
-/// CPUs with SSSE3 support.
-///
-/// # Arguments
-///
-/// * `inputs` - Array of 4 byte slices to hash
-///
-/// # Returns
-///
-/// Array of 4 MD5 digests (16 bytes each) in the same order as the inputs
+/// Returns digests in the same order as `inputs`. Currently mirrors the SSE2
+/// kernel; the dedicated SSSE3 entry point exists so future revisions can
+/// adopt `pshufb`-based byte handling without disturbing the SSE2 path.
 ///
 /// # Safety
 ///
-/// Caller must ensure SSSE3 is available. Use runtime detection before calling:
-///
-/// ```ignore
-/// if is_x86_feature_detected!("ssse3") {
-///     let digests = unsafe { digest_x4(&inputs) };
-/// }
-/// ```
-///
-/// This function uses `unsafe` internally for:
-/// - SSSE3/SSE2 intrinsics (`_mm_*` functions)
-/// - Aligned memory access via `_mm_store_si128`
+/// Caller must ensure SSSE3 is available; verify at runtime with
+/// `is_x86_feature_detected!("ssse3")` before calling.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "ssse3")]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {

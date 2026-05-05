@@ -1,36 +1,12 @@
 //! SSE4.1 4-lane parallel MD5 implementation.
 //!
-//! Processes 4 independent MD5 computations simultaneously using 128-bit XMM registers.
-//!
-//! # CPU Feature Requirements
-//!
-//! - **SSE4.1**: Intel Penryn (2007+), AMD Bulldozer (2011+) or newer
-//! - Must be verified at runtime using `is_x86_feature_detected!("sse4.1")`
-//!
-//! # SIMD Strategy
-//!
-//! SSE4.1 provides a significant improvement over SSE2/SSSE3 with the `blendv`
-//! instruction family. This implementation uses `_mm_blendv_epi8` for efficient
-//! lane masking when inputs have different lengths.
+//! Processes 4 independent MD5 computations simultaneously using 128-bit XMM
+//! registers. SSE4.1 (Intel Penryn 2007+, AMD Bulldozer 2011+) must be verified
+//! at runtime via `is_x86_feature_detected!("sse4.1")`. Uses `_mm_blendv_epi8`
+//! for lane masking, replacing the three-instruction AND/ANDNOT/OR sequence
+//! required by SSE2 - a measurable win for inputs with varying block counts.
 
 #![allow(unsafe_op_in_unsafe_fn)]
-//!
-//! **Key advantage over SSE2**: The SSE2 implementation requires three instructions
-//! (AND, ANDNOT, OR) to implement conditional blending, while SSE4.1 does it in
-//! a single `blendv` instruction. This reduces instruction count and improves
-//! performance for inputs with varying lengths.
-//!
-//! # Performance Characteristics
-//!
-//! - **Throughput**: ~4x scalar performance
-//! - **Latency**: Similar to SSE2/SSSE3
-//! - **Best use case**: Processing inputs with varying block counts
-//! - **Efficiency**: Better than SSE2 for mixed-length inputs
-//!
-//! # Availability
-//!
-//! SSE4.1 is available on most processors from 2008 onwards but not guaranteed
-//! on all x86_64. Always use runtime detection before calling this implementation.
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -165,39 +141,16 @@ macro_rules! rotl {
     };
 }
 
-/// Compute MD5 digests for up to 4 inputs in parallel using SSE4.1.
+/// Compute MD5 digests for 4 inputs in parallel using SSE4.1.
 ///
-/// Processes 4 independent byte slices in parallel, computing their MD5 digests
-/// simultaneously. Uses SSE4.1's `blendv` instruction for more efficient lane
-/// masking compared to SSE2.
-///
-/// # Arguments
-///
-/// * `inputs` - Array of 4 byte slices to hash
-///
-/// # Returns
-///
-/// Array of 4 MD5 digests (16 bytes each) in the same order as the inputs
-///
-/// # Performance
-///
-/// This implementation is particularly efficient when processing inputs of
-/// varying lengths, as the `blendv` instruction provides better masking
-/// performance than SSE2's manual AND/ANDNOT/OR sequence.
+/// Returns digests in the same order as `inputs`. Uses `_mm_blendv_epi8` for
+/// lane masking, which is faster than the AND/ANDNOT/OR sequence required by
+/// the SSE2 path - especially helpful for inputs with varying block counts.
 ///
 /// # Safety
 ///
-/// Caller must ensure SSE4.1 is available. Use runtime detection before calling:
-///
-/// ```ignore
-/// if is_x86_feature_detected!("sse4.1") {
-///     let digests = unsafe { digest_x4(&inputs) };
-/// }
-/// ```
-///
-/// This function uses `unsafe` internally for:
-/// - SSE4.1 intrinsics (`_mm_*` functions including `_mm_blendv_epi8`)
-/// - Aligned memory access via `_mm_store_si128`
+/// Caller must ensure SSE4.1 is available; verify at runtime with
+/// `is_x86_feature_detected!("sse4.1")` before calling.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.1")]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {

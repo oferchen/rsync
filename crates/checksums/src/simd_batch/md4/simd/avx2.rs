@@ -34,7 +34,11 @@ const M3: [usize; 16] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
 /// Maximum input size supported.
 const MAX_INPUT_SIZE: usize = 1_024 * 1_024; // 1MB per input
 
-/// Rotate left helper - AVX2 doesn't have a rotate instruction
+/// 32-bit rotate-left for AVX2 using variable-shift intrinsics.
+///
+/// AVX2 has no native rotate, so this pairs `_mm256_sllv_epi32` with
+/// `_mm256_srlv_epi32` and OR. Variable shifts let the shift amount be
+/// a runtime value.
 #[target_feature(enable = "avx2")]
 unsafe fn rotl(x: __m256i, n: i32) -> __m256i {
     _mm256_or_si256(
@@ -43,10 +47,16 @@ unsafe fn rotl(x: __m256i, n: i32) -> __m256i {
     )
 }
 
-/// Compute MD4 digests for up to 8 inputs in parallel using AVX2.
+/// Compute MD4 digests for 8 inputs in parallel using AVX2.
+///
+/// Returns digests in the same order as `inputs`. Lanes with shorter inputs
+/// are masked off via `_mm256_blendv_epi8` after their final block. Inputs
+/// larger than 1 MiB fall back to the scalar path to cap padding allocations.
 ///
 /// # Safety
-/// Caller must ensure AVX2 is available.
+///
+/// Caller must ensure AVX2 is available; verify at runtime with
+/// `is_x86_feature_detected!("avx2")` before calling.
 #[target_feature(enable = "avx2")]
 pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
     // Find the maximum length to determine block count
