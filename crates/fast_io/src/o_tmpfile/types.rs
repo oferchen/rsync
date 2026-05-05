@@ -160,7 +160,7 @@ mod tests {
             let dir = tempdir().expect("tempdir");
             let mut atf = match AnonymousTempFile::open(dir.path()) {
                 Ok(a) => a,
-                Err(_) => return, // O_TMPFILE not supported
+                Err(_) => return, // O_TMPFILE not supported on this filesystem
             };
 
             atf.file_mut().write_all(b"test data").expect("write");

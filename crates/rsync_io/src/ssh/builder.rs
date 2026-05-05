@@ -217,6 +217,28 @@ impl SshCommand {
         self
     }
 
+    /// Returns `true` when the configured SSH command requests built-in
+    /// OpenSSH compression via `-C` or `-o Compression=yes`.
+    ///
+    /// Used to detect double-compression hazards when rsync's own
+    /// `--compress` is enabled: compressing twice wastes CPU and can
+    /// expand already-compressed data.
+    ///
+    /// Detection is conservative and inspects the explicit command-line
+    /// arguments only - it does not parse `~/.ssh/config`, since the SSH
+    /// client merges that file at spawn time and we cannot reliably read it.
+    /// `-C` and `-o Compression=...` cover the cases users set on the
+    /// rsync invocation itself (via `-e ssh -C` / `--rsh`).
+    ///
+    /// Truthy values for `Compression`: `yes`, `true`, `1`, case-insensitive.
+    #[must_use]
+    pub fn has_ssh_compression(&self) -> bool {
+        self.options
+            .iter()
+            .enumerate()
+            .any(|(idx, opt)| arg_enables_ssh_compression(opt, self.options.get(idx + 1)))
+    }
+
     /// Configures the comma-separated list of OpenSSH ProxyJump hosts.
     ///
     /// When `Some(value)` and `value` is non-empty, `-J <value>` is appended
@@ -592,6 +614,44 @@ pub(super) fn has_hardware_aes() -> bool {
             false
         }
     })
+}
+
+/// Returns `true` if the SSH option `arg` (with optional split-pair `next`)
+/// requests built-in OpenSSH compression.
+///
+/// Recognises:
+/// - the standalone `-C` flag (case-sensitive, OpenSSH convention)
+/// - `-oCompression=<truthy>` and `-o Compression=<truthy>` (case-insensitive
+///   key, with `<truthy>` in `{yes, true, 1}` case-insensitive)
+///
+/// The split form (where `-o` and `Compression=...` are separate argv
+/// entries) consumes `next` so a future call on the same iterator does not
+/// double-count the value.
+fn arg_enables_ssh_compression(arg: &OsStr, next: Option<&OsString>) -> bool {
+    if arg == OsStr::new("-C") {
+        return true;
+    }
+    let Some(s) = arg.to_str() else {
+        return false;
+    };
+    if let Some(rest) = s.strip_prefix("-o") {
+        let body = if rest.is_empty() {
+            match next.and_then(|os| os.to_str()) {
+                Some(v) => v,
+                None => return false,
+            }
+        } else {
+            rest
+        };
+        if let Some((key, value)) = body.split_once('=') {
+            return key.eq_ignore_ascii_case("Compression")
+                && matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "yes" | "true" | "1"
+                );
+        }
+    }
+    false
 }
 
 /// Classified SSH host operand.
