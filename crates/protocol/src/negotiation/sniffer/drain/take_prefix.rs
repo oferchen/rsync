@@ -156,8 +156,6 @@ mod tests {
         NegotiationPrologueSniffer::new()
     }
 
-    // ==== take_sniffed_prefix tests ====
-
     #[test]
     fn take_sniffed_prefix_returns_prefix_only() {
         let mut sniffer = create_sniffer_with_remainder();
@@ -188,8 +186,6 @@ mod tests {
         assert_eq!(prefix[0], 0x00);
     }
 
-    // ==== take_sniffed_prefix_into tests ====
-
     #[test]
     fn take_sniffed_prefix_into_fills_target() {
         let mut sniffer = create_legacy_sniffer();
@@ -214,8 +210,6 @@ mod tests {
         let _ = sniffer.take_sniffed_prefix_into(&mut target).unwrap();
         assert_eq!(&target, b"@RSYNCD:");
     }
-
-    // ==== take_sniffed_prefix_into_slice tests ====
 
     #[test]
     fn take_sniffed_prefix_into_slice_copies_to_slice() {
@@ -245,8 +239,6 @@ mod tests {
         assert_eq!(len, 0);
     }
 
-    // ==== take_sniffed_prefix_into_array tests ====
-
     #[test]
     fn take_sniffed_prefix_into_array_copies_to_array() {
         let mut sniffer = create_legacy_sniffer();
@@ -263,8 +255,6 @@ mod tests {
         let result = sniffer.take_sniffed_prefix_into_array(&mut buf);
         assert!(result.is_err());
     }
-
-    // ==== take_sniffed_prefix_into_writer tests ====
 
     #[test]
     fn take_sniffed_prefix_into_writer_writes_prefix() {
@@ -287,8 +277,6 @@ mod tests {
         assert_eq!(len, 0);
         assert!(writer.get_ref().is_empty());
     }
-
-    // ==== discard_sniffed_prefix tests ====
 
     #[test]
     fn discard_sniffed_prefix_returns_prefix_length() {
@@ -318,8 +306,6 @@ mod tests {
         let _ = sniffer.discard_sniffed_prefix();
         assert_eq!(sniffer.sniffed_prefix_len(), 0);
     }
-
-    // ==== Edge cases ====
 
     #[test]
     fn take_sniffed_prefix_updates_prefix_bytes_retained() {
