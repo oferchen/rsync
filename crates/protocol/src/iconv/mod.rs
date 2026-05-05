@@ -106,8 +106,6 @@ mod tests {
         assert_eq!(conv.remote_encoding_name(), "UTF-8");
     }
 
-    // New API tests (EncodingConverter/EncodingPair/EncodingError)
-
     #[test]
     fn test_encoding_pair_creation() {
         let pair = EncodingPair::new("utf-8", "iso-8859-1");
