@@ -181,7 +181,6 @@ impl<W: Write> MplexWriter<W> {
             return Ok(());
         }
 
-        // Split buffer into frames if needed
         let mut pos = 0;
         while pos < self.buffer.len() {
             let remaining = self.buffer.len() - pos;
@@ -225,9 +224,9 @@ impl<W: Write> MplexWriter<W> {
     /// # example().unwrap();
     /// ```
     pub fn write_message(&mut self, code: MessageCode, payload: &[u8]) -> io::Result<()> {
-        // Flush buffered DATA first to maintain ordering
+        // Flush buffered DATA first so the control message does not appear
+        // before data the caller has already written.
         self.flush_buffer()?;
-        // Send the message
         send_msg(&mut self.inner, code, payload)?;
         self.inner.flush()
     }
@@ -254,10 +253,8 @@ impl<W: Write> MplexWriter<W> {
     /// # example().unwrap();
     /// ```
     pub fn write_data(&mut self, data: &[u8]) -> io::Result<()> {
-        // Flush buffered data first
         self.flush_buffer()?;
 
-        // Split into frames if needed
         let mut pos = 0;
         while pos < data.len() {
             let remaining = data.len() - pos;
@@ -296,9 +293,9 @@ impl<W: Write> MplexWriter<W> {
     /// # example().unwrap();
     /// ```
     pub fn write_raw(&mut self, data: &[u8]) -> io::Result<()> {
-        // Flush buffered data first
+        // Flush buffered DATA before raw bytes so the receiver sees the
+        // multiplexed prefix in the order the caller produced it.
         self.flush_buffer()?;
-        // Write directly without framing
         self.inner.write_all(data)?;
         self.inner.flush()
     }
@@ -362,18 +359,17 @@ impl<W: Write> Write for MplexWriter<W> {
             return Ok(0);
         }
 
-        // If buffer would overflow, flush first
         if self.buffer.len() + buf.len() > self.buffer_size {
             self.flush_buffer()?;
         }
 
-        // If buf is larger than buffer size, send directly
+        // Bypass the buffer when a single write exceeds the buffer size,
+        // splitting it into max_frame_size chunks via write_data.
         if buf.len() > self.buffer_size {
             self.write_data(buf)?;
             return Ok(buf.len());
         }
 
-        // Buffer the data
         self.buffer.extend_from_slice(buf);
         Ok(buf.len())
     }
@@ -437,7 +433,6 @@ mod tests {
         writer.flush().unwrap();
         assert_eq!(writer.buffered(), 0);
 
-        // Verify the frame
         let mut cursor = std::io::Cursor::new(&output);
         let frame = recv_msg(&mut cursor).unwrap();
         assert_eq!(frame.code(), MessageCode::Data);
@@ -455,7 +450,7 @@ mod tests {
 
         writer.flush().unwrap();
 
-        // Should be sent as a single frame
+        // Successive small writes coalesce into one frame.
         let mut cursor = std::io::Cursor::new(&output);
         let frame = recv_msg(&mut cursor).unwrap();
         assert_eq!(frame.payload(), b"hello world");
@@ -470,7 +465,7 @@ mod tests {
         writer.write_all(&data).unwrap();
         writer.flush().unwrap();
 
-        // Should be split into 3 frames: 100 + 100 + 50
+        // 250 bytes split into max_frame_size (100) chunks: 100 + 100 + 50.
         let mut cursor = std::io::Cursor::new(&output);
 
         let frame1 = recv_msg(&mut cursor).unwrap();
@@ -503,17 +498,15 @@ mod tests {
         let mut output = Vec::new();
         let mut writer = MplexWriter::new(&mut output);
 
-        // Buffer some data
         writer.write_all(b"buffered data").unwrap();
         assert_eq!(writer.buffered(), 13);
 
-        // Write a control message - should flush buffer first
+        // write_message must flush DATA before sending the control frame.
         writer
             .write_message(MessageCode::Warning, b"warning")
             .unwrap();
         assert_eq!(writer.buffered(), 0);
 
-        // Verify: DATA frame, then WARNING frame
         let mut cursor = std::io::Cursor::new(&output);
 
         let frame1 = recv_msg(&mut cursor).unwrap();
@@ -544,7 +537,7 @@ mod tests {
 
         writer.write_raw(b"raw bytes").unwrap();
 
-        // Raw bytes should be written directly, no multiplex frame
+        // write_raw bypasses framing, so the bytes appear verbatim.
         assert_eq!(output, b"raw bytes");
     }
 
@@ -561,12 +554,11 @@ mod tests {
         writer.write_raw(b"raw").unwrap();
         assert_eq!(writer.buffered(), 0);
 
-        // Should have a DATA frame followed by raw bytes
+        // Buffered data is flushed as a DATA frame before the raw bytes.
         let mut cursor = std::io::Cursor::new(&output[..]);
         let frame = recv_msg(&mut cursor).unwrap();
         assert_eq!(frame.payload(), b"buffered");
 
-        // Remaining bytes are raw
         let mut remaining = Vec::new();
         cursor.read_to_end(&mut remaining).unwrap();
         assert_eq!(remaining, b"raw");
@@ -630,10 +622,9 @@ mod tests {
         writer.write_all(b"small").unwrap();
         assert_eq!(writer.buffered(), 5);
 
-        // This should trigger auto-flush
+        // 16-byte write exceeds the 10-byte buffer, so it bypasses buffering
+        // and is sent directly via write_data, leaving the buffer empty.
         writer.write_all(b"trigger overflow").unwrap();
-        // Buffer now contains "trigger overflow" (16 bytes > 10)
-        // but since it's larger than buffer size, it was sent directly
         assert_eq!(writer.buffered(), 0);
     }
 
@@ -656,7 +647,6 @@ mod tests {
         writer.write_all(&large_data).unwrap();
         writer.flush().unwrap();
 
-        // Read back all frames
         let mut cursor = std::io::Cursor::new(&output);
         let mut reconstructed = Vec::new();
 

@@ -321,7 +321,7 @@ mod tests {
         let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec()).unwrap();
         let mut bytes = Vec::new();
         frame.encode_into_vec(&mut bytes).unwrap();
-        // Header is 4 bytes + 3 bytes payload
+        // 4-byte header + 3-byte payload.
         assert_eq!(bytes.len(), 7);
     }
 
@@ -330,7 +330,7 @@ mod tests {
         let frame = MessageFrame::new(MessageCode::Info, b"a".to_vec()).unwrap();
         let mut bytes = vec![0xFF, 0xFF];
         frame.encode_into_vec(&mut bytes).unwrap();
-        // Original 2 bytes + header 4 + payload 1
+        // 2-byte prefix preserved + 4-byte header + 1-byte payload = 7.
         assert_eq!(bytes.len(), 7);
         assert_eq!(&bytes[0..2], &[0xFF, 0xFF]);
     }
@@ -340,7 +340,8 @@ mod tests {
         let frame = MessageFrame::new(MessageCode::Data, b"test".to_vec()).unwrap();
         let mut bytes = Vec::new();
         frame.encode_into_writer(&mut bytes).unwrap();
-        assert_eq!(bytes.len(), 8); // 4 header + 4 payload
+        // 4-byte header + 4-byte payload.
+        assert_eq!(bytes.len(), 8);
     }
 
     #[test]
@@ -427,7 +428,7 @@ mod tests {
         let original = MessageFrame::new(MessageCode::Info, b"a".to_vec()).unwrap();
         let mut encoded = Vec::new();
         original.encode_into_vec(&mut encoded).unwrap();
-        encoded.push(0xFF); // Extra trailing byte
+        encoded.push(0xFF);
 
         let result = MessageFrame::try_from(encoded.as_slice());
         assert!(result.is_err());
