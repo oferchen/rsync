@@ -94,11 +94,12 @@ fn build_index(
     block_len: u32,
     algorithm: SignatureAlgorithm,
 ) -> Option<DeltaSignatureIndex> {
+    let checksum_len = u8::try_from(algorithm.digest_len()).expect("digest fits in u8");
     let params = SignatureLayoutParams::new(
         basis.len() as u64,
         Some(NonZeroU32::new(block_len).expect("block_len non-zero")),
         ProtocolVersion::NEWEST,
-        NonZeroU8::new(16).expect("checksum length non-zero"),
+        NonZeroU8::new(checksum_len).expect("checksum length non-zero"),
     );
     let layout = calculate_signature_layout(params).expect("layout");
     let signature = generate_file_signature(basis, layout, algorithm).expect("signature");
