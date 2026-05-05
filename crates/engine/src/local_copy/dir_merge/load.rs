@@ -70,8 +70,13 @@ impl DirMergeEntries {
         self.exclude_if_present.push(rule);
     }
 
+    /// Merges another set of entries into this one.
+    ///
+    /// A `clear_inherited` flag in the nested entries propagates to this set,
+    /// matching upstream's behaviour when a merged filter file contains `!`
+    /// or `clear`: the directive wipes accumulated rules from this scope as
+    /// well as parent scopes.
     fn extend(&mut self, mut other: DirMergeEntries) {
-        // If nested file had a clear directive, it affects us too
         if other.clear_inherited {
             self.rules.clear();
             self.exclude_if_present.clear();
@@ -294,8 +299,6 @@ pub(crate) fn load_dir_merge_rules_recursive(
 mod tests {
     use super::*;
 
-    // These tests use Unix-style absolute paths (starting with /)
-
     #[cfg(unix)]
     #[test]
     fn resolve_dir_merge_path_relative_pattern() {
@@ -311,7 +314,6 @@ mod tests {
         let base = Path::new("/base");
         let pattern = Path::new("/subdir/filter");
         let result = resolve_dir_merge_path(base, pattern);
-        // Absolute pattern with "/" root should be stripped and joined to base
         assert_eq!(result, PathBuf::from("/base/subdir/filter"));
     }
 
@@ -421,23 +423,19 @@ mod tests {
 
     #[test]
     fn dir_merge_entries_extend_with_clear_inherited_clears_parent() {
-        // Simulate parent directory rules
         let mut parent_entries = DirMergeEntries::default();
         parent_entries.push_rule(FilterRule::exclude("*.tmp".to_owned()));
         parent_entries.push_rule(FilterRule::exclude("*.bak".to_owned()));
         parent_entries.push_exclude_if_present(ExcludeIfPresentRule::new(".nobackup".to_owned()));
 
-        // Child directory has a clear directive followed by new rules
         let mut child_entries = DirMergeEntries {
             clear_inherited: true,
             ..Default::default()
         };
         child_entries.push_rule(FilterRule::include("important.tmp".to_owned()));
 
-        // Extend should clear parent rules due to clear_inherited flag
         parent_entries.extend(child_entries);
 
-        // Should only have the child's rule, parent rules cleared
         assert_eq!(parent_entries.rules.len(), 1);
         assert_eq!(parent_entries.exclude_if_present.len(), 0);
         assert!(parent_entries.clear_inherited);
@@ -445,17 +443,14 @@ mod tests {
 
     #[test]
     fn dir_merge_entries_extend_without_clear_preserves_parent() {
-        // Simulate parent directory rules
         let mut parent_entries = DirMergeEntries::default();
         parent_entries.push_rule(FilterRule::exclude("*.tmp".to_owned()));
 
-        // Child directory without clear directive
         let mut child_entries = DirMergeEntries::default();
         child_entries.push_rule(FilterRule::include("*.rs".to_owned()));
 
         parent_entries.extend(child_entries);
 
-        // Should have both parent and child rules
         assert_eq!(parent_entries.rules.len(), 2);
         assert!(!parent_entries.clear_inherited);
     }

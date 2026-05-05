@@ -57,7 +57,6 @@ mod tests {
 
     #[test]
     fn parsed_filter_directive_rule_debug() {
-        // Just verify the enum can be created and debugged
         let directive = ParsedFilterDirective::Clear;
         let debug = format!("{directive:?}");
         assert!(debug.contains("Clear"));
