@@ -1,4 +1,7 @@
 #![deny(unsafe_code)]
+//! File-size field decoding (varlong30 for protocol 30+, longint for older).
+//!
+//! upstream: flist.c:recv_file_entry() - file_length = read_varlong30(f, 3)
 
 use std::io::{self, Read};
 

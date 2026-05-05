@@ -1,4 +1,7 @@
 #![deny(unsafe_code)]
+//! Symlink target decoding with a bounded length check.
+//!
+//! upstream: flist.c:recv_file_entry() - symlink target read_vstring branch
 
 use std::io::{self, Read};
 

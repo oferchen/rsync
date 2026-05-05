@@ -1,4 +1,7 @@
 #![deny(unsafe_code)]
+//! Unix mode-bit decoding for file entries.
+//!
+//! upstream: flist.c:recv_file_entry() - mode field handling
 
 use std::io::{self, Read};
 

@@ -1,4 +1,8 @@
 #![deny(unsafe_code)]
+//! Timestamp field decoding (mtime, mtime_nsec, atime, crtime).
+//!
+//! upstream: flist.c:recv_file_entry() - SAME_TIME / MOD_NSEC / SAME_ATIME /
+//! CRTIME_EQ_MTIME branches
 
 use std::io::{self, Read};
 
@@ -62,19 +66,18 @@ pub fn decode_mtime_nsec<R: Read>(reader: &mut R, flags: u32) -> io::Result<Opti
     if flags & ((XMIT_MOD_NSEC as u32) << 8) != 0 {
         Ok(Some(read_varint(reader)? as u32))
     } else if flags & (XMIT_SAME_TIME as u32) != 0 {
-        // mtime is inherited from the previous entry; callers must also
-        // inherit the previous entry's nsec. Signal this with None.
+        // mtime is inherited; signal that the caller must also inherit the
+        // previous entry's nsec rather than reset to zero.
         Ok(None)
     } else {
-        // New mtime without XMIT_MOD_NSEC: upstream defines nsec = 0,
-        // NOT "carry forward the previous nsec". Returning Some(0)
-        // prevents callers from accidentally inheriting a stale nsec.
-        // Upstream: flist.c recv_file_entry() -- nsec absent => 0.
+        // upstream: flist.c:recv_file_entry() - nsec absent implies 0, not
+        // "carry forward". Returning Some(0) blocks callers from accidentally
+        // inheriting a stale nsec.
         Ok(Some(0))
     }
 }
 
-/// Decodes access time (for --atimes, non-directories only).
+/// Decodes access time (for `--atimes`, non-directories only).
 ///
 /// Returns the decoded atime, or previous value if `XMIT_SAME_ATIME` is set.
 ///
@@ -93,7 +96,7 @@ pub fn decode_atime<R: Read>(
     }
 }
 
-/// Decodes creation time (for --crtimes).
+/// Decodes creation time (for `--crtimes`).
 ///
 /// Returns the decoded crtime, or the current entry's mtime if `XMIT_CRTIME_EQ_MTIME` is set.
 ///

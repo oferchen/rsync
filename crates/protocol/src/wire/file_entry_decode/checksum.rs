@@ -1,8 +1,11 @@
 #![deny(unsafe_code)]
+//! Checksum field decoding for file entries (`--checksum` mode).
+//!
+//! upstream: flist.c:recv_file_entry() - checksum trailer
 
 use std::io::{self, Read};
 
-/// Decodes file checksum (for --checksum mode).
+/// Decodes file checksum (for `--checksum` mode).
 ///
 /// Reads raw bytes of length `checksum_len` from the wire.
 /// For regular files this is the actual checksum (or zeros if not computed).

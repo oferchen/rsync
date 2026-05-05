@@ -1,4 +1,7 @@
 #![deny(unsafe_code)]
+//! File name decoding with shared-prefix decompression.
+//!
+//! upstream: flist.c:recv_file_entry() - SAME_NAME / LONG_NAME branches
 
 use std::io::{self, Read};
 

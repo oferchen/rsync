@@ -1,4 +1,8 @@
 #![deny(unsafe_code)]
+//! UID/GID decoding plus optional owner-name field (protocol 30+).
+//!
+//! upstream: flist.c:recv_file_entry() - SAME_UID / SAME_GID and
+//! USER_NAME_FOLLOWS / GROUP_NAME_FOLLOWS handling
 
 use std::io::{self, Read};
 
@@ -62,9 +66,8 @@ pub fn decode_gid<R: Read>(
 
 /// Shared implementation for decoding a user or group ID from the wire format.
 ///
-/// The only difference between UID and GID decoding is which flag constants
-/// are checked: `same_flag` for reusing the previous value, and
-/// `name_follows_flag` for reading an associated owner name.
+/// `same_flag` selects the bit that reuses the previous value, and
+/// `name_follows_flag` selects the bit that signals an associated owner name.
 fn decode_owner_id<R: Read>(
     reader: &mut R,
     flags: u32,
@@ -94,7 +97,7 @@ fn decode_owner_id<R: Read>(
 
 /// Decodes a user or group name (protocol 30+).
 ///
-/// Wire format: `u8(len)` + `name_bytes[0..len]`
+/// Wire format: `u8(len)` + `name_bytes[0..len]`.
 fn decode_owner_name<R: Read>(reader: &mut R) -> io::Result<String> {
     let mut len_buf = [0u8; 1];
     reader.read_exact(&mut len_buf)?;

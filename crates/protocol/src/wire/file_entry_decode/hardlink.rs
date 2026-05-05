@@ -1,4 +1,7 @@
 #![deny(unsafe_code)]
+//! Hardlink reference decoding (index for protocol 30+, dev/ino for 28-29).
+//!
+//! upstream: flist.c:recv_file_entry() - HLINKED / HLINK_FIRST / SAME_DEV branches
 
 use std::io::{self, Read};
 
@@ -20,8 +23,8 @@ pub fn decode_hardlink_idx<R: Read>(reader: &mut R, flags: u32) -> io::Result<Op
         if flags & ((XMIT_HLINK_FIRST as u32) << 8) != 0 {
             Ok(None)
         } else {
-            // Cast i32 bits to u32 to preserve the full index space;
-            // upstream C uses unsigned int for hlink_flist indices.
+            // Cast i32 bits to u32: upstream C uses unsigned int for
+            // hlink_flist indices, so we preserve the full index space.
             Ok(Some(read_varint(reader)? as u32))
         }
     } else {
@@ -50,7 +53,7 @@ pub fn decode_hardlink_dev_ino<R: Read>(
     let dev = if flags & ((XMIT_SAME_DEV_PRE30 as u32) << 8) != 0 {
         prev_dev
     } else {
-        // Read dev + 1 and subtract 1 (upstream convention)
+        // upstream writes dev + 1 so dev == 0 is distinguishable; reverse here.
         read_longint(reader)? - 1
     };
 

@@ -1,4 +1,7 @@
 #![deny(unsafe_code)]
+//! Transmission-flag decoding for file entries (primary + extended bytes).
+//!
+//! upstream: flist.c:recv_file_entry() - flags / XMIT_EXTENDED_FLAGS handling
 
 use std::io::{self, Read};
 
@@ -9,7 +12,7 @@ use super::super::file_entry::{XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST};
 /// Decodes transmission flags from the wire format.
 ///
 /// The decoding varies by protocol version and compatibility flags:
-/// - **Varint mode** (VARINT_FLIST_FLAGS): Single varint containing all flag bits
+/// - **Varint mode** (`VARINT_FLIST_FLAGS`): Single varint containing all flag bits
 /// - **Protocol 28+**: 1 byte, or 2 bytes if extended flags present
 /// - **Protocol < 28**: 1 byte only
 ///
@@ -21,7 +24,7 @@ use super::super::file_entry::{XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST};
 /// | Mode | Format |
 /// |------|--------|
 /// | Varint | `varint(xflags)` where 0 means end-of-list |
-/// | Proto 28+ | `u8` or `u16 LE` if XMIT_EXTENDED_FLAGS set |
+/// | Proto 28+ | `u8` or `u16 LE` if `XMIT_EXTENDED_FLAGS` set |
 /// | Proto < 28 | `u8` only |
 ///
 /// # Examples
@@ -48,9 +51,8 @@ pub fn decode_flags<R: Read>(
     if use_varint_flags {
         let flags = read_varint(reader)? as u32;
 
-        // In varint mode:
-        // - actual 0 means end-of-list
-        // - XMIT_EXTENDED_FLAGS was written for flags=0 to avoid ambiguity
+        // Varint mode: 0 means end-of-list, so the encoder substitutes
+        // XMIT_EXTENDED_FLAGS when the real xflags value is 0.
         if flags == 0 {
             Ok((0, true))
         } else if flags == XMIT_EXTENDED_FLAGS as u32 {
@@ -76,13 +78,12 @@ pub fn decode_flags<R: Read>(
 
             // Detect the safe-file-list IO-error end-of-list sentinel.
             // Wire: [XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST] + varint(err).
-            // Without this, decode_end_marker is never called; the error
-            // varint leaks into the next entry parse, corrupting the flist.
-            // Upstream: flist.c recv_file_entry() XMIT_IO_ERROR_ENDLIST branch.
-            // The sentinel is exactly [XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST].
-            // XMIT_IO_ERROR_ENDLIST shares its bit with XMIT_HLINK_FIRST; a bitmask
-            // test would fire on any hardlink-leader or atime-inherit entry that also
-            // has bit 0x1000 set. Exact equality is the only safe check.
+            // Without this branch, decode_end_marker is never called and the
+            // error varint leaks into the next entry parse, corrupting the flist.
+            // XMIT_IO_ERROR_ENDLIST shares its bit with XMIT_HLINK_FIRST, so a
+            // bitmask test would also fire on any hardlink-leader or
+            // atime-inherit entry; exact equality is the only safe check.
+            // upstream: flist.c:recv_file_entry() XMIT_IO_ERROR_ENDLIST branch
             if flags == (XMIT_EXTENDED_FLAGS as u32) | ((XMIT_IO_ERROR_ENDLIST as u32) << 8) {
                 return Ok((flags, true));
             }
@@ -113,7 +114,7 @@ pub fn decode_flags<R: Read>(
 /// | Mode | Format |
 /// |------|--------|
 /// | Varint | `varint(0)` + `varint(io_error)` |
-/// | Safe file list with XMIT_IO_ERROR_ENDLIST | `varint(error)` |
+/// | Safe file list with `XMIT_IO_ERROR_ENDLIST` | `varint(error)` |
 /// | Normal | Nothing (flags == 0 is sufficient) |
 ///
 /// # Examples
@@ -145,17 +146,17 @@ pub fn decode_end_marker<R: Read>(
     }
 }
 
-/// Returns `true` when the flag word from `decode_flags` is a
+/// Returns `true` when the flag word from [`decode_flags`] is a
 /// safe-file-list IO-error end-of-list sentinel rather than a file entry.
 ///
-/// After `decode_flags` returns `(flags, true)`, callers must check this
+/// After [`decode_flags`] returns `(flags, true)`, callers must check this
 /// to distinguish `flags == 0` (normal end) from the IO-error sentinel
-/// (which needs `decode_end_marker` to consume the trailing error varint).
+/// (which needs [`decode_end_marker`] to consume the trailing error varint).
 ///
-/// Upstream: `flist.c:recv_file_entry()` XMIT_IO_ERROR_ENDLIST branch.
+/// upstream: flist.c:recv_file_entry() XMIT_IO_ERROR_ENDLIST branch
 #[must_use]
 pub fn is_io_error_end_marker(flags: u32) -> bool {
-    // Must match exact sentinel, not just the bit: XMIT_HLINK_FIRST shares
-    // the same bit position as XMIT_IO_ERROR_ENDLIST.
+    // XMIT_HLINK_FIRST shares the bit position of XMIT_IO_ERROR_ENDLIST,
+    // so an exact-equality test is required, not a bitmask test.
     flags == (XMIT_EXTENDED_FLAGS as u32) | ((XMIT_IO_ERROR_ENDLIST as u32) << 8)
 }
