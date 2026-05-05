@@ -358,7 +358,6 @@ fn tail_edge_insertion_round_trips() {
 #[test]
 fn block_sized_insertion_at_block_boundary_loses_no_match() {
     for &block_len in BLOCK_SIZES {
-        let block_size = block_len as usize;
         for algorithm in matrix_algorithms() {
             assert_aligned_insert_shape(block_len, 1, 1, algorithm);
             assert_aligned_insert_shape(block_len, BASIS_BLOCKS / 2, 1, algorithm);
