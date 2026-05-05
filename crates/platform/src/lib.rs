@@ -12,8 +12,8 @@
 //!
 //! # Windows
 //!
-//! Uses the `windows` crate (v0.61) for Win32 API bindings. Unsafe blocks
-//! are required for FFI calls but are scoped to individual functions.
+//! Uses the `windows` crate for Win32 API bindings. Unsafe blocks are required
+//! for FFI calls but are scoped to individual functions.
 //!
 //! # Safety Policy
 //!
