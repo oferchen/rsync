@@ -1,3 +1,6 @@
+//! Setters and accessors for `--log-file` and `--log-file-format` on
+//! [`LocalCopyOptions`].
+
 use std::path::{Path, PathBuf};
 
 use super::types::LocalCopyOptions;

@@ -1,3 +1,7 @@
+//! Setters and accessors for deletion-related options (`--delete`,
+//! `--delete-before/during/after/delay`, `--delete-excluded`, `--max-delete`,
+//! `--ignore-errors`) on [`LocalCopyOptions`].
+
 use super::types::{DeleteTiming, LocalCopyOptions};
 
 impl LocalCopyOptions {
