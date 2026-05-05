@@ -1,37 +1,36 @@
 #![allow(clippy::module_name_repetitions)]
 
-//! # Overview
+//! Block-matching helpers for the delta-transfer pipeline.
 //!
-//! The `delta` module hosts helpers that mirror upstream rsync's block-matching
-//! heuristics. The [`calculate_signature_layout`] function replicates the
-//! "square root" block-size calculation performed in `generator.c:sum_sizes_sqroot()`
-//! (rsync 3.4.1). Future delta-transfer stages reuse this information when
-//! computing rolling and strong checksums for individual blocks.
+//! Re-exports the signature-layout primitives from [`signature`] and the
+//! delta-generation/application types from [`matching`]. The signature side
+//! mirrors upstream `generator.c:sum_sizes_sqroot()` (rsync 3.4.1) for block
+//! size and strong-checksum length selection; the matching side produces and
+//! consumes the resulting token streams.
 //!
-//! # Design
-//!
-//! Layout types and functions are re-exported from the [`signature`] crate.
-//! Delta-specific functionality is re-exported from the [`matching`] crate:
-//! [`DeltaGenerator`] for generating delta tokens, [`DeltaSignatureIndex`] for
-//! fast signature lookups, and [`DeltaScript`]/[`DeltaToken`] for representing
-//! and applying delta streams.
-//!
-//! # See also
-//!
-//! - [`crate::local_copy`] will integrate these helpers as the delta-transfer
-//!   pipeline evolves.
-//! - [`DeltaGenerator`] exposes the delta-token generator that complements the
-//!   layout helpers.
-//! - [`apply_delta`] applies delta streams to recreate target payloads.
-//! - Upstream `generator.c::sum_sizes_sqroot()` for the reference C
-//!   implementation mirrored by the signature crate.
+//! See [`crate::local_copy`] for the higher-level transfer driver that wires
+//! these helpers into actual file copies.
 
-/// Delta generation and application types from the matching crate.
+/// Delta generation, application, and signature-lookup types.
+///
+/// - [`DeltaGenerator`] streams [`DeltaToken`]s by matching the sender's basis
+///   blocks against the receiver's signatures.
+/// - [`DeltaSignatureIndex`] provides O(1) rolling-checksum lookups during
+///   match scanning.
+/// - [`DeltaScript`] aggregates tokens for replay; [`apply_delta`] reconstructs
+///   the target file from a script plus the basis.
+/// - [`generate_delta`] is the high-level convenience wrapper around
+///   [`DeltaGenerator`].
 pub use matching::{
     DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken, apply_delta, generate_delta,
 };
 
-/// Signature layout types from the signature crate.
+/// Signature-layout primitives mirroring upstream `generator.c:sum_sizes_sqroot()`.
+///
+/// [`calculate_signature_layout`] picks block size and strong-checksum length
+/// from the file size using the upstream square-root heuristic.
+/// [`SignatureLayoutParams`] captures the inputs; [`SignatureLayout`] carries
+/// the resolved layout; [`SignatureLayoutError`] reports invalid inputs.
 pub use signature::{
     SignatureLayout, SignatureLayoutError, SignatureLayoutParams, calculate_signature_layout,
 };
