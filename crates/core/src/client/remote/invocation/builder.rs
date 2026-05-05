@@ -162,6 +162,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--fsync"));
         }
 
+        if let Some(depth) = self.config.io_uring_depth() {
+            args.push(OsString::from(format!("--io-uring-depth={depth}")));
+        }
+
         let flags = self.build_flag_string();
         if !flags.is_empty() {
             args.push(OsString::from(flags));

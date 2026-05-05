@@ -1187,6 +1187,20 @@ pub fn writer_from_file(
     buffer_capacity: usize,
     policy: crate::IoUringPolicy,
 ) -> io::Result<IoUringOrStdWriter> {
+    writer_from_file_with_depth(file, buffer_capacity, policy, None)
+}
+
+/// Like [`writer_from_file`] but accepts an explicit submission queue depth.
+///
+/// On non-Linux platforms the depth is ignored because the stub never
+/// constructs a real ring. The signature parity with the Linux module keeps
+/// caller code free of `cfg` gates.
+pub fn writer_from_file_with_depth(
+    file: std::fs::File,
+    buffer_capacity: usize,
+    policy: crate::IoUringPolicy,
+    _depth: Option<u32>,
+) -> io::Result<IoUringOrStdWriter> {
     if matches!(policy, crate::IoUringPolicy::Enabled) {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -1205,6 +1219,19 @@ pub fn writer_from_file(
 pub fn reader_from_path<P: AsRef<Path>>(
     path: P,
     policy: crate::IoUringPolicy,
+) -> io::Result<IoUringOrStdReader> {
+    reader_from_path_with_depth(path, policy, None)
+}
+
+/// Like [`reader_from_path`] but accepts an explicit submission queue depth.
+///
+/// On non-Linux platforms the depth is ignored because the stub never
+/// constructs a real ring. The signature parity with the Linux module keeps
+/// caller code free of `cfg` gates.
+pub fn reader_from_path_with_depth<P: AsRef<Path>>(
+    path: P,
+    policy: crate::IoUringPolicy,
+    _depth: Option<u32>,
 ) -> io::Result<IoUringOrStdReader> {
     if matches!(policy, crate::IoUringPolicy::Enabled) {
         return Err(io::Error::new(

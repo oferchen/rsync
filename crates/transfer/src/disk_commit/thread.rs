@@ -68,17 +68,25 @@ pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
 /// Returns `Some` on Linux 5.6+ when the `io_uring` feature is enabled and
 /// the policy is `Auto` or `Enabled`. Returns `None` when io_uring is
 /// unavailable or the policy is `Disabled`.
-fn try_create_disk_batch(policy: fast_io::IoUringPolicy) -> Option<fast_io::IoUringDiskBatch> {
+///
+/// The optional `depth` overrides [`fast_io::IoUringConfig::sq_entries`] when
+/// provided, mirroring the `--io-uring-depth=N` CLI tunable.
+fn try_create_disk_batch(
+    policy: fast_io::IoUringPolicy,
+    depth: Option<u32>,
+) -> Option<fast_io::IoUringDiskBatch> {
+    let mut config = fast_io::IoUringConfig::default();
+    if let Some(d) = depth {
+        config.sq_entries = d;
+    }
     match policy {
         fast_io::IoUringPolicy::Disabled => None,
-        fast_io::IoUringPolicy::Auto => {
-            fast_io::IoUringDiskBatch::try_new(&fast_io::IoUringConfig::default())
-        }
+        fast_io::IoUringPolicy::Auto => fast_io::IoUringDiskBatch::try_new(&config),
         fast_io::IoUringPolicy::Enabled => {
             // Enabled policy: try to create, but log and proceed if it fails.
             // The caller explicitly requested io_uring, so we attempt it but
             // do not fail the entire transfer if the ring cannot be created.
-            fast_io::IoUringDiskBatch::try_new(&fast_io::IoUringConfig::default())
+            fast_io::IoUringDiskBatch::try_new(&config)
         }
     }
 }
@@ -168,7 +176,7 @@ fn disk_thread_main(
     config: DiskCommitConfig,
 ) {
     let mut write_buf = Vec::with_capacity(WRITE_BUF_SIZE);
-    let mut disk_batch = try_create_disk_batch(config.io_uring_policy);
+    let mut disk_batch = try_create_disk_batch(config.io_uring_policy, config.io_uring_depth);
     // io_uring takes precedence on Linux; only attempt IOCP if io_uring is
     // not active. In practice the two backends are mutually exclusive by
     // platform, but this keeps the invariant explicit.

@@ -28,6 +28,8 @@ pub(super) struct ServerLongFlags {
     pub(super) ignore_errors: bool,
     pub(super) fsync: bool,
     pub(super) io_uring_policy: fast_io::IoUringPolicy,
+    /// Optional `--io-uring-depth=N` value forwarded by the client.
+    pub(super) io_uring_depth: Option<String>,
     pub(super) zero_copy_policy: fast_io::ZeroCopyPolicy,
     pub(super) write_devices: bool,
     pub(super) trust_sender: bool,
@@ -89,6 +91,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         ignore_errors: false,
         fsync: false,
         io_uring_policy: fast_io::IoUringPolicy::Auto,
+        io_uring_depth: None,
         zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
         write_devices: false,
         trust_sender: false,
@@ -176,6 +179,8 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
     } else if let Some(value) = s.strip_prefix("--timeout=") {
         // upstream: options.c - server_options() emits `--timeout=%d` from io_timeout
         flags.timeout = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--io-uring-depth=") {
+        flags.io_uring_depth = Some(value.to_owned());
     // upstream: options.c:2915-2923 - reference directory args
     } else if let Some(value) = s.strip_prefix("--compare-dest=") {
         flags.reference_directories.push(ReferenceDirectory::new(
@@ -242,4 +247,5 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--max-delete=")
         || arg.starts_with("--iconv=")
         || arg.starts_with("--timeout=")
+        || arg.starts_with("--io-uring-depth=")
 }
