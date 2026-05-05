@@ -1,14 +1,5 @@
 //! Transfer statistics struct and wire format encoding/decoding.
 //!
-//! Implements the wire format for exchanging transfer statistics between rsync
-//! processes. The format varies by protocol version:
-//!
-//! - Protocol 30+: Uses varlong30 encoding with 3-byte minimum
-//! - Protocol 29: Adds flist build/transfer time fields
-//! - Protocol < 29: Basic stats only
-//!
-//! # Wire Format
-//!
 //! Stats are exchanged at the end of a transfer in this order:
 //!
 //! ```text
@@ -19,7 +10,7 @@
 //! flist_xfertime  : varlong30 (protocol >= 29, microseconds)
 //! ```
 //!
-//! Note: The meaning of read/write swaps between sender and receiver perspectives.
+//! The meaning of read/write swaps between sender and receiver perspectives.
 
 use std::io::{self, Read, Write};
 
@@ -28,17 +19,13 @@ use crate::version::ProtocolVersion;
 
 /// Transfer statistics exchanged between rsync processes.
 ///
-/// These statistics are sent at the end of a transfer to allow both sides
-/// to report accurate totals. The field meanings depend on the role:
+/// Sent at the end of a transfer so both sides can report accurate totals.
+/// Field meanings depend on the role:
 ///
 /// - **Sender**: `total_read` is bytes received, `total_written` is bytes sent
 /// - **Receiver**: `total_read` is bytes sent, `total_written` is bytes received
 ///
-/// # Wire Format
-///
-/// The core byte counts (`total_read`, `total_written`, `total_size`) and
-/// optional timing fields are serialized using `varlong30` encoding. Use
-/// [`write_to`](Self::write_to) and [`read_from`](Self::read_from) for
+/// Use [`write_to`](Self::write_to) and [`read_from`](Self::read_from) for
 /// wire-format I/O.
 ///
 /// # Examples
@@ -204,9 +191,7 @@ impl TransferStats {
 
     /// Writes the stats to a stream in wire format.
     ///
-    /// The format depends on the protocol version:
-    /// - All versions: total_read, total_written, total_size (varlong30)
-    /// - Protocol >= 29: Also includes flist_buildtime, flist_xfertime
+    /// Protocol >= 29 additionally writes `flist_buildtime` and `flist_xfertime`.
     ///
     /// # Errors
     ///
@@ -226,9 +211,7 @@ impl TransferStats {
 
     /// Reads stats from a stream in wire format.
     ///
-    /// The format depends on the protocol version:
-    /// - All versions: total_read, total_written, total_size (varlong30)
-    /// - Protocol >= 29: Also includes flist_buildtime, flist_xfertime
+    /// Protocol >= 29 additionally reads `flist_buildtime` and `flist_xfertime`.
     ///
     /// # Errors
     ///
