@@ -28,21 +28,18 @@ use std::io;
 #[cfg(unix)]
 #[allow(unsafe_code)]
 pub fn become_daemon() -> io::Result<()> {
-    // Fork - parent exits, child continues.
     // upstream: clientserver.c:1466
     // SAFETY: fork() is safe to call before threads are spawned.
     let pid = unsafe { libc::fork() };
     match pid {
         -1 => return Err(io::Error::last_os_error()),
-        0 => {} // child
+        0 => {}
         _ => std::process::exit(0),
     }
 
-    // Create a new session and detach from controlling terminal.
     // upstream: clientserver.c:1478
     nix::unistd::setsid().map_err(|e| io::Error::from_raw_os_error(e as i32))?;
 
-    // Redirect stdin/stdout/stderr to /dev/null.
     // upstream: clientserver.c:1490-1493
     redirect_stdio_to_devnull()
 }

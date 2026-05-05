@@ -82,7 +82,6 @@ mod tests {
         let _lock = TEST_LOCK.lock().unwrap();
         let key = "PLATFORM_ENV_TEST_SET";
 
-        // Ensure clean state.
         #[allow(unsafe_code)]
         unsafe {
             env::remove_var(key);
