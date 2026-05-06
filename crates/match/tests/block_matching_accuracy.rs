@@ -217,15 +217,26 @@ fn multiple_identical_blocks_all_matched() {
         "repeated identical blocks should reconstruct correctly"
     );
 
-    // All blocks should match (minimal literals)
-    let copy_count = script
+    // All input bytes should be covered by COPY tokens (no literals).
+    // The seq-match extend_run helper may coalesce consecutive matches into
+    // a single COPY token, so assert total copied bytes rather than token count.
+    let copied_bytes: usize = script
         .tokens()
         .iter()
-        .filter(|t| matches!(t, DeltaToken::Copy { .. }))
-        .count();
-    assert!(
-        copy_count >= 3,
-        "should find at least 3 copy tokens for repeated blocks"
+        .filter_map(|t| match t {
+            DeltaToken::Copy { len, .. } => Some(*len),
+            _ => None,
+        })
+        .sum();
+    assert_eq!(
+        copied_bytes,
+        input.len(),
+        "all input bytes should be covered by copy tokens for repeated blocks"
+    );
+    assert_eq!(
+        script.literal_bytes(),
+        0,
+        "no literal bytes expected when every input block matches the basis"
     );
 }
 
@@ -710,15 +721,20 @@ fn matching_at_exact_block_boundaries() {
         "exact block boundaries should have zero literals"
     );
 
-    let copy_count = script
+    // Seq-match coalesces the contiguous run of basis blocks into a single
+    // fat Copy token; verify total covered bytes equal `num_blocks` worth.
+    let copy_bytes: usize = script
         .tokens()
         .iter()
-        .filter(|t| matches!(t, DeltaToken::Copy { .. }))
-        .count();
-
+        .map(|t| match t {
+            DeltaToken::Copy { len, .. } => *len,
+            DeltaToken::Literal(_) => 0,
+        })
+        .sum();
     assert_eq!(
-        copy_count, num_blocks,
-        "should have exactly {num_blocks} copy tokens for {num_blocks} blocks"
+        copy_bytes,
+        num_blocks * block_len,
+        "should copy exactly {num_blocks} blocks worth of bytes"
     );
 }
 
@@ -837,14 +853,19 @@ fn statistical_matching_accuracy() {
 
         let script = generate_delta(&input[..], &index).expect("should generate delta");
 
-        // Count matches
-        let copy_count = script
+        // Count basis blocks matched. Seq-match coalesces consecutive
+        // matched basis blocks into one fat Copy, so a fat Copy of length
+        // `K * block_len` represents K matched basis blocks.
+        let matched_blocks: usize = script
             .tokens()
             .iter()
-            .filter(|t| matches!(t, DeltaToken::Copy { .. }))
-            .count();
+            .map(|t| match t {
+                DeltaToken::Copy { len, .. } => len / block_len,
+                DeltaToken::Literal(_) => 0,
+            })
+            .sum();
 
-        total_correct_matches += copy_count;
+        total_correct_matches += matched_blocks;
         total_expected_matches += num_matching;
     }
 

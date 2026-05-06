@@ -331,24 +331,48 @@ pub(super) fn compute_file_checksum(
 
 /// Converts engine delta script to wire protocol delta operations.
 ///
-/// Takes ownership of the script to avoid cloning literal data.
+/// Takes ownership of the script to avoid cloning literal data. Multi-block
+/// Copy tokens emitted by the seq-match optimization (where a single
+/// `DeltaToken::Copy` covers a run of `N` adjacent basis blocks) are expanded
+/// here into `N` consecutive `DeltaOp::Copy` entries with `length =
+/// block_length`. This keeps the wire byte stream byte-identical to the
+/// no-coalesce baseline: each basis block is still emitted as one
+/// `write_int(-(block_index + 1))` token by the wire layer.
+///
+/// `block_length` is the canonical length of a full basis block. Tokens whose
+/// stored `len` is not a multiple of `block_length` are emitted unchanged so
+/// last-block tail copies (when the basis ends with a short block) round-trip
+/// cleanly.
 ///
 /// # Upstream Reference
 ///
 /// - `match.c:matched()` - emits tokens as they are generated
 /// - `token.c:send_token()` - writes tokens to the wire
-pub(super) fn script_to_wire_delta(script: DeltaScript) -> Vec<DeltaOp> {
-    script
-        .into_tokens()
-        .into_iter()
-        .map(|token| match token {
-            DeltaToken::Literal(data) => DeltaOp::Literal(data),
-            DeltaToken::Copy { index, len } => DeltaOp::Copy {
-                block_index: index as u32,
-                length: len as u32,
-            },
-        })
-        .collect()
+pub(super) fn script_to_wire_delta(script: DeltaScript, block_length: u32) -> Vec<DeltaOp> {
+    let block_len = block_length as usize;
+    let mut ops = Vec::with_capacity(script.tokens().len());
+    for token in script.into_tokens() {
+        match token {
+            DeltaToken::Literal(data) => ops.push(DeltaOp::Literal(data)),
+            DeltaToken::Copy { index, len } => {
+                if block_len > 0 && len > block_len && len % block_len == 0 {
+                    let run = len / block_len;
+                    for k in 0..run {
+                        ops.push(DeltaOp::Copy {
+                            block_index: (index + k as u64) as u32,
+                            length: block_length,
+                        });
+                    }
+                } else {
+                    ops.push(DeltaOp::Copy {
+                        block_index: index as u32,
+                        length: len as u32,
+                    });
+                }
+            }
+        }
+    }
+    ops
 }
 
 /// Writes delta tokens to the wire, using compression if enabled.

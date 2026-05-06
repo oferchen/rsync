@@ -183,14 +183,18 @@ fn assert_aligned_insert_shape(
         "aligned insert: every basis block is matched"
     );
 
-    let copy_indices: Vec<u64> = script
-        .tokens()
-        .iter()
-        .filter_map(|tok| match tok {
-            DeltaToken::Copy { index, .. } => Some(*index),
-            _ => None,
-        })
-        .collect();
+    // The seq-match optimisation may coalesce consecutive matched basis
+    // blocks into a single fat `Copy { len = run * block_len }`. Expand
+    // back to per-block indices for the contiguity invariant assertion.
+    let mut copy_indices: Vec<u64> = Vec::new();
+    for tok in script.tokens() {
+        if let DeltaToken::Copy { index, len } = tok {
+            let run = (*len / block_size).max(1);
+            for k in 0..run {
+                copy_indices.push(*index + k as u64);
+            }
+        }
+    }
     let mut expected: Vec<u64> = (0..insert_offset_blocks as u64).collect();
     expected.extend(insert_offset_blocks as u64..BASIS_BLOCKS as u64);
     assert_eq!(
@@ -315,15 +319,18 @@ fn prepend_aligned_insertion_preserves_full_basis_match() {
     assert_eq!(script.copy_bytes(), basis.len() as u64);
 
     // First non-literal token after the prepended block must reference basis
-    // block 0; the subsequent COPY tokens must run contiguously to the end.
-    let copy_sequence: Vec<u64> = script
-        .tokens()
-        .iter()
-        .filter_map(|tok| match tok {
-            DeltaToken::Copy { index, .. } => Some(*index),
-            _ => None,
-        })
-        .collect();
+    // block 0; the subsequent COPY bytes must run contiguously to the end.
+    // Expand fat Copy tokens (seq-match coalesces consecutive matches).
+    let block_size = block_len as usize;
+    let mut copy_sequence: Vec<u64> = Vec::new();
+    for tok in script.tokens() {
+        if let DeltaToken::Copy { index, len } = tok {
+            let run = (*len / block_size).max(1);
+            for k in 0..run {
+                copy_sequence.push(*index + k as u64);
+            }
+        }
+    }
     let expected: Vec<u64> = (0..BASIS_BLOCKS as u64).collect();
     assert_eq!(copy_sequence, expected);
 }
