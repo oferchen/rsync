@@ -80,6 +80,14 @@ pub struct IoUringKernelInfo {
     pub kernel_minor: Option<u32>,
     /// Number of supported io_uring opcodes (0 if unavailable or probe failed).
     pub supported_ops: u32,
+    /// Whether the kernel supports `IORING_REGISTER_PBUF_RING` (Linux 5.19+).
+    ///
+    /// Determined by the kernel-version probe in
+    /// [`super::buffer_ring::pbuf_ring_supported`]. `false` does not preclude
+    /// classic provided buffers (`IORING_OP_PROVIDE_BUFFERS` /
+    /// `IORING_REGISTER_BUFFERS`); see the fallback chain documented on
+    /// `crate::io_uring::buffer_ring`.
+    pub pbuf_ring_supported: bool,
     /// Human-readable reason string (same as `io_uring_availability_reason()`).
     pub reason: String,
 }
@@ -116,9 +124,12 @@ pub mod config_detail {
     ///
     /// Probes the kernel version and io_uring syscall availability, returning
     /// a struct with machine-readable fields for programmatic consumption.
+    /// The PBUF_RING capability flag reflects the cached
+    /// [`crate::io_uring::buffer_ring::pbuf_ring_supported`] probe.
     #[must_use]
     pub fn io_uring_kernel_info() -> super::IoUringKernelInfo {
         let result = super::check_io_uring_reason();
+        let pbuf_ring_supported = crate::io_uring::buffer_ring::pbuf_ring_supported();
         match &result {
             super::IoUringProbeResult::Available {
                 major,
@@ -129,6 +140,7 @@ pub mod config_detail {
                 kernel_major: Some(*major),
                 kernel_minor: Some(*minor),
                 supported_ops: *supported_ops,
+                pbuf_ring_supported,
                 reason: result.reason(),
             },
             super::IoUringProbeResult::KernelTooOld { major, minor }
@@ -138,6 +150,7 @@ pub mod config_detail {
                     kernel_major: Some(*major),
                     kernel_minor: Some(*minor),
                     supported_ops: 0,
+                    pbuf_ring_supported,
                     reason: result.reason(),
                 }
             }
@@ -147,6 +160,7 @@ pub mod config_detail {
                 kernel_major: None,
                 kernel_minor: None,
                 supported_ops: 0,
+                pbuf_ring_supported,
                 reason: result.reason(),
             },
         }
@@ -211,6 +225,11 @@ pub(crate) enum IoUringProbeResult {
 
 impl IoUringProbeResult {
     /// Returns a human-readable reason string suitable for log output.
+    ///
+    /// For the [`Available`](Self::Available) variant the suffix
+    /// `, pbuf_ring=yes` or `, pbuf_ring=no` reflects the cached
+    /// [`super::buffer_ring::pbuf_ring_supported`] probe so that
+    /// `--version` output can communicate which fallback tier is in use.
     pub(crate) fn reason(&self) -> String {
         match self {
             Self::Available {
@@ -218,7 +237,15 @@ impl IoUringProbeResult {
                 minor,
                 supported_ops,
             } => {
-                format!("io_uring: enabled (kernel {major}.{minor}, {supported_ops} ops supported)")
+                let pbuf = if super::buffer_ring::pbuf_ring_supported() {
+                    "yes"
+                } else {
+                    "no"
+                };
+                format!(
+                    "io_uring: enabled (kernel {major}.{minor}, {supported_ops} ops supported, \
+                     pbuf_ring={pbuf})"
+                )
             }
             Self::NoKernelRelease => {
                 "io_uring: disabled (could not read kernel version)".to_string()
@@ -441,6 +468,10 @@ mod tests {
         assert!(reason.contains("enabled"));
         assert!(reason.contains("6.1"));
         assert!(reason.contains("48 ops supported"));
+        assert!(
+            reason.contains("pbuf_ring=yes") || reason.contains("pbuf_ring=no"),
+            "available reason must surface PBUF_RING probe result, got: {reason}"
+        );
     }
 
     #[test]
@@ -521,12 +552,14 @@ mod tests {
             kernel_major: Some(6),
             kernel_minor: Some(1),
             supported_ops: 48,
-            reason: "io_uring: enabled (kernel 6.1, 48 ops supported)".to_string(),
+            pbuf_ring_supported: true,
+            reason: "io_uring: enabled (kernel 6.1, 48 ops supported, pbuf_ring=yes)".to_string(),
         };
         assert!(info.available);
         assert_eq!(info.kernel_major, Some(6));
         assert_eq!(info.kernel_minor, Some(1));
         assert!(info.supported_ops > 0);
+        assert!(info.pbuf_ring_supported);
     }
 
     #[test]
@@ -536,10 +569,12 @@ mod tests {
             kernel_major: Some(4),
             kernel_minor: Some(19),
             supported_ops: 0,
+            pbuf_ring_supported: false,
             reason: "io_uring: disabled (kernel 4.19 < 5.6 required)".to_string(),
         };
         assert!(!info.available);
         assert_eq!(info.supported_ops, 0);
+        assert!(!info.pbuf_ring_supported);
     }
 
     #[test]
@@ -549,6 +584,7 @@ mod tests {
             kernel_major: None,
             kernel_minor: None,
             supported_ops: 0,
+            pbuf_ring_supported: false,
             reason: "io_uring: disabled (could not read kernel version)".to_string(),
         };
         assert!(!info.available);

@@ -6,7 +6,7 @@ Tracking issue: oc-rsync task #2043. Sibling audits:
 (task #1086), [`docs/audits/mmap-iouring-co-usage.md`](mmap-iouring-co-usage.md)
 (task #1660).
 
-Last verified: 2026-05-01 against master @ `83c8aa41`. Files spot-checked:
+Last verified: 2026-05-05 against master @ `5ca6c71eb`. Files spot-checked:
 `crates/fast_io/src/io_uring/mod.rs`,
 `crates/fast_io/src/io_uring/buffer_ring.rs`,
 `crates/fast_io/src/io_uring/registered_buffers.rs`,
@@ -15,6 +15,13 @@ Last verified: 2026-05-01 against master @ `83c8aa41`. Files spot-checked:
 `crates/fast_io/src/io_uring/socket_writer.rs`,
 `crates/fast_io/src/io_uring/config.rs`,
 `crates/fast_io/src/lib.rs`.
+
+Phase 2 status: probe is now process-cached at `OnceLock` boundary in
+[`buffer_ring::pbuf_ring_supported`](../../crates/fast_io/src/io_uring/buffer_ring.rs)
+and re-exported at the crate root as `fast_io::pbuf_ring_supported` and
+on `IoUringKernelInfo::pbuf_ring_supported`. The `--version` reason
+string now includes `pbuf_ring=yes/no`. The cross-platform stub
+mirrors the same surface and always returns `false`.
 
 ## Scope
 

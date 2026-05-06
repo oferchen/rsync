@@ -162,8 +162,9 @@ pub use io_uring::{
     RegisteredBufferSlot, RegisteredBufferStats, RenameAt2Args, SharedCompletion, SharedRing,
     SharedRingConfig, buffer_id_from_cqe_flags, build_linkat_sqe, build_linkat_sqe_unchecked,
     build_renameat2_sqe, build_renameat2_sqe_unchecked, is_io_uring_available, linkat_supported,
-    reader_from_path, reader_from_path_with_depth, renameat2_blocking, renameat2_supported,
-    sqpoll_fell_back, submit_linkat_blocking, writer_from_file, writer_from_file_with_depth,
+    pbuf_ring_supported, reader_from_path, reader_from_path_with_depth, renameat2_blocking,
+    renameat2_supported, sqpoll_fell_back, submit_linkat_blocking, writer_from_file,
+    writer_from_file_with_depth,
 };
 
 #[cfg(all(target_os = "windows", feature = "iocp"))]
@@ -279,6 +280,7 @@ fn io_uring_kernel_info_impl() -> io_uring::IoUringKernelInfo {
         kernel_major: None,
         kernel_minor: None,
         supported_ops: 0,
+        pbuf_ring_supported: false,
         reason: io_uring_availability_reason_impl(),
     }
 }
