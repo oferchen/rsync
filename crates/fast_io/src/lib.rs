@@ -130,8 +130,8 @@ pub mod iocp;
 pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use platform_copy::{
-    CopyMethod, CopyResult, DefaultPlatformCopy, NoZeroCopyPlatformCopy, PlatformCopy,
-    try_clonefile, try_fcopyfile, try_ficlone, try_refs_reflink,
+    CopyMethod, CopyResult, DefaultPlatformCopy, NoCowPlatformCopy, NoZeroCopyPlatformCopy,
+    PlatformCopy, try_clonefile, try_fcopyfile, try_ficlone, try_refs_reflink,
 };
 pub use traits::{FileReader, FileWriter};
 
