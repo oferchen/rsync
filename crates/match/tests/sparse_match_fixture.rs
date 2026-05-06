@@ -227,9 +227,13 @@ fn assert_sparse_match_invariants(
         total, source_len,
         "total bytes emitted must equal source.len()"
     );
+    // Seq-match coalesces consecutive matched basis blocks into one fat
+    // `DeltaToken::Copy`. The planted prefix is always contiguous, so it
+    // collapses to at most one Copy token; planted=0 yields zero.
+    let expected_copy_tokens = if planted == 0 { 0 } else { 1 };
     assert_eq!(
-        copy_tokens, planted,
-        "exactly `planted` copy tokens must be emitted"
+        copy_tokens, expected_copy_tokens,
+        "planted prefix must coalesce into at most one fat copy token"
     );
 }
 
@@ -375,14 +379,18 @@ fn k_two_smallest_fixture_emits_two_copy_tokens_then_literal() {
         .generate(Cursor::new(source.clone()), &index)
         .expect("delta generation");
 
-    let copy_indices: Vec<u64> = script
-        .tokens()
-        .iter()
-        .filter_map(|t| match t {
-            DeltaToken::Copy { index, .. } => Some(*index),
-            DeltaToken::Literal(_) => None,
-        })
-        .collect();
+    // Seq-match coalesces basis blocks 0 and 1 into a single fat Copy.
+    // Expand the run to recover per-block indices for the contiguity
+    // assertion.
+    let mut copy_indices: Vec<u64> = Vec::new();
+    for tok in script.tokens() {
+        if let DeltaToken::Copy { index, len } = tok {
+            let run = (*len / block_size).max(1);
+            for k in 0..run {
+                copy_indices.push(*index + k as u64);
+            }
+        }
+    }
     assert_eq!(
         copy_indices,
         vec![0, 1],

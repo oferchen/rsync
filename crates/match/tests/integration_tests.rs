@@ -1554,7 +1554,20 @@ mod algorithm_correctness {
                     (*block_idx as usize) < num_blocks,
                     "copy token should reference valid block index: {block_idx} >= {num_blocks}"
                 );
-                assert_eq!(*len, block_len, "copy length should equal block length");
+                // Seq-match coalesces consecutive matched basis blocks into
+                // a single fat Copy. The token length is therefore an
+                // integer multiple of the canonical block length, and the
+                // run must fit inside the indexed block range.
+                assert_eq!(
+                    *len % block_len,
+                    0,
+                    "copy length should be a multiple of block length"
+                );
+                let run = *len / block_len;
+                assert!(
+                    (*block_idx as usize) + run <= num_blocks,
+                    "copy run extends past last indexed block: index={block_idx} run={run} num_blocks={num_blocks}"
+                );
             }
         }
     }
