@@ -430,7 +430,10 @@ fn build_index_for_extend_run(data: &[u8]) -> DeltaSignatureIndex {
 /// `extend_run` extends through every consecutive matching block.
 #[test]
 fn extend_run_walks_full_basis() {
-    let data: Vec<u8> = (0..16384).map(|i| ((i * 11 + 3) % 251) as u8).collect();
+    // Size is an exact multiple of `DEFAULT_BLOCK_SIZE` (700) so that every
+    // basis block is full-length and `extend_run` can walk every one. With a
+    // partial trailing block, `extend_run` would halt at the size mismatch.
+    let data: Vec<u8> = (0..16800).map(|i| ((i * 11 + 3) % 251) as u8).collect();
     let index = build_index_for_extend_run(&data);
     let block_count = index.block_count();
     let block_len = index.block_length();
