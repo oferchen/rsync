@@ -39,6 +39,8 @@ pub struct IoUringKernelInfo {
     pub kernel_minor: Option<u32>,
     /// Number of supported io_uring opcodes (always 0).
     pub supported_ops: u32,
+    /// Whether the kernel supports `IORING_REGISTER_PBUF_RING` (always `false`).
+    pub pbuf_ring_supported: bool,
     /// Human-readable reason string.
     pub reason: String,
 }
@@ -232,6 +234,15 @@ pub mod buffer_ring {
         false
     }
 
+    /// Returns `false` on non-Linux platforms.
+    ///
+    /// Cross-platform alias for [`is_supported`] matching the
+    /// [`crate::pbuf_ring_supported`] re-export.
+    #[must_use]
+    pub fn pbuf_ring_supported() -> bool {
+        false
+    }
+
     /// Always returns `None` on this platform (no CQE buffer flag support).
     #[inline]
     #[must_use]
@@ -361,7 +372,9 @@ pub mod registered_buffers {
     }
 }
 
-pub use buffer_ring::{BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags};
+pub use buffer_ring::{
+    BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags, pbuf_ring_supported,
+};
 pub use linkat::{
     IORING_OP_LINKAT, LINKAT_MIN_KERNEL, LinkAtArgs, build_linkat_sqe, build_linkat_sqe_unchecked,
     linkat_supported, submit_linkat_blocking,

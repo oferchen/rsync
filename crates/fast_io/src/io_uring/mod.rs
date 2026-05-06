@@ -77,6 +77,12 @@
 //!   Factory types handle the final fallback to `BufReader`/`BufWriter`.
 //! - **Buffer registration**: registered (`READ_FIXED`/`WRITE_FIXED`) -> regular
 //!   (`Read`/`Write`) opcodes. Silent fallback on registration failure.
+//! - **Provided-buffer rings (PBUF_RING)**: Linux 5.19+ ring-mapped supplied
+//!   buffers (`IORING_REGISTER_PBUF_RING`, opcode 22) -> classic provide-buffers
+//!   path on 5.6+ -> standard `read`/`write` -> non-Linux io_uring stub. The
+//!   probe is cached process-wide via [`buffer_ring::pbuf_ring_supported`] and
+//!   surfaced on [`IoUringKernelInfo::pbuf_ring_supported`]. See
+//!   `docs/audits/iouring-pbuf-ring.md` for the full call-site survey.
 
 mod batching;
 pub mod buffer_ring;
@@ -100,7 +106,9 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
 
-pub use buffer_ring::{BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags};
+pub use buffer_ring::{
+    BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags, pbuf_ring_supported,
+};
 pub use config::{
     IoUringConfig, IoUringKernelInfo, config_detail, is_io_uring_available, sqpoll_fell_back,
 };
