@@ -649,8 +649,9 @@ fn test_remote_invocation_with_multiple_paths() {
     let flags_idx = 3;
     assert!(args[flags_idx].to_string_lossy().starts_with('-'));
     // Capability info string for protocol features (checksum negotiation, etc.)
-    // Receiver direction includes 'i' for INC_RECURSE sender capability.
-    assert_eq!(args[flags_idx + 1].to_string_lossy(), "-e.iLsfxCIvu");
+    // Sender-side INC_RECURSE is opt-in (default false); 'i' is omitted from
+    // the capability string. Tracker #1862.
+    assert_eq!(args[flags_idx + 1].to_string_lossy(), "-e.LsfxCIvu");
     let dot_idx = flags_idx + 2;
     assert_eq!(args[dot_idx].to_string_lossy(), ".");
     // Paths come after "."
