@@ -26,6 +26,7 @@ use logging::VerbosityConfig;
 use logging_sink::MessageSink;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 #[cfg(unix)]
@@ -213,6 +214,8 @@ where
         ssh_ipv6: _ssh_ipv6,
         ssh_port: _ssh_port,
         jump_host,
+        rayon_threads,
+        tokio_threads,
     } = parsed;
 
     let password_file = password_file.map(PathBuf::from);
@@ -232,6 +235,12 @@ where
 
     let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
     logging::init(verbosity_config);
+
+    let rayon_thread_count = rayon_threads.and_then(|n| NonZeroUsize::new(n as usize));
+    let tokio_thread_count = tokio_threads.and_then(|n| NonZeroUsize::new(n as usize));
+    if let Some(threads) = rayon_thread_count {
+        super::super::thread_tunables::install_rayon_thread_count(threads, stderr);
+    }
 
     if let Err(code) = validate_stdin_sources_conflict(&password_file, &files_from, stderr) {
         return code;
@@ -666,6 +675,8 @@ where
         min_size_limit,
         max_size_limit,
         block_size_override,
+        rayon_threads: rayon_thread_count,
+        tokio_threads: tokio_thread_count,
         max_alloc: max_alloc_limit,
         backup,
         backup_dir: backup_dir.map(PathBuf::from),

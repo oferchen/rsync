@@ -668,6 +668,7 @@ dependencies = [
  "metadata",
  "predicates",
  "protocol",
+ "rayon",
  "rsync_io",
  "rustix 1.1.4",
  "serial_test",
