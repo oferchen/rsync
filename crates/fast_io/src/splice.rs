@@ -91,6 +91,18 @@ pub fn is_splice_available() -> bool {
     }
 }
 
+/// Returns whether `splice(2)` is available and not disabled by `policy`.
+///
+/// Combines [`is_splice_available`] with the
+/// [`ZeroCopyPolicy`](crate::ZeroCopyPolicy) gate. Returns `false` when
+/// the policy is [`ZeroCopyPolicy::Disabled`](crate::ZeroCopyPolicy::Disabled)
+/// regardless of kernel support, so callers can opt out of zero-copy
+/// transfer paths via `--no-zero-copy`.
+#[must_use]
+pub fn is_splice_enabled(policy: crate::ZeroCopyPolicy) -> bool {
+    !matches!(policy, crate::ZeroCopyPolicy::Disabled) && is_splice_available()
+}
+
 /// Probes splice support by creating a pipe pair and attempting a zero-length splice.
 ///
 /// This detects kernels or seccomp profiles that block `splice(2)`.

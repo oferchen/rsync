@@ -449,10 +449,12 @@ where
     } else {
         fast_io::IoUringPolicy::Auto
     };
-    let cow_policy = if matches.get_flag("no-cow") {
-        fast_io::CowPolicy::Disabled
+    let zero_copy_policy = if matches.get_flag("zero-copy") {
+        fast_io::ZeroCopyPolicy::Enabled
+    } else if matches.get_flag("no-zero-copy") {
+        fast_io::ZeroCopyPolicy::Disabled
     } else {
-        fast_io::CowPolicy::Auto
+        fast_io::ZeroCopyPolicy::Auto
     };
     let delay_updates = matches.get_flag("delay-updates") && !matches.get_flag("no-delay-updates");
     let partial_dir_cli = matches
@@ -755,7 +757,7 @@ where
         preallocate,
         fsync,
         io_uring_policy,
-        cow_policy,
+        zero_copy_policy,
         delay_updates,
         partial_dir,
         temp_dir,
