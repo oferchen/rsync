@@ -10,7 +10,7 @@ use std::io::{self, Seek, SeekFrom};
 #[cfg(target_os = "linux")]
 use rustix::{fd::AsFd, io::Errno};
 
-use super::{SPARSE_WRITE_SIZE, SparseDetector, SparseRegion};
+use super::{SPARSE_WRITE_SIZE, SparseDetectStrategy, SparseDetector, SparseRegion};
 
 /// Reads sparse files efficiently using filesystem hole detection.
 ///
@@ -65,15 +65,86 @@ impl SparseReader {
     ///
     /// - **Linux**: Uses `SEEK_HOLE`/`SEEK_DATA` syscalls for efficient detection
     /// - **Other platforms**: Reads file in chunks and scans for zero runs
-    #[cfg(target_os = "linux")]
     pub fn detect_holes(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+        Self::detect_holes_with(file, SparseDetectStrategy::Auto)
+    }
+
+    /// Detects holes using the explicit strategy chosen by `--sparse-detect`.
+    ///
+    /// See [`SparseDetectStrategy`] for the per-variant semantics. On
+    /// non-Linux targets the [`SparseDetectStrategy::Map`] variant degrades to
+    /// the seek-based path because FIEMAP is a Linux-specific ioctl.
+    pub fn detect_holes_with(
+        file: &fs::File,
+        strategy: SparseDetectStrategy,
+    ) -> io::Result<Vec<SparseRegion>> {
+        match strategy {
+            SparseDetectStrategy::Auto => Self::detect_holes_auto(file),
+            SparseDetectStrategy::Seek => Self::detect_holes_seek(file),
+            SparseDetectStrategy::Map => Self::detect_holes_map(file),
+            SparseDetectStrategy::None => Self::detect_holes_disabled(file),
+        }
+    }
+
+    /// Default detection: prefer `SEEK_HOLE`/`SEEK_DATA` on Linux, fall back
+    /// to byte scanning elsewhere or when the syscalls fail.
+    #[cfg(target_os = "linux")]
+    fn detect_holes_auto(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
         Self::detect_holes_linux(file)
     }
 
     /// Fallback hole detection for non-Linux platforms.
     #[cfg(not(target_os = "linux"))]
-    pub fn detect_holes(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+    fn detect_holes_auto(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
         Self::detect_holes_fallback(file)
+    }
+
+    /// Forced seek-based detection. On platforms without `SEEK_HOLE` support
+    /// this returns a single data region spanning the entire file.
+    #[cfg(target_os = "linux")]
+    fn detect_holes_seek(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+        Self::detect_holes_linux(file)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn detect_holes_seek(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+        Self::detect_holes_single_data(file)
+    }
+
+    /// Filesystem-mapping detection. Uses FIEMAP on Linux and falls back to
+    /// the seek path on every other platform. The current implementation
+    /// reuses `SEEK_HOLE`/`SEEK_DATA` because the Linux kernel exposes the
+    /// same hole information through both interfaces; future revisions can
+    /// substitute a direct FIEMAP ioctl call without changing the public API.
+    #[cfg(target_os = "linux")]
+    fn detect_holes_map(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+        Self::detect_holes_linux(file)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn detect_holes_map(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+        Self::detect_holes_single_data(file)
+    }
+
+    /// Disables hole detection. The entire file is reported as a single data
+    /// region so any zero runs are written verbatim by the destination
+    /// writer.
+    fn detect_holes_disabled(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+        Self::detect_holes_single_data(file)
+    }
+
+    /// Reports the file as one contiguous data region; used by the `none`
+    /// strategy and by the seek/map strategies on platforms without
+    /// `SEEK_HOLE` support.
+    fn detect_holes_single_data(file: &fs::File) -> io::Result<Vec<SparseRegion>> {
+        let file_size = file.metadata()?.len();
+        if file_size == 0 {
+            return Ok(Vec::new());
+        }
+        Ok(vec![SparseRegion::Data {
+            offset: 0,
+            length: file_size,
+        }])
     }
 
     /// Linux-specific hole detection using SEEK_HOLE and SEEK_DATA.

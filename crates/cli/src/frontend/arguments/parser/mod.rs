@@ -347,6 +347,23 @@ where
     let hard_links = tri_state_flag_positive_first(&matches, "hard-links", "no-hard-links");
     let links = tri_state_flag_positive_first(&matches, "links", "no-links");
     let sparse = tri_state_flag_positive_first(&matches, "sparse", "no-sparse");
+    let sparse_detect = match matches.remove_one::<OsString>("sparse-detect") {
+        Some(value) => {
+            let text = value.to_string_lossy().into_owned();
+            match engine::SparseDetectStrategy::parse(&text) {
+                Ok(strategy) => Some(strategy),
+                Err(_) => {
+                    return Err(clap::Error::raw(
+                        clap::error::ErrorKind::ValueValidation,
+                        format!(
+                            "invalid value for --sparse-detect: '{text}' (expected auto, seek, map, or none)\n",
+                        ),
+                    ));
+                }
+            }
+        }
+        None => None,
+    };
     let fuzzy = {
         let count = matches.get_count("fuzzy");
         let negated = matches.get_flag("no-fuzzy");
@@ -700,6 +717,7 @@ where
         hard_links,
         links,
         sparse,
+        sparse_detect,
         fuzzy,
         copy_links,
         copy_dirlinks,

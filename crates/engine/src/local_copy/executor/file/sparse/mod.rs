@@ -20,6 +20,79 @@ pub use detect::SparseDetector;
 pub use reader::SparseReader;
 pub use writer::SparseWriter;
 
+/// Selects the mechanism used by [`SparseReader::detect_holes`] to identify
+/// sparse regions in a file.
+///
+/// Mirrors upstream rsync's `--sparse` semantics by separating the *whether*
+/// (controlled by `--sparse` / `-S`) from the *how* (controlled by
+/// `--sparse-detect`). The strategy only affects detection of pre-existing
+/// holes when reading source files; downstream write paths continue to honour
+/// `--sparse` independently.
+///
+/// # Variants
+///
+/// - [`SparseDetectStrategy::Auto`] keeps the historical behaviour: prefer
+///   `SEEK_HOLE` / `SEEK_DATA` on Linux, fall back to byte scanning when those
+///   syscalls fail or are unsupported.
+/// - [`SparseDetectStrategy::Seek`] forces the seek-based path; on platforms
+///   without `SEEK_HOLE` support this still yields a single data region (no
+///   hole detection).
+/// - [`SparseDetectStrategy::Map`] requests filesystem extent mapping (FIEMAP
+///   on Linux). On non-Linux platforms it gracefully degrades to seek-based
+///   detection.
+/// - [`SparseDetectStrategy::None`] disables hole detection entirely. Zero
+///   runs are written verbatim by the destination writer rather than skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SparseDetectStrategy {
+    /// Default behaviour: probe `SEEK_HOLE`/`SEEK_DATA`, fall back to scanning.
+    #[default]
+    Auto,
+    /// Force `SEEK_HOLE`/`SEEK_DATA` based detection.
+    Seek,
+    /// Use filesystem extent mapping (FIEMAP) where available.
+    Map,
+    /// Disable hole detection; treat the file as fully populated data.
+    None,
+}
+
+impl SparseDetectStrategy {
+    /// Returns the canonical lowercase token used on the command line.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Seek => "seek",
+            Self::Map => "map",
+            Self::None => "none",
+        }
+    }
+
+    /// Parses a CLI token into a [`SparseDetectStrategy`].
+    ///
+    /// The match is case-insensitive. Unknown tokens are returned as the
+    /// original input for the caller to surface in an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns the original input string when no variant matches.
+    pub fn parse(value: &str) -> Result<Self, &str> {
+        let lowered = value.trim().to_ascii_lowercase();
+        match lowered.as_str() {
+            "auto" => Ok(Self::Auto),
+            "seek" => Ok(Self::Seek),
+            "map" => Ok(Self::Map),
+            "none" => Ok(Self::None),
+            _ => Err(value),
+        }
+    }
+}
+
+impl std::fmt::Display for SparseDetectStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 pub(crate) use state::{SparseWriteState, write_sparse_chunk};
 
 use detect::{leading_zero_run, trailing_zero_run};

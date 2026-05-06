@@ -122,6 +122,16 @@ impl ClientConfigBuilder {
         sparse: bool,
     }
 
+    builder_setter! {
+        /// Selects the strategy used to detect existing holes in source files.
+        ///
+        /// Mirrors the `--sparse-detect=[auto|seek|map|none]` CLI flag.
+        /// `--sparse` controls *whether* sparse semantics apply; this setting
+        /// controls *how* the engine probes the source for zero regions.
+        #[doc(alias = "--sparse-detect")]
+        sparse_detect: engine::SparseDetectStrategy,
+    }
+
     /// Sets the fuzzy matching level for delta transfers.
     ///
     /// - 0: disabled (default)

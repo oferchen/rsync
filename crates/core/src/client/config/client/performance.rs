@@ -85,6 +85,16 @@ impl ClientConfig {
         self.sparse
     }
 
+    /// Returns the configured sparse hole-detection strategy.
+    ///
+    /// Defaults to [`engine::SparseDetectStrategy::Auto`] when
+    /// `--sparse-detect` is unset.
+    #[must_use]
+    #[doc(alias = "--sparse-detect")]
+    pub const fn sparse_detect(&self) -> engine::SparseDetectStrategy {
+        self.sparse_detect
+    }
+
     /// Returns the fuzzy matching level.
     ///
     /// - 0: disabled (default)
@@ -206,6 +216,12 @@ mod tests {
     fn sparse_default_is_false() {
         let config = default_config();
         assert!(!config.sparse());
+    }
+
+    #[test]
+    fn sparse_detect_default_is_auto() {
+        let config = default_config();
+        assert_eq!(config.sparse_detect(), engine::SparseDetectStrategy::Auto);
     }
 
     #[test]

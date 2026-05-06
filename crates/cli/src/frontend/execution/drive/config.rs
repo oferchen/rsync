@@ -81,6 +81,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) hard_links: bool,
     pub(crate) links: bool,
     pub(crate) sparse: bool,
+    pub(crate) sparse_detect: engine::SparseDetectStrategy,
     pub(crate) copy_links: bool,
     pub(crate) copy_dirlinks: bool,
     pub(crate) copy_unsafe_links: bool,
@@ -222,6 +223,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .hard_links(inputs.hard_links)
         .links(inputs.links)
         .sparse(inputs.sparse)
+        .sparse_detect(inputs.sparse_detect)
         .fuzzy_level(inputs.fuzzy_level)
         .copy_links(inputs.copy_links)
         .copy_dirlinks(inputs.copy_dirlinks)

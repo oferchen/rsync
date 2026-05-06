@@ -131,8 +131,8 @@ pub(crate) use dir_merge::{
 
 pub(crate) use executor::*;
 pub use executor::{
-    DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetector, SparseReader,
-    SparseRegion, SparseWriter, compute_backup_path, remove_existing_destination,
+    DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetectStrategy, SparseDetector,
+    SparseReader, SparseRegion, SparseWriter, compute_backup_path, remove_existing_destination,
     remove_incomplete_destination,
 };
 

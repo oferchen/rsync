@@ -137,6 +137,7 @@ impl LocalCopyOptionsBuilder {
             iconv: self.iconv,
             numeric_ids: self.numeric_ids,
             sparse: self.sparse,
+            sparse_detect_strategy: self.sparse_detect_strategy,
             checksum: self.checksum,
             checksum_algorithm: self.checksum_algorithm,
             checksum_seed: self.checksum_seed,

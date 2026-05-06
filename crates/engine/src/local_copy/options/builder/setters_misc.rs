@@ -8,6 +8,7 @@ use fast_io::PlatformCopy;
 
 use super::LocalCopyOptionsBuilder;
 use crate::batch::BatchWriter;
+use crate::local_copy::executor::SparseDetectStrategy;
 use crate::signature::SignatureAlgorithm;
 
 impl LocalCopyOptionsBuilder {
@@ -15,6 +16,17 @@ impl LocalCopyOptionsBuilder {
     #[must_use]
     pub fn sparse(mut self, enabled: bool) -> Self {
         self.sparse = enabled;
+        self
+    }
+
+    /// Selects the sparse hole-detection strategy used by the read path.
+    ///
+    /// Independent of [`Self::sparse`]: detection runs whenever the engine
+    /// consults [`crate::SparseReader::detect_holes_with`], but the result is
+    /// only acted upon for writes when sparse handling is enabled.
+    #[must_use]
+    pub fn sparse_detect_strategy(mut self, strategy: SparseDetectStrategy) -> Self {
+        self.sparse_detect_strategy = strategy;
         self
     }
 

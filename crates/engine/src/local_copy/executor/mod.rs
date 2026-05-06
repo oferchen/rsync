@@ -21,8 +21,8 @@ pub(crate) use file::{
     write_sparse_chunk,
 };
 pub use file::{
-    DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetector, SparseReader,
-    SparseRegion, SparseWriter, compute_backup_path, remove_existing_destination,
+    DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetectStrategy, SparseDetector,
+    SparseReader, SparseRegion, SparseWriter, compute_backup_path, remove_existing_destination,
     remove_incomplete_destination,
 };
 #[cfg(test)]

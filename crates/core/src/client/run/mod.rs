@@ -583,6 +583,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .hard_links(config.preserve_hard_links())
             .links(config.links())
             .sparse(config.sparse())
+            .sparse_detect_strategy(config.sparse_detect())
             .copy_links(config.copy_links())
             .copy_dirlinks(config.copy_dirlinks())
             .copy_devices_as_files(config.copy_devices())
