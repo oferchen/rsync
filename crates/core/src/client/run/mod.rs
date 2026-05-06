@@ -427,6 +427,16 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         }
     }
 
+    /// Swaps the platform copy strategy when `--no-cow` is in effect.
+    fn apply_cow_policy(options: LocalCopyOptions, config: &ClientConfig) -> LocalCopyOptions {
+        match config.cow_policy() {
+            fast_io::CowPolicy::Auto => options,
+            fast_io::CowPolicy::Disabled => {
+                options.with_platform_copy(std::sync::Arc::new(fast_io::NoCowPlatformCopy::new()))
+            }
+        }
+    }
+
     /// Resolves the user's `--iconv` request into a
     /// [`FilenameConverter`](protocol::iconv::FilenameConverter) and
     /// attaches it to the local-copy options.

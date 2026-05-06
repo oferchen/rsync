@@ -205,7 +205,7 @@ pub fn send_file_to_fd_with_policy(
 #[cfg(not(unix))]
 pub fn send_file_to_fd_with_policy(
     source: &File,
-    dest_fd: i32,
+    _dest_fd: i32,
     length: u64,
     _policy: crate::ZeroCopyPolicy,
 ) -> io::Result<u64> {
