@@ -21,6 +21,7 @@ use super::Digest;
 use super::md5_scalar as scalar;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use super::md5_simd as simd;
+use crate::cpu_features::{SimdFeature, feature_allowed};
 
 /// Available SIMD backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +93,11 @@ impl Dispatcher {
     /// Dual-path feature detection: all variants are compiled on all platforms.
     /// On non-matching architectures the detection returns false, so the variant
     /// is never selected at runtime but the code path is still compiled.
+    ///
+    /// Each capability check is gated by the runtime SIMD override
+    /// ([`crate::cpu_features::feature_allowed`]) so the CLI `--simd` flag can
+    /// pin dispatch to a specific level even on hosts that advertise wider
+    /// SIMD support.
     fn detect_backend() -> Backend {
         if Self::has_avx512() {
             return Backend::Avx512;
@@ -118,6 +124,9 @@ impl Dispatcher {
     }
 
     fn has_avx512() -> bool {
+        if !feature_allowed(SimdFeature::Avx512) {
+            return false;
+        }
         #[cfg(target_arch = "x86_64")]
         {
             is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw")
@@ -129,6 +138,9 @@ impl Dispatcher {
     }
 
     fn has_avx2() -> bool {
+        if !feature_allowed(SimdFeature::Avx2) {
+            return false;
+        }
         #[cfg(target_arch = "x86_64")]
         {
             is_x86_feature_detected!("avx2")
@@ -140,6 +152,9 @@ impl Dispatcher {
     }
 
     fn has_sse41() -> bool {
+        if !feature_allowed(SimdFeature::Sse41) {
+            return false;
+        }
         #[cfg(target_arch = "x86_64")]
         {
             is_x86_feature_detected!("sse4.1")
@@ -151,6 +166,9 @@ impl Dispatcher {
     }
 
     fn has_ssse3() -> bool {
+        if !feature_allowed(SimdFeature::Ssse3) {
+            return false;
+        }
         #[cfg(target_arch = "x86_64")]
         {
             is_x86_feature_detected!("ssse3")
@@ -162,6 +180,9 @@ impl Dispatcher {
     }
 
     fn has_sse2() -> bool {
+        if !feature_allowed(SimdFeature::Sse2) {
+            return false;
+        }
         #[cfg(target_arch = "x86_64")]
         {
             // SSE2 is baseline for x86_64, always available
@@ -174,6 +195,9 @@ impl Dispatcher {
     }
 
     fn has_neon() -> bool {
+        if !feature_allowed(SimdFeature::Neon) {
+            return false;
+        }
         #[cfg(target_arch = "aarch64")]
         {
             // NEON is mandatory on aarch64

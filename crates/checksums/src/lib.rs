@@ -358,6 +358,7 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+pub mod cpu_features;
 pub mod crc32c;
 mod rolling;
 pub mod strong;
@@ -374,6 +375,15 @@ mod simd_parity_tests;
 /// - MD5: RFC 1321 test vectors pass
 /// - MD4: RFC 1320 test vectors pass
 pub(crate) mod simd_batch;
+
+/// Re-exports the MD5 backend selector used by integration tests of the
+/// runtime SIMD override. Hidden from rustdoc; production code must hash
+/// through [`crc32c`], [`strong`], or the higher-level `simd_batch` API.
+#[doc(hidden)]
+pub mod md5_backend {
+    pub use crate::simd_batch::Backend;
+    pub use crate::simd_batch::md5_dispatcher::Dispatcher;
+}
 
 /// Parallel checksum computation using rayon with automatic sequential fallback.
 pub mod parallel;
@@ -418,6 +428,13 @@ pub use strong::openssl_acceleration_available;
 /// providing automatic use of AVX2 (x86_64) or NEON (aarch64) instructions
 /// when available at runtime.
 pub use strong::xxh3_simd_available;
+
+/// Runtime SIMD level override (set via the `--simd` CLI flag).
+///
+/// See the [`cpu_features`] module for the override API and dispatch
+/// semantics. Re-exported here so callers can use `checksums::SimdLevel`
+/// without depending on the module path.
+pub use cpu_features::{SimdLevel, set_simd_override, simd_override};
 
 /// Re-exports from the [`strong::strategy`] module for runtime checksum algorithm selection.
 ///

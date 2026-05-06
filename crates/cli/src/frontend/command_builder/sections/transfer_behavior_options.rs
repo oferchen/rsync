@@ -169,6 +169,20 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
+                Arg::new("simd")
+                    .long("simd")
+                    .value_name("LEVEL")
+                    .help(
+                        "Force the SIMD level used by checksum dispatch. \
+                         LEVEL is one of auto (default, CPU autodetect), \
+                         avx512, avx2, sse4, neon, or none (scalar). \
+                         The override caps dispatch at the requested level; \
+                         backends that exceed the host's CPUID capabilities \
+                         degrade to the next available implementation.",
+                    )
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
                 Arg::new("cow")
                     .long("cow")
                     .help(

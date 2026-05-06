@@ -47,6 +47,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use super::accumulate_chunk_scalar_raw;
+use crate::cpu_features::{SimdFeature, feature_allowed};
 use core::arch::aarch64::{
     int16x8_t, vaddlvq_s16, vget_high_s8, vget_low_s8, vld1q_s16, vld1q_u8, vmovl_s8, vmulq_s16,
     vreinterpretq_s8_u8,
@@ -66,14 +67,20 @@ fn neon_available() -> bool {
     *NEON_AVAILABLE.get_or_init(|| std::arch::is_aarch64_feature_detected!("neon"))
 }
 
+/// Honours the CLI override on top of CPUID-style feature detection.
+#[inline]
+fn neon_enabled() -> bool {
+    neon_available() && feature_allowed(SimdFeature::Neon)
+}
+
 #[inline]
 pub(super) fn simd_available() -> bool {
-    neon_available()
+    neon_enabled()
 }
 
 #[inline]
 pub(super) fn accumulate_chunk(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> (u32, u32, usize) {
-    if !neon_available() {
+    if !neon_enabled() {
         return accumulate_chunk_scalar_raw(s1, s2, len, chunk);
     }
 

@@ -64,6 +64,7 @@ use core::arch::x86_64::{
     _mm256_set1_epi16, _mm256_storeu_si256,
 };
 
+use crate::cpu_features::{SimdFeature, feature_allowed};
 use std::sync::OnceLock;
 
 const SSE2_BLOCK_LEN: usize = 16;
@@ -85,9 +86,19 @@ fn cpu_features() -> FeatureLevel {
     })
 }
 
+/// Returns the AVX2/SSE2 capabilities permitted by both the CLI override and CPUID.
+#[inline]
+fn effective_features() -> FeatureLevel {
+    let detected = cpu_features();
+    FeatureLevel {
+        avx2: detected.avx2 && feature_allowed(SimdFeature::Avx2),
+        sse2: detected.sse2 && feature_allowed(SimdFeature::Sse2),
+    }
+}
+
 #[inline]
 pub(super) fn simd_available() -> bool {
-    let features = cpu_features();
+    let features = effective_features();
     features.avx2 || features.sse2
 }
 
@@ -98,7 +109,7 @@ pub(super) fn try_accumulate_chunk(
     len: usize,
     chunk: &[u8],
 ) -> Option<(u32, u32, usize)> {
-    let features = cpu_features();
+    let features = effective_features();
 
     if chunk.len() >= AVX2_BLOCK_LEN && features.avx2 {
         // SAFETY: AVX2 is available (checked above) and chunk.len() >= AVX2_BLOCK_LEN.

@@ -480,6 +480,24 @@ where
     } else {
         fast_io::CowPolicy::Auto
     };
+    let simd_override = match matches.remove_one::<OsString>("simd") {
+        Some(value) => {
+            let text = value.to_string_lossy();
+            match checksums::SimdLevel::parse_cli(text.as_ref()) {
+                Some(level) => Some(level),
+                None => {
+                    return Err(clap::Error::raw(
+                        clap::error::ErrorKind::InvalidValue,
+                        format!(
+                            "invalid value '{text}' for '--simd <LEVEL>': \
+                             expected one of auto, avx512, avx2, sse4, neon, none\n"
+                        ),
+                    ));
+                }
+            }
+        }
+        None => None,
+    };
     let delay_updates = matches.get_flag("delay-updates") && !matches.get_flag("no-delay-updates");
     let partial_dir_cli = matches
         .remove_one::<OsString>("partial-dir")
@@ -784,6 +802,7 @@ where
         io_uring_depth,
         zero_copy_policy,
         cow_policy,
+        simd_override,
         delay_updates,
         partial_dir,
         temp_dir,

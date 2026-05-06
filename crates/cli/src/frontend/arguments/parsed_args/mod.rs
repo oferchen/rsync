@@ -451,6 +451,14 @@ pub struct ParsedArgs {
     /// `--cow` / `--no-cow` - copy-on-write reflink policy for whole-file copies.
     pub cow_policy: fast_io::CowPolicy,
 
+    /// `--simd=<level>` - runtime override for SIMD checksum dispatch.
+    ///
+    /// `None` keeps the default CPUID-based selection
+    /// ([`checksums::SimdLevel::Auto`]). Any other value caps the dispatcher
+    /// at the requested level (or forces the scalar reference for
+    /// [`checksums::SimdLevel::None`]).
+    pub simd_override: Option<checksums::SimdLevel>,
+
     /// `--delay-updates` - use temp files and rename after all transfers complete.
     pub delay_updates: bool,
 
