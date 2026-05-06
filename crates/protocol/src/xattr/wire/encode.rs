@@ -112,15 +112,27 @@ pub fn send_xattr_request<W: Write>(writer: &mut W, indices: &[usize]) -> io::Re
     Ok(())
 }
 
-/// Sends the full values for entries marked as TODO.
+/// Sends the full values for entries whose state is marked as needing send.
+///
+/// Iterates over the xattr list and emits the full datum for every entry
+/// whose `XattrState` reports `needs_send()` (the to-do state set by the
+/// receiver after diffing the abbreviated value against its local copy).
+/// Entries in any other state are skipped silently, preserving the relative
+/// ordering of the on-wire stream.
 ///
 /// # Wire Format
 ///
 /// ```text
-/// For each TODO entry:
+/// For each entry where state.needs_send() is true:
 ///   length : varint
 ///   value  : bytes[length]
 /// ```
+///
+/// # Upstream Reference
+///
+/// See `xattrs.c:send_xattr()` - the second pass over the xattr list emits
+/// values for entries flagged with the upstream pending-send state after
+/// the receiver replies to the abbreviated digest exchange.
 pub fn send_xattr_values<W: Write>(writer: &mut W, list: &XattrList) -> io::Result<()> {
     for entry in list.iter() {
         if entry.state().needs_send() {
