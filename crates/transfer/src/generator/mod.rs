@@ -723,7 +723,11 @@ impl GeneratorContext {
         if file_size >= IO_URING_READ_THRESHOLD
             && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
         {
-            match fast_io::reader_from_path(path, self.config.write.io_uring_policy) {
+            match fast_io::reader_from_path_with_depth(
+                path,
+                self.config.write.io_uring_policy,
+                self.config.write.io_uring_depth,
+            ) {
                 Ok(r) => return Ok(Box::new(r)),
                 Err(_) => {
                     // Fall through to standard BufReader on io_uring failure
