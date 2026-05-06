@@ -25,7 +25,7 @@ impl FileListWriter {
     /// - Protocol 28+: one or two bytes depending on extended flags
     /// - Protocol < 28: single byte
     ///
-    /// // upstream: flist.c:send_file_entry() lines 545-565
+    /// upstream: flist.c:send_file_entry() lines 545-565
     pub(super) fn write_flags<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -74,7 +74,7 @@ impl FileListWriter {
     /// Encodes the shared prefix length (if `XMIT_SAME_NAME`) and the name
     /// suffix. Long names (> 255 bytes) use varint length encoding.
     ///
-    /// // upstream: flist.c:send_file_entry() lines 566-580
+    /// upstream: flist.c:send_file_entry() lines 566-580
     pub(super) fn write_name<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -100,7 +100,7 @@ impl FileListWriter {
     ///
     /// Wire format: varint30(len) + raw bytes (no null terminator)
     ///
-    /// // upstream: flist.c:send_file_entry() lines 660-670
+    /// upstream: flist.c:send_file_entry() lines 660-670
     pub(super) fn write_symlink_target<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -136,7 +136,7 @@ impl FileListWriter {
     /// - Major: varint30 (omitted if XMIT_SAME_RDEV_MAJOR set)
     /// - Minor: varint (protocol 30+) or byte/int (protocol 28-29)
     ///
-    /// // upstream: flist.c:send_file_entry() lines 640-660
+    /// upstream: flist.c:send_file_entry() lines 640-660
     pub(super) fn write_rdev<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
@@ -191,7 +191,7 @@ impl FileListWriter {
     /// - If XMIT_HLINKED is set but not XMIT_HLINK_FIRST: write varint index
     /// - If XMIT_HLINK_FIRST is also set: no index (this is the first/leader)
     ///
-    /// // upstream: flist.c:send_file_entry() lines 583-595
+    /// upstream: flist.c:send_file_entry() lines 583-595
     pub(super) fn write_hardlink_idx<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -223,7 +223,7 @@ impl FileListWriter {
     /// - If not XMIT_SAME_DEV_PRE30: write longint(dev + 1)
     /// - Always write longint(ino)
     ///
-    /// // upstream: flist.c:send_file_entry() lines 670-690
+    /// upstream: flist.c:send_file_entry() lines 670-690
     pub(super) fn write_hardlink_dev_ino<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
@@ -263,7 +263,7 @@ impl FileListWriter {
     /// - For regular files: actual checksum from entry
     /// - For non-regular files (proto < 28 only): empty_sum (all zeros)
     ///
-    /// // upstream: flist.c:send_file_entry() lines 700-720
+    /// upstream: flist.c:send_file_entry() lines 700-720
     pub(super) fn write_checksum<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -343,7 +343,7 @@ impl FileListWriter {
     /// - Safe file list with error: two-byte sentinel + varint error code
     /// - Normal: single zero byte
     ///
-    /// // upstream: flist.c:send_file_list() end-of-list write
+    /// upstream: flist.c:send_file_list() end-of-list write
     pub fn write_end<W: Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -370,7 +370,7 @@ impl FileListWriter {
 
     /// Updates file list statistics based on the entry type.
     ///
-    /// // upstream: flist.c:send_file_list() stat accumulation at end of loop
+    /// upstream: flist.c:send_file_list() stat accumulation at end of loop
     pub(super) fn update_stats(&mut self, entry: &FileEntry) {
         if entry.is_dir() {
             self.stats.num_dirs += 1;

@@ -169,7 +169,7 @@ impl FileListWriter {
     /// The name is preceded by a single length byte, limiting names to 255
     /// bytes. Longer names are silently truncated.
     ///
-    /// // upstream: flist.c:send_file_entry() - uid_ndx/gid_ndx name writing
+    /// upstream: flist.c:send_file_entry() - uid_ndx/gid_ndx name writing
     #[inline]
     fn write_owner_name<W: Write + ?Sized>(
         &self,
