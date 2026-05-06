@@ -244,8 +244,8 @@ mod tests {
         if linkat_supported() {
             return; // probe says yes; cannot exercise the unsupported branch
         }
-        let old = CStr::from_bytes_with_nul(b"/tmp/old\0").unwrap();
-        let new = CStr::from_bytes_with_nul(b"/tmp/new\0").unwrap();
+        let old = c"/tmp/old";
+        let new = c"/tmp/new";
         let err = build_linkat_sqe(LinkAtArgs {
             old_dirfd: libc::AT_FDCWD,
             old_path: old,
@@ -259,8 +259,8 @@ mod tests {
 
     #[test]
     fn build_linkat_sqe_unchecked_smoke() {
-        let old = CStr::from_bytes_with_nul(b"/tmp/old\0").unwrap();
-        let new = CStr::from_bytes_with_nul(b"/tmp/new\0").unwrap();
+        let old = c"/tmp/old";
+        let new = c"/tmp/new";
         // Construct without panic and tag with user_data; the queue API
         // consumes a tagged entry, so chaining `user_data` exercises the
         // builder's full surface.
@@ -279,8 +279,8 @@ mod tests {
         if !linkat_supported() {
             return;
         }
-        let old = CStr::from_bytes_with_nul(b"/tmp/old\0").unwrap();
-        let new = CStr::from_bytes_with_nul(b"/tmp/new\0").unwrap();
+        let old = c"/tmp/old";
+        let new = c"/tmp/new";
         let _entry = build_linkat_sqe(LinkAtArgs {
             old_dirfd: libc::AT_FDCWD,
             old_path: old,
