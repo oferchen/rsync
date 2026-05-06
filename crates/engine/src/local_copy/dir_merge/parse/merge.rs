@@ -4,6 +4,13 @@ use super::{
 };
 use std::path::PathBuf;
 
+/// Parses a `merge` directive of the form `merge[,modifiers] PATH`.
+///
+/// Returns `Ok(None)` when the input does not start with the `merge` keyword.
+/// Rejects `merge -` (stdin merges are not allowed inside `.rsync-filter`
+/// files) and missing-path inputs unless the `,C` modifier supplies the
+/// implicit `.cvsignore` default. `options` is `None` only when no modifiers
+/// were specified, preserving inheritance of the caller's parser settings.
 pub(super) fn parse_merge_directive(
     text: &str,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
@@ -62,6 +69,12 @@ pub(super) fn parse_merge_directive(
     }))
 }
 
+/// Parses the short-form merge prefixes `.` (plain merge) and `:` (dir-merge).
+///
+/// Returns `Ok(None)` when the input begins with any other character. The
+/// `:` form enables extended modifiers (`n`, `e`, `w`, `s`, `r`, `/`) and
+/// always returns explicit `options`. The `.` form mirrors the long-form
+/// `merge` semantics, returning `None` options when no modifiers were given.
 pub(super) fn parse_short_merge_directive_line(
     text: &str,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
