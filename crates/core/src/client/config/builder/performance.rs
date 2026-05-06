@@ -105,10 +105,12 @@ impl ClientConfigBuilder {
     }
 
     builder_setter! {
-        /// Sets the maximum memory allocation limit per allocation request.
+        /// Sets the `--max-alloc` cap in bytes for the global buffer pool.
         ///
-        /// When set, this limits how much memory can be allocated in a single
-        /// request, providing protection against memory exhaustion attacks.
+        /// When set, the pool tracks outstanding (checked-out) memory and
+        /// blocks `acquire` calls that would push the outstanding total past
+        /// this limit. Mirrors upstream rsync's `max_alloc` (default 1 GiB;
+        /// suffixes K/M/G/T/P/E supported by the CLI parser).
         #[doc(alias = "--max-alloc")]
         max_alloc: Option<u64>,
     }
