@@ -268,6 +268,12 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Sets the I/O-level zero-copy policy.
+    pub fn zero_copy_policy(&mut self, policy: fast_io::ZeroCopyPolicy) -> &mut Self {
+        self.write.zero_copy_policy = policy;
+        self
+    }
+
     /// Sets the reference directories for basis file lookup.
     pub fn reference_directories(&mut self, dirs: Vec<ReferenceDirectory>) -> &mut Self {
         self.reference_directories = dirs;

@@ -581,109 +581,38 @@ fn jump_host_defaults_to_none() {
 }
 
 #[test]
-fn cow_policy_default_is_auto() {
+fn zero_copy_default_is_auto() {
     let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Auto);
+    assert_eq!(parsed.zero_copy_policy, fast_io::ZeroCopyPolicy::Auto);
 }
 
 #[test]
-fn cow_flag_selects_auto_policy() {
-    let parsed = parse_test_args(["--cow", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Auto);
+fn zero_copy_flag_sets_enabled() {
+    let parsed = parse_test_args(["--zero-copy", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.zero_copy_policy, fast_io::ZeroCopyPolicy::Enabled);
 }
 
 #[test]
-fn no_cow_flag_selects_disabled_policy() {
-    let parsed = parse_test_args(["--no-cow", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Disabled);
+fn no_zero_copy_flag_sets_disabled() {
+    let parsed = parse_test_args(["--no-zero-copy", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.zero_copy_policy, fast_io::ZeroCopyPolicy::Disabled);
 }
 
 #[test]
-fn cow_then_no_cow_last_wins() {
-    let parsed = parse_test_args(["--cow", "--no-cow", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Disabled);
+fn zero_copy_then_no_zero_copy_last_wins() {
+    let parsed = parse_test_args(["--zero-copy", "--no-zero-copy", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.zero_copy_policy, fast_io::ZeroCopyPolicy::Disabled);
 }
 
 #[test]
-fn no_cow_then_cow_last_wins() {
-    let parsed = parse_test_args(["--no-cow", "--cow", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Auto);
+fn no_zero_copy_then_zero_copy_last_wins() {
+    let parsed = parse_test_args(["--no-zero-copy", "--zero-copy", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.zero_copy_policy, fast_io::ZeroCopyPolicy::Enabled);
 }
 
 #[test]
-fn rayon_threads_accepts_positive_value() {
-    let parsed = parse_test_args(["--rayon-threads", "8", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.rayon_threads, Some(8));
-}
-
-#[test]
-fn rayon_threads_defaults_to_none() {
-    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
-    assert!(parsed.rayon_threads.is_none());
-}
-
-#[test]
-fn rayon_threads_rejects_zero() {
-    let err = parse_test_args(["--rayon-threads", "0", "src/", "dst/"]).unwrap_err();
-    let message = err.to_string();
-    assert!(message.contains("--rayon-threads"));
-    assert!(message.contains("positive"));
-}
-
-#[test]
-fn rayon_threads_rejects_excessive_value() {
-    let err = parse_test_args(["--rayon-threads", "1025", "src/", "dst/"]).unwrap_err();
-    let message = err.to_string();
-    assert!(message.contains("--rayon-threads"));
-    assert!(message.contains("1024"));
-}
-
-#[test]
-fn rayon_threads_rejects_non_numeric() {
-    let err = parse_test_args(["--rayon-threads", "many", "src/", "dst/"]).unwrap_err();
-    let message = err.to_string();
-    assert!(message.contains("--rayon-threads"));
-    assert!(message.contains("'many'"));
-}
-
-#[test]
-fn tokio_threads_accepts_positive_value() {
-    let parsed = parse_test_args(["--tokio-threads", "4", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.tokio_threads, Some(4));
-}
-
-#[test]
-fn tokio_threads_defaults_to_none() {
-    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
-    assert!(parsed.tokio_threads.is_none());
-}
-
-#[test]
-fn tokio_threads_rejects_zero() {
-    let err = parse_test_args(["--tokio-threads", "0", "src/", "dst/"]).unwrap_err();
-    let message = err.to_string();
-    assert!(message.contains("--tokio-threads"));
-    assert!(message.contains("positive"));
-}
-
-#[test]
-fn tokio_threads_rejects_excessive_value() {
-    let err = parse_test_args(["--tokio-threads", "9999", "src/", "dst/"]).unwrap_err();
-    let message = err.to_string();
-    assert!(message.contains("--tokio-threads"));
-    assert!(message.contains("1024"));
-}
-
-#[test]
-fn tokio_threads_rejects_non_numeric() {
-    let err = parse_test_args(["--tokio-threads", "abc", "src/", "dst/"]).unwrap_err();
-    let message = err.to_string();
-    assert!(message.contains("--tokio-threads"));
-    assert!(message.contains("'abc'"));
-}
-
-#[test]
-fn rayon_threads_accepts_max_value() {
-    let parsed = parse_test_args(["--rayon-threads", "1024", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.rayon_threads, Some(1024));
+fn zero_copy_is_independent_from_io_uring() {
+    let parsed = parse_test_args(["--no-zero-copy", "--io-uring", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.zero_copy_policy, fast_io::ZeroCopyPolicy::Disabled);
+    assert_eq!(parsed.io_uring_policy, fast_io::IoUringPolicy::Enabled);
 }

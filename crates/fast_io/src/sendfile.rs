@@ -165,6 +165,53 @@ pub fn send_file_to_fd(source: &File, _dest_fd: i32, length: u64) -> io::Result<
     send_file_to_writer(source, &mut io::sink(), length)
 }
 
+/// Policy-aware variant of [`send_file_to_fd`].
+///
+/// When `policy` is [`ZeroCopyPolicy::Disabled`](crate::ZeroCopyPolicy::Disabled),
+/// the `sendfile(2)` fast path is skipped and the function falls through to
+/// a buffered `read`/`write` loop. `Auto` and `Enabled` route to the
+/// existing [`send_file_to_fd`] which auto-selects `sendfile` for transfers
+/// above the platform threshold.
+#[cfg(target_os = "linux")]
+pub fn send_file_to_fd_with_policy(
+    source: &File,
+    dest_fd: i32,
+    length: u64,
+    policy: crate::ZeroCopyPolicy,
+) -> io::Result<u64> {
+    if matches!(policy, crate::ZeroCopyPolicy::Disabled) {
+        copy_via_fd_write(source, dest_fd, length)
+    } else {
+        send_file_to_fd(source, dest_fd, length)
+    }
+}
+
+/// Non-Linux unix policy-aware fallback - delegates to [`send_file_to_fd`].
+///
+/// `sendfile(2)` is not used on non-Linux unix targets, so the policy is
+/// purely informational here and the call always uses the standard
+/// `read`/`write` path.
+#[cfg(all(unix, not(target_os = "linux")))]
+pub fn send_file_to_fd_with_policy(
+    source: &File,
+    dest_fd: i32,
+    length: u64,
+    _policy: crate::ZeroCopyPolicy,
+) -> io::Result<u64> {
+    send_file_to_fd(source, dest_fd, length)
+}
+
+/// Non-unix policy-aware stub for `send_file_to_fd_with_policy`.
+#[cfg(not(unix))]
+pub fn send_file_to_fd_with_policy(
+    source: &File,
+    _dest_fd: i32,
+    length: u64,
+    _policy: crate::ZeroCopyPolicy,
+) -> io::Result<u64> {
+    send_file_to_writer(source, &mut io::sink(), length)
+}
+
 /// Attempts zero-copy transfer via `sendfile` syscall.
 ///
 /// This function directly invokes the Linux `sendfile` syscall for optimal
