@@ -61,7 +61,10 @@ use std::time::Duration;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use engine::local_copy::{FilterProgram, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
+use engine::local_copy::{
+    FilterProgram, GlobalBufferPoolConfig, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
+    init_global_buffer_pool,
+};
 
 use super::config::{BandwidthLimit, ClientConfig, DeleteMode};
 use super::error::{ClientError, map_local_copy_error, missing_operands_error};
@@ -181,6 +184,8 @@ fn run_client_internal(
     if !config.has_transfer_request() {
         return Err(missing_operands_error());
     }
+
+    apply_max_alloc(&config);
 
     let batch_writer = if let Some(batch_cfg) = config.batch_config() {
         if let Some(result) = batch::handle_batch_read(batch_cfg, &config) {
@@ -321,6 +326,44 @@ fn run_client_internal(
     }
 
     Ok(summary)
+}
+
+/// Applies the `--max-alloc` cap from the [`ClientConfig`] to the global
+/// buffer pool.
+///
+/// Calls [`init_global_buffer_pool`] with [`GlobalBufferPoolConfig::default`]
+/// adjusted to carry the requested memory cap. The first caller wins per
+/// process: subsequent invocations and lazy initialisations are no-ops, so
+/// the cap only takes effect when this runs before any subsystem has
+/// acquired a buffer. That matches the lifetime of a typical CLI invocation
+/// (one client per process). Library callers that already initialised the
+/// pool retain whatever cap they chose.
+///
+/// Mirrors upstream rsync `options.c:1943-1950`, where `max_alloc` is set
+/// once during option processing and consumed by allocation paths thereafter.
+fn apply_max_alloc(config: &ClientConfig) {
+    let Some(limit) = config.max_alloc() else {
+        return;
+    };
+    let Ok(limit_usize) = usize::try_from(limit) else {
+        // Configurations parsed via the CLI are bounded by `MAX_ALLOC_CEILING`
+        // (u64::MAX / 4) so this branch is only reachable on 32-bit targets
+        // when a programmatic builder supplies a 64-bit value larger than
+        // the host's address space. Skipping the cap is safe; the pool
+        // simply remains uncapped.
+        return;
+    };
+    if limit_usize == 0 {
+        return;
+    }
+    let cfg = GlobalBufferPoolConfig {
+        memory_cap: Some(limit_usize),
+        ..GlobalBufferPoolConfig::default()
+    };
+    // `Err` means another caller (typically a library embedder) already
+    // initialised the pool; their configuration wins to avoid silently
+    // overriding their settings.
+    let _ = init_global_buffer_pool(cfg);
 }
 
 /// Builder for [`LocalCopyOptions`] derived from a [`ClientConfig`] and

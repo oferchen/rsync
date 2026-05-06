@@ -239,6 +239,77 @@ fn max_alloc_rejects_non_numeric() {
 }
 
 #[test]
+fn max_alloc_argument_resolution_rejects_zero() {
+    use crate::frontend::execution::parse_max_alloc_argument;
+    let error =
+        parse_max_alloc_argument(OsStr::new("0")).expect_err("zero should fail at the cap layer");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("greater than zero"),
+        "expected zero-rejection error, got: {rendered}"
+    );
+}
+
+#[test]
+fn max_alloc_argument_resolution_accepts_typical_values() {
+    use crate::frontend::execution::parse_max_alloc_argument;
+    assert_eq!(
+        parse_max_alloc_argument(OsStr::new("1G")).expect("1G accepted"),
+        1024 * 1024 * 1024
+    );
+    assert_eq!(
+        parse_max_alloc_argument(OsStr::new("512M")).expect("512M accepted"),
+        512 * 1024 * 1024
+    );
+    assert_eq!(
+        parse_max_alloc_argument(OsStr::new("1024K")).expect("1024K accepted"),
+        1024 * 1024
+    );
+    assert_eq!(
+        parse_max_alloc_argument(OsStr::new("4096")).expect("plain bytes accepted"),
+        4096
+    );
+}
+
+#[test]
+fn max_alloc_argument_resolution_rejects_invalid() {
+    use crate::frontend::execution::parse_max_alloc_argument;
+    assert!(parse_max_alloc_argument(OsStr::new("garbage")).is_err());
+    assert!(parse_max_alloc_argument(OsStr::new("100X")).is_err());
+    assert!(parse_max_alloc_argument(OsStr::new("")).is_err());
+    assert!(parse_max_alloc_argument(OsStr::new("-1G")).is_err());
+}
+
+#[test]
+fn max_alloc_argument_resolution_rejects_excessive_value() {
+    use crate::frontend::execution::parse_max_alloc_argument;
+    let value = format!("{}", u64::MAX);
+    let err = parse_max_alloc_argument(OsStr::new(&value)).expect_err("ceiling enforced");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("exceeds the supported range"),
+        "expected range error, got: {rendered}"
+    );
+}
+
+#[test]
+fn max_alloc_zero_value_produces_error_exit() {
+    let _guard = clear_rsync_rsh();
+    let (code, _stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--max-alloc=0"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ]);
+    let stderr_text = String::from_utf8_lossy(&stderr);
+    assert_ne!(code, 0, "should exit with error for zero --max-alloc");
+    assert!(
+        stderr_text.contains("greater than zero"),
+        "error should mention greater-than-zero, got: {stderr_text}"
+    );
+}
+
+#[test]
 fn max_alloc_invalid_value_produces_error_exit() {
     let _guard = clear_rsync_rsh();
     let (code, _stdout, stderr) = run_with_args([

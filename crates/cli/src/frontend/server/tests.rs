@@ -295,6 +295,7 @@ fn long_flags_defaults() {
     assert!(flags.checksum_choice.is_none());
     assert!(flags.min_size.is_none());
     assert!(flags.max_size.is_none());
+    assert!(flags.max_alloc.is_none());
     assert!(flags.stop_at.is_none());
     assert!(flags.stop_after.is_none());
     assert!(matches!(
@@ -415,6 +416,31 @@ fn long_flags_max_size() {
 }
 
 #[test]
+fn long_flags_max_alloc() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--max-alloc=512M"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.max_alloc.as_deref(), Some("512M"));
+}
+
+#[test]
+fn long_flags_max_alloc_is_known_long_flag() {
+    let args = [
+        OsString::from("--server"),
+        OsString::from("--max-alloc=1G"),
+        OsString::from("-logDtpr"),
+        OsString::from("."),
+        OsString::from("src/"),
+    ];
+    let (flag_string, positional) = parse_server_flag_string_and_args(&args[1..]);
+    assert_eq!(flag_string, "-logDtpr");
+    assert_eq!(positional, vec![OsString::from("src/")]);
+    assert!(is_known_server_long_flag("--max-alloc=1G"));
+}
+
+#[test]
 fn long_flags_stop_at() {
     let args = vec![
         OsString::from("--server"),
@@ -448,6 +474,7 @@ fn long_flags_all_combined() {
         OsString::from("--checksum-choice=md5"),
         OsString::from("--min-size=100"),
         OsString::from("--max-size=1M"),
+        OsString::from("--max-alloc=2G"),
         OsString::from("--stop-after=30"),
         OsString::from("-logDtpr"),
         OsString::from("."),
@@ -464,6 +491,7 @@ fn long_flags_all_combined() {
     assert_eq!(flags.checksum_choice.as_deref(), Some("md5"));
     assert_eq!(flags.min_size.as_deref(), Some("100"));
     assert_eq!(flags.max_size.as_deref(), Some("1M"));
+    assert_eq!(flags.max_alloc.as_deref(), Some("2G"));
     assert_eq!(flags.stop_after.as_deref(), Some("30"));
 }
 

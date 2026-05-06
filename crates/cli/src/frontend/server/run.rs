@@ -186,6 +186,29 @@ fn apply_value_flags<Err: Write>(
         }
     }
 
+    // upstream: options.c:1943-1950 - server-side `--max-alloc` is parsed and
+    // applied to the local allocator. We forward it from the client and
+    // enforce the cap on the server's buffer pool.
+    if let Some(alloc_str) = &long_flags.max_alloc {
+        match super::super::execution::parse_max_alloc_argument(std::ffi::OsStr::new(alloc_str)) {
+            Ok(limit) => {
+                if let Ok(limit_usize) = usize::try_from(limit)
+                    && limit_usize > 0
+                {
+                    let cfg = engine::local_copy::GlobalBufferPoolConfig {
+                        memory_cap: Some(limit_usize),
+                        ..engine::local_copy::GlobalBufferPoolConfig::default()
+                    };
+                    let _ = engine::local_copy::init_global_buffer_pool(cfg);
+                }
+            }
+            Err(message) => {
+                write_server_error(stderr, brand, message.to_string());
+                return Err(1);
+            }
+        }
+    }
+
     if let Some(when_str) = &long_flags.stop_at {
         match parse_server_stop_at(when_str) {
             Ok(deadline) => config.stop_at = Some(deadline),

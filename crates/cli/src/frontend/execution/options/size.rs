@@ -63,6 +63,57 @@ pub(crate) fn parse_size_limit_argument(value: &OsStr, flag: &str) -> Result<u64
     }
 }
 
+/// Sanity ceiling for `--max-alloc`.
+///
+/// Limits the parsed value to at most one quarter of `u64::MAX` so the cap
+/// can be safely converted to `usize` and added to outstanding-byte counters
+/// without risking arithmetic overflow on 64-bit platforms.
+pub(crate) const MAX_ALLOC_CEILING: u64 = u64::MAX / 4;
+
+/// Parses the `--max-alloc` argument as a non-zero byte count with a sanity ceiling.
+///
+/// Mirrors upstream rsync's `parse_size_arg("max-alloc", ...)` accepting K, M,
+/// G, T, P, E suffixes, while rejecting:
+///
+/// - empty input,
+/// - negative values,
+/// - zero (unlimited semantics are not exposed by oc-rsync),
+/// - values above [`MAX_ALLOC_CEILING`].
+///
+/// # Errors
+///
+/// Returns a [`Message`] with role [`Role::Client`] and exit code 1 on any
+/// rejection, matching upstream's diagnostic style.
+pub(crate) fn parse_max_alloc_argument(value: &OsStr) -> Result<u64, Message> {
+    let text = value.to_string_lossy();
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
+    let display = if trimmed.is_empty() {
+        text.as_ref()
+    } else {
+        trimmed
+    };
+
+    let limit = parse_size_limit_argument(value, "--max-alloc")?;
+
+    if limit == 0 {
+        return Err(rsync_error!(
+            1,
+            format!("invalid --max-alloc '{display}': size must be greater than zero")
+        )
+        .with_role(Role::Client));
+    }
+
+    if limit > MAX_ALLOC_CEILING {
+        return Err(rsync_error!(
+            1,
+            format!("invalid --max-alloc '{display}': size exceeds the supported range")
+        )
+        .with_role(Role::Client));
+    }
+
+    Ok(limit)
+}
+
 /// Parses the `--block-size` argument as a positive `NonZeroU32` with optional unit suffix.
 pub(crate) fn parse_block_size_argument(value: &OsStr) -> Result<NonZeroU32, Message> {
     let text = value.to_string_lossy();
@@ -560,6 +611,71 @@ mod tests {
         assert!(
             rendered.contains("--max-alloc"),
             "error should mention --max-alloc, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_argument_valid_gigabyte() {
+        assert_eq!(
+            parse_max_alloc_argument(&os("1G")).unwrap(),
+            1024 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_argument_valid_megabyte() {
+        assert_eq!(
+            parse_max_alloc_argument(&os("512M")).unwrap(),
+            512 * 1024 * 1024
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_argument_valid_kilobyte() {
+        assert_eq!(parse_max_alloc_argument(&os("1024K")).unwrap(), 1024 * 1024);
+    }
+
+    #[test]
+    fn parse_max_alloc_argument_valid_plain_bytes() {
+        assert_eq!(parse_max_alloc_argument(&os("1024")).unwrap(), 1024);
+    }
+
+    #[test]
+    fn parse_max_alloc_argument_rejects_zero() {
+        let err = parse_max_alloc_argument(&os("0")).unwrap_err();
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("must be greater than zero"),
+            "expected zero-rejection error, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_argument_rejects_invalid() {
+        assert!(parse_max_alloc_argument(&os("garbage")).is_err());
+        assert!(parse_max_alloc_argument(&os("100X")).is_err());
+        assert!(parse_max_alloc_argument(&os("")).is_err());
+        assert!(parse_max_alloc_argument(&os("-1G")).is_err());
+    }
+
+    #[test]
+    fn parse_max_alloc_argument_rejects_above_ceiling() {
+        // u64::MAX expressed as bytes overflows the ceiling.
+        let value = format!("{}", u64::MAX);
+        let err = parse_max_alloc_argument(&os(&value)).unwrap_err();
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("exceeds the supported range"),
+            "expected range error, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn parse_max_alloc_argument_accepts_ceiling() {
+        let value = format!("{MAX_ALLOC_CEILING}");
+        assert_eq!(
+            parse_max_alloc_argument(&os(&value)).unwrap(),
+            MAX_ALLOC_CEILING
         );
     }
 

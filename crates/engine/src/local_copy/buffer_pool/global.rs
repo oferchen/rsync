@@ -39,6 +39,13 @@ pub struct GlobalBufferPoolConfig {
     pub max_buffers: usize,
     /// Size of each buffer in bytes.
     pub buffer_size: usize,
+    /// Optional hard memory cap in bytes for outstanding (checked-out) buffers.
+    ///
+    /// When `Some`, the pool blocks `acquire` calls that would push outstanding
+    /// memory past the cap until a buffer is returned. `None` leaves the pool
+    /// uncapped, matching its historical default. A value of `Some(0)` is
+    /// treated as `None`.
+    pub memory_cap: Option<usize>,
 }
 
 /// Environment variable for overriding the buffer pool size (number of buffers).
@@ -66,6 +73,7 @@ impl Default for GlobalBufferPoolConfig {
         Self {
             max_buffers,
             buffer_size: super::super::COPY_BUFFER_SIZE,
+            memory_cap: None,
         }
     }
 }
@@ -107,15 +115,17 @@ pub fn global_buffer_pool() -> Arc<BufferPool> {
 /// init_global_buffer_pool(GlobalBufferPoolConfig {
 ///     max_buffers: 16,
 ///     buffer_size: 256 * 1024,
+///     memory_cap: Some(512 * 1024 * 1024),
 /// }).expect("pool not yet initialized");
 /// ```
 pub fn init_global_buffer_pool(
     config: GlobalBufferPoolConfig,
 ) -> Result<(), GlobalBufferPoolConfig> {
-    let pool = Arc::new(BufferPool::with_buffer_size(
-        config.max_buffers,
-        config.buffer_size,
-    ));
+    let mut pool = BufferPool::with_buffer_size(config.max_buffers, config.buffer_size);
+    if let Some(cap) = config.memory_cap.filter(|&n| n > 0) {
+        pool = pool.with_memory_cap(cap);
+    }
+    let pool = Arc::new(pool);
     GLOBAL_BUFFER_POOL.set(pool).map_err(|_| config)
 }
 
@@ -137,6 +147,7 @@ mod tests {
             .unwrap_or(4);
         assert_eq!(config.max_buffers, expected);
         assert_eq!(config.buffer_size, super::super::super::COPY_BUFFER_SIZE);
+        assert!(config.memory_cap.is_none());
     }
 
     #[test]
@@ -144,9 +155,11 @@ mod tests {
         let config = GlobalBufferPoolConfig {
             max_buffers: 32,
             buffer_size: 512 * 1024,
+            memory_cap: Some(64 * 1024 * 1024),
         };
         assert_eq!(config.max_buffers, 32);
         assert_eq!(config.buffer_size, 512 * 1024);
+        assert_eq!(config.memory_cap, Some(64 * 1024 * 1024));
     }
 
     #[test]
@@ -296,6 +309,7 @@ mod tests {
         let config = GlobalBufferPoolConfig {
             max_buffers: 99,
             buffer_size: 1024,
+            memory_cap: None,
         };
         let result = init_global_buffer_pool(config);
         assert!(result.is_err());
@@ -304,5 +318,26 @@ mod tests {
         let returned = result.unwrap_err();
         assert_eq!(returned.max_buffers, 99);
         assert_eq!(returned.buffer_size, 1024);
+        assert!(returned.memory_cap.is_none());
+    }
+
+    #[test]
+    fn memory_cap_field_round_trips() {
+        let config = GlobalBufferPoolConfig {
+            max_buffers: 4,
+            buffer_size: 8 * 1024,
+            memory_cap: Some(4 * 1024 * 1024),
+        };
+        assert_eq!(config.memory_cap, Some(4 * 1024 * 1024));
+    }
+
+    #[test]
+    fn memory_cap_zero_is_treated_as_unbounded() {
+        // The init helper filters out memory_cap=Some(0) so the pool stays
+        // uncapped instead of panicking on `MemoryCap::new(0)`. We only
+        // assert the filter logic here; the actual pool init is exercised
+        // by `init_after_lazy_init_returns_err` and integration tests.
+        let cap: Option<usize> = Some(0).filter(|&n| n > 0);
+        assert!(cap.is_none());
     }
 }

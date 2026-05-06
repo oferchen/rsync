@@ -35,6 +35,13 @@ pub(super) struct ServerLongFlags {
     pub(super) checksum_choice: Option<String>,
     pub(super) min_size: Option<String>,
     pub(super) max_size: Option<String>,
+    /// Memory allocation cap forwarded by the client.
+    ///
+    /// upstream: options.c:2845-2846 - `--max-alloc=arg` is emitted by
+    /// `server_options()` when the user-supplied value differs from the
+    /// default. Each side enforces its own cap, so the server records and
+    /// applies the value locally.
+    pub(super) max_alloc: Option<String>,
     pub(super) stop_at: Option<String>,
     pub(super) stop_after: Option<String>,
     pub(super) files_from: Option<String>,
@@ -88,6 +95,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         checksum_choice: None,
         min_size: None,
         max_size: None,
+        max_alloc: None,
         stop_at: None,
         stop_after: None,
         files_from: None,
@@ -148,6 +156,8 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.min_size = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--max-size=") {
         flags.max_size = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--max-alloc=") {
+        flags.max_alloc = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--stop-at=") {
         flags.stop_at = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--stop-after=") {
@@ -219,6 +229,7 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--link-dest=")
         || arg.starts_with("--min-size=")
         || arg.starts_with("--max-size=")
+        || arg.starts_with("--max-alloc=")
         || arg.starts_with("--stop-at=")
         || arg.starts_with("--stop-after=")
         || arg.starts_with("--files-from=")

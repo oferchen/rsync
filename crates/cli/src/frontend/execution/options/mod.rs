@@ -24,7 +24,9 @@ pub(crate) use numeric::{
 pub(crate) use protocol::parse_protocol_version_arg;
 #[cfg(test)]
 pub(crate) use size::{SizeParseError, pow_u128_for_size};
-pub(crate) use size::{parse_block_size_argument, parse_size_limit_argument};
+pub(crate) use size::{
+    parse_block_size_argument, parse_max_alloc_argument, parse_size_limit_argument,
+};
 
 #[cfg(test)]
 mod tests {

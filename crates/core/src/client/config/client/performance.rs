@@ -113,10 +113,12 @@ impl ClientConfig {
         self.block_size_override
     }
 
-    /// Returns the maximum memory allocation limit per allocation request.
+    /// Returns the configured `--max-alloc` cap in bytes, if any.
     ///
-    /// When set, this limits how much memory can be allocated in a single
-    /// request, providing protection against memory exhaustion attacks.
+    /// When set, the global buffer pool tracks outstanding (checked-out)
+    /// memory and applies backpressure once allocations would push the
+    /// outstanding total past this limit. Mirrors upstream rsync's
+    /// `max_alloc` (default 1 GiB; suffixes K/M/G/T/P/E supported).
     #[doc(alias = "--max-alloc")]
     pub const fn max_alloc(&self) -> Option<u64> {
         self.max_alloc
