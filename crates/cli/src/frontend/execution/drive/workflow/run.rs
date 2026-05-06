@@ -175,6 +175,7 @@ where
         io_uring_depth,
         zero_copy_policy,
         cow_policy,
+        simd_override,
         delay_updates,
         partial_dir,
         temp_dir,
@@ -219,6 +220,22 @@ where
         rayon_threads,
         tokio_threads,
     } = parsed;
+
+    if let Some(level) = simd_override
+        && let Err(previous) = checksums::set_simd_override(level)
+    {
+        let message = rsync_error!(
+            1,
+            format!(
+                "--simd: cannot change SIMD level after initialization \
+                 (was {}, requested {})",
+                previous.as_cli_str(),
+                level.as_cli_str(),
+            )
+        )
+        .with_role(Role::Client);
+        return fail_with_message(message, stderr);
+    }
 
     let password_file = password_file.map(PathBuf::from);
     let human_readable_setting = human_readable;
