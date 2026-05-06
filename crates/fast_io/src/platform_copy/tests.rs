@@ -607,3 +607,51 @@ fn dispatch_falls_back_from_reflink_on_ntfs() {
         result.method
     );
 }
+
+#[test]
+fn no_cow_platform_copy_returns_standard_copy() {
+    let temp = TempDir::new().expect("create temp dir");
+    let content = b"hello no-cow";
+    let (src, dst) = setup_test_files(temp.path(), "no_cow", content);
+
+    let copier = NoCowPlatformCopy::new();
+    let result = copier
+        .copy_file(&src, &dst, content.len() as u64)
+        .expect("no-cow copy succeeds");
+
+    assert_eq!(result.method, CopyMethod::StandardCopy);
+    assert!(!result.is_zero_copy());
+    assert_eq!(result.bytes_copied, content.len() as u64);
+
+    let dst_content = std::fs::read(&dst).expect("read destination");
+    assert_eq!(dst_content, content);
+}
+
+#[test]
+fn no_cow_platform_copy_supports_reflink_returns_false() {
+    let copier = NoCowPlatformCopy::new();
+    assert!(!copier.supports_reflink());
+}
+
+#[test]
+fn no_cow_platform_copy_preferred_method_is_standard() {
+    let copier = NoCowPlatformCopy::new();
+    assert_eq!(copier.preferred_method(0), CopyMethod::StandardCopy);
+    assert_eq!(
+        copier.preferred_method(1024 * 1024),
+        CopyMethod::StandardCopy
+    );
+}
+
+#[test]
+fn no_cow_platform_copy_propagates_missing_source_error() {
+    let temp = TempDir::new().expect("create temp dir");
+    let missing = temp.path().join("does_not_exist");
+    let dst = temp.path().join("dst");
+
+    let copier = NoCowPlatformCopy::new();
+    let err = copier
+        .copy_file(&missing, &dst, 0)
+        .expect_err("missing source should fail");
+    assert_eq!(err.kind(), io::ErrorKind::NotFound);
+}

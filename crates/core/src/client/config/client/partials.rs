@@ -64,6 +64,14 @@ impl ClientConfig {
     pub const fn io_uring_policy(&self) -> fast_io::IoUringPolicy {
         self.io_uring_policy
     }
+
+    /// Returns the copy-on-write reflink policy for whole-file copies.
+    #[must_use]
+    #[doc(alias = "--cow")]
+    #[doc(alias = "--no-cow")]
+    pub const fn cow_policy(&self) -> fast_io::CowPolicy {
+        self.cow_policy
+    }
 }
 
 #[cfg(test)]
@@ -126,5 +134,11 @@ mod tests {
     fn io_uring_policy_default_is_auto() {
         let config = default_config();
         assert_eq!(config.io_uring_policy(), fast_io::IoUringPolicy::Auto);
+    }
+
+    #[test]
+    fn cow_policy_default_is_auto() {
+        let config = default_config();
+        assert_eq!(config.cow_policy(), fast_io::CowPolicy::Auto);
     }
 }

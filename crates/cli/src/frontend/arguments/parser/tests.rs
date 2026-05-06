@@ -579,3 +579,33 @@ fn jump_host_defaults_to_none() {
     let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
     assert!(parsed.jump_host.is_none());
 }
+
+#[test]
+fn cow_policy_default_is_auto() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Auto);
+}
+
+#[test]
+fn cow_flag_selects_auto_policy() {
+    let parsed = parse_test_args(["--cow", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Auto);
+}
+
+#[test]
+fn no_cow_flag_selects_disabled_policy() {
+    let parsed = parse_test_args(["--no-cow", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Disabled);
+}
+
+#[test]
+fn cow_then_no_cow_last_wins() {
+    let parsed = parse_test_args(["--cow", "--no-cow", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Disabled);
+}
+
+#[test]
+fn no_cow_then_cow_last_wins() {
+    let parsed = parse_test_args(["--no-cow", "--cow", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Auto);
+}
