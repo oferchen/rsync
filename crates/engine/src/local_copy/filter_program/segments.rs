@@ -1,3 +1,7 @@
+//! Compiled filter segments and stacks that evaluate include/exclude,
+//! protect/risk, and exclude-if-present rules sequentially with first-match
+//! semantics, mirroring upstream `exclude.c` rule traversal.
+
 use std::collections::HashSet;
 use std::path::Path;
 

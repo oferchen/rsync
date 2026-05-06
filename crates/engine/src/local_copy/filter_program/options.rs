@@ -1,3 +1,6 @@
+//! Per-directory merge parser configuration and enforced-kind modifiers
+//! controlling how `.rsync-filter`-style files are interpreted.
+
 /// Rule kind enforced for entries inside a dir-merge file when modifiers
 /// request include-only or exclude-only semantics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
