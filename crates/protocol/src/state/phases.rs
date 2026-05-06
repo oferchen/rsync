@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-/// Protocol phase marker traits for type-safe transitions.
+/// Protocol phase marker trait for type-safe transitions.
 pub trait ProtocolPhase: fmt::Debug + Send + Sync {
     /// Human-readable name of this phase.
     fn name(&self) -> &'static str;

@@ -5,12 +5,32 @@
 //!
 //! # Protocol Phases
 //!
-//! The rsync protocol progresses through these phases:
+//! The rsync protocol progresses through these phases in strict forward order:
 //!
 //! 1. **Negotiation** - Protocol version and capability negotiation
 //! 2. **FileList** - File list exchange between sender and receiver
 //! 3. **Transfer** - Delta transfer phase
 //! 4. **Finalize** - Final statistics exchange and cleanup
+//!
+//! ```text
+//! Negotiation -> FileList -> Transfer -> Finalize
+//!     |             |           |          (terminal)
+//!     |             |           +-- record_transfer (loop)
+//!     |             +-- set_file_count
+//!     +-- set_protocol_version, set_checksum_seed
+//! ```
+//!
+//! # Invariants
+//!
+//! - Transitions are forward-only; there is no rollback path.
+//! - `Negotiation -> FileList` requires both `protocol_version` and `checksum_seed`.
+//! - `FileList -> Transfer` requires `file_count`.
+//! - `Transfer -> Finalize` is always valid and consumes the transfer state.
+//! - `Finalize` is terminal: [`DynamicProtocolState::advance`] is a no-op once
+//!   reached, so callers may invoke it unconditionally.
+//! - [`ProtocolState`] enforces the above at compile time via the typestate
+//!   pattern; [`DynamicProtocolState`] enforces it at runtime via
+//!   [`TransitionError`].
 //!
 //! # Submodules
 //!
