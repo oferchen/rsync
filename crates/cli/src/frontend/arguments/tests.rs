@@ -1193,6 +1193,39 @@ mod option_values {
     }
 
     #[test]
+    fn io_uring_depth_accepts_power_of_two() {
+        let parsed = parse_test_args(["--io-uring-depth=256", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.io_uring_depth, Some(256));
+    }
+
+    #[test]
+    fn io_uring_depth_default_is_none() {
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.io_uring_depth, None);
+    }
+
+    #[test]
+    fn io_uring_depth_rejects_zero() {
+        let err = parse_test_args(["--io-uring-depth=0", "src/", "dst/"])
+            .expect_err("zero depth must be rejected");
+        assert!(err.to_string().contains("--io-uring-depth"));
+    }
+
+    #[test]
+    fn io_uring_depth_rejects_non_power_of_two() {
+        let err = parse_test_args(["--io-uring-depth=100", "src/", "dst/"])
+            .expect_err("non-power-of-two depth must be rejected");
+        assert!(err.to_string().contains("--io-uring-depth"));
+    }
+
+    #[test]
+    fn io_uring_depth_rejects_too_large() {
+        let err = parse_test_args(["--io-uring-depth=65536", "src/", "dst/"])
+            .expect_err("depth > 32768 must be rejected");
+        assert!(err.to_string().contains("--io-uring-depth"));
+    }
+
+    #[test]
     fn modify_window_with_equals() {
         let parsed = parse_test_args(["--modify-window=2", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.modify_window, Some(OsString::from("2")));

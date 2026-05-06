@@ -154,7 +154,25 @@ pub fn writer_from_file(
     buffer_capacity: usize,
     policy: crate::IoUringPolicy,
 ) -> io::Result<IoUringOrStdWriter> {
-    let config = IoUringConfig::default();
+    writer_from_file_with_depth(file, buffer_capacity, policy, None)
+}
+
+/// Like [`writer_from_file`] but allows the caller to override the submission
+/// queue depth.
+///
+/// `depth` corresponds to the `--io-uring-depth=N` CLI flag and overrides
+/// [`IoUringConfig::sq_entries`] when `Some`. The value should already be
+/// validated via [`crate::validate_io_uring_depth`].
+pub fn writer_from_file_with_depth(
+    file: File,
+    buffer_capacity: usize,
+    policy: crate::IoUringPolicy,
+    depth: Option<u32>,
+) -> io::Result<IoUringOrStdWriter> {
+    let mut config = IoUringConfig::default();
+    if let Some(d) = depth {
+        config.sq_entries = d;
+    }
 
     match policy {
         crate::IoUringPolicy::Auto => {
@@ -212,7 +230,24 @@ pub fn reader_from_path<P: AsRef<std::path::Path>>(
     path: P,
     policy: crate::IoUringPolicy,
 ) -> io::Result<IoUringOrStdReader> {
-    let config = IoUringConfig::default();
+    reader_from_path_with_depth(path, policy, None)
+}
+
+/// Like [`reader_from_path`] but allows the caller to override the submission
+/// queue depth.
+///
+/// `depth` corresponds to the `--io-uring-depth=N` CLI flag and overrides
+/// [`IoUringConfig::sq_entries`] when `Some`. The value should already be
+/// validated via [`crate::validate_io_uring_depth`].
+pub fn reader_from_path_with_depth<P: AsRef<std::path::Path>>(
+    path: P,
+    policy: crate::IoUringPolicy,
+    depth: Option<u32>,
+) -> io::Result<IoUringOrStdReader> {
+    let mut config = IoUringConfig::default();
+    if let Some(d) = depth {
+        config.sq_entries = d;
+    }
 
     match policy {
         crate::IoUringPolicy::Auto => {

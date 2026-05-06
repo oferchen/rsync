@@ -65,6 +65,17 @@ impl ClientConfig {
         self.io_uring_policy
     }
 
+    /// Returns the io_uring submission queue depth override, if any.
+    ///
+    /// `None` means the default depth ([`fast_io::IoUringConfig::sq_entries`])
+    /// is used; `Some(n)` overrides it with a user-supplied power-of-two value
+    /// previously validated via [`fast_io::validate_io_uring_depth`].
+    #[must_use]
+    #[doc(alias = "--io-uring-depth")]
+    pub const fn io_uring_depth(&self) -> Option<u32> {
+        self.io_uring_depth
+    }
+
     /// Returns the copy-on-write reflink policy for whole-file copies.
     #[must_use]
     #[doc(alias = "--cow")]
@@ -152,5 +163,11 @@ mod tests {
     fn zero_copy_policy_default_is_auto() {
         let config = default_config();
         assert_eq!(config.zero_copy_policy(), fast_io::ZeroCopyPolicy::Auto);
+    }
+
+    #[test]
+    fn io_uring_depth_default_is_none() {
+        let config = default_config();
+        assert_eq!(config.io_uring_depth(), None);
     }
 }

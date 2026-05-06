@@ -29,6 +29,21 @@ fn config_io_uring_policy_disabled() {
 }
 
 #[test]
+fn config_io_uring_depth_default_is_none() {
+    let config = DiskCommitConfig::default();
+    assert_eq!(config.io_uring_depth, None);
+}
+
+#[test]
+fn config_io_uring_depth_override() {
+    let config = DiskCommitConfig {
+        io_uring_depth: Some(256),
+        ..DiskCommitConfig::default()
+    };
+    assert_eq!(config.io_uring_depth, Some(256));
+}
+
+#[test]
 fn config_iocp_policy_disabled() {
     let config = DiskCommitConfig {
         iocp_policy: fast_io::IocpPolicy::Disabled,

@@ -1031,6 +1031,27 @@ fn zero_copy_policy_default_is_auto() {
     assert_eq!(config.zero_copy_policy(), fast_io::ZeroCopyPolicy::Auto);
 }
 
+#[test]
+fn io_uring_depth_default_is_none() {
+    let config = builder().build();
+    assert_eq!(config.io_uring_depth(), None);
+}
+
+#[test]
+fn io_uring_depth_sets_some() {
+    let config = builder().io_uring_depth(Some(256)).build();
+    assert_eq!(config.io_uring_depth(), Some(256));
+}
+
+#[test]
+fn io_uring_depth_clears_to_none() {
+    let config = builder()
+        .io_uring_depth(Some(128))
+        .io_uring_depth(None)
+        .build();
+    assert_eq!(config.io_uring_depth(), None);
+}
+
 // Mutual exclusion validation tests
 // (upstream: options.c:2406-2414 - inplace/append conflicts with partial-dir/delay-updates)
 

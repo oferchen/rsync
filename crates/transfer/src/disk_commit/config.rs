@@ -78,6 +78,13 @@ pub struct DiskCommitConfig {
     /// batching multiple writes into a single `io_uring_enter` call.
     /// Falls back to standard buffered I/O on non-Linux or older kernels.
     pub io_uring_policy: fast_io::IoUringPolicy,
+    /// Optional override for the io_uring submission queue depth (`--io-uring-depth=N`).
+    ///
+    /// `None` keeps the upstream default
+    /// ([`fast_io::IoUringConfig::sq_entries`]). `Some(n)` overrides the
+    /// default with a power-of-two value previously validated via
+    /// [`fast_io::validate_io_uring_depth`].
+    pub io_uring_depth: Option<u32>,
     /// Policy controlling IOCP usage for disk writes on Windows.
     ///
     /// When `Auto` (default), the disk thread attempts to create an
@@ -101,6 +108,7 @@ impl Default for DiskCommitConfig {
             acl_cache: None,
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
+            io_uring_depth: None,
             iocp_policy: fast_io::IocpPolicy::Auto,
         }
     }

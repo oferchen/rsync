@@ -112,6 +112,13 @@ pub struct RequestConfig<'a> {
     pub inplace_partial: bool,
     /// Policy controlling io_uring usage for file I/O (`--io-uring` / `--no-io-uring`).
     pub io_uring_policy: fast_io::IoUringPolicy,
+    /// Optional override for the io_uring submission queue depth (`--io-uring-depth=N`).
+    ///
+    /// `None` keeps the default
+    /// ([`fast_io::IoUringConfig::sq_entries`]). `Some(n)` overrides the
+    /// default with a power-of-two value previously validated via
+    /// [`fast_io::validate_io_uring_depth`].
+    pub io_uring_depth: Option<u32>,
     /// Whether xattr preservation is active (`-X` / `--xattrs`).
     ///
     /// When true, the sender may include `ITEM_REPORT_XATTR` in iflags with
@@ -284,6 +291,7 @@ mod tests {
             inplace: false,
             inplace_partial: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
+            io_uring_depth: None,
             preserve_xattrs: false,
             want_xattr_optim: false,
             append: false,

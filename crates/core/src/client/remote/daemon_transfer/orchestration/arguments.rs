@@ -252,6 +252,9 @@ pub(super) fn build_full_daemon_args(
         if config.fsync() {
             args.push("--fsync".to_owned());
         }
+        if let Some(depth) = config.io_uring_depth() {
+            args.push(format!("--io-uring-depth={depth}"));
+        }
 
         // upstream: options.c:2915-2923 - --compare-dest/copy-dest/link-dest
         // sent only when client is sender (push).

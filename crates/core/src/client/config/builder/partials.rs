@@ -89,6 +89,17 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the io_uring submission queue depth override.
+    ///
+    /// Pass `None` to keep the upstream default (64). When `Some(n)`, the
+    /// caller must have validated `n` via [`fast_io::validate_io_uring_depth`].
+    #[must_use]
+    #[doc(alias = "--io-uring-depth")]
+    pub const fn io_uring_depth(mut self, depth: Option<u32>) -> Self {
+        self.io_uring_depth = depth;
+        self
+    }
+
     /// Sets the copy-on-write reflink policy for whole-file copies.
     #[must_use]
     #[doc(alias = "--cow")]

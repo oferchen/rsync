@@ -268,6 +268,15 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Sets the io_uring submission queue depth override.
+    ///
+    /// `None` keeps the default (64). `Some(n)` requires that `n` was
+    /// validated via [`fast_io::validate_io_uring_depth`].
+    pub fn io_uring_depth(&mut self, depth: Option<u32>) -> &mut Self {
+        self.write.io_uring_depth = depth;
+        self
+    }
+
     /// Sets the I/O-level zero-copy policy.
     pub fn zero_copy_policy(&mut self, policy: fast_io::ZeroCopyPolicy) -> &mut Self {
         self.write.zero_copy_policy = policy;

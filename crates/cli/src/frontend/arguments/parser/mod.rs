@@ -449,12 +449,36 @@ where
     } else {
         fast_io::IoUringPolicy::Auto
     };
+    let io_uring_depth = match matches.remove_one::<OsString>("io-uring-depth") {
+        Some(value) => {
+            let s = value.to_string_lossy();
+            let parsed = s.parse::<u32>().map_err(|_| {
+                clap::Error::raw(
+                    clap::error::ErrorKind::ValueValidation,
+                    format!("invalid --io-uring-depth value '{s}': must be a positive integer\n"),
+                )
+            })?;
+            let validated = fast_io::validate_io_uring_depth(parsed).map_err(|e| {
+                clap::Error::raw(
+                    clap::error::ErrorKind::ValueValidation,
+                    format!("invalid --io-uring-depth value '{s}': {e}\n"),
+                )
+            })?;
+            Some(validated)
+        }
+        None => None,
+    };
     let zero_copy_policy = if matches.get_flag("zero-copy") {
         fast_io::ZeroCopyPolicy::Enabled
     } else if matches.get_flag("no-zero-copy") {
         fast_io::ZeroCopyPolicy::Disabled
     } else {
         fast_io::ZeroCopyPolicy::Auto
+    };
+    let cow_policy = if matches.get_flag("no-cow") {
+        fast_io::CowPolicy::Disabled
+    } else {
+        fast_io::CowPolicy::Auto
     };
     let delay_updates = matches.get_flag("delay-updates") && !matches.get_flag("no-delay-updates");
     let partial_dir_cli = matches
@@ -757,7 +781,9 @@ where
         preallocate,
         fsync,
         io_uring_policy,
+        io_uring_depth,
         zero_copy_policy,
+        cow_policy,
         delay_updates,
         partial_dir,
         temp_dir,

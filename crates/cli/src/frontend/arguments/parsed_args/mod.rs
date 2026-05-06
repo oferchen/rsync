@@ -435,10 +435,21 @@ pub struct ParsedArgs {
     /// `--io-uring` / `--no-io-uring` - io_uring policy for file I/O.
     pub io_uring_policy: fast_io::IoUringPolicy,
 
+    /// `--io-uring-depth=N` - override io_uring submission queue depth.
+    ///
+    /// `None` keeps the upstream default (64). When `Some(n)`, the value has
+    /// already been validated via [`fast_io::validate_io_uring_depth`] and is
+    /// guaranteed to be a power of two in
+    /// `[fast_io::IO_URING_DEPTH_MIN, fast_io::IO_URING_DEPTH_MAX]`.
+    pub io_uring_depth: Option<u32>,
+
     /// `--zero-copy` / `--no-zero-copy` - I/O-level zero-copy policy
     /// (`sendfile`, `splice`, `copy_file_range`, io_uring `SEND_ZC`).
     /// Orthogonal to `--cow` which controls FS-level reflink cloning.
     pub zero_copy_policy: fast_io::ZeroCopyPolicy,
+
+    /// `--cow` / `--no-cow` - copy-on-write reflink policy for whole-file copies.
+    pub cow_policy: fast_io::CowPolicy,
 
     /// `--delay-updates` - use temp files and rename after all transfers complete.
     pub delay_updates: bool,

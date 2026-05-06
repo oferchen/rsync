@@ -244,6 +244,30 @@ fn apply_value_flags<Err: Write>(
         }
     }
 
+    if let Some(depth_str) = &long_flags.io_uring_depth {
+        match depth_str.parse::<u32>() {
+            Ok(parsed) => match fast_io::validate_io_uring_depth(parsed) {
+                Ok(depth) => config.write.io_uring_depth = Some(depth),
+                Err(e) => {
+                    write_server_error(
+                        stderr,
+                        brand,
+                        format!("invalid --io-uring-depth value '{depth_str}': {e}"),
+                    );
+                    return Err(1);
+                }
+            },
+            Err(_) => {
+                write_server_error(
+                    stderr,
+                    brand,
+                    format!("invalid --io-uring-depth value '{depth_str}'"),
+                );
+                return Err(1);
+            }
+        }
+    }
+
     Ok(())
 }
 

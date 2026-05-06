@@ -55,6 +55,13 @@ pub struct WriteConfig {
     pub delay_updates: bool,
     /// Policy controlling io_uring usage for file I/O.
     pub io_uring_policy: fast_io::IoUringPolicy,
+    /// Optional override for the io_uring submission queue depth (`--io-uring-depth=N`).
+    ///
+    /// `None` keeps the upstream default
+    /// ([`fast_io::IoUringConfig::sq_entries`], 64). `Some(n)` overrides the
+    /// default with a power-of-two value previously validated via
+    /// [`fast_io::validate_io_uring_depth`].
+    pub io_uring_depth: Option<u32>,
     /// Policy controlling I/O-level zero-copy syscalls (`sendfile`, `splice`,
     /// `copy_file_range`, io_uring `SEND_ZC`).
     ///
@@ -73,6 +80,7 @@ impl Default for WriteConfig {
             write_devices: false,
             delay_updates: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
+            io_uring_depth: None,
             zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
         }
     }
