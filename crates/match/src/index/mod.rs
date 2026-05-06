@@ -9,9 +9,12 @@
 
 mod bithash;
 mod builder;
+mod matched_blocks;
 
 #[cfg(test)]
 mod bithash_tests;
+#[cfg(test)]
+mod matched_blocks_tests;
 #[cfg(test)]
 mod tests;
 
@@ -24,6 +27,7 @@ use checksums::RollingDigest;
 use signature::{SignatureAlgorithm, SignatureBlock};
 
 use bithash::BitHash;
+pub use matched_blocks::MatchedBlocks;
 
 /// Size of the tag table for quick rolling checksum rejection (2^16 entries).
 ///
@@ -87,6 +91,26 @@ impl DeltaSignatureIndex {
     /// Attempts to locate a matching block for a contiguous byte slice.
     #[inline]
     pub fn find_match_bytes(&self, digest: RollingDigest, window: &[u8]) -> Option<usize> {
+        self.find_match_bytes_filtered(digest, window, None)
+    }
+
+    /// Attempts to locate a matching block for a contiguous byte slice,
+    /// skipping basis blocks already marked in `matched`.
+    ///
+    /// When `matched` is `None` this behaves identically to
+    /// [`Self::find_match_bytes`]. When `Some`, candidate basis blocks
+    /// whose bit is set in the bitmap are filtered out before the
+    /// strong-checksum verify, mirroring zsync's `librcksum`
+    /// matched-block pruning. Pruning never reduces the set of source
+    /// bytes that can be matched: see [`MatchedBlocks`] for the
+    /// duplicate-block correctness contract.
+    #[inline]
+    pub fn find_match_bytes_filtered(
+        &self,
+        digest: RollingDigest,
+        window: &[u8],
+        matched: Option<&MatchedBlocks>,
+    ) -> Option<usize> {
         if window.len() != self.block_length {
             return None;
         }
@@ -111,10 +135,10 @@ impl DeltaSignatureIndex {
         // enough candidates to amortise rayon's per-call overhead.
         #[cfg(feature = "parallel")]
         if candidates.len() >= Self::PARALLEL_THRESHOLD {
-            return self.find_match_parallel(candidates, window);
+            return self.find_match_parallel(candidates, window, matched);
         }
 
-        self.find_match_sequential(candidates, window)
+        self.find_match_sequential(candidates, window, matched)
     }
 
     /// Minimum number of candidates to trigger parallel verification.
@@ -128,10 +152,19 @@ impl DeltaSignatureIndex {
     ///
     /// Computes the strong checksum once and compares against all candidates,
     /// mirroring upstream rsync's `done_csum2` flag in `match.c:hash_search()`.
+    /// Skips candidates already marked in `matched` when the bitmap is supplied.
     #[inline]
-    fn find_match_sequential(&self, candidates: &[usize], window: &[u8]) -> Option<usize> {
+    fn find_match_sequential(
+        &self,
+        candidates: &[usize],
+        window: &[u8],
+        matched: Option<&MatchedBlocks>,
+    ) -> Option<usize> {
         let strong = self.algorithm.compute_truncated(window, self.strong_length);
         for &index in candidates {
+            if matches!(matched, Some(m) if m.is_matched(index)) {
+                continue;
+            }
             let block = &self.blocks[index];
             debug_assert_eq!(block.len(), self.block_length);
             if strong.as_slice() == block.strong() {
@@ -146,12 +179,20 @@ impl DeltaSignatureIndex {
     /// Computes strong checksums concurrently and returns the first match found.
     /// Uses `find_any` for early termination when a match is discovered.
     #[cfg(feature = "parallel")]
-    fn find_match_parallel(&self, candidates: &[usize], window: &[u8]) -> Option<usize> {
+    fn find_match_parallel(
+        &self,
+        candidates: &[usize],
+        window: &[u8],
+        matched: Option<&MatchedBlocks>,
+    ) -> Option<usize> {
         use rayon::prelude::*;
 
         candidates
             .par_iter()
             .find_any(|&&index| {
+                if matches!(matched, Some(m) if m.is_matched(index)) {
+                    return false;
+                }
                 let block = &self.blocks[index];
                 let strong = self.algorithm.compute_truncated(window, self.strong_length);
                 strong.as_slice() == block.strong()
@@ -172,6 +213,23 @@ impl DeltaSignatureIndex {
         first: &[u8],
         second: &[u8],
     ) -> Option<usize> {
+        self.find_match_slices_filtered(digest, first, second, None)
+    }
+
+    /// Attempts to locate a matching block for a non-contiguous window,
+    /// skipping basis blocks already marked in `matched`.
+    ///
+    /// Mirrors [`Self::find_match_bytes_filtered`] for the two-slice
+    /// window form used by the generator's ring buffer. Passing `None`
+    /// is equivalent to [`Self::find_match_slices`].
+    #[inline]
+    pub fn find_match_slices_filtered(
+        &self,
+        digest: RollingDigest,
+        first: &[u8],
+        second: &[u8],
+        matched: Option<&MatchedBlocks>,
+    ) -> Option<usize> {
         if first.len() + second.len() != self.block_length {
             return None;
         }
@@ -189,10 +247,10 @@ impl DeltaSignatureIndex {
 
         #[cfg(feature = "parallel")]
         if candidates.len() >= Self::PARALLEL_THRESHOLD {
-            return self.find_match_slices_parallel(candidates, first, second);
+            return self.find_match_slices_parallel(candidates, first, second, matched);
         }
 
-        self.find_match_slices_sequential(candidates, first, second)
+        self.find_match_slices_sequential(candidates, first, second, matched)
     }
 
     /// Sequential candidate verification for non-contiguous window data.
@@ -202,11 +260,15 @@ impl DeltaSignatureIndex {
         candidates: &[usize],
         first: &[u8],
         second: &[u8],
+        matched: Option<&MatchedBlocks>,
     ) -> Option<usize> {
         let strong = self
             .algorithm
             .compute_truncated_slices(first, second, self.strong_length);
         for &index in candidates {
+            if matches!(matched, Some(m) if m.is_matched(index)) {
+                continue;
+            }
             let block = &self.blocks[index];
             debug_assert_eq!(block.len(), self.block_length);
             if strong.as_slice() == block.strong() {
@@ -223,12 +285,16 @@ impl DeltaSignatureIndex {
         candidates: &[usize],
         first: &[u8],
         second: &[u8],
+        matched: Option<&MatchedBlocks>,
     ) -> Option<usize> {
         use rayon::prelude::*;
 
         candidates
             .par_iter()
             .find_any(|&&index| {
+                if matches!(matched, Some(m) if m.is_matched(index)) {
+                    return false;
+                }
                 let block = &self.blocks[index];
                 let strong =
                     self.algorithm

@@ -17,7 +17,7 @@ use logging::debug_log;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::index::DeltaSignatureIndex;
+use crate::index::{DeltaSignatureIndex, MatchedBlocks};
 use crate::ring_buffer::RingBuffer;
 use crate::script::{DeltaScript, DeltaToken};
 
@@ -63,6 +63,11 @@ fn flush_seq_match_run(
 #[derive(Clone, Debug)]
 pub struct DeltaGenerator {
     buffer_len: usize,
+    /// Test-only knob disabling the matched-block pruning bitmap so the
+    /// property tests can compare prune-on against prune-off output. The
+    /// production path always prunes; see `docs/design/zsync-prune.md`.
+    #[cfg(test)]
+    prune_matched: bool,
 }
 
 impl DeltaGenerator {
@@ -71,6 +76,8 @@ impl DeltaGenerator {
     pub const fn new() -> Self {
         Self {
             buffer_len: DEFAULT_BUFFER_LEN,
+            #[cfg(test)]
+            prune_matched: true,
         }
     }
 
@@ -78,6 +85,18 @@ impl DeltaGenerator {
     #[must_use]
     pub fn with_buffer_len(mut self, buffer_len: usize) -> Self {
         self.buffer_len = buffer_len.max(1);
+        self
+    }
+
+    /// Test-only switch that disables the matched-block pruning bitmap.
+    ///
+    /// Used by the property tests in `matched_blocks_tests.rs` to compare
+    /// prune-on output against the no-prune baseline. Not exposed in
+    /// production builds.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_prune_matched(mut self, enabled: bool) -> Self {
+        self.prune_matched = enabled;
         self
     }
 
@@ -127,6 +146,17 @@ impl DeltaGenerator {
         // is likely at block i+1. Checking this hint before the hash table
         // lookup skips the probe entirely when data is sequential.
         let mut want_i: Option<usize> = Some(0);
+
+        // zsync-inspired matched-block pruning: each emitted Copy token sets a
+        // bit so later probes skip the strong-checksum verify on already-
+        // consumed basis blocks. Duplicate-content siblings live at distinct
+        // basis indices; the bitmap leaves those siblings findable until each
+        // is consumed independently. See docs/design/zsync-prune.md.
+        let mut matched_blocks = MatchedBlocks::with_block_count(index.block_count());
+        #[cfg(test)]
+        let prune_matched = self.prune_matched;
+        #[cfg(not(test))]
+        let prune_matched = true;
 
         let mut buffer = vec![0u8; self.buffer_len.max(block_len)];
         let mut buffer_pos = 0usize;
@@ -199,17 +229,24 @@ impl DeltaGenerator {
 
             // Match using two-slice view to avoid O(block_len) rotation when wrapped.
             // upstream: match.c:144-190 - try want_i hint before hash probe.
+            // The want_i hint deliberately bypasses the matched-block bitmap:
+            // the hint targets the just-matched index plus one, which the
+            // bitmap correctly leaves unset. Adding a bitmap probe to the
+            // hint adds a branch with no information gain.
             let (first, second) = window.as_slices();
-            let matched = if let Some(hint) = want_i {
-                if index.check_block_match_slices(hint, digest, first, second) {
-                    Some(hint)
+            let matched = {
+                let prune_filter = prune_matched.then_some(&matched_blocks);
+                if let Some(hint) = want_i {
+                    if index.check_block_match_slices(hint, digest, first, second) {
+                        Some(hint)
+                    } else {
+                        hash_hits += 1;
+                        index.find_match_slices_filtered(digest, first, second, prune_filter)
+                    }
                 } else {
                     hash_hits += 1;
-                    index.find_match_slices(digest, first, second)
+                    index.find_match_slices_filtered(digest, first, second, prune_filter)
                 }
-            } else {
-                hash_hits += 1;
-                index.find_match_slices(digest, first, second)
             };
             if let Some(mut match_idx) = matched {
                 // upstream: match.c:265-310 - block match with bulk refill.
@@ -275,6 +312,13 @@ impl DeltaGenerator {
                     }
                     total_bytes += block.len() as u64;
 
+                    // zsync prune trigger site, equivalent to write_blocks()
+                    // in librcksum/rsum.c:109-119: mark the basis block as
+                    // consumed AFTER the Copy token has been emitted, so a
+                    // later probe at a different source offset will not pick
+                    // this basis index again.
+                    matched_blocks.mark_matched(match_idx);
+
                     want_i = if match_idx + 1 < index.block_count() {
                         Some(match_idx + 1)
                     } else {
@@ -317,16 +361,19 @@ impl DeltaGenerator {
                     // block boundary before falling back to a hash probe.
                     let adj_digest = rolling.digest();
                     let (f, s) = window.as_slices();
-                    let adj_match = if let Some(hint) = want_i {
-                        if index.check_block_match_slices(hint, adj_digest, f, s) {
-                            Some(hint)
+                    let adj_match = {
+                        let adj_filter = prune_matched.then_some(&matched_blocks);
+                        if let Some(hint) = want_i {
+                            if index.check_block_match_slices(hint, adj_digest, f, s) {
+                                Some(hint)
+                            } else {
+                                hash_hits += 1;
+                                index.find_match_slices_filtered(adj_digest, f, s, adj_filter)
+                            }
                         } else {
                             hash_hits += 1;
-                            index.find_match_slices(adj_digest, f, s)
+                            index.find_match_slices_filtered(adj_digest, f, s, adj_filter)
                         }
-                    } else {
-                        hash_hits += 1;
-                        index.find_match_slices(adj_digest, f, s)
                     };
                     if let Some(next_idx) = adj_match {
                         match_idx = next_idx;
