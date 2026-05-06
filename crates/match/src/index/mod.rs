@@ -7,8 +7,11 @@
 //! Uses [`FxHashMap`] for 2-5x faster lookups compared to std HashMap,
 //! optimized for small integer keys like `(u16, u16)`.
 
+mod bithash;
 mod builder;
 
+#[cfg(test)]
+mod bithash_tests;
 #[cfg(test)]
 mod tests;
 
@@ -19,6 +22,8 @@ use rustc_hash::FxHashMap;
 use checksums::RollingDigest;
 
 use signature::{SignatureAlgorithm, SignatureBlock};
+
+use bithash::BitHash;
 
 /// Size of the tag table for quick rolling checksum rejection (2^16 entries).
 ///
@@ -45,6 +50,12 @@ pub struct DeltaSignatureIndex {
     /// Tag table for O(1) rejection using sum1 (low 16 bits of rolling checksum).
     /// upstream: match.c - `tag_table[s1]` check before hash probe.
     tag_table: Vec<bool>,
+    /// Bithash prefilter mixing both rolling-sum halves.
+    ///
+    /// Sized to roughly 8x the rsum-bucket count (~1 byte per indexed block),
+    /// the bithash rejects ~7/8 of post-tag misses before the FxHashMap walk.
+    /// Mirrors zsync's `librcksum/rsum.c:362-366` probe expression.
+    bithash: BitHash,
 }
 
 impl DeltaSignatureIndex {
@@ -83,6 +94,13 @@ impl DeltaSignatureIndex {
         // upstream: match.c - tag_table[s1] fast-path rejects most non-matching
         // positions before the more expensive hash probe.
         if !self.tag_table[digest.sum1() as usize] {
+            return None;
+        }
+
+        // zsync-style bithash prefilter: rejects ~7/8 of post-tag misses
+        // using both sum halves before the FxHashMap probe. One-sided, so
+        // never produces a false negative.
+        if !self.bithash.contains(digest.value()) {
             return None;
         }
 
@@ -159,6 +177,10 @@ impl DeltaSignatureIndex {
         }
 
         if !self.tag_table[digest.sum1() as usize] {
+            return None;
+        }
+
+        if !self.bithash.contains(digest.value()) {
             return None;
         }
 
