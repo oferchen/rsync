@@ -7,7 +7,6 @@ use crate::local_copy::options::types::{LocalCopyOptions, ReferenceDirectoryKind
 impl LocalCopyOptionsBuilder {
     /// Validates the builder configuration and returns any errors.
     fn validate(&self) -> Result<(), BuilderError> {
-        // size_only and checksum are mutually exclusive
         if self.size_only && self.checksum {
             return Err(BuilderError::ConflictingOptions {
                 option1: "size_only",
@@ -15,7 +14,6 @@ impl LocalCopyOptionsBuilder {
             });
         }
 
-        // inplace and delay_updates are mutually exclusive
         if self.inplace && self.delay_updates {
             return Err(BuilderError::ConflictingOptions {
                 option1: "inplace",
@@ -33,7 +31,6 @@ impl LocalCopyOptionsBuilder {
             }
         }
 
-        // copy_links and preserve_symlinks are mutually exclusive
         if self.copy_links && self.preserve_symlinks {
             return Err(BuilderError::ConflictingOptions {
                 option1: "copy_links",
@@ -41,9 +38,9 @@ impl LocalCopyOptionsBuilder {
             });
         }
 
-        // --compare-dest, --copy-dest, and --link-dest are mutually exclusive
-        // (upstream rsync enforces this). Multiple directories of the same kind
-        // are allowed, but mixing kinds is not.
+        // upstream: options.c - --compare-dest/--copy-dest/--link-dest are
+        // mutually exclusive across kinds; multiple entries of the same kind
+        // are accepted.
         {
             let mut has_compare = false;
             let mut has_copy = false;
