@@ -408,6 +408,12 @@ pub struct ParsedArgs {
     /// `--sparse`, `-S` / `--no-sparse` - handle sparse files efficiently.
     pub sparse: Option<bool>,
 
+    /// `--sparse-detect=[auto|seek|map|none]` - hole-detection strategy.
+    ///
+    /// `--sparse` is the *whether* gate; this is the *how*. `None` keeps the
+    /// engine default ([`engine::SparseDetectStrategy::Auto`]).
+    pub sparse_detect: Option<engine::SparseDetectStrategy>,
+
     /// `--open-noatime` - open files with `O_NOATIME`.
     pub open_noatime: bool,
 

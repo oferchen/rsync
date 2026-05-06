@@ -2461,3 +2461,90 @@ fn punch_hole_overlapping_holes() {
     assert!(buffer[1000..2500].iter().all(|&b| b == 0));
     assert!(buffer[2500..].iter().all(|&b| b == 0xBB));
 }
+
+#[test]
+fn sparse_detect_strategy_parses_each_canonical_token() {
+    use super::SparseDetectStrategy;
+
+    assert_eq!(
+        SparseDetectStrategy::parse("auto").unwrap(),
+        SparseDetectStrategy::Auto
+    );
+    assert_eq!(
+        SparseDetectStrategy::parse("seek").unwrap(),
+        SparseDetectStrategy::Seek
+    );
+    assert_eq!(
+        SparseDetectStrategy::parse("map").unwrap(),
+        SparseDetectStrategy::Map
+    );
+    assert_eq!(
+        SparseDetectStrategy::parse("none").unwrap(),
+        SparseDetectStrategy::None
+    );
+}
+
+#[test]
+fn sparse_detect_strategy_parse_is_case_insensitive_and_trims() {
+    use super::SparseDetectStrategy;
+
+    assert_eq!(
+        SparseDetectStrategy::parse("AUTO").unwrap(),
+        SparseDetectStrategy::Auto
+    );
+    assert_eq!(
+        SparseDetectStrategy::parse("  Map ").unwrap(),
+        SparseDetectStrategy::Map
+    );
+}
+
+#[test]
+fn sparse_detect_strategy_rejects_unknown_tokens() {
+    use super::SparseDetectStrategy;
+
+    let err = SparseDetectStrategy::parse("bogus").unwrap_err();
+    assert_eq!(err, "bogus");
+}
+
+#[test]
+fn sparse_detect_strategy_round_trips_via_as_str() {
+    use super::SparseDetectStrategy;
+
+    for variant in [
+        SparseDetectStrategy::Auto,
+        SparseDetectStrategy::Seek,
+        SparseDetectStrategy::Map,
+        SparseDetectStrategy::None,
+    ] {
+        let token = variant.as_str();
+        assert_eq!(SparseDetectStrategy::parse(token).unwrap(), variant);
+    }
+}
+
+#[test]
+fn sparse_reader_with_none_strategy_reports_single_data_region() {
+    use super::{SparseDetectStrategy, SparseReader};
+
+    let mut file = NamedTempFile::new().expect("temp file");
+    file.as_file_mut()
+        .write_all(&vec![0u8; super::SPARSE_WRITE_SIZE * 2])
+        .expect("write zeros");
+
+    let regions = SparseReader::detect_holes_with(file.as_file(), SparseDetectStrategy::None)
+        .expect("detect holes");
+
+    assert_eq!(regions.len(), 1);
+    assert!(regions[0].is_data());
+    assert_eq!(regions[0].offset(), 0);
+    assert_eq!(regions[0].length() as usize, super::SPARSE_WRITE_SIZE * 2);
+}
+
+#[test]
+fn sparse_reader_with_none_strategy_handles_empty_file() {
+    use super::{SparseDetectStrategy, SparseReader};
+
+    let file = NamedTempFile::new().expect("temp file");
+    let regions = SparseReader::detect_holes_with(file.as_file(), SparseDetectStrategy::None)
+        .expect("detect holes");
+    assert!(regions.is_empty());
+}
