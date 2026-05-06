@@ -1,4 +1,7 @@
 #![deny(unsafe_code)]
+//! Filename decoding with shared-prefix decompression.
+//!
+//! upstream: flist.c:recv_file_entry() name branch (lines 800-850).
 
 use std::io::{self, Read};
 

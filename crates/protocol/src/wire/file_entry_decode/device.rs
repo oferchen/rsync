@@ -1,4 +1,7 @@
 #![deny(unsafe_code)]
+//! Device-number (rdev) field decoding for block/character device entries.
+//!
+//! upstream: flist.c:recv_file_entry() rdev branch (lines 910-945).
 
 use std::io::{self, Read};
 

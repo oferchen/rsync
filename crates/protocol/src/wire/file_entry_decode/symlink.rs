@@ -1,4 +1,7 @@
 #![deny(unsafe_code)]
+//! Symlink-target decoding with `MAXPATHLEN`-bounded length cap.
+//!
+//! upstream: flist.c:recv_file_entry() symlink branch; rsync.h `MAXPATHLEN`.
 
 use std::io::{self, Read};
 
