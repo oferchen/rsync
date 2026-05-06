@@ -2,6 +2,14 @@ use super::types::{FilterParseError, ParsedFilterDirective};
 use crate::local_copy::filter_program::{DirMergeEnforcedKind, DirMergeOptions};
 use std::path::PathBuf;
 
+/// Parses `dir-merge` and `per-dir` directives.
+///
+/// Returns `Ok(None)` for inputs that do not begin with either alias, or when
+/// the alias is followed by a non-separator character (so that
+/// `dir-mergeXXX` is not silently accepted). Modifiers are introduced by
+/// `,`; `+` and `-` are mutually exclusive, and `c` activates the CVS
+/// preset (whitespace parser, no comments, no inheritance, list-clearing
+/// permitted, default file `.cvsignore`).
 pub(super) fn parse_dir_merge_directive(
     text: &str,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {

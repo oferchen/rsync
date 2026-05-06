@@ -118,6 +118,13 @@ fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
     }
 }
 
+/// Parses a single line of a per-directory merge file.
+///
+/// Returns `Ok(None)` for blank or comment-only lines. Recognises list-clear
+/// (`!`/`clear`), short-form merges (`.`/`:`), `merge`/`dir-merge`/`per-dir`
+/// directives, `exclude-if-present`, the `+`/`-` short-form rule prefixes,
+/// and the `include`/`exclude`/`show`/`hide`/`protect`/`risk` keywords with
+/// their `,modifier` suffix. Trailing whitespace is trimmed from patterns.
 pub(crate) fn parse_filter_directive_line(
     text: &str,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
