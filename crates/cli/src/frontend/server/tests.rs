@@ -398,6 +398,23 @@ fn long_flags_zero_copy_is_known() {
 }
 
 #[test]
+fn long_flags_io_uring_depth_value() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--io-uring-depth=256"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.io_uring_depth.as_deref(), Some("256"));
+}
+
+#[test]
+fn long_flags_io_uring_depth_default_is_none() {
+    let args = vec![OsString::from("--server")];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.io_uring_depth.is_none());
+}
+
+#[test]
 fn long_flags_write_devices() {
     let args = vec![
         OsString::from("--server"),
@@ -561,6 +578,7 @@ fn known_flag_detects_value_flags() {
     assert!(is_known_server_long_flag("--stop-after=60"));
     assert!(is_known_server_long_flag("--files-from=-"));
     assert!(is_known_server_long_flag("--files-from=/path/to/list"));
+    assert!(is_known_server_long_flag("--io-uring-depth=128"));
 }
 
 #[test]

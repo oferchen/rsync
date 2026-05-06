@@ -84,6 +84,7 @@ impl ReceiverContext {
             inplace: self.config.write.inplace,
             inplace_partial: self.config.write.inplace_partial,
             io_uring_policy: self.config.write.io_uring_policy,
+            io_uring_depth: self.config.write.io_uring_depth,
             preserve_xattrs: self.config.flags.xattrs,
             want_xattr_optim: self.compat_flags.is_some_and(|f| {
                 f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
@@ -130,6 +131,7 @@ impl ReceiverContext {
             backup,
             acl_cache: setup.acl_cache.clone(),
             io_uring_policy: self.config.write.io_uring_policy,
+            io_uring_depth: self.config.write.io_uring_depth,
             ..DiskCommitConfig::default()
         };
         let mut pipelined_receiver = PipelinedReceiver::new(disk_config);
