@@ -89,8 +89,7 @@ fn override_caps_md5_dispatcher_below_host_capability() {
         let backend = Dispatcher::detect().backend();
         assert!(
             !matches!(backend, Backend::Avx512 | Backend::Avx2),
-            "Sse4 override must not select AVX-class backends, got {:?}",
-            backend,
+            "Sse4 override must not select AVX-class backends, got {backend:?}",
         );
     });
 }
@@ -116,8 +115,7 @@ fn override_neon_blocks_x86_backends() {
                 backend,
                 Backend::Avx512 | Backend::Avx2 | Backend::Sse41 | Backend::Ssse3 | Backend::Sse2
             ),
-            "Neon override must not select x86 backends, got {:?}",
-            backend,
+            "Neon override must not select x86 backends, got {backend:?}",
         );
     });
 }
