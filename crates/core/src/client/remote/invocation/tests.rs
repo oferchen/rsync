@@ -2040,6 +2040,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         .open_noatime(true)
         .preallocate(true)
         .set_rsync_path("/custom/rsync")
+        .inc_recursive_send(true)
         .build();
 
     let args = build_sender_args(&config);
