@@ -5,6 +5,7 @@ mod metadata;
 mod module_listing;
 mod options;
 mod summary;
+mod thread_tunables;
 mod validation;
 #[cfg(test)]
 pub(crate) use validation::CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE;
