@@ -107,9 +107,7 @@ fn duplicate_basis_strategy() -> impl Strategy<Value = Vec<u8>> {
             for i in 0..n_blocks {
                 let mut block = vec![0u8; block_len];
                 if seeds.is_empty() {
-                    for byte in &mut block {
-                        *byte = fill;
-                    }
+                    block.fill(fill);
                 } else {
                     let seed = seeds[i % seeds.len()];
                     for (j, byte) in block.iter_mut().enumerate() {
