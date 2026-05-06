@@ -358,9 +358,27 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         options = self.apply_time_and_timeout(options, config);
         options = self.apply_reference_directories(options, config);
         options = self.apply_iconv(options, config);
+        options = Self::apply_cow_policy(options, config);
         options = self.apply_filter_program(options);
 
         options
+    }
+
+    /// Swaps the platform copy strategy when `--no-cow` is in effect.
+    ///
+    /// `CowPolicy::Auto` keeps the default [`fast_io::DefaultPlatformCopy`]
+    /// strategy that opportunistically uses CoW reflinks. `CowPolicy::Disabled`
+    /// installs [`fast_io::NoCowPlatformCopy`], which forces every whole-file
+    /// copy through `std::fs::copy` and reports `CopyMethod::StandardCopy` so
+    /// that downstream fast paths (such as the macOS clonefile shortcut) skip
+    /// the reflink branch.
+    fn apply_cow_policy(options: LocalCopyOptions, config: &ClientConfig) -> LocalCopyOptions {
+        match config.cow_policy() {
+            fast_io::CowPolicy::Auto => options,
+            fast_io::CowPolicy::Disabled => {
+                options.with_platform_copy(std::sync::Arc::new(fast_io::NoCowPlatformCopy::new()))
+            }
+        }
     }
 
     /// Resolves the user's `--iconv` request into a
@@ -670,5 +688,42 @@ mod iconv_wiring_tests {
         });
         let options = build_local_copy_options(&config, None);
         assert!(options.iconv().is_none());
+    }
+}
+
+#[cfg(test)]
+mod cow_policy_wiring_tests {
+    use std::ffi::OsString;
+
+    use super::build_local_copy_options;
+    use crate::client::config::ClientConfig;
+
+    fn config_with_cow(policy: fast_io::CowPolicy) -> ClientConfig {
+        ClientConfig::builder()
+            .transfer_args([OsString::from("src"), OsString::from("dst")])
+            .cow_policy(policy)
+            .build()
+    }
+
+    #[test]
+    fn auto_policy_keeps_default_platform_copy() {
+        let config = config_with_cow(fast_io::CowPolicy::Auto);
+        let options = build_local_copy_options(&config, None);
+        assert!(options.platform_copy().supports_reflink());
+    }
+
+    #[test]
+    fn disabled_policy_installs_no_cow_strategy() {
+        let config = config_with_cow(fast_io::CowPolicy::Disabled);
+        let options = build_local_copy_options(&config, None);
+        assert!(!options.platform_copy().supports_reflink());
+        assert_eq!(
+            options.platform_copy().preferred_method(0),
+            fast_io::CopyMethod::StandardCopy
+        );
+        assert_eq!(
+            options.platform_copy().preferred_method(1024 * 1024 * 1024),
+            fast_io::CopyMethod::StandardCopy
+        );
     }
 }
