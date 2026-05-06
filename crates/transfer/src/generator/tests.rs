@@ -406,7 +406,7 @@ fn script_to_wire_delta_converts_literals() {
     ];
     let script = DeltaScript::new(tokens, 6, 6);
 
-    let wire_ops = script_to_wire_delta(script);
+    let wire_ops = script_to_wire_delta(script, 1024);
 
     assert_eq!(wire_ops.len(), 2);
     match &wire_ops[0] {
@@ -431,7 +431,7 @@ fn script_to_wire_delta_converts_copy_operations() {
     ];
     let script = DeltaScript::new(tokens, 1537, 1);
 
-    let wire_ops = script_to_wire_delta(script);
+    let wire_ops = script_to_wire_delta(script, 1024);
 
     assert_eq!(wire_ops.len(), 3);
     match &wire_ops[0] {

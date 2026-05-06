@@ -331,7 +331,7 @@ impl GeneratorContext {
                     block_length,
                 )?;
                 let delta_total_bytes = delta_script.total_bytes();
-                let wire_ops = script_to_wire_delta(delta_script);
+                let wire_ops = script_to_wire_delta(delta_script, block_length);
                 let use_compression = self.file_compression(source_path).is_some();
                 let is_zlib = matches!(
                     negotiated_compression,
