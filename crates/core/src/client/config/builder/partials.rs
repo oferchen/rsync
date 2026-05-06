@@ -89,6 +89,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the copy-on-write reflink policy for whole-file copies.
+    #[must_use]
+    #[doc(alias = "--cow")]
+    #[doc(alias = "--no-cow")]
+    pub const fn cow_policy(mut self, policy: fast_io::CowPolicy) -> Self {
+        self.cow_policy = policy;
+        self
+    }
+
     /// Sets the I/O-level zero-copy policy (`sendfile`, `splice`,
     /// `copy_file_range`, io_uring `SEND_ZC`).
     ///

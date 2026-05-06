@@ -65,6 +65,14 @@ impl ClientConfig {
         self.io_uring_policy
     }
 
+    /// Returns the copy-on-write reflink policy for whole-file copies.
+    #[must_use]
+    #[doc(alias = "--cow")]
+    #[doc(alias = "--no-cow")]
+    pub const fn cow_policy(&self) -> fast_io::CowPolicy {
+        self.cow_policy
+    }
+
     /// Returns the I/O-level zero-copy policy.
     ///
     /// Controls `sendfile`, `splice`, `copy_file_range`, and io_uring
