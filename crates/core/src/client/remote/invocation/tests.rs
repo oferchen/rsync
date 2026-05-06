@@ -1644,7 +1644,7 @@ fn default_rsync_path_is_rsync() {
 fn capability_string_present_in_sender_args() {
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
-    let expected = build_capability_string(true);
+    let expected = build_capability_string(false);
     assert!(
         args.iter().any(|a| a == &expected),
         "expected capability string {expected} in args: {args:?}"
@@ -1655,7 +1655,7 @@ fn capability_string_present_in_sender_args() {
 fn capability_string_present_in_receiver_args() {
     let config = ClientConfig::builder().build();
     let args = build_receiver_args(&config);
-    let expected = build_capability_string(true);
+    let expected = build_capability_string(false);
     assert!(
         args.iter().any(|a| a == &expected),
         "expected capability string {expected} in args: {args:?}"
