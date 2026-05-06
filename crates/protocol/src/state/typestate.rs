@@ -59,17 +59,18 @@ impl ProtocolState<Negotiation> {
         self.phase.checksum_seed = Some(seed);
     }
 
-    /// Transition to file list phase.
+    /// Transition to the file list phase.
     ///
-    /// Requires protocol_version and checksum_seed to be set.
+    /// Both [`set_protocol_version`](Self::set_protocol_version) and
+    /// [`set_checksum_seed`](Self::set_checksum_seed) must have been called
+    /// first; the missing field is reported via the returned error.
     ///
     /// # Errors
     ///
-    /// Returns [`TransitionError::MissingProtocolVersion`] if the protocol version
-    /// has not been set.
-    ///
-    /// Returns [`TransitionError::MissingChecksumSeed`] if the checksum seed
-    /// has not been set.
+    /// - [`TransitionError::MissingProtocolVersion`] if the protocol version
+    ///   has not been set.
+    /// - [`TransitionError::MissingChecksumSeed`] if the checksum seed has not
+    ///   been set.
     ///
     /// # Examples
     ///
@@ -127,14 +128,14 @@ impl ProtocolState<FileList> {
         self.phase.file_count = Some(count);
     }
 
-    /// Transition to transfer phase.
+    /// Transition to the transfer phase.
     ///
-    /// Requires file_count to be set.
+    /// [`set_file_count`](Self::set_file_count) must have been called first.
     ///
     /// # Errors
     ///
-    /// Returns [`TransitionError::MissingFileCount`] if the file count
-    /// has not been set.
+    /// - [`TransitionError::MissingFileCount`] if the file count has not been
+    ///   set.
     ///
     /// # Examples
     ///
@@ -212,9 +213,11 @@ impl ProtocolState<Transfer> {
         self.phase.files_transferred
     }
 
-    /// Transition to finalize phase.
+    /// Transition to the finalize phase.
     ///
-    /// This transition is always valid and consumes the transfer state.
+    /// This transition is infallible and consumes the transfer state. The
+    /// running `files_transferred` counter and the original `file_count` are
+    /// carried into the [`Finalize`] phase as `total_files`.
     ///
     /// # Examples
     ///
