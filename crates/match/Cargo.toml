@@ -37,6 +37,7 @@ parallel = ["dep:rayon"]
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+proptest = "1.4"
 protocol = { path = "../protocol" }
 tempfile = "3.15"
 

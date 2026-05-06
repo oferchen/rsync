@@ -2185,6 +2185,7 @@ dependencies = [
  "checksums",
  "criterion",
  "logging",
+ "proptest",
  "protocol",
  "rayon",
  "rustc-hash",
