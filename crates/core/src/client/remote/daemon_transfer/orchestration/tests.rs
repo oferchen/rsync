@@ -78,47 +78,43 @@ mod protect_args_daemon_tests {
     }
 
     #[test]
-    fn build_full_args_push_advertises_inc_recurse_capability_by_default() {
-        // Push (is_sender=false, we are sender) advertises the 'i' capability
-        // by default, mirroring upstream's `allow_inc_recurse = 1`. Tracker #1862.
-        let config = ClientConfig::default();
-        let request = test_daemon_request();
+    fn build_full_args_push_omits_inc_recurse_capability_by_default() {
+        // Sender-side INC_RECURSE is opt-in: the daemon push capability
+        // builder reads only `inc_recursive_send`, which defaults to false
+        // until the sender state machine is validated against upstream rsync.
+        // Tracker #1862.
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
-        let args = build_full_daemon_args(&config, &request, protocol, false);
+        let request = test_daemon_request();
 
-        let caps = args
+        let config_default = ClientConfig::default();
+        let args_default = build_full_daemon_args(&config_default, &request, protocol, false);
+        let caps_default = args_default
             .iter()
             .find(|a| a.starts_with("-e."))
             .expect("capability string present");
         assert!(
-            caps.contains('i'),
-            "default push capability string must advertise 'i': {caps}"
+            !caps_default.contains('i'),
+            "default push capability must omit 'i': {caps_default}"
         );
-    }
 
-    #[test]
-    fn build_full_args_push_omits_inc_recurse_when_no_inc_recursive_set() {
-        // `--no-inc-recursive` clears `allow_inc_recurse`; the bit is dropped
-        // from the capability string in both transfer directions. Tracker #1862.
-        let config = ClientConfig::builder().inc_recursive_send(false).build();
-        let request = test_daemon_request();
-        let protocol = ProtocolVersion::try_from(32u8).unwrap();
-        let args = build_full_daemon_args(&config, &request, protocol, false);
-
-        let caps = args
+        let config_on = ClientConfig::builder().inc_recursive_send(true).build();
+        let args_on = build_full_daemon_args(&config_on, &request, protocol, false);
+        let caps_on = args_on
             .iter()
             .find(|a| a.starts_with("-e."))
             .expect("capability string present");
         assert!(
-            !caps.contains('i'),
-            "--no-inc-recursive must suppress 'i' on push capability: {caps}"
+            caps_on.contains('i'),
+            "--inc-recursive must advertise 'i' on push capability: {caps_on}"
         );
     }
 
     #[test]
-    fn build_full_args_pull_advertises_inc_recurse_capability_by_default() {
-        // Pull (is_sender=true, daemon is sender) also advertises 'i' by
-        // default to match upstream's symmetric `allow_inc_recurse` global.
+    fn build_full_args_pull_omits_inc_recurse_capability_by_default() {
+        // Sender-side INC_RECURSE is opt-in: the daemon push/pull capability
+        // builder reads only `inc_recursive_send`, which defaults to false
+        // until the sender state machine is validated against upstream rsync.
+        // Tracker #1862.
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         let request = test_daemon_request();
 
@@ -128,17 +124,20 @@ mod protect_args_daemon_tests {
             .iter()
             .find(|a| a.starts_with("-e."))
             .expect("capability string present");
-        assert!(caps_default.contains('i'));
+        assert!(
+            !caps_default.contains('i'),
+            "default pull capability must omit 'i': {caps_default}"
+        );
 
-        let config_off = ClientConfig::builder().inc_recursive_send(false).build();
-        let args_off = build_full_daemon_args(&config_off, &request, protocol, true);
-        let caps_off = args_off
+        let config_on = ClientConfig::builder().inc_recursive_send(true).build();
+        let args_on = build_full_daemon_args(&config_on, &request, protocol, true);
+        let caps_on = args_on
             .iter()
             .find(|a| a.starts_with("-e."))
             .expect("capability string present");
         assert!(
-            !caps_off.contains('i'),
-            "--no-inc-recursive must suppress 'i' on pull capability: {caps_off}"
+            caps_on.contains('i'),
+            "--inc-recursive must advertise 'i' on pull capability: {caps_on}"
         );
     }
 

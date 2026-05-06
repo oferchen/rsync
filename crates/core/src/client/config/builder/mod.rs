@@ -368,7 +368,7 @@ impl ClientConfigBuilder {
             mkpath: self.mkpath,
             prune_empty_dirs: self.prune_empty_dirs,
             qsort: self.qsort,
-            inc_recursive_send: self.inc_recursive_send.unwrap_or(true),
+            inc_recursive_send: self.inc_recursive_send.unwrap_or(false),
             verbosity: self.verbosity,
             progress: self.progress,
             stats: self.stats,
