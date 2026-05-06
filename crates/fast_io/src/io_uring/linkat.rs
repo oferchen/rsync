@@ -198,18 +198,15 @@ pub fn submit_linkat_blocking(args: LinkAtArgs<'_>) -> io::Result<i32> {
     // caller's stack frame keeps alive across `submit_and_wait`. The ring
     // is local and has no other outstanding references to those paths.
     unsafe {
-        ring.submission().push(&sqe).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                "submission queue full while pushing LINKAT SQE",
-            )
-        })?;
+        ring.submission()
+            .push(&sqe)
+            .map_err(|_| io::Error::other("submission queue full while pushing LINKAT SQE"))?;
     }
     ring.submit_and_wait(1)?;
     let cqe = ring
         .completion()
         .next()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "missing LINKAT CQE"))?;
+        .ok_or_else(|| io::Error::other("missing LINKAT CQE"))?;
     let result = cqe.result();
     if result < 0 {
         return Err(io::Error::from_raw_os_error(-result));
