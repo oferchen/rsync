@@ -85,6 +85,7 @@ mod disk_batch;
 mod file_factory;
 mod file_reader;
 mod file_writer;
+pub mod linkat;
 pub mod registered_buffers;
 pub mod renameat2;
 pub mod shared_ring;
@@ -109,6 +110,10 @@ pub use file_factory::{
 };
 pub use file_reader::IoUringReader;
 pub use file_writer::IoUringWriter;
+pub use linkat::{
+    IORING_OP_LINKAT, LINKAT_MIN_KERNEL, LinkAtArgs, build_linkat_sqe, build_linkat_sqe_unchecked,
+    linkat_supported, submit_linkat_blocking,
+};
 pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats};
 pub use renameat2::{
     IORING_OP_RENAMEAT, RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT, RenameAt2Args,

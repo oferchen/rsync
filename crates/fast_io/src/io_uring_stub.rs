@@ -350,6 +350,10 @@ pub mod registered_buffers {
 }
 
 pub use buffer_ring::{BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags};
+pub use linkat::{
+    IORING_OP_LINKAT, LINKAT_MIN_KERNEL, LinkAtArgs, build_linkat_sqe, build_linkat_sqe_unchecked,
+    linkat_supported, submit_linkat_blocking,
+};
 pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats};
 pub use renameat2::{
     IORING_OP_RENAMEAT, RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT, RenameAt2Args,
@@ -357,6 +361,100 @@ pub use renameat2::{
 };
 
 pub use shared_ring::{OpTag, SharedCompletion, SharedRing, SharedRingConfig};
+
+/// Stub `linkat` module mirroring [`crate::io_uring::linkat`] on non-Linux
+/// platforms or when the `io_uring` cargo feature is disabled.
+///
+/// Every entry point reports the opcode as unsupported so callers fall back
+/// to a synchronous `linkat(2)` syscall (or the platform equivalent).
+pub mod linkat {
+    use std::ffi::CStr;
+    use std::io;
+
+    /// Numeric value of `IORING_OP_LINKAT`. Documented for parity with the
+    /// Linux module; the stub never submits real SQEs.
+    pub const IORING_OP_LINKAT: u8 = 39;
+
+    /// Minimum Linux kernel version that ships `IORING_OP_LINKAT`.
+    pub const LINKAT_MIN_KERNEL: (u32, u32) = (5, 15);
+
+    /// Borrowed arguments for an `IORING_OP_LINKAT` submission. On the stub
+    /// the struct exists only so cross-platform call sites compile; no SQE
+    /// is ever built.
+    #[derive(Debug)]
+    pub struct LinkAtArgs<'a> {
+        /// Directory file descriptor that resolves `old_path`.
+        pub old_dirfd: i32,
+        /// Source path of the existing inode being hardlinked.
+        pub old_path: &'a CStr,
+        /// Directory file descriptor that resolves `new_path`.
+        pub new_dirfd: i32,
+        /// Destination path of the new hardlink.
+        pub new_path: &'a CStr,
+        /// Flags passed to the kernel.
+        pub flags: i32,
+    }
+
+    /// Always returns `false` on this platform.
+    #[must_use]
+    pub fn linkat_supported() -> bool {
+        false
+    }
+
+    /// Always returns `Unsupported` on this platform.
+    pub fn build_linkat_sqe(_args: LinkAtArgs<'_>) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "IORING_OP_LINKAT is not available on this platform",
+        ))
+    }
+
+    /// Stub mirror of the Linux `build_linkat_sqe_unchecked`. Exists for API
+    /// surface parity; never called from production code on this platform.
+    #[must_use]
+    pub fn build_linkat_sqe_unchecked(_args: LinkAtArgs<'_>) {}
+
+    /// Always returns `Unsupported` on this platform. Mirrors the Linux
+    /// blocking submitter so cross-platform callers can fall back without
+    /// `cfg`-gating their own code.
+    pub fn submit_linkat_blocking(_args: LinkAtArgs<'_>) -> io::Result<i32> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "IORING_OP_LINKAT is not available on this platform",
+        ))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn stub_reports_unsupported() {
+            assert!(!linkat_supported());
+        }
+
+        #[test]
+        fn stub_constants_match_linux_uapi() {
+            assert_eq!(IORING_OP_LINKAT, 39);
+            assert_eq!(LINKAT_MIN_KERNEL, (5, 15));
+        }
+
+        #[test]
+        fn stub_build_linkat_sqe_returns_unsupported() {
+            let old = CStr::from_bytes_with_nul(b"/tmp/old\0").unwrap();
+            let new = CStr::from_bytes_with_nul(b"/tmp/new\0").unwrap();
+            let err = build_linkat_sqe(LinkAtArgs {
+                old_dirfd: 0,
+                old_path: old,
+                new_dirfd: 0,
+                new_path: new,
+                flags: 0,
+            })
+            .unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        }
+    }
+}
 
 /// Stub `IORING_OP_RENAMEAT` module for non-Linux platforms or when the
 /// `io_uring` cargo feature is disabled.
