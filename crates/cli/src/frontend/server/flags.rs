@@ -28,6 +28,7 @@ pub(super) struct ServerLongFlags {
     pub(super) ignore_errors: bool,
     pub(super) fsync: bool,
     pub(super) io_uring_policy: fast_io::IoUringPolicy,
+    pub(super) zero_copy_policy: fast_io::ZeroCopyPolicy,
     pub(super) write_devices: bool,
     pub(super) trust_sender: bool,
     pub(super) qsort: bool,
@@ -88,6 +89,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         ignore_errors: false,
         fsync: false,
         io_uring_policy: fast_io::IoUringPolicy::Auto,
+        zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
         write_devices: false,
         trust_sender: false,
         qsort: false,
@@ -122,6 +124,8 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--fsync" => flags.fsync = true,
             "--io-uring" => flags.io_uring_policy = fast_io::IoUringPolicy::Enabled,
             "--no-io-uring" => flags.io_uring_policy = fast_io::IoUringPolicy::Disabled,
+            "--zero-copy" => flags.zero_copy_policy = fast_io::ZeroCopyPolicy::Enabled,
+            "--no-zero-copy" => flags.zero_copy_policy = fast_io::ZeroCopyPolicy::Disabled,
             "--write-devices" => flags.write_devices = true,
             "--trust-sender" => flags.trust_sender = true,
             "--qsort" => flags.qsort = true,
@@ -205,6 +209,8 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--fsync"
             | "--io-uring"
             | "--no-io-uring"
+            | "--zero-copy"
+            | "--no-zero-copy"
             | "--write-devices"
             | "--trust-sender"
             | "--qsort"

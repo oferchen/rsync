@@ -375,6 +375,7 @@ fn test_writer_buffering() {
         sqpoll_idle_ms: 1000,
         register_buffers: false,
         registered_buffer_count: 0,
+        zero_copy_policy: crate::ZeroCopyPolicy::Auto,
     };
 
     let factory = IoUringWriterFactory::default().force_fallback(true);
@@ -569,6 +570,7 @@ fn test_factory_with_custom_config() {
         sqpoll_idle_ms: 1000,
         register_buffers: false,
         registered_buffer_count: 0,
+        zero_copy_policy: crate::ZeroCopyPolicy::Auto,
     };
 
     let factory = IoUringReaderFactory::with_config(config);
@@ -625,6 +627,7 @@ fn test_queue_depth_limits() {
         sqpoll_idle_ms: 1000,
         register_buffers: false,
         registered_buffer_count: 0,
+        zero_copy_policy: crate::ZeroCopyPolicy::Auto,
     };
 
     let mut writer = IoUringWriter::create(&path, &config).unwrap();
@@ -695,6 +698,7 @@ fn test_io_uring_reader_read_all_batched() {
         sqpoll_idle_ms: 1000,
         register_buffers: false,
         registered_buffer_count: 0,
+        zero_copy_policy: crate::ZeroCopyPolicy::Auto,
     };
 
     let mut reader = IoUringReader::open(&path, &config).unwrap();
@@ -728,6 +732,7 @@ fn test_io_uring_batched_read_small_sq() {
         sqpoll_idle_ms: 1000,
         register_buffers: false,
         registered_buffer_count: 0,
+        zero_copy_policy: crate::ZeroCopyPolicy::Auto,
     };
 
     let mut reader = IoUringReader::open(&path, &config).unwrap();
@@ -760,6 +765,7 @@ fn test_io_uring_batched_write() {
         sqpoll_idle_ms: 1000,
         register_buffers: false,
         registered_buffer_count: 0,
+        zero_copy_policy: crate::ZeroCopyPolicy::Auto,
     };
 
     let mut writer = IoUringWriter::create(&path, &config).unwrap();
@@ -794,6 +800,7 @@ fn test_io_uring_large_file_batched_roundtrip() {
         sqpoll_idle_ms: 1000,
         register_buffers: false,
         registered_buffer_count: 0,
+        zero_copy_policy: crate::ZeroCopyPolicy::Auto,
     };
 
     {

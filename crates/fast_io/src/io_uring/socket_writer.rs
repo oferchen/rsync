@@ -13,6 +13,13 @@ use super::config::IoUringConfig;
 /// Replaces direct `write()` calls on `TcpStream` by batching sends through
 /// the io_uring ring. Maintains an internal write buffer, flushing via
 /// batched send SQEs.
+///
+/// `SEND_ZC` is gated by [`IoUringConfig::allow_send_zc`] - currently
+/// `false` for both `Auto` and `Disabled` policies, so this writer always
+/// emits regular `IORING_OP_SEND` SQEs. When the
+/// [`ZeroCopyPolicy::Enabled`](crate::ZeroCopyPolicy::Enabled) opt-in path
+/// is wired through the registered-buffer ring, `allow_send_zc` will switch
+/// to selecting `IORING_OP_SEND_ZC` here.
 pub struct IoUringSocketWriter {
     ring: RawIoUring,
     fd: RawFd,
@@ -21,6 +28,8 @@ pub struct IoUringSocketWriter {
     buffer_pos: usize,
     buffer_size: usize,
     sq_entries: u32,
+    #[allow(dead_code)]
+    allow_send_zc: bool,
 }
 
 impl IoUringSocketWriter {
@@ -40,6 +49,7 @@ impl IoUringSocketWriter {
             buffer_pos: 0,
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
+            allow_send_zc: config.allow_send_zc(),
         })
     }
 

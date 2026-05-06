@@ -95,6 +95,7 @@ where
     config.deletion.ignore_errors = long_flags.ignore_errors;
     config.write.fsync = long_flags.fsync;
     config.write.io_uring_policy = long_flags.io_uring_policy;
+    config.write.zero_copy_policy = long_flags.zero_copy_policy;
     config.write.write_devices = long_flags.write_devices;
     // upstream: options.c:2493 - server always trusts sender (am_server implies trust)
     config.trust_sender = true;

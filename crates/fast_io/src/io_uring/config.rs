@@ -324,6 +324,19 @@ pub struct IoUringConfig {
     /// Number of fixed buffers to register. Only relevant when `register_buffers`
     /// is true. Capped at 1024 by the kernel. Default: 8.
     pub registered_buffer_count: usize,
+    /// Zero-copy policy for socket sends.
+    ///
+    /// When set to [`ZeroCopyPolicy::Enabled`](crate::ZeroCopyPolicy::Enabled),
+    /// io_uring socket writers prefer `IORING_OP_SEND_ZC` (Linux 6.0+) for
+    /// reduced CPU overhead via kernel-side page pinning. When set to
+    /// [`ZeroCopyPolicy::Disabled`](crate::ZeroCopyPolicy::Disabled),
+    /// they fall back to regular `IORING_OP_SEND` and avoid registering
+    /// page-pinned buffers for socket I/O. The default
+    /// [`ZeroCopyPolicy::Auto`](crate::ZeroCopyPolicy::Auto) selects
+    /// `IORING_OP_SEND` since `SEND_ZC` only outperforms `SEND` on large
+    /// pinned-buffer transfers; future revisions may flip the default once
+    /// `SEND_ZC` is wired through the buffer-ring path.
+    pub zero_copy_policy: crate::ZeroCopyPolicy,
 }
 
 impl Default for IoUringConfig {
@@ -337,6 +350,7 @@ impl Default for IoUringConfig {
             sqpoll_idle_ms: 1000,
             register_buffers: true,
             registered_buffer_count: 8,
+            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
         }
     }
 }
@@ -354,6 +368,7 @@ impl IoUringConfig {
             sqpoll_idle_ms: 1000,
             register_buffers: true,
             registered_buffer_count: 16,
+            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
         }
     }
 
@@ -369,7 +384,22 @@ impl IoUringConfig {
             sqpoll_idle_ms: 1000,
             register_buffers: true,
             registered_buffer_count: 8,
+            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
         }
+    }
+
+    /// Returns whether socket writers may attempt `IORING_OP_SEND_ZC`.
+    ///
+    /// `SEND_ZC` (Linux 6.0+) reduces CPU overhead via kernel-side page
+    /// pinning but only outperforms `IORING_OP_SEND` for large pinned-buffer
+    /// transfers. Returns `true` only when the policy is
+    /// [`ZeroCopyPolicy::Enabled`](crate::ZeroCopyPolicy::Enabled).
+    /// `Auto` and `Disabled` both return `false` so the default path uses
+    /// regular `IORING_OP_SEND`; flipping `Auto` to opt in is reserved for a
+    /// future revision once `SEND_ZC` is wired to the registered-buffer ring.
+    #[must_use]
+    pub fn allow_send_zc(&self) -> bool {
+        matches!(self.zero_copy_policy, crate::ZeroCopyPolicy::Enabled)
     }
 
     /// Builds an `IoUring` instance from this config.

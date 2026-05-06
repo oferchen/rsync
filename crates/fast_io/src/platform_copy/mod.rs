@@ -47,6 +47,7 @@
 //! ```
 
 mod dispatch;
+mod no_zero_copy;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -54,6 +55,7 @@ mod types;
 use std::io;
 use std::path::Path;
 
+pub use no_zero_copy::NoZeroCopyPlatformCopy;
 pub use types::{CopyMethod, CopyResult, PlatformCopy};
 
 /// Default platform copy implementation with automatic mechanism selection.

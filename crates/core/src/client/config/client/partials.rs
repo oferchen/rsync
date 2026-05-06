@@ -72,6 +72,18 @@ impl ClientConfig {
     pub const fn cow_policy(&self) -> fast_io::CowPolicy {
         self.cow_policy
     }
+
+    /// Returns the I/O-level zero-copy policy.
+    ///
+    /// Controls `sendfile`, `splice`, `copy_file_range`, and io_uring
+    /// `SEND_ZC`. Orthogonal to the cow policy which gates FS-level
+    /// reflink/CoW cloning.
+    #[must_use]
+    #[doc(alias = "--zero-copy")]
+    #[doc(alias = "--no-zero-copy")]
+    pub const fn zero_copy_policy(&self) -> fast_io::ZeroCopyPolicy {
+        self.zero_copy_policy
+    }
 }
 
 #[cfg(test)]
@@ -137,8 +149,8 @@ mod tests {
     }
 
     #[test]
-    fn cow_policy_default_is_auto() {
+    fn zero_copy_policy_default_is_auto() {
         let config = default_config();
-        assert_eq!(config.cow_policy(), fast_io::CowPolicy::Auto);
+        assert_eq!(config.zero_copy_policy(), fast_io::ZeroCopyPolicy::Auto);
     }
 }

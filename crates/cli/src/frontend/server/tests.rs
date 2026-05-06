@@ -302,6 +302,10 @@ fn long_flags_defaults() {
         flags.io_uring_policy,
         fast_io::IoUringPolicy::Auto
     ));
+    assert!(matches!(
+        flags.zero_copy_policy,
+        fast_io::ZeroCopyPolicy::Auto
+    ));
 }
 
 #[test]
@@ -355,6 +359,42 @@ fn long_flags_io_uring_disabled() {
         flags.io_uring_policy,
         fast_io::IoUringPolicy::Disabled
     ));
+}
+
+#[test]
+fn long_flags_zero_copy_default_is_auto() {
+    let args: Vec<OsString> = vec![OsString::from("--server")];
+    let flags = parse_server_long_flags(&args);
+    assert!(matches!(
+        flags.zero_copy_policy,
+        fast_io::ZeroCopyPolicy::Auto
+    ));
+}
+
+#[test]
+fn long_flags_zero_copy_enabled() {
+    let args = vec![OsString::from("--server"), OsString::from("--zero-copy")];
+    let flags = parse_server_long_flags(&args);
+    assert!(matches!(
+        flags.zero_copy_policy,
+        fast_io::ZeroCopyPolicy::Enabled
+    ));
+}
+
+#[test]
+fn long_flags_zero_copy_disabled() {
+    let args = vec![OsString::from("--server"), OsString::from("--no-zero-copy")];
+    let flags = parse_server_long_flags(&args);
+    assert!(matches!(
+        flags.zero_copy_policy,
+        fast_io::ZeroCopyPolicy::Disabled
+    ));
+}
+
+#[test]
+fn long_flags_zero_copy_is_known() {
+    assert!(is_known_server_long_flag("--zero-copy"));
+    assert!(is_known_server_long_flag("--no-zero-copy"));
 }
 
 #[test]

@@ -1010,24 +1010,25 @@ fn io_uring_policy_default_is_auto() {
 }
 
 #[test]
-fn cow_policy_default_is_auto() {
-    let config = builder().build();
-    assert_eq!(config.cow_policy(), fast_io::CowPolicy::Auto);
-}
-
-#[test]
-fn cow_policy_sets_disabled() {
-    let config = builder().cow_policy(fast_io::CowPolicy::Disabled).build();
-    assert_eq!(config.cow_policy(), fast_io::CowPolicy::Disabled);
-}
-
-#[test]
-fn cow_policy_can_be_reset_to_auto() {
+fn zero_copy_policy_sets_enabled() {
     let config = builder()
-        .cow_policy(fast_io::CowPolicy::Disabled)
-        .cow_policy(fast_io::CowPolicy::Auto)
+        .zero_copy_policy(fast_io::ZeroCopyPolicy::Enabled)
         .build();
-    assert_eq!(config.cow_policy(), fast_io::CowPolicy::Auto);
+    assert_eq!(config.zero_copy_policy(), fast_io::ZeroCopyPolicy::Enabled);
+}
+
+#[test]
+fn zero_copy_policy_sets_disabled() {
+    let config = builder()
+        .zero_copy_policy(fast_io::ZeroCopyPolicy::Disabled)
+        .build();
+    assert_eq!(config.zero_copy_policy(), fast_io::ZeroCopyPolicy::Disabled);
+}
+
+#[test]
+fn zero_copy_policy_default_is_auto() {
+    let config = builder().build();
+    assert_eq!(config.zero_copy_policy(), fast_io::ZeroCopyPolicy::Auto);
 }
 
 // Mutual exclusion validation tests

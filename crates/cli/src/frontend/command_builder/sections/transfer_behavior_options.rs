@@ -158,29 +158,29 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .overrides_with("io-uring"),
             )
             .arg(
-                Arg::new("cow")
-                    .long("cow")
+                Arg::new("zero-copy")
+                    .long("zero-copy")
                     .help(
-                        "Allow copy-on-write reflinks for whole-file copies \
-                         (default). Uses FICLONE/copy_file_range on Linux, \
-                         clonefile/fcopyfile on macOS, and ReFS/CopyFileExW \
-                         on Windows when the destination filesystem supports \
-                         them, with portable fallback otherwise.",
+                        "Allow I/O-level zero-copy syscalls (sendfile, \
+                         splice, copy_file_range, io_uring SEND_ZC) when \
+                         supported by the kernel. Default policy is \
+                         auto/enabled. Independent of filesystem-level \
+                         reflink/CoW cloning.",
                     )
                     .action(ArgAction::SetTrue)
-                    .overrides_with("no-cow"),
+                    .overrides_with("no-zero-copy"),
             )
             .arg(
-                Arg::new("no-cow")
-                    .long("no-cow")
+                Arg::new("no-zero-copy")
+                    .long("no-zero-copy")
                     .help(
-                        "Disable copy-on-write reflinks; always use the \
-                         portable std::fs::copy fallback for whole-file \
-                         copies. Useful for benchmarking, diagnostics, or \
-                         when downstream tooling does not handle reflinks.",
+                        "Disable I/O-level zero-copy (policy=disabled); \
+                         route through portable userspace read/write loops \
+                         and force the platform copy fallback. Does not \
+                         affect filesystem-level reflink/CoW cloning.",
                     )
                     .action(ArgAction::SetTrue)
-                    .overrides_with("cow"),
+                    .overrides_with("zero-copy"),
             )
             .arg(
                 Arg::new("inplace")

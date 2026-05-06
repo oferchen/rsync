@@ -435,8 +435,10 @@ pub struct ParsedArgs {
     /// `--io-uring` / `--no-io-uring` - io_uring policy for file I/O.
     pub io_uring_policy: fast_io::IoUringPolicy,
 
-    /// `--cow` / `--no-cow` - copy-on-write reflink policy for whole-file copies.
-    pub cow_policy: fast_io::CowPolicy,
+    /// `--zero-copy` / `--no-zero-copy` - I/O-level zero-copy policy
+    /// (`sendfile`, `splice`, `copy_file_range`, io_uring `SEND_ZC`).
+    /// Orthogonal to `--cow` which controls FS-level reflink cloning.
+    pub zero_copy_policy: fast_io::ZeroCopyPolicy,
 
     /// `--delay-updates` - use temp files and rename after all transfers complete.
     pub delay_updates: bool,

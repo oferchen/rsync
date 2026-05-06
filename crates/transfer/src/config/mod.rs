@@ -55,6 +55,13 @@ pub struct WriteConfig {
     pub delay_updates: bool,
     /// Policy controlling io_uring usage for file I/O.
     pub io_uring_policy: fast_io::IoUringPolicy,
+    /// Policy controlling I/O-level zero-copy syscalls (`sendfile`, `splice`,
+    /// `copy_file_range`, io_uring `SEND_ZC`).
+    ///
+    /// Orthogonal to filesystem-level reflink cloning. When set to
+    /// [`fast_io::ZeroCopyPolicy::Disabled`], the receiver routes through
+    /// portable `read`/`write` loops and the sender skips `sendfile(2)`.
+    pub zero_copy_policy: fast_io::ZeroCopyPolicy,
 }
 
 impl Default for WriteConfig {
@@ -66,6 +73,7 @@ impl Default for WriteConfig {
             write_devices: false,
             delay_updates: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
+            zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
         }
     }
 }
