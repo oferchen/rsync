@@ -1,4 +1,7 @@
 #![deny(unsafe_code)]
+//! Unix mode-bits field decoding (fixed 4-byte little-endian).
+//!
+//! upstream: flist.c:recv_file_entry() mode branch.
 
 use std::io::{self, Read};
 
