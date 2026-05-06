@@ -1,3 +1,6 @@
+//! Per-directory merge and exclude-if-present rule descriptors used by
+//! `FilterProgram` to evaluate `.rsync-filter`-style markers during traversal.
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
