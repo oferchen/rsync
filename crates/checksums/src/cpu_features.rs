@@ -286,8 +286,7 @@ mod tests {
             assert_eq!(
                 SimdLevel::parse_cli(level.as_cli_str()),
                 Some(level),
-                "round trip for {:?}",
-                level
+                "round trip for {level:?}"
             );
         }
     }
@@ -317,7 +316,7 @@ mod tests {
             SimdFeature::Sse2,
             SimdFeature::Neon,
         ] {
-            assert!(allowed(SimdLevel::Auto, feature), "auto: {:?}", feature);
+            assert!(allowed(SimdLevel::Auto, feature), "auto: {feature:?}");
         }
     }
 
@@ -331,7 +330,7 @@ mod tests {
             SimdFeature::Sse2,
             SimdFeature::Neon,
         ] {
-            assert!(!allowed(SimdLevel::None, feature), "none: {:?}", feature);
+            assert!(!allowed(SimdLevel::None, feature), "none: {feature:?}");
         }
     }
 
@@ -363,7 +362,7 @@ mod tests {
             SimdFeature::Ssse3,
             SimdFeature::Sse2,
         ] {
-            assert!(!allowed(SimdLevel::Neon, feature), "neon vs {:?}", feature);
+            assert!(!allowed(SimdLevel::Neon, feature), "neon vs {feature:?}");
         }
         assert!(allowed(SimdLevel::Neon, SimdFeature::Neon));
     }
@@ -379,12 +378,7 @@ mod tests {
             SimdLevel::None,
         ] {
             let byte = level_to_byte(level);
-            assert_eq!(
-                byte_to_level(byte),
-                Some(level),
-                "round trip for {:?}",
-                level
-            );
+            assert_eq!(byte_to_level(byte), Some(level), "round trip for {level:?}");
         }
     }
 
