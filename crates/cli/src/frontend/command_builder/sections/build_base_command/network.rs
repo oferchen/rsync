@@ -116,7 +116,9 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
             Arg::new("max-alloc")
                 .long("max-alloc")
                 .value_name("SIZE")
-                .help("Limit memory allocation to SIZE bytes (can use K, M, G suffixes).")
+                .help(
+                    "Cap memory allocation at SIZE bytes. Supports K, M, G, T, P, E (powers of 1024), KB/MB/GB (powers of 1000), and KiB/MiB/GiB (explicit binary). Default 1G; zero is rejected.",
+                )
                 .num_args(1)
                 .value_parser(OsStringValueParser::new()),
         )
