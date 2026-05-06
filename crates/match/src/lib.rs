@@ -29,5 +29,5 @@ mod script;
 
 pub use fuzzy::{FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, compute_similarity_score};
 pub use generator::{DeltaGenerator, generate_delta};
-pub use index::DeltaSignatureIndex;
+pub use index::{DeltaSignatureIndex, MatchedBlocks};
 pub use script::{DeltaScript, DeltaToken, apply_delta};
