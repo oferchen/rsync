@@ -672,7 +672,7 @@ mod tests {
 
     #[test]
     fn parse_max_alloc_argument_accepts_ceiling() {
-        let value = format!("{}", MAX_ALLOC_CEILING);
+        let value = format!("{MAX_ALLOC_CEILING}");
         assert_eq!(
             parse_max_alloc_argument(&os(&value)).unwrap(),
             MAX_ALLOC_CEILING

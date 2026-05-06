@@ -427,7 +427,7 @@ fn long_flags_max_alloc() {
 
 #[test]
 fn long_flags_max_alloc_is_known_long_flag() {
-    let args = vec![
+    let args = [
         OsString::from("--server"),
         OsString::from("--max-alloc=1G"),
         OsString::from("-logDtpr"),
