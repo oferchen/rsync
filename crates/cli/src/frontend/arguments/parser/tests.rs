@@ -616,3 +616,50 @@ fn zero_copy_is_independent_from_io_uring() {
     assert_eq!(parsed.zero_copy_policy, fast_io::ZeroCopyPolicy::Disabled);
     assert_eq!(parsed.io_uring_policy, fast_io::IoUringPolicy::Enabled);
 }
+
+#[test]
+fn simd_defaults_to_none() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.simd_override, None);
+}
+
+#[test]
+fn simd_accepts_each_canonical_level() {
+    for (input, expected) in [
+        ("auto", checksums::SimdLevel::Auto),
+        ("avx512", checksums::SimdLevel::Avx512),
+        ("avx2", checksums::SimdLevel::Avx2),
+        ("sse4", checksums::SimdLevel::Sse4),
+        ("neon", checksums::SimdLevel::Neon),
+        ("none", checksums::SimdLevel::None),
+    ] {
+        let arg = format!("--simd={input}");
+        let parsed = parse_test_args([arg.as_str(), "src/", "dst/"])
+            .unwrap_or_else(|err| panic!("parse failed for {input}: {err}"));
+        assert_eq!(
+            parsed.simd_override,
+            Some(expected),
+            "level {input} parsed incorrectly",
+        );
+    }
+}
+
+#[test]
+fn simd_accepts_aliases() {
+    let parsed = parse_test_args(["--simd=AVX-512", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.simd_override, Some(checksums::SimdLevel::Avx512));
+
+    let parsed = parse_test_args(["--simd=sse4.1", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.simd_override, Some(checksums::SimdLevel::Sse4));
+
+    let parsed = parse_test_args(["--simd=scalar", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.simd_override, Some(checksums::SimdLevel::None));
+}
+
+#[test]
+fn simd_rejects_unknown_levels() {
+    let result = parse_test_args(["--simd=avx1024", "src/", "dst/"]);
+    let err = result.expect_err("unknown level should fail");
+    assert!(err.to_string().contains("--simd"));
+    assert!(err.to_string().contains("avx1024"));
+}
