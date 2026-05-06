@@ -158,6 +158,31 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .overrides_with("io-uring"),
             )
             .arg(
+                Arg::new("cow")
+                    .long("cow")
+                    .help(
+                        "Allow copy-on-write reflinks for whole-file copies \
+                         (default). Uses FICLONE/copy_file_range on Linux, \
+                         clonefile/fcopyfile on macOS, and ReFS/CopyFileExW \
+                         on Windows when the destination filesystem supports \
+                         them, with portable fallback otherwise.",
+                    )
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-cow"),
+            )
+            .arg(
+                Arg::new("no-cow")
+                    .long("no-cow")
+                    .help(
+                        "Disable copy-on-write reflinks; always use the \
+                         portable std::fs::copy fallback for whole-file \
+                         copies. Useful for benchmarking, diagnostics, or \
+                         when downstream tooling does not handle reflinks.",
+                    )
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("cow"),
+            )
+            .arg(
                 Arg::new("inplace")
                     .long("inplace")
                     .help("Write updated data directly to destination files.")

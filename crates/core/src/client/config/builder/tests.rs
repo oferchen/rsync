@@ -1009,6 +1009,27 @@ fn io_uring_policy_default_is_auto() {
     assert_eq!(config.io_uring_policy(), fast_io::IoUringPolicy::Auto);
 }
 
+#[test]
+fn cow_policy_default_is_auto() {
+    let config = builder().build();
+    assert_eq!(config.cow_policy(), fast_io::CowPolicy::Auto);
+}
+
+#[test]
+fn cow_policy_sets_disabled() {
+    let config = builder().cow_policy(fast_io::CowPolicy::Disabled).build();
+    assert_eq!(config.cow_policy(), fast_io::CowPolicy::Disabled);
+}
+
+#[test]
+fn cow_policy_can_be_reset_to_auto() {
+    let config = builder()
+        .cow_policy(fast_io::CowPolicy::Disabled)
+        .cow_policy(fast_io::CowPolicy::Auto)
+        .build();
+    assert_eq!(config.cow_policy(), fast_io::CowPolicy::Auto);
+}
+
 // Mutual exclusion validation tests
 // (upstream: options.c:2406-2414 - inplace/append conflicts with partial-dir/delay-updates)
 

@@ -90,6 +90,42 @@ impl PlatformCopy for DefaultPlatformCopy {
     }
 }
 
+/// Platform copy strategy that disables copy-on-write reflinks.
+///
+/// Forces every whole-file copy through the portable `std::fs::copy`
+/// fallback, bypassing `FICLONE`, `copy_file_range`, `clonefile`,
+/// `fcopyfile`, `FSCTL_DUPLICATE_EXTENTS`, and `CopyFileExW`. The result
+/// always reports [`CopyMethod::StandardCopy`] so callers that probe
+/// [`CopyResult::is_zero_copy`] (such as the macOS clonefile fast path)
+/// transparently fall through to the regular copy code path.
+///
+/// Selected by the `--no-cow` CLI flag via [`super::CowPolicy::Disabled`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoCowPlatformCopy;
+
+impl NoCowPlatformCopy {
+    /// Creates a new `NoCowPlatformCopy` instance.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl PlatformCopy for NoCowPlatformCopy {
+    fn copy_file(&self, src: &Path, dst: &Path, _size_hint: u64) -> io::Result<CopyResult> {
+        let bytes = std::fs::copy(src, dst)?;
+        Ok(CopyResult::new(bytes, CopyMethod::StandardCopy))
+    }
+
+    fn supports_reflink(&self) -> bool {
+        false
+    }
+
+    fn preferred_method(&self, _size: u64) -> CopyMethod {
+        CopyMethod::StandardCopy
+    }
+}
+
 /// Attempts a copy-on-write block clone using Windows ReFS `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
 ///
 /// On ReFS volumes, creates an instant reflink where source and destination share

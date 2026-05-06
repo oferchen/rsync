@@ -110,6 +110,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) preallocate: bool,
     pub(crate) fsync: bool,
     pub(crate) io_uring_policy: fast_io::IoUringPolicy,
+    pub(crate) cow_policy: fast_io::CowPolicy,
     pub(crate) partial_dir: Option<PathBuf>,
     pub(crate) temp_dir: Option<PathBuf>,
     pub(crate) delay_updates: bool,
@@ -251,6 +252,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .preallocate(inputs.preallocate)
         .fsync(inputs.fsync)
         .io_uring_policy(inputs.io_uring_policy)
+        .cow_policy(inputs.cow_policy)
         .partial_directory(inputs.partial_dir.clone())
         .temp_directory(inputs.temp_dir.clone())
         .delay_updates(inputs.delay_updates)

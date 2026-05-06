@@ -429,6 +429,9 @@ pub struct ParsedArgs {
     /// `--io-uring` / `--no-io-uring` - io_uring policy for file I/O.
     pub io_uring_policy: fast_io::IoUringPolicy,
 
+    /// `--cow` / `--no-cow` - copy-on-write reflink policy for whole-file copies.
+    pub cow_policy: fast_io::CowPolicy,
+
     /// `--delay-updates` - use temp files and rename after all transfers complete.
     pub delay_updates: bool,
 

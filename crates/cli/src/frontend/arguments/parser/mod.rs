@@ -429,6 +429,11 @@ where
     } else {
         fast_io::IoUringPolicy::Auto
     };
+    let cow_policy = if matches.get_flag("no-cow") {
+        fast_io::CowPolicy::Disabled
+    } else {
+        fast_io::CowPolicy::Auto
+    };
     let delay_updates = matches.get_flag("delay-updates") && !matches.get_flag("no-delay-updates");
     let partial_dir_cli = matches
         .remove_one::<OsString>("partial-dir")
@@ -729,6 +734,7 @@ where
         preallocate,
         fsync,
         io_uring_policy,
+        cow_policy,
         delay_updates,
         partial_dir,
         temp_dir,
