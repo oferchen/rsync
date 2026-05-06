@@ -14,6 +14,7 @@ use filters::FilterSet;
 use protocol::iconv::FilenameConverter;
 
 use crate::batch::BatchWriter;
+use crate::local_copy::executor::SparseDetectStrategy;
 use crate::local_copy::filter_program::FilterProgram;
 use crate::local_copy::options::types::{DeleteTiming, LinkDestEntry, ReferenceDirectory};
 use crate::local_copy::skip_compress::SkipCompressList;
@@ -94,6 +95,7 @@ pub struct LocalCopyOptionsBuilder {
 
     pub(super) numeric_ids: bool,
     pub(super) sparse: bool,
+    pub(super) sparse_detect_strategy: SparseDetectStrategy,
     pub(super) checksum: bool,
     pub(super) checksum_algorithm: SignatureAlgorithm,
     pub(super) checksum_seed: Option<u32>,
@@ -218,6 +220,7 @@ impl LocalCopyOptionsBuilder {
             iconv: None,
             numeric_ids: false,
             sparse: false,
+            sparse_detect_strategy: SparseDetectStrategy::Auto,
             checksum: false,
             checksum_algorithm: SignatureAlgorithm::Md5 {
                 seed_config: checksums::strong::Md5Seed::none(),
