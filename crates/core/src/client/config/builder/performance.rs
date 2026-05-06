@@ -1,5 +1,5 @@
 use super::*;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 
 impl ClientConfigBuilder {
     builder_setter! {
@@ -102,6 +102,23 @@ impl ClientConfigBuilder {
         /// Applies an explicit delta-transfer block size override.
         #[doc(alias = "--block-size")]
         block_size_override: Option<NonZeroU32>,
+    }
+
+    builder_setter! {
+        /// Caps the rayon worker pool to a fixed thread count.
+        ///
+        /// `None` keeps rayon's default of one worker per logical CPU.
+        #[doc(alias = "--rayon-threads")]
+        rayon_threads: Option<NonZeroUsize>,
+    }
+
+    builder_setter! {
+        /// Caps the async (tokio) runtime worker count.
+        ///
+        /// `None` keeps tokio's own defaults. The value is honoured only when
+        /// async transports are enabled at build time.
+        #[doc(alias = "--tokio-threads")]
+        tokio_threads: Option<NonZeroUsize>,
     }
 
     builder_setter! {

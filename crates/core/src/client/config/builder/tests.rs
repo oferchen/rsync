@@ -1,7 +1,7 @@
 use super::*;
 use crate::client::config::FilterRuleKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::time::{Duration, SystemTime};
 
 fn builder() -> ClientConfigBuilder {
@@ -1336,6 +1336,40 @@ fn block_size_override_none_clears_value() {
         .block_size_override(None)
         .build();
     assert!(config.block_size_override().is_none());
+}
+
+#[test]
+fn rayon_threads_sets_value() {
+    let threads = NonZeroUsize::new(8).unwrap();
+    let config = builder().rayon_threads(Some(threads)).build();
+    assert_eq!(config.rayon_threads(), Some(threads));
+}
+
+#[test]
+fn rayon_threads_none_clears_value() {
+    let threads = NonZeroUsize::new(8).unwrap();
+    let config = builder()
+        .rayon_threads(Some(threads))
+        .rayon_threads(None)
+        .build();
+    assert!(config.rayon_threads().is_none());
+}
+
+#[test]
+fn tokio_threads_sets_value() {
+    let threads = NonZeroUsize::new(4).unwrap();
+    let config = builder().tokio_threads(Some(threads)).build();
+    assert_eq!(config.tokio_threads(), Some(threads));
+}
+
+#[test]
+fn tokio_threads_none_clears_value() {
+    let threads = NonZeroUsize::new(4).unwrap();
+    let config = builder()
+        .tokio_threads(Some(threads))
+        .tokio_threads(None)
+        .build();
+    assert!(config.tokio_threads().is_none());
 }
 
 #[test]

@@ -47,6 +47,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --max-size=SIZE  Skip files larger than SIZE.\n",
             "      --max-alloc=SIZE  Cap memory allocation at SIZE bytes (K=1024, M=1024^2, G=1024^3, T=1024^4, P=1024^5, E=1024^6; KB/MB/GB use powers of 1000; KiB/MiB/GiB are explicit binary; default 1G; 0 is rejected).\n",
             "      --block-size=SIZE  Force the delta-transfer block size to SIZE bytes.\n",
+            "      --rayon-threads=N  Cap the rayon worker pool to N threads (1-1024).\n",
+            "      --tokio-threads=N  Cap the async (tokio) runtime to N threads (1-1024); requires async features.\n",
             "  -b, --backup    Create backups before overwriting or deleting existing entries.\n",
             "      --backup-dir=DIR  Store backups inside DIR instead of alongside the destination.\n",
             "      --suffix=SUFFIX  Append SUFFIX to backup names (default '~').\n",

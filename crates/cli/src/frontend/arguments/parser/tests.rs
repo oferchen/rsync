@@ -609,3 +609,81 @@ fn no_cow_then_cow_last_wins() {
     let parsed = parse_test_args(["--no-cow", "--cow", "src/", "dst/"]).expect("parse");
     assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Auto);
 }
+
+#[test]
+fn rayon_threads_accepts_positive_value() {
+    let parsed = parse_test_args(["--rayon-threads", "8", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.rayon_threads, Some(8));
+}
+
+#[test]
+fn rayon_threads_defaults_to_none() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(parsed.rayon_threads.is_none());
+}
+
+#[test]
+fn rayon_threads_rejects_zero() {
+    let err = parse_test_args(["--rayon-threads", "0", "src/", "dst/"]).unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("--rayon-threads"));
+    assert!(message.contains("positive"));
+}
+
+#[test]
+fn rayon_threads_rejects_excessive_value() {
+    let err = parse_test_args(["--rayon-threads", "1025", "src/", "dst/"]).unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("--rayon-threads"));
+    assert!(message.contains("1024"));
+}
+
+#[test]
+fn rayon_threads_rejects_non_numeric() {
+    let err = parse_test_args(["--rayon-threads", "many", "src/", "dst/"]).unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("--rayon-threads"));
+    assert!(message.contains("'many'"));
+}
+
+#[test]
+fn tokio_threads_accepts_positive_value() {
+    let parsed = parse_test_args(["--tokio-threads", "4", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.tokio_threads, Some(4));
+}
+
+#[test]
+fn tokio_threads_defaults_to_none() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(parsed.tokio_threads.is_none());
+}
+
+#[test]
+fn tokio_threads_rejects_zero() {
+    let err = parse_test_args(["--tokio-threads", "0", "src/", "dst/"]).unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("--tokio-threads"));
+    assert!(message.contains("positive"));
+}
+
+#[test]
+fn tokio_threads_rejects_excessive_value() {
+    let err = parse_test_args(["--tokio-threads", "9999", "src/", "dst/"]).unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("--tokio-threads"));
+    assert!(message.contains("1024"));
+}
+
+#[test]
+fn tokio_threads_rejects_non_numeric() {
+    let err = parse_test_args(["--tokio-threads", "abc", "src/", "dst/"]).unwrap_err();
+    let message = err.to_string();
+    assert!(message.contains("--tokio-threads"));
+    assert!(message.contains("'abc'"));
+}
+
+#[test]
+fn rayon_threads_accepts_max_value() {
+    let parsed = parse_test_args(["--rayon-threads", "1024", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.rayon_threads, Some(1024));
+}

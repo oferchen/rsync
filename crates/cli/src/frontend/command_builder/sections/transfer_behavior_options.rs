@@ -300,6 +300,24 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
+                Arg::new("rayon-threads")
+                    .long("rayon-threads")
+                    .value_name("N")
+                    .help("Cap the rayon worker pool to N threads (1-1024).")
+                    .num_args(1)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("tokio-threads")
+                    .long("tokio-threads")
+                    .value_name("N")
+                    .help(
+                        "Cap the async (tokio) runtime to N threads (1-1024); requires async features.",
+                    )
+                    .num_args(1)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
                 Arg::new("backup")
                     .long("backup")
                     .short('b')
