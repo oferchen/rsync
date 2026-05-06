@@ -8,6 +8,9 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+/// Wraps a `FilterProgramError` as a `LocalCopyError` with file path context,
+/// reporting the failure through the standard `compile filter file` operation
+/// label so callers see consistent error messages.
 pub(crate) fn filter_program_local_error(
     path: &Path,
     error: &FilterProgramError,
@@ -19,6 +22,11 @@ pub(crate) fn filter_program_local_error(
     )
 }
 
+/// Resolves a per-directory merge file pattern against `base`.
+///
+/// Absolute patterns whose root component is `/` are stripped of that root and
+/// joined onto `base`, mirroring upstream's treatment of root-anchored
+/// `dir-merge` paths. Relative patterns are joined to `base` directly.
 pub(crate) fn resolve_dir_merge_path(base: &Path, pattern: &Path) -> PathBuf {
     if pattern.is_absolute()
         && let Ok(stripped) = pattern.strip_prefix(Path::new("/"))
@@ -29,6 +37,11 @@ pub(crate) fn resolve_dir_merge_path(base: &Path, pattern: &Path) -> PathBuf {
     base.join(pattern)
 }
 
+/// Applies the per-directory merge `options` to `rule` as defaults.
+///
+/// Anchors the rule to the source root when configured, marks it perishable,
+/// and overrides the sender/receiver flags when the merge directive specified
+/// either side modifier. Returns the rule unchanged when no defaults apply.
 pub(crate) fn apply_dir_merge_rule_defaults(
     mut rule: FilterRule,
     options: &DirMergeOptions,
@@ -52,9 +65,13 @@ pub(crate) fn apply_dir_merge_rule_defaults(
     rule
 }
 
+/// Accumulated rules and `exclude-if-present` markers loaded from a single
+/// per-directory merge file (and any files it transitively merges).
 #[derive(Default)]
 pub(crate) struct DirMergeEntries {
+    /// Filter rules parsed from the merge file, in source order.
     pub(crate) rules: Vec<FilterRule>,
+    /// `exclude-if-present` marker rules parsed from the merge file.
     pub(crate) exclude_if_present: Vec<ExcludeIfPresentRule>,
     /// Indicates a clear directive was encountered, meaning inherited rules
     /// from parent directories should also be cleared.
@@ -88,6 +105,13 @@ impl DirMergeEntries {
     }
 }
 
+/// Loads filter rules from `path`, recursing into nested `merge` directives.
+///
+/// `options` controls the parser (whitespace-vs-line, comment handling,
+/// enforced include/exclude kind) used for this file. `visited` is a
+/// canonical-path stack used to detect cycles: if `path` would re-enter a file
+/// already on the stack the function returns an error rather than recursing
+/// infinitely. On success the visited entry is popped before returning.
 pub(crate) fn load_dir_merge_rules_recursive(
     path: &Path,
     options: &DirMergeOptions,

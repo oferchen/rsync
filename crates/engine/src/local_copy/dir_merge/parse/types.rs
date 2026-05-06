@@ -5,17 +5,30 @@ use thiserror::Error;
 use crate::local_copy::filter_program::{DirMergeOptions, ExcludeIfPresentRule};
 use filters::FilterRule;
 
+/// AST node produced by parsing a single line of a per-directory merge file.
 #[derive(Debug)]
 pub(crate) enum ParsedFilterDirective {
+    /// A concrete filter rule (`+`, `-`, `include`, `exclude`, `show`, `hide`,
+    /// `protect`, `risk`).
     Rule(FilterRule),
+    /// A `merge` or `dir-merge` directive that pulls in another filter file.
     Merge {
+        /// Path to the merged file, resolved relative to the enclosing file's
+        /// parent directory unless absolute.
         path: PathBuf,
+        /// Optional parser overrides (modifiers such as `,n`, `,e`, `,w`).
+        /// `None` indicates the merged file inherits the current parser
+        /// configuration unchanged.
         options: Option<DirMergeOptions>,
     },
+    /// An `exclude-if-present` directive naming a marker file whose presence
+    /// excludes the containing directory.
     ExcludeIfPresent(ExcludeIfPresentRule),
+    /// A list-clearing directive (`!` or `clear`) that wipes inherited rules.
     Clear,
 }
 
+/// Error returned when a filter directive cannot be parsed.
 #[derive(Debug, Error)]
 #[error("{message}")]
 pub(crate) struct FilterParseError {
@@ -23,6 +36,7 @@ pub(crate) struct FilterParseError {
 }
 
 impl FilterParseError {
+    /// Constructs a new parse error from any value convertible to `String`.
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
