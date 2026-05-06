@@ -25,14 +25,18 @@ use std::num::NonZeroU8;
 
 /// Builds a basis with a known repeating pattern guaranteed to produce many
 /// consecutive matched blocks when the source is the basis itself or a
-/// prefix of it. The pattern is large enough to span > 8 full-length blocks
-/// at the layout's chosen `block_length`.
+/// prefix of it.
+///
+/// Size is an exact multiple of `signature::block_size::DEFAULT_BLOCK_SIZE`
+/// (700) so every basis block is full-length and `extend_run` can walk all
+/// of them. With a partial trailing block, extend_run halts at the size
+/// mismatch and the fat-copy assertions below would not hold.
 fn build_synthetic_basis() -> Vec<u8> {
-    // Mix of byte ranges keeps the rolling checksum unique per block while
-    // keeping the data simple to reproduce. 64 KiB at 700-1024 byte blocks
-    // gives ~64 to 90 full-length blocks, plenty for run extension.
-    let mut buf = Vec::with_capacity(64 * 1024);
-    for i in 0..(64 * 1024usize) {
+    // 94 full blocks of 700 bytes = 65 800 bytes (≈ 64 KiB), well within the
+    // < 700² byte threshold where `calculate_block_length` returns 700.
+    const TOTAL: usize = 700 * 94;
+    let mut buf = Vec::with_capacity(TOTAL);
+    for i in 0..TOTAL {
         buf.push(((i * 17 + 5) % 251) as u8);
     }
     buf
