@@ -127,8 +127,8 @@ pub struct DeltaApplicator<'a> {
     sparse_state: Option<SparseWriteState>,
     checksum_verifier: ChecksumVerifier,
     basis_signature: Option<&'a FileSignature>,
-    /// Cached basis file mapper, opened once and reused for all block references.
-    /// Uses `AdaptiveMapStrategy` on Unix, `BufferedMap` on Windows.
+    /// Cached basis file mapper, opened once and reused for all block
+    /// references. Strategy resolved per [`BasisWriterKind`] and target OS.
     basis_map: Option<MapFile<BasisMapStrategy>>,
     /// Reusable buffer for literal token data to avoid per-token allocations.
     token_buffer: TokenBuffer,

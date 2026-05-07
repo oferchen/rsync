@@ -1,18 +1,15 @@
-//! Sparse file write state tracker.
+//! Sparse file write state tracker for hole optimization during delta apply.
 //!
-//! Tracks pending runs of zeros that should become holes in the output file
-//! rather than being written as data. Mirrors upstream rsync's `write_sparse()`
-//! behavior in `fileio.c`.
+//! upstream: `fileio.c` `write_sparse()`.
 
 use std::io::{self, Seek, SeekFrom, Write};
 
 use crate::constants::{CHUNK_SIZE, leading_zero_count, trailing_zero_count};
 
-/// State tracker for sparse file writing.
+/// Tracks pending runs of zeros so they become holes in the output file rather
+/// than being written as data.
 ///
-/// Tracks pending runs of zeros that should become holes in the output file
-/// rather than being written as data. Mirrors upstream rsync's `write_sparse()`
-/// behavior in `fileio.c`.
+/// Mirrors upstream rsync's `write_sparse()` behaviour in `fileio.c`.
 #[derive(Debug, Default)]
 pub struct SparseWriteState {
     pending_zeros: u64,
