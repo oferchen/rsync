@@ -92,6 +92,7 @@
 //! ```
 
 mod allocator;
+mod buffer_controller;
 mod global;
 mod guard;
 mod memory_cap;
@@ -102,6 +103,7 @@ mod thread_local_cache;
 pub mod throughput;
 
 pub use allocator::{BufferAllocator, DefaultAllocator};
+pub use buffer_controller::{AdaptiveBufferController, ControllerConfig};
 pub use global::{GlobalBufferPoolConfig, global_buffer_pool, init_global_buffer_pool};
 pub use guard::{BorrowedBufferGuard, BufferGuard};
 pub use pool::{BufferPool, BufferPoolStats};
