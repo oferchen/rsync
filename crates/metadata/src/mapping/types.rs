@@ -74,8 +74,9 @@ pub(crate) enum MappingMatcher {
 impl MappingMatcher {
     /// Tests whether the given identifier matches this matcher.
     ///
-    /// The `name_lookup` closure is called lazily only when the matcher
-    /// requires name resolution.
+    /// `name_lookup` is invoked lazily and only by name-based variants
+    /// ([`Self::ExactName`], [`Self::Pattern`]). Numeric and wildcard-all
+    /// variants never trigger a name resolution.
     pub(crate) fn matches<F>(&self, identifier: u32, mut name_lookup: F) -> io::Result<bool>
     where
         F: FnMut() -> io::Result<Option<String>>,
@@ -112,6 +113,9 @@ pub(crate) enum MappingTarget {
 
 impl MappingTarget {
     /// Resolves this target to a UID.
+    ///
+    /// Returns [`io::ErrorKind::NotFound`] if a name target cannot be
+    /// resolved on the receiver.
     pub(crate) fn resolve_uid(&self) -> io::Result<RawUid> {
         match self {
             Self::Id(id) => Ok(*id as RawUid),
@@ -126,6 +130,9 @@ impl MappingTarget {
     }
 
     /// Resolves this target to a GID.
+    ///
+    /// Returns [`io::ErrorKind::NotFound`] if a name target cannot be
+    /// resolved on the receiver.
     pub(crate) fn resolve_gid(&self) -> io::Result<RawGid> {
         match self {
             Self::Id(id) => Ok(*id as RawGid),

@@ -12,11 +12,13 @@ use super::types::{MappingKind, MappingMatcher, MappingParseError, MappingTarget
 
 /// Parses the source (left-hand) side of a mapping entry.
 ///
-/// Recognizes:
+/// Recognized in priority order:
 /// - `*` as a wildcard-all matcher
 /// - Numeric values or ranges (e.g., `100`, `100-200`)
 /// - Glob patterns containing `*`, `?`, or `[`
-/// - Exact name strings
+/// - Otherwise, treated as an exact name string
+///
+/// An empty source is rejected with a [`MappingParseError`].
 pub(crate) fn parse_matcher(
     kind: MappingKind,
     source: &str,
@@ -46,8 +48,9 @@ pub(crate) fn parse_matcher(
 
 /// Parses a numeric value or range from a source string.
 ///
-/// Returns `Some((start, end))` for both single values (where `start == end`)
-/// and ranges. Reversed ranges are normalized so `start <= end`.
+/// Returns `Some((start, end))` for single values (where `start == end`) and
+/// `start-end` ranges. Reversed ranges (`end-start`) are normalized so
+/// `start <= end`. Returns `None` for any non-numeric or malformed input.
 pub(super) fn parse_numeric_range(source: &str) -> Option<(u32, u32)> {
     let mut parts = source.split('-');
     let start = parts.next()?;
