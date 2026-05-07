@@ -2,8 +2,8 @@
 //!
 //! The [`MessageSegments`] type exposes the low-level representation that the
 //! logging subsystem streams into stdout/stderr. This submodule keeps the
-//! implementation split across focussed files so that each area – iterators,
-//! vectored I/O, and buffer-friendly helpers – remains under the workspace line
+//! implementation split across focussed files so that each area - iterators,
+//! vectored I/O, and buffer-friendly helpers - remains under the workspace line
 //! limits while still providing comprehensive rustdoc coverage.
 
 mod base;
