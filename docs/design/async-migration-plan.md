@@ -588,6 +588,118 @@ never pre-empts runtime workers. Tracked in #1595; see
 `docs/design/io-uring-rayon-composition.md` for the boundary
 diagram.
 
+#### 9.6.1 Runtime choice: tokio-uring vs glommio vs sync io_uring
+
+Three plausible runtimes can drive io_uring submissions; each
+trades surface area for performance and ecosystem reach.
+
+| Runtime | Pool model | Reactor | Ecosystem | Verdict |
+|---------|------------|---------|-----------|---------|
+| sync io_uring (today) | rayon + blocking pool | none, direct submit/wait | tokio-agnostic; works on any kernel >= 5.6 | keep |
+| `tokio-uring` | tokio current-thread per worker | thread-local ring driven by tokio reactor | requires the current-thread runtime, not multi-thread | rejected for default daemon |
+| `glommio` | one runtime per CPU, shard-nothing | per-shard ring, thread-pinned | separate executor; no tokio interop | rejected for workspace |
+
+The sync io_uring path stays the default for three reasons. First,
+it is already shipping behind `fast_io`'s feature gate and is
+exercised by the criterion suite. Second, a `spawn_blocking`
+boundary on the disk-commit path lets the multi-thread tokio
+runtime keep its workers free for accept and codec work; the
+blocking pool absorbs syscall latency. Third, the sync surface
+keeps `fast_io` tokio-free, which the Phase 0 guardrail enforces.
+
+`tokio-uring` is rejected as the default because it forces the
+current-thread runtime, which conflicts with the daemon's need to
+serve thousands of connections from a multi-thread pool. Adoption
+would split the codebase: daemon on multi-thread, file I/O on
+current-thread, with another bridge in between. We may revisit if
+upstream tokio merges multi-thread io_uring; until then a single
+optional `async-io-uring` feature could expose `tokio-uring` for
+single-threaded callers without changing the default.
+
+`glommio` is rejected because its shard-nothing model assumes one
+runtime per CPU and rules out cross-thread channel use, which is
+how the receiver pipeline (`run_pipeline` at
+`async_pipeline.rs:137`) feeds disk commits. A glommio adoption
+would require rewriting the entire pipeline around per-shard
+queues, well beyond the scope of this plan.
+
+The end-state: tokio multi-thread runtime owns scheduling, rayon
+owns CPU, sync io_uring (driven from `spawn_blocking`) owns
+fd-bound I/O. No second runtime ships in the default binary.
+
+### 9.7 Dependency bloat
+
+Tokio plus `tokio-util` plus `flume` plus `crossbeam-queue` plus
+`futures-util` (transitive via tokio) adds roughly 70 transitive
+crates and ~1.2 MB to a release binary on x86_64 Linux. The
+audit at `docs/audits/tokio-dependency-boundary-2026.md` confirms
+the seven-crate boundary keeps this contained: 18 workspace
+crates ship without tokio, and the binary footprint of
+`--no-default-features` builds is unchanged.
+
+Mitigations:
+
+- The Phase 0 guardrail script keeps the boundary at seven crates;
+  any drift fails CI.
+- `cargo bloat` is run on every Phase 2-5 rollout PR. The
+  threshold is +10% on the release binary's `.text` section; a
+  larger jump triggers a focused size audit.
+- Optional features (`async-daemon`, `async-ssh`,
+  `async-transfer`) compose; a distributor enabling only
+  `async-daemon` does not pay for SSH-side or receiver-side async
+  pulls.
+- A `tokio-free` smoke build runs in CI on every PR
+  (`--no-default-features --features metadata,perf`) to confirm
+  the path stays viable for embedded distributors.
+
+The accepted cost: when the user opts into the full async stack,
+the binary grows by ~1.2 MB and link time grows by ~3 seconds on
+warm caches. This is a one-time cost paid at build, not at
+runtime.
+
+### 9.8 Runtime selection at startup
+
+oc-rsync runs in three modes (CLI client, CLI server-via-ssh,
+daemon) and only some of them need a runtime. Naive adoption -
+"build a multi-thread runtime in `main()`" - pays the startup
+cost universally.
+
+Failure modes:
+
+- A short-lived `oc-rsync --version` invocation pays a 100-300
+  microsecond runtime startup.
+- Cron-driven local-only transfers (no SSH, no daemon, no
+  `rsync://`) pay for a runtime they never use.
+- The daemon needs multi-thread; the CLI client typically wants
+  current-thread; building both forks code paths.
+
+Mitigations:
+
+- Lazy runtime construction. The runtime is built on first await,
+  not in `main()`. The CLI startup path stays sync until the
+  transport scheme is resolved.
+- Mode-specific runtimes:
+
+  | Caller | Runtime | Worker count |
+  |--------|---------|--------------|
+  | CLI local-only | none | n/a |
+  | CLI over SSH (sync facade) | none | n/a |
+  | CLI over SSH (async-ssh) | current-thread | 1 |
+  | CLI over `rsync://` | current-thread | 1 |
+  | Daemon | multi-thread | `num_cpus::get()` |
+
+- One CI gate covers it: `oc-rsync --version` startup must not
+  regress by more than 10ms (section 9.5). A second CI gate
+  asserts the local-only transfer path never instantiates a
+  tokio runtime, by checking that
+  `tokio::runtime::Runtime::new` is not reached on the
+  local-to-local benchmark trace.
+- Documentation: the user-facing runbook lists the runtime cost
+  per mode so distributors can make an informed choice.
+
+The end-state: tokio runs only when an async-capable transport or
+the daemon needs it; CLI local-only stays runtime-free.
+
 ## 10. Open Questions and Tracked Tasks
 
 ### 10.1 Open questions
