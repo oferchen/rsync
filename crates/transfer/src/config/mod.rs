@@ -287,7 +287,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `clientserver.c:rsync_module()` — builds `daemon_filter_list` from
+    /// - `clientserver.c:rsync_module()` - builds `daemon_filter_list` from
     ///   `lp_filter()`, `lp_include()`, `lp_exclude()`, `lp_include_from()`,
     ///   `lp_exclude_from()` before the transfer starts.
     pub daemon_filter_rules: Vec<FilterRuleWireFormat>,
