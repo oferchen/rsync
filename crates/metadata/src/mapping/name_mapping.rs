@@ -69,8 +69,9 @@ impl NameMapping {
 
     /// Finds the first matching rule for the given identifier.
     ///
-    /// Caches the name lookup result across rule evaluations to avoid
-    /// redundant system calls.
+    /// Rules are evaluated in declaration order - first match wins. The
+    /// associated name is looked up at most once per call and cached across
+    /// rule evaluations to avoid redundant system calls.
     pub(super) fn resolve_rule(&self, identifier: u32) -> io::Result<Option<&MappingRule>> {
         if self.rules.is_empty() {
             return Ok(None);
