@@ -65,7 +65,7 @@ fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessComman
 /// upstream-compatible environment variables. If the command exits non-zero,
 /// returns an error indicating the connection should be denied.
 ///
-/// Upstream: `clientserver.c` — `early_exec()` runs early in the connection,
+/// Upstream: `clientserver.c` - `early_exec()` runs early in the connection,
 /// before authentication and argument exchange.
 fn run_early_exec(
     command: &str,
@@ -112,7 +112,7 @@ fn run_early_exec(
 /// where `write_buf(write_fd, early_input, early_input_len)` pipes client-sent
 /// early-input data to the pre-xfer exec script.
 ///
-/// Upstream: `clientserver.c` — `pre_exec()` / `write_pre_exec_args()` runs
+/// Upstream: `clientserver.c` - `pre_exec()` / `write_pre_exec_args()` runs
 /// the command and pipes early-input data to its stdin.
 fn run_pre_xfer_exec(
     command: &str,
@@ -132,7 +132,7 @@ fn run_pre_xfer_exec(
     let mut child = cmd.spawn()?;
 
     // Pipe early-input data to the child's stdin, then close it.
-    // upstream: clientserver.c:583-584 — write_buf(write_fd, early_input, early_input_len)
+    // upstream: clientserver.c:583-584 - write_buf(write_fd, early_input, early_input_len)
     if let Some(data) = early_input {
         if let Some(mut stdin) = child.stdin.take() {
             // Best-effort write; ignore broken pipe if the child exits early.
@@ -172,7 +172,7 @@ fn run_pre_xfer_exec(
 /// set to the transfer's exit code. Failures are logged but do not change the
 /// transfer exit status.
 ///
-/// Upstream: `clientserver.c` — `post_exec()` runs the command after the
+/// Upstream: `clientserver.c` - `post_exec()` runs the command after the
 /// transfer completes, regardless of success or failure.
 fn run_post_xfer_exec(
     command: &str,

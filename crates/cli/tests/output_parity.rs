@@ -244,7 +244,7 @@ fn itemize_new_file_format() {
 
 #[test]
 fn itemize_unchanged_file_format() {
-    // upstream: log.c:735-744 — all-dots collapse to spaces for '.', 'h', 'c' update types
+    // upstream: log.c:735-744 - all-dots collapse to spaces for '.', 'h', 'c' update types
     let change = ItemizeChange::new()
         .with_update_type(UpdateType::NotUpdated)
         .with_file_type(FileType::RegularFile);

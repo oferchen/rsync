@@ -445,7 +445,7 @@ fn modify_window_with_update_skips_when_dest_newer_within_window_despite_size_di
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
-    // Different sizes — but --update should still skip because dest is newer
+    // Different sizes - but --update should still skip because dest is newer
     fs::write(&source, b"source data").expect("write source");
     fs::write(&destination, b"dest").expect("write dest");
 
@@ -562,7 +562,7 @@ fn modify_window_with_update_skips_when_source_slightly_newer_within_window() {
 }
 
 /// When source is newer than dest by exactly the window, `--update` does
-/// NOT skip — the source is definitively newer.
+/// NOT skip - the source is definitively newer.
 /// upstream: `source - dest = 2`, NOT `< 2` -> proceed with copy
 #[test]
 fn modify_window_with_update_copies_when_source_at_exact_window_boundary() {

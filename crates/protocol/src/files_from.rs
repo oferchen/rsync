@@ -26,12 +26,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `io.c:forward_filesfrom_data()` — reads from local fd and writes to socket
-//! - `io.c:start_filesfrom_forwarding()` — initializes forwarding state
-//! - `io.c:read_line()` (RL_CONVERT branch) — reader-side iconv
-//! - `compat.c:799-806` — `filesfrom_convert` gating (`protect_args && files_from`)
-//! - `flist.c:send_file_list()` — sender reads filenames from `filesfrom_fd`
-//! - `options.c:server_options()` — sends `--files-from` args to server
+//! - `io.c:forward_filesfrom_data()` - reads from local fd and writes to socket
+//! - `io.c:start_filesfrom_forwarding()` - initializes forwarding state
+//! - `io.c:read_line()` (RL_CONVERT branch) - reader-side iconv
+//! - `compat.c:799-806` - `filesfrom_convert` gating (`protect_args && files_from`)
+//! - `flist.c:send_file_list()` - sender reads filenames from `filesfrom_fd`
+//! - `options.c:server_options()` - sends `--files-from` args to server
 
 use std::borrow::Cow;
 use std::io::{self, Read, Write};
@@ -49,13 +49,13 @@ use crate::iconv::FilenameConverter;
 /// When `iconv` is `Some`, each NUL-separated entry is transcoded with
 /// [`FilenameConverter::local_to_remote`] before being written to the wire,
 /// mirroring upstream `forward_filesfrom_data`'s `iconvbufs(ic_send, ...)`
-/// call. When `iconv` is `None`, bytes are forwarded verbatim — equivalent
+/// call. When `iconv` is `None`, bytes are forwarded verbatim - equivalent
 /// to upstream's `ic_send == (iconv_t)-1` case.
 ///
 /// # Upstream Reference
 ///
-/// - `io.c:forward_filesfrom_data()` — the core forwarding loop
-/// - `compat.c:799-806` — `filesfrom_convert` gating predicate
+/// - `io.c:forward_filesfrom_data()` - the core forwarding loop
+/// - `compat.c:799-806` - `filesfrom_convert` gating predicate
 pub fn forward_files_from<R: Read, W: Write>(
     reader: &mut R,
     writer: &mut W,
@@ -76,7 +76,7 @@ pub fn forward_files_from<R: Read, W: Write>(
 
         let chunk = &mut buf[..n];
 
-        // upstream: io.c:397-403 — transform CR and/or LF into '\0'.
+        // upstream: io.c:397-403 - transform CR and/or LF into '\0'.
         if !eol_nulls {
             for byte in chunk.iter_mut() {
                 if *byte == b'\n' || *byte == b'\r' {
@@ -92,7 +92,7 @@ pub fn forward_files_from<R: Read, W: Write>(
                     current_entry.clear();
                     last_emitted_nul = true;
                 }
-                // upstream: io.c:456-482 — collapse runs of consecutive '\0'.
+                // upstream: io.c:456-482 - collapse runs of consecutive '\0'.
             } else {
                 current_entry.push(byte);
             }
@@ -106,7 +106,7 @@ pub fn forward_files_from<R: Read, W: Write>(
         last_emitted_nul = true;
     }
 
-    // upstream: io.c:379 — write_buf(iobuf.out_fd, "\0\0", ff_lastchar ? 2 : 1).
+    // upstream: io.c:379 - write_buf(iobuf.out_fd, "\0\0", ff_lastchar ? 2 : 1).
     if last_emitted_nul {
         writer.write_all(b"\0")?;
     } else {
@@ -147,7 +147,7 @@ fn write_filesfrom_entry<W: Write>(
 /// [`FilenameConverter::remote_to_local`] before being decoded into a
 /// `String`, mirroring upstream `read_line(RL_CONVERT)`'s
 /// `iconvbufs(ic_recv, ...)` call. When `iconv` is `None`, wire bytes are
-/// decoded verbatim — equivalent to upstream's `ic_recv == (iconv_t)-1`
+/// decoded verbatim - equivalent to upstream's `ic_recv == (iconv_t)-1`
 /// case.
 ///
 /// This is used by the sender process to receive the file list from the
@@ -155,10 +155,10 @@ fn write_filesfrom_entry<W: Write>(
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2262` — `read_line(filesfrom_fd, fbuf, sizeof fbuf, rl_flags)`
+/// - `flist.c:2262` - `read_line(filesfrom_fd, fbuf, sizeof fbuf, rl_flags)`
 ///   with `RL_EOL_NULLS` set when `reading_remotely`
-/// - `io.c:read_line()` (RL_CONVERT branch) — `iconvbufs(ic_recv, ...)`
-/// - `compat.c:799-806` — `filesfrom_convert` gating predicate
+/// - `io.c:read_line()` (RL_CONVERT branch) - `iconvbufs(ic_recv, ...)`
+/// - `compat.c:799-806` - `filesfrom_convert` gating predicate
 pub fn read_files_from_stream<R: Read>(
     reader: &mut R,
     iconv: Option<&FilenameConverter>,
@@ -170,7 +170,7 @@ pub fn read_files_from_stream<R: Read>(
     loop {
         let n = reader.read(&mut byte_buf)?;
         if n == 0 {
-            // Unexpected EOF — flush any pending entry then return.
+            // Unexpected EOF - flush any pending entry then return.
             if !current.is_empty() {
                 push_decoded_filename(&mut filenames, &current, iconv);
                 current.clear();
@@ -204,7 +204,7 @@ fn push_decoded_filename(out: &mut Vec<String>, raw: &[u8], iconv: Option<&Filen
     let bytes: Cow<'_, [u8]> = match iconv {
         Some(converter) => match converter.remote_to_local(raw) {
             Ok(cow) => cow,
-            // upstream: ICB_INCLUDE_BAD — keep the bad bytes rather than abort.
+            // upstream: ICB_INCLUDE_BAD - keep the bad bytes rather than abort.
             Err(_) => Cow::Borrowed(raw),
         },
         None => Cow::Borrowed(raw),

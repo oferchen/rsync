@@ -90,7 +90,7 @@ fn decide_entry_action(
     keep_name: &mut bool,
 ) -> Result<EntryAction, LocalCopyError> {
     if !context.allows(relative_path, effective_type.is_dir()) {
-        // upstream: flist.c:flist_sort_and_clean() — when -m is active,
+        // upstream: flist.c:flist_sort_and_clean() - when -m is active,
         // directories excluded by non-dir-specific rules are still traversed
         // so that file-level include rules can rescue their contents.
         if effective_type.is_dir()
@@ -183,7 +183,7 @@ pub(crate) fn plan_directory_entries<'a>(
         let entry_metadata = &entry.metadata;
         let entry_type = entry_metadata.file_type();
 
-        // upstream: flist.c:make_file() — skip entries with bogus zero st_mode
+        // upstream: flist.c:make_file() - skip entries with bogus zero st_mode
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
@@ -416,7 +416,7 @@ fn plan_directory_entries_with_prefetch<'a>(
         let entry_metadata = &entry.metadata;
         let entry_type = entry_metadata.file_type();
 
-        // upstream: flist.c:make_file() — skip entries with bogus zero st_mode
+        // upstream: flist.c:make_file() - skip entries with bogus zero st_mode
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;

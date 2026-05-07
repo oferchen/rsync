@@ -10,7 +10,7 @@
 //! - `flist.c`: `static char lastname[MAXPATHLEN]` and `static int*` state variables
 //!   used across `send_file_entry()` / `recv_file_entry()` calls
 
-/// upstream: rsync.h `MAXPATHLEN` — maximum path length for file list name compression.
+/// upstream: rsync.h `MAXPATHLEN` - maximum path length for file list name compression.
 const MAXPATHLEN: usize = 4096;
 
 /// Compression state for sequential file list processing.
