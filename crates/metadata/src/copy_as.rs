@@ -17,9 +17,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync.c:do_as_root()` — switches euid/egid before privileged operations
-//! - `rsync.c:undo_as_root()` — restores original euid/egid
-//! - `main.c` — `--copy-as` parsing and initial identity resolution
+//! - `rsync.c:do_as_root()` - switches euid/egid before privileged operations
+//! - `rsync.c:undo_as_root()` - restores original euid/egid
+//! - `main.c` - `--copy-as` parsing and initial identity resolution
 
 use std::ffi::OsStr;
 use std::io;
@@ -179,7 +179,7 @@ impl Drop for CopyAsGuard {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:do_as_root()` — same ordering: egid first, then euid
+/// - `rsync.c:do_as_root()` - same ordering: egid first, then euid
 #[cfg(unix)]
 #[allow(unsafe_code)]
 pub fn switch_effective_ids(ids: &CopyAsIds) -> io::Result<CopyAsGuard> {

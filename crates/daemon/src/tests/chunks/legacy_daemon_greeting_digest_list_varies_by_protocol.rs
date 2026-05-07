@@ -1,6 +1,6 @@
 /// Protocol 32 greeting includes all five supported digest algorithms.
 ///
-/// upstream: csprotocol.txt — protocol 32 requires the digest list and all
+/// upstream: csprotocol.txt - protocol 32 requires the digest list and all
 /// algorithms introduced through protocol 31 (SHA-512, SHA-256, SHA-1) are
 /// present alongside MD5 and MD4.
 #[test]
@@ -46,10 +46,10 @@ fn legacy_daemon_greeting_protocol_31_includes_all_digests() {
     );
 }
 
-/// Protocol 30 greeting includes only MD5 and MD4 — SHA-family digests were
+/// Protocol 30 greeting includes only MD5 and MD4 - SHA-family digests were
 /// not available before protocol 31.
 ///
-/// upstream: csprotocol.txt — protocol 30-31 default to "md5" when the digest
+/// upstream: csprotocol.txt - protocol 30-31 default to "md5" when the digest
 /// list is absent.
 #[test]
 fn legacy_daemon_greeting_protocol_30_includes_md5_and_md4_only() {

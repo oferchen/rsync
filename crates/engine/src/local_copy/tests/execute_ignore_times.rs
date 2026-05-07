@@ -299,7 +299,7 @@ fn ignore_times_with_size_only_skips_same_size() {
         )
         .expect("copy succeeds");
 
-    // size_only wins over ignore_times — file is NOT transferred
+    // size_only wins over ignore_times - file is NOT transferred
     assert_eq!(summary.files_copied(), 0);
     assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(
@@ -341,7 +341,7 @@ fn size_only_wins_over_ignore_times_with_same_content() {
         )
         .expect("copy with ignore_times");
 
-    // size_only wins over ignore_times — file is NOT transferred
+    // size_only wins over ignore_times - file is NOT transferred
     assert_eq!(summary_with.files_copied(), 0);
     assert_eq!(fs::read(&destination).expect("read dest"), content);
 }

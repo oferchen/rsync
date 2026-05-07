@@ -2527,7 +2527,7 @@ fn test_choose_checksum_server_picks_first_client_match() {
 #[test]
 fn test_choose_checksum_client_picks_best_local_preference() {
     // Client iterates its own local list, picks first item also in server's list.
-    // upstream: compat.c:349-354 — client finds lowest local position among matches.
+    // upstream: compat.c:349-354 - client finds lowest local position among matches.
     // Server sends: md5 xxh128 xxh3
     // Client supports: xxh128 xxh3 xxh64 md5 md4 sha1 none
     // Client iterates local list: xxh128 is first local item in server's list → picks xxh128

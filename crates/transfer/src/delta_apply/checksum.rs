@@ -1,15 +1,14 @@
 //! Checksum verification for delta transfer integrity.
 //!
-//! Uses enum dispatch for zero-allocation runtime algorithm selection.
-//! Mirrors upstream rsync's checksum verification in `receiver.c`.
+//! upstream: `receiver.c` end-of-file digest verification.
 
 use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
-/// Checksum verifier for delta transfer integrity verification.
+/// Whole-file checksum verifier with enum dispatch for zero-allocation runtime
+/// algorithm selection.
 ///
-/// Uses enum dispatch for zero-allocation runtime algorithm selection.
-/// Mirrors upstream rsync's checksum verification in `receiver.c`.
+/// Mirrors upstream rsync's whole-file checksum verification in `receiver.c`.
 pub enum ChecksumVerifier {
     /// No checksum - `CSUM_NONE` negotiated. 1-byte placeholder digest
     /// matching upstream `receiver.c` behaviour.

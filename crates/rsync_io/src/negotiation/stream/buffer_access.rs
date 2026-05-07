@@ -28,7 +28,7 @@ impl<R> NegotiatedStream<R> {
     /// The helper mirrors [`Self::buffered`] but allocates a new vector sized exactly for the
     /// captured transcript. It reserves the necessary capacity via [`Vec::try_reserve_exact`]
     /// internally, propagating allocation failures as [`TryReserveError`]. Callers that need to own
-    /// the replay bytes—for example to stash them in a log or retry a handshake—can use this method
+    /// the replay bytes-for example to stash them in a log or retry a handshake-can use this method
     /// without first preparing a scratch buffer.
     ///
     /// # Examples

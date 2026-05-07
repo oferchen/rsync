@@ -1713,7 +1713,7 @@ fn each_ascii_printable_separately() {
         }
     }
 
-    // Count actual files on disk — on case-insensitive filesystems (default
+    // Count actual files on disk - on case-insensitive filesystems (default
     // macOS APFS) A.txt and a.txt are the same file, so the count is lower.
     let actual_files: usize = fs::read_dir(&root).unwrap().count();
 

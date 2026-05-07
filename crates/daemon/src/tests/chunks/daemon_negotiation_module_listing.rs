@@ -44,8 +44,8 @@ fn daemon_negotiation_module_list_sends_capabilities_before_ok() {
         "Expected CAP response, got: {line}"
     );
 
-    // upstream: no @RSYNCD: OK before module listing — go straight to modules.
-    // Read module listing — upstream: clientserver.c:1254 uses %-15s\t%s\n format
+    // upstream: no @RSYNCD: OK before module listing - go straight to modules.
+    // Read module listing - upstream: clientserver.c:1254 uses %-15s\t%s\n format
     line.clear();
     reader.read_line(&mut line).expect("module listing");
     assert_eq!(line, "test           \t\n", "Expected %-15s aligned module, got: {line}");
@@ -176,7 +176,7 @@ fn daemon_negotiation_module_list_includes_comments() {
     line.clear();
     reader.read_line(&mut line).expect("module");
 
-    // upstream: clientserver.c:1254 — %-15s\t%s\n format
+    // upstream: clientserver.c:1254 - %-15s\t%s\n format
     assert_eq!(
         line, "mymod          \tThis is a comment\n",
         "Module listing should use %-15s alignment, got: {line}"

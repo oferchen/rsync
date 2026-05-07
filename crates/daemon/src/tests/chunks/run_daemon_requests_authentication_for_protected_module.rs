@@ -71,7 +71,7 @@ fn run_daemon_requests_authentication_for_protected_module() {
     stream.write_all(b"\n").expect("send empty credentials");
     stream.flush().expect("flush empty credentials");
 
-    // upstream: clientserver.c:762 — auth failure sends
+    // upstream: clientserver.c:762 - auth failure sends
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("denied message");
