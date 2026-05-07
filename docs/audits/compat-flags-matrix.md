@@ -1,107 +1,373 @@
-# Compatibility Flags Matrix - Internal Audit
+# Compatibility Flags Matrix vs Upstream rsync 3.4.1
 
-This audit traces fifteen CLI flags that influence protocol behaviour through
-our three-layer pipeline:
+Task #2106. Audit of the protocol-30+ compatibility-flag bitfield
+(`compat_flags`), the `-e.<chars>` capability string, and the CLI options
+that drive both. This document supersedes the prior internal-pipeline
+matrix; that material is summarised in the appendix below.
 
-1. **Parse site** in `crates/cli/` - where Clap registers the long flag and
-   the parser collects its boolean / string value.
-2. **Propagation field** in `crates/core/src/` - where the flag is stored on
-   `ClientConfig` (built via `ClientConfigBuilder`) and forwarded to runtime
-   layers.
-3. **Runtime use site** in `crates/transfer/` or `crates/engine/` - where the
-   flag actually gates work (skipping files, choosing write strategies,
-   placing partials, etc.).
+Sources:
 
-The "Status" column reflects only this internal wiring:
+- Upstream `target/interop/upstream-src/rsync-3.4.1/compat.c` lines
+  117-125 (`CF_*` bit definitions), 161-179 (`set_allow_inc_recurse`),
+  710-783 (compat-flag exchange and post-exchange variable wiring).
+- Upstream `target/interop/upstream-src/rsync-3.4.1/options.c` lines
+  113 (`allow_inc_recurse = 1`), 614-617 (`--inc-recursive` /
+  `--no-inc-recursive` popt entries), 3003-3047 (`maybe_add_e_option`
+  capability string).
+- `crates/protocol/src/compatibility/flags.rs`
+  (`CompatibilityFlags` bitfield, varint codec).
+- `crates/protocol/src/compatibility/known.rs`
+  (`KnownCompatibilityFlag` enum, canonical `CF_*` names).
+- `crates/transfer/src/setup/capability.rs`
+  (`CAPABILITY_MAPPINGS`, `build_capability_string`,
+  `build_compat_flags_from_client_info`, `parse_client_info`,
+  `client_has_pre_release_v_flag`).
+- `crates/transfer/src/setup/compat.rs` (`write_compat_flags`,
+  `exchange_compat_flags_direct`).
+- `crates/transfer/src/setup/negotiator.rs` (`RsyncNegotiator`).
+- `crates/transfer/src/lib.rs` lines 413-470 (`allow_inc_recurse`
+  computation, post-exchange application of `CF_INPLACE_PARTIAL_DIR`
+  and `CF_AVOID_XATTR_OPTIM`).
+- `crates/core/src/client/remote/invocation/builder.rs` lines 169-194
+  and 458-576 (single-letter flag string + capability string for SSH).
+- `crates/core/src/client/remote/daemon_transfer/orchestration/arguments.rs`
+  line 155 (capability string for daemon transfers).
 
-- **OK** - all three layers present and connected by name; runtime checks
-  the propagated value.
-- **PARTIAL** - layers present but path is split / fan-out across multiple
-  runtime call sites that each reach the value differently, or the field
-  has separate sub-options (e.g. `--backup` plus `--backup-dir`/`--suffix`)
-  that each need their own propagation.
-- **TODO** - one of the three layers is missing or only consumed in a
-  surrounding helper without a direct runtime gate on the propagated field.
+## 1. Wire field
 
-This document is an internal pipeline audit. It does not cross-reference
-upstream rsync source.
+`compat_flags` is a `u32` bitfield exchanged after protocol negotiation
+on protocol >= 30. Upstream encodes it with `write_varint` (signed-i32
+varint) at `compat.c:738` and reads it with `read_varint` at
+`compat.c:740`. A pre-release client that advertises `'V'` instead of
+`'v'` triggers a single-byte `write_byte` path (`compat.c:733-736`)
+which we mirror in `crates/transfer/src/setup/compat.rs::write_compat_flags`.
 
-## Master matrix
+oc-rsync defines the bitfield in
+`crates/protocol/src/compatibility/flags.rs`:
 
-| Flag                     | CLI parse site (`crates/cli/`)                                                  | Core field (`crates/core/src/`)                                                    | Runtime use (`crates/transfer/` / `crates/engine/`)                                                                | Status  |
-|--------------------------|---------------------------------------------------------------------------------|------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|:-------:|
-| `--checksum`             | `frontend/command_builder/sections/build_base_command/transfer.rs:115-128`; collected at `frontend/arguments/parser/mod.rs:573` | `client/config/client/mod.rs:107` (`checksum: bool`); builder field `client/config/builder/mod.rs:178`, builder setter `client/config/builder/validation.rs:8` | `engine/src/local_copy/options/integrity.rs:115` (`checksum_enabled`), gated at `engine/src/local_copy/executor/file/copy/mod.rs:168` and `executor/directory/recursive/checksum.rs:87`; transfer-side flag bit `transfer/src/flags.rs:40,232` | OK      |
-| `--inplace`              | `frontend/command_builder/sections/transfer_behavior_options.rs:237`; collected at `frontend/arguments/parser/mod.rs:536` (tri-state) | `client/config/client/mod.rs:150` (`inplace: bool`); builder field `client/config/builder/mod.rs:228`, setter `client/config/builder/partials.rs:46` | `engine/src/local_copy/options/staging.rs:180` (`inplace_enabled`); call sites at `engine/src/local_copy/executor/file/copy/transfer/execute.rs:68,131,345`, `executor/file/copy/transfer/special.rs:49-53`; transfer-side `transfer/src/config/mod.rs:30` and `transfer/src/disk_commit/process.rs:232,313` (`begin.is_inplace`) | OK      |
-| `--partial`              | `frontend/command_builder/sections/build_base_command/transfer.rs:292`; collected at `frontend/arguments/parser/mod.rs:437,514` | `client/config/client/mod.rs:143` (`partial: bool`); builder field `client/config/builder/mod.rs:221`, setter `client/config/builder/partials.rs:9` | `engine/src/local_copy/options/staging.rs:153` (`partial_enabled`); transfer-side `transfer/src/flags.rs:71,247`; engine `executor/file/partial.rs:59` (`from_options`) and write-strategy gating `executor/file/copy/transfer/write_strategy.rs:73,81` | OK      |
-| `--partial-dir`          | `frontend/command_builder/sections/transfer_behavior_options.rs:7`; collected at `frontend/arguments/parser/mod.rs:502-517` | `client/config/client/mod.rs:144` (`partial_dir: Option<PathBuf>`); builder field `client/config/builder/mod.rs:222`, setter `client/config/builder/partials.rs:25` (`partial_directory`) | `engine/src/local_copy/options/staging.rs:97-99,157-158` (`partial_directory_path`); call sites `engine/src/local_copy/executor/cleanup.rs:67-68`, `executor/file/paths.rs:33-43` (`partial_directory_destination_path`); validation `transfer/src/config/builder.rs:441-444` (`--append` vs `--partial-dir`) | OK      |
-| `--whole-file`           | `frontend/command_builder/sections/transfer_behavior_options.rs:72`; collected at `frontend/arguments/parser/mod.rs:545` (tri-state) | `client/config/client/mod.rs:106` (`whole_file: Option<bool>`); builder field `client/config/builder/mod.rs:177`, setter `client/config/builder/performance.rs:85,96` | `transfer/src/flags.rs:62,243`; basis selection `transfer/src/receiver/basis.rs:76,229`; pipeline gating `transfer/src/receiver/transfer/pipeline.rs:175,198,217`; receiver `transfer/src/receiver/mod.rs:321` | OK      |
-| `--append`               | `frontend/command_builder/sections/transfer_behavior_options.rs:102`; collected at `frontend/arguments/parser/mod.rs:537-543` (with `append-verify` shortcut) | `client/config/client/mod.rs:151` (`append: bool`); builder field `client/config/builder/mod.rs:229`, setter `client/config/builder/partials.rs:54` | `transfer/src/flags.rs:91`; receiver `transfer/src/transfer_ops/mod.rs:222,228` (`append_offset`), `transfer/src/transfer_ops/request.rs:133`; pipeline `transfer/src/receiver/transfer/pipeline.rs:92`; engine staging `engine/src/local_copy/executor/file/append.rs:29-63`; conflict validation `transfer/src/config/builder.rs:441` | OK      |
-| `--append-verify`        | `frontend/command_builder/sections/transfer_behavior_options.rs:120`; collected at `frontend/arguments/parser/mod.rs:537,819` | `client/config/client/mod.rs:152` (`append_verify: bool`); builder field `client/config/builder/mod.rs:230`, setter `client/config/builder/partials.rs:65` | `engine/src/local_copy/options/staging.rs:127,193` (`append_verify_enabled`); call sites `engine/src/local_copy/executor/file/append.rs:63`, `executor/file/copy/transfer/execute.rs:66,269`, `executor/file/copy/mod.rs:172,204`. Not exposed to the transfer-pipeline daemon path - verified at engine staging only. | PARTIAL |
-| `--update`               | `frontend/command_builder/sections/build_base_command/transfer.rs:178`; collected at `frontend/arguments/parser/mod.rs:671` | `client/config/client/mod.rs:115` (`update: bool`); builder field `client/config/builder/mod.rs:186`, setter `client/config/builder/selection.rs:26` | `engine/src/local_copy/options/integrity.rs:91-92,172` (`update`/`update_enabled`); call sites `engine/src/local_copy/context_impl/options.rs:407`, `executor/file/copy/dry_run.rs:45`, `executor/file/copy/existing.rs:25`; transfer-side `transfer/src/flags.rs:73` | OK      |
-| `--modify-window`        | `frontend/command_builder/sections/build_base_command/transfer.rs:185`; collected at `frontend/arguments/parser/mod.rs:193` | `client/config/client/mod.rs:74` (`modify_window: Option<u64>`); builder field `client/config/builder/mod.rs:151`, setter `client/config/builder/selection.rs:10` | `engine/src/local_copy/options/integrity.rs:109,182-183` (`modify_window`); call sites `engine/src/local_copy/context_impl/state.rs:359`, `executor/file/copy/dry_run.rs:50`, `executor/file/copy/transfer/execute.rs:604`, `executor/file/copy/existing.rs:30`, `executor/reference.rs:96`; comparison engine `executor/file/comparison.rs:31,38,113,163` | OK      |
-| `--size-only`            | `frontend/command_builder/sections/build_base_command/transfer.rs:151`; collected at `frontend/arguments/parser/mod.rs:574` | `client/config/client/mod.rs:110` (`size_only: bool`); builder field `client/config/builder/mod.rs:181`, setter `client/config/builder/selection.rs:14` | `engine/src/local_copy/options/integrity.rs:44,135` (`size_only`/`size_only_enabled`); validation `engine/src/local_copy/options/builder/validation.rs:10-12` (mutually exclusive with `--checksum`); call sites `engine/src/local_copy/executor/file/comparison.rs:109,135,154`, `executor/file/copy/links.rs:205`, `executor/file/copy/transfer/execute.rs:600` | OK      |
-| `--ignore-existing`      | `frontend/command_builder/sections/build_base_command/transfer.rs:164`; collected at `frontend/arguments/parser/mod.rs:669` | `client/config/client/mod.rs:112` (`ignore_existing: bool`); builder field `client/config/builder/mod.rs:183`, setter `client/config/builder/selection.rs:18` | `engine/src/local_copy/options/integrity.rs:60,148` (`ignore_existing`/`ignore_existing_enabled`); call sites `engine/src/local_copy/executor/file/copy/dry_run.rs:67`, `executor/file/copy/existing.rs:48` | OK      |
-| `--existing`             | `frontend/command_builder/sections/build_base_command/transfer.rs:170`; collected at `frontend/arguments/parser/mod.rs:670` | `client/config/client/mod.rs:113` (`existing_only: bool`); builder field reachable via builder selection setters `client/config/builder/selection.rs` (`existing_only`) | `engine/src/local_copy/options/integrity.rs:68,154` (`existing_only`/`existing_only_enabled`); call sites `engine/src/local_copy/executor/file/copy/mod.rs:114`, `executor/directory/recursive/mod.rs:82`, `executor/special/device.rs:85`, `executor/special/symlink.rs:177`, `executor/special/fifo.rs:87` | OK      |
-| `--backup`               | `frontend/command_builder/sections/transfer_behavior_options.rs:372`; collected at `frontend/arguments/parser/mod.rs:263-267` (auto-enabled by `--backup-dir` / `--suffix`) | `client/config/client/mod.rs:146-148` (`backup: bool`, `backup_dir: Option<PathBuf>`, `backup_suffix: Option<OsString>`); builder field `client/config/builder/mod.rs:224`, setter `client/config/builder/paths.rs:54` | `engine/src/local_copy/options/backup.rs:14,57` (`backup`/`backup_enabled`); engine state `engine/src/local_copy/context_impl/state.rs:466`; gating `engine/src/local_copy/executor/file/copy/transfer/execute.rs:610`; transfer-side wire bit `transfer/src/flags.rs:95`. The auxiliary `backup_dir` / `backup_suffix` fields propagate through the same builder but flow into a separate engine path (backup placement vs the boolean gate). | PARTIAL |
-| `--remove-source-files`  | `frontend/command_builder/sections/transfer_behavior_options.rs:88`; collected at `frontend/arguments/parser/mod.rs:534-535` (also accepts deprecated `--remove-sent-files`) | `client/config/client/mod.rs:75` (`remove_source_files: bool`); builder field `client/config/builder/mod.rs:152`, setter `client/config/builder/selection.rs:12` | `engine/src/local_copy/options/limits.rs:30,96-97` (`remove_source_files`/`remove_source_files_enabled`); engine context `engine/src/local_copy/context_impl/options.rs:352-353`; gating `engine/src/local_copy/executor/cleanup.rs:354` | OK      |
-| `--temp-dir`             | `frontend/command_builder/sections/transfer_behavior_options.rs:15`; collected at `frontend/arguments/parser/mod.rs:519-520` | `client/config/client/mod.rs:145` (`temp_directory: Option<PathBuf>`); builder field `client/config/builder/mod.rs:223`, setter `client/config/builder/partials.rs:37` (`temp_directory`) | `engine/src/local_copy/options/types.rs:174` (`temp_dir: Option<PathBuf>`); path helper `engine/src/local_copy/executor/file/paths.rs:61-68` (`temporary_destination_path`); guard `engine/src/local_copy/executor/file/guard.rs:147`; gating `engine/src/local_copy/executor/file/copy/transfer/execute.rs:138,349`, `executor/file/copy/transfer/write_strategy.rs:66,73,81,193,211` (`has_temp_directory`). Builder field name (`temp_directory`) differs from the engine struct field name (`temp_dir`) - both reach the same runtime decision but the rename is unobvious. | PARTIAL |
+| Constant                                       | Bit      | Upstream macro            |
+|------------------------------------------------|----------|---------------------------|
+| `CompatibilityFlags::INC_RECURSE`              | `1 << 0` | `CF_INC_RECURSE`          |
+| `CompatibilityFlags::SYMLINK_TIMES`            | `1 << 1` | `CF_SYMLINK_TIMES`        |
+| `CompatibilityFlags::SYMLINK_ICONV`            | `1 << 2` | `CF_SYMLINK_ICONV`        |
+| `CompatibilityFlags::SAFE_FILE_LIST`           | `1 << 3` | `CF_SAFE_FLIST`           |
+| `CompatibilityFlags::AVOID_XATTR_OPTIMIZATION` | `1 << 4` | `CF_AVOID_XATTR_OPTIM`    |
+| `CompatibilityFlags::CHECKSUM_SEED_FIX`        | `1 << 5` | `CF_CHKSUM_SEED_FIX`      |
+| `CompatibilityFlags::INPLACE_PARTIAL_DIR`      | `1 << 6` | `CF_INPLACE_PARTIAL_DIR`  |
+| `CompatibilityFlags::VARINT_FLIST_FLAGS`       | `1 << 7` | `CF_VARINT_FLIST_FLAGS`   |
+| `CompatibilityFlags::ID0_NAMES`                | `1 << 8` | `CF_ID0_NAMES`            |
 
-## Why three flags are PARTIAL
+`CompatibilityFlags::ALL_KNOWN` masks all nine bits; bits outside that
+mask round-trip via `from_bits` so future upstream additions are
+preserved on the wire even when oc-rsync cannot interpret them.
 
-- **`--append-verify`** - the verify variant only fans out into the engine
-  staging path (`local_copy::executor::file::append`) and is not consumed by
-  the daemon transfer pipeline. The plain `--append` path is what
-  `transfer/src/transfer_ops/mod.rs` uses. The verify-after-write step lives
-  exclusively on the local-copy side.
-- **`--backup`** - the boolean is wired straight through, but the related
-  options `--backup-dir` (`client/config/builder/paths.rs:54`,
-  `executor/file/copy/transfer/execute.rs:610`) and `--suffix` are separate
-  fields that travel to runtime independently. Auditors looking at "is
-  `--backup` plumbed?" must check three propagation fields, not one. Parser
-  also auto-promotes `backup = true` whenever `--backup-dir` or `--suffix`
-  is present without `--backup`, which is non-obvious from the field name.
-- **`--temp-dir`** - the builder setter is named `temp_directory` while the
-  engine struct names the field `temp_dir`. Same value, but `grep temp_dir`
-  in `crates/core/src` returns zero hits, which can mislead auditors. The
-  rename happens in `client/config/builder/mod.rs:317-end` during `build()`.
+The negotiation is unidirectional: only the server writes `compat_flags`
+(`compat.c:711-738`), the client reads. The single source of truth on
+our side is `transfer::setup::capability::CAPABILITY_MAPPINGS`, which
+mirrors `compat.c:712-734` row-by-row. Both
+`build_capability_string()` (what we advertise as `-e.<chars>`) and
+`build_compat_flags_from_client_info()` (what we set on the server when
+processing a client's `-e` argument) iterate the same table.
 
-## Tri-state vs binary flags
+## 2. Per-flag propagation
 
-Five of the audited flags are tri-state (positive / negative-with-`--no-X` /
-unset), parsed via `tri_state_flag_positive_first`:
+For each `CF_*` bit the entries below describe the client-side
+trigger, the server-side rule that turns the bit on, the runtime
+effect, and the matching oc-rsync code path.
 
-- `--checksum` / `--no-checksum` (parser line 573)
-- `--inplace` / `--no-inplace` (parser line 536)
-- `--whole-file` / `--no-whole-file` (parser line 545)
-- `--partial` / `--no-partial` (parser lines 437, 514)
+### CF_INC_RECURSE (`'i'`)
 
-These are stored as `Option<bool>` in the builder (or as `bool` after
-`unwrap_or(default)` resolution). `--whole-file` is the only one that stays
-`Option<bool>` all the way into `ClientConfig` (line 106), because the
-runtime needs to distinguish "user did not pass `--whole-file`" from "user
-passed `--no-whole-file`". The other tri-states collapse to `bool` at config
-build time.
+- Advertised when `allow_inc_recurse == 1`. Upstream initialises this
+  to `1` at `options.c:113` and clears it in `set_allow_inc_recurse`
+  (`compat.c:161-178`) when `--no-inc-recursive`/`--no-i-r` is set,
+  when recursion is off, when `--qsort` is in effect, or when a
+  receiver also asks for `--delete-before/-after`, `--delay-updates`,
+  or `--prune-empty-dirs`.
+- Server sets `compat_flags |= CF_INC_RECURSE` only if it advertised
+  `allow_inc_recurse` and the client-info string contains `'i'`
+  (`compat.c:712`).
+- Effect: `inc_recurse = 1`, the file list is exchanged in
+  incremental segments.
+- oc-rsync mapping: row `{ char: 'i', requires_inc_recurse: true }`
+  in `CAPABILITY_MAPPINGS`. The `allow_inc_recurse` predicate is
+  computed in `crates/transfer/src/lib.rs:416-419` and matches
+  upstream's gate (recursion required, `qsort` excluded, receiver
+  excludes `delete`/`prune_empty_dirs`).
 
-The rest are plain boolean flags or value-bearing options. Flags listed in
-the `--checksum` row use a separate `checksum-choice` value flag (parsed at
-`frontend/arguments/parser/mod.rs:577,596`) that is independent of the
-boolean `--checksum` gate audited here.
+### CF_SYMLINK_TIMES (`'L'`)
 
-## Cross-flag invariants enforced at config build time
+- Advertised whenever upstream is built with `CAN_SET_SYMLINK_TIMES`
+  (`options.c:3024`); the bit is then set unconditionally on the
+  server (`compat.c:713-715`).
+- Effect: senders may receive symlink mtimes; receivers honour
+  `lutimes`/`utimensat` for symlinks.
+- oc-rsync mapping: row `{ char: 'L', platform_ok: cfg!(unix) }` in
+  `CAPABILITY_MAPPINGS`. Windows clears the row (`platform_ok =
+  false`) so neither the capability char nor the bit is exchanged
+  there.
 
-These propagation-level checks prevent invalid combinations from reaching
-the runtime:
+### CF_SYMLINK_ICONV (`'s'`)
 
-- `--inplace` vs `--delay-updates` - `crates/core/src/client/config/builder/mod.rs:287`.
-- `--append` vs `--partial-dir` - `crates/transfer/src/config/builder.rs:441-444`.
-- `--size-only` vs `--checksum` - `crates/engine/src/local_copy/options/builder/validation.rs:10-12`.
-- `--append` implies `--inplace` - propagated through `client/config/builder/partials.rs:54`.
-- `--partial-dir` implies `--partial` - `client/config/builder/partials.rs:25-27`.
-- `--append-verify` implies `--append` - `client/config/builder/partials.rs:65-70`.
-- `--backup-dir` / `--suffix` imply `--backup` - parser auto-promotion at
-  `frontend/arguments/parser/mod.rs:266-267`.
+- Advertised iff upstream was built with `ICONV_OPTION` (gates the
+  `'s'` capability char at `options.c:3027` and the bit at
+  `compat.c:716-718`).
+- Effect: the sender re-encodes symlink targets via the negotiated
+  `--iconv` charset.
+- oc-rsync mapping: row `{ char: 's', requires_iconv: true }` in
+  `CAPABILITY_MAPPINGS`, gated by
+  `iconv_capability_compiled_in()` which evaluates
+  `cfg!(feature = "iconv")`. When the cargo feature is off, neither
+  the capability char nor the bit is exchanged.
 
-These chained implications make some flags unreachable individually:
-`--append-verify` always sets `append`; `--partial-dir` always sets
-`partial`. Any audit comparing "is `--X` set" must therefore consult the
-post-build `ClientConfig` getters, not the raw parser output.
+### CF_SAFE_FLIST (`'f'`)
+
+- Advertised unconditionally by upstream (`options.c:3029`).
+- Server sets the bit when the client advertised `'f'`
+  (`compat.c:719-720`).
+- Effect: receivers tolerate non-fatal I/O errors during file-list
+  generation and continue. Implicitly true when
+  `protocol_version >= 31` (`compat.c:775`).
+- oc-rsync mapping: row `{ char: 'f' }`, always advertised on
+  protocol >= 30 transfers.
+
+### CF_AVOID_XATTR_OPTIM (`'x'`)
+
+- Advertised unconditionally by upstream (`options.c:3030`).
+- Server sets the bit when the client advertised `'x'`
+  (`compat.c:721-722`).
+- Effect: gates `want_xattr_optim` on protocol 31+
+  (`compat.c:746`); when missing, both peers fall back to xattr-free
+  behaviour. oc-rsync also uses absence of this bit on the server side
+  as the signal that the remote daemon was built without xattr
+  support, downgrading `--xattrs` with a warning rather than aborting
+  (`crates/transfer/src/lib.rs:449-463`).
+- oc-rsync mapping: row `{ char: 'x' }`, always advertised.
+
+### CF_CHKSUM_SEED_FIX (`'C'`)
+
+- Advertised unconditionally by upstream (`options.c:3031`).
+- Server sets the bit when the client advertised `'C'`
+  (`compat.c:723-724`).
+- Effect: drives `proper_seed_order = 1` (`compat.c:747`), which
+  selects the corrected MD5 seed feed order on protocol 30+.
+- oc-rsync mapping: row `{ char: 'C' }`, always advertised.
+
+### CF_INPLACE_PARTIAL_DIR (`'I'`)
+
+- Advertised unconditionally by upstream (`options.c:3032`).
+- Server sets the bit when the client advertised `'I'`
+  (`compat.c:725-726`).
+- Effect: when the receiver has `--partial-dir` configured, basis
+  files coming from the partial directory are opened with the
+  per-file `inplace = 1` shortcut (`compat.c:777-778`,
+  `receiver.c:797`).
+- oc-rsync mapping: row `{ char: 'I' }`. Post-exchange, we apply the
+  same one-line gate at
+  `crates/transfer/src/lib.rs:442-447`: if the negotiated flags
+  contain `INPLACE_PARTIAL_DIR` *and* `config.has_partial_dir`, we set
+  `config.write.inplace_partial = true`.
+
+### CF_VARINT_FLIST_FLAGS (`'v'` / pre-release `'V'`)
+
+- Advertised unconditionally by upstream as `'v'`
+  (`options.c:3033`); pre-release builds used `'V'`, which we still
+  recognise for backward compatibility.
+- Server sets the bit when the client advertised `'v'`
+  (`compat.c:729-732`) and additionally enables
+  `do_negotiated_strings`. The pre-release `'V'` path forces the bit
+  via single-byte write (`compat.c:733-736`).
+- Effect: file-list xfer-flags are written as varints
+  (`xfer_flags_as_varint = 1`, `compat.c:748`); the same bit also
+  gates the `negotiate_capabilities` vstring exchange.
+- oc-rsync mapping: row `{ char: 'v' }`. The `'V'` recognition lives
+  in `transfer::setup::capability::client_has_pre_release_v_flag` and
+  `transfer::setup::compat::write_compat_flags`, which forces the bit
+  and switches to the single-byte encoding when the client advertises
+  `'V'`.
+
+### CF_ID0_NAMES (`'u'`)
+
+- Advertised unconditionally by upstream (`options.c:3034`).
+- Server sets the bit when the client advertised `'u'`
+  (`compat.c:727-728`); drives `xmit_id0_names = 1`
+  (`compat.c:749`).
+- Effect: the file list transmits the user/group names for uid 0 and
+  gid 0 even when `--numeric-ids` is not in use.
+- oc-rsync mapping: row `{ char: 'u' }`, always advertised.
+
+## 3. CLI option to compat-flag table
+
+The "compat flag" column lists the `CF_*` bit (or post-exchange
+runtime variable) that the option controls. `-` means the option
+does not affect the compat-flag bitfield - it is forwarded as a
+separate single-letter flag in `build_flag_string` or as a
+`--long-form` argument in `append_long_form_args`.
+
+| CLI option              | Wire surface                       | Compat flag / variable touched      | Notes                                                                                                |
+|-------------------------|------------------------------------|-------------------------------------|------------------------------------------------------------------------------------------------------|
+| `--checksum` / `-c`     | `'c'` in single-letter flags       | -                                   | builder.rs:510-512. Independent of `compat_flags`; checksum negotiation rides on `'v'`.              |
+| `--checksum-choice`     | `--checksum-choice=ALGO` long-form | -                                   | Drives the vstring exchange gated by `CF_VARINT_FLIST_FLAGS`, not a bit itself.                      |
+| `--checksum-seed=N`     | `--checksum-seed=N` long-form      | influences `CF_CHKSUM_SEED_FIX` use | The bit is always advertised; this option only changes the seed value.                               |
+| `--inplace`             | `--inplace` long-form              | `CF_INPLACE_PARTIAL_DIR` (consumer) | builder.rs:308. Bit is always advertised; receiver only honours it when `--partial-dir` set.         |
+| `--partial`             | `'P'` in single-letter flags       | -                                   | builder.rs:556. Implies `--partial-dir=.~tmp~` only when `--partial-dir` is unset.                   |
+| `--partial-dir=DIR`     | `--partial-dir=DIR` long-form      | `CF_INPLACE_PARTIAL_DIR` (consumer) | Sets `config.has_partial_dir`, which the post-exchange gate consumes.                                |
+| `--whole-file` / `-W`   | `'W'` in single-letter flags       | -                                   | builder.rs:540. `--no-whole-file` is silent (matches upstream).                                      |
+| `--append`              | `--append` long-form               | -                                   | builder.rs:312.                                                                                      |
+| `--append-verify`       | `--append-verify` long-form        | -                                   | builder.rs:314.                                                                                      |
+| `--hard-links` / `-H`   | `'H'` in single-letter flags       | -                                   | builder.rs:513.                                                                                      |
+| `--acls` / `-A`         | `'A'` in single-letter flags       | -                                   | Gated on `feature = "acl"`. No dedicated `CF_*` flag exists; daemon refusal is via config.           |
+| `--xattrs` / `-X`       | `'X'` in single-letter flags       | `CF_AVOID_XATTR_OPTIM` (consumer)   | Gated on `feature = "xattr"`. Absent bit downgrades `--xattrs` with a warning.                       |
+| `--inc-recursive`       | `'i'` in `-e.<chars>`              | `CF_INC_RECURSE`                    | Sets `inc_recursive_send = true`; `allow_inc_recurse` predicate also requires `--recursive`.         |
+| `--no-inc-recursive`    | `'i'` suppressed in `-e.<chars>`   | `CF_INC_RECURSE` cleared            | Mirrors `compat.c:177` server-side override.                                                         |
+| `--iconv=CHARSET`       | `'s'` in `-e.<chars>`              | `CF_SYMLINK_ICONV`                  | Capability requires `feature = "iconv"`.                                                             |
+| `--numeric-ids`         | `--numeric-ids` long-form          | -                                   | Independent of `CF_ID0_NAMES`; numeric IDs disable name lookup but the bit still advertises uid/gid 0 names. |
+| `--delete[-…]`          | `--delete-before/during/after/delay` | `CF_INC_RECURSE` (gate)           | `delete_before/after`/`delay_updates` clear `allow_inc_recurse` on the receiver path.                |
+| `--prune-empty-dirs`    | `'m'` in single-letter flags       | `CF_INC_RECURSE` (gate)             | Receiver-side option that clears `allow_inc_recurse` (`compat.c:175`).                               |
+| `--qsort`               | (server-only)                      | `CF_INC_RECURSE` (gate)             | `compat.c:171`. Mirrored in `transfer/src/lib.rs:417`.                                               |
+| `--protocol=N`          | first-line `@RSYNCD:`              | suppresses `compat_flags` exchange  | Below 30 the whole compat phase is skipped (`compat.c:710`), so no bits are exchanged.               |
+
+The single-letter flag string is built in
+`crates/core/src/client/remote/invocation/builder.rs::build_flag_string`
+and the long-form arguments in `append_long_form_args` (same file,
+`options.c::server_options` order). The capability string itself is
+appended unconditionally on protocol >= 30 by
+`build_capability_string(self.config.inc_recursive_send())` at
+builder.rs:184-186 and by
+`build_capability_string(config.inc_recursive_send())` in
+`daemon_transfer/orchestration/arguments.rs:155`.
+
+## 4. Current capability string
+
+`build_capability_string` in
+`crates/transfer/src/setup/capability.rs:138-153` walks
+`CAPABILITY_MAPPINGS` and emits the characters in upstream order. With
+all features compiled and `allow_inc_recurse = true` the resulting
+string is:
+
+```
+-e.iLsfxCIvu
+```
+
+When the SSH client default applies (`inc_recursive_send = false`,
+which is the post-#3744 default in
+`crates/core/src/client/config/builder/mod.rs:381`) the `'i'` is
+suppressed and oc-rsync emits:
+
+```
+-e.LsfxCIvu
+```
+
+This matches the string referenced in `AGENTS.md` and
+`crates/core/src/client/remote/invocation/builder.rs:182-186`. On
+Windows the `'L'` is omitted (`platform_ok = false`); without the
+`iconv` cargo feature the `'s'` is omitted; the `'i'` is suppressed
+whenever `inc_recursive_send` is `false`.
+
+## 5. Gaps
+
+The compat-flag pipeline is consistent for the bits we currently
+support, but the propagation chain has the following gaps relative to
+upstream rsync 3.4.1:
+
+1. **`CF_INC_RECURSE` advertised only when `inc_recursive_send = true`.**
+   `crates/core/src/client/config/builder/mod.rs:381` defaults
+   `inc_recursive_send` to `false`, undoing PR #3557 in PR #3744 to
+   work around the v0.6.1 push regression on incremental-recursion
+   senders. Upstream defaults `allow_inc_recurse = 1`
+   (`options.c:113`) and clears it only in
+   `set_allow_inc_recurse`. Until the sender-side regression is
+   resolved, oc-rsync will not advertise `'i'` on push transfers
+   without the user passing `--inc-recursive`, which silently downgrades
+   wire compatibility (no `CF_INC_RECURSE`, no incremental file list).
+   Tracked: PR #3557 / PR #3744 history.
+
+2. **`--qsort` does not exist on the CLI.** Upstream's
+   `set_allow_inc_recurse` reads the global `use_qsort`
+   (`compat.c:171`). oc-rsync threads `config.qsort` through
+   `crates/transfer/src/lib.rs:417`, but nothing in
+   `crates/cli/src/frontend/command_builder/sections/build_base_command`
+   sets it. As a result the `qsort` arm of the gate is dead code from
+   the CLI side - we never get the upstream behaviour where
+   `--qsort` clears `CF_INC_RECURSE`.
+
+3. **`CF_SYMLINK_ICONV` advertised on protocol exchange but no iconv
+   transcoding pipeline.** The capability bit and `'s'` capability
+   character are gated on `cfg!(feature = "iconv")`. The current build
+   does not enable the feature in any default profile (no `iconv`
+   feature in `crates/transfer/Cargo.toml` default-features), so
+   `'s'` is never advertised and the bit is never set. `--iconv` is
+   accepted by the CLI but the corresponding wire behaviour
+   (`sender_symlink_iconv`, `compat.c:763-767`) is never engaged.
+   Tracked separately: `docs/audits/iconv-parse-deadend.md`.
+
+4. **No dedicated ACL compat flag.** Upstream has no `CF_ACL` bit;
+   ACL refusal flows through the daemon's `refuse options` machinery.
+   oc-rsync's pipeline mirrors this, but
+   `crates/transfer/src/lib.rs:467-470` documents the absence rather
+   than enforcing it. Clients pushing `--acls` to a daemon built
+   without `feature = "acl"` see the warning from
+   `clear_unsupported_features`, not the upstream "unknown option"
+   refusal. Documentation/behaviour mismatch only - no compat-flag
+   plumbing change is needed.
+
+5. **`--checksum-seed=0` is not distinguished from "unset" on the
+   wire.** `crates/transfer/src/setup/negotiator.rs:188-200`
+   regenerates the seed when the value is `Some(0)` or `None`,
+   matching upstream `options.c:835`. CLI parsing accepts `0` as a
+   valid seed but stores it as `Some(0)`, which then triggers the
+   regeneration path. Users passing `--checksum-seed=0` therefore get
+   a fresh per-run seed rather than a literal zero seed. Upstream has
+   the same quirk, so this is parity-preserving but worth noting.
+
+6. **Pre-release `'V'` capability has no interop fixture.**
+   `client_has_pre_release_v_flag` and the single-byte
+   `write_compat_flags` path are exercised only by unit tests in
+   `crates/transfer/src/setup/tests.rs`. There is no harness that
+   validates the byte-encoded flag exchange against an actual
+   pre-release client, because no such peer ships any longer. The
+   risk is bounded but worth flagging if pre-release interop ever
+   resurfaces.
+
+7. **Unknown-bit propagation is preserved but unobservable.**
+   `CompatibilityFlags::from_bits` retains bits outside
+   `KNOWN_MASK`, but no diagnostic surfaces them. Future upstream
+   additions will round-trip silently. A `--debug=compat` token
+   could log `flags.unknown_bits()` when non-zero. Out of scope for
+   this audit.
+
+No regression in negotiation correctness was found: the `CF_*` bits we
+advertise match upstream order, the post-exchange variables
+(`CF_INPLACE_PARTIAL_DIR`, `CF_AVOID_XATTR_OPTIM`,
+`CF_CHKSUM_SEED_FIX`, `CF_VARINT_FLIST_FLAGS`, `CF_ID0_NAMES`) are
+consumed at the right call sites, and the pre-release `'V'` encoding
+is honoured. The only material wire-compatibility shortfall is the
+default-off `inc_recursive_send`, which the project tracks under the
+sender-side INC_RECURSE work.
+
+## Appendix: internal CLI-to-runtime pipeline (from prior audit)
+
+The previously published version of this document focused on the
+internal three-layer CLI -> `ClientConfig` -> `engine`/`transfer`
+pipeline. The full matrix lives in commit history (PR #3802); the
+findings still relevant to compat-flag propagation are:
+
+- `--whole-file` is the only audited tri-state that stays
+  `Option<bool>` all the way into `ClientConfig` so the runtime can
+  distinguish "unset" from "explicit `--no-whole-file`". Compat-flag
+  semantics use this signal indirectly when building the single-letter
+  flag string (builder.rs:540 only emits `'W'` when the user passed
+  the positive form).
+- `--append` implies `--inplace`, which forces `config.inplace = true`
+  and allows the receiver-side gate at `transfer/src/lib.rs:442-447`
+  to interact correctly with `CF_INPLACE_PARTIAL_DIR` when
+  `--partial-dir` is also set.
+- `--partial-dir` implies `--partial`. The `has_partial_dir` field
+  consumed by the `CF_INPLACE_PARTIAL_DIR` post-exchange gate is set
+  through this implication rather than directly from `--partial`.
+- `--size-only` and `--checksum` are mutually exclusive at config
+  build time
+  (`crates/engine/src/local_copy/options/builder/validation.rs:10-12`).
+  Neither participates in the compat-flag bitfield directly, but
+  `--checksum` does drive the single-letter `'c'` bit on the wire
+  which interacts with the negotiated checksum algorithm exchange
+  gated by `CF_VARINT_FLIST_FLAGS`.
