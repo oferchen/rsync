@@ -512,7 +512,7 @@ fn test_e2e_empty_buffer_error() {
 
     // Client tries to read from empty buffer (but first sends its own data)
     let mut client_output = Vec::new();
-    let mut client_input = &b""[..]; // Empty buffer — will fail after sending
+    let mut client_input = &b""[..]; // Empty buffer - will fail after sending
 
     let result = negotiate_capabilities(
         protocol,
@@ -846,7 +846,7 @@ fn test_e2e_buffer_reuse() {
     let first_size = shared_buffer.len();
     let first_data = shared_buffer.clone();
 
-    // Second negotiation — should produce identical output
+    // Second negotiation - should produce identical output
     shared_buffer.clear();
     let mut server_input = &peer_data[..];
     negotiate_capabilities(

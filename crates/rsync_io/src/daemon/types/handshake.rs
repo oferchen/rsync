@@ -202,7 +202,7 @@ impl<R> LegacyDaemonHandshake<R> {
     ///
     /// Debug builds assert that the supplied stream captured a legacy ASCII negotiation so a binary
     /// session cannot be rewrapped accidentally. Higher layers can therefore temporarily take
-    /// ownership of the components—for example to wrap the transport with timeouts—before
+    /// ownership of the components-for example to wrap the transport with timeouts-before
     /// reassembling the handshake without replaying the daemon greeting.
     #[must_use]
     pub fn from_components(

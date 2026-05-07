@@ -202,7 +202,7 @@ pub fn negotiate_capabilities_with_override(
     // When FALSE, upstream uses pre-filled defaults without any wire protocol exchange.
     if !do_negotiation {
         // Use protocol 30+ defaults without sending or reading anything.
-        // upstream: compat.c:194 — when -z is active but no vstring negotiation,
+        // upstream: compat.c:194 - when -z is active but no vstring negotiation,
         // parse_compress_choice() defaults to CPRES_ZLIB.
         let checksum = checksum_override.unwrap_or(ChecksumAlgorithm::MD5);
         // upstream: compat.c:194 - when no vstring negotiation and no explicit
@@ -358,7 +358,7 @@ pub(super) fn choose_checksum_algorithm(
     } else {
         // Client: iterate our local list, first item also in server's (remote)
         // list wins. This gives client preference order priority.
-        // upstream: compat.c:349-354 — client continues iterating to find the
+        // upstream: compat.c:349-354 - client continues iterating to find the
         // local item with the best (lowest) position in our own list.
         for &local in SUPPORTED_CHECKSUMS {
             if remote_items.contains(&local) {
@@ -368,7 +368,7 @@ pub(super) fn choose_checksum_algorithm(
         }
     }
 
-    // upstream: compat.c:383-406 — failure to negotiate is a hard error
+    // upstream: compat.c:383-406 - failure to negotiate is a hard error
     Err(io::Error::new(
         io::ErrorKind::InvalidData,
         format!("failed to negotiate a common checksum algorithm (remote offers: {remote_list})"),

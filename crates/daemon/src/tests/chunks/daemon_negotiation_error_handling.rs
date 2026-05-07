@@ -241,7 +241,7 @@ fn daemon_negotiation_error_refused_options() {
             );
         }
         Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
-            // Daemon closed the connection — acceptable outcome for refused options.
+            // Daemon closed the connection - acceptable outcome for refused options.
         }
         Err(e) => panic!("unexpected I/O error: {e}"),
     }

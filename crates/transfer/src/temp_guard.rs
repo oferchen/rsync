@@ -7,8 +7,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `receiver.c:get_tmpname()` — temp file path construction
-//! - `receiver.c:open_tmpfile()` → `syscall.c:do_mkstemp()` — atomic creation
+//! - `receiver.c:get_tmpname()` - temp file path construction
+//! - `receiver.c:open_tmpfile()` → `syscall.c:do_mkstemp()` - atomic creation
 
 use std::fs;
 use std::io;
@@ -44,8 +44,8 @@ const NAME_MAX: usize = 255;
 ///
 /// # Arguments
 ///
-/// * `dest` — Final destination path for the file.
-/// * `temp_dir` — Optional `--temp-dir` directory.
+/// * `dest` - Final destination path for the file.
+/// * `temp_dir` - Optional `--temp-dir` directory.
 ///
 /// # Returns
 ///
@@ -112,12 +112,12 @@ fn truncate_utf8_safe(s: &str, max_len: usize) -> String {
 ///
 /// # Arguments
 ///
-/// * `dest` — Final destination path.
-/// * `temp_dir` — Optional `--temp-dir`.
+/// * `dest` - Final destination path.
+/// * `temp_dir` - Optional `--temp-dir`.
 ///
 /// # Returns
 ///
-/// A tuple of `(File, TempFileGuard)` — the open file handle and an RAII guard
+/// A tuple of `(File, TempFileGuard)` - the open file handle and an RAII guard
 /// that cleans up the temp file on drop unless `keep()` is called.
 pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::File, TempFileGuard)> {
     let template = get_tmpname(dest, temp_dir)?;
@@ -129,14 +129,14 @@ pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::Fil
 
         match fs::OpenOptions::new()
             .write(true)
-            .create_new(true) // O_EXCL — fail if exists
+            .create_new(true) // O_EXCL - fail if exists
             .open(&concrete_path)
         {
             Ok(file) => {
                 return Ok((file, TempFileGuard::new(concrete_path)));
             }
             Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                // Collision — try another random suffix
+                // Collision - try another random suffix
                 continue;
             }
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
@@ -201,7 +201,7 @@ impl TempFileGuard {
         }
     }
 
-    /// Mark the temp file as successful — don't delete on drop.
+    /// Mark the temp file as successful - don't delete on drop.
     #[inline]
     pub const fn keep(&mut self) {
         self.keep_on_drop = true;
@@ -217,7 +217,7 @@ impl TempFileGuard {
 impl Drop for TempFileGuard {
     fn drop(&mut self) {
         if !self.keep_on_drop {
-            // Best-effort cleanup — ignore errors since:
+            // Best-effort cleanup - ignore errors since:
             // 1. File might not exist (never created)
             // 2. File might already be deleted (renamed away)
             // 3. We're in a drop context (can't propagate errors)
@@ -497,7 +497,7 @@ mod tests {
             let (_file, guard) = open_tmpfile(&dest, None).unwrap();
             temp_path = guard.path().to_path_buf();
             assert!(temp_path.exists());
-            // guard dropped here — file should be deleted
+            // guard dropped here - file should be deleted
         }
 
         assert!(!temp_path.exists());

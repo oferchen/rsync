@@ -8,6 +8,8 @@
 
 /// Tests whether `text` matches a wildcard `pattern`.
 ///
+/// Operates on raw bytes so non-UTF-8 names are handled losslessly.
+///
 /// Supported metacharacters:
 /// - `*` matches zero or more characters
 /// - `?` matches exactly one character

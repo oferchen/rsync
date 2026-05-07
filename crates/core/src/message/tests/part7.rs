@@ -1,5 +1,3 @@
-// Comprehensive path normalization tests
-
 #[test]
 fn normalize_path_handles_relative_paths() {
     let normalized = normalize_path(Path::new("foo/bar/baz.txt"));

@@ -61,7 +61,7 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
             }
             discard.clear();
         }
-    } // bad stream dropped here — worker thread has already finished
+    } // bad stream dropped here - worker thread has already finished
 
     // If catch_unwind isolation had failed the daemon would have exited and
     // connect_with_retries would time out.

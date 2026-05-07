@@ -138,8 +138,8 @@ where
 ///
 /// This convenience wrapper mirrors [`negotiate_session_from_stream`] but immediately converts the
 /// resulting [`SessionHandshake`] into [`SessionHandshakeParts`]. Callers that already possess a
-/// [`NegotiatedStream`]—for instance after invoking
-/// [`sniff_negotiation_stream`](crate::sniff_negotiation_stream)—can therefore obtain the replaying
+/// [`NegotiatedStream`]-for instance after invoking
+/// [`sniff_negotiation_stream`](crate::sniff_negotiation_stream)-can therefore obtain the replaying
 /// stream parts and negotiated metadata without rebuilding the handshake manually.
 ///
 /// # Errors
