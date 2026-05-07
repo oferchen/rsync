@@ -63,7 +63,7 @@ fn write_vectored_impl<W: Write>(writer: &mut W, buffers: &[&[u8]]) -> io::Resul
                         slices = &slices[1..];
                     }
                     if remaining > 0 && !slices.is_empty() {
-                        // Partial write of a slice — fall back to sequential for remainder
+                        // Partial write of a slice - fall back to sequential for remainder
                         let partial_buf = &chunk[chunk.len() - slices.len()][remaining..];
                         writer.write_all(partial_buf)?;
                         total += partial_buf.len() as u64;

@@ -57,8 +57,8 @@ impl ClientConfigBuilder {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2447-2490` — files_from parsing
-    /// - `options.c:2944-2956` — server_options() forwarding
+    /// - `options.c:2447-2490` - files_from parsing
+    /// - `options.c:2944-2956` - server_options() forwarding
     #[must_use]
     pub fn files_from(mut self, source: super::FilesFromSource) -> Self {
         self.files_from = source;

@@ -320,7 +320,7 @@ pub fn get_rsync_acl(path: &Path, mode: u32, is_default: bool) -> RsyncAcl {
 /// # Upstream Reference
 ///
 /// Matches upstream rsync's behavior when the source has no extended
-/// ACL entries — the destination retains only base owner/group/other entries.
+/// ACL entries - the destination retains only base owner/group/other entries.
 fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {

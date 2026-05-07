@@ -49,7 +49,7 @@ pub fn collect_entries(walker: FileListWalker) -> Result<Vec<FileListEntry>, Fil
 /// Collects all file list entries sequentially from the walker.
 #[deprecated(
     since = "0.6.0",
-    note = "renamed to `collect_entries` — this function is sequential"
+    note = "renamed to `collect_entries` - this function is sequential"
 )]
 pub fn collect_parallel(walker: FileListWalker) -> Result<Vec<FileListEntry>, FileListError> {
     collect_entries(walker)
@@ -628,7 +628,7 @@ mod tests {
     fn collect_paths_chunked_large_chunk() {
         let temp = create_test_tree();
 
-        // Chunk larger than total paths — single batch
+        // Chunk larger than total paths - single batch
         let result = collect_paths_chunked_parallel(temp.path().to_path_buf(), false, 1000);
         let entries = result.unwrap();
 

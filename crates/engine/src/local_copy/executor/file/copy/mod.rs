@@ -68,7 +68,7 @@ pub(crate) fn copy_file(
     context.summary_mut().record_regular_file_total();
     context.summary_mut().record_total_bytes(file_size);
 
-    // upstream: generator.c:recv_generator() — skip files outside size range
+    // upstream: generator.c:recv_generator() - skip files outside size range
     if let Some(min_limit) = context.min_file_size_limit()
         && file_size < min_limit
     {

@@ -140,7 +140,7 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
 
         context.backup_existing_entry(&path, Some(entry_relative.as_path()), file_type)?;
         if file_type.is_dir() {
-            // upstream: generator.c:delete_in_dir() — recursively delete
+            // upstream: generator.c:delete_in_dir() - recursively delete
             // directory contents first, counting each item individually,
             // then remove the now-empty directory.
             delete_directory_tree_recursive(
