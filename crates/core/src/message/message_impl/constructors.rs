@@ -9,7 +9,7 @@ impl Message {
     /// Higher layers typically construct diagnostics through the
     /// severity-specific helpers such as [`Message::info`], [`Message::warning`],
     /// or [`Message::error`]. This constructor allows callers to generate
-    /// messages dynamically when the severity is only known at runtime—for
+    /// messages dynamically when the severity is only known at runtime - for
     /// example when mapping upstream exit-code tables. The message starts without
     /// an associated exit code or source location so additional context can be
     /// layered on afterwards.

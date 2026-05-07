@@ -58,7 +58,7 @@ impl MessageScratch {
     ///
     /// The helper reuses the thread-local storage maintained by this module so callers can render
     /// multiple messages without explicitly storing a [`MessageScratch`]. When the thread-local
-    /// instance is temporarily unavailable—such as when the current thread already borrowed it—the
+    /// instance is temporarily unavailable - such as when the current thread already borrowed it - the
     /// function transparently falls back to a fresh buffer. This mirrors the strategy used by
     /// [`Message::render_to`](crate::message::Message::render_to) and
     /// [`Message::to_bytes`](crate::message::Message::to_bytes), ensuring consistent performance
