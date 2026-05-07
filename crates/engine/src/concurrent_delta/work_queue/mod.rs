@@ -99,12 +99,14 @@ mod bounded;
 mod capacity;
 mod drain;
 mod iter;
+pub mod limiter;
 #[cfg(feature = "multi-producer")]
 mod multi_producer;
 
 pub use bounded::{SendError, WorkQueueReceiver, WorkQueueSender, bounded, bounded_with_capacity};
 pub use capacity::{adaptive_queue_depth, default_capacity};
 pub use iter::WorkQueueIter;
+pub use limiter::{AimdLimiter, LimiterConfig, OverloadReason, Ticket};
 
 #[cfg(test)]
 mod tests;
