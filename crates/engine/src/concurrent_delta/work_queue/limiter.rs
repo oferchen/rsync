@@ -295,11 +295,7 @@ impl AimdLimiter {
         self.rtt_ema.store(new_ema, Ordering::Release);
 
         let prev_var = self.rtt_var.load(Ordering::Acquire);
-        let diff = if sample > new_ema {
-            sample - new_ema
-        } else {
-            new_ema - sample
-        };
+        let diff = sample.abs_diff(new_ema);
         let new_var = if prev_var == 0 {
             diff
         } else {
@@ -340,7 +336,7 @@ impl AimdLimiter {
             return n;
         }
         let mut x = n;
-        let mut y = (x + 1) / 2;
+        let mut y = x.div_ceil(2);
         while y < x {
             x = y;
             y = (x + n / x) / 2;
@@ -560,8 +556,7 @@ mod tests {
         let ema = limiter.rtt_ema_nanos();
         assert!(
             (9_000_000..=9_500_000).contains(&ema),
-            "expected EMA in [9.0ms, 9.5ms], got {} ns",
-            ema
+            "expected EMA in [9.0ms, 9.5ms], got {ema} ns",
         );
     }
 
