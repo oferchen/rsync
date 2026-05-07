@@ -32,11 +32,11 @@ pub enum AceType {
     Deny = 1,
 }
 
-/// NFSv4 ACE flags (stub — bitflags not needed for no-op).
+/// NFSv4 ACE flags (stub - bitflags not needed for no-op).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AceFlags(pub u32);
 
-/// NFSv4 access mask (stub — bitflags not needed for no-op).
+/// NFSv4 access mask (stub - bitflags not needed for no-op).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AccessMask(pub u32);
 

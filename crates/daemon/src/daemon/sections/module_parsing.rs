@@ -14,7 +14,7 @@ fn parse_daemon_option(payload: &str) -> Option<&str> {
 
 /// Options that cannot be refused via wildcard-only patterns.
 ///
-/// upstream: clientserver.c — `parse_refuse_options()` marks certain options as
+/// upstream: clientserver.c - `parse_refuse_options()` marks certain options as
 /// "vital": they can only be refused by explicit name, not via `*` or other
 /// glob wildcards. This prevents administrators from accidentally breaking the
 /// protocol handshake by refusing all options with `*`.
@@ -47,7 +47,7 @@ const VITAL_OPTIONS: &[&str] = &[
 /// Vital options (e.g., `--server`, `--sender`, `--dry-run`) cannot be refused
 /// by wildcard patterns and require explicit naming.
 ///
-/// upstream: clientserver.c — `check_refuse_options()` with fnmatch semantics.
+/// upstream: clientserver.c - `check_refuse_options()` with fnmatch semantics.
 fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Option<&'a str> {
     if module.refuse_options.is_empty() {
         return None;
@@ -72,7 +72,7 @@ fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Optio
 /// When a pattern contains glob metacharacters (`*`, `?`, `[`), vital options
 /// are exempt from matching.
 ///
-/// upstream: clientserver.c — refuse list is evaluated with fnmatch(3) semantics;
+/// upstream: clientserver.c - refuse list is evaluated with fnmatch(3) semantics;
 /// vital options are skipped during wildcard expansion.
 fn is_option_refused(refuse_list: &[String], canonical: &str) -> bool {
     let mut refused = false;
@@ -86,7 +86,7 @@ fn is_option_refused(refuse_list: &[String], canonical: &str) -> bool {
 
         let is_glob = pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
 
-        // upstream: clientserver.c — vital options are immune to wildcard patterns
+        // upstream: clientserver.c - vital options are immune to wildcard patterns
         if is_glob && is_vital_option(canonical) {
             continue;
         }

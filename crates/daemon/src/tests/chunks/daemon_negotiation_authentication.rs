@@ -175,7 +175,7 @@ fn daemon_negotiation_auth_denies_wrong_password() {
         .expect("send wrong credentials");
     stream.flush().expect("flush");
 
-    // upstream: clientserver.c:762 — auth failure sends
+    // upstream: clientserver.c:762 - auth failure sends
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("response");
@@ -270,7 +270,7 @@ fn daemon_negotiation_auth_denies_unknown_user() {
         .expect("send unknown user");
     stream.flush().expect("flush");
 
-    // upstream: clientserver.c:762 — auth failure sends
+    // upstream: clientserver.c:762 - auth failure sends
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("response");
@@ -417,7 +417,7 @@ fn daemon_negotiation_auth_denies_empty_credentials() {
         .expect("send empty credentials");
     stream.flush().expect("flush");
 
-    // upstream: clientserver.c:762 — auth failure sends
+    // upstream: clientserver.c:762 - auth failure sends
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("response");

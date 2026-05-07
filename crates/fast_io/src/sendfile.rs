@@ -153,13 +153,13 @@ pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u
     copy_via_fd_write(source, dest_fd, length)
 }
 
-/// Stub for non-Linux unix platforms — uses libc::write fallback.
+/// Stub for non-Linux unix platforms - uses libc::write fallback.
 #[cfg(all(unix, not(target_os = "linux")))]
 pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
     copy_via_fd_write(source, dest_fd, length)
 }
 
-/// Stub for non-unix platforms — raw fd is not meaningful.
+/// Stub for non-unix platforms - raw fd is not meaningful.
 #[cfg(not(unix))]
 pub fn send_file_to_fd(source: &File, _dest_fd: i32, length: u64) -> io::Result<u64> {
     send_file_to_writer(source, &mut io::sink(), length)
@@ -334,7 +334,7 @@ fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64
     Ok(total)
 }
 
-/// Stub for non-Linux unix platforms — uses libc::write.
+/// Stub for non-Linux unix platforms - uses libc::write.
 #[cfg(all(unix, not(target_os = "linux")))]
 fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
     let mut reader = io::BufReader::new(source);

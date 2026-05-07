@@ -39,7 +39,7 @@ pub enum DeltaToken {
     Literal(LiteralData),
     /// Copy a block from the basis file at the given index.
     BlockRef(usize),
-    /// End of file marker — no more tokens follow.
+    /// End of file marker - no more tokens follow.
     End,
 }
 
@@ -117,7 +117,7 @@ impl TokenReader {
     /// Reads the next token from the stream.
     ///
     /// For plain mode, reads a 4-byte i32 and returns the token type.
-    /// Literal tokens return `LiteralData::Pending` — the caller must
+    /// Literal tokens return `LiteralData::Pending` - the caller must
     /// read the data bytes from the stream.
     ///
     /// For compressed mode, delegates to `CompressedTokenDecoder::recv_token()`
@@ -152,7 +152,7 @@ impl TokenReader {
 
     /// Feeds block data into the decompressor's dictionary after a block match.
     ///
-    /// Only needed for compressed mode — keeps the decompressor's dictionary
+    /// Only needed for compressed mode - keeps the decompressor's dictionary
     /// synchronized with the sender's compressor. In plain mode this is a no-op.
     ///
     /// Must be called after processing each `BlockRef` token with the actual

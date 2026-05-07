@@ -5,9 +5,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:flist_new()` — allocates sub-lists with `ndx_start` offsets
-//! - `flist.c:send_extra_file_list()` — sends one segment per directory
-//! - `rsync.h:285-288` — NDX_FLIST_OFFSET constant
+//! - `flist.c:flist_new()` - allocates sub-lists with `ndx_start` offsets
+//! - `flist.c:send_extra_file_list()` - sends one segment per directory
+//! - `rsync.h:285-288` - NDX_FLIST_OFFSET constant
 
 #![allow(dead_code)]
 
@@ -120,7 +120,7 @@ impl SegmentedFileList {
     /// Computes the `ndx_start` for the next segment.
     ///
     /// Upstream: `cur_flist->ndx_start + cur_flist->used` (flist.c recv_file_list).
-    /// No gap between segments — each starts immediately after the previous.
+    /// No gap between segments - each starts immediately after the previous.
     #[must_use]
     pub fn next_ndx_start(&self) -> i32 {
         if let Some(last) = self.segments.last() {
@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(sfl.total_entries(), 3);
         assert_eq!(sfl.segment_count(), 2);
 
-        // Lookup by NDX — contiguous ranges, no gaps
+        // Lookup by NDX - contiguous ranges, no gaps
         assert_eq!(sfl.get_by_ndx(0).unwrap().name(), "file1.txt");
         assert_eq!(sfl.get_by_ndx(1).unwrap().name(), "file2.txt");
         assert_eq!(sfl.get_by_ndx(2).unwrap().name(), "subdir/a.txt");

@@ -218,7 +218,7 @@ pub(crate) fn copy_device(
     #[cfg(not(unix))]
     {
         // Windows / non-Unix: we can’t actually create a device node.
-        // Do nothing here — the rest (metadata + bookkeeping) still runs so the code compiles.
+        // Do nothing here - the rest (metadata + bookkeeping) still runs so the code compiles.
     }
 
     context.register_created_path(

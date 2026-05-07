@@ -11,7 +11,7 @@ use crate::local_copy::executor::SparseDetectStrategy;
 /// Subdirectory name used by upstream rsync for staging files when
 /// `--delay-updates` is active and no explicit `--partial-dir` is given.
 ///
-/// upstream: options.c — `static char tmp_partialdir[] = ".~tmp~";`
+/// upstream: options.c - `static char tmp_partialdir[] = ".~tmp~";`
 pub const DELAY_UPDATES_PARTIAL_DIR: &str = ".~tmp~";
 
 impl LocalCopyOptions {
@@ -69,7 +69,7 @@ impl LocalCopyOptions {
     /// staging directory is automatically set to `.~tmp~` to match upstream
     /// rsync behaviour.
     ///
-    /// upstream: options.c — `if (delay_updates && !partial_dir) partial_dir = tmp_partialdir;`
+    /// upstream: options.c - `if (delay_updates && !partial_dir) partial_dir = tmp_partialdir;`
     #[must_use]
     #[doc(alias = "--delay-updates")]
     pub fn delay_updates(mut self, delay: bool) -> Self {

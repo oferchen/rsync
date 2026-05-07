@@ -10,12 +10,12 @@
 //! ## Wire Format Reference (upstream token.c lines 321-329)
 //!
 //! ```text
-//! END_FLAG      = 0x00  — end of file marker
-//! TOKEN_LONG    = 0x20  — followed by 32-bit LE token number
-//! TOKENRUN_LONG = 0x21  — followed by 32-bit LE token + 16-bit LE run count
-//! DEFLATED_DATA = 0x40  — + 6-bit high len, then low len byte, then compressed data
-//! TOKEN_REL     = 0x80  — + 6-bit relative token number
-//! TOKENRUN_REL  = 0xC0  — + 6-bit relative token + 16-bit LE run count
+//! END_FLAG      = 0x00  - end of file marker
+//! TOKEN_LONG    = 0x20  - followed by 32-bit LE token number
+//! TOKENRUN_LONG = 0x21  - followed by 32-bit LE token + 16-bit LE run count
+//! DEFLATED_DATA = 0x40  - + 6-bit high len, then low len byte, then compressed data
+//! TOKEN_REL     = 0x80  - + 6-bit relative token number
+//! TOKENRUN_REL  = 0xC0  - + 6-bit relative token + 16-bit LE run count
 //! ```
 //!
 //! ## Testing Strategy
@@ -83,7 +83,7 @@ enum TestToken {
 }
 
 // ===========================================================================
-// Section 1: Golden byte tests — verify decoder handles upstream wire format
+// Section 1: Golden byte tests - verify decoder handles upstream wire format
 // ===========================================================================
 
 /// Upstream rsync signals end-of-file with a single END_FLAG (0x00) byte.
@@ -379,7 +379,7 @@ fn golden_mixed_literal_and_block_match() {
 }
 
 // ===========================================================================
-// Section 2: Encoder format tests — verify our encoder produces upstream format
+// Section 2: Encoder format tests - verify our encoder produces upstream format
 // ===========================================================================
 
 /// Verify the encoder writes END_FLAG (0x00) as the final byte.
@@ -536,7 +536,7 @@ fn encoder_run_length_boundary_65535() {
 }
 
 // ===========================================================================
-// Section 3: Round-trip tests — encode then decode with various data patterns
+// Section 3: Round-trip tests - encode then decode with various data patterns
 // ===========================================================================
 
 /// Round-trip: empty file (no literals, no blocks, just END_FLAG).
@@ -764,7 +764,7 @@ fn decoder_reuse_across_files() {
     }
 }
 
-/// Exactly CHUNK_SIZE (32 KiB) of literal data — the boundary where the
+/// Exactly CHUNK_SIZE (32 KiB) of literal data - the boundary where the
 /// encoder flushes its first chunk.
 #[test]
 fn roundtrip_exactly_chunk_size() {
@@ -775,7 +775,7 @@ fn roundtrip_exactly_chunk_size() {
     assert!(blocks.is_empty());
 }
 
-/// One byte less than CHUNK_SIZE — data stays in buffer until finish().
+/// One byte less than CHUNK_SIZE - data stays in buffer until finish().
 #[test]
 fn roundtrip_chunk_size_minus_one() {
     let data = vec![0xCDu8; 32 * 1024 - 1];
@@ -785,7 +785,7 @@ fn roundtrip_chunk_size_minus_one() {
     assert!(blocks.is_empty());
 }
 
-/// One byte more than CHUNK_SIZE — triggers a flush mid-stream, with one byte
+/// One byte more than CHUNK_SIZE - triggers a flush mid-stream, with one byte
 /// remaining for the next chunk.
 #[test]
 fn roundtrip_chunk_size_plus_one() {
@@ -863,7 +863,7 @@ fn protocol_version_30_and_31_both_produce_valid_wire_format() {
 /// rx_token becomes N+1. Multiple TOKEN_REL encodings in sequence must
 /// each account for this increment.
 ///
-/// Reference: token.c line 599 `return -1 - rx_token;` — the decoder
+/// Reference: token.c line 599 `return -1 - rx_token;` - the decoder
 /// returns the token value and the caller (in upstream) knows that
 /// rx_token has already been incremented.
 #[test]

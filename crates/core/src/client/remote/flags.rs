@@ -93,7 +93,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if effective_dirs && !effective_recursive {
         flags.push('d');
     }
-    // upstream: options.c:2622 — whole_file, but not when --append is active
+    // upstream: options.c:2622 - whole_file, but not when --append is active
     // (append requires delta transfer to append only new data)
     if config.whole_file() && !config.append() {
         flags.push('W');
@@ -116,7 +116,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_crtimes() {
         flags.push('N');
     }
-    // upstream: options.c:764 — 'L' = copy_links (resolve symlinks).
+    // upstream: options.c:764 - 'L' = copy_links (resolve symlinks).
     if config.copy_links() {
         flags.push('L');
     }

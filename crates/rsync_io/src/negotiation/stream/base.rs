@@ -17,7 +17,7 @@ use super::super::{NegotiationBuffer, NegotiationBufferAccess};
 ///
 /// When the inner reader implements [`Clone`], the entire [`NegotiatedStream`]
 /// can be cloned. The clone retains the buffered negotiation bytes and replay
-/// cursor so both instances continue independently—matching upstream helpers
+/// cursor so both instances continue independently-matching upstream helpers
 /// that occasionally need to inspect the handshake transcript while preserving
 /// the original transport for continued use.
 #[derive(Clone, Debug)]

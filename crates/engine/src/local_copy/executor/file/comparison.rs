@@ -36,7 +36,7 @@ pub(crate) fn destination_is_newer(
             // difference is strictly less than the modify window.
             // upstream: (source - dest) < modify_window
             Ok(diff) => diff < modify_window,
-            // Source is older than destination — always skip.
+            // Source is older than destination - always skip.
             Err(_) => true,
         },
         _ => false,

@@ -135,7 +135,7 @@ pub(crate) fn copy_symlink(
     let raw_target = fs::read_link(source)
         .map_err(|error| LocalCopyError::io("read symbolic link", source, error))?;
 
-    // upstream: clientserver.c — on the sender side, unmunge already-munged
+    // upstream: clientserver.c - on the sender side, unmunge already-munged
     // targets so safety checks and comparisons work on the real path.
     let target = if munge_links {
         let raw_str = raw_target.to_string_lossy();
@@ -389,7 +389,7 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    // upstream: clientserver.c — on the receiver side, munge the target so
+    // upstream: clientserver.c - on the receiver side, munge the target so
     // it cannot resolve outside the module root.
     let write_target = if munge_links {
         PathBuf::from(::metadata::munge_symlink(&target.to_string_lossy()))

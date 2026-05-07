@@ -200,7 +200,7 @@ impl MessageCode {
     /// `ErrorSocket`, `ErrorUtf8`, and `ErrorExit`. Useful for counting remote
     /// errors received through the multiplex channel.
     ///
-    /// upstream: io.c — `FERROR*` codes map to these message types.
+    /// upstream: io.c - `FERROR*` codes map to these message types.
     #[inline]
     #[must_use]
     pub const fn is_error(self) -> bool {

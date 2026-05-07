@@ -259,7 +259,7 @@ fn handle_legacy_session(
             Err(_) => {}
         }
 
-        // upstream: clientserver.c:1357-1368 — the daemon checks if the first
+        // upstream: clientserver.c:1357-1368 - the daemon checks if the first
         // non-@RSYNCD line is `#early_input=<len>`. If so, it reads <len> bytes
         // of raw data and then reads the next line as the module name.
         if let Some(data) = read_early_input(&line, &mut reader)? {
@@ -318,12 +318,12 @@ fn handle_legacy_session(
 
 /// Command prefix for the early-input protocol message.
 ///
-/// upstream: clientserver.c — `#define EARLY_INPUT_CMD "#early_input="`
+/// upstream: clientserver.c - `#define EARLY_INPUT_CMD "#early_input="`
 const EARLY_INPUT_CMD: &str = "#early_input=";
 
 /// Maximum early-input data size in bytes.
 ///
-/// upstream: rsync.h — `BIGPATHBUFLEN` is `MAXPATHLEN + 1024` (typically 5120).
+/// upstream: rsync.h - `BIGPATHBUFLEN` is `MAXPATHLEN + 1024` (typically 5120).
 const EARLY_INPUT_MAX_SIZE: usize = 5120;
 
 /// Checks whether `line` is an `#early_input=<len>` command and, if so, reads
@@ -333,7 +333,7 @@ const EARLY_INPUT_MAX_SIZE: usize = 5120;
 /// data was read successfully, `Ok(None)` when the line is not an early-input
 /// command, or an I/O error if reading fails or the length is invalid.
 ///
-/// upstream: clientserver.c:1357-1364 — `rsync_module()` reads early input data
+/// upstream: clientserver.c:1357-1364 - `rsync_module()` reads early input data
 /// and stores it for later delivery to the pre-xfer exec script.
 fn read_early_input(
     line: &str,

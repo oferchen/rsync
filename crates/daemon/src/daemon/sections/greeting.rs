@@ -8,7 +8,7 @@
 /// - **Protocol < 30**: md4 only. MD5 was introduced in protocol 30; no digest
 ///   list is appended since legacy clients do not expect one.
 ///
-/// upstream: csprotocol.txt — the daemon greeting carries the digest list that
+/// upstream: csprotocol.txt - the daemon greeting carries the digest list that
 /// informs the client which challenge/response algorithms the server accepts.
 pub(crate) fn legacy_daemon_greeting_for_protocol(version: ProtocolVersion) -> String {
     let mut greeting =

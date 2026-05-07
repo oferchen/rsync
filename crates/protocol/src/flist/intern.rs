@@ -13,7 +13,7 @@
 //!
 //! # Thread Safety
 //!
-//! `PathInterner` is not `Sync` — it is designed for single-threaded use during
+//! `PathInterner` is not `Sync` - it is designed for single-threaded use during
 //! sequential file list decoding. The interned `Arc<Path>` values are `Send + Sync`
 //! and can be freely shared across threads after interning.
 

@@ -458,7 +458,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
     fn build_flag_string(&self) -> String {
         let mut flags = String::from("-");
 
-        // upstream: options.c:2169-2188 — when --files-from is active, upstream
+        // upstream: options.c:2169-2188 - when --files-from is active, upstream
         // sets recurse=0, xfer_dirs=1, relative_paths=1. Suppress 'r' and imply
         // 'R' to match this behaviour.
         let files_from_active = self.config.files_from().is_active();

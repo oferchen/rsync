@@ -246,10 +246,10 @@ impl ParsedServerFlags {
             b'R' => self.relative = true,
             b'P' => self.partial = true,
             b'u' => self.update = true,
-            // upstream: options.c:2613 — 'b' = backup.
+            // upstream: options.c:2613 - 'b' = backup.
             b'b' => self.backup = true,
             b'N' => self.crtimes = true,
-            // upstream: options.c:764 — 'L' = copy_links (resolve symlinks).
+            // upstream: options.c:764 - 'L' = copy_links (resolve symlinks).
             b'L' => self.copy_links = true,
             // upstream: options.c:764 - fuzzy_basis++ for each 'y'
             b'y' => self.fuzzy_level = self.fuzzy_level.saturating_add(1),

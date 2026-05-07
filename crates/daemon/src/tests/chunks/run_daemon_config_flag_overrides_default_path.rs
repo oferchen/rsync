@@ -6,7 +6,7 @@
 /// connection. Both the separated (`--config FILE`) and inline (`--config=FILE`)
 /// forms are validated.
 ///
-/// upstream: main.c — `--config=FILE` overrides the compiled-in default path.
+/// upstream: main.c - `--config=FILE` overrides the compiled-in default path.
 #[test]
 fn run_daemon_config_flag_overrides_default_path() {
     let _lock = ENV_LOCK.lock().expect("env lock");

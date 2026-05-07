@@ -6,8 +6,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:add_dirs_to_tree()` — builds tree from directory entries
-//! - `flist.c:send_extra_file_list()` — traverses tree depth-first via
+//! - `flist.c:add_dirs_to_tree()` - builds tree from directory entries
+//! - `flist.c:send_extra_file_list()` - traverses tree depth-first via
 //!   `DIR_FIRST_CHILD`, `DIR_NEXT_SIBLING`, `DIR_PARENT` macros
 
 /// A node in the directory tree representing a directory whose contents
@@ -51,7 +51,7 @@ impl DirectoryTree {
     /// Creates a new empty directory tree with a virtual root node.
     #[must_use]
     pub fn new() -> Self {
-        // Virtual root node — never yielded, serves as parent for top-level dirs
+        // Virtual root node - never yielded, serves as parent for top-level dirs
         let root = DirNode {
             dir_ndx: usize::MAX,
             path: String::new(),
@@ -133,7 +133,7 @@ impl DirectoryTree {
             self.cursor = Some(child);
             self.depth += 1;
         } else {
-            // No children — go to next sibling, or backtrack to parent's sibling
+            // No children - go to next sibling, or backtrack to parent's sibling
             let mut current = cursor;
             loop {
                 if let Some(sibling) = self.nodes[current].next_sibling {

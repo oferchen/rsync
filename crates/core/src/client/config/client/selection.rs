@@ -147,7 +147,7 @@ impl ClientConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2447-2490` — files_from parsing
+    /// - `options.c:2447-2490` - files_from parsing
     #[must_use]
     #[doc(alias = "--files-from")]
     pub fn files_from(&self) -> &FilesFromSource {

@@ -58,14 +58,14 @@ fn run_daemon_rejects_push_to_read_only_module() {
 
     // Send client arguments that indicate a push (no --sender flag means
     // the server must act as receiver, which conflicts with read-only).
-    // upstream: options.c:server_options() — server args are null-terminated
+    // upstream: options.c:server_options() - server args are null-terminated
     // for protocol >= 30.
     stream
         .write_all(b"--server\0-logDtpr\0.\0readonly/\0\0")
         .expect("send client args");
     stream.flush().expect("flush client args");
 
-    // upstream: clientserver.c — daemon rejects with
+    // upstream: clientserver.c - daemon rejects with
     // "@ERROR: module is read only"
     line.clear();
     reader.read_line(&mut line).expect("error message");

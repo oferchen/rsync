@@ -753,7 +753,7 @@ fn parity_itemize_string_is_eleven_chars_for_non_delete() {
 
 #[test]
 fn parity_itemize_unchanged_file_shows_dots() {
-    // upstream: log.c:735-744 — all-dots collapse to spaces for '.', 'h', 'c' update types
+    // upstream: log.c:735-744 - all-dots collapse to spaces for '.', 'h', 'c' update types
     let event = ClientEvent::for_test(
         PathBuf::from("unchanged.txt"),
         ClientEventKind::MetadataReused,
@@ -2228,7 +2228,7 @@ fn parity_info_flag_skip_shows_skip_messages() {
     );
 
     // When files are identical, --info=skip should show that files were skipped.
-    // The file was identical so no transfer needed — either skip message or empty output
+    // The file was identical so no transfer needed - either skip message or empty output
     // is acceptable (upstream rsync only shows skip at level >= 1 when there's a reason).
     let _ = combined;
     assert_eq!(code, 0, "--info=skip should not cause errors");

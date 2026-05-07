@@ -136,7 +136,7 @@ fn execute_inplace_disables_sparse_writes() {
     let dense_blocks = dense_meta.blocks();
     let sparse_blocks = sparse_meta.blocks();
     // Allow a small tolerance for filesystem allocation differences (delayed
-    // allocation, alignment, etc.) — the key property is that inplace mode
+    // allocation, alignment, etc.) - the key property is that inplace mode
     // does not create large sparse holes.
     let tolerance = (dense_blocks / 10).max(8);
     assert!(
