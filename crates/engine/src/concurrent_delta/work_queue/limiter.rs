@@ -265,9 +265,8 @@ impl AimdLimiter {
         }
 
         let target = self.target.load(Ordering::Acquire);
-        let new_target = (target as u64)
-            .saturating_mul(self.beta_num as u64)
-            / self.beta_den as u64;
+        let new_target =
+            (target as u64).saturating_mul(self.beta_num as u64) / self.beta_den as u64;
         let new_target = (new_target as usize).max(self.min_limit);
         self.target.store(new_target, Ordering::Release);
         self.consecutive_successes.store(0, Ordering::Release);
@@ -662,10 +661,7 @@ mod tests {
 
     #[test]
     fn config_builder_clamps_initial_target() {
-        let limiter = LimiterConfig::new(100)
-            .min_limit(2)
-            .max_limit(10)
-            .build();
+        let limiter = LimiterConfig::new(100).min_limit(2).max_limit(10).build();
         assert_eq!(limiter.target(), 10, "initial clamped to max_limit");
 
         let limiter = LimiterConfig::new(1).min_limit(4).max_limit(16).build();
