@@ -27,7 +27,6 @@ use std::cell::RefCell;
 ///
 /// assert_eq!(segments.len(), message.to_bytes().unwrap().len());
 /// ```
-
 #[derive(Clone, Copy, Debug)]
 pub struct MessageScratch {
     pub(super) code_digits: [u8; 20],
