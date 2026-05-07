@@ -104,7 +104,7 @@ pub const SUPPORTED_DAEMON_DIGESTS: &[DaemonAuthDigest; 5] = &[
 
 /// Returns the authentication digests appropriate for the given protocol version.
 ///
-/// upstream: csprotocol.txt — digest negotiation rules depend on protocol era:
+/// upstream: csprotocol.txt - digest negotiation rules depend on protocol era:
 ///
 /// - **Protocol >= 31**: all digests (SHA-512, SHA-256, SHA-1, MD5, MD4).
 ///   Rsync 3.2.7 introduced the digest list in the greeting for protocol 31+.
@@ -153,7 +153,7 @@ pub fn parse_daemon_digest_list(list: Option<&str>) -> Vec<DaemonAuthDigest> {
 /// When no advertised digest matches, falls back based on `protocol_version`:
 /// MD5 for protocol >= 30, MD4 for protocol < 30.
 ///
-/// upstream: compat.c:858 — `protocol_version >= 30 ? "md5" : "md4"`
+/// upstream: compat.c:858 - `protocol_version >= 30 ? "md5" : "md4"`
 #[must_use]
 pub fn select_daemon_digest(
     advertised: &[DaemonAuthDigest],
@@ -165,14 +165,14 @@ pub fn select_daemon_digest(
         }
     }
 
-    // upstream: compat.c:858 — when no daemon_auth_choices are configured the default
+    // upstream: compat.c:858 - when no daemon_auth_choices are configured the default
     // digest depends on the negotiated protocol version.
     default_legacy_digest(protocol_version)
 }
 
 /// Returns the protocol-version-appropriate legacy digest.
 ///
-/// upstream: compat.c:858 — `protocol_version >= 30 ? "md5" : "md4"`
+/// upstream: compat.c:858 - `protocol_version >= 30 ? "md5" : "md4"`
 #[must_use]
 pub const fn default_legacy_digest(protocol_version: u8) -> DaemonAuthDigest {
     if protocol_version >= 30 {
@@ -241,7 +241,7 @@ pub fn verify_daemon_auth_response(
         .filter(|digest| {
             // When the protocol version is known and the response is ambiguous (MD4/MD5),
             // only try the protocol-appropriate digest.
-            // upstream: compat.c:858 — protocol_version >= 30 ? "md5" : "md4"
+            // upstream: compat.c:858 - protocol_version >= 30 ? "md5" : "md4"
             if let Some(version) = protocol_version {
                 if candidates.len() > 1 {
                     let expected = default_legacy_digest(version);

@@ -75,7 +75,7 @@ fn run_daemon_auth_failure_rejects_wrong_credentials() {
     assert!(!challenge.is_empty());
 
     // Send wrong credentials - compute MD5 digest with wrong password.
-    // upstream: authenticate() in authenticate.c — client sends
+    // upstream: authenticate() in authenticate.c - client sends
     // "username base64(MD5(password + challenge))\n"
     let wrong_password = "wrongpassword";
     let mut digest_input = Vec::new();
@@ -91,7 +91,7 @@ fn run_daemon_auth_failure_rejects_wrong_credentials() {
         .expect("send wrong credentials");
     stream.flush().expect("flush wrong credentials");
 
-    // upstream: clientserver.c:762 — auth failure sends
+    // upstream: clientserver.c:762 - auth failure sends
     // "@ERROR: auth failed on module %s\n"
     line.clear();
     reader.read_line(&mut line).expect("denied message");

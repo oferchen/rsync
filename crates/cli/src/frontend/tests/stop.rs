@@ -52,7 +52,7 @@ fn stop_at_argument_rejects_past_time() {
     let now = OffsetDateTime::now_local().expect("local time");
 
     // Skip near midnight: subtracting 1 minute wraps to 23:59 which the
-    // parser treats as 23:59 *today* — that is in the future at 00:00.
+    // parser treats as 23:59 *today* - that is in the future at 00:00.
     if now.hour() == 0 && now.minute() < 5 {
         return;
     }

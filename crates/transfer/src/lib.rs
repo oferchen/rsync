@@ -360,7 +360,7 @@ pub fn run_server_with_handshake<W: Write>(
     // client reads silently); SSH mode uses bidirectional exchange.
     let is_daemon_mode = config.connection.client_mode || handshake.client_args.is_some();
 
-    // upstream: compat.c — do_compression is set by -z (short option) or by
+    // upstream: compat.c - do_compression is set by -z (short option) or by
     // --new-compress, --old-compress, --compress-choice=ALGO (long options).
     // upstream: options.c:2704 only puts 'z' in argstr for CPRES_ZLIB.
     // For zlibx, zstd, lz4, upstream sends long options instead.
@@ -506,12 +506,12 @@ pub fn run_server_with_handshake<W: Write>(
         writer = writer.activate_multiplex()?;
     }
 
-    // upstream: exclude.c:1650 — am_sender && !receiver_wants_list skips sending.
+    // upstream: exclude.c:1650 - am_sender && !receiver_wants_list skips sending.
     // Push mode applies exclusion locally in the generator; only delete/prune
     // needs the filter list on the wire.
     let receiver_wants_filter_list = config.flags.delete || config.flags.prune_empty_dirs;
 
-    // upstream: main.c:1258 — daemon sender always calls recv_filter_list(f_in).
+    // upstream: main.c:1258 - daemon sender always calls recv_filter_list(f_in).
     let should_send_filter_list = if config.connection.client_mode {
         match config.role {
             ServerRole::Generator => receiver_wants_filter_list,
@@ -530,7 +530,7 @@ pub fn run_server_with_handshake<W: Write>(
         writer.flush()?;
     }
 
-    // upstream: main.c:1354-1356 — after sending filter list, forward
+    // upstream: main.c:1354-1356 - after sending filter list, forward
     // pre-read --files-from data to the remote daemon's generator so it
     // can build the file list from the forwarded filenames.
     // This applies only in client-mode pull (Receiver), where the daemon's
@@ -542,7 +542,7 @@ pub fn run_server_with_handshake<W: Write>(
         }
     }
 
-    // upstream: main.c:1249-1250 — server sends MSG_IO_TIMEOUT to client.
+    // upstream: main.c:1249-1250 - server sends MSG_IO_TIMEOUT to client.
     if !config.connection.client_mode
         && let Some(timeout_secs) = handshake.io_timeout
         && handshake.protocol.supports_extended_goodbye()
@@ -575,7 +575,7 @@ pub fn run_server_with_handshake<W: Write>(
     match config.role {
         ServerRole::Receiver => {
             let mut ctx = ReceiverContext::new(&handshake, config);
-            // upstream: io.c:859 — stats.total_written tracking
+            // upstream: io.c:859 - stats.total_written tracking
             let mut counting_writer = writer::CountingWriter::new(&mut writer);
             let mut stats = ctx.run(chained_reader, &mut counting_writer, progress)?;
             stats.bytes_sent = counting_writer.bytes_written();

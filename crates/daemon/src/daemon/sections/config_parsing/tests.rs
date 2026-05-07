@@ -1292,7 +1292,7 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
 
-        // No global 'use chroot' directive — default is true
+        // No global 'use chroot' directive - default is true
         assert!(result.modules[0].use_chroot);
     }
 

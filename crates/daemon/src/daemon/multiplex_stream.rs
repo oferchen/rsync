@@ -82,14 +82,14 @@ impl<R: Read> Read for MultiplexReader<R> {
                     return Ok(to_copy);
                 }
                 protocol::MessageCode::Info | protocol::MessageCode::Client => {
-                    // upstream: log.c:rwrite() — FINFO and FCLIENT go to stdout
+                    // upstream: log.c:rwrite() - FINFO and FCLIENT go to stdout
                     if let Ok(msg) = std::str::from_utf8(&self.buffer) {
                         print!("{}", msg);
                         let _ = io::stdout().flush();
                     }
                 }
                 protocol::MessageCode::Warning | protocol::MessageCode::Log => {
-                    // upstream: log.c:rwrite() — FWARNING to stderr, FLOG to daemon log
+                    // upstream: log.c:rwrite() - FWARNING to stderr, FLOG to daemon log
                     if let Ok(msg) = std::str::from_utf8(&self.buffer) {
                         eprint!("{}", msg);
                     }
@@ -98,13 +98,13 @@ impl<R: Read> Read for MultiplexReader<R> {
                 | protocol::MessageCode::ErrorXfer
                 | protocol::MessageCode::ErrorSocket
                 | protocol::MessageCode::ErrorUtf8 => {
-                    // upstream: log.c:rwrite() — FERROR* to stderr
+                    // upstream: log.c:rwrite() - FERROR* to stderr
                     if let Ok(msg) = std::str::from_utf8(&self.buffer) {
                         eprint!("{}", msg);
                     }
                 }
                 protocol::MessageCode::ErrorExit => {
-                    // upstream: io.c:1663-1701 — MSG_ERROR_EXIT carries a
+                    // upstream: io.c:1663-1701 - MSG_ERROR_EXIT carries a
                     // 4-byte exit code and triggers _exit_cleanup(val).
                     let exit_code = if self.buffer.len() == 4 {
                         i32::from_le_bytes([
