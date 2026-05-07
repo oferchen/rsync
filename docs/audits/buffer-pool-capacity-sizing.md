@@ -1,433 +1,266 @@
 # BufferPool capacity selection and sizing assumptions
 
-Last verified: 2026-05-05 against
-`crates/engine/src/local_copy/buffer_pool/{mod,pool,global,pressure,memory_cap,allocator,thread_local_cache,throughput,guard}.rs`,
-`crates/engine/src/local_copy/mod.rs`,
-`crates/engine/src/local_copy/context_impl/state.rs`,
-`crates/engine/src/local_copy/executor/file/copy/transfer/execute.rs`,
-`crates/engine/src/local_copy/executor/directory/parallel_checksum.rs`,
-`crates/engine/src/lib.rs`, `crates/transfer/tests/buffer_pool_cross_crate.rs`,
-and benches under `crates/engine/benches/`.
+Tracking issue: #1637. Related, completed: #1010-#1012 (global pool),
+#1187-#1189 (memory cap), #1265 (lock-free swap), #1295 (sharded
+design), #1329-#1330 (`ArrayQueue` migration), #1336 (split guard),
+#1342 (`BufferAllocator` trait), #1363 (dynamic capacity),
+#1638-#1641 (adaptive sizing), #1643 (env-var override). In flight:
+#1297 (benchmark), #1642 (adaptive bench), #2045 (io_uring + adaptive
+design).
 
-Tracking issue: #1637. Related: #1010-#1012 (global pool, completed),
-#1187-#1189 (memory cap, completed), #1265 (lock-free swap, completed),
-#1295 (sharded design, completed), #1297 (benchmark, pending), #1329-#1330
-(`ArrayQueue` migration, completed), #1336 (split guard, completed), #1342
-(`BufferAllocator` trait, completed), #1363 (dynamic capacity, completed),
-#1638-#1641 (adaptive sizing, completed), #1642 (adaptive bench, pending),
-#1643 (CLI/env override, completed), #2045 (io_uring + adaptive design,
-in flight).
+This audit documents the current `BufferPool` capacity selection logic,
+the sizing assumptions baked into the defaults, the trade-offs they
+encode, and a short list of improvements worth pursuing. The pool was
+originally a single file at `crates/engine/src/local_copy/buffer_pool.rs`
+but was decomposed into a module under
+`crates/engine/src/local_copy/buffer_pool/` (mod.rs, pool.rs, global.rs,
+pressure.rs, memory_cap.rs, allocator.rs, thread_local_cache.rs,
+throughput.rs, guard.rs). All file references below point at the
+current module layout.
 
-## Scope
+## 1. BufferPool implementation
 
-Document where the `BufferPool` capacity numbers come from, where they hold,
-where they break down, what the adaptive policy added in #1638-#1641 does
-and does not solve, and what knobs are exposed to operators today via the
-`OC_RSYNC_BUFFER_POOL_SIZE` and `OC_RSYNC_BUFFER_POOL_STATS` environment
-variables wired in #1643. The output is a sizing reference for the pending
-#1642 benchmark and a pre-flight checklist for the #2045 io_uring fixed
-buffer registration design.
+The pool is a two-level cache designed to amortize the cost of
+allocating the per-file copy buffer used by the local-copy executor and
+the parallel checksum walker.
 
-## 1. Current default capacity
+- Module entry point and public re-exports:
+  `crates/engine/src/local_copy/buffer_pool/mod.rs:94-108`.
+- Core `BufferPool<A>` struct with the lock-free
+  `crossbeam_queue::ArrayQueue` central queue, atomic admission counter,
+  soft-capacity field, optional memory cap, optional pressure tracker,
+  optional throughput tracker, and telemetry counters:
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:87-148`.
+- Thread-local single-slot fast path keyed on `RefCell<Option<Vec<u8>>>`:
+  `crates/engine/src/local_copy/buffer_pool/thread_local_cache.rs`.
+- Acquire hot path checks the thread-local slot, then pops from the
+  central queue, then falls through to a fresh allocation:
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:361-422`.
+- Return hot path tries the thread-local slot first, then admits to the
+  central queue under a soft-cap CAS, then deallocates:
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:534-612`.
+- Process-wide singleton with lazy init:
+  `crates/engine/src/local_copy/buffer_pool/global.rs:30-130`.
+- Adaptive resizer driven by hit/miss rates:
+  `crates/engine/src/local_copy/buffer_pool/pressure.rs`.
+- Hard memory cap with backpressure (CAS fast path, condvar slow path):
+  `crates/engine/src/local_copy/buffer_pool/memory_cap.rs`.
 
-Two distinct quantities matter here. Conflating them is the most common
-mistake in tuning the pool.
+Buffer ownership is exclusively via RAII guards
+(`BufferGuard` / `BorrowedBufferGuard`) returned by `acquire_from`,
+`acquire_adaptive_from`, and `acquire`. The `Drop` impls call
+`return_buffer` to push the buffer back into the pool exactly once,
+even on panic unwind.
 
-- **Buffer size (per-buffer byte length)**: 128 KiB, set by the constant
-  `COPY_BUFFER_SIZE = 128 * 1024` at
-  `crates/engine/src/local_copy/mod.rs:165`. This is also the value of
-  `ADAPTIVE_BUFFER_MEDIUM` at `crates/engine/src/local_copy/mod.rs:172`
-  and is the default `buffer_size` field initialized in
-  `BufferPool::new()` at `crates/engine/src/local_copy/buffer_pool/pool.rs:172`.
-- **Pool capacity (number of buffers retained)**: `available_parallelism()`
-  with a fallback of 4, returned by `BufferPool::default()` at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:835-840` and used by
-  `GlobalBufferPoolConfig::default()` at
-  `crates/engine/src/local_copy/buffer_pool/global.rs:57-71`.
+## 2. Default capacity, per-buffer size, total memory cap
 
-Two further constants govern the queue's underlying storage and the
-adaptive resizer's hard limits:
+Two distinct quantities drive sizing. They are independently
+configurable and conflating them is the most common tuning mistake.
 
-- `DEFAULT_QUEUE_CAPACITY = 256` at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:32`. The lock-free
-  `crossbeam_queue::ArrayQueue` is sized to the larger of `max_buffers`
-  and this constant via `queue_capacity()` at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:40-42`. The soft cap
-  is enforced separately on return.
-- `MAX_CAPACITY = 256` and `MIN_CAPACITY = 2` at
-  `crates/engine/src/local_copy/buffer_pool/pressure.rs:53` and
-  `crates/engine/src/local_copy/buffer_pool/pressure.rs:47`. These bound
-  the adaptive resizer's grow and shrink decisions.
+### Per-buffer size
 
-The adaptive size table is at
-`crates/engine/src/local_copy/mod.rs:168-180` and dispatched by
-`adaptive_buffer_size()` at `crates/engine/src/local_copy/mod.rs:203-215`:
-8 KiB, 32 KiB, 128 KiB, 512 KiB, 1 MiB, switching at 64 KiB, 1 MiB, 64 MiB,
-and 256 MiB file-size thresholds.
+- `COPY_BUFFER_SIZE = 128 * 1024` at
+  `crates/engine/src/local_copy/mod.rs:165`. This is the default
+  `buffer_size` field set by `BufferPool::new()` at
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:172`.
+- Adaptive table at `crates/engine/src/local_copy/mod.rs:168-180` and
+  selector at `crates/engine/src/local_copy/mod.rs:203-215`: 8 KiB,
+  32 KiB, 128 KiB, 512 KiB, 1 MiB at file-size thresholds 64 KiB,
+  1 MiB, 64 MiB, 256 MiB.
+- The medium adaptive bucket equals `COPY_BUFFER_SIZE`, so an adaptive
+  acquire for files between 1 MiB and 64 MiB takes the fast path.
+  `acquire_adaptive_from` at
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:432-449`.
 
-## 2. Where the value came from
+### Pool capacity (number of buffers retained in the central queue)
 
-The numbers are not arbitrary but they were not chosen against a
-representative workload either. The trail in the comments and history is:
+- Default soft cap is `available_parallelism()`, falling back to 4:
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:835-840` and the
+  global config `Default` at
+  `crates/engine/src/local_copy/buffer_pool/global.rs:58-79`.
+- Underlying `ArrayQueue` is sized to the larger of `max_buffers` and
+  `DEFAULT_QUEUE_CAPACITY = 256`:
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:32`,
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:40-42`.
+- Adaptive resizer bounds the soft cap to `[2, 256]`:
+  `MIN_CAPACITY` and `MAX_CAPACITY` at
+  `crates/engine/src/local_copy/buffer_pool/pressure.rs:47,53`.
+- The thread-local cache is one extra slot per OS thread, not counted
+  against the soft cap:
+  `crates/engine/src/local_copy/buffer_pool/thread_local_cache.rs`.
 
-- `COPY_BUFFER_SIZE = 128 * 1024` predates the buffer pool and matches the
-  `read`/`write` block size used historically across the local-copy
-  executor. The constant doubles as `ADAPTIVE_BUFFER_MEDIUM` and is the
-  bucket selected for files between 1 MiB and 64 MiB. Tests at
-  `crates/engine/src/local_copy/buffer_pool/tests.rs:290-292` assert the
-  invariant `ADAPTIVE_BUFFER_MEDIUM == COPY_BUFFER_SIZE` so that the
-  thread-local fast path can short-circuit when an adaptive request lands
-  in the medium bucket (see `acquire_adaptive_from()` at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:432-449`).
-- `available_parallelism()` was introduced in PR #2979 (commit
-  `dfeba4e3a`, "feat: implement global bounded buffer pool singleton")
-  and motivated by the rayon thread pool topology: one buffer per worker
-  thread is the saturation point for the dominant workload (one file per
-  worker at a time).
-- `DEFAULT_QUEUE_CAPACITY = 256` was sized to match `MAX_CAPACITY = 256`
-  in the adaptive resizer landed by PR #3248 (commit `a1c4ec3cf`,
-  "feat: add adaptive BufferPool resizing based on allocation pressure").
-  The comment at `crates/engine/src/local_copy/buffer_pool/pool.rs:30-31`
-  cites 8 MiB of pooled memory at 64 buffers x 128 KiB; the upper bound
-  reaches 32 MiB at 256 buffers x 128 KiB, matching the budget cited at
-  `crates/engine/src/local_copy/buffer_pool/pressure.rs:51-52`.
-- The env var `OC_RSYNC_BUFFER_POOL_SIZE` and the telemetry counters
-  printed via `OC_RSYNC_BUFFER_POOL_STATS=1` landed in PR #3253
-  (commit `6edfd1667`, "feat: add BufferPool telemetry counters and env
-  var pool sizing"). See
-  `crates/engine/src/local_copy/buffer_pool/global.rs:49`,
-  `crates/engine/src/local_copy/buffer_pool/global.rs:61-65`, and the
-  drop-time print at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:849-861`.
-- The throughput tracker came in PR #3032 (commit `9687f9434`,
-  "feat: add EMA throughput tracker and dynamic buffer sizing to
-  BufferPool"). It is opt-in via `with_throughput_tracking()` at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:270-273` and is not
-  active by default.
+### Total memory cap
 
-## 3. Workloads it was tuned for
-
-The defaults assume a steady-state local-copy run that looks like a rayon
-parallel walk with one in-flight buffer per worker thread:
-
-- **100k small files in parallel**: `parallel_checksum.rs:92` pulls the
-  global pool once and threads `Arc<BufferPool>` into `hash_file_contents`
-  at `crates/engine/src/local_copy/executor/directory/parallel_checksum.rs:142,151,153`.
-  Each worker holds one buffer, returns it on file end, and the
-  thread-local slot at
-  `crates/engine/src/local_copy/buffer_pool/thread_local_cache.rs:24-27`
-  serves the next acquire with zero synchronization. The central queue
-  is touched only on the first acquire per thread.
-- **1 GiB single-file local copy**: the executor at
-  `crates/engine/src/local_copy/executor/file/copy/transfer/execute.rs:376-379`
-  takes one buffer via `BufferPool::acquire_adaptive_from()` for the
-  duration of the copy. With `available_parallelism()` >= 1, that fits
-  trivially. The 1 MiB `ADAPTIVE_BUFFER_HUGE` bucket at
-  `crates/engine/src/local_copy/mod.rs:175-180` halves the syscall count
-  on the read/write fallback path versus `ADAPTIVE_BUFFER_LARGE`.
-- **Multi-thread parallel stat / parallel checksum**: same pattern as the
-  100k case. Workers process candidates sequentially and recycle a single
-  buffer through the thread-local slot. The lock-free `ArrayQueue` only
-  comes into play when a thread retires its slot while another thread's
-  slot is full, an uncommon event in steady state.
-
-In all three cases the buffer pool's role is amortizing the
-`vec![0u8; 128 * 1024]` that `DefaultAllocator::allocate()` at
-`crates/engine/src/local_copy/buffer_pool/allocator.rs:51-53` would
-otherwise issue per file. The hot-path per-acquire cost in steady state
-is one `RefCell` borrow plus one `set_len()` (see the unsafe block at
-`crates/engine/src/local_copy/buffer_pool/pool.rs:550-556` that elides
-the `resize(size, 0)` memset that profiling measured at 26 % of runtime
-before #3253).
-
-## 4. Where it underprovisions
-
-The default capacity equals hardware parallelism, which is exactly enough
-for the "one buffer per worker" assumption and nothing more. Workloads
-that violate that assumption see allocator pressure that the pool cannot
-absorb until the adaptive resizer reacts:
-
-- **1M small files in parallel**: rayon spawns `available_parallelism()`
-  workers but the thread-local cache is per OS thread, not per rayon
-  task. Bursts of `par_iter()` work can route returns through the
-  central queue. With `max_buffers = N_cpus`, every return past the
-  thread-local slot lands directly at the soft cap. Subsequent acquires
-  on a cold thread allocate fresh through `pop_buffer()` at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:621-641`. Miss rate
-  spikes during workload acceleration until the adaptive resizer fires
-  at the next 64-op boundary.
-- **Sub-tasking inside a single file**: e.g. the parallel checksum
-  pipeline acquiring a second buffer for verify or hash-strong rehash.
-  With one slot per thread, the second acquire goes to the central
-  queue or a fresh allocation. At `max_buffers = N_cpus` the central
-  queue is empty in steady state, so the second-buffer path is
-  fresh-allocate every time.
-- **Memory-cap'd configurations with `try_acquire_from()`**: the
-  non-blocking variant at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:391-422` returns
-  `None` at the cap. Callers that retry without backoff (e.g. the
-  io_uring submission loop in #2045) will burn CPU spinning. There is
-  no test coverage today for the rate-limited acquire pattern; #1642
-  should add it.
-
-The grow path doubles capacity at most once every 64 acquires (see
-`CHECK_INTERVAL = 64` at
-`crates/engine/src/local_copy/buffer_pool/pressure.rs:29`). Going from 8
-buffers to the 256 ceiling takes five doublings, which is 320 acquires
-of accumulated pressure, plus the 64 ops between checks. On a 1M-file
-workload this is invisible. On a short burst it is the entire workload.
-
-## 5. Where it overprovisions
-
-The other failure mode is keeping memory pinned that nothing will reuse.
-The pool's idle footprint is bounded but not negligible:
-
-- **Sequential single-threaded transfers**: a `oc-rsync src dst` invocation
-  with `RAYON_NUM_THREADS=1` still picks `max_buffers = N_cpus` from
-  `available_parallelism()`. On a 16-core host that is 16 x 128 KiB =
-  2 MiB of central pool capacity that the workload will never fill,
-  plus one TLS slot in active use.
-- **Long-lived process with bursty workloads**: the soft cap is the
-  retention target for the central queue, not a high-water mark. Once
-  the adaptive resizer has grown the pool to a peak, the shrink path at
-  `crates/engine/src/local_copy/buffer_pool/pressure.rs:155-163` only
-  fires when `utilization < 30 %` and `miss_rate < 10 %` simultaneously.
-  A workload that oscillates between idle and saturated misses the
-  shrink window and stays at peak.
-- **Daemon mode with short-lived sessions**: each session inherits the
-  process-wide singleton (see
-  `crates/engine/src/local_copy/context_impl/state.rs:36`), so the pool
-  retains the worst-case sizing across sessions. There is no per-session
-  reset.
-
-The hard ceiling at 256 buffers x 128 KiB caps idle memory at 32 MiB,
-which is safe for a server-class deployment but not negligible on a
-constrained embedded target. The 4 KiB / 256 KiB clamp in
-`recommended_buffer_size()` at
-`crates/engine/src/local_copy/buffer_pool/pool.rs:326-339` interacts
-poorly with `ADAPTIVE_BUFFER_HUGE = 1 MiB`: a throughput-tracked pool
-would never recommend a 1 MiB buffer even when the file size adaptive
-table would.
-
-## 6. Adaptive grow/shrink policy from #1638-#1641
-
-Implemented in `crates/engine/src/local_copy/buffer_pool/pressure.rs`
-and wired into the acquire path via `pop_buffer()` at
-`crates/engine/src/local_copy/buffer_pool/pool.rs:621-641` and
-`maybe_resize()` at
-`crates/engine/src/local_copy/buffer_pool/pool.rs:650-678`.
-
-Policy summary:
-
-- **Check cadence**: every 64 acquires
-  (`CHECK_INTERVAL` at `crates/engine/src/local_copy/buffer_pool/pressure.rs:29`,
-  power of two for bitwise modular check at
-  `crates/engine/src/local_copy/buffer_pool/pressure.rs:107-110`).
-- **Grow trigger**: `miss_rate > 20 %`
-  (`MISS_RATE_GROW_THRESHOLD` at
-  `crates/engine/src/local_copy/buffer_pool/pressure.rs:35`). New
-  capacity is `min(current * 2, 256)` per
-  `crates/engine/src/local_copy/buffer_pool/pressure.rs:136-142`.
-- **Shrink trigger**: `utilization < 30 %` AND `miss_rate < 10 %`
-  (`UTILIZATION_SHRINK_THRESHOLD` at
-  `crates/engine/src/local_copy/buffer_pool/pressure.rs:41` combined with
-  the `MISS_RATE_GROW_THRESHOLD / 2` guard at
-  `crates/engine/src/local_copy/buffer_pool/pressure.rs:155-156`). New
-  capacity is `max(current / 2, 2)`.
-- **Shrink reclamation**: excess buffers above the new cap are popped
-  and deallocated immediately at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:664-676`, decrementing
-  `central_count` per reclamation.
-
-What it solves:
-
-- Mismatched defaults on hosts where `N_cpus` is much smaller than the
-  effective parallelism (e.g. a workload that fans out via
-  `rayon::scope` and exceeds `available_parallelism()` briefly).
-- Long-running daemon processes whose workload mix changes shape over
-  time. Periodic re-evaluation eventually converges to the new
-  steady-state size.
-
-What it does not solve:
-
-- **Cold-start bursts**: the first 64 ops on a fresh pool are evaluated
-  but cannot trigger growth because there are no prior samples; the
-  resizer's first useful evaluation is at op 128.
-- **Churn under uneven workloads**: a workload that alternates between
-  bursts and idle in cycles shorter than `CHECK_INTERVAL` ops will not
-  reach a stable size. The shrink path's dual threshold (utilization
-  AND low miss rate) prevents the worst thrashing, but the pool can
-  still oscillate between sizes that are both wrong for the average
-  workload.
-- **Per-thread starvation**: the resizer adjusts the central queue's
-  soft cap. It cannot influence which thread holds a TLS slot, so a
-  workload with fewer hot threads than buffers leaves the queue full
-  while a few threads spin acquire-allocate-deallocate.
-- **Hard memory cap interaction**: the resizer has no view of
-  `MemoryCap::outstanding()`. Growing the soft cap when checked-out
-  memory is already at the hard cap is a no-op against acquire
-  blocking, but it does increase eventual idle memory after returns.
-
-## 7. CLI/env override surface (#1643)
-
-There is no `--buffer-pool-size` CLI flag today. The override surface is
-two environment variables, both consumed by the engine crate without
-proxying through `cli` or `core`.
-
-- **`OC_RSYNC_BUFFER_POOL_SIZE`** at
-  `crates/engine/src/local_copy/buffer_pool/global.rs:49`. Parsed at
-  `GlobalBufferPoolConfig::default()` at
-  `crates/engine/src/local_copy/buffer_pool/global.rs:61-65`:
-  - Type: positive `usize`. Zero, negative, and non-numeric values are
-    silently ignored and the pool falls back to
-    `available_parallelism()`. The behaviour is fixed by tests at
-    `crates/engine/src/local_copy/buffer_pool/global.rs:243-289`.
-  - Default: `available_parallelism()` with a fallback of 4.
-  - Bounds: lower bound 1 (zero is rejected). Upper bound is whatever
-    the OS allocator can serve x the per-buffer 128 KiB cost. The
-    adaptive resizer's `MAX_CAPACITY = 256` does not cap the env-var
-    value because the env var sets the soft cap directly. A user who
-    sets `OC_RSYNC_BUFFER_POOL_SIZE=10000` gets a pool that retains up
-    to 10000 buffers (1.25 GiB at 128 KiB each), although the underlying
-    `ArrayQueue` will be sized accordingly via
-    `queue_capacity()` at `crates/engine/src/local_copy/buffer_pool/pool.rs:40-42`.
-  - Read once at first access. Setting the variable after the singleton
-    has been initialized has no effect.
-- **`OC_RSYNC_BUFFER_POOL_STATS`** at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:850`. Boolean (`"1"`
-  enables, anything else is off). Checked only at pool drop, prints
-  `reuses`, `allocations`, `growths`, and `hit_rate` on stderr. No
-  effect on pool behaviour, telemetry only.
-
-There is no programmatic flag plumbed through `core::CoreConfig` or
-`cli::Args`. The `init_global_buffer_pool()` function at
-`crates/engine/src/local_copy/buffer_pool/global.rs:112-120` is exposed
-publicly for embedders but the binary entry points do not call it.
-
-## 8. Memory cap interaction (#1188)
-
-The memory cap is a hard upper bound on outstanding (checked-out) bytes
-implemented in `crates/engine/src/local_copy/buffer_pool/memory_cap.rs`.
-It is opt-in via `with_memory_cap()` at
-`crates/engine/src/local_copy/buffer_pool/pool.rs:253-257` and is not
-configured by default. The default `BufferPool` and the global singleton
-both run uncapped.
-
-Interaction surface:
-
-- **What the cap counts**: bytes outstanding (checked out by callers).
-  Idle buffers in the central queue or in TLS slots do not count, since
-  they are immediately reusable. The accounting is at
+- No hard memory cap by default. Opt-in via `with_memory_cap()` at
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:253-257`.
+- When set, accounts for outstanding (checked-out) bytes only; idle
+  buffers do not count:
   `crates/engine/src/local_copy/buffer_pool/memory_cap.rs:14-22`.
-- **Backpressure semantics**: `wait_and_reserve()` at
-  `crates/engine/src/local_copy/buffer_pool/memory_cap.rs:56-109` uses a
-  CAS fast path then a condvar slow path. Returners notify all waiters
-  via `track_return()` at
-  `crates/engine/src/local_copy/buffer_pool/memory_cap.rs:142-152`.
-- **Adaptive growth interaction**: the adaptive resizer can grow the
-  soft cap above what the memory cap will admit. When this happens,
-  `acquire_from()` blocks at the cap regardless of the soft cap value.
-  No deadlock is possible because returns are unconditional, but
-  throughput collapses to the rate of returns. This is the failure
-  mode that #1642 must measure.
-- **`recommended_buffer_size()` clamp**: at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:326-339`, the
-  recommended size is capped at `memory_cap / 4`. This protects against
-  a single buffer pinning a quarter of the cap, but it also caps the
-  recommendation below `ADAPTIVE_BUFFER_HUGE = 1 MiB` for any cap below
-  4 MiB.
+- Implicit ceiling on idle memory at default settings: the soft cap can
+  grow to 256 buffers, so 256 x 128 KiB = 32 MiB of pooled memory. The
+  comment at `crates/engine/src/local_copy/buffer_pool/pressure.rs:50-53`
+  states this budget explicitly.
+- Operator override of pool count is via `OC_RSYNC_BUFFER_POOL_SIZE`
+  env var (#1643): `crates/engine/src/local_copy/buffer_pool/global.rs:56`,
+  parsed at `crates/engine/src/local_copy/buffer_pool/global.rs:64-72`.
 
-The cap and the adaptive resizer were designed independently. They
-compose correctly (no shared mutable state) but not optimally (the
-resizer cannot detect cap-induced misses, since cap waits do not
-register as pool misses; only fresh allocations do).
+## 3. Sizing assumptions
 
-## 9. Recommended sizing rules of thumb for users
+The defaults assume the dominant local-copy workload: a rayon parallel
+walk where each worker holds one buffer for the duration of one file,
+returns it on file end, and immediately re-acquires for the next file.
 
-Given the analysis above, here are the heuristics worth documenting in
-operator-facing notes:
+- **Target concurrency**: equal to `available_parallelism()`. Each rayon
+  worker is expected to hold at most one buffer at a time. The
+  thread-local cache absorbs the steady-state acquire/return traffic at
+  zero synchronization cost. The central queue is touched only on the
+  first acquire per OS thread and on cross-thread imbalance.
+- **Per-thread reuse**: the TLS slot is single-occupancy. The first
+  acquire per thread comes from the central queue (or fresh
+  allocation); subsequent acquire/return pairs cycle through the TLS
+  slot. This matches the saturation point of the parallel checksum
+  walker
+  (`crates/engine/src/local_copy/executor/directory/parallel_checksum.rs:142,151,153`)
+  and the file-copy executor
+  (`crates/engine/src/local_copy/executor/file/copy/transfer/execute.rs:376-379`).
+- **Memory budget**: the pool retains at most `soft_capacity` buffers
+  in the central queue. With `soft_capacity = N_cpus` and 128 KiB
+  buffers, idle memory is bounded by `N_cpus * 128 KiB`. With the
+  adaptive ceiling at 256, the worst-case retained memory is 32 MiB
+  regardless of host parallelism.
+- **No hard memory cap by default**. The cap is an embedder-only knob
+  intended for memory-constrained deployments. The default daemon and
+  CLI entry points run uncapped.
+- **Burst tolerance**: the underlying `ArrayQueue` is pre-allocated to
+  `max(max_buffers, 256)` slots
+  (`crates/engine/src/local_copy/buffer_pool/pool.rs:32-42`). This
+  headroom allows the adaptive resizer to grow the soft cap up to 256
+  without reallocating the queue.
 
-- **Default is correct for most local copies**. If `OC_RSYNC_BUFFER_POOL_SIZE`
-  is unset and the workload is one rsync invocation per minute or less,
-  the pool's idle memory is bounded by 256 x 128 KiB = 32 MiB and the
-  hot path is amortized. Do not tune.
-- **Override when `N_cpus` >> hot threads**. On a 64-core host running
-  oc-rsync with `--no-detach` and a single-threaded workload, set
-  `OC_RSYNC_BUFFER_POOL_SIZE=4` or `8` to cap idle memory.
-- **Override when sub-tasking is heavy**. Workloads using
-  `--checksum` plus `--whole-file` plus a deep parallel verify can hold
-  more than one buffer per thread. Set
-  `OC_RSYNC_BUFFER_POOL_SIZE=2*N_cpus` and verify with
-  `OC_RSYNC_BUFFER_POOL_STATS=1` that `hit_rate > 95 %` and `growths == 0`.
-- **Avoid setting above 256 unless you have measured the win**. The
-  adaptive resizer caps growth at 256 for a reason; an env-var override
-  larger than that just disables the implicit safety bound on the
-  central queue.
-- **Memory cap is for adversarial environments**. Containerized
-  deployments with strict cgroups limits should plumb a memory cap via
-  `init_global_buffer_pool()` plus a custom `with_memory_cap()` call;
-  the env var alone does not expose this.
-- **Use stats output before tuning**. Run with
-  `OC_RSYNC_BUFFER_POOL_STATS=1` and inspect the stderr line at process
-  exit. A `hit_rate > 95 %` means the default is fine; below 80 % means
-  the workload is allocating fresh buffers more often than the resizer
-  can react. A non-zero `growths` count means the workload exceeded the
-  initial capacity at least once; if it grows every run, raise the env
-  var to the steady-state size.
+## 4. Trade-offs
 
-## 10. Open questions for #1642 benchmark
+The defaults trade off allocation pressure against pinned idle memory.
 
-The benchmark under #1642 should answer the following, none of which are
-settled by the existing micro-benchmarks at
-`crates/engine/benches/buffer_pool_benchmark.rs` or
-`crates/engine/benches/buffer_pool_contention.rs`:
+- **Smaller pool (lower `max_buffers`)**:
+  - Less idle memory. A pool of 4 buffers caps idle memory at 512 KiB.
+  - More misses under burst. Sub-tasking patterns where a single thread
+    holds two buffers simultaneously bypass the TLS slot and either pop
+    the central queue or allocate fresh.
+  - Higher allocator and zero-init pressure when the central queue
+    drains. Profiling against the pre-pool implementation showed
+    `vec![0; 128 * 1024]` consuming approximately 26 % of CPU; that is
+    the cost the pool is amortizing.
+- **Larger pool (higher `max_buffers`)**:
+  - More memory pinned even when idle. A 64-core host with the
+    adaptive cap maxed reaches 32 MiB of central-queue memory plus one
+    TLS slot per active OS thread.
+  - Diminishing reuse benefit past `N_cpus + sub-task fanout`. Buffers
+    above that threshold sit idle indefinitely until the shrink path
+    fires (`utilization < 30 %` and `miss_rate < 10 %`,
+    `crates/engine/src/local_copy/buffer_pool/pressure.rs:155-163`).
+  - Fixed-buffer io_uring registration (planned under #2045) cost
+    scales with pool size; an oversized pool extends warm-up time.
+- **Single shared global pool vs per-subsystem pools**:
+  - The global singleton (#1010-#1012) gives one shared memory budget
+    across receiver, generator, parallel checksum, and disk commit.
+    Per-subsystem pools would each independently size to
+    `available_parallelism()`, multiplying retained memory.
+  - The drawback is no per-subsystem accounting; telemetry counters are
+    aggregated process-wide.
+- **Adaptive resizer cadence vs reactivity**:
+  - `CHECK_INTERVAL = 64`
+    (`crates/engine/src/local_copy/buffer_pool/pressure.rs:29`)
+    amortizes the resize evaluation. A smaller interval reacts faster
+    to bursts but costs more atomic load/swap operations on the hot
+    path.
+  - The current threshold combination (grow at 20 % miss, shrink at
+    30 % utilization plus 10 % miss) tolerates oscillation but
+    converges slowly for cold-start bursts (cannot trigger growth until
+    at least 128 acquires have elapsed).
 
-1. What is the cold-start miss rate on a 1M-file workload at
-   `available_parallelism()` capacity, and how many `CHECK_INTERVAL`
-   boundaries elapse before the resizer reaches steady-state? The
-   theoretical lower bound is 5 doublings x 64 ops = 320 acquires; the
-   observed value depends on rayon scheduling.
-2. Does the grow path ever actually fire on the dominant local-copy
-   workload, or is the global singleton's startup capacity already
-   sufficient? Use `total_growths()` at
-   `crates/engine/src/local_copy/buffer_pool/pool.rs:779-781`.
-3. Does shrink ever fire in long-running daemon mode, or does idle
-   memory accrete monotonically? Add a workload alternation (saturate,
-   idle, saturate) and verify the resizer reaches the shrink threshold.
-4. What is the cap-blocked acquire rate when `with_memory_cap()` is set
-   below `max_buffers x buffer_size`? This is not measurable from
-   `total_misses()` because cap waits do not record as misses; the
-   benchmark must instrument `MemoryCap::outstanding()` directly.
-5. What is the measured win of the unsafe `set_len()` shortcut at
-   `crates/engine/src/local_copy/buffer_pool/pool.rs:550-556` over the
-   `resize(size, 0)` it replaces? The 26 % CPU figure cited in the
-   comment was measured pre-#3253; revalidate on the current code path
-   to justify keeping the unsafe block.
-6. How does the adaptive policy interact with the throughput tracker's
-   `recommended_buffer_size()` when both are enabled? The recommendation
-   targets 10 ms of data per buffer
-   (`TARGET_BUFFER_DURATION_SECS = 0.01` at
-   `crates/engine/src/local_copy/buffer_pool/throughput.rs:48`), which
-   for a 1 GiB/s sustained throughput recommends 10 MiB clamped to the
-   `MAX_BUFFER_SIZE = 256 * 1024` ceiling at
-   `crates/engine/src/local_copy/buffer_pool/throughput.rs:42`. The
-   adaptive table for >= 256 MiB files would prefer 1 MiB buffers; the
-   tracker forces 256 KiB. Which wins on real hardware?
-7. How does the soft cap interact with the lock-free `ArrayQueue`'s
-   fixed hard capacity when `OC_RSYNC_BUFFER_POOL_SIZE > 256`? The
-   queue is sized via `queue_capacity()` at
-   `crates/engine/src/local_copy/buffer_pool/pool.rs:40-42` to
-   `max(max_buffers, 256)`, so a value of 10000 produces a 10000-slot
-   queue and matching idle memory. Confirm via stress test that the
-   admission CAS at
-   `crates/engine/src/local_copy/buffer_pool/pool.rs:584-612` does not
-   regress when capacity is two orders of magnitude above the default.
-8. What is the right default for the pending io_uring registered-buffer
-   path under #2045? The fixed-buffer registration cost amortizes only
-   if the pool's churn rate is low; the benchmark should establish a
-   baseline reuse rate against which #2045 can claim a win.
+## 5. Proposed improvements
 
-The answers feed back into whether the 128 KiB / `N_cpus` defaults
-should change, whether `OC_RSYNC_BUFFER_POOL_SIZE` should be promoted to
-a `--buffer-pool-size` CLI flag, and whether the adaptive resizer's
-thresholds need workload-specific overrides.
+### (a) Workload-derived sizing at startup
+
+Replace the bare `available_parallelism()` default with a heuristic
+that factors in the expected workload shape. The CLI entry point
+already knows the recurse depth, the parallel-stat threshold, and
+whether `--checksum` or parallel verify is enabled; that information
+should seed the initial soft cap.
+
+- A single-file `oc-rsync src dst` invocation should start at 2 buffers
+  (one in flight, one warm). The current default of `N_cpus` over-
+  provisions for non-parallel workloads.
+- A recursive copy with parallel checksum should start at
+  `min(N_cpus, expected_files / 4)`, clamped to `[2, 32]`.
+- Plumb the heuristic through `core::CoreConfig` so the embedder can
+  override it.
+
+### (b) Promote `OC_RSYNC_BUFFER_POOL_SIZE` to a CLI flag
+
+The env var landed in #1643 and exposes the soft cap directly with
+documented bounds and silent rejection of invalid values
+(`crates/engine/src/local_copy/buffer_pool/global.rs:64-72`,
+tests at `crates/engine/src/local_copy/buffer_pool/global.rs:243-289`).
+Operators have to remember an env var name and set it before
+invocation. A `--buffer-pool-size N` CLI flag with the same semantics,
+validated by clap and threaded through `core::CoreConfig`, would make
+the knob discoverable via `--help` and consistent with other tuning
+flags. Also expose `--buffer-pool-stats` to flip the telemetry print
+path on demand.
+
+### (c) Instrumentation hooks
+
+The pool already exposes telemetry via `BufferPoolStats` (returned by
+`stats()` at `crates/engine/src/local_copy/buffer_pool/pool.rs:791-797`)
+and a stderr summary printed on drop when
+`OC_RSYNC_BUFFER_POOL_STATS=1`. This is one-shot and only useful for
+post-hoc tuning. Add:
+
+- A periodic sampler that emits `total_hits`, `total_misses`,
+  `total_growths`, and `available()` to the logging crate at the
+  `debug` level, gated by a config flag. Useful for long-running
+  daemons.
+- An internal metrics export (Prometheus-shaped counters) when the
+  daemon is started with a metrics endpoint. Counters already exist;
+  only the exporter wiring is missing.
+- Track `central_count` peak and TLS-slot hit ratio explicitly to
+  distinguish "TLS absorbed it" from "central queue absorbed it" in
+  the hit count.
+
+### (d) Drain on idle
+
+Add a periodic drain task that shrinks the central queue when the
+process has been idle for longer than a threshold (e.g. 60 seconds).
+The adaptive shrink path requires both `utilization < 30 %` and
+`miss_rate < 10 %` measured over `CHECK_INTERVAL` ops; a long-idle
+process never accumulates new operations and so never re-evaluates.
+The result is monotonic memory growth in daemon mode after the first
+busy burst. A wall-clock-driven shrink complements the op-count-driven
+shrink and addresses the failure mode where the singleton is shared
+across short-lived sessions
+(`crates/engine/src/local_copy/context_impl/state.rs:36`).
+
+### (e) Adaptive ceiling tied to memory cap
+
+When `with_memory_cap()` is configured, the adaptive resizer's
+`MAX_CAPACITY = 256` ceiling is irrelevant; the binding constraint is
+`memory_cap / buffer_size`. Wire the resizer to read the cap and clamp
+its grow target to the cap-implied maximum so that the soft cap never
+exceeds what the memory budget can actually admit. This avoids the
+failure mode where the resizer grows the soft cap past the cap and
+subsequent acquires block on `wait_and_reserve()`
+(`crates/engine/src/local_copy/buffer_pool/memory_cap.rs:56-109`)
+without the resizer noticing.
+
+## Summary
+
+The default sizing (one buffer per hardware thread, 128 KiB each, soft
+cap bounded to `[2, 256]` by the adaptive resizer, 32 MiB worst-case
+idle footprint) is correct for the dominant local-copy workload and
+defensible for daemon mode. The known gaps are cold-start
+underprovisioning, oversizing on high-core hosts running
+single-threaded copies, and the absence of CLI plumbing for the env-var
+override. The five improvements above are sequenced from highest
+leverage (workload-derived sizing) to most narrowly scoped (memory-cap-
+aware adaptive ceiling) and can be pursued independently.
