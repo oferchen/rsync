@@ -163,7 +163,11 @@ fn submit_and_verify_reads(
     payload: &[u8],
     label: &str,
 ) {
-    assert_eq!(offsets.len(), bufs.len(), "{label}: offset/buf count mismatch");
+    assert_eq!(
+        offsets.len(),
+        bufs.len(),
+        "{label}: offset/buf count mismatch"
+    );
 
     // Distinct op_id per SQE so the demux can tell them apart.
     for (i, buf) in bufs.iter_mut().enumerate() {
@@ -231,7 +235,12 @@ fn pipe() -> (std::fs::File, std::fs::File) {
     // file descriptors before returning. The fds are wrapped in `File`
     // immediately so the kernel handle ownership is recorded.
     let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
-    assert_eq!(rc, 0, "libc::pipe failed: {}", std::io::Error::last_os_error());
+    assert_eq!(
+        rc,
+        0,
+        "libc::pipe failed: {}",
+        std::io::Error::last_os_error()
+    );
     // SAFETY: `pipe` returned 0, so both fds are valid kernel handles owned
     // by this process; wrapping them in `File` transfers ownership safely.
     let r = unsafe { std::fs::File::from_raw_fd(fds[0]) };
