@@ -183,7 +183,7 @@ rustc-hash = "2.1"
 # Parallel directory walking - ~4x faster than walkdir
 jwalk = "0.8"
 # Cross-platform ACL support (Linux, macOS, FreeBSD)
-exacl = "0.12"
+exacl = "0.13"
 # Async runtime - feature-gated for optional async support
 tokio = { version = "1.52", features = ["rt-multi-thread", "io-util", "net", "fs", "sync", "time", "process", "macros"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
