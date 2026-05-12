@@ -352,7 +352,10 @@ mod tests {
     fn integral_term_eliminates_steady_state_error_after_repeated_low_samples() {
         // Pure-P would leave a residual offset; the integrator should keep
         // pushing the buffer up across repeated identical low samples.
-        let ctrl = ControllerConfig::new(lan_setpoint())
+        // Use a moderate setpoint (1 MB/s) so the integral accumulates
+        // gradually without saturating the anti-windup clamp or hitting
+        // max_size on the first step.
+        let ctrl = ControllerConfig::new(1_000_000)
             .gains(0.0, 0.5, 0.0)
             .min_size(16 * 1024)
             .max_size(4 * 1024 * 1024)
