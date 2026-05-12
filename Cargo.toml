@@ -185,7 +185,7 @@ jwalk = "0.8"
 # Cross-platform ACL support (Linux, macOS, FreeBSD)
 exacl = "0.12"
 # Async runtime - feature-gated for optional async support
-tokio = { version = "1.45", features = ["rt-multi-thread", "io-util", "net", "fs", "sync", "time", "process", "macros"] }
+tokio = { version = "1.52", features = ["rt-multi-thread", "io-util", "net", "fs", "sync", "time", "process", "macros"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
 # Serialization framework - feature-gated for JSON config and data export
 serde = { version = "1.0", features = ["derive"] }
