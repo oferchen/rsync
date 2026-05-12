@@ -95,7 +95,7 @@ pub fn apply_protocol_restrictions(
         // upstream compat.c:655-661 - ACLs require protocol 30+
         if flags.preserve_acls && !flags.local_server {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+                io::ErrorKind::Unsupported,
                 format!("--acls requires protocol 30 or higher (negotiated {version})."),
             ));
         }
@@ -103,7 +103,7 @@ pub fn apply_protocol_restrictions(
         // upstream compat.c:662-668 - xattrs require protocol 30+
         if flags.preserve_xattrs && !flags.local_server {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+                io::ErrorKind::Unsupported,
                 format!("--xattrs requires protocol 30 or higher (negotiated {version})."),
             ));
         }
@@ -123,7 +123,7 @@ pub fn apply_protocol_restrictions(
         // upstream compat.c:679-685 - fuzzy requires 29+
         if flags.fuzzy_basis {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+                io::ErrorKind::Unsupported,
                 format!("--fuzzy requires protocol 29 or higher (negotiated {version})."),
             ));
         }
@@ -131,7 +131,7 @@ pub fn apply_protocol_restrictions(
         // upstream compat.c:687-693 - basis_dir + inplace requires 29+
         if flags.basis_dir_count > 0 && flags.inplace {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+                io::ErrorKind::Unsupported,
                 format!(
                     "--compare-dest/--copy-dest/--link-dest with --inplace requires \
                      protocol 29 or higher (negotiated {version})."
@@ -142,7 +142,7 @@ pub fn apply_protocol_restrictions(
         // upstream compat.c:695-701 - multiple basis dirs require 29+
         if flags.basis_dir_count > 1 {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+                io::ErrorKind::Unsupported,
                 format!(
                     "Using more than one --compare-dest/--copy-dest/--link-dest option \
                      requires protocol 29 or higher (negotiated {version})."
@@ -153,7 +153,7 @@ pub fn apply_protocol_restrictions(
         // upstream compat.c:703-709 - prune-empty-dirs requires 29+
         if flags.prune_empty_dirs {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
+                io::ErrorKind::Unsupported,
                 format!(
                     "--prune-empty-dirs requires protocol 29 or higher (negotiated {version})."
                 ),
