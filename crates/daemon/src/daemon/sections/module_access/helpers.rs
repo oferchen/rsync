@@ -64,11 +64,14 @@ pub(crate) fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, 
 }
 
 /// Creates a [`DaemonError`] for log file open failures.
+///
+/// upstream: log.c:163 - log-open failures produce RERR_MESSAGEIO (13).
 fn log_file_error(path: &Path, error: io::Error) -> DaemonError {
-    DaemonError::new(
-        FEATURE_UNAVAILABLE_EXIT_CODE,
+    let code = ExitCode::MessageIo;
+    DaemonError::with_code(
+        code,
         rsync_error!(
-            FEATURE_UNAVAILABLE_EXIT_CODE,
+            code.as_i32(),
             format!("failed to open log file '{}': {}", path.display(), error)
         )
         .with_role(Role::Daemon),

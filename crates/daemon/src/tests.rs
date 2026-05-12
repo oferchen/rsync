@@ -68,6 +68,7 @@ use crate::daemon::{
 use core::{
     bandwidth::{BandwidthLimiter, LimiterChange},
     branding::{self, Brand},
+    exit_code::ExitCode,
 };
 
 // Import from protocol
@@ -111,6 +112,7 @@ include!("tests/chunks/help_flag_renders_static_help_snapshot.rs");
 include!("tests/chunks/legacy_daemon_greeting_digest_list_varies_by_protocol.rs");
 include!("tests/chunks/legacy_daemon_greeting_has_single_newline.rs");
 include!("tests/chunks/legacy_daemon_greeting_includes_version_and_digests.rs");
+include!("tests/chunks/log_file_open_failure_returns_message_io.rs");
 include!("tests/chunks/log_module_bandwidth_change_ignores_unchanged.rs");
 include!("tests/chunks/log_module_bandwidth_change_logs_disable.rs");
 include!("tests/chunks/log_module_bandwidth_change_logs_updates.rs");
