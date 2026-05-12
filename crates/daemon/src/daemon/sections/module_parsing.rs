@@ -156,7 +156,6 @@ fn parse_bind_address(value: &OsString) -> Result<IpAddr, DaemonError> {
 
     lookup_host(candidate)
         .map_err(|_| config_error(format!("invalid bind address '{text}'")))?
-        .into_iter()
         .next()
         .ok_or_else(|| config_error(format!("invalid bind address '{text}'")))
 }
