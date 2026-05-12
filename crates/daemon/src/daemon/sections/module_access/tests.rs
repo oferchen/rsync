@@ -284,12 +284,13 @@ mod module_access_tests {
 
     // Tests for error file functions
 
+    /// upstream: log.c:163 - log-open failures produce RERR_MESSAGEIO (13).
     #[test]
     fn log_file_error_creates_daemon_error_with_correct_code() {
         let path = std::path::Path::new("/tmp/test.log");
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test error");
         let err = log_file_error(path, io_err);
-        assert_eq!(err.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+        assert_eq!(err.exit_code(), core::exit_code::ExitCode::MessageIo.as_i32());
     }
 
     #[test]
