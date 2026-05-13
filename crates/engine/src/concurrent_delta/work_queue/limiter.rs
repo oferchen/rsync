@@ -908,7 +908,7 @@ mod tests {
         // Target must be within valid bounds.
         let target = limiter.target();
         assert!(
-            target >= 1 && target <= 64,
+            (1..=64).contains(&target),
             "target {target} must be within [min_limit, max_limit]",
         );
     }
