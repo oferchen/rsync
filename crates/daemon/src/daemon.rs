@@ -46,6 +46,7 @@ use core::{
         parse_bandwidth_limit,
     },
     branding::{self, Brand, manifest},
+    exit_code::ExitCode,
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
     server::{
