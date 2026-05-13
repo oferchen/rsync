@@ -1,22 +1,14 @@
-//! Benchmark skeleton for the splice/vmsplice SSH-stdio investigation.
+//! Benchmark for splice/vmsplice zero-copy transfer paths.
 //!
-//! Tracks oc-rsync task #1860. The audit doc lives at
-//! `docs/audits/splice-ssh-stdio.md`. This bench provides a baseline so that
-//! once the splice driver lands (`fast_io::splice_pipe`, see follow-up
-//! #1861), a measurable delta can be reported against the read/write loop
-//! that oc-rsync uses today on the SSH-stdio sender path.
+//! Compares three data movement strategies for writing file/buffer data
+//! through a pipe (simulating the SSH stdio path):
 //!
-//! Two benches are defined inside the `splice_pipe` group:
-//!
-//! - `read_write_baseline` - a real file -> pipe transfer using
-//!   `read(2)` + `write_all(2)` with a 64 KiB buffer. This mirrors the
-//!   current sender code path (modulo the multiplex envelope) and produces
-//!   the comparison baseline for future splice work.
-//! - `splice_baseline` - a placeholder slot that today just records a
-//!   constant. It exists so that the criterion group has a stable identity
-//!   on Linux and so that follow-up patches can drop the splice driver into
-//!   place without changing the report layout. The body is intentionally
-//!   trivial; replace it once #1861 lands.
+//! - `read_write_baseline` - standard `read(2)` + `write_all(2)` with a
+//!   64 KiB buffer. This mirrors the existing sender code path.
+//! - `splice_transfer` - `splice(file_fd, pipe) + splice(pipe, dest_fd)`
+//!   zero-copy path via [`fast_io::splice::SplicePipe`].
+//! - `vmsplice_transfer` - `vmsplice(buf, pipe) + splice(pipe, dest_fd)`
+//!   for transferring an in-memory buffer to a file without userspace copy.
 //!
 //! Cross-platform: the meaningful code is gated to Linux. On other targets
 //! the bench compiles to an empty criterion main so that
@@ -31,7 +23,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 fn bench_splice_pipe(c: &mut Criterion) {
     use std::fs::File;
     use std::io::{Read, Write};
-    use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
+    use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
     use std::thread;
 
     use criterion::{BenchmarkId, Throughput};
@@ -94,6 +86,13 @@ fn bench_splice_pipe(c: &mut Criterion) {
         (write_end, drain)
     }
 
+    /// Creates a destination temp file and returns (file, raw_fd).
+    fn make_dest_file() -> (NamedTempFile, i32) {
+        let file = NamedTempFile::new().expect("create dest temp file");
+        let fd = file.as_file().as_raw_fd();
+        (file, fd)
+    }
+
     /// Drives the read/write baseline once. Reads `payload` from start to end
     /// into a 64 KiB buffer and writes it through `writer` (a pipe).
     fn run_read_write(payload: &NamedTempFile, writer: OwnedFd) {
@@ -133,19 +132,48 @@ fn bench_splice_pipe(c: &mut Criterion) {
         );
     }
 
-    eprintln!(
-        "splice_pipe::splice_baseline is a placeholder; tracking #1861 \
-         for the real fast_io::splice_pipe driver"
-    );
-    for &(label, size) in SIZES {
-        group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(
-            BenchmarkId::new("splice_baseline", label),
-            &size,
-            |b, &size| {
-                b.iter(|| black_box(size as u64));
-            },
-        );
+    // splice(2) bench: file -> splice -> pipe -> splice -> dest file.
+    if fast_io::splice::is_splice_available() {
+        for &(label, size) in SIZES {
+            let payload = create_payload(size);
+            group.throughput(Throughput::Bytes(size as u64));
+            group.bench_with_input(BenchmarkId::new("splice_transfer", label), &(), |b, _| {
+                b.iter_with_setup(
+                    || {
+                        let src = File::open(payload.path()).expect("open payload");
+                        let (dest, dest_fd) = make_dest_file();
+                        (src, dest, dest_fd)
+                    },
+                    |(src, _dest, dest_fd)| {
+                        let src_fd = src.as_raw_fd();
+                        let n = fast_io::splice::try_splice_to_file(src_fd, dest_fd, size)
+                            .expect("splice_to_file");
+                        black_box(n);
+                    },
+                );
+            });
+        }
+
+        // vmsplice(2) bench: in-memory buffer -> vmsplice -> pipe -> splice -> dest file.
+        for &(label, size) in SIZES {
+            let buf: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+            group.throughput(Throughput::Bytes(size as u64));
+            group.bench_with_input(BenchmarkId::new("vmsplice_transfer", label), &(), |b, _| {
+                b.iter_with_setup(
+                    || {
+                        let (dest, dest_fd) = make_dest_file();
+                        (dest, dest_fd)
+                    },
+                    |(_dest, dest_fd)| {
+                        let n = fast_io::splice::try_vmsplice_to_file(&buf, dest_fd)
+                            .expect("vmsplice_to_file");
+                        black_box(n);
+                    },
+                );
+            });
+        }
+    } else {
+        eprintln!("splice(2) not available on this kernel - skipping splice/vmsplice benches");
     }
 
     group.finish();
