@@ -623,7 +623,7 @@ mod tests {
         let statx_buf = results.into_iter().next().unwrap().unwrap();
         assert_eq!(statx_buf.stx_size, 5);
         assert_eq!(
-            statx_buf.stx_mode & libc::S_IFMT,
+            u32::from(statx_buf.stx_mode) & libc::S_IFMT,
             libc::S_IFREG,
             "expected regular file"
         );
