@@ -205,9 +205,32 @@ impl ParallelDeltaPipeline {
     /// The [`DeltaConsumer`] reorder buffer capacity is set to the same value,
     /// which is sufficient to hold all in-flight results and yield contiguous
     /// runs as workers complete.
+    ///
+    /// Use [`new_adaptive`](Self::new_adaptive) when the average target file
+    /// size is known - small-file workloads benefit from deeper queues.
     #[must_use]
     pub fn new(worker_count: usize) -> Self {
         let capacity = worker_count.saturating_mul(2).max(2);
+        Self::with_capacity(capacity)
+    }
+
+    /// Creates a new parallel pipeline whose work queue depth adapts to the
+    /// workload's average file size and the available core count.
+    ///
+    /// The capacity multiplier scales between 2x (large-file, I/O-bound) and
+    /// 8x (small-file, CPU/syscall-bound) of `worker_count`, mirroring the
+    /// heuristic in
+    /// [`work_queue::adaptive_queue_depth`](engine::concurrent_delta::work_queue::adaptive_queue_depth).
+    ///
+    /// Pass `avg_target_size == 0` when the workload is unknown to fall back
+    /// to the default 2x multiplier - identical to [`new`](Self::new).
+    #[must_use]
+    pub fn new_adaptive(worker_count: usize, avg_target_size: u64) -> Self {
+        let capacity = adaptive_capacity(worker_count, avg_target_size);
+        Self::with_capacity(capacity)
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
         let (work_tx, work_rx) = work_queue::bounded_with_capacity(capacity);
         let consumer = DeltaConsumer::spawn(work_rx, capacity);
 
@@ -227,6 +250,17 @@ impl ParallelDeltaPipeline {
     #[must_use]
     pub fn new_bypass(worker_count: usize) -> Self {
         let capacity = worker_count.saturating_mul(2).max(2);
+        Self::with_bypass_capacity(capacity)
+    }
+
+    /// Bypass-mode variant of [`new_adaptive`](Self::new_adaptive).
+    #[must_use]
+    pub fn new_bypass_adaptive(worker_count: usize, avg_target_size: u64) -> Self {
+        let capacity = adaptive_capacity(worker_count, avg_target_size);
+        Self::with_bypass_capacity(capacity)
+    }
+
+    fn with_bypass_capacity(capacity: usize) -> Self {
         let (work_tx, work_rx) = work_queue::bounded_with_capacity(capacity);
         let consumer = DeltaConsumer::spawn_bypass(work_rx);
 
@@ -236,6 +270,27 @@ impl ParallelDeltaPipeline {
             consumer: Some(consumer),
         }
     }
+}
+
+/// Computes the bounded work queue capacity for a given worker count and
+/// average target file size.
+///
+/// Mirrors [`work_queue::adaptive_queue_depth`] but operates on an explicit
+/// `worker_count` rather than `rayon::current_num_threads()` so the receiver
+/// can pass the configured thread budget when it differs from rayon's pool.
+fn adaptive_capacity(worker_count: usize, avg_target_size: u64) -> usize {
+    const SMALL_FILE_THRESHOLD: u64 = 64 * 1024;
+    const LARGE_FILE_THRESHOLD: u64 = 1024 * 1024;
+    let multiplier: usize = if avg_target_size == 0 {
+        2
+    } else if avg_target_size < SMALL_FILE_THRESHOLD {
+        8
+    } else if avg_target_size > LARGE_FILE_THRESHOLD {
+        2
+    } else {
+        4
+    };
+    worker_count.saturating_mul(multiplier).max(2)
 }
 
 impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
@@ -358,12 +413,18 @@ impl ThresholdDeltaPipeline {
     }
 
     /// Promotes from buffering to parallel mode, flushing buffered items.
+    ///
+    /// Sizes the work queue using [`ParallelDeltaPipeline::new_adaptive`] with
+    /// the average target file size computed from the buffered items, so
+    /// small-file workloads get a deeper queue (8x cores) to keep workers
+    /// saturated, while large-file workloads stay at 2x to bound memory.
     fn promote_to_parallel(&mut self, buffered: Vec<DeltaWork>) -> io::Result<()> {
         let worker_count = rayon::current_num_threads();
+        let avg_target_size = average_target_size(&buffered);
         let mut parallel = if self.bypass_reorder {
-            ParallelDeltaPipeline::new_bypass(worker_count)
+            ParallelDeltaPipeline::new_bypass_adaptive(worker_count, avg_target_size)
         } else {
-            ParallelDeltaPipeline::new(worker_count)
+            ParallelDeltaPipeline::new_adaptive(worker_count, avg_target_size)
         };
         for item in buffered {
             parallel.submit_work(item)?;
@@ -371,6 +432,21 @@ impl ThresholdDeltaPipeline {
         self.mode = ThresholdMode::Parallel(parallel);
         Ok(())
     }
+}
+
+/// Returns the arithmetic mean of `target_size()` across `items`, or 0 when
+/// the slice is empty. Saturating-add so a long tail of very large files
+/// cannot overflow the u128 accumulator before the division.
+fn average_target_size(items: &[DeltaWork]) -> u64 {
+    if items.is_empty() {
+        return 0;
+    }
+    let total: u128 = items
+        .iter()
+        .map(|w| u128::from(w.target_size()))
+        .fold(0u128, |a, b| a.saturating_add(b));
+    let avg = total / items.len() as u128;
+    u64::try_from(avg).unwrap_or(u64::MAX)
 }
 
 impl ReceiverDeltaPipeline for ThresholdDeltaPipeline {
@@ -1370,5 +1446,70 @@ mod tests {
         ndx_values.sort_unstable();
         let expected: Vec<u32> = (0..count).collect();
         assert_eq!(ndx_values, expected);
+    }
+
+    #[test]
+    fn adaptive_capacity_small_files_uses_8x_multiplier() {
+        // Small-file workloads (< 64 KiB) need a deeper queue to avoid
+        // worker starvation since per-file syscall overhead dominates.
+        assert_eq!(super::adaptive_capacity(4, 4096), 32);
+        assert_eq!(super::adaptive_capacity(4, 63 * 1024), 32);
+    }
+
+    #[test]
+    fn adaptive_capacity_medium_files_uses_4x_multiplier() {
+        // Medium files (64 KiB - 1 MiB) interpolate at 4x.
+        assert_eq!(super::adaptive_capacity(4, 64 * 1024), 16);
+        assert_eq!(super::adaptive_capacity(4, 512 * 1024), 16);
+        assert_eq!(super::adaptive_capacity(4, 1024 * 1024), 16);
+    }
+
+    #[test]
+    fn adaptive_capacity_large_files_uses_2x_multiplier() {
+        // Large files (> 1 MiB) are I/O-bound; a deeper queue wastes memory.
+        assert_eq!(super::adaptive_capacity(4, 1024 * 1024 + 1), 8);
+        assert_eq!(super::adaptive_capacity(4, 100 * 1024 * 1024), 8);
+    }
+
+    #[test]
+    fn adaptive_capacity_unknown_workload_falls_back_to_default() {
+        // avg_target_size == 0 means "workload unknown"; preserve the
+        // pre-existing 2x multiplier so the change is opt-in.
+        assert_eq!(super::adaptive_capacity(4, 0), 8);
+    }
+
+    #[test]
+    fn adaptive_capacity_floor_keeps_pipeline_usable() {
+        // A degenerate worker_count of 0 must still produce a non-zero
+        // capacity, otherwise the bounded channel would panic on create.
+        assert_eq!(super::adaptive_capacity(0, 0), 2);
+        assert_eq!(super::adaptive_capacity(0, 4096), 2);
+    }
+
+    #[test]
+    fn average_target_size_empty_returns_zero() {
+        assert_eq!(super::average_target_size(&[]), 0);
+    }
+
+    #[test]
+    fn average_target_size_computes_arithmetic_mean() {
+        let items = vec![
+            DeltaWork::whole_file(0, PathBuf::from("/a"), 1024),
+            DeltaWork::whole_file(1, PathBuf::from("/b"), 2048),
+            DeltaWork::whole_file(2, PathBuf::from("/c"), 3072),
+        ];
+        assert_eq!(super::average_target_size(&items), 2048);
+    }
+
+    #[test]
+    fn average_target_size_saturates_at_u64_max() {
+        // Saturating accumulator must not panic on a long tail of huge files.
+        let items = vec![
+            DeltaWork::whole_file(0, PathBuf::from("/a"), u64::MAX),
+            DeltaWork::whole_file(1, PathBuf::from("/b"), u64::MAX),
+            DeltaWork::whole_file(2, PathBuf::from("/c"), u64::MAX),
+        ];
+        // Average of three u64::MAX values is u64::MAX (within rounding).
+        assert!(super::average_target_size(&items) >= u64::MAX - 1);
     }
 }
