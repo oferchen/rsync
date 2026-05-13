@@ -424,11 +424,15 @@ fn execute_archive_mode_copies_socket() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // archive_options() enables specials (among other things)
+    // archive_options() minus owner/group: chown requires root or matching
+    // uid/gid resolution, which varies across CI environments. Ownership
+    // preservation is tested in execute_ownership_preservation.rs.
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            test_helpers::presets::archive_options(),
+            test_helpers::presets::archive_options()
+                .owner(false)
+                .group(false),
         )
         .expect("archive copy succeeds");
 
@@ -471,7 +475,9 @@ fn execute_archive_mode_copies_fifo_and_socket_together() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            test_helpers::presets::archive_options(),
+            test_helpers::presets::archive_options()
+                .owner(false)
+                .group(false),
         )
         .expect("archive copy succeeds");
 
