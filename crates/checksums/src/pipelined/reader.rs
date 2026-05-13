@@ -2,6 +2,27 @@
 //!
 //! Spawns a background thread to read the next block while the main thread
 //! processes the current block, achieving I/O-computation overlap.
+//!
+//! # Buffer Recycling
+//!
+//! The reader uses exactly two pre-allocated buffers that swap roles between
+//! the I/O thread and the main thread. After the main thread finishes
+//! processing a block, the buffer is returned to the I/O thread for reuse
+//! via a recycling channel. This eliminates per-block heap allocations on
+//! the hot path.
+//!
+//! ```text
+//! ┌─────────────┐   IoMessage::Block(buf)   ┌───────────────┐
+//! │  I/O Thread  │ ─────────────────────────► │  Main Thread   │
+//! │  (reader)    │                            │  (checksums)   │
+//! │              │ ◄───────────────────────── │                │
+//! └─────────────┘   recycle channel (buf)    └───────────────┘
+//! ```
+//!
+//! If the recycle channel is empty (the main thread has not yet returned a
+//! buffer), the I/O thread allocates a fresh buffer as a fallback. This
+//! graceful degradation avoids blocking the I/O thread when the computation
+//! thread is slower than I/O.
 
 use std::io::{self, Read};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -24,6 +45,11 @@ enum IoMessage {
 /// Uses a background thread to read the next block while the main thread
 /// processes the current block. This overlaps I/O with computation.
 ///
+/// Two pre-allocated buffers are recycled between the I/O and main threads
+/// via a return channel, eliminating per-block heap allocations on the hot
+/// path. If the main thread has not yet returned a buffer, the I/O thread
+/// allocates a fresh one to avoid stalling.
+///
 /// # Thread Safety
 ///
 /// The reader spawns a background thread for I/O. The thread is automatically
@@ -31,12 +57,16 @@ enum IoMessage {
 pub struct DoubleBufferedReader<R> {
     config: PipelineConfig,
     receiver: Option<Receiver<IoMessage>>,
+    /// Channel for returning consumed buffers to the I/O thread.
+    recycle_sender: Option<Sender<Vec<u8>>>,
     io_thread: Option<JoinHandle<()>>,
     current_block: Option<Vec<u8>>,
     prefetched_block: Option<Vec<u8>>,
     eof_reached: bool,
     direct_reader: Option<R>,
     synchronous: bool,
+    /// Reusable buffer for synchronous mode to avoid per-block allocation.
+    sync_buffer: Option<Vec<u8>>,
 }
 
 impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
@@ -60,34 +90,41 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
             config.enabled && size_hint.is_none_or(|size| size >= config.min_file_size);
 
         if !should_pipeline {
+            let sync_buf = vec![0u8; config.block_size];
             return Self {
                 config,
                 receiver: None,
+                recycle_sender: None,
                 io_thread: None,
                 current_block: None,
                 prefetched_block: None,
                 eof_reached: false,
                 direct_reader: Some(reader),
                 synchronous: true,
+                sync_buffer: Some(sync_buf),
             };
         }
 
         let (sender, receiver) = mpsc::channel();
+        let (recycle_tx, recycle_rx) = mpsc::channel();
         let block_size = config.block_size;
 
-        // Read first block synchronously to have it ready immediately
+        // Pre-allocate the first of two buffers and read synchronously so
+        // the first `next_block()` call returns immediately.
         let mut first_block = vec![0u8; block_size];
         let first_read = match read_exact_or_eof(&mut reader, &mut first_block) {
             Ok(0) => {
                 return Self {
                     config,
                     receiver: None,
+                    recycle_sender: None,
                     io_thread: None,
                     current_block: None,
                     prefetched_block: None,
                     eof_reached: true,
                     direct_reader: None,
                     synchronous: false,
+                    sync_buffer: None,
                 };
             }
             Ok(n) => {
@@ -98,36 +135,41 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
                 return Self {
                     config,
                     receiver: None,
+                    recycle_sender: None,
                     io_thread: None,
                     current_block: None,
                     prefetched_block: None,
                     eof_reached: true,
                     direct_reader: Some(reader),
                     synchronous: true,
+                    sync_buffer: None,
                 };
             }
         };
 
         let io_thread = thread::spawn(move || {
-            io_thread_main(reader, sender, block_size);
+            io_thread_main(reader, sender, recycle_rx, block_size);
         });
 
         Self {
             config,
             receiver: Some(receiver),
+            recycle_sender: Some(recycle_tx),
             io_thread: Some(io_thread),
             current_block: first_read,
             prefetched_block: None,
             eof_reached: false,
             direct_reader: None,
             synchronous: false,
+            sync_buffer: None,
         }
     }
 
     /// Returns the next block of data, or `None` if EOF reached.
     ///
     /// Returns data that was pre-read while the previous block was being
-    /// processed, then initiates reading the next block.
+    /// processed, then initiates reading the next block. The previously
+    /// returned buffer is recycled back to the I/O thread for reuse.
     ///
     /// # Errors
     ///
@@ -139,6 +181,11 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
 
         if self.synchronous {
             return self.next_block_sync();
+        }
+
+        // Recycle the previously consumed buffer back to the I/O thread.
+        if let Some(old_buf) = self.prefetched_block.take() {
+            self.recycle_buffer(old_buf);
         }
 
         let current = self.current_block.take();
@@ -173,13 +220,34 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
     }
 
     /// Synchronous block reading for small files.
+    ///
+    /// Reuses a single pre-allocated buffer across calls, avoiding per-block
+    /// heap allocation. The buffer cycles through `sync_buffer` (idle) ->
+    /// `current_block` (in use by caller) -> `sync_buffer` (reclaimed on
+    /// next call).
     fn next_block_sync(&mut self) -> io::Result<Option<&[u8]>> {
         if let Some(ref mut reader) = self.direct_reader {
-            let mut buffer = vec![0u8; self.config.block_size];
-            let bytes_read = read_exact_or_eof(reader, &mut buffer)?;
+            // Reclaim the buffer from the previous call if it was not already
+            // returned to sync_buffer (it lives in current_block while the
+            // caller holds a reference).
+            let mut buffer = self
+                .current_block
+                .take()
+                .or_else(|| self.sync_buffer.take())
+                .unwrap_or_else(|| vec![0u8; self.config.block_size]);
+
+            // Restore full capacity for reading. The buffer may have been
+            // truncated for a short final block on a previous call.
+            let block_size = self.config.block_size;
+            if buffer.len() < block_size {
+                buffer.resize(block_size, 0);
+            }
+
+            let bytes_read = read_exact_or_eof(reader, &mut buffer[..block_size])?;
 
             if bytes_read == 0 {
                 self.eof_reached = true;
+                self.sync_buffer = Some(buffer);
                 return Ok(None);
             }
 
@@ -189,6 +257,17 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
         } else {
             self.eof_reached = true;
             Ok(None)
+        }
+    }
+
+    /// Sends a consumed buffer back to the I/O thread for reuse.
+    ///
+    /// If the recycle channel is disconnected (I/O thread has exited), the
+    /// buffer is silently dropped.
+    fn recycle_buffer(&self, buffer: Vec<u8>) {
+        if let Some(ref tx) = self.recycle_sender {
+            // Ignore send errors - the I/O thread may have already exited.
+            let _ = tx.send(buffer);
         }
     }
 
@@ -207,8 +286,9 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
 
 impl<R> Drop for DoubleBufferedReader<R> {
     fn drop(&mut self) {
-        // Drop receiver first to signal I/O thread to stop
+        // Drop channels first to signal I/O thread to stop.
         drop(self.receiver.take());
+        drop(self.recycle_sender.take());
 
         if let Some(handle) = self.io_thread.take() {
             let _ = handle.join();
@@ -217,9 +297,31 @@ impl<R> Drop for DoubleBufferedReader<R> {
 }
 
 /// Main loop for the background I/O thread.
-fn io_thread_main<R: Read>(mut reader: R, sender: Sender<IoMessage>, block_size: usize) {
+///
+/// Tries to reuse buffers returned via `recycle_rx` before allocating fresh
+/// ones. This keeps heap allocations to a minimum during steady-state
+/// operation with two recycled buffers.
+fn io_thread_main<R: Read>(
+    mut reader: R,
+    sender: Sender<IoMessage>,
+    recycle_rx: Receiver<Vec<u8>>,
+    block_size: usize,
+) {
     loop {
-        let mut buffer = vec![0u8; block_size];
+        // Try to reuse a recycled buffer. If none is available (main thread
+        // still processing), allocate a fresh buffer as fallback. This avoids
+        // blocking the I/O thread on the main thread's computation speed.
+        let mut buffer = match recycle_rx.try_recv() {
+            Ok(mut buf) => {
+                // Restore full capacity for reading. The main thread may have
+                // truncated the buffer for a short final block.
+                if buf.len() < block_size {
+                    buf.resize(block_size, 0);
+                }
+                buf
+            }
+            Err(_) => vec![0u8; block_size],
+        };
 
         match read_exact_or_eof(&mut reader, &mut buffer) {
             Ok(0) => {

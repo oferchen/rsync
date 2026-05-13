@@ -8,7 +8,7 @@
 //! │                    Double-Buffered Checksum Pipeline                     │
 //! ├──────────────────────────────────────────────────────────────────────────┤
 //! │                                                                          │
-//! │  Time →                                                                  │
+//! │  Time ->                                                                 │
 //! │                                                                          │
 //! │  Without pipelining (sequential):                                        │
 //! │  ┌────────┐ ┌──────────────┐ ┌────────┐ ┌──────────────┐                │
@@ -24,6 +24,15 @@
 //! │                                                                          │
 //! └──────────────────────────────────────────────────────────────────────────┘
 //! ```
+//!
+//! # Buffer Recycling
+//!
+//! The double-buffered reader pre-allocates two buffers and recycles them
+//! between the I/O thread and the main thread via a return channel. After the
+//! main thread finishes processing a block, the buffer is sent back to the
+//! I/O thread for reuse, eliminating per-block heap allocations on the hot
+//! path. If the main thread has not yet returned a buffer, the I/O thread
+//! allocates a fresh one as a fallback to avoid stalling.
 //!
 //! # Performance Benefits
 //!
@@ -287,6 +296,220 @@ mod tests {
                 DoubleBufferedReader::with_size_hint(Cursor::new(data), config, Some(1024 * 1024));
 
             let _ = reader.next_block().unwrap();
+        }
+    }
+
+    /// Verifies that pipelined (double-buffered) checksums produce identical
+    /// results to sequential (single-buffer) checksums across various file
+    /// sizes, including smaller-than-block, exact-block, multi-block, and
+    /// partial-last-block cases.
+    #[test]
+    fn pipelined_matches_sequential_various_sizes() {
+        let block_size = 64 * 1024;
+        let sizes: &[usize] = &[
+            0,                  // empty
+            1,                  // single byte
+            100,                // smaller than block
+            block_size - 1,     // one less than block
+            block_size,         // exact block boundary
+            block_size + 1,     // one more than block
+            block_size * 3,     // exact multiple
+            block_size * 3 + 7, // partial last block
+            block_size * 10,    // many blocks
+        ];
+
+        for &size in sizes {
+            let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+
+            let pipelined_config = PipelineConfig::default()
+                .with_block_size(block_size)
+                .with_min_file_size(0)
+                .with_enabled(true);
+            let sequential_config = pipelined_config.with_enabled(false);
+
+            let pipelined = compute_checksums_pipelined::<Md5, _>(
+                Cursor::new(data.clone()),
+                pipelined_config,
+                Some(size as u64),
+            )
+            .unwrap();
+
+            let sequential = compute_checksums_pipelined::<Md5, _>(
+                Cursor::new(data),
+                sequential_config,
+                Some(size as u64),
+            )
+            .unwrap();
+
+            assert_eq!(
+                pipelined.len(),
+                sequential.len(),
+                "block count mismatch for size {size}"
+            );
+            for (i, (p, s)) in pipelined.iter().zip(sequential.iter()).enumerate() {
+                assert_eq!(
+                    p.rolling, s.rolling,
+                    "rolling mismatch at block {i} for size {size}"
+                );
+                assert_eq!(
+                    p.strong.as_ref(),
+                    s.strong.as_ref(),
+                    "strong mismatch at block {i} for size {size}"
+                );
+                assert_eq!(p.len, s.len, "len mismatch at block {i} for size {size}");
+            }
+        }
+    }
+
+    /// Exercises the sync-mode buffer reuse path by reading multiple blocks
+    /// in synchronous mode and verifying all data is correct.
+    #[test]
+    fn sync_mode_reuses_buffer() {
+        let data: Vec<u8> = (0..200).map(|i| (i % 256) as u8).collect();
+        let config = PipelineConfig::default()
+            .with_block_size(50)
+            .with_enabled(false);
+
+        let mut reader = DoubleBufferedReader::new(Cursor::new(data.clone()), config);
+
+        let mut collected = Vec::new();
+        while let Some(block) = reader.next_block().unwrap() {
+            collected.extend_from_slice(block);
+        }
+        assert_eq!(collected, data);
+    }
+
+    /// Verifies that many blocks worth of data are correctly read and
+    /// checksummed in pipelined mode with buffer recycling.
+    #[test]
+    fn many_blocks_pipelined_recycling() {
+        let block_size = 1024;
+        let num_blocks = 100;
+        let data: Vec<u8> = (0..block_size * num_blocks)
+            .map(|i| (i % 256) as u8)
+            .collect();
+
+        let config = PipelineConfig::default()
+            .with_block_size(block_size)
+            .with_min_file_size(0);
+
+        let checksums = compute_checksums_pipelined::<Md5, _>(
+            Cursor::new(data.clone()),
+            config,
+            Some(data.len() as u64),
+        )
+        .unwrap();
+
+        assert_eq!(checksums.len(), num_blocks);
+
+        for (i, cs) in checksums.iter().enumerate() {
+            let start = i * block_size;
+            let end = start + block_size;
+            let block = &data[start..end];
+
+            let expected_rolling = RollingDigest::from_bytes(block);
+            let expected_strong = Md5::digest(block);
+
+            assert_eq!(
+                cs.rolling, expected_rolling,
+                "rolling mismatch at block {i}"
+            );
+            assert_eq!(
+                cs.strong.as_ref(),
+                expected_strong.as_ref(),
+                "strong mismatch at block {i}"
+            );
+        }
+    }
+
+    /// Verifies data integrity when file size is smaller than one block and
+    /// pipelining is forced.
+    #[test]
+    fn single_byte_pipelined() {
+        let data = vec![0x42u8; 1];
+        let config = PipelineConfig::default()
+            .with_block_size(64 * 1024)
+            .with_min_file_size(0);
+
+        let checksums =
+            compute_checksums_pipelined::<Md5, _>(Cursor::new(data.clone()), config, Some(1))
+                .unwrap();
+
+        assert_eq!(checksums.len(), 1);
+        assert_eq!(checksums[0].len, 1);
+        assert_eq!(checksums[0].rolling, RollingDigest::from_bytes(&data));
+    }
+}
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use crate::RollingDigest;
+    use crate::strong::Md5;
+    use proptest::prelude::*;
+    use std::io::Cursor;
+
+    proptest! {
+        /// Property: for any random data and block size, pipelined checksums
+        /// must be identical to sequential checksums.
+        #[test]
+        fn pipelined_equals_sequential(
+            data in prop::collection::vec(any::<u8>(), 0..512 * 1024),
+            block_size in (64usize..=128 * 1024).prop_map(|s| s.max(1)),
+        ) {
+            let pipelined_config = PipelineConfig::default()
+                .with_block_size(block_size)
+                .with_min_file_size(0)
+                .with_enabled(true);
+            let sequential_config = pipelined_config.with_enabled(false);
+
+            let pipelined = compute_checksums_pipelined::<Md5, _>(
+                Cursor::new(data.clone()),
+                pipelined_config,
+                Some(data.len() as u64),
+            )
+            .unwrap();
+
+            let sequential = compute_checksums_pipelined::<Md5, _>(
+                Cursor::new(data.clone()),
+                sequential_config,
+                Some(data.len() as u64),
+            )
+            .unwrap();
+
+            prop_assert_eq!(pipelined.len(), sequential.len());
+            for (p, s) in pipelined.iter().zip(sequential.iter()) {
+                prop_assert_eq!(p.rolling, s.rolling);
+                prop_assert_eq!(p.strong.as_ref(), s.strong.as_ref());
+                prop_assert_eq!(p.len, s.len);
+            }
+        }
+
+        /// Property: collected data from the double-buffered reader equals
+        /// the original input data, regardless of pipelining mode.
+        #[test]
+        fn reader_collects_all_data(
+            data in prop::collection::vec(any::<u8>(), 0..256 * 1024),
+            block_size in (64usize..=64 * 1024).prop_map(|s| s.max(1)),
+            pipelined in any::<bool>(),
+        ) {
+            let config = PipelineConfig::default()
+                .with_block_size(block_size)
+                .with_min_file_size(0)
+                .with_enabled(pipelined);
+
+            let mut reader = DoubleBufferedReader::with_size_hint(
+                Cursor::new(data.clone()),
+                config,
+                Some(data.len() as u64),
+            );
+
+            let mut collected = Vec::new();
+            while let Some(block) = reader.next_block().unwrap() {
+                collected.extend_from_slice(block);
+            }
+
+            prop_assert_eq!(collected, data);
         }
     }
 }
