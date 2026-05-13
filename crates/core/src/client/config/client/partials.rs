@@ -77,7 +77,6 @@ impl ClientConfig {
     /// `None` means the default depth ([`fast_io::IoUringConfig::sq_entries`])
     /// is used; `Some(n)` overrides it with a user-supplied power-of-two value
     /// previously validated via [`fast_io::validate_io_uring_depth`].
-    #[must_use]
     #[doc(alias = "--io-uring-depth")]
     pub const fn io_uring_depth(&self) -> Option<u32> {
         self.io_uring_depth

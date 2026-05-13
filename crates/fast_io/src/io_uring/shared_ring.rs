@@ -112,7 +112,6 @@ impl OpTag {
     /// Returns `None` when the high 8 bits do not match a known tag value;
     /// the caller should treat that as a corrupted completion.
     #[inline]
-    #[must_use]
     pub fn decode(user_data: u64) -> Option<(Self, u64)> {
         let tag = (user_data >> 56) as u8;
         let op_id = user_data & ((1u64 << 56) - 1);
@@ -218,7 +217,6 @@ impl SharedRing {
     ///
     /// The caller retains ownership of both fds; this type does not close
     /// them on drop.
-    #[must_use]
     pub fn try_new(reader_fd: RawFd, writer_fd: RawFd, config: &SharedRingConfig) -> Option<Self> {
         if !is_io_uring_available() {
             return None;

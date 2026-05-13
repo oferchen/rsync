@@ -251,7 +251,7 @@ mod tests {
         state.push(make_transfer(1));
         assert!(!state.can_send());
 
-        state.pop();
+        let _ = state.pop();
         assert!(state.can_send());
     }
 
@@ -276,7 +276,7 @@ mod tests {
         state.push(make_transfer(10));
 
         assert_eq!(state.expected_ndx(), Some(5));
-        state.pop();
+        let _ = state.pop();
         assert_eq!(state.expected_ndx(), Some(10));
     }
 
@@ -308,8 +308,8 @@ mod tests {
         assert_eq!(state.total_sent(), 3);
         assert_eq!(state.total_processed(), 0);
 
-        state.pop();
-        state.pop();
+        let _ = state.pop();
+        let _ = state.pop();
 
         assert_eq!(state.total_sent(), 3);
         assert_eq!(state.total_processed(), 2);
@@ -524,12 +524,12 @@ mod tests {
         assert_eq!(state.available_slots(), 0);
 
         // Transition back to 1/2
-        state.pop();
+        let _ = state.pop();
         assert!(state.can_send());
         assert_eq!(state.available_slots(), 1);
 
         // Transition back to 0/2
-        state.pop();
+        let _ = state.pop();
         assert!(state.can_send());
         assert_eq!(state.available_slots(), 2);
     }
@@ -622,11 +622,11 @@ mod tests {
         state.push(make_transfer(100)); // Large gap
 
         assert_eq!(state.expected_ndx(), Some(1));
-        state.pop();
+        let _ = state.pop();
         assert_eq!(state.expected_ndx(), Some(5));
-        state.pop();
+        let _ = state.pop();
         assert_eq!(state.expected_ndx(), Some(100));
-        state.pop();
+        let _ = state.pop();
         assert_eq!(state.expected_ndx(), None);
     }
 

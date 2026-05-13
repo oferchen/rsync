@@ -409,7 +409,6 @@ pub fn platform_io_capabilities() -> Vec<&'static str> {
 ///
 /// Returns `Some(Err(...))` when io_uring is available and the rename was
 /// submitted but the kernel returned an error (e.g., `ENOENT`, `EACCES`).
-#[must_use]
 pub fn try_rename_via_io_uring(
     old_path: &std::path::Path,
     new_path: &std::path::Path,
@@ -470,7 +469,6 @@ fn try_rename_via_io_uring_impl(
 ///
 /// Returns `Some(Err(...))` when io_uring is available and the link was
 /// submitted but the kernel returned an error (e.g., `EEXIST`, `EACCES`).
-#[must_use]
 pub fn try_hard_link_via_io_uring(
     src_path: &std::path::Path,
     dst_path: &std::path::Path,

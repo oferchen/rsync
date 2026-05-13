@@ -140,7 +140,6 @@ impl IocpDiskBatch {
     ///
     /// This is the recommended constructor for production use - callers
     /// should fall back to standard buffered I/O when `None` is returned.
-    #[must_use]
     pub fn try_new(config: &IocpConfig) -> Option<Self> {
         if !super::config::is_iocp_available() {
             return None;
