@@ -375,7 +375,7 @@ pub(in crate::local_copy) fn execute_transfer(
 
     let mut pool_guard = if context.use_buffer_pool() {
         Some(
-            super::super::super::super::super::BufferPool::acquire_adaptive_from(
+            super::super::super::super::super::BufferPool::acquire_controlled_from(
                 context.buffer_pool(),
                 file_size,
             ),
