@@ -6,6 +6,7 @@
 //! reception, so this module handles both protocol versions uniformly.
 
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use logging::debug_log;
@@ -236,7 +237,8 @@ impl ReceiverContext {
                 }
 
                 // upstream: hlink.c:maybe_hard_link() -> atomic_create() -> do_link()
-                if let Err(e) = fs::hard_link(&leader_path, &link_path) {
+                // Try io_uring LINKAT on Linux 5.15+, fall back to std::fs::hard_link.
+                if let Err(e) = hard_link_with_io_uring_fallback(&leader_path, &link_path) {
                     debug_log!(
                         Recv,
                         1,
@@ -278,5 +280,81 @@ impl ReceiverContext {
         // Protocol 28-29 hardlinks are normalized to hardlink_idx/hlink_first
         // during file list reception (normalize_pre30_hardlinks), so the
         // protocol 30+ path above handles both versions uniformly.
+    }
+}
+
+/// Creates a hard link, trying io_uring first on supported kernels.
+///
+/// On Linux 5.15+ with io_uring LINKAT support, submits the link as an
+/// `IORING_OP_LINKAT` SQE. Falls back to `std::fs::hard_link` when io_uring
+/// is unavailable (non-Linux, old kernel, or feature not compiled in).
+fn hard_link_with_io_uring_fallback(src: &Path, dst: &Path) -> io::Result<()> {
+    if let Some(result) = fast_io::try_hard_link_via_io_uring(src, dst) {
+        return result;
+    }
+    fs::hard_link(src, dst)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies the io_uring LINKAT fallback creates a valid hard link
+    /// regardless of whether io_uring handles it or `std::fs::hard_link` does.
+    #[test]
+    fn hard_link_via_io_uring_or_fallback_creates_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("link_src.txt");
+        let dst = dir.path().join("link_dst.txt");
+
+        fs::write(&src, b"hardlink payload").unwrap();
+
+        hard_link_with_io_uring_fallback(&src, &dst).unwrap();
+
+        assert!(src.exists());
+        assert!(dst.exists());
+        assert_eq!(fs::read(&dst).unwrap(), b"hardlink payload");
+
+        // Verify they share the same inode (both point to same data).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let src_meta = fs::metadata(&src).unwrap();
+            let dst_meta = fs::metadata(&dst).unwrap();
+            assert_eq!(src_meta.ino(), dst_meta.ino());
+        }
+    }
+
+    /// Verifies that attempting to hard link to an existing destination fails
+    /// with an appropriate error (io_uring or fallback path).
+    #[test]
+    fn hard_link_via_io_uring_or_fallback_fails_when_dst_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("link_src_exists.txt");
+        let dst = dir.path().join("link_dst_exists.txt");
+
+        fs::write(&src, b"source").unwrap();
+        fs::write(&dst, b"existing").unwrap();
+
+        let result = hard_link_with_io_uring_fallback(&src, &dst);
+        assert!(result.is_err());
+    }
+
+    /// Verifies consistent availability: the function returns the same
+    /// path (io_uring vs fallback) across multiple calls.
+    #[test]
+    fn hard_link_io_uring_availability_consistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("consistency_src.txt");
+        let dst1 = dir.path().join("consistency_dst1.txt");
+        let dst2 = dir.path().join("consistency_dst2.txt");
+        fs::write(&src, b"data").unwrap();
+
+        let first = fast_io::try_hard_link_via_io_uring(&src, &dst1).is_some();
+        let second = fast_io::try_hard_link_via_io_uring(&src, &dst2).is_some();
+        assert_eq!(
+            first, second,
+            "io_uring LINKAT availability must be consistent"
+        );
     }
 }

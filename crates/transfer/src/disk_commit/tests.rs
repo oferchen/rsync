@@ -413,3 +413,122 @@ fn whole_file_coalesced() {
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
 }
+
+/// Verifies the io_uring rename dispatch in `commit_file`: the temp-file
+/// rename must succeed regardless of whether io_uring handles it or the
+/// `std::fs::rename` fallback does. This exercises the same path as
+/// production remote transfers.
+#[test]
+fn commit_file_rename_via_io_uring_or_fallback() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("iouring_rename_commit.dat");
+
+    let config = DiskCommitConfig {
+        io_uring_policy: fast_io::IoUringPolicy::Auto,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 14,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"rename content".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 14);
+
+    assert!(file_path.exists());
+    assert_eq!(fs::read(&file_path).unwrap(), b"rename content");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies the io_uring rename works when replacing an existing destination.
+#[test]
+fn commit_file_rename_replaces_existing_via_io_uring_or_fallback() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("iouring_replace.dat");
+
+    fs::write(&file_path, b"old content").unwrap();
+
+    let config = DiskCommitConfig {
+        io_uring_policy: fast_io::IoUringPolicy::Auto,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 11,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"new content".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 11);
+    assert_eq!(fs::read(&file_path).unwrap(), b"new content");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies the whole-file path also uses the io_uring rename dispatch.
+#[test]
+fn whole_file_commit_via_io_uring_or_fallback() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("whole_iouring.dat");
+
+    let config = DiskCommitConfig {
+        io_uring_policy: fast_io::IoUringPolicy::Auto,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: 13,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: b"whole iouring".to_vec(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 13);
+    assert_eq!(fs::read(&file_path).unwrap(), b"whole iouring");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
