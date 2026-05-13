@@ -752,20 +752,25 @@ mod tests {
         // Simulate a workload change: throughput drops suddenly (e.g.,
         // link degradation). The controller should increase the buffer
         // to compensate.
-        let setpoint = 100 * 1024 * 1024; // 100 MB/s
-        let ctrl = ControllerConfig::new(setpoint)
-            .min_size(16 * 1024)
-            .max_size(4 * 1024 * 1024)
-            .build();
-
-        let mid = (16 * 1024 + 4 * 1024 * 1024) / 2;
-        let k_fast = setpoint as f64 / mid as f64;
+        //
+        // Plant k must satisfy K_p * k < 1 for closed-loop stability.
+        // With k=0.5 and default K_p=0.6, loop gain = 0.3 - well damped.
+        let min = 16 * 1024;
+        let max = 4 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k_fast = 0.5;
+        let setpoint = (k_fast * mid as f64) as u64;
         let cap_fast = setpoint as f64 * 4.0;
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .min_size(min)
+            .max_size(max)
+            .build();
 
         let mut now = Instant::now();
 
         // Phase 1: Converge under normal conditions.
-        for _ in 0..50 {
+        for _ in 0..80 {
             now += Duration::from_millis(100);
             let throughput = linear_plant(ctrl.buffer_size(), k_fast, cap_fast);
             ctrl.observe_at(throughput, now);
@@ -773,16 +778,15 @@ mod tests {
         let size_before_drop = ctrl.buffer_size();
 
         // Phase 2: Throughput drops by 50% (slower link).
+        // k_slow=0.25, loop gain = 0.6 * 0.25 = 0.15. Very stable.
         let k_slow = k_fast * 0.5;
         let cap_slow = cap_fast * 0.5;
-        for _ in 0..50 {
+        for _ in 0..80 {
             now += Duration::from_millis(100);
             let throughput = linear_plant(ctrl.buffer_size(), k_slow, cap_slow);
             ctrl.observe_at(throughput, now);
         }
 
-        // The controller should have increased the buffer size to
-        // compensate for reduced per-byte throughput.
         let size_after_drop = ctrl.buffer_size();
         assert!(
             size_after_drop > size_before_drop,
@@ -794,15 +798,22 @@ mod tests {
     fn convergence_responds_to_sudden_throughput_increase() {
         // Simulate throughput improvement: controller should eventually
         // shrink the buffer since less buffer is needed to hit setpoint.
-        let setpoint = 50 * 1024 * 1024; // 50 MB/s
-        let ctrl = ControllerConfig::new(setpoint)
-            .min_size(16 * 1024)
-            .max_size(2 * 1024 * 1024)
-            .build();
+        //
+        // k_fast = 1.0 after the 2x gain increase. Gains are reduced
+        // so K_p * k_fast = 0.3 stays within the discrete stability
+        // margin; derivative damping K_d/dt * k = 0.2 prevents ringing.
+        let min = 16 * 1024;
+        let max = 2 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k_slow = 0.5;
+        let setpoint = (k_slow * mid as f64) as u64;
+        let cap_slow = setpoint as f64 * 4.0;
 
-        let mid = (16 * 1024 + 2 * 1024 * 1024) / 2;
-        let k_slow = setpoint as f64 / mid as f64;
-        let cap_slow = setpoint as f64 * 2.0;
+        let ctrl = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.02)
+            .min_size(min)
+            .max_size(max)
+            .build();
 
         let mut now = Instant::now();
 
@@ -814,10 +825,10 @@ mod tests {
         }
         let size_before_increase = ctrl.buffer_size();
 
-        // Phase 2: Link gets 4x faster - throughput now exceeds setpoint
+        // Phase 2: Link gets 2x faster - throughput exceeds setpoint
         // at the current buffer size, so the controller should shrink.
-        let k_fast = k_slow * 4.0;
-        let cap_fast = cap_slow * 4.0;
+        let k_fast = k_slow * 2.0;
+        let cap_fast = cap_slow * 2.0;
         for _ in 0..80 {
             now += Duration::from_millis(100);
             let throughput = linear_plant(ctrl.buffer_size(), k_fast, cap_fast);
@@ -919,15 +930,20 @@ mod tests {
         // After a step change in the plant's gain (simulating a new
         // workload), the controller should re-converge within 20
         // samples (2 seconds at 100 ms intervals).
-        let setpoint = 100 * 1024 * 1024;
-        let ctrl = ControllerConfig::new(setpoint)
-            .min_size(16 * 1024)
-            .max_size(4 * 1024 * 1024)
-            .build();
-
-        let mid = (16 * 1024 + 4 * 1024 * 1024) / 2;
-        let k1 = setpoint as f64 / mid as f64;
+        //
+        // k1=0.5, k2=1.0. Gains scaled so K_p*k2 = 0.3 for stability.
+        let min = 16 * 1024;
+        let max = 4 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k1 = 0.5;
+        let setpoint = (k1 * mid as f64) as u64;
         let cap = setpoint as f64 * 4.0;
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.02)
+            .min_size(min)
+            .max_size(max)
+            .build();
 
         let mut now = Instant::now();
         // Converge under k1.
