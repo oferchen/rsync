@@ -1,8 +1,17 @@
-/// Applies a chroot jail to the given module path.
+/// Applies a chroot jail.
 ///
-/// Delegates to `platform::privilege::apply_chroot()`.
+/// Delegates to `platform::privilege::apply_chroot()`. Failure is propagated to
+/// the caller so the daemon refuses to serve rather than continuing without the
+/// requested isolation.
 ///
-/// upstream: clientserver.c - chroot(lp_path(i)) after sanitising the module path.
+/// Caveat: chroot is process-wide, so in our thread-per-connection model this
+/// affects every concurrent session. Per-module chroot only works correctly
+/// when the daemon serves a single module or all modules share the same root.
+/// See `docs/DAEMON_PROCESS_MODEL.md`.
+///
+/// upstream: `clientserver.c:978-985` `rsync_module()` - `chroot(module_chdir)`
+/// after sanitising the module path; `@ERROR: chroot failed` returned to the
+/// client when it fails.
 #[cfg(unix)]
 fn apply_chroot(module_path: &Path, log_sink: &SharedLogSink) -> io::Result<()> {
     if let Err(err) = platform::privilege::apply_chroot(module_path) {
@@ -27,9 +36,22 @@ fn apply_chroot(_module_path: &Path, _log_sink: &SharedLogSink) -> io::Result<()
 
 /// Drops process privileges to the specified uid and gid.
 ///
-/// Delegates to `platform::privilege::drop_privileges()`.
+/// Delegates to `platform::privilege::drop_privileges()`. The underlying call
+/// sequence is `setgroups` -> `setgid` -> `setuid`, matching the POSIX ordering
+/// required for setuid to be irreversible. Any failure is propagated; the
+/// daemon must refuse to serve rather than continue as root.
 ///
-/// upstream: clientserver.c:rsync_module() - setgid/setuid after chroot.
+/// Caveat: on Linux the setuid system call is propagated to every thread of
+/// the process, so a per-module privilege drop affects all concurrent sessions
+/// in our thread-per-connection model. Per-module `uid`/`gid` directives only
+/// work correctly when the daemon serves a single module. Operators that need
+/// privilege separation across modules should run a separate daemon per
+/// identity.
+///
+/// upstream: `clientserver.c:1006-1044` `rsync_module()` - `setgid`/
+/// `setgroups`/`setuid` after chroot. Each failure returns `@ERROR: setgid
+/// failed`, `@ERROR: setgroups failed`, or `@ERROR: setuid failed` and the
+/// connection is dropped.
 fn drop_privileges(
     uid: Option<u32>,
     gid: Option<u32>,
@@ -59,8 +81,21 @@ fn drop_privileges(
 
 /// Applies chroot and privilege restrictions for a daemon module.
 ///
-/// This is the main entry point called from the module access flow after
-/// authentication succeeds but before the transfer begins.
+/// Called from the module access flow after authentication succeeds but before
+/// the transfer begins. The order (chroot then privilege drop) matches
+/// upstream and is required for security: the chroot needs root privileges,
+/// so the uid/gid drop must come after it.
+///
+/// Errors are propagated unchanged so the caller can send an `@ERROR:` reply
+/// to the client and close the connection - the daemon never silently
+/// continues with reduced or escalated privileges.
+///
+/// upstream: `clientserver.c:rsync_module()` lines 978-1044 - chroot, then
+/// `setgid`/`setgroups`, then `setuid`. Default uid/gid is `nobody:nobody`
+/// when running as root and the module config does not override it
+/// (`clientserver.c:779,818`); oc-rsync only drops when the config sets an
+/// explicit numeric `uid`/`gid` and otherwise relies on the daemon-level
+/// `uid`/`gid` directives applied before the accept loop.
 fn apply_module_privilege_restrictions(
     module: &ModuleDefinition,
     log_sink: &SharedLogSink,
@@ -126,5 +161,19 @@ mod privilege_tests {
         let sink = test_log_sink();
         let result = apply_module_privilege_restrictions(&module, &sink);
         assert!(result.is_ok());
+    }
+
+    /// Chroot failure must propagate so the daemon refuses to serve rather
+    /// than continuing as root. Mirrors upstream `clientserver.c:978-982`
+    /// where `@ERROR: chroot failed` is sent and the connection returns -1.
+    #[cfg(unix)]
+    #[test]
+    fn apply_chroot_returns_err_for_nonexistent_path() {
+        let sink = test_log_sink();
+        let result = apply_chroot(
+            std::path::Path::new("/nonexistent_oc_rsync_chroot_test_xyz_12345"),
+            &sink,
+        );
+        assert!(result.is_err(), "chroot to missing path must fail");
     }
 }
