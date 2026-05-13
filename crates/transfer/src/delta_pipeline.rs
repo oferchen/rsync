@@ -217,6 +217,25 @@ impl ParallelDeltaPipeline {
             consumer: Some(consumer),
         }
     }
+
+    /// Creates a parallel pipeline that bypasses reorder buffering.
+    ///
+    /// Results are delivered in completion order rather than submission order.
+    /// This eliminates reorder overhead when strict file-list ordering is
+    /// unnecessary - for example, when `--delay-updates` is off and files
+    /// are committed immediately upon completion.
+    #[must_use]
+    pub fn new_bypass(worker_count: usize) -> Self {
+        let capacity = worker_count.saturating_mul(2).max(2);
+        let (work_tx, work_rx) = work_queue::bounded_with_capacity(capacity);
+        let consumer = DeltaConsumer::spawn_bypass(work_rx);
+
+        Self {
+            next_sequence: 0,
+            work_tx: Some(work_tx),
+            consumer: Some(consumer),
+        }
+    }
 }
 
 impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
@@ -288,6 +307,8 @@ pub struct ThresholdDeltaPipeline {
     threshold: usize,
     /// Current operating mode.
     mode: ThresholdMode,
+    /// When `true`, the parallel pipeline bypasses reorder buffering.
+    bypass_reorder: bool,
 }
 
 impl std::fmt::Debug for ThresholdDeltaPipeline {
@@ -299,6 +320,7 @@ impl std::fmt::Debug for ThresholdDeltaPipeline {
         f.debug_struct("ThresholdDeltaPipeline")
             .field("threshold", &self.threshold)
             .field("mode", &mode_label)
+            .field("bypass_reorder", &self.bypass_reorder)
             .finish()
     }
 }
@@ -310,6 +332,7 @@ impl ThresholdDeltaPipeline {
         Self {
             threshold,
             mode: ThresholdMode::Buffering(Vec::new()),
+            bypass_reorder: false,
         }
     }
 
@@ -319,10 +342,29 @@ impl ThresholdDeltaPipeline {
         Self::new(DEFAULT_PARALLEL_THRESHOLD)
     }
 
+    /// Creates a threshold pipeline that bypasses reorder buffering.
+    ///
+    /// When the threshold is reached and parallel mode activates, the
+    /// internal [`ParallelDeltaPipeline`] delivers results in completion
+    /// order rather than submission order. This eliminates reorder overhead
+    /// when strict file-list ordering is unnecessary.
+    #[must_use]
+    pub fn new_bypass(threshold: usize) -> Self {
+        Self {
+            threshold,
+            mode: ThresholdMode::Buffering(Vec::new()),
+            bypass_reorder: true,
+        }
+    }
+
     /// Promotes from buffering to parallel mode, flushing buffered items.
     fn promote_to_parallel(&mut self, buffered: Vec<DeltaWork>) -> io::Result<()> {
         let worker_count = rayon::current_num_threads();
-        let mut parallel = ParallelDeltaPipeline::new(worker_count);
+        let mut parallel = if self.bypass_reorder {
+            ParallelDeltaPipeline::new_bypass(worker_count)
+        } else {
+            ParallelDeltaPipeline::new(worker_count)
+        };
         for item in buffered {
             parallel.submit_work(item)?;
         }
@@ -1217,5 +1259,116 @@ mod tests {
             assert_eq!(r.ndx().get(), i as u32);
             assert!(r.is_success());
         }
+    }
+
+    #[test]
+    fn parallel_bypass_delivers_all_results() {
+        let mut pipeline = ParallelDeltaPipeline::new_bypass(2);
+        for i in 0..20u32 {
+            let work =
+                DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), u64::from(i) * 100);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 20);
+        // All items present (order may differ from submission in bypass mode).
+        let mut ndx_values: Vec<u32> = results.iter().map(|r| r.ndx().get()).collect();
+        ndx_values.sort_unstable();
+        let expected: Vec<u32> = (0..20).collect();
+        assert_eq!(ndx_values, expected);
+        for r in &results {
+            assert!(r.is_success());
+        }
+    }
+
+    #[test]
+    fn parallel_bypass_empty_pipeline() {
+        let pipeline = ParallelDeltaPipeline::new_bypass(2);
+        let results = Box::new(pipeline).flush();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn parallel_bypass_single_item() {
+        let mut pipeline = ParallelDeltaPipeline::new_bypass(2);
+        let work = DeltaWork::whole_file(42, PathBuf::from("/dest/single"), 256);
+        pipeline.submit_work(work).unwrap();
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].ndx().get(), 42);
+        assert_eq!(results[0].bytes_written(), 256);
+    }
+
+    #[test]
+    fn parallel_bypass_trait_object_works() {
+        let mut pipeline: Box<dyn ReceiverDeltaPipeline> =
+            Box::new(ParallelDeltaPipeline::new_bypass(2));
+        for i in 0..5u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 100);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = pipeline.flush();
+        assert_eq!(results.len(), 5);
+        let mut ndx_values: Vec<u32> = results.iter().map(|r| r.ndx().get()).collect();
+        ndx_values.sort_unstable();
+        assert_eq!(ndx_values, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn threshold_bypass_below_threshold_uses_sequential() {
+        let mut pipeline = ThresholdDeltaPipeline::new_bypass(10);
+        for i in 0..5u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 100);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        // Below threshold, items are buffered and processed sequentially.
+        assert!(pipeline.poll_result().is_none());
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 5);
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r.ndx().get(), i as u32);
+            assert!(r.is_success());
+        }
+    }
+
+    #[test]
+    fn threshold_bypass_at_threshold_switches_to_parallel_bypass() {
+        let threshold = 5;
+        let mut pipeline = ThresholdDeltaPipeline::new_bypass(threshold);
+        for i in 0..10u32 {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 64);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        assert!(matches!(pipeline.mode, ThresholdMode::Parallel(_)));
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), 10);
+        let mut ndx_values: Vec<u32> = results.iter().map(|r| r.ndx().get()).collect();
+        ndx_values.sort_unstable();
+        let expected: Vec<u32> = (0..10).collect();
+        assert_eq!(ndx_values, expected);
+    }
+
+    #[test]
+    fn parallel_bypass_large_batch() {
+        let mut pipeline = ParallelDeltaPipeline::new_bypass(4);
+        let count = 200u32;
+        for i in 0..count {
+            let work = DeltaWork::whole_file(i, PathBuf::from(format!("/dest/{i}")), 32);
+            pipeline.submit_work(work).unwrap();
+        }
+
+        let results = Box::new(pipeline).flush();
+        assert_eq!(results.len(), count as usize);
+        let mut ndx_values: Vec<u32> = results.iter().map(|r| r.ndx().get()).collect();
+        ndx_values.sort_unstable();
+        let expected: Vec<u32> = (0..count).collect();
+        assert_eq!(ndx_values, expected);
     }
 }

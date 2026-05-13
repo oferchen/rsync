@@ -25,6 +25,8 @@
 //! invariant that post-processing (checksum verification, metadata commit)
 //! sees files in file-list order.
 
+use std::collections::VecDeque;
+
 use super::adaptive::{AdaptiveCapacityPolicy, AdaptiveState, ReorderStats};
 
 /// Collects out-of-order items and yields them in sequence order.
@@ -80,6 +82,17 @@ pub struct ReorderBuffer<T> {
     /// Optional adaptive capacity scaling state. `None` preserves the
     /// historical fixed-capacity behaviour.
     adaptive: Option<AdaptiveState>,
+    /// When `true`, items pass through without sequence-based reordering.
+    ///
+    /// In bypass mode, [`insert`](Self::insert) appends to a FIFO queue and
+    /// [`next_in_order`](Self::next_in_order) pops from its front. Sequence
+    /// numbers are ignored - items are delivered in insertion order. This
+    /// eliminates the O(1)-per-item ring buffer overhead when strict ordering
+    /// is unnecessary (e.g., `--delay-updates` is off and files are committed
+    /// immediately upon completion).
+    bypass: bool,
+    /// FIFO queue used in bypass mode. Empty when `bypass` is `false`.
+    bypass_queue: VecDeque<T>,
 }
 
 /// Error returned when the reorder buffer is at capacity.
@@ -115,6 +128,48 @@ impl<T> ReorderBuffer<T> {
             capacity,
             high_water_offset: 0,
             adaptive: None,
+            bypass: false,
+            bypass_queue: VecDeque::new(),
+        }
+    }
+
+    /// Creates a passthrough buffer that skips sequence-based reordering.
+    ///
+    /// In passthrough mode, items are delivered in insertion order regardless
+    /// of their sequence numbers. This is an optimization for transfers where
+    /// strict file-list ordering is unnecessary - for example, when
+    /// `--delay-updates` is off and each file is committed immediately upon
+    /// completion.
+    ///
+    /// The buffer allocates no ring buffer slots. All items flow through a
+    /// lightweight FIFO queue, eliminating the per-item overhead of sequence
+    /// tracking, slot indexing, and gap detection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use engine::concurrent_delta::reorder::ReorderBuffer;
+    ///
+    /// let mut buf: ReorderBuffer<&str> = ReorderBuffer::passthrough();
+    ///
+    /// // Items are delivered in insertion order, not sequence order.
+    /// buf.insert(2, "third").unwrap();
+    /// buf.insert(0, "first").unwrap();
+    /// assert_eq!(buf.next_in_order(), Some("third"));
+    /// assert_eq!(buf.next_in_order(), Some("first"));
+    /// ```
+    #[must_use]
+    pub fn passthrough() -> Self {
+        Self {
+            slots: Vec::new().into_boxed_slice(),
+            head: 0,
+            next_expected: 0,
+            count: 0,
+            capacity: 0,
+            high_water_offset: 0,
+            adaptive: None,
+            bypass: true,
+            bypass_queue: VecDeque::new(),
         }
     }
 
@@ -133,6 +188,15 @@ impl<T> ReorderBuffer<T> {
         let mut buf = Self::new(policy.min);
         buf.adaptive = Some(AdaptiveState::new(policy));
         buf
+    }
+
+    /// Returns `true` if the buffer is in passthrough (bypass) mode.
+    ///
+    /// In passthrough mode, items are delivered in insertion order without
+    /// sequence-based reordering.
+    #[must_use]
+    pub const fn is_passthrough(&self) -> bool {
+        self.bypass
     }
 
     /// Computes the ring buffer index for a given sequence number.
@@ -165,6 +229,11 @@ impl<T> ReorderBuffer<T> {
     /// Returns [`CapacityExceeded`] when the buffer is full or the sequence
     /// offset exceeds capacity.
     pub fn insert(&mut self, sequence: u64, item: T) -> Result<(), CapacityExceeded> {
+        if self.bypass {
+            self.bypass_queue.push_back(item);
+            self.count += 1;
+            return Ok(());
+        }
         // Adaptive policy may grow the ring before insert to avoid the error.
         if self.adaptive.is_some() && self.slot_index(sequence).is_none() {
             self.try_adaptive_preinsert_grow(sequence);
@@ -260,6 +329,12 @@ impl<T> ReorderBuffer<T> {
     /// advances the expected counter and head pointer. Returns `None` if
     /// that item has not yet been inserted.
     pub fn next_in_order(&mut self) -> Option<T> {
+        if self.bypass {
+            let item = self.bypass_queue.pop_front()?;
+            self.count -= 1;
+            self.next_expected += 1;
+            return Some(item);
+        }
         let item = self.slots[self.head].take()?;
         self.head = (self.head + 1) % self.capacity;
         self.next_expected += 1;
@@ -332,6 +407,11 @@ impl<T> ReorderBuffer<T> {
     /// ring capacity, this inserts directly. For sequences beyond capacity,
     /// the ring is grown to accommodate the item.
     pub fn force_insert(&mut self, sequence: u64, item: T) {
+        if self.bypass {
+            self.bypass_queue.push_back(item);
+            self.count += 1;
+            return;
+        }
         if let Some(idx) = self.slot_index(sequence) {
             if self.slots[idx].is_none() {
                 self.count += 1;
@@ -404,6 +484,10 @@ impl<T> ReorderBuffer<T> {
     /// Returns `None` if the sequence is outside the current window or if
     /// the slot is empty.
     pub fn take(&mut self, sequence: u64) -> Option<T> {
+        if self.bypass {
+            // Bypass mode does not support indexed extraction.
+            return None;
+        }
         let idx = self.slot_index(sequence)?;
         let item = self.slots[idx].take()?;
         self.count -= 1;
@@ -425,6 +509,12 @@ impl<T> ReorderBuffer<T> {
     /// were never inserted - a fatal correctness violation.
     pub fn finish(self) {
         if self.count > 0 {
+            if self.bypass {
+                panic!(
+                    "ReorderBuffer (bypass): {} items remain undelivered",
+                    self.count,
+                );
+            }
             // Find the first occupied slot to report the gap.
             let mut first_seq = self.next_expected;
             for i in 0..self.capacity {
@@ -1419,5 +1509,201 @@ mod adaptive_tests {
         }
         let expected: Vec<u64> = (0..n).collect();
         assert_eq!(collected, expected);
+    }
+}
+
+#[cfg(test)]
+mod passthrough_tests {
+    use super::*;
+
+    #[test]
+    fn passthrough_delivers_in_insertion_order() {
+        let mut buf: ReorderBuffer<&str> = ReorderBuffer::passthrough();
+        assert!(buf.is_passthrough());
+
+        // Insert out of sequence order.
+        buf.insert(2, "third").unwrap();
+        buf.insert(0, "first").unwrap();
+        buf.insert(1, "second").unwrap();
+
+        // Items come out in insertion order, not sequence order.
+        assert_eq!(buf.next_in_order(), Some("third"));
+        assert_eq!(buf.next_in_order(), Some("first"));
+        assert_eq!(buf.next_in_order(), Some("second"));
+        assert_eq!(buf.next_in_order(), None);
+    }
+
+    #[test]
+    fn passthrough_insert_never_returns_capacity_exceeded() {
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
+        // Even very large sequence numbers succeed - no ring buffer bounds.
+        assert!(buf.insert(u64::MAX - 1, 999).is_ok());
+        assert!(buf.insert(0, 0).is_ok());
+        assert_eq!(buf.buffered_count(), 2);
+    }
+
+    #[test]
+    fn passthrough_drain_ready_yields_all_items() {
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
+        buf.insert(5, 50).unwrap();
+        buf.insert(3, 30).unwrap();
+        buf.insert(1, 10).unwrap();
+
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained, vec![50, 30, 10]);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn passthrough_force_insert_appends_to_queue() {
+        let mut buf: ReorderBuffer<&str> = ReorderBuffer::passthrough();
+        buf.force_insert(10, "forced");
+        buf.force_insert(5, "also_forced");
+
+        assert_eq!(buf.buffered_count(), 2);
+        assert_eq!(buf.next_in_order(), Some("forced"));
+        assert_eq!(buf.next_in_order(), Some("also_forced"));
+    }
+
+    #[test]
+    fn passthrough_is_empty_and_count() {
+        let mut buf: ReorderBuffer<i32> = ReorderBuffer::passthrough();
+        assert!(buf.is_empty());
+        assert_eq!(buf.buffered_count(), 0);
+
+        buf.insert(0, 42).unwrap();
+        assert!(!buf.is_empty());
+        assert_eq!(buf.buffered_count(), 1);
+
+        buf.next_in_order();
+        assert!(buf.is_empty());
+        assert_eq!(buf.buffered_count(), 0);
+    }
+
+    #[test]
+    fn passthrough_finish_succeeds_when_drained() {
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
+        buf.insert(0, 0).unwrap();
+        buf.insert(1, 1).unwrap();
+        let _: Vec<_> = buf.drain_ready().collect();
+        buf.finish(); // no panic
+    }
+
+    #[test]
+    #[should_panic(expected = "items remain undelivered")]
+    fn passthrough_finish_panics_with_pending_items() {
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
+        buf.insert(0, 0).unwrap();
+        buf.finish();
+    }
+
+    #[test]
+    fn passthrough_take_returns_none() {
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
+        buf.insert(0, 42).unwrap();
+        // Take is not supported in bypass mode.
+        assert!(buf.take(0).is_none());
+        // Item is still in the queue.
+        assert_eq!(buf.buffered_count(), 1);
+    }
+
+    #[test]
+    fn passthrough_capacity_is_zero() {
+        let buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
+        assert_eq!(buf.capacity(), 0);
+    }
+
+    #[test]
+    fn passthrough_stats_show_no_adaptive_events() {
+        let buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
+        let stats = buf.stats();
+        assert_eq!(stats.grow_events, 0);
+        assert_eq!(stats.shrink_events, 0);
+        assert_eq!(stats.capacity, 0);
+    }
+
+    #[test]
+    fn passthrough_next_expected_advances() {
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
+        assert_eq!(buf.next_expected(), 0);
+
+        buf.insert(5, 50).unwrap();
+        buf.next_in_order();
+        assert_eq!(buf.next_expected(), 1);
+
+        buf.insert(3, 30).unwrap();
+        buf.insert(1, 10).unwrap();
+        let _: Vec<_> = buf.drain_ready().collect();
+        assert_eq!(buf.next_expected(), 3);
+    }
+
+    #[test]
+    fn passthrough_large_batch() {
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
+
+        // Insert 1000 items with arbitrary sequence numbers.
+        for i in 0..1000u64 {
+            buf.insert(999 - i, i).unwrap();
+        }
+        assert_eq!(buf.buffered_count(), 1000);
+
+        let drained: Vec<u64> = buf.drain_ready().collect();
+        assert_eq!(drained.len(), 1000);
+        // Values are in insertion order (0, 1, 2, ..., 999).
+        for (i, &val) in drained.iter().enumerate() {
+            assert_eq!(val, i as u64);
+        }
+    }
+
+    #[test]
+    fn passthrough_interleaved_insert_and_drain() {
+        let mut buf: ReorderBuffer<u64> = ReorderBuffer::passthrough();
+
+        buf.insert(0, 100).unwrap();
+        assert_eq!(buf.next_in_order(), Some(100));
+
+        buf.insert(5, 200).unwrap();
+        buf.insert(3, 300).unwrap();
+        assert_eq!(buf.next_in_order(), Some(200));
+        assert_eq!(buf.next_in_order(), Some(300));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn non_passthrough_flag_is_false() {
+        let buf: ReorderBuffer<u64> = ReorderBuffer::new(4);
+        assert!(!buf.is_passthrough());
+    }
+
+    /// Verifies that `DeltaResult` items flow through passthrough mode
+    /// without sequence-based reordering.
+    #[test]
+    fn passthrough_delta_result_integration() {
+        use crate::concurrent_delta::types::DeltaResult;
+
+        let mut buf: ReorderBuffer<DeltaResult> = ReorderBuffer::passthrough();
+
+        // Simulate three workers completing: seq 2 first, then 0, then 1.
+        let r2 = DeltaResult::success(20, 2000, 500, 1500).with_sequence(2);
+        let r0 = DeltaResult::success(10, 1000, 300, 700).with_sequence(0);
+        let r1 = DeltaResult::needs_redo(15, "checksum mismatch".to_string()).with_sequence(1);
+
+        buf.insert(r2.sequence(), r2).unwrap();
+        buf.insert(r0.sequence(), r0).unwrap();
+        buf.insert(r1.sequence(), r1).unwrap();
+
+        let drained: Vec<DeltaResult> = buf.drain_ready().collect();
+        assert_eq!(drained.len(), 3);
+
+        // Insertion order preserved - seq 2 first, then 0, then 1.
+        assert_eq!(drained[0].sequence(), 2);
+        assert_eq!(drained[0].ndx().get(), 20);
+
+        assert_eq!(drained[1].sequence(), 0);
+        assert_eq!(drained[1].ndx().get(), 10);
+
+        assert_eq!(drained[2].sequence(), 1);
+        assert_eq!(drained[2].ndx().get(), 15);
+        assert!(drained[2].needs_retry());
     }
 }
