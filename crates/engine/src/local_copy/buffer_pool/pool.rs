@@ -535,6 +535,69 @@ impl<A: BufferAllocator> BufferPool<A> {
         }
     }
 
+    /// Acquires a buffer whose size is driven by the PID controller.
+    ///
+    /// When a [`buffer controller`](Self::with_buffer_controller) is enabled,
+    /// the returned buffer is sized to
+    /// [`recommended_buffer_size`](Self::recommended_buffer_size) - the PID
+    /// output that tracks the throughput setpoint. When no controller is
+    /// present, this falls back to file-size-based adaptive sizing via
+    /// [`acquire_adaptive_from`](Self::acquire_adaptive_from).
+    ///
+    /// This is the preferred acquisition method for the transfer pipeline:
+    /// it feeds the controller's recommendation into the actual I/O buffer
+    /// size, closing the feedback loop between throughput observation and
+    /// buffer allocation.
+    ///
+    /// The controller recommendation is clamped between `min_size` and
+    /// `max_size` (configured at controller build time). If the recommended
+    /// size matches the pool's default `buffer_size`, the thread-local cache
+    /// and central pool are reused. Otherwise a fresh buffer is allocated at
+    /// the recommended size and resized back to the pool default on return.
+    #[must_use]
+    pub fn acquire_controlled_from(pool: Arc<Self>, file_size: u64) -> BufferGuard<A> {
+        let desired = if pool.buffer_controller.is_some() {
+            pool.recommended_buffer_size()
+        } else {
+            adaptive_buffer_size(file_size)
+        };
+
+        if desired == pool.buffer_size {
+            return Self::acquire_from(pool);
+        }
+
+        pool.wait_and_reserve_memory(desired);
+        let buffer = pool.allocator.allocate(desired);
+        BufferGuard {
+            buffer: Some(buffer),
+            pool,
+        }
+    }
+
+    /// Acquires a controller-driven buffer (borrows self).
+    ///
+    /// Borrowed variant of [`acquire_controlled_from`](Self::acquire_controlled_from).
+    /// Returns a guard with a lifetime tied to `self`.
+    #[must_use]
+    pub fn acquire_controlled(&self, file_size: u64) -> BorrowedBufferGuard<'_, A> {
+        let desired = if self.buffer_controller.is_some() {
+            self.recommended_buffer_size()
+        } else {
+            adaptive_buffer_size(file_size)
+        };
+
+        if desired == self.buffer_size {
+            return self.acquire();
+        }
+
+        self.wait_and_reserve_memory(desired);
+        let buffer = self.allocator.allocate(desired);
+        BorrowedBufferGuard {
+            buffer: Some(buffer),
+            pool: self,
+        }
+    }
+
     /// Acquires a buffer from the pool (borrows self).
     ///
     /// **Note:** This method returns a guard with a lifetime tied to `self`.
