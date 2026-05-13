@@ -394,6 +394,24 @@ impl<T> ReorderBuffer<T> {
         self.capacity = new_capacity;
     }
 
+    /// Removes and returns the item at the given sequence number, if present.
+    ///
+    /// Unlike [`next_in_order`](Self::next_in_order), this does not advance the
+    /// delivery cursor - it only removes the item from its slot. Used by the
+    /// spill layer to extract items for disk serialization without changing
+    /// the buffer's ordering state.
+    ///
+    /// Returns `None` if the sequence is outside the current window or if
+    /// the slot is empty.
+    pub fn take(&mut self, sequence: u64) -> Option<T> {
+        let idx = self.slot_index(sequence)?;
+        let item = self.slots[idx].take()?;
+        self.count -= 1;
+        // Do not adjust high_water_offset here - it remains valid as an
+        // upper bound. The adaptive policy will naturally recalibrate.
+        Some(item)
+    }
+
     /// Validates that all items have been delivered with no gaps in the sequence.
     ///
     /// Call this after all producers have finished and all results have been
@@ -687,6 +705,36 @@ mod tests {
         }
         let drained: Vec<u64> = buf.drain_ready().collect();
         assert_eq!(drained, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn take_extracts_without_advancing_cursor() {
+        let mut buf = ReorderBuffer::new(8);
+        buf.insert(0, "a").unwrap();
+        buf.insert(1, "b").unwrap();
+        buf.insert(2, "c").unwrap();
+        buf.insert(4, "e").unwrap();
+
+        // Take seq 2 - cursor stays at 0.
+        let taken = buf.take(2);
+        assert_eq!(taken, Some("c"));
+        assert_eq!(buf.next_expected(), 0);
+        assert_eq!(buf.buffered_count(), 3);
+
+        // Take seq 4.
+        let taken = buf.take(4);
+        assert_eq!(taken, Some("e"));
+        assert_eq!(buf.buffered_count(), 2);
+
+        // Take non-existent seq.
+        assert!(buf.take(3).is_none());
+        assert!(buf.take(99).is_none());
+
+        // Remaining items drain in order.
+        let drained: Vec<&str> = buf.drain_ready().collect();
+        assert_eq!(drained, vec!["a", "b"]);
+        // Seq 2 was taken - gap prevents further drain.
+        assert_eq!(buf.next_expected(), 2);
     }
 
     #[test]
