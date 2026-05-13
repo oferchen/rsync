@@ -25,14 +25,14 @@
 //! └──────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! # Buffer Recycling
+//! # Strict Two-Buffer Invariant
 //!
-//! The double-buffered reader pre-allocates two buffers and recycles them
-//! between the I/O thread and the main thread via a return channel. After the
-//! main thread finishes processing a block, the buffer is sent back to the
-//! I/O thread for reuse, eliminating per-block heap allocations on the hot
-//! path. If the main thread has not yet returned a buffer, the I/O thread
-//! allocates a fresh one as a fallback to avoid stalling.
+//! The reader pre-allocates exactly two buffers (A and B) and swaps their
+//! roles on every iteration. A bounded `sync_channel(1)` limits the data
+//! direction to one in-flight block, while the I/O thread blocks on
+//! `recv()` until a recycled buffer arrives. This guarantees constant memory
+//! usage of `2 * block_size` regardless of relative I/O and computation
+//! speeds - no fallback allocations, no unbounded read-ahead.
 //!
 //! # Performance Benefits
 //!
