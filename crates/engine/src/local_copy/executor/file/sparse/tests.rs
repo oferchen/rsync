@@ -2110,16 +2110,13 @@ fn sparse_detector_default_threshold() {
 #[test]
 fn sparse_writer_basic_write() {
     let file = NamedTempFile::new().expect("temp file");
-    let mut writer = super::SparseWriter::new(
-        file.as_file().try_clone().expect("clone"),
-        false, // Dense mode
-    );
+    let mut writer = super::SparseWriter::new(file.as_file().try_clone().expect("clone"));
 
-    writer.write_region(0, b"hello").expect("write");
-    writer.write_region(10, b"world").expect("write");
-    writer.finish(15).expect("finish");
+    writer.write_all(b"hello").expect("write");
+    writer.write_all(&[0u8; 5]).expect("write zeros");
+    writer.write_all(b"world").expect("write");
+    writer.finish().expect("finish");
 
-    // Verify contents
     let mut file_handle = file.reopen().expect("reopen");
     let mut contents = Vec::new();
     file_handle.read_to_end(&mut contents).expect("read");
@@ -2131,18 +2128,16 @@ fn sparse_writer_basic_write() {
 #[test]
 fn sparse_writer_sparse_mode() {
     let file = NamedTempFile::new().expect("temp file");
-    let mut writer = super::SparseWriter::new(
-        file.as_file().try_clone().expect("clone"),
-        true, // Sparse mode
-    );
+    let mut writer = super::SparseWriter::new(file.as_file().try_clone().expect("clone"));
 
-    // Build the data as one sequential write
     let mut data = vec![b'A'];
     data.extend_from_slice(&vec![0u8; super::SPARSE_WRITE_SIZE * 2]);
     data.push(b'B');
 
-    writer.write_region(0, &data).expect("write");
-    writer.finish(data.len() as u64).expect("finish");
+    writer.write_all(&data).expect("write");
+    let (mut inner, _stats) = writer.finish().expect("finish");
+    let pos = inner.stream_position().expect("pos");
+    inner.set_len(pos).expect("set_len");
 
     // Verify contents
     let mut file_handle = file.reopen().expect("reopen");
@@ -2159,10 +2154,9 @@ fn sparse_writer_sparse_mode() {
 #[test]
 fn sparse_writer_empty_data() {
     let file = NamedTempFile::new().expect("temp file");
-    let mut writer = super::SparseWriter::new(file.as_file().try_clone().expect("clone"), true);
+    let writer = super::SparseWriter::new(file.as_file().try_clone().expect("clone"));
 
-    writer.write_region(0, &[]).expect("write empty");
-    writer.finish(0).expect("finish");
+    writer.finish().expect("finish");
 
     let metadata = file.as_file().metadata().expect("metadata");
     assert_eq!(metadata.len(), 0);
@@ -2171,11 +2165,10 @@ fn sparse_writer_empty_data() {
 #[test]
 fn sparse_writer_file_accessors() {
     let file = NamedTempFile::new().expect("temp file");
-    let mut writer = super::SparseWriter::new(file.as_file().try_clone().expect("clone"), false);
+    let mut writer = super::SparseWriter::new(file.as_file().try_clone().expect("clone"));
 
-    // Test accessors
-    let _file_ref: &fs::File = writer.file();
-    let _file_mut: &mut fs::File = writer.file_mut();
+    let _file_ref: &fs::File = writer.inner();
+    let _file_mut: &mut fs::File = writer.inner_mut();
 }
 
 #[test]
