@@ -1,12 +1,13 @@
 /// Convergence tests for the per-stream token-bucket bandwidth limiter with
-/// throughput feedback loop.
+/// throughput feedback loop (#2098).
 ///
 /// These tests verify that the limiter converges to the configured rate under
 /// various load profiles: steady-state, step response, burst recovery,
-/// multi-stream fairness, underutilization, zero-crossing, and minimum
-/// granularity. All assertions operate on the deterministic `requested` sleep
-/// durations recorded via the `test-support` infrastructure, eliminating
-/// wall-clock jitter.
+/// multi-stream fairness, underutilization, zero-crossing, minimum
+/// granularity, effectively-unlimited bandwidth, idle recovery, and
+/// stability under matched throughput. All assertions operate on the
+/// deterministic `requested` sleep durations recorded via the `test-support`
+/// infrastructure, eliminating wall-clock jitter.
 use super::{BandwidthLimiter, recorded_sleep_session};
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -806,4 +807,454 @@ fn debt_fully_cleared_after_simulated_sleep() {
         "post-sleep debt should be low, got {:?}",
         second_sleep.requested()
     );
+}
+
+// ---------------------------------------------------------------------------
+// Very high bandwidth target: effectively unlimited throughput
+// ---------------------------------------------------------------------------
+
+#[test]
+fn high_bandwidth_target_u64_max_never_throttles() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = u64::MAX;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // Even large writes should produce zero sleep at u64::MAX rate.
+    // 10 MB total across 100 chunks.
+    for _ in 0..100 {
+        let sleep = limiter.register(100_000);
+        assert!(
+            sleep.is_noop(),
+            "u64::MAX rate should never throttle, got {:?}",
+            sleep.requested()
+        );
+    }
+}
+
+#[test]
+fn high_bandwidth_target_1gbps_acts_unlimited_for_small_writes() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    // 1 GB/s - effectively unlimited for most practical transfers
+    let rate = 1_000_000_000_u64;
+    let chunk = 64 * 1024_usize; // 64 KB chunks (typical I/O size)
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // 1000 chunks of 64 KB = 64 MB total. At 1 GB/s this is 64 ms of
+    // transfer time, so individual chunks should stay below the 100 ms
+    // minimum sleep threshold.
+    let mut any_throttled = false;
+    for _ in 0..1000 {
+        let sleep = limiter.register(chunk);
+        if !sleep.is_noop() {
+            any_throttled = true;
+        }
+    }
+
+    // The first few chunks accumulate debt below threshold; eventually debt
+    // may cross the threshold and trigger a single sleep.  Even if that
+    // happens, the total sleep should be negligible relative to the volume.
+    let total_bytes = 1000 * chunk;
+    let total_sleep = session.total_duration();
+    if any_throttled {
+        // At 1 GB/s the expected sleep for 64 MB is 64 ms.
+        assert!(
+            total_sleep <= Duration::from_millis(200),
+            "high-rate limiter slept too long: {total_sleep:?} for {total_bytes} bytes"
+        );
+    }
+}
+
+#[test]
+fn high_bandwidth_target_step_down_from_unlimited() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let unlimited_rate = u64::MAX;
+    let limited_rate = 1000_u64;
+    let chunk = 250_usize;
+
+    let mut limiter = BandwidthLimiter::new(nz(unlimited_rate));
+
+    // Run at unlimited - should never sleep
+    for _ in 0..10 {
+        let sleep = limiter.register(chunk);
+        assert!(sleep.is_noop());
+    }
+
+    // Step down to a real limit
+    limiter.update_limit(nz(limited_rate));
+
+    let _ = run_pacing(&mut limiter, 2, chunk);
+    let (bytes, sleep) = run_pacing(&mut limiter, 8, chunk);
+    let obs = observed_rate(bytes, sleep);
+    let deviation = (obs - limited_rate as f64).abs() / limited_rate as f64 * 100.0;
+    assert!(
+        deviation <= 5.0,
+        "step-down from unlimited: observed {obs:.2} deviates {deviation:.3}% from {limited_rate}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Idle recovery: feedback loop recovers after a prolonged idle period
+// ---------------------------------------------------------------------------
+
+#[test]
+fn idle_recovery_reset_then_resume_converges() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 2000_u64;
+    let chunk = (rate / 4) as usize;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // Establish steady-state
+    let _ = run_pacing(&mut limiter, 4, chunk);
+    let (bytes1, sleep1) = run_pacing(&mut limiter, 8, chunk);
+    let obs1 = observed_rate(bytes1, sleep1);
+    let dev1 = (obs1 - rate as f64).abs() / rate as f64 * 100.0;
+    assert!(dev1 <= 5.0, "pre-idle: {dev1:.3}%");
+
+    // Simulate prolonged idle by resetting (clears stale timing state)
+    limiter.reset();
+
+    // Resume after idle - should converge within 2 warm-up chunks
+    let _ = run_pacing(&mut limiter, 2, chunk);
+    let (bytes2, sleep2) = run_pacing(&mut limiter, 8, chunk);
+    let obs2 = observed_rate(bytes2, sleep2);
+    let dev2 = (obs2 - rate as f64).abs() / rate as f64 * 100.0;
+    assert!(
+        dev2 <= 5.0,
+        "post-idle: observed {obs2:.2} deviates {dev2:.3}% from {rate}"
+    );
+}
+
+#[test]
+fn idle_recovery_burst_capped_limiter_no_stale_debt() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 5000_u64;
+    let burst = 2500_u64;
+    let chunk = (rate / 4) as usize;
+
+    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
+
+    // Drive to steady-state
+    let _ = run_pacing(&mut limiter, 4, chunk);
+
+    // Simulate idle by resetting
+    limiter.reset();
+    assert_eq!(limiter.accumulated_debt_for_testing(), 0);
+
+    // Resume - should converge cleanly without burst-induced penalty
+    let _ = run_pacing(&mut limiter, 2, chunk);
+    let (bytes, sleep) = run_pacing(&mut limiter, 8, chunk);
+    let obs = observed_rate(bytes, sleep);
+    let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+    assert!(
+        deviation <= 5.0,
+        "idle recovery with burst: {obs:.2} deviates {deviation:.3}%"
+    );
+}
+
+#[test]
+fn idle_recovery_multiple_idle_resume_cycles() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 4000_u64;
+    let chunk = (rate / 4) as usize;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    for cycle in 0..5 {
+        // Drive to steady-state
+        let _ = run_pacing(&mut limiter, 2, chunk);
+        let (bytes, sleep) = run_pacing(&mut limiter, 8, chunk);
+        let obs = observed_rate(bytes, sleep);
+        let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+        assert!(
+            deviation <= 5.0,
+            "cycle {cycle}: observed {obs:.2} deviates {deviation:.3}%"
+        );
+
+        // Simulate idle period
+        limiter.reset();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bounded convergence: verify convergence within specific iteration count
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bounded_convergence_within_four_chunks() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 8000_u64;
+    let chunk = (rate / 4) as usize;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // The first chunk has no prior timing state (last_instant is None),
+    // so it accumulates full debt. By the 4th chunk, the simulated_elapsed_us
+    // feedback should have stabilized the rate.
+    let mut cumulative_bytes: u128 = 0;
+    let mut cumulative_sleep = Duration::ZERO;
+
+    for i in 0..4 {
+        let sleep = limiter.register(chunk);
+        cumulative_bytes += chunk as u128;
+        cumulative_sleep = cumulative_sleep.saturating_add(sleep.requested());
+
+        // After 4 chunks, check cumulative convergence
+        if i == 3 {
+            let obs = observed_rate(cumulative_bytes, cumulative_sleep);
+            let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+            assert!(
+                deviation <= 5.0,
+                "after 4 chunks: observed {obs:.2} deviates {deviation:.3}%"
+            );
+        }
+    }
+}
+
+#[test]
+fn bounded_convergence_after_rate_change_within_two_chunks() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let old_rate = 2000_u64;
+    let new_rate = 10_000_u64;
+    let chunk = (new_rate / 4) as usize;
+
+    let mut limiter = BandwidthLimiter::new(nz(old_rate));
+    let _ = run_pacing(&mut limiter, 4, chunk);
+
+    // update_limit clears debt and timing state, so the very first chunk
+    // at the new rate should converge immediately.
+    limiter.update_limit(nz(new_rate));
+
+    let sleep = limiter.register(chunk);
+    let obs = observed_rate(chunk as u128, sleep.requested());
+    let deviation = (obs - new_rate as f64).abs() / new_rate as f64 * 100.0;
+    assert!(
+        deviation <= 5.0,
+        "first chunk after rate change: {obs:.2} deviates {deviation:.3}%"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Stability: no oscillation when throughput matches target
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stability_consecutive_sleeps_are_uniform() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 4000_u64;
+    let chunk = (rate / 4) as usize; // 1000 bytes -> 250 ms per chunk
+    let expected_per_chunk = Duration::from_millis(250);
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // Warm up
+    let _ = run_pacing(&mut limiter, 2, chunk);
+
+    // Collect per-chunk sleep durations
+    let mut sleeps = Vec::new();
+    for _ in 0..10 {
+        let sleep = limiter.register(chunk);
+        sleeps.push(sleep.requested());
+    }
+
+    // All sleeps should be within 10% of expected
+    for (i, &s) in sleeps.iter().enumerate() {
+        let diff = s.abs_diff(expected_per_chunk);
+        assert!(
+            diff <= Duration::from_millis(25),
+            "chunk {i}: sleep {s:?} deviates more than 25 ms from {expected_per_chunk:?}"
+        );
+    }
+}
+
+#[test]
+fn stability_no_monotonic_drift() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 5000_u64;
+    let chunk = (rate / 4) as usize;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // Warm up
+    let _ = run_pacing(&mut limiter, 2, chunk);
+
+    // Measure rate over successive windows
+    let mut previous_rate: Option<f64> = None;
+    for window in 0..5 {
+        let (bytes, sleep) = run_pacing(&mut limiter, 4, chunk);
+        let obs = observed_rate(bytes, sleep);
+
+        if let Some(prev) = previous_rate {
+            let drift = (obs - prev).abs() / rate as f64 * 100.0;
+            assert!(
+                drift <= 3.0,
+                "window {window}: rate drifted {drift:.3}% between {prev:.2} and {obs:.2}"
+            );
+        }
+        previous_rate = Some(obs);
+    }
+}
+
+#[test]
+fn stability_variance_bounded_across_samples() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 10_000_u64;
+    let chunk = (rate / 4) as usize;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // Warm up
+    let _ = run_pacing(&mut limiter, 2, chunk);
+
+    // Collect per-chunk rates
+    let mut rates = Vec::new();
+    for _ in 0..20 {
+        let sleep = limiter.register(chunk);
+        let obs = observed_rate(chunk as u128, sleep.requested());
+        if obs.is_finite() {
+            rates.push(obs);
+        }
+    }
+
+    // Compute coefficient of variation (stddev / mean)
+    let mean = rates.iter().sum::<f64>() / rates.len() as f64;
+    let variance = rates.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / rates.len() as f64;
+    let cv = variance.sqrt() / mean * 100.0;
+
+    assert!(
+        cv <= 5.0,
+        "coefficient of variation {cv:.3}% exceeds 5% threshold (mean={mean:.2})"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bursty traffic: verify recovery without excessive back-pressure
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bursty_traffic_large_burst_then_steady_state_converges() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 2000_u64;
+    let chunk = (rate / 4) as usize;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // Send a large burst: 10x the per-second rate
+    let _ = limiter.register(rate as usize * 10);
+
+    // After the burst, drive at steady-state chunk size.
+    // Warm up to let simulated_elapsed_us forgive the burst debt.
+    let _ = run_pacing(&mut limiter, 4, chunk);
+
+    // Measure steady-state after burst recovery
+    let (bytes, sleep) = run_pacing(&mut limiter, 8, chunk);
+    let obs = observed_rate(bytes, sleep);
+    let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+    assert!(
+        deviation <= 5.0,
+        "post-burst steady-state: {obs:.2} deviates {deviation:.3}%"
+    );
+}
+
+#[test]
+fn bursty_traffic_alternating_burst_and_trickle() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 4000_u64;
+    let burst_size = rate as usize * 5;
+    let trickle_chunk = 10_usize;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    for cycle in 0..3 {
+        // Burst phase
+        let burst_sleep = limiter.register(burst_size);
+        assert!(
+            !burst_sleep.is_noop(),
+            "cycle {cycle}: burst should trigger throttle"
+        );
+
+        // Trickle phase - many small writes below threshold
+        for _ in 0..20 {
+            let _ = limiter.register(trickle_chunk);
+        }
+
+        // After trickle, measure convergence at normal chunk size
+        let normal_chunk = (rate / 4) as usize;
+        let _ = run_pacing(&mut limiter, 2, normal_chunk);
+        let (bytes, sleep) = run_pacing(&mut limiter, 4, normal_chunk);
+        let obs = observed_rate(bytes, sleep);
+        let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+        assert!(
+            deviation <= 5.0,
+            "cycle {cycle}: post-burst/trickle: {obs:.2} deviates {deviation:.3}%"
+        );
+    }
+}
+
+#[test]
+fn bursty_traffic_burst_cap_prevents_excessive_back_pressure() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 1000_u64;
+    let burst = 2000_u64;
+    let max_sleep = Duration::from_secs(burst / rate); // 2 seconds
+
+    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
+
+    // Repeated bursts should always be bounded by burst/rate
+    for i in 0..5 {
+        let sleep = limiter.register(rate as usize * 20);
+        assert!(
+            sleep.requested() <= max_sleep,
+            "burst {i}: sleep {:?} exceeds max {max_sleep:?}",
+            sleep.requested()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-rate convergence: verify convergence across wide range of rates
+// ---------------------------------------------------------------------------
+
+#[test]
+fn convergence_across_three_decades_of_rates() {
+    let rates = [100_u64, 1_000, 10_000, 100_000, 1_000_000, 10_000_000];
+
+    for &rate in &rates {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let chunk = std::cmp::max(rate / 8, 1) as usize;
+        let mut limiter = BandwidthLimiter::new(nz(rate));
+
+        // Warm up
+        let _ = run_pacing(&mut limiter, 2, chunk);
+
+        let (bytes, sleep) = run_pacing(&mut limiter, 16, chunk);
+        let obs = observed_rate(bytes, sleep);
+        let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+        assert!(
+            deviation <= 5.0,
+            "rate {rate}: observed {obs:.2} deviates {deviation:.3}%"
+        );
+    }
 }
