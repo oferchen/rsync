@@ -483,6 +483,214 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Windows ReFS partial-file reflink via `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
+///
+/// Clones a range of blocks from `src` into `dst` at the specified offsets.
+/// Both `src_offset`, `dst_offset`, and `byte_count` must be cluster-aligned
+/// (this function queries the cluster size and rounds accordingly). The
+/// destination file must already exist and be large enough to hold the cloned
+/// range at the target offset.
+///
+/// # Arguments
+///
+/// * `src` - Source file path (must exist and be readable)
+/// * `dst` - Destination file path (must exist and be writable)
+/// * `src_offset` - Byte offset in the source file to start cloning from
+/// * `dst_offset` - Byte offset in the destination file to clone into
+/// * `byte_count` - Number of bytes to clone (rounded up to cluster boundary)
+///
+/// # Constraints
+///
+/// - Both files must be on the same ReFS volume.
+/// - Offsets and byte_count are rounded up to the volume's cluster size.
+/// - The destination must be pre-sized to accommodate `dst_offset + aligned_byte_count`.
+/// - On failure, partial state may remain - the caller should clean up.
+///
+/// # References
+///
+/// - upstream: ReFS block cloning is an oc-rsync optimization (no upstream equivalent).
+/// - Microsoft docs: `FSCTL_DUPLICATE_EXTENTS_TO_FILE` control code.
+#[cfg(target_os = "windows")]
+#[allow(unsafe_code)]
+pub(super) fn try_refs_reflink_range_impl(
+    src: &Path,
+    dst: &Path,
+    src_offset: u64,
+    dst_offset: u64,
+    byte_count: u64,
+) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GetDiskFreeSpaceW, OPEN_EXISTING,
+    };
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+
+    /// Generic read access right.
+    const GENERIC_READ: u32 = 0x8000_0000;
+    /// Generic write access right.
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+
+    /// `FSCTL_DUPLICATE_EXTENTS_TO_FILE` control code.
+    const FSCTL_DUPLICATE_EXTENTS_TO_FILE: u32 = 0x0009_8344;
+
+    /// Input structure for `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
+    #[repr(C)]
+    struct DuplicateExtentsData {
+        file_handle: isize,
+        source_file_offset: i64,
+        target_file_offset: i64,
+        byte_count: i64,
+    }
+
+    if byte_count == 0 {
+        return Ok(());
+    }
+
+    // Query cluster size for alignment.
+    let volume_root = dst.ancestors().last().unwrap_or(dst);
+    let root_wide: Vec<u16> = volume_root
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut sectors_per_cluster: u32 = 0;
+    let mut bytes_per_sector: u32 = 0;
+    let mut free_clusters: u32 = 0;
+    let mut total_clusters: u32 = 0;
+
+    // SAFETY: root_wide is a valid null-terminated UTF-16 string.
+    // Output pointers are valid stack-allocated u32 variables.
+    let disk_result = unsafe {
+        GetDiskFreeSpaceW(
+            root_wide.as_ptr(),
+            &mut sectors_per_cluster,
+            &mut bytes_per_sector,
+            &mut free_clusters,
+            &mut total_clusters,
+        )
+    };
+
+    if disk_result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let cluster_size = u64::from(sectors_per_cluster) * u64::from(bytes_per_sector);
+    if cluster_size == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "cluster size is zero",
+        ));
+    }
+
+    let params = compute_duplicate_extents_params(src_offset, dst_offset, byte_count, cluster_size);
+
+    let src_wide: Vec<u16> = src
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // SAFETY: src_wide is a valid null-terminated UTF-16 path.
+    let src_handle = unsafe {
+        CreateFileW(
+            src_wide.as_ptr(),
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        )
+    };
+
+    if src_handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+
+    let dst_wide: Vec<u16> = dst
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // Open destination for writing. OPEN_EXISTING because the caller must
+    // pre-create and pre-size the destination for partial reflink.
+    // SAFETY: dst_wide is a valid null-terminated UTF-16 path.
+    let dst_handle = unsafe {
+        CreateFileW(
+            dst_wide.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        )
+    };
+
+    if dst_handle == INVALID_HANDLE_VALUE {
+        let err = io::Error::last_os_error();
+        // SAFETY: src_handle is a valid open handle.
+        unsafe { CloseHandle(src_handle) };
+        return Err(err);
+    }
+
+    let dup_data = DuplicateExtentsData {
+        file_handle: src_handle as isize,
+        source_file_offset: params.source_offset as i64,
+        target_file_offset: params.target_offset as i64,
+        byte_count: params.byte_count as i64,
+    };
+
+    let mut bytes_returned: u32 = 0;
+
+    // SAFETY: dst_handle and src_handle are valid open file handles.
+    // dup_data is a properly initialized DuplicateExtentsData struct with
+    // cluster-aligned offsets. bytes_returned is a valid output pointer.
+    let ioctl_result = unsafe {
+        DeviceIoControl(
+            dst_handle as HANDLE,
+            FSCTL_DUPLICATE_EXTENTS_TO_FILE,
+            &dup_data as *const DuplicateExtentsData as *const std::ffi::c_void,
+            std::mem::size_of::<DuplicateExtentsData>() as u32,
+            std::ptr::null_mut(),
+            0,
+            &mut bytes_returned,
+            std::ptr::null_mut(),
+        )
+    };
+
+    // SAFETY: Both handles are valid open handles.
+    unsafe {
+        CloseHandle(src_handle);
+        CloseHandle(dst_handle);
+    }
+
+    if ioctl_result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    Ok(())
+}
+
+/// Non-Windows stub for partial ReFS reflink.
+#[cfg(not(target_os = "windows"))]
+pub(super) fn try_refs_reflink_range_impl(
+    _src: &Path,
+    _dst: &Path,
+    _src_offset: u64,
+    _dst_offset: u64,
+    _byte_count: u64,
+) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "ReFS reflink is only available on Windows",
+    ))
+}
+
 /// Non-Windows stub for ReFS reflink.
 #[cfg(not(target_os = "windows"))]
 pub(super) fn try_refs_reflink_impl(_src: &Path, _dst: &Path) -> io::Result<()> {
@@ -518,6 +726,61 @@ pub(super) fn try_ficlone_impl(_src: &Path, _dst: &Path) -> io::Result<()> {
         io::ErrorKind::Unsupported,
         "FICLONE is only available on Linux",
     ))
+}
+
+/// Computed parameters for the `FSCTL_DUPLICATE_EXTENTS_TO_FILE` ioctl.
+///
+/// Encapsulates the cluster-aligned offsets and byte count derived from
+/// user-supplied (unaligned) values. This struct is used both by the actual
+/// ioctl call and by unit tests that verify alignment arithmetic without
+/// requiring a ReFS volume.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct DuplicateExtentsParams {
+    /// Source file offset, rounded down to cluster boundary.
+    pub source_offset: u64,
+    /// Destination file offset, rounded down to cluster boundary.
+    pub target_offset: u64,
+    /// Byte count, rounded up so that `source_offset + byte_count` covers
+    /// the original `[src_offset, src_offset + count)` range on a cluster
+    /// boundary.
+    pub byte_count: u64,
+}
+
+/// Computes cluster-aligned parameters for `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
+///
+/// The ioctl requires all three fields - source offset, target offset, and
+/// byte count - to be multiples of the filesystem cluster size. This function
+/// rounds offsets down and the end position up, guaranteeing the original
+/// byte range is fully covered.
+///
+/// # Arguments
+///
+/// * `src_offset` - Unaligned source file offset
+/// * `dst_offset` - Unaligned destination file offset
+/// * `byte_count` - Unaligned number of bytes to clone
+/// * `cluster_size` - Filesystem cluster size in bytes (must be > 0)
+///
+/// # Panics
+///
+/// Panics if `cluster_size` is zero (callers must validate beforehand).
+pub(super) fn compute_duplicate_extents_params(
+    src_offset: u64,
+    dst_offset: u64,
+    byte_count: u64,
+    cluster_size: u64,
+) -> DuplicateExtentsParams {
+    debug_assert!(cluster_size > 0, "cluster_size must be positive");
+
+    let aligned_src = (src_offset / cluster_size) * cluster_size;
+    let aligned_dst = (dst_offset / cluster_size) * cluster_size;
+    let end = src_offset + byte_count;
+    let aligned_end = ((end + cluster_size - 1) / cluster_size) * cluster_size;
+
+    DuplicateExtentsParams {
+        source_offset: aligned_src,
+        target_offset: aligned_dst,
+        byte_count: aligned_end - aligned_src,
+    }
 }
 
 /// macOS supports reflink via `clonefile` on APFS.
