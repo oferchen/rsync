@@ -163,6 +163,48 @@ pub fn try_refs_reflink(src: &Path, dst: &Path) -> io::Result<()> {
     dispatch::try_refs_reflink_impl(src, dst)
 }
 
+/// Attempts a partial copy-on-write block clone using Windows ReFS
+/// `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
+///
+/// Clones `byte_count` bytes from `src` starting at `src_offset` into `dst`
+/// at `dst_offset`. All offsets and the byte count are rounded to the volume's
+/// cluster size internally (the ioctl requires cluster-aligned parameters).
+///
+/// The destination file must already exist and be large enough to hold the
+/// cloned range at the target offset. Unlike [`try_refs_reflink`], this
+/// function does not create or resize the destination.
+///
+/// # Constraints
+///
+/// - Source and destination must be on the same ReFS volume.
+/// - The volume must be formatted as ReFS (NTFS does not support block cloning).
+/// - The destination must be pre-created and pre-sized by the caller.
+/// - Windows Server 2016+ or Windows 10+ with a ReFS-formatted volume.
+///
+/// # Platform Support
+///
+/// - **Windows**: Calls `DeviceIoControl` with `FSCTL_DUPLICATE_EXTENTS_TO_FILE`.
+/// - **Other platforms**: Returns `ErrorKind::Unsupported`.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The platform does not support ReFS reflink (non-Windows)
+/// - The filesystem is not ReFS (NTFS, FAT32, exFAT)
+/// - Cross-volume (source and destination on different volumes)
+/// - Source or destination does not exist or is not accessible
+/// - Cluster size query fails
+/// - The ioctl itself fails
+pub fn try_refs_reflink_range(
+    src: &Path,
+    dst: &Path,
+    src_offset: u64,
+    dst_offset: u64,
+    byte_count: u64,
+) -> io::Result<()> {
+    dispatch::try_refs_reflink_range_impl(src, dst, src_offset, dst_offset, byte_count)
+}
+
 /// Attempts a copy-on-write clone using Linux `FICLONE` ioctl.
 ///
 /// On Btrfs, XFS (with reflink enabled), and bcachefs, `FICLONE` creates an
