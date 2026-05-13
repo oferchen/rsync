@@ -293,7 +293,10 @@ fn aimd_intermittent_errors_do_not_cause_runaway_oscillation() {
     // floor or above the ceiling.
     let min_rate = *all_rates.iter().min().expect("non-empty");
     let max_rate = *all_rates.iter().max().expect("non-empty");
-    assert!(min_rate >= floor, "min rate {min_rate} fell below floor {floor}");
+    assert!(
+        min_rate >= floor,
+        "min rate {min_rate} fell below floor {floor}"
+    );
     assert!(
         max_rate <= ceiling,
         "max rate {max_rate} exceeded ceiling {ceiling}"
