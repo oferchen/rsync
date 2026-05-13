@@ -6,6 +6,7 @@ pub(super) use super::{
 
 mod apply_effective_limit_cases;
 mod configuration;
+mod convergence;
 mod helpers;
 mod pacing;
 mod rate_algorithm;
