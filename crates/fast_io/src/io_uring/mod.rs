@@ -98,6 +98,7 @@ pub mod shared_ring;
 mod socket_factory;
 mod socket_reader;
 mod socket_writer;
+pub mod statx;
 
 #[cfg(test)]
 mod tests;
@@ -134,6 +135,10 @@ pub use socket_factory::{
 };
 pub use socket_reader::IoUringSocketReader;
 pub use socket_writer::IoUringSocketWriter;
+pub use statx::{
+    IORING_OP_STATX, STATX_MIN_KERNEL, StatxArgs, StatxResult, build_statx_sqe,
+    build_statx_sqe_unchecked, statx_supported, submit_statx_batch, submit_statx_blocking,
+};
 
 use crate::traits::{FileReader, FileReaderFactory, FileWriterFactory};
 use batching::try_register_fd;
