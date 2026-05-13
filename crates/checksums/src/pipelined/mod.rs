@@ -444,7 +444,6 @@ mod tests {
 #[cfg(test)]
 mod property_tests {
     use super::*;
-    use crate::RollingDigest;
     use crate::strong::Md5;
     use proptest::prelude::*;
     use std::io::Cursor;
