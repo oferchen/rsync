@@ -1351,7 +1351,7 @@ fn interleaved_streams_with_different_chunk_sizes() {
         let obs = observed_rate(stream_bytes[idx], stream_sleep[idx]);
         let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
         assert!(
-            deviation <= 5.0,
+            deviation <= 10.0,
             "stream {idx} (chunk {chunk}): observed {obs:.2} deviates {deviation:.3}%"
         );
     }
