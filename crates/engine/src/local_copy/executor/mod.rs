@@ -22,8 +22,8 @@ pub(crate) use file::{
 };
 pub use file::{
     DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetectStrategy, SparseDetector,
-    SparseReader, SparseRegion, SparseWriter, compute_backup_path, remove_existing_destination,
-    remove_incomplete_destination,
+    SparseReader, SparseRegion, SparseWriteStats, SparseWriter, ZeroScanStrategy,
+    compute_backup_path, remove_existing_destination, remove_incomplete_destination,
 };
 #[cfg(test)]
 pub(crate) use file::{
