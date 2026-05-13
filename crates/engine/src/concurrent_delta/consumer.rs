@@ -124,14 +124,37 @@ impl DeltaConsumer {
     ///
     /// # Panics
     ///
-    /// Panics if `reorder_capacity` is zero.
+    /// Panics if `reorder_capacity` is zero and `bypass_reorder` is `false`.
     #[must_use]
     pub fn spawn(rx: WorkQueueReceiver, reorder_capacity: usize) -> Self {
+        Self::spawn_inner(rx, reorder_capacity, false)
+    }
+
+    /// Spawns background threads that drain the work queue in parallel
+    /// and deliver results in arrival order, bypassing reordering.
+    ///
+    /// Identical to [`spawn`](Self::spawn) except the internal
+    /// [`ReorderBuffer`] operates in passthrough mode. Items are forwarded
+    /// to the consumer in the order they complete rather than submission
+    /// order. This eliminates reorder overhead when strict file-list
+    /// ordering is unnecessary - for example, when `--delay-updates` is
+    /// off and files are committed immediately.
+    #[must_use]
+    pub fn spawn_bypass(rx: WorkQueueReceiver) -> Self {
+        Self::spawn_inner(rx, 0, true)
+    }
+
+    /// Internal spawn implementation shared by ordered and bypass paths.
+    fn spawn_inner(rx: WorkQueueReceiver, reorder_capacity: usize, bypass: bool) -> Self {
         let (result_tx, result_rx) = mpsc::channel();
 
         // Bounded channel between drain and reorder threads. Capacity matches
         // reorder buffer so workers can stay ahead without unbounded buffering.
-        let stream_capacity = reorder_capacity.max(rayon::current_num_threads() * 2);
+        let stream_capacity = if bypass {
+            rayon::current_num_threads() * 2
+        } else {
+            reorder_capacity.max(rayon::current_num_threads() * 2)
+        };
         let (stream_tx, stream_rx) = crossbeam_channel::bounded::<DeltaResult>(stream_capacity);
 
         // Thread 1: runs rayon::scope, streaming results as workers complete.
@@ -142,11 +165,16 @@ impl DeltaConsumer {
             })
             .expect("failed to spawn delta-drain thread");
 
-        // Thread 2: receives streamed results, reorders, forwards in sequence order.
+        // Thread 2: receives streamed results, reorders (or passes through),
+        // and forwards to the consumer channel.
         let handle = thread::Builder::new()
             .name("delta-reorder".to_string())
             .spawn(move || {
-                let mut reorder = ReorderBuffer::new(reorder_capacity);
+                let mut reorder = if bypass {
+                    ReorderBuffer::passthrough()
+                } else {
+                    ReorderBuffer::new(reorder_capacity)
+                };
 
                 for result in stream_rx {
                     // Insert may fail if buffer is at capacity. Drain ready
@@ -592,5 +620,85 @@ mod tests {
 
         assert!(consumer.try_recv().is_none());
         consumer.join().unwrap();
+    }
+
+    #[test]
+    fn bypass_delivers_all_results() {
+        let (tx, rx) = spawn_producer(50);
+        let producer = std::thread::spawn(move || send_items(&tx, 50));
+
+        let consumer = DeltaConsumer::spawn_bypass(rx);
+        let results: Vec<DeltaResult> = consumer.iter().collect();
+        producer.join().unwrap();
+
+        assert_eq!(results.len(), 50);
+        // All items delivered - verify by collecting ndx values.
+        let mut ndx_values: Vec<u32> = results.iter().map(|r| r.ndx().get()).collect();
+        ndx_values.sort_unstable();
+        let expected: Vec<u32> = (0..50).collect();
+        assert_eq!(ndx_values, expected);
+    }
+
+    #[test]
+    fn bypass_empty_queue_yields_no_results() {
+        let (tx, rx) = spawn_producer(1);
+        drop(tx);
+
+        let consumer = DeltaConsumer::spawn_bypass(rx);
+        let results: Vec<DeltaResult> = consumer.iter().collect();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn bypass_single_item() {
+        let (tx, rx) = spawn_producer(1);
+        tx.send(DeltaWork::whole_file(42, PathBuf::from("/dst/single"), 128).with_sequence(0))
+            .unwrap();
+        drop(tx);
+
+        let consumer = DeltaConsumer::spawn_bypass(rx);
+        let results: Vec<DeltaResult> = consumer.iter().collect();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].ndx().get(), 42);
+        assert_eq!(results[0].bytes_written(), 128);
+    }
+
+    #[test]
+    fn bypass_join_succeeds() {
+        let (tx, rx) = spawn_producer(10);
+        let producer = std::thread::spawn(move || send_items(&tx, 10));
+
+        let consumer = DeltaConsumer::spawn_bypass(rx);
+        let results: Vec<DeltaResult> = consumer.iter().collect();
+        producer.join().unwrap();
+
+        assert_eq!(results.len(), 10);
+        consumer.join().unwrap();
+    }
+
+    #[test]
+    fn bypass_large_batch_delivers_all() {
+        let count = 500u32;
+        let (tx, rx) = work_queue::bounded_with_capacity(32);
+
+        let producer = std::thread::spawn(move || {
+            for i in 0..count {
+                let work =
+                    DeltaWork::whole_file(i, PathBuf::from("/dst"), 64).with_sequence(u64::from(i));
+                tx.send(work).unwrap();
+            }
+        });
+
+        let consumer = DeltaConsumer::spawn_bypass(rx);
+        let results: Vec<DeltaResult> = consumer.into_iter().collect();
+        producer.join().unwrap();
+
+        assert_eq!(results.len(), count as usize);
+        // Verify all items present (order may differ from submission).
+        let mut ndx_values: Vec<u32> = results.iter().map(|r| r.ndx().get()).collect();
+        ndx_values.sort_unstable();
+        let expected: Vec<u32> = (0..count).collect();
+        assert_eq!(ndx_values, expected);
     }
 }
