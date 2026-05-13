@@ -1,3 +1,4 @@
+use super::dispatch;
 use super::*;
 use std::io;
 use std::io::Write;
@@ -654,4 +655,166 @@ fn no_cow_platform_copy_propagates_missing_source_error() {
         .copy_file(&missing, &dst, 0)
         .expect_err("missing source should fail");
     assert_eq!(err.kind(), io::ErrorKind::NotFound);
+}
+
+// ── FSCTL_DUPLICATE_EXTENTS parameter construction tests ──────────────
+
+#[test]
+fn duplicate_extents_params_already_aligned() {
+    let params = dispatch::compute_duplicate_extents_params(0, 0, 4096, 4096);
+    assert_eq!(params.source_offset, 0);
+    assert_eq!(params.target_offset, 0);
+    assert_eq!(params.byte_count, 4096);
+}
+
+#[test]
+fn duplicate_extents_params_byte_count_rounds_up() {
+    // 100 bytes at offset 0 with 4096 cluster size rounds byte_count up to 4096
+    let params = dispatch::compute_duplicate_extents_params(0, 0, 100, 4096);
+    assert_eq!(params.source_offset, 0);
+    assert_eq!(params.target_offset, 0);
+    assert_eq!(params.byte_count, 4096);
+}
+
+#[test]
+fn duplicate_extents_params_offsets_round_down() {
+    // Source offset 5000 rounds down to 4096, dst offset 9000 rounds down to 8192
+    let params = dispatch::compute_duplicate_extents_params(5000, 9000, 100, 4096);
+    assert_eq!(params.source_offset, 4096);
+    assert_eq!(params.target_offset, 8192);
+    // Range covers [5000, 5100) -> aligned to [4096, 8192) = 4096 bytes
+    assert_eq!(params.byte_count, 4096);
+}
+
+#[test]
+fn duplicate_extents_params_cross_cluster_boundary() {
+    // Range [4000, 5000) spans two clusters with 4096-byte clusters
+    let params = dispatch::compute_duplicate_extents_params(4000, 0, 1000, 4096);
+    assert_eq!(params.source_offset, 0);
+    assert_eq!(params.target_offset, 0);
+    // Aligned range: [0, 8192) = 8192 bytes (two clusters)
+    assert_eq!(params.byte_count, 8192);
+}
+
+#[test]
+fn duplicate_extents_params_large_cluster_size() {
+    // ReFS commonly uses 64KB clusters
+    let cluster = 64 * 1024;
+    let params = dispatch::compute_duplicate_extents_params(1000, 2000, 50_000, cluster);
+    assert_eq!(params.source_offset, 0);
+    assert_eq!(params.target_offset, 0);
+    // Range [1000, 51000) -> aligned to [0, 65536) = 1 cluster
+    assert_eq!(params.byte_count, cluster);
+}
+
+#[test]
+fn duplicate_extents_params_large_cluster_multiple_clusters() {
+    let cluster = 64 * 1024;
+    // Range [0, 200_000) at 64KB clusters needs ceil(200000/65536)=4 clusters
+    let params = dispatch::compute_duplicate_extents_params(0, 0, 200_000, cluster);
+    assert_eq!(params.source_offset, 0);
+    assert_eq!(params.target_offset, 0);
+    assert_eq!(params.byte_count, 4 * cluster);
+}
+
+#[test]
+fn duplicate_extents_params_exact_cluster_boundary() {
+    // Range exactly one cluster at cluster-aligned offset
+    let params = dispatch::compute_duplicate_extents_params(8192, 16384, 4096, 4096);
+    assert_eq!(params.source_offset, 8192);
+    assert_eq!(params.target_offset, 16384);
+    assert_eq!(params.byte_count, 4096);
+}
+
+#[test]
+fn duplicate_extents_params_zero_byte_count() {
+    let params = dispatch::compute_duplicate_extents_params(4096, 0, 0, 4096);
+    assert_eq!(params.source_offset, 4096);
+    assert_eq!(params.target_offset, 0);
+    assert_eq!(params.byte_count, 0);
+}
+
+#[test]
+fn duplicate_extents_params_one_byte() {
+    // Single byte at offset 0 still requires one full cluster
+    let params = dispatch::compute_duplicate_extents_params(0, 0, 1, 4096);
+    assert_eq!(params.byte_count, 4096);
+}
+
+// ── Partial ReFS reflink tests ────────────────────────────────────────
+
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn refs_reflink_range_returns_unsupported_on_non_windows() {
+    let temp = TempDir::new().expect("create temp dir");
+    let (src, dst) = setup_test_files(temp.path(), "refs_range_stub", b"data");
+
+    let err = try_refs_reflink_range(&src, &dst, 0, 0, 4).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}
+
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn refs_reflink_range_zero_bytes_returns_unsupported_on_non_windows() {
+    let temp = TempDir::new().expect("create temp dir");
+    let (src, dst) = setup_test_files(temp.path(), "refs_range_zero", b"data");
+
+    // Even zero-byte range returns Unsupported on non-Windows
+    let err = try_refs_reflink_range(&src, &dst, 0, 0, 0).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn refs_reflink_range_zero_bytes_succeeds() {
+    let temp = TempDir::new().expect("create temp dir");
+    let (src, dst) = setup_test_files(temp.path(), "refs_range_zero", b"data");
+    std::fs::write(&dst, b"dest").expect("write dst");
+
+    // Zero-byte range is a no-op, should succeed on any filesystem
+    let result = try_refs_reflink_range(&src, &dst, 0, 0, 0);
+    assert!(result.is_ok(), "zero-byte range should succeed");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn refs_reflink_range_fails_gracefully_on_ntfs() {
+    let temp = TempDir::new().expect("create temp dir");
+    let content = b"partial reflink test data on NTFS";
+    let (src, dst) = setup_test_files(temp.path(), "refs_range_ntfs", content);
+    // Pre-create destination so OPEN_EXISTING succeeds
+    std::fs::write(&dst, &vec![0u8; content.len()]).expect("write dst");
+
+    let result = try_refs_reflink_range(&src, &dst, 0, 0, content.len() as u64);
+    assert!(
+        result.is_err(),
+        "partial reflink should fail on NTFS (CI uses NTFS)"
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn refs_reflink_range_fails_on_missing_source() {
+    let temp = TempDir::new().expect("create temp dir");
+    let src = temp.path().join("nonexistent_range_src.txt");
+    let dst = temp.path().join("range_dst.txt");
+    std::fs::write(&dst, b"dest").expect("write dst");
+
+    let result = try_refs_reflink_range(&src, &dst, 0, 0, 100);
+    assert!(result.is_err(), "missing source should fail");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn refs_reflink_range_fails_on_missing_destination() {
+    let temp = TempDir::new().expect("create temp dir");
+    let src = temp.path().join("range_src.txt");
+    let dst = temp.path().join("nonexistent_range_dst.txt");
+    std::fs::write(&src, b"source").expect("write src");
+
+    let result = try_refs_reflink_range(&src, &dst, 0, 0, 6);
+    assert!(
+        result.is_err(),
+        "missing destination should fail (OPEN_EXISTING)"
+    );
 }
