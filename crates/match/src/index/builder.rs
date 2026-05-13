@@ -2,16 +2,15 @@
 //!
 //! Provides [`from_signature`](DeltaSignatureIndex::from_signature) and
 //! [`rebuild`](DeltaSignatureIndex::rebuild) methods that populate the tag
-//! table, bithash prefilter, and lookup map from a [`FileSignature`].
-
-use rustc_hash::FxHashMap;
+//! table, bithash prefilter, and [`CompactLookup`] from a [`FileSignature`].
 
 use signature::{FileSignature, SignatureAlgorithm, SignatureBlock};
 
+use super::compact_lookup::CompactLookup;
 use super::{BitHash, DeltaSignatureIndex, TAG_TABLE_SIZE};
 
 /// Shared helper that indexes full-length blocks into the tag table, bithash,
-/// and lookup map.
+/// and compact lookup table.
 ///
 /// Returns `true` if at least one full-length block was indexed.
 fn populate_index(
@@ -19,7 +18,7 @@ fn populate_index(
     block_length: usize,
     tag_table: &mut [bool],
     bithash: &mut BitHash,
-    lookup: &mut FxHashMap<(u16, u16), Vec<usize>>,
+    lookup: &mut CompactLookup,
 ) -> bool {
     let mut has_full_blocks = false;
     for (index, block) in blocks.iter().enumerate() {
@@ -30,10 +29,7 @@ fn populate_index(
         let digest = block.rolling();
         tag_table[digest.sum1() as usize] = true;
         bithash.insert(digest.value());
-        lookup
-            .entry((digest.sum1(), digest.sum2()))
-            .or_default()
-            .push(index);
+        lookup.insert(digest.sum1(), digest.sum2(), index as u32);
     }
     has_full_blocks
 }
@@ -53,8 +49,7 @@ impl DeltaSignatureIndex {
         let strong_length = usize::from(signature.layout().strong_sum_length().get());
         let blocks: Vec<SignatureBlock> = signature.blocks().to_vec();
 
-        let mut lookup: FxHashMap<(u16, u16), Vec<usize>> =
-            FxHashMap::with_capacity_and_hasher(blocks.len(), Default::default());
+        let mut lookup = CompactLookup::with_capacity(blocks.len());
         let mut tag_table = vec![false; TAG_TABLE_SIZE];
         let mut bithash = BitHash::with_block_count(blocks.len());
 
@@ -80,7 +75,7 @@ impl DeltaSignatureIndex {
     }
 
     /// Rebuilds the index in-place from a new signature, reusing the
-    /// existing `FxHashMap` allocation.
+    /// existing [`CompactLookup`] allocation.
     ///
     /// Mirrors upstream rsync's hash table reuse pattern (match.c):
     /// the table is cleared and repopulated rather than freed and

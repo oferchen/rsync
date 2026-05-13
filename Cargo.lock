@@ -2160,7 +2160,6 @@ dependencies = [
  "logging",
  "proptest",
  "protocol",
- "rayon",
  "rustc-hash",
  "signature 0.6.1",
  "tempfile",
