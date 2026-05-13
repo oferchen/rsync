@@ -55,6 +55,7 @@ fn serve_connections(
         syslog_tag,
         daemon_uid,
         daemon_gid,
+        daemon_chroot,
         proxy_protocol,
         ..
     } = options;
@@ -226,23 +227,46 @@ fn serve_connections(
         None
     };
 
-    // Drop daemon-level privileges after binding (which may require root for
-    // ports < 1024), daemonizing, and writing the PID file.
-    // upstream: clientserver.c - setuid/setgid from global uid/gid params happen
-    // after the socket is bound and the daemon has forked.
-    if daemon_uid.is_some() || daemon_gid.is_some() {
+    // Apply daemon-level chroot and drop daemon-level privileges after binding
+    // (which may require root for ports < 1024), daemonizing, and writing the
+    // PID file. Order matches upstream: chroot first (while still root), then
+    // setgid, then setuid. Any failure is fatal so the daemon never continues
+    // running as root after a partial privilege drop.
+    // upstream: clientserver.c:1301-1339 start_accept_loop() applies
+    // lp_daemon_chroot() then lp_daemon_gid()/lp_daemon_uid() before the accept
+    // loop services any client.
+    if daemon_chroot.is_some() || daemon_uid.is_some() || daemon_gid.is_some() {
         let fallback_sink = open_privilege_fallback_sink();
         let sink = log_sink.as_ref().unwrap_or(&fallback_sink);
-        drop_privileges(daemon_uid, daemon_gid, sink).map_err(|error| {
-            DaemonError::new(
-                FEATURE_UNAVAILABLE_EXIT_CODE,
-                rsync_error!(
+
+        if let Some(chroot_path) = daemon_chroot.as_deref() {
+            apply_chroot(chroot_path, sink).map_err(|error| {
+                DaemonError::new(
                     FEATURE_UNAVAILABLE_EXIT_CODE,
-                    format!("failed to drop daemon privileges: {error}")
+                    rsync_error!(
+                        FEATURE_UNAVAILABLE_EXIT_CODE,
+                        format!(
+                            "daemon chroot to '{}' failed: {error}",
+                            chroot_path.display()
+                        )
+                    )
+                    .with_role(Role::Daemon),
                 )
-                .with_role(Role::Daemon),
-            )
-        })?;
+            })?;
+        }
+
+        if daemon_uid.is_some() || daemon_gid.is_some() {
+            drop_privileges(daemon_uid, daemon_gid, sink).map_err(|error| {
+                DaemonError::new(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    rsync_error!(
+                        FEATURE_UNAVAILABLE_EXIT_CODE,
+                        format!("failed to drop daemon privileges: {error}")
+                    )
+                    .with_role(Role::Daemon),
+                )
+            })?;
+        }
     }
 
     let notifier = systemd::ServiceNotifier::new();
