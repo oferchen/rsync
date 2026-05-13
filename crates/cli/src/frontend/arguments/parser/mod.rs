@@ -187,6 +187,9 @@ where
         None => None,
     };
 
+    let adaptive_concurrency =
+        matches.get_flag("adaptive-concurrency") && !matches.get_flag("no-adaptive-concurrency");
+
     let rayon_threads = parse_thread_count(&mut matches, "rayon-threads")?;
     let tokio_threads = parse_thread_count(&mut matches, "tokio-threads")?;
 
@@ -861,6 +864,7 @@ where
         ssh_ipv6,
         ssh_port,
         jump_host,
+        adaptive_concurrency,
         rayon_threads,
         tokio_threads,
     })

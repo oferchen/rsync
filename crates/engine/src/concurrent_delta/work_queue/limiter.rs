@@ -662,4 +662,166 @@ mod tests {
         let limiter = LimiterConfig::new(1).min_limit(4).max_limit(16).build();
         assert_eq!(limiter.target(), 4, "initial clamped up to min_limit");
     }
+
+    // --- Convergence tests (#2092) ---
+
+    #[test]
+    fn convergence_under_alternating_success_and_overload() {
+        // Under a sustained pattern of success windows followed by single
+        // overload signals, the target should stabilize within a bounded
+        // range rather than diverging to min or max.
+        let limiter = limiter_with(8, 2, 128);
+        // Exit slow-start by injecting a first overload.
+        let t = limiter.try_acquire().unwrap();
+        t.record_overload(OverloadReason::RttSpike);
+        let mut last_target = limiter.target();
+
+        // Run 50 cycles of: one full success window, then one overload.
+        // The debounce window starts near zero (fresh limiter), so we
+        // sleep briefly between cycles to ensure decreases are not
+        // suppressed.
+        for _ in 0..50 {
+            thread::sleep(Duration::from_millis(1));
+            let window = limiter.target();
+            for _ in 0..window {
+                let t = limiter.try_acquire().unwrap();
+                t.record_success();
+            }
+            let after_increase = limiter.target();
+
+            thread::sleep(Duration::from_millis(1));
+            let t = limiter.try_acquire().unwrap();
+            t.record_overload(OverloadReason::QueueSaturated);
+            last_target = limiter.target();
+
+            // Additive increase (+1) followed by multiplicative decrease
+            // (floor(n/2)) converges to a fixed point where
+            // floor((n+1)/2) == n, which is n in {2, 3} for alpha=1, beta=1/2.
+            // Allow a range [2, after_increase] to account for timing.
+            assert!(
+                last_target >= 2 && last_target <= after_increase,
+                "target {last_target} should stay in [2, {after_increase}]",
+            );
+        }
+
+        // After 50 cycles the target must have settled near the AIMD
+        // equilibrium (which for alpha=1, beta=1/2 is 2 or 3).
+        assert!(
+            last_target <= 4,
+            "expected convergence near 2-3, got {last_target}",
+        );
+    }
+
+    #[test]
+    fn sustained_successes_grow_target_monotonically() {
+        let limiter = limiter_with(4, 1, 64);
+        // Exit slow-start.
+        let t = limiter.try_acquire().unwrap();
+        t.record_overload(OverloadReason::DiskCommitPressure);
+
+        thread::sleep(Duration::from_millis(1));
+        let mut prev = limiter.target();
+        // 10 consecutive success windows should produce monotonic growth.
+        for _ in 0..10 {
+            let window = limiter.target();
+            for _ in 0..window {
+                let t = limiter.try_acquire().unwrap();
+                t.record_success();
+            }
+            let cur = limiter.target();
+            assert!(
+                cur >= prev,
+                "target must not decrease during pure success: {prev} -> {cur}",
+            );
+            prev = cur;
+        }
+        assert!(
+            prev > 4,
+            "target should have grown beyond initial after 10 success windows, got {prev}",
+        );
+    }
+
+    #[test]
+    fn debounce_expires_after_twice_rtt_ema() {
+        let limiter = limiter_with(16, 1, 64);
+        // Seed RTT EMA to 5ms so debounce window = 10ms.
+        for _ in 0..16 {
+            limiter.update_rtt(5_000_000);
+        }
+        let t = limiter.try_acquire().unwrap();
+        t.record_overload(OverloadReason::ErrorRate);
+        let after_first = limiter.target();
+        assert_eq!(after_first, 8);
+
+        // Immediate second overload: debounce suppresses.
+        let t = limiter.try_acquire().unwrap();
+        t.record_overload(OverloadReason::ErrorRate);
+        assert_eq!(limiter.target(), 8, "suppressed within debounce window");
+
+        // Wait past 2 * rtt_ema (~10ms), then overload again.
+        thread::sleep(Duration::from_millis(15));
+        let t = limiter.try_acquire().unwrap();
+        t.record_overload(OverloadReason::ErrorRate);
+        assert_eq!(
+            limiter.target(),
+            4,
+            "decrease should apply after debounce expires",
+        );
+    }
+
+    #[test]
+    fn slow_start_doubles_multiple_windows() {
+        let limiter = limiter_with(1, 1, 256);
+        let mut expected = 1;
+        // During slow-start, each completed window doubles the target.
+        for _ in 0..7 {
+            let window = limiter.target();
+            assert_eq!(window, expected);
+            for _ in 0..window {
+                let t = limiter.try_acquire().unwrap();
+                t.record_success();
+            }
+            expected = expected.saturating_mul(2).min(256);
+        }
+        assert_eq!(
+            limiter.target(),
+            128,
+            "slow-start should reach 128 after 7 doublings"
+        );
+    }
+
+    #[test]
+    fn overload_during_slow_start_transitions_to_additive() {
+        let limiter = limiter_with(4, 1, 128);
+        // One slow-start window: 4 -> 8.
+        for _ in 0..4 {
+            let t = limiter.try_acquire().unwrap();
+            t.record_success();
+        }
+        assert_eq!(limiter.target(), 8);
+
+        // Overload exits slow-start.
+        let t = limiter.try_acquire().unwrap();
+        t.record_overload(OverloadReason::RttSpike);
+        assert_eq!(limiter.target(), 4);
+
+        thread::sleep(Duration::from_millis(1));
+
+        // Next window: additive, not doubling.
+        for _ in 0..4 {
+            let t = limiter.try_acquire().unwrap();
+            t.record_success();
+        }
+        assert_eq!(
+            limiter.target(),
+            5,
+            "post-overload growth must be additive (+1, not x2)"
+        );
+
+        for _ in 0..5 {
+            let t = limiter.try_acquire().unwrap();
+            t.record_success();
+        }
+        assert_eq!(limiter.target(), 6, "second additive window: 5 -> 6");
+    }
 }
