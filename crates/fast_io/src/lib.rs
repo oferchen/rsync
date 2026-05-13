@@ -141,7 +141,12 @@ pub use kernel_version::{
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 pub use sendfile::send_file_to_fd_with_policy;
 pub use socket_options::set_socket_int_option;
-pub use splice::{is_splice_available, is_splice_enabled, recv_fd_to_file, try_splice_to_file};
+#[cfg(target_os = "linux")]
+pub use splice::DEFAULT_PIPE_CAPACITY;
+pub use splice::{
+    SplicePipe, is_splice_available, is_splice_enabled, recv_fd_to_file, try_splice_to_file,
+    try_vmsplice_to_file,
+};
 
 pub use mmap_reader::MmapReader;
 pub use o_tmpfile::{
