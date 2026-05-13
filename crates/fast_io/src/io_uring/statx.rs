@@ -459,12 +459,10 @@ fn rustix_statx_to_libc(src: &rustix::fs::Statx) -> libc::statx {
     // newtype wrappers (e.g. `StatxAttributes`) depending on its backend
     // feature configuration, while libc uses plain integers. A byte-level
     // copy sidesteps the type mismatch entirely.
-    const _: () = assert!(
-        std::mem::size_of::<rustix::fs::Statx>() == std::mem::size_of::<libc::statx>()
-    );
-    const _: () = assert!(
-        std::mem::align_of::<rustix::fs::Statx>() == std::mem::align_of::<libc::statx>()
-    );
+    const _: () =
+        assert!(std::mem::size_of::<rustix::fs::Statx>() == std::mem::size_of::<libc::statx>());
+    const _: () =
+        assert!(std::mem::align_of::<rustix::fs::Statx>() == std::mem::align_of::<libc::statx>());
     // SAFETY: Both types represent the same kernel struct with identical
     // size and alignment (verified by const assertions above). All bit
     // patterns of the C struct are valid for both representations.
