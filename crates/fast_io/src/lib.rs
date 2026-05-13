@@ -168,14 +168,14 @@ pub use temp_file_strategy::{
 };
 
 pub use io_uring::{
-    BufferRing, BufferRingConfig, BufferRingError, IORING_OP_LINKAT, IORING_OP_RENAMEAT,
-    IORING_OP_STATX, IoUringConfig, IoUringDiskBatch, IoUringKernelInfo, IoUringOrStdReader,
-    IoUringOrStdWriter, IoUringReader, IoUringReaderFactory, IoUringWriter, IoUringWriterFactory,
-    LINKAT_MIN_KERNEL, LinkAtArgs, OpTag, RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT,
-    RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats, RenameAt2Args,
-    STATX_MIN_KERNEL, SharedCompletion, SharedRing, SharedRingConfig, StatxArgs, StatxResult,
-    buffer_id_from_cqe_flags, build_linkat_sqe, build_linkat_sqe_unchecked, build_renameat2_sqe,
-    build_renameat2_sqe_unchecked, build_statx_sqe, build_statx_sqe_unchecked,
+    BgidAllocator, BufferRing, BufferRingConfig, BufferRingError, IORING_OP_LINKAT,
+    IORING_OP_RENAMEAT, IORING_OP_STATX, IoUringConfig, IoUringDiskBatch, IoUringKernelInfo,
+    IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory, IoUringWriter,
+    IoUringWriterFactory, LINKAT_MIN_KERNEL, LinkAtArgs, OpTag, RENAME_EXCHANGE, RENAME_NOREPLACE,
+    RENAME_WHITEOUT, RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats,
+    RenameAt2Args, STATX_MIN_KERNEL, SharedCompletion, SharedRing, SharedRingConfig, StatxArgs,
+    StatxResult, buffer_id_from_cqe_flags, build_linkat_sqe, build_linkat_sqe_unchecked,
+    build_renameat2_sqe, build_renameat2_sqe_unchecked, build_statx_sqe, build_statx_sqe_unchecked,
     is_io_uring_available, linkat_supported, pbuf_ring_supported, reader_from_path,
     reader_from_path_with_depth, renameat2_blocking, renameat2_supported, sqpoll_fell_back,
     statx_supported, submit_linkat_blocking, submit_statx_batch, submit_statx_blocking,
