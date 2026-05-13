@@ -132,6 +132,7 @@ pub use parallel::{ParallelExecutor, ParallelResult};
 pub use platform_copy::{
     CopyMethod, CopyResult, DefaultPlatformCopy, NoCowPlatformCopy, NoZeroCopyPlatformCopy,
     PlatformCopy, try_clonefile, try_fcopyfile, try_ficlone, try_refs_reflink,
+    try_refs_reflink_range,
 };
 pub use traits::{FileReader, FileWriter};
 
@@ -339,7 +340,7 @@ pub use io_uring::{
 /// - **Linux**: `copy_file_range`, `sendfile`, `splice` (runtime-probed),
 ///   `FICLONE`, `O_TMPFILE`, `io_uring` (runtime-probed)
 /// - **macOS**: `clonefile`, `fcopyfile`
-/// - **Windows**: `CopyFileEx`, `IOCP` (runtime-probed)
+/// - **Windows**: `CopyFileEx`, `ReFS reflink`, `IOCP` (runtime-probed)
 #[must_use]
 pub fn platform_io_capabilities() -> Vec<&'static str> {
     let mut caps = Vec::new();
@@ -373,6 +374,7 @@ pub fn platform_io_capabilities() -> Vec<&'static str> {
     #[cfg(target_os = "windows")]
     {
         caps.push("CopyFileEx");
+        caps.push("ReFS reflink");
         if is_iocp_available() {
             caps.push("IOCP");
         }
@@ -827,6 +829,7 @@ mod tests {
         #[cfg(target_os = "windows")]
         {
             assert!(caps.contains(&"CopyFileEx"));
+            assert!(caps.contains(&"ReFS reflink"));
         }
     }
 
