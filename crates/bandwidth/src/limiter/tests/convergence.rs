@@ -128,11 +128,7 @@ fn steady_state_total_sleep_matches_expected_transfer_time() {
 
     // 100 KB at 10 KB/s = 10 seconds
     let expected = Duration::from_secs(10);
-    let diff = if total_requested > expected {
-        total_requested - expected
-    } else {
-        expected - total_requested
-    };
+    let diff = total_requested.abs_diff(expected);
     assert!(
         diff <= Duration::from_secs(1),
         "total {total_requested:?} should be within 1s of {expected:?}"
@@ -649,11 +645,7 @@ fn minimum_granularity_single_byte_accumulation() {
 
     // 10 bytes at 10 B/s = 1 second
     let expected = Duration::from_secs(1);
-    let diff = if total_requested > expected {
-        total_requested - expected
-    } else {
-        expected - total_requested
-    };
+    let diff = total_requested.abs_diff(expected);
     assert!(
         diff <= Duration::from_millis(200),
         "10 bytes at 10 B/s: total {total_requested:?} should be near {expected:?}"
