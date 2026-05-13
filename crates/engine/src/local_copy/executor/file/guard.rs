@@ -301,15 +301,34 @@ impl DestinationWriteGuard {
 
     /// Commits a named temp file via rename with retry logic.
     ///
+    /// On Linux 5.11+ with io_uring available, the rename is submitted as an
+    /// `IORING_OP_RENAMEAT` SQE instead of a synchronous `rename(2)` syscall.
+    /// Falls back to `std::fs::rename` on all other platforms or when the
+    /// kernel lacks the opcode.
+    ///
     /// upstream: `util1.c:robust_rename()` - retry up to 4 times on `ETXTBSY`.
     fn commit_named_temp_file(&self, temp_path: PathBuf) -> Result<(), LocalCopyError> {
         let mut tries = 4u32;
         loop {
-            match fs::rename(&temp_path, &self.final_path) {
+            let rename_result = if let Some(result) =
+                fast_io::try_rename_via_io_uring(&temp_path, &self.final_path)
+            {
+                result
+            } else {
+                fs::rename(&temp_path, &self.final_path)
+            };
+            match rename_result {
                 Ok(()) => return Ok(()),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(&self.final_path)?;
-                    fs::rename(&temp_path, &self.final_path).map_err(|rename_error| {
+                    let retry_result = if let Some(result) =
+                        fast_io::try_rename_via_io_uring(&temp_path, &self.final_path)
+                    {
+                        result
+                    } else {
+                        fs::rename(&temp_path, &self.final_path)
+                    };
+                    retry_result.map_err(|rename_error| {
                         LocalCopyError::io(self.finalise_action(), temp_path.clone(), rename_error)
                     })?;
                     return Ok(());
@@ -761,6 +780,73 @@ mod tests {
             assert!(!dest.exists());
             let count = fs::read_dir(temp.path()).expect("read_dir").count();
             assert_eq!(count, 0);
+        }
+    }
+
+    /// Tests for the io_uring RENAMEAT2 dispatch in `commit_named_temp_file`.
+    ///
+    /// These tests verify that the guard commits correctly regardless of
+    /// whether io_uring handles the rename or the fallback `std::fs::rename`
+    /// does. The dispatch is transparent to callers.
+    mod io_uring_rename_dispatch {
+        use super::*;
+
+        #[test]
+        fn commit_succeeds_via_io_uring_or_fallback() {
+            let temp = tempdir().expect("tempdir");
+            let dest = temp.path().join("iouring_rename.txt");
+
+            let (guard, mut file) =
+                DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+            file.write_all(b"io_uring rename test").expect("write");
+            drop(file);
+
+            guard.commit().expect("commit must succeed");
+
+            assert!(dest.exists());
+            assert_eq!(
+                fs::read_to_string(&dest).expect("read"),
+                "io_uring rename test"
+            );
+        }
+
+        #[test]
+        fn commit_replaces_existing_via_io_uring_or_fallback() {
+            let temp = tempdir().expect("tempdir");
+            let dest = temp.path().join("iouring_replace.txt");
+
+            fs::write(&dest, b"old content").expect("write existing");
+
+            let (guard, mut file) =
+                DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+            file.write_all(b"new via io_uring or fallback")
+                .expect("write");
+            drop(file);
+
+            guard.commit().expect("commit must succeed");
+
+            assert_eq!(
+                fs::read_to_string(&dest).expect("read"),
+                "new via io_uring or fallback"
+            );
+        }
+
+        #[test]
+        fn try_rename_via_io_uring_returns_consistent_availability() {
+            let dir = tempfile::tempdir().unwrap();
+            let src = dir.path().join("probe_src.txt");
+            let dst1 = dir.path().join("probe_dst1.txt");
+            let dst2 = dir.path().join("probe_dst2.txt");
+            fs::write(&src, b"data").unwrap();
+
+            let first = fast_io::try_rename_via_io_uring(&src, &dst1).is_some();
+            // If first call consumed the file, recreate.
+            if first {
+                fs::write(&src, b"data").unwrap();
+                let _ = fs::remove_file(&dst1);
+            }
+            let second = fast_io::try_rename_via_io_uring(&src, &dst2).is_some();
+            assert_eq!(first, second, "availability must be consistent");
         }
     }
 }

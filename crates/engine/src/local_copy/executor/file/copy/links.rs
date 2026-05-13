@@ -29,6 +29,17 @@ use ::metadata::apply_file_metadata_with_options;
 use super::super::super::super::CROSS_DEVICE_ERROR_CODE;
 use super::super::guard::remove_existing_destination;
 
+/// Creates a hard link, trying io_uring `IORING_OP_LINKAT` first on Linux 5.15+.
+///
+/// Falls back to `std::fs::hard_link` when io_uring is unavailable or the
+/// kernel lacks the opcode.
+fn hard_link_with_io_uring_fallback(source: &Path, destination: &Path) -> std::io::Result<()> {
+    if let Some(result) = fast_io::try_hard_link_via_io_uring(source, destination) {
+        return result;
+    }
+    fs::hard_link(source, destination)
+}
+
 /// Result of hard-link and reference-directory processing for a file.
 pub(super) struct LinkOutcome {
     pub(super) copy_source_override: Option<PathBuf>,
@@ -76,17 +87,19 @@ pub(super) fn process_links(
     )? {
         let mut attempted_commit = false;
         loop {
-            match fs::hard_link(&link_target, destination) {
+            match hard_link_with_io_uring_fallback(&link_target, destination) {
                 Ok(()) => break,
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(destination)?;
-                    fs::hard_link(&link_target, destination).map_err(|link_error| {
-                        LocalCopyError::io(
-                            "create hard link",
-                            destination.to_path_buf(),
-                            link_error,
-                        )
-                    })?;
+                    hard_link_with_io_uring_fallback(&link_target, destination).map_err(
+                        |link_error| {
+                            LocalCopyError::io(
+                                "create hard link",
+                                destination.to_path_buf(),
+                                link_error,
+                            )
+                        },
+                    )?;
                     break;
                 }
                 Err(error)
