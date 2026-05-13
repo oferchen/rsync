@@ -424,15 +424,15 @@ fn execute_archive_mode_copies_socket() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // archive_options() minus owner/group: chown requires root or matching
-    // uid/gid resolution, which varies across CI environments. Ownership
-    // preservation is tested in execute_ownership_preservation.rs.
+    // archive_options() minus owner/group/times: chown requires root,
+    // utimensat on sockets returns ENXIO on some Linux kernels.
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
             test_helpers::presets::archive_options()
                 .owner(false)
-                .group(false),
+                .group(false)
+                .times(false),
         )
         .expect("archive copy succeeds");
 
@@ -477,7 +477,8 @@ fn execute_archive_mode_copies_fifo_and_socket_together() {
             LocalCopyExecution::Apply,
             test_helpers::presets::archive_options()
                 .owner(false)
-                .group(false),
+                .group(false)
+                .times(false),
         )
         .expect("archive copy succeeds");
 
