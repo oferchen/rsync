@@ -439,7 +439,14 @@ impl ReceiverContext {
                 fs::rename(&file_path, &backup_path)?;
             }
 
-            fs::rename(temp_guard.path(), &file_path)?;
+            // On Linux 5.11+ with io_uring, submits IORING_OP_RENAMEAT instead of
+            // synchronous rename(2). Falls back to std::fs::rename on all other
+            // platforms or when the kernel lacks the opcode.
+            if let Some(result) = fast_io::try_rename_via_io_uring(temp_guard.path(), &file_path) {
+                result?;
+            } else {
+                fs::rename(temp_guard.path(), &file_path)?;
+            }
             temp_guard.keep();
 
             if let Err(meta_err) =
