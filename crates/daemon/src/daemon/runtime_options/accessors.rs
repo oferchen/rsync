@@ -39,10 +39,15 @@ impl RuntimeOptions {
         self.proxy_protocol
     }
 
-    /// Returns the directory the daemon chroots into before forking children.
+    /// Returns the directory the daemon chroots into before serving any
+    /// connections.
     ///
-    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
-    #[allow(dead_code)] // REASON: accessor for daemon listener; wired when async daemon starts
+    /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL. Applied in
+    /// `clientserver.c:1301-1312 start_accept_loop()` before privilege drop.
+    /// The accept loop destructures the field directly; this accessor is kept
+    /// for callers that hold an opaque `&RuntimeOptions` (e.g. test
+    /// inspection of parsed config).
+    #[allow(dead_code)] // REASON: accessor for external read-only inspection of parsed runtime options
     pub(crate) fn daemon_chroot(&self) -> Option<&Path> {
         self.daemon_chroot.as_deref()
     }
