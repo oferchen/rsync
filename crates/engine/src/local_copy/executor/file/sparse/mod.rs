@@ -18,7 +18,7 @@ mod tests;
 
 pub use detect::SparseDetector;
 pub use reader::SparseReader;
-pub use writer::SparseWriter;
+pub use writer::{SparseWriteStats, SparseWriter, ZeroScanStrategy};
 
 /// Selects the mechanism used by [`SparseReader::detect_holes`] to identify
 /// sparse regions in a file.

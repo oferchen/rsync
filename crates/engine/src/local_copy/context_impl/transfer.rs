@@ -301,9 +301,15 @@ impl<'a> CopyContext<'a> {
             return Ok(FileCopyOutcome::new(copied, None));
         }
 
+        if sparse {
+            return self.copy_file_contents_sparse(
+                reader, writer, buffer, compress, source, destination, relative,
+                total_size, initial_bytes, expected_remaining, start,
+            );
+        }
+
         let mut total_bytes: u64 = 0;
         let mut literal_bytes: u64 = 0;
-        let mut sparse_state = SparseWriteState::default();
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress: u64 = 0;
         // 1MB interval amortizes clock_gettime syscalls across the copy loop.
@@ -331,14 +337,9 @@ impl<'a> CopyContext<'a> {
                 break;
             }
 
-            let written = if sparse {
-                write_sparse_chunk(writer, &mut sparse_state, &buffer[..read], destination)?
-            } else {
-                writer.write_all(&buffer[..read]).map_err(|error| {
-                    LocalCopyError::io("copy file", destination, error)
-                })?;
-                read
-            };
+            writer.write_all(&buffer[..read]).map_err(|error| {
+                LocalCopyError::io("copy file", destination, error)
+            })?;
 
             self.register_progress();
 
@@ -361,12 +362,7 @@ impl<'a> CopyContext<'a> {
 
             total_bytes = total_bytes.saturating_add(read as u64);
             bytes_since_timeout_check = bytes_since_timeout_check.saturating_add(read as u64);
-            let literal_delta = if sparse {
-                read as u64
-            } else {
-                written as u64
-            };
-            literal_bytes = literal_bytes.saturating_add(literal_delta);
+            literal_bytes = literal_bytes.saturating_add(read as u64);
             // Only compute elapsed time if we have an observer to report to
             if self.observer.is_some() {
                 let progressed = initial_bytes.saturating_add(total_bytes);
@@ -374,17 +370,115 @@ impl<'a> CopyContext<'a> {
             }
         }
 
-        if sparse {
-            let final_position = sparse_state.finish(writer, destination)?;
-            writer.set_len(final_position).map_err(|error| {
-                LocalCopyError::io(
-                    "truncate destination file",
-                    destination.to_path_buf(),
-                    error,
-                )
+        let outcome = if let Some(encoder) = compressor {
+            let compressed_total = encoder.finish().map_err(|error| {
+                LocalCopyError::io("compress file", source, error)
             })?;
             self.register_progress();
+            let delta = compressed_total.saturating_sub(compressed_progress);
+            self.register_limiter_bytes(delta);
+            FileCopyOutcome::new(literal_bytes, Some(compressed_total))
+        } else {
+            FileCopyOutcome::new(literal_bytes, None)
+        };
+
+        Ok(outcome)
+    }
+
+    /// Sparse variant of `copy_file_contents` using the `SparseWriter` decorator.
+    ///
+    /// Wraps the destination writer in a `SparseWriter` that transparently
+    /// converts zero runs into seeks, producing sparse files on supported
+    /// filesystems. The decorator is consumed at finalization, returning
+    /// the final stream position for `set_len`.
+    #[allow(clippy::too_many_arguments)]
+    fn copy_file_contents_sparse(
+        &mut self,
+        reader: &mut fs::File,
+        writer: &mut fs::File,
+        buffer: &mut [u8],
+        compress: bool,
+        source: &Path,
+        destination: &Path,
+        relative: &Path,
+        total_size: u64,
+        initial_bytes: u64,
+        expected_remaining: u64,
+        start: Instant,
+    ) -> Result<FileCopyOutcome, LocalCopyError> {
+        let mut total_bytes: u64 = 0;
+        let mut literal_bytes: u64 = 0;
+        let mut sparse_writer = SparseWriter::new(&mut *writer);
+        let mut compressor = self.start_compressor(compress, source)?;
+        let mut compressed_progress: u64 = 0;
+        const TIMEOUT_CHECK_INTERVAL: u64 = 1024 * 1024;
+        let mut bytes_since_timeout_check: u64 = 0;
+
+        loop {
+            if total_bytes >= expected_remaining {
+                break;
+            }
+            if bytes_since_timeout_check >= TIMEOUT_CHECK_INTERVAL {
+                self.enforce_timeout()?;
+                bytes_since_timeout_check = 0;
+            }
+            let chunk_len = if let Some(limiter) = self.limiter.as_ref() {
+                limiter.recommended_read_size(buffer.len())
+            } else {
+                buffer.len()
+            };
+
+            let read = reader
+                .read(&mut buffer[..chunk_len])
+                .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+            if read == 0 {
+                break;
+            }
+
+            sparse_writer.write_all(&buffer[..read]).map_err(|error| {
+                LocalCopyError::io("copy file", destination, error)
+            })?;
+
+            self.register_progress();
+
+            let mut compressed_delta = None;
+            if let Some(encoder) = compressor.as_mut() {
+                encoder.write(&buffer[..read]).map_err(|error| {
+                    LocalCopyError::io("compress file", source, error)
+                })?;
+                let total = encoder.bytes_written();
+                let delta = total.saturating_sub(compressed_progress);
+                compressed_progress = total;
+                compressed_delta = Some(delta);
+            }
+
+            if let Some(delta) = compressed_delta {
+                self.register_limiter_bytes(delta);
+            } else {
+                self.register_limiter_bytes(read as u64);
+            }
+
+            total_bytes = total_bytes.saturating_add(read as u64);
+            bytes_since_timeout_check = bytes_since_timeout_check.saturating_add(read as u64);
+            literal_bytes = literal_bytes.saturating_add(read as u64);
+            if self.observer.is_some() {
+                let progressed = initial_bytes.saturating_add(total_bytes);
+                self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
+            }
         }
+
+        let (inner, final_position, _stats) =
+            sparse_writer.finish_and_position().map_err(|error| {
+                LocalCopyError::io("finish sparse writer", destination.to_path_buf(), error)
+            })?;
+        inner.set_len(final_position).map_err(|error| {
+            LocalCopyError::io(
+                "truncate destination file",
+                destination.to_path_buf(),
+                error,
+            )
+        })?;
+        self.register_progress();
 
         let outcome = if let Some(encoder) = compressor {
             let compressed_total = encoder.finish().map_err(|error| {
