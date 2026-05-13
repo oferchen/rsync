@@ -498,6 +498,8 @@ pub(super) fn map_child_exit_status(status: std::process::ExitStatus) -> ExitCod
     }
 
     match status.code() {
+        // upstream: main.c:1591 - shell exit codes mapped to RERR_CMD_*
+        Some(126) => ExitCode::CommandRun,
         Some(127) => ExitCode::CommandNotFound,
         Some(255) => ExitCode::CommandFailed,
         Some(code) => ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer),
@@ -795,6 +797,13 @@ mod tests {
         fn maps_exit_127_to_command_not_found() {
             let status = exit_status_for_code(127);
             assert_eq!(map_child_exit_status(status), ExitCode::CommandNotFound);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn maps_exit_126_to_command_run() {
+            let status = exit_status_for_code(126);
+            assert_eq!(map_child_exit_status(status), ExitCode::CommandRun);
         }
 
         #[cfg(unix)]

@@ -258,6 +258,7 @@ impl ExitCode {
     ///   `BrokenPipe`, `AddrInUse`, `AddrNotAvailable`, `NotConnected` - `SocketIo`
     /// - `TimedOut` - `Timeout`
     /// - `UnexpectedEof`, `InvalidData` - `StreamIo`
+    /// - `Unsupported` - `Unsupported`
     /// - `Interrupted` by signal - `Signal`
     /// - All other I/O errors - `FileIo`
     #[must_use]
@@ -282,6 +283,8 @@ impl ExitCode {
             ErrorKind::UnexpectedEof | ErrorKind::InvalidData => Self::StreamIo,
 
             ErrorKind::Interrupted => Self::Signal,
+
+            ErrorKind::Unsupported => Self::Unsupported,
 
             _ => Self::FileIo,
         }

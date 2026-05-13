@@ -231,6 +231,14 @@ fn from_io_error_maps_signal_interruption() {
 }
 
 #[test]
+fn from_io_error_maps_unsupported_to_unsupported() {
+    use std::io::{Error, ErrorKind};
+
+    let err = Error::from(ErrorKind::Unsupported);
+    assert_eq!(ExitCode::from_io_error(&err), ExitCode::Unsupported);
+}
+
+#[test]
 fn from_io_error_defaults_to_file_io() {
     use std::io::{Error, ErrorKind};
 
