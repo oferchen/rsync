@@ -20,7 +20,7 @@
 //! upstream: receiver.c:recv_files() processes files in file-list order.
 //! This buffer restores sequential ordering after parallel delta dispatch.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant;
 
 /// Default window size for the bounded reorder buffer.
@@ -123,6 +123,15 @@ pub struct BoundedReorderBuffer<T> {
     stall_start: Option<Instant>,
     /// Clock source for stall timing.
     clock: ClockFn,
+    /// When `true`, items pass through without sequence-based reordering.
+    ///
+    /// In bypass mode, [`insert`](Self::insert) appends to a FIFO queue and
+    /// returns items immediately. Sequence numbers are ignored. This
+    /// eliminates BTreeMap overhead when strict ordering is unnecessary
+    /// (e.g., `--delay-updates` is off and files are committed immediately).
+    bypass: bool,
+    /// FIFO queue used in bypass mode. Empty when `bypass` is `false`.
+    bypass_queue: VecDeque<T>,
 }
 
 /// Items drained from the buffer in sequence order.
@@ -170,6 +179,7 @@ impl<T: std::fmt::Debug> std::fmt::Debug for BoundedReorderBuffer<T> {
             .field("total_stall_nanos", &self.total_stall_nanos)
             .field("items_delivered", &self.items_delivered)
             .field("stall_active", &self.stall_start.is_some())
+            .field("bypass", &self.bypass)
             .finish()
     }
 }
@@ -184,6 +194,48 @@ impl<T> BoundedReorderBuffer<T> {
     /// Panics if `window_size` is zero.
     pub fn new(window_size: u64) -> Self {
         Self::with_clock(window_size, Box::new(Instant::now))
+    }
+
+    /// Creates a passthrough buffer that skips sequence-based reordering.
+    ///
+    /// In passthrough mode, items are delivered in insertion order regardless
+    /// of their sequence numbers. This is an optimization for transfers where
+    /// strict file-list ordering is unnecessary - for example, when
+    /// `--delay-updates` is off and each file is committed immediately upon
+    /// completion.
+    ///
+    /// The buffer allocates no BTreeMap entries. All items flow through a
+    /// lightweight FIFO queue, eliminating per-item overhead of sequence
+    /// tracking, gap detection, and stall measurement.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use transfer::reorder_buffer::BoundedReorderBuffer;
+    ///
+    /// let mut buf: BoundedReorderBuffer<&str> = BoundedReorderBuffer::passthrough();
+    ///
+    /// // Items are delivered in insertion order, not sequence order.
+    /// let d = buf.insert(2, "third").unwrap();
+    /// assert_eq!(d, vec!["third"]);
+    ///
+    /// let d = buf.insert(0, "first").unwrap();
+    /// assert_eq!(d, vec!["first"]);
+    /// ```
+    pub fn passthrough() -> Self {
+        Self {
+            next_expected: 0,
+            window_size: 0,
+            pending: BTreeMap::new(),
+            peak_depth: 0,
+            stall_count: 0,
+            total_stall_nanos: 0,
+            items_delivered: 0,
+            stall_start: None,
+            clock: Box::new(Instant::now),
+            bypass: true,
+            bypass_queue: VecDeque::new(),
+        }
     }
 
     /// Creates a new bounded reorder buffer with a custom clock source.
@@ -207,7 +259,18 @@ impl<T> BoundedReorderBuffer<T> {
             items_delivered: 0,
             stall_start: None,
             clock,
+            bypass: false,
+            bypass_queue: VecDeque::new(),
         }
+    }
+
+    /// Returns `true` if the buffer is in passthrough (bypass) mode.
+    ///
+    /// In passthrough mode, items are delivered in insertion order without
+    /// sequence-based reordering.
+    #[must_use]
+    pub const fn is_passthrough(&self) -> bool {
+        self.bypass
     }
 
     /// Inserts an item and returns any consecutive items ready for delivery.
@@ -229,6 +292,10 @@ impl<T> BoundedReorderBuffer<T> {
     /// Returns [`BackpressureError`] when `seq >= next_expected + window_size`.
     #[must_use = "drained items must be processed to maintain ordering"]
     pub fn insert(&mut self, seq: u64, item: T) -> Result<DrainedItems<T>, BackpressureError> {
+        if self.bypass {
+            self.items_delivered += 1;
+            return Ok(vec![item]);
+        }
         // Already delivered - ignore duplicate/stale submissions.
         if seq < self.next_expected {
             return Ok(Vec::new());
@@ -978,6 +1045,108 @@ mod tests {
                     prop_assert_eq!(m.items_delivered, n);
                 }
             }
+        }
+    }
+
+    /// Tests for passthrough (bypass) mode.
+    mod passthrough_tests {
+        use super::*;
+
+        #[test]
+        fn passthrough_delivers_immediately() {
+            let mut buf: BoundedReorderBuffer<&str> = BoundedReorderBuffer::passthrough();
+            assert!(buf.is_passthrough());
+
+            let d = buf.insert(5, "hello").unwrap();
+            assert_eq!(d, vec!["hello"]);
+
+            let d = buf.insert(0, "world").unwrap();
+            assert_eq!(d, vec!["world"]);
+        }
+
+        #[test]
+        fn passthrough_no_backpressure() {
+            let mut buf: BoundedReorderBuffer<u64> = BoundedReorderBuffer::passthrough();
+            // Any sequence number is accepted.
+            let d = buf.insert(u64::MAX - 1, 999).unwrap();
+            assert_eq!(d, vec![999]);
+        }
+
+        #[test]
+        fn passthrough_no_reordering() {
+            let mut buf: BoundedReorderBuffer<&str> = BoundedReorderBuffer::passthrough();
+
+            // Insert out of order: 2, 0, 1.
+            let d = buf.insert(2, "c").unwrap();
+            assert_eq!(d, vec!["c"]);
+
+            let d = buf.insert(0, "a").unwrap();
+            assert_eq!(d, vec!["a"]);
+
+            let d = buf.insert(1, "b").unwrap();
+            assert_eq!(d, vec!["b"]);
+        }
+
+        #[test]
+        fn passthrough_metrics_track_delivery() {
+            let mut buf: BoundedReorderBuffer<u64> = BoundedReorderBuffer::passthrough();
+            buf.insert(0, 10).unwrap();
+            buf.insert(1, 20).unwrap();
+            buf.insert(2, 30).unwrap();
+
+            let m = buf.metrics();
+            assert_eq!(m.items_delivered, 3);
+            assert_eq!(m.current_depth, 0);
+            assert_eq!(m.peak_depth, 0);
+            assert_eq!(m.stall_count, 0);
+            assert_eq!(m.total_stall_nanos, 0);
+        }
+
+        #[test]
+        fn passthrough_buffered_count_is_zero() {
+            let mut buf: BoundedReorderBuffer<u64> = BoundedReorderBuffer::passthrough();
+            buf.insert(0, 42).unwrap();
+            // Items pass through immediately - nothing buffered.
+            assert_eq!(buf.buffered_count(), 0);
+            assert!(buf.is_empty());
+        }
+
+        #[test]
+        fn passthrough_window_size_is_zero() {
+            let buf: BoundedReorderBuffer<u64> = BoundedReorderBuffer::passthrough();
+            assert_eq!(buf.window_size(), 0);
+        }
+
+        #[test]
+        fn passthrough_next_expected_stays_zero() {
+            let mut buf: BoundedReorderBuffer<u64> = BoundedReorderBuffer::passthrough();
+            buf.insert(0, 10).unwrap();
+            buf.insert(1, 20).unwrap();
+            // In bypass mode, next_expected is not advanced.
+            assert_eq!(buf.next_expected(), 0);
+        }
+
+        #[test]
+        fn passthrough_large_batch() {
+            let mut buf: BoundedReorderBuffer<u64> = BoundedReorderBuffer::passthrough();
+            let mut all_drained = Vec::new();
+
+            for i in 0..500u64 {
+                let d = buf.insert(499 - i, i).unwrap();
+                all_drained.extend(d);
+            }
+
+            assert_eq!(all_drained.len(), 500);
+            // Values arrive in insertion order (0, 1, 2, ..., 499).
+            for (i, &val) in all_drained.iter().enumerate() {
+                assert_eq!(val, i as u64);
+            }
+        }
+
+        #[test]
+        fn non_passthrough_flag_is_false() {
+            let buf: BoundedReorderBuffer<u64> = BoundedReorderBuffer::new(4);
+            assert!(!buf.is_passthrough());
         }
     }
 }
