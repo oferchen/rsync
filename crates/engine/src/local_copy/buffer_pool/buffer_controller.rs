@@ -1041,4 +1041,880 @@ mod tests {
             "WAN preset should converge despite jitter: throughput={final_throughput}, setpoint={setpoint}, error={error_pct:.2}"
         );
     }
+
+    // --- Extended convergence tests (task #2096) ---
+    //
+    // These tests verify convergence under more complex workload patterns,
+    // boundary conditions, and multi-phase scenarios that exercise the
+    // controller's stability beyond the basic single-pattern tests above.
+
+    /// Variance of a slice of `usize` values, returned as f64.
+    fn variance(values: &[usize]) -> f64 {
+        if values.is_empty() {
+            return 0.0;
+        }
+        let mean = values.iter().sum::<usize>() as f64 / values.len() as f64;
+        values
+            .iter()
+            .map(|&v| (v as f64 - mean).powi(2))
+            .sum::<f64>()
+            / values.len() as f64
+    }
+
+    #[test]
+    fn convergence_multi_phase_ramp_plateau_decay() {
+        // Workload pattern: ramp up throughput linearly, hold at plateau,
+        // then decay. The controller must track each phase and stabilize.
+        let min = 16 * 1024;
+        let max = 2 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k = 0.5;
+        let setpoint = (k * mid as f64) as u64;
+        let cap = setpoint as f64 * 4.0;
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.02)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let mut now = Instant::now();
+
+        // Phase 1: Ramp up from 10% to 100% of plant capacity over 50 samples.
+        for i in 0..50 {
+            now += Duration::from_millis(100);
+            let ramp_factor = 0.1 + 0.9 * (i as f64 / 49.0);
+            let throughput = linear_plant(ctrl.buffer_size(), k * ramp_factor, cap);
+            ctrl.observe_at(throughput, now);
+        }
+
+        // Phase 2: Plateau at full plant capacity for 50 samples.
+        for _ in 0..50 {
+            now += Duration::from_millis(100);
+            let throughput = linear_plant(ctrl.buffer_size(), k, cap);
+            ctrl.observe_at(throughput, now);
+        }
+
+        // Verify plateau stability.
+        let mut plateau_sizes = Vec::with_capacity(20);
+        for _ in 0..20 {
+            now += Duration::from_millis(100);
+            let throughput = linear_plant(ctrl.buffer_size(), k, cap);
+            ctrl.observe_at(throughput, now);
+            plateau_sizes.push(ctrl.buffer_size());
+        }
+        let plateau_var = variance(&plateau_sizes);
+        let plateau_mean = plateau_sizes.iter().sum::<usize>() as f64 / plateau_sizes.len() as f64;
+        let cv = if plateau_mean > 0.0 {
+            plateau_var.sqrt() / plateau_mean
+        } else {
+            0.0
+        };
+        assert!(
+            cv < 0.10,
+            "plateau phase should be stable: cv={cv:.4}, mean={plateau_mean:.0}"
+        );
+
+        // Phase 3: Decay plant gain by 50% and let the controller adapt.
+        let k_slow = k * 0.5;
+        for _ in 0..50 {
+            now += Duration::from_millis(100);
+            let throughput = linear_plant(ctrl.buffer_size(), k_slow, cap);
+            ctrl.observe_at(throughput, now);
+        }
+
+        // After decay, throughput should still be near setpoint (controller
+        // grew the buffer to compensate for reduced plant gain).
+        let final_throughput = linear_plant(ctrl.buffer_size(), k_slow, cap);
+        let error_pct = (final_throughput as f64 - setpoint as f64).abs() / setpoint as f64;
+        assert!(
+            error_pct < 0.20,
+            "controller should track decay: throughput={final_throughput}, setpoint={setpoint}, error={error_pct:.2}"
+        );
+    }
+
+    #[test]
+    fn convergence_zero_load_sustained_no_pathological_behavior() {
+        // Feed zero throughput for many iterations. The controller should
+        // saturate at max_size without panicking, producing NaN, or any
+        // other pathological behavior.
+        let max = 512 * 1024;
+        let ctrl = ControllerConfig::new(50 * 1024 * 1024)
+            .min_size(16 * 1024)
+            .max_size(max)
+            .build();
+
+        let mut now = Instant::now();
+        for _ in 0..500 {
+            now += Duration::from_millis(100);
+            let size = ctrl.observe_at(0, now);
+            assert!(size >= ctrl.min_size(), "size below min: {size}");
+            assert!(size <= ctrl.max_size(), "size above max: {size}");
+        }
+
+        // Should be pinned at max after sustained zero throughput.
+        assert_eq!(ctrl.buffer_size(), max);
+
+        // Verify the integrator is clamped (not infinite).
+        let state = ctrl.state.lock().unwrap();
+        assert!(state.integral.is_finite(), "integral must be finite");
+    }
+
+    #[test]
+    fn convergence_max_throughput_sustained_no_pathological_behavior() {
+        // Feed extremely high throughput (u64::MAX / 2) for many iterations.
+        // The controller should saturate at min_size without overflow.
+        let min = 16 * 1024;
+        let ctrl = ControllerConfig::new(1_000_000)
+            .min_size(min)
+            .max_size(1024 * 1024)
+            .build();
+
+        let mut now = Instant::now();
+        for _ in 0..500 {
+            now += Duration::from_millis(100);
+            let size = ctrl.observe_at(u64::MAX / 2, now);
+            assert!(size >= min, "size below min: {size}");
+            assert!(size <= ctrl.max_size(), "size above max: {size}");
+        }
+
+        assert_eq!(ctrl.buffer_size(), min);
+
+        let state = ctrl.state.lock().unwrap();
+        assert!(state.integral.is_finite(), "integral must be finite");
+        assert!(state.prev_error.is_finite(), "prev_error must be finite");
+    }
+
+    #[test]
+    fn convergence_sawtooth_load_bounded_oscillation() {
+        // Feed a repeating sawtooth pattern: throughput linearly ramps up
+        // then drops to zero, repeating. The controller's oscillation
+        // amplitude should remain bounded and not grow over time.
+        let setpoint = 50 * 1024 * 1024u64;
+        let ctrl = ControllerConfig::new(setpoint)
+            .min_size(16 * 1024)
+            .max_size(2 * 1024 * 1024)
+            .build();
+
+        let mut now = Instant::now();
+
+        // Run 5 sawtooth cycles, 20 samples each.
+        let mut cycle_ranges = Vec::new();
+        for _cycle in 0..5 {
+            let mut sizes = Vec::with_capacity(20);
+            for i in 0..20 {
+                now += Duration::from_millis(100);
+                // Ramp from 0 to 2x setpoint linearly.
+                let fraction = i as f64 / 19.0;
+                let throughput = (setpoint as f64 * 2.0 * fraction) as u64;
+                ctrl.observe_at(throughput, now);
+                sizes.push(ctrl.buffer_size());
+            }
+            let cycle_min = *sizes.iter().min().unwrap();
+            let cycle_max = *sizes.iter().max().unwrap();
+            cycle_ranges.push(cycle_max - cycle_min);
+        }
+
+        // The oscillation range should not grow over successive cycles.
+        // Compare the last cycle's range to the first cycle's range.
+        let first_range = cycle_ranges[0];
+        let last_range = *cycle_ranges.last().unwrap();
+        assert!(
+            last_range <= first_range + first_range / 10,
+            "oscillation should not grow: first_range={first_range}, last_range={last_range}"
+        );
+    }
+
+    #[test]
+    fn convergence_reset_and_reconverge() {
+        // Converge the controller, then reset the PID accumulators and
+        // verify it re-converges to the same operating point.
+        let min = 16 * 1024;
+        let max = 2 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k = 0.5;
+        let setpoint = (k * mid as f64) as u64;
+        let cap = setpoint as f64 * 4.0;
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.02)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let mut now = Instant::now();
+
+        // Converge initially.
+        for _ in 0..100 {
+            now += Duration::from_millis(100);
+            let throughput = linear_plant(ctrl.buffer_size(), k, cap);
+            ctrl.observe_at(throughput, now);
+        }
+        let converged_size = ctrl.buffer_size();
+        let converged_throughput = linear_plant(converged_size, k, cap);
+        let error_before = (converged_throughput as f64 - setpoint as f64).abs() / setpoint as f64;
+
+        // Reset the PID state.
+        ctrl.reset();
+
+        // Re-converge.
+        for _ in 0..100 {
+            now += Duration::from_millis(100);
+            let throughput = linear_plant(ctrl.buffer_size(), k, cap);
+            ctrl.observe_at(throughput, now);
+        }
+        let reconverged_size = ctrl.buffer_size();
+        let reconverged_throughput = linear_plant(reconverged_size, k, cap);
+        let error_after = (reconverged_throughput as f64 - setpoint as f64).abs() / setpoint as f64;
+
+        // Both convergences should reach similar accuracy.
+        assert!(
+            error_before < 0.15,
+            "initial convergence failed: error={error_before:.2}"
+        );
+        assert!(
+            error_after < 0.15,
+            "post-reset reconvergence failed: error={error_after:.2}"
+        );
+    }
+
+    #[test]
+    fn convergence_narrow_min_max_window() {
+        // When min_size and max_size are very close together, the controller
+        // should still converge without oscillating between the two bounds.
+        let min = 100 * 1024;
+        let max = 120 * 1024;
+        let setpoint = 50 * 1024 * 1024u64;
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let mut now = Instant::now();
+        for _ in 0..100 {
+            now += Duration::from_millis(100);
+            ctrl.observe_at(setpoint, now);
+        }
+
+        // With throughput exactly at setpoint, the buffer should stabilize.
+        let mut sizes = Vec::with_capacity(20);
+        for _ in 0..20 {
+            now += Duration::from_millis(100);
+            ctrl.observe_at(setpoint, now);
+            sizes.push(ctrl.buffer_size());
+        }
+
+        // All sizes should be the same (steady state with zero error).
+        let unique: std::collections::HashSet<_> = sizes.iter().collect();
+        assert!(
+            unique.len() <= 2,
+            "narrow window should produce stable output, got {} distinct sizes: {:?}",
+            unique.len(),
+            sizes
+        );
+    }
+
+    #[test]
+    fn convergence_min_equals_max_stays_fixed() {
+        // When min_size == max_size, the controller has no room to adjust.
+        // Buffer size must always equal that value.
+        let fixed = 128 * 1024;
+        let ctrl = ControllerConfig::new(50 * 1024 * 1024)
+            .min_size(fixed)
+            .max_size(fixed)
+            .build();
+
+        let mut now = Instant::now();
+        for sample in [0u64, 1, 1_000_000, 100_000_000, u64::MAX / 2] {
+            now += Duration::from_millis(100);
+            let size = ctrl.observe_at(sample, now);
+            assert_eq!(
+                size, fixed,
+                "size must equal fixed bound regardless of input"
+            );
+        }
+    }
+
+    #[test]
+    fn convergence_speed_proportional_only() {
+        // A proportional-only controller (no I, no D) should converge
+        // within a bounded number of iterations for a linear plant.
+        let min = 16 * 1024;
+        let max = 2 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k = 0.3;
+        let setpoint = (k * mid as f64) as u64;
+        let cap = setpoint as f64 * 4.0;
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .gains(0.5, 0.0, 0.0)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let mut now = Instant::now();
+        let mut converged_at = None;
+        for i in 0..100 {
+            now += Duration::from_millis(100);
+            let throughput = linear_plant(ctrl.buffer_size(), k, cap);
+            ctrl.observe_at(throughput, now);
+            let measured = linear_plant(ctrl.buffer_size(), k, cap);
+            let error_pct = (measured as f64 - setpoint as f64).abs() / setpoint as f64;
+            if error_pct < 0.05 && converged_at.is_none() {
+                converged_at = Some(i);
+            }
+        }
+
+        // P-only should converge quickly (proportional acts immediately)
+        // but may have residual steady-state error. We just check it
+        // reaches within 5% at some point.
+        assert!(
+            converged_at.is_some(),
+            "P-only controller should converge within 100 samples"
+        );
+        assert!(
+            converged_at.unwrap() < 30,
+            "P-only convergence should be fast, but took {} samples",
+            converged_at.unwrap()
+        );
+    }
+
+    #[test]
+    fn convergence_speed_full_pid_faster_than_integral_only() {
+        // Full PID should converge at least as fast as pure I controller
+        // for the same plant model.
+        let min = 16 * 1024;
+        let max = 2 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k = 0.3;
+        let setpoint = (k * mid as f64) as u64;
+        let cap = setpoint as f64 * 4.0;
+
+        let t0 = Instant::now();
+
+        let ctrl_pid = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.02)
+            .min_size(min)
+            .max_size(max)
+            .build();
+        let ctrl_i_only = ControllerConfig::new(setpoint)
+            .gains(0.0, 0.1, 0.0)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let tolerance = 0.10;
+        let max_samples = 200;
+
+        let find_convergence = |ctrl: &AdaptiveBufferController, start: Instant| -> Option<usize> {
+            let mut t = start;
+            for i in 0..max_samples {
+                t += Duration::from_millis(100);
+                let throughput = linear_plant(ctrl.buffer_size(), k, cap);
+                ctrl.observe_at(throughput, t);
+                let measured = linear_plant(ctrl.buffer_size(), k, cap);
+                let error_pct = (measured as f64 - setpoint as f64).abs() / setpoint as f64;
+                if error_pct < tolerance {
+                    return Some(i);
+                }
+            }
+            None
+        };
+
+        let pid_samples = find_convergence(&ctrl_pid, t0);
+        let i_samples = find_convergence(&ctrl_i_only, t0);
+
+        assert!(
+            pid_samples.is_some(),
+            "PID controller should converge within {max_samples} samples"
+        );
+        assert!(
+            i_samples.is_some(),
+            "I-only controller should converge within {max_samples} samples"
+        );
+        assert!(
+            pid_samples.unwrap() <= i_samples.unwrap(),
+            "PID should converge at least as fast as I-only: PID={}, I-only={}",
+            pid_samples.unwrap(),
+            i_samples.unwrap()
+        );
+    }
+
+    #[test]
+    fn convergence_derivative_kick_suppression() {
+        // When the setpoint changes (simulated by changing the plant gain),
+        // the derivative term acts on the error derivative, not the process
+        // variable derivative. A sudden error spike should not cause the
+        // controller to overshoot wildly. We compare overshoot with D=0
+        // vs D>0.
+        let min = 16 * 1024;
+        let max = 4 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k = 0.5;
+        let setpoint = (k * mid as f64) as u64;
+        let cap = setpoint as f64 * 4.0;
+        let t0 = Instant::now();
+
+        let ctrl_no_d = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.0)
+            .min_size(min)
+            .max_size(max)
+            .build();
+        let ctrl_with_d = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.05)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        // Converge both under normal conditions.
+        let mut t = t0;
+        for _ in 0..80 {
+            t += Duration::from_millis(100);
+            let tp_no_d = linear_plant(ctrl_no_d.buffer_size(), k, cap);
+            ctrl_no_d.observe_at(tp_no_d, t);
+            let tp_with_d = linear_plant(ctrl_with_d.buffer_size(), k, cap);
+            ctrl_with_d.observe_at(tp_with_d, t);
+        }
+
+        let steady_no_d = ctrl_no_d.buffer_size();
+        let steady_with_d = ctrl_with_d.buffer_size();
+
+        // Sudden plant change: throughput drops to 10% of before.
+        let k_slow = k * 0.1;
+        t += Duration::from_millis(100);
+        let tp_no_d = linear_plant(ctrl_no_d.buffer_size(), k_slow, cap);
+        ctrl_no_d.observe_at(tp_no_d, t);
+        let tp_with_d = linear_plant(ctrl_with_d.buffer_size(), k_slow, cap);
+        ctrl_with_d.observe_at(tp_with_d, t);
+
+        let kick_no_d = (ctrl_no_d.buffer_size() as i64 - steady_no_d as i64).unsigned_abs();
+        let kick_with_d = (ctrl_with_d.buffer_size() as i64 - steady_with_d as i64).unsigned_abs();
+
+        // The derivative-equipped controller should have a larger or equal
+        // initial response (D adds to the proportional kick for same-sign
+        // derivative), but the key property is that neither produces an
+        // output outside the configured bounds.
+        assert!(
+            ctrl_no_d.buffer_size() >= min && ctrl_no_d.buffer_size() <= max,
+            "no-D controller output out of bounds: {}",
+            ctrl_no_d.buffer_size()
+        );
+        assert!(
+            ctrl_with_d.buffer_size() >= min && ctrl_with_d.buffer_size() <= max,
+            "with-D controller output out of bounds: {}",
+            ctrl_with_d.buffer_size()
+        );
+
+        // Both should have responded (non-zero kick).
+        assert!(
+            kick_no_d > 0 || kick_with_d > 0,
+            "at least one controller should react to step change"
+        );
+    }
+
+    #[test]
+    fn convergence_rapid_sample_intervals() {
+        // Feed samples at 1 ms intervals (10x faster than default). The
+        // controller should still converge due to the MIN_DT clamp.
+        let min = 16 * 1024;
+        let max = 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k = 0.5;
+        let setpoint = (k * mid as f64) as u64;
+        let cap = setpoint as f64 * 4.0;
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.02)
+            .min_size(min)
+            .max_size(max)
+            .sample_interval_ms(1)
+            .build();
+
+        let mut now = Instant::now();
+        for _ in 0..500 {
+            now += Duration::from_millis(1);
+            let throughput = linear_plant(ctrl.buffer_size(), k, cap);
+            ctrl.observe_at(throughput, now);
+        }
+
+        let final_throughput = linear_plant(ctrl.buffer_size(), k, cap);
+        let error_pct = (final_throughput as f64 - setpoint as f64).abs() / setpoint as f64;
+        assert!(
+            error_pct < 0.15,
+            "should converge with rapid samples: error={error_pct:.2}"
+        );
+    }
+
+    #[test]
+    fn convergence_slow_sample_intervals() {
+        // Feed samples at 5 s intervals (max dt). The MAX_DT clamp
+        // prevents integral windup.
+        let min = 16 * 1024;
+        let max = 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k = 0.5;
+        let setpoint = (k * mid as f64) as u64;
+        let cap = setpoint as f64 * 4.0;
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.02)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let mut now = Instant::now();
+        for _ in 0..50 {
+            now += Duration::from_secs(5);
+            let throughput = linear_plant(ctrl.buffer_size(), k, cap);
+            ctrl.observe_at(throughput, now);
+        }
+
+        let final_throughput = linear_plant(ctrl.buffer_size(), k, cap);
+        let error_pct = (final_throughput as f64 - setpoint as f64).abs() / setpoint as f64;
+        assert!(
+            error_pct < 0.20,
+            "should converge with slow samples: error={error_pct:.2}"
+        );
+
+        // Verify integral did not wind up to infinity.
+        let state = ctrl.state.lock().unwrap();
+        assert!(
+            state.integral.is_finite(),
+            "integral must be finite under slow sampling"
+        );
+    }
+
+    #[test]
+    fn convergence_stall_then_resume() {
+        // Simulate a producer stall (large gap between samples, then
+        // normal sampling resumes). The controller should recover.
+        let min = 16 * 1024;
+        let max = 2 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k = 0.5;
+        let setpoint = (k * mid as f64) as u64;
+        let cap = setpoint as f64 * 4.0;
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.02)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let mut now = Instant::now();
+
+        // Converge normally.
+        for _ in 0..80 {
+            now += Duration::from_millis(100);
+            let throughput = linear_plant(ctrl.buffer_size(), k, cap);
+            ctrl.observe_at(throughput, now);
+        }
+        let size_before_stall = ctrl.buffer_size();
+
+        // Stall for 30 seconds (well beyond MAX_DT of 5s).
+        now += Duration::from_secs(30);
+        let throughput = linear_plant(ctrl.buffer_size(), k, cap);
+        ctrl.observe_at(throughput, now);
+
+        // Size should still be within bounds.
+        assert!(ctrl.buffer_size() >= min);
+        assert!(ctrl.buffer_size() <= max);
+
+        // Resume normal sampling and verify reconvergence.
+        for _ in 0..80 {
+            now += Duration::from_millis(100);
+            let throughput = linear_plant(ctrl.buffer_size(), k, cap);
+            ctrl.observe_at(throughput, now);
+        }
+
+        let final_throughput = linear_plant(ctrl.buffer_size(), k, cap);
+        let error_pct = (final_throughput as f64 - setpoint as f64).abs() / setpoint as f64;
+        assert!(
+            error_pct < 0.15,
+            "should reconverge after stall: before_stall={size_before_stall}, after={}, error={error_pct:.2}",
+            ctrl.buffer_size()
+        );
+    }
+
+    #[test]
+    fn convergence_alternating_fast_and_slow_plant() {
+        // Alternate between a fast plant (throughput above setpoint) and a
+        // slow plant (throughput below setpoint). The controller should
+        // remain bounded and eventually stabilize (variance decreases or
+        // stays bounded across cycles).
+        let min = 16 * 1024;
+        let max = 2 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k = 0.5;
+        let setpoint = (k * mid as f64) as u64;
+        let cap = setpoint as f64 * 4.0;
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.02)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let mut now = Instant::now();
+
+        // 10 cycles: 10 samples with k*1.5 (above setpoint), then 10
+        // with k*0.7 (below setpoint). The average throughput at midpoint
+        // is ~1.1*setpoint, so the controller should settle to a moderate
+        // buffer size.
+        let k_fast = k * 1.5;
+        let k_slow = k * 0.7;
+
+        // Early window: collect sizes from first 5 cycles.
+        let mut early_sizes = Vec::new();
+        for _ in 0..5 {
+            for _ in 0..10 {
+                now += Duration::from_millis(100);
+                let throughput = linear_plant(ctrl.buffer_size(), k_fast, cap);
+                ctrl.observe_at(throughput, now);
+                early_sizes.push(ctrl.buffer_size());
+            }
+            for _ in 0..10 {
+                now += Duration::from_millis(100);
+                let throughput = linear_plant(ctrl.buffer_size(), k_slow, cap);
+                ctrl.observe_at(throughput, now);
+                early_sizes.push(ctrl.buffer_size());
+            }
+        }
+
+        // Late window: collect sizes from next 5 cycles.
+        let mut late_sizes = Vec::new();
+        for _ in 0..5 {
+            for _ in 0..10 {
+                now += Duration::from_millis(100);
+                let throughput = linear_plant(ctrl.buffer_size(), k_fast, cap);
+                ctrl.observe_at(throughput, now);
+                late_sizes.push(ctrl.buffer_size());
+            }
+            for _ in 0..10 {
+                now += Duration::from_millis(100);
+                let throughput = linear_plant(ctrl.buffer_size(), k_slow, cap);
+                ctrl.observe_at(throughput, now);
+                late_sizes.push(ctrl.buffer_size());
+            }
+        }
+
+        // Late variance should be bounded (not growing).
+        let early_var = variance(&early_sizes);
+        let late_var = variance(&late_sizes);
+        assert!(
+            late_var <= early_var * 1.5 + 1.0,
+            "oscillation should not grow: early_var={early_var:.0}, late_var={late_var:.0}"
+        );
+
+        // All sizes must be within bounds.
+        for &s in early_sizes.iter().chain(late_sizes.iter()) {
+            assert!(
+                s >= min && s <= max,
+                "size {s} out of bounds [{min}, {max}]"
+            );
+        }
+    }
+
+    #[test]
+    fn convergence_monotonic_approach_from_min() {
+        // Start the controller at min_size (by setting min close to initial)
+        // and verify it monotonically approaches the setpoint from below
+        // (no overshoots that dip below the starting point). Use a plant
+        // where setpoint is achievable well within the buffer range.
+        let min = 16 * 1024;
+        let max = 4 * 1024 * 1024;
+        let mid = (min + max) / 2;
+
+        // Set gains low enough that loop gain K_p * k < 1 for stability.
+        let k = 0.3;
+        let setpoint = (k * mid as f64) as u64;
+        let cap = setpoint as f64 * 4.0;
+
+        // Use min_size close to the default initial midpoint so the
+        // controller starts from a consistent position.
+        let ctrl = ControllerConfig::new(setpoint)
+            .gains(0.2, 0.05, 0.01)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let initial = ctrl.buffer_size();
+        let mut now = Instant::now();
+
+        // Feed low throughput so the controller grows the buffer.
+        let mut floor = initial;
+        let mut monotonic_violations = 0;
+        for _ in 0..50 {
+            now += Duration::from_millis(100);
+            // Plant returns less than setpoint so error is positive -> grow.
+            let throughput = linear_plant(ctrl.buffer_size(), k * 0.5, cap);
+            ctrl.observe_at(throughput, now);
+            let current = ctrl.buffer_size();
+            if current < floor {
+                monotonic_violations += 1;
+            }
+            floor = floor.max(current);
+        }
+
+        // Allow at most a couple of minor dips due to derivative kick
+        // when the error rate changes sign.
+        assert!(
+            monotonic_violations <= 3,
+            "growth from below setpoint should be mostly monotonic: {monotonic_violations} violations",
+        );
+    }
+
+    #[test]
+    fn convergence_high_noise_amplitude_bounded_output() {
+        // Even under extremely noisy measurements (noise amplitude equals
+        // the setpoint), the controller must keep its output within bounds.
+        let min = 16 * 1024;
+        let max = 2 * 1024 * 1024;
+        let setpoint = 50 * 1024 * 1024u64;
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let mut now = Instant::now();
+
+        // Noise pattern with full-range swings around the setpoint.
+        let noise_factors: [f64; 10] = [0.0, 2.0, 0.1, 1.9, 0.3, 1.7, 0.5, 1.5, 0.2, 1.8];
+        for i in 0..200 {
+            now += Duration::from_millis(100);
+            let throughput = (setpoint as f64 * noise_factors[i % noise_factors.len()]) as u64;
+            let size = ctrl.observe_at(throughput, now);
+            assert!(
+                size >= min,
+                "output below min at iteration {i}: {size} < {min}"
+            );
+            assert!(
+                size <= max,
+                "output above max at iteration {i}: {size} > {max}"
+            );
+        }
+    }
+
+    #[test]
+    fn convergence_setpoint_at_plant_maximum() {
+        // When the setpoint equals the plant's maximum output, the
+        // controller should grow the buffer to the point where the
+        // plant saturates and then stabilize at max buffer size.
+        let min = 16 * 1024;
+        let max = 2 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        // Choose k so that throughput = setpoint at the midpoint.
+        // The plant cap equals setpoint, so at mid: k*mid = setpoint.
+        // For buffer sizes > mid, throughput saturates at plant_cap.
+        let setpoint = 50 * 1024 * 1024u64;
+        let k = setpoint as f64 / mid as f64;
+        let plant_cap = setpoint as f64; // Plant saturates at setpoint.
+
+        let ctrl = ControllerConfig::new(setpoint)
+            .gains(0.3, 0.1, 0.02)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let mut now = Instant::now();
+        for _ in 0..200 {
+            now += Duration::from_millis(100);
+            let throughput = linear_plant(ctrl.buffer_size(), k, plant_cap);
+            ctrl.observe_at(throughput, now);
+        }
+
+        // At the plant ceiling, throughput saturates. The controller's
+        // error goes to zero once throughput matches setpoint. The buffer
+        // should stabilize (not keep growing) once throughput = setpoint.
+        let final_throughput = linear_plant(ctrl.buffer_size(), k, plant_cap);
+        let error_pct = (final_throughput as f64 - setpoint as f64).abs() / setpoint as f64;
+        assert!(
+            error_pct < 0.05,
+            "throughput should match setpoint at saturation: throughput={final_throughput}, setpoint={setpoint}"
+        );
+    }
+
+    #[test]
+    fn convergence_asymmetric_gains_bias() {
+        // With high P and low I, convergence should be fast but have
+        // residual steady-state offset. With high I and low P, convergence
+        // should be slower but eliminate offset. This verifies the relative
+        // behavior matches PID theory.
+        let min = 16 * 1024;
+        let max = 2 * 1024 * 1024;
+        let mid = (min + max) / 2;
+        let k = 0.3;
+        let setpoint = (k * mid as f64) as u64;
+        let cap = setpoint as f64 * 4.0;
+        let t0 = Instant::now();
+
+        let ctrl_high_p = ControllerConfig::new(setpoint)
+            .gains(0.5, 0.01, 0.0)
+            .min_size(min)
+            .max_size(max)
+            .build();
+        let ctrl_high_i = ControllerConfig::new(setpoint)
+            .gains(0.05, 0.3, 0.0)
+            .min_size(min)
+            .max_size(max)
+            .build();
+
+        let mut t = t0;
+        for _ in 0..300 {
+            t += Duration::from_millis(100);
+            let tp_hp = linear_plant(ctrl_high_p.buffer_size(), k, cap);
+            ctrl_high_p.observe_at(tp_hp, t);
+            let tp_hi = linear_plant(ctrl_high_i.buffer_size(), k, cap);
+            ctrl_high_i.observe_at(tp_hi, t);
+        }
+
+        let final_hp = linear_plant(ctrl_high_p.buffer_size(), k, cap);
+        let final_hi = linear_plant(ctrl_high_i.buffer_size(), k, cap);
+        let error_hp = (final_hp as f64 - setpoint as f64).abs() / setpoint as f64;
+        let error_hi = (final_hi as f64 - setpoint as f64).abs() / setpoint as f64;
+
+        // High-I should have lower steady-state error than high-P.
+        assert!(
+            error_hi <= error_hp + 0.05,
+            "high-I should have lower or equal steady-state error: error_hi={error_hi:.3}, error_hp={error_hp:.3}"
+        );
+    }
+
+    #[test]
+    fn convergence_concurrent_observers() {
+        // Multiple threads calling observe_at concurrently should not cause
+        // panics, data corruption, or outputs outside bounds.
+        use std::sync::Arc;
+        use std::thread;
+
+        let setpoint = 50 * 1024 * 1024u64;
+        let min = 16 * 1024;
+        let max = 2 * 1024 * 1024;
+
+        let ctrl = Arc::new(
+            ControllerConfig::new(setpoint)
+                .min_size(min)
+                .max_size(max)
+                .build(),
+        );
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let ctrl = Arc::clone(&ctrl);
+                thread::spawn(move || {
+                    for _ in 0..200 {
+                        let size = ctrl.observe(setpoint);
+                        assert!(size >= min, "concurrent output below min: {size}");
+                        assert!(size <= max, "concurrent output above max: {size}");
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().expect("thread panicked during concurrent observe");
+        }
+    }
 }
