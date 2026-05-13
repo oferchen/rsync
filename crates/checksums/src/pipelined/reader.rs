@@ -1,31 +1,39 @@
 //! Double-buffered reader that overlaps I/O with computation.
 //!
 //! Spawns a background thread to read the next block while the main thread
-//! processes the current block, achieving I/O-computation overlap.
+//! processes the current block, achieving I/O-computation overlap with exactly
+//! two pre-allocated buffers.
 //!
-//! # Buffer Recycling
+//! # Strict Two-Buffer Invariant
 //!
-//! The reader uses exactly two pre-allocated buffers that swap roles between
-//! the I/O thread and the main thread. After the main thread finishes
-//! processing a block, the buffer is returned to the I/O thread for reuse
-//! via a recycling channel. This eliminates per-block heap allocations on
-//! the hot path.
+//! The reader pre-allocates exactly two buffers and swaps their roles between
+//! I/O and computation on every iteration. Bounded channels enforce that at
+//! most one block is in-flight, so the total memory footprint is always
+//! `2 * block_size` regardless of I/O speed or computation latency.
 //!
 //! ```text
-//! ┌─────────────┐   IoMessage::Block(buf)   ┌───────────────┐
-//! │  I/O Thread  │ ─────────────────────────► │  Main Thread   │
-//! │  (reader)    │                            │  (checksums)   │
-//! │              │ ◄───────────────────────── │                │
-//! └─────────────┘   recycle channel (buf)    └───────────────┘
+//! ┌─────────────┐   sync_channel(1): Block(buf)   ┌───────────────┐
+//! │  I/O Thread  │ ───────────────────────────────► │  Main Thread   │
+//! │  (reader)    │                                  │  (checksums)   │
+//! │              │ ◄─────────────────────────────── │                │
+//! └─────────────┘   recycle channel: buf            └───────────────┘
 //! ```
 //!
-//! If the recycle channel is empty (the main thread has not yet returned a
-//! buffer), the I/O thread allocates a fresh buffer as a fallback. This
-//! graceful degradation avoids blocking the I/O thread when the computation
-//! thread is slower than I/O.
+//! Timeline with two buffers A and B:
+//!
+//! 1. Constructor reads block 0 into buffer A (synchronous).
+//! 2. I/O thread receives buffer B via the recycle channel and reads block 1.
+//! 3. Main thread calls `next_block()`:
+//!    - Returns buffer A (block 0) for checksum computation.
+//!    - Receives buffer B (block 1) via the bounded data channel.
+//! 4. Main thread calls `next_block()` again:
+//!    - Recycles buffer A back to the I/O thread.
+//!    - Returns buffer B (block 1) for checksum computation.
+//!    - I/O thread receives buffer A and reads block 2.
+//! 5. The two buffers keep swapping roles until EOF.
 
 use std::io::{self, Read};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::thread::{self, JoinHandle};
 
 use super::config::PipelineConfig;
@@ -43,12 +51,9 @@ enum IoMessage {
 /// Double-buffered reader for pipelined checksum computation.
 ///
 /// Uses a background thread to read the next block while the main thread
-/// processes the current block. This overlaps I/O with computation.
-///
-/// Two pre-allocated buffers are recycled between the I/O and main threads
-/// via a return channel, eliminating per-block heap allocations on the hot
-/// path. If the main thread has not yet returned a buffer, the I/O thread
-/// allocates a fresh one to avoid stalling.
+/// processes the current block. Exactly two pre-allocated buffers are swapped
+/// between the I/O and main threads via bounded channels, enforcing constant
+/// memory usage of `2 * block_size`.
 ///
 /// # Thread Safety
 ///
@@ -84,6 +89,10 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
     ///
     /// The size hint decides whether to enable pipelining. If the size is
     /// smaller than `config.min_file_size`, synchronous mode is used.
+    ///
+    /// In pipelined mode, two buffers are pre-allocated. Buffer A is filled
+    /// synchronously with the first block. Buffer B is sent to the I/O thread
+    /// via the recycle channel so it can begin reading block 1 immediately.
     #[must_use]
     pub fn with_size_hint(mut reader: R, config: PipelineConfig, size_hint: Option<u64>) -> Self {
         let should_pipeline =
@@ -105,14 +114,15 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
             };
         }
 
-        let (sender, receiver) = mpsc::channel();
+        // Bounded data channel: at most one block in-flight from I/O to main.
+        let (sender, receiver) = mpsc::sync_channel(1);
         let (recycle_tx, recycle_rx) = mpsc::channel();
         let block_size = config.block_size;
 
-        // Pre-allocate the first of two buffers and read synchronously so
+        // Pre-allocate buffer A and read the first block synchronously so
         // the first `next_block()` call returns immediately.
-        let mut first_block = vec![0u8; block_size];
-        let first_read = match read_exact_or_eof(&mut reader, &mut first_block) {
+        let mut buf_a = vec![0u8; block_size];
+        let first_read = match read_exact_or_eof(&mut reader, &mut buf_a) {
             Ok(0) => {
                 return Self {
                     config,
@@ -128,8 +138,8 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
                 };
             }
             Ok(n) => {
-                first_block.truncate(n);
-                Some(first_block)
+                buf_a.truncate(n);
+                Some(buf_a)
             }
             Err(_) => {
                 return Self {
@@ -146,6 +156,11 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
                 };
             }
         };
+
+        // Pre-allocate buffer B and seed the recycle channel so the I/O thread
+        // can begin reading immediately without waiting for a recycled buffer.
+        let buf_b = vec![0u8; block_size];
+        let _ = recycle_tx.send(buf_b);
 
         let io_thread = thread::spawn(move || {
             io_thread_main(reader, sender, recycle_rx, block_size);
@@ -298,30 +313,26 @@ impl<R> Drop for DoubleBufferedReader<R> {
 
 /// Main loop for the background I/O thread.
 ///
-/// Tries to reuse buffers returned via `recycle_rx` before allocating fresh
-/// ones. This keeps heap allocations to a minimum during steady-state
-/// operation with two recycled buffers.
+/// Waits for a recycled buffer from the main thread before each read. The
+/// constructor seeds the recycle channel with one pre-allocated buffer, so
+/// the first iteration never blocks. Subsequent iterations block until the
+/// main thread returns a consumed buffer, enforcing the two-buffer invariant.
 fn io_thread_main<R: Read>(
     mut reader: R,
-    sender: Sender<IoMessage>,
+    sender: SyncSender<IoMessage>,
     recycle_rx: Receiver<Vec<u8>>,
     block_size: usize,
 ) {
-    loop {
-        // Try to reuse a recycled buffer. If none is available (main thread
-        // still processing), allocate a fresh buffer as fallback. This avoids
-        // blocking the I/O thread on the main thread's computation speed.
-        let mut buffer = match recycle_rx.try_recv() {
-            Ok(mut buf) => {
-                // Restore full capacity for reading. The main thread may have
-                // truncated the buffer for a short final block.
-                if buf.len() < block_size {
-                    buf.resize(block_size, 0);
-                }
-                buf
-            }
-            Err(_) => vec![0u8; block_size],
-        };
+    // Wait for a recycled buffer on each iteration. The constructor pre-seeds
+    // the channel with one buffer, so the first recv() returns immediately.
+    // After that, each recv() blocks until the main thread recycles a buffer
+    // via `recycle_buffer()`. This guarantees exactly two buffers exist.
+    while let Ok(mut buffer) = recycle_rx.recv() {
+        // Restore full capacity for reading. The main thread may have
+        // truncated the buffer for a short final block.
+        if buffer.len() < block_size {
+            buffer.resize(block_size, 0);
+        }
 
         match read_exact_or_eof(&mut reader, &mut buffer) {
             Ok(0) => {
