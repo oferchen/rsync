@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use crossbeam_queue::ArrayQueue;
 
 use super::allocator::{BufferAllocator, DefaultAllocator};
+use super::buffer_controller::{AdaptiveBufferController, ControllerConfig};
 use super::guard::{BorrowedBufferGuard, BufferGuard};
 use super::memory_cap::MemoryCap;
 use super::pressure::{PressureTracker, ResizeAction};
@@ -127,6 +128,20 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     /// pool's soft capacity to match demand. Enabled via
     /// [`with_adaptive_resizing`](Self::with_adaptive_resizing).
     pressure: Option<PressureTracker>,
+    /// Optional PID-style buffer-size controller.
+    ///
+    /// When present, dynamically adjusts the recommended buffer size based
+    /// on throughput feedback. The controller observes bytes-per-second
+    /// samples from [`record_transfer`](Self::record_transfer) and drives
+    /// the buffer size toward the throughput setpoint using proportional,
+    /// integral, and derivative terms. Enabled via
+    /// [`with_buffer_controller`](Self::with_buffer_controller).
+    ///
+    /// The controller affects individual buffer sizes (the manipulated
+    /// variable), while the pressure tracker affects the pool's slot count.
+    /// The two loops observe orthogonal signals and compose without
+    /// interference.
+    buffer_controller: Option<AdaptiveBufferController>,
     /// Cumulative count of acquire operations that found a buffer in the
     /// thread-local cache or central pool (no fresh allocation needed).
     ///
@@ -174,6 +189,7 @@ impl BufferPool {
             memory_cap: None,
             throughput: None,
             pressure: None,
+            buffer_controller: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
             total_growths: AtomicU64::new(0),
@@ -199,6 +215,7 @@ impl BufferPool {
             memory_cap: None,
             throughput: None,
             pressure: None,
+            buffer_controller: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
             total_growths: AtomicU64::new(0),
@@ -229,6 +246,7 @@ impl<A: BufferAllocator> BufferPool<A> {
             memory_cap: None,
             throughput: None,
             pressure: None,
+            buffer_controller: None,
             total_hits: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
             total_growths: AtomicU64::new(0),
@@ -306,25 +324,82 @@ impl<A: BufferAllocator> BufferPool<A> {
         self
     }
 
+    /// Enables PID-style buffer-size control based on throughput feedback.
+    ///
+    /// When enabled, the controller dynamically adjusts the recommended
+    /// buffer size returned by [`recommended_buffer_size`](Self::recommended_buffer_size)
+    /// by observing throughput samples fed through [`record_transfer`](Self::record_transfer).
+    /// The controller drives the buffer size toward a target throughput
+    /// (the setpoint) using proportional, integral, and derivative terms,
+    /// which eliminates steady-state offset and damps overshoot.
+    ///
+    /// This feature is orthogonal to adaptive resizing (which adjusts pool
+    /// slot count) and throughput tracking (which provides the EMA estimate).
+    /// The controller consumes throughput data and emits a buffer-size
+    /// recommendation; the existing grow/shrink loop continues to manage
+    /// pool capacity independently.
+    ///
+    /// Throughput tracking is automatically enabled when a buffer controller
+    /// is configured, since the controller requires throughput samples.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use engine::local_copy::buffer_pool::{BufferPool, ControllerConfig};
+    ///
+    /// let pool = BufferPool::new(4)
+    ///     .with_buffer_controller(ControllerConfig::new(100 * 1024 * 1024));
+    /// ```
+    #[must_use]
+    pub fn with_buffer_controller(mut self, config: ControllerConfig) -> Self {
+        self.buffer_controller = Some(config.build());
+        // The controller requires throughput samples, so ensure tracking is on.
+        if self.throughput.is_none() {
+            self.throughput = Some(ThroughputTracker::new());
+        }
+        self
+    }
+
     /// Records a transfer sample for throughput tracking.
+    ///
+    /// When throughput tracking is enabled, folds the sample into the EMA
+    /// estimate. When a buffer controller is also enabled, feeds the
+    /// current throughput to the PID controller so it can adjust the
+    /// recommended buffer size.
     ///
     /// No-op if throughput tracking is not enabled. This method is safe
     /// to call from any thread.
     pub fn record_transfer(&self, bytes: usize, duration: std::time::Duration) {
         if let Some(tracker) = &self.throughput {
             tracker.record_transfer(bytes, duration);
+            if let Some(controller) = &self.buffer_controller {
+                let bps = tracker.throughput_bps();
+                if bps > 0.0 {
+                    controller.observe(bps as u64);
+                }
+            }
         }
     }
 
     /// Returns a recommended buffer size based on observed throughput.
     ///
-    /// When throughput tracking is enabled, uses the EMA estimate to compute
-    /// a buffer size targeting ~10 ms of data. The result is clamped between
-    /// 4 KiB and the lesser of 256 KiB or `memory_cap / 4`.
+    /// When a buffer controller is enabled, returns the controller's
+    /// PID-driven recommendation - this supersedes the EMA-based heuristic
+    /// because the controller actively drives toward the throughput setpoint
+    /// and damps oscillation via its derivative term.
     ///
-    /// When tracking is disabled, returns the pool's configured `buffer_size`.
+    /// When only throughput tracking is enabled (no controller), uses the
+    /// EMA estimate to compute a buffer size targeting ~10 ms of data. The
+    /// result is clamped between 4 KiB and the lesser of 256 KiB or
+    /// `memory_cap / 4`.
+    ///
+    /// When neither is enabled, returns the pool's configured `buffer_size`.
     #[must_use]
     pub fn recommended_buffer_size(&self) -> usize {
+        // PID controller takes priority when present.
+        if let Some(controller) = &self.buffer_controller {
+            return controller.buffer_size();
+        }
         match &self.throughput {
             Some(tracker) => {
                 let max = self
@@ -342,6 +417,18 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn throughput_tracker(&self) -> Option<&ThroughputTracker> {
         self.throughput.as_ref()
+    }
+
+    /// Returns a reference to the buffer controller, if enabled.
+    #[must_use]
+    pub fn buffer_controller(&self) -> Option<&AdaptiveBufferController> {
+        self.buffer_controller.as_ref()
+    }
+
+    /// Returns `true` if a PID-style buffer controller is enabled.
+    #[must_use]
+    pub fn has_buffer_controller(&self) -> bool {
+        self.buffer_controller.is_some()
     }
 
     /// Acquires a buffer from the pool using an Arc reference.

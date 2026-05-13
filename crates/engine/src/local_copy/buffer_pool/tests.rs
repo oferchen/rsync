@@ -1854,3 +1854,226 @@ fn lock_free_acquire_release_under_scoped_concurrency() {
         "central queue exceeded soft cap: {observed} > {soft_cap}"
     );
 }
+
+// --- Buffer controller integration tests ---
+
+#[test]
+fn no_buffer_controller_by_default() {
+    let pool = BufferPool::new(4);
+    assert!(!pool.has_buffer_controller());
+    assert!(pool.buffer_controller().is_none());
+}
+
+#[test]
+fn buffer_controller_enabled_via_builder() {
+    let pool =
+        BufferPool::new(4).with_buffer_controller(super::ControllerConfig::new(100 * 1024 * 1024));
+    assert!(pool.has_buffer_controller());
+    assert!(pool.buffer_controller().is_some());
+}
+
+#[test]
+fn buffer_controller_enables_throughput_tracking() {
+    // Enabling a buffer controller should automatically enable throughput
+    // tracking, since the controller needs throughput samples.
+    let pool =
+        BufferPool::new(4).with_buffer_controller(super::ControllerConfig::new(100 * 1024 * 1024));
+    assert!(pool.throughput_tracker().is_some());
+}
+
+#[test]
+fn buffer_controller_preserves_existing_throughput_tracker() {
+    // If throughput tracking is already enabled, adding a controller
+    // should not replace the existing tracker.
+    let pool = BufferPool::new(4)
+        .with_throughput_tracking_alpha(0.5)
+        .with_buffer_controller(super::ControllerConfig::new(100 * 1024 * 1024));
+    assert!(pool.throughput_tracker().is_some());
+    assert!(pool.has_buffer_controller());
+}
+
+#[test]
+fn buffer_controller_with_builder_chain() {
+    let pool = BufferPool::with_buffer_size(4, 1024)
+        .with_memory_cap(8192)
+        .with_adaptive_resizing()
+        .with_buffer_controller(super::ControllerConfig::new(50 * 1024 * 1024));
+    assert!(pool.has_buffer_controller());
+    assert!(pool.is_adaptive());
+    assert_eq!(pool.memory_cap(), Some(8192));
+    assert_eq!(pool.buffer_size(), 1024);
+}
+
+#[test]
+fn recommended_buffer_size_returns_controller_value_when_enabled() {
+    let pool =
+        BufferPool::new(4).with_buffer_controller(super::ControllerConfig::new(100 * 1024 * 1024));
+
+    // Before any samples, the controller returns its initial size (midpoint).
+    let size = pool.recommended_buffer_size();
+    let controller = pool.buffer_controller().unwrap();
+    assert_eq!(size, controller.buffer_size());
+}
+
+#[test]
+fn record_transfer_feeds_controller() {
+    let pool = BufferPool::new(4).with_buffer_controller(
+        super::ControllerConfig::new(100 * 1024 * 1024)
+            .min_size(16 * 1024)
+            .max_size(4 * 1024 * 1024),
+    );
+
+    let initial_size = pool.recommended_buffer_size();
+
+    // Record enough high-throughput samples to move the EMA past warmup
+    // and feed the controller. 200 MB/s is above the 100 MB/s setpoint,
+    // so the controller should shrink the buffer.
+    for _ in 0..20 {
+        pool.record_transfer(2_000_000, std::time::Duration::from_millis(10));
+    }
+
+    let size_after = pool.recommended_buffer_size();
+    // The controller should have adjusted the size (either direction
+    // depending on the relationship between throughput and setpoint).
+    // We just verify it changed.
+    assert_ne!(
+        initial_size, size_after,
+        "buffer size should change after recording transfer samples"
+    );
+}
+
+#[test]
+fn controller_recommended_size_supersedes_tracker() {
+    // When both throughput tracking and a controller are enabled,
+    // recommended_buffer_size should return the controller's value,
+    // not the tracker's heuristic.
+    let pool = BufferPool::new(4)
+        .with_throughput_tracking()
+        .with_buffer_controller(super::ControllerConfig::new(100 * 1024 * 1024));
+
+    // Record samples so both tracker and controller have data.
+    for _ in 0..10 {
+        pool.record_transfer(1_000_000, std::time::Duration::from_secs(1));
+    }
+
+    let recommended = pool.recommended_buffer_size();
+    let controller_size = pool.buffer_controller().unwrap().buffer_size();
+    assert_eq!(
+        recommended, controller_size,
+        "recommended_buffer_size should match controller when enabled"
+    );
+}
+
+#[test]
+fn controller_convergence_through_pool_api() {
+    // End-to-end convergence test through the pool's public API.
+    // Simulates recording transfers that yield steady throughput and
+    // verifies the controller converges the recommended buffer size
+    // to a stable value.
+    let setpoint = 50 * 1024 * 1024u64; // 50 MB/s
+    let pool = BufferPool::new(4).with_buffer_controller(
+        super::ControllerConfig::new(setpoint)
+            .min_size(16 * 1024)
+            .max_size(2 * 1024 * 1024),
+    );
+
+    // Simulate steady 50 MB/s: 500 KB every 10 ms.
+    for _ in 0..100 {
+        pool.record_transfer(500_000, std::time::Duration::from_millis(10));
+    }
+
+    // Collect sizes over next 20 samples and verify stability.
+    let mut sizes = Vec::with_capacity(20);
+    for _ in 0..20 {
+        pool.record_transfer(500_000, std::time::Duration::from_millis(10));
+        sizes.push(pool.recommended_buffer_size());
+    }
+
+    let min_s = *sizes.iter().min().unwrap();
+    let max_s = *sizes.iter().max().unwrap();
+    // The size should have settled within a reasonable range.
+    let range = max_s.saturating_sub(min_s);
+    let mean = sizes.iter().sum::<usize>() / sizes.len();
+    let pct = if mean > 0 {
+        range as f64 / mean as f64
+    } else {
+        0.0
+    };
+    assert!(
+        pct < 0.20,
+        "recommended size should stabilize: min={min_s}, max={max_s}, mean={mean}, range_pct={pct:.2}"
+    );
+}
+
+#[test]
+fn controller_setpoint_matches_config() {
+    let pool =
+        BufferPool::new(4).with_buffer_controller(super::ControllerConfig::new(42 * 1024 * 1024));
+    let controller = pool.buffer_controller().unwrap();
+    assert_eq!(controller.setpoint(), 42 * 1024 * 1024);
+}
+
+#[test]
+fn controller_reset_preserves_recommended_size() {
+    let pool = BufferPool::new(4).with_buffer_controller(
+        super::ControllerConfig::new(100 * 1024 * 1024)
+            .min_size(16 * 1024)
+            .max_size(1024 * 1024),
+    );
+
+    // Feed some samples to move the buffer size away from initial.
+    for _ in 0..20 {
+        pool.record_transfer(1_000_000, std::time::Duration::from_millis(10));
+    }
+
+    let before = pool.recommended_buffer_size();
+    pool.buffer_controller().unwrap().reset();
+    let after = pool.recommended_buffer_size();
+    assert_eq!(
+        before, after,
+        "reset should preserve buffer size, only clearing PID accumulators"
+    );
+}
+
+#[test]
+fn controller_concurrent_record_and_recommend() {
+    // Verify thread safety: multiple threads record transfers while
+    // others read the recommended buffer size.
+    let pool = Arc::new(
+        BufferPool::new(4).with_buffer_controller(
+            super::ControllerConfig::new(100 * 1024 * 1024)
+                .min_size(16 * 1024)
+                .max_size(4 * 1024 * 1024),
+        ),
+    );
+
+    let writer_count = 4;
+    let reader_count = 4;
+    let iterations = 200;
+
+    let mut handles = Vec::new();
+
+    for _ in 0..writer_count {
+        let pool = Arc::clone(&pool);
+        handles.push(thread::spawn(move || {
+            for _ in 0..iterations {
+                pool.record_transfer(500_000, std::time::Duration::from_millis(10));
+            }
+        }));
+    }
+
+    for _ in 0..reader_count {
+        let pool = Arc::clone(&pool);
+        handles.push(thread::spawn(move || {
+            for _ in 0..iterations {
+                let size = pool.recommended_buffer_size();
+                assert!(size >= 16 * 1024, "size below minimum: {size}");
+                assert!(size <= 4 * 1024 * 1024, "size above maximum: {size}");
+            }
+        }));
+    }
+
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
+}
