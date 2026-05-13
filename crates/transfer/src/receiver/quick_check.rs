@@ -174,7 +174,8 @@ pub(super) fn try_reference_dest(
                 if let Some(parent) = dest_path.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
-                if fs::hard_link(&ref_path, &dest_path).is_ok() {
+                // Try io_uring LINKAT on Linux 5.15+, fall back to std::fs::hard_link.
+                if hard_link_with_io_uring_fallback(&ref_path, &dest_path).is_ok() {
                     if let Err(e) = apply_metadata_from_file_entry(&dest_path, entry, metadata_opts)
                     {
                         metadata_errors.push((dest_path.clone(), e.to_string()));
@@ -260,4 +261,50 @@ fn file_checksum_matches(
 /// - `util1.c`: `clean_fname()` with `CFN_REFUSE_DOT_DOT_DIRS`
 pub(super) fn path_contains_dot_dot(path: &Path) -> bool {
     path.components().any(|c| matches!(c, Component::ParentDir))
+}
+
+/// Creates a hard link, trying io_uring first on supported kernels.
+///
+/// On Linux 5.15+ with io_uring LINKAT support, submits the link as an
+/// `IORING_OP_LINKAT` SQE. Falls back to `std::fs::hard_link` when io_uring
+/// is unavailable (non-Linux, old kernel, or feature not compiled in).
+fn hard_link_with_io_uring_fallback(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if let Some(result) = fast_io::try_hard_link_via_io_uring(src, dst) {
+        return result;
+    }
+    fs::hard_link(src, dst)
+}
+
+#[cfg(test)]
+mod io_uring_linkat_tests {
+    use super::*;
+
+    /// Verifies the io_uring LINKAT fallback in the link-dest path creates a
+    /// valid hard link regardless of whether io_uring handles it or
+    /// `std::fs::hard_link` does.
+    #[test]
+    fn hard_link_via_io_uring_or_fallback_in_quick_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("linkdest_src.txt");
+        let dst = dir.path().join("linkdest_dst.txt");
+
+        fs::write(&src, b"link-dest payload").unwrap();
+
+        hard_link_with_io_uring_fallback(&src, &dst).unwrap();
+
+        assert!(src.exists());
+        assert!(dst.exists());
+        assert_eq!(fs::read(&dst).unwrap(), b"link-dest payload");
+    }
+
+    /// Verifies the fallback correctly fails when the source does not exist.
+    #[test]
+    fn hard_link_fails_for_missing_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("missing.txt");
+        let dst = dir.path().join("dst.txt");
+
+        let result = hard_link_with_io_uring_fallback(&src, &dst);
+        assert!(result.is_err());
+    }
 }
