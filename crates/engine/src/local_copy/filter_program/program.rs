@@ -178,7 +178,13 @@ impl FilterProgram {
                 }
                 FilterInstruction::DirMerge { index } => {
                     if let Some(layers) = dir_merge_layers.get(*index) {
-                        for layer in layers {
+                        // upstream: exclude.c:check_filter() - local (child) rules
+                        // precede inherited (parent) rules in the linked list;
+                        // head-first traversal gives child rules precedence.
+                        // Our `layers` Vec is populated parent-first via
+                        // `layers[index].push(segment)` in context_impl/transfer.rs,
+                        // so iterate in reverse to match upstream semantics.
+                        for layer in layers.iter().rev() {
                             layer.apply(path, is_dir, &mut outcome, context);
                         }
                     }
@@ -219,7 +225,10 @@ impl FilterProgram {
                 }
                 FilterInstruction::DirMerge { index } => {
                     if let Some(layers) = dir_merge_layers.get(*index) {
-                        for layer in layers {
+                        // upstream: exclude.c:check_filter() - newest (child)
+                        // rules win on first match, see the matching loop in
+                        // `evaluate()` above.
+                        for layer in layers.iter().rev() {
                             if let Some(result) = layer.excluded_dir_by_non_dir_rule(path) {
                                 return result;
                             }
@@ -451,5 +460,41 @@ mod tests {
         ];
         let unique: std::collections::HashSet<_> = codes.iter().collect();
         assert_eq!(codes.len(), unique.len());
+    }
+
+    #[test]
+    fn child_dir_merge_rules_override_parent_rules() {
+        // upstream: exclude.c:check_filter() - local (child) rules are at the
+        // head of the merged rule list, inherited (parent) rules at the tail;
+        // head-first traversal gives child rules precedence on first match.
+        let rule = DirMergeRule::new(".rsync-filter".to_owned(), Default::default());
+        let program = FilterProgram::new([FilterProgramEntry::DirMerge(rule)]).unwrap();
+
+        let mut parent_segment = FilterSegment::default();
+        parent_segment
+            .push_rule(FilterRule::exclude("debug.log"))
+            .expect("add parent rule");
+
+        let mut child_segment = FilterSegment::default();
+        child_segment
+            .push_rule(FilterRule::include("debug.log"))
+            .expect("add child override");
+
+        // Parent pushed first (layer index 0), child pushed second (layer
+        // index 1) - mirrors how context_impl/transfer.rs populates the Vec
+        // as directories are descended.
+        let dir_layers = vec![vec![parent_segment, child_segment]];
+
+        let outcome = program.evaluate(
+            Path::new("debug.log"),
+            false,
+            &dir_layers,
+            None,
+            FilterContext::Transfer,
+        );
+        assert!(
+            outcome.allows_transfer(),
+            "child directory include must override parent directory exclude"
+        );
     }
 }
