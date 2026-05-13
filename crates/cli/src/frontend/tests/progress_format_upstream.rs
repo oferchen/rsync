@@ -1,16 +1,17 @@
 //! Tests verifying that --progress output format matches upstream rsync.
 //!
-//! Upstream rsync --progress per-file format:
-//!   `   32,768 100%    1.23MB/s    0:00:00 (xfr#1, to-chk=5/7)`
+//! Upstream rsync --progress per-file format (progress.c:129):
+//!   `     32,768 100%    1.23MB/s    0:00:00 (xfr#1, to-chk=5/7)`
 //!
-//! The format consists of:
+//! The format string `"\r%15s %3d%% %7.2f%s %s%s"` produces:
 //!   - Right-aligned bytes (15-char field, thousands-separated)
-//!   - Right-aligned percentage (4-char field)
-//!   - Right-aligned transfer rate (12-char field, kB/s, MB/s, GB/s)
-//!   - Right-aligned elapsed time (11-char field, H:MM:SS)
-//!   - Transfer count and remaining count: (xfr#N, to-chk=M/T)
+//!   - Right-aligned percentage (4-char field, e.g. ` 99%`)
+//!   - Right-aligned transfer rate (11-char field: 7-char value + 4-char unit
+//!     suffix kB/s, MB/s, GB/s)
+//!   - Right-aligned elapsed time (10-char field, `%4u:%02u:%02u`)
+//!   - Transfer count and remaining count: `(xfr#N, to-chk=M/T)`
 //!
-//! When totals are unavailable, percentage shows as "??%".
+//! When totals are unavailable, percentage shows as `??%`.
 
 use super::common::*;
 use super::*;

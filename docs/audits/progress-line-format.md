@@ -1,6 +1,6 @@
 # Progress line byte-for-byte format audit vs upstream rsync 3.4.1
 
-Tracking issue: #2110. Last verified: 2026-05-13 against `origin/master`.
+Tracking issue: #2110. Last verified: 2026-05-14 against `origin/master`.
 
 Sources: `target/interop/upstream-src/rsync-3.4.1/progress.c`;
 `crates/cli/src/frontend/progress/live.rs`,
@@ -140,17 +140,21 @@ seconds (`PROGRESS_HISTORY_SECS = 5`, `progress.c:37`).
 ### 2.1 Live progress path
 
 `crates/cli/src/frontend/progress/live.rs:63-160` implements
-`ClientProgressObserver`. The per-file format (`live.rs:88-106`):
+`ClientProgressObserver`. The per-file format:
 
 ```rust
 let size_field = format!("{:>15}", format_progress_bytes(bytes, ...));
 let percent_field = format!("{percent:>4}");
-let rate_field = format!("{:>12}", format_progress_rate(bytes, ...));
-let elapsed_field = format!("{:>11}", format_progress_elapsed(...));
+let rate_field = format!("{:>11}", format_progress_rate(bytes, ...));
+let elapsed_field = format!("{:>10}", format_progress_elapsed(...));
 write!(writer,
     "{size_field} {percent_field} {rate_field} {elapsed_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
 )?;
 ```
+
+The rate column packs upstream's `%7.2f%s` (7-char value + 4-char unit
+suffix) into 11 chars; the elapsed column matches `%4u:%02u:%02u` at
+10 chars.
 
 Carriage return: emitted before the line when `line_active` is true
 (`live.rs:99-101`).
@@ -238,8 +242,8 @@ No overflow guard - extreme durations produce arbitrarily wide output.
 | Base | 1024 (binary) | 1024 (binary) | YES |
 | Unit strings | `kB/s`, `MB/s`, `GB/s` | `kB/s`, `MB/s`, `GB/s` | YES |
 | Precision | 2 decimal places | 2 decimal places | YES |
-| Value width | Fixed 7 chars (`%7.2f`) | Variable (`{:.2}`) | NO |
-| Combined width | 11 chars (`%7.2f` + 4) | 12 chars (`{:>12}`) | NO |
+| Value width | Fixed 7 chars (`%7.2f`) | Variable (`{:.2}`) within 11-char field | PARTIAL |
+| Combined width | 11 chars (`%7.2f` + 4) | 11 chars (`{:>11}`) | YES |
 | kB->MB threshold | `rate > 1024` (kB/s units) | `rate >= MIB` (bytes/s) | YES |
 | MB->GB threshold | `rate > 1024*1024` (kB/s units) | `rate >= GIB` (bytes/s) | YES |
 | Zero fallback | `0.00kB/s` (clamped diff=1) | `0.00kB/s` | YES |
@@ -248,9 +252,9 @@ No overflow guard - extreme durations produce arbitrarily wide output.
 
 | Aspect | Upstream | oc-rsync | Match |
 |--------|----------|----------|-------|
-| Format | `HHHH:MM:SS` | `H:MM:SS` | PARTIAL |
-| Hours width | 4 chars (`%4u`) | Variable (no min) | NO |
-| Total width | 10 chars fixed | 11 chars right-aligned | NO |
+| Format | `HHHH:MM:SS` | `H:MM:SS` padded to 10 chars | YES (for hours < 10000) |
+| Hours width | 4 chars (`%4u`) | Variable (no min in helper, padded in field) | YES (for hours < 10000) |
+| Total width | 10 chars fixed | 10 chars right-aligned | YES |
 | Semantics: mid-file | Estimated remaining time | Elapsed time | NO |
 | Semantics: final | Total elapsed time | Elapsed time | YES |
 | Overflow guard | `  ??:??:??` | None | NO |
@@ -263,7 +267,7 @@ No overflow guard - extreme durations produce arbitrarily wide output.
 | `xfr#N` format | `xfr#%d` (bare integer) | `xfr#{index}` | YES |
 | Check prefix | `to-chk` or `ir-chk` | Always `to-chk` | NO |
 | Counts format | Bare integers | Bare integers | YES |
-| Leading space | ` (xfr#...)` | `(xfr#...)` (no leading space) | NO |
+| Leading space | ` (xfr#...)` | ` (xfr#...)` (space between elapsed and `(`) | YES |
 | Mid-file eol | `"  "` (two spaces) | Not emitted (live: line stays) | PARTIAL |
 
 ### 3.6 Line framing
@@ -277,21 +281,24 @@ No overflow guard - extreme durations produce arbitrarily wide output.
 
 ## 4. Summary of divergences
 
-| ID | Field | Severity | Description |
-|----|-------|----------|-------------|
-| D1 | Bytes | Low | Thousands separator always comma, not locale-aware |
-| D2 | Bytes | Low | `-hhh` (base-1024) and `--no-h` modes not supported |
-| D3 | Rate | Medium | Value width not fixed to 7 chars (`%7.2f` vs `{:.2}`) |
-| D4 | Rate | Low | Combined field 12 chars vs upstream's 11 chars |
-| D5 | Rate | Low | Human-readable mode uses base-1000 vs upstream base-1024 |
-| D6 | Time | High | Mid-file shows elapsed time, not estimated remaining |
-| D7 | Time | Medium | No 5-second sliding-window rate averaging |
-| D8 | Time | Low | Hours not fixed to 4 chars (`%4u` vs variable) |
-| D9 | Time | Low | No overflow guard (`  ??:??:??` sentinel missing) |
-| D10 | Trailer | Low | `ir-chk` never emitted during incremental recursion |
-| D11 | Trailer | Low | Missing leading space before `(xfr#...)` |
-| D12 | Framing | Low | No trailing space-padding for shrinking lines |
-| D13 | Framing | Low | No 1000ms throttle on refresh interval |
+Status legend: FIXED in this audit; OPEN remains a divergence; CLOSED was
+re-evaluated and the implementation already matches upstream.
+
+| ID | Field | Severity | Status | Description |
+|----|-------|----------|--------|-------------|
+| D1 | Bytes | Low | OPEN | Thousands separator always comma, not locale-aware |
+| D2 | Bytes | Low | OPEN | `-hhh` (base-1024) and `--no-h` modes not supported |
+| D3 | Rate | Low | OPEN | Value width not fixed to 7 chars (`%7.2f` vs `{:.2}`) within the 11-char field |
+| D4 | Rate | Low | FIXED | Combined rate field aligned to 11 chars (was 12); matches `%7.2f%s` |
+| D5 | Rate | Low | OPEN | Human-readable mode uses base-1000 vs upstream base-1024 |
+| D6 | Time | High | OPEN | Mid-file shows elapsed time, not estimated remaining |
+| D7 | Time | Medium | OPEN | No 5-second sliding-window rate averaging |
+| D8 | Time | Low | FIXED | Combined elapsed field aligned to 10 chars (was 11); matches `%4u:%02u:%02u` |
+| D9 | Time | Low | OPEN | No overflow guard (`  ??:??:??` sentinel missing) |
+| D10 | Trailer | Low | OPEN | `ir-chk` never emitted during incremental recursion |
+| D11 | Trailer | Low | CLOSED | Single space between elapsed field and `(xfr#...)` already matches upstream's `eol` leading space |
+| D12 | Framing | Low | OPEN | No trailing space-padding for shrinking lines |
+| D13 | Framing | Low | OPEN | No 1000ms throttle on refresh interval |
 
 ## 5. Recommended fixes
 
@@ -309,18 +316,15 @@ switching to total elapsed time only on the final update. Requires:
 
 ### P1 - Should fix for pixel-perfect output
 
-**D3 - Rate value width**: Use `format!("{:>7.2}", rate)` for a fixed
-7-character numeric value, matching `%7.2f`. This makes the rate column
-start at a consistent position and also resolves D4.
-
-**D8 - Hours width**: Use `format!("{hours:>4}:{minutes:02}:{seconds:02}")`
-for a fixed 10-character time field, matching `%4u:%02u:%02u`.
+**D3 - Rate value width**: Within the now-11-char field, upstream's
+`%7.2f` pins the digits to columns 21..27 inclusive. oc-rsync currently
+right-justifies the full `value+unit` blob into 11 chars, so values
+narrower than 7 chars shift one column left compared to upstream. Use
+`format!("{value:>7.2}{unit}")` inside `format_progress_rate_decimal` to
+fix the digit positions.
 
 **D9 - Overflow guard**: When remaining time is negative or exceeds
 `9999 * 3600` seconds, display `  ??:??:??` (10 chars).
-
-**D11 - Leading space**: Add a space before `(xfr#...)` in both live and
-batch paths.
 
 ### P2 - Nice to have
 

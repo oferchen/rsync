@@ -85,15 +85,19 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 }
 
                 let bytes = event.bytes_transferred();
+                // Field widths mirror upstream rsync's `rprint_progress` format string
+                // `"\r%15s %3d%% %7.2f%s %s%s"` (progress.c:129). The rate column packs the
+                // `%7.2f` value (7 chars) plus a 4-char unit suffix (kB/s, MB/s, GB/s) for an
+                // 11-char total. The elapsed column matches `%4u:%02u:%02u` at 10 chars.
                 let size_field =
                     format!("{:>15}", format_progress_bytes(bytes, self.human_readable));
                 let percent = format_progress_percent(bytes, update.total_bytes());
                 let percent_field = format!("{percent:>4}");
                 let rate_field = format!(
-                    "{:>12}",
+                    "{:>11}",
                     format_progress_rate(bytes, event.elapsed(), self.human_readable)
                 );
-                let elapsed_field = format!("{:>11}", format_progress_elapsed(event.elapsed()));
+                let elapsed_field = format!("{:>10}", format_progress_elapsed(event.elapsed()));
                 let xfr_index = update.index();
 
                 if self.line_active {
@@ -123,11 +127,11 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                     format_progress_percent(bytes, update.overall_total_bytes())
                 );
                 let rate_field = format!(
-                    "{:>12}",
+                    "{:>11}",
                     format_progress_rate(bytes, update.overall_elapsed(), self.human_readable)
                 );
                 let elapsed_field =
-                    format!("{:>11}", format_progress_elapsed(update.overall_elapsed()));
+                    format!("{:>10}", format_progress_elapsed(update.overall_elapsed()));
                 let xfr_index = update.index();
 
                 if self.line_active {
