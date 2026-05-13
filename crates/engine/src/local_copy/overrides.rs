@@ -57,10 +57,7 @@ pub(super) fn create_hard_link(source: &Path, destination: &Path) -> io::Result<
         return result;
     }
 
-    if let Some(result) = fast_io::try_hard_link_via_io_uring(source, destination) {
-        return result;
-    }
-    fs::hard_link(source, destination)
+    fast_io::hard_link(source, destination)
 }
 
 #[cfg(test)]

@@ -565,6 +565,35 @@ fn try_statx_batch_via_io_uring_impl(
     None
 }
 
+/// Creates a hard link from `src` to `dst`, trying io_uring first.
+///
+/// On Linux 5.15+ with io_uring `IORING_OP_LINKAT` support, the link is
+/// submitted as an asynchronous SQE on a transient ring, avoiding a
+/// synchronous `linkat(2)` syscall. On all other platforms, older kernels,
+/// or when the `io_uring` feature is disabled, falls back to
+/// [`std::fs::hard_link`].
+///
+/// This is the recommended single entry point for hard-link creation across
+/// the codebase. It consolidates the try-io_uring-then-fallback pattern so
+/// callers do not need to handle the `Option` from
+/// [`try_hard_link_via_io_uring`] themselves.
+///
+/// # Errors
+///
+/// Returns an error when both the io_uring path and the `std::fs::hard_link`
+/// fallback fail (e.g., `EEXIST`, `EACCES`, `EXDEV`).
+///
+/// # Upstream reference
+///
+/// Upstream rsync uses synchronous `link(2)` / `linkat(2)` for hardlink
+/// creation (`hlink.c`). The io_uring fast path is a latency optimisation.
+pub fn hard_link(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    if let Some(result) = try_hard_link_via_io_uring(src, dst) {
+        return result;
+    }
+    std::fs::hard_link(src, dst)
+}
+
 /// Minimum value accepted for the io_uring submission queue depth tunable.
 ///
 /// The kernel rejects rings with zero entries, so callers must request at
@@ -1440,5 +1469,89 @@ mod io_uring_statx_dispatch_tests {
                 panic!("unexpected error on empty input: {e}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod hard_link_convenience_tests {
+    use super::*;
+    use std::fs;
+
+    /// Verifies `hard_link` creates a valid hard link on any platform,
+    /// using io_uring when available and falling back to `std::fs::hard_link`.
+    #[test]
+    fn hard_link_creates_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("hl_src.txt");
+        let dst = dir.path().join("hl_dst.txt");
+        fs::write(&src, b"hard link payload").unwrap();
+
+        hard_link(&src, &dst).unwrap();
+
+        assert!(src.exists(), "source must still exist after hard link");
+        assert!(dst.exists(), "destination must exist after hard link");
+        assert_eq!(fs::read(&dst).unwrap(), b"hard link payload");
+    }
+
+    /// Verifies that source and destination share the same inode on Unix,
+    /// confirming a true hard link rather than a copy.
+    #[cfg(unix)]
+    #[test]
+    fn hard_link_shares_inode() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("hl_inode_src.txt");
+        let dst = dir.path().join("hl_inode_dst.txt");
+        fs::write(&src, b"inode check").unwrap();
+
+        hard_link(&src, &dst).unwrap();
+
+        let src_ino = fs::metadata(&src).unwrap().ino();
+        let dst_ino = fs::metadata(&dst).unwrap().ino();
+        assert_eq!(src_ino, dst_ino, "hard link must share same inode");
+    }
+
+    /// Verifies `hard_link` returns an error when the destination already
+    /// exists (EEXIST).
+    #[test]
+    fn hard_link_fails_when_dst_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("hl_exists_src.txt");
+        let dst = dir.path().join("hl_exists_dst.txt");
+        fs::write(&src, b"source").unwrap();
+        fs::write(&dst, b"existing").unwrap();
+
+        let result = hard_link(&src, &dst);
+        assert!(result.is_err(), "must fail when destination exists");
+    }
+
+    /// Verifies `hard_link` returns an error when the source does not exist.
+    #[test]
+    fn hard_link_fails_for_missing_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("hl_missing.txt");
+        let dst = dir.path().join("hl_missing_dst.txt");
+
+        let result = hard_link(&src, &dst);
+        assert!(result.is_err(), "must fail when source does not exist");
+    }
+
+    /// Verifies that writing to the source after hard-linking is visible
+    /// through the destination path, confirming shared data blocks.
+    #[test]
+    fn hard_link_shares_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("hl_shared_src.txt");
+        let dst = dir.path().join("hl_shared_dst.txt");
+        fs::write(&src, b"original").unwrap();
+
+        hard_link(&src, &dst).unwrap();
+
+        // Overwrite via source path.
+        fs::write(&src, b"modified").unwrap();
+
+        // Read through destination - should see the modification.
+        assert_eq!(fs::read(&dst).unwrap(), b"modified");
     }
 }

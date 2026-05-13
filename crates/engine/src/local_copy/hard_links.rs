@@ -15,17 +15,6 @@ use std::path::{Path, PathBuf};
 
 use rustc_hash::FxHashMap;
 
-/// Creates a hard link, trying io_uring `IORING_OP_LINKAT` first on Linux 5.15+.
-///
-/// Falls back to `std::fs::hard_link` when io_uring is unavailable or the
-/// kernel lacks the opcode.
-fn hard_link_with_io_uring_fallback(source: &Path, destination: &Path) -> std::io::Result<()> {
-    if let Some(result) = fast_io::try_hard_link_via_io_uring(source, destination) {
-        return result;
-    }
-    fs::hard_link(source, destination)
-}
-
 /// Tracks completed hardlink leaders by protocol group index during file apply.
 ///
 /// When the receiver commits a leader file to its final destination, it records
@@ -106,7 +95,7 @@ impl HardlinkApplyTracker {
             if follower_dest.symlink_metadata().is_ok() {
                 fs::remove_file(follower_dest)?;
             }
-            hard_link_with_io_uring_fallback(leader_path, follower_dest)?;
+            fast_io::hard_link(leader_path, follower_dest)?;
             Ok(HardlinkApplyResult::Linked)
         } else {
             self.deferred
@@ -176,7 +165,7 @@ impl HardlinkApplyTracker {
                         continue;
                     }
                 }
-                match hard_link_with_io_uring_fallback(&leader_path, &follower) {
+                match fast_io::hard_link(&leader_path, &follower) {
                     Ok(()) => linked += 1,
                     Err(e) => errors.push((follower, e)),
                 }
@@ -1229,9 +1218,8 @@ mod apply_tracker_tests {
 
 /// Tests for the io_uring LINKAT dispatch in hardlink creation.
 ///
-/// These tests verify that `hard_link_with_io_uring_fallback` works correctly
-/// regardless of whether io_uring handles the link or `std::fs::hard_link`
-/// does.
+/// These tests verify that `fast_io::hard_link` works correctly regardless
+/// of whether io_uring handles the link or `std::fs::hard_link` does.
 #[cfg(test)]
 mod io_uring_linkat_dispatch_tests {
     use super::*;
@@ -1243,7 +1231,7 @@ mod io_uring_linkat_dispatch_tests {
         let dst = temp.path().join("linkat_dst.txt");
         std::fs::write(&src, b"linkat dispatch test").unwrap();
 
-        hard_link_with_io_uring_fallback(&src, &dst).expect("hard link must succeed");
+        fast_io::hard_link(&src, &dst).expect("hard link must succeed");
 
         assert!(src.exists());
         assert!(dst.exists());
@@ -1263,7 +1251,7 @@ mod io_uring_linkat_dispatch_tests {
         let dst = temp.path().join("linkat_inode_dst.txt");
         std::fs::write(&src, b"inode check").unwrap();
 
-        hard_link_with_io_uring_fallback(&src, &dst).expect("hard link must succeed");
+        fast_io::hard_link(&src, &dst).expect("hard link must succeed");
 
         let src_ino = std::fs::metadata(&src).unwrap().ino();
         let dst_ino = std::fs::metadata(&dst).unwrap().ino();
