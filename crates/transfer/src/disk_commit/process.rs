@@ -296,6 +296,11 @@ fn make_writer<'a>(
 }
 
 /// Performs backup, atomic rename, and inplace truncation after writing.
+///
+/// When io_uring is available (Linux 5.11+ with `IORING_OP_RENAMEAT`), the
+/// temp-file rename is submitted as an io_uring SQE instead of a synchronous
+/// `rename(2)` syscall. Falls back to `std::fs::rename` on all other
+/// platforms or when the kernel lacks the opcode.
 fn commit_file(
     begin: &BeginMessage,
     config: &DiskCommitConfig,
@@ -309,7 +314,7 @@ fn commit_file(
     }
 
     if needs_rename {
-        fs::rename(cleanup_guard.path(), &begin.file_path)?;
+        rename_with_io_uring_fallback(cleanup_guard.path(), &begin.file_path)?;
     } else if begin.is_inplace {
         // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))
         // In append mode, bytes_written only counts newly received data -
@@ -324,6 +329,21 @@ fn commit_file(
     }
     cleanup_guard.keep();
     Ok(())
+}
+
+/// Renames a temp file to its final destination, trying io_uring first.
+///
+/// On Linux 5.11+ with io_uring RENAMEAT2 support, submits the rename as an
+/// `IORING_OP_RENAMEAT` SQE. Falls back to `std::fs::rename` when io_uring
+/// is unavailable (non-Linux, old kernel, or feature not compiled in).
+///
+/// This mirrors the pattern used in `engine::local_copy::executor::file::guard`
+/// for local-copy temp-file commits.
+fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) -> io::Result<()> {
+    if let Some(result) = fast_io::try_rename_via_io_uring(old_path, new_path) {
+        return result;
+    }
+    fs::rename(old_path, new_path)
 }
 
 /// Applies metadata, ACLs, and xattrs after file commit.
@@ -438,4 +458,75 @@ fn finalize_checksum(verifier: Option<ChecksumVerifier>) -> Option<ComputedCheck
         let len = v.finalize_into(&mut buf);
         ComputedChecksum { bytes: buf, len }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies the io_uring RENAMEAT2 fallback renames a file regardless of
+    /// whether io_uring handles it or `std::fs::rename` does.
+    #[test]
+    fn rename_with_io_uring_fallback_moves_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("rename_src.txt");
+        let dst = dir.path().join("rename_dst.txt");
+
+        fs::write(&src, b"io_uring rename data").unwrap();
+
+        rename_with_io_uring_fallback(&src, &dst).unwrap();
+
+        assert!(!src.exists());
+        assert!(dst.exists());
+        assert_eq!(fs::read(&dst).unwrap(), b"io_uring rename data");
+    }
+
+    /// Verifies the rename replaces an existing destination file.
+    #[test]
+    fn rename_with_io_uring_fallback_replaces_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("rename_replace_src.txt");
+        let dst = dir.path().join("rename_replace_dst.txt");
+
+        fs::write(&src, b"new data").unwrap();
+        fs::write(&dst, b"old data").unwrap();
+
+        rename_with_io_uring_fallback(&src, &dst).unwrap();
+
+        assert!(!src.exists());
+        assert_eq!(fs::read(&dst).unwrap(), b"new data");
+    }
+
+    /// Verifies the rename fails with an error when the source does not exist.
+    #[test]
+    fn rename_with_io_uring_fallback_fails_for_missing_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("missing_src.txt");
+        let dst = dir.path().join("rename_fail_dst.txt");
+
+        let result = rename_with_io_uring_fallback(&src, &dst);
+        assert!(result.is_err());
+    }
+
+    /// Verifies consistent io_uring availability for RENAMEAT2 across calls.
+    #[test]
+    fn rename_io_uring_availability_consistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("avail_src.txt");
+        let dst1 = dir.path().join("avail_dst1.txt");
+        let dst2 = dir.path().join("avail_dst2.txt");
+        fs::write(&src, b"data").unwrap();
+
+        let first = fast_io::try_rename_via_io_uring(&src, &dst1).is_some();
+        // If first call consumed the file, recreate it.
+        if first {
+            fs::write(&src, b"data").unwrap();
+            let _ = fs::remove_file(&dst1);
+        }
+        let second = fast_io::try_rename_via_io_uring(&src, &dst2).is_some();
+        assert_eq!(
+            first, second,
+            "io_uring RENAMEAT2 availability must be consistent"
+        );
+    }
 }
