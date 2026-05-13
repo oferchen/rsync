@@ -162,7 +162,7 @@ fn probe_statx_support() -> bool {
 ///
 /// The `args` struct must outlive the submission so the kernel can read
 /// the borrowed `CStr` path and write the statx buffer.
-pub fn build_statx_sqe(args: &StatxArgs<'_>) -> io::Result<squeue::Entry> {
+pub fn build_statx_sqe(args: &mut StatxArgs<'_>) -> io::Result<squeue::Entry> {
     if !statx_supported() {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -178,7 +178,7 @@ pub fn build_statx_sqe(args: &StatxArgs<'_>) -> io::Result<squeue::Entry> {
 /// isolation. Production callers should use [`build_statx_sqe`] so the
 /// probe gate keeps the fallback path correct.
 #[must_use]
-pub fn build_statx_sqe_unchecked(args: &StatxArgs<'_>) -> squeue::Entry {
+pub fn build_statx_sqe_unchecked(args: &mut StatxArgs<'_>) -> squeue::Entry {
     opcode::Statx::new(
         types::Fd(args.dirfd),
         args.pathname.as_ptr(),
@@ -213,14 +213,14 @@ pub fn submit_statx_blocking(
     mask: u32,
 ) -> io::Result<libc::statx> {
     let mut statx_buf: libc::statx = unsafe { std::mem::zeroed() };
-    let args = StatxArgs {
+    let mut args = StatxArgs {
         dirfd,
         pathname,
         flags,
         mask,
         statx_buf: &mut statx_buf,
     };
-    let sqe = build_statx_sqe(&args)?.user_data(0);
+    let sqe = build_statx_sqe(&mut args)?.user_data(0);
     let mut ring = io_uring::IoUring::new(2)?;
     // SAFETY: `sqe` references the CStr path borrowed from `pathname` and the
     // statx buffer borrowed from our stack, both of which outlive
@@ -508,7 +508,7 @@ mod tests {
         }
         let path = c"/tmp/test";
         let mut buf: libc::statx = unsafe { std::mem::zeroed() };
-        let err = build_statx_sqe(&StatxArgs {
+        let err = build_statx_sqe(&mut StatxArgs {
             dirfd: libc::AT_FDCWD,
             pathname: path,
             flags: 0,
@@ -524,7 +524,7 @@ mod tests {
         let path = c"/tmp/test";
         let mut buf: libc::statx = unsafe { std::mem::zeroed() };
         // Construct without panic and tag with user_data.
-        let _tagged = build_statx_sqe_unchecked(&StatxArgs {
+        let _tagged = build_statx_sqe_unchecked(&mut StatxArgs {
             dirfd: libc::AT_FDCWD,
             pathname: path,
             flags: libc::AT_SYMLINK_NOFOLLOW,
@@ -541,7 +541,7 @@ mod tests {
         }
         let path = c"/tmp/test";
         let mut buf: libc::statx = unsafe { std::mem::zeroed() };
-        let _entry = build_statx_sqe(&StatxArgs {
+        let _entry = build_statx_sqe(&mut StatxArgs {
             dirfd: libc::AT_FDCWD,
             pathname: path,
             flags: 0,

@@ -608,7 +608,7 @@ pub mod statx {
     }
 
     /// Always returns `Unsupported` on this platform.
-    pub fn build_statx_sqe(_args: &StatxArgs<'_>) -> io::Result<()> {
+    pub fn build_statx_sqe(_args: &mut StatxArgs<'_>) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "IORING_OP_STATX is not available on this platform",
@@ -617,7 +617,7 @@ pub mod statx {
 
     /// Stub mirror of the Linux `build_statx_sqe_unchecked`. Exists for API
     /// surface parity; never called from production code on this platform.
-    pub fn build_statx_sqe_unchecked(_args: &StatxArgs<'_>) {}
+    pub fn build_statx_sqe_unchecked(_args: &mut StatxArgs<'_>) {}
 
     /// Always returns `Unsupported` on this platform.
     pub fn submit_statx_blocking(
