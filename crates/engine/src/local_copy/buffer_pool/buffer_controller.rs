@@ -1010,16 +1010,18 @@ mod tests {
     fn convergence_wan_preset_with_high_jitter() {
         // WAN-like conditions: lower setpoint, higher jitter. The
         // controller should still converge despite noisy measurements.
-        let setpoint = 5 * 1024 * 1024; // 5 MB/s WAN
+        let min = 4 * 1024;
+        let max = 512 * 1024;
+        let mid = (min + max) / 2;
+        let k = 0.5;
+        let setpoint = (k * mid as f64) as u64;
         let ctrl = ControllerConfig::new(setpoint)
-            .gains(0.4, 0.15, 0.03) // more conservative gains for noisy link
-            .min_size(4 * 1024)
-            .max_size(512 * 1024)
+            .gains(0.4, 0.15, 0.03)
+            .min_size(min)
+            .max_size(max)
             .build();
 
-        let mid = (4 * 1024 + 512 * 1024) / 2;
-        let k = setpoint as f64 / mid as f64;
-        let cap = setpoint as f64 * 2.0;
+        let cap = setpoint as f64 * 4.0;
 
         let mut now = Instant::now();
         // Simulate jittery throughput: base + noise pattern.
