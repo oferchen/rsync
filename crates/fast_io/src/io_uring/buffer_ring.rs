@@ -60,7 +60,7 @@
 use std::io;
 use std::ptr;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 
 use io_uring::IoUring as RawIoUring;
 
@@ -154,6 +154,19 @@ pub enum BufferRingError {
         /// Configured ring size at the time of the call.
         ring_size: u32,
     },
+
+    /// The buffer group ID namespace (u16, 65 536 values) is exhausted.
+    ///
+    /// io_uring identifies provided buffer groups with a 16-bit Buffer Group
+    /// ID (bgid). The kernel stores this in `struct io_uring_buf_reg.bgid`
+    /// (upstream: io_uring/kbuf.c, `io_register_pbuf_ring()`), bounding the
+    /// per-process namespace to `u16::MAX + 1 = 65 536` distinct groups.
+    /// [`BgidAllocator::allocate`] returns this error when the monotonic
+    /// counter would exceed `u16::MAX`. Callers must drop existing
+    /// [`BufferRing`] instances (which triggers `IORING_UNREGISTER_PBUF_RING`)
+    /// to reclaim kernel slots before allocating further IDs.
+    #[error("io_uring buffer group ID namespace exhausted (limit: 65535)")]
+    BgidExhausted,
 }
 
 impl From<BufferRingError> for io::Error {
@@ -164,9 +177,8 @@ impl From<BufferRingError> for io::Error {
             }
             BufferRingError::InvalidRingSize(_)
             | BufferRingError::InvalidBufferSize
-            | BufferRingError::BufferIdOutOfRange { .. } => {
-                io::Error::new(io::ErrorKind::InvalidInput, e)
-            }
+            | BufferRingError::BufferIdOutOfRange { .. }
+            | BufferRingError::BgidExhausted => io::Error::new(io::ErrorKind::InvalidInput, e),
             BufferRingError::MmapFailed(_)
             | BufferRingError::RegisterFailed(_)
             | BufferRingError::AllocationFailed(_) => io::Error::other(e),
@@ -218,6 +230,89 @@ impl BufferRingConfig {
             return Err(BufferRingError::InvalidBufferSize);
         }
         Ok(())
+    }
+}
+
+/// Maximum number of distinct buffer group IDs available per process.
+///
+/// The io_uring kernel interface stores bgid as `u16` inside
+/// `struct io_uring_buf_reg` (upstream: io_uring/kbuf.c,
+/// `io_register_pbuf_ring()`), bounding the namespace to
+/// `u16::MAX + 1 = 65 536` values (0..=65 535). Registering a 65 537th
+/// group without first unregistering an existing one causes the kernel to
+/// return `EEXIST` or silently collide, so callers must stay within this
+/// bound.
+const BGID_NAMESPACE_SIZE: u32 = u16::MAX as u32 + 1;
+
+/// Process-wide monotonic counter for automatic buffer group ID assignment.
+///
+/// Stored as `u32` so values above `u16::MAX` can be detected without
+/// wrapping. Incremented once per [`BgidAllocator::allocate`] call and
+/// decremented only on the boundary call that crosses past the namespace
+/// limit, keeping the counter capped at `BGID_NAMESPACE_SIZE` thereafter.
+static NEXT_BGID: AtomicU32 = AtomicU32::new(0);
+
+/// Allocator for io_uring buffer group IDs (bgid).
+///
+/// io_uring provided buffer rings (PBUF_RING) are identified by a 16-bit
+/// Buffer Group ID. With only 65 536 possible values, a long-running
+/// process that continuously allocates new buffer rings without recycling
+/// bgids will eventually exhaust the namespace and silently collide with
+/// rings still active in the kernel.
+///
+/// [`BgidAllocator`] provides a safe, bounded allocation path:
+///
+/// - [`allocate`](Self::allocate) returns a monotonically increasing bgid
+///   starting at 0.
+/// - Once the counter reaches `BGID_NAMESPACE_SIZE` (65 536), every
+///   subsequent call returns [`BufferRingError::BgidExhausted`] rather
+///   than wrapping and silently reusing a bgid still held by an active
+///   ring.
+///
+/// Callers that create a bounded, fixed number of buffer rings per
+/// process may set [`BufferRingConfig::bgid`] directly with known
+/// constants and skip this allocator entirely.
+pub struct BgidAllocator;
+
+impl BgidAllocator {
+    /// Allocates the next available buffer group ID.
+    ///
+    /// Uses a process-wide monotonic `u32` counter starting at 0. When the
+    /// counter would exceed `u16::MAX` (65 535) - meaning all 65 536
+    /// possible bgids have been issued - returns
+    /// [`BufferRingError::BgidExhausted`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferRingError::BgidExhausted`] when the namespace is
+    /// exhausted. The process must drop existing [`BufferRing`] instances
+    /// to reclaim kernel slots; the counter cannot be reset without
+    /// restarting the process.
+    pub fn allocate() -> Result<u16, BufferRingError> {
+        // Relaxed ordering is sufficient: uniqueness within the process is
+        // guaranteed by the atomic RMW alone; no other memory operations
+        // depend on this value being observed in a particular order.
+        let id = NEXT_BGID.fetch_add(1, Ordering::Relaxed);
+        if id < BGID_NAMESPACE_SIZE {
+            Ok(id as u16)
+        } else {
+            // Cap the counter at BGID_NAMESPACE_SIZE rather than letting it
+            // climb toward `u32::MAX` and eventually wrap back to 0, which
+            // would resume issuing valid u16 IDs that collide with active
+            // rings.
+            NEXT_BGID.fetch_sub(1, Ordering::Relaxed);
+            Err(BufferRingError::BgidExhausted)
+        }
+    }
+
+    /// Returns the number of bgids remaining in the namespace.
+    ///
+    /// When this reaches zero, [`allocate`](Self::allocate) returns
+    /// [`BufferRingError::BgidExhausted`]. The value may decrease
+    /// concurrently as other threads allocate.
+    pub fn remaining() -> u32 {
+        let used = NEXT_BGID.load(Ordering::Relaxed).min(BGID_NAMESPACE_SIZE);
+        BGID_NAMESPACE_SIZE - used
     }
 }
 
@@ -948,5 +1043,48 @@ mod tests {
         let ps = page_size();
         assert!(ps > 0);
         assert!(ps.is_power_of_two());
+    }
+
+    #[test]
+    fn bgid_allocator_returns_distinct_ids() {
+        let a = BgidAllocator::allocate().expect("first allocation");
+        let b = BgidAllocator::allocate().expect("second allocation");
+        assert_ne!(a, b, "consecutive allocations must return distinct bgids");
+    }
+
+    #[test]
+    fn bgid_allocator_exhaustion_returns_error() {
+        // Save the current counter, force it to the namespace limit, verify
+        // that the next allocation reports exhaustion, then restore so other
+        // tests in this module can continue to allocate freely.
+        let prev = NEXT_BGID.swap(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
+        let result = BgidAllocator::allocate();
+        NEXT_BGID.store(prev, Ordering::Relaxed);
+        assert!(
+            matches!(result, Err(BufferRingError::BgidExhausted)),
+            "expected BgidExhausted when counter == BGID_NAMESPACE_SIZE, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn bgid_exhausted_converts_to_invalid_input_io_error() {
+        let err: io::Error = BufferRingError::BgidExhausted.into();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("65535"),
+            "error message must cite the namespace limit: {msg}"
+        );
+    }
+
+    #[test]
+    fn bgid_allocator_remaining_does_not_increase() {
+        let before = BgidAllocator::remaining();
+        let _ = BgidAllocator::allocate();
+        let after = BgidAllocator::remaining();
+        assert!(
+            after <= before,
+            "remaining should not increase: before={before}, after={after}"
+        );
     }
 }
