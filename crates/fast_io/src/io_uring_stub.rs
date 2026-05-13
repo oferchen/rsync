@@ -394,7 +394,8 @@ pub mod registered_buffers {
 }
 
 pub use buffer_ring::{
-    BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags, pbuf_ring_supported,
+    BgidAllocator, BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags,
+    pbuf_ring_supported,
 };
 pub use linkat::{
     IORING_OP_LINKAT, LINKAT_MIN_KERNEL, LinkAtArgs, build_linkat_sqe, build_linkat_sqe_unchecked,
