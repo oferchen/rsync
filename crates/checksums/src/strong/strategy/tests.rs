@@ -59,6 +59,7 @@ fn digest_display() {
 
 #[test]
 fn algorithm_kind_name() {
+    assert_eq!(ChecksumAlgorithmKind::Blake2b256.name(), "blake2b");
     assert_eq!(ChecksumAlgorithmKind::Md4.name(), "md4");
     assert_eq!(ChecksumAlgorithmKind::Md5.name(), "md5");
     assert_eq!(ChecksumAlgorithmKind::Sha1.name(), "sha1");
@@ -71,6 +72,7 @@ fn algorithm_kind_name() {
 
 #[test]
 fn algorithm_kind_digest_len() {
+    assert_eq!(ChecksumAlgorithmKind::Blake2b256.digest_len(), 32);
     assert_eq!(ChecksumAlgorithmKind::Md4.digest_len(), 16);
     assert_eq!(ChecksumAlgorithmKind::Md5.digest_len(), 16);
     assert_eq!(ChecksumAlgorithmKind::Sha1.digest_len(), 20);
@@ -83,6 +85,7 @@ fn algorithm_kind_digest_len() {
 
 #[test]
 fn algorithm_kind_is_cryptographic() {
+    assert!(ChecksumAlgorithmKind::Blake2b256.is_cryptographic());
     assert!(ChecksumAlgorithmKind::Md4.is_cryptographic());
     assert!(ChecksumAlgorithmKind::Md5.is_cryptographic());
     assert!(ChecksumAlgorithmKind::Sha1.is_cryptographic());
@@ -95,6 +98,18 @@ fn algorithm_kind_is_cryptographic() {
 
 #[test]
 fn algorithm_kind_from_name() {
+    assert_eq!(
+        ChecksumAlgorithmKind::from_name("blake2b"),
+        Some(ChecksumAlgorithmKind::Blake2b256)
+    );
+    assert_eq!(
+        ChecksumAlgorithmKind::from_name("blake2b-256"),
+        Some(ChecksumAlgorithmKind::Blake2b256)
+    );
+    assert_eq!(
+        ChecksumAlgorithmKind::from_name("blake2b256"),
+        Some(ChecksumAlgorithmKind::Blake2b256)
+    );
     assert_eq!(
         ChecksumAlgorithmKind::from_name("md4"),
         Some(ChecksumAlgorithmKind::Md4)
@@ -122,9 +137,27 @@ fn algorithm_kind_from_name() {
 #[test]
 fn algorithm_kind_all() {
     let all = ChecksumAlgorithmKind::all();
-    assert_eq!(all.len(), 8);
+    assert_eq!(all.len(), 9);
+    assert!(all.contains(&ChecksumAlgorithmKind::Blake2b256));
     assert!(all.contains(&ChecksumAlgorithmKind::Md4));
     assert!(all.contains(&ChecksumAlgorithmKind::Xxh3_128));
+}
+
+#[test]
+fn blake2b256_strategy_compute() {
+    let strategy = Blake2b256Strategy::new();
+    let digest = strategy.compute(b"test");
+    assert_eq!(digest.len(), 32);
+    assert_eq!(strategy.digest_len(), 32);
+    assert_eq!(strategy.algorithm_name(), "blake2b");
+}
+
+#[test]
+fn blake2b256_strategy_differs_from_sha256() {
+    let blake2b = Blake2b256Strategy::new();
+    let sha256 = Sha256Strategy::new();
+    let data = b"comparison";
+    assert_ne!(blake2b.compute(data), sha256.compute(data));
 }
 
 #[test]
@@ -462,6 +495,9 @@ fn selector_with_seed_config_xxh3() {
 
 #[test]
 fn selector_concrete_factories() {
+    let blake2b256 = ChecksumStrategySelector::blake2b256();
+    assert_eq!(blake2b256.digest_len(), 32);
+
     let md4 = ChecksumStrategySelector::md4();
     assert_eq!(md4.algorithm_name(), "md4");
 
@@ -495,6 +531,7 @@ fn selector_concrete_factories() {
 fn strategies_are_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
 
+    assert_send_sync::<Blake2b256Strategy>();
     assert_send_sync::<Md4Strategy>();
     assert_send_sync::<Md5Strategy>();
     assert_send_sync::<Sha1Strategy>();
@@ -508,6 +545,7 @@ fn strategies_are_send_sync() {
 #[test]
 fn boxed_strategy_works() {
     let strategies: Vec<Box<dyn ChecksumStrategy>> = vec![
+        Box::new(Blake2b256Strategy::new()),
         Box::new(Md4Strategy::new()),
         Box::new(Md5Strategy::new()),
         Box::new(Sha1Strategy::new()),

@@ -5,8 +5,9 @@ use std::io;
 /// This list matches upstream rsync 3.4.1's default order.
 /// The client will select the first algorithm in this list that it also supports.
 /// Upstream order: xxh128 xxh3 xxh64 md5 md4 sha1 none
-pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
-    &["xxh128", "xxh3", "xxh64", "md5", "md4", "sha1", "none"];
+pub(super) const SUPPORTED_CHECKSUMS: &[&str] = &[
+    "xxh128", "xxh3", "xxh64", "blake2b", "md5", "md4", "sha1", "none",
+];
 
 /// Returns supported compression algorithms in preference order for negotiation.
 ///
@@ -51,6 +52,8 @@ pub(super) fn supported_compressions() -> Vec<&'static str> {
 pub enum ChecksumAlgorithm {
     /// No checksum - used for directory listings and dry-run modes.
     None,
+    /// BLAKE2b-256 checksum - modern cryptographic hash for protocol 32.
+    Blake2b,
     /// MD4 checksum - legacy default for protocol versions below 30.
     MD4,
     /// MD5 checksum - default for protocol 30+ when negotiation is unavailable.
@@ -70,6 +73,7 @@ impl ChecksumAlgorithm {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::None => "none",
+            Self::Blake2b => "blake2b",
             Self::MD4 => "md4",
             Self::MD5 => "md5",
             Self::SHA1 => "sha1",
@@ -87,6 +91,7 @@ impl ChecksumAlgorithm {
     pub fn parse(name: &str) -> io::Result<Self> {
         match name {
             "none" => Ok(Self::None),
+            "blake2b" | "blake2b-256" | "blake2b256" => Ok(Self::Blake2b),
             "md4" => Ok(Self::MD4),
             "md5" => Ok(Self::MD5),
             "sha1" => Ok(Self::SHA1),

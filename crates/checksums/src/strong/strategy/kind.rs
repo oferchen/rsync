@@ -12,6 +12,11 @@ use std::fmt;
 /// Suitable for algorithm selection, comparison, and protocol negotiation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum ChecksumAlgorithmKind {
+    /// BLAKE2b-256 - modern cryptographic hash for protocol 32.
+    ///
+    /// BLAKE2b-256 produces a 256-bit (32-byte) digest with performance
+    /// competitive with MD5 while providing full collision resistance.
+    Blake2b256,
     /// MD4 - legacy algorithm for rsync protocol < 30.
     ///
     /// Upstream rsync uses MD4 as the default strong checksum for older protocol
@@ -41,6 +46,7 @@ impl ChecksumAlgorithmKind {
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
+            Self::Blake2b256 => "blake2b",
             Self::Md4 => "md4",
             Self::Md5 => "md5",
             Self::Sha1 => "sha1",
@@ -58,7 +64,7 @@ impl ChecksumAlgorithmKind {
         match self {
             Self::Md4 | Self::Md5 | Self::Xxh3_128 => 16,
             Self::Sha1 => 20,
-            Self::Sha256 => 32,
+            Self::Blake2b256 | Self::Sha256 => 32,
             Self::Sha512 => 64,
             Self::Xxh64 | Self::Xxh3 => 8,
         }
@@ -72,7 +78,7 @@ impl ChecksumAlgorithmKind {
     pub const fn is_cryptographic(&self) -> bool {
         matches!(
             self,
-            Self::Md4 | Self::Md5 | Self::Sha1 | Self::Sha256 | Self::Sha512
+            Self::Blake2b256 | Self::Md4 | Self::Md5 | Self::Sha1 | Self::Sha256 | Self::Sha512
         )
     }
 
@@ -83,6 +89,7 @@ impl ChecksumAlgorithmKind {
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
+            "blake2b" | "blake2b-256" | "blake2b256" => Some(Self::Blake2b256),
             "md4" => Some(Self::Md4),
             "md5" => Some(Self::Md5),
             "sha1" | "sha-1" => Some(Self::Sha1),
@@ -99,6 +106,7 @@ impl ChecksumAlgorithmKind {
     #[must_use]
     pub const fn all() -> &'static [Self] {
         &[
+            Self::Blake2b256,
             Self::Md4,
             Self::Md5,
             Self::Sha1,

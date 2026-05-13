@@ -3,7 +3,38 @@
 use super::digest::ChecksumDigest;
 use super::kind::ChecksumAlgorithmKind;
 use super::trait_def::ChecksumStrategy;
-use crate::strong::{Md4, Md5, Md5Seed, Sha1, Sha256, Sha512, StrongDigest, Xxh3, Xxh3_128, Xxh64};
+use crate::strong::{
+    Blake2b256, Md4, Md5, Md5Seed, Sha1, Sha256, Sha512, StrongDigest, Xxh3, Xxh3_128, Xxh64,
+};
+
+/// BLAKE2b-256 checksum strategy for protocol 32 strong checksum negotiation.
+///
+/// BLAKE2b-256 produces a 256-bit (32-byte) digest with performance competitive
+/// with MD5 while providing full collision resistance.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Blake2b256Strategy;
+
+impl Blake2b256Strategy {
+    /// Creates a new BLAKE2b-256 strategy.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl ChecksumStrategy for Blake2b256Strategy {
+    fn compute(&self, data: &[u8]) -> ChecksumDigest {
+        ChecksumDigest::new(Blake2b256::digest(data).as_ref())
+    }
+
+    fn digest_len(&self) -> usize {
+        Blake2b256::DIGEST_LEN
+    }
+
+    fn algorithm_kind(&self) -> ChecksumAlgorithmKind {
+        ChecksumAlgorithmKind::Blake2b256
+    }
+}
 
 /// MD4 checksum strategy for rsync protocol versions < 30.
 ///

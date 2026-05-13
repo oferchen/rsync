@@ -3,15 +3,15 @@
 use std::fmt;
 
 use checksums::strong::{
-    Md4, Md5, Md5Seed, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64, md4_digest_batch,
+    Blake2b256, Md4, Md5, Md5Seed, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64, md4_digest_batch,
     md5_digest_batch,
 };
 
 /// Stack-allocated buffer for strong checksum digests, avoiding heap allocation
 /// in the delta matching hot path.
 ///
-/// Sized to hold the largest supported digest (SHA-1, 20 bytes). All other
-/// algorithms produce 8 or 16 bytes, so this fits comfortably on the stack.
+/// Sized to hold the largest supported digest (BLAKE2b-256, 32 bytes). All other
+/// algorithms produce 8, 16, or 20 bytes, so this fits comfortably on the stack.
 #[derive(Clone, Copy)]
 pub struct DigestBuf {
     buf: [u8; Self::MAX_LEN],
@@ -19,8 +19,8 @@ pub struct DigestBuf {
 }
 
 impl DigestBuf {
-    /// Maximum digest length across all supported algorithms (SHA-1 = 20 bytes).
-    pub const MAX_LEN: usize = 20;
+    /// Maximum digest length across all supported algorithms (BLAKE2b-256 = 32 bytes).
+    pub const MAX_LEN: usize = 32;
 
     /// Returns the digest bytes as a slice.
     #[inline]
@@ -99,6 +99,8 @@ pub enum SignatureAlgorithm {
         /// Seed configuration for MD5 checksum calculation.
         seed_config: Md5Seed,
     },
+    /// BLAKE2b-256, negotiated in protocol 32 for modern cryptographic integrity.
+    Blake2b256,
     /// SHA-1, available when both peers advertise it.
     Sha1,
     /// XXH64, available in newer protocol combinations with an explicit seed.
@@ -128,6 +130,7 @@ impl SignatureAlgorithm {
             | SignatureAlgorithm::Md4Seeded { .. }
             | SignatureAlgorithm::Md5 { .. } => 16,
             SignatureAlgorithm::Sha1 => Sha1::DIGEST_LEN,
+            SignatureAlgorithm::Blake2b256 => Blake2b256::DIGEST_LEN,
             SignatureAlgorithm::Xxh64 { .. } | SignatureAlgorithm::Xxh3 { .. } => 8,
             SignatureAlgorithm::Xxh3_128 { .. } => 16,
         }
@@ -151,6 +154,9 @@ impl SignatureAlgorithm {
             ),
             SignatureAlgorithm::Sha1 => {
                 DigestBuf::from_slice(Sha1::digest(data).as_ref(), effective_len)
+            }
+            SignatureAlgorithm::Blake2b256 => {
+                DigestBuf::from_slice(Blake2b256::digest(data).as_ref(), effective_len)
             }
             SignatureAlgorithm::Xxh64 { seed } => {
                 DigestBuf::from_slice(Xxh64::digest(seed, data).as_ref(), effective_len)
@@ -239,6 +245,12 @@ impl SignatureAlgorithm {
             }
             SignatureAlgorithm::Md5 { seed_config } => {
                 let mut h = Md5::with_seed(seed_config);
+                h.update(a);
+                h.update(b);
+                DigestBuf::from_slice(h.finalize().as_ref(), effective_len)
+            }
+            SignatureAlgorithm::Blake2b256 => {
+                let mut h = Blake2b256::new();
                 h.update(a);
                 h.update(b);
                 DigestBuf::from_slice(h.finalize().as_ref(), effective_len)

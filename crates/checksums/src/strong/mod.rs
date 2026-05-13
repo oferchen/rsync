@@ -2,8 +2,8 @@
 //!
 //! Upstream rsync negotiates the strong checksum algorithm based on the protocol
 //! version and compile-time feature set. This module exposes streaming wrappers
-//! for MD4, MD5, XXH64, XXH3/64, and XXH3/128 so higher layers can compose the
-//! desired strategy without reimplementing the hashing primitives.
+//! for BLAKE2b-256, MD4, MD5, XXH64, XXH3/64, and XXH3/128 so higher layers
+//! can compose the desired strategy without reimplementing the hashing primitives.
 //!
 //! # Upstream Reference
 //!
@@ -16,7 +16,11 @@
 //! ## Cryptographic Hashes (MD4, MD5, SHA family)
 //!
 //! ```
-//! use checksums::strong::{Md4, Md5, Sha1, Sha256, StrongDigest};
+//! use checksums::strong::{Blake2b256, Md4, Md5, Sha1, Sha256, StrongDigest};
+//!
+//! // BLAKE2b-256 - modern hash for protocol 32
+//! let blake2b = Blake2b256::digest(b"data");
+//! assert_eq!(blake2b.as_ref().len(), 32);
 //!
 //! // MD4 - legacy algorithm for rsync protocol compatibility
 //! let md4 = Md4::digest(b"data");
@@ -55,6 +59,7 @@
 //! assert_eq!(xxh3_128.as_ref().len(), 16);
 //! ```
 
+mod blake2b;
 mod md4;
 mod md5;
 #[cfg(feature = "openssl")]
@@ -64,6 +69,9 @@ mod sha256;
 mod sha512;
 pub mod strategy;
 mod xxhash;
+
+/// Streaming BLAKE2b-256 hasher (256-bit output).
+pub use blake2b::Blake2b256;
 
 /// MD4 streaming hasher and batch digest function.
 ///
@@ -179,12 +187,23 @@ pub trait StrongDigest: Sized {
 
 #[cfg(test)]
 mod tests {
-    use super::{Md4, Md5, Sha1, Sha256, Sha512, StrongDigest, Xxh3, Xxh3_128, Xxh64};
+    use super::{Blake2b256, Md4, Md5, Sha1, Sha256, Sha512, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 
     #[cfg(feature = "openssl")]
     #[test]
     fn openssl_detection_succeeds_when_feature_enabled() {
         assert!(super::openssl_acceleration_available());
+    }
+
+    #[test]
+    fn blake2b256_trait_round_trip_matches_inherent_api() {
+        let input = b"trait-check";
+
+        let mut via_trait = Blake2b256::new();
+        via_trait.update(input);
+        let trait_digest = via_trait.finalize();
+
+        assert_eq!(trait_digest.as_ref(), Blake2b256::digest(input).as_ref());
     }
 
     #[test]
@@ -282,6 +301,13 @@ mod tests {
     }
 
     #[test]
+    fn blake2b256_digest_len_is_32() {
+        assert_eq!(Blake2b256::DIGEST_LEN, 32);
+        let digest = Blake2b256::digest(b"test");
+        assert_eq!(digest.as_ref().len(), 32);
+    }
+
+    #[test]
     fn md5_digest_len_is_16() {
         assert_eq!(Md5::DIGEST_LEN, 16);
         let digest = Md5::digest(b"test");
@@ -338,6 +364,18 @@ mod tests {
     }
 
     #[test]
+    fn blake2b256_multiple_updates() {
+        let mut hasher = Blake2b256::new();
+        hasher.update(b"hello");
+        hasher.update(b" ");
+        hasher.update(b"world");
+        let split_digest = hasher.finalize();
+
+        let combined_digest = Blake2b256::digest(b"hello world");
+        assert_eq!(split_digest.as_ref(), combined_digest.as_ref());
+    }
+
+    #[test]
     fn md5_multiple_updates() {
         let mut hasher = Md5::new();
         hasher.update(b"hello");
@@ -387,6 +425,10 @@ mod tests {
     #[test]
     fn empty_input_produces_valid_digests() {
         let empty = b"";
+        assert_eq!(
+            Blake2b256::digest(empty).as_ref().len(),
+            Blake2b256::DIGEST_LEN
+        );
         assert_eq!(Md4::digest(empty).as_ref().len(), Md4::DIGEST_LEN);
         assert_eq!(Md5::digest(empty).as_ref().len(), Md5::DIGEST_LEN);
         assert_eq!(Sha1::digest(empty).as_ref().len(), Sha1::DIGEST_LEN);

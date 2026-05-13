@@ -525,6 +525,7 @@ dependencies = [
 name = "checksums"
 version = "0.6.1"
 dependencies = [
+ "blake2",
  "crc32c",
  "criterion",
  "digest 0.10.7",

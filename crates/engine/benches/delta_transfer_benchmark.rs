@@ -76,6 +76,7 @@ fn build_index(
         | SignatureAlgorithm::Md5 { .. } => 16,
         SignatureAlgorithm::Xxh3 { .. } | SignatureAlgorithm::Xxh64 { .. } => 8,
         SignatureAlgorithm::Xxh3_128 { .. } | SignatureAlgorithm::Sha1 => 16,
+        SignatureAlgorithm::Blake2b256 => 32,
     };
     let params = SignatureLayoutParams::new(
         data.len() as u64,

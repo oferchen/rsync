@@ -6,8 +6,8 @@
 //! - `compat.c` - checksum capability negotiation for XXH3/SHA family
 
 use super::impls::{
-    Md4Strategy, Md5Strategy, Sha1Strategy, Sha256Strategy, Sha512Strategy, Xxh3_128Strategy,
-    Xxh3Strategy, Xxh64Strategy,
+    Blake2b256Strategy, Md4Strategy, Md5Strategy, Sha1Strategy, Sha256Strategy, Sha512Strategy,
+    Xxh3_128Strategy, Xxh3Strategy, Xxh64Strategy,
 };
 use super::kind::ChecksumAlgorithmKind;
 use super::seed::{SeedConfig, extract_u64_seed};
@@ -86,6 +86,7 @@ impl ChecksumStrategySelector {
     #[must_use]
     pub fn for_algorithm(kind: ChecksumAlgorithmKind, seed: i32) -> Box<dyn ChecksumStrategy> {
         match kind {
+            ChecksumAlgorithmKind::Blake2b256 => Box::new(Blake2b256Strategy::new()),
             ChecksumAlgorithmKind::Md4 => Box::new(Md4Strategy::new()),
             ChecksumAlgorithmKind::Md5 => Box::new(Md5Strategy::with_legacy_seed(seed)),
             ChecksumAlgorithmKind::Sha1 => Box::new(Sha1Strategy::new()),
@@ -119,6 +120,7 @@ impl ChecksumStrategySelector {
         seed: SeedConfig,
     ) -> Box<dyn ChecksumStrategy> {
         match kind {
+            ChecksumAlgorithmKind::Blake2b256 => Box::new(Blake2b256Strategy::new()),
             ChecksumAlgorithmKind::Md4 => Box::new(Md4Strategy::new()),
             ChecksumAlgorithmKind::Md5 => {
                 let md5_seed = match seed {
@@ -137,6 +139,12 @@ impl ChecksumStrategySelector {
                 Box::new(Xxh3_128Strategy::new(extract_u64_seed(&seed)))
             }
         }
+    }
+
+    /// Creates a concrete (non-boxed) BLAKE2b-256 strategy.
+    #[must_use]
+    pub const fn blake2b256() -> Blake2b256Strategy {
+        Blake2b256Strategy::new()
     }
 
     /// Creates a concrete (non-boxed) MD4 strategy.

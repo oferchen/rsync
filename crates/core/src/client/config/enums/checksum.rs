@@ -9,6 +9,8 @@ use engine::signature::SignatureAlgorithm;
 pub enum StrongChecksumAlgorithm {
     /// Automatically selects the negotiated algorithm (locally resolved to MD5).
     Auto,
+    /// BLAKE2b-256 strong checksum (protocol 32).
+    Blake2b,
     /// MD4 strong checksum.
     Md4,
     /// MD5 strong checksum.
@@ -34,6 +36,7 @@ impl StrongChecksumAlgorithm {
                     seed_config: Md5Seed::none(),
                 }
             }
+            StrongChecksumAlgorithm::Blake2b => SignatureAlgorithm::Blake2b256,
             StrongChecksumAlgorithm::Md4 => SignatureAlgorithm::Md4,
             StrongChecksumAlgorithm::Sha1 => SignatureAlgorithm::Sha1,
             StrongChecksumAlgorithm::Xxh64 => SignatureAlgorithm::Xxh64 { seed: 0 },
@@ -47,6 +50,7 @@ impl StrongChecksumAlgorithm {
     pub const fn canonical_name(self) -> &'static str {
         match self {
             StrongChecksumAlgorithm::Auto => "auto",
+            StrongChecksumAlgorithm::Blake2b => "blake2b",
             StrongChecksumAlgorithm::Md4 => "md4",
             StrongChecksumAlgorithm::Md5 => "md5",
             StrongChecksumAlgorithm::Sha1 => "sha1",
@@ -64,6 +68,7 @@ impl StrongChecksumAlgorithm {
     pub const fn to_protocol_algorithm(self) -> Option<protocol::ChecksumAlgorithm> {
         match self {
             StrongChecksumAlgorithm::Auto => None,
+            StrongChecksumAlgorithm::Blake2b => Some(protocol::ChecksumAlgorithm::Blake2b),
             StrongChecksumAlgorithm::Md4 => Some(protocol::ChecksumAlgorithm::MD4),
             StrongChecksumAlgorithm::Md5 => Some(protocol::ChecksumAlgorithm::MD5),
             StrongChecksumAlgorithm::Sha1 => Some(protocol::ChecksumAlgorithm::SHA1),
@@ -112,6 +117,7 @@ impl StrongChecksumChoice {
         let normalized = label.trim().to_ascii_lowercase();
         match normalized.as_str() {
             "auto" => Ok(StrongChecksumAlgorithm::Auto),
+            "blake2b" | "blake2b-256" | "blake2b256" => Ok(StrongChecksumAlgorithm::Blake2b),
             "md4" => Ok(StrongChecksumAlgorithm::Md4),
             "md5" => Ok(StrongChecksumAlgorithm::Md5),
             "sha1" => Ok(StrongChecksumAlgorithm::Sha1),

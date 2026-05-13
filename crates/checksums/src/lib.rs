@@ -442,7 +442,7 @@ pub use cpu_features::{SimdLevel, set_simd_override, simd_override};
 /// checksum algorithms at runtime based on protocol version or explicit choice.
 /// See the [`strong::strategy`] module documentation for usage details.
 pub use strong::strategy::{
-    ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector,
-    MAX_DIGEST_LEN, Md4Strategy, Md5SeedConfig, Md5Strategy, SeedConfig, Sha1Strategy,
-    Sha256Strategy, Sha512Strategy, Xxh3_128Strategy, Xxh3Strategy, Xxh64Strategy,
+    Blake2b256Strategy, ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy,
+    ChecksumStrategySelector, MAX_DIGEST_LEN, Md4Strategy, Md5SeedConfig, Md5Strategy, SeedConfig,
+    Sha1Strategy, Sha256Strategy, Sha512Strategy, Xxh3_128Strategy, Xxh3Strategy, Xxh64Strategy,
 };

@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 
-use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
+use checksums::strong::{Blake2b256, Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 
 use crate::local_copy::buffer_pool::{BufferPool, global_buffer_pool};
 use crate::signature::SignatureAlgorithm;
@@ -227,6 +227,17 @@ fn hash_file_contents(
         }
         SignatureAlgorithm::Xxh3_128 { seed } => {
             let mut hasher = Xxh3_128::new(seed);
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+            }
+            hasher.finalize().as_ref().to_vec()
+        }
+        SignatureAlgorithm::Blake2b256 => {
+            let mut hasher = Blake2b256::new();
             loop {
                 let n = file.read(&mut buffer)?;
                 if n == 0 {

@@ -372,7 +372,7 @@ fn algorithm_kind_from_name_case_insensitive() {
 fn algorithm_kind_from_name_rejects_invalid() {
     let invalid = [
         "none", // valid in protocol but not a checksum algorithm kind
-        "invalid", "", "md6", "sha384", "sha3-256", "blake2b", "crc32",
+        "invalid", "", "md6", "sha384", "sha3-256", "crc32",
     ];
     for name in invalid {
         assert_eq!(
@@ -659,6 +659,7 @@ fn for_algorithm_factory_matches_concrete_factories() {
     for kind in ChecksumAlgorithmKind::all() {
         let boxed = ChecksumStrategySelector::for_algorithm(*kind, seed);
         let concrete: Box<dyn ChecksumStrategy> = match kind {
+            ChecksumAlgorithmKind::Blake2b256 => Box::new(ChecksumStrategySelector::blake2b256()),
             ChecksumAlgorithmKind::Md4 => Box::new(ChecksumStrategySelector::md4()),
             ChecksumAlgorithmKind::Md5 => Box::new(ChecksumStrategySelector::md5_legacy(seed)),
             ChecksumAlgorithmKind::Sha1 => Box::new(ChecksumStrategySelector::sha1()),
@@ -939,11 +940,11 @@ fn all_upstream_algorithms_are_supported() {
 
 #[test]
 fn algorithm_kind_all_contains_eight_variants() {
-    // MD4, MD5, SHA1, SHA256, SHA512, XXH64, XXH3, XXH3-128
+    // BLAKE2b-256, MD4, MD5, SHA1, SHA256, SHA512, XXH64, XXH3, XXH3-128
     assert_eq!(
         ChecksumAlgorithmKind::all().len(),
-        8,
-        "Should have 8 algorithm variants"
+        9,
+        "Should have 9 algorithm variants"
     );
 }
 // rsync's checksum_seed is an i32. When passed to XXHash (which takes u64),

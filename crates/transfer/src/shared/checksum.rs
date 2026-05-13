@@ -165,6 +165,7 @@ impl ChecksumFactory {
                 };
                 SignatureAlgorithm::Md5 { seed_config }
             }
+            ChecksumAlgorithm::Blake2b => SignatureAlgorithm::Blake2b256,
             ChecksumAlgorithm::SHA1 => SignatureAlgorithm::Sha1,
             ChecksumAlgorithm::XXH64 => SignatureAlgorithm::Xxh64 { seed: seed_u64 },
             ChecksumAlgorithm::XXH3 => SignatureAlgorithm::Xxh3 { seed: seed_u64 },
@@ -191,6 +192,7 @@ impl ChecksumFactory {
         match self.algorithm {
             ChecksumAlgorithm::None | ChecksumAlgorithm::MD4 | ChecksumAlgorithm::MD5 => 16,
             ChecksumAlgorithm::SHA1 => 20,
+            ChecksumAlgorithm::Blake2b => 32,
             ChecksumAlgorithm::XXH64 | ChecksumAlgorithm::XXH3 => 8,
             ChecksumAlgorithm::XXH128 => 16,
         }

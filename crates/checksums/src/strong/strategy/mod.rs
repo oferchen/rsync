@@ -85,8 +85,8 @@ mod tests;
 
 pub use digest::{ChecksumDigest, MAX_DIGEST_LEN};
 pub use impls::{
-    Md4Strategy, Md5Strategy, Sha1Strategy, Sha256Strategy, Sha512Strategy, Xxh3_128Strategy,
-    Xxh3Strategy, Xxh64Strategy,
+    Blake2b256Strategy, Md4Strategy, Md5Strategy, Sha1Strategy, Sha256Strategy, Sha512Strategy,
+    Xxh3_128Strategy, Xxh3Strategy, Xxh64Strategy,
 };
 pub use kind::ChecksumAlgorithmKind;
 pub use seed::{Md5SeedConfig, SeedConfig};

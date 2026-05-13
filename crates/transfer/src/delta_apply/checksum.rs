@@ -2,7 +2,7 @@
 //!
 //! upstream: `receiver.c` end-of-file digest verification.
 
-use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
+use checksums::strong::{Blake2b256, Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 /// Whole-file checksum verifier with enum dispatch for zero-allocation runtime
@@ -13,6 +13,8 @@ pub enum ChecksumVerifier {
     /// No checksum - `CSUM_NONE` negotiated. 1-byte placeholder digest
     /// matching upstream `receiver.c` behaviour.
     None,
+    /// BLAKE2b-256 checksum (protocol 32 negotiated).
+    Blake2b(Blake2b256),
     /// MD4 checksum (legacy, protocol < 30).
     Md4(Md4),
     /// MD5 checksum (protocol 30+ default).
@@ -85,6 +87,7 @@ impl ChecksumVerifier {
     pub fn for_algorithm(algorithm: ChecksumAlgorithm) -> Self {
         match algorithm {
             ChecksumAlgorithm::None => Self::None,
+            ChecksumAlgorithm::Blake2b => Self::Blake2b(Blake2b256::new()),
             ChecksumAlgorithm::MD4 => Self::Md4(Md4::new()),
             ChecksumAlgorithm::MD5 => Self::Md5(Md5::new()),
             ChecksumAlgorithm::SHA1 => Self::Sha1(Sha1::new()),
@@ -100,6 +103,7 @@ impl ChecksumVerifier {
     pub const fn algorithm(&self) -> ChecksumAlgorithm {
         match self {
             Self::None => ChecksumAlgorithm::None,
+            Self::Blake2b(_) => ChecksumAlgorithm::Blake2b,
             Self::Md4(_) => ChecksumAlgorithm::MD4,
             Self::Md5(_) => ChecksumAlgorithm::MD5,
             Self::Sha1(_) => ChecksumAlgorithm::SHA1,
@@ -114,6 +118,7 @@ impl ChecksumVerifier {
     pub fn update(&mut self, data: &[u8]) {
         match self {
             Self::None => {}
+            Self::Blake2b(h) => h.update(data),
             Self::Md4(h) => h.update(data),
             Self::Md5(h) => h.update(data),
             Self::Sha1(h) => h.update(data),
@@ -123,8 +128,8 @@ impl ChecksumVerifier {
         }
     }
 
-    /// Maximum digest length across all supported algorithms (SHA1 = 20 bytes).
-    pub const MAX_DIGEST_LEN: usize = 20;
+    /// Maximum digest length across all supported algorithms (BLAKE2b-256 = 32 bytes).
+    pub const MAX_DIGEST_LEN: usize = 32;
 
     /// Returns the digest length for the current algorithm.
     #[inline]
@@ -134,6 +139,7 @@ impl ChecksumVerifier {
             Self::None => 1,
             Self::Md4(_) | Self::Md5(_) | Self::Xxh128(_) => 16,
             Self::Sha1(_) => 20,
+            Self::Blake2b(_) => 32,
             Self::Xxh64(_) | Self::Xxh3(_) => 8,
         }
     }
@@ -147,6 +153,7 @@ impl ChecksumVerifier {
         let len = self.digest_len();
         match self {
             Self::None => buf[0] = 0,
+            Self::Blake2b(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
             Self::Md4(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
             Self::Md5(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
             Self::Sha1(h) => buf[..len].copy_from_slice(h.finalize().as_ref()),
