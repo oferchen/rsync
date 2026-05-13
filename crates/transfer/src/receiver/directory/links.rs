@@ -6,7 +6,6 @@
 //! reception, so this module handles both protocol versions uniformly.
 
 use std::fs;
-use std::io;
 use std::path::Path;
 
 use logging::debug_log;
