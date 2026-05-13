@@ -45,6 +45,7 @@ impl RuleType {
     /// # Upstream Reference
     ///
     /// `exclude.c:1137-1214` - prefix character to rule type mapping
+    #[must_use]
     pub const fn from_prefix_char(c: char) -> Option<Self> {
         match c {
             '+' => Some(RuleType::Include),

@@ -81,6 +81,7 @@ impl FilterSet {
     ///
     /// Returns [`FilterError`] if any rule's pattern cannot be compiled into a
     /// valid glob matcher.
+    #[must_use]
     pub fn from_rules<I>(rules: I) -> Result<Self, FilterError>
     where
         I: IntoIterator<Item = FilterRule>,
@@ -218,6 +219,7 @@ impl FilterSet {
     /// assert!(!set.allows(Path::new("main.o"), false));
     /// // But explicit includes still work (if perishable)
     /// ```
+    #[must_use]
     pub fn from_rules_with_cvs<I>(rules: I, perishable: bool) -> Result<Self, FilterError>
     where
         I: IntoIterator<Item = FilterRule>,
@@ -261,6 +263,7 @@ impl FilterSet {
     /// assert!(!set.allows(Path::new("._notes.txt"), false));
     /// assert!(set.allows(Path::new("notes.txt"), false));
     /// ```
+    #[must_use]
     pub fn from_rules_with_apple_double<I>(rules: I, perishable: bool) -> Result<Self, FilterError>
     where
         I: IntoIterator<Item = FilterRule>,

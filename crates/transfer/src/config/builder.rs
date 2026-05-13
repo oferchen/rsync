@@ -467,6 +467,7 @@ impl ServerConfigBuilder {
     /// - `--inplace` and `--delay-updates` are both enabled
     /// - `--append` and `--partial-dir` are both enabled
     /// - `min_file_size` exceeds `max_file_size`
+    #[must_use]
     pub fn build(&self) -> Result<ServerConfig, BuilderError> {
         self.validate()?;
         Ok(self.build_unchecked())

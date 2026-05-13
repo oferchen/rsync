@@ -21,6 +21,7 @@ use crate::ProtocolVersion;
 /// # Upstream Reference
 ///
 /// `exclude.c:1522-1587` - `get_rule_prefix()` returns NULL for unsendable rules
+#[must_use]
 pub fn build_rule_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> Option<String> {
     if protocol.uses_old_prefixes() {
         return build_old_prefix(rule);

@@ -58,6 +58,7 @@ pub fn write_int<W: Write>(writer: &mut W, value: i32) -> io::Result<()> {
 /// ```
 ///
 /// Reference: `io.c:read_int()` line ~2091
+#[must_use]
 #[inline]
 pub fn read_int<R: Read>(reader: &mut R) -> io::Result<i32> {
     let mut buf = [0u8; 4];

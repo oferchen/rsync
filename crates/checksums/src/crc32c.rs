@@ -140,6 +140,7 @@ pub fn crc32c_bytes(data: &[u8]) -> u32 {
 /// let file_checksum = crc32c_file(&path).unwrap();
 /// assert_eq!(file_checksum, crc32c_bytes(b"hello world"));
 /// ```
+#[must_use]
 pub fn crc32c_file(path: &Path) -> io::Result<u32> {
     let file = File::open(path)?;
     let mut reader = BufReader::with_capacity(BUF_SIZE, file);

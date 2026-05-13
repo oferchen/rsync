@@ -205,6 +205,7 @@ pub fn write_token_stream<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Resu
 /// let token = read_token(&mut &data[..]).unwrap();
 /// assert_eq!(token, None); // End of stream
 /// ```
+#[must_use]
 pub fn read_token<R: Read>(reader: &mut R) -> io::Result<Option<i32>> {
     let token = read_int(reader)?;
     if token == 0 {

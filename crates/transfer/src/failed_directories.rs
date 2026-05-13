@@ -61,6 +61,7 @@ impl FailedDirectories {
     /// assert_eq!(failed.failed_ancestor("a/b/c/file.txt"), Some("a/b"));
     /// assert_eq!(failed.failed_ancestor("a/c/file.txt"), None);
     /// ```
+    #[must_use]
     pub fn failed_ancestor(&self, entry_path: &str) -> Option<&str> {
         // Check if exact path is failed
         if self.paths.contains(entry_path) {

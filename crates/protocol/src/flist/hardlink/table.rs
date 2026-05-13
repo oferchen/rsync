@@ -85,6 +85,7 @@ impl HardlinkTable {
     /// Looks up a hardlink entry without modifying the table.
     ///
     /// Returns the entry if found, or `None` if the (dev, ino) pair is not in the table.
+    #[must_use]
     pub fn get(&self, dev_ino: &DevIno) -> Option<&HardlinkEntry> {
         self.entries.get(dev_ino)
     }

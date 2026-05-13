@@ -141,6 +141,7 @@ impl KnownCompatibilityFlag {
     /// assert_eq!(parsed, KnownCompatibilityFlag::IncRecurse);
     /// assert!(KnownCompatibilityFlag::from_str("CF_UNKNOWN").is_err());
     /// ```
+    #[must_use]
     pub fn from_name(name: &str) -> Result<Self, ParseKnownCompatibilityFlagError> {
         Self::from_str(name)
     }

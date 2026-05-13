@@ -118,6 +118,7 @@ impl SignatureCache {
     /// Tries to get a pre-computed signature for a file.
     ///
     /// Returns `Some(signature)` if available, `None` otherwise.
+    #[must_use]
     pub fn get_signature(&mut self, file_path: &PathBuf) -> Option<FileSignature> {
         self.completed.remove(file_path)
     }
@@ -125,6 +126,7 @@ impl SignatureCache {
     /// Checks if a signature generation failed.
     ///
     /// Returns the error message if the generation failed.
+    #[must_use]
     pub fn get_error(&mut self, file_path: &PathBuf) -> Option<String> {
         self.failed.remove(file_path)
     }
@@ -180,6 +182,7 @@ impl CacheStats {
 /// Tries to open a file and get its size for signature generation.
 ///
 /// Returns `(file, size)` if successful, `None` otherwise.
+#[must_use]
 pub fn try_open_file_for_signature(path: &PathBuf) -> Option<(fs::File, u64)> {
     let file = fs::File::open(path).ok()?;
     let metadata = file.metadata().ok()?;

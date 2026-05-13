@@ -243,6 +243,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// First checks the in-memory buffer. If the next expected item was
     /// spilled to disk, it is reloaded transparently and the delivery
     /// cursor advances.
+    #[must_use]
     pub fn next_in_order(&mut self) -> Option<T> {
         // Try in-memory first.
         if let Some(item) = self.inner.next_in_order() {

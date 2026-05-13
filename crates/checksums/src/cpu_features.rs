@@ -162,6 +162,7 @@ fn byte_to_level(byte: u8) -> Option<SimdLevel> {
 ///
 /// Returns the previously-installed level when called more than once with a
 /// different value.
+#[must_use]
 pub fn set_simd_override(level: SimdLevel) -> Result<(), SimdLevel> {
     let new_byte = level_to_byte(level);
     match OVERRIDE.compare_exchange(UNINIT, new_byte, Ordering::SeqCst, Ordering::SeqCst) {
