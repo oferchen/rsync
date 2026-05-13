@@ -173,6 +173,10 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
         writeln!(stdout, "{}", event.relative_path().display())?;
 
         let bytes = event.bytes_transferred();
+        // Field widths mirror upstream rsync's `rprint_progress` format string
+        // `"\r%15s %3d%% %7.2f%s %s%s"` (progress.c:129). The rate column packs the
+        // `%7.2f` value (7 chars) plus a 4-char unit suffix (kB/s, MB/s, GB/s) for an
+        // 11-char total. The elapsed column matches `%4u:%02u:%02u` at 10 chars.
         let size_field = format!("{:>15}", format_progress_bytes(bytes, human_readable));
         let percent_hint = match event.kind() {
             ClientEventKind::DataCopied => event.total_bytes(),
@@ -180,10 +184,10 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
         };
         let percent_field = format!("{:>4}", format_progress_percent(bytes, percent_hint));
         let rate_field = format!(
-            "{:>12}",
+            "{:>11}",
             format_progress_rate(bytes, event.elapsed(), human_readable)
         );
-        let elapsed_field = format!("{:>11}", format_progress_elapsed(event.elapsed()));
+        let elapsed_field = format!("{:>10}", format_progress_elapsed(event.elapsed()));
         let remaining = total - index - 1;
         let xfr_index = index + 1;
 
