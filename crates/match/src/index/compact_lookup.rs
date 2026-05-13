@@ -127,6 +127,12 @@ impl CompactLookup {
         self.len
     }
 
+    /// Returns the total number of slots (always a power of two).
+    #[allow(dead_code)]
+    pub(super) fn capacity(&self) -> usize {
+        (self.mask as usize) + 1
+    }
+
     #[inline]
     fn empty_slot() -> u64 {
         (EMPTY_KEY as u64) << 32
