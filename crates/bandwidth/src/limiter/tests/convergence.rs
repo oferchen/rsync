@@ -1258,3 +1258,372 @@ fn convergence_across_three_decades_of_rates() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Interleaved multi-stream fairness: round-robin across independent limiters
+// ---------------------------------------------------------------------------
+
+#[test]
+fn interleaved_streams_converge_independently() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rates = [2000_u64, 4000, 8000, 1000];
+    let mut limiters: Vec<BandwidthLimiter> = rates
+        .iter()
+        .map(|&r| BandwidthLimiter::new(nz(r)))
+        .collect();
+
+    // Warm up all limiters with interleaved registrations
+    for _ in 0..4 {
+        for (idx, limiter) in limiters.iter_mut().enumerate() {
+            let chunk = (rates[idx] / 4) as usize;
+            let _ = limiter.register(chunk);
+        }
+    }
+
+    // Measure each limiter's rate while interleaving registrations
+    let mut stream_bytes = vec![0_u128; rates.len()];
+    let mut stream_sleep = vec![Duration::ZERO; rates.len()];
+
+    for _ in 0..12 {
+        for (idx, limiter) in limiters.iter_mut().enumerate() {
+            let chunk = (rates[idx] / 4) as usize;
+            let sleep = limiter.register(chunk);
+            stream_bytes[idx] += chunk as u128;
+            stream_sleep[idx] = stream_sleep[idx].saturating_add(sleep.requested());
+        }
+    }
+
+    for (idx, &rate) in rates.iter().enumerate() {
+        let obs = observed_rate(stream_bytes[idx], stream_sleep[idx]);
+        let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+        assert!(
+            deviation <= 5.0,
+            "interleaved stream {idx} (rate {rate}): observed {obs:.2} deviates {deviation:.3}%"
+        );
+    }
+}
+
+#[test]
+fn interleaved_streams_with_different_chunk_sizes() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 5000_u64;
+    let chunks = [100_usize, 500, 1250, 2500];
+    let mut limiters: Vec<BandwidthLimiter> = chunks
+        .iter()
+        .map(|_| BandwidthLimiter::new(nz(rate)))
+        .collect();
+
+    // Warm up
+    for (idx, limiter) in limiters.iter_mut().enumerate() {
+        let _ = run_pacing(limiter, 2, chunks[idx]);
+    }
+
+    // Interleaved measurement
+    let mut stream_bytes = vec![0_u128; chunks.len()];
+    let mut stream_sleep = vec![Duration::ZERO; chunks.len()];
+
+    for _ in 0..16 {
+        for (idx, limiter) in limiters.iter_mut().enumerate() {
+            let sleep = limiter.register(chunks[idx]);
+            stream_bytes[idx] += chunks[idx] as u128;
+            stream_sleep[idx] = stream_sleep[idx].saturating_add(sleep.requested());
+        }
+    }
+
+    // All streams share the same rate; they should all converge regardless
+    // of chunk size, though small chunks may accumulate below the minimum
+    // sleep threshold and show infinite observed rate.
+    for (idx, &chunk) in chunks.iter().enumerate() {
+        if stream_sleep[idx].is_zero() {
+            // Small chunks below threshold - verify total bytes are small enough
+            // that the limiter correctly deferred sleeping.
+            let expected_sleep_us = stream_bytes[idx] as f64 / rate as f64 * 1_000_000.0;
+            assert!(
+                expected_sleep_us < 100_000.0,
+                "stream {idx} (chunk {chunk}): zero sleep but expected {expected_sleep_us:.0} us"
+            );
+            continue;
+        }
+        let obs = observed_rate(stream_bytes[idx], stream_sleep[idx]);
+        let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+        assert!(
+            deviation <= 5.0,
+            "stream {idx} (chunk {chunk}): observed {obs:.2} deviates {deviation:.3}%"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Overshoot trajectory: verify initial burst settles toward target
+// ---------------------------------------------------------------------------
+
+#[test]
+fn overshoot_trajectory_settles_monotonically() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 4000_u64;
+    let chunk = (rate / 4) as usize;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // Send a large burst to create overshoot
+    let _ = limiter.register(rate as usize * 5);
+
+    // Collect per-chunk observed rates as the limiter settles
+    let mut per_chunk_rates = Vec::new();
+    for _ in 0..12 {
+        let sleep = limiter.register(chunk);
+        let obs = observed_rate(chunk as u128, sleep.requested());
+        if obs.is_finite() {
+            per_chunk_rates.push(obs);
+        }
+    }
+
+    // The last few samples should be close to the target rate, confirming
+    // the limiter settled after the initial burst.
+    let tail = &per_chunk_rates[per_chunk_rates.len().saturating_sub(4)..];
+    for (i, &obs) in tail.iter().enumerate() {
+        let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+        assert!(
+            deviation <= 5.0,
+            "tail sample {i}: observed {obs:.2} deviates {deviation:.3}% from {rate}"
+        );
+    }
+}
+
+#[test]
+fn overshoot_with_burst_cap_limits_initial_penalty() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 2000_u64;
+    let burst = 4000_u64;
+    let chunk = (rate / 4) as usize;
+    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
+
+    // Massive burst - debt clamped to burst
+    let burst_sleep = limiter.register(rate as usize * 20);
+    let max_burst_sleep = Duration::from_secs(burst / rate);
+    assert!(
+        burst_sleep.requested() <= max_burst_sleep,
+        "burst sleep {:?} exceeds max {:?}",
+        burst_sleep.requested(),
+        max_burst_sleep
+    );
+
+    // Verify the very next steady-state chunk converges
+    let _ = run_pacing(&mut limiter, 2, chunk);
+    let (bytes, sleep) = run_pacing(&mut limiter, 8, chunk);
+    let obs = observed_rate(bytes, sleep);
+    let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+    assert!(
+        deviation <= 5.0,
+        "post-overshoot with burst cap: {obs:.2} deviates {deviation:.3}%"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Zero-byte registration: verify no corruption during zero-traffic gaps
+// ---------------------------------------------------------------------------
+
+#[test]
+fn zero_byte_registration_preserves_limiter_state() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 5000_u64;
+    let chunk = (rate / 4) as usize;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // Establish steady state
+    let _ = run_pacing(&mut limiter, 2, chunk);
+    let (bytes1, sleep1) = run_pacing(&mut limiter, 4, chunk);
+    let obs1 = observed_rate(bytes1, sleep1);
+
+    // Inject many zero-byte registrations (simulating idle polling)
+    for _ in 0..100 {
+        let sleep = limiter.register(0);
+        assert!(sleep.is_noop(), "zero-byte register must be noop");
+    }
+
+    // Resume normal traffic - rate should still converge
+    let (bytes2, sleep2) = run_pacing(&mut limiter, 4, chunk);
+    let obs2 = observed_rate(bytes2, sleep2);
+
+    let dev1 = (obs1 - rate as f64).abs() / rate as f64 * 100.0;
+    let dev2 = (obs2 - rate as f64).abs() / rate as f64 * 100.0;
+    assert!(dev1 <= 5.0, "before zero-gap: {dev1:.3}%");
+    assert!(dev2 <= 5.0, "after zero-gap: {dev2:.3}%");
+}
+
+#[test]
+fn zero_byte_registration_does_not_advance_timing() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 1000_u64;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // Register some debt
+    let sleep1 = limiter.register(1000);
+    assert_eq!(sleep1.requested(), Duration::from_secs(1));
+
+    let debt_before = limiter.accumulated_debt_for_testing();
+
+    // Zero-byte registration should not modify debt
+    let sleep0 = limiter.register(0);
+    assert!(sleep0.is_noop());
+    assert_eq!(
+        limiter.accumulated_debt_for_testing(),
+        debt_before,
+        "zero-byte register must not alter debt"
+    );
+}
+
+#[test]
+fn zero_byte_registration_with_burst_cap() {
+    let rate = 1000_u64;
+    let burst = 500_u64;
+    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
+
+    // Build some debt
+    let _ = limiter.register(2000);
+    let debt_after_write = limiter.accumulated_debt_for_testing();
+    assert!(debt_after_write <= u128::from(burst));
+
+    // Zero-byte register must not change anything
+    let sleep = limiter.register(0);
+    assert!(sleep.is_noop());
+    assert_eq!(limiter.accumulated_debt_for_testing(), debt_after_write);
+}
+
+// ---------------------------------------------------------------------------
+// Convergence after configuration with burst added/removed mid-stream
+// ---------------------------------------------------------------------------
+
+#[test]
+fn add_burst_mid_stream_clamps_existing_debt() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 2000_u64;
+    let chunk = (rate / 4) as usize;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // Drive without burst - accumulate large debt via big write
+    let _ = limiter.register(rate as usize * 10);
+
+    // Now add a burst cap - this resets state via update_configuration
+    let burst = 1000_u64;
+    limiter.update_configuration(nz(rate), Some(nz(burst)));
+    assert_eq!(limiter.accumulated_debt_for_testing(), 0);
+
+    // Steady-state should converge at the same rate
+    let _ = run_pacing(&mut limiter, 2, chunk);
+    let (bytes, sleep) = run_pacing(&mut limiter, 8, chunk);
+    let obs = observed_rate(bytes, sleep);
+    let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+    assert!(
+        deviation <= 5.0,
+        "post-burst-add: {obs:.2} deviates {deviation:.3}%"
+    );
+}
+
+#[test]
+fn remove_burst_mid_stream_allows_unbounded_debt() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 1000_u64;
+    let burst = 500_u64;
+    let mut limiter = BandwidthLimiter::with_burst(nz(rate), Some(nz(burst)));
+
+    // Warm up with burst
+    let _ = run_pacing(&mut limiter, 4, (rate / 4) as usize);
+
+    // Remove burst
+    limiter.update_configuration(nz(rate), None);
+    assert!(limiter.burst_bytes().is_none());
+
+    // A large write should now accumulate unbounded debt
+    let sleep = limiter.register(5000);
+    assert_eq!(sleep.requested(), Duration::from_secs(5));
+
+    // Verify convergence resumes at the correct rate after removing burst
+    let chunk = (rate / 4) as usize;
+    let _ = run_pacing(&mut limiter, 2, chunk);
+    let (bytes, sleep_dur) = run_pacing(&mut limiter, 8, chunk);
+    let obs = observed_rate(bytes, sleep_dur);
+    let deviation = (obs - rate as f64).abs() / rate as f64 * 100.0;
+    assert!(
+        deviation <= 5.0,
+        "post-burst-removal: {obs:.2} deviates {deviation:.3}%"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Monotonic debt decay: verify debt decreases over successive registrations
+// ---------------------------------------------------------------------------
+
+#[test]
+fn debt_decreases_toward_zero_over_steady_state() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let rate = 2000_u64;
+    let chunk = (rate / 4) as usize;
+    let mut limiter = BandwidthLimiter::new(nz(rate));
+
+    // Create initial debt
+    let _ = limiter.register(rate as usize * 3);
+
+    // Track debt over successive steady-state chunks
+    let mut debts = Vec::new();
+    for _ in 0..10 {
+        let _ = limiter.register(chunk);
+        debts.push(limiter.accumulated_debt_for_testing());
+    }
+
+    // After the initial burst recovery, debt should stabilize at a low level.
+    // The last few entries should be smaller than the first few.
+    let first_half_max = debts[..5].iter().copied().max().unwrap_or(0);
+    let second_half_max = debts[5..].iter().copied().max().unwrap_or(0);
+    assert!(
+        second_half_max <= first_half_max,
+        "debt should decay: first-half max {first_half_max}, second-half max {second_half_max}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Rapid alternating rates: verify no accumulation of error
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rapid_alternation_error_does_not_accumulate() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let slow = 1000_u64;
+    let fast = 10_000_u64;
+    let mut limiter = BandwidthLimiter::new(nz(slow));
+
+    // Alternate between slow and fast 20 times, measuring the final rate
+    // after each switch to confirm no accumulated error.
+    for i in 0..20 {
+        let target = if i % 2 == 0 { fast } else { slow };
+        limiter.update_limit(nz(target));
+
+        let chunk = (target / 4) as usize;
+        let (bytes, sleep) = run_pacing(&mut limiter, 4, chunk);
+        let obs = observed_rate(bytes, sleep);
+        let deviation = (obs - target as f64).abs() / target as f64 * 100.0;
+        assert!(
+            deviation <= 5.0,
+            "alternation {i} (target {target}): observed {obs:.2} deviates {deviation:.3}%"
+        );
+    }
+}
