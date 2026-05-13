@@ -214,9 +214,10 @@ impl ReceiverContext {
                 reader,
                 &mut ndx_read_codec,
                 self.config.flags.xattrs,
-                self.compat_flags.is_some_and(|f| {
-                    f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
-                }),
+                self.protocol.as_u8() >= 31
+                    && self.compat_flags.is_some_and(|f| {
+                        !f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
+                    }),
             )?;
 
             debug_assert_eq!(

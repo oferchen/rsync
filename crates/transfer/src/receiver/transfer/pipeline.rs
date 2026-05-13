@@ -86,9 +86,10 @@ impl ReceiverContext {
             io_uring_policy: self.config.write.io_uring_policy,
             io_uring_depth: self.config.write.io_uring_depth,
             preserve_xattrs: self.config.flags.xattrs,
-            want_xattr_optim: self.compat_flags.is_some_and(|f| {
-                f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
-            }),
+            want_xattr_optim: self.protocol.as_u8() >= 31
+                && self.compat_flags.is_some_and(|f| {
+                    !f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
+                }),
             append: self.config.flags.append,
         };
 
@@ -415,9 +416,10 @@ impl ReceiverContext {
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
         let write_iflags = self.protocol.supports_iflags();
         let preserve_xattrs = self.config.flags.xattrs;
-        let want_xattr_optim = self
-            .compat_flags
-            .is_some_and(|f| f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION));
+        let want_xattr_optim = self.protocol.as_u8() >= 31
+            && self.compat_flags.is_some_and(|f| {
+                !f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
+            });
 
         for &(file_idx, file_entry, _) in files_to_transfer {
             // upstream: generator.c:1925 - write_ndx(f_out, ndx)
