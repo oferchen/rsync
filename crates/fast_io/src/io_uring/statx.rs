@@ -213,36 +213,35 @@ pub fn submit_statx_blocking(
     mask: u32,
 ) -> io::Result<libc::statx> {
     let mut statx_buf: libc::statx = unsafe { std::mem::zeroed() };
-    let mut args = StatxArgs {
-        dirfd,
-        pathname,
-        flags,
-        mask,
-        statx_buf: &mut statx_buf,
-    };
-    let sqe = build_statx_sqe(&mut args)?.user_data(0);
-    let mut ring = io_uring::IoUring::new(2)?;
-    // SAFETY: `sqe` references the CStr path borrowed from `pathname` and the
-    // statx buffer borrowed from our stack, both of which outlive
-    // `submit_and_wait`. The ring is local and has no other outstanding
-    // references.
-    unsafe {
-        ring.submission()
-            .push(&sqe)
-            .map_err(|_| io::Error::other("submission queue full while pushing STATX SQE"))?;
+    {
+        let mut args = StatxArgs {
+            dirfd,
+            pathname,
+            flags,
+            mask,
+            statx_buf: &mut statx_buf,
+        };
+        let sqe = build_statx_sqe(&mut args)?.user_data(0);
+        let mut ring = io_uring::IoUring::new(2)?;
+        // SAFETY: `sqe` references the CStr path borrowed from `pathname` and
+        // the statx buffer borrowed from our stack, both of which outlive
+        // `submit_and_wait`. The ring is local and has no other outstanding
+        // references.
+        unsafe {
+            ring.submission()
+                .push(&sqe)
+                .map_err(|_| io::Error::other("submission queue full while pushing STATX SQE"))?;
+        }
+        ring.submit_and_wait(1)?;
+        let cqe = ring
+            .completion()
+            .next()
+            .ok_or_else(|| io::Error::other("missing STATX CQE"))?;
+        let result = cqe.result();
+        if result < 0 {
+            return Err(io::Error::from_raw_os_error(-result));
+        }
     }
-    ring.submit_and_wait(1)?;
-    let cqe = ring
-        .completion()
-        .next()
-        .ok_or_else(|| io::Error::other("missing STATX CQE"))?;
-    let result = cqe.result();
-    if result < 0 {
-        return Err(io::Error::from_raw_os_error(-result));
-    }
-    // Re-borrow to satisfy the borrow checker - args held the mutable ref
-    // but the kernel has already written through the raw pointer.
-    drop(args);
     Ok(statx_buf)
 }
 
