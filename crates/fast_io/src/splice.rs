@@ -1452,7 +1452,7 @@ mod tests {
 
             // Perform two sequential transfers through the same pipe.
             for i in 0u8..2 {
-                let content: Vec<u8> = (0..128).map(|j| j.wrapping_add(i * 64)).collect();
+                let content: Vec<u8> = (0..128u8).map(|j| j.wrapping_add(i * 64)).collect();
                 let mut dest = NamedTempFile::new().unwrap();
 
                 let (recv_fd, writer) = socketpair_with_writer(content.clone());
