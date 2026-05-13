@@ -108,7 +108,8 @@ use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
 
 pub use buffer_ring::{
-    BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags, pbuf_ring_supported,
+    BgidAllocator, BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags,
+    pbuf_ring_supported,
 };
 pub use config::{
     IoUringConfig, IoUringKernelInfo, config_detail, is_io_uring_available, sqpoll_fell_back,
