@@ -4,11 +4,13 @@
 //! delta generation. It indexes signature blocks by their rolling checksum
 //! components `(sum1, sum2)` for efficient matching.
 //!
-//! Uses [`FxHashMap`] for 2-5x faster lookups compared to std HashMap,
-//! optimized for small integer keys like `(u16, u16)`.
+//! Uses a flat open-addressing hash table ([`CompactLookup`]) with Robin Hood
+//! probing for cache-friendly O(1) lookups. Each entry is 8 bytes (packed key
+//! + block index), fitting 8 entries per 64-byte cache line.
 
 mod bithash;
 mod builder;
+mod compact_lookup;
 mod matched_blocks;
 
 #[cfg(test)]
@@ -20,13 +22,12 @@ mod tests;
 
 use std::collections::VecDeque;
 
-use rustc_hash::FxHashMap;
-
 use checksums::RollingDigest;
 
 use signature::{SignatureAlgorithm, SignatureBlock};
 
 use bithash::BitHash;
+use compact_lookup::CompactLookup;
 pub use matched_blocks::MatchedBlocks;
 
 /// Size of the tag table for quick rolling checksum rejection (2^16 entries).
@@ -38,26 +39,26 @@ const TAG_TABLE_SIZE: usize = 1 << 16;
 
 /// Index over a file signature that accelerates delta matching.
 ///
-/// Uses [`FxHashMap`] keyed by `(sum1, sum2)` rolling checksum components for O(1)
-/// block lookup. A tag table indexed by `sum1` provides fast-path rejection
-/// before the hash probe, mirroring upstream rsync's `tag_table` in `match.c`.
-/// The block length is stored separately since all indexed blocks have the same
-/// canonical length.
+/// Uses a flat open-addressing hash table ([`CompactLookup`]) keyed by packed
+/// `(sum1, sum2)` for O(1) block lookup with excellent cache locality. A tag
+/// table indexed by `sum1` provides fast-path rejection before the hash probe,
+/// mirroring upstream rsync's `tag_table` in `match.c`. The block length is
+/// stored separately since all indexed blocks have the same canonical length.
 #[derive(Clone, Debug)]
 pub struct DeltaSignatureIndex {
     block_length: usize,
     strong_length: usize,
     algorithm: SignatureAlgorithm,
     blocks: Vec<SignatureBlock>,
-    /// Lookup table keyed by (sum1, sum2) - block length is constant for all entries.
-    lookup: FxHashMap<(u16, u16), Vec<usize>>,
+    /// Flat open-addressing lookup keyed by packed (sum1, sum2).
+    lookup: CompactLookup,
     /// Tag table for O(1) rejection using sum1 (low 16 bits of rolling checksum).
     /// upstream: match.c - `tag_table[s1]` check before hash probe.
     tag_table: Vec<bool>,
     /// Bithash prefilter mixing both rolling-sum halves.
     ///
     /// Sized to roughly 8x the rsum-bucket count (~1 byte per indexed block),
-    /// the bithash rejects ~7/8 of post-tag misses before the FxHashMap walk.
+    /// the bithash rejects ~7/8 of post-tag misses before the hash probe.
     /// Mirrors zsync's `librcksum/rsum.c:362-366` probe expression.
     bithash: BitHash,
 }
@@ -122,46 +123,14 @@ impl DeltaSignatureIndex {
         }
 
         // zsync-style bithash prefilter: rejects ~7/8 of post-tag misses
-        // using both sum halves before the FxHashMap probe. One-sided, so
+        // using both sum halves before the hash-table probe. One-sided, so
         // never produces a false negative.
         if !self.bithash.contains(digest.value()) {
             return None;
         }
 
-        let key = (digest.sum1(), digest.sum2());
-        let candidates = self.lookup.get(&key)?;
-
-        // Strong checksum is CPU-intensive; parallelise only when there are
-        // enough candidates to amortise rayon's per-call overhead.
-        #[cfg(feature = "parallel")]
-        if candidates.len() >= Self::PARALLEL_THRESHOLD {
-            return self.find_match_parallel(candidates, window, matched);
-        }
-
-        self.find_match_sequential(candidates, window, matched)
-    }
-
-    /// Minimum number of candidates to trigger parallel verification.
-    ///
-    /// Below this threshold, the overhead of thread spawning exceeds the benefit.
-    /// With 4+ candidates, parallel strong checksum computation provides measurable speedup.
-    #[cfg(feature = "parallel")]
-    const PARALLEL_THRESHOLD: usize = 4;
-
-    /// Sequential candidate verification (used for few candidates).
-    ///
-    /// Computes the strong checksum once and compares against all candidates,
-    /// mirroring upstream rsync's `done_csum2` flag in `match.c:hash_search()`.
-    /// Skips candidates already marked in `matched` when the bitmap is supplied.
-    #[inline]
-    fn find_match_sequential(
-        &self,
-        candidates: &[usize],
-        window: &[u8],
-        matched: Option<&MatchedBlocks>,
-    ) -> Option<usize> {
         let strong = self.algorithm.compute_truncated(window, self.strong_length);
-        for &index in candidates {
+        for index in self.lookup.find_all(digest.sum1(), digest.sum2()) {
             if matches!(matched, Some(m) if m.is_matched(index)) {
                 continue;
             }
@@ -172,32 +141,6 @@ impl DeltaSignatureIndex {
             }
         }
         None
-    }
-
-    /// Parallel candidate verification using rayon.
-    ///
-    /// Computes strong checksums concurrently and returns the first match found.
-    /// Uses `find_any` for early termination when a match is discovered.
-    #[cfg(feature = "parallel")]
-    fn find_match_parallel(
-        &self,
-        candidates: &[usize],
-        window: &[u8],
-        matched: Option<&MatchedBlocks>,
-    ) -> Option<usize> {
-        use rayon::prelude::*;
-
-        candidates
-            .par_iter()
-            .find_any(|&&index| {
-                if matches!(matched, Some(m) if m.is_matched(index)) {
-                    return false;
-                }
-                let block = &self.blocks[index];
-                let strong = self.algorithm.compute_truncated(window, self.strong_length);
-                strong.as_slice() == block.strong()
-            })
-            .copied()
     }
 
     /// Attempts to locate a matching block for a possibly non-contiguous window
@@ -242,30 +185,10 @@ impl DeltaSignatureIndex {
             return None;
         }
 
-        let key = (digest.sum1(), digest.sum2());
-        let candidates = self.lookup.get(&key)?;
-
-        #[cfg(feature = "parallel")]
-        if candidates.len() >= Self::PARALLEL_THRESHOLD {
-            return self.find_match_slices_parallel(candidates, first, second, matched);
-        }
-
-        self.find_match_slices_sequential(candidates, first, second, matched)
-    }
-
-    /// Sequential candidate verification for non-contiguous window data.
-    #[inline]
-    fn find_match_slices_sequential(
-        &self,
-        candidates: &[usize],
-        first: &[u8],
-        second: &[u8],
-        matched: Option<&MatchedBlocks>,
-    ) -> Option<usize> {
         let strong = self
             .algorithm
             .compute_truncated_slices(first, second, self.strong_length);
-        for &index in candidates {
+        for index in self.lookup.find_all(digest.sum1(), digest.sum2()) {
             if matches!(matched, Some(m) if m.is_matched(index)) {
                 continue;
             }
@@ -276,32 +199,6 @@ impl DeltaSignatureIndex {
             }
         }
         None
-    }
-
-    /// Parallel candidate verification for non-contiguous window data.
-    #[cfg(feature = "parallel")]
-    fn find_match_slices_parallel(
-        &self,
-        candidates: &[usize],
-        first: &[u8],
-        second: &[u8],
-        matched: Option<&MatchedBlocks>,
-    ) -> Option<usize> {
-        use rayon::prelude::*;
-
-        candidates
-            .par_iter()
-            .find_any(|&&index| {
-                if matches!(matched, Some(m) if m.is_matched(index)) {
-                    return false;
-                }
-                let block = &self.blocks[index];
-                let strong =
-                    self.algorithm
-                        .compute_truncated_slices(first, second, self.strong_length);
-                strong.as_slice() == block.strong()
-            })
-            .copied()
     }
 
     /// Checks whether a specific block matches the given rolling digest and window data.
