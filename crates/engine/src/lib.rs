@@ -215,7 +215,7 @@ pub use local_copy::{
     LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyOptionsBuilder, LocalCopyPlan,
     LocalCopySummary, ReferenceDirectory, ReferenceDirectoryKind, SkipCompressList,
     SkipCompressParseError, SparseDetectStrategy, SparseDetector, SparseReader, SparseRegion,
-    SparseWriter, compute_backup_path,
+    SparseWriteStats, SparseWriter, ZeroScanStrategy, compute_backup_path,
 };
 
 /// File signature generation for delta transfers.
