@@ -238,7 +238,7 @@ impl ReceiverContext {
 
                 // upstream: hlink.c:maybe_hard_link() -> atomic_create() -> do_link()
                 // Try io_uring LINKAT on Linux 5.15+, fall back to std::fs::hard_link.
-                if let Err(e) = hard_link_with_io_uring_fallback(&leader_path, &link_path) {
+                if let Err(e) = fast_io::hard_link(&leader_path, &link_path) {
                     debug_log!(
                         Recv,
                         1,
@@ -283,24 +283,12 @@ impl ReceiverContext {
     }
 }
 
-/// Creates a hard link, trying io_uring first on supported kernels.
-///
-/// On Linux 5.15+ with io_uring LINKAT support, submits the link as an
-/// `IORING_OP_LINKAT` SQE. Falls back to `std::fs::hard_link` when io_uring
-/// is unavailable (non-Linux, old kernel, or feature not compiled in).
-fn hard_link_with_io_uring_fallback(src: &Path, dst: &Path) -> io::Result<()> {
-    if let Some(result) = fast_io::try_hard_link_via_io_uring(src, dst) {
-        return result;
-    }
-    fs::hard_link(src, dst)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::fs;
 
-    /// Verifies the io_uring LINKAT fallback creates a valid hard link
-    /// regardless of whether io_uring handles it or `std::fs::hard_link` does.
+    /// Verifies `fast_io::hard_link` creates a valid hard link regardless of
+    /// whether io_uring handles it or `std::fs::hard_link` does.
     #[test]
     fn hard_link_via_io_uring_or_fallback_creates_link() {
         let dir = tempfile::tempdir().unwrap();
@@ -309,7 +297,7 @@ mod tests {
 
         fs::write(&src, b"hardlink payload").unwrap();
 
-        hard_link_with_io_uring_fallback(&src, &dst).unwrap();
+        fast_io::hard_link(&src, &dst).unwrap();
 
         assert!(src.exists());
         assert!(dst.exists());
@@ -336,7 +324,7 @@ mod tests {
         fs::write(&src, b"source").unwrap();
         fs::write(&dst, b"existing").unwrap();
 
-        let result = hard_link_with_io_uring_fallback(&src, &dst);
+        let result = fast_io::hard_link(&src, &dst);
         assert!(result.is_err());
     }
 
