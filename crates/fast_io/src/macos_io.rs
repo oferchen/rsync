@@ -754,8 +754,7 @@ mod tests {
 
     #[test]
     fn max_iov_count_is_reasonable() {
-        assert!(MAX_IOV_COUNT > 0);
-        assert!(MAX_IOV_COUNT <= 1024); // POSIX IOV_MAX on macOS
+        assert_eq!(MAX_IOV_COUNT, 64);
     }
 
     #[test]
