@@ -135,12 +135,18 @@ impl IoUringConfig {
 pub mod buffer_ring {
     use std::io;
 
-    /// Errors specific to buffer ring operations (stub - never constructed).
+    /// Errors specific to buffer ring operations.
     #[derive(Debug, thiserror::Error)]
     pub enum BufferRingError {
         /// PBUF_RING is not supported on this platform.
         #[error("PBUF_RING is not available on this platform")]
         Unsupported,
+
+        /// The buffer group ID namespace is exhausted (stub variant mirrors
+        /// the Linux `BufferRingError::BgidExhausted` so cross-platform
+        /// callers can pattern-match without `cfg`-gating).
+        #[error("io_uring buffer group ID namespace exhausted (limit: 65535)")]
+        BgidExhausted,
     }
 
     impl From<BufferRingError> for io::Error {
@@ -245,6 +251,26 @@ pub mod buffer_ring {
     #[inline]
     pub fn buffer_id_from_cqe_flags(_flags: u32) -> Option<u16> {
         None
+    }
+
+    /// Stub allocator for buffer group IDs.
+    ///
+    /// Mirrors the Linux `BgidAllocator` interface so cross-platform callers
+    /// can compile without `cfg`-gating. On this platform io_uring is
+    /// unavailable, so `allocate` always reports the namespace as exhausted
+    /// and `remaining` reports zero.
+    pub struct BgidAllocator;
+
+    impl BgidAllocator {
+        /// Always returns `Err(BgidExhausted)` on this platform.
+        pub fn allocate() -> Result<u16, BufferRingError> {
+            Err(BufferRingError::BgidExhausted)
+        }
+
+        /// Always returns 0 on this platform.
+        pub fn remaining() -> u32 {
+            0
+        }
     }
 }
 
