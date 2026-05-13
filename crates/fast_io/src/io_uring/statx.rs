@@ -184,7 +184,7 @@ pub fn build_statx_sqe_unchecked(args: &StatxArgs<'_>) -> squeue::Entry {
         args.pathname.as_ptr(),
         (args.statx_buf as *mut libc::statx).cast::<types::statx>(),
     )
-    .flags(args.flags as u32)
+    .flags(args.flags)
     .mask(args.mask)
     .build()
 }
@@ -454,34 +454,21 @@ fn fallback_statx_single(path: &Path, follow_symlinks: bool) -> StatxResult {
 #[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 fn rustix_statx_to_libc(src: &rustix::fs::Statx) -> libc::statx {
-    // SAFETY: `libc::statx` is a plain-old-data C struct. Zero-initializing
-    // is valid and sets all padding/spare fields to zero.
-    let mut dst: libc::statx = unsafe { std::mem::zeroed() };
-    dst.stx_mask = src.stx_mask;
-    dst.stx_blksize = src.stx_blksize;
-    dst.stx_attributes = src.stx_attributes;
-    dst.stx_nlink = src.stx_nlink;
-    dst.stx_uid = src.stx_uid;
-    dst.stx_gid = src.stx_gid;
-    dst.stx_mode = src.stx_mode;
-    dst.stx_ino = src.stx_ino;
-    dst.stx_size = src.stx_size;
-    dst.stx_blocks = src.stx_blocks;
-    dst.stx_attributes_mask = src.stx_attributes_mask;
-    dst.stx_atime.tv_sec = src.stx_atime.tv_sec;
-    dst.stx_atime.tv_nsec = src.stx_atime.tv_nsec;
-    dst.stx_btime.tv_sec = src.stx_btime.tv_sec;
-    dst.stx_btime.tv_nsec = src.stx_btime.tv_nsec;
-    dst.stx_ctime.tv_sec = src.stx_ctime.tv_sec;
-    dst.stx_ctime.tv_nsec = src.stx_ctime.tv_nsec;
-    dst.stx_mtime.tv_sec = src.stx_mtime.tv_sec;
-    dst.stx_mtime.tv_nsec = src.stx_mtime.tv_nsec;
-    dst.stx_rdev_major = src.stx_rdev_major;
-    dst.stx_rdev_minor = src.stx_rdev_minor;
-    dst.stx_dev_major = src.stx_dev_major;
-    dst.stx_dev_minor = src.stx_dev_minor;
-    dst.stx_mnt_id = src.stx_mnt_id;
-    dst
+    // Both types are #[repr(C)] representations of the kernel `struct statx`.
+    // Field-by-field copy is fragile because rustix exposes some fields as
+    // newtype wrappers (e.g. `StatxAttributes`) depending on its backend
+    // feature configuration, while libc uses plain integers. A byte-level
+    // copy sidesteps the type mismatch entirely.
+    const _: () = assert!(
+        std::mem::size_of::<rustix::fs::Statx>() == std::mem::size_of::<libc::statx>()
+    );
+    const _: () = assert!(
+        std::mem::align_of::<rustix::fs::Statx>() == std::mem::align_of::<libc::statx>()
+    );
+    // SAFETY: Both types represent the same kernel struct with identical
+    // size and alignment (verified by const assertions above). All bit
+    // patterns of the C struct are valid for both representations.
+    unsafe { std::ptr::read((src as *const rustix::fs::Statx).cast::<libc::statx>()) }
 }
 
 #[cfg(test)]
