@@ -28,5 +28,8 @@ pub(crate) use paths::partial_destination_path;
 pub(crate) use paths::temporary_destination_path;
 #[cfg(test)]
 pub(crate) use preallocate::maybe_preallocate_destination;
-pub use sparse::{SparseDetectStrategy, SparseDetector, SparseReader, SparseRegion, SparseWriter};
+pub use sparse::{
+    SparseDetectStrategy, SparseDetector, SparseReader, SparseRegion, SparseWriteStats,
+    SparseWriter, ZeroScanStrategy,
+};
 pub(crate) use sparse::{SparseWriteState, write_sparse_chunk};
