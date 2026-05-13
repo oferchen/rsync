@@ -318,7 +318,7 @@ fn submit_statx_batch_io_uring(
     // across submission and completion.
     let mut c_paths: Vec<Option<CString>> = Vec::with_capacity(count);
     let mut statx_bufs: Vec<libc::statx> = vec![unsafe { std::mem::zeroed() }; count];
-    let mut path_errors: Vec<Option<io::Error>> = vec![None; count];
+    let mut path_errors: Vec<Option<io::Error>> = (0..count).map(|_| None).collect();
 
     for (i, path) in paths.iter().enumerate() {
         match CString::new(path.as_os_str().as_bytes()) {
@@ -349,7 +349,7 @@ fn submit_statx_batch_io_uring(
                 c_path.as_ptr(),
                 (&mut statx_bufs[i] as *mut libc::statx).cast::<types::statx>(),
             )
-            .flags(flags as u32)
+            .flags(flags)
             .mask(mask)
             .build()
             .user_data(i as u64);
@@ -457,9 +457,9 @@ fn rustix_statx_to_libc(src: &rustix::fs::Statx) -> libc::statx {
     // SAFETY: `libc::statx` is a plain-old-data C struct. Zero-initializing
     // is valid and sets all padding/spare fields to zero.
     let mut dst: libc::statx = unsafe { std::mem::zeroed() };
-    dst.stx_mask = src.stx_mask.bits();
+    dst.stx_mask = src.stx_mask;
     dst.stx_blksize = src.stx_blksize;
-    dst.stx_attributes = src.stx_attributes.bits();
+    dst.stx_attributes = src.stx_attributes;
     dst.stx_nlink = src.stx_nlink;
     dst.stx_uid = src.stx_uid;
     dst.stx_gid = src.stx_gid;
@@ -467,7 +467,7 @@ fn rustix_statx_to_libc(src: &rustix::fs::Statx) -> libc::statx {
     dst.stx_ino = src.stx_ino;
     dst.stx_size = src.stx_size;
     dst.stx_blocks = src.stx_blocks;
-    dst.stx_attributes_mask = src.stx_attributes_mask.bits();
+    dst.stx_attributes_mask = src.stx_attributes_mask;
     dst.stx_atime.tv_sec = src.stx_atime.tv_sec;
     dst.stx_atime.tv_nsec = src.stx_atime.tv_nsec;
     dst.stx_btime.tv_sec = src.stx_btime.tv_sec;
