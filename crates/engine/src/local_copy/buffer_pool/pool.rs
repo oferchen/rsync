@@ -414,13 +414,11 @@ impl<A: BufferAllocator> BufferPool<A> {
     }
 
     /// Returns a reference to the throughput tracker, if enabled.
-    #[must_use]
     pub fn throughput_tracker(&self) -> Option<&ThroughputTracker> {
         self.throughput.as_ref()
     }
 
     /// Returns a reference to the buffer controller, if enabled.
-    #[must_use]
     pub fn buffer_controller(&self) -> Option<&AdaptiveBufferController> {
         self.buffer_controller.as_ref()
     }
@@ -475,7 +473,6 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// Returns `None` if a memory cap is configured and outstanding memory
     /// is at or above the cap. Otherwise behaves identically to
     /// [`acquire_from`](Self::acquire_from).
-    #[must_use]
     pub fn try_acquire_from(pool: Arc<Self>) -> Option<BufferGuard<A>> {
         // Fast path: check thread-local cache.
         if let Some(buffer) = thread_local_cache::try_take() {
@@ -634,7 +631,6 @@ impl<A: BufferAllocator> BufferPool<A> {
     ///
     /// Returns `None` if a memory cap is configured and outstanding memory
     /// is at or above the cap.
-    #[must_use]
     pub fn try_acquire(&self) -> Option<BorrowedBufferGuard<'_, A>> {
         // Fast path: check thread-local cache.
         if let Some(buffer) = thread_local_cache::try_take() {
@@ -875,7 +871,6 @@ impl<A: BufferAllocator> BufferPool<A> {
     }
 
     /// Returns the configured memory cap in bytes, or `None` if uncapped.
-    #[must_use]
     pub fn memory_cap(&self) -> Option<usize> {
         self.memory_cap.as_ref().map(|cap| cap.limit())
     }

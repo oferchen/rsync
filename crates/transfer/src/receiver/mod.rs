@@ -467,7 +467,6 @@ impl ReceiverContext {
     ///
     /// Used by `build_files_to_transfer()` to reject daemon-excluded files
     /// before accepting transfer data.
-    #[must_use]
     pub fn daemon_filter_set(&self) -> Option<&FilterSet> {
         self.daemon_filter_set.as_ref()
     }

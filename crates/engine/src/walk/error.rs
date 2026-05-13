@@ -68,7 +68,6 @@ impl WalkError {
     }
 
     /// Returns the path where the error occurred, if available.
-    #[must_use]
     pub fn path(&self) -> Option<&PathBuf> {
         match self {
             Self::Io { path, .. } | Self::Loop { path, .. } => Some(path),

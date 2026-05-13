@@ -145,7 +145,6 @@ impl IocpDiskBatch {
     }
 
     /// Always returns `None` on this platform.
-    #[must_use]
     pub fn try_new(_config: &IocpConfig) -> Option<Self> {
         None
     }
