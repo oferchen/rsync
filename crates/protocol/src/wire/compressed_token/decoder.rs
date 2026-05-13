@@ -73,7 +73,6 @@ impl CompressedTokenDecoder {
     ///
     /// upstream: token.c:recv_zstd_token()
     #[cfg(feature = "zstd")]
-    #[must_use]
     pub fn new_zstd() -> io::Result<Self> {
         Ok(Self {
             inner: DecoderInner::Zstd(ZstdTokenDecoder::new()?),

@@ -54,7 +54,6 @@ impl<R: std::io::Read> StreamingFileList<R> {
     /// - `Ok(Some(entry))` - An entry is ready for processing
     /// - `Ok(None)` - No more entries (end of list reached)
     /// - `Err(e)` - An I/O error occurred
-    #[must_use]
     pub fn next_ready(&mut self) -> std::io::Result<Option<FileEntry>> {
         if let Some(entry) = self.incremental.pop() {
             return Ok(Some(entry));
@@ -84,7 +83,6 @@ impl<R: std::io::Read> StreamingFileList<R> {
     ///
     /// Useful when you want to process entries in order after reading
     /// the complete list, but still want incremental dependency tracking.
-    #[must_use]
     pub fn read_all(mut self) -> std::io::Result<IncrementalFileListIter> {
         while !self.finished_reading {
             match self.reader.read_entry(&mut self.source)? {

@@ -35,7 +35,6 @@ use super::error::MergeFileError;
 /// # Errors
 ///
 /// Returns [`MergeFileError`] if any line contains unrecognised syntax.
-#[must_use]
 pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>, MergeFileError> {
     let mut rules = Vec::new();
 

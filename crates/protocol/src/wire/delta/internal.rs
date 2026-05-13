@@ -61,7 +61,6 @@ pub fn write_delta_op<W: Write>(writer: &mut W, op: &DeltaOp) -> io::Result<()> 
 /// Returns an error if:
 /// - Reading from the underlying stream fails
 /// - An invalid opcode is encountered (not 0x00 or 0x01)
-#[must_use]
 pub fn read_delta_op<R: Read>(reader: &mut R) -> io::Result<DeltaOp> {
     let mut opcode = [0u8; 1];
     reader.read_exact(&mut opcode)?;
@@ -125,7 +124,6 @@ pub fn write_delta<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Result<()> 
 /// Returns an error if:
 /// - Reading from the underlying stream fails
 /// - An invalid opcode is encountered in any delta operation
-#[must_use]
 pub fn read_delta<R: Read>(reader: &mut R) -> io::Result<Vec<DeltaOp>> {
     let raw_count = read_varint(reader)?;
     if raw_count < 0 {

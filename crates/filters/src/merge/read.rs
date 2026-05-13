@@ -27,7 +27,6 @@ use super::parse::parse_rules;
 /// # Errors
 ///
 /// Returns an error if the file cannot be read or contains invalid syntax.
-#[must_use]
 pub fn read_rules(path: &Path) -> Result<Vec<FilterRule>, MergeFileError> {
     let content = fs::read_to_string(path).map_err(|e| MergeFileError::io_error(path, &e))?;
     parse_rules(&content, path)

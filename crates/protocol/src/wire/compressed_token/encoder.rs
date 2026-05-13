@@ -65,7 +65,6 @@ impl CompressedTokenEncoder {
     ///
     /// upstream: token.c:send_zstd_token()
     #[cfg(feature = "zstd")]
-    #[must_use]
     pub fn new_zstd(level: i32) -> io::Result<Self> {
         Ok(Self {
             inner: EncoderInner::Zstd(ZstdTokenEncoder::new(level)?),
