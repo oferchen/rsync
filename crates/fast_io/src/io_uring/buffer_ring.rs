@@ -474,7 +474,6 @@ impl BufferRing {
     ///
     /// This is the preferred entry point for optional PBUF_RING usage - it
     /// never returns an error, making it safe to call speculatively.
-    #[must_use]
     pub fn try_new(ring: &RawIoUring, config: BufferRingConfig) -> Option<Self> {
         Self::new(ring, config).ok()
     }
@@ -511,7 +510,6 @@ impl BufferRing {
     /// is dropped.
     ///
     /// Returns `None` if `buf_id` is out of range.
-    #[must_use]
     pub fn buffer_ptr(&self, buf_id: u16) -> Option<*const u8> {
         if u32::from(buf_id) >= self.config.ring_size {
             return None;
@@ -528,7 +526,6 @@ impl BufferRing {
     /// - `buf_id` was obtained from a completed CQE (not recycled yet)
     /// - `len` does not exceed the CQE result (bytes actually written by kernel)
     /// - No concurrent recycling of this buffer occurs during the slice lifetime
-    #[must_use]
     pub unsafe fn buffer_slice(&self, buf_id: u16, len: usize) -> Option<&[u8]> {
         let ptr = self.buffer_ptr(buf_id)?;
         let clamped = len.min(self.config.buffer_size as usize);
@@ -644,7 +641,6 @@ impl Drop for BufferRing {
 /// `IORING_CQE_F_BUFFER` in the flags and encodes the buffer ID in
 /// the upper 16 bits. Returns `None` if the buffer flag is not set.
 #[inline]
-#[must_use]
 pub fn buffer_id_from_cqe_flags(flags: u32) -> Option<u16> {
     if flags & IORING_CQE_F_BUFFER != 0 {
         Some((flags >> IORING_CQE_BUFFER_SHIFT) as u16)

@@ -348,7 +348,6 @@ impl RegisteredBufferGroup {
     ///
     /// This is the preferred entry point for optional buffer registration - it
     /// never returns an error, making it safe to call speculatively.
-    #[must_use]
     pub fn try_new(ring: &RawIoUring, buffer_size: usize, count: usize) -> Option<Self> {
         Self::new(ring, buffer_size, count).ok()
     }
@@ -383,7 +382,6 @@ impl RegisteredBufferGroup {
     ///
     /// Bumps `total_acquires` on entry and `total_misses` on the `None`
     /// return path. Both counters are `Relaxed` and feed [`stats`](Self::stats).
-    #[must_use]
     pub fn checkout(&self) -> Option<RegisteredBufferSlot<'_>> {
         self.total_acquires.fetch_add(1, Ordering::Relaxed);
         for (word_idx, word) in self.free_bitset.iter().enumerate() {

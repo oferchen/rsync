@@ -229,7 +229,6 @@ impl DeltaConsumer {
     ///
     /// Useful for polling from a pipeline loop where blocking would stall
     /// the producer.
-    #[must_use]
     pub fn try_recv(&self) -> Option<DeltaResult> {
         self.result_rx.try_recv().ok()
     }

@@ -83,7 +83,6 @@ impl IoUringDiskBatch {
     ///
     /// This is the recommended constructor for production use - callers should
     /// fall back to standard buffered I/O when `None` is returned.
-    #[must_use]
     pub fn try_new(config: &IoUringConfig) -> Option<Self> {
         if !is_io_uring_available() {
             return None;

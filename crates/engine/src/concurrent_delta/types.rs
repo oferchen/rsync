@@ -210,7 +210,6 @@ impl DeltaWork {
     }
 
     /// Returns the basis path, if this is a delta transfer.
-    #[must_use]
     pub fn basis_path(&self) -> Option<&std::path::Path> {
         self.basis_path.as_deref()
     }
@@ -220,7 +219,6 @@ impl DeltaWork {
     /// Present only when the work item was constructed via
     /// [`DeltaWork::delta_with_source`]. When `Some`, the strategy runs the
     /// full block-matching pipeline rather than relying on pre-computed stats.
-    #[must_use]
     pub fn source_path(&self) -> Option<&std::path::Path> {
         self.source_path.as_deref()
     }
