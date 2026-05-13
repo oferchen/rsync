@@ -87,7 +87,6 @@ impl DaemonConfig {
     /// When running as a Windows service, the SCM control handler writes to
     /// these flags. The daemon accept loop uses them instead of registering
     /// its own platform signal handlers.
-    #[must_use]
     pub fn take_signal_flags(&mut self) -> Option<SignalFlags> {
         self.signal_flags.take()
     }
@@ -97,7 +96,6 @@ impl DaemonConfig {
     /// When set, the daemon skips its own socket bind and uses this listener
     /// directly. This eliminates the TOCTOU race between test port allocation
     /// and daemon bind.
-    #[must_use]
     pub fn take_pre_bound_listener(&mut self) -> Option<TcpListener> {
         self.pre_bound_listener.take()
     }

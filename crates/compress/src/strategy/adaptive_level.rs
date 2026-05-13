@@ -169,7 +169,6 @@ impl DefaultAdaptiveLevelStrategy {
     }
 
     /// Returns the most recently smoothed ratio, if any blocks have been observed.
-    #[must_use]
     pub const fn smoothed_ratio(&self) -> Option<f64> {
         self.smoothed_ratio
     }

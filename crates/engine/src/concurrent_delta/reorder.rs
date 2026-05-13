@@ -703,7 +703,7 @@ mod tests {
         assert_eq!(buf.next_expected(), 0);
 
         buf.insert(0, "x").unwrap();
-        buf.next_in_order();
+        let _ = buf.next_in_order();
         assert_eq!(buf.next_expected(), 1);
 
         buf.insert(1, "y").unwrap();
@@ -1575,7 +1575,7 @@ mod passthrough_tests {
         assert!(!buf.is_empty());
         assert_eq!(buf.buffered_count(), 1);
 
-        buf.next_in_order();
+        let _ = buf.next_in_order();
         assert!(buf.is_empty());
         assert_eq!(buf.buffered_count(), 0);
     }
@@ -1628,7 +1628,7 @@ mod passthrough_tests {
         assert_eq!(buf.next_expected(), 0);
 
         buf.insert(5, 50).unwrap();
-        buf.next_in_order();
+        let _ = buf.next_in_order();
         assert_eq!(buf.next_expected(), 1);
 
         buf.insert(3, 30).unwrap();

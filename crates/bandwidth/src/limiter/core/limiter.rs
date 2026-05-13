@@ -131,7 +131,6 @@ impl BandwidthLimiter {
     /// each [`register`](Self::register) call. Returns `None` when debt is
     /// unconstrained.
     #[inline]
-    #[must_use]
     pub const fn burst_bytes(&self) -> Option<NonZeroU64> {
         self.burst_bytes
     }

@@ -135,7 +135,6 @@ impl IconvSetting {
     /// - `options.c::recv_iconv_settings` (parse `--iconv=LOCAL,REMOTE`)
     /// - `compat.c:716-718` (gates `CF_SYMLINK_ICONV` advertisement on
     ///   whether iconv is configured)
-    #[must_use]
     pub fn resolve_converter(&self) -> Option<FilenameConverter> {
         match self {
             Self::Unspecified | Self::Disabled => None,
