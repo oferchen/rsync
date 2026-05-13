@@ -1,10 +1,9 @@
-//! AIMD adaptive-concurrency limiter (task #2091).
+//! AIMD adaptive-concurrency limiter.
 //!
 //! Implements the Additive-Increase / Multiplicative-Decrease control law
 //! described in `docs/design/aimd-concurrency-limiter.md`. The limiter is
-//! standalone in this PR and is not yet wired into [`WorkQueueSender`] or
-//! the disk-commit side; integration arrives with #2092 (tests under
-//! injected error) and #2093 (CLI flag).
+//! exposed to users via `--adaptive-concurrency` / `--no-adaptive-concurrency`
+//! and wired through `ClientConfig` into the concurrent delta pipeline.
 //!
 //! Design references:
 //! - RFC 5681 section 3.1 (TCP congestion avoidance, AIMD law).
@@ -24,10 +23,7 @@
 //!   and treats the rest as successes (overload should reflect resource
 //!   pressure, not deterministic filesystem state).
 //!
-//! All public types are wired into [`super`] via `pub mod limiter` and a
-//! re-export. No callers consume them yet; integration tickets #2092 / #2093
-//! will plug the limiter into [`WorkQueueSender::send`](super::WorkQueueSender)
-//! and the CLI.
+//! All public types are re-exported from [`super`] via `pub mod limiter`.
 //!
 //! [`WorkQueueSender`]: super::WorkQueueSender
 
@@ -823,5 +819,192 @@ mod tests {
             t.record_success();
         }
         assert_eq!(limiter.target(), 6, "second additive window: 5 -> 6");
+    }
+
+    #[test]
+    fn sustained_overloads_converge_to_min_limit() {
+        let limiter = limiter_with(64, 4, 256);
+        // Seed RTT EMA so the debounce window has measurable length.
+        for _ in 0..8 {
+            limiter.update_rtt(1_000_000); // 1 ms
+        }
+        // Repeatedly overload with enough delay between signals to pass
+        // the debounce window (2 * rtt_ema ~ 2 ms). After enough rounds,
+        // target must reach the floor.
+        for _ in 0..20 {
+            thread::sleep(Duration::from_millis(3));
+            let t = limiter.try_acquire().unwrap();
+            t.record_overload(OverloadReason::DiskCommitPressure);
+        }
+        assert_eq!(
+            limiter.target(),
+            4,
+            "sustained overloads must drive target to min_limit",
+        );
+    }
+
+    #[test]
+    fn mixed_transient_and_deterministic_errors() {
+        // Deterministic errors (NotFound, PermissionDenied) should not
+        // decrease the target. Only transient errors should.
+        let limiter = limiter_with(8, 1, 16);
+
+        // A batch of deterministic errors: target stays at 8.
+        for kind in [
+            io::ErrorKind::NotFound,
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::AlreadyExists,
+        ] {
+            let t = limiter.try_acquire().unwrap();
+            t.record_error(kind);
+        }
+        assert_eq!(
+            limiter.target(),
+            8,
+            "deterministic errors must not reduce target",
+        );
+
+        // A transient error triggers overload.
+        let t = limiter.try_acquire().unwrap();
+        t.record_error(io::ErrorKind::TimedOut);
+        assert_eq!(limiter.target(), 4, "transient TimedOut must halve target",);
+    }
+
+    #[test]
+    fn concurrent_acquire_release_preserves_in_flight_invariant() {
+        // Multiple threads doing acquire-record cycles should never leave
+        // in_flight stuck or negative. This tests the CAS loop and Drop
+        // safety under contention.
+        let limiter = Arc::new(limiter_with(8, 1, 64));
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                let limiter = limiter.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    for _ in 0..500 {
+                        if let Some(t) = limiter.try_acquire() {
+                            // Alternate between success and overload to
+                            // exercise both paths concurrently.
+                            if i % 2 == 0 {
+                                t.record_success();
+                            } else {
+                                t.record_overload(OverloadReason::QueueSaturated);
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(
+            limiter.in_flight(),
+            0,
+            "all slots must be released after concurrent workers finish",
+        );
+        // Target must be within valid bounds.
+        let target = limiter.target();
+        assert!(
+            (1..=64).contains(&target),
+            "target {target} must be within [min_limit, max_limit]",
+        );
+    }
+
+    #[test]
+    fn custom_beta_ratio_convergence() {
+        // With beta = 2/3 (less aggressive decrease), convergence settles
+        // at a higher equilibrium than the default beta = 1/2.
+        let limiter = LimiterConfig::new(12)
+            .min_limit(1)
+            .max_limit(128)
+            .alpha(1)
+            .beta_num(2)
+            .beta_den(3)
+            .build();
+        // Exit slow-start.
+        let t = limiter.try_acquire().unwrap();
+        t.record_overload(OverloadReason::RttSpike);
+        let mut prev_target = limiter.target();
+        // beta=2/3 of 12 = 8
+        assert_eq!(prev_target, 8);
+
+        // Run several success-window + overload cycles. With alpha=1 and
+        // beta=2/3, the equilibrium satisfies floor((n+1)*2/3) == n,
+        // giving n in {2, 3}. The cycle should converge within these bounds.
+        for _ in 0..30 {
+            thread::sleep(Duration::from_millis(1));
+            let window = limiter.target();
+            for _ in 0..window {
+                let t = limiter.try_acquire().unwrap();
+                t.record_success();
+            }
+            thread::sleep(Duration::from_millis(1));
+            let t = limiter.try_acquire().unwrap();
+            t.record_overload(OverloadReason::ErrorRate);
+            prev_target = limiter.target();
+        }
+        assert!(
+            prev_target <= 4,
+            "beta=2/3 convergence should settle near 2-3, got {prev_target}",
+        );
+    }
+
+    #[test]
+    fn dropped_ticket_does_not_affect_convergence() {
+        // Simulate a panic mid-computation: the ticket is dropped without
+        // recording. This must not disturb subsequent convergence.
+        let limiter = Arc::new(limiter_with(4, 1, 32));
+
+        // Exit slow-start.
+        let t = limiter.try_acquire().unwrap();
+        t.record_overload(OverloadReason::RttSpike);
+        assert_eq!(limiter.target(), 2);
+
+        thread::sleep(Duration::from_millis(1));
+
+        // Drop a ticket without recording (simulated panic).
+        {
+            let _t = limiter.try_acquire().unwrap();
+            assert_eq!(limiter.in_flight(), 1);
+            // _t dropped here
+        }
+        assert_eq!(limiter.in_flight(), 0, "drop must release slot");
+        assert_eq!(limiter.target(), 2, "drop must not change target",);
+
+        // Convergence should still work normally after dropped ticket.
+        for _ in 0..2 {
+            let t = limiter.try_acquire().unwrap();
+            t.record_success();
+        }
+        assert_eq!(
+            limiter.target(),
+            3,
+            "additive increase resumes after dropped ticket",
+        );
+    }
+
+    #[test]
+    fn max_limit_reached_during_slow_start() {
+        // Slow-start doubles but must clamp at max_limit.
+        let limiter = limiter_with(4, 1, 10);
+        // Window of 4 -> 8.
+        for _ in 0..4 {
+            let t = limiter.try_acquire().unwrap();
+            t.record_success();
+        }
+        assert_eq!(limiter.target(), 8);
+        // Window of 8 -> 16, but clamped to max_limit=10.
+        for _ in 0..8 {
+            let t = limiter.try_acquire().unwrap();
+            t.record_success();
+        }
+        assert_eq!(
+            limiter.target(),
+            10,
+            "slow-start doubling must clamp at max_limit",
+        );
     }
 }
