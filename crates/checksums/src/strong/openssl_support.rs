@@ -33,7 +33,6 @@ pub fn openssl_acceleration_available() -> bool {
 }
 
 /// Creates an MD5 hasher backed by OpenSSL when available.
-#[must_use]
 pub fn new_md5_hasher() -> Option<Hasher> {
     if !openssl_acceleration_available() {
         return None;
@@ -43,7 +42,6 @@ pub fn new_md5_hasher() -> Option<Hasher> {
 }
 
 /// Creates an MD4 hasher backed by OpenSSL when available.
-#[must_use]
 pub fn new_md4_hasher() -> Option<Hasher> {
     if !openssl_acceleration_available() {
         return None;

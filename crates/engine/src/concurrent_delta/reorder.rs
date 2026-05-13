@@ -328,7 +328,6 @@ impl<T> ReorderBuffer<T> {
     /// Yields the item with sequence number equal to `next_expected` and
     /// advances the expected counter and head pointer. Returns `None` if
     /// that item has not yet been inserted.
-    #[must_use]
     pub fn next_in_order(&mut self) -> Option<T> {
         if self.bypass {
             let item = self.bypass_queue.pop_front()?;
@@ -484,7 +483,6 @@ impl<T> ReorderBuffer<T> {
     ///
     /// Returns `None` if the sequence is outside the current window or if
     /// the slot is empty.
-    #[must_use]
     pub fn take(&mut self, sequence: u64) -> Option<T> {
         if self.bypass {
             // Bypass mode does not support indexed extraction.

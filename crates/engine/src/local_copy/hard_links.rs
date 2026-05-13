@@ -118,7 +118,6 @@ impl HardlinkApplyTracker {
     }
 
     /// Returns the leader destination path for a given group index, if known.
-    #[must_use]
     pub fn leader_path(&self, gnum: u32) -> Option<&Path> {
         self.leaders.get(&gnum).map(PathBuf::as_path)
     }

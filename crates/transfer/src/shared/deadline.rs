@@ -29,7 +29,6 @@ impl TransferDeadline {
     ///
     /// Returns `None` if no deadline is configured. If the deadline is already
     /// in the past, returns a deadline that triggers immediately.
-    #[must_use]
     pub fn from_system_time(stop_at: Option<SystemTime>) -> Option<Self> {
         stop_at.map(|deadline| {
             let now = SystemTime::now();

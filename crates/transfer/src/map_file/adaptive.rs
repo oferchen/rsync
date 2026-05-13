@@ -33,7 +33,6 @@ impl AdaptiveMapStrategy {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened.
-    #[must_use]
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Self::open_with_threshold(path, MMAP_THRESHOLD)
     }
@@ -43,7 +42,6 @@ impl AdaptiveMapStrategy {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened.
-    #[must_use]
     pub fn open_with_threshold<P: AsRef<Path>>(path: P, threshold: u64) -> io::Result<Self> {
         let metadata = std::fs::metadata(path.as_ref())?;
         let size = metadata.len();
@@ -69,7 +67,6 @@ impl AdaptiveMapStrategy {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened.
-    #[must_use]
     pub fn open_buffered<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Ok(Self::Buffered(BufferedMap::open(path)?))
     }

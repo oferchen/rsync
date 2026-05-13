@@ -186,7 +186,6 @@ pub mod buffer_ring {
         }
 
         /// Always returns `None` on this platform.
-        #[must_use]
         pub fn try_new(_ring: &(), _config: BufferRingConfig) -> Option<Self> {
             None
         }
@@ -210,7 +209,6 @@ pub mod buffer_ring {
         }
 
         /// Returns `None` on this platform.
-        #[must_use]
         pub fn buffer_ptr(&self, _buf_id: u16) -> Option<*const u8> {
             None
         }
@@ -245,7 +243,6 @@ pub mod buffer_ring {
 
     /// Always returns `None` on this platform (no CQE buffer flag support).
     #[inline]
-    #[must_use]
     pub fn buffer_id_from_cqe_flags(_flags: u32) -> Option<u16> {
         None
     }
@@ -274,7 +271,6 @@ pub mod registered_buffers {
         }
 
         /// Always returns `None` on this platform.
-        #[must_use]
         pub fn try_new(_ring: &(), _buffer_size: usize, _count: usize) -> Option<Self> {
             None
         }
@@ -298,7 +294,6 @@ pub mod registered_buffers {
         }
 
         /// Always returns `None` on this platform.
-        #[must_use]
         pub fn checkout(&self) -> Option<RegisteredBufferSlot<'_>> {
             None
         }
@@ -595,7 +590,6 @@ pub mod shared_ring {
 
         /// Decodes a `user_data` value into the source tag and op id.
         #[inline]
-        #[must_use]
         pub fn decode(user_data: u64) -> Option<(Self, u64)> {
             let tag = (user_data >> 56) as u8;
             let op_id = user_data & ((1u64 << 56) - 1);
@@ -660,7 +654,6 @@ pub mod shared_ring {
 
     impl SharedRing {
         /// Always returns `None` on this platform.
-        #[must_use]
         pub fn try_new(
             _reader_fd: c_int,
             _writer_fd: c_int,
@@ -768,7 +761,6 @@ impl IoUringDiskBatch {
     }
 
     /// Always returns `None` on this platform.
-    #[must_use]
     pub fn try_new(_config: &IoUringConfig) -> Option<Self> {
         None
     }

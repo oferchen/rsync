@@ -327,7 +327,6 @@ impl ReceiverContext {
     /// Returns `None` for protocols < 30 or when compat exchange was skipped.
     /// The flags control protocol-specific behaviors like incremental recursion,
     /// checksum seed ordering, and file list encoding.
-    #[must_use]
     pub const fn compat_flags(&self) -> Option<protocol::CompatibilityFlags> {
         self.compat_flags
     }
@@ -468,7 +467,6 @@ impl ReceiverContext {
     ///
     /// Used by `build_files_to_transfer()` to reject daemon-excluded files
     /// before accepting transfer data.
-    #[must_use]
     pub fn daemon_filter_set(&self) -> Option<&FilterSet> {
         self.daemon_filter_set.as_ref()
     }

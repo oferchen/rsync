@@ -194,7 +194,6 @@ impl IncrementalFileList {
     ///
     /// The entry's parent directory is guaranteed to have been yielded previously
     /// (or is the root directory).
-    #[must_use]
     pub fn pop(&mut self) -> Option<FileEntry> {
         self.ready.pop_front().inspect(|_entry| {
             self.entries_yielded += 1;
@@ -202,7 +201,6 @@ impl IncrementalFileList {
     }
 
     /// Returns a reference to the next ready entry without removing it.
-    #[must_use]
     pub fn peek(&self) -> Option<&FileEntry> {
         self.ready.front()
     }

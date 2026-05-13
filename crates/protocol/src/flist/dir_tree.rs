@@ -121,7 +121,6 @@ impl DirectoryTree {
     ///
     /// Mirrors the traversal in `send_extra_file_list()` using
     /// `DIR_FIRST_CHILD`, `DIR_NEXT_SIBLING`, `DIR_PARENT` macros.
-    #[must_use]
     pub fn next_directory(&mut self) -> Option<(usize, &str)> {
         let cursor = self.cursor?;
 

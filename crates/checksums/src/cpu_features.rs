@@ -63,7 +63,6 @@ impl SimdLevel {
     /// `sse4`, `neon`, `none`) plus a small set of aliases (e.g. `avx-512`,
     /// `sse4.1`) for human convenience. Returns `None` for unrecognised
     /// spellings so the caller can render a CLI-appropriate error.
-    #[must_use]
     pub fn parse_cli(value: &str) -> Option<Self> {
         let normalized: String = value
             .chars()

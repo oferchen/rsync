@@ -191,7 +191,6 @@ impl AimdLimiter {
     /// Attempts to acquire a slot. Returns `None` when `in_flight >= target`.
     ///
     /// CAS-loops on `in_flight` so the count never races past `target`.
-    #[must_use]
     pub fn try_acquire(&self) -> Option<Ticket<'_>> {
         let mut current = self.in_flight.load(Ordering::Acquire);
         loop {

@@ -175,7 +175,6 @@ impl ParsedServerFlags {
     ///
     /// Returns an error if the string doesn't start with `-` or contains
     /// invalid characters.
-    #[must_use]
     pub fn parse(flag_string: &str) -> Result<Self, ParseFlagError> {
         let bytes = flag_string.as_bytes();
         if bytes.is_empty() || bytes[0] != b'-' {

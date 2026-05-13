@@ -33,7 +33,6 @@ impl MmapStrategy {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened or mapped.
-    #[must_use]
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         Ok(Self {
             mmap: MmapReader::open(path)?,

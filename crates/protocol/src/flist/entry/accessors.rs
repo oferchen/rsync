@@ -183,32 +183,27 @@ impl FileEntry {
 
     /// Returns the user ID if set.
     #[inline]
-    #[must_use]
     pub const fn uid(&self) -> Option<u32> {
         self.uid
     }
 
     /// Returns the group ID if set.
     #[inline]
-    #[must_use]
     pub const fn gid(&self) -> Option<u32> {
         self.gid
     }
 
     /// Returns the symlink target if this is a symlink.
-    #[must_use]
     pub fn link_target(&self) -> Option<&PathBuf> {
         self.extras.as_ref().and_then(|e| e.link_target.as_ref())
     }
 
     /// Returns the device major number if this is a device.
-    #[must_use]
     pub fn rdev_major(&self) -> Option<u32> {
         self.extras.as_ref().and_then(|e| e.rdev_major)
     }
 
     /// Returns the device minor number if this is a device.
-    #[must_use]
     pub fn rdev_minor(&self) -> Option<u32> {
         self.extras.as_ref().and_then(|e| e.rdev_minor)
     }
@@ -272,7 +267,6 @@ impl FileEntry {
     }
 
     /// Returns the user name if set.
-    #[must_use]
     pub fn user_name(&self) -> Option<&str> {
         self.extras.as_ref().and_then(|e| e.user_name.as_deref())
     }
@@ -283,7 +277,6 @@ impl FileEntry {
     }
 
     /// Returns the group name if set.
-    #[must_use]
     pub fn group_name(&self) -> Option<&str> {
         self.extras.as_ref().and_then(|e| e.group_name.as_deref())
     }
@@ -306,7 +299,6 @@ impl FileEntry {
     }
 
     /// Returns the hardlink index if this entry is a hardlink.
-    #[must_use]
     pub fn hardlink_idx(&self) -> Option<u32> {
         self.extras.as_ref().and_then(|e| e.hardlink_idx)
     }
@@ -370,7 +362,6 @@ impl FileEntry {
 
     /// Returns the hardlink device number (for protocol < 30).
     #[inline]
-    #[must_use]
     pub fn hardlink_dev(&self) -> Option<i64> {
         self.extras.as_ref().and_then(|e| e.hardlink_dev)
     }
@@ -382,7 +373,6 @@ impl FileEntry {
 
     /// Returns the hardlink inode number (for protocol < 30).
     #[inline]
-    #[must_use]
     pub fn hardlink_ino(&self) -> Option<i64> {
         self.extras.as_ref().and_then(|e| e.hardlink_ino)
     }
@@ -394,7 +384,6 @@ impl FileEntry {
 
     /// Returns the file checksum if set (for --checksum mode).
     #[inline]
-    #[must_use]
     pub fn checksum(&self) -> Option<&[u8]> {
         self.extras.as_ref().and_then(|e| e.checksum.as_deref())
     }
@@ -406,7 +395,6 @@ impl FileEntry {
 
     /// Returns the access ACL index if set (for --acls mode).
     #[inline]
-    #[must_use]
     pub fn acl_ndx(&self) -> Option<u32> {
         self.extras.as_ref().and_then(|e| e.acl_ndx)
     }
@@ -420,7 +408,6 @@ impl FileEntry {
     ///
     /// Corresponds to upstream's `F_DIR_DEFACL`. Only meaningful for directories.
     #[inline]
-    #[must_use]
     pub fn def_acl_ndx(&self) -> Option<u32> {
         self.extras.as_ref().and_then(|e| e.def_acl_ndx)
     }
@@ -434,7 +421,6 @@ impl FileEntry {
 
     /// Returns the extended attribute index if set (for --xattrs mode).
     #[inline]
-    #[must_use]
     pub fn xattr_ndx(&self) -> Option<u32> {
         self.extras.as_ref().and_then(|e| e.xattr_ndx)
     }
@@ -449,7 +435,6 @@ impl FileEntry {
     /// Populated by the generator from filesystem xattr data.
     /// Names are in wire format.
     #[inline]
-    #[must_use]
     pub fn xattr_list(&self) -> Option<&crate::xattr::XattrList> {
         self.extras.as_ref().and_then(|e| e.xattr_list.as_ref())
     }

@@ -107,7 +107,6 @@ impl PipelineState {
     /// Removes and returns the oldest pending transfer.
     ///
     /// Returns `None` if there are no outstanding requests.
-    #[must_use]
     pub fn pop(&mut self) -> Option<PendingTransfer> {
         let transfer = self.pending.pop_front();
         if transfer.is_some() {
@@ -117,7 +116,6 @@ impl PipelineState {
     }
 
     /// Peeks at the oldest pending transfer without removing it.
-    #[must_use]
     pub fn peek(&self) -> Option<&PendingTransfer> {
         self.pending.front()
     }
@@ -125,7 +123,6 @@ impl PipelineState {
     /// Returns the expected NDX for the next response.
     ///
     /// Used to verify responses arrive in order.
-    #[must_use]
     pub fn expected_ndx(&self) -> Option<i32> {
         self.pending.front().map(PendingTransfer::ndx)
     }
@@ -254,7 +251,7 @@ mod tests {
         state.push(make_transfer(1));
         assert!(!state.can_send());
 
-        state.pop();
+        let _ = state.pop();
         assert!(state.can_send());
     }
 
@@ -279,7 +276,7 @@ mod tests {
         state.push(make_transfer(10));
 
         assert_eq!(state.expected_ndx(), Some(5));
-        state.pop();
+        let _ = state.pop();
         assert_eq!(state.expected_ndx(), Some(10));
     }
 
@@ -311,8 +308,8 @@ mod tests {
         assert_eq!(state.total_sent(), 3);
         assert_eq!(state.total_processed(), 0);
 
-        state.pop();
-        state.pop();
+        let _ = state.pop();
+        let _ = state.pop();
 
         assert_eq!(state.total_sent(), 3);
         assert_eq!(state.total_processed(), 2);
@@ -527,12 +524,12 @@ mod tests {
         assert_eq!(state.available_slots(), 0);
 
         // Transition back to 1/2
-        state.pop();
+        let _ = state.pop();
         assert!(state.can_send());
         assert_eq!(state.available_slots(), 1);
 
         // Transition back to 0/2
-        state.pop();
+        let _ = state.pop();
         assert!(state.can_send());
         assert_eq!(state.available_slots(), 2);
     }
@@ -625,11 +622,11 @@ mod tests {
         state.push(make_transfer(100)); // Large gap
 
         assert_eq!(state.expected_ndx(), Some(1));
-        state.pop();
+        let _ = state.pop();
         assert_eq!(state.expected_ndx(), Some(5));
-        state.pop();
+        let _ = state.pop();
         assert_eq!(state.expected_ndx(), Some(100));
-        state.pop();
+        let _ = state.pop();
         assert_eq!(state.expected_ndx(), None);
     }
 

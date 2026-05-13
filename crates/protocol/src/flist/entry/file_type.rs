@@ -32,7 +32,6 @@ impl FileType {
     /// `0o170000`). Returns `None` for unrecognized mode patterns.
     ///
     /// upstream: rsync.h S_IFMT mask (`0o170000`).
-    #[must_use]
     pub const fn from_mode(mode: u32) -> Option<Self> {
         match mode & 0o170000 {
             0o100000 => Some(Self::Regular),     // S_IFREG

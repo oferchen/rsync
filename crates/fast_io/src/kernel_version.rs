@@ -62,7 +62,6 @@ impl std::fmt::Display for KernelVersion {
 /// );
 /// assert_eq!(parse_kernel_version("invalid"), None);
 /// ```
-#[must_use]
 pub fn parse_kernel_version(release: &str) -> Option<KernelVersion> {
     let mut parts = release.split(|c: char| !c.is_ascii_digit());
     let major = parts.next()?.parse().ok()?;
