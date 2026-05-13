@@ -42,6 +42,7 @@
 //! - **ReFS reflink** via `FSCTL_DUPLICATE_EXTENTS_TO_FILE` for instant CoW on Windows
 //! - **Windows IOCP** for overlapped async file I/O (optional, `iocp` feature)
 //! - **io_uring** for batched syscalls on Linux (optional, `io_uring` feature)
+//! - **macOS optimized writes** using `F_NOCACHE` (cache bypass) and `writev` (scatter-gather)
 //! - **Platform copy trait** abstracting `copy_file_range`, `clonefile`, `CopyFileExW`
 //! - **Cached sorting** with Schwartzian transform
 //!
@@ -93,6 +94,8 @@ pub mod sendfile;
 pub mod socket_options;
 pub mod splice;
 pub mod syscall_batch;
+
+pub mod macos_io;
 
 #[cfg(unix)]
 pub mod mmap_reader;
@@ -147,6 +150,10 @@ pub use splice::DEFAULT_PIPE_CAPACITY;
 pub use splice::{
     SplicePipe, is_splice_available, is_splice_enabled, recv_fd_to_file, try_splice_to_file,
     try_vmsplice_to_file,
+};
+
+pub use macos_io::{
+    F_NOCACHE_THRESHOLD, MAX_IOV_COUNT, MacosWriter, is_nocache_set, set_nocache, writev_buffers,
 };
 
 pub use mmap_reader::MmapReader;
@@ -339,7 +346,7 @@ pub use io_uring::{
 ///
 /// - **Linux**: `copy_file_range`, `sendfile`, `splice` (runtime-probed),
 ///   `FICLONE`, `O_TMPFILE`, `io_uring` (runtime-probed)
-/// - **macOS**: `clonefile`, `fcopyfile`
+/// - **macOS**: `clonefile`, `fcopyfile`, `F_NOCACHE`, `writev`
 /// - **Windows**: `CopyFileEx`, `ReFS reflink`, `IOCP` (runtime-probed)
 #[must_use]
 pub fn platform_io_capabilities() -> Vec<&'static str> {
@@ -368,6 +375,8 @@ pub fn platform_io_capabilities() -> Vec<&'static str> {
     {
         caps.push("clonefile");
         caps.push("fcopyfile");
+        caps.push("F_NOCACHE");
+        caps.push("writev");
     }
 
     // Windows compile-time capabilities
@@ -824,6 +833,8 @@ mod tests {
         {
             assert!(caps.contains(&"clonefile"));
             assert!(caps.contains(&"fcopyfile"));
+            assert!(caps.contains(&"F_NOCACHE"));
+            assert!(caps.contains(&"writev"));
         }
 
         #[cfg(target_os = "windows")]
