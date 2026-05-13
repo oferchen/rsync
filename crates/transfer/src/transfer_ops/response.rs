@@ -278,7 +278,14 @@ pub fn process_file_response<R: Read>(
 
     if needs_rename {
         // Atomic rename: temp file to final destination.
-        fs::rename(cleanup_guard.path(), &file_path)?;
+        // On Linux 5.11+ with io_uring, submits IORING_OP_RENAMEAT instead of
+        // synchronous rename(2). Falls back to std::fs::rename on all other
+        // platforms or when the kernel lacks the opcode.
+        if let Some(result) = fast_io::try_rename_via_io_uring(cleanup_guard.path(), &file_path) {
+            result?;
+        } else {
+            fs::rename(cleanup_guard.path(), &file_path)?;
+        }
     } else if ctx.config.inplace {
         // Inplace: truncate to final size.
         // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))
