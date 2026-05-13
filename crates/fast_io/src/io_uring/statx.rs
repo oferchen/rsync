@@ -562,8 +562,8 @@ mod tests {
         let statx_buf = result.expect("statx on /proc/self/exe should succeed");
         // The file must be a regular file or symlink.
         assert!(
-            statx_buf.stx_mode & libc::S_IFMT == libc::S_IFREG
-                || statx_buf.stx_mode & libc::S_IFMT == libc::S_IFLNK,
+            u32::from(statx_buf.stx_mode) & libc::S_IFMT == libc::S_IFREG
+                || u32::from(statx_buf.stx_mode) & libc::S_IFMT == libc::S_IFLNK,
             "expected regular file or symlink, got mode {:#o}",
             statx_buf.stx_mode
         );
@@ -596,7 +596,7 @@ mod tests {
         // report as a symlink.
         let statx_buf = result.expect("lstat on /proc/self/exe should succeed");
         assert_eq!(
-            statx_buf.stx_mode & libc::S_IFMT,
+            u32::from(statx_buf.stx_mode) & libc::S_IFMT,
             libc::S_IFLNK,
             "expected symlink, got mode {:#o}",
             statx_buf.stx_mode
@@ -718,7 +718,7 @@ mod tests {
             let results_follow = submit_statx_batch(&paths, true).unwrap();
             let statx_follow = results_follow[0].as_ref().unwrap();
             assert_eq!(
-                statx_follow.stx_mode & libc::S_IFMT,
+                u32::from(statx_follow.stx_mode) & libc::S_IFMT,
                 libc::S_IFREG,
                 "expected regular file when following symlinks"
             );
@@ -727,7 +727,7 @@ mod tests {
             let results_nofollow = submit_statx_batch(&paths, false).unwrap();
             let statx_nofollow = results_nofollow[0].as_ref().unwrap();
             assert_eq!(
-                statx_nofollow.stx_mode & libc::S_IFMT,
+                u32::from(statx_nofollow.stx_mode) & libc::S_IFMT,
                 libc::S_IFLNK,
                 "expected symlink when not following symlinks"
             );
