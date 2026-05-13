@@ -370,7 +370,7 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
     }
 
     // Round up to cluster boundary for the ioctl
-    let aligned_size = ((file_size + cluster_size - 1) / cluster_size) * cluster_size;
+    let aligned_size = file_size.div_ceil(cluster_size) * cluster_size;
 
     let src_wide: Vec<u16> = src
         .as_os_str()
@@ -734,6 +734,7 @@ pub(super) fn try_ficlone_impl(_src: &Path, _dst: &Path) -> io::Result<()> {
 /// user-supplied (unaligned) values. This struct is used both by the actual
 /// ioctl call and by unit tests that verify alignment arithmetic without
 /// requiring a ReFS volume.
+#[cfg(any(target_os = "windows", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct DuplicateExtentsParams {
     /// Source file offset, rounded down to cluster boundary.
@@ -763,6 +764,7 @@ pub(super) struct DuplicateExtentsParams {
 /// # Panics
 ///
 /// Panics if `cluster_size` is zero (callers must validate beforehand).
+#[cfg(any(target_os = "windows", test))]
 pub(super) fn compute_duplicate_extents_params(
     src_offset: u64,
     dst_offset: u64,
@@ -774,7 +776,7 @@ pub(super) fn compute_duplicate_extents_params(
     let aligned_src = (src_offset / cluster_size) * cluster_size;
     let aligned_dst = (dst_offset / cluster_size) * cluster_size;
     let end = src_offset + byte_count;
-    let aligned_end = ((end + cluster_size - 1) / cluster_size) * cluster_size;
+    let aligned_end = end.div_ceil(cluster_size) * cluster_size;
 
     DuplicateExtentsParams {
         source_offset: aligned_src,
