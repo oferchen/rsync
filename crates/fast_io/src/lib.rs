@@ -169,15 +169,17 @@ pub use temp_file_strategy::{
 
 pub use io_uring::{
     BufferRing, BufferRingConfig, BufferRingError, IORING_OP_LINKAT, IORING_OP_RENAMEAT,
-    IoUringConfig, IoUringDiskBatch, IoUringKernelInfo, IoUringOrStdReader, IoUringOrStdWriter,
-    IoUringReader, IoUringReaderFactory, IoUringWriter, IoUringWriterFactory, LINKAT_MIN_KERNEL,
-    LinkAtArgs, OpTag, RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT, RegisteredBufferGroup,
-    RegisteredBufferSlot, RegisteredBufferStats, RenameAt2Args, SharedCompletion, SharedRing,
-    SharedRingConfig, buffer_id_from_cqe_flags, build_linkat_sqe, build_linkat_sqe_unchecked,
-    build_renameat2_sqe, build_renameat2_sqe_unchecked, is_io_uring_available, linkat_supported,
-    pbuf_ring_supported, reader_from_path, reader_from_path_with_depth, renameat2_blocking,
-    renameat2_supported, sqpoll_fell_back, submit_linkat_blocking, writer_from_file,
-    writer_from_file_with_depth,
+    IORING_OP_STATX, IoUringConfig, IoUringDiskBatch, IoUringKernelInfo, IoUringOrStdReader,
+    IoUringOrStdWriter, IoUringReader, IoUringReaderFactory, IoUringWriter, IoUringWriterFactory,
+    LINKAT_MIN_KERNEL, LinkAtArgs, OpTag, RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT,
+    RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats, RenameAt2Args,
+    STATX_MIN_KERNEL, SharedCompletion, SharedRing, SharedRingConfig, StatxArgs, StatxResult,
+    buffer_id_from_cqe_flags, build_linkat_sqe, build_linkat_sqe_unchecked, build_renameat2_sqe,
+    build_renameat2_sqe_unchecked, build_statx_sqe, build_statx_sqe_unchecked,
+    is_io_uring_available, linkat_supported, pbuf_ring_supported, reader_from_path,
+    reader_from_path_with_depth, renameat2_blocking, renameat2_supported, sqpoll_fell_back,
+    statx_supported, submit_linkat_blocking, submit_statx_batch, submit_statx_blocking,
+    writer_from_file, writer_from_file_with_depth,
 };
 
 #[cfg(all(target_os = "windows", feature = "iocp"))]
@@ -514,6 +516,52 @@ fn try_hard_link_via_io_uring_impl(
     _src_path: &std::path::Path,
     _dst_path: &std::path::Path,
 ) -> Option<std::io::Result<()>> {
+    None
+}
+
+/// Attempts to stat files via io_uring `IORING_OP_STATX` batch submission.
+///
+/// On Linux with kernel 5.11+ and io_uring available, submits all paths
+/// as independent STATX SQEs on a single ring and returns the results.
+/// On all other platforms, or when the kernel lacks the opcode, returns
+/// `None` so the caller can fall back to synchronous stat calls.
+///
+/// # Arguments
+///
+/// * `paths` - Slice of paths to stat.
+/// * `follow_symlinks` - If `true`, follows symlinks (like `stat`);
+///   if `false`, does not follow (like `lstat`).
+///
+/// # Returns
+///
+/// - `Some(Ok(results))` when io_uring statx is available and all
+///   submissions succeeded (individual paths may still have errors).
+/// - `None` when io_uring statx is not available on this platform/kernel.
+/// - `Some(Err(...))` for ring-level failures.
+#[must_use]
+pub fn try_statx_batch_via_io_uring(
+    paths: &[&std::path::Path],
+    follow_symlinks: bool,
+) -> Option<std::io::Result<Vec<StatxResult>>> {
+    try_statx_batch_via_io_uring_impl(paths, follow_symlinks)
+}
+
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+fn try_statx_batch_via_io_uring_impl(
+    paths: &[&std::path::Path],
+    follow_symlinks: bool,
+) -> Option<std::io::Result<Vec<StatxResult>>> {
+    if !statx_supported() {
+        return None;
+    }
+    Some(submit_statx_batch(paths, follow_symlinks))
+}
+
+#[cfg(not(all(target_os = "linux", feature = "io_uring")))]
+fn try_statx_batch_via_io_uring_impl(
+    _paths: &[&std::path::Path],
+    _follow_symlinks: bool,
+) -> Option<std::io::Result<Vec<StatxResult>>> {
     None
 }
 
@@ -1320,5 +1368,77 @@ mod io_uring_hard_link_dispatch_tests {
             "must return None on non-Linux platforms"
         );
         assert!(!dst.exists(), "destination must not exist");
+    }
+}
+
+#[cfg(test)]
+mod io_uring_statx_dispatch_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn try_statx_batch_via_io_uring_stats_or_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("statx_dispatch.txt");
+        fs::write(&file, b"dispatch payload").unwrap();
+
+        let paths: Vec<&std::path::Path> = vec![file.as_path()];
+        match try_statx_batch_via_io_uring(&paths, true) {
+            Some(Ok(results)) => {
+                assert_eq!(results.len(), 1);
+                assert!(results[0].is_ok(), "existing file should succeed");
+            }
+            Some(Err(e)) => {
+                panic!("io_uring statx batch returned ring error: {e}");
+            }
+            None => {
+                // Not available on this platform/kernel.
+            }
+        }
+    }
+
+    #[test]
+    fn try_statx_batch_via_io_uring_returns_none_consistently() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("statx_consistency.txt");
+        fs::write(&file, b"data").unwrap();
+
+        let paths: Vec<&std::path::Path> = vec![file.as_path()];
+        let first = try_statx_batch_via_io_uring(&paths, true).is_some();
+        let second = try_statx_batch_via_io_uring(&paths, true).is_some();
+        assert_eq!(
+            first, second,
+            "availability must be consistent across calls"
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn try_statx_batch_via_io_uring_returns_none_on_non_linux() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("non_linux_statx.txt");
+        fs::write(&file, b"data").unwrap();
+
+        let paths: Vec<&std::path::Path> = vec![file.as_path()];
+        assert!(
+            try_statx_batch_via_io_uring(&paths, true).is_none(),
+            "must return None on non-Linux platforms"
+        );
+    }
+
+    #[test]
+    fn try_statx_batch_via_io_uring_empty_input() {
+        let paths: Vec<&std::path::Path> = vec![];
+        match try_statx_batch_via_io_uring(&paths, true) {
+            Some(Ok(results)) => {
+                assert!(results.is_empty());
+            }
+            None => {
+                // Not available on this platform.
+            }
+            Some(Err(e)) => {
+                panic!("unexpected error on empty input: {e}");
+            }
+        }
     }
 }
