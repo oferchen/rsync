@@ -20,7 +20,7 @@
 //! upstream: receiver.c:recv_files() processes files in file-list order.
 //! This buffer restores sequential ordering after parallel delta dispatch.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 /// Default window size for the bounded reorder buffer.
@@ -125,13 +125,11 @@ pub struct BoundedReorderBuffer<T> {
     clock: ClockFn,
     /// When `true`, items pass through without sequence-based reordering.
     ///
-    /// In bypass mode, [`insert`](Self::insert) appends to a FIFO queue and
-    /// returns items immediately. Sequence numbers are ignored. This
-    /// eliminates BTreeMap overhead when strict ordering is unnecessary
-    /// (e.g., `--delay-updates` is off and files are committed immediately).
+    /// In bypass mode, [`insert`](Self::insert) returns items immediately.
+    /// Sequence numbers are ignored. This eliminates BTreeMap overhead when
+    /// strict ordering is unnecessary (e.g., `--delay-updates` is off and
+    /// files are committed immediately).
     bypass: bool,
-    /// FIFO queue used in bypass mode. Empty when `bypass` is `false`.
-    bypass_queue: VecDeque<T>,
 }
 
 /// Items drained from the buffer in sequence order.
@@ -234,7 +232,6 @@ impl<T> BoundedReorderBuffer<T> {
             stall_start: None,
             clock: Box::new(Instant::now),
             bypass: true,
-            bypass_queue: VecDeque::new(),
         }
     }
 
@@ -260,7 +257,6 @@ impl<T> BoundedReorderBuffer<T> {
             stall_start: None,
             clock,
             bypass: false,
-            bypass_queue: VecDeque::new(),
         }
     }
 
