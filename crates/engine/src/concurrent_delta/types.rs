@@ -447,6 +447,117 @@ impl DeltaResult {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SpillCodec implementation for DeltaResult
+// ---------------------------------------------------------------------------
+//
+// Binary format (all little-endian):
+//   [u32  ndx]
+//   [u64  sequence]
+//   [u64  bytes_written]
+//   [u64  literal_bytes]
+//   [u64  matched_bytes]
+//   [u8   status_tag]     0 = Success, 1 = NeedsRedo, 2 = Failed
+//   [u32  reason_len]     (only if status_tag != 0)
+//   [u8*  reason_bytes]   (only if status_tag != 0)
+
+impl super::spill::SpillCodec for DeltaResult {
+    fn encode(&self, w: &mut dyn std::io::Write) -> std::io::Result<()> {
+        w.write_all(&self.ndx.get().to_le_bytes())?;
+        w.write_all(&self.sequence.to_le_bytes())?;
+        w.write_all(&self.bytes_written.to_le_bytes())?;
+        w.write_all(&self.literal_bytes.to_le_bytes())?;
+        w.write_all(&self.matched_bytes.to_le_bytes())?;
+
+        match &self.status {
+            DeltaResultStatus::Success => {
+                w.write_all(&[0u8])?;
+            }
+            DeltaResultStatus::NeedsRedo { reason } => {
+                w.write_all(&[1u8])?;
+                let bytes = reason.as_bytes();
+                w.write_all(&(bytes.len() as u32).to_le_bytes())?;
+                w.write_all(bytes)?;
+            }
+            DeltaResultStatus::Failed { reason } => {
+                w.write_all(&[2u8])?;
+                let bytes = reason.as_bytes();
+                w.write_all(&(bytes.len() as u32).to_le_bytes())?;
+                w.write_all(bytes)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn decode(r: &mut dyn std::io::Read) -> std::io::Result<Self> {
+        let mut u32_buf = [0u8; 4];
+        let mut u64_buf = [0u8; 8];
+        let mut tag_buf = [0u8; 1];
+
+        r.read_exact(&mut u32_buf)?;
+        let ndx = FileNdx::new(u32::from_le_bytes(u32_buf));
+
+        r.read_exact(&mut u64_buf)?;
+        let sequence = u64::from_le_bytes(u64_buf);
+
+        r.read_exact(&mut u64_buf)?;
+        let bytes_written = u64::from_le_bytes(u64_buf);
+
+        r.read_exact(&mut u64_buf)?;
+        let literal_bytes = u64::from_le_bytes(u64_buf);
+
+        r.read_exact(&mut u64_buf)?;
+        let matched_bytes = u64::from_le_bytes(u64_buf);
+
+        r.read_exact(&mut tag_buf)?;
+        let status = match tag_buf[0] {
+            0 => DeltaResultStatus::Success,
+            1 | 2 => {
+                r.read_exact(&mut u32_buf)?;
+                let reason_len = u32::from_le_bytes(u32_buf) as usize;
+                let mut reason_buf = vec![0u8; reason_len];
+                r.read_exact(&mut reason_buf)?;
+                let reason = String::from_utf8(reason_buf)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                if tag_buf[0] == 1 {
+                    DeltaResultStatus::NeedsRedo { reason }
+                } else {
+                    DeltaResultStatus::Failed { reason }
+                }
+            }
+            other => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("unknown DeltaResultStatus tag: {other}"),
+                ));
+            }
+        };
+
+        Ok(Self {
+            ndx,
+            sequence,
+            bytes_written,
+            literal_bytes,
+            matched_bytes,
+            status,
+        })
+    }
+
+    fn estimated_size(&self) -> usize {
+        // Fixed fields: 4 + 8 + 8 + 8 + 8 = 36 bytes.
+        // Status: 1 byte tag + optional string.
+        let status_size = match &self.status {
+            DeltaResultStatus::Success => 0,
+            DeltaResultStatus::NeedsRedo { reason } | DeltaResultStatus::Failed { reason } => {
+                // String: 24 bytes (String struct) + heap data.
+                24 + reason.len()
+            }
+        };
+        // Include struct overhead (padding, enum discriminant).
+        36 + status_size + 16
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

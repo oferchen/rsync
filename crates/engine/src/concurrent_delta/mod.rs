@@ -174,6 +174,7 @@ pub mod consumer;
 #[cfg(test)]
 mod multi_producer_audit;
 pub mod reorder;
+pub mod spill;
 pub mod strategy;
 mod types;
 pub mod work_queue;
@@ -181,5 +182,6 @@ pub mod work_queue;
 pub use adaptive::{AdaptiveCapacityPolicy, ReorderStats};
 pub use consumer::DeltaConsumer;
 pub use reorder::ReorderBuffer;
+pub use spill::{SpillCodec, SpillStats, SpillableReorderBuffer};
 pub use strategy::{DeltaStrategy, DeltaTransferStrategy, WholeFileStrategy};
 pub use types::{DeltaResult, DeltaResultStatus, DeltaWork, DeltaWorkKind, FileNdx};
