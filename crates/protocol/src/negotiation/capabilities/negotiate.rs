@@ -240,6 +240,16 @@ pub fn negotiate_capabilities_with_override(
     // The greeting is just informational; the actual selection uses vstrings.
     let _ = is_daemon_mode; // Exchange happens in all modes when do_negotiation=true
 
+    // upstream: compat.c:521-525 send_negotiate_str
+    // Server emits "Server <type> list (on server): <list>", client emits
+    // "Client <type> list (on client): <list>" at DEBUG_GTE(NSTR, am_server?3:2).
+    let (local_side, remote_side, local_lc) = if is_server {
+        ("Server", "Client", "server")
+    } else {
+        ("Client", "Server", "client")
+    };
+    let send_level = if is_server { 3 } else { 2 };
+
     // Send our supported algorithm lists. upstream: compat.c:541-544
     // When --checksum-choice overrides the selection, advertise only that
     // algorithm (upstream options.c replaces valid_checksums with the user's
@@ -248,24 +258,42 @@ pub fn negotiate_capabilities_with_override(
         Some(algo) => algo.as_str().to_owned(),
         None => SUPPORTED_CHECKSUMS.join(" "),
     };
-    debug_log!(Proto, 2, "sending checksum list: {}", checksum_list);
+    debug_log!(
+        Nstr,
+        send_level,
+        "{local_side} checksum list (on {local_lc}): {checksum_list}"
+    );
     write_vstring(stdout, &checksum_list)?;
 
     if send_compression {
         let compression_list = supported_compressions().join(" ");
-        debug_log!(Proto, 2, "sending compression list: {}", compression_list);
+        debug_log!(
+            Nstr,
+            send_level,
+            "{local_side} compress list (on {local_lc}): {compression_list}"
+        );
         write_vstring(stdout, &compression_list)?;
     }
 
     stdout.flush()?;
 
-    // Read the remote side's algorithm lists. upstream: compat.c:546-564
+    // Read the remote side's algorithm lists. upstream: compat.c:373-378
+    // recv_negotiate_str emits "<remote> <type> list (on <local>): <list>"
+    // at DEBUG_GTE(NSTR, am_server?3:2).
     let remote_checksum_list = read_vstring(stdin)?;
-    debug_log!(Proto, 2, "received checksum list: {}", remote_checksum_list);
+    debug_log!(
+        Nstr,
+        send_level,
+        "{remote_side} checksum list (on {local_lc}): {remote_checksum_list}"
+    );
 
     let remote_compression_list = if send_compression {
         let list = read_vstring(stdin)?;
-        debug_log!(Proto, 2, "received compression list: {}", list);
+        debug_log!(
+            Nstr,
+            send_level,
+            "{remote_side} compress list (on {local_lc}): {list}"
+        );
         Some(list)
     } else {
         None
@@ -312,13 +340,25 @@ pub fn negotiate_capabilities_with_override(
         CompressionAlgorithm::None
     };
 
+    // upstream: compat.c:866 "Client negotiated <type>: <name>"
+    // (NSTR level 1, daemon auth checksum; we reuse the wording for the
+    // bidirectional checksum negotiation summary).
+    let nego_level = if is_server { 3 } else { 1 };
     debug_log!(
-        Proto,
-        1,
-        "negotiated checksum={}, compression={}",
-        checksum.as_str(),
-        compression.as_str()
+        Nstr,
+        nego_level,
+        "{local_side} negotiated checksum: {}",
+        checksum.as_str()
     );
+    // upstream: compat.c:215 "<side> negotiated compress: <name> (level <N>)"
+    if compression != CompressionAlgorithm::None {
+        debug_log!(
+            Nstr,
+            nego_level,
+            "{local_side} negotiated compress: {}",
+            compression.as_str()
+        );
+    }
     Ok(NegotiationResult {
         checksum,
         compression,

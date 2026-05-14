@@ -322,12 +322,15 @@ PARTIAL gap closures and parity polish identified during this audit:
    User impact: **rare**, but breaks discovery for new users learning
    the `info`/`debug` category names.
 
-4. **`--debug=nstr` negotiation message wording.**
-   Upstream prints `Client compress: zstd (level 3)`; oc-rsync prints
-   a slightly different wording. Tools that grep `--debug=nstr` for
-   negotiated codec/checksum lose parity. Align the wording in
-   `crates/transfer/src/pipeline/` and add a debug-output snapshot
-   test. User impact: **rare**, scoped to debugging harnesses.
+4. **`--debug=nstr` negotiation message wording.** RESOLVED. Wording
+   in `crates/protocol/src/negotiation/capabilities/negotiate.rs`
+   now matches upstream `compat.c:215,373-378,521-525,866`
+   verbatim (`Client/Server <type> list (on <side>): <list>` and
+   `Client/Server negotiated <type>: <name>`) on the `Nstr` debug
+   target. Unit tests in
+   `crates/protocol/src/negotiation/capabilities/tests.rs` assert
+   the exact wire strings. User impact: **rare**, scoped to
+   debugging harnesses.
 
 5. **`--stop-at=y-m-dTh:m` timezone parity.**
    Upstream parses local time (`util2.c::parse_time`). oc-rsync's
