@@ -199,7 +199,7 @@ fn info_negation_forms() {
 #[test]
 fn info_rejects_empty_segments() {
     let flags = vec![OsString::from("progress,,stats")];
-    let error = parse_info_flags(&flags).err().expect("parse should fail");
+    let error = parse_info_flags(&flags).expect_err("parse should fail");
     assert!(error.to_string().contains("--info flag must not be empty"));
 }
 
@@ -290,7 +290,7 @@ fn debug_all_and_none() {
 #[test]
 fn debug_rejects_empty_segments() {
     let flags = vec![OsString::from("deltasum,,io")];
-    let error = parse_debug_flags(&flags).err().expect("parse should fail");
+    let error = parse_debug_flags(&flags).expect_err("parse should fail");
     assert!(error.to_string().contains("--debug flag must not be empty"));
 }
 
