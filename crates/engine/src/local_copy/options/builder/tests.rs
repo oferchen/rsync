@@ -389,6 +389,42 @@ mod staging_options {
     }
 
     #[test]
+    fn delay_updates_finalisation_sets_default_partial_dir() {
+        use std::path::Path;
+
+        use crate::local_copy::options::staging::DELAY_UPDATES_PARTIAL_DIR;
+
+        let options = LocalCopyOptionsBuilder::new()
+            .delay_updates(true)
+            .build()
+            .expect("valid options");
+
+        assert_eq!(
+            options.partial_directory_path(),
+            Some(Path::new(DELAY_UPDATES_PARTIAL_DIR)),
+            "build() must promote partial_dir to the upstream default when \
+             --delay-updates is set and no explicit --partial-dir was supplied",
+        );
+    }
+
+    #[test]
+    fn delay_updates_finalisation_preserves_explicit_partial_dir() {
+        use std::path::Path;
+
+        let options = LocalCopyOptionsBuilder::new()
+            .partial_dir(Some("/custom/staging"))
+            .delay_updates(true)
+            .build()
+            .expect("valid options");
+
+        assert_eq!(
+            options.partial_directory_path(),
+            Some(Path::new("/custom/staging")),
+            "explicit --partial-dir must survive build() finalisation",
+        );
+    }
+
+    #[test]
     fn inplace_enables() {
         let options = LocalCopyOptionsBuilder::new()
             .inplace(true)
