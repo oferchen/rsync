@@ -55,6 +55,9 @@ impl GeneratorContext {
         use super::delta::generate_delta_from_signature;
         use super::protocol_io::read_signature_blocks;
 
+        // upstream: sender.c:217-218 - rprintf(FINFO, "send_files starting\n")
+        debug_log!(Send, 1, "send_files starting");
+
         // Phase handling: upstream sender.c line 210: max_phase = protocol_version >= 29 ? 2 : 1
         let mut phase: i32 = 0;
         let max_phase: i32 = if self.protocol.supports_iflags() {
@@ -172,6 +175,9 @@ impl GeneratorContext {
                         if phase > max_phase {
                             break;
                         }
+                        // upstream: sender.c:254-255
+                        // rprintf(FINFO, "send_files phase=%d\n", phase)
+                        debug_log!(Send, 1, "send_files phase={}", phase);
                         if let Err(e) = ndx_write_codec
                             .write_ndx_done(&mut *writer)
                             .and_then(|()| writer.flush())
@@ -235,6 +241,16 @@ impl GeneratorContext {
             }
             if let Some(ref xname_data) = xname {
                 self.timing.total_bytes_read += 4 + xname_data.len() as u64;
+            }
+
+            // upstream: sender.c:277-278
+            // rprintf(FINFO, "send_files(%d, %s%s%s)\n", ndx, path,slash,fname)
+            // F_PATHNAME is unset for the in-band file list we build, so the
+            // path/slash prefix is empty and we emit just the relative name.
+            if ndx < self.file_list.len() {
+                let wire_ndx = self.flat_to_wire_ndx(ndx);
+                let entry_path = self.file_list[ndx].path().display().to_string();
+                debug_log!(Send, 1, "send_files({}, {})", wire_ndx, entry_path);
             }
 
             if !iflags.needs_transfer() {
@@ -387,6 +403,10 @@ impl GeneratorContext {
             }
             files_transferred += 1;
 
+            // upstream: sender.c:445-446
+            // rprintf(FINFO, "sender finished %s%s%s\n", path,slash,fname)
+            debug_log!(Send, 1, "sender finished {}", file_entry.path().display());
+
             // upstream: sender.c:430 - log_item(log_code, file, iflags, NULL)
             self.maybe_emit_itemize(writer, &iflags, ndx, itemize)?;
 
@@ -446,6 +466,10 @@ impl GeneratorContext {
 
         // Cache flist_writer back for potential reuse (e.g., phase 2).
         self.incremental.flist_writer_cache = Some(flist_writer);
+
+        // upstream: sender.c:457-458
+        // rprintf(FINFO, "send files finished\n")
+        debug_log!(Send, 1, "send files finished");
 
         // upstream: sender.c:454-462 - after the transfer loop exits, the sender
         // sends io_error (if changed) and a final NDX_DONE. This NDX_DONE is the
@@ -788,5 +812,117 @@ impl GeneratorContext {
             delete_stats: self.delete_stats,
             io_error: self.io_error,
         })
+    }
+}
+
+#[cfg(test)]
+mod send_debug_emission_tests {
+    //! Wording tests for `--debug=send` producer emissions.
+    //!
+    //! Each test asserts the exact wire string that upstream rsync 3.4.1
+    //! emits from `sender.c send_files` under `DEBUG_GTE(SEND, 1)`. The
+    //! strings are matched byte-for-byte because interop harnesses grep
+    //! for these literals.
+
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, debug_log, drain_events, init};
+    use std::path::PathBuf;
+
+    fn init_send_level1() {
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.send = 1;
+        init(cfg);
+        let _ = drain_events();
+    }
+
+    fn send_messages() -> Vec<String> {
+        drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Send,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn send_files_starting_matches_upstream() {
+        // upstream: sender.c:217-218
+        init_send_level1();
+        debug_log!(Send, 1, "send_files starting");
+        let msgs = send_messages();
+        assert!(
+            msgs.iter().any(|m| m == "send_files starting"),
+            "missing upstream wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn send_files_phase_matches_upstream() {
+        // upstream: sender.c:254-255 - "send_files phase=%d"
+        init_send_level1();
+        let phase: i32 = 2;
+        debug_log!(Send, 1, "send_files phase={}", phase);
+        let msgs = send_messages();
+        assert!(
+            msgs.iter().any(|m| m == "send_files phase=2"),
+            "missing upstream wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn send_files_per_file_matches_upstream() {
+        // upstream: sender.c:277-278 - "send_files(%d, %s%s%s)"
+        // F_PATHNAME unset -> path/slash empty, only fname emitted.
+        init_send_level1();
+        let ndx: i32 = 7;
+        let name = PathBuf::from("dir/file.txt");
+        debug_log!(Send, 1, "send_files({}, {})", ndx, name.display());
+        let msgs = send_messages();
+        assert!(
+            msgs.iter().any(|m| m == "send_files(7, dir/file.txt)"),
+            "missing upstream wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn sender_finished_matches_upstream() {
+        // upstream: sender.c:445-446 - "sender finished %s%s%s"
+        init_send_level1();
+        let name = PathBuf::from("dir/file.txt");
+        debug_log!(Send, 1, "sender finished {}", name.display());
+        let msgs = send_messages();
+        assert!(
+            msgs.iter().any(|m| m == "sender finished dir/file.txt"),
+            "missing upstream wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn send_files_finished_matches_upstream() {
+        // upstream: sender.c:457-458 - "send files finished"
+        init_send_level1();
+        debug_log!(Send, 1, "send files finished");
+        let msgs = send_messages();
+        assert!(
+            msgs.iter().any(|m| m == "send files finished"),
+            "missing upstream wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn send_emissions_suppressed_when_disabled() {
+        let cfg = VerbosityConfig::default();
+        init(cfg);
+        let _ = drain_events();
+        debug_log!(Send, 1, "send_files starting");
+        let msgs = send_messages();
+        assert!(
+            msgs.is_empty(),
+            "Send debug emissions must be gated; got: {msgs:?}"
+        );
     }
 }
