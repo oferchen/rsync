@@ -27,9 +27,12 @@ impl ConnectionCounter {
 
     /// Returns the current number of active connections.
     ///
-    /// Wired into the accept loop for future daemon-level max-connections
-    /// enforcement.
-    #[allow(dead_code)] // REASON: wired when daemon accept loop enforces max-connections
+    /// Consulted by the accept loop before spawning a worker thread so that
+    /// the daemon can refuse a connection with `@ERROR: max connections (N)
+    /// reached -- try again later` once `--max-connections` is reached.
+    ///
+    /// upstream: clientserver.c:744-756 enforces `lp_max_connections()` per
+    /// module via `claim_connection()` and emits the same error wording.
     pub(crate) fn active(&self) -> usize {
         self.active.load(Ordering::Acquire)
     }

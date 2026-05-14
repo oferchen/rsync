@@ -169,6 +169,15 @@ fn parse_max_sessions(value: &OsString) -> Result<NonZeroUsize, DaemonError> {
         .ok_or_else(|| config_error("--max-sessions must be greater than zero".to_owned()))
 }
 
+fn parse_max_connections(value: &OsString) -> Result<NonZeroUsize, DaemonError> {
+    let text = value.to_string_lossy();
+    let parsed: usize = text
+        .parse()
+        .map_err(|_| config_error(format!("invalid value for --max-connections: '{text}'")))?;
+    NonZeroUsize::new(parsed)
+        .ok_or_else(|| config_error("--max-connections must be greater than zero".to_owned()))
+}
+
 fn parse_module_definition(
     value: &OsString,
     default_secrets: Option<&Path>,

@@ -8,6 +8,15 @@ impl RuntimeOptions {
         Ok(())
     }
 
+    fn set_max_connections(&mut self, value: NonZeroUsize) -> Result<(), DaemonError> {
+        if self.max_connections.is_some() {
+            return Err(duplicate_argument("--max-connections"));
+        }
+
+        self.max_connections = Some(value);
+        Ok(())
+    }
+
     fn set_bandwidth_limit(
         &mut self,
         limit: Option<NonZeroU64>,
