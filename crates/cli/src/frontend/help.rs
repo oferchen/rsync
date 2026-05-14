@@ -134,6 +134,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --no-delay-updates  Disable delayed updates.\n",
             "  -W, --whole-file  Copy files without using the delta-transfer algorithm.\n",
             "      --no-whole-file  Enable the delta-transfer algorithm (disable whole-file copies).\n",
+            "      --xxh64-dedup  Internal-only: xxh64-hash source and existing destination before computing a delta; matching digests bypass delta computation. Off by default.\n",
             "      --remove-source-files  Remove source files after a successful transfer.\n",
             "      --remove-sent-files   Alias of --remove-source-files.\n",
             "      --append    Append data to existing destination files without rewriting preserved bytes.\n",

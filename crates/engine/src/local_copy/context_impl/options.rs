@@ -379,6 +379,14 @@ impl<'a> CopyContext<'a> {
         self.options.checksum_enabled()
     }
 
+    pub(super) const fn xxh64_dedup_enabled(&self) -> bool {
+        self.options.xxh64_dedup_enabled()
+    }
+
+    pub(super) const fn xxh64_dedup_size_limit(&self) -> u64 {
+        self.options.xxh64_dedup_size_limit()
+    }
+
     pub(super) const fn size_only_enabled(&self) -> bool {
         self.options.size_only_enabled()
     }

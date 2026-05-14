@@ -104,6 +104,13 @@ pub struct ClientConfig {
     pub(super) skip_compress: SkipCompressList,
     pub(super) open_noatime: bool,
     pub(super) whole_file: Option<bool>,
+    /// Internal-only xxh64 file-dedup heuristic toggle.
+    ///
+    /// Enabled via `--xxh64-dedup`. The receiver hashes both the source and
+    /// the existing destination with xxh64 before computing a delta;
+    /// matching digests bypass delta computation. The flag is local-only
+    /// and never alters the wire protocol forwarded to the peer.
+    pub(super) xxh64_dedup: bool,
     pub(super) checksum: bool,
     pub(super) checksum_choice: StrongChecksumChoice,
     pub(super) checksum_seed: Option<u32>,
@@ -266,6 +273,7 @@ impl Default for ClientConfig {
             skip_compress: SkipCompressList::default(),
             open_noatime: false,
             whole_file: None,
+            xxh64_dedup: false,
             checksum: false,
             checksum_choice: StrongChecksumChoice::default(),
             checksum_seed: None,

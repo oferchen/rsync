@@ -933,6 +933,18 @@ mod negation_flags {
     }
 
     #[test]
+    fn xxh64_dedup_flag_defaults_to_off() {
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert!(!parsed.xxh64_dedup);
+    }
+
+    #[test]
+    fn xxh64_dedup_flag_enables_heuristic() {
+        let parsed = parse_test_args(["--xxh64-dedup", "src/", "dst/"]).expect("parse");
+        assert!(parsed.xxh64_dedup);
+    }
+
+    #[test]
     fn no_one_file_system_flag() {
         let parsed = parse_test_args(["--no-one-file-system", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.one_file_system, Some(0));

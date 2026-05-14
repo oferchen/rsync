@@ -197,6 +197,7 @@ where
         max_alloc,
         itemize_changes,
         whole_file,
+        xxh64_dedup,
         xattrs,
         no_motd,
         password_file,
@@ -779,6 +780,7 @@ where
         append: append_enabled,
         append_verify,
         whole_file: whole_file_enabled, // Pass Option<bool> through for tri-state semantics
+        xxh64_dedup,
         timeout: timeout_setting,
         connect_timeout: connect_timeout_setting,
         stop_deadline: stop_request.as_ref().map(StopRequest::deadline),
