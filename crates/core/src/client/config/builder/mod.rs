@@ -273,7 +273,19 @@ impl ClientConfigBuilder {
     /// - `--inplace` conflicts with `--partial-dir` and `--delay-updates`
     /// - `--append` conflicts with `--partial-dir` and `--delay-updates`
     ///   (upstream: `--append` sets `inplace = 1`, then the `inplace && partial_dir` check fires)
+    /// - `--append` conflicts with `--whole-file`
+    ///   (upstream: options.c:2382 `if (append_mode) { if (whole_file > 0) ... }`)
     pub fn validate(&self) -> Result<(), ConfigConflict> {
+        // upstream: options.c:2382 - --append cannot be used with --whole-file.
+        // Only an explicit `--whole-file` (Some(true)) conflicts; the default
+        // (None) and `--no-whole-file` (Some(false)) are accepted.
+        if self.append && self.whole_file == Some(true) {
+            return Err(ConfigConflict {
+                option1: "append",
+                option2: "whole-file",
+            });
+        }
+
         let is_inplace = self.inplace || self.append;
         if is_inplace {
             let mode = if self.append { "append" } else { "inplace" };
