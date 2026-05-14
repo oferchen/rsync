@@ -163,6 +163,7 @@ members = [
 ]
 exclude = [
     "crates/protocol/fuzz",
+    "fuzz",
     "tools/dhat-profile",
 ]
 resolver = "2"
