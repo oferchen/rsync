@@ -134,10 +134,13 @@ impl Seek for ReusableBufWriter<'_> {
 /// 256 KB buffer. `IoUring` borrows the disk thread's persistent
 /// [`fast_io::IoUringDiskBatch`] which has already been registered with the
 /// active file via `begin_file`. `Iocp` is the Windows analogue, borrowing
-/// the persistent [`fast_io::IocpDiskBatch`].
+/// the persistent [`fast_io::IocpDiskBatch`]. `Macos` wraps the file in
+/// [`fast_io::MacosWriter`], which pairs `F_NOCACHE` (for files above 1 MiB)
+/// with `writev(2)` scatter-gather flushes.
 ///
-/// Sparse mode requires `Seek`, which neither batch writer provides, so
-/// callers must select `Buffered` whenever `use_sparse` is set.
+/// Sparse mode requires `Seek`, which none of `IoUring`, `Iocp`, or `Macos`
+/// provide, so callers must select `Buffered` whenever `use_sparse` is set
+/// or `append_offset` is non-zero.
 pub(super) enum Writer<'a> {
     Buffered(ReusableBufWriter<'a>),
     #[cfg(all(target_os = "linux", feature = "io_uring"))]
@@ -148,6 +151,8 @@ pub(super) enum Writer<'a> {
     Iocp {
         batch: &'a mut fast_io::IocpDiskBatch,
     },
+    #[cfg(target_os = "macos")]
+    Macos(fast_io::MacosWriter),
 }
 
 impl<'a> Writer<'a> {
@@ -170,6 +175,11 @@ impl<'a> Writer<'a> {
                 debug_assert!(false, "sparse mode must select buffered writer");
                 unreachable!("sparse mode must select buffered writer")
             }
+            #[cfg(target_os = "macos")]
+            Writer::Macos(_) => {
+                debug_assert!(false, "sparse mode must select buffered writer");
+                unreachable!("sparse mode must select buffered writer")
+            }
         }
     }
 
@@ -181,6 +191,8 @@ impl<'a> Writer<'a> {
             Writer::IoUring { batch } => batch.write_data(data),
             #[cfg(all(target_os = "windows", feature = "iocp"))]
             Writer::Iocp { batch } => batch.write_data(data),
+            #[cfg(target_os = "macos")]
+            Writer::Macos(w) => w.write_all(data),
         }
     }
 
@@ -206,6 +218,18 @@ impl<'a> Writer<'a> {
             Writer::IoUring { .. } => Ok(()),
             #[cfg(all(target_os = "windows", feature = "iocp"))]
             Writer::Iocp { .. } => Ok(()),
+            #[cfg(target_os = "macos")]
+            Writer::Macos(w) => {
+                if do_fsync {
+                    w.sync().map_err(|e| {
+                        io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
+                    })
+                } else {
+                    w.flush().map_err(|e| {
+                        io::Error::other(format!("flush failed for {file_path:?}: {e}"))
+                    })
+                }
+            }
         }
     }
 
@@ -240,6 +264,8 @@ impl<'a> Writer<'a> {
                     format!("IOCP commit failed for {file_path:?}: {e}"),
                 )
             }),
+            #[cfg(target_os = "macos")]
+            Writer::Macos(_) => Ok(()),
         }
     }
 }
