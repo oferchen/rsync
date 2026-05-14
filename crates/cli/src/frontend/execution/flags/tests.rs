@@ -928,7 +928,7 @@ fn info_flag_numeric_n_caps_each_priority_group_at_per_flag_max() {
         }
         let observed = match spec.name {
             "progress" => match settings.progress {
-                ProgressSetting::Disabled => 0,
+                ProgressSetting::Disabled | ProgressSetting::Unspecified => 0,
                 ProgressSetting::PerFile => 1,
                 ProgressSetting::Overall => 2,
             },

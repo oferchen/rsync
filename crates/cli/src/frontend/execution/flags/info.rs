@@ -26,6 +26,10 @@ use super::super::super::progress::{NameOutputLevel, ProgressSetting};
 pub(crate) struct InfoFlagSpec {
     pub(crate) name: &'static str,
     pub(crate) max_level: u8,
+    // Exposed for future daemon-side `limit_output_verbosity()` parity. The
+    // current client-side `enable_all_at_level()` clamps by max_level rather
+    // than priority, mirroring upstream's `parse_output_words` behavior.
+    #[allow(dead_code)]
     pub(crate) priority: u8,
     pub(crate) strict_cap: bool,
 }
