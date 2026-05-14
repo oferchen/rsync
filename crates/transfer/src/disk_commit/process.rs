@@ -47,6 +47,7 @@ pub(super) fn process_file(
         iocp_batch,
         config.use_sparse,
         begin.append_offset,
+        begin.target_size,
     )?;
 
     let mut sparse_state = if config.use_sparse {
@@ -164,6 +165,7 @@ pub(super) fn process_whole_file(
         iocp_batch,
         config.use_sparse,
         begin.append_offset,
+        begin.target_size,
     )?;
     let bytes_written = data.len() as u64;
 
@@ -249,19 +251,25 @@ fn open_output_file(
 }
 
 /// Constructs the per-file [`Writer`] dispatching between batched async
-/// submission (io_uring on Linux, IOCP on Windows) and the buffered fallback.
+/// submission (io_uring on Linux, IOCP on Windows), the macOS `F_NOCACHE` +
+/// `writev` writer, and the buffered fallback.
 ///
-/// Selects a batched backend when (a) the disk thread holds an active batch,
-/// (b) sparse mode is disabled, and (c) the file does not start at a non-zero
-/// offset (append mode). Sparse mode requires `Seek`, which the batch writers
-/// do not provide.
+/// Selects a non-buffered backend when (a) the disk thread holds an active
+/// batch (Linux/Windows) or the target is macOS, (b) sparse mode is disabled,
+/// and (c) the file does not start at a non-zero offset (append mode). Sparse
+/// mode requires `Seek`, which none of these writers provide.
 ///
 /// Append mode opens the file and seeks past existing content via
 /// [`std::io::Seek::seek`]. The batch writers issue submissions with absolute
 /// offsets starting at 0 and ignore the file position, so they would
-/// overwrite the existing prefix with zeros. Append mode therefore always
-/// falls back to the buffered writer, which honors the seek via
-/// `Write::write_all` on the underlying `File`.
+/// overwrite the existing prefix with zeros. [`fast_io::MacosWriter`]
+/// likewise issues writes from the current position without preserving the
+/// seek. Append mode therefore always falls back to the buffered writer,
+/// which honors the seek via `Write::write_all` on the underlying `File`.
+///
+/// On macOS, `MacosWriter::from_file` uses `size_hint` to decide whether to
+/// set `F_NOCACHE` (only for files >= 1 MiB), preserving the page cache for
+/// small files. `size_hint` is the receiver-known target size.
 ///
 /// On the batched paths, `batch.begin_file(file)` registers the file with the
 /// backend; the matching `commit_file` happens via [`Writer::finish`].
@@ -273,6 +281,7 @@ fn make_writer<'a>(
     iocp_batch: Option<&'a mut fast_io::IocpDiskBatch>,
     use_sparse: bool,
     append_offset: u64,
+    size_hint: u64,
 ) -> io::Result<Writer<'a>> {
     #[cfg(all(target_os = "linux", feature = "io_uring"))]
     {
@@ -290,6 +299,14 @@ fn make_writer<'a>(
                 batch.begin_file(file)?;
                 return Ok(Writer::Iocp { batch });
             }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if !use_sparse && append_offset == 0 {
+            return Ok(Writer::Macos(fast_io::MacosWriter::from_file(
+                file, size_hint,
+            )));
         }
     }
     Ok(Writer::Buffered(ReusableBufWriter::new(file, write_buf)))
@@ -506,6 +523,80 @@ mod tests {
 
         let result = rename_with_io_uring_fallback(&src, &dst);
         assert!(result.is_err());
+    }
+
+    /// Verifies `make_writer` selects [`Writer::Macos`] when sparse mode is
+    /// disabled and `append_offset` is zero, so the `F_NOCACHE` + `writev`
+    /// optimization is engaged on the common write path.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn make_writer_selects_macos_for_non_sparse_zero_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("macos_writer_select.bin");
+        let file = fs::File::create(&path).unwrap();
+        let mut write_buf = Vec::with_capacity(256 * 1024);
+
+        let writer = make_writer(
+            file,
+            &mut write_buf,
+            None,
+            None,
+            /* use_sparse */ false,
+            /* append_offset */ 0,
+            /* size_hint */ 0,
+        )
+        .unwrap();
+
+        assert!(
+            matches!(writer, Writer::Macos(_)),
+            "macOS non-sparse zero-offset writes must select Writer::Macos"
+        );
+    }
+
+    /// Verifies `make_writer` falls back to [`Writer::Buffered`] when sparse
+    /// mode or append mode is active on macOS, preserving `Seek` semantics.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn make_writer_falls_back_to_buffered_when_seek_required() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Sparse mode forces buffered.
+        let sparse_path = dir.path().join("sparse.bin");
+        let sparse_file = fs::File::create(&sparse_path).unwrap();
+        let mut sparse_buf = Vec::with_capacity(256 * 1024);
+        let sparse_writer = make_writer(
+            sparse_file,
+            &mut sparse_buf,
+            None,
+            None,
+            /* use_sparse */ true,
+            /* append_offset */ 0,
+            /* size_hint */ 0,
+        )
+        .unwrap();
+        assert!(
+            matches!(sparse_writer, Writer::Buffered(_)),
+            "sparse mode must select Writer::Buffered"
+        );
+
+        // Append mode forces buffered.
+        let append_path = dir.path().join("append.bin");
+        let append_file = fs::File::create(&append_path).unwrap();
+        let mut append_buf = Vec::with_capacity(256 * 1024);
+        let append_writer = make_writer(
+            append_file,
+            &mut append_buf,
+            None,
+            None,
+            /* use_sparse */ false,
+            /* append_offset */ 4096,
+            /* size_hint */ 0,
+        )
+        .unwrap();
+        assert!(
+            matches!(append_writer, Writer::Buffered(_)),
+            "append mode must select Writer::Buffered"
+        );
     }
 
     /// Verifies consistent io_uring availability for RENAMEAT2 across calls.
