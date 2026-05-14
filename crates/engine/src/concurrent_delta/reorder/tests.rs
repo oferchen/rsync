@@ -1,6 +1,6 @@
 //! Unit tests for the sequence-based reorder buffer.
 
-mod tests {
+mod core_tests {
     use super::super::*;
 
     #[test]
