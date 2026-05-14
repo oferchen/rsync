@@ -558,17 +558,19 @@ fn error_all_invalid_versions() {
 }
 
 /// Test error message content.
+///
+/// upstream: compat.c:620-621 emits the two-line wording verbatim. We mirror
+/// it byte-for-byte. The rejected version is preserved on the variant and
+/// accessible via `unsupported_version()` for callers that need it.
 #[test]
-fn error_message_includes_version_range() {
+fn error_message_matches_upstream_verbatim() {
     let err = NegotiationError::UnsupportedVersion(27);
-    let msg = err.to_string();
-
-    // Should mention the version
-    assert!(msg.contains("27"), "Error should mention version 27");
-
-    // Should mention the valid range
-    assert!(msg.contains("28"), "Error should mention min version 28");
-    assert!(msg.contains("32"), "Error should mention max version 32");
+    assert_eq!(
+        err.to_string(),
+        "protocol version mismatch -- is your shell clean?\n\
+         (see the rsync manpage for an explanation)"
+    );
+    assert_eq!(err.unsupported_version(), Some(27));
 }
 
 /// Comprehensive feature matrix test for all supported versions.
