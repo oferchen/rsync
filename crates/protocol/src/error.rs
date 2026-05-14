@@ -33,7 +33,17 @@ pub enum NegotiationError {
         peer_versions: Vec<u8>,
     },
     /// The peer advertised a protocol version outside the upstream supported range.
-    #[error("peer advertised unsupported rsync protocol version {version} (valid range {oldest}-{newest})", version = .0, oldest = ProtocolVersion::supported_range_bounds().0, newest = ProtocolVersion::supported_range_bounds().1)]
+    ///
+    /// The Display rendering is byte-identical to upstream rsync 3.4.1's two
+    /// `FERROR` lines emitted from `compat.c:620-621` when `remote_protocol`
+    /// falls outside `[MIN_PROTOCOL_VERSION, MAX_PROTOCOL_VERSION]`. Backup
+    /// monitoring tools grep for this exact wording, so changing it would
+    /// break interop. The offending version is preserved on the variant and
+    /// reachable via [`NegotiationError::unsupported_version`].
+    // upstream: compat.c:618-623 (start_protocol)
+    #[error(
+        "protocol version mismatch -- is your shell clean?\n(see the rsync manpage for an explanation)"
+    )]
     UnsupportedVersion(u32),
     /// A legacy ASCII daemon greeting could not be parsed.
     #[error("malformed legacy rsync daemon greeting: {input:?}")]
@@ -109,14 +119,18 @@ mod tests {
     }
 
     #[test]
-    fn display_mentions_supported_range_for_unsupported_versions() {
+    fn display_matches_upstream_verbatim_for_unsupported_versions() {
+        // upstream: compat.c:620-621 emits these two FERROR lines verbatim
+        // (`protocol version mismatch -- is your shell clean?\n` followed by
+        // `(see the rsync manpage for an explanation)\n`). Backup monitoring
+        // tools grep for this exact wording.
         let err = NegotiationError::UnsupportedVersion(27);
-        let rendered = err.to_string();
-
-        assert!(rendered.contains("peer advertised unsupported rsync protocol version 27"));
-        assert!(rendered.contains("valid range"));
-        assert!(rendered.contains(&ProtocolVersion::OLDEST.as_u8().to_string()));
-        assert!(rendered.contains(&ProtocolVersion::NEWEST.as_u8().to_string()));
+        assert_eq!(
+            err.to_string(),
+            "protocol version mismatch -- is your shell clean?\n\
+             (see the rsync manpage for an explanation)"
+        );
+        assert_eq!(err.unsupported_version(), Some(27));
     }
 
     #[test]
