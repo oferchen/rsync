@@ -130,6 +130,15 @@ impl MacosWriter {
         self.bytes_written
     }
 
+    /// Flushes pending buffers and fsyncs the underlying file.
+    ///
+    /// Drains any accumulated `writev` buffers and then calls `sync_all` on
+    /// the file descriptor so the data is persisted to durable storage.
+    pub fn sync(&mut self) -> io::Result<()> {
+        self.flush_writev()?;
+        self.file.sync_all()
+    }
+
     /// Attempts to set `F_NOCACHE` on the file descriptor.
     ///
     /// Returns `true` on success, `false` if `fcntl` fails (e.g., on a
@@ -410,6 +419,12 @@ impl MacosWriter {
     #[must_use]
     pub fn bytes_written(&self) -> u64 {
         self.bytes_written
+    }
+
+    /// Flushes buffered data and fsyncs the underlying file.
+    pub fn sync(&mut self) -> io::Result<()> {
+        self.inner.flush()?;
+        self.inner.get_ref().sync_all()
     }
 }
 
