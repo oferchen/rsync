@@ -22,11 +22,11 @@ Companion documents (already in tree):
 
 ## Verdict
 
-**OK-with-caveat.**
+**S1 RESOLVED.**
 
 There is no live wired path where a `MmapReader` /
 `MmapStrategy`-backed buffer can be referenced from an SQPOLL'd io_uring SQE
-today. The hazard is closed by three independent layers:
+today. The hazard is closed by four independent layers:
 
 1. SQPOLL is off in every preset and never flipped on by a production caller
    (`crates/fast_io/src/io_uring/config.rs:374, 392, 408`).
@@ -36,15 +36,15 @@ today. The hazard is closed by three independent layers:
    (`crates/fast_io/src/io_uring/registered_buffers.rs:283-301`).
 3. `DeltaApplicator` forces `BufferedMap` for the basis file when its writer
    is io_uring-backed (`crates/transfer/src/delta_apply/applicator.rs:161-176`).
+4. `IoUringConfig::build_ring` (`crates/fast_io/src/io_uring/config.rs`) now
+   refuses `setup_sqpoll` whenever the caller has flagged
+   `mmap_basis_active: true` on the same plan, emits a
+   `debug_log!(Io, 1, ...)` warning, sets `SQPOLL_FALLBACK`, and falls back
+   to a regular ring. Configuration-time check (before any SQE is built),
+   never a runtime failure. Tracked in #2158.
 
-The **caveat** is that none of these layers is defended by a runtime check
-that refuses SQPOLL when an `MmapReader` or `MmapStrategy` is in scope. The
-invariant is held by convention at the call sites. The opt-in path
-(`IoUringConfig::sqpoll = true`) builds the ring without consulting any
-mmap state, and `IoUringWriter::write` still has a zero-copy bypass that
-submits the caller's `&[u8]` directly when `len >= buffer_size`
-(`file_writer.rs:330`, see audit #3440 F3). One future caller pairing
-SQPOLL with `MmapStrategy` would reopen the hazard.
+Layer 4 closes the caveat that previous revisions of this audit left open:
+the recommendation block below is now implemented.
 
 ## Evidence table
 
@@ -105,24 +105,34 @@ kthread stalls the entire SQ, or a third-party truncation surfaces as
 This is the residual-risk class that promotes the verdict to
 "with caveat".
 
-## Recommendation (single-PR fix to close the caveat)
+## Resolution (#2158, implemented)
 
-Refuse SQPOLL at ring construction unless the caller has opted into the
-mmap-incompatible path. Concretely, change `IoUringConfig::build_ring`
-(`crates/fast_io/src/io_uring/config.rs:436-451`) to require an explicit
-`allow_mmap_basis: bool` invariant on the config, defaulting to `false`,
-and skip `setup_sqpoll` when the invariant cannot be guaranteed. Tie the
-invariant to the same writer-kind signal that already drives the
-`DeltaApplicator` selector:
+Implementation reference: `crates/fast_io/src/io_uring/config.rs`
+`IoUringConfig::mmap_basis_active` field + `build_ring` defensive branch.
 
-- `BasisWriterKind::Standard` -> SQPOLL request honoured, but no io_uring
-  writer is wired so no SQE is in flight.
-- `BasisWriterKind::IoUring` -> SQPOLL request honoured, basis is forced
-  to `BufferedMap` by the existing selector, no mmap can reach the ring.
-- Any future "io_uring writer with mmap basis" caller -> the config
-  builder refuses to set `setup_sqpoll`, returns `Err`, and the operator
-  sees a clear "SQPOLL + mmap basis not supported" diagnostic instead of
-  a silent kernel-thread stall.
+`IoUringConfig` now carries an explicit `mmap_basis_active: bool` field
+that defaults to `false`. Callers driving an mmap-backed basis flip it to
+`true` before the first ring construction. `build_ring` consults the flag
+before calling `setup_sqpoll`: when SQPOLL is requested but
+`mmap_basis_active` is `true`, the builder logs a single
+`debug_log!(Io, 1, ...)` warning, sets `SQPOLL_FALLBACK`, and builds a
+plain ring. This is configuration-time (before any SQE is submitted), so
+the hazard cannot reach the kernel even if a future caller forgets to wire
+`BasisWriterKind::IoUring`.
+
+Behaviour matrix (now enforced in `config.rs` tests):
+
+- `BasisWriterKind::Standard`, `mmap_basis_active: false` -> SQPOLL
+  request honoured (kernel permission permitting). No io_uring writer is
+  wired so no SQE is in flight regardless.
+- `BasisWriterKind::IoUring`, `mmap_basis_active: false` -> SQPOLL request
+  honoured. Basis is forced to `BufferedMap` by the existing selector, no
+  mmap can reach the ring.
+- Any caller that pairs SQPOLL with `mmap_basis_active: true` -> the
+  builder refuses `setup_sqpoll`, emits a single `debug_log!` warning,
+  sets `SQPOLL_FALLBACK`, and builds a regular ring. The transfer
+  succeeds; the operator sees a clear diagnostic instead of a silent
+  kernel-thread stall.
 
 The alternative - forcing `MAP_POPULATE` or `mlock` on every
 `MmapReader::open` - was already evaluated and rejected
@@ -133,9 +143,10 @@ construction approach is the single-PR mitigation that survives all three
 failure modes (stall, task-work fallback, EFAULT/SIGBUS) without
 per-call-site hardening.
 
-This is a follow-up improvement, not a current bug fix: nothing today
-constructs an SQPOLL ring on a wired path. The change defends against the
-next contributor pairing SQPOLL with an mmap basis.
+This is a defensive measure, not a current bug fix: nothing today
+constructs an SQPOLL ring on a wired path. The implemented check (see
+"Resolution" above) defends against the next contributor pairing SQPOLL
+with an mmap basis.
 
 ## References
 
