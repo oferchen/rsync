@@ -77,13 +77,14 @@ fn xxh64_dedup_falls_through_when_files_differ() {
     assert_eq!(fs::read(&destination).expect("read dest"), source_bytes);
 }
 
-// Gated to Unix: the assertion that identical content yields zero literal
-// bytes through the rolling+strong delta path depends on block-alignment
-// behaviour observed on POSIX filesystems. On Windows the same delta scan
-// emits a small trailing literal segment, so the bytes_copied == 0
-// invariant does not hold cross-platform. Coverage for the size-limit
-// gate itself is preserved on Unix; the heuristic is platform-neutral.
-#[cfg(unix)]
+// Gated to Linux only: the assertion that identical content yields zero
+// literal bytes through the rolling+strong delta path depends on
+// copy_file_range / io_uring short-circuits available on Linux. Other
+// platforms emit a small trailing literal segment (Windows ~284-492 bytes,
+// macOS similar) in their delta path, so the bytes_copied == 0 invariant
+// only holds on Linux. Coverage for the size-limit gate itself is
+// preserved on Linux; the heuristic is platform-neutral.
+#[cfg(target_os = "linux")]
 #[test]
 fn xxh64_dedup_skipped_when_file_exceeds_size_limit() {
     let temp = tempdir().expect("tempdir");
@@ -122,11 +123,12 @@ fn xxh64_dedup_skipped_when_file_exceeds_size_limit() {
     assert_eq!(fs::read(&destination).expect("read dest"), payload);
 }
 
-// Gated to Unix: see note on xxh64_dedup_skipped_when_file_exceeds_size_limit.
-// The full-delta path emits a small trailing literal segment on Windows
-// even when source and destination are byte-identical, so the
-// bytes_copied == 0 invariant only holds on POSIX filesystems.
-#[cfg(unix)]
+// Gated to Linux only: see note on xxh64_dedup_skipped_when_file_exceeds_size_limit.
+// Other platforms emit a small trailing literal segment (Windows ~284-492
+// bytes, macOS similar) in their delta path even when source and
+// destination are byte-identical; the bytes_copied == 0 invariant only
+// holds on Linux where copy_file_range / io_uring can short-circuit.
+#[cfg(target_os = "linux")]
 #[test]
 fn xxh64_dedup_disabled_runs_full_delta_path() {
     let temp = tempdir().expect("tempdir");
