@@ -337,6 +337,28 @@ pub struct IoUringConfig {
     /// Idle timeout (ms) for the SQPOLL kernel thread before it goes to sleep.
     /// Only relevant when `sqpoll` is true. Default: 1000ms.
     pub sqpoll_idle_ms: u32,
+    /// Signals that an `mmap`-backed reader (e.g. `MmapReader` /
+    /// `MmapStrategy`) is live on this transfer plan and may share buffers
+    /// with this ring.
+    ///
+    /// Set by the caller before [`build_ring`](Self::build_ring) when the
+    /// upstream selector cannot guarantee `BufferedMap` for the basis file
+    /// (see `BasisWriterKind` in `crates/transfer/src/delta_apply/`). When
+    /// `true`, `build_ring` refuses to enable SQPOLL even if `sqpoll == true`
+    /// and falls back to a regular ring with a single warning emitted via
+    /// `logging::debug_log!`.
+    ///
+    /// The pairing of SQPOLL with an mmap'd file region is unsafe on
+    /// pre-6.x Linux kernels: the SQPOLL kthread runs without the user
+    /// `mm` context, so cold-page faults on mapped pages are serviced via
+    /// `task_work` on the original task. Under load this loops between
+    /// kthread submission and userspace fault-in, and on concurrent
+    /// truncation surfaces as in-kernel `SIGBUS`. See
+    /// `docs/audits/io-uring-sqpoll-mmap-interaction.md` (companion audits
+    /// `docs/audits/mmap-iouring-sqpoll-pagefaults.md` and
+    /// `docs/audits/io_uring_sqpoll_mmap_pagefault.md`) for the long-form
+    /// discussion and upstream-kernel references.
+    pub mmap_basis_active: bool,
     /// Whether to register fixed buffers for `READ_FIXED`/`WRITE_FIXED` operations.
     ///
     /// When enabled, a [`RegisteredBufferGroup`](super::RegisteredBufferGroup) is
@@ -373,6 +395,7 @@ impl Default for IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            mmap_basis_active: false,
             register_buffers: true,
             registered_buffer_count: 8,
             zero_copy_policy: crate::ZeroCopyPolicy::Auto,
@@ -391,6 +414,7 @@ impl IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            mmap_basis_active: false,
             register_buffers: true,
             registered_buffer_count: 16,
             zero_copy_policy: crate::ZeroCopyPolicy::Auto,
@@ -407,6 +431,7 @@ impl IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            mmap_basis_active: false,
             register_buffers: true,
             registered_buffer_count: 8,
             zero_copy_policy: crate::ZeroCopyPolicy::Auto,
@@ -433,8 +458,34 @@ impl IoUringConfig {
     /// `EPERM` / `ENOMEM`. This two-step approach means callers can
     /// optimistically request SQPOLL without needing privilege checks
     /// upfront - the fallback is transparent.
+    ///
+    /// # Defensive SQPOLL + mmap refusal
+    ///
+    /// When [`mmap_basis_active`](Self::mmap_basis_active) is set the
+    /// caller is signalling that an `MmapReader` / `MmapStrategy` is live
+    /// on the same transfer plan that owns this ring. Pairing SQPOLL with
+    /// a file-backed mmap region is a documented kernel hazard: the SQPOLL
+    /// kthread services SQEs without the user `mm` context, so cold-page
+    /// faults on mapped pages bounce to `task_work` on the original task
+    /// (deadlock loop on pre-6.x kernels) and concurrent truncation
+    /// surfaces as in-kernel `SIGBUS`. See
+    /// `docs/audits/io-uring-sqpoll-mmap-interaction.md` for the long-form
+    /// reasoning. We degrade gracefully (disable SQPOLL, regular ring)
+    /// rather than failing the transfer.
     pub(crate) fn build_ring(&self) -> io::Result<RawIoUring> {
-        if self.sqpoll {
+        let sqpoll_requested = self.sqpoll;
+        let sqpoll_safe = sqpoll_requested && !self.mmap_basis_active;
+        if sqpoll_requested && !sqpoll_safe {
+            logging::debug_log!(
+                Io,
+                1,
+                "io_uring: refusing SQPOLL because an mmap basis reader is active on this \
+                 transfer plan (SQPOLL kthread + file-backed mmap is a known kernel deadlock \
+                 hazard on pre-6.x kernels); falling back to a regular ring"
+            );
+            SQPOLL_FALLBACK.store(true, Ordering::Relaxed);
+        }
+        if sqpoll_safe {
             let mut builder = io_uring::IoUring::builder();
             builder.setup_sqpoll(self.sqpoll_idle_ms);
             match builder.build(self.sq_entries) {
@@ -822,6 +873,75 @@ mod tests {
         assert!(
             !sqpoll_fell_back(),
             "SQPOLL fallback flag must not be set when SQPOLL was not requested"
+        );
+    }
+
+    #[test]
+    fn default_config_mmap_basis_inactive() {
+        let config = IoUringConfig::default();
+        assert!(
+            !config.mmap_basis_active,
+            "mmap_basis_active must default to false"
+        );
+        assert!(!IoUringConfig::for_large_files().mmap_basis_active);
+        assert!(!IoUringConfig::for_small_files().mmap_basis_active);
+    }
+
+    #[test]
+    fn build_ring_sqpoll_with_small_files_no_mmap_keeps_request() {
+        // Small-file plan: no mmap basis, SQPOLL request must reach the
+        // builder (and either succeed or set the fallback flag, both fine).
+        SQPOLL_FALLBACK.store(false, Ordering::Relaxed);
+        let config = IoUringConfig {
+            sqpoll: true,
+            mmap_basis_active: false,
+            ..IoUringConfig::for_small_files()
+        };
+        let ring = config.build_ring();
+        assert!(
+            ring.is_ok(),
+            "build_ring() must succeed when no mmap basis is active"
+        );
+        // The fallback flag may or may not be set depending on whether the
+        // test runner has CAP_SYS_NICE; only the no-mmap path even attempts
+        // setup_sqpoll, so simply succeeding is the assertion we need.
+    }
+
+    #[test]
+    fn build_ring_sqpoll_with_mmap_basis_disables_sqpoll() {
+        // Large-file plan with mmap basis: the defensive check must refuse
+        // SQPOLL and fall back to a regular ring with the fallback flag set.
+        SQPOLL_FALLBACK.store(false, Ordering::Relaxed);
+        let config = IoUringConfig {
+            sqpoll: true,
+            mmap_basis_active: true,
+            ..IoUringConfig::for_large_files()
+        };
+        let ring = config.build_ring();
+        assert!(
+            ring.is_ok(),
+            "build_ring() must succeed (graceful degrade) when mmap basis is active"
+        );
+        assert!(
+            sqpoll_fell_back(),
+            "SQPOLL fallback flag must be set when mmap_basis_active blocks SQPOLL"
+        );
+    }
+
+    #[test]
+    fn build_ring_no_sqpoll_with_mmap_basis_no_warning() {
+        // mmap_basis_active without sqpoll is a no-op: no warning, no
+        // fallback flag, plain ring construction.
+        SQPOLL_FALLBACK.store(false, Ordering::Relaxed);
+        let config = IoUringConfig {
+            sqpoll: false,
+            mmap_basis_active: true,
+            ..IoUringConfig::default()
+        };
+        let _ = config.build_ring();
+        assert!(
+            !sqpoll_fell_back(),
+            "fallback flag must stay clear when SQPOLL was never requested"
         );
     }
 }
