@@ -8,7 +8,7 @@ use core::{
 use super::super::super::progress::{NameOutputLevel, ProgressSetting};
 
 /// Parsed `--info` flag settings controlling informational output levels.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct InfoFlagSettings {
     pub(crate) progress: ProgressSetting,
     pub(crate) stats: Option<u8>,
