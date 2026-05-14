@@ -243,7 +243,7 @@ crates/fast_io/         # Platform I/O (io_uring, copy_file_range, sendfile)
 crates/compress/        # zstd, lz4, zlib compression codecs
 crates/bandwidth/       # Bandwidth limiting and rate control
 crates/signature/       # Signature layout and block-size calculations
-crates/match/           # Delta matching and block search
+crates/matching/        # Delta matching and block search
 crates/flist/           # File list generation and traversal
 crates/logging/         # Logging macros and verbosity control
 crates/logging-sink/    # Message sink and output formatting

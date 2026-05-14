@@ -13,7 +13,7 @@
 //! # Why this matters
 //!
 //! Today's pre-bithash baseline relies on the 16-bit `tag_table`
-//! fast-path (`crates/match/src/index/mod.rs`, mirroring upstream
+//! fast-path (`crates/matching/src/index/mod.rs`, mirroring upstream
 //! `match.c`'s `tag_table[s1]`). With ~60k indexed blocks the table
 //! saturates and almost every rolling-checksum probe survives the gate,
 //! which means the full hash-table lookup runs at every offset. A
