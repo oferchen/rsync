@@ -1390,8 +1390,7 @@ mod tests {
         let third = RegisteredBufferGroup::new(&ring, 4096, 2);
         assert!(
             third.is_ok(),
-            "after explicit unregister, the ring must accept a fresh \
-             registration: {third:?}"
+            "after explicit unregister, the ring must accept a fresh registration"
         );
     }
 
@@ -1458,9 +1457,10 @@ mod tests {
 
         // Generate measurable telemetry: one hit, one forced miss.
         let s = group.checkout().expect("slot");
-        let _miss = group.checkout().expect("second slot");
+        let s2 = group.checkout().expect("second slot");
         assert!(group.checkout().is_none());
         drop(s);
+        drop(s2);
 
         let snapshot = group.stats();
         assert_eq!(snapshot.total_acquires, 3);
@@ -1527,7 +1527,7 @@ mod tests {
         let third = RegisteredBufferGroup::new(&ring, 4096, 2);
         assert!(
             third.is_ok(),
-            "ring must be reusable after a failed registration was cleaned up: {third:?}"
+            "ring must be reusable after a failed registration was cleaned up"
         );
     }
 }
