@@ -159,11 +159,12 @@ impl PipelinedReceiver {
                     let pending = self.expected_checksums.pop_front();
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
+                        // upstream: sender.c:362 - rsyserr(FERROR_XFER, errno,
+                        // "send_files failed to open %s", full_fname(...)); full_fname()
+                        // wraps the path in double quotes (util1.c:1228).
                         self.warnings.push(format!(
-                            "rsync: send_files failed to open {:?}: Permission denied (13) {}{}",
+                            "rsync: [sender] send_files failed to open \"{}\": Permission denied (13)",
                             path.display(),
-                            crate::role_trailer::error_location!(),
-                            crate::role_trailer::receiver(),
                         ));
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
@@ -217,11 +218,12 @@ impl PipelinedReceiver {
                     let pending = self.expected_checksums.pop_front();
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
+                        // upstream: sender.c:362 - rsyserr(FERROR_XFER, errno,
+                        // "send_files failed to open %s", full_fname(...)); full_fname()
+                        // wraps the path in double quotes (util1.c:1228).
                         self.warnings.push(format!(
-                            "rsync: send_files failed to open {:?}: Permission denied (13) {}{}",
+                            "rsync: [sender] send_files failed to open \"{}\": Permission denied (13)",
                             path.display(),
-                            crate::role_trailer::error_location!(),
-                            crate::role_trailer::receiver(),
                         ));
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
@@ -272,22 +274,21 @@ impl PipelinedReceiver {
                 || computed.bytes[..computed.len] != pending.expected[..pending.len]
             {
                 if self.redo_enabled {
-                    // upstream: receiver.c:960-968 - WARNING, will try again
+                    // upstream: receiver.c:965-968 -
+                    // "WARNING: %s failed verification -- update %s%s.\n"
+                    // with keptstr="discarded", redostr=" (will try again)".
                     self.warnings.push(format!(
-                        "WARNING: {:?} failed verification -- update discarded (will try again). {}{}",
-                        pending.file_path,
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver(),
+                        "WARNING: {} failed verification -- update discarded (will try again).",
+                        pending.file_path.display(),
                     ));
                     self.redo_indices.push(pending.file_index);
                     return Ok(());
                 }
-                // upstream: receiver.c:957-959 - ERROR in phase 2 (redoing)
+                // upstream: receiver.c:957-968 - phase-2 redo path (FERROR_XFER):
+                // "ERROR: %s failed verification -- update %s.\n" with keptstr="discarded".
                 self.warnings.push(format!(
-                    "ERROR: {:?} failed verification -- update discarded. {}{}",
-                    pending.file_path,
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver(),
+                    "ERROR: {} failed verification -- update discarded.",
+                    pending.file_path.display(),
                 ));
                 // In phase 2, upstream logs the error but continues the transfer.
                 return Ok(());
@@ -648,5 +649,33 @@ mod tests {
         let pr = PipelinedReceiver::new(DiskCommitConfig::default());
         assert_eq!(pr.permission_error_count(), 0);
         drop(pr);
+    }
+
+    /// Pins the WARNING wording to upstream `receiver.c:965-968` verbatim.
+    #[test]
+    fn verification_warning_wording_matches_upstream() {
+        let path = PathBuf::from("/tmp/a/b");
+        let msg = format!(
+            "WARNING: {} failed verification -- update discarded (will try again).",
+            path.display(),
+        );
+        assert_eq!(
+            msg,
+            "WARNING: /tmp/a/b failed verification -- update discarded (will try again)."
+        );
+    }
+
+    /// Pins the ERROR wording for the phase-2 redo path to upstream verbatim.
+    #[test]
+    fn verification_error_wording_matches_upstream() {
+        let path = PathBuf::from("/tmp/a/b");
+        let msg = format!(
+            "ERROR: {} failed verification -- update discarded.",
+            path.display(),
+        );
+        assert_eq!(
+            msg,
+            "ERROR: /tmp/a/b failed verification -- update discarded."
+        );
     }
 }
