@@ -202,7 +202,7 @@ fn test_negotiate_nstr_messages_match_upstream_wording_client() {
     let messages: Vec<String> = drain_events()
         .into_iter()
         .filter_map(|event| match event {
-            DiagnosticEvent::Debug { flag, message, .. } if flag == DebugFlag::Nstr => {
+            DiagnosticEvent::Debug { flag: DebugFlag::Nstr, message, .. } => {
                 Some(message)
             }
             _ => None,
@@ -257,7 +257,7 @@ fn test_negotiate_nstr_summary_matches_upstream_wording_client() {
     let messages: Vec<String> = drain_events()
         .into_iter()
         .filter_map(|event| match event {
-            DiagnosticEvent::Debug { flag, message, .. } if flag == DebugFlag::Nstr => {
+            DiagnosticEvent::Debug { flag: DebugFlag::Nstr, message, .. } => {
                 Some(message)
             }
             _ => None,
