@@ -81,6 +81,7 @@ fn parse_rule_line_expanded(
     let (mods, pattern) = parse_modifiers(rest);
 
     if mods.word_split && !pattern.is_empty() {
+        validate_side_modifiers(action_char, &mods, line, source_path, line_num)?;
         let patterns: Vec<&str> = pattern.split_whitespace().collect();
         if patterns.is_empty() {
             return Err(MergeFileError::parse_error(
@@ -165,6 +166,42 @@ impl RuleModifiers {
     }
 }
 
+/// Rejects `s` or `r` modifiers when the rule prefix already implies a side.
+///
+/// Matches upstream's `prefix_specifies_side` guard: prefixes `H`/`S`
+/// (sender-side hide/show) and `P`/`R` (receiver-side protect/risk) bind the
+/// rule to a single side, so combining them with the modifier counterpart is a
+/// syntax error.
+///
+/// upstream: exclude.c parse_filter_str (rsync-3.4.2) lines 1269-1278
+fn validate_side_modifiers(
+    action_char: char,
+    mods: &RuleModifiers,
+    line: &str,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<(), MergeFileError> {
+    let prefix_side = matches!(action_char, 'H' | 'S' | 'P' | 'R');
+    if !prefix_side {
+        return Ok(());
+    }
+    let conflict = if mods.sender_only {
+        Some('s')
+    } else if mods.receiver_only {
+        Some('r')
+    } else {
+        None
+    };
+    if let Some(ch) = conflict {
+        return Err(MergeFileError::parse_error(
+            source_path,
+            line_num,
+            format!("invalid modifier '{ch}' on side-specific filter rule: {line}"),
+        ));
+    }
+    Ok(())
+}
+
 /// Parses modifiers from a string following the action character.
 ///
 /// Returns the parsed modifiers and the remaining string (pattern).
@@ -234,41 +271,48 @@ impl ShortFormAction {
 
 /// Tries to parse a short-form rule (single character prefix like `+`, `-`, `P`).
 ///
-/// Returns `Some(rule)` if the line matches a short-form pattern, `None` otherwise.
+/// Returns `Ok(Some(rule))` if the line matches a short-form pattern,
+/// `Ok(None)` if no prefix matched, or `Err` if a recognised prefix was paired
+/// with an invalid modifier (e.g. `Hr`, `Sr`, `Ps`, `Rs`).
 ///
 /// upstream: exclude.c:parse_filter_str() - short-form prefix handling
-fn try_parse_short_form(line: &str) -> Option<FilterRule> {
-    let (rest, action) = if let Some(r) = line.strip_prefix('+') {
-        (r, ShortFormAction::Include)
+fn try_parse_short_form(
+    line: &str,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<Option<FilterRule>, MergeFileError> {
+    let (rest, action, prefix_char) = if let Some(r) = line.strip_prefix('+') {
+        (r, ShortFormAction::Include, '+')
     } else if let Some(r) = line.strip_prefix('-') {
-        (r, ShortFormAction::Exclude)
+        (r, ShortFormAction::Exclude, '-')
     } else if let Some(r) = line.strip_prefix('P') {
-        (r, ShortFormAction::Protect)
+        (r, ShortFormAction::Protect, 'P')
     } else if let Some(r) = line.strip_prefix('R') {
-        (r, ShortFormAction::Risk)
+        (r, ShortFormAction::Risk, 'R')
     } else if let Some(r) = line.strip_prefix('.') {
-        (r, ShortFormAction::Merge)
+        (r, ShortFormAction::Merge, '.')
     } else if let Some(r) = line.strip_prefix(':') {
-        (r, ShortFormAction::DirMerge)
+        (r, ShortFormAction::DirMerge, ':')
     } else if let Some(r) = line.strip_prefix('H') {
-        (r, ShortFormAction::Hide)
+        (r, ShortFormAction::Hide, 'H')
     } else if let Some(r) = line.strip_prefix('S') {
-        (r, ShortFormAction::Show)
+        (r, ShortFormAction::Show, 'S')
     } else {
-        return None;
+        return Ok(None);
     };
 
     let (mods, pattern) = parse_modifiers(rest);
     if pattern.is_empty() {
-        return None;
+        return Ok(None);
     }
+    validate_side_modifiers(prefix_char, &mods, line, source_path, line_num)?;
 
     let rule = action.to_rule(pattern);
-    Some(if action.supports_mods() {
+    Ok(Some(if action.supports_mods() {
         mods.apply(rule)
     } else {
         rule
-    })
+    }))
 }
 
 /// Tries to parse a long-form rule (keyword prefix like `include`, `exclude`).
@@ -314,7 +358,7 @@ fn parse_rule_line(
         return Ok(FilterRule::clear());
     }
 
-    if let Some(rule) = try_parse_short_form(line) {
+    if let Some(rule) = try_parse_short_form(line, source_path, line_num)? {
         return Ok(rule);
     }
 
