@@ -14,10 +14,7 @@ pub use backup::compute_backup_path;
 pub(crate) use backup::copy_entry_to_backup;
 #[cfg(test)]
 pub(crate) use comparison::files_checksum_match;
-pub(crate) use comparison::{
-    CopyComparison, DEFAULT_XXH64_DEDUP_SIZE_LIMIT, Xxh64DedupOutcome, should_skip_copy,
-    xxh64_dedup_check,
-};
+pub(crate) use comparison::{CopyComparison, DEFAULT_XXH64_DEDUP_SIZE_LIMIT, should_skip_copy};
 pub(crate) use copy::copy_file;
 #[cfg(test)]
 pub(crate) use copy::take_fsync_call_count;
