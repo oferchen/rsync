@@ -1,7 +1,6 @@
 use std::io::{self, Write};
 
 use core::client::{ClientEvent, ClientEventKind, ClientSummary, HumanReadableMode};
-use fast_io::{is_io_uring_available, sqpoll_fell_back};
 
 use super::format::{
     compute_rate, describe_event_kind, event_matches_name_level, format_list_permissions,
@@ -201,6 +200,12 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
 }
 
 /// Emits a statistics summary mirroring the subset of counters supported by the local engine.
+///
+/// Line ordering, label spelling, and the trailing blank line before the totals
+/// trailer follow upstream rsync's `output_summary` (`main.c:416-465`). The
+/// helper deliberately omits the upstream leading `\n` (`main.c:419`) because
+/// the caller (`emit_transfer_summary`) emits a blank line between prior
+/// output blocks and the stats block.
 pub(crate) fn emit_stats<W: Write + ?Sized>(
     summary: &ClientSummary,
     stdout: &mut W,
@@ -285,7 +290,6 @@ pub(crate) fn emit_stats<W: Write + ?Sized>(
     )?;
     writeln!(stdout, "Total bytes sent: {bytes_sent_display}")?;
     writeln!(stdout, "Total bytes received: {bytes_received_display}")?;
-    writeln!(stdout, "I/O backend: {}", io_backend_label())?;
     writeln!(stdout)?;
 
     emit_totals(summary, stdout, human_readable, dry_run)
@@ -479,41 +483,4 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
         }
     }
     Ok(())
-}
-
-/// Returns a human-readable label describing the I/O backend in use.
-///
-/// On Linux with io_uring available, reports whether SQPOLL mode is active
-/// or whether it fell back to standard submission. On non-Linux or when
-/// io_uring is unavailable, reports "standard I/O".
-fn io_backend_label() -> &'static str {
-    if is_io_uring_available() {
-        if sqpoll_fell_back() {
-            "io_uring"
-        } else {
-            "io_uring (SQPOLL)"
-        }
-    } else {
-        "standard I/O"
-    }
-}
-
-#[cfg(test)]
-mod io_backend_tests {
-    use super::*;
-
-    #[test]
-    fn io_backend_label_returns_known_value() {
-        let label = io_backend_label();
-        assert!(
-            label == "standard I/O" || label == "io_uring" || label == "io_uring (SQPOLL)",
-            "unexpected io_backend_label: {label}"
-        );
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    #[test]
-    fn io_backend_label_is_standard_on_non_linux() {
-        assert_eq!(io_backend_label(), "standard I/O");
-    }
 }
