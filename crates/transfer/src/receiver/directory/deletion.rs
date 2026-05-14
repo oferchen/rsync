@@ -98,7 +98,8 @@ impl ReceiverContext {
         // after parallel deletion completes.
         let per_dir_results: Vec<(DeleteStats, Vec<PathBuf>)> = crate::parallel_io::map_blocking(
             dirs_to_scan,
-            self.parallel_thresholds.deletion,
+            self.parallel_thresholds
+                .for_op(crate::parallel_io::ParallelOp::Deletion),
             move |dir_relative| {
                 let dest_path = if dir_relative.as_os_str() == "." {
                     dest_dir_owned.clone()
