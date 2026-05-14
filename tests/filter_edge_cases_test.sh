@@ -2,7 +2,7 @@
 # Filter Edge Cases Interoperability Test Script
 #
 # Tests filter rule edge cases by comparing oc-rsync output against upstream
-# rsync 3.4.1. Each test creates source/dest trees, runs both tools with
+# rsync 3.4.1+. Each test creates source/dest trees, runs both tools with
 # identical arguments, and diffs the results.
 #
 # Environment variable overrides:
@@ -19,7 +19,11 @@ WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Paths (overridable via environment)
 OC_RSYNC="${OC_RSYNC:-${WORKSPACE_ROOT}/target/release/oc-rsync}"
 UPSTREAM_INSTALL_ROOT="${UPSTREAM_INSTALL_ROOT:-${WORKSPACE_ROOT}/target/interop/upstream-install}"
-UPSTREAM_RSYNC="${UPSTREAM_RSYNC:-${UPSTREAM_INSTALL_ROOT}/3.4.1/bin/rsync}"
+DEFAULT_UPSTREAM_RSYNC="${UPSTREAM_INSTALL_ROOT}/3.4.2/bin/rsync"
+if [[ ! -x "${DEFAULT_UPSTREAM_RSYNC}" ]]; then
+    DEFAULT_UPSTREAM_RSYNC="${UPSTREAM_INSTALL_ROOT}/3.4.1/bin/rsync"
+fi
+UPSTREAM_RSYNC="${UPSTREAM_RSYNC:-${DEFAULT_UPSTREAM_RSYNC}}"
 
 # Create a temp directory with cleanup trap
 TEST_DIR="$(mktemp -d)"
@@ -539,7 +543,7 @@ main() {
 
     if [ ! -x "$UPSTREAM_RSYNC" ]; then
         log_error "upstream rsync binary not found or not executable: $UPSTREAM_RSYNC"
-        log_info "Set UPSTREAM_RSYNC or ensure upstream rsync 3.4.1 is installed."
+        log_info "Set UPSTREAM_RSYNC or ensure upstream rsync 3.4.1+ is installed."
         exit 1
     fi
 
