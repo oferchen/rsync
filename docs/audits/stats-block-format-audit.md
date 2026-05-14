@@ -39,8 +39,7 @@ Upstream (`target/interop/upstream-src/rsync-3.4.1/`):
 
 oc-rsync:
 
-- `crates/cli/src/frontend/progress/render.rs` - `emit_stats`, `emit_totals`,
-  `io_backend_label`.
+- `crates/cli/src/frontend/progress/render.rs` - `emit_stats`, `emit_totals`.
 - `crates/cli/src/frontend/progress/format/size.rs` - `format_size`,
   `format_decimal_bytes`, `format_human_bytes`.
 - `crates/cli/src/frontend/progress/format/rate.rs` - `format_summary_rate`,
@@ -399,22 +398,18 @@ Total bytes received: {bytes_received_display}
 
 Parity: **OK**, same `--human-readable` off-by-one.
 
-### EXTRA: I/O backend
+### EXTRA: I/O backend (FIXED)
 
-oc-rsync (`render.rs:284`):
+Previously oc-rsync emitted an extra `I/O backend: <label>` line after
+`Total bytes received:` (`render.rs` pre-fix line 288), where `<label>` was
+one of `"standard I/O"`, `"io_uring"`, or `"io_uring (SQPOLL)"`. Upstream
+emits no such line, so byte-equivalent log parsers treated it as garbage.
 
-```
-I/O backend: {io_backend_label()}
-```
+This line and its `io_backend_label()` helper have been removed. The block
+now ends at `Total bytes received:` followed by the trailer-separator
+blank line, matching upstream's `main.c:447-452` exactly.
 
-Where `io_backend_label()` returns one of `"standard I/O"`, `"io_uring"`,
-or `"io_uring (SQPOLL)"`.
-
-Upstream emits no such line. This is a non-upstream addition that scripts
-parsing the stats block for byte-equivalent output will treat as garbage.
-
-Parity: **EXTRA - drift.** Should be removed or gated behind an
-oc-rsync-specific verbosity / debug flag.
+Parity: **OK.**
 
 ### Block separator before totals
 
@@ -422,14 +417,11 @@ Upstream (`main.c:452`): `rprintf(FCLIENT, "\n");` between the stats body
 and the totals. Always emits a blank line at this point when
 `INFO_GTE(STATS, 1)`.
 
-oc-rsync: writes `writeln!(stdout)?` at `render.rs:285` after the I/O
-backend line. The blank line is unconditional in `emit_stats`, so the
-separator does land before the totals - but it currently follows the
-spurious "I/O backend" line, not the upstream final line ("Total bytes
-received").
+oc-rsync writes `writeln!(stdout)?` in `emit_stats` after the final
+`Total bytes received:` line, so the separator lands in the same place
+upstream emits it.
 
-Parity: **OK** (blank line present), but only because of the extra line.
-Removing "I/O backend" preserves the parity intentionally.
+Parity: **OK.**
 
 ### 14. sent/received/rate one-liner
 
@@ -590,7 +582,7 @@ Counting each distinct line-level deviation:
 13. `File list generation time` - no thousands separator on integer part.
 14. `File list transfer time` - no `flist_buildtime != 0` gate.
 15. `File list transfer time` - no thousands separator.
-16. `I/O backend` line - extra, non-upstream.
+16. `I/O backend` line - extra, non-upstream. (**FIXED**)
 17. Bytes/sec - "UNKNOWN" sentinel missing.
 18. Bytes/sec - half-second divisor offset missing.
 19. Bytes/sec - no thousands separator on rate value at default.
@@ -598,14 +590,13 @@ Counting each distinct line-level deviation:
 21. Trailer - `(BATCH ONLY)` branch missing.
 22. Locale-aware `get_number_separator` not implemented.
 
-Total discrepancies: **22**.
+Total discrepancies: **22** (1 fixed, 21 open).
 
 ## Recommendations
 
 In rough priority order (highest user-visible drift first):
 
-1. Remove the `I/O backend:` line from the stats body, or move it behind a
-   debug-only verbosity that does not collide with `--stats` consumers.
+1. ~~Remove the `I/O backend:` line from the stats body.~~ **Done.**
 2. Switch byte/count formatting defaults so oc-rsync's level 0
    (`Disabled`) maps to upstream's level 1 (current behaviour matches
    only by coincidence on the byte-count rows). Reserve `--human-readable`
