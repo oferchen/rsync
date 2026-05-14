@@ -3,7 +3,7 @@ use std::io::IoSlice;
 
 use super::{
     MAX_MESSAGE_SEGMENTS, MessageScratch, MessageSegments, Role, Severity, SourceLocation,
-    VERSION_SUFFIX,
+    VERSION_SUFFIX, file_basename,
     numbers::{encode_signed_decimal, encode_unsigned_decimal},
 };
 use crate::branding::Brand;
@@ -88,7 +88,7 @@ impl Message {
                 encode_unsigned_decimal(u64::from(source.line()), &mut scratch.line_digits);
             let len = digits.len();
             let start = scratch.line_digits.len() - len;
-            (source.path().as_bytes(), start, len)
+            (file_basename(source.path()).as_bytes(), start, len)
         });
 
         {
@@ -107,9 +107,10 @@ impl Message {
         if let Some((path_bytes, start, len)) = source_info {
             push(b" at ");
             push(path_bytes);
-            push(b":");
+            push(b"(");
             let digits = &scratch.line_digits[start..start + len];
             push(digits);
+            push(b")");
         }
 
         if let Some(role) = self.role {
