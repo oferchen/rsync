@@ -14,7 +14,8 @@ use io_uring::{IoUring as RawIoUring, opcode};
 use super::batching::{NO_FIXED_FD, maybe_fixed_file, sqe_fd};
 use super::config::IoUringConfig;
 use super::registered_buffers::{
-    RegisteredBufferGroup, RegisteredBufferSlotInfo, submit_read_fixed_batch,
+    RegisteredBufferGroup, RegisteredBufferSlotInfo, RegisteredBufferStatus,
+    submit_read_fixed_batch,
 };
 use crate::traits::FileReader;
 
@@ -38,6 +39,10 @@ pub struct IoUringReader {
     fixed_fd_slot: i32,
     /// Optional registered buffer group for `READ_FIXED` operations.
     registered_buffers: Option<RegisteredBufferGroup>,
+    /// Provenance of `registered_buffers`: distinguishes "disabled by config"
+    /// from "kernel rejected registration" so operators can diagnose why a
+    /// transfer is using the unfixed `IORING_OP_READ` fallback.
+    registered_buffer_status: RegisteredBufferStatus,
 }
 
 impl IoUringReader {
@@ -70,15 +75,13 @@ impl IoUringReader {
             NO_FIXED_FD
         };
 
-        let registered_buffers = if config.register_buffers {
-            RegisteredBufferGroup::try_new(
+        let (registered_buffers, registered_buffer_status) =
+            RegisteredBufferGroup::try_new_with_status(
                 &ring,
                 config.buffer_size,
                 config.registered_buffer_count,
-            )
-        } else {
-            None
-        };
+                config.register_buffers,
+            );
 
         Ok(Self {
             ring,
@@ -89,7 +92,18 @@ impl IoUringReader {
             sq_entries: config.sq_entries,
             fixed_fd_slot,
             registered_buffers,
+            registered_buffer_status,
         })
+    }
+
+    /// Returns the provenance of fixed-buffer registration on this reader.
+    ///
+    /// Distinguishes the "caller disabled registration" case from the
+    /// "kernel rejected registration" case when fixed-buffer I/O is
+    /// inactive. See [`RegisteredBufferStatus`].
+    #[must_use]
+    pub fn registered_buffer_status(&self) -> &RegisteredBufferStatus {
+        &self.registered_buffer_status
     }
 
     /// Reads data at the specified offset without advancing the position.
