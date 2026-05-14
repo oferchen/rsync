@@ -570,15 +570,21 @@ fn version_32_feature_profile() {
     );
 }
 
-/// Verifies `UnsupportedVersion` error message includes version range.
+/// Verifies `UnsupportedVersion` error message matches upstream wording.
+///
+/// upstream: compat.c:618-623 (start_protocol). The message is intentionally
+/// version-agnostic; the rejected version is reachable via the variant data
+/// through `unsupported_version()` for structured callers.
 #[test]
-fn unsupported_version_error_includes_range() {
+fn unsupported_version_error_matches_upstream() {
     let err = NegotiationError::UnsupportedVersion(27);
     let msg = err.to_string();
 
-    assert!(msg.contains("27"), "error should mention version 27");
-    assert!(msg.contains("28"), "error should mention min version 28");
-    assert!(msg.contains("32"), "error should mention max version 32");
+    assert_eq!(
+        msg,
+        "protocol version mismatch -- is your shell clean?\n(see the rsync manpage for an explanation)",
+    );
+    assert_eq!(err.unsupported_version(), Some(27));
 }
 
 /// Verifies `NoMutualProtocol` error message includes peer versions.
