@@ -91,6 +91,17 @@ where
         return code;
     }
 
+    // upstream: options.c parse_output_words - server-side info parsing
+    // silently ignores unknown tokens so a newer client can forward names
+    // this build has not learned yet. The well-formed empty/level errors
+    // still surface so malformed input is not swallowed entirely.
+    if !long_flags.info.is_empty()
+        && let Err(message) = super::super::execution::parse_info_flags_server(&long_flags.info)
+    {
+        write_server_error(stderr, program_brand, message.text().to_owned());
+        return 1;
+    }
+
     // Boolean and move-only flags applied after value parsing releases its borrow.
     config.deletion.ignore_errors = long_flags.ignore_errors;
     config.write.fsync = long_flags.fsync;
