@@ -274,6 +274,30 @@ pub(crate) fn socket_error(
     ClientError::with_code(code, message)
 }
 
+/// Builds the canonical "connection unexpectedly closed" diagnostic that
+/// upstream rsync emits when the protocol stream reaches EOF mid-transfer.
+///
+/// The wording mirrors `whine_about_eof()` in upstream `io.c`:
+///
+/// ```text
+/// rsync: connection unexpectedly closed (<N> bytes received so far) [<role>]
+/// ```
+///
+/// The diagnostic carries `RERR_STREAMIO` (exit code 12), matching upstream's
+/// `exit_cleanup(RERR_STREAMIO)` call at the end of the routine.
+///
+/// # Upstream Reference
+///
+/// - `io.c:228-232` (rsync 3.4.1) - `whine_about_eof()` prints this line and
+///   exits with `RERR_STREAMIO`.
+#[cold]
+pub fn connection_unexpectedly_closed_error(bytes_received: u64, role: Role) -> ClientError {
+    let code = ExitCode::StreamIo;
+    let text = format!("connection unexpectedly closed ({bytes_received} bytes received so far)");
+    let message = rsync_error!(code.as_i32(), text).with_role(role);
+    ClientError::with_code(code, message)
+}
+
 /// Creates a daemon error from an i32 exit code.
 ///
 /// If the exit code doesn't map to a known [`ExitCode`] variant,
@@ -565,6 +589,53 @@ mod tests {
             assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
             let msg = error.to_string();
             assert!(msg.contains("failed to connect to localhost:873"));
+        }
+
+        /// Pins the canonical upstream wording from `io.c:228-232`
+        /// (`whine_about_eof()`). Backup and monitoring tools grep for the
+        /// "connection unexpectedly closed (N bytes received so far) [role]"
+        /// substring, so the rendered diagnostic must contain it verbatim.
+        ///
+        /// upstream: io.c:228-232 (rsync 3.4.1):
+        ///   rprintf(FERROR, RSYNC_NAME ": connection unexpectedly closed "
+        ///       "(%s bytes received so far) [%s]\n",
+        ///       big_num(stats.total_read), who_am_i());
+        ///   exit_cleanup(RERR_STREAMIO);
+        #[test]
+        fn connection_unexpectedly_closed_matches_upstream_wording() {
+            let error = connection_unexpectedly_closed_error(1024, Role::Receiver);
+
+            assert_eq!(error.exit_code(), ExitCode::StreamIo.as_i32());
+            assert_eq!(error.code(), ExitCode::StreamIo);
+
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("connection unexpectedly closed (1024 bytes received so far)"),
+                "missing upstream wording: {rendered}"
+            );
+            assert!(
+                rendered.contains("[receiver="),
+                "missing role trailer: {rendered}"
+            );
+        }
+
+        #[test]
+        fn connection_unexpectedly_closed_zero_bytes_includes_count() {
+            let error = connection_unexpectedly_closed_error(0, Role::Generator);
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("connection unexpectedly closed (0 bytes received so far)"),
+                "missing zero-byte wording: {rendered}"
+            );
+            assert!(rendered.contains("[generator="));
+        }
+
+        #[test]
+        fn connection_unexpectedly_closed_supports_sender_role() {
+            let error = connection_unexpectedly_closed_error(42, Role::Sender);
+            let rendered = error.to_string();
+            assert!(rendered.contains("(42 bytes received so far)"));
+            assert!(rendered.contains("[sender="));
         }
 
         #[test]
