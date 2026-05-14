@@ -237,10 +237,13 @@ Footnote validation sites:
   (`crates/core/src/client/config/builder/mod.rs:276-296`).
 - [d] Upstream rejects `--inplace --partial-dir` unless
   `CF_INPLACE_PARTIAL_DIR` is negotiated. The conflict is detected at
-  `options.c:2406-2414`. oc-rsync rejects the pair unconditionally at
-  `crates/core/src/client/config/builder/mod.rs:288-293`. The protocol
-  fix-up that would allow the pair under `CF_INPLACE_PARTIAL_DIR` is
-  not yet wired through the builder; see gap G2.
+  `options.c:2406-2414`. oc-rsync now exposes
+  `ClientConfigBuilder::validate_with_capabilities` (see
+  `crates/core/src/client/config/builder/mod.rs`), which permits the
+  pair when the negotiated bitfield contains
+  `CompatibilityFlags::INPLACE_PARTIAL_DIR`. `validate()` keeps the
+  strict default for callers that have not yet seen the negotiated
+  bits, matching upstream's parse-time refusal. Gap G2 is resolved.
 - [e] Upstream rejects `--inplace --delay-updates` at
   `options.c:2406-2414` (the `partial_dir` message string covers both
   paths because `delay_updates` synthesises a `partial_dir` upstream).
@@ -329,20 +332,22 @@ Ordered by user-facing impact.
   `crates/cli/tests/option_combinations_flags.rs`
   (`test_checksum_choice_none_parses`).
 
-### G2 - `--inplace --partial-dir` cannot be enabled even when peer advertises `CF_INPLACE_PARTIAL_DIR`
+### G2 - `--inplace --partial-dir` cannot be enabled even when peer advertises `CF_INPLACE_PARTIAL_DIR` (RESOLVED)
 
 - **Upstream behaviour.** `compat.c:777-778` enables `inplace_partial`
   when both peers negotiate `CF_INPLACE_PARTIAL_DIR` (bit 6,
   introduced at protocol 30). With that bit set, upstream's
   `options.c:2406-2414` rejection is bypassed at the receiver and the
   pair runs successfully.
-- **oc-rsync behaviour.**
-  `crates/core/src/client/config/builder/mod.rs:288-293` rejects
-  `--inplace --partial-dir` unconditionally before negotiation can
-  happen, since the config builder runs at CLI parse time.
-- **Impact.** A correct combination that upstream rsync accepts at
-  proto >= 30 is rejected by oc-rsync at the CLI. Loud failure (error
-  message) rather than silent.
+- **oc-rsync behaviour.** `ClientConfigBuilder` now exposes
+  `validate_with_capabilities(caps)` alongside the strict default
+  `validate()`. When `caps` contains
+  `CompatibilityFlags::INPLACE_PARTIAL_DIR`, the
+  `--inplace`/`--append` + `--partial-dir` combination is accepted;
+  otherwise the upstream parse-time rejection is preserved.
+- **Status.** Resolved (#2142/#2143/#2144). The strict `validate()`
+  default remains so callers without negotiated capability bits still
+  match upstream's `options.c:2406-2414` behaviour.
 
 ### G3 - `--append --whole-file` accepted instead of rejected
 
@@ -391,9 +396,9 @@ Ordered by user-facing impact.
    config-time check.
 4. G1 (`--checksum-choice=none` -> `whole_file`) is resolved (see
    section 4). G2 (`CF_INPLACE_PARTIAL_DIR` runtime relaxation) is
-   tracked as a follow-up because it requires threading the negotiated
-   `CF_*` bits back into the builder, which exceeds the scope of a
-   single conflict-cell audit.
+   resolved by `validate_with_capabilities`, which threads the
+   negotiated `CF_*` bits into the builder while keeping the strict
+   default in place.
 5. G4 is internal API only; defer until the rename-batch path is
    refactored independently.
 
