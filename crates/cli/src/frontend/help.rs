@@ -53,7 +53,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --backup-dir=DIR  Store backups inside DIR instead of alongside the destination.\n",
             "      --suffix=SUFFIX  Append SUFFIX to backup names (default '~').\n",
             "  -c, --checksum   Skip updates for files that already match by checksum.\n",
-            "      --checksum-choice=ALGO  Select the strong checksum algorithm (auto, md4, md5, xxh64, xxh3, or xxh128).\n",
+            "      --checksum-choice=ALGO  Select the strong checksum algorithm (auto, none, md4, md5, xxh64, xxh3, or xxh128). `none` forces whole-file transfer.\n",
             "      --checksum-seed=NUM  Use NUM as the checksum seed for xxhash algorithms.\n",
             "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
             "      --ignore-times  Disable quick checks based on size and modification time (treat all files as changed).\n",
