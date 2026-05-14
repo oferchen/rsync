@@ -211,7 +211,8 @@ pub(crate) fn copy_directory_recursive(
             Err(error) if error.is_vanished_error() => {
                 // upstream: flist.c:1289 / sender.c:358 - vanished files produce
                 // a warning and set IOERR_VANISHED (exit code 24).
-                eprintln!("file has vanished: {}", planned.entry.path.display());
+                // full_fname() wraps the path in double quotes (util1.c:1228).
+                eprintln!("file has vanished: \"{}\"", planned.entry.path.display());
                 context.record_io_error();
                 if first_entry_io_error.is_none() {
                     first_entry_io_error = Some(error);
