@@ -201,6 +201,8 @@ pub fn writer_from_file_with_depth(
                         buffer_capacity,
                         config.sq_entries,
                         fixed_fd_slot,
+                        config.register_buffers,
+                        config.registered_buffer_count,
                     )));
                 }
             }
@@ -223,6 +225,8 @@ pub fn writer_from_file_with_depth(
                 buffer_capacity,
                 config.sq_entries,
                 fixed_fd_slot,
+                config.register_buffers,
+                config.registered_buffer_count,
             )))
         }
         crate::IoUringPolicy::Disabled => Ok(IoUringOrStdWriter::Std(
