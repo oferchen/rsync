@@ -367,9 +367,11 @@ acceleration:
 
 ### 8.2 Verbose Output (`-vv`)
 
-The transfer summary printed at the end of a `-vv` run includes an
-**I/O backend** line showing the active backend for the session:
-`standard I/O`, `io_uring`, or `io_uring (SQPOLL)`.
+The transfer summary printed at the end of a `-vv` run intentionally
+mirrors upstream rsync's `--stats` body byte-for-byte
+(`target/interop/upstream-src/rsync-3.4.1/main.c:416-465`), so it does
+not include an `I/O backend` line. Use the runtime diagnostic functions
+below or `--version` (Section 8.1) to inspect the active backend.
 
 **Source:** `crates/cli/src/frontend/progress/render.rs`
 
