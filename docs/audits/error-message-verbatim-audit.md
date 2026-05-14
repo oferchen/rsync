@@ -42,14 +42,14 @@ backup-monitoring and alerting tools.
 
 | # | Upstream wording (cited) | oc-rsync wording (cited) | Status |
 |---|---|---|---|
-| C1 | `rsync: connection unexpectedly closed (<N> bytes received so far) [<role>]\n` (`io.c:228-230`) | None emitted; only a comment at `crates/daemon/src/daemon/sections/module_access/transfer.rs:521` notes the gap | MISSING |
+| C1 | `rsync: connection unexpectedly closed (<N> bytes received so far) [<role>]\n` (`io.c:228-230`) | `connection_unexpectedly_closed_error(bytes, role)` builds `connection unexpectedly closed (<N> bytes received so far)` with `Role` trailer and exit code 12 (`crates/core/src/client/error.rs:connection_unexpectedly_closed_error`); rendered envelope uses `rsync error:` per oc-rsync's standard message format | DIVERGENT |
 | C2 | `[<role>] io timeout after <N> seconds -- exiting\n` (`io.c:199-200`) | No `[<role>]`-bracket equivalent; timeouts surface through `ExitCode::Timeout` with body text `transfer timed out after <s> seconds without progress` (`crates/core/src/client/error.rs:202-205`) | DIVERGENT |
 | C3 | `rsync: [<role>] read error: <strerror> (<errno>)\n` (`io.c:804,806`, via `rsyserr`) | `network read error: <e>` sent via `send_abort` (`crates/transfer/src/transfer_ops/token_loop.rs:103,137`); no `rsync:` prefix, no `[<role>]`, extra `network` qualifier | DIVERGENT |
 | C4 | `rsync: writefd_unbuffered failed to write <N> bytes [<role>]: <strerror> (<errno>)\n` (`io.c:847`) | None emitted on the writer path | MISSING |
 | C5 | `Invalid packet at end of run [<role>]\n` (`main.c:1077`) | None emitted | MISSING |
 | C6 | `Your options have been rejected by the server.\n` (`main.c:1222`) | None emitted | MISSING |
 
-Family totals: 0 EXACT, 2 DIVERGENT, 4 MISSING.
+Family totals: 0 EXACT, 3 DIVERGENT, 3 MISSING.
 
 ## 2. Protocol negotiation errors
 
