@@ -4,6 +4,7 @@ pub(super) use super::{
     recorded_sleep_session, sleep_for, test_support::recorded_sleeps,
 };
 
+mod aimd_convergence;
 mod apply_effective_limit_cases;
 mod configuration;
 mod convergence;
