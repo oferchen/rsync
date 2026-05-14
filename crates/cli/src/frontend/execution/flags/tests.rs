@@ -832,6 +832,42 @@ fn info_help_text_mentions_all_and_none() {
     assert!(INFO_HELP_TEXT.contains("none"));
 }
 
+// `no<flag>` / `-<flag>` are an internal-only extension not present in
+// upstream rsync 3.4.1 (`options.c parse_output_words`); they must not be
+// advertised in `--info=help` so users do not rely on a non-portable form.
+#[test]
+fn info_help_text_does_not_advertise_no_or_dash_prefix() {
+    assert!(
+        !INFO_HELP_TEXT.contains("noprogress"),
+        "INFO_HELP_TEXT must not advertise the 'no<flag>' extension"
+    );
+    assert!(
+        !INFO_HELP_TEXT.contains("'no'"),
+        "INFO_HELP_TEXT must not advertise the 'no' prefix"
+    );
+    assert!(
+        !INFO_HELP_TEXT.contains("'-'"),
+        "INFO_HELP_TEXT must not advertise the '-' prefix"
+    );
+}
+
+// Parser must still accept the internal-only `no<flag>` / `-<flag>` forms
+// for backwards compatibility and server-mode token forwarding even though
+// they are no longer advertised in `--info=help`.
+#[test]
+fn info_flag_no_prefix_still_accepted_after_help_scrub() {
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("noprogress", "noprogress").unwrap();
+    assert_eq!(settings.progress, ProgressSetting::Disabled);
+}
+
+#[test]
+fn info_flag_dash_prefix_still_accepted_after_help_scrub() {
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("-progress", "-progress").unwrap();
+    assert_eq!(settings.progress, ProgressSetting::Disabled);
+}
+
 #[test]
 fn debug_help_text_lists_all_keywords() {
     let keywords = [
