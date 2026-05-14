@@ -138,24 +138,23 @@ Producer counts come from
 | OWN        | 2 | 2 | W_REC | Debug ownership changes in users & groups (levels 1-2) | none | missing |
 | PROTO      | 1 | u8::MAX | W_CLI\|W_SRV | Debug protocol information | `crates/protocol/src/negotiation/capabilities/negotiate.rs`, `crates/protocol/src/multiplex/io/send.rs`, `crates/protocol/src/multiplex/io/recv.rs` (6 sites at levels 1-2) | partial (level 2 not in upstream range) |
 | RECV       | 1 | u8::MAX | W_REC | Debug receiver functions | `crates/transfer/src/receiver/directory/links.rs:264` (1 site at level 2) | partial (level 2 not in upstream range) |
-| SEND       | 1 | u8::MAX | W_SND | Debug sender functions | none via `debug_log!`; `crates/engine/src/local_copy/debug_send.rs` defines `trace_send_file_start`/`trace_send_file_end` and 6 more helpers on `target: "rsync::send"`, but none of them is called from production code outside the module's own tests (see gap G3) | missing |
+| SEND       | 1 | u8::MAX | W_SND | Debug sender functions | `crates/transfer/src/generator/transfer.rs` (5 sites at level 1, upstream-verbatim wording from `sender.c:217,254,277,445,457`); `crates/engine/src/local_copy/debug_send.rs` trace helpers remain unwired (see gap G3) | impl (D13 RESOLVED) |
 | TIME       | 2 | 2 | W_REC | Debug setting of modified times (levels 1-2) | `crates/transfer/src/disk_commit/thread.rs` (3 sites at levels 1-2) | impl |
 
 Total: 24 upstream `DEBUG_*` flags, matching `COUNT_DEBUG = DEBUG_TIME + 1`
 (`rsync.h:1462`). Status roll-up:
 
-- **impl**: 5 - DUP, FILTER, FLIST, NSTR, TIME.
+- **impl**: 6 - DUP, FILTER, FLIST, NSTR, SEND, TIME.
 - **partial**: 7 - CONNECT, DEL, DELTASUM, EXIT, IO, PROTO, RECV.
-- **missing**: 12 - ACL, BACKUP, BIND, CHDIR, CMD, FUZZY, GENR, HASH,
-  HLINK, ICONV, OWN, SEND.
+- **missing**: 11 - ACL, BACKUP, BIND, CHDIR, CMD, FUZZY, GENR, HASH,
+  HLINK, ICONV, OWN.
 
-`SEND` is a notable case: the subsystem module
-(`crates/engine/src/local_copy/debug_send.rs`) is fully implemented
-with 8 `tracing::*(target: SEND_TARGET, ...)` call sites
-(`debug_send.rs:43,70,98,125,151,178,206,233`), but the public
-helpers are never invoked from production code paths - only from the
-module's own unit tests at `debug_send.rs:584-657`. The same pattern
-holds for `crates/engine/src/local_copy/debug_del.rs`,
+`SEND` (D13) is now wired into the generator's send loop with the
+five upstream-verbatim messages from `sender.c send_files` (lines
+217, 254, 277, 445, 457). The `crates/engine/src/local_copy/debug_send.rs`
+trace helpers remain unwired; production emissions go through
+`debug_log!(Send, 1, ...)` directly. The same `debug_log!`-vs-trace-helper
+pattern holds for `crates/engine/src/local_copy/debug_del.rs`,
 `crates/engine/src/local_copy/debug_recv/trace_functions.rs`,
 `crates/engine/src/local_copy/debug_deltasum/{checksum,matching}.rs`,
 and the three `debug_io.rs` modules - the trace functions exist and
