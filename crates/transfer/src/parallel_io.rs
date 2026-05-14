@@ -32,6 +32,36 @@ pub const DEFAULT_METADATA_THRESHOLD: usize = 64;
 /// per-item cost is higher than a single stat call.
 pub const DEFAULT_DELETION_THRESHOLD: usize = 64;
 
+/// Per-operation cost classification driving threshold selection.
+///
+/// Each variant gates one rayon dual-path call site. The variant identity
+/// encodes the expected per-item cost profile - cheap syscalls dispatch
+/// at a higher item count than expensive CPU-bound work - so call sites
+/// look up the appropriate threshold by operation rather than reading
+/// a single global constant.
+///
+/// Cost estimates are documented per variant and reflect warm-cache local
+/// filesystem behaviour; networked filesystems shift the crossover upward
+/// (see `docs/audits/parallel-stat-batch-size-profile.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ParallelOp {
+    /// `lstat` / `stat` / quick-check probes. Cheap (~1 us warm, hundreds of
+    /// microseconds on NFS). Default crossover: [`DEFAULT_STAT_THRESHOLD`].
+    Stat,
+    /// Rolling + strong checksum signature generation over basis files.
+    /// Expensive (milliseconds per file). Default crossover:
+    /// [`DEFAULT_SIGNATURE_THRESHOLD`].
+    Signature,
+    /// `chmod` / `chown` / `utimes` / xattr / ACL application. Medium
+    /// (a few syscalls per directory). Default crossover:
+    /// [`DEFAULT_METADATA_THRESHOLD`].
+    Metadata,
+    /// `read_dir` + per-entry filter evaluation during `--delete` scans.
+    /// Medium (one `read_dir` plus per-entry stat). Default crossover:
+    /// [`DEFAULT_DELETION_THRESHOLD`].
+    Deletion,
+}
+
 /// Per-operation thresholds for switching between sequential and parallel execution.
 ///
 /// Different operations have different overhead profiles: CPU-bound signature
@@ -41,6 +71,10 @@ pub const DEFAULT_DELETION_THRESHOLD: usize = 64;
 ///
 /// All thresholds represent the minimum item count required to justify rayon
 /// thread-pool dispatch. Below the threshold, sequential iteration is used.
+///
+/// Call sites should prefer [`ParallelThresholds::for_op`] over direct field
+/// access so that adding a new operation only requires extending [`ParallelOp`]
+/// and this struct, not editing every dispatch site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParallelThresholds {
     /// Minimum file count for parallel `stat()` / `lstat()` calls.
@@ -65,32 +99,60 @@ impl Default for ParallelThresholds {
 }
 
 impl ParallelThresholds {
+    /// Returns the threshold configured for `op`.
+    ///
+    /// This is the preferred accessor for dispatch sites: it keeps the
+    /// per-operation mapping in one place, so call sites read as
+    /// `thresholds.for_op(ParallelOp::Stat)` rather than coupling to the
+    /// struct's field layout.
+    #[must_use]
+    pub const fn for_op(&self, op: ParallelOp) -> usize {
+        match op {
+            ParallelOp::Stat => self.stat,
+            ParallelOp::Signature => self.signature,
+            ParallelOp::Metadata => self.metadata,
+            ParallelOp::Deletion => self.deletion,
+        }
+    }
+
+    /// Returns a copy with `op`'s threshold replaced.
+    ///
+    /// Mirrors [`ParallelThresholds::for_op`] for the override side: tests
+    /// and call-site overrides set a single operation's value without
+    /// having to know which struct field backs it.
+    #[must_use]
+    pub const fn with_op(mut self, op: ParallelOp, threshold: usize) -> Self {
+        match op {
+            ParallelOp::Stat => self.stat = threshold,
+            ParallelOp::Signature => self.signature = threshold,
+            ParallelOp::Metadata => self.metadata = threshold,
+            ParallelOp::Deletion => self.deletion = threshold,
+        }
+        self
+    }
+
     /// Sets the stat threshold.
     #[must_use]
-    pub const fn with_stat(mut self, threshold: usize) -> Self {
-        self.stat = threshold;
-        self
+    pub const fn with_stat(self, threshold: usize) -> Self {
+        self.with_op(ParallelOp::Stat, threshold)
     }
 
     /// Sets the signature computation threshold.
     #[must_use]
-    pub const fn with_signature(mut self, threshold: usize) -> Self {
-        self.signature = threshold;
-        self
+    pub const fn with_signature(self, threshold: usize) -> Self {
+        self.with_op(ParallelOp::Signature, threshold)
     }
 
     /// Sets the metadata application threshold.
     #[must_use]
-    pub const fn with_metadata(mut self, threshold: usize) -> Self {
-        self.metadata = threshold;
-        self
+    pub const fn with_metadata(self, threshold: usize) -> Self {
+        self.with_op(ParallelOp::Metadata, threshold)
     }
 
     /// Sets the deletion scanning threshold.
     #[must_use]
-    pub const fn with_deletion(mut self, threshold: usize) -> Self {
-        self.deletion = threshold;
-        self
+    pub const fn with_deletion(self, threshold: usize) -> Self {
+        self.with_op(ParallelOp::Deletion, threshold)
     }
 }
 
@@ -211,6 +273,81 @@ mod tests {
         let items: Vec<i32> = (0..5).collect();
         let results = map_blocking(items, t.stat, |x| x * 2);
         assert_eq!(results, vec![0, 2, 4, 6, 8]);
+    }
+
+    #[test]
+    fn for_op_returns_documented_defaults() {
+        let t = ParallelThresholds::default();
+        assert_eq!(t.for_op(ParallelOp::Stat), DEFAULT_STAT_THRESHOLD);
+        assert_eq!(t.for_op(ParallelOp::Signature), DEFAULT_SIGNATURE_THRESHOLD);
+        assert_eq!(t.for_op(ParallelOp::Metadata), DEFAULT_METADATA_THRESHOLD);
+        assert_eq!(t.for_op(ParallelOp::Deletion), DEFAULT_DELETION_THRESHOLD);
+    }
+
+    #[test]
+    fn for_op_reflects_field_overrides() {
+        let t = ParallelThresholds::default()
+            .with_stat(128)
+            .with_signature(16)
+            .with_metadata(256)
+            .with_deletion(48);
+        assert_eq!(t.for_op(ParallelOp::Stat), 128);
+        assert_eq!(t.for_op(ParallelOp::Signature), 16);
+        assert_eq!(t.for_op(ParallelOp::Metadata), 256);
+        assert_eq!(t.for_op(ParallelOp::Deletion), 48);
+    }
+
+    #[test]
+    fn with_op_overrides_only_targeted_operation() {
+        let base = ParallelThresholds::default();
+        let stat_only = base.with_op(ParallelOp::Stat, 7);
+        assert_eq!(stat_only.for_op(ParallelOp::Stat), 7);
+        assert_eq!(
+            stat_only.for_op(ParallelOp::Signature),
+            DEFAULT_SIGNATURE_THRESHOLD
+        );
+        assert_eq!(
+            stat_only.for_op(ParallelOp::Metadata),
+            DEFAULT_METADATA_THRESHOLD
+        );
+        assert_eq!(
+            stat_only.for_op(ParallelOp::Deletion),
+            DEFAULT_DELETION_THRESHOLD
+        );
+
+        let chained = stat_only
+            .with_op(ParallelOp::Signature, 1)
+            .with_op(ParallelOp::Metadata, 2)
+            .with_op(ParallelOp::Deletion, 3);
+        assert_eq!(chained.for_op(ParallelOp::Stat), 7);
+        assert_eq!(chained.for_op(ParallelOp::Signature), 1);
+        assert_eq!(chained.for_op(ParallelOp::Metadata), 2);
+        assert_eq!(chained.for_op(ParallelOp::Deletion), 3);
+    }
+
+    #[test]
+    fn with_op_and_with_field_helpers_agree() {
+        let via_op = ParallelThresholds::default()
+            .with_op(ParallelOp::Stat, 11)
+            .with_op(ParallelOp::Signature, 12)
+            .with_op(ParallelOp::Metadata, 13)
+            .with_op(ParallelOp::Deletion, 14);
+        let via_field = ParallelThresholds::default()
+            .with_stat(11)
+            .with_signature(12)
+            .with_metadata(13)
+            .with_deletion(14);
+        assert_eq!(via_op, via_field);
+    }
+
+    #[test]
+    fn for_op_drives_map_blocking_dispatch() {
+        // Test override path: confirm `for_op` is a drop-in replacement for
+        // direct field access in the dispatch site contract.
+        let t = ParallelThresholds::default().with_op(ParallelOp::Stat, 0);
+        let items: Vec<i32> = (0..5).collect();
+        let results = map_blocking(items, t.for_op(ParallelOp::Stat), |x| x + 1);
+        assert_eq!(results, vec![1, 2, 3, 4, 5]);
     }
 
     /// Simulates a stat result paired with its original file list index.

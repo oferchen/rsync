@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::parallel_io::{ParallelThresholds, map_blocking};
+use crate::parallel_io::{ParallelOp, ParallelThresholds, map_blocking};
 
 /// Result of batched metadata resolution for a single directory entry.
 ///
@@ -40,7 +40,7 @@ pub(in crate::generator) fn batch_stat_dir_entries(
     follow_symlinks: bool,
     thresholds: &ParallelThresholds,
 ) -> Vec<StatResult> {
-    map_blocking(paths, thresholds.stat, move |path| {
+    map_blocking(paths, thresholds.for_op(ParallelOp::Stat), move |path| {
         let metadata = if follow_symlinks {
             fs::metadata(&path)
         } else {
