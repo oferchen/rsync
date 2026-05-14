@@ -391,14 +391,18 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # Invoke through `rustup run` to bypass the cargo proxy shim, which on
+      # macOS GitHub runners can resolve to rustup-init directly and fail with
+      # `error: unexpected argument 'build' found` when rust-toolchain.toml
+      # pins a toolchain that was not pre-installed.
       - name: Build
-        run: cargo build --locked --workspace --all-features
+        run: rustup run ${{ matrix.toolchain }} cargo build --locked --workspace --all-features
 
       - name: Test
         run: |
-          # Run macOS-specific crates only (core, engine, cli have platform code)
-          # Full test suite runs on Linux; macOS validates platform-specific paths
-          cargo nextest run --locked -p core -p engine -p cli --all-features
+          # Run macOS-specific crates only (core, engine, cli have platform code).
+          # Full test suite runs on Linux; macOS validates platform-specific paths.
+          rustup run ${{ matrix.toolchain }} cargo nextest run --locked -p core -p engine -p cli --all-features
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

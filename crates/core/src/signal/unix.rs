@@ -199,7 +199,7 @@ extern "C" fn handle_sigpipe(_signum: libc::c_int) {
 pub fn install_signal_handlers() -> io::Result<SignalHandler> {
     unsafe {
         let mut sa_int: libc::sigaction = std::mem::zeroed();
-        sa_int.sa_sigaction = handle_sigint as libc::sighandler_t;
+        sa_int.sa_sigaction = handle_sigint as *const () as libc::sighandler_t;
         sa_int.sa_flags = libc::SA_RESTART; // Restart interrupted syscalls
         libc::sigemptyset(&mut sa_int.sa_mask as *mut libc::sigset_t);
 
@@ -208,7 +208,7 @@ pub fn install_signal_handlers() -> io::Result<SignalHandler> {
         }
 
         let mut sa_term: libc::sigaction = std::mem::zeroed();
-        sa_term.sa_sigaction = handle_sigterm as libc::sighandler_t;
+        sa_term.sa_sigaction = handle_sigterm as *const () as libc::sighandler_t;
         sa_term.sa_flags = libc::SA_RESTART;
         libc::sigemptyset(&mut sa_term.sa_mask as *mut libc::sigset_t);
 
@@ -217,7 +217,7 @@ pub fn install_signal_handlers() -> io::Result<SignalHandler> {
         }
 
         let mut sa_hup: libc::sigaction = std::mem::zeroed();
-        sa_hup.sa_sigaction = handle_sighup as libc::sighandler_t;
+        sa_hup.sa_sigaction = handle_sighup as *const () as libc::sighandler_t;
         sa_hup.sa_flags = libc::SA_RESTART;
         libc::sigemptyset(&mut sa_hup.sa_mask as *mut libc::sigset_t);
 
@@ -226,7 +226,7 @@ pub fn install_signal_handlers() -> io::Result<SignalHandler> {
         }
 
         let mut sa_pipe: libc::sigaction = std::mem::zeroed();
-        sa_pipe.sa_sigaction = handle_sigpipe as libc::sighandler_t;
+        sa_pipe.sa_sigaction = handle_sigpipe as *const () as libc::sighandler_t;
         sa_pipe.sa_flags = libc::SA_RESTART;
         libc::sigemptyset(&mut sa_pipe.sa_mask as *mut libc::sigset_t);
 
