@@ -89,7 +89,8 @@ pub(crate) fn copy_sources(
                     if error.is_vanished_error() {
                         // upstream: flist.c:1289 - vanished files produce a warning
                         // and set IOERR_VANISHED, but transfer continues.
-                        eprintln!("file has vanished: {}", source.path().display());
+                        // full_fname() wraps the path in double quotes (util1.c:1228).
+                        eprintln!("file has vanished: \"{}\"", source.path().display());
                         context.record_io_error();
                         if first_io_error.is_none() {
                             first_io_error = Some(error);
