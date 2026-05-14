@@ -4,7 +4,7 @@
 # Usage:
 #   ./scripts/run_arch_benchmark_container.sh [--runs N] [--json] [--profile]
 #
-# Builds upstream rsync 3.4.1 + oc-rsync v0.5.8 + oc-rsync HEAD inside
+# Builds upstream rsync 3.4.2 + oc-rsync v0.5.8 + oc-rsync HEAD inside
 # an Arch Linux container, then runs the full benchmark matrix.
 #
 # Modes:

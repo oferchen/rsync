@@ -346,7 +346,7 @@ strip = false
 
 [workspace.metadata.oc_rsync]
 brand = "oc"
-upstream_version = "3.4.1"
+upstream_version = "3.4.2"
 rust_version = "0.6.1"
 protocol = 32
 client_bin = "oc-rsync"

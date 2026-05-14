@@ -9,14 +9,14 @@
 # batches with CPRES_ZLIB dictionary sync). Cross-tool interop from oc-rsync
 # to upstream is limited because oc-rsync uses a different batch body format.
 #
-# Known upstream bug: rsync 3.4.1 cannot read back its own compressed delta
+# Known upstream bug: rsync 3.4.1+ cannot read back its own compressed delta
 # batch files due to missing inflate dictionary synchronization in the batch
 # reader (token.c:608). oc-rsync does not have this limitation.
 #
 # Environment variable overrides:
 #   OC_RSYNC              - path to oc-rsync binary
 #   UPSTREAM_INSTALL_ROOT - root of upstream installs (expects {version}/bin/rsync)
-#   UPSTREAM_VERSIONS     - space-separated list of versions (default: "3.0.9 3.1.3 3.4.1")
+#   UPSTREAM_VERSIONS     - space-separated list of versions (default: "3.0.9 3.1.3 3.4.1 3.4.2")
 
 set -euo pipefail
 
@@ -27,7 +27,7 @@ WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Paths (overridable via environment)
 OC_RSYNC="${OC_RSYNC:-${WORKSPACE_ROOT}/target/release/oc-rsync}"
 UPSTREAM_INSTALL_ROOT="${UPSTREAM_INSTALL_ROOT:-${WORKSPACE_ROOT}/target/interop/upstream-install}"
-UPSTREAM_VERSIONS="${UPSTREAM_VERSIONS:-3.0.9 3.1.3 3.4.1}"
+UPSTREAM_VERSIONS="${UPSTREAM_VERSIONS:-3.0.9 3.1.3 3.4.1 3.4.2}"
 
 # Create a temp directory with cleanup trap
 TEST_DIR="$(mktemp -d)"
@@ -290,7 +290,7 @@ test_upstream_to_oc() {
 # =========================================================================
 # Compressed batch test: upstream writes compressed, oc-rsync reads
 #
-# Note: upstream rsync 3.4.1 has a limitation where the batch file format
+# Note: upstream rsync 3.4.1+ has a limitation where the batch file format
 # does not record which compression algorithm was used (only that
 # compression was active via bit 8 in stream flags). On read-batch,
 # upstream's parse_compress_choice() (compat.c:194-195) always assumes
