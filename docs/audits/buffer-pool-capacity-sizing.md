@@ -25,32 +25,40 @@ allocating the per-file copy buffer used by the local-copy executor and
 the parallel checksum walker.
 
 - Module entry point and public re-exports:
-  `crates/engine/src/local_copy/buffer_pool/mod.rs:94-108`.
+  `crates/engine/src/local_copy/buffer_pool/mod.rs:94-110`.
 - Core `BufferPool<A>` struct with the lock-free
   `crossbeam_queue::ArrayQueue` central queue, atomic admission counter,
   soft-capacity field, optional memory cap, optional pressure tracker,
-  optional throughput tracker, and telemetry counters:
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:87-148`.
+  optional throughput tracker, optional PID buffer-size controller, and
+  telemetry counters:
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:88-163`.
 - Thread-local single-slot fast path keyed on `RefCell<Option<Vec<u8>>>`:
   `crates/engine/src/local_copy/buffer_pool/thread_local_cache.rs`.
 - Acquire hot path checks the thread-local slot, then pops from the
   central queue, then falls through to a fresh allocation:
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:361-422`.
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:446-469`
+  (Arc variant) and `pool.rs:606-628` (borrowed variant).
 - Return hot path tries the thread-local slot first, then admits to the
   central queue under a soft-cap CAS, then deallocates:
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:534-612`.
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:681-719`.
 - Process-wide singleton with lazy init:
   `crates/engine/src/local_copy/buffer_pool/global.rs:30-130`.
 - Adaptive resizer driven by hit/miss rates:
   `crates/engine/src/local_copy/buffer_pool/pressure.rs`.
 - Hard memory cap with backpressure (CAS fast path, condvar slow path):
   `crates/engine/src/local_copy/buffer_pool/memory_cap.rs`.
+- PID-style adaptive buffer-size controller that observes throughput
+  samples and emits a recommended buffer size:
+  `crates/engine/src/local_copy/buffer_pool/buffer_controller.rs`.
 
 Buffer ownership is exclusively via RAII guards
 (`BufferGuard` / `BorrowedBufferGuard`) returned by `acquire_from`,
-`acquire_adaptive_from`, and `acquire`. The `Drop` impls call
-`return_buffer` to push the buffer back into the pool exactly once,
-even on panic unwind.
+`acquire_adaptive_from`, `acquire_controlled_from`, and `acquire`. The
+`Drop` impls call `return_buffer` to push the buffer back into the pool
+exactly once, even on panic unwind. The local-copy executor uses the
+controller-driven acquire path so the buffer size tracks the throughput
+setpoint:
+`crates/engine/src/local_copy/executor/file/copy/transfer/execute.rs:376-383`.
 
 ## 2. Default capacity, per-buffer size, total memory cap
 
@@ -62,7 +70,7 @@ configurable and conflating them is the most common tuning mistake.
 - `COPY_BUFFER_SIZE = 128 * 1024` at
   `crates/engine/src/local_copy/mod.rs:165`. This is the default
   `buffer_size` field set by `BufferPool::new()` at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:172`.
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:182-197`.
 - Adaptive table at `crates/engine/src/local_copy/mod.rs:168-180` and
   selector at `crates/engine/src/local_copy/mod.rs:203-215`: 8 KiB,
   32 KiB, 128 KiB, 512 KiB, 1 MiB at file-size thresholds 64 KiB,
@@ -70,18 +78,25 @@ configurable and conflating them is the most common tuning mistake.
 - The medium adaptive bucket equals `COPY_BUFFER_SIZE`, so an adaptive
   acquire for files between 1 MiB and 64 MiB takes the fast path.
   `acquire_adaptive_from` at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:432-449`.
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:516-533`.
+- When a PID-style buffer controller is configured (the default for
+  the transfer pipeline), buffer size is driven instead by the
+  controller's recommendation. The controller is bounded by the
+  configured min/max (default 16 KiB .. 4 MiB, see
+  `crates/engine/src/local_copy/buffer_pool/buffer_controller.rs:47-49`)
+  and selected per acquire by
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:555-572`.
 
 ### Pool capacity (number of buffers retained in the central queue)
 
 - Default soft cap is `available_parallelism()`, falling back to 4:
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:835-840` and the
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:973-986` and the
   global config `Default` at
   `crates/engine/src/local_copy/buffer_pool/global.rs:58-79`.
 - Underlying `ArrayQueue` is sized to the larger of `max_buffers` and
   `DEFAULT_QUEUE_CAPACITY = 256`:
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:32`,
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:40-42`.
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:33`,
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:41-43`.
 - Adaptive resizer bounds the soft cap to `[2, 256]`:
   `MIN_CAPACITY` and `MAX_CAPACITY` at
   `crates/engine/src/local_copy/buffer_pool/pressure.rs:47,53`.
@@ -92,10 +107,10 @@ configurable and conflating them is the most common tuning mistake.
 ### Total memory cap
 
 - No hard memory cap by default. Opt-in via `with_memory_cap()` at
-  `crates/engine/src/local_copy/buffer_pool/pool.rs:253-257`.
+  `crates/engine/src/local_copy/buffer_pool/pool.rs:272-275`.
 - When set, accounts for outstanding (checked-out) bytes only; idle
   buffers do not count:
-  `crates/engine/src/local_copy/buffer_pool/memory_cap.rs:14-22`.
+  `crates/engine/src/local_copy/buffer_pool/memory_cap.rs:13-22`.
 - Implicit ceiling on idle memory at default settings: the soft cap can
   grow to 256 buffers, so 256 x 128 KiB = 32 MiB of pooled memory. The
   comment at `crates/engine/src/local_copy/buffer_pool/pressure.rs:50-53`
@@ -120,9 +135,9 @@ returns it on file end, and immediately re-acquires for the next file.
   allocation); subsequent acquire/return pairs cycle through the TLS
   slot. This matches the saturation point of the parallel checksum
   walker
-  (`crates/engine/src/local_copy/executor/directory/parallel_checksum.rs:142,151,153`)
+  (`crates/engine/src/local_copy/executor/directory/parallel_checksum.rs:92,153`)
   and the file-copy executor
-  (`crates/engine/src/local_copy/executor/file/copy/transfer/execute.rs:376-379`).
+  (`crates/engine/src/local_copy/executor/file/copy/transfer/execute.rs:376-383`).
 - **Memory budget**: the pool retains at most `soft_capacity` buffers
   in the central queue. With `soft_capacity = N_cpus` and 128 KiB
   buffers, idle memory is bounded by `N_cpus * 128 KiB`. With the
@@ -133,7 +148,7 @@ returns it on file end, and immediately re-acquires for the next file.
   CLI entry points run uncapped.
 - **Burst tolerance**: the underlying `ArrayQueue` is pre-allocated to
   `max(max_buffers, 256)` slots
-  (`crates/engine/src/local_copy/buffer_pool/pool.rs:32-42`). This
+  (`crates/engine/src/local_copy/buffer_pool/pool.rs:33-43`). This
   headroom allows the adaptive resizer to grow the soft cap up to 256
   without reallocating the queue.
 
@@ -201,7 +216,7 @@ should seed the initial soft cap.
 The env var landed in #1643 and exposes the soft cap directly with
 documented bounds and silent rejection of invalid values
 (`crates/engine/src/local_copy/buffer_pool/global.rs:64-72`,
-tests at `crates/engine/src/local_copy/buffer_pool/global.rs:243-289`).
+tests at `crates/engine/src/local_copy/buffer_pool/global.rs:256-302`).
 Operators have to remember an env var name and set it before
 invocation. A `--buffer-pool-size N` CLI flag with the same semantics,
 validated by clap and threaded through `core::CoreConfig`, would make
@@ -212,10 +227,10 @@ path on demand.
 ### (c) Instrumentation hooks
 
 The pool already exposes telemetry via `BufferPoolStats` (returned by
-`stats()` at `crates/engine/src/local_copy/buffer_pool/pool.rs:791-797`)
-and a stderr summary printed on drop when
-`OC_RSYNC_BUFFER_POOL_STATS=1`. This is one-shot and only useful for
-post-hoc tuning. Add:
+`stats()` at `crates/engine/src/local_copy/buffer_pool/pool.rs:936-942`)
+and a stderr summary printed on drop when `OC_RSYNC_BUFFER_POOL_STATS=1`
+(`crates/engine/src/local_copy/buffer_pool/pool.rs:988-1006`). This is
+one-shot and only useful for post-hoc tuning. Add:
 
 - A periodic sampler that emits `total_hits`, `total_misses`,
   `total_growths`, and `available()` to the logging crate at the
@@ -252,6 +267,35 @@ failure mode where the resizer grows the soft cap past the cap and
 subsequent acquires block on `wait_and_reserve()`
 (`crates/engine/src/local_copy/buffer_pool/memory_cap.rs:56-109`)
 without the resizer noticing.
+
+## 6. Upstream rsync comparison
+
+Upstream rsync 3.4.1 does not use a heap buffer pool. Its hot paths use
+fixed-size compile-time buffers sized around 32 KiB, with one larger
+write-side staging buffer:
+
+- `IO_BUFFER_SIZE` and `CHUNK_SIZE` are both `32 * 1024`
+  (`target/interop/upstream-src/rsync-3.4.1/rsync.h:158,160`). These
+  govern the multiplex framing buffer and the per-iteration delta
+  block read size.
+- `WRITE_SIZE = 32 * 1024` and `MAX_MAP_SIZE = 256 * 1024`
+  (`target/interop/upstream-src/rsync-3.4.1/rsync.h:157,159`). The
+  receiver's deferred-write buffer is allocated lazily at
+  `wf_writeBufSize = WRITE_SIZE * 8` = 256 KiB
+  (`target/interop/upstream-src/rsync-3.4.1/fileio.c:161-163`) on first
+  write and then reused for the duration of the process.
+- `MAX_BLOCK_SIZE = 1 << 17` = 128 KiB
+  (`target/interop/upstream-src/rsync-3.4.1/rsync.h:161`). This is the
+  upper bound on the rolling-checksum block size and indirectly caps
+  the per-block read for the sender.
+- Upstream's only "pool" is the arena-style `alloc_pool`
+  (`target/interop/upstream-src/rsync-3.4.1/flist.c:713,1241`) used
+  for file-list metadata, not I/O buffers.
+
+The 128 KiB default and 4 KiB - 4 MiB controller range in `oc-rsync`
+bracket the upstream constants. The pooling indirection is a Rust-side
+optimization to recover the zero-init cost that upstream avoids by
+keeping its 256 KiB write buffer alive for the entire process.
 
 ## Summary
 
