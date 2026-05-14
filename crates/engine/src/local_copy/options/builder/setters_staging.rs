@@ -33,19 +33,12 @@ impl LocalCopyOptionsBuilder {
 
     /// Enables delay-updates mode.
     ///
-    /// When enabled and no explicit `partial_dir` has been set, the staging
-    /// directory defaults to `.~tmp~` matching upstream rsync behaviour.
+    /// The implicit `partial_dir` promotion to `.~tmp~` is performed once at
+    /// [`super::LocalCopyOptionsBuilder::build`] time, mirroring upstream
+    /// rsync's option finalisation in `options.c`.
     #[must_use]
     pub fn delay_updates(mut self, enabled: bool) -> Self {
         self.delay_updates = enabled;
-        if enabled {
-            self.partial = true;
-            if self.partial_dir.is_none() {
-                self.partial_dir = Some(PathBuf::from(
-                    crate::local_copy::options::staging::DELAY_UPDATES_PARTIAL_DIR,
-                ));
-            }
-        }
         self
     }
 
