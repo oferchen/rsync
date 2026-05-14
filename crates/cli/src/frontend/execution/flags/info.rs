@@ -28,35 +28,41 @@ pub(crate) struct InfoFlagSettings {
 
 impl InfoFlagSettings {
     const fn enable_all(&mut self) {
-        self.progress = ProgressSetting::PerFile;
-        self.stats = Some(1);
-        self.name = Some(NameOutputLevel::UpdatedOnly);
-        self.backup = Some(1);
-        self.copy = Some(1);
-        self.del = Some(1);
-        self.flist = Some(1);
-        self.misc = Some(1);
-        self.mount = Some(1);
-        self.nonreg = Some(1);
-        self.remove = Some(1);
-        self.skip = Some(1);
-        self.symsafe = Some(1);
+        self.enable_all_at_level(1);
+    }
+
+    // upstream: options.c parse_output_words - the "all<N>" token sets every
+    // flag to level `min(N, max_for_that_flag)`. Per-flag caps mirror the
+    // hard limits enforced in `apply()` below (progress 2, stats 3, flist 2,
+    // misc 2, skip 2, others 1).
+    const fn enable_all_at_level(&mut self, level: u8) {
+        self.progress = match level {
+            0 => ProgressSetting::Disabled,
+            1 => ProgressSetting::PerFile,
+            _ => ProgressSetting::Overall,
+        };
+        self.stats = Some(if level > 3 { 3 } else { level });
+        self.name = match level {
+            0 => Some(NameOutputLevel::Disabled),
+            1 => Some(NameOutputLevel::UpdatedOnly),
+            _ => Some(NameOutputLevel::UpdatedAndUnchanged),
+        };
+        let cap2 = if level > 2 { 2 } else { level };
+        self.flist = Some(cap2);
+        self.misc = Some(cap2);
+        self.skip = Some(cap2);
+        let cap1 = if level > 1 { 1 } else { level };
+        self.backup = Some(cap1);
+        self.copy = Some(cap1);
+        self.del = Some(cap1);
+        self.mount = Some(cap1);
+        self.nonreg = Some(cap1);
+        self.remove = Some(cap1);
+        self.symsafe = Some(cap1);
     }
 
     const fn disable_all(&mut self) {
-        self.progress = ProgressSetting::Disabled;
-        self.stats = Some(0);
-        self.name = Some(NameOutputLevel::Disabled);
-        self.backup = Some(0);
-        self.copy = Some(0);
-        self.del = Some(0);
-        self.flist = Some(0);
-        self.misc = Some(0);
-        self.mount = Some(0);
-        self.nonreg = Some(0);
-        self.remove = Some(0);
-        self.skip = Some(0);
-        self.symsafe = Some(0);
+        self.enable_all_at_level(0);
     }
 
     pub(super) fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
@@ -67,13 +73,23 @@ impl InfoFlagSettings {
             return Ok(());
         }
 
-        if lower == "all" || lower == "1" {
+        if lower == "all" {
             self.enable_all();
             return Ok(());
         }
 
-        if lower == "none" || lower == "0" {
+        if lower == "none" {
             self.disable_all();
+            return Ok(());
+        }
+
+        // upstream: options.c parse_output_words accepts "all<N>" (e.g. "all2")
+        // to set every flag to level N. As a usability extension, oc-rsync
+        // also accepts a bare integer token like "--info=2" with the same
+        // semantics. Per-flag caps are applied by `enable_all_at_level`.
+        if !lower.is_empty() && lower.bytes().all(|b| b.is_ascii_digit()) {
+            let level = lower.parse::<u8>().unwrap_or(u8::MAX);
+            self.enable_all_at_level(level);
             return Ok(());
         }
 
