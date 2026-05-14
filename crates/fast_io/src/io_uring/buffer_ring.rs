@@ -59,8 +59,8 @@
 
 use std::io;
 use std::ptr;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use io_uring::IoUring as RawIoUring;
 
@@ -247,10 +247,22 @@ const BGID_NAMESPACE_SIZE: u32 = u16::MAX as u32 + 1;
 /// Process-wide monotonic counter for automatic buffer group ID assignment.
 ///
 /// Stored as `u32` so values above `u16::MAX` can be detected without
-/// wrapping. Incremented once per [`BgidAllocator::allocate`] call and
-/// decremented only on the boundary call that crosses past the namespace
-/// limit, keeping the counter capped at `BGID_NAMESPACE_SIZE` thereafter.
+/// wrapping. Incremented once per [`BgidAllocator::allocate`] call (when
+/// the free-list is empty) and decremented only on the boundary call that
+/// crosses past the namespace limit, keeping the counter capped at
+/// `BGID_NAMESPACE_SIZE` thereafter.
 static NEXT_BGID: AtomicU32 = AtomicU32::new(0);
+
+/// Process-wide free-list of returned bgids available for reuse.
+///
+/// Populated by [`BgidAllocator::deallocate`] when a [`BufferRing`] that
+/// was issued a bgid by [`BgidAllocator::allocate`] is dropped. Drained by
+/// [`BgidAllocator::allocate`] before incrementing [`NEXT_BGID`], so the
+/// monotonic counter only advances when no reusable id is available.
+fn bgid_free_list() -> &'static Mutex<Vec<u16>> {
+    static FREE_LIST: OnceLock<Mutex<Vec<u16>>> = OnceLock::new();
+    FREE_LIST.get_or_init(|| Mutex::new(Vec::new()))
+}
 
 /// Allocator for io_uring buffer group IDs (bgid).
 ///
@@ -262,12 +274,15 @@ static NEXT_BGID: AtomicU32 = AtomicU32::new(0);
 ///
 /// [`BgidAllocator`] provides a safe, bounded allocation path:
 ///
-/// - [`allocate`](Self::allocate) returns a monotonically increasing bgid
+/// - [`allocate`](Self::allocate) returns a bgid - either a previously
+///   freed id from the internal free-list, or the next monotonic value
 ///   starting at 0.
-/// - Once the counter reaches `BGID_NAMESPACE_SIZE` (65 536), every
-///   subsequent call returns [`BufferRingError::BgidExhausted`] rather
-///   than wrapping and silently reusing a bgid still held by an active
-///   ring.
+/// - [`deallocate`](Self::deallocate) returns a bgid to the free-list so
+///   that future [`allocate`](Self::allocate) calls can reuse it.
+/// - Once the monotonic counter reaches `BGID_NAMESPACE_SIZE` (65 536)
+///   and the free-list is empty, [`allocate`](Self::allocate) returns
+///   [`BufferRingError::BgidExhausted`] rather than wrapping and silently
+///   reusing a bgid still held by an active ring.
 ///
 /// Callers that create a bounded, fixed number of buffer rings per
 /// process may set [`BufferRingConfig::bgid`] directly with known
@@ -277,18 +292,32 @@ pub struct BgidAllocator;
 impl BgidAllocator {
     /// Allocates the next available buffer group ID.
     ///
-    /// Uses a process-wide monotonic `u32` counter starting at 0. When the
-    /// counter would exceed `u16::MAX` (65 535) - meaning all 65 536
-    /// possible bgids have been issued - returns
+    /// First drains the internal free-list of previously-deallocated bgids.
+    /// If the free-list is empty, falls through to a process-wide monotonic
+    /// `u32` counter starting at 0. When the counter would exceed
+    /// `u16::MAX` (65 535) - meaning all 65 536 possible bgids have been
+    /// issued and none have been returned - returns
     /// [`BufferRingError::BgidExhausted`].
     ///
     /// # Errors
     ///
-    /// Returns [`BufferRingError::BgidExhausted`] when the namespace is
-    /// exhausted. The process must drop existing [`BufferRing`] instances
-    /// to reclaim kernel slots; the counter cannot be reset without
-    /// restarting the process.
+    /// Returns [`BufferRingError::BgidExhausted`] when both the free-list
+    /// is empty and the monotonic counter is at the namespace limit.
+    /// Callers must drop existing [`BufferRing`] instances that own their
+    /// bgid (so [`deallocate`](Self::deallocate) runs in the destructor)
+    /// to make ids available again.
     pub fn allocate() -> Result<u16, BufferRingError> {
+        // Reuse a freed id when one is available. The lock is held only for
+        // the pop, so contention with concurrent deallocate calls is
+        // negligible in practice (one buffer ring per long-running task).
+        if let Some(id) = bgid_free_list()
+            .lock()
+            .expect("bgid free-list poisoned")
+            .pop()
+        {
+            return Ok(id);
+        }
+
         // Relaxed ordering is sufficient: uniqueness within the process is
         // guaranteed by the atomic RMW alone; no other memory operations
         // depend on this value being observed in a particular order.
@@ -305,14 +334,51 @@ impl BgidAllocator {
         }
     }
 
+    /// Returns a previously-allocated bgid to the free-list for reuse.
+    ///
+    /// Wired into [`BufferRing`]'s `Drop` implementation when the ring's
+    /// bgid was issued by [`allocate`](Self::allocate); callers should not
+    /// normally invoke this directly. The next call to
+    /// [`allocate`](Self::allocate) will return this id before advancing
+    /// the monotonic counter.
+    ///
+    /// # Idempotence
+    ///
+    /// Calling `deallocate` more than once for the same bgid is a no-op
+    /// after the first call - the duplicate is silently dropped so the
+    /// free-list never contains the same id twice. This defends against
+    /// double-drop scenarios where, e.g., a buffer ring is moved out of an
+    /// `Option` and the original holder is also dropped.
+    ///
+    /// # Assumption
+    ///
+    /// The caller must own `bgid`: it must have been returned by a prior
+    /// [`allocate`](Self::allocate) call and not handed back through this
+    /// method since. Returning a caller-provided constant (a bgid that was
+    /// never issued by this allocator) pollutes the free-list and causes a
+    /// later [`allocate`](Self::allocate) to issue an id that may collide
+    /// with a ring active elsewhere in the process.
+    pub fn deallocate(bgid: u16) {
+        let mut free_list = bgid_free_list().lock().expect("bgid free-list poisoned");
+        if !free_list.contains(&bgid) {
+            free_list.push(bgid);
+        }
+    }
+
     /// Returns the number of bgids remaining in the namespace.
     ///
-    /// When this reaches zero, [`allocate`](Self::allocate) returns
+    /// Includes both unallocated counter slots and free-list entries
+    /// available for reuse. When this reaches zero,
+    /// [`allocate`](Self::allocate) returns
     /// [`BufferRingError::BgidExhausted`]. The value may decrease
     /// concurrently as other threads allocate.
     pub fn remaining() -> u32 {
         let used = NEXT_BGID.load(Ordering::Relaxed).min(BGID_NAMESPACE_SIZE);
-        BGID_NAMESPACE_SIZE - used
+        let free = bgid_free_list()
+            .lock()
+            .expect("bgid free-list poisoned")
+            .len() as u32;
+        BGID_NAMESPACE_SIZE - used + free
     }
 }
 
@@ -408,6 +474,13 @@ pub struct BufferRing {
     /// Mirrors the kernel's ring tail. Userspace advances this to make
     /// previously consumed buffers available to the kernel again.
     tail: AtomicU16,
+
+    /// `true` if [`BgidAllocator`] issued [`config.bgid`](BufferRingConfig::bgid)
+    /// and `Drop` should return it to the free-list. `false` when the bgid
+    /// was supplied directly by the caller via [`new`](Self::new), in
+    /// which case the caller owns the namespace slot and `Drop` leaves it
+    /// alone.
+    allocator_owned: bool,
 }
 
 // SAFETY: The raw pointers point to memory exclusively owned by this struct.
@@ -562,6 +635,7 @@ impl BufferRing {
             buffers_layout: buf_layout,
             config,
             tail: AtomicU16::new(ring_entries as u16),
+            allocator_owned: false,
         })
     }
 
@@ -571,6 +645,41 @@ impl BufferRing {
     /// never returns an error, making it safe to call speculatively.
     pub fn try_new(ring: &RawIoUring, config: BufferRingConfig) -> Option<Self> {
         Self::new(ring, config).ok()
+    }
+
+    /// Creates a buffer ring with a bgid issued by [`BgidAllocator`].
+    ///
+    /// The supplied `config.bgid` is overridden with the next id returned
+    /// by [`BgidAllocator::allocate`], and the returned ring takes
+    /// ownership of that id - dropping the ring calls
+    /// [`BgidAllocator::deallocate`] so the id is returned to the
+    /// free-list for reuse. Long-running daemons that cycle through many
+    /// buffer rings should prefer this entry point over [`new`](Self::new)
+    /// to avoid exhausting the 16-bit bgid namespace.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BufferRingError::BgidExhausted`] when the allocator has
+    /// no ids available. Otherwise returns any error
+    /// [`new`](Self::new) would return; in that case the allocated bgid
+    /// is returned to the free-list before propagating the failure so it
+    /// is not leaked.
+    pub fn new_with_allocator(
+        ring: &RawIoUring,
+        mut config: BufferRingConfig,
+    ) -> Result<Self, BufferRingError> {
+        let bgid = BgidAllocator::allocate()?;
+        config.bgid = bgid;
+        match Self::new(ring, config) {
+            Ok(mut br) => {
+                br.allocator_owned = true;
+                Ok(br)
+            }
+            Err(e) => {
+                BgidAllocator::deallocate(bgid);
+                Err(e)
+            }
+        }
     }
 
     /// Returns the buffer group ID for this ring.
@@ -726,6 +835,13 @@ impl Drop for BufferRing {
         // after unregister completes.
         unsafe {
             std::alloc::dealloc(self.buffers_ptr, self.buffers_layout);
+        }
+
+        // Return the bgid to the allocator's free-list if this ring owned
+        // an allocator-issued id. Caller-supplied bgids are left alone -
+        // the caller continues to own that namespace slot.
+        if self.allocator_owned {
+            BgidAllocator::deallocate(self.config.bgid);
         }
     }
 }
@@ -1052,14 +1168,58 @@ mod tests {
         assert_ne!(a, b, "consecutive allocations must return distinct bgids");
     }
 
+    /// Serializes tests that mutate global allocator state.
+    ///
+    /// `NEXT_BGID` and the bgid free-list are process-wide; tests that
+    /// swap or drain them must not run concurrently with other tests that
+    /// observe the same state, otherwise interleavings produce
+    /// false-negative failures.
+    fn bgid_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Snapshots, then clears, `NEXT_BGID` and the free-list. The returned
+    /// guard restores both on drop so tests leave global state untouched.
+    struct BgidStateGuard {
+        prev_counter: u32,
+        prev_free_list: Vec<u16>,
+        _serializer: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl BgidStateGuard {
+        fn snapshot() -> Self {
+            let serializer = bgid_test_lock();
+            let prev_counter = NEXT_BGID.swap(0, Ordering::Relaxed);
+            let prev_free_list = {
+                let mut list = bgid_free_list().lock().expect("free-list poisoned");
+                std::mem::take(&mut *list)
+            };
+            Self {
+                prev_counter,
+                prev_free_list,
+                _serializer: serializer,
+            }
+        }
+    }
+
+    impl Drop for BgidStateGuard {
+        fn drop(&mut self) {
+            NEXT_BGID.store(self.prev_counter, Ordering::Relaxed);
+            let mut list = bgid_free_list().lock().expect("free-list poisoned");
+            *list = std::mem::take(&mut self.prev_free_list);
+        }
+    }
+
     #[test]
     fn bgid_allocator_exhaustion_returns_error() {
-        // Save the current counter, force it to the namespace limit, verify
-        // that the next allocation reports exhaustion, then restore so other
-        // tests in this module can continue to allocate freely.
-        let prev = NEXT_BGID.swap(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
+        let _guard = BgidStateGuard::snapshot();
+        // Force the counter to the namespace limit with the free-list empty;
+        // the next allocation must report exhaustion.
+        NEXT_BGID.store(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
         let result = BgidAllocator::allocate();
-        NEXT_BGID.store(prev, Ordering::Relaxed);
         assert!(
             matches!(result, Err(BufferRingError::BgidExhausted)),
             "expected BgidExhausted when counter == BGID_NAMESPACE_SIZE, got {result:?}"
@@ -1085,6 +1245,75 @@ mod tests {
         assert!(
             after <= before,
             "remaining should not increase: before={before}, after={after}"
+        );
+    }
+
+    #[test]
+    fn bgid_allocator_reuses_freed_ids() {
+        let _guard = BgidStateGuard::snapshot();
+        // Counter and free-list are both empty after snapshot.
+        let id = BgidAllocator::allocate().expect("initial allocation");
+        BgidAllocator::deallocate(id);
+        let reused = BgidAllocator::allocate().expect("post-deallocate allocation");
+        assert_eq!(
+            id, reused,
+            "allocate must drain the free-list before advancing the counter"
+        );
+    }
+
+    #[test]
+    fn bgid_allocator_free_list_persists_after_exhaustion() {
+        let _guard = BgidStateGuard::snapshot();
+        // Drive the counter to the namespace limit, then return one id.
+        // The next allocation must succeed from the free-list even though
+        // the monotonic counter is fully consumed.
+        NEXT_BGID.store(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
+        assert!(
+            matches!(
+                BgidAllocator::allocate(),
+                Err(BufferRingError::BgidExhausted)
+            ),
+            "sanity: counter must be exhausted before the free-list seed"
+        );
+
+        BgidAllocator::deallocate(123);
+        let reused = BgidAllocator::allocate().expect("allocation must succeed from free-list");
+        assert_eq!(reused, 123, "freed bgid must be returned ahead of counter");
+
+        // With the free-list drained again the allocator reports exhaustion.
+        assert!(matches!(
+            BgidAllocator::allocate(),
+            Err(BufferRingError::BgidExhausted)
+        ));
+    }
+
+    #[test]
+    fn bgid_allocator_remaining_includes_free_list() {
+        let _guard = BgidStateGuard::snapshot();
+        // Counter at limit, free-list empty -> zero remaining.
+        NEXT_BGID.store(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
+        assert_eq!(BgidAllocator::remaining(), 0);
+
+        // Each deallocated id adds one to remaining.
+        BgidAllocator::deallocate(7);
+        assert_eq!(BgidAllocator::remaining(), 1);
+        BgidAllocator::deallocate(42);
+        assert_eq!(BgidAllocator::remaining(), 2);
+
+        // Idempotent deallocate does not inflate the free-list count.
+        BgidAllocator::deallocate(7);
+        assert_eq!(BgidAllocator::remaining(), 2);
+    }
+
+    #[test]
+    fn bgid_allocator_deallocate_is_idempotent() {
+        let _guard = BgidStateGuard::snapshot();
+        BgidAllocator::deallocate(99);
+        BgidAllocator::deallocate(99);
+        let list_len = bgid_free_list().lock().expect("free-list poisoned").len();
+        assert_eq!(
+            list_len, 1,
+            "duplicate deallocate must not push the same bgid twice"
         );
     }
 }
