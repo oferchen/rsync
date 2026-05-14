@@ -77,7 +77,7 @@ use io_uring::IoUring as RawIoUring;
 ///
 /// The kernel typically allows up to 1024 registered buffers. We cap at this
 /// limit to avoid kernel rejections.
-const MAX_REGISTERED_BUFFERS: usize = 1024;
+pub(super) const MAX_REGISTERED_BUFFERS: usize = 1024;
 
 /// A group of page-aligned buffers registered with an io_uring instance.
 ///
@@ -159,6 +159,53 @@ impl RegisteredBufferStats {
             return 0.0;
         }
         self.total_misses as f64 / self.total_acquires as f64
+    }
+}
+
+/// Owner-side state of fixed-buffer registration on an `io_uring` instance.
+///
+/// `Option<RegisteredBufferGroup>` alone cannot distinguish "the caller opted
+/// out via [`IoUringConfig::register_buffers`]" from "registration was
+/// attempted and the kernel rejected it" (low `RLIMIT_MEMLOCK`, seccomp,
+/// `IORING_MAX_REG_BUFFERS` exceeded, etc.). Both cases force the unfixed
+/// `IORING_OP_READ` / `IORING_OP_WRITE` fallback, but operators need to tell
+/// them apart when diagnosing a transfer that is unexpectedly slow.
+///
+/// Returned by [`IoUringReader::registered_buffer_status`] and
+/// [`IoUringWriter::registered_buffer_status`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegisteredBufferStatus {
+    /// Registration succeeded; `READ_FIXED` / `WRITE_FIXED` are in use.
+    Enabled,
+    /// The caller disabled registration via `IoUringConfig::register_buffers
+    /// = false`. No registration attempt was made.
+    Disabled,
+    /// Registration was attempted and rejected by the kernel. The owner
+    /// fell back silently to the unfixed opcodes. `reason` carries the
+    /// kernel's `errno` string for telemetry / tracing.
+    RegistrationFailed {
+        /// Reason returned by `IORING_REGISTER_BUFFERS` (formatted `errno`).
+        reason: String,
+    },
+}
+
+impl RegisteredBufferStatus {
+    /// True when `READ_FIXED` / `WRITE_FIXED` opcodes are active.
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+
+    /// True when the caller explicitly disabled registration.
+    #[must_use]
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, Self::Disabled)
+    }
+
+    /// True when registration was attempted but rejected by the kernel.
+    #[must_use]
+    pub fn is_registration_failed(&self) -> bool {
+        matches!(self, Self::RegistrationFailed { .. })
     }
 }
 
@@ -350,6 +397,37 @@ impl RegisteredBufferGroup {
     /// never returns an error, making it safe to call speculatively.
     pub fn try_new(ring: &RawIoUring, buffer_size: usize, count: usize) -> Option<Self> {
         Self::new(ring, buffer_size, count).ok()
+    }
+
+    /// Attempts registration honoring an `enabled` flag, returning the group
+    /// (if any) plus a [`RegisteredBufferStatus`] that distinguishes the
+    /// "disabled by config" and "registration failed" paths.
+    ///
+    /// - When `enabled` is `false`: returns `(None, Disabled)` without calling
+    ///   the kernel.
+    /// - When `enabled` is `true` and registration succeeds: returns
+    ///   `(Some(group), Enabled)`.
+    /// - When `enabled` is `true` and the kernel rejects registration:
+    ///   returns `(None, RegistrationFailed { reason })` carrying the
+    ///   formatted `errno` for telemetry.
+    pub fn try_new_with_status(
+        ring: &RawIoUring,
+        buffer_size: usize,
+        count: usize,
+        enabled: bool,
+    ) -> (Option<Self>, RegisteredBufferStatus) {
+        if !enabled {
+            return (None, RegisteredBufferStatus::Disabled);
+        }
+        match Self::new(ring, buffer_size, count) {
+            Ok(g) => (Some(g), RegisteredBufferStatus::Enabled),
+            Err(e) => (
+                None,
+                RegisteredBufferStatus::RegistrationFailed {
+                    reason: e.to_string(),
+                },
+            ),
+        }
     }
 
     /// Returns the number of buffers in this group.
@@ -1529,5 +1607,59 @@ mod tests {
             third.is_ok(),
             "ring must be reusable after a failed registration was cleaned up"
         );
+    }
+
+    /// `try_new_with_status` with `enabled=false` returns `Disabled` without
+    /// calling the kernel - distinct from a `RegistrationFailed` outcome.
+    #[test]
+    fn try_new_with_status_disabled_when_flag_off() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let (group, status) = RegisteredBufferGroup::try_new_with_status(&ring, 4096, 4, false);
+        assert!(group.is_none());
+        assert_eq!(status, RegisteredBufferStatus::Disabled);
+        assert!(status.is_disabled() && !status.is_enabled() && !status.is_registration_failed());
+    }
+
+    /// Successful registration yields `Enabled` and a live group; constrained
+    /// environments that reject registration still produce a non-`Disabled`
+    /// status, exercising the failure branch.
+    #[test]
+    fn try_new_with_status_enabled_on_success() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let (group, status) = RegisteredBufferGroup::try_new_with_status(&ring, 4096, 4, true);
+        assert_ne!(status, RegisteredBufferStatus::Disabled);
+        if let RegisteredBufferStatus::Enabled = status {
+            assert_eq!(group.expect("Enabled implies a group").count(), 4);
+        }
+    }
+
+    /// When registration fails the status carries the formatted `errno` for
+    /// telemetry and the group is `None`. Forcing failure via the wrapper's
+    /// own `MAX_REGISTERED_BUFFERS` ceiling keeps the test portable.
+    #[test]
+    fn try_new_with_status_registration_failed_carries_reason() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let (group, status) = RegisteredBufferGroup::try_new_with_status(
+            &ring,
+            4096,
+            MAX_REGISTERED_BUFFERS + 1,
+            true,
+        );
+        assert!(group.is_none());
+        match status {
+            RegisteredBufferStatus::RegistrationFailed { reason } => {
+                assert!(!reason.is_empty(), "failure reason must be populated");
+            }
+            other => panic!("expected RegistrationFailed, got {other:?}"),
+        }
     }
 }
