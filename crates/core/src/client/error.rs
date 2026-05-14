@@ -241,9 +241,10 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
         ExitCode::PartialTransfer
     };
     let path_display = path.display();
-    // upstream: flist.c:1289 - vanished files produce "file has vanished" warning
+    // upstream: flist.c:1289 - rprintf(c, "file has vanished: %s\n", full_fname(...));
+    // full_fname() wraps the path in double quotes (util1.c:1228).
     let text = if error.kind() == io::ErrorKind::NotFound {
-        format!("file has vanished: '{path_display}'")
+        format!("file has vanished: \"{path_display}\"")
     } else {
         format!("failed to {action} '{path_display}': {error}")
     };
