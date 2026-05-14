@@ -6,11 +6,26 @@ use std::num::{NonZeroU8, NonZeroU32};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use checksums::strong::Xxh64;
+
 use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signature_layout};
 use crate::local_copy::{COPY_BUFFER_SIZE, LocalCopyError};
 use crate::signature::{SignatureAlgorithm, SignatureError, generate_file_signature};
 
 use protocol::ProtocolVersion;
+
+/// Default upper bound for the xxh64 dedup heuristic.
+///
+/// Files larger than this size are skipped because the cost of hashing both
+/// sides dominates any savings from avoiding the rolling+strong checksum
+/// pipeline. The value can be overridden via
+/// [`LocalCopyOptions::xxh64_dedup_size_limit`](crate::local_copy::LocalCopyOptions::xxh64_dedup_size_limit).
+pub(crate) const DEFAULT_XXH64_DEDUP_SIZE_LIMIT: u64 = 8 * 1024 * 1024;
+
+/// Seed used by the xxh64 dedup heuristic.
+///
+/// Fixed value chosen to avoid collisions with rsync block-checksum seeds.
+const XXH64_DEDUP_SEED: u64 = 0x6F632D72_73796E63; // "oc-rsync"
 
 /// Returns `true` when `--update` should skip this file because the
 /// destination is not older than the source by more than `modify_window`.
@@ -235,6 +250,74 @@ pub(crate) fn files_checksum_match(
         } else {
             LockstepCheck::Diverged
         }
+    })
+}
+
+/// Result of the xxh64 dedup heuristic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Xxh64DedupOutcome {
+    /// The heuristic did not run because the file exceeded the configured
+    /// size limit.
+    Skipped,
+    /// Both files produced the same xxh64 digest; treat the destination as
+    /// identical to the source and bypass delta computation.
+    Match,
+    /// Files produced different xxh64 digests; the caller should fall through
+    /// to the normal delta path.
+    Differ,
+}
+
+/// Streams `file` end-to-end into an [`Xxh64`] hasher and returns the digest.
+fn hash_file_xxh64(file: &mut fs::File) -> io::Result<[u8; 8]> {
+    let mut hasher = Xxh64::new(XXH64_DEDUP_SEED);
+    let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize())
+}
+
+/// Runs the internal xxh64 file-dedup heuristic.
+///
+/// When enabled, both `source` and `destination` are streamed through xxh64
+/// and the digests are compared. A match indicates with very high probability
+/// that the files are byte-identical, so the caller can bypass the
+/// rolling+strong checksum pipeline.
+///
+/// The heuristic is purely local (no wire protocol change) and is gated by
+/// the supplied size limit; files larger than `size_limit` return
+/// [`Xxh64DedupOutcome::Skipped`] so the cost of hashing does not eclipse the
+/// delta savings.
+///
+/// Returns [`Xxh64DedupOutcome::Match`] only when the source size equals the
+/// destination size and the digests match.
+pub(crate) fn xxh64_dedup_check(
+    source: &Path,
+    destination: &Path,
+    source_size: u64,
+    destination_size: u64,
+    size_limit: u64,
+) -> io::Result<Xxh64DedupOutcome> {
+    if source_size != destination_size {
+        return Ok(Xxh64DedupOutcome::Differ);
+    }
+    if source_size > size_limit {
+        return Ok(Xxh64DedupOutcome::Skipped);
+    }
+
+    let mut source_file = fs::File::open(source)?;
+    let mut destination_file = fs::File::open(destination)?;
+    let source_digest = hash_file_xxh64(&mut source_file)?;
+    let destination_digest = hash_file_xxh64(&mut destination_file)?;
+
+    Ok(if source_digest == destination_digest {
+        Xxh64DedupOutcome::Match
+    } else {
+        Xxh64DedupOutcome::Differ
     })
 }
 
@@ -499,5 +582,98 @@ mod tests {
             &dst_meta,
             Duration::from_secs(2)
         ));
+    }
+
+    fn write_file(path: &Path, contents: &[u8]) {
+        let mut file = fs::File::create(path).expect("create file");
+        file.write_all(contents).expect("write contents");
+    }
+
+    #[test]
+    fn xxh64_dedup_check_reports_match_for_identical_files() {
+        let temp = create_tempdir();
+        let source = temp.path().join("source.bin");
+        let destination = temp.path().join("dest.bin");
+        let payload = vec![0xABu8; 4096];
+        write_file(&source, &payload);
+        write_file(&destination, &payload);
+
+        let outcome = xxh64_dedup_check(
+            &source,
+            &destination,
+            payload.len() as u64,
+            payload.len() as u64,
+            DEFAULT_XXH64_DEDUP_SIZE_LIMIT,
+        )
+        .expect("dedup check");
+
+        assert_eq!(outcome, Xxh64DedupOutcome::Match);
+    }
+
+    #[test]
+    fn xxh64_dedup_check_reports_differ_for_distinct_content() {
+        let temp = create_tempdir();
+        let source = temp.path().join("source.bin");
+        let destination = temp.path().join("dest.bin");
+        let mut source_bytes = vec![0u8; 4096];
+        for (offset, byte) in source_bytes.iter_mut().enumerate() {
+            *byte = (offset & 0xFF) as u8;
+        }
+        let mut dest_bytes = source_bytes.clone();
+        dest_bytes[2048] ^= 0xFF;
+        write_file(&source, &source_bytes);
+        write_file(&destination, &dest_bytes);
+
+        let outcome = xxh64_dedup_check(
+            &source,
+            &destination,
+            source_bytes.len() as u64,
+            dest_bytes.len() as u64,
+            DEFAULT_XXH64_DEDUP_SIZE_LIMIT,
+        )
+        .expect("dedup check");
+
+        assert_eq!(outcome, Xxh64DedupOutcome::Differ);
+    }
+
+    #[test]
+    fn xxh64_dedup_check_skips_when_file_exceeds_size_limit() {
+        let temp = create_tempdir();
+        let source = temp.path().join("source.bin");
+        let destination = temp.path().join("dest.bin");
+        let payload = vec![0xCDu8; 2048];
+        write_file(&source, &payload);
+        write_file(&destination, &payload);
+
+        let outcome = xxh64_dedup_check(
+            &source,
+            &destination,
+            payload.len() as u64,
+            payload.len() as u64,
+            1024,
+        )
+        .expect("dedup check");
+
+        assert_eq!(outcome, Xxh64DedupOutcome::Skipped);
+    }
+
+    #[test]
+    fn xxh64_dedup_check_short_circuits_when_sizes_differ() {
+        let temp = create_tempdir();
+        let source = temp.path().join("source.bin");
+        let destination = temp.path().join("dest.bin");
+        write_file(&source, &vec![0u8; 1024]);
+        write_file(&destination, &vec![0u8; 512]);
+
+        let outcome = xxh64_dedup_check(
+            &source,
+            &destination,
+            1024,
+            512,
+            DEFAULT_XXH64_DEDUP_SIZE_LIMIT,
+        )
+        .expect("dedup check");
+
+        assert_eq!(outcome, Xxh64DedupOutcome::Differ);
     }
 }

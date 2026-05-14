@@ -1052,3 +1052,4 @@ include!("execute_filter_program.rs");
 include!("execute_skip_compress.rs");
 include!("execute_direct_write.rs");
 include!("execute_dry_run.rs");
+include!("execute_xxh64_dedup.rs");

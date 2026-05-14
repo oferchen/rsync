@@ -70,6 +70,19 @@ impl ClientConfig {
         self.whole_file
     }
 
+    /// Reports whether the internal xxh64 file-dedup heuristic is enabled.
+    ///
+    /// The flag is local-only: when set, the receiver opportunistically
+    /// hashes both the source and the existing destination with xxh64
+    /// before computing a delta. Matching digests bypass the
+    /// rolling+strong checksum pipeline and treat the destination as
+    /// identical to the source. The flag never alters the wire protocol.
+    #[must_use]
+    #[doc(alias = "--xxh64-dedup")]
+    pub const fn xxh64_dedup(&self) -> bool {
+        self.xxh64_dedup
+    }
+
     /// Reports whether source files should be opened without updating access times.
     #[must_use]
     #[doc(alias = "--open-noatime")]
@@ -222,6 +235,18 @@ mod tests {
     fn whole_file_default_is_true() {
         let config = default_config();
         assert!(config.whole_file());
+    }
+
+    #[test]
+    fn xxh64_dedup_default_is_disabled() {
+        let config = default_config();
+        assert!(!config.xxh64_dedup());
+    }
+
+    #[test]
+    fn xxh64_dedup_builder_round_trip() {
+        let config = ClientConfig::builder().xxh64_dedup(true).build();
+        assert!(config.xxh64_dedup());
     }
 
     #[test]

@@ -141,6 +141,8 @@ impl LocalCopyOptionsBuilder {
             checksum: self.checksum,
             checksum_algorithm: self.checksum_algorithm,
             checksum_seed: self.checksum_seed,
+            enable_xxh64_dedup: self.enable_xxh64_dedup,
+            xxh64_dedup_size_limit: self.xxh64_dedup_size_limit,
             size_only: self.size_only,
             ignore_times: self.ignore_times,
             ignore_existing: self.ignore_existing,
