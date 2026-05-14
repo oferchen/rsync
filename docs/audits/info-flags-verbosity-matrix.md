@@ -260,18 +260,18 @@ Upstream skips the unknown-token error when `am_server` is true
 SSH this can surface as a stricter parse than upstream, which can break
 forward-compatibility with newer client flag spellings.
 
-### 4.6 `priority` field not modelled
+### 4.6 `priority` field now modelled (RESOLVED)
 
-Upstream tracks per-flag priority (`DEFAULT_PRIORITY < HELP_PRIORITY <
-USER_PRIORITY < LIMIT_PRIORITY`, `options.c:249-252`) so a later
-`-v` cannot lower a level that the user pinned with `--info=name2`.
-oc-rsync overwrites unconditionally on every `set()` call
-(`crates/logging/src/levels/info.rs:104-120`); the documented order
-in `crates/cli/src/frontend/execution/drive/options.rs` happens to call
-`parse_info_flags` after `VerbosityConfig::from_verbose_level`, so
-`--info=` settings win in practice. But if `limit_output_verbosity()`
-(`options.c:527-552`) ever needs to be matched (server-side ceiling
-imposed by daemon config), the missing priority field will block it.
+The `InfoFlagSpec` struct in
+`crates/cli/src/frontend/execution/flags/info.rs` carries a first-class
+`priority: u8` field on every entry of the `INFO_FLAG_SPECS` table,
+mirroring upstream's verbosity-group index (`options.c:239-243` -
+NONREG=0, level-1 group=1, level-2 group=2). The parser still treats
+`--info=` settings as overriding `-v` levels for ergonomic reasons, but
+the priority data is now queryable from a single source of truth, so a
+future daemon-side `limit_output_verbosity()` consumer can ratchet
+levels per the upstream `DEFAULT/HELP/USER/LIMIT` order without
+touching the parser.
 
 ## 5. Summary of divergences
 
@@ -295,7 +295,7 @@ re-evaluated and the implementation already matches upstream.
 | I13 | All       | Low      | OPEN   | `--info=no<flag>` / `--info=-<flag>` accepted by oc-rsync only; upstream rejects unknown tokens. Diverges in the rejection direction (oc-rsync more permissive). |
 | I14 | All       | Low      | OPEN   | Unknown-token message text differs: upstream `Unknown --info item: "FOO"`, oc-rsync `invalid --info flag 'FOO': use --info=help for supported flags`. Same exit code (1). |
 | I15 | All       | Low      | OPEN   | Server-side mode (`am_server`) should suppress unknown-token errors (`options.c:465`); oc-rsync errors unconditionally. |
-| I16 | All       | Low      | OPEN   | Priority field (`DEFAULT/HELP/USER/LIMIT`, `options.c:249-252`) not modelled; later daemon-imposed limits cannot lower user-set levels. |
+| I16 | All       | Low      | RESOLVED | `InfoFlagSpec::priority` on every `INFO_FLAG_SPECS` entry now mirrors upstream's `info_verbosity[]` group index (`options.c:239-243`); a daemon-side `limit_output_verbosity()` consumer can read priorities from the spec table without re-deriving them. |
 | I17 | Help text | Low      | OPEN   | Help text in `info.rs:228-246` advertises hard-coded `(levels 1-2)` / `(levels 1-3)` ranges; upstream's `output_item_help()` (`options.c:474-509`) prints the per-verbosity additions dynamically. The two diverge whenever upstream's `info_verbosity[]` is edited. |
 
 ## 6. Recommended fixes
@@ -342,10 +342,11 @@ re-evaluated and the implementation already matches upstream.
 9. **I14 / I15 - unknown-token text and server tolerance**: align the
    string to `Unknown --info item: "FOO"` and short-circuit when
    running as server.
-10. **I16 - priority field**: add a `priority: u8` companion to each
-    `InfoLevels` field and honour the order in
-    `crates/logging/src/config.rs`. Most flows will continue to use
-    `USER_PRIORITY`; daemon mode is the consumer.
+10. **I16 - priority field** (RESOLVED): `InfoFlagSpec::priority` now
+    lives on the `INFO_FLAG_SPECS` table at
+    `crates/cli/src/frontend/execution/flags/info.rs`. The remaining
+    daemon-side `limit_output_verbosity()` wiring is a follow-up
+    consumer of this data, no longer blocked on parser changes.
 
 ## 7. Test plan
 
