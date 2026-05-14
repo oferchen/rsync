@@ -111,6 +111,7 @@ pub use self::error::{
     CLIENT_SERVER_PROTOCOL_EXIT_CODE, ClientError, FEATURE_UNAVAILABLE_EXIT_CODE,
     FILE_IO_EXIT_CODE, FILE_SELECTION_EXIT_CODE, IPC_EXIT_CODE, PARTIAL_TRANSFER_EXIT_CODE,
     PROTOCOL_INCOMPATIBLE_EXIT_CODE, REMOTE_COMMAND_NOT_FOUND_EXIT_CODE, SOCKET_IO_EXIT_CODE,
+    connection_unexpectedly_closed_error,
 };
 pub use self::module_list::{
     DaemonAddress, ModuleList, ModuleListEntry, ModuleListOptions, ModuleListRequest,
