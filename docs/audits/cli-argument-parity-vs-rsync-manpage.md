@@ -171,7 +171,7 @@ form is from the same `0. \`--flag\`, \`-x\`` line in the man page.
 | `--old-args` | - | yes | yes | rsync.1.md:2440 | command_builder/sections |
 | `--secluded-args` | `-s` | yes | yes | rsync.1.md:2472 | build_base_command/network.rs:61 (`--protect-args` + alias `secluded-args`) |
 | `--trust-sender` | - | yes | yes | rsync.1.md:2511 | build_base_command/privileges.rs:39 |
-| `--copy-as=USER[:GROUP]` | - | yes | **PARTIAL** | rsync.1.md:2547 | transfer_behavior_options.rs:597 (no-op on Windows; see metadata/src/copy_as.rs:237) |
+| `--copy-as=USER[:GROUP]` | - | yes | **PARTIAL** | rsync.1.md:2547 | transfer_behavior_options.rs:597 (Windows returns a descriptive error from `switch_effective_ids` until `LogonUserW` impersonation is wired through `CopyAsIds`; see metadata/src/copy_as.rs:270) |
 | `--temp-dir=DIR` | `-T` | yes | yes | rsync.1.md:2586 | transfer_behavior_options.rs:15 (alias `--tmp-dir`) |
 | `--fuzzy` | `-y` | yes | yes | rsync.1.md:2622 | build_base_command/transfer.rs:233 |
 | `--compare-dest=DIR` | - | yes | yes | rsync.1.md:2638 | command_builder/sections |
@@ -250,7 +250,7 @@ platform.
 
 | option | what works | gap | severity | follow-up |
 |--------|-----------|-----|----------|-----------|
-| `--copy-as=USER[:GROUP]` | POSIX `setuid`/`setgid` switching on Linux, macOS, BSD via `crates/metadata/src/copy_as.rs:48-222`. Spec parsing and validation succeed on every platform. | On Windows the guard is a no-op (`crates/metadata/src/copy_as.rs:228-240`). Token impersonation through `LogonUserW` + `ImpersonateLoggedOnUser` is not wired, so the flag silently has no effect on Windows receivers. | rare (Windows-only edge case; receiver-side privilege drop) | gate behind `windows-rs` token APIs; emit a startup warning instead of silent no-op |
+| `--copy-as=USER[:GROUP]` | POSIX `setuid`/`setgid` switching on Linux, macOS, BSD via `crates/metadata/src/copy_as.rs:48-222`. Spec parsing and validation succeed on every platform. On Windows, `switch_effective_ids` probes the calling process token for `SeImpersonatePrivilege` and returns a descriptive `io::Error` (`PermissionDenied` when the privilege is absent, `Unsupported` when present), turning the previous silent no-op into a loud failure (`crates/metadata/src/copy_as.rs:270-290`). | Token impersonation through `LogonUserW` + `ImpersonateLoggedOnUser` is still not wired through `CopyAsIds` (the building block already exists in `crates/platform/src/privilege.rs:142`), so the flag cannot drive an actual identity switch on Windows yet. | rare (Windows-only edge case; receiver-side privilege drop) | thread `CopyAsIds` (or account name) through `platform::privilege::drop_privileges_windows` and replace the descriptive error with a real impersonation flow |
 | `--skip-compress=LIST` | Argument is parsed and stored in `core::client::config` (`connection_and_logging_options.rs:106`). Forwarded over the wire to the remote peer for compatibility. | Per-file codec switching is a no-op in upstream rsync 3.4.1 itself (man-page line 2822: "no compression method currently supports per-file compression changes, so this option has no effect"). oc-rsync mirrors the no-op intentionally to stay wire-compatible. | not user-visible (matches upstream) | None - revisit only if upstream introduces per-file codec switching |
 
 ## EXTRA options (oc-only)
@@ -298,11 +298,13 @@ There are no missing options. The five highest-impact follow-ups are
 PARTIAL gap closures and parity polish identified during this audit:
 
 1. **`--copy-as` Windows token impersonation (PARTIAL).**
-   Wire `LogonUserW` + `ImpersonateLoggedOnUser` through the `windows`
-   crate in `crates/metadata/src/copy_as.rs:228-240`. Until then, emit
-   a startup warning on Windows when `--copy-as` is supplied so users
-   are not silently surprised. User impact: **rare**, but failure mode
-   is silent on a major platform.
+   The Windows path no longer silently succeeds: `switch_effective_ids`
+   probes the calling process token for `SeImpersonatePrivilege` and
+   returns a descriptive `io::Error` (`crates/metadata/src/copy_as.rs:270-290`).
+   The remaining work is to thread the resolved account through
+   `crates/platform/src/privilege.rs:142` (which already implements
+   `LogonUserW` + `ImpersonateLoggedOnUser`) so the flag drives a real
+   identity switch on Windows. User impact: **rare** (Windows-only).
 
 2. **Help-output byte parity for `-a` parenthetical.**
    Upstream's `--help` ends the `-a` line with `(no -A,-X,-U,-N,-H)`.

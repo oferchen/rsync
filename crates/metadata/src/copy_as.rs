@@ -13,7 +13,16 @@
 //! - **Unix**: Uses `seteuid(2)` / `setegid(2)` via libc. Requires the
 //!   process to be running as root (euid 0) or to possess `CAP_SETUID` /
 //!   `CAP_SETGID`.
-//! - **Non-Unix**: Provides no-op stubs that log a warning and succeed.
+//! - **Windows**: Returns a descriptive `Unsupported` error. The POSIX
+//!   `--copy-as=USER` flow takes no password and assumes the process can
+//!   change effective identity without one (root or a `CAP_SETUID`
+//!   capability). The Win32 equivalent is `LogonUserW` +
+//!   `ImpersonateLoggedOnUser`, which generally requires either a
+//!   password (not exposed by `--copy-as`) or `SeTcbPrivilege` /
+//!   `SeImpersonatePrivilege` plus an S4U logon. We surface a clear
+//!   error rather than silently dropping the option; full token
+//!   impersonation is tracked as a follow-up.
+//! - **Other non-Unix**: Returns `Unsupported`.
 //!
 //! # Upstream Reference
 //!
@@ -221,22 +230,159 @@ pub fn switch_effective_ids(ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
     })
 }
 
-/// No-op guard for non-Unix platforms.
+/// Placeholder guard for non-Unix platforms.
 ///
-/// Since effective UID/GID switching is not supported outside Unix, this
-/// guard does nothing on construction or drop.
+/// On Windows and other non-Unix targets, [`switch_effective_ids`] currently
+/// fails before any switch occurs, so this struct is never constructed at
+/// runtime. It exists so the public type alias compiles on every platform
+/// and downstream callers can hold an `Option<CopyAsGuard>` without
+/// `cfg`-gating their own code.
 #[cfg(not(unix))]
 pub struct CopyAsGuard {
     _private: (),
 }
 
-/// No-op privilege switch for non-Unix platforms.
+/// Attempts to switch the calling process identity on Windows.
 ///
-/// Always succeeds and returns a no-op guard. The `--copy-as` option has
-/// no effect on non-Unix platforms.
-#[cfg(not(unix))]
+/// The POSIX `--copy-as` contract is "drop to USER[:GROUP] without a
+/// password". On Windows this maps to `LogonUserW` +
+/// `ImpersonateLoggedOnUser`, which either needs the target user's
+/// password (not exposed by the CLI flag) or `SeTcbPrivilege` /
+/// `SeImpersonatePrivilege` plus an S4U logon. Until the
+/// `CopyAsIds`-driven impersonation flow is wired through to the
+/// `platform::privilege::drop_privileges_windows` helper, this function
+/// probes the calling process token for `SeImpersonatePrivilege` and
+/// returns a descriptive error in both branches so users see a loud
+/// failure instead of a silent no-op.
+///
+/// # Errors
+///
+/// - `ErrorKind::PermissionDenied` when the process token lacks
+///   `SeImpersonatePrivilege`.
+/// - `ErrorKind::Unsupported` when the privilege is present (token
+///   impersonation flow is not yet wired to this entry point).
+/// - Lower-level `io::Error::other` if the probe itself fails
+///   (for example, `OpenProcessToken` returns an error).
+///
+/// # Upstream Reference
+///
+/// - `rsync.c:do_as_root()` - POSIX equivalent that this routine mirrors.
+#[cfg(windows)]
+#[allow(unsafe_code)]
 pub fn switch_effective_ids(_ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
-    Ok(CopyAsGuard { _private: () })
+    if has_impersonate_privilege()? {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "--copy-as on Windows requires LogonUserW + ImpersonateLoggedOnUser \
+             token impersonation, which is not yet wired. The calling process \
+             has SeImpersonatePrivilege; rerun the transfer on a Unix host or \
+             track the follow-up for S4U logon support.",
+        ))
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "--copy-as on Windows requires SeImpersonatePrivilege (or a \
+             password-based LogonUserW flow, which --copy-as does not \
+             accept). Grant the privilege via secpol.msc -> Local Policies \
+             -> User Rights Assignment -> 'Impersonate a client after \
+             authentication', or rerun the transfer on a Unix host.",
+        ))
+    }
+}
+
+/// Probes the calling process token for `SeImpersonatePrivilege`.
+///
+/// Returns `Ok(true)` when the privilege is present and enabled or
+/// enabled-by-default, `Ok(false)` when absent, or an `io::Error`
+/// wrapping the last OS error when the Win32 calls fail.
+///
+/// # Safety
+///
+/// Each `unsafe` block here calls a well-documented Win32 API exactly
+/// once with locally owned, correctly aligned out-pointers. The token
+/// handle is closed via the `CloseHandleGuard` RAII helper so the
+/// privilege probe is leak-free even on error paths.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn has_impersonate_privilege() -> io::Result<bool> {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, LUID};
+    use windows::Win32::Security::{
+        LUID_AND_ATTRIBUTES, LookupPrivilegeValueW, PRIVILEGE_SET, PrivilegeCheck,
+        SE_IMPERSONATE_NAME, SE_PRIVILEGE_ENABLED, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows::core::{BOOL, PCWSTR};
+
+    // Win32 `PRIVILEGE_SET.Control` flag: require every listed privilege
+    // to be held. The constant is not exported as a named symbol by the
+    // `windows` crate (winnt.h `PRIVILEGE_SET_ALL_NECESSARY` == 1).
+    const PRIVILEGE_SET_ALL_NECESSARY: u32 = 1;
+
+    // RAII wrapper that closes the process token on drop, including
+    // when an early `?` propagates an error.
+    struct CloseHandleGuard(HANDLE);
+    impl Drop for CloseHandleGuard {
+        fn drop(&mut self) {
+            if !self.0.is_invalid() {
+                // SAFETY: the handle came from OpenProcessToken and is
+                // still valid until this Drop runs.
+                unsafe {
+                    let _ = CloseHandle(self.0);
+                }
+            }
+        }
+    }
+
+    let mut token = HANDLE::default();
+    // SAFETY: GetCurrentProcess returns a pseudo-handle that does not
+    // require closing. OpenProcessToken writes the real token handle
+    // into `token`, which we then own and close via the RAII guard.
+    unsafe {
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)
+            .map_err(|err| io::Error::other(format!("OpenProcessToken failed: {err}")))?;
+    }
+    let _token_guard = CloseHandleGuard(token);
+
+    // Resolve the SeImpersonatePrivilege LUID on the local system.
+    let mut luid = LUID::default();
+    // SAFETY: SE_IMPERSONATE_NAME is a static null-terminated wide
+    // string from the `windows` crate; PCWSTR::null() requests the
+    // local system; `luid` is a local out-parameter we own.
+    unsafe {
+        LookupPrivilegeValueW(PCWSTR::null(), SE_IMPERSONATE_NAME, &mut luid)
+            .map_err(|err| io::Error::other(format!("LookupPrivilegeValueW failed: {err}")))?;
+    }
+
+    let mut privilege_set = PRIVILEGE_SET {
+        PrivilegeCount: 1,
+        Control: PRIVILEGE_SET_ALL_NECESSARY,
+        Privilege: [LUID_AND_ATTRIBUTES {
+            Luid: luid,
+            Attributes: SE_PRIVILEGE_ENABLED,
+        }],
+    };
+    let mut result = BOOL(0);
+    // SAFETY: `token` is a valid TOKEN_QUERY handle (kept alive by the
+    // RAII guard); `privilege_set` is a properly initialised
+    // single-entry structure we own; `result` is a local BOOL we own.
+    unsafe {
+        PrivilegeCheck(token, &mut privilege_set, &mut result)
+            .map_err(|err| io::Error::other(format!("PrivilegeCheck failed: {err}")))?;
+    }
+
+    Ok(result.0 != 0)
+}
+
+/// Privilege switch for non-Unix, non-Windows targets.
+///
+/// Returns `Unsupported` so callers surface a loud error instead of
+/// silently dropping `--copy-as`.
+#[cfg(not(any(unix, windows)))]
+pub fn switch_effective_ids(_ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "--copy-as is not supported on this platform",
+    ))
 }
 
 #[cfg(not(unix))]
@@ -392,23 +538,51 @@ mod tests {
         assert_eq!(resolve_user("root").unwrap(), 0);
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     #[test]
-    fn non_unix_switch_returns_noop_guard() {
+    fn windows_switch_returns_descriptive_error() {
+        // The probe inspects the calling process token. CI runners
+        // typically do not hold SeImpersonatePrivilege, so the error
+        // should be PermissionDenied. Elevated runners may instead
+        // hit the Unsupported branch. Accept either outcome and
+        // assert the error message names the missing capability.
         let ids = CopyAsIds {
             uid: 1000,
             gid: Some(1000),
         };
-        let guard = switch_effective_ids(&ids);
-        assert!(guard.is_ok());
+        let err = switch_effective_ids(&ids).unwrap_err();
+        assert!(
+            matches!(
+                err.kind(),
+                io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported
+            ),
+            "unexpected error kind {:?}: {err}",
+            err.kind()
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--copy-as"),
+            "error message should mention --copy-as: {msg}"
+        );
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     #[test]
-    fn non_unix_switch_without_group_returns_noop_guard() {
+    fn windows_switch_without_group_returns_error() {
         let ids = CopyAsIds { uid: 0, gid: None };
-        let guard = switch_effective_ids(&ids);
-        assert!(guard.is_ok());
+        let err = switch_effective_ids(&ids).unwrap_err();
+        assert!(matches!(
+            err.kind(),
+            io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_privilege_probe_does_not_panic() {
+        // Whatever the answer, the probe must complete without panicking
+        // and without leaking the process token.
+        let _ = has_impersonate_privilege().expect("privilege probe should succeed");
     }
 
     #[cfg(not(unix))]
@@ -439,17 +613,5 @@ mod tests {
         let spec = OsString::from("0:wheel");
         let err = parse_copy_as_spec(&spec).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
-    }
-
-    #[cfg(not(unix))]
-    #[test]
-    fn non_unix_guard_drop_is_noop() {
-        let ids = CopyAsIds {
-            uid: 1000,
-            gid: Some(1000),
-        };
-        let guard = switch_effective_ids(&ids).unwrap();
-        drop(guard);
-        // No panic or side effects from drop
     }
 }
