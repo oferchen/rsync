@@ -177,7 +177,9 @@ impl ReceiverContext {
                         let dest_dir = &setup.dest_dir;
                         let checksum_length = setup.checksum_length;
                         let checksum_algorithm = setup.checksum_algorithm;
-                        let sig_threshold = self.parallel_thresholds.signature;
+                        let sig_threshold = self
+                            .parallel_thresholds
+                            .for_op(crate::parallel_io::ParallelOp::Signature);
 
                         // Ordering: wire protocol requires file requests in file-list index order.
                         // Preserved by par_iter().map().collect() + sequential zip/send loop below.

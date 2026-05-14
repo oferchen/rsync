@@ -121,7 +121,8 @@ impl ReceiverContext {
         let acl_cache_clone = acl_cache.cloned();
         let results = crate::parallel_io::map_blocking(
             entry_snapshots,
-            self.parallel_thresholds.metadata,
+            self.parallel_thresholds
+                .for_op(crate::parallel_io::ParallelOp::Metadata),
             move |(dir_path, entry, xattr_list)| {
                 if let Err(e) =
                     apply_metadata_from_file_entry(&dir_path, &entry, &metadata_opts_clone)
