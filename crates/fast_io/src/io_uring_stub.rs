@@ -196,6 +196,17 @@ pub mod buffer_ring {
             None
         }
 
+        /// Always returns `Err(Unsupported)` on this platform.
+        ///
+        /// Mirrors the Linux `BufferRing::new_with_allocator` signature so
+        /// cross-platform callers compile without `cfg`-gating.
+        pub fn new_with_allocator(
+            _ring: &(),
+            _config: BufferRingConfig,
+        ) -> Result<Self, BufferRingError> {
+            Err(BufferRingError::Unsupported)
+        }
+
         /// Returns the buffer group ID (never called on this platform).
         #[must_use]
         pub fn bgid(&self) -> u16 {
@@ -257,8 +268,8 @@ pub mod buffer_ring {
     ///
     /// Mirrors the Linux `BgidAllocator` interface so cross-platform callers
     /// can compile without `cfg`-gating. On this platform io_uring is
-    /// unavailable, so `allocate` always reports the namespace as exhausted
-    /// and `remaining` reports zero.
+    /// unavailable, so `allocate` always reports the namespace as exhausted,
+    /// `deallocate` is a no-op, and `remaining` reports zero.
     pub struct BgidAllocator;
 
     impl BgidAllocator {
@@ -266,6 +277,10 @@ pub mod buffer_ring {
         pub fn allocate() -> Result<u16, BufferRingError> {
             Err(BufferRingError::BgidExhausted)
         }
+
+        /// No-op on this platform; the allocator never issues ids so there
+        /// is nothing to return to the free-list.
+        pub fn deallocate(_bgid: u16) {}
 
         /// Always returns 0 on this platform.
         pub fn remaining() -> u32 {
@@ -1693,6 +1708,26 @@ mod tests {
         let config = BufferRingConfig::default();
         let err: io::Error = BufferRing::new(&(), config).unwrap_err().into();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn buffer_ring_new_with_allocator_returns_error_on_stub() {
+        let config = BufferRingConfig::default();
+        let err: io::Error = BufferRing::new_with_allocator(&(), config)
+            .unwrap_err()
+            .into();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn bgid_allocator_reports_exhausted_on_stub() {
+        let err: io::Error = BgidAllocator::allocate().unwrap_err().into();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(BgidAllocator::remaining(), 0);
+        // Deallocate is a no-op and must not panic.
+        BgidAllocator::deallocate(0);
+        BgidAllocator::deallocate(u16::MAX);
+        assert_eq!(BgidAllocator::remaining(), 0);
     }
 
     #[test]
