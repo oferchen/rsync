@@ -62,8 +62,8 @@ client (`log.c:288` and downstream).
 2. **Rate field width**: upstream emits `%7.2f%s` -> exactly 7 columns of value plus the unit (`kB/s` / `MB/s` / `GB/s`); ours pads the combined `value+unit` to 12 columns. For `"1.23MB/s"` upstream produces `"   1.23MB/s"` (4 leading spaces; total 11 chars) while ours produces `"    1.23MB/s"` (12 chars). Misalignment is one column wider.
 3. **Rate unit set**: upstream uses only `kB/s`, `MB/s`, `GB/s` (`progress.c:108-116`). Ours additionally produces `TB/s` and `PB/s` via `format_progress_rate_human` -> `format_verbose_rate_human` (`rate.rs:80-97`). Mixed-base units never appear upstream.
 4. **Rate divisor**: upstream uses 1024-based thresholds, switching at `> 1024` and `> 1024*1024` kB/s (`progress.c:108-111`). Our decimal path uses 1024-based KiB/MiB/GiB (`rate.rs:137-148`), but the `format_progress_rate_human` path used in human-readable mode falls back to 1000-based units (`rate.rs:81-87`), which disagrees with upstream's strictly binary scaling.
-5. **ETA vs elapsed**: upstream prints **time remaining** in the in-flight line (`progress.c:105`) and switches to **total time taken** for the last line (`progress.c:97-98`). The `??:??:??` literal appears when ETA is unknown (`progress.c:118-119`). Ours always prints `event.elapsed()`, the time spent so far on the current entry (`live.rs:96`, `render.rs:186`), so the ETA semantics are missing entirely.
-6. **ETA width**: upstream uses `%4u:%02u:%02u` -> minimum 10 columns (4 + 1 + 2 + 1 + 2). Ours uses `H:MM:SS` -> 7 columns minimum, padded right to 11. Width and content do not match.
+5. **ETA vs elapsed** (RESOLVED): upstream prints **time remaining** in the in-flight line (`progress.c:105`) and switches to **total time taken** for the last line (`progress.c:97-98`). The `??:??:??` literal appears when ETA is unknown (`progress.c:118-119`). `live.rs` now drives a `RemainingTimeEstimator` (`format/remaining.rs`) for the mid-transfer ticks and only falls back to elapsed for the final tick.
+6. **ETA width** (RESOLVED): upstream uses `%4u:%02u:%02u` -> minimum 10 columns (4 + 1 + 2 + 1 + 2). `RemainingTimeEstimator::render` emits `H:MM:SS` plus the `??:??:??` placeholder, right-padded to 10 in the live renderer.
 7. **Trailing tail (in-flight)**: upstream sets `eol = "  "` (two spaces) on each live tick (`progress.c:100`) so the next `\r` overwrites cleanly. Ours emits the full `(xfr#N, to-chk=R/T)` tail on every tick (`live.rs:103-106`), not just the final update.
 8. **Trailing tail (final)**: upstream uses `to-chk` only while the file list is still streaming (`!flist_eof`) and switches to `ir-chk` once the flist is complete (`progress.c:80`). Ours hard-codes `to-chk` (`live.rs:106`, `render.rs:192`).
 9. **xfr#N and counts**: upstream's `xfr#N` is `stats.xferred_files` (regular files transferred to date) and the chk count is `stats.num_files - current_file_index - 1` (`progress.c:79-82`). Ours uses `update.index()` (count of progress events emitted, `progress.rs:215-217`) and the local remaining/total derived from event order (`live.rs:69-71`). For runs that include directories, symlinks, or skipped entries the totals will diverge from upstream's reg-only `xferred_files`.
@@ -128,8 +128,8 @@ When `INFO_GTE(PROGRESS, 2)`:
 
 ### Discrepancies
 
-17. **No 1-second throttle**: any update emitted by the engine reaches the writer. For fast local copies this can produce hundreds of ticks per second per file.
-18. **No 5-slot history ring**: rate computation in upstream uses the oldest sample in the 5-second ring as its denominator (`progress.c:102-104`), giving a smoothed rate. Ours divides cumulative bytes by total elapsed (`rate.rs:122`), so the rate window grows over time and never reflects the recent slope.
+17. **1-second throttle** (RESOLVED for ETA): `RemainingTimeEstimator::observe` ignores samples that arrive within 1 s of the newest retained sample (`format/remaining.rs:60-72`), matching the `msdiff < 1000` guard in `progress.c:224-225`. The rate column still consumes raw cumulative bytes.
+18. **5-slot history ring** (RESOLVED for ETA): `RemainingTimeEstimator` keeps a 5-slot ring (`HISTORY_SLOTS = PROGRESS_HISTORY_SECS = 5`) and computes the rate from the oldest retained sample to the freshest, mirroring `progress.c:102-104`. The summary rate (`format_summary_rate`) intentionally remains cumulative, matching upstream's `main.c:413` summary semantics.
 19. **No `want_progress_now` / `instant_progress` equivalent**: upstream forces a single tick when external code sets the flag (e.g. before printing a non-progress line). We have no path to flush a final tick out of band.
 20. **No 1500 ms backfill of the start anchor**: upstream's `ph_start` heuristic seeds from the previous file's last sample if recent (`progress.c:208-218`). Our `overall_start` is fixed at observer construction (`progress.rs:181`) and per-file elapsed comes from the engine, so the boundary case (long pause then resume) reports a low rate for the first second of the new file.
 
@@ -181,8 +181,8 @@ total size is {total_size_display}  speedup is {speedup:.2}{dry_run_suffix}
 | 2 | Rate value width | `progress.c:129` `%7.2f%s` | `live.rs:92-95`, `render.rs:182-185` | minor |
 | 3 | Rate unit set | `progress.c:108-116` | `rate.rs:80-97` | major |
 | 4 | Rate divisor base | `progress.c:108-111` | `rate.rs:81-87` | major |
-| 5 | ETA vs elapsed | `progress.c:97-105` | `live.rs:96`, `render.rs:186` | major |
-| 6 | ETA width | `progress.c:121-122` | `progress.rs:20-26` | minor |
+| 5 | ETA vs elapsed | `progress.c:97-105` | `live.rs:117-124,161-168` | RESOLVED |
+| 6 | ETA width | `progress.c:121-122` | `format/remaining.rs:106-114` | RESOLVED |
 | 7 | In-flight tail | `progress.c:100` | `live.rs:103-106` | major |
 | 8 | `to-chk` vs `ir-chk` | `progress.c:78-82` | `live.rs:106`, `render.rs:192` | major |
 | 9 | xfr#N counter source | `progress.c:78-82` | `progress.rs:215-217` | major |
@@ -193,8 +193,8 @@ total size is {total_size_display}  speedup is {speedup:.2}{dry_run_suffix}
 | 14 | TTY foreground check | `progress.c:185-237` | absent | major |
 | 15 | First-tick CR | `progress.c:129` | `live.rs:99-101` | minor |
 | 16 | `output_needs_newline` flag | `progress.c:127`, `progress.c:132` | absent | minor |
-| 17 | 1-second throttle | `progress.c:224-225` | absent | major |
-| 18 | 5-slot rolling rate window | `progress.c:102-104` | `rate.rs:122` | major |
+| 17 | 1-second throttle | `progress.c:224-225` | `format/remaining.rs:60-72` | RESOLVED |
+| 18 | 5-slot rolling rate window | `progress.c:102-104` | `format/remaining.rs:34-72` | RESOLVED |
 | 19 | `instant_progress` / `want_progress_now` | `progress.c:35`, `progress.c:158-165` | absent | minor |
 | 20 | 1500 ms start backfill | `progress.c:208-218` | `progress.rs:181` | minor |
 | 21 | Locale grouping separator | `compat.c:177-178`, `compat.c:230-240` | `size.rs:38` | minor |
@@ -206,6 +206,8 @@ total size is {total_size_display}  speedup is {speedup:.2}{dry_run_suffix}
 | 27 | Speedup grouping | `main.c:459` | `render.rs:326` | minor |
 
 Total discrepancies recorded: **27** (one row, #25, agrees by coincidence).
+Resolved to date: D5, D6, D17, D18 (sliding-window remaining-time estimator;
+see `crates/cli/src/frontend/progress/format/remaining.rs`).
 
 ## 7. Verification Recipe
 
