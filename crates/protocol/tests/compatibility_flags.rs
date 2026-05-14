@@ -121,6 +121,35 @@ fn test_inplace_partial_dir_flag_encoding() {
     assert_eq!(buf, vec![64], "CF_INPLACE_PARTIAL_DIR encodes as [64]");
 }
 
+// upstream: compat.c CF_INPLACE_PARTIAL_DIR (1<<6) - this golden test
+// pins the byte sequence emitted on the wire when the bit is set alone
+// and when combined with other protocol-30 capabilities. The first byte
+// of the upstream varint is identical to a single-byte write_byte() emit
+// because the high bit is clear for any value below 0x80.
+#[test]
+fn test_inplace_partial_dir_wire_byte_matches_upstream() {
+    let mut buf = Vec::new();
+    CompatibilityFlags::INPLACE_PARTIAL_DIR
+        .encode_to_vec(&mut buf)
+        .expect("encoding must succeed");
+    // upstream: compat.c:736-738 - write_byte(f_out, compat_flags) for the
+    // pre-release path and write_varint(f_out, compat_flags) otherwise.
+    // CF_INPLACE_PARTIAL_DIR alone is 0x40, which encodes identically
+    // under both writers.
+    assert_eq!(buf, [0x40]);
+}
+
+#[test]
+fn test_inplace_partial_dir_combined_with_inc_recurse_wire_bytes() {
+    // CF_INC_RECURSE (0x01) | CF_INPLACE_PARTIAL_DIR (0x40) == 0x41.
+    let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::INPLACE_PARTIAL_DIR;
+    let mut buf = Vec::new();
+    flags
+        .encode_to_vec(&mut buf)
+        .expect("encoding must succeed");
+    assert_eq!(buf, [0x41]);
+}
+
 #[test]
 fn test_varint_flist_flags_flag_encoding() {
     let flag = CompatibilityFlags::VARINT_FLIST_FLAGS;

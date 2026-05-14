@@ -1139,6 +1139,51 @@ fn validate_default_builder_ok() {
     assert!(b.validate().is_ok());
 }
 
+// upstream: compat.c CF_INPLACE_PARTIAL_DIR - bit 6, protocol >= 30.
+// When both peers advertise the 'I' capability char, the receiver enables
+// per-file inplace for basis files in the partial directory and the otherwise
+// conflicting --inplace --partial-dir combination is accepted.
+#[test]
+fn validate_with_capabilities_inplace_partial_dir_accepted_when_cap_negotiated() {
+    let b = builder()
+        .inplace(true)
+        .partial_directory(Some("/tmp/partial"));
+    let caps = protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR;
+    assert!(b.validate_with_capabilities(caps).is_ok());
+}
+
+#[test]
+fn validate_with_capabilities_append_partial_dir_accepted_when_cap_negotiated() {
+    let b = builder()
+        .append(true)
+        .partial_directory(Some("/tmp/partial"));
+    let caps = protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR;
+    assert!(b.validate_with_capabilities(caps).is_ok());
+}
+
+#[test]
+fn validate_with_capabilities_inplace_partial_dir_rejected_without_cap() {
+    let b = builder()
+        .inplace(true)
+        .partial_directory(Some("/tmp/partial"));
+    let err = b
+        .validate_with_capabilities(protocol::CompatibilityFlags::EMPTY)
+        .unwrap_err();
+    assert_eq!(err.option1, "inplace");
+    assert_eq!(err.option2, "partial-dir");
+}
+
+#[test]
+fn validate_with_capabilities_delay_updates_conflict_not_relaxed() {
+    // CF_INPLACE_PARTIAL_DIR does not relax --inplace --delay-updates.
+    let b = builder().inplace(true).delay_updates(true);
+    let err = b
+        .validate_with_capabilities(protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR)
+        .unwrap_err();
+    assert_eq!(err.option1, "inplace");
+    assert_eq!(err.option2, "delay-updates");
+}
+
 #[test]
 fn compare_destination_adds_directory() {
     let config = builder().compare_destination("/tmp/compare").build();
