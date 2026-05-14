@@ -67,7 +67,7 @@ Three parallel formatters exist:
 | Deleted files per-type | yes | **bare integer** | none | none |
 | `flist_buildtime==0` suppresses lines 11-12 | yes | no | no | yes |
 | `Total bytes sent/received` | `human_num` (commas) | `format_size`/`HumanReadableMode` | commas | commas |
-| Extra `I/O backend: ...` line | absent | **emitted at line 15** | absent | absent |
+| Extra `I/O backend: ...` line | absent | FIXED (removed) | absent | absent |
 | Speed divisor | `0.5+(end-start)` wall-clock | wall-clock elapsed | `flist_build+flist_xfer` (**wrong**) | same wrong divisor |
 | Speedup `comma_dnum(...,2)` | yes (commas) | matches | matches | `{:.2}` no commas |
 | `(DRY RUN)` suffix | yes | yes | absent | absent |
@@ -93,30 +93,29 @@ Add per-formatter unit tests pinning trailing `\n` and leading blank line.
 
 ## 5. Known divergences worth tracking
 
-1. **`I/O backend:` line** (`render.rs:284`). Not in upstream. Move
-   behind a non-default info word or drop from `--stats`.
-2. **`dev` bucket merged with `special`** in `emit_stats`.
-3. **Deletion per-type breakdown missing**; emitted as bare integer.
-4. **Leading blank line missing** before `Number of files:`.
-5. **Protocol-version gating absent** for created (>=29) / deleted (>=31).
-6. **`flist_buildtime == 0` suppression absent** in `emit_stats` and
-   `stats_format`; upstream omits both timing lines together.
-7. **`bytes/sec` divisor wrong** in `stats_format` and
-   `protocol::stats::display` (file-list timing instead of wall-clock).
-8. **No trailing `\n`** from `stats_format::format` and `Display for
-   TransferStats`.
-9. **`--no-human-readable` ignored on stats path** (commas hardcoded).
-10. **Speedup uses `{:.2}`** in `protocol::stats::display`, losing the
-    thousands separators upstream emits via `comma_dnum`.
-11. **`(BATCH ONLY)` suffix missing** from `emit_stats` trailer.
-12. **Three duplicate formatters.** Consolidate into one `StatsFormatter`
-    shared between the live path and goldens.
+Status legend: FIXED in this audit; OPEN remains a divergence; CLOSED was
+re-evaluated and the implementation already matches upstream.
+
+| ID | Severity | Status | Description |
+|----|----------|--------|-------------|
+| S1 | Low | FIXED | `I/O backend:` line (`render.rs:288`) is not in upstream's `output_summary`; removed so the stats block ends at `Total bytes received:` and the blank line precedes the trailer as upstream emits at `main.c:452`. |
+| S2 | Low | OPEN | `dev` bucket merged with `special` in `emit_stats`; upstream emits `dev` and `special` separately. |
+| S3 | Low | OPEN | Deletion per-type breakdown missing; emitted as bare integer. |
+| S4 | Low | OPEN | Leading blank line missing before `Number of files:` (upstream `main.c:419`). |
+| S5 | Low | OPEN | Protocol-version gating absent for created (>=29) / deleted (>=31). |
+| S6 | Medium | OPEN | `flist_buildtime == 0` suppression absent in `emit_stats` and `stats_format`; upstream omits both timing lines together. |
+| S7 | High | OPEN | `bytes/sec` divisor wrong in `stats_format` and `protocol::stats::display` (file-list timing instead of wall-clock). |
+| S8 | Low | OPEN | No trailing `\n` from `stats_format::format` and `Display for TransferStats`. |
+| S9 | Medium | OPEN | `--no-human-readable` ignored on stats path (commas hardcoded). |
+| S10 | Low | OPEN | Speedup uses `{:.2}` in `protocol::stats::display`, losing thousands separators upstream emits via `comma_dnum`. |
+| S11 | Low | OPEN | `(BATCH ONLY)` suffix missing from `emit_stats` trailer. |
+| S12 | Low | OPEN | Three duplicate formatters; consolidate into one `StatsFormatter` shared between the live path and goldens. |
 
 ## References
 
 - Upstream: `main.c::output_summary` (416-465); `inums.h`;
   `lib/compat.c::do_big_num` (170-246), `do_big_dnum` (252-).
-- oc-rsync: `crates/cli/src/frontend/progress/render.rs::emit_stats`
-  (200-288), `emit_totals` (291-328);
+- oc-rsync: `crates/cli/src/frontend/progress/render.rs::emit_stats`,
+  `emit_totals`;
   `crates/cli/src/frontend/stats_format.rs` (136-263);
   `crates/protocol/src/stats/display.rs` (49-184).
