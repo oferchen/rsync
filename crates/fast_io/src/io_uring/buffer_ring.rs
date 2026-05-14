@@ -310,7 +310,11 @@ impl BgidAllocator {
         // Reuse a freed id when one is available. The lock is held only for
         // the pop, so contention with concurrent deallocate calls is
         // negligible in practice (one buffer ring per long-running task).
-        if let Some(id) = bgid_free_list().lock().expect("bgid free-list poisoned").pop() {
+        if let Some(id) = bgid_free_list()
+            .lock()
+            .expect("bgid free-list poisoned")
+            .pop()
+        {
             return Ok(id);
         }
 
@@ -1265,7 +1269,10 @@ mod tests {
         // the monotonic counter is fully consumed.
         NEXT_BGID.store(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
         assert!(
-            matches!(BgidAllocator::allocate(), Err(BufferRingError::BgidExhausted)),
+            matches!(
+                BgidAllocator::allocate(),
+                Err(BufferRingError::BgidExhausted)
+            ),
             "sanity: counter must be exhausted before the free-list seed"
         );
 
