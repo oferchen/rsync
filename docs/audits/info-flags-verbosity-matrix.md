@@ -237,12 +237,15 @@ per-flag caps stay in lockstep with the per-token validation in
 
 ### 4.3 `no<flag>` / `-<flag>` negation
 
-`crates/cli/src/frontend/execution/flags/info.rs:184-188` accepts the
-`no` and `-` prefixes by stripping them and treating the level as `0`.
-Upstream lacks this codepath in `parse_output_words`; it relies on
-`stats0` etc. The diversion is invisible because both ultimately set
-the level to zero, but the rsync man page (`rsync.1.md:419`) uses the
-suffix form only.
+`crates/cli/src/frontend/execution/flags/info.rs::parse_flag_and_level`
+accepts the `no` and `-` prefixes by stripping them and treating the
+level as `0`. Upstream lacks this codepath in `parse_output_words`; it
+relies on `stats0` etc. The diversion is invisible because both
+ultimately set the level to zero, but the rsync man page
+(`rsync.1.md:419`) uses the suffix form only. The forms are retained for
+backwards compatibility and tolerance of server-mode token forwarding,
+but are no longer advertised in `--info=help`; the suffix form is the
+only spelling shown to users.
 
 ### 4.4 Unknown-token error code
 
@@ -292,7 +295,7 @@ re-evaluated and the implementation already matches upstream.
 | I10 | SKIP 2    | Low      | OPEN   | Upstream emits the "(type change)" / "(sum change)" suffix at `generator.c:1387`; oc-rsync's SKIP emissions never include the suffix. |
 | I11 | All       | Medium   | OPEN   | `should_show_*` and the parse-cap layer collapse level 2/3 to level 1 because no production code differentiates levels beyond `> 0`. Closing I1-I10 individually addresses this category. |
 | I12 | All       | Low      | RESOLVED | `--info=N` (bare digit) now accepted as a usability extension; oc-rsync's `apply()` in `info.rs` delegates to `enable_all_at_level(N)` with the same per-flag caps as upstream's `all<N>` token (`options.c parse_output_words`). |
-| I13 | All       | Low      | OPEN   | `--info=no<flag>` / `--info=-<flag>` accepted by oc-rsync only; upstream rejects unknown tokens. Diverges in the rejection direction (oc-rsync more permissive). |
+| I13 | All       | Low      | RESOLVED | `--info=no<flag>` / `--info=-<flag>` are an internal-only extension not advertised in `--info=help`; the parser still accepts them for backwards compatibility and server-mode token forwarding, but the user-facing surface only shows the upstream suffix form. |
 | I14 | All       | Low      | OPEN   | Unknown-token message text differs: upstream `Unknown --info item: "FOO"`, oc-rsync `invalid --info flag 'FOO': use --info=help for supported flags`. Same exit code (1). |
 | I15 | All       | Low      | OPEN   | Server-side mode (`am_server`) should suppress unknown-token errors (`options.c:465`); oc-rsync errors unconditionally. |
 | I16 | All       | Low      | OPEN   | Priority field (`DEFAULT/HELP/USER/LIMIT`, `options.c:249-252`) not modelled; later daemon-imposed limits cannot lower user-set levels. |

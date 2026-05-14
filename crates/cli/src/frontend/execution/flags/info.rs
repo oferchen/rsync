@@ -208,6 +208,14 @@ impl InfoFlagSettings {
         "skip", "stats", "symsafe",
     ];
 
+    // Internal-only extension: `no<flag>` and `-<flag>` are accepted as a
+    // negation form mapping to level 0 (e.g. `noprogress` == `progress0`).
+    // Upstream rsync 3.4.1's `parse_output_words` (`options.c:427`) does NOT
+    // implement this prefix; it relies on the `flag0` suffix instead. The
+    // forms remain accepted for backwards compatibility and to tolerate
+    // server-mode token forwarding, but they are intentionally not advertised
+    // in `--info=help` (see `INFO_HELP_TEXT`) so users do not rely on a
+    // non-portable spelling. New code should prefer the suffix form.
     pub(super) fn parse_flag_and_level<'a>(&self, input: &'a str) -> (&'a str, u8) {
         let base = input.trim_end_matches(|c: char| c.is_ascii_digit());
         if base != input {
@@ -301,5 +309,4 @@ pub(crate) const INFO_HELP_TEXT: &str = "The following --info flags are supporte
     STATS       Mention statistics at end of run (levels 1-3).\n\
     SYMSAFE     Mention symlinks that are unsafe.\n\
 \n\
-Flags may be written with 'no' or '-' prefixes (for example, --info=noprogress).\n\
 Level suffixes may be used (for example, --info=stats2 or --info=flist0).\n";
