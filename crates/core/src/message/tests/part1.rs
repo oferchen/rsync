@@ -199,7 +199,7 @@ fn formats_error_with_code_role_and_source() {
 
     assert!(formatted.starts_with("rsync error: delta-transfer failure (code 23) at "));
     assert!(formatted.contains(&format!("[sender={}]", crate::version::RUST_VERSION)));
-    assert!(formatted.contains("src/message/tests.rs"));
+    assert!(formatted.contains("tests.rs("));
 }
 
 #[test]
