@@ -1092,6 +1092,30 @@ fn validate_append_with_delay_updates_conflicts() {
 }
 
 #[test]
+fn validate_append_with_whole_file_conflicts() {
+    // upstream: options.c:2382 - --append cannot be used with --whole-file.
+    let b = builder().append(true).whole_file(true);
+    let err = b.validate().unwrap_err();
+    assert_eq!(err.option1, "append");
+    assert_eq!(err.option2, "whole-file");
+    assert_eq!(err.to_string(), "--append cannot be used with --whole-file");
+}
+
+#[test]
+fn validate_append_with_no_whole_file_ok() {
+    // Explicit `--no-whole-file` is the upstream-compatible companion to --append.
+    let b = builder().append(true).whole_file(false);
+    assert!(b.validate().is_ok());
+}
+
+#[test]
+fn validate_append_without_explicit_whole_file_ok() {
+    // Default (None) leaves auto-detection in place and does not conflict.
+    let b = builder().append(true);
+    assert!(b.validate().is_ok());
+}
+
+#[test]
 fn validate_inplace_without_conflicts_ok() {
     let b = builder().inplace(true);
     assert!(b.validate().is_ok());
