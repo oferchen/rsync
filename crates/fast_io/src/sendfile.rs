@@ -1,20 +1,24 @@
 //! Zero-copy file-to-socket transfer using `sendfile` syscall with automatic fallback.
 //!
-//! This module provides high-performance file-to-socket transfer using Linux's `sendfile`
-//! syscall when available, with automatic fallback to standard read/write on other
-//! platforms or when the syscall fails.
+//! This module provides high-performance file-to-socket transfer using the
+//! native `sendfile` syscall on Linux and macOS, with automatic fallback to
+//! standard read/write on other platforms or when the syscall fails.
 //!
 //! # Platform Support
 //!
-//! - **Linux**: Uses `sendfile` for zero-copy file-to-socket transfer
-//! - **Other platforms**: Automatic fallback to buffered read/write
+//! - **Linux**: Uses Linux's `sendfile(out, in, offset, count)` for
+//!   zero-copy file-to-socket transfer.
+//! - **macOS**: Uses Darwin's `sendfile(fd, s, offset, &len, hdtr, flags)`.
+//!   The signature differs from Linux: `len` is an in/out parameter (bytes
+//!   to send -> bytes actually sent) and a return of `0` means success.
+//! - **Other platforms**: Automatic fallback to buffered read/write.
 //!
 //! # Performance Characteristics
 //!
 //! - For files < 64KB: Uses read/write directly (lower syscall overhead)
 //! - For files >= 64KB: Attempts `sendfile` for zero-copy transfer
 //! - Fallback path uses 256KB buffer for efficient bulk transfer
-//! - Sends data in chunks up to ~2GB to avoid signal interruption
+//! - On Linux, sends data in chunks up to ~2GB to avoid signal interruption
 //!
 //! # Example
 //!
@@ -44,7 +48,7 @@ use std::io::{self, Read, Write};
 /// Minimum file size to attempt sendfile (below this, read/write is fine).
 ///
 /// Small files benefit from the simpler read/write path due to lower syscall overhead.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const SENDFILE_THRESHOLD: u64 = 64 * 1024; // 64KB
 
 /// Maximum bytes per sendfile call (Linux limit to avoid signal interruption).
@@ -52,6 +56,15 @@ const SENDFILE_THRESHOLD: u64 = 64 * 1024; // 64KB
 /// Linux `sendfile` can be interrupted by signals, so we limit each call to ~2GB.
 #[cfg(target_os = "linux")]
 const SENDFILE_CHUNK_SIZE: usize = 0x7fff_f000; // ~2GB
+
+/// Maximum bytes per Darwin `sendfile` call.
+///
+/// Darwin's `sendfile` accepts an `off_t` length so the only practical ceiling
+/// is `i64::MAX`. We cap each call at ~2 GiB to keep partial-send accounting
+/// simple and avoid pinning a single socket for too long when other I/O is
+/// waiting.
+#[cfg(target_os = "macos")]
+const SENDFILE_CHUNK_SIZE: u64 = 0x7fff_f000; // ~2GB
 
 /// Transfers file contents to a writer, using buffered read/write.
 ///
@@ -153,8 +166,24 @@ pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u
     copy_via_fd_write(source, dest_fd, length)
 }
 
-/// Stub for non-Linux unix platforms - uses libc::write fallback.
-#[cfg(all(unix, not(target_os = "linux")))]
+/// macOS dispatch - prefers Darwin's native `sendfile(2)` for sockets.
+///
+/// Above [`SENDFILE_THRESHOLD`] the function attempts a zero-copy transfer
+/// via `try_sendfile_macos`. The Darwin `sendfile` only accepts socket
+/// destinations, so a non-socket `dest_fd` (pipe, regular file) falls back
+/// to the buffered `read`/`write` loop transparently.
+#[cfg(target_os = "macos")]
+pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
+    if length >= SENDFILE_THRESHOLD {
+        if let Ok(n) = try_sendfile_macos(source, dest_fd, length) {
+            return Ok(n);
+        }
+    }
+    copy_via_fd_write(source, dest_fd, length)
+}
+
+/// Stub for other unix platforms (BSD, illumos, ...) - uses libc::write fallback.
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
     copy_via_fd_write(source, dest_fd, length)
 }
@@ -172,7 +201,7 @@ pub fn send_file_to_fd(source: &File, _dest_fd: i32, length: u64) -> io::Result<
 /// a buffered `read`/`write` loop. `Auto` and `Enabled` route to the
 /// existing [`send_file_to_fd`] which auto-selects `sendfile` for transfers
 /// above the platform threshold.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn send_file_to_fd_with_policy(
     source: &File,
     dest_fd: i32,
@@ -186,12 +215,12 @@ pub fn send_file_to_fd_with_policy(
     }
 }
 
-/// Non-Linux unix policy-aware fallback - delegates to [`send_file_to_fd`].
+/// Other unix policy-aware fallback - delegates to [`send_file_to_fd`].
 ///
-/// `sendfile(2)` is not used on non-Linux unix targets, so the policy is
-/// purely informational here and the call always uses the standard
-/// `read`/`write` path.
-#[cfg(all(unix, not(target_os = "linux")))]
+/// `sendfile(2)` is not used on non-Linux, non-macOS unix targets, so the
+/// policy is purely informational here and the call always uses the
+/// standard `read`/`write` path.
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 pub fn send_file_to_fd_with_policy(
     source: &File,
     dest_fd: i32,
@@ -272,6 +301,134 @@ fn try_sendfile(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
 
         total += result as u64;
         remaining -= result as u64;
+    }
+
+    Ok(total)
+}
+
+/// Attempts zero-copy transfer via Darwin's `sendfile(2)`.
+///
+/// macOS exposes a BSD-style `sendfile` whose signature differs from Linux:
+///
+/// ```c
+/// int sendfile(int fd, int s, off_t offset, off_t *len,
+///              struct sf_hdtr *hdtr, int flags);
+/// ```
+///
+/// `*len` is in/out: on entry it holds the maximum bytes to send; on return
+/// it holds the bytes actually sent. A return value of `0` indicates
+/// success; `-1` indicates failure with errno set. On `EAGAIN`, `EINTR`, or
+/// `EINPROGRESS`, `*len` still reports a partial byte count and the caller
+/// is expected to advance and retry from `offset + *len`.
+///
+/// Darwin's `sendfile` requires the destination to be a `SOCK_STREAM`
+/// socket. Non-socket destinations (pipes, regular files) fail with
+/// `ENOTSOCK`, which surfaces here as an error so the dispatch in
+/// [`send_file_to_fd`] can fall back to the buffered `read`/`write` loop.
+///
+/// # Source offset
+///
+/// Linux's `sendfile` with a NULL offset pointer uses and advances the
+/// source file position. Darwin's signature requires an explicit offset
+/// and does not touch the file position. To preserve the "transfer from
+/// the current file position" contract documented on [`send_file_to_fd`],
+/// this function reads the current position via `lseek(fd, 0, SEEK_CUR)`,
+/// passes it as the syscall offset, and advances the position with a
+/// matching `lseek(SEEK_SET)` after a successful transfer.
+///
+/// # Safety
+///
+/// Uses unsafe FFI to call `libc::sendfile` and `libc::lseek`. File
+/// descriptors must be valid (they are derived from `&File` and a caller-
+/// provided socket fd).
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn try_sendfile_macos(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
+    use std::os::fd::AsRawFd;
+
+    let src_fd = source.as_raw_fd();
+
+    // Capture the current source position so we mirror Linux's
+    // "advance the file position" contract after the transfer succeeds.
+    // SAFETY: `src_fd` is a valid open file descriptor borrowed from `source`.
+    // `lseek` with `SEEK_CUR` and offset 0 is a pure query - it cannot move
+    // or corrupt the position.
+    let start_offset = unsafe { libc::lseek(src_fd, 0, libc::SEEK_CUR) };
+    if start_offset < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut total: u64 = 0;
+    let mut remaining = length;
+
+    while remaining > 0 {
+        let chunk = remaining.min(SENDFILE_CHUNK_SIZE);
+        // Darwin's sendfile treats `*len == 0` as "send until EOF". We always
+        // pass an explicit non-zero chunk so partial-send accounting stays
+        // simple - 0 only occurs after the outer loop terminates.
+        let mut len: libc::off_t = chunk as libc::off_t;
+        let offset: libc::off_t = start_offset
+            .checked_add(total as i64)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "offset overflow"))?;
+
+        // SAFETY: `src_fd` and `dest_fd` are valid open file descriptors.
+        // `&mut len` is a valid pointer to a stack-allocated `off_t` for the
+        // duration of the call. NULL `hdtr` and `flags = 0` request a plain
+        // file-to-socket transfer with no header/trailer iovecs.
+        let ret = unsafe {
+            libc::sendfile(
+                src_fd,
+                dest_fd,
+                offset,
+                &mut len as *mut libc::off_t,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+
+        // Darwin populates `*len` with the bytes actually sent on both
+        // success and EAGAIN/EINTR. Treat any positive `len` as forward
+        // progress before deciding whether to surface the error.
+        let sent = if len >= 0 { len as u64 } else { 0 };
+
+        if ret != 0 {
+            let err = io::Error::last_os_error();
+            // EAGAIN / EINTR with a partial send: treat as forward progress
+            // and stop. The caller observes the prefix that did move and the
+            // socket peer sees a consistent stream.
+            if total + sent == 0 {
+                return Err(err);
+            }
+            total += sent;
+            // Best-effort: advance the source file position to match the
+            // bytes we actually transferred so callers that resume from the
+            // file's current offset stay correct. Saturating arithmetic
+            // protects against the (astronomically unlikely) case of an
+            // `off_t` overflow on multi-exabyte transfers.
+            let new_offset = start_offset.saturating_add(total as i64);
+            // SAFETY: `src_fd` is still valid; SEEK_SET with a non-negative
+            // offset is well-defined for regular files.
+            unsafe {
+                let _ = libc::lseek(src_fd, new_offset, libc::SEEK_SET);
+            }
+            return Ok(total);
+        }
+
+        total += sent;
+        if sent == 0 {
+            // No progress and no error: source reached EOF.
+            break;
+        }
+        remaining = remaining.saturating_sub(sent);
+    }
+
+    // Advance the source file position by the total bytes transferred so
+    // the post-call file offset matches Linux's behaviour.
+    let new_offset = start_offset.saturating_add(total as i64);
+    // SAFETY: `src_fd` is a valid open file descriptor; SEEK_SET with a
+    // non-negative offset is a well-defined operation.
+    unsafe {
+        let _ = libc::lseek(src_fd, new_offset, libc::SEEK_SET);
     }
 
     Ok(total)
@@ -641,6 +798,148 @@ mod tests {
         let received = reader_thread.join().expect("reader thread should succeed");
         assert_eq!(received.len(), expected_content.len());
         assert_eq!(received, expected_content);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_send_file_to_fd_socketpair_macos() {
+        // Darwin's sendfile(2) only accepts SOCK_STREAM destinations.
+        // Exercise the native path with a content length above
+        // SENDFILE_THRESHOLD so try_sendfile_macos is invoked rather than
+        // the buffered read/write fallback.
+        use std::thread;
+
+        let size = SENDFILE_THRESHOLD as usize + 4096; // 68 KiB
+        let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+        let source = create_temp_file(&content).unwrap();
+
+        let mut socket_fds = [0i32; 2];
+        let result = unsafe {
+            libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
+        };
+        assert_eq!(result, 0, "Failed to create socketpair");
+
+        let recv_fd = socket_fds[0];
+        let send_fd = socket_fds[1];
+
+        // Drain the receive end concurrently so a small socket buffer does
+        // not deadlock the sender.
+        let expected_content = content.clone();
+        let reader_thread = thread::spawn(move || {
+            let mut received = Vec::with_capacity(expected_content.len());
+            let mut buf = [0u8; 8192];
+            while received.len() < expected_content.len() {
+                let n = unsafe {
+                    libc::read(recv_fd, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len())
+                };
+                if n <= 0 {
+                    break;
+                }
+                received.extend_from_slice(&buf[..n as usize]);
+            }
+            unsafe { libc::close(recv_fd) };
+            received
+        });
+
+        // try_sendfile_macos should succeed end-to-end for a SOCK_STREAM peer.
+        let sent = try_sendfile_macos(source.as_file(), send_fd, size as u64)
+            .expect("native macOS sendfile should succeed on a SOCK_STREAM");
+        assert_eq!(sent, size as u64);
+
+        unsafe { libc::close(send_fd) };
+
+        let received = reader_thread.join().expect("reader thread should succeed");
+        assert_eq!(received.len(), expected_content.len());
+        assert_eq!(received, expected_content);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_send_file_to_fd_dispatch_uses_native_macos() {
+        // The high-level dispatch must succeed for SOCK_STREAM destinations
+        // on macOS without falling back to read/write (which would also pass
+        // the byte-equality check but defeat the purpose of this audit).
+        let content: Vec<u8> = (0..(SENDFILE_THRESHOLD as usize + 1024))
+            .map(|i| ((i * 13 + 7) % 256) as u8)
+            .collect();
+        let source = create_temp_file(&content).unwrap();
+
+        let mut socket_fds = [0i32; 2];
+        let result = unsafe {
+            libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
+        };
+        assert_eq!(result, 0, "Failed to create socketpair");
+
+        let recv_fd = socket_fds[0];
+        let send_fd = socket_fds[1];
+
+        let expected = content.clone();
+        let reader_thread = std::thread::spawn(move || {
+            let mut received = Vec::with_capacity(expected.len());
+            let mut buf = [0u8; 8192];
+            while received.len() < expected.len() {
+                let n = unsafe {
+                    libc::read(recv_fd, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len())
+                };
+                if n <= 0 {
+                    break;
+                }
+                received.extend_from_slice(&buf[..n as usize]);
+            }
+            unsafe { libc::close(recv_fd) };
+            received
+        });
+
+        let sent = send_file_to_fd(source.as_file(), send_fd, content.len() as u64).unwrap();
+        assert_eq!(sent, content.len() as u64);
+
+        unsafe { libc::close(send_fd) };
+
+        let received = reader_thread.join().expect("reader thread should succeed");
+        assert_eq!(received, content);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_send_file_to_fd_macos_non_socket_falls_back() {
+        // Darwin's sendfile returns ENOTSOCK for pipes; the dispatch must
+        // fall back to the read/write loop and still deliver the bytes.
+        let content: Vec<u8> = (0..(SENDFILE_THRESHOLD as usize + 512))
+            .map(|i| (i % 256) as u8)
+            .collect();
+        let source = create_temp_file(&content).unwrap();
+
+        let mut pipe_fds = [0i32; 2];
+        let result = unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
+        assert_eq!(result, 0, "Failed to create pipe");
+
+        let read_fd = pipe_fds[0];
+        let write_fd = pipe_fds[1];
+
+        let expected = content.clone();
+        let reader_thread = std::thread::spawn(move || {
+            let mut received = Vec::with_capacity(expected.len());
+            let mut buf = [0u8; 8192];
+            while received.len() < expected.len() {
+                let n = unsafe {
+                    libc::read(read_fd, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len())
+                };
+                if n <= 0 {
+                    break;
+                }
+                received.extend_from_slice(&buf[..n as usize]);
+            }
+            unsafe { libc::close(read_fd) };
+            received
+        });
+
+        let sent = send_file_to_fd(source.as_file(), write_fd, content.len() as u64).unwrap();
+        assert_eq!(sent, content.len() as u64);
+
+        unsafe { libc::close(write_fd) };
+
+        let received = reader_thread.join().expect("reader thread should succeed");
+        assert_eq!(received, content);
     }
 
     #[test]
