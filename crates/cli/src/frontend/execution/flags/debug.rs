@@ -6,7 +6,7 @@ use core::{
 };
 
 /// Parsed `--debug` flag settings controlling diagnostic output levels.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct DebugFlagSettings {
     pub(crate) acl: Option<u8>,
     pub(crate) backup: Option<u8>,
