@@ -160,6 +160,7 @@ include!("tests/chunks/read_trimmed_line_strips_crlf_terminators.rs");
 include!("tests/chunks/read_trimmed_line_strips_lf_only.rs");
 include!("tests/chunks/read_trimmed_line_strips_multiple_cr_lf.rs");
 include!("tests/chunks/run_daemon_accepts_valid_credentials.rs");
+include!("tests/chunks/daemon_error_payloads_match_upstream_wording.rs");
 include!("tests/chunks/run_daemon_denies_module_when_host_not_allowed.rs");
 include!("tests/chunks/run_daemon_enforces_bwlimit_during_module_list.rs");
 include!("tests/chunks/run_daemon_enforces_module_connection_limit.rs");

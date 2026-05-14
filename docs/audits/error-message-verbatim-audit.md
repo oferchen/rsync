@@ -83,7 +83,7 @@ citations are in `clientserver.c`.
 | D2 | `@ERROR: access denied to %s from %s (%s)\n` (`clientserver.c:733-734`) | `@ERROR: access denied to {module} from {host} ({addr})` (`crates/daemon/src/daemon.rs:114`) | EXACT |
 | D3 | `@ERROR: max connections (%d) reached -- try again later\n` (`clientserver.c:752`) | `@ERROR: max connections ({limit}) reached -- try again later` (`crates/daemon/src/daemon.rs:123`) | EXACT |
 | D4 | `@ERROR: auth failed on module %s\n` (`clientserver.c:762`) | `@ERROR: auth failed on module {module}` (`crates/daemon/src/daemon.rs:118`) | EXACT |
-| D5 | `@ERROR: failed to open lock file\n` (`clientserver.c:748`) | `@ERROR: failed to update module connection lock; please try again later` (`crates/daemon/src/daemon.rs:125-126`) | DIVERGENT |
+| D5 | `@ERROR: failed to open lock file\n` (`clientserver.c:748`) | `@ERROR: failed to open lock file` (`crates/daemon/src/daemon.rs:125-126`) | EXACT |
 | D6 | `@ERROR: chdir failed\n` (`clientserver.c:647`) | None emitted | MISSING |
 | D7 | `@ERROR: protocol startup error\n` (`clientserver.c:182`) | None emitted | MISSING |
 | D8 | `@ERROR: Unknown command '%s'\n` (`clientserver.c:1379`) | None emitted | MISSING |
@@ -96,7 +96,7 @@ citations are in `clientserver.c`.
 | D15 | (none - upstream has no equivalent) | `@ERROR: The server is configured to refuse <flag>` (`crates/daemon/src/daemon/sections/module_access/request.rs:127`) | Extra (oc-rsync only) |
 | D16 | (none) | `@ERROR: chroot/privilege setup failed: <err>` (`crates/daemon/src/daemon/sections/module_access/transfer.rs:353,360`) | Extra (oc-rsync only) |
 
-Family totals: 4 EXACT, 3 DIVERGENT, 6 MISSING, 3 Extra.
+Family totals: 5 EXACT, 2 DIVERGENT, 6 MISSING, 3 Extra.
 
 ## 4. File operation warnings (per-file `rsyserr`)
 
@@ -171,10 +171,10 @@ above). The project-memory note should be revised accordingly.
 |---|---:|---:|---:|---:|
 | 1. Connection / transport | 0 | 2 | 4 | 0 |
 | 2. Protocol negotiation | 1 | 1 | 6 | 0 |
-| 3. Daemon `@ERROR:` lines | 4 | 3 | 6 | 3 |
+| 3. Daemon `@ERROR:` lines | 5 | 2 | 6 | 3 |
 | 4. Per-file `rsyserr` warnings | 1 | 8 | 0 | 0 |
 | 5. Exit-code envelope | 11 | 3 | 0 | 0 |
-| **Total** | **17** | **17** | **16** | **3** |
+| **Total** | **18** | **16** | **16** | **3** |
 
 ## 7. Top 5 divergences by user impact
 
