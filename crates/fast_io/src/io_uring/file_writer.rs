@@ -14,7 +14,8 @@ use io_uring::{IoUring as RawIoUring, opcode};
 use super::batching::{maybe_fixed_file, sqe_fd, submit_write_batch, try_register_fd};
 use super::config::IoUringConfig;
 use super::registered_buffers::{
-    RegisteredBufferGroup, RegisteredBufferSlotInfo, submit_write_fixed_batch,
+    RegisteredBufferGroup, RegisteredBufferSlotInfo, RegisteredBufferStatus,
+    submit_write_fixed_batch,
 };
 use crate::traits::FileWriter;
 
@@ -39,6 +40,10 @@ pub struct IoUringWriter {
     fixed_fd_slot: i32,
     /// Optional registered buffer group for `WRITE_FIXED` operations.
     registered_buffers: Option<RegisteredBufferGroup>,
+    /// Provenance of `registered_buffers`: distinguishes "disabled by config"
+    /// from "kernel rejected registration" so operators can diagnose why a
+    /// transfer is using the unfixed `IORING_OP_WRITE` fallback.
+    registered_buffer_status: RegisteredBufferStatus,
 }
 
 impl IoUringWriter {
@@ -53,15 +58,13 @@ impl IoUringWriter {
         let file = File::create(path)?;
         let ring = config.build_ring()?;
         let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);
-        let registered_buffers = if config.register_buffers {
-            RegisteredBufferGroup::try_new(
+        let (registered_buffers, registered_buffer_status) =
+            RegisteredBufferGroup::try_new_with_status(
                 &ring,
                 config.buffer_size,
                 config.registered_buffer_count,
-            )
-        } else {
-            None
-        };
+                config.register_buffers,
+            );
 
         Ok(Self {
             ring,
@@ -73,6 +76,7 @@ impl IoUringWriter {
             sq_entries: config.sq_entries,
             fixed_fd_slot,
             registered_buffers,
+            registered_buffer_status,
         })
     }
 
@@ -80,15 +84,13 @@ impl IoUringWriter {
     pub fn from_file(file: File, config: &IoUringConfig) -> io::Result<Self> {
         let ring = config.build_ring()?;
         let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);
-        let registered_buffers = if config.register_buffers {
-            RegisteredBufferGroup::try_new(
+        let (registered_buffers, registered_buffer_status) =
+            RegisteredBufferGroup::try_new_with_status(
                 &ring,
                 config.buffer_size,
                 config.registered_buffer_count,
-            )
-        } else {
-            None
-        };
+                config.register_buffers,
+            );
 
         Ok(Self {
             ring,
@@ -100,6 +102,7 @@ impl IoUringWriter {
             sq_entries: config.sq_entries,
             fixed_fd_slot,
             registered_buffers,
+            registered_buffer_status,
         })
     }
 
@@ -122,11 +125,13 @@ impl IoUringWriter {
         register_buffers: bool,
         registered_buffer_count: usize,
     ) -> Self {
-        let registered_buffers = if register_buffers {
-            RegisteredBufferGroup::try_new(&ring, buffer_capacity, registered_buffer_count)
-        } else {
-            None
-        };
+        let (registered_buffers, registered_buffer_status) =
+            RegisteredBufferGroup::try_new_with_status(
+                &ring,
+                buffer_capacity,
+                registered_buffer_count,
+                register_buffers,
+            );
 
         Self {
             ring,
@@ -138,6 +143,7 @@ impl IoUringWriter {
             sq_entries,
             fixed_fd_slot,
             registered_buffers,
+            registered_buffer_status,
         }
     }
 
@@ -146,10 +152,20 @@ impl IoUringWriter {
     ///
     /// Returns `None` when the caller disabled `register_buffers` or when
     /// kernel registration failed and the writer is using the regular
-    /// `IORING_OP_WRITE` fallback path.
+    /// `IORING_OP_WRITE` fallback path. To tell the two cases apart, call
+    /// [`registered_buffer_status`](Self::registered_buffer_status).
     #[must_use]
     pub fn registered_buffer_count(&self) -> Option<usize> {
         self.registered_buffers.as_ref().map(|g| g.count())
+    }
+
+    /// Returns the provenance of fixed-buffer registration on this writer.
+    ///
+    /// Use this to distinguish the two `registered_buffer_count() == None`
+    /// cases: caller disabled registration vs the kernel rejected it.
+    #[must_use]
+    pub fn registered_buffer_status(&self) -> &RegisteredBufferStatus {
+        &self.registered_buffer_status
     }
 
     /// Creates a file with preallocated space.
@@ -162,15 +178,13 @@ impl IoUringWriter {
         file.set_len(size)?;
         let ring = config.build_ring()?;
         let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);
-        let registered_buffers = if config.register_buffers {
-            RegisteredBufferGroup::try_new(
+        let (registered_buffers, registered_buffer_status) =
+            RegisteredBufferGroup::try_new_with_status(
                 &ring,
                 config.buffer_size,
                 config.registered_buffer_count,
-            )
-        } else {
-            None
-        };
+                config.register_buffers,
+            );
 
         Ok(Self {
             ring,
@@ -182,6 +196,7 @@ impl IoUringWriter {
             sq_entries: config.sq_entries,
             fixed_fd_slot,
             registered_buffers,
+            registered_buffer_status,
         })
     }
 
@@ -476,6 +491,30 @@ mod tests {
             writer.registered_buffer_count(),
             None,
             "register_buffers=false must skip RegisteredBufferGroup construction"
+        );
+        assert_eq!(
+            writer.registered_buffer_status(),
+            &RegisteredBufferStatus::Disabled,
+            "status must be Disabled when register_buffers=false, not RegistrationFailed"
+        );
+    }
+
+    #[test]
+    fn registered_buffer_status_failed_when_kernel_rejects() {
+        // Force registration failure by asking for more buffers than the
+        // wrapper allows. This is rejected before reaching the kernel, so the
+        // test is portable to environments without io_uring permissions.
+        let writer = match make_writer(
+            true,
+            super::super::registered_buffers::MAX_REGISTERED_BUFFERS + 1,
+        ) {
+            Some(w) => w,
+            None => return,
+        };
+        assert_eq!(writer.registered_buffer_count(), None);
+        assert!(
+            writer.registered_buffer_status().is_registration_failed(),
+            "kernel-side rejection must surface as RegistrationFailed, not Disabled"
         );
     }
 
