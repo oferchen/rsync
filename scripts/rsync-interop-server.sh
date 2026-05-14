@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 # WHAT WAS DONE / WHY:
 # - Ensures workspace oc-rsync is built.
-# - Ensures upstream rsync 3.0.9 / 3.1.3 / 3.4.1 exist (Debian/Ubuntu-first, source fallback).
+# - Ensures upstream rsync 3.0.9 / 3.1.3 / 3.4.1 / 3.4.2 exist (Debian/Ubuntu-first, source fallback).
 # - Starts per-version daemons:
 #     * oc-rsync --daemon on a unique port
 #     * upstream rsync --daemon on the next port
@@ -35,7 +35,7 @@ upstream_install_root="${workspace_root}/target/interop/upstream-install"
 run_root="${workspace_root}/target/interop/run"
 readonly target_dir upstream_src_root upstream_install_root run_root
 
-versions=(3.0.9 3.1.3 3.4.1)
+versions=(3.0.9 3.1.3 3.4.1 3.4.2)
 readonly versions
 
 rsync_repo_url="https://github.com/RsyncProject/rsync.git"
@@ -95,6 +95,9 @@ build_version_url() {
       ;;
     3.4.1)
       printf '%s/pool/main/r/rsync/rsync_3.4.1+ds1-6_%s.deb\n' "${DEBIAN_MIRROR}" "${arch}"
+      ;;
+    3.4.2)
+      printf '%s/pool/main/r/rsync/rsync_3.4.2+ds1-1_%s.deb\n' "${DEBIAN_MIRROR}" "${arch}"
       ;;
     *)
       printf '%s/pool/main/r/rsync/rsync_%s-1_%s.deb\n' "${DEBIAN_MIRROR}" "${version}" "${arch}"
@@ -168,6 +171,12 @@ try_fetch_deb_generic() {
       ;;
     3.4.1)
       candidates=("${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1+ds1-5_${arch}.deb")
+      ;;
+    3.4.2)
+      candidates=(
+        "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.2+ds1-2_${arch}.deb"
+        "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.2-1_${arch}.deb"
+      )
       ;;
     *)
       candidates=("${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_${version}-1_${arch}.deb")

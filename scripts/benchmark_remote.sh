@@ -2,7 +2,7 @@
 # Remote rsync:// benchmark comparing multiple versions.
 #
 # Compares:
-#   - Upstream rsync 3.4.1
+#   - Upstream rsync 3.4.2 (fallback: 3.4.1)
 #   - oc-rsync v0.5.2
 #   - oc-rsync v0.5.3
 #   - oc-rsync dev (current codebase)
@@ -20,7 +20,7 @@
 #
 # Requirements:
 #   - hyperfine: cargo install hyperfine
-#   - Upstream rsync 3.4.1
+#   - Upstream rsync 3.4.2 (fallback: 3.4.1)
 #   - oc-rsync builds
 
 set -euo pipefail
@@ -29,7 +29,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Binary paths
-UPSTREAM="${PROJECT_ROOT}/target/interop/upstream-install/3.4.1/bin/rsync"
+UPSTREAM="${PROJECT_ROOT}/target/interop/upstream-install/3.4.2/bin/rsync"
+if [[ ! -x "${UPSTREAM}" ]]; then
+    UPSTREAM="${PROJECT_ROOT}/target/interop/upstream-install/3.4.1/bin/rsync"
+fi
 OC_V052="${PROJECT_ROOT}/target/oc-rsync-v0.5.2"
 OC_V053="${PROJECT_ROOT}/target/oc-rsync-v0.5.3"
 OC_DEV="${PROJECT_ROOT}/target/release/oc-rsync"

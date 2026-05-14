@@ -119,17 +119,21 @@ stop_daemon() {
 run_daemon_test() {
   local direction=$1 scenario_name=$2
 
-  local version="3.4.1"
+  local version="3.4.2"
   # For protocol-31 with upstream 3.0.9, use that version
   if [[ "$scenario_name" == "protocol-31" && "$direction" == "up" ]]; then
     version="3.0.9"
   fi
 
   local upstream_binary
-  upstream_binary=$(find_upstream_binary "$version") || {
+  upstream_binary=$(find_upstream_binary "$version") || upstream_binary=""
+  if [[ -z "$upstream_binary" && "$version" == "3.4.2" ]]; then
+    upstream_binary=$(find_upstream_binary "3.4.1") || upstream_binary=""
+  fi
+  if [[ -z "$upstream_binary" ]]; then
     echo "SKIP:no-binary"
     return 2
-  }
+  fi
 
   local oc_port upstream_port
   oc_port=$(alloc_port)
@@ -193,7 +197,7 @@ run_daemon_test() {
 run_standalone_test_by_name() {
   local name=$1
   local upstream_binary
-  upstream_binary=$(find_upstream_binary "3.4.1") || {
+  upstream_binary=$(find_upstream_binary "3.4.2") || upstream_binary=$(find_upstream_binary "3.4.1") || {
     echo "SKIP:no-binary"
     return 2
   }
@@ -254,7 +258,7 @@ run_standalone_test_by_name() {
       ;;
     iconv-upstream)
       # Reproducer for #1916: --iconv UTF-8/LATIN1 round-trip vs upstream
-      # rsync 3.4.1. Mirrors the standalone harness scenario but with a
+      # rsync 3.4.1+. Mirrors the standalone harness scenario but with a
       # minimal fixture so the dashboard can rerun quickly.
       local iu_src="${dest}/iconv-up-src"
       local iu_dest_oc="${dest}/iconv-up-dest-oc"
@@ -292,7 +296,7 @@ CONF
       cmp -s "${iu_src}/café.txt" "${iu_dest_oc}/café.txt" || return 1
       ;;
     upstream-compressed-batch-self-roundtrip)
-      # upstream rsync 3.4.1 cannot read back its own compressed delta batch
+      # upstream rsync 3.4.1+ cannot read back its own compressed delta batch
       # files. The batch writer records raw compressed tokens (zlib DEFLATED_DATA)
       # but the batch reader's inflate context lacks the dictionary sync that
       # see_deflate_token() provides during live transfers, causing "inflate

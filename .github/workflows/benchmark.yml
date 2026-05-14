@@ -69,21 +69,21 @@ jobs:
         id: cache-rsync
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: target/interop/upstream-src/rsync-3.4.1
-          key: upstream-rsync-3.4.1-${{ runner.os }}-full
+          path: target/interop/upstream-src/rsync-3.4.2
+          key: upstream-rsync-3.4.2-${{ runner.os }}-full
 
-      - name: Build upstream rsync 3.4.1
+      - name: Build upstream rsync 3.4.2
         if: steps.cache-rsync.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           mkdir -p target/interop/upstream-src
           cd target/interop/upstream-src
 
-          if [ ! -d rsync-3.4.1 ]; then
-            curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz | tar xz
+          if [ ! -d rsync-3.4.2 ]; then
+            curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.2.tar.gz | tar xz
           fi
 
-          cd rsync-3.4.1
+          cd rsync-3.4.2
           if [ ! -f rsync ]; then
             ./configure
             make -j$(nproc)
@@ -99,7 +99,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no localhost true
 
       - name: Install upstream rsync to PATH
-        run: sudo cp target/interop/upstream-src/rsync-3.4.1/rsync /usr/local/bin/rsync
+        run: sudo cp target/interop/upstream-src/rsync-3.4.2/rsync /usr/local/bin/rsync
 
       - name: Run benchmark
         id: benchmark
