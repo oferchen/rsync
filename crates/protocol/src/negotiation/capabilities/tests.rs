@@ -179,6 +179,105 @@ fn test_vstring_max_nstr_strlen_limit_accepts_boundary() {
     assert_eq!(received, boundary);
 }
 
+/// Confirms `--debug=nstr` emits the exact wording used by upstream rsync
+/// 3.4.1 (compat.c:373-378, 521-525, 866) for the client-side bidirectional
+/// negotiation exchange.
+#[test]
+fn test_negotiate_nstr_messages_match_upstream_wording_client() {
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.nstr = 2;
+    init(cfg);
+    let _ = drain_events();
+
+    let protocol = ProtocolVersion::try_from(32).unwrap();
+    let client_response = b"\x03md5\x04zlib";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    let _ = negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, false)
+        .unwrap();
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug { flag, message, .. } if flag == DebugFlag::Nstr => {
+                Some(message)
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.starts_with("Client checksum list (on client): ")),
+        "missing upstream client send wording: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.starts_with("Client compress list (on client): ")),
+        "missing upstream client compress send wording: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "Server checksum list (on client): md5"),
+        "missing upstream server recv wording: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "Server compress list (on client): zlib"),
+        "missing upstream server compress recv wording: {messages:?}"
+    );
+}
+
+/// Confirms `--debug=nstr` level 1 emits upstream's per-side "negotiated"
+/// summary (compat.c:215, 866) using exact wording.
+#[test]
+fn test_negotiate_nstr_summary_matches_upstream_wording_client() {
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.nstr = 1;
+    init(cfg);
+    let _ = drain_events();
+
+    let protocol = ProtocolVersion::try_from(32).unwrap();
+    let client_response = b"\x03md5\x04zlib";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    let _ = negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, false)
+        .unwrap();
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug { flag, message, .. } if flag == DebugFlag::Nstr => {
+                Some(message)
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "Client negotiated checksum: md5"),
+        "missing upstream level-1 checksum summary: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "Client negotiated compress: zlib"),
+        "missing upstream level-1 compress summary: {messages:?}"
+    );
+}
+
 #[test]
 fn test_vstring_two_byte_format() {
     // Test vstring encoding for length > 127
