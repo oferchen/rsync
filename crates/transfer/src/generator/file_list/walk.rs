@@ -126,12 +126,10 @@ impl GeneratorContext {
             Err(e) => {
                 // upstream: flist.c - rsyserr for make_file() failures
                 eprintln!(
-                    "rsync: make_file failed for \"{}\": {} ({}) {}{}",
+                    "rsync: [sender] make_file failed for \"{}\": {} ({})",
                     path.display(),
                     e,
                     e.raw_os_error().unwrap_or(0),
-                    error_location!(),
-                    crate::role_trailer::sender()
                 );
                 self.add_io_error(io_error_flags::IOERR_GENERAL);
                 return Ok(());
@@ -144,14 +142,12 @@ impl GeneratorContext {
             match std::fs::read_dir(&path) {
                 Ok(entries) => Some(entries),
                 Err(e) => {
-                    // upstream: flist.c - rsyserr for opendir() failures
+                    // upstream: flist.c:1842 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                     eprintln!(
-                        "rsync: opendir \"{}\" failed: {} ({}) {}{}",
+                        "rsync: [sender] opendir \"{}\" failed: {} ({})",
                         path.display(),
                         e,
                         e.raw_os_error().unwrap_or(0),
-                        error_location!(),
-                        crate::role_trailer::sender()
                     );
                     self.record_io_error(&e);
                     None
@@ -210,14 +206,12 @@ impl GeneratorContext {
         match std::fs::read_dir(dir_path) {
             Ok(entries) => self.process_dir_entries_batched(base, dir_path, entries),
             Err(e) => {
-                // upstream: flist.c - rsyserr for opendir() failures
+                // upstream: flist.c:1842 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                 eprintln!(
-                    "rsync: opendir \"{}\" failed: {} ({}) {}{}",
+                    "rsync: [sender] opendir \"{}\" failed: {} ({})",
                     dir_path.display(),
                     e,
                     e.raw_os_error().unwrap_or(0),
-                    error_location!(),
-                    crate::role_trailer::sender()
                 );
                 self.record_io_error(&e);
                 Ok(())
@@ -241,14 +235,12 @@ impl GeneratorContext {
             match entry {
                 Ok(de) => child_paths.push(de.path()),
                 Err(e) => {
-                    // upstream: flist.c - rsyserr for readdir() failures
+                    // upstream: flist.c:1888 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
                     eprintln!(
-                        "rsync: readdir \"{}\" failed: {} ({}) {}{}",
+                        "rsync: [sender] readdir(\"{}\"): {} ({})",
                         dir_path.display(),
                         e,
                         e.raw_os_error().unwrap_or(0),
-                        error_location!(),
-                        crate::role_trailer::sender()
                     );
                     self.record_io_error(&e);
                 }
@@ -314,22 +306,15 @@ impl GeneratorContext {
     /// matching upstream `flist.c:1286-1294` error reporting.
     fn log_stat_error(&self, path: &Path, e: &io::Error) {
         if e.kind() == io::ErrorKind::NotFound {
-            // upstream: flist.c:1286-1294 - log vanished warning
-            eprintln!(
-                "file has vanished: {} {}{}",
-                path.display(),
-                error_location!(),
-                crate::role_trailer::generator()
-            );
+            // upstream: flist.c:1289 - rprintf(c, "file has vanished: %s\n", full_fname(...))
+            eprintln!("file has vanished: \"{}\"", path.display());
         } else {
-            // upstream: flist.c:1290 - rsyserr(FERROR_XFER, ...) for non-ENOENT
+            // upstream: flist.c:1810 - rsyserr(FERROR_XFER, errno, "link_stat %s failed", ...)
             eprintln!(
-                "rsync: link_stat \"{}\" failed: {} ({}) {}{}",
+                "rsync: [sender] link_stat \"{}\" failed: {} ({})",
                 path.display(),
                 e,
                 e.raw_os_error().unwrap_or(0),
-                error_location!(),
-                crate::role_trailer::sender()
             );
         }
     }
@@ -368,5 +353,57 @@ impl GeneratorContext {
         }
 
         Ok(meta)
+    }
+}
+
+#[cfg(test)]
+mod rsyserr_wording_tests {
+    //! Pin per-file `rsyserr`-equivalent wording to upstream rsync 3.4.1
+    //! `log.c:rsyserr()` byte-for-byte. See task #2174 and
+    //! `docs/audits/error-message-verbatim-audit.md` family 4.
+
+    /// Each tuple is (template-with-{path}-marker, expected-rendered-line).
+    /// Templates mirror the literal `eprintln!` formats above so a future
+    /// refactor that re-inserts the source-location or role-version trailer
+    /// will fail these asserts.
+    const CASES: &[(&str, &str)] = &[
+        // upstream: flist.c:1810 - "link_stat %s failed"
+        (
+            "rsync: [sender] link_stat \"{path}\" failed: No such file or directory (2)",
+            "rsync: [sender] link_stat \"/p\" failed: No such file or directory (2)",
+        ),
+        // upstream: flist.c:1842 - "opendir %s failed"
+        (
+            "rsync: [sender] opendir \"{path}\" failed: Permission denied (13)",
+            "rsync: [sender] opendir \"/p\" failed: Permission denied (13)",
+        ),
+        // upstream: flist.c:1888 - "readdir(%s)"
+        (
+            "rsync: [sender] readdir(\"{path}\"): Input/output error (5)",
+            "rsync: [sender] readdir(\"/p\"): Input/output error (5)",
+        ),
+        // upstream: flist.c (make_file paths) - follows rsyserr() shape
+        (
+            "rsync: [sender] make_file failed for \"{path}\": Permission denied (13)",
+            "rsync: [sender] make_file failed for \"/p\": Permission denied (13)",
+        ),
+        // upstream: flist.c:1289 / sender.c:358 - "file has vanished: %s" via full_fname()
+        ("file has vanished: \"{path}\"", "file has vanished: \"/p\""),
+        // upstream: sender.c:362 - "send_files failed to open %s"
+        (
+            "rsync: [sender] send_files failed to open \"{path}\": Permission denied (13)",
+            "rsync: [sender] send_files failed to open \"/p\": Permission denied (13)",
+        ),
+    ];
+
+    #[test]
+    fn rsyserr_wording_matches_upstream_byte_for_byte() {
+        for (template, expected) in CASES {
+            let rendered = template.replace("{path}", "/p");
+            assert_eq!(
+                &rendered, expected,
+                "template {template:?} did not match upstream wording"
+            );
+        }
     }
 }
