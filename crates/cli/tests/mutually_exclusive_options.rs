@@ -230,3 +230,39 @@ fn test_multiple_usermap_concatenation_preserves_order() {
     let args = result.expect("multiple --usermap should succeed");
     assert_eq!(args.usermap, Some("a:b,c:d".into()));
 }
+
+#[test]
+fn test_append_and_whole_file_rejected() {
+    // upstream: options.c:2382 - --append cannot be used with --whole-file.
+    // Both flags parse cleanly individually; the conflict surfaces at config
+    // build time and is reported through the rsync syntax-error path
+    // (exit code 1).
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let code = cli::run(
+        ["oc-rsync", "--append", "--whole-file", "src", "dest"],
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(code, 1, "expected RERR_SYNTAX (exit code 1)");
+    let stderr_text = String::from_utf8_lossy(&stderr);
+    assert!(
+        stderr_text.contains("--append") && stderr_text.contains("--whole-file"),
+        "stderr should name both conflicting flags, got: {stderr_text}"
+    );
+    assert!(
+        stderr_text.contains("cannot be used with"),
+        "stderr should use upstream phrasing, got: {stderr_text}"
+    );
+}
+
+#[test]
+fn test_append_and_no_whole_file_accepted() {
+    // The companion `--no-whole-file` form must remain accepted.
+    let result = parse_args(["oc-rsync", "--append", "--no-whole-file", "src", "dest"]);
+    assert!(
+        result.is_ok(),
+        "--append --no-whole-file should parse without conflict"
+    );
+}
