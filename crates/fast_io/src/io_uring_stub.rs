@@ -66,6 +66,10 @@ pub struct IoUringConfig {
     pub sqpoll: bool,
     /// SQPOLL idle timeout in ms (no-op on non-Linux).
     pub sqpoll_idle_ms: u32,
+    /// Signals an `mmap` basis reader is live on this transfer plan
+    /// (no-op on non-Linux; field exists so cross-platform code can set it
+    /// without `cfg`-gating).
+    pub mmap_basis_active: bool,
     /// Whether to register fixed buffers (no-op on non-Linux).
     pub register_buffers: bool,
     /// Number of fixed buffers to register (no-op on non-Linux).
@@ -83,6 +87,7 @@ impl Default for IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            mmap_basis_active: false,
             register_buffers: true,
             registered_buffer_count: 8,
             zero_copy_policy: crate::ZeroCopyPolicy::Auto,
@@ -101,6 +106,7 @@ impl IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            mmap_basis_active: false,
             register_buffers: true,
             registered_buffer_count: 16,
             zero_copy_policy: crate::ZeroCopyPolicy::Auto,
@@ -117,6 +123,7 @@ impl IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            mmap_basis_active: false,
             register_buffers: true,
             registered_buffer_count: 8,
             zero_copy_policy: crate::ZeroCopyPolicy::Auto,
