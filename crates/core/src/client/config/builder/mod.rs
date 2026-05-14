@@ -309,8 +309,22 @@ impl ClientConfigBuilder {
     }
 
     /// Finalises the builder and constructs a [`ClientConfig`].
+    ///
+    /// Performs upstream-compatible promotions before materialising the
+    /// config:
+    ///
+    /// - `--checksum-choice=none` promotes `whole_file` to `Some(true)`.
+    ///   Mirrors upstream `checksum.c:197-198`, which assigns
+    ///   `whole_file = 1` whenever the negotiated transfer checksum is
+    ///   `CSUM_NONE`. The delta pipeline cannot run without a transfer
+    ///   checksum, so whole-file transfer is the only valid mode.
     #[must_use]
-    pub fn build(self) -> ClientConfig {
+    pub fn build(mut self) -> ClientConfig {
+        // upstream: checksum.c:197-198 parse_checksum_choice() forces
+        // `whole_file = 1` unconditionally when `xfer_sum_nni->num == CSUM_NONE`.
+        if self.checksum_choice.transfer_is_none() {
+            self.whole_file = Some(true);
+        }
         ClientConfig {
             transfer_args: self.transfer_args,
             dry_run: self.dry_run,

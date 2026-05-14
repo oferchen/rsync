@@ -598,8 +598,10 @@ NEON) are used where available, with automatic scalar fallbacks.
 :   Skip compressing files with suffixes in *LIST*.
 
 **--checksum-choice**=*ALGO*
-:   Select the strong checksum algorithm. Valid values: **auto**, **md4**,
-    **md5**, **xxh64**, **xxh3**, **xxh128**. Also available as **--cc**.
+:   Select the strong checksum algorithm. Valid values: **auto**, **none**,
+    **md4**, **md5**, **xxh64**, **xxh3**, **xxh128**. Also available as
+    **--cc**. **none** disables the transfer checksum and forces
+    **--whole-file** (mirrors upstream `checksum.c:197-198`).
 
 **--checksum-seed**=*NUM*
 :   Set the checksum seed for xxhash-based algorithms.

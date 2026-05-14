@@ -1368,6 +1368,31 @@ fn whole_file_sets_false() {
 }
 
 #[test]
+fn checksum_choice_none_promotes_whole_file() {
+    // upstream: checksum.c:197-198 - CSUM_NONE forces whole_file = 1.
+    let choice = StrongChecksumChoice::parse("none").unwrap();
+    let config = builder().checksum_choice(choice).build();
+    assert_eq!(config.whole_file_raw(), Some(true));
+    assert!(config.whole_file());
+}
+
+#[test]
+fn checksum_choice_none_overrides_explicit_no_whole_file() {
+    // upstream: checksum.c:198 assigns `whole_file = 1` unconditionally,
+    // overriding any user-supplied `--no-whole-file`.
+    let choice = StrongChecksumChoice::parse("none").unwrap();
+    let config = builder().whole_file(false).checksum_choice(choice).build();
+    assert_eq!(config.whole_file_raw(), Some(true));
+}
+
+#[test]
+fn checksum_choice_md5_leaves_whole_file_untouched() {
+    let choice = StrongChecksumChoice::parse("md5").unwrap();
+    let config = builder().checksum_choice(choice).build();
+    assert_eq!(config.whole_file_raw(), None);
+}
+
+#[test]
 fn block_size_override_sets_value() {
     let size = NonZeroU32::new(4096).unwrap();
     let config = builder().block_size_override(Some(size)).build();
