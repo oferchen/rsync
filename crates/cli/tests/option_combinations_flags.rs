@@ -98,6 +98,24 @@ fn test_compress_level_zero_disables_compression() {
 }
 
 #[test]
+fn test_checksum_choice_none_parses() {
+    // upstream: options.c:740-741 accepts `none` as a checksum-choice value.
+    let args = parse_args(["oc-rsync", "--checksum-choice=none", "src", "dest"]).unwrap();
+    let choice = args.checksum_choice.expect("checksum_choice must be set");
+    assert!(
+        choice.transfer_is_none(),
+        "--checksum-choice=none should select the none transfer algorithm"
+    );
+}
+
+#[test]
+fn test_checksum_choice_none_via_cc_alias() {
+    let args = parse_args(["oc-rsync", "--cc=none", "src", "dest"]).unwrap();
+    let choice = args.checksum_choice.expect("checksum_choice must be set");
+    assert!(choice.transfer_is_none());
+}
+
+#[test]
 fn test_no_compression_by_default() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
     assert!(!args.compress, "Compression should be disabled by default");
