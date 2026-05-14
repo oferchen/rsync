@@ -7,6 +7,56 @@ use core::{
 
 use super::super::super::progress::{NameOutputLevel, ProgressSetting};
 
+/// Per-flag descriptor for an `--info=` token.
+///
+/// upstream: options.c `output_struct` (rsync-3.4.1:259-266) plus the
+/// `info_verbosity[]` grouping at options.c:239-243. `max_level` is the
+/// per-flag ceiling used when `--info=all<N>` or `--info=N` fans out
+/// across every flag (it caps each flag at its highest meaningful level,
+/// mirroring upstream's runtime `INFO_GTE(...)` checks). `priority`
+/// records the upstream verbosity group at which the flag is auto-enabled
+/// from `-v` (NONREG=0, level-1 group covers COPY/DEL/FLIST/MISC/NAME/
+/// STATS/SYMSAFE=1, level-2 group covers BACKUP/MOUNT/REMOVE/SKIP=2). It
+/// is currently informational, exposed for the daemon-side limit handling
+/// tracked by audit I16 (`limit_output_verbosity()`, options.c:527-552).
+/// `strict_cap` controls whether a per-token level above `max_level` is
+/// rejected (`--info=flist3`) or silently capped (`--info=backup5`),
+/// preserving oc-rsync's historical usability split.
+#[derive(Clone, Copy)]
+pub(crate) struct InfoFlagSpec {
+    pub(crate) name: &'static str,
+    pub(crate) max_level: u8,
+    // Exposed for future daemon-side `limit_output_verbosity()` parity. The
+    // current client-side `enable_all_at_level()` clamps by max_level rather
+    // than priority, mirroring upstream's `parse_output_words` behavior.
+    #[allow(dead_code)]
+    pub(crate) priority: u8,
+    pub(crate) strict_cap: bool,
+}
+
+// upstream: options.c info_verbosity[] (rsync-3.4.1:239-243) - priority is
+// the verbosity-group index. NONREG sits in group 0 (always-on default),
+// the level-1 group covers COPY/DEL/FLIST/MISC/NAME/STATS/SYMSAFE, and the
+// level-2 group covers BACKUP/MOUNT/REMOVE/SKIP. PROGRESS has no upstream
+// verbosity-group entry; oc-rsync treats it as priority 1 so `--info=1`
+// enables per-file progress, matching upstream `-v` parity for `--info`.
+#[rustfmt::skip]
+pub(crate) const INFO_FLAG_SPECS: &[InfoFlagSpec] = &[
+    InfoFlagSpec { name: "backup",   max_level: 1, priority: 2, strict_cap: false },
+    InfoFlagSpec { name: "copy",     max_level: 1, priority: 1, strict_cap: false },
+    InfoFlagSpec { name: "del",      max_level: 1, priority: 1, strict_cap: false },
+    InfoFlagSpec { name: "flist",    max_level: 2, priority: 1, strict_cap: true  },
+    InfoFlagSpec { name: "misc",     max_level: 2, priority: 1, strict_cap: true  },
+    InfoFlagSpec { name: "mount",    max_level: 1, priority: 2, strict_cap: false },
+    InfoFlagSpec { name: "name",     max_level: 2, priority: 1, strict_cap: false },
+    InfoFlagSpec { name: "nonreg",   max_level: 1, priority: 0, strict_cap: false },
+    InfoFlagSpec { name: "progress", max_level: 2, priority: 1, strict_cap: true  },
+    InfoFlagSpec { name: "remove",   max_level: 1, priority: 2, strict_cap: false },
+    InfoFlagSpec { name: "skip",     max_level: 2, priority: 2, strict_cap: true  },
+    InfoFlagSpec { name: "stats",    max_level: 3, priority: 1, strict_cap: true  },
+    InfoFlagSpec { name: "symsafe",  max_level: 1, priority: 1, strict_cap: false },
+];
+
 /// Parsed `--info` flag settings controlling informational output levels.
 #[derive(Debug, Default)]
 pub(crate) struct InfoFlagSettings {
@@ -27,42 +77,61 @@ pub(crate) struct InfoFlagSettings {
 }
 
 impl InfoFlagSettings {
-    const fn enable_all(&mut self) {
+    fn enable_all(&mut self) {
         self.enable_all_at_level(1);
     }
 
     // upstream: options.c parse_output_words - the "all<N>" token sets every
-    // flag to level `min(N, max_for_that_flag)`. Per-flag caps mirror the
-    // hard limits enforced in `apply()` below (progress 2, stats 3, flist 2,
-    // misc 2, skip 2, others 1).
-    const fn enable_all_at_level(&mut self, level: u8) {
-        self.progress = match level {
-            0 => ProgressSetting::Disabled,
-            1 => ProgressSetting::PerFile,
-            _ => ProgressSetting::Overall,
-        };
-        self.stats = Some(if level > 3 { 3 } else { level });
-        self.name = match level {
-            0 => Some(NameOutputLevel::Disabled),
-            1 => Some(NameOutputLevel::UpdatedOnly),
-            _ => Some(NameOutputLevel::UpdatedAndUnchanged),
-        };
-        let cap2 = if level > 2 { 2 } else { level };
-        self.flist = Some(cap2);
-        self.misc = Some(cap2);
-        self.skip = Some(cap2);
-        let cap1 = if level > 1 { 1 } else { level };
-        self.backup = Some(cap1);
-        self.copy = Some(cap1);
-        self.del = Some(cap1);
-        self.mount = Some(cap1);
-        self.nonreg = Some(cap1);
-        self.remove = Some(cap1);
-        self.symsafe = Some(cap1);
+    // flag to level `min(N, spec.max_level)`. The `priority` field on each
+    // spec records the upstream verbosity-group ordering (NONREG=0, level-1
+    // group=1, level-2 group=2) and is exposed via `InfoFlagSpec::priority`
+    // for future daemon-side `limit_output_verbosity()` parity (audit I16).
+    fn enable_all_at_level(&mut self, level: u8) {
+        for spec in INFO_FLAG_SPECS {
+            let effective = level.min(spec.max_level);
+            self.assign(spec.name, effective);
+        }
     }
 
-    const fn disable_all(&mut self) {
-        self.enable_all_at_level(0);
+    fn disable_all(&mut self) {
+        for spec in INFO_FLAG_SPECS {
+            self.assign(spec.name, 0);
+        }
+    }
+
+    fn assign(&mut self, name: &str, level: u8) {
+        match name {
+            "progress" => {
+                self.progress = match level {
+                    0 => ProgressSetting::Disabled,
+                    1 => ProgressSetting::PerFile,
+                    _ => ProgressSetting::Overall,
+                }
+            }
+            "stats" => self.stats = Some(level),
+            "name" => {
+                self.name = Some(match level {
+                    0 => NameOutputLevel::Disabled,
+                    1 => NameOutputLevel::UpdatedOnly,
+                    _ => NameOutputLevel::UpdatedAndUnchanged,
+                })
+            }
+            "backup" => self.backup = Some(level),
+            "copy" => self.copy = Some(level),
+            "del" => self.del = Some(level),
+            "flist" => self.flist = Some(level),
+            "misc" => self.misc = Some(level),
+            "mount" => self.mount = Some(level),
+            "nonreg" => self.nonreg = Some(level),
+            "remove" => self.remove = Some(level),
+            "skip" => self.skip = Some(level),
+            "symsafe" => self.symsafe = Some(level),
+            _ => {}
+        }
+    }
+
+    fn spec_for(name: &str) -> Option<&'static InfoFlagSpec> {
+        INFO_FLAG_SPECS.iter().find(|spec| spec.name == name)
     }
 
     #[cfg(test)]
@@ -115,98 +184,27 @@ impl InfoFlagSettings {
 
         let (normalized, level) = self.parse_flag_and_level(&lower);
 
-        match normalized {
-            "progress" => {
-                self.progress = match level {
-                    0 => ProgressSetting::Disabled,
-                    1 => ProgressSetting::PerFile,
-                    2 => ProgressSetting::Overall,
-                    _ => return Err(info_flag_error(display)),
-                };
+        // upstream: options.c output_msg / parse_output_words clamps levels to
+        // MAX_OUT_LEVEL=4 but never rejects them. oc-rsync rejects only when the
+        // spec's `strict_cap` is set (progress/stats/flist/misc/skip) and the
+        // user-supplied level exceeds `max_level`; other flags accept any level
+        // verbatim for forward-compatibility with hypothetical future emit sites.
+        // The `!am_server` branch for missing specs mirrors upstream's
+        // parse_output_words server-mode tolerance: a newer client may forward
+        // info tokens this build does not know, and the server must not reject.
+        let Some(spec) = Self::spec_for(normalized) else {
+            return if am_server {
                 Ok(())
-            }
-            "stats" => {
-                if level > 3 {
-                    return Err(info_flag_error(display));
-                }
-                self.stats = Some(level);
-                Ok(())
-            }
-            "name" => {
-                let name_level = if level == 0 {
-                    NameOutputLevel::Disabled
-                } else if level == 1 {
-                    NameOutputLevel::UpdatedOnly
-                } else if level >= 2 {
-                    NameOutputLevel::UpdatedAndUnchanged
-                } else {
-                    return Err(info_flag_error(display));
-                };
-                self.name = Some(name_level);
-                Ok(())
-            }
-            "backup" => {
-                self.backup = Some(level);
-                Ok(())
-            }
-            "copy" => {
-                self.copy = Some(level);
-                Ok(())
-            }
-            "del" => {
-                self.del = Some(level);
-                Ok(())
-            }
-            "flist" => {
-                if level > 2 {
-                    return Err(info_flag_error(display));
-                }
-                self.flist = Some(level);
-                Ok(())
-            }
-            "misc" => {
-                if level > 2 {
-                    return Err(info_flag_error(display));
-                }
-                self.misc = Some(level);
-                Ok(())
-            }
-            "mount" => {
-                self.mount = Some(level);
-                Ok(())
-            }
-            "nonreg" => {
-                self.nonreg = Some(level);
-                Ok(())
-            }
-            "remove" => {
-                self.remove = Some(level);
-                Ok(())
-            }
-            "skip" => {
-                if level > 2 {
-                    return Err(info_flag_error(display));
-                }
-                self.skip = Some(level);
-                Ok(())
-            }
-            "symsafe" => {
-                self.symsafe = Some(level);
-                Ok(())
-            }
-            // upstream: options.c parse_output_words - server mode silently
-            // skips unknown tokens; client mode errors so users see typos.
-            _ if am_server => Ok(()),
-            _ => Err(info_flag_error(display)),
+            } else {
+                Err(info_flag_error(display))
+            };
+        };
+        if spec.strict_cap && level > spec.max_level {
+            return Err(info_flag_error(display));
         }
+        self.assign(spec.name, level);
+        Ok(())
     }
-
-    /// Known info flag names for disambiguating `no-` prefix vs flag names
-    /// that start with "no" (e.g., "nonreg").
-    const KNOWN_FLAGS: &'static [&'static str] = &[
-        "backup", "copy", "del", "flist", "misc", "mount", "name", "nonreg", "progress", "remove",
-        "skip", "stats", "symsafe",
-    ];
 
     // Internal-only extension: `no<flag>` and `-<flag>` are accepted as a
     // negation form mapping to level 0 (e.g. `noprogress` == `progress0`).
@@ -219,12 +217,12 @@ impl InfoFlagSettings {
     pub(super) fn parse_flag_and_level<'a>(&self, input: &'a str) -> (&'a str, u8) {
         let base = input.trim_end_matches(|c: char| c.is_ascii_digit());
         if base != input {
-            if Self::KNOWN_FLAGS.contains(&base) {
+            if Self::spec_for(base).is_some() {
                 let suffix = &input[base.len()..];
                 let level = suffix.parse::<u8>().unwrap_or(1);
                 return (base, level);
             }
-        } else if Self::KNOWN_FLAGS.contains(&input) {
+        } else if Self::spec_for(input).is_some() {
             return (input, 1);
         }
 
