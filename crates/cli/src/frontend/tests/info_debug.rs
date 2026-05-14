@@ -151,9 +151,7 @@ fn info_flist_levels() {
     assert_eq!(settings.flist, Some(2));
 
     let flags = vec![OsString::from("flist3")];
-    let error = parse_info_flags(&flags)
-        .err()
-        .expect("should reject level 3");
+    let error = parse_info_flags(&flags).expect_err("should reject level 3");
     assert!(error.to_string().contains("invalid --info flag"));
 }
 
@@ -172,9 +170,7 @@ fn info_stats_levels() {
     assert_eq!(settings.stats, Some(3));
 
     let flags = vec![OsString::from("stats4")];
-    let error = parse_info_flags(&flags)
-        .err()
-        .expect("should reject level 4");
+    let error = parse_info_flags(&flags).expect_err("should reject level 4");
     assert!(error.to_string().contains("invalid --info flag"));
 }
 
@@ -199,7 +195,7 @@ fn info_negation_forms() {
 #[test]
 fn info_rejects_empty_segments() {
     let flags = vec![OsString::from("progress,,stats")];
-    let error = parse_info_flags(&flags).err().expect("parse should fail");
+    let error = parse_info_flags(&flags).expect_err("parse should fail");
     assert!(error.to_string().contains("--info flag must not be empty"));
 }
 
@@ -227,9 +223,7 @@ fn debug_flist_levels() {
     assert_eq!(settings.flist, Some(4));
 
     let flags = vec![OsString::from("flist5")];
-    let error = parse_debug_flags(&flags)
-        .err()
-        .expect("should reject level 5");
+    let error = parse_debug_flags(&flags).expect_err("should reject level 5");
     assert!(error.to_string().contains("invalid --debug flag"));
 }
 
@@ -248,9 +242,7 @@ fn debug_io_levels() {
     assert_eq!(settings.io, Some(4));
 
     let flags = vec![OsString::from("io5")];
-    let error = parse_debug_flags(&flags)
-        .err()
-        .expect("should reject level 5");
+    let error = parse_debug_flags(&flags).expect_err("should reject level 5");
     assert!(error.to_string().contains("invalid --debug flag"));
 }
 
@@ -290,7 +282,7 @@ fn debug_all_and_none() {
 #[test]
 fn debug_rejects_empty_segments() {
     let flags = vec![OsString::from("deltasum,,io")];
-    let error = parse_debug_flags(&flags).err().expect("parse should fail");
+    let error = parse_debug_flags(&flags).expect_err("parse should fail");
     assert!(error.to_string().contains("--debug flag must not be empty"));
 }
 
