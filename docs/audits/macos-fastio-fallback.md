@@ -221,15 +221,23 @@ writer at `crates/transfer/src/disk_commit/writer.rs:142` still
 constructs `ReusableBufWriter` directly from
 `std::fs::File`; nothing branches to `MacosWriter` on macOS.
 
-### 3.4 Whole-file copy: no `posix_fadvise`/`F_NOCACHE` hint
+### 3.4 Whole-file copy: no `posix_fadvise`/`F_NOCACHE` hint (M3 RESOLVED)
 
 When `clonefile` and `fcopyfile` both fail and the chain drops to
 `std::fs::copy` (`platform_copy/dispatch.rs:93`), the userspace
 buffered copy runs through the unified buffer cache. For tree-wide
 copies larger than RAM this evicts hot pages for the rest of the
-run. No `F_NOCACHE` hint is set anywhere in the macOS path. Cheap
-to add at the call site once `MacosWriter` is wired in (section
-4.1).
+run.
+
+**Resolved (#2154):** The local-copy executor now applies the macOS
+sequential-read advisory at source-file open. The helper lives at
+`crates/fast_io/src/macos_io.rs::apply_sequential_read_hint` and is
+wired into `crates/engine/src/local_copy/executor/file/copy/transfer/open.rs::open_source_file`.
+Files at or above `F_NOCACHE_THRESHOLD` (1 MiB) receive
+`fcntl(fd, F_NOCACHE, 1)`, the macOS analogue of Linux's
+`posix_fadvise(POSIX_FADV_DONTNEED)`. `F_RDADVISE` is deliberately
+not used: it requires a known `(ra_offset, ra_count)` extent and
+rsync's delta algorithm seeks unpredictably through the basis file.
 
 ### 3.5 Network-to-disk path: no `sendfile`
 
