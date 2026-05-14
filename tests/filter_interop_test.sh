@@ -8,7 +8,7 @@
 # Environment variable overrides:
 #   OC_RSYNC              - path to oc-rsync binary
 #   UPSTREAM_INSTALL_ROOT - root of upstream installs (expects {version}/bin/rsync)
-#   UPSTREAM_VERSION      - upstream version to test against (default: "3.4.1")
+#   UPSTREAM_VERSION      - upstream version to test against (default: "3.4.2")
 
 set -euo pipefail
 
@@ -19,7 +19,7 @@ WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Paths (overridable via environment)
 OC_RSYNC="${OC_RSYNC:-${WORKSPACE_ROOT}/target/release/oc-rsync}"
 UPSTREAM_INSTALL_ROOT="${UPSTREAM_INSTALL_ROOT:-${WORKSPACE_ROOT}/target/interop/upstream-install}"
-UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.4.1}"
+UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.4.2}"
 UPSTREAM_RSYNC="${UPSTREAM_INSTALL_ROOT}/${UPSTREAM_VERSION}/bin/rsync"
 
 # Create a temp directory with cleanup trap

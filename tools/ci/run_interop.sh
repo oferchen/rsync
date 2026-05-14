@@ -5,6 +5,7 @@
 #     3.0.9  -> old-releases.ubuntu.com
 #     3.1.3  -> archive.ubuntu.com
 #     3.4.1  -> deb.debian.org (3.4.1+ds1-6)
+#     3.4.2  -> deb.debian.org (3.4.2+ds1-1, fallback to source if missing)
 # - Falls back to source build if the exact .deb for this arch is missing
 # - Starts oc-rsync --daemon on a non-privileged port by passing --port on the CLI
 set -euo pipefail
@@ -50,7 +51,7 @@ upstream_install_root="${workspace_root}/target/interop/upstream-install"
 interop_log_dir="${workspace_root}/target/interop/logs"
 
 # Versions we test against
-versions=(3.0.9 3.1.3 3.4.1)
+versions=(3.0.9 3.1.3 3.4.1 3.4.2)
 rsync_repo_url="https://github.com/RsyncProject/rsync.git"
 rsync_tarball_base_url="${RSYNC_TARBALL_BASE_URL:-https://rsync.samba.org/ftp/rsync/src}"
 
@@ -115,6 +116,9 @@ build_version_url() {
       ;;
     3.4.1)
       echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1+ds1-6_${arch}.deb"
+      ;;
+    3.4.2)
+      echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.2+ds1-1_${arch}.deb"
       ;;
     *)
       echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_${version}-1_${arch}.deb"
@@ -196,6 +200,12 @@ try_fetch_deb_generic() {
     3.4.1)
       candidates+=(
         "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1+ds1-5_${arch}.deb"
+      )
+      ;;
+    3.4.2)
+      candidates+=(
+        "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.2+ds1-2_${arch}.deb"
+        "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.2-1_${arch}.deb"
       )
       ;;
     *)
@@ -2199,7 +2209,7 @@ test_compressed_batch_delta_interop() {
 
   # Step 1: upstream rsync writes a compressed batch with delta transfers.
   # --no-whole-file forces delta mode even for local transfers.
-  # --compress-choice=zlib avoids an upstream bug where rsync 3.4.1 with zstd
+  # --compress-choice=zlib avoids an upstream bug where rsync 3.4.1+ with zstd
   # support negotiates zstd for local transfers, but --read-batch forces
   # CPRES_ZLIB decoder (compat.c:194), which can't inflate zstd-compressed data.
   if ! timeout "$hard_timeout" "$upstream_binary" -avI -z --no-whole-file \
@@ -3091,7 +3101,7 @@ test_iconv() {
   return 0
 }
 
-# #1916: --iconv daemon round-trip vs upstream rsync 3.4.1
+# #1916: --iconv daemon round-trip vs upstream rsync 3.4.1+
 #
 # # Wire semantics
 #
@@ -3285,7 +3295,7 @@ CONF
   return 0
 }
 
-# #1916: --iconv UTF-8/LATIN1 SSH/local-mode interop vs upstream rsync 3.4.1.
+# #1916: --iconv UTF-8/LATIN1 SSH/local-mode interop vs upstream rsync 3.4.1+.
 #
 # Companion to test_iconv_upstream_interop, which covers the daemon-mode side
 # of the same gap. SSH/local mode was bridged in PR #3458 by wiring
@@ -3592,7 +3602,7 @@ test_hardlinks_comprehensive() {
   return 0
 }
 
-# Comprehensive INC_RECURSE interop test against upstream rsync 3.4.1.
+# Comprehensive INC_RECURSE interop test against upstream rsync 3.4.1+.
 # Creates a deep nested directory structure (5 levels, 4 branches, 100+ files)
 # with mixed sizes, transfers with --inc-recursive, then verifies correctness.
 # Tests: (1) local oc-rsync transfer, (2) incremental re-sync (no re-transfer),
@@ -5501,7 +5511,7 @@ CONF
 
 # Zstd compression auto-negotiation interop test (PR #3081).
 # Validates that --compress-choice=zstd works in both daemon push directions
-# when both sides support zstd (rsync 3.4.1). Tests the negotiation path
+# when both sides support zstd (rsync 3.4.1+). Tests the negotiation path
 # where the client requests zstd and the daemon accepts it.
 test_zstd_negotiation() {
   local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
@@ -9426,8 +9436,9 @@ run_comprehensive_interop_case() {
   write_upstream_conf "$ucf" "$upf" "$upstream_port" "$ud" "c-${tag}" "$up_identity"
 
   # Core scenarios run against all versions. Extended scenarios only run
-  # against 3.4.1 to keep CI within time limits (~45 scenarios x 3 versions
-  # x 2 directions = 270 transfers at ~10s each = 45 min for native alone).
+  # against 3.4.1+ (protocol 32) to keep CI within time limits (~45 scenarios
+  # x 3 versions x 2 directions = 270 transfers at ~10s each = 45 min for
+  # native alone).
   local -a scenarios=(
     "archive|-av|basic"
     "relative|-avR|basic"
@@ -9446,11 +9457,11 @@ run_comprehensive_interop_case() {
     "acls|-avA|acls"
   )
 
-  # Extended scenarios only for the newest upstream version (3.4.1).
+  # Extended scenarios only for the newest upstream versions (3.4.1+).
   # xattrs requires protocol >= 30 (upstream compat.c), so it only works
-  # against 3.4.1 (protocol 32), not 3.0.9 (protocol 28) or 3.1.3 (protocol 31
-  # but may lack --enable-xattr-support).
-  if [[ "${version}" == "3.4.1" ]]; then
+  # against 3.4.1/3.4.2 (protocol 32), not 3.0.9 (protocol 28) or 3.1.3
+  # (protocol 31 but may lack --enable-xattr-support).
+  if [[ "${version}" == "3.4.1" || "${version}" == "3.4.2" ]]; then
     scenarios+=(
       "xattrs|-avX|xattrs"
       "one-file-system|-avx|basic"
@@ -9499,7 +9510,7 @@ run_comprehensive_interop_case() {
     )
 
     # compress-choice scenarios gated on upstream binary support.
-    # Upstream rsync 3.4.1 may or may not have SUPPORT_LZ4/SUPPORT_ZSTD
+    # Upstream rsync 3.4.1+ may or may not have SUPPORT_LZ4/SUPPORT_ZSTD
     # compiled in, depending on whether liblz4-dev/libzstd-dev were present
     # at configure time (Debian package vs source build).
     local up_version_output
@@ -9755,11 +9766,20 @@ done
 echo "=== Parallel version tests complete ==="
 
 # =====================================================================
-# Protocol version forcing tests: all 5 protocols via upstream 3.4.1
+# Protocol version forcing tests: all 5 protocols via the newest
+# available upstream binary (3.4.2, falling back to 3.4.1).
 # Run sequentially to avoid port contention under CI load.
 # =====================================================================
-newest_binary="${upstream_install_root}/3.4.1/bin/rsync"
-if [[ -x "$newest_binary" ]]; then
+newest_label=""
+newest_binary=""
+for nv in 3.4.2 3.4.1; do
+  if [[ -x "${upstream_install_root}/${nv}/bin/rsync" ]]; then
+    newest_label="$nv"
+    newest_binary="${upstream_install_root}/${nv}/bin/rsync"
+    break
+  fi
+done
+if [[ -n "$newest_binary" ]]; then
   protos=(28 29 30 31 32)
   fp_warnings=()
 
@@ -9768,7 +9788,7 @@ if [[ -x "$newest_binary" ]]; then
     up_port=$(allocate_ephemeral_port)
     echo ""
     echo "=== Protocol ${proto} (forced via --protocol=${proto}) (ports: oc=${oc_port} up=${up_port}) ==="
-    if ! run_comprehensive_interop_case "3.4.1" "$newest_binary" \
+    if ! run_comprehensive_interop_case "$newest_label" "$newest_binary" \
         "$oc_port" "$up_port" "--protocol=${proto}"; then
       fp_warnings+=("proto${proto}")
     fi
@@ -9785,7 +9805,7 @@ if [[ -x "$newest_binary" ]]; then
 
   echo "=== Sequential protocol tests complete ==="
 else
-  echo "Skipping protocol forcing tests (3.4.1 binary unavailable)"
+  echo "Skipping protocol forcing tests (no 3.4.x binary available)"
 fi
 
 # =====================================================================
@@ -9796,8 +9816,14 @@ echo ""
 echo "=== Standalone Interop Tests ==="
 
 # Use the newest available upstream binary for standalone tests
-standalone_binary="${upstream_install_root}/3.4.1/bin/rsync"
-if [[ ! -x "$standalone_binary" ]]; then
+standalone_binary=""
+for nv in 3.4.2 3.4.1; do
+  if [[ -x "${upstream_install_root}/${nv}/bin/rsync" ]]; then
+    standalone_binary="${upstream_install_root}/${nv}/bin/rsync"
+    break
+  fi
+done
+if [[ -z "$standalone_binary" ]]; then
   # Fall back to any available version
   for v in "${versions[@]}"; do
     if [[ -x "${upstream_install_root}/${v}/bin/rsync" ]]; then

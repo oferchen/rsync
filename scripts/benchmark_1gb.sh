@@ -20,7 +20,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 OC_RSYNC="${OC_RSYNC:-${PROJECT_ROOT}/target/release/oc-rsync}"
-UPSTREAM_RSYNC="${UPSTREAM_RSYNC:-${PROJECT_ROOT}/target/interop/upstream-install/3.4.1/bin/rsync}"
+DEFAULT_UPSTREAM_RSYNC="${PROJECT_ROOT}/target/interop/upstream-install/3.4.2/bin/rsync"
+if [[ ! -x "${DEFAULT_UPSTREAM_RSYNC}" ]]; then
+    DEFAULT_UPSTREAM_RSYNC="${PROJECT_ROOT}/target/interop/upstream-install/3.4.1/bin/rsync"
+fi
+UPSTREAM_RSYNC="${UPSTREAM_RSYNC:-${DEFAULT_UPSTREAM_RSYNC}}"
 RUNS="${RUNS:-3}"
 BLOCK_SIZE="${BLOCK_SIZE:-131072}"
 

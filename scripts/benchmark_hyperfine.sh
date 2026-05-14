@@ -16,14 +16,17 @@
 #
 # Requirements:
 #   - hyperfine: cargo install hyperfine
-#   - Upstream rsync built in target/interop/upstream-install/3.4.1/
+#   - Upstream rsync built in target/interop/upstream-install/3.4.2/ (or 3.4.1/)
 #   - oc-rsync built with: cargo build --release
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-UPSTREAM="${PROJECT_ROOT}/target/interop/upstream-install/3.4.1/bin/rsync"
+UPSTREAM="${PROJECT_ROOT}/target/interop/upstream-install/3.4.2/bin/rsync"
+if [[ ! -x "${UPSTREAM}" ]]; then
+    UPSTREAM="${PROJECT_ROOT}/target/interop/upstream-install/3.4.1/bin/rsync"
+fi
 OC_RSYNC="${PROJECT_ROOT}/target/release/oc-rsync"
 
 # Defaults

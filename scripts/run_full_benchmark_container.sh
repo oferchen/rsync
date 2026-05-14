@@ -3,7 +3,7 @@
 #
 # Usage: ./scripts/run_full_benchmark_container.sh [--runs N] [--json]
 #
-# Builds upstream rsync 3.4.1 + oc-rsync (current HEAD) inside
+# Builds upstream rsync 3.4.2 + oc-rsync (current HEAD) inside
 # an Arch Linux container, then runs the full benchmark matrix.
 
 set -euo pipefail

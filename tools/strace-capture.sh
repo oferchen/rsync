@@ -5,7 +5,10 @@ set -euo pipefail
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$WORKSPACE_ROOT"
 
-UPSTREAM_BIN="target/interop/upstream-install/3.4.1/bin/rsync"
+UPSTREAM_BIN="target/interop/upstream-install/3.4.2/bin/rsync"
+if [[ ! -x "${UPSTREAM_BIN}" ]]; then
+    UPSTREAM_BIN="target/interop/upstream-install/3.4.1/bin/rsync"
+fi
 TEST_PORT=18873
 OUTPUT_DIR="tests/protocol_handshakes"
 
