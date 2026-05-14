@@ -109,17 +109,21 @@ systematic additions: double-quoted path, appended `error_location!()`
 
 | # | Upstream wording (cited) | oc-rsync wording (cited) | Status |
 |---|---|---|---|
-| F1 | `rsync: [sender] link_stat %s failed: <strerror> (<errno>)\n` (`flist.c:1289`, `rsyserr`) | `rsync: link_stat "<path>" failed: <e> (<errno>) at <basename>(<line>) [sender=<ver>]\n` (`crates/transfer/src/generator/file_list/walk.rs:327`) | DIVERGENT |
-| F2 | `rsync: [sender] send_files failed to open %s: <strerror> (<errno>)\n` (`sender.c:362`) | `rsync: send_files failed to open "<path>": <e> (<errno>) at <basename>(<line>) [generator=<ver>]\n` (`crates/transfer/src/generator/protocol_io.rs:142`) | DIVERGENT |
-| F3 | `rsync: [sender] opendir %s failed: <strerror> (<errno>)\n` (`flist.c:2398`) | `rsync: opendir "<path>" failed: <e> (<errno>) at <basename>(<line>) [sender=<ver>]\n` (`crates/transfer/src/generator/file_list/walk.rs:149,215`) | DIVERGENT |
-| F4 | `rsync: [sender] readdir(%s): <strerror> (<errno>)\n` (`flist.c:2418`) | `rsync: readdir "<path>" failed: <e> (<errno>) at <basename>(<line>) [sender=<ver>]\n` (`crates/transfer/src/generator/file_list/walk.rs:246`) | DIVERGENT |
-| F5 | `file has vanished: %s\n` bare (`flist.c:1289`, `sender.c:358`) | `file has vanished: "<path>" at <basename>(<line>) [generator=<ver>]\n` (transfer crate); single-quoted variant `file has vanished: '<path>'` on client path (`crates/core/src/client/error.rs:246`) | DIVERGENT |
+| F1 | `rsync: [sender] link_stat %s failed: <strerror> (<errno>)\n` (`flist.c:1810`, `rsyserr`) | `rsync: [sender] link_stat "<path>" failed: <e> (<errno>)` (`crates/transfer/src/generator/file_list/walk.rs:325`) | FIXED (task #2174) |
+| F2 | `rsync: [sender] send_files failed to open %s: <strerror> (<errno>)\n` (`sender.c:362`) | `rsync: [sender] send_files failed to open "<path>": <e> (<errno>)` (`crates/transfer/src/generator/protocol_io.rs:140`) | FIXED (task #2174) |
+| F3 | `rsync: [sender] opendir %s failed: <strerror> (<errno>)\n` (`flist.c:1842`) | `rsync: [sender] opendir "<path>" failed: <e> (<errno>)` (`crates/transfer/src/generator/file_list/walk.rs:147,213`) | FIXED (task #2174) |
+| F4 | `rsync: [sender] readdir(%s): <strerror> (<errno>)\n` (`flist.c:1888`) | `rsync: [sender] readdir("<path>"): <e> (<errno>)` (`crates/transfer/src/generator/file_list/walk.rs:244`) | FIXED (task #2174) |
+| F5 | `file has vanished: %s\n` where `%s` is `full_fname()` and resolves to `"<path>"` (`flist.c:1289`, `sender.c:358`, `util1.c:1228`) | `file has vanished: "<path>"` (transfer + engine crates and `crates/core/src/client/error.rs:247`) | FIXED (task #2174) |
 | F6 | `skipping non-regular file "%s"\n` (`generator.c:1687`) | `skipping non-regular file "<path>"` (`crates/cli/src/frontend/progress/render.rs:396`) | EXACT |
-| F7 | `WARNING: %s failed verification -- update %s%s.\n` where `%s` cycles {`discarded`, `put into partial-dir`, `retained`} and `%s%s` is ` (will try again)` or ` (may try again)` (`receiver.c:965-968`) | Hardcoded `WARNING: "<path>" failed verification -- update discarded (will try again). at <basename>(<line>) [receiver=<ver>]` (`crates/transfer/src/pipeline/receiver.rs:277-281`) | DIVERGENT |
-| F8 | `ERROR: %s failed verification -- update %s.\n` (`receiver.c:965-968`, redo phase) | Hardcoded `ERROR: "<path>" failed verification -- update discarded. at <basename>(<line>) [receiver=<ver>]` (`crates/transfer/src/pipeline/receiver.rs:287`) | DIVERGENT |
-| F9 | `rsync: [sender] make_file failed for %s: <strerror>` (no upstream direct site; `flist.c` paths surface as plain `rsyserr` strings) | `rsync: make_file failed for "<path>": <e> (<errno>) at <basename>(<line>) [sender=<ver>]` (`crates/transfer/src/generator/file_list/walk.rs:129`) | DIVERGENT |
+| F7 | `WARNING: %s failed verification -- update %s%s.\n` where `%s` cycles {`discarded`, `put into partial-dir`, `retained`} and `%s%s` is ` (will try again)` or ` (may try again)` (`receiver.c:965-968`) | `WARNING: <path> failed verification -- update discarded (will try again).` (`crates/transfer/src/pipeline/receiver.rs:278-281`) | FIXED (task #2174) |
+| F8 | `ERROR: %s failed verification -- update %s.\n` (`receiver.c:957-968`, redo phase) | `ERROR: <path> failed verification -- update discarded.` (`crates/transfer/src/pipeline/receiver.rs:287-289`) | FIXED (task #2174) |
+| F9 | `rsync: [sender] make_file failed for %s: <strerror>` (no upstream direct site; `flist.c` paths surface as plain `rsyserr` strings) | `rsync: [sender] make_file failed for "<path>": <e> (<errno>)` (`crates/transfer/src/generator/file_list/walk.rs:128`) | FIXED (task #2174) |
 
-Family totals: 1 EXACT, 8 DIVERGENT, 0 MISSING.
+Family totals: 9 EXACT/FIXED, 0 DIVERGENT, 0 MISSING. Task #2174
+removed the appended ` at <basename>(<line>) [<role>=<version>]` trailer
+from the 8 per-file `rsyserr` warnings, added the `[sender]` bracket
+where it was missing, and replaced `{:?}` debug formatting with
+upstream's raw `%s` for the verification-fail strings.
 
 ## 5. Exit-code banner (envelope) format
 
@@ -172,9 +176,9 @@ above). The project-memory note should be revised accordingly.
 | 1. Connection / transport | 0 | 2 | 4 | 0 |
 | 2. Protocol negotiation | 2 | 0 | 6 | 0 |
 | 3. Daemon `@ERROR:` lines | 5 | 2 | 6 | 3 |
-| 4. Per-file `rsyserr` warnings | 1 | 8 | 0 | 0 |
+| 4. Per-file `rsyserr` warnings | 9 | 0 | 0 | 0 |
 | 5. Exit-code envelope | 11 | 3 | 0 | 0 |
-| **Total** | **19** | **15** | **16** | **3** |
+| **Total** | **27** | **7** | **16** | **3** |
 
 ## 7. Top 5 divergences by user impact
 
@@ -186,7 +190,7 @@ frequently the target string appears in published rsync wrapper scripts.
 |---|---|---|---|
 | 1 | C1 | High | `connection unexpectedly closed` never emitted - the canonical TCP-failure marker that Ansible, Bacula, rsnapshot, and BackupPC all grep on |
 | 2 | E1 | High | Source-location separator uses `:` (oc-rsync) instead of `(...)` (upstream) in every `rsync error:` / `rsync warning:` envelope; log-parsing regex `at \S+\(\d+\)` fails |
-| 3 | F1-F4 | Medium | `rsyserr` family (`link_stat`, `send_files`, `opendir`, `readdir`) drops upstream's `[<role>]` bracket immediately after `rsync:` and appends an extra source-location + role-version trailer that upstream omits for these per-file lines |
+| 3 | F1-F4 | Medium (FIXED in #2174) | `rsyserr` family (`link_stat`, `send_files`, `opendir`, `readdir`) now emits the upstream `[<role>]` bracket and no longer appends a source-location or role-version trailer on these per-file lines |
 | 4 | C3 | Medium | `network read error` instead of upstream's bare `read error`; alerting rules keyed on `[%s] read error:` miss the event |
 | 5 | D12/D13 | Medium | Daemon `module is read only` / `module is write only` emitted as `@ERROR:` greeting lines; upstream sends them through `MSG_ERROR` after the handshake using `ERROR:` (no `@`, no greeting-frame). Clients that branch on `@ERROR:` vs `ERROR:` mis-classify the error |
 

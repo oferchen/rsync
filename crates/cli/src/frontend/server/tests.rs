@@ -414,6 +414,27 @@ fn long_flags_io_uring_depth_default_is_none() {
     assert!(flags.io_uring_depth.is_none());
 }
 
+// upstream: options.c:2928-2931 - server_options() forwards --info=FLAGS so
+// the server must recognise it as a long flag and not let it leak into the
+// positional path list.
+#[test]
+fn long_flags_info_is_captured() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--info=PROGRESS,STATS"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(
+        flags
+            .info
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+        vec!["PROGRESS,STATS".to_owned()],
+    );
+    assert!(is_known_server_long_flag("--info=PROGRESS,STATS"));
+}
+
 #[test]
 fn long_flags_write_devices() {
     let args = vec![

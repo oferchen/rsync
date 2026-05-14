@@ -134,7 +134,7 @@ Producer counts come from
 | HLINK      | 3 (help says 1-3) | 3 | W_SND\|W_REC | Debug hard-link actions (levels 1-3) | none | missing |
 | ICONV      | 2 | 2 | W_CLI\|W_SRV | Debug iconv character conversions (levels 1-2) | none | missing |
 | IO         | 4 | 4 | W_CLI\|W_SRV | Debug I/O routines (levels 1-4) | `crates/transfer/src/disk_commit/thread.rs:117,125,132,149,153,155` plus `tracing::*(target: "rsync::io", ...)` in `crates/protocol/src/debug_io.rs`, `crates/fast_io/src/debug_io.rs`, `crates/rsync_io/src/debug_io.rs` (`debug_io.rs` trace funcs not called from production - see gap G3) | partial (levels 1 and 3 emitted via `debug_log!`; trace-func helpers unwired) |
-| NSTR       | 2 | u8::MAX | W_CLI\|W_SRV | Debug negotiation strings | none | missing |
+| NSTR       | 2 | u8::MAX | W_CLI\|W_SRV | Debug negotiation strings | `crates/protocol/src/negotiation/capabilities/negotiate.rs` (6 sites covering levels 1-3, upstream-verbatim wording from `compat.c:215,373-378,521-525,866`) | impl |
 | OWN        | 2 | 2 | W_REC | Debug ownership changes in users & groups (levels 1-2) | none | missing |
 | PROTO      | 1 | u8::MAX | W_CLI\|W_SRV | Debug protocol information | `crates/protocol/src/negotiation/capabilities/negotiate.rs`, `crates/protocol/src/multiplex/io/send.rs`, `crates/protocol/src/multiplex/io/recv.rs` (6 sites at levels 1-2) | partial (level 2 not in upstream range) |
 | RECV       | 1 | u8::MAX | W_REC | Debug receiver functions | `crates/transfer/src/receiver/directory/links.rs:264` (1 site at level 2) | partial (level 2 not in upstream range) |
@@ -144,10 +144,10 @@ Producer counts come from
 Total: 24 upstream `DEBUG_*` flags, matching `COUNT_DEBUG = DEBUG_TIME + 1`
 (`rsync.h:1462`). Status roll-up:
 
-- **impl**: 4 - DUP, FILTER, FLIST, TIME.
+- **impl**: 5 - DUP, FILTER, FLIST, NSTR, TIME.
 - **partial**: 7 - CONNECT, DEL, DELTASUM, EXIT, IO, PROTO, RECV.
-- **missing**: 13 - ACL, BACKUP, BIND, CHDIR, CMD, FUZZY, GENR, HASH,
-  HLINK, ICONV, NSTR, OWN, SEND.
+- **missing**: 12 - ACL, BACKUP, BIND, CHDIR, CMD, FUZZY, GENR, HASH,
+  HLINK, ICONV, OWN, SEND.
 
 `SEND` is a notable case: the subsystem module
 (`crates/engine/src/local_copy/debug_send.rs`) is fully implemented

@@ -25,7 +25,9 @@ pub(crate) use file_list::{
     load_file_list_operands, operand_is_remote, resolve_file_list_entries,
     resolve_files_from_source,
 };
-pub(crate) use flags::{DEBUG_HELP_TEXT, INFO_HELP_TEXT, parse_debug_flags, parse_info_flags};
+pub(crate) use flags::{
+    DEBUG_HELP_TEXT, INFO_HELP_TEXT, parse_debug_flags, parse_info_flags, parse_info_flags_server,
+};
 pub(crate) use module_list::render_module_list;
 pub(crate) use operands::{extract_operands, parse_bind_address_argument};
 #[cfg(test)]
