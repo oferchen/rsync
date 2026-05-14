@@ -88,9 +88,13 @@ impl LocalCopyOptionsBuilder {
     ///
     /// This is useful when you know the configuration is valid or want
     /// to skip validation for performance reasons.
+    ///
+    /// Performs the `--delay-updates` implicit `partial_dir` finalisation
+    /// once, deterministically, so engine code never has to re-derive it.
+    /// upstream: options.c - `if (delay_updates && !partial_dir) partial_dir = tmp_partialdir;`
     #[must_use]
     pub fn build_unchecked(self) -> LocalCopyOptions {
-        LocalCopyOptions {
+        let mut options = LocalCopyOptions {
             delete: self.delete,
             delete_timing: self.delete_timing,
             delete_excluded: self.delete_excluded,
@@ -190,7 +194,9 @@ impl LocalCopyOptionsBuilder {
             log_file: self.log_file,
             log_file_format: self.log_file_format,
             platform_copy: self.platform_copy,
-        }
+        };
+        options.apply_delay_updates_partial_dir_default();
+        options
     }
 }
 

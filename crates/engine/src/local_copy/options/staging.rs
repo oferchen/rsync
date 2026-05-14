@@ -66,21 +66,34 @@ impl LocalCopyOptions {
     /// Requests that updated files be renamed into place after the transfer completes.
     ///
     /// When enabled and no explicit `--partial-dir` has been configured, the
-    /// staging directory is automatically set to `.~tmp~` to match upstream
+    /// staging directory is finalised to `.~tmp~` via
+    /// [`Self::apply_delay_updates_partial_dir_default`] to match upstream
     /// rsync behaviour.
-    ///
-    /// upstream: options.c - `if (delay_updates && !partial_dir) partial_dir = tmp_partialdir;`
     #[must_use]
     #[doc(alias = "--delay-updates")]
     pub fn delay_updates(mut self, delay: bool) -> Self {
         self.delay_updates = delay;
-        if delay {
+        self.apply_delay_updates_partial_dir_default();
+        self
+    }
+
+    /// Promotes the staging directory to `.~tmp~` when `--delay-updates` is
+    /// enabled and no explicit `--partial-dir` has been configured.
+    ///
+    /// This is the single source of truth for the promotion rule and is
+    /// idempotent. It is invoked from the [`Self::delay_updates`] setter and
+    /// from `LocalCopyOptionsBuilder::build_unchecked` as a finalisation step
+    /// so the promotion happens deterministically before any engine code
+    /// observes the options.
+    ///
+    /// upstream: options.c - `if (delay_updates && !partial_dir) partial_dir = tmp_partialdir;`
+    pub(in crate::local_copy::options) fn apply_delay_updates_partial_dir_default(&mut self) {
+        if self.delay_updates {
             self.partial = true;
             if self.partial_dir.is_none() {
                 self.partial_dir = Some(PathBuf::from(DELAY_UPDATES_PARTIAL_DIR));
             }
         }
-        self
     }
 
     /// Requests that updated files be flushed to stable storage once writing completes.
