@@ -14,7 +14,7 @@ use filters::FilterSet;
 use protocol::iconv::FilenameConverter;
 
 use crate::batch::BatchWriter;
-use crate::local_copy::executor::SparseDetectStrategy;
+use crate::local_copy::executor::{DEFAULT_XXH64_DEDUP_SIZE_LIMIT, SparseDetectStrategy};
 use crate::local_copy::filter_program::FilterProgram;
 use crate::local_copy::options::types::{DeleteTiming, LinkDestEntry, ReferenceDirectory};
 use crate::local_copy::skip_compress::SkipCompressList;
@@ -99,6 +99,8 @@ pub struct LocalCopyOptionsBuilder {
     pub(super) checksum: bool,
     pub(super) checksum_algorithm: SignatureAlgorithm,
     pub(super) checksum_seed: Option<u32>,
+    pub(super) enable_xxh64_dedup: bool,
+    pub(super) xxh64_dedup_size_limit: u64,
     pub(super) size_only: bool,
     pub(super) ignore_times: bool,
     pub(super) ignore_existing: bool,
@@ -226,6 +228,8 @@ impl LocalCopyOptionsBuilder {
                 seed_config: checksums::strong::Md5Seed::none(),
             },
             checksum_seed: None,
+            enable_xxh64_dedup: false,
+            xxh64_dedup_size_limit: DEFAULT_XXH64_DEDUP_SIZE_LIMIT,
             size_only: false,
             ignore_times: false,
             ignore_existing: false,

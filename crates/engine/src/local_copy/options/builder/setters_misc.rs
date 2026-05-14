@@ -55,6 +55,30 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
+    /// Enables the internal xxh64 file-dedup heuristic.
+    ///
+    /// When set, the receiver hashes both the source and the existing
+    /// destination with xxh64 before computing a rolling+strong delta
+    /// signature. Matching digests indicate the files are identical with
+    /// very high probability, so the receiver bypasses the delta path
+    /// entirely. The heuristic never affects the wire protocol and is
+    /// disabled by default.
+    #[must_use]
+    #[doc(alias = "--xxh64-dedup")]
+    pub fn enable_xxh64_dedup(mut self, enabled: bool) -> Self {
+        self.enable_xxh64_dedup = enabled;
+        self
+    }
+
+    /// Sets the maximum file size, in bytes, eligible for the xxh64 dedup
+    /// heuristic. Files larger than this are passed straight to the normal
+    /// delta path.
+    #[must_use]
+    pub fn xxh64_dedup_size_limit(mut self, size_limit: u64) -> Self {
+        self.xxh64_dedup_size_limit = size_limit;
+        self
+    }
+
     /// Enables size-only comparison.
     #[must_use]
     pub fn size_only(mut self, enabled: bool) -> Self {

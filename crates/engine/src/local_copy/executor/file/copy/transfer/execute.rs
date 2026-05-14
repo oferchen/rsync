@@ -27,7 +27,8 @@ use crate::local_copy::{
 
 use super::super::super::append::{AppendMode, determine_append_mode};
 use super::super::super::comparison::{
-    CopyComparison, build_delta_signature, files_checksum_match, should_skip_copy,
+    CopyComparison, Xxh64DedupOutcome, build_delta_signature, files_checksum_match,
+    should_skip_copy, xxh64_dedup_check,
 };
 use super::super::super::guard::remove_incomplete_destination;
 use super::super::super::preallocate::maybe_preallocate_destination;
@@ -308,6 +309,42 @@ pub(in crate::local_copy) fn execute_transfer(
         reader
             .seek(SeekFrom::Start(append_offset))
             .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+    }
+
+    // Internal-only xxh64 file-dedup heuristic. Runs only when explicitly
+    // opted in via `enable_xxh64_dedup`. When source and destination produce
+    // identical xxh64 digests, treat the transfer as a metadata-only sync.
+    // The heuristic is local-only and never affects the wire protocol.
+    if append_offset == 0 && context.xxh64_dedup_enabled() && copy_source_override.is_none() {
+        if let Some(existing) = existing_metadata {
+            if existing.is_file() && metadata.is_file() {
+                let outcome = xxh64_dedup_check(
+                    source,
+                    destination,
+                    file_size,
+                    existing.len(),
+                    context.xxh64_dedup_size_limit(),
+                )
+                .map_err(|error| {
+                    LocalCopyError::io("xxh64 dedup check", destination.to_path_buf(), error)
+                })?;
+                if matches!(outcome, Xxh64DedupOutcome::Match) {
+                    record_metadata_only_skip(
+                        context,
+                        source,
+                        destination,
+                        metadata,
+                        &metadata_options,
+                        record_path,
+                        existing,
+                        &flags,
+                        mode,
+                        "xxh64 dedup match",
+                    )?;
+                    return Ok(());
+                }
+            }
+        }
     }
 
     // Build delta signature when a basis file exists and we are not appending.
@@ -631,11 +668,49 @@ fn try_skip_up_to_date(
         return Ok(false);
     }
 
+    record_metadata_only_skip(
+        context,
+        source,
+        destination,
+        metadata,
+        metadata_options,
+        record_path,
+        existing,
+        flags,
+        mode,
+        "already up-to-date",
+    )?;
+
+    Ok(true)
+}
+
+/// Records a metadata-only skip outcome and applies destination metadata.
+///
+/// Used by both the up-to-date quick check and the xxh64 dedup heuristic.
+/// The caller has already established that the source and destination are
+/// content-identical, so the only remaining work is to sync metadata,
+/// xattrs, ACLs, and emit the `MetadataReused` event.
+#[allow(clippy::too_many_arguments)]
+fn record_metadata_only_skip(
+    context: &mut CopyContext,
+    #[allow(unused_variables)] // REASON: used on unix with feature "xattr"
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+    metadata_options: &MetadataOptions,
+    record_path: &Path,
+    existing: &fs::Metadata,
+    flags: &TransferFlags,
+    #[allow(unused_variables)] // REASON: used on unix with feature "xattr"
+    mode: LocalCopyExecution,
+    reason: &str,
+) -> Result<(), LocalCopyError> {
     debug_log!(
         Deltasum,
         2,
-        "skipping {}: already up-to-date",
-        record_path.display()
+        "skipping {}: {}",
+        record_path.display(),
+        reason
     );
     ::metadata::apply_file_metadata_if_changed(destination, metadata, existing, metadata_options)
         .map_err(crate::local_copy::map_metadata_error)?;
@@ -677,7 +752,7 @@ fn try_skip_up_to_date(
         .with_change_set(change_set),
     );
 
-    Ok(true)
+    Ok(())
 }
 
 /// Normalizes a clonefile'd destination to match open()-created file defaults.

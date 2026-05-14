@@ -84,6 +84,18 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .overrides_with("whole-file"),
             )
             .arg(
+                Arg::new("xxh64-dedup")
+                    .long("xxh64-dedup")
+                    .help(
+                        "Internal-only: hash both the source and existing \
+                         destination with xxh64 before computing a delta. \
+                         Matching digests bypass delta computation. \
+                         Local optimization that never affects the wire \
+                         protocol. Off by default.",
+                    )
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("remove-source-files")
                     .long("remove-source-files")
                     .help("Remove source files after a successful transfer.")

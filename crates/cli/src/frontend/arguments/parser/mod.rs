@@ -546,6 +546,7 @@ where
         None
     };
     let whole_file = tri_state_flag_positive_first(&matches, "whole-file", "no-whole-file");
+    let xxh64_dedup = matches.get_flag("xxh64-dedup");
     let progress_setting =
         if matches.get_flag("progress") || matches.get_count("partial-progress") > 0 {
             ProgressSetting::PerFile
@@ -826,6 +827,7 @@ where
         max_alloc,
         itemize_changes,
         whole_file,
+        xxh64_dedup,
         excludes,
         includes,
         compare_destinations,

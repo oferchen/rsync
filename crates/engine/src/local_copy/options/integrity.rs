@@ -38,6 +38,32 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Enables the internal xxh64 file-dedup heuristic.
+    ///
+    /// When set, the receiver hashes both the source and the existing
+    /// destination with xxh64 before computing a rolling+strong delta
+    /// signature. Matching digests indicate the files are identical with
+    /// very high probability, so the receiver bypasses the delta path
+    /// entirely. The heuristic never affects the wire protocol and is
+    /// disabled by default.
+    #[must_use]
+    #[doc(alias = "--xxh64-dedup")]
+    pub const fn enable_xxh64_dedup(mut self, enabled: bool) -> Self {
+        self.enable_xxh64_dedup = enabled;
+        self
+    }
+
+    /// Sets the maximum file size, in bytes, eligible for the xxh64 dedup
+    /// heuristic.
+    ///
+    /// Files exceeding this size are passed straight to the normal delta
+    /// path because the cost of hashing both sides outweighs the savings.
+    #[must_use]
+    pub const fn with_xxh64_dedup_size_limit(mut self, size_limit: u64) -> Self {
+        self.xxh64_dedup_size_limit = size_limit;
+        self
+    }
+
     /// Enables size-only change detection.
     #[must_use]
     #[doc(alias = "--size-only")]
@@ -128,6 +154,18 @@ impl LocalCopyOptions {
     /// When `None`, the seed is determined automatically.
     pub const fn checksum_seed(&self) -> Option<u32> {
         self.checksum_seed
+    }
+
+    /// Reports whether the internal xxh64 file-dedup heuristic is enabled.
+    #[must_use]
+    pub const fn xxh64_dedup_enabled(&self) -> bool {
+        self.enable_xxh64_dedup
+    }
+
+    /// Returns the xxh64 dedup size limit, in bytes.
+    #[must_use]
+    pub const fn xxh64_dedup_size_limit(&self) -> u64 {
+        self.xxh64_dedup_size_limit
     }
 
     /// Reports whether size-only change detection has been requested.
