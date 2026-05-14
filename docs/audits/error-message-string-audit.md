@@ -502,7 +502,7 @@ rejection reasons.
 | `@ERROR: access denied to %s from %s (%s)\n` | `clientserver.c:733-734` | `@ERROR: access denied to {module} from {host} ({addr})` | **Match** |
 | `@ERROR: max connections (%d) reached -- try again later\n` | `clientserver.c:752` | `@ERROR: max connections ({limit}) reached -- try again later` | **Match** |
 | `@ERROR: auth failed on module %s\n` | `clientserver.c:762` | `@ERROR: auth failed on module {module}` | **Match** |
-| `@ERROR: failed to open lock file\n` | `clientserver.c:748` | `@ERROR: failed to update module connection lock; please try again later` | **Drift** |
+| `@ERROR: failed to open lock file\n` | `clientserver.c:748` | `@ERROR: failed to open lock file` | **Match** |
 | `@ERROR: protocol startup error\n` | `clientserver.c:182` | (none) | **Missing** |
 | `@ERROR: chdir failed\n` | `clientserver.c:647` | (none) | **Missing** |
 | `@ERROR: Unknown command '%s'\n` | `clientserver.c:1379` | (none) | **Missing** |
