@@ -227,11 +227,13 @@ no `info_log!(Foo, 2, ...)` (or `3`) in production paths.
 `apply()` in `info.rs:70-78` honours both, but with one wrinkle: the
 "all" arm sets `progress = PerFile` (level 1) and `stats = Some(1)`. It
 matches upstream `parse_output_words("all", lev=1)` in spirit. Upstream
-additionally accepts bare digit tokens like `--info=2` (`isDigit(str)`
-at `options.c:439`) to set `lev=2` with `len=0` (i.e. "all flags to
-level 2"). oc-rsync's `apply()` only accepts `"1"` and `"0"` as
-all/none synonyms (line 70-78); `--info=2` falls into
-`parse_flag_and_level` and is rejected as unknown.
+accepts `all<N>` (e.g. `all2`) to set every flag to level N (per-flag
+clamped via the `lev > MAX_OUT_LEVEL` ceiling in
+`options.c parse_output_words`). oc-rsync additionally accepts a bare
+`<N>` token like `--info=2` with the same semantics as a usability
+extension; the dispatch flows through `enable_all_at_level(N)` so the
+per-flag caps stay in lockstep with the per-token validation in
+`apply()`.
 
 ### 4.3 `no<flag>` / `-<flag>` negation
 
@@ -289,7 +291,7 @@ re-evaluated and the implementation already matches upstream.
 | I9  | MISC 2    | Low      | OPEN   | Upstream emits "Setting --timeout=N to match server" at `io.c:1536-1537`; oc-rsync only emits MISC-1 errors. |
 | I10 | SKIP 2    | Low      | OPEN   | Upstream emits the "(type change)" / "(sum change)" suffix at `generator.c:1387`; oc-rsync's SKIP emissions never include the suffix. |
 | I11 | All       | Medium   | OPEN   | `should_show_*` and the parse-cap layer collapse level 2/3 to level 1 because no production code differentiates levels beyond `> 0`. Closing I1-I10 individually addresses this category. |
-| I12 | All       | Low      | OPEN   | `--info=2` (bare digit) accepted by upstream (`options.c:439`) as "set all flags to level 2"; oc-rsync rejects it (`info.rs:80-82`). |
+| I12 | All       | Low      | RESOLVED | `--info=N` (bare digit) now accepted as a usability extension; oc-rsync's `apply()` in `info.rs` delegates to `enable_all_at_level(N)` with the same per-flag caps as upstream's `all<N>` token (`options.c parse_output_words`). |
 | I13 | All       | Low      | OPEN   | `--info=no<flag>` / `--info=-<flag>` accepted by oc-rsync only; upstream rejects unknown tokens. Diverges in the rejection direction (oc-rsync more permissive). |
 | I14 | All       | Low      | OPEN   | Unknown-token message text differs: upstream `Unknown --info item: "FOO"`, oc-rsync `invalid --info flag 'FOO': use --info=help for supported flags`. Same exit code (1). |
 | I15 | All       | Low      | OPEN   | Server-side mode (`am_server`) should suppress unknown-token errors (`options.c:465`); oc-rsync errors unconditionally. |
@@ -334,8 +336,9 @@ re-evaluated and the implementation already matches upstream.
 
 ### P3 - Parser polish
 
-8. **I12 - bare digit token**: extend `apply()` to accept `"2"`/`"3"`
-   as "all flags to level N" synonyms.
+8. **I12 - bare digit token** (RESOLVED): `apply()` now accepts any pure
+   digit token (`"2"`, `"3"`, ...) and routes it through
+   `enable_all_at_level(N)` to mirror upstream `all<N>` per-flag caps.
 9. **I14 / I15 - unknown-token text and server tolerance**: align the
    string to `Unknown --info item: "FOO"` and short-circuit when
    running as server.

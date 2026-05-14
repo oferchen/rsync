@@ -815,3 +815,80 @@ fn debug_help_text_mentions_all_and_none() {
     assert!(DEBUG_HELP_TEXT.contains("all"));
     assert!(DEBUG_HELP_TEXT.contains("none"));
 }
+
+// upstream: options.c parse_output_words - "all<N>" sets every flag to
+// level N (per-flag clamped). oc-rsync accepts a bare "<N>" token as a
+// usability extension with the same semantics.
+#[test]
+fn info_flag_numeric_2_enables_all_at_level_2() {
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("2", "2").unwrap();
+    assert_eq!(settings.progress, ProgressSetting::Overall);
+    assert_eq!(settings.stats, Some(2));
+    assert_eq!(settings.name, Some(NameOutputLevel::UpdatedAndUnchanged));
+    assert_eq!(settings.flist, Some(2));
+    assert_eq!(settings.misc, Some(2));
+    assert_eq!(settings.skip, Some(2));
+    // Flags with max level 1 stay clamped at 1.
+    assert_eq!(settings.backup, Some(1));
+    assert_eq!(settings.copy, Some(1));
+    assert_eq!(settings.del, Some(1));
+    assert_eq!(settings.mount, Some(1));
+    assert_eq!(settings.nonreg, Some(1));
+    assert_eq!(settings.remove, Some(1));
+    assert_eq!(settings.symsafe, Some(1));
+}
+
+#[test]
+fn info_flag_numeric_3_clamps_per_flag() {
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("3", "3").unwrap();
+    // STATS supports level 3.
+    assert_eq!(settings.stats, Some(3));
+    // PROGRESS, NAME, FLIST, MISC, SKIP clamp at 2.
+    assert_eq!(settings.progress, ProgressSetting::Overall);
+    assert_eq!(settings.name, Some(NameOutputLevel::UpdatedAndUnchanged));
+    assert_eq!(settings.flist, Some(2));
+    assert_eq!(settings.misc, Some(2));
+    assert_eq!(settings.skip, Some(2));
+    // Boolean flags clamp at 1.
+    assert_eq!(settings.copy, Some(1));
+}
+
+#[test]
+fn info_flag_numeric_then_named_override() {
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("2", "2").unwrap();
+    settings.apply("name0", "name0").unwrap();
+    assert_eq!(settings.name, Some(NameOutputLevel::Disabled));
+    // Other flags retained from the numeric pre-fill.
+    assert_eq!(settings.stats, Some(2));
+}
+
+#[test]
+fn parse_info_flags_numeric_then_named_in_one_arg() {
+    let values = vec![OsString::from("2,name0")];
+    let result = parse_info_flags(&values).unwrap();
+    assert_eq!(result.name, Some(NameOutputLevel::Disabled));
+    assert_eq!(result.stats, Some(2));
+    assert_eq!(result.flist, Some(2));
+}
+
+#[test]
+fn info_flag_numeric_high_value_saturates() {
+    // Out-of-range integers saturate at per-flag caps rather than erroring.
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("99", "99").unwrap();
+    assert_eq!(settings.stats, Some(3));
+    assert_eq!(settings.flist, Some(2));
+    assert_eq!(settings.copy, Some(1));
+}
+
+#[test]
+fn info_flag_numeric_overflow_does_not_panic() {
+    // A value that overflows u8 falls back to u8::MAX inside the parser,
+    // which still saturates to per-flag caps.
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("999", "999").unwrap();
+    assert_eq!(settings.stats, Some(3));
+}
