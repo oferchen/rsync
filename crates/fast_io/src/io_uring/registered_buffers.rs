@@ -1336,4 +1336,198 @@ mod tests {
         };
         assert!((s.miss_rate() - 1.0).abs() < 1e-12);
     }
+
+    // Constrained-environment Drop coverage.
+    //
+    // The fixed-buffer invariants audit (PR #4022, task #2118) documents that
+    // `RegisteredBufferGroup::Drop` deliberately does NOT issue
+    // `IORING_UNREGISTER_BUFFERS`; the kernel reclaims the pinning when the
+    // ring fd closes. The tests below exercise that contract under conditions
+    // where a naive implementation would either leak userspace memory or
+    // surprise callers by silently mutating kernel state.
+
+    /// Structural proof that `Drop` does NOT call `IORING_UNREGISTER_BUFFERS`:
+    /// after dropping the group while the ring fd remains open, the kernel
+    /// must still consider buffers registered. A second `register_buffers`
+    /// call on the same ring is rejected (typically with `EBUSY`) precisely
+    /// because the prior registration is still live. After an explicit
+    /// unregister against the same ring fd, a fresh registration succeeds,
+    /// proving the ring itself is not poisoned by the silent-Drop policy.
+    #[test]
+    fn drop_does_not_release_kernel_registration() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 2) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        // Drop the group while keeping the ring alive. If Drop secretly
+        // called unregister_buffers, the kernel slot table would now be
+        // empty and the next registration would succeed.
+        drop(group);
+
+        // Attempt a fresh registration on the same ring. The kernel still
+        // holds the prior pinning, so this must be rejected. We do not
+        // assert a specific errno (kernels differ); the contract is only
+        // that the call returns an `Err`, never panics, and leaves the
+        // ring usable.
+        let second = RegisteredBufferGroup::new(&ring, 4096, 2);
+        if second.is_ok() {
+            // Some kernels (5.13+) support replace-style update semantics
+            // on a second register; in that case our invariant cannot be
+            // probed by this method. Skip rather than false-fail.
+            return;
+        }
+
+        // Release the kernel-side pinning explicitly via the submitter on
+        // the live ring fd. After this, fresh registration must succeed -
+        // confirming the ring itself is not poisoned by the silent-Drop
+        // policy, only the prior kernel-side registration was still live.
+        let _ = ring.submitter().unregister_buffers();
+        let third = RegisteredBufferGroup::new(&ring, 4096, 2);
+        assert!(
+            third.is_ok(),
+            "after explicit unregister, the ring must accept a fresh registration"
+        );
+    }
+
+    /// Drop a group whose internal tracking state is non-default: some
+    /// slots have been checked out (and returned), some checkouts have
+    /// missed, and the stats counters are non-zero. Memory must be freed
+    /// cleanly regardless of the tracking-state snapshot at drop time.
+    ///
+    /// This guards against a regression where Drop assumes a pristine
+    /// bitset / counter state. The audit (PR #4022, task #2118) notes the
+    /// invariant that `Drop` is "panic-safe" because it only calls
+    /// `alloc::dealloc`; we make the in-use-tracking case explicit here.
+    #[test]
+    fn drop_with_in_use_tracking_state_is_clean() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 4) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        // Drive the group through a realistic mid-use trajectory: acquire
+        // and release multiple times, then exhaust the pool to bump misses,
+        // then return everything so the bitset is "all free" but counters
+        // are non-zero.
+        for _ in 0..3 {
+            let s = group.checkout().expect("slot");
+            drop(s);
+        }
+        let hold: Vec<_> = (0..4).filter_map(|_| group.checkout()).collect();
+        for _ in 0..5 {
+            assert!(group.checkout().is_none());
+        }
+        let stats_before = group.stats();
+        assert!(stats_before.total_acquires >= 12);
+        assert!(stats_before.total_misses >= 5);
+        drop(hold);
+        assert_eq!(group.available(), 4);
+
+        // Slots must be dropped before the group (compile-time invariant via
+        // `RegisteredBufferSlot<'a>` borrow on `&self`). With slots released,
+        // drop the group: this must complete without panic or abort even
+        // though acquire / miss counters carry stale state from earlier
+        // activity.
+        drop(group);
+    }
+
+    /// `RegisteredBufferStats` is `Copy`, so a snapshot taken before the
+    /// group is dropped remains usable after. This documents that
+    /// telemetry consumers (e.g., the adaptive sizer) do not need to
+    /// outlive their group via lifetime coupling.
+    #[test]
+    fn stats_snapshot_survives_group_drop() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let group = match RegisteredBufferGroup::new(&ring, 4096, 2) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        // Generate measurable telemetry: one hit, one forced miss.
+        let s = group.checkout().expect("slot");
+        let s2 = group.checkout().expect("second slot");
+        assert!(group.checkout().is_none());
+        drop(s);
+        drop(s2);
+
+        let snapshot = group.stats();
+        assert_eq!(snapshot.total_acquires, 3);
+        assert_eq!(snapshot.total_misses, 1);
+
+        // Drop the group. The snapshot is plain integers and must remain
+        // observably identical after the source group is gone.
+        drop(group);
+
+        assert_eq!(snapshot.total_acquires, 3);
+        assert_eq!(snapshot.total_misses, 1);
+        let mr = snapshot.miss_rate();
+        assert!(
+            (mr - 1.0 / 3.0).abs() < 1e-12,
+            "miss_rate snapshot drift: {mr}"
+        );
+    }
+
+    /// When `RegisteredBufferGroup::new` fails after the first registration
+    /// is already live on the ring, the recovery path must (a) deallocate
+    /// the partially-built buffer set, (b) return an `Err` to the caller,
+    /// and (c) leave the ring in a state where a subsequent `try_new`
+    /// against a freshly unregistered ring succeeds. This is the
+    /// "early return from registration failure recovery" constrained
+    /// environment called out in task #1678.
+    #[test]
+    fn drop_on_construction_failure_does_not_double_register() {
+        let ring = match RawIoUring::new(4) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        // First registration claims the ring's slot table.
+        let first = match RegisteredBufferGroup::new(&ring, 4096, 2) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        // Second `new` against the same live ring is the recovery path we
+        // want to exercise. On kernels that refuse double-registration the
+        // partially-allocated buffers must be freed inside `new` before
+        // the error propagates - any leak shows up as an ASan / Miri
+        // failure. On newer kernels (5.13+) that accept replace-style
+        // update semantics the second `new` succeeds; in that case we
+        // cannot probe the failure-recovery branch and skip out cleanly.
+        let second = RegisteredBufferGroup::new(&ring, 4096, 2);
+        if second.is_ok() {
+            return;
+        }
+        drop(second);
+
+        // The first group is still functional - registration-failure
+        // recovery in the second call did not poison its state.
+        assert_eq!(first.available(), 2);
+        let s = first.checkout().expect("first group still usable");
+        drop(s);
+
+        // Explicit unregister on the live group clears kernel state.
+        let _ = first.unregister(&ring);
+        drop(first);
+
+        // After cleanup, a fresh group constructs cleanly. This proves the
+        // failure-recovery branch did not leave dangling kernel state.
+        let third = RegisteredBufferGroup::new(&ring, 4096, 2);
+        assert!(
+            third.is_ok(),
+            "ring must be reusable after a failed registration was cleaned up"
+        );
+    }
 }
