@@ -107,15 +107,26 @@ impl IoUringWriter {
     ///
     /// Used by [`super::writer_from_file`] which builds the ring separately
     /// so it can fall back to standard I/O without consuming the `File`.
+    ///
+    /// Honors `register_buffers`: when `false`, skips
+    /// [`RegisteredBufferGroup`] construction entirely so flushes use the
+    /// regular `IORING_OP_WRITE` path. When `true`, allocates
+    /// `registered_buffer_count` fixed buffers (matching the pattern in
+    /// [`IoUringConfig`](super::IoUringConfig)).
     pub(super) fn with_ring(
         file: File,
         ring: RawIoUring,
         buffer_capacity: usize,
         sq_entries: u32,
         fixed_fd_slot: i32,
+        register_buffers: bool,
+        registered_buffer_count: usize,
     ) -> Self {
-        // Attempt buffer registration with default count.
-        let registered_buffers = RegisteredBufferGroup::try_new(&ring, buffer_capacity, 8);
+        let registered_buffers = if register_buffers {
+            RegisteredBufferGroup::try_new(&ring, buffer_capacity, registered_buffer_count)
+        } else {
+            None
+        };
 
         Self {
             ring,
@@ -128,6 +139,17 @@ impl IoUringWriter {
             fixed_fd_slot,
             registered_buffers,
         }
+    }
+
+    /// Returns the count of currently-registered fixed buffers, or `None` if
+    /// buffer registration is not active on this writer.
+    ///
+    /// Returns `None` when the caller disabled `register_buffers` or when
+    /// kernel registration failed and the writer is using the regular
+    /// `IORING_OP_WRITE` fallback path.
+    #[must_use]
+    pub fn registered_buffer_count(&self) -> Option<usize> {
+        self.registered_buffers.as_ref().map(|g| g.count())
     }
 
     /// Creates a file with preallocated space.
@@ -411,5 +433,87 @@ impl Seek for IoUringWriter {
 impl Drop for IoUringWriter {
     fn drop(&mut self) {
         let _ = self.flush_buffer();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    /// Builds a writer via `with_ring` for testing. Returns `None` when the
+    /// kernel rejects `io_uring_setup(2)` (e.g., container, seccomp, or non
+    /// 5.6+ kernel) so the test skips cleanly.
+    fn make_writer(
+        register_buffers: bool,
+        registered_buffer_count: usize,
+    ) -> Option<IoUringWriter> {
+        let dir = tempdir().ok()?;
+        let file = File::create(dir.path().join("out.bin")).ok()?;
+        let ring = RawIoUring::new(4).ok()?;
+        // Keep `dir` alive for the duration of the writer by leaking it; the
+        // OS reclaims the temp file at process exit. Tests are short-lived
+        // and this avoids ordering the drop with the writer.
+        std::mem::forget(dir);
+        Some(IoUringWriter::with_ring(
+            file,
+            ring,
+            4096,
+            4,
+            -1,
+            register_buffers,
+            registered_buffer_count,
+        ))
+    }
+
+    #[test]
+    fn with_ring_skips_registration_when_disabled() {
+        let writer = match make_writer(false, 8) {
+            Some(w) => w,
+            None => return,
+        };
+        assert_eq!(
+            writer.registered_buffer_count(),
+            None,
+            "register_buffers=false must skip RegisteredBufferGroup construction"
+        );
+    }
+
+    #[test]
+    fn with_ring_respects_configured_count() {
+        let writer = match make_writer(true, 16) {
+            Some(w) => w,
+            None => return,
+        };
+        // Buffer registration may fail silently inside RegisteredBufferGroup
+        // (e.g., kernel without IORING_REGISTER_BUFFERS) - skip in that case.
+        let count = match writer.registered_buffer_count() {
+            Some(c) => c,
+            None => return,
+        };
+        assert_eq!(
+            count, 16,
+            "with_ring must honor registered_buffer_count, not hard-code 8"
+        );
+    }
+
+    #[test]
+    fn with_ring_uses_default_count_when_unset() {
+        // `IoUringConfig::default()` sets `registered_buffer_count = 8`.
+        // Verify that wiring the config default through `with_ring` produces
+        // a writer with exactly 8 registered buffers.
+        let config = IoUringConfig::default();
+        assert!(config.register_buffers, "default must enable registration");
+        assert_eq!(config.registered_buffer_count, 8, "default count must be 8");
+
+        let writer = match make_writer(config.register_buffers, config.registered_buffer_count) {
+            Some(w) => w,
+            None => return,
+        };
+        let count = match writer.registered_buffer_count() {
+            Some(c) => c,
+            None => return,
+        };
+        assert_eq!(count, 8, "default config must produce 8 registered buffers");
     }
 }
