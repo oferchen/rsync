@@ -450,6 +450,10 @@ impl GeneratorContext {
         }
 
         // Flush any remaining INC_RECURSE segments and send NDX_FLIST_EOF.
+        // No need to track flist_done_remaining here: the EOF flush is the
+        // final write loop in this function, so the counter is never read
+        // again. Mid-transfer increments at line ~435 are still needed for
+        // the in-loop accounting at line ~158.
         if inc_recurse && !self.incremental.flist_eof_sent {
             for seg in scheduler.remaining() {
                 self.encode_and_send_segment(
@@ -459,7 +463,6 @@ impl GeneratorContext {
                     &mut flist_ndx_codec,
                 )?;
                 segments_sent += 1;
-                flist_done_remaining += 1;
             }
             self.send_flist_eof(&mut *writer, &mut flist_ndx_codec, segments_sent)?;
         }
