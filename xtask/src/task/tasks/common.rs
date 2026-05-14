@@ -36,6 +36,7 @@ impl Task for CargoBuildTask {
 }
 
 /// Invokes an external cargo tool.
+#[allow(dead_code)]
 pub struct CargoToolTask {
     pub tool_name: &'static str,
     pub description: &'static str,
@@ -188,6 +189,7 @@ impl Task for ValidateBrandingTask {
 }
 
 /// Creates a file or artifact.
+#[allow(dead_code)]
 pub struct CreateFileTask {
     pub name: &'static str,
     pub description: &'static str,
