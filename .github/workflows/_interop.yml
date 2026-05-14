@@ -10,7 +10,7 @@ on:
       upstream_rsync_version:
         description: 'Upstream rsync version for cache key'
         type: string
-        default: '3.4.1'
+        default: '3.4.2'
       rust_toolchain:
         description: 'Rust toolchain version'
         type: string
