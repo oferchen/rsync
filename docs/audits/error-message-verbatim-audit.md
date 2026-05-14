@@ -59,7 +59,7 @@ mapped to exit code 2 (`RERR_PROTOCOL`).
 
 | # | Upstream wording (cited) | oc-rsync wording (cited) | Status |
 |---|---|---|---|
-| P1 | `protocol version mismatch -- is your shell clean?\n` followed by `(see the rsync manpage for an explanation)\n` (`compat.c:620-621`) | `peer advertised unsupported rsync protocol version <N> (valid range <oldest>-<newest>)` (`crates/protocol/src/error.rs:36-37`, `NegotiationError::UnsupportedVersion`) | DIVERGENT |
+| P1 | `protocol version mismatch -- is your shell clean?\n` followed by `(see the rsync manpage for an explanation)\n` (`compat.c:620-621`) | `protocol version mismatch -- is your shell clean?\n(see the rsync manpage for an explanation)` (`crates/protocol/src/error.rs`, `NegotiationError::UnsupportedVersion`) | EXACT (FIXED #2172) |
 | P2 | `The protocol version in the batch file is too new (%d > %d).\n` (`compat.c:609-610`) | None emitted on the batch-read path | MISSING |
 | P3 | `--protocol must be at least %d on the %s.\n` (`compat.c:629-630`) | None emitted | MISSING |
 | P4 | `--protocol must be no more than %d on the %s.\n` (`compat.c:634-635`) | None emitted | MISSING |
@@ -68,7 +68,7 @@ mapped to exit code 2 (`RERR_PROTOCOL`).
 | P7 | `unexpected tag %d [%s%s]\n` (`io.c:1703`) | None emitted | MISSING |
 | P8 | `your client does not support one of our daemon-auth checksums: %s\n` (`compat.c:872`) | None emitted | MISSING |
 
-Family totals: 1 EXACT, 1 DIVERGENT, 6 MISSING.
+Family totals: 2 EXACT, 0 DIVERGENT, 6 MISSING.
 
 ## 3. Daemon `@ERROR:` wire lines
 
@@ -170,11 +170,11 @@ above). The project-memory note should be revised accordingly.
 | Family | EXACT | DIVERGENT | MISSING | Extra |
 |---|---:|---:|---:|---:|
 | 1. Connection / transport | 0 | 2 | 4 | 0 |
-| 2. Protocol negotiation | 1 | 1 | 6 | 0 |
+| 2. Protocol negotiation | 2 | 0 | 6 | 0 |
 | 3. Daemon `@ERROR:` lines | 5 | 2 | 6 | 3 |
 | 4. Per-file `rsyserr` warnings | 1 | 8 | 0 | 0 |
 | 5. Exit-code envelope | 11 | 3 | 0 | 0 |
-| **Total** | **18** | **16** | **16** | **3** |
+| **Total** | **19** | **15** | **16** | **3** |
 
 ## 7. Top 5 divergences by user impact
 
