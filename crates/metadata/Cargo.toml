@@ -35,6 +35,8 @@ apple-fs = { path = "../apple-fs" }
 
 # Windows ACL support via Win32 GetSecurityInfo/SetSecurityInfo.
 # Mirrors upstream rsync acls.c semantics over NTFS DACLs.
+# Win32_System_Threading is required for OpenProcessToken/GetCurrentProcess
+# used by the --copy-as privilege probe in copy_as.rs.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_Foundation",
@@ -42,6 +44,7 @@ windows = { version = "0.62", features = [
     "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_SystemServices",
+    "Win32_System_Threading",
 ] }
 
 [features]
