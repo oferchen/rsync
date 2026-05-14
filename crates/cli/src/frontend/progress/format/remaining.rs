@@ -75,6 +75,15 @@ impl RemainingTimeEstimator {
 
     /// Computes the remaining seconds required to copy `total - ofs` bytes at
     /// the rate measured between the oldest retained sample and `now`.
+    ///
+    /// Mirrors upstream's `rate ? ... : 0.0` ternary in `progress.c:105`: when
+    /// the window is primed but no bytes were transferred over it (a stalled
+    /// transfer), upstream sets `remain = 0.0`, which renders as `0:00:00`
+    /// rather than the `??:??:??` placeholder. Returning `Some(0.0)` here keeps
+    /// the rendered output byte-identical to upstream during a stall instead
+    /// of extrapolating an ETA from stale samples.
+    ///
+    /// upstream: progress.c:102-105 rprint_progress
     pub(crate) fn remaining_seconds(&self, now: Instant, ofs: u64, total: u64) -> Option<f64> {
         let oldest = self.samples[self.oldest]?;
         let bytes_left = total.checked_sub(ofs)?;
@@ -83,22 +92,27 @@ impl RemainingTimeEstimator {
         }
         let bytes_delta = ofs.checked_sub(oldest.ofs)?;
         if bytes_delta == 0 {
-            return None;
+            // Stalled window: upstream's `rate ? ... : 0.0` collapses to 0.0,
+            // which renders as `0:00:00`. See `progress.c:105`.
+            return Some(0.0);
         }
         let elapsed = now.saturating_duration_since(oldest.at).as_secs_f64();
         if elapsed <= 0.0 {
-            return None;
+            return Some(0.0);
         }
         let rate = bytes_delta as f64 / elapsed;
         if rate <= 0.0 {
-            return None;
+            return Some(0.0);
         }
         Some(bytes_left as f64 / rate)
     }
 
     /// Renders the remaining time as `H:MM:SS` (matching upstream's
     /// `%4u:%02u:%02u`, progress.c:121-122), or the `??:??:??` placeholder
-    /// when no rate is available or the value exceeds upstream's clamp.
+    /// when the value exceeds upstream's `9999*3600`-second clamp. A stalled
+    /// window (zero throughput over the retained samples) renders as
+    /// `0:00:00`, mirroring upstream's `remain = rate ? ... : 0.0` collapse
+    /// in `progress.c:105`.
     pub(crate) fn render(&self, now: Instant, ofs: u64, total: u64) -> String {
         match self.remaining_seconds(now, ofs, total) {
             Some(secs) if secs.is_finite() && secs >= 0.0 => {
@@ -275,6 +289,56 @@ mod tests {
             rendered.chars().filter(|c| *c == ':').count() == 2,
             "rendered={rendered}"
         );
+    }
+
+    /// Stalled transfer: the window is primed and rotates across several
+    /// ticks, but `ofs` never advances. Upstream collapses to
+    /// `remain = 0.0` -> `0:00:00`; we must do the same instead of
+    /// extrapolating from older samples or emitting `??:??:??`.
+    /// upstream: progress.c:102-125 rprint_progress
+    #[test]
+    fn stall_mid_transfer_renders_as_upstream() {
+        let mut est = RemainingTimeEstimator::new();
+        let t0 = Instant::now();
+        est.observe(t0, 100);
+        est.observe(at(t0, 1), 100);
+        est.observe(at(t0, 2), 100);
+        est.observe(at(t0, 3), 100);
+        let secs = est
+            .remaining_seconds(at(t0, 3), 100, 10_000)
+            .expect("stall yields Some(0.0)");
+        assert_eq!(secs, 0.0, "stall should mirror upstream's remain=0.0");
+        assert_eq!(est.render(at(t0, 3), 100, 10_000), "0:00:00");
+    }
+
+    /// After a stall, resuming throughput must repopulate the window so the
+    /// estimator switches back to a live ETA rather than continuing to report
+    /// `0:00:00`. Verifies the ring rotation keeps working through the dip.
+    #[test]
+    fn stall_then_recovery_returns_live_eta() {
+        let mut est = RemainingTimeEstimator::new();
+        let t0 = Instant::now();
+        est.observe(t0, 0);
+        for sec in 1..=4 {
+            est.observe(at(t0, sec), 0);
+        }
+        assert_eq!(est.render(at(t0, 4), 0, 10_000), "0:00:00");
+        // Resume at 1 MB/s for long enough to flush the stalled samples out
+        // of the 5-slot window.
+        let rate: u64 = 1_000_000;
+        let mut ofs = 0u64;
+        for sec in 5..=15 {
+            ofs += rate;
+            est.observe(at(t0, sec), ofs);
+        }
+        let secs = est
+            .remaining_seconds(at(t0, 15), ofs, ofs + 10 * rate)
+            .expect("rate available after recovery");
+        assert!(
+            (secs - 10.0).abs() < 1.0,
+            "expected ~10s after recovery, got {secs}"
+        );
+        assert_ne!(est.render(at(t0, 15), ofs, ofs + 10 * rate), "??:??:??");
     }
 
     /// Property-style sweep: feed a bursty throughput pattern and assert the
