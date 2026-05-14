@@ -28,8 +28,8 @@ use super::{COPY_BUFFER_SIZE, adaptive_buffer_size};
 /// the soft capacity without having to reallocate the queue.
 ///
 /// Matches the upper bound enforced by the adaptive resizer (`MAX_CAPACITY`
-/// in `pressure.rs`). At 128 KB per buffer, 64 buffers = 8 MiB of
-/// outstanding pooled memory before a fresh allocation is required.
+/// in `pressure.rs`). At 128 KiB per buffer (`COPY_BUFFER_SIZE`), 256
+/// buffers = 32 MiB of pooled memory at the resizer's maximum soft cap.
 const DEFAULT_QUEUE_CAPACITY: usize = 256;
 
 /// Computes the fixed [`ArrayQueue`] capacity for a given soft maximum.
