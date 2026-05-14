@@ -365,6 +365,58 @@ pub fn set_nocache(file: &std::fs::File) -> bool {
     ret != -1
 }
 
+/// Applies the macOS sequential-read advisory to a source file descriptor.
+///
+/// For large files read end-to-end (rsync's sender / local-copy path), the
+/// unified buffer cache adds no benefit: each byte is read once and the data
+/// will not be revisited soon. Without a hint, a single tree-wide transfer
+/// can evict every other working set from the cache. macOS exposes
+/// `fcntl(fd, F_NOCACHE, 1)` for exactly this case - it is the equivalent of
+/// Linux's `posix_fadvise(POSIX_FADV_DONTNEED)` / `POSIX_FADV_NOREUSE`.
+///
+/// `F_RDADVISE` is intentionally **not** invoked here. That fcntl prefetches
+/// a specific extent range (`struct radvisory { ra_offset, ra_count }`) and
+/// is appropriate when the caller knows precisely which bytes will be read.
+/// rsync's delta algorithm seeks unpredictably through the basis file, so a
+/// blanket `F_RDADVISE` could waste prefetch bandwidth. Callers that already
+/// know they will stream the file end-to-end can drive prefetch separately.
+///
+/// The hint is applied only when `size_hint >= F_NOCACHE_THRESHOLD`. Smaller
+/// files fit comfortably in the cache and may legitimately be re-read.
+///
+/// Returns `true` when the hint was applied. Returns `false` when the file
+/// is below the threshold, when the platform is not macOS, or when the
+/// `fcntl` call fails (e.g., on a filesystem that rejects the flag). Failure
+/// is silent because the hint is advisory.
+///
+/// # Reference
+///
+/// Apple's `fcntl(2)` man page documents `F_NOCACHE`:
+/// "Turns data caching off/on. A non-zero value in arg turns data caching
+///  off. A value of zero in arg turns data caching on."
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+pub fn apply_sequential_read_hint(file: &std::fs::File, size_hint: u64) -> bool {
+    use std::os::unix::io::AsRawFd;
+
+    if size_hint < F_NOCACHE_THRESHOLD {
+        return false;
+    }
+    let fd = file.as_raw_fd();
+    // SAFETY: `fd` is a valid open file descriptor borrowed from `file`.
+    // `F_NOCACHE` with argument 1 is well-defined on macOS and cannot
+    // corrupt the descriptor or kernel state; failure returns -1 with errno
+    // set, which we surface as `false`.
+    let ret = unsafe { libc::fcntl(fd, libc::F_NOCACHE, 1) };
+    ret != -1
+}
+
+/// Stub for non-macOS platforms. Always returns `false`.
+#[cfg(not(target_os = "macos"))]
+pub fn apply_sequential_read_hint(_file: &std::fs::File, _size_hint: u64) -> bool {
+    false
+}
+
 /// Queries whether `F_NOCACHE` is currently set on a file descriptor.
 ///
 /// macOS does not provide a direct query API for `F_NOCACHE` - the `fcntl`
@@ -827,6 +879,37 @@ mod tests {
 
         let content = std::fs::read(&path).unwrap();
         assert_eq!(&content, b"data");
+    }
+
+    #[test]
+    fn apply_sequential_read_hint_below_threshold_returns_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("small_source.bin");
+        std::fs::write(&path, b"tiny").unwrap();
+
+        let file = std::fs::File::open(&path).unwrap();
+        // Below the threshold the hint is intentionally not applied,
+        // regardless of platform.
+        assert!(!apply_sequential_read_hint(&file, 512));
+    }
+
+    #[test]
+    fn apply_sequential_read_hint_large_file_matches_platform() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large_source.bin");
+        std::fs::write(&path, b"placeholder").unwrap();
+
+        let file = std::fs::File::open(&path).unwrap();
+        let applied = apply_sequential_read_hint(&file, F_NOCACHE_THRESHOLD);
+
+        // On macOS the fcntl call should succeed for a regular file on a
+        // local filesystem. On every other platform the helper is a stub
+        // and must return false.
+        #[cfg(target_os = "macos")]
+        assert!(applied);
+
+        #[cfg(not(target_os = "macos"))]
+        assert!(!applied);
     }
 
     #[test]
