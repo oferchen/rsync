@@ -4,16 +4,16 @@
 //! scripts depend on for parsing:
 //!
 //! ```text
-//! rsync error: <text> (code N) at <file>:<line> [<role>=<version>]
-//! rsync warning: <text> (code N) at <file>:<line> [<role>=<version>]
+//! rsync error: <text> (code N) at <basename>(<line>) [<role>=<version>]
+//! rsync warning: <text> (code N) at <basename>(<line>) [<role>=<version>]
 //! ```
 //!
 //! Reference: upstream `log.c:rwrite()`, `errcode.h` (rsync 3.4.1).
 //!
 //! The [`rsync_error_fmt!`] and [`rsync_warning_fmt!`] macros produce strings
-//! in this format. They capture `file!()` and `line!()` at the call site, strip
-//! the repo prefix to yield a `crates/`-relative path, and embed the caller's
-//! `CARGO_PKG_VERSION` as the version.
+//! in this format. They capture `file!()` and `line!()` at the call site,
+//! reduce the path to its basename (matching upstream's `at io.c(234)` style),
+//! and embed the caller's `CARGO_PKG_VERSION` as the version.
 
 /// Strips the repository prefix from a compile-time file path.
 ///
@@ -51,6 +51,28 @@ fn find_crates_prefix(path: &str) -> Option<usize> {
     path.find(needle)
 }
 
+/// Extracts the filename component from a `file!()` path.
+///
+/// Mirrors upstream rsync's `log.c:rwrite()` which appends `at <basename>(<line>)`
+/// to diagnostic messages (e.g. `at io.c(234)`). Handles both Unix (`/`) and
+/// Windows (`\`) path separators so the helper works on compile-time paths from
+/// either host.
+#[must_use]
+pub fn file_basename(path: &str) -> &str {
+    let last_fwd = path.rfind('/');
+    let last_back = path.rfind('\\');
+    let last_sep = match (last_fwd, last_back) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+    match last_sep {
+        Some(pos) => &path[pos + 1..],
+        None => path,
+    }
+}
+
 /// Formats an upstream-compatible rsync error string.
 ///
 /// This is the function backing [`rsync_error_fmt!`]. Prefer the macro, which
@@ -59,20 +81,20 @@ fn find_crates_prefix(path: &str) -> Option<usize> {
 /// # Format
 ///
 /// ```text
-/// rsync error: <message> (code <exit_code>) at <rel_path>:<line> [<role>=<version>]
+/// rsync error: <message> (code <exit_code>) at <basename>(<line>) [<role>=<version>]
 /// ```
 #[must_use]
 pub fn format_rsync_error(
     message: &str,
     exit_code: i32,
-    manifest_dir: &str,
+    _manifest_dir: &str,
     file_path: &str,
     line: u32,
     role: &str,
     version: &str,
 ) -> String {
-    let rel_path = strip_repo_prefix(manifest_dir, file_path);
-    format!("rsync error: {message} (code {exit_code}) at {rel_path}:{line} [{role}={version}]")
+    let basename = file_basename(file_path);
+    format!("rsync error: {message} (code {exit_code}) at {basename}({line}) [{role}={version}]")
 }
 
 /// Formats an upstream-compatible rsync warning string.
@@ -83,32 +105,32 @@ pub fn format_rsync_error(
 /// # Format
 ///
 /// ```text
-/// rsync warning: <message> (code <exit_code>) at <rel_path>:<line> [<role>=<version>]
+/// rsync warning: <message> (code <exit_code>) at <basename>(<line>) [<role>=<version>]
 /// ```
 #[must_use]
 pub fn format_rsync_warning(
     message: &str,
     exit_code: i32,
-    manifest_dir: &str,
+    _manifest_dir: &str,
     file_path: &str,
     line: u32,
     role: &str,
     version: &str,
 ) -> String {
-    let rel_path = strip_repo_prefix(manifest_dir, file_path);
-    format!("rsync warning: {message} (code {exit_code}) at {rel_path}:{line} [{role}={version}]")
+    let basename = file_basename(file_path);
+    format!("rsync warning: {message} (code {exit_code}) at {basename}({line}) [{role}={version}]")
 }
 
 /// Produces an upstream-compatible rsync error string.
 ///
-/// Captures `file!()` and `line!()` at the call site, strips the repo prefix
-/// from the path (everything up to and including `crates/`), and formats the
-/// result using the upstream pattern.
+/// Captures `file!()` and `line!()` at the call site, reduces the path to its
+/// basename (matching upstream's `at io.c(234)` style), and formats the result
+/// using the upstream pattern.
 ///
 /// # Format
 ///
 /// ```text
-/// rsync error: <message> (code <exit_code>) at <rel_path>:<line> [<role>=<version>]
+/// rsync error: <message> (code <exit_code>) at <basename>(<line>) [<role>=<version>]
 /// ```
 ///
 /// # Arguments
@@ -162,7 +184,7 @@ macro_rules! rsync_error_fmt {
 /// # Format
 ///
 /// ```text
-/// rsync warning: <message> (code <exit_code>) at <rel_path>:<line> [<role>=<version>]
+/// rsync warning: <message> (code <exit_code>) at <basename>(<line>) [<role>=<version>]
 /// ```
 ///
 /// # Examples
@@ -258,7 +280,7 @@ mod tests {
         );
         assert_eq!(
             result,
-            "rsync error: some files/attrs were not transferred (code 23) at crates/core/src/transfer.rs:42 [sender=0.6.0]"
+            "rsync error: some files/attrs were not transferred (code 23) at transfer.rs(42) [sender=0.6.0]"
         );
     }
 
@@ -275,7 +297,7 @@ mod tests {
         );
         assert_eq!(
             result,
-            "rsync error: read errors (code 11) at crates/engine/src/delta.rs:100 [receiver=0.6.0]"
+            "rsync error: read errors (code 11) at delta.rs(100) [receiver=0.6.0]"
         );
     }
 
@@ -322,7 +344,7 @@ mod tests {
         );
         assert_eq!(
             result,
-            "rsync warning: some files vanished before they could be transferred (code 24) at crates/core/src/transfer.rs:55 [sender=0.6.0]"
+            "rsync warning: some files vanished before they could be transferred (code 24) at transfer.rs(55) [sender=0.6.0]"
         );
     }
 
@@ -345,7 +367,7 @@ mod tests {
     fn rsync_error_fmt_macro_captures_location() {
         let s = rsync_error_fmt!(23, "sender", "partial transfer");
         assert!(s.starts_with("rsync error: partial transfer (code 23) at "));
-        assert!(s.contains("error_format.rs:"));
+        assert!(s.contains("error_format.rs("));
         assert!(s.contains("[sender="));
         assert!(s.ends_with("]"));
     }
@@ -363,7 +385,7 @@ mod tests {
     fn rsync_warning_fmt_macro_captures_location() {
         let s = rsync_warning_fmt!(24, "sender", "files vanished");
         assert!(s.starts_with("rsync warning: files vanished (code 24) at "));
-        assert!(s.contains("error_format.rs:"));
+        assert!(s.contains("error_format.rs("));
         assert!(s.contains("[sender="));
         assert!(s.ends_with("]"));
     }
@@ -389,17 +411,23 @@ mod tests {
     }
 
     #[test]
-    fn macro_path_contains_crates_prefix() {
+    fn macro_path_uses_basename_not_full_path() {
         let s = rsync_error_fmt!(1, "server", "test");
-        // file!() for this test is inside crates/logging/src/error_format.rs
+        // file!() for this test is inside crates/logging/src/error_format.rs but
+        // the rendered message must contain only the basename to match upstream's
+        // `at <file>(<line>)` style.
         assert!(
-            s.contains("crates/"),
-            "path should be crates/-relative, got: {s}"
+            !s.contains("crates/"),
+            "path must be basename-only, got: {s}"
+        );
+        assert!(
+            s.contains("error_format.rs("),
+            "path should contain basename followed by '(', got: {s}"
         );
     }
 
     /// Verifies the full format matches the upstream pattern:
-    /// `rsync error: <text> (code N) at <file>:<line> [<role>=<version>]`
+    /// `rsync error: <text> (code N) at <basename>(<line>) [<role>=<version>]`
     #[test]
     fn full_format_structure_matches_upstream_pattern() {
         let s = rsync_error_fmt!(23, "sender", "some files/attrs were not transferred");
@@ -424,8 +452,60 @@ mod tests {
         assert!(trailer.starts_with("[sender="));
         assert!(trailer.ends_with(']'));
 
-        // Between " at " and "[" should be "file:line "
-        let location = &after_prefix[at_pos + 4..bracket_start];
-        assert!(location.contains(':'), "location should contain file:line");
+        // Between " at " and " [" the location must be "<basename>(<line>)"
+        let location = after_prefix[at_pos + 4..bracket_start].trim_end();
+        let paren_open = location.find('(').expect("location must contain '('");
+        let basename = &location[..paren_open];
+        assert!(
+            !basename.contains('/') && !basename.contains('\\'),
+            "location must use basename only, got: {location}"
+        );
+        assert!(location.ends_with(')'), "location must end with ')'");
+        let line_str = &location[paren_open + 1..location.len() - 1];
+        assert!(
+            line_str.chars().all(|c| c.is_ascii_digit()),
+            "line portion must be numeric, got: {line_str}"
+        );
+    }
+
+    #[test]
+    fn file_basename_extracts_unix_filename() {
+        assert_eq!(
+            file_basename("/repo/crates/core/src/transfer.rs"),
+            "transfer.rs"
+        );
+    }
+
+    #[test]
+    fn file_basename_extracts_windows_filename() {
+        assert_eq!(file_basename("C:\\repo\\crates\\core\\main.rs"), "main.rs");
+    }
+
+    #[test]
+    fn file_basename_returns_input_when_no_separator() {
+        assert_eq!(file_basename("lib.rs"), "lib.rs");
+    }
+
+    #[test]
+    fn file_basename_handles_mixed_separators() {
+        assert_eq!(file_basename("src/sub\\file.rs"), "file.rs");
+    }
+
+    #[test]
+    fn error_format_matches_upstream_basename_style() {
+        // Upstream emits `at <basename>(<line>)`, e.g. `at io.c(234)`.
+        let result = format_rsync_error(
+            "error in socket IO",
+            10,
+            "/repo/crates/transport",
+            "/repo/crates/transport/src/io.rs",
+            234,
+            "sender",
+            "3.4.1",
+        );
+        assert!(
+            result.contains(" at io.rs(234) "),
+            "expected ' at io.rs(234) ', got: {result}"
+        );
     }
 }

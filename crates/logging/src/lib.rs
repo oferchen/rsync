@@ -46,7 +46,7 @@
 //! errcode.h):
 //!
 //! ```text
-//! rsync error: <text> (code N) at <file>:<line> [<role>=<version>]
+//! rsync error: <text> (code N) at <basename>(<line>) [<role>=<version>]
 //! ```
 //!
 //! # Usage
@@ -86,7 +86,9 @@ mod tracing_bridge;
 mod tracing_macros;
 
 pub use config::VerbosityConfig;
-pub use error_format::{format_rsync_error, format_rsync_warning, strip_repo_prefix};
+pub use error_format::{
+    file_basename, format_rsync_error, format_rsync_warning, strip_repo_prefix,
+};
 pub use levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
 pub use phase_timer::PhaseTimer;
 pub use thread_local::{

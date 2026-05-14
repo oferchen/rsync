@@ -4,9 +4,9 @@
 // may depend on. This file verifies that the Message rendering system
 // produces output matching those formats. The canonical patterns are:
 //
-//   rsync error: <text> (code N) at <file>:<line> [<role>=<version>]
-//   rsync warning: <text> (code N) at <file>:<line> [<role>=<version>]
-//   rsync info: <text> at <file>:<line> [<role>=<version>]
+//   rsync error: <text> (code N) at <basename>(<line>) [<role>=<version>]
+//   rsync warning: <text> (code N) at <basename>(<line>) [<role>=<version>]
+//   rsync info: <text> at <basename>(<line>) [<role>=<version>]
 //
 // Reference: upstream rsync log.c, errcode.h (rsync 3.4.1)
 
@@ -88,10 +88,10 @@ fn source_location_uses_at_separator_matching_upstream() {
         rendered.contains(" at "),
         "Source location must use ' at ' separator like upstream, got: {rendered}"
     );
-    // Upstream uses "at main.c(NNN)" but we use "at path:line" which is close
+    // Upstream uses "at <basename>(<line>)" - e.g. "at receiver.c(842)".
     assert!(
-        rendered.contains(":"),
-        "Source location must include colon between file and line, got: {rendered}"
+        rendered.contains(".rs("),
+        "Source location must use upstream parens style, got: {rendered}"
     );
 }
 
@@ -480,7 +480,7 @@ fn error_message_is_parseable_by_regex() {
         .with_source(message_source!());
     let rendered = msg.to_string();
 
-    // Pattern: rsync error: <text> (code <N>) at <file>:<line> [<role>=<version>]
+    // Pattern: rsync error: <text> (code <N>) at <basename>(<line>) [<role>=<version>]
     // Verify components are present and in order
     assert!(rendered.starts_with("rsync error: "));
     assert!(rendered.contains("(code 23)"));
@@ -566,4 +566,49 @@ fn all_exit_code_messages_render_with_correct_prefix_and_code() {
             entry.code()
         );
     }
+}
+
+#[test]
+fn source_location_uses_basename_and_parens_matching_upstream() {
+    // Upstream `log.c:rwrite()` emits `at <basename>(<line>)`, e.g.
+    //   rsync error: error in file IO (code 11) at receiver.c(842) [receiver=3.4.1]
+    // Verify rendered output uses the same basename + parens style instead of
+    // exposing the full workspace path.
+    let msg = Message::error(11, "error in file IO")
+        .with_role(Role::Receiver)
+        .with_source(message_source!());
+    let rendered = msg.to_string();
+
+    let at_pos = rendered.find(" at ").expect("source separator must exist");
+    let bracket_pos = rendered.find(" [").expect("role trailer must exist");
+    assert!(at_pos < bracket_pos, "source must precede role trailer");
+
+    let location = &rendered[at_pos + 4..bracket_pos];
+    let paren_open = location.find('(').expect("location must contain '('");
+    let basename = &location[..paren_open];
+
+    assert!(
+        !basename.is_empty(),
+        "basename must not be empty, got: {rendered}"
+    );
+    assert!(
+        !basename.contains('/') && !basename.contains('\\'),
+        "basename must omit path separators, got: {basename:?}"
+    );
+    assert!(
+        basename.ends_with(".rs"),
+        "basename must point at a Rust source file, got: {basename:?}"
+    );
+    assert!(
+        location.ends_with(')'),
+        "location must close with ')', got: {location:?}"
+    );
+
+    let line_str = &location[paren_open + 1..location.len() - 1];
+    assert!(
+        line_str.chars().all(|c| c.is_ascii_digit()),
+        "line portion must be numeric, got: {line_str:?}"
+    );
+    let line_num: u32 = line_str.parse().expect("line must parse as u32");
+    assert!(line_num > 0, "line must be positive");
 }
