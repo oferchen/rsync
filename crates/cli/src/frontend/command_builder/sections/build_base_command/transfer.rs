@@ -12,7 +12,7 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
             Arg::new("archive")
                 .long("archive")
                 .short('a')
-                .help("Enable archive mode (implies --owner, --group, --perms, and --times).")
+                .help("archive mode is -rlptgoD (no -A,-X,-U,-N,-H)")
                 .action(ArgAction::SetTrue),
         )
         .arg(

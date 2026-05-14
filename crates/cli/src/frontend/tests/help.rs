@@ -51,6 +51,19 @@ fn oc_help_mentions_config_option() {
 }
 
 #[test]
+fn archive_help_matches_upstream_parenthetical() {
+    // Upstream rsync 3.4.1 (help-rsync.h:10) renders the archive line as:
+    //   --archive, -a            archive mode is -rlptgoD (no -A,-X,-U,-N,-H)
+    // The parenthetical must match byte-for-byte for interop tooling that
+    // grep `--help` output by upstream wording.
+    let help = render_help(ProgramName::OcRsync);
+    assert!(
+        help.contains("archive mode is -rlptgoD (no -A,-X,-U,-N,-H)"),
+        "rendered help missing upstream archive wording: {help}"
+    );
+}
+
+#[test]
 fn supported_options_list_mentions_all_help_flags() {
     let help = render_help(ProgramName::OcRsync);
     let options = collect_options(&help);
