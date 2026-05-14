@@ -132,6 +132,7 @@ fn resolve_group_by_name(name: &str) -> io::Result<u32> {
 /// errors from `Drop`; however, if the original identity cannot be restored,
 /// subsequent file operations will use the switched identity.
 #[cfg(unix)]
+#[derive(Debug)]
 pub struct CopyAsGuard {
     original_euid: u32,
     original_egid: u32,
@@ -238,6 +239,7 @@ pub fn switch_effective_ids(ids: &CopyAsIds) -> io::Result<CopyAsGuard> {
 /// and downstream callers can hold an `Option<CopyAsGuard>` without
 /// `cfg`-gating their own code.
 #[cfg(not(unix))]
+#[derive(Debug)]
 pub struct CopyAsGuard {
     _private: (),
 }
