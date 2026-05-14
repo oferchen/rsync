@@ -97,6 +97,43 @@ fn parse_info_flags_comma_separated() {
     assert_eq!(result.stats, Some(1));
 }
 
+// upstream: options.c parse_output_words - the client-side parser rejects
+// unknown info tokens so users see typos at their source.
+#[test]
+fn parse_info_flags_client_rejects_unknown_token() {
+    let values = vec![OsString::from("future_unknown_flag")];
+    let err = parse_info_flags(&values).expect_err("client mode must reject unknown tokens");
+    assert!(
+        err.text().contains("future_unknown_flag"),
+        "error text should name the offending token: {}",
+        err.text()
+    );
+}
+
+// upstream: options.c parse_output_words - the `!am_server` guard means the
+// server side silently accepts unknown tokens, preserving compatibility when
+// a newer client forwards info names this build has not learned yet.
+#[test]
+fn parse_info_flags_server_accepts_unknown_token() {
+    let values = vec![OsString::from("future_unknown_flag")];
+    let settings =
+        parse_info_flags_server(&values).expect("server mode must accept unknown tokens");
+    assert_eq!(settings.progress, ProgressSetting::Unspecified);
+    assert_eq!(settings.stats, None);
+}
+
+// Server-mode tolerance must still apply known tokens; only the unknown
+// portion is skipped. Mirrors upstream's per-token loop in
+// parse_output_words().
+#[test]
+fn parse_info_flags_server_mixes_known_and_unknown() {
+    let values = vec![OsString::from("progress,future_unknown_flag,stats")];
+    let settings = parse_info_flags_server(&values)
+        .expect("server mode must accept unknown tokens alongside known ones");
+    assert_eq!(settings.progress, ProgressSetting::PerFile);
+    assert_eq!(settings.stats, Some(1));
+}
+
 #[test]
 fn debug_flag_parse_flag_and_level_default() {
     let settings = DebugFlagSettings::default();
