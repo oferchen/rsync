@@ -31,7 +31,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --config=FILE  Specify alternate daemon config file.\n",
             "  -n, --dry-run    Validate transfers without modifying the destination.\n",
             "      --list-only  List files without performing a transfer.\n",
-            "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
+            "  -a, --archive    archive mode is -rlptgoD (no -A,-X,-U,-N,-H)\n",
             "  -r, --recursive  Recurse into directories.\n",
             "      --no-recursive  Disable directory recursion.\n",
             "  -d, --dirs      Copy directory entries even when recursion is disabled.\n",
