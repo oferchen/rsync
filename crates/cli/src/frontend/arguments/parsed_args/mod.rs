@@ -186,6 +186,13 @@ pub struct ParsedArgs {
     /// `--whole-file`, `-W` / `--no-whole-file` - disable delta-transfer algorithm.
     pub whole_file: Option<bool>,
 
+    /// `--xxh64-dedup` - opt-in xxh64 file-dedup heuristic.
+    ///
+    /// Internal optimization: when set, the receiver hashes both the source and the
+    /// existing destination with xxh64 before computing a delta. Matching digests
+    /// bypass delta computation. The flag never alters the wire protocol.
+    pub xxh64_dedup: bool,
+
     /// `--fuzzy`, `-y` / `--no-fuzzy` - find similar files for delta basis.
     /// `None` = unset, `Some(0)` = disabled, `Some(1)` = dest dir,
     /// `Some(2)` = also reference dirs.

@@ -98,6 +98,19 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables the internal xxh64 file-dedup heuristic on the local receiver.
+    ///
+    /// When set, the receiver hashes both the source and the existing
+    /// destination with xxh64 before computing a delta. Matching digests
+    /// bypass delta computation. The flag is internal-only and never alters
+    /// the wire protocol forwarded to the peer.
+    #[must_use]
+    #[doc(alias = "--xxh64-dedup")]
+    pub const fn xxh64_dedup(mut self, enabled: bool) -> Self {
+        self.xxh64_dedup = enabled;
+        self
+    }
+
     builder_setter! {
         /// Applies an explicit delta-transfer block size override.
         #[doc(alias = "--block-size")]
