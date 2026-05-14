@@ -146,7 +146,7 @@ members = [
     "crates/filters",
     "crates/logging",
     "crates/logging-sink",
-    "crates/match",
+    "crates/matching",
     "crates/compress",
     "crates/metadata",
     "crates/protocol",

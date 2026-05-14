@@ -22,7 +22,7 @@ protocol = { path = "../protocol" }
 bandwidth = { path = "../bandwidth" }
 logging = { path = "../logging" }
 signature = { path = "../signature" }
-matching = { path = "../match" }
+matching = { path = "../matching" }
 batch = { path = "../batch" }
 fast_io = { path = "../fast_io", default-features = false }
 thiserror = "2.0"
