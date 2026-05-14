@@ -4,7 +4,7 @@ Tracking: beta-readiness criterion #3 (the `KNOWN_FAILURES` array and
 `is_known_failure_from_conf()` rules in `tools/ci/known_failures.conf` must
 both be empty before the project leaves beta).
 
-Last verified: 2026-05-01 against master @ `9da533d6`. Source files
+Last verified: 2026-05-14 against master @ `701c574f9`. Source files
 spot-checked:
 
 - `tools/ci/known_failures.conf` (the conf this audit maps).
@@ -24,6 +24,12 @@ spot-checked:
   [`docs/audits/iconv-filename-converter-design.md`](iconv-filename-converter-design.md),
   [`docs/audits/zstd-batch-compatibility.md`](zstd-batch-compatibility.md),
   [`docs/audits/protocol-28-32-interop-matrix.md`](protocol-28-32-interop-matrix.md).
+- Canonical inventory:
+  [`docs/audits/interop-known-failures-inventory.md`](interop-known-failures-inventory.md)
+  (PR #4026) is the up-to-date snapshot of every interop known-failure
+  entry on `master`. This audit retains the eliminate-path analysis and
+  the retirement log; new inventory queries should consult the canonical
+  inventory first.
 
 ## Scope and method
 
@@ -61,78 +67,12 @@ and the matching `DASHBOARD_ENTRIES` row are removed in the same PR.
 
 ## Section 1: unconditional `KNOWN_FAILURES` entries
 
-### 1.1 `standalone:iconv-upstream`
+`standalone:iconv-upstream` and `standalone:delta-stats` previously
+appeared in this section. Both have been retired from
+`tools/ci/known_failures.conf`; see [Section 7: retired](#section-7-retired)
+for the merge SHAs.
 
-- **Direction:** standalone (driven by the `--iconv` interop scenario,
-  not a daemon push/pull direction).
-- **Category:** oc-rsync gap (daemon-mode `--iconv` plumbing
-  incomplete).
-- **Root cause:** PR #3458 bridged `IconvSetting` to the
-  `FilenameConverter` trait for SSH and local transfers, and PR #3527
-  wired `IconvSetting` into the config builder. Daemon-mode iconv
-  remains incomplete:
-  - `crates/daemon/src/daemon/sections/config_parsing/module_directives.rs:330`
-    parses the `charset =` module directive, but the parsed value is
-    not threaded into the daemon's iconv runtime.
-  - Findings 1, 2, and 3 of [`docs/audits/iconv-pipeline.md`](iconv-pipeline.md)
-    remain open (symlink target transcoding, `--files-from`
-    forwarding, `--secluded-args`/`--protect-args` transcoding).
-  - Upstream contract for the missing pieces:
-    `target/interop/upstream-src/rsync-3.4.1/flist.c:1127-1150`
-    (recv symlink iconv), `flist.c:1605-1621` (send symlink iconv),
-    `io.c:416-452` (`--files-from` forwarding), `rsync.c:283-320`
-    (`send_protected_args` per-arg iconv).
-  - Negotiation gate: upstream `compat.c:716-718, 763-767` advertises
-    `CF_SYMLINK_ICONV` only when `iconv_opt` is set; oc-rsync's
-    `crates/transfer/src/setup/capability.rs::build_capability_string`
-    always emits `s` rather than driving it from `IconvSetting`.
-- **Eliminate path:** Fix in oc-rsync. Two follow-up PRs gated on the
-  iconv audits already in the tree:
-  1. Wire the daemon `charset =` value into the iconv runtime that
-     `IconvSetting` constructs at config-build time. Touchpoints:
-     `crates/daemon/src/daemon/sections/module_definition/finish.rs`,
-     `crates/core/src/config/build.rs`, the iconv plumbing surfaced by
-     PR #3527.
-  2. Land Findings 1-3 from [`docs/audits/iconv-pipeline.md`](iconv-pipeline.md)
-     so symlink-target, `--files-from`, and `--secluded-args` paths
-     all run `ic_send`/`ic_recv` like upstream.
-- **Tracking issue:** #1916 (existing), plus the open
-  follow-ups already itemised in `docs/audits/iconv-pipeline.md`.
-- **Complexity:** L (touches daemon config, capability negotiation,
-  flist read/write paths, `files_from`, secluded args).
-
-### 1.2 `standalone:delta-stats`
-
-- **Direction:** standalone (delta-statistics interop assertion).
-- **Category:** oc-rsync bug.
-- **Root cause:** When oc-rsync runs as the daemon-mode server, the
-  delta engine does not engage. The block-match scheduler produces
-  zero matched blocks even for pre-seeded identical destinations, so
-  every byte is sent as a literal. Conf annotates this as "delta engine
-  not active in daemon code path" and the upstream contract is
-  `token.c:send_token()` block-match emission combined with the
-  generator-driven signature exchange that the daemon path skips.
-  Existing tests:
-  - PR #3461 `test: add delta-stats interop test verifying transfer
-    statistics` introduced the standalone interop case.
-  - Conf entry was added by `b7e648b5 test: add delta-stats to known
-    failures pending delta engine daemon fix`.
-- **Eliminate path:** Fix in oc-rsync. The delta engine entry point
-  used by SSH and local transfers must be wired into the daemon
-  server-side handler so generator-side signature emission and
-  receiver-side block matching run identically regardless of transport.
-  Likely touchpoints:
-  - `crates/engine/src/local_copy/executor/...` and
-    `crates/engine/src/sender/` (delta sender activation).
-  - `crates/daemon/src/daemon/...` (server-side dispatch into the same
-    code path SSH uses).
-- **Tracking issue:** open daemon-mode delta engine fix; see PR
-  history `b7e648b5` and `36829acb` for the test scaffolding that
-  turns green when the bug is fixed.
-- **Complexity:** M-L (architectural: align daemon server-side with
-  the SSH/local executor instead of running a literal-only path).
-
-### 1.3 `standalone:upstream-compressed-batch-self-roundtrip`
+### 1.1 `standalone:upstream-compressed-batch-self-roundtrip`
 
 - **Direction:** standalone (batch self-roundtrip with upstream
   rsync 3.4.1 on both sides).
@@ -243,8 +183,6 @@ needing to install older upstream binaries on every runner.
 
 | Category | Entry | Direction | Eliminate path | Complexity | Tracking |
 |---|---|---|---|---|---|
-| oc-rsync gap | `standalone:iconv-upstream` | standalone | Fix: wire daemon `charset =` to iconv runtime; finish symlink/files-from/secluded-args transcoding (Findings 1-3 of `iconv-pipeline.md`) | L | #1916, [`docs/audits/iconv-pipeline.md`](iconv-pipeline.md) |
-| oc-rsync bug | `standalone:delta-stats` | standalone | Fix: route daemon-mode server through the same delta engine entry point used by SSH/local transfers | M-L | PRs `b7e648b5`, `36829acb` (test scaffold) |
 | upstream bug | `standalone:upstream-compressed-batch-self-roundtrip` | standalone | Permanent: upstream `token.c:608` batch inflate dictionary sync bug. oc-rsync reads correctly via `crates/batch/src/replay.rs:475-479,807-824` | n/a | [`docs/audits/zstd-batch-compatibility.md`](zstd-batch-compatibility.md) (#1685) |
 | upstream protocol limitation | `up:acls` | up | Permanent: `compat.c:655-661` hard-exits at proto < 30, no ACL wire format below 30 | n/a | upstream contract |
 | upstream protocol limitation | `up:xattrs` | up | Permanent: `compat.c:662-668` hard-exits at proto < 30, no xattr wire format below 30 | n/a | upstream contract |
@@ -254,22 +192,23 @@ needing to install older upstream binaries on every runner.
 
 ## Section 4: fixable-vs-permanent summary
 
-- **Fixable (eliminates the entry):** 2 entries.
-  - `standalone:iconv-upstream` (oc-rsync gap, complexity L).
-  - `standalone:delta-stats` (oc-rsync bug, complexity M-L).
+- **Fixable (eliminates the entry):** 0 entries. Both previously
+  fixable entries (`standalone:iconv-upstream` and
+  `standalone:delta-stats`) have been retired; see
+  [Section 7: retired](#section-7-retired).
 - **Permanent (must stay in conf for the supported upstream pin):**
   6 entries.
   - 1 upstream bug: `standalone:upstream-compressed-batch-self-roundtrip`.
   - 5 upstream protocol-version-locked: `up:acls`, `up:xattrs`,
     `up:compress-zstd`, `up:compress-lz4`, `up:merge-filter`.
 
-When the two fixable entries land, the unconditional `KNOWN_FAILURES`
-array reduces to a single upstream-bug entry, and
+With the two fixable entries retired, the unconditional
+`KNOWN_FAILURES` array reduces to a single upstream-bug entry, and
 `is_known_failure_from_conf()` reduces to its protocol-version gates.
 That residue is structural: it documents upstream's own limits, not
-oc-rsync's. Beta-readiness criterion #3 should treat the protocol-locked
-and upstream-bug entries as compliant: the criterion is about
-oc-rsync gaps, not about the contents of upstream's wire protocol.
+oc-rsync's. Beta-readiness criterion #3 is satisfied for oc-rsync
+gaps: the criterion is about oc-rsync gaps, not about the contents of
+upstream's wire protocol.
 
 ## Section 5: cross-references to merged work
 
@@ -314,7 +253,49 @@ Single-PR procedure for removing a fixable conf entry:
 3. In the same PR, delete the matching entry from both
    `KNOWN_FAILURES` (or the `is_known_failure_from_conf` rule) and
    `DASHBOARD_ENTRIES`.
-4. Update this audit: move the entry from Section 3's punch list to a
-   new "Section 7: retired" log with the merge SHA and PR number.
+4. Update this audit: move the entry from Section 3's punch list to
+   [Section 7: retired](#section-7-retired) with the merge SHA and PR
+   number.
 5. When all fixable entries are retired, mark beta-readiness criterion
    #3 satisfied.
+
+## Section 7: retired
+
+Entries removed from `tools/ci/known_failures.conf` after the
+eliminate path landed. Each line cites the merge SHAs of the
+retirement commits.
+
+### `standalone:iconv-upstream` (retired)
+
+- **Retired by:**
+  - `daf0849e7 feat(transfer): wire IconvSetting -> FilenameConverter at
+    config build (#1911) (#3555)` - drove `IconvSetting` through the
+    config builder so daemon/SSH/local share one resolver.
+  - `8619b63b0 feat(protocol): close iconv pipeline for symlink targets,
+    files-from, secluded args` - closed Findings 1-3 from
+    [`docs/audits/iconv-pipeline.md`](iconv-pipeline.md) (symlink target
+    transcoding, `--files-from` forwarding, `--secluded-args` /
+    `--protect-args` per-arg transcoding).
+  - `5713e74ea chore(ci): remove iconv-local-ssh from KNOWN_FAILURES
+    after BatchMode fix` - dropped the matching `KNOWN_FAILURES` entry
+    once the wiring landed.
+- **Verification:** `tools/ci/known_failures.conf` and
+  `tools/ci/upstream_testsuite_known_failures.conf` no longer reference
+  the `iconv-upstream` identifier.
+
+### `standalone:delta-stats` (retired)
+
+- **Retired by:**
+  - `60e83fd96 chore(ci): remove standalone:delta-stats from
+    KNOWN_FAILURES` - removed the conf entry once the daemon-mode delta
+    engine produced non-literal output.
+  - `34dd330a4 chore(ci): remove standalone:delta-stats from
+    KNOWN_FAILURES (#3561)` - merge of the same change to master.
+- **Verification:** `tools/ci/known_failures.conf` and
+  `tools/ci/upstream_testsuite_known_failures.conf` no longer reference
+  the `delta-stats` identifier.
+
+For the current inventory of every interop known-failure entry on
+`master`, see
+[`docs/audits/interop-known-failures-inventory.md`](interop-known-failures-inventory.md)
+(PR #4026).
