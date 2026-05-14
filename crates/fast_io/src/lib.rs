@@ -158,7 +158,8 @@ pub use splice::{
 };
 
 pub use macos_io::{
-    F_NOCACHE_THRESHOLD, MAX_IOV_COUNT, MacosWriter, is_nocache_set, set_nocache, writev_buffers,
+    F_NOCACHE_THRESHOLD, MAX_IOV_COUNT, MacosWriter, apply_sequential_read_hint, is_nocache_set,
+    set_nocache, writev_buffers,
 };
 
 pub use mmap_reader::MmapReader;
