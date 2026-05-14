@@ -59,6 +59,7 @@ impl InfoFlagSettings {
         self.symsafe = Some(0);
     }
 
+    #[cfg(test)]
     pub(super) fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
         self.apply_with_mode(token, display, false)
     }
