@@ -49,11 +49,10 @@ pub(crate) fn parse_stop_at_argument(value: &OsStr) -> Result<SystemTime, Messag
         trimmed
     };
 
-    match parse_stop_at_internal(trimmed) {
+    let now = OffsetDateTime::now_local().map_err(|_| local_offset_unavailable(display))?;
+    match parse_stop_at_internal(trimmed, now) {
         Ok(deadline) => Ok(deadline),
-        Err(StopAtError::InvalidFormat) | Err(StopAtError::LocalOffset) => {
-            Err(invalid_stop_at(display))
-        }
+        Err(StopAtError::InvalidFormat) => Err(invalid_stop_at(display)),
         Err(StopAtError::NotInFuture) => Err(stop_at_not_future(display)),
     }
 }
@@ -70,29 +69,38 @@ fn stop_at_not_future(value: &str) -> Message {
     rsync_error!(1, format!("--stop-at time is not in the future: {value}")).with_role(Role::Client)
 }
 
+fn local_offset_unavailable(value: &str) -> Message {
+    rsync_error!(
+        1,
+        format!("--stop-at could not determine local timezone: {value}")
+    )
+    .with_role(Role::Client)
+}
+
 #[derive(Debug)]
 enum StopAtError {
     InvalidFormat,
-    LocalOffset,
     NotInFuture,
 }
 
 #[derive(Debug)]
 enum BuildError {
     InvalidDate,
-    LocalOffset,
 }
 
 impl From<BuildError> for StopAtError {
     fn from(error: BuildError) -> Self {
         match error {
             BuildError::InvalidDate => StopAtError::InvalidFormat,
-            BuildError::LocalOffset => StopAtError::LocalOffset,
         }
     }
 }
 
-fn parse_stop_at_internal(input: &str) -> Result<SystemTime, StopAtError> {
+// upstream: options.c:1155 parse_time() - reference "now" comes from
+// localtime(&now) and mktime() interprets the constructed tm as local time.
+// We mirror that by capturing the local OffsetDateTime once at the call site
+// and reusing its UTC offset for every candidate datetime.
+fn parse_stop_at_internal(input: &str, now: OffsetDateTime) -> Result<SystemTime, StopAtError> {
     if input.is_empty() {
         return Err(StopAtError::InvalidFormat);
     }
@@ -172,7 +180,7 @@ fn parse_stop_at_internal(input: &str) -> Result<SystemTime, StopAtError> {
         in_date = 0;
     }
 
-    let now = OffsetDateTime::now_local().map_err(|_| StopAtError::LocalOffset)?;
+    let local_offset = now.offset();
     let original_tm_year = tm_year;
     let original_tm_mon = tm_mon;
     let original_tm_mday = tm_mday;
@@ -225,7 +233,7 @@ fn parse_stop_at_internal(input: &str) -> Result<SystemTime, StopAtError> {
 
     let mut old_mday = tm_mday;
     let mut datetime =
-        build_offset_datetime(tm_year, tm_mon, tm_mday, tm_hour, tm_min, now.offset())?;
+        build_offset_datetime(tm_year, tm_mon, tm_mday, tm_hour, tm_min, local_offset)?;
     let no_date_specified = original_tm_year < 0 && original_tm_mon < 0 && original_tm_mday < 0;
 
     if no_date_specified && datetime <= now {
@@ -262,7 +270,7 @@ fn parse_stop_at_internal(input: &str) -> Result<SystemTime, StopAtError> {
             _ => unreachable!(),
         }
 
-        match build_offset_datetime(tm_year, tm_mon, tm_mday, tm_hour, tm_min, datetime.offset()) {
+        match build_offset_datetime(tm_year, tm_mon, tm_mday, tm_hour, tm_min, local_offset) {
             Ok(new_dt) => {
                 datetime = new_dt;
             }
@@ -275,7 +283,6 @@ fn parse_stop_at_internal(input: &str) -> Result<SystemTime, StopAtError> {
                 in_date_flag = 2;
                 continue;
             }
-            Err(BuildError::LocalOffset) => return Err(StopAtError::LocalOffset),
         }
     }
 
@@ -294,13 +301,17 @@ fn parse_stop_at_internal(input: &str) -> Result<SystemTime, StopAtError> {
     offset_datetime_to_system_time(datetime)
 }
 
+// upstream: options.c parse_time uses mktime() with the process's current
+// timezone for every candidate. We capture the offset once at "now" and reuse
+// it - this matches upstream when no DST transition falls between now and the
+// target datetime, which is the typical use case for --stop-at deadlines.
 fn build_offset_datetime(
     tm_year: i32,
     tm_mon: i32,
     tm_mday: i32,
     tm_hour: i32,
     tm_min: i32,
-    initial_offset: UtcOffset,
+    local_offset: UtcOffset,
 ) -> Result<OffsetDateTime, BuildError> {
     let year = tm_year + 1900;
     let month = Month::try_from((tm_mon + 1) as u8).map_err(|_| BuildError::InvalidDate)?;
@@ -309,23 +320,7 @@ fn build_offset_datetime(
     let time =
         Time::from_hms(tm_hour as u8, tm_min as u8, 0).map_err(|_| BuildError::InvalidDate)?;
     let primitive = PrimitiveDateTime::new(date, time);
-    let mut datetime = primitive.assume_offset(initial_offset);
-    let mut attempts = 0u8;
-
-    loop {
-        match UtcOffset::local_offset_at(datetime) {
-            Ok(offset) if offset == datetime.offset() => return Ok(datetime),
-            Ok(offset) => {
-                datetime = primitive.assume_offset(offset);
-            }
-            Err(_) => return Err(BuildError::LocalOffset),
-        }
-
-        attempts += 1;
-        if attempts >= 3 {
-            return Err(BuildError::LocalOffset);
-        }
-    }
+    Ok(primitive.assume_offset(local_offset))
 }
 
 fn offset_datetime_to_system_time(datetime: OffsetDateTime) -> Result<SystemTime, StopAtError> {
@@ -345,6 +340,19 @@ fn offset_datetime_to_system_time(datetime: OffsetDateTime) -> Result<SystemTime
 mod tests {
     use super::*;
     use std::ffi::OsString;
+
+    /// Fixed reference "now" for deterministic parser tests: 2026-06-15T12:00:00+02:00.
+    /// Using a non-UTC offset proves the parser interprets inputs in the local zone.
+    fn fixed_local_now() -> OffsetDateTime {
+        let date = Date::from_calendar_date(2026, Month::June, 15).unwrap();
+        let time = Time::from_hms(12, 0, 0).unwrap();
+        let offset = UtcOffset::from_hms(2, 0, 0).unwrap();
+        PrimitiveDateTime::new(date, time).assume_offset(offset)
+    }
+
+    fn parse_with_now(input: &str, now: OffsetDateTime) -> Result<SystemTime, StopAtError> {
+        parse_stop_at_internal(input, now)
+    }
 
     #[test]
     fn stop_after_valid_minutes() {
@@ -476,74 +484,74 @@ mod tests {
 
     #[test]
     fn stop_at_internal_empty_input() {
-        let result = parse_stop_at_internal("");
+        let result = parse_with_now("", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
     #[test]
     fn stop_at_internal_only_t_prefix() {
-        let result = parse_stop_at_internal("T");
+        let result = parse_with_now("T", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
     #[test]
     fn stop_at_internal_only_colon_prefix() {
-        let result = parse_stop_at_internal(":");
+        let result = parse_with_now(":", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
     #[test]
     fn stop_at_internal_non_digit_start() {
-        let result = parse_stop_at_internal("abc");
+        let result = parse_with_now("abc", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
     #[test]
     fn stop_at_internal_negative_hour() {
         // Hours must be 0-23
-        let result = parse_stop_at_internal("T-1:00");
+        let result = parse_with_now("T-1:00", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
     #[test]
     fn stop_at_internal_hour_24() {
-        let result = parse_stop_at_internal("T24:00");
+        let result = parse_with_now("T24:00", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
     #[test]
     fn stop_at_internal_minute_60() {
-        let result = parse_stop_at_internal("T12:60");
+        let result = parse_with_now("T12:60", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
     #[test]
     fn stop_at_internal_month_0() {
-        let result = parse_stop_at_internal("2030-00-15");
+        let result = parse_with_now("2030-00-15", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
     #[test]
     fn stop_at_internal_month_13() {
-        let result = parse_stop_at_internal("2030-13-15");
+        let result = parse_with_now("2030-13-15", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
     #[test]
     fn stop_at_internal_day_0() {
-        let result = parse_stop_at_internal("2030-06-00");
+        let result = parse_with_now("2030-06-00", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
     #[test]
     fn stop_at_internal_day_32() {
-        let result = parse_stop_at_internal("2030-06-32");
+        let result = parse_with_now("2030-06-32", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
     #[test]
     fn stop_at_internal_feb_30() {
-        let result = parse_stop_at_internal("2030-02-30");
+        let result = parse_with_now("2030-02-30", fixed_local_now());
         assert!(matches!(result, Err(StopAtError::InvalidFormat)));
     }
 
@@ -552,13 +560,6 @@ mod tests {
         let error = StopAtError::InvalidFormat;
         let debug = format!("{error:?}");
         assert!(debug.contains("InvalidFormat"));
-    }
-
-    #[test]
-    fn stop_at_error_local_offset_debug() {
-        let error = StopAtError::LocalOffset;
-        let debug = format!("{error:?}");
-        assert!(debug.contains("LocalOffset"));
     }
 
     #[test]
@@ -576,24 +577,10 @@ mod tests {
     }
 
     #[test]
-    fn build_error_local_offset_debug() {
-        let error = BuildError::LocalOffset;
-        let debug = format!("{error:?}");
-        assert!(debug.contains("LocalOffset"));
-    }
-
-    #[test]
     fn build_error_converts_to_stop_at_error_invalid() {
         let build_error = BuildError::InvalidDate;
         let stop_error: StopAtError = build_error.into();
         assert!(matches!(stop_error, StopAtError::InvalidFormat));
-    }
-
-    #[test]
-    fn build_error_converts_to_stop_at_error_offset() {
-        let build_error = BuildError::LocalOffset;
-        let stop_error: StopAtError = build_error.into();
-        assert!(matches!(stop_error, StopAtError::LocalOffset));
     }
 
     #[test]
@@ -642,41 +629,73 @@ mod tests {
 
     #[test]
     fn stop_at_internal_dash_separator() {
-        // Far future date should always be valid
-        let result = parse_stop_at_internal("2099-12-31T23:59");
-        // May fail due to local offset issues in test env, but format should be ok
-        assert!(
-            !matches!(result, Err(StopAtError::InvalidFormat))
-                || matches!(result, Err(StopAtError::LocalOffset))
-        );
+        let result = parse_with_now("2099-12-31T23:59", fixed_local_now()).expect("parses");
+        assert!(result > SystemTime::UNIX_EPOCH);
     }
 
     #[test]
     fn stop_at_internal_slash_separator() {
-        let result = parse_stop_at_internal("2099/12/31T23:59");
-        assert!(
-            !matches!(result, Err(StopAtError::InvalidFormat))
-                || matches!(result, Err(StopAtError::LocalOffset))
-        );
+        let result = parse_with_now("2099/12/31T23:59", fixed_local_now()).expect("parses");
+        assert!(result > SystemTime::UNIX_EPOCH);
     }
 
     #[test]
     fn stop_at_internal_lowercase_t() {
-        let result = parse_stop_at_internal("2099-12-31t23:59");
-        assert!(
-            !matches!(result, Err(StopAtError::InvalidFormat))
-                || matches!(result, Err(StopAtError::LocalOffset))
-        );
+        let result = parse_with_now("2099-12-31t23:59", fixed_local_now()).expect("parses");
+        assert!(result > SystemTime::UNIX_EPOCH);
     }
 
     #[test]
     fn stop_at_internal_two_digit_year_future() {
         // 99 should be interpreted as 2099 (or later century in the future)
-        let result = parse_stop_at_internal("99-12-31");
-        // Should not be InvalidFormat - either succeeds or LocalOffset
-        assert!(
-            !matches!(result, Err(StopAtError::InvalidFormat))
-                || matches!(result, Err(StopAtError::LocalOffset))
-        );
+        let result = parse_with_now("99-12-31", fixed_local_now()).expect("parses");
+        assert!(result > SystemTime::UNIX_EPOCH);
+    }
+
+    /// upstream parity: `YYYY-MM-DDTHH:MM` is interpreted in the process's local
+    /// timezone. With `now = 2026-06-15T12:00:00+02:00`, the input
+    /// `2026-12-31T23:59` resolves to `2026-12-31T23:59:00+02:00` -> unix
+    /// `1798754340`. UTC interpretation would have yielded `1798761540` (+7200s).
+    #[test]
+    fn stop_at_absolute_interpreted_in_local_zone() {
+        let now = fixed_local_now();
+        let parsed = parse_with_now("2026-12-31T23:59", now).expect("parses");
+        let unix = parsed.duration_since(SystemTime::UNIX_EPOCH).unwrap();
+        assert_eq!(unix.as_secs(), 1_798_754_340);
+    }
+
+    /// upstream parity: with a negative offset, the same wall-clock input maps
+    /// to a different unix timestamp - proving the parser honours local TZ.
+    #[test]
+    fn stop_at_absolute_local_zone_negative_offset() {
+        let date = Date::from_calendar_date(2026, Month::June, 15).unwrap();
+        let time = Time::from_hms(12, 0, 0).unwrap();
+        let offset = UtcOffset::from_hms(-5, 0, 0).unwrap();
+        let now = PrimitiveDateTime::new(date, time).assume_offset(offset);
+
+        let parsed = parse_with_now("2026-12-31T23:59", now).expect("parses");
+        let unix = parsed.duration_since(SystemTime::UNIX_EPOCH).unwrap();
+        // 2026-12-31T23:59:00-05:00 == unix 1798779540
+        assert_eq!(unix.as_secs(), 1_798_779_540);
+    }
+
+    /// Edge: end-of-year boundary in upstream's local-time convention.
+    #[test]
+    fn stop_at_end_of_year_local_time() {
+        let now = fixed_local_now();
+        let parsed = parse_with_now("2025-12-31T23:59", now);
+        // 2025-12-31 is in the past relative to the fixed 2026-06-15 "now", but
+        // the year is explicit so upstream bumps the loop until NotInFuture.
+        // Our parser surfaces NotInFuture in that case - the behavioural pin.
+        assert!(matches!(parsed, Err(StopAtError::NotInFuture)));
+    }
+
+    /// Stop-after duration is timezone-irrelevant - duration is added to "now".
+    #[test]
+    fn stop_after_duration_is_timezone_independent() {
+        let before = SystemTime::now();
+        let deadline = parse_stop_after_argument(&OsString::from("90")).expect("parses");
+        let delta = deadline.duration_since(before).unwrap();
+        assert!(delta.as_secs() >= 5398 && delta.as_secs() <= 5402);
     }
 }

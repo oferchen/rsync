@@ -250,11 +250,14 @@ upstream.
    golden bytes so future negotiation refactors do not silently drop
    support for older daemons in the field.
 
-10. **`--stop-at=y-m-dTh:m` timezone parsing.** Upstream parses local
-    time. oc-rsync currently parses as if the input were UTC when the
-    `T` separator is present. Switch to local-time parsing to match
-    `rsync.1.md` and add a timezone-aware test that runs on Linux,
-    macOS, and Windows runners.
+10. **`--stop-at=y-m-dTh:m` timezone parsing.** RESOLVED (#2179). The
+    parser captures `OffsetDateTime::now_local()` once at the call
+    site and reuses that offset for every candidate datetime, mirroring
+    upstream `options.c:1155 parse_time()` which calls `localtime(&now)`
+    and `mktime(&t)` (both local-zone). Deterministic unit tests pin
+    the behaviour with an injected `now` at `+02:00` and `-05:00`,
+    proving the same wall-clock input produces distinct unix
+    timestamps - the proof that the parser honours local TZ.
 
 ## Estimated completion
 
