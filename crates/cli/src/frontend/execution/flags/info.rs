@@ -8,7 +8,7 @@ use core::{
 use super::super::super::progress::{NameOutputLevel, ProgressSetting};
 
 /// Parsed `--info` flag settings controlling informational output levels.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct InfoFlagSettings {
     pub(crate) progress: ProgressSetting,
     pub(crate) stats: Option<u8>,
@@ -65,7 +65,27 @@ impl InfoFlagSettings {
         self.enable_all_at_level(0);
     }
 
+    #[cfg(test)]
     pub(super) fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
+        self.apply_with_mode(token, display, false)
+    }
+
+    /// Applies a single `--info` token.
+    ///
+    /// When `am_server` is `true`, an unrecognised token is silently
+    /// accepted instead of producing an error, mirroring upstream rsync's
+    /// `parse_output_words()` (`options.c:465`) where the
+    /// `if (len && !words[j].name && !am_server)` guard skips the
+    /// `RERR_SYNTAX` exit. This preserves cross-version compatibility when a
+    /// newer client forwards info tokens this server build does not know.
+    ///
+    /// upstream: options.c parse_output_words
+    pub(super) fn apply_with_mode(
+        &mut self,
+        token: &str,
+        display: &str,
+        am_server: bool,
+    ) -> Result<(), Message> {
         let lower = token.to_ascii_lowercase();
 
         if lower == "help" {
@@ -174,6 +194,9 @@ impl InfoFlagSettings {
                 self.symsafe = Some(level);
                 Ok(())
             }
+            // upstream: options.c parse_output_words - server mode silently
+            // skips unknown tokens; client mode errors so users see typos.
+            _ if am_server => Ok(()),
             _ => Err(info_flag_error(display)),
         }
     }
@@ -217,6 +240,26 @@ fn info_flag_error(display: &str) -> Message {
 
 /// Parses `--info` flag values into resolved settings.
 pub(crate) fn parse_info_flags(values: &[OsString]) -> Result<InfoFlagSettings, Message> {
+    parse_info_flags_inner(values, false)
+}
+
+/// Parses `--info` flag values in server mode, silently ignoring unknown tokens.
+///
+/// Upstream rsync's `parse_output_words()` checks `!am_server` before raising
+/// `Unknown --info item` (`options.c:465`). The server side accepts whatever
+/// the (possibly newer) client forwards so the connection survives across
+/// version skew. The client-side parser still rejects unknown tokens via
+/// [`parse_info_flags`] so typos surface at the source.
+///
+/// upstream: options.c parse_output_words
+pub(crate) fn parse_info_flags_server(values: &[OsString]) -> Result<InfoFlagSettings, Message> {
+    parse_info_flags_inner(values, true)
+}
+
+fn parse_info_flags_inner(
+    values: &[OsString],
+    am_server: bool,
+) -> Result<InfoFlagSettings, Message> {
     let mut settings = InfoFlagSettings::default();
     for value in values {
         let text = value.to_string_lossy();
@@ -234,7 +277,7 @@ pub(crate) fn parse_info_flags(values: &[OsString]) -> Result<InfoFlagSettings, 
                 );
             }
 
-            settings.apply(token, token)?;
+            settings.apply_with_mode(token, token, am_server)?;
         }
     }
 

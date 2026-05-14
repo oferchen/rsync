@@ -77,6 +77,12 @@ pub(super) struct ServerLongFlags {
     /// Reference directories for basis file lookup.
     /// upstream: options.c:2915-2923 - `--compare-dest`, `--copy-dest`, `--link-dest`
     pub(super) reference_directories: Vec<ReferenceDirectory>,
+    /// Raw `--info=FLAGS` values forwarded by the client.
+    ///
+    /// upstream: options.c:2928-2931 - `server_options()` emits the output of
+    /// `make_output_option(info_words, info_levels, ...)`, so the server
+    /// receives `--info=...` whenever the client has non-default info levels.
+    pub(super) info: Vec<OsString>,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -115,6 +121,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         iconv: None,
         timeout: None,
         reference_directories: Vec::new(),
+        info: Vec::new(),
     };
 
     for arg in args {
@@ -181,6 +188,11 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.timeout = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--io-uring-depth=") {
         flags.io_uring_depth = Some(value.to_owned());
+    // upstream: options.c:2928-2931 - server_options() forwards info levels.
+    // Capture the raw value so run_server_mode can parse it tolerantly via
+    // parse_info_flags_server (mirroring `am_server` in parse_output_words).
+    } else if let Some(value) = s.strip_prefix("--info=") {
+        flags.info.push(OsString::from(value));
     // upstream: options.c:2915-2923 - reference directory args
     } else if let Some(value) = s.strip_prefix("--compare-dest=") {
         flags.reference_directories.push(ReferenceDirectory::new(
@@ -248,4 +260,5 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--iconv=")
         || arg.starts_with("--timeout=")
         || arg.starts_with("--io-uring-depth=")
+        || arg.starts_with("--info=")
 }
