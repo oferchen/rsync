@@ -133,7 +133,7 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
                 .visible_alias("cc")
                 .value_name("ALGO")
                 .help(
-                    "Select the strong checksum algorithm (auto, md4, md5, xxh64, xxh3, or xxh128).",
+                    "Select the strong checksum algorithm (auto, none, md4, md5, xxh64, xxh3, or xxh128). `none` forces whole-file transfer.",
                 )
                 .num_args(1)
                 .action(ArgAction::Set)

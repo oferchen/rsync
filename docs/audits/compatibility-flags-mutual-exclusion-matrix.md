@@ -78,9 +78,10 @@ protocol gating if any, and (c) oc-rsync's plumbing for the flag.
 - **oc-rsync.** Stored as `ServerConfigBuilder::checksum_choice`
   (`crates/transfer/src/config/builder.rs:75`) and
   `ClientConfigBuilder::checksum_choice`
-  (`crates/core/src/client/config/builder/mod.rs:179`). No
-  validator promotes `whole_file` when the chosen algorithm is
-  `None`. See gap G1 in section 4.
+  (`crates/core/src/client/config/builder/mod.rs:179`).
+  `ClientConfigBuilder::build` promotes `whole_file` to `Some(true)`
+  when `checksum_choice.transfer_is_none()` returns true, mirroring
+  upstream `checksum.c:197-198`. See G1 (resolved) in section 4.
 
 ### 1.3 `--inplace`
 
@@ -203,10 +204,10 @@ Legend:
 | (row x col) | `--checksum` | `--checksum-choice=none` | `--inplace` | `--whole-file` | `--no-whole-file` | `--append` | `--append-verify` | `--partial` | `--partial-dir=DIR` | `--delay-updates` | `--temp-dir=DIR` |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `--checksum` | - | OK | OK | OK | OK | OK | OK | OK | OK | OK | OK |
-| `--checksum-choice=none` | OK | - | OK | OK->fix [a] | ERR [a] | OK | OK | OK | OK | OK | OK |
+| `--checksum-choice=none` | OK | - | OK | OK [a] | OK [a] | OK | OK | OK | OK | OK | OK |
 | `--inplace` | OK | OK | - | OK | OK | OK [b] | OK [b] | OK [c] | ERR [d] | ERR [e] | OK [f] |
-| `--whole-file` | OK | OK->fix [a] | OK | - | ERR (tri-state) | ERR [g] | ERR [g] | OK | OK | OK | OK |
-| `--no-whole-file` | OK | ERR [a] | OK | ERR (tri-state) | - | OK | OK | OK | OK | OK | OK |
+| `--whole-file` | OK | OK [a] | OK | - | ERR (tri-state) | ERR [g] | ERR [g] | OK | OK | OK | OK |
+| `--no-whole-file` | OK | OK [a] | OK | ERR (tri-state) | - | OK | OK | OK | OK | OK | OK |
 | `--append` | OK | OK | OK [b] | ERR [g] | OK | - | OK | OK [c] | ERR [h] | ERR [i] | OK |
 | `--append-verify` | OK | OK | OK [b] | ERR [g] | OK | OK | - | OK [c] | ERR [h] | ERR [i] | OK |
 | `--partial` | OK | OK | OK [c] | OK | OK | OK [c] | OK [c] | - | OK->fix [j] | OK->fix [j] | OK |
@@ -220,8 +221,10 @@ Footnote validation sites:
   (`target/interop/upstream-src/rsync-3.4.1/checksum.c:197-198`). A
   caller-supplied `--no-whole-file` therefore contradicts the algorithm
   choice. Upstream emits no error in `options.c`; the contradiction
-  manifests later in `parse_checksum_choice`. oc-rsync currently
-  performs neither the silent promotion nor the rejection: see gap G1.
+  manifests later in `parse_checksum_choice`. oc-rsync mirrors upstream
+  exactly: `ClientConfigBuilder::build` promotes `whole_file` to
+  `Some(true)` whenever `checksum_choice.transfer_is_none()` returns
+  true, silently overriding `--no-whole-file`. See G1 (RESOLVED).
 - [b] `--append` sets `inplace = 1` upstream
   (`options.c:2392`). The `--inplace` and `--append`/`--append-verify`
   pair is therefore redundant but accepted (`options.c:2406`). oc-rsync
@@ -234,10 +237,13 @@ Footnote validation sites:
   (`crates/core/src/client/config/builder/mod.rs:276-296`).
 - [d] Upstream rejects `--inplace --partial-dir` unless
   `CF_INPLACE_PARTIAL_DIR` is negotiated. The conflict is detected at
-  `options.c:2406-2414`. oc-rsync rejects the pair unconditionally at
-  `crates/core/src/client/config/builder/mod.rs:288-293`. The protocol
-  fix-up that would allow the pair under `CF_INPLACE_PARTIAL_DIR` is
-  not yet wired through the builder; see gap G2.
+  `options.c:2406-2414`. oc-rsync now exposes
+  `ClientConfigBuilder::validate_with_capabilities` (see
+  `crates/core/src/client/config/builder/mod.rs`), which permits the
+  pair when the negotiated bitfield contains
+  `CompatibilityFlags::INPLACE_PARTIAL_DIR`. `validate()` keeps the
+  strict default for callers that have not yet seen the negotiated
+  bits, matching upstream's parse-time refusal. Gap G2 is resolved.
 - [e] Upstream rejects `--inplace --delay-updates` at
   `options.c:2406-2414` (the `partial_dir` message string covers both
   paths because `delay_updates` synthesises a `partial_dir` upstream).
@@ -303,7 +309,7 @@ Conformance tests:
 
 Ordered by user-facing impact.
 
-### G1 - `--checksum-choice=none` does not promote `--whole-file`
+### G1 - `--checksum-choice=none` does not promote `--whole-file` (RESOLVED)
 
 - **Upstream behaviour.**
   `target/interop/upstream-src/rsync-3.4.1/checksum.c:197-198` sets
@@ -312,29 +318,36 @@ Ordered by user-facing impact.
   `target/interop/upstream-src/rsync-3.4.1/options.c:1981-1987`, this
   means a user who passes `--checksum-choice=none` ends up with a
   whole-file transfer even if they did not pass `-W`.
-- **oc-rsync behaviour.** `ChecksumAlgorithm::None` is recognised at
-  `crates/transfer/src/shared/checksum.rs:146` and falls back to MD4
-  semantics for seed compatibility, but no code path promotes
-  `whole_file` to `Some(true)`. The pair `--checksum-choice=none
-  --no-whole-file` therefore yields a delta transfer that has no
-  strong checksum, which violates upstream's invariant.
-- **Impact.** Wire divergence (oc-rsync runs the delta algorithm
-  where upstream sends literal data); silent.
+- **oc-rsync behaviour (resolved).**
+  `StrongChecksumAlgorithm::None` is recognised by the parser
+  (`crates/core/src/client/config/enums/checksum.rs`) and
+  `ClientConfigBuilder::build` promotes `whole_file` to `Some(true)`
+  whenever `checksum_choice.transfer_is_none()` returns true. The
+  promotion is unconditional, matching upstream's silent override of
+  `--no-whole-file`.
+- **Status.** Resolved in #2139/#2140/#2141. Regression tests live in
+  `crates/core/src/client/config/builder/tests.rs`
+  (`checksum_choice_none_promotes_whole_file`,
+  `checksum_choice_none_overrides_explicit_no_whole_file`) and
+  `crates/cli/tests/option_combinations_flags.rs`
+  (`test_checksum_choice_none_parses`).
 
-### G2 - `--inplace --partial-dir` cannot be enabled even when peer advertises `CF_INPLACE_PARTIAL_DIR`
+### G2 - `--inplace --partial-dir` cannot be enabled even when peer advertises `CF_INPLACE_PARTIAL_DIR` (RESOLVED)
 
 - **Upstream behaviour.** `compat.c:777-778` enables `inplace_partial`
   when both peers negotiate `CF_INPLACE_PARTIAL_DIR` (bit 6,
   introduced at protocol 30). With that bit set, upstream's
   `options.c:2406-2414` rejection is bypassed at the receiver and the
   pair runs successfully.
-- **oc-rsync behaviour.**
-  `crates/core/src/client/config/builder/mod.rs:288-293` rejects
-  `--inplace --partial-dir` unconditionally before negotiation can
-  happen, since the config builder runs at CLI parse time.
-- **Impact.** A correct combination that upstream rsync accepts at
-  proto >= 30 is rejected by oc-rsync at the CLI. Loud failure (error
-  message) rather than silent.
+- **oc-rsync behaviour.** `ClientConfigBuilder` now exposes
+  `validate_with_capabilities(caps)` alongside the strict default
+  `validate()`. When `caps` contains
+  `CompatibilityFlags::INPLACE_PARTIAL_DIR`, the
+  `--inplace`/`--append` + `--partial-dir` combination is accepted;
+  otherwise the upstream parse-time rejection is preserved.
+- **Status.** Resolved (#2142/#2143/#2144). The strict `validate()`
+  default remains so callers without negotiated capability bits still
+  match upstream's `options.c:2406-2414` behaviour.
 
 ### G3 - `--append --whole-file` accepted instead of rejected
 
@@ -381,12 +394,11 @@ Ordered by user-facing impact.
    test in `tests.rs:1055-1116`.
 3. The fix needs no protocol or wire changes; it is purely a
    config-time check.
-4. G1 (`--checksum-choice=none` -> `whole_file`) and G2
-   (`CF_INPLACE_PARTIAL_DIR` runtime relaxation) are tracked as
-   follow-ups because they require either a checksum-negotiation
-   callback or threading the negotiated `CF_*` bits back into the
-   builder, both of which exceed the scope of a single conflict-cell
-   audit.
+4. G1 (`--checksum-choice=none` -> `whole_file`) is resolved (see
+   section 4). G2 (`CF_INPLACE_PARTIAL_DIR` runtime relaxation) is
+   resolved by `validate_with_capabilities`, which threads the
+   negotiated `CF_*` bits into the builder while keeping the strict
+   default in place.
 5. G4 is internal API only; defer until the rename-batch path is
    refactored independently.
 

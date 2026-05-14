@@ -9,6 +9,12 @@ use engine::signature::SignatureAlgorithm;
 pub enum StrongChecksumAlgorithm {
     /// Automatically selects the negotiated algorithm (locally resolved to MD5).
     Auto,
+    /// No transfer checksum; disables delta and forces whole-file transfers.
+    ///
+    /// Mirrors upstream `CSUM_NONE` (see `checksum.c:63`). When selected as the
+    /// transfer algorithm, upstream `checksum.c:197-198` unconditionally sets
+    /// `whole_file = 1`.
+    None,
     /// MD4 strong checksum.
     Md4,
     /// MD5 strong checksum.
@@ -34,7 +40,11 @@ impl StrongChecksumAlgorithm {
                     seed_config: Md5Seed::none(),
                 }
             }
-            StrongChecksumAlgorithm::Md4 => SignatureAlgorithm::Md4,
+            // `none` disables delta (whole_file is forced upstream), but a
+            // signature algorithm is still required by the engine's type
+            // signature. MD4 matches upstream's default fallback semantics
+            // and is never actually computed when whole-file is in effect.
+            StrongChecksumAlgorithm::None | StrongChecksumAlgorithm::Md4 => SignatureAlgorithm::Md4,
             StrongChecksumAlgorithm::Sha1 => SignatureAlgorithm::Sha1,
             StrongChecksumAlgorithm::Xxh64 => SignatureAlgorithm::Xxh64 { seed: 0 },
             StrongChecksumAlgorithm::Xxh3 => SignatureAlgorithm::Xxh3 { seed: 0 },
@@ -47,6 +57,7 @@ impl StrongChecksumAlgorithm {
     pub const fn canonical_name(self) -> &'static str {
         match self {
             StrongChecksumAlgorithm::Auto => "auto",
+            StrongChecksumAlgorithm::None => "none",
             StrongChecksumAlgorithm::Md4 => "md4",
             StrongChecksumAlgorithm::Md5 => "md5",
             StrongChecksumAlgorithm::Sha1 => "sha1",
@@ -64,6 +75,7 @@ impl StrongChecksumAlgorithm {
     pub const fn to_protocol_algorithm(self) -> Option<protocol::ChecksumAlgorithm> {
         match self {
             StrongChecksumAlgorithm::Auto => None,
+            StrongChecksumAlgorithm::None => Some(protocol::ChecksumAlgorithm::None),
             StrongChecksumAlgorithm::Md4 => Some(protocol::ChecksumAlgorithm::MD4),
             StrongChecksumAlgorithm::Md5 => Some(protocol::ChecksumAlgorithm::MD5),
             StrongChecksumAlgorithm::Sha1 => Some(protocol::ChecksumAlgorithm::SHA1),
@@ -112,6 +124,7 @@ impl StrongChecksumChoice {
         let normalized = label.trim().to_ascii_lowercase();
         match normalized.as_str() {
             "auto" => Ok(StrongChecksumAlgorithm::Auto),
+            "none" => Ok(StrongChecksumAlgorithm::None),
             "md4" => Ok(StrongChecksumAlgorithm::Md4),
             "md5" => Ok(StrongChecksumAlgorithm::Md5),
             "sha1" => Ok(StrongChecksumAlgorithm::Sha1),
@@ -157,6 +170,18 @@ impl StrongChecksumChoice {
         }
     }
 
+    /// Reports whether the transfer algorithm is the `none` sentinel.
+    ///
+    /// Upstream `checksum.c:197-198` forces `whole_file = 1` whenever the
+    /// negotiated transfer checksum is `CSUM_NONE`. The config builder uses
+    /// this to promote `whole_file` at build time so the delta pipeline is
+    /// never engaged when the user explicitly disables the transfer
+    /// checksum.
+    #[must_use]
+    pub const fn transfer_is_none(self) -> bool {
+        matches!(self.transfer, StrongChecksumAlgorithm::None)
+    }
+
     /// Returns the transfer algorithm as a protocol-layer override for negotiation.
     ///
     /// When the transfer algorithm is [`Auto`](StrongChecksumAlgorithm::Auto), returns
@@ -192,11 +217,13 @@ mod tests {
             assert_eq!(StrongChecksumAlgorithm::Xxh64.canonical_name(), "xxh64");
             assert_eq!(StrongChecksumAlgorithm::Xxh3.canonical_name(), "xxh3");
             assert_eq!(StrongChecksumAlgorithm::Xxh128.canonical_name(), "xxh128");
+            assert_eq!(StrongChecksumAlgorithm::None.canonical_name(), "none");
         }
 
         #[test]
         fn to_signature_algorithm() {
             let _ = StrongChecksumAlgorithm::Auto.to_signature_algorithm();
+            let _ = StrongChecksumAlgorithm::None.to_signature_algorithm();
             let _ = StrongChecksumAlgorithm::Md4.to_signature_algorithm();
             let _ = StrongChecksumAlgorithm::Md5.to_signature_algorithm();
             let _ = StrongChecksumAlgorithm::Sha1.to_signature_algorithm();
@@ -270,6 +297,30 @@ mod tests {
         #[test]
         fn parse_invalid_returns_error() {
             assert!(StrongChecksumChoice::parse("invalid").is_err());
+        }
+
+        #[test]
+        fn parse_none() {
+            // upstream: checksum.c:63 - { CSUM_NONE, 0, "none", NULL }.
+            let choice = StrongChecksumChoice::parse("none").unwrap();
+            assert_eq!(choice.transfer(), StrongChecksumAlgorithm::None);
+            assert_eq!(choice.file(), StrongChecksumAlgorithm::None);
+            assert!(choice.transfer_is_none());
+            assert_eq!(choice.to_argument(), "none");
+            assert_eq!(
+                choice.transfer_protocol_override(),
+                Some(protocol::ChecksumAlgorithm::None),
+            );
+        }
+
+        #[test]
+        fn transfer_is_none_false_for_other_algorithms() {
+            assert!(
+                !StrongChecksumChoice::parse("md5")
+                    .unwrap()
+                    .transfer_is_none()
+            );
+            assert!(!StrongChecksumChoice::default().transfer_is_none());
         }
 
         #[test]

@@ -66,6 +66,10 @@ pub struct IoUringConfig {
     pub sqpoll: bool,
     /// SQPOLL idle timeout in ms (no-op on non-Linux).
     pub sqpoll_idle_ms: u32,
+    /// Signals an `mmap` basis reader is live on this transfer plan
+    /// (no-op on non-Linux; field exists so cross-platform code can set it
+    /// without `cfg`-gating).
+    pub mmap_basis_active: bool,
     /// Whether to register fixed buffers (no-op on non-Linux).
     pub register_buffers: bool,
     /// Number of fixed buffers to register (no-op on non-Linux).
@@ -83,6 +87,7 @@ impl Default for IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            mmap_basis_active: false,
             register_buffers: true,
             registered_buffer_count: 8,
             zero_copy_policy: crate::ZeroCopyPolicy::Auto,
@@ -101,6 +106,7 @@ impl IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            mmap_basis_active: false,
             register_buffers: true,
             registered_buffer_count: 16,
             zero_copy_policy: crate::ZeroCopyPolicy::Auto,
@@ -117,6 +123,7 @@ impl IoUringConfig {
             register_files: true,
             sqpoll: false,
             sqpoll_idle_ms: 1000,
+            mmap_basis_active: false,
             register_buffers: true,
             registered_buffer_count: 8,
             zero_copy_policy: crate::ZeroCopyPolicy::Auto,
@@ -316,6 +323,31 @@ pub mod registered_buffers {
             None
         }
 
+        /// Stub form of the registration-aware constructor used on Linux.
+        ///
+        /// On non-Linux platforms registration is never attempted, so the
+        /// status is always [`RegisteredBufferStatus::Disabled`] when the
+        /// caller opts out and `RegistrationFailed` otherwise (mirroring the
+        /// Linux failure path so callers see the same observability signal).
+        pub fn try_new_with_status(
+            _ring: &(),
+            _buffer_size: usize,
+            _count: usize,
+            enabled: bool,
+        ) -> (Option<Self>, RegisteredBufferStatus) {
+            if enabled {
+                (
+                    None,
+                    RegisteredBufferStatus::RegistrationFailed {
+                        reason: "io_uring buffer registration is not available on this platform"
+                            .to_string(),
+                    },
+                )
+            } else {
+                (None, RegisteredBufferStatus::Disabled)
+            }
+        }
+
         /// Returns the number of buffers (always 0).
         #[must_use]
         pub fn count(&self) -> usize {
@@ -376,6 +408,43 @@ pub mod registered_buffers {
         }
     }
 
+    /// Stub mirror of the Linux `RegisteredBufferStatus` enum. Lets
+    /// cross-platform callers reason about registration provenance without
+    /// `cfg`-gating their telemetry surface.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum RegisteredBufferStatus {
+        /// Registration succeeded (never produced by the stub).
+        Enabled,
+        /// Registration was not attempted (caller opted out).
+        Disabled,
+        /// Registration failed. On non-Linux platforms the failure reason is
+        /// always "not available on this platform".
+        RegistrationFailed {
+            /// Human-readable failure reason for telemetry.
+            reason: String,
+        },
+    }
+
+    impl RegisteredBufferStatus {
+        /// Always false on the stub - no Linux-only opcode is in use.
+        #[must_use]
+        pub fn is_enabled(&self) -> bool {
+            matches!(self, Self::Enabled)
+        }
+
+        /// True when the caller explicitly disabled registration.
+        #[must_use]
+        pub fn is_disabled(&self) -> bool {
+            matches!(self, Self::Disabled)
+        }
+
+        /// True when registration was attempted but rejected (or stubbed out).
+        #[must_use]
+        pub fn is_registration_failed(&self) -> bool {
+            matches!(self, Self::RegistrationFailed { .. })
+        }
+    }
+
     /// Stub registered buffer slot (not available on this platform).
     pub struct RegisteredBufferSlot<'a> {
         _phantom: std::marker::PhantomData<&'a ()>,
@@ -416,7 +485,9 @@ pub use linkat::{
     IORING_OP_LINKAT, LINKAT_MIN_KERNEL, LinkAtArgs, build_linkat_sqe, build_linkat_sqe_unchecked,
     linkat_supported, submit_linkat_blocking,
 };
-pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats};
+pub use registered_buffers::{
+    RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats, RegisteredBufferStatus,
+};
 pub use renameat2::{
     IORING_OP_RENAMEAT, RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT, RenameAt2Args,
     build_renameat2_sqe, build_renameat2_sqe_unchecked, renameat2_blocking, renameat2_supported,

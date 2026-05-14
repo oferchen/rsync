@@ -638,3 +638,79 @@ fn read_rules_recursive_mixed_with_dir_merge() {
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
     assert_eq!(rules[1].action(), FilterAction::Include);
 }
+
+// upstream: exclude.c parse_filter_str (rsync-3.4.2) lines 1269-1278 — the
+// `s` and `r` modifiers gate which side a rule fires on. These tests pin
+// down the three-state parsing surface (both, sender-only, receiver-only)
+// and the `prefix_specifies_side` rejection.
+
+#[test]
+fn parse_include_default_both_sides() {
+    let rules = parse_rules("+ foo", Path::new("test")).unwrap();
+    assert!(rules[0].applies_to_sender());
+    assert!(rules[0].applies_to_receiver());
+}
+
+#[test]
+fn parse_include_receiver_only() {
+    let rules = parse_rules("+r foo", Path::new("test")).unwrap();
+    assert!(!rules[0].applies_to_sender());
+    assert!(rules[0].applies_to_receiver());
+}
+
+#[test]
+fn parse_include_sender_only() {
+    let rules = parse_rules("+s foo", Path::new("test")).unwrap();
+    assert!(rules[0].applies_to_sender());
+    assert!(!rules[0].applies_to_receiver());
+}
+
+#[test]
+fn parse_exclude_receiver_only() {
+    let rules = parse_rules("-r *.tmp", Path::new("test")).unwrap();
+    assert_eq!(rules[0].action(), FilterAction::Exclude);
+    assert!(!rules[0].applies_to_sender());
+    assert!(rules[0].applies_to_receiver());
+}
+
+#[test]
+fn parse_both_side_modifiers_collapses_to_both() {
+    // Upstream treats setting both FILTRULE_SENDER_SIDE and FILTRULE_RECEIVER_SIDE
+    // as equivalent to setting neither (see exclude.c send_rules elide computation
+    // at lines 1605-1612). Our parser matches that semantics.
+    let rules = parse_rules("+sr foo", Path::new("test")).unwrap();
+    assert!(rules[0].applies_to_sender());
+    assert!(rules[0].applies_to_receiver());
+}
+
+#[test]
+fn parse_rejects_s_modifier_on_side_specific_prefix() {
+    // upstream: exclude.c parse_filter_str sets `prefix_specifies_side` for
+    // H/S/P/R prefixes and rejects 's' or 'r' modifiers on them.
+    for line in ["Hs foo", "Ss foo", "Ps foo", "Rs foo"] {
+        let err = parse_rules(line, Path::new("test")).unwrap_err();
+        assert!(
+            err.message.contains("invalid modifier 's'"),
+            "expected rejection for `{line}`, got `{}`",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn parse_rejects_r_modifier_on_side_specific_prefix() {
+    for line in ["Hr foo", "Sr foo", "Pr foo", "Rr foo"] {
+        let err = parse_rules(line, Path::new("test")).unwrap_err();
+        assert!(
+            err.message.contains("invalid modifier 'r'"),
+            "expected rejection for `{line}`, got `{}`",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn parse_rejects_side_modifier_with_word_split_on_side_prefix() {
+    let err = parse_rules("Hsw foo bar", Path::new("test")).unwrap_err();
+    assert!(err.message.contains("invalid modifier 's'"));
+}

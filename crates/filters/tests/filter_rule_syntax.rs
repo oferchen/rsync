@@ -908,10 +908,14 @@ mod combined_filter_types {
 
     #[test]
     fn modifiers_on_different_rule_types() {
+        // Note: side-specific prefixes (H/S/P/R) implicitly bind their side,
+        // so adding an `s`/`r` modifier is redundant and upstream rejects it
+        // (see exclude.c:1269-1278 prefix_specifies_side). `P!` alone already
+        // implies receiver-only; `H!p` is sender-only.
         let rules = parse_rules(
             "+!p special.txt\n\
              -!s *.hidden\n\
-             P!r /protected\n\
+             P! /protected\n\
              H!p *.secret",
             Path::new("test"),
         )

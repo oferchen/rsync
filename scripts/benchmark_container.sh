@@ -3,7 +3,7 @@
 #
 # Usage: ./scripts/benchmark_container.sh [--runs N]
 #
-# Builds oc-rsync (release) and upstream rsync 3.4.1 inside a Debian container,
+# Builds oc-rsync (release) and upstream rsync 3.4.2 inside a Debian container,
 # then runs the benchmark suite and prints the report.
 
 set -euo pipefail
@@ -21,7 +21,7 @@ CONTAINER_ENGINE="${CONTAINER_ENGINE:-podman}"
 IMAGE_NAME="oc-rsync-bench"
 CONTAINER_NAME="oc-rsync-bench-run"
 
-echo "=== oc-rsync vs upstream rsync 3.4.1 — Linux Container Benchmark ==="
+echo "=== oc-rsync vs upstream rsync 3.4.2 — Linux Container Benchmark ==="
 echo "Container engine: $CONTAINER_ENGINE"
 echo "Runs per test: $RUNS"
 echo ""

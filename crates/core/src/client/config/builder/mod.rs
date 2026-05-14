@@ -277,6 +277,22 @@ impl ClientConfigBuilder {
     /// - `--append` conflicts with `--whole-file`
     ///   (upstream: options.c:2382 `if (append_mode) { if (whole_file > 0) ... }`)
     pub fn validate(&self) -> Result<(), ConfigConflict> {
+        self.validate_with_capabilities(protocol::CompatibilityFlags::EMPTY)
+    }
+
+    /// Checks for mutually exclusive option combinations, relaxing checks that
+    /// upstream peers negotiate away through capability bits.
+    ///
+    /// Currently `CF_INPLACE_PARTIAL_DIR` (bit 6, introduced at protocol 30)
+    /// permits `--inplace`/`--append` to coexist with `--partial-dir`: the
+    /// receiver writes the in-place output but treats a basis file located in
+    /// `partial_dir` as an inplace target as well.
+    ///
+    /// upstream: compat.c CF_INPLACE_PARTIAL_DIR
+    pub fn validate_with_capabilities(
+        &self,
+        caps: protocol::CompatibilityFlags,
+    ) -> Result<(), ConfigConflict> {
         // upstream: options.c:2382 - --append cannot be used with --whole-file.
         // Only an explicit `--whole-file` (Some(true)) conflicts; the default
         // (None) and `--no-whole-file` (Some(false)) are accepted.
@@ -298,7 +314,13 @@ impl ClientConfigBuilder {
                 });
             }
 
-            if self.partial_dir.is_some() {
+            // upstream: compat.c:777-778 - when CF_INPLACE_PARTIAL_DIR is
+            // negotiated, the receiver enables per-file inplace for basis
+            // files retrieved from the partial directory, allowing the
+            // otherwise-conflicting pair.
+            let inplace_partial_allowed =
+                caps.contains(protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR);
+            if self.partial_dir.is_some() && !inplace_partial_allowed {
                 return Err(ConfigConflict {
                     option1: mode,
                     option2: "partial-dir",
@@ -309,8 +331,22 @@ impl ClientConfigBuilder {
     }
 
     /// Finalises the builder and constructs a [`ClientConfig`].
+    ///
+    /// Performs upstream-compatible promotions before materialising the
+    /// config:
+    ///
+    /// - `--checksum-choice=none` promotes `whole_file` to `Some(true)`.
+    ///   Mirrors upstream `checksum.c:197-198`, which assigns
+    ///   `whole_file = 1` whenever the negotiated transfer checksum is
+    ///   `CSUM_NONE`. The delta pipeline cannot run without a transfer
+    ///   checksum, so whole-file transfer is the only valid mode.
     #[must_use]
-    pub fn build(self) -> ClientConfig {
+    pub fn build(mut self) -> ClientConfig {
+        // upstream: checksum.c:197-198 parse_checksum_choice() forces
+        // `whole_file = 1` unconditionally when `xfer_sum_nni->num == CSUM_NONE`.
+        if self.checksum_choice.transfer_is_none() {
+            self.whole_file = Some(true);
+        }
         ClientConfig {
             transfer_args: self.transfer_args,
             dry_run: self.dry_run,
