@@ -180,6 +180,36 @@ mod runtime_options_tests {
     }
 
     #[test]
+    fn parse_max_connections_option() {
+        let args = vec![OsString::from("--max-connections"), OsString::from("4")];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.max_connections, Some(NonZeroUsize::new(4).unwrap()));
+    }
+
+    #[test]
+    fn parse_max_connections_zero_is_rejected() {
+        let args = vec![OsString::from("--max-connections"), OsString::from("0")];
+        assert!(RuntimeOptions::parse(&args).is_err());
+    }
+
+    #[test]
+    fn parse_max_connections_non_numeric_is_rejected() {
+        let args = vec![OsString::from("--max-connections"), OsString::from("nope")];
+        assert!(RuntimeOptions::parse(&args).is_err());
+    }
+
+    #[test]
+    fn duplicate_max_connections_is_rejected() {
+        let args = vec![
+            OsString::from("--max-connections"),
+            OsString::from("2"),
+            OsString::from("--max-connections"),
+            OsString::from("3"),
+        ];
+        assert!(RuntimeOptions::parse(&args).is_err());
+    }
+
+    #[test]
     fn parse_bwlimit_option() {
         let args = vec![OsString::from("--bwlimit"), OsString::from("1000")];
         let options = RuntimeOptions::parse(&args).expect("parse");

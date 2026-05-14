@@ -10,6 +10,13 @@ struct AcceptLoopState<'a> {
     connection_counter: ConnectionCounter,
     start_time: SystemTime,
     max_sessions: Option<usize>,
+    /// Concurrent connection cap consulted by the accept loop before
+    /// dispatching a worker. `None` disables the check.
+    ///
+    /// upstream: clientserver.c:744-756 enforces the per-module `max
+    /// connections` directive via `claim_connection()`; this cap mirrors
+    /// the same behaviour at the daemon level.
+    max_connections: Option<usize>,
     config_path: &'a Option<PathBuf>,
     connection_limiter: &'a Option<Arc<ConnectionLimiter>>,
     modules: Arc<Vec<ModuleRuntime>>,
@@ -94,6 +101,56 @@ fn check_signals_and_maintain(
     }
 
     Ok(None)
+}
+
+/// Refuses an accepted socket once the daemon hits its concurrent
+/// connection cap.
+///
+/// Returns `true` if the socket was refused (the caller should skip
+/// spawning a worker and drop the stream), or `false` if admission
+/// should proceed. When the cap is hit, writes
+/// `@ERROR: max connections (N) reached -- try again later\n` to the
+/// stream (matching upstream's wording byte for byte). The accept loop
+/// keeps running.
+///
+/// upstream: clientserver.c:744-756 - `claim_connection()` enforces the
+/// per-module `lp_max_connections()` cap and emits
+/// `@ERROR: max connections (%d) reached -- try again later\n` to the
+/// client via `io_printf(f_out, ...)`.
+fn refuse_if_at_capacity(
+    stream: &mut TcpStream,
+    peer_addr: SocketAddr,
+    state: &AcceptLoopState<'_>,
+) -> bool {
+    let Some(limit) = state.max_connections else {
+        return false;
+    };
+
+    if state.connection_counter.active() < limit {
+        return false;
+    }
+
+    // Mirror upstream wording exactly. The trailing newline is part of the
+    // protocol-framed `@ERROR:` reply (`io_printf` writes the literal `\n`).
+    let payload = format!("@ERROR: max connections ({limit}) reached -- try again later\n");
+    if let Err(error) = stream.write_all(payload.as_bytes())
+        && let Some(log) = state.log_sink.as_ref()
+    {
+        let text =
+            format!("failed to deliver max-connections refusal to {peer_addr}: {error}");
+        let message = rsync_warning!(text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+    let _ = stream.flush();
+
+    if let Some(log) = state.log_sink.as_ref() {
+        let text =
+            format!("refused connection from {peer_addr}: max connections ({limit}) reached");
+        let message = rsync_info!(text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+
+    true
 }
 
 /// Spawns a worker thread for an accepted connection.
@@ -228,7 +285,7 @@ fn run_single_listener_loop(
         }
 
         match listener.accept() {
-            Ok((stream, raw_peer_addr)) => {
+            Ok((mut stream, raw_peer_addr)) => {
                 if let Err(error) = stream.set_nonblocking(false) {
                     if let Some(log) = state.log_sink.as_ref() {
                         let text = format!(
@@ -241,6 +298,11 @@ fn run_single_listener_loop(
                 }
 
                 apply_client_options(&stream, &state.client_socket_options, state.log_sink.as_ref());
+
+                if refuse_if_at_capacity(&mut stream, raw_peer_addr, state) {
+                    drop(stream);
+                    continue;
+                }
 
                 let handle = spawn_connection_worker(stream, raw_peer_addr, state);
                 state.workers.push(handle);
@@ -340,8 +402,13 @@ fn run_dual_stack_loop(
 
         // Use recv_timeout to allow periodic worker reaping and signal checks
         match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(Ok((stream, raw_peer_addr))) => {
+            Ok(Ok((mut stream, raw_peer_addr))) => {
                 apply_client_options(&stream, &state.client_socket_options, state.log_sink.as_ref());
+
+                if refuse_if_at_capacity(&mut stream, raw_peer_addr, state) {
+                    drop(stream);
+                    continue;
+                }
 
                 let handle = spawn_connection_worker(stream, raw_peer_addr, state);
                 state.workers.push(handle);

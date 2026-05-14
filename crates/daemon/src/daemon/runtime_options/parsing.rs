@@ -71,6 +71,11 @@ impl RuntimeOptions {
             {
                 let max = parse_max_sessions(&value)?;
                 options.set_max_sessions(max)?;
+            } else if let Some(value) =
+                take_option_value(argument, &mut iter, "--max-connections")?
+            {
+                let max = parse_max_connections(&value)?;
+                options.set_max_connections(max)?;
             } else if argument == "--ipv4" {
                 options.force_address_family(AddressFamily::Ipv4)?;
             } else if argument == "--ipv6" {

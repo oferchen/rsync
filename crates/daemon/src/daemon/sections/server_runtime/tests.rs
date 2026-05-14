@@ -693,3 +693,195 @@ fn apply_stream_socket_options_empty_is_noop() {
     let stream = TcpStream::connect(addr).expect("connect");
     apply_socket_options_to_stream(&stream, &[]).expect("empty options should succeed");
 }
+
+/// Builds an [`AcceptLoopState`] suitable for unit tests that exercise
+/// admission control without spinning up a full daemon.
+///
+/// All borrowed fields point into long-lived storage owned by the caller,
+/// so the test must keep `signal_flags`, `config_path`, `limiter`, `log`
+/// and `notifier` alive for the duration of the borrow.
+fn test_accept_loop_state<'a>(
+    signal_flags: &'a SignalFlags,
+    config_path: &'a Option<PathBuf>,
+    limiter: &'a Option<Arc<ConnectionLimiter>>,
+    log_sink: &'a Option<SharedLogSink>,
+    notifier: &'a systemd::ServiceNotifier,
+    counter: ConnectionCounter,
+    max_connections: Option<usize>,
+) -> AcceptLoopState<'a> {
+    AcceptLoopState {
+        signal_flags,
+        workers: Vec::new(),
+        served: 0,
+        active_connections: 0,
+        connection_counter: counter,
+        start_time: SystemTime::now(),
+        max_sessions: None,
+        max_connections,
+        config_path,
+        connection_limiter: limiter,
+        modules: Arc::new(Vec::new()),
+        motd_lines: Arc::new(Vec::new()),
+        log_sink,
+        notifier,
+        client_socket_options: Arc::new(Vec::new()),
+        bandwidth_limit: None,
+        bandwidth_burst: None,
+        reverse_lookup: false,
+        proxy_protocol: false,
+    }
+}
+
+/// Reads the first line emitted by the daemon refusal.
+///
+/// `@ERROR:` lines are newline-terminated, so we read until `\n` and trim
+/// the terminator before comparison.
+fn read_error_line(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set read timeout");
+    let mut buf = Vec::with_capacity(96);
+    let mut byte = [0u8; 1];
+    loop {
+        let n = stream.read(&mut byte).expect("read refusal payload");
+        if n == 0 {
+            break;
+        }
+        if byte[0] == b'\n' {
+            break;
+        }
+        buf.push(byte[0]);
+    }
+    String::from_utf8(buf).expect("UTF-8 refusal payload")
+}
+
+fn no_op_signal_flags() -> SignalFlags {
+    SignalFlags {
+        reload_config: Arc::new(AtomicBool::new(false)),
+        shutdown: Arc::new(AtomicBool::new(false)),
+        graceful_exit: Arc::new(AtomicBool::new(false)),
+        progress_dump: Arc::new(AtomicBool::new(false)),
+    }
+}
+
+#[test]
+fn refuse_if_at_capacity_admits_when_no_cap_configured() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let client_handle = thread::spawn(move || TcpStream::connect(local).expect("connect"));
+    let (mut server_stream, peer) = listener.accept().expect("accept");
+    let _client = client_handle.join().expect("client connect");
+
+    let flags = no_op_signal_flags();
+    let config_path: Option<PathBuf> = None;
+    let limiter: Option<Arc<ConnectionLimiter>> = None;
+    let log_sink: Option<SharedLogSink> = None;
+    let notifier = systemd::ServiceNotifier::new();
+    let counter = ConnectionCounter::new();
+    // Acquire two guards; with no cap configured the helper still admits.
+    let _g1 = counter.acquire();
+    let _g2 = counter.acquire();
+    let state = test_accept_loop_state(
+        &flags,
+        &config_path,
+        &limiter,
+        &log_sink,
+        &notifier,
+        counter.clone(),
+        None,
+    );
+
+    assert!(!refuse_if_at_capacity(&mut server_stream, peer, &state));
+}
+
+#[test]
+fn accept_loop_refuses_when_at_capacity() {
+    // Simulate max_connections = 2. Two guards are already held by
+    // existing workers, so a third connection must be refused with the
+    // upstream-compatible `@ERROR: max connections (2) reached -- try
+    // again later` line, after which the accept loop is expected to
+    // keep running.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let client_handle =
+        thread::spawn(move || TcpStream::connect(local).expect("connect third client"));
+    let (mut server_stream, peer) = listener.accept().expect("accept third client");
+    let mut client_stream = client_handle.join().expect("client connect");
+
+    let flags = no_op_signal_flags();
+    let config_path: Option<PathBuf> = None;
+    let limiter: Option<Arc<ConnectionLimiter>> = None;
+    let log_sink: Option<SharedLogSink> = None;
+    let notifier = systemd::ServiceNotifier::new();
+    let counter = ConnectionCounter::new();
+    // Two active workers already hold guards.
+    let _g1 = counter.acquire();
+    let _g2 = counter.acquire();
+    assert_eq!(counter.active(), 2);
+
+    let state = test_accept_loop_state(
+        &flags,
+        &config_path,
+        &limiter,
+        &log_sink,
+        &notifier,
+        counter.clone(),
+        Some(2),
+    );
+
+    assert!(refuse_if_at_capacity(&mut server_stream, peer, &state));
+
+    // The client must observe the exact upstream wording before EOF.
+    let line = read_error_line(&mut client_stream);
+    assert_eq!(
+        line, "@ERROR: max connections (2) reached -- try again later",
+        "refusal payload must mirror upstream clientserver.c:752"
+    );
+
+    // The accept loop is expected to keep running: dropping the server
+    // stream is what closes the refused socket, and the counter is
+    // untouched (no guard acquired for the refused peer).
+    drop(server_stream);
+    assert_eq!(counter.active(), 2);
+}
+
+#[test]
+fn accept_loop_recovers_after_disconnect() {
+    // Same setup as `accept_loop_refuses_when_at_capacity`, but after
+    // releasing one of the two active guards a new connection must be
+    // admitted instead of refused.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let client_handle =
+        thread::spawn(move || TcpStream::connect(local).expect("connect after drain"));
+    let (mut server_stream, peer) = listener.accept().expect("accept after drain");
+    let _client = client_handle.join().expect("client connect");
+
+    let flags = no_op_signal_flags();
+    let config_path: Option<PathBuf> = None;
+    let limiter: Option<Arc<ConnectionLimiter>> = None;
+    let log_sink: Option<SharedLogSink> = None;
+    let notifier = systemd::ServiceNotifier::new();
+    let counter = ConnectionCounter::new();
+    let g1 = counter.acquire();
+    let _g2 = counter.acquire();
+    assert_eq!(counter.active(), 2);
+
+    let state = test_accept_loop_state(
+        &flags,
+        &config_path,
+        &limiter,
+        &log_sink,
+        &notifier,
+        counter.clone(),
+        Some(2),
+    );
+
+    // Drop one worker's guard - simulating a finished session.
+    drop(g1);
+    assert_eq!(counter.active(), 1);
+
+    // Admission must now proceed (return value `false`) and the helper
+    // must not write a refusal line to the socket.
+    assert!(!refuse_if_at_capacity(&mut server_stream, peer, &state));
+}
