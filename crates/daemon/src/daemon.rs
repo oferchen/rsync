@@ -106,24 +106,31 @@ pub(crate) const LEGACY_SECRETS_ENV: &str = "RSYNCD_SECRETS";
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Error payload returned to clients while daemon functionality is incomplete.
-const HANDSHAKE_ERROR_PAYLOAD: &str = "@ERROR: daemon functionality is unavailable in this build";
+pub(crate) const HANDSHAKE_ERROR_PAYLOAD: &str =
+    "@ERROR: daemon functionality is unavailable in this build";
 /// Error payload sent when a host is denied access to a module.
 ///
 /// upstream: clientserver.c:733 - `@ERROR: access denied to %s from %s (%s)\n`
 /// where args are (name, host, addr).
-const ACCESS_DENIED_PAYLOAD: &str = "@ERROR: access denied to {module} from {host} ({addr})";
+pub(crate) const ACCESS_DENIED_PAYLOAD: &str =
+    "@ERROR: access denied to {module} from {host} ({addr})";
 /// Error payload sent when authentication fails on a protected module.
 ///
 /// upstream: clientserver.c:762 - `@ERROR: auth failed on module %s\n`
-const AUTH_FAILED_PAYLOAD: &str = "@ERROR: auth failed on module {module}";
+pub(crate) const AUTH_FAILED_PAYLOAD: &str = "@ERROR: auth failed on module {module}";
 /// Error payload returned when a requested module does not exist.
-const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
+///
+/// upstream: clientserver.c:730 - `@ERROR: Unknown module '%s'\n`
+pub(crate) const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";
 /// Error payload returned when a module reaches its connection cap.
-const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
+///
+/// upstream: clientserver.c:752 - `@ERROR: max connections (%d) reached -- try again later\n`
+pub(crate) const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
     "@ERROR: max connections ({limit}) reached -- try again later";
-/// Error payload returned when updating the connection lock file fails.
-const MODULE_LOCK_ERROR_PAYLOAD: &str =
-    "@ERROR: failed to update module connection lock; please try again later";
+/// Error payload returned when opening the module connection lock file fails.
+///
+/// upstream: clientserver.c:748 - `@ERROR: failed to open lock file\n`
+pub(crate) const MODULE_LOCK_ERROR_PAYLOAD: &str = "@ERROR: failed to open lock file";
 mod module_state;
 #[cfg(test)]
 use self::module_state::TEST_CONFIG_CANDIDATES;
