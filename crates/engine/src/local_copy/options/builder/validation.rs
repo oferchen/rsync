@@ -21,6 +21,16 @@ impl LocalCopyOptionsBuilder {
             });
         }
 
+        // upstream: options.c:2382 - --append cannot be used with --whole-file.
+        // Only an explicit `whole_file = Some(true)` conflicts; the default
+        // (None) and `--no-whole-file` (Some(false)) are accepted.
+        if self.append && self.whole_file == Some(true) {
+            return Err(BuilderError::ConflictingOptions {
+                option1: "append",
+                option2: "whole_file",
+            });
+        }
+
         if let (Some(min), Some(max)) = (self.min_file_size, self.max_file_size) {
             if min > max {
                 return Err(BuilderError::InvalidCombination {

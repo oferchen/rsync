@@ -603,6 +603,40 @@ mod validation {
     }
 
     #[test]
+    fn append_and_whole_file_conflict() {
+        // upstream: options.c:2382 - --append cannot be used with --whole-file.
+        let result = LocalCopyOptionsBuilder::new()
+            .append(true)
+            .whole_file(true)
+            .build();
+
+        assert!(matches!(
+            result,
+            Err(BuilderError::ConflictingOptions {
+                option1: "append",
+                option2: "whole_file"
+            })
+        ));
+    }
+
+    #[test]
+    fn append_with_no_whole_file_ok() {
+        // Explicit `--no-whole-file` is the upstream-compatible companion to --append.
+        let result = LocalCopyOptionsBuilder::new()
+            .append(true)
+            .whole_file(false)
+            .build();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn append_with_default_whole_file_ok() {
+        // Unset whole_file (None) leaves auto-detection to the engine.
+        let result = LocalCopyOptionsBuilder::new().append(true).build();
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn build_unchecked_skips_validation() {
         let options = LocalCopyOptionsBuilder::new()
             .size_only(true)
