@@ -1,0 +1,26 @@
+[package]
+name = "oc-rsync-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+rust-version = "1.88"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.protocol]
+path = "../crates/protocol"
+
+[[bin]]
+name = "protocol_wire"
+path = "fuzz_targets/protocol_wire.rs"
+test = false
+doc = false
+bench = false
+
+# Standalone workspace - excluded from the root workspace so that
+# `cargo build` does not pull libfuzzer-sys into ordinary builds.
+[workspace]
