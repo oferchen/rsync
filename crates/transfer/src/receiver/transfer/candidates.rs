@@ -124,7 +124,8 @@ impl ReceiverContext {
         let stat_results: Vec<(usize, PathBuf, Option<fs::Metadata>)> =
             crate::parallel_io::map_blocking(
                 stat_paths,
-                self.parallel_thresholds.stat,
+                self.parallel_thresholds
+                    .for_op(crate::parallel_io::ParallelOp::Stat),
                 move |(idx, file_path)| {
                     let meta = fs::metadata(&file_path).ok();
                     (idx, file_path, meta)

@@ -203,7 +203,7 @@ pub use delta_pipeline::{
 };
 pub use parallel_io::{
     DEFAULT_DELETION_THRESHOLD, DEFAULT_METADATA_THRESHOLD, DEFAULT_SIGNATURE_THRESHOLD,
-    DEFAULT_STAT_THRESHOLD, ParallelThresholds,
+    DEFAULT_STAT_THRESHOLD, ParallelOp, ParallelThresholds,
 };
 pub use pipeline::{
     DEFAULT_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW, MIN_PIPELINE_WINDOW, PendingTransfer,
