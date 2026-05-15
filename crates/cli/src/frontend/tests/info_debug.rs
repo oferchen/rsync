@@ -31,6 +31,7 @@ fn info_progress2_enables_progress_output() {
     assert!(metadata.file_type().is_fifo());
 }
 
+#[cfg(unix)]
 #[test]
 fn info_stats_enables_summary_block() {
     use tempfile::tempdir;
