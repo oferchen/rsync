@@ -376,4 +376,48 @@ mod tests {
             "secs={secs} not in [{lower}, {upper}]"
         );
     }
+
+    /// Upstream renders the time overflow as `"  ??:??:??"` (10 chars, two
+    /// leading spaces inside the buffer; see `progress.c:119`). Our `render()`
+    /// returns the 8-character `"??:??:??"` and relies on the caller's
+    /// 10-wide right-aligned field to pad the leading spaces. Verify the
+    /// final on-the-wire form is byte-equivalent.
+    /// upstream: progress.c:118-119 rprint_progress
+    #[test]
+    fn overflow_sentinel_matches_upstream_after_padding() {
+        let mut est = RemainingTimeEstimator::new();
+        let t0 = Instant::now();
+        est.observe(t0, 0);
+        est.observe(t0 + Duration::from_secs(1), 1);
+        let rendered = est.render(t0 + Duration::from_secs(1), 1, u64::MAX);
+        assert_eq!(rendered, "??:??:??");
+        let on_wire = format!("{rendered:>10}");
+        assert_eq!(on_wire, "  ??:??:??");
+        assert_eq!(on_wire.len(), 10);
+    }
+
+    /// Boundary case at the upstream clamp threshold (`9999 * 3600` seconds).
+    /// Exactly at the limit must still render numerically; one second past
+    /// must collapse to the sentinel.
+    /// upstream: progress.c:118 rprint_progress
+    #[test]
+    fn overflow_boundary_exact_vs_off_by_one() {
+        // Construct synthetic samples so the computed `remain` lands precisely
+        // at the boundary, then one second beyond it.
+        let mut est = RemainingTimeEstimator::new();
+        let t0 = Instant::now();
+        est.observe(t0, 0);
+        est.observe(t0 + Duration::from_secs(1), 1);
+        let at_limit = MAX_REMAINING_SECS;
+        let over_limit = MAX_REMAINING_SECS + 1;
+        // Rate is 1 B/s; bytes_left = `at_limit` yields remain == at_limit.
+        assert_ne!(
+            est.render(t0 + Duration::from_secs(1), 1, 1 + at_limit),
+            "??:??:??"
+        );
+        assert_eq!(
+            est.render(t0 + Duration::from_secs(1), 1, 1 + over_limit),
+            "??:??:??"
+        );
+    }
 }
