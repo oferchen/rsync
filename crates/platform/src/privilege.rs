@@ -36,11 +36,17 @@ use std::path::Path;
 #[cfg(unix)]
 #[allow(unsafe_code)]
 pub fn apply_chroot(path: &Path) -> io::Result<()> {
+    // Declared locally because the `libc` crate's `tzset` export varies across
+    // versions and feature gates; `tzset()` is a POSIX-mandated C function with
+    // a stable ABI present in every Unix libc.
+    unsafe extern "C" {
+        fn tzset();
+    }
     // SAFETY: `tzset` is a thread-safe POSIX call with no parameters and no
     // pointer arguments. It reads `/etc/localtime` (or `$TZ`) and updates the
     // process-wide timezone state guarded by libc's internal lock.
     unsafe {
-        libc::tzset();
+        tzset();
     }
     nix::unistd::chroot(path).map_err(nix_to_io)?;
     std::env::set_current_dir("/")?;
