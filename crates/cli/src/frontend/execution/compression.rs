@@ -192,9 +192,10 @@ pub(crate) fn parse_compress_threads(argument: &OsStr) -> Result<Option<NonZeroU
         }
         Ok(_) => Err(rsync_error!(
             1,
-            "--compress-threads={} must be between 0 and {}",
-            trimmed,
-            COMPRESS_THREADS_MAX
+            format!(
+                "--compress-threads={} must be between 0 and {}",
+                trimmed, COMPRESS_THREADS_MAX
+            )
         )
         .with_role(Role::Client)),
         Err(_) => Err(
