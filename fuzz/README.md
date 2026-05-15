@@ -22,9 +22,10 @@ unstable compiler flags.
 
 ## Available targets
 
-| Target          | Entry point                                          |
-| --------------- | ---------------------------------------------------- |
-| `protocol_wire` | `protocol::BorrowedMessageFrames` (multiplex frames) |
+| Target                 | Entry point                                                              |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `protocol_wire`        | `protocol::BorrowedMessageFrames` (multiplex frames)                     |
+| `simd_checksum_parity` | `checksums` rolling + MD4/MD5 batch SIMD dispatchers vs scalar reference |
 
 ## Running
 
@@ -32,6 +33,7 @@ From the repository root:
 
 ```bash
 cargo +nightly fuzz run protocol_wire
+cargo +nightly fuzz run simd_checksum_parity
 ```
 
 Useful flags:
@@ -45,8 +47,20 @@ mkdir -p fuzz/corpus/protocol_wire
 cargo +nightly fuzz run protocol_wire fuzz/corpus/protocol_wire
 ```
 
-Crashes are written to `fuzz/artifacts/protocol_wire/`. Reproduce a crash by
+Crashes are written to `fuzz/artifacts/<target>/`. Reproduce a crash by
 re-running the target with the artifact path appended.
+
+### `simd_checksum_parity`
+
+Cross-checks every runtime-selected SIMD checksum dispatcher
+(`RollingChecksum::update`, `strong::md5_digest_batch`,
+`strong::md4_digest_batch`) against an independent scalar reference for each
+arbitrary libFuzzer input. The on-tree `checksums::run_simd_self_test` uses a
+fixed input sweep; this target relies on coverage-guided fuzzing to reach
+shapes outside that sweep (odd remainders past SIMD lane boundaries, repeated
+byte patterns, adversarial transitions across MD4/MD5 block boundaries, ...).
+Any byte-level disagreement panics, which libFuzzer records as a finding
+under `fuzz/artifacts/simd_checksum_parity/`.
 
 ## Adding more targets
 
