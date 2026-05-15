@@ -11,6 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use logging::info_log;
+
 use crate::local_copy::overrides::create_hard_link;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
@@ -108,6 +110,16 @@ pub(super) fn process_links(
             }
         }
 
+        // upstream: hlink.c:236 - rprintf(code, "%s => %s\n", fname, realname)
+        // emitted at INFO_GTE(NAME, 1) when a hard link is created via --link-dest.
+        info_log!(
+            Name,
+            1,
+            "{} => {}",
+            record_path.display(),
+            link_target.display()
+        );
+
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
@@ -168,6 +180,16 @@ pub(super) fn process_links(
             }
         }
 
+        // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1) when an
+        // already-copied inode is hard-linked into place.
+        info_log!(
+            Name,
+            1,
+            "{} => {}",
+            record_path.display(),
+            existing_target.display()
+        );
+
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
@@ -210,6 +232,10 @@ pub(super) fn process_links(
     {
         match decision {
             ReferenceDecision::Skip => {
+                // upstream: generator.c:1010,1133 / rsync.c:676 - "is uptodate"
+                // emitted at INFO_GTE(NAME, 2) when a reference-directory match
+                // means no transfer is needed.
+                info_log!(Name, 2, "{} is uptodate", record_path.display());
                 context.summary_mut().record_regular_file_matched();
                 let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
                 let total_bytes = Some(metadata_snapshot.len());
@@ -313,6 +339,9 @@ pub(super) fn process_links(
                     )?;
                     #[cfg(all(any(unix, windows), feature = "acl"))]
                     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+                    // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1)
+                    // when a hard link is created from a reference directory.
+                    info_log!(Name, 1, "{} => {}", record_path.display(), path.display());
                     context.record_hard_link(metadata, destination);
                     context.summary_mut().record_hard_link();
                     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
@@ -350,4 +379,73 @@ pub(super) fn process_links(
         copy_source_override,
         completed: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    //! Pinning tests for `--info=NAME` level 1/2 emissions in the local-copy
+    //! link path. Strings are matched byte-for-byte against upstream rsync.
+    //!
+    //! upstream: log.c log_item / send_directory NAME emissions
+    //! upstream: hlink.c:236 ("=>"), generator.c:1010/1133 ("is uptodate").
+
+    use logging::{
+        DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init,
+    };
+
+    fn init_name_level(level: u8) {
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.name = level;
+        init(cfg);
+        let _ = drain_events();
+    }
+
+    fn name_messages() -> Vec<String> {
+        drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Info {
+                    flag: InfoFlag::Name,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn local_copy_hard_link_emission_matches_upstream() {
+        // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1)
+        init_name_level(1);
+        info_log!(Name, 1, "{} => {}", "out/file.txt", "ref/file.txt");
+        let msgs = name_messages();
+        assert!(
+            msgs.iter().any(|m| m == "out/file.txt => ref/file.txt"),
+            "missing upstream hardlink => wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn local_copy_uptodate_emission_matches_upstream() {
+        // upstream: rsync.c:672-676 - "%s is uptodate" at INFO_GTE(NAME, 2)
+        init_name_level(2);
+        info_log!(Name, 2, "{} is uptodate", "out/file.txt");
+        let msgs = name_messages();
+        assert!(
+            msgs.iter().any(|m| m == "out/file.txt is uptodate"),
+            "missing upstream `is uptodate` wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn local_copy_uptodate_suppressed_below_level_two() {
+        // upstream: rsync.c:672 - INFO_GTE(NAME, 2) gates the emission
+        init_name_level(1);
+        info_log!(Name, 2, "{} is uptodate", "out/file.txt");
+        assert!(
+            name_messages().is_empty(),
+            "uptodate emission must be gated at NAME level 2"
+        );
+    }
 }

@@ -8,9 +8,7 @@
 use std::fs;
 use std::path::Path;
 
-use logging::debug_log;
-#[cfg(unix)]
-use logging::info_log;
+use logging::{debug_log, info_log};
 
 use crate::generator::ItemFlags;
 use crate::receiver::ReceiverContext;
@@ -77,6 +75,9 @@ impl ReceiverContext {
                     // upstream: generator.c:1565 - symlink up-to-date, metadata only
                     let iflags = ItemFlags::from_raw(0);
                     let _ = self.emit_itemize(writer, &iflags, entry);
+                    // upstream: log.c log_item / send_directory NAME emissions
+                    // upstream: generator.c:1133 - "%s is uptodate" at INFO_GTE(NAME, 2)
+                    info_log!(Name, 2, "{} is uptodate", relative_path.display());
                     continue;
                 }
                 let _ = std::fs::remove_file(&link_path);
@@ -218,6 +219,15 @@ impl ReceiverContext {
                                 // upstream: hlink.c - hardlink already correct, metadata only
                                 let iflags = ItemFlags::from_raw(0);
                                 let _ = self.emit_itemize(writer, &iflags, entry);
+                                // upstream: hlink.c:223 - "%s is uptodate"
+                                // emitted at INFO_GTE(NAME, 2) when the
+                                // destination already hard-links to the leader.
+                                info_log!(
+                                    Name,
+                                    2,
+                                    "{} is uptodate",
+                                    relative_path.display()
+                                );
                                 continue;
                             }
                         }
@@ -254,6 +264,15 @@ impl ReceiverContext {
                             | ItemFlags::ITEM_IS_NEW,
                     );
                     let _ = self.emit_itemize(writer, &iflags, entry);
+                    // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1)
+                    // when a hardlink follower is linked to its leader.
+                    info_log!(
+                        Name,
+                        1,
+                        "{} => {}",
+                        relative_path.display(),
+                        leader_path.display()
+                    );
                 }
             }
 
@@ -325,6 +344,83 @@ mod tests {
 
         let result = fast_io::hard_link(&src, &dst);
         assert!(result.is_err());
+    }
+
+    /// Verifies the hardlink `%s => %s` and `%s is uptodate` emission shapes
+    /// match upstream rsync byte-for-byte.
+    ///
+    /// upstream: log.c log_item / send_directory NAME emissions
+    /// upstream: hlink.c:223 (`"is uptodate"`) and hlink.c:236 (`"=>"`).
+    #[test]
+    fn hardlink_name_level_emission_shape_matches_upstream() {
+        use logging::{
+            DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init,
+        };
+
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.name = 2;
+        init(cfg);
+        let _ = drain_events();
+
+        let follower = std::path::Path::new("dir/follower");
+        let leader = std::path::Path::new("dir/leader");
+        info_log!(Name, 1, "{} => {}", follower.display(), leader.display());
+        info_log!(Name, 2, "{} is uptodate", follower.display());
+
+        let messages: Vec<String> = drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Info {
+                    flag: InfoFlag::Name,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            messages.iter().any(|m| m == "dir/follower => dir/leader"),
+            "missing upstream hardlink => emission: {messages:?}"
+        );
+        assert!(
+            messages.iter().any(|m| m == "dir/follower is uptodate"),
+            "missing upstream `is uptodate` emission: {messages:?}"
+        );
+    }
+
+    /// Verifies NAME emissions are suppressed when the flag level is below
+    /// the emission level.
+    #[test]
+    fn hardlink_name_emissions_suppressed_at_level_zero() {
+        use logging::{
+            DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init,
+        };
+
+        let cfg = VerbosityConfig::default();
+        init(cfg);
+        let _ = drain_events();
+
+        info_log!(Name, 1, "src => dst");
+        info_log!(Name, 2, "src is uptodate");
+
+        let messages: Vec<_> = drain_events()
+            .into_iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    DiagnosticEvent::Info {
+                        flag: InfoFlag::Name,
+                        ..
+                    }
+                )
+            })
+            .collect();
+
+        assert!(
+            messages.is_empty(),
+            "NAME emissions must be gated by InfoFlag::Name level: {messages:?}"
+        );
     }
 
     /// Verifies consistent availability: the function returns the same
