@@ -22,6 +22,14 @@ pub struct TransferProgressEvent<'a> {
     pub files_done: usize,
     /// Total number of files to transfer.
     pub total_files: usize,
+    /// Whether the file list is complete (no more INC_RECURSE sub-lists pending).
+    ///
+    /// Mirrors upstream's global `flist_eof` flag, which controls the
+    /// `to-chk` vs `ir-chk` suffix on the per-file progress line.
+    ///
+    /// upstream: progress.c:79-82 rprint_progress - prints
+    /// `flist_eof ? "to" : "ir"` as the chk prefix.
+    pub flist_eof: bool,
 }
 
 /// Callback trait for transfer progress reporting.
