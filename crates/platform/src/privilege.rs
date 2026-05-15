@@ -283,6 +283,87 @@ mod tests {
         );
     }
 
+    /// End-to-end smoke test for the `apply_chroot` -> log-timestamp path:
+    /// drives the function with a fixed POSIX `TZ` offset and asserts that
+    /// a post-call `localtime_r` resolves the expected local hour. This
+    /// pins the contract upstream rsync 3.4.2 added: `tzset()` is invoked
+    /// during `apply_chroot` so that timestamps emitted after the chroot
+    /// syscall reflect the host timezone instead of UTC.
+    ///
+    /// Steps (no root required, chroot is allowed to fail):
+    ///   1. Set `TZ=EST5` (UTC-5, no DST) under a process-wide mutex.
+    ///   2. Call `apply_chroot` with a non-existent path. The inline
+    ///      `tzset()` runs before the chroot syscall errors out.
+    ///   3. Convert a fixed UTC epoch with `localtime_r` and assert the
+    ///      local hour matches EST5.
+    ///
+    /// upstream: clientserver.c rsync_module / start_accept_loop with tzset
+    /// before chroot.
+    #[cfg(unix)]
+    #[test]
+    #[allow(unsafe_code)]
+    fn apply_chroot_caches_local_timezone_offset() {
+        use std::sync::{Mutex, OnceLock};
+
+        unsafe extern "C" {
+            fn tzset();
+        }
+
+        // `TZ` is process-wide global state; serialize against any other test
+        // in this module that mutates it.
+        static TZ_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = TZ_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+
+        // Save and restore `TZ` so we never leak the override to siblings.
+        let original = std::env::var_os("TZ");
+        // SAFETY: writes to `TZ` are protected by `TZ_LOCK` for the test
+        // scope. POSIX `setenv` is the supported mechanism for changing the
+        // libc-visible timezone.
+        unsafe {
+            std::env::set_var("TZ", "EST5");
+        }
+
+        // Trigger `apply_chroot` - the inner `tzset()` runs even though the
+        // chroot syscall fails on a non-existent path.
+        let chroot_err = apply_chroot(Path::new("/nonexistent_oc_tzset_cache_probe")).unwrap_err();
+        assert!(
+            chroot_err.kind() == io::ErrorKind::PermissionDenied
+                || chroot_err.kind() == io::ErrorKind::NotFound,
+            "unexpected chroot error: {:?}",
+            chroot_err.kind()
+        );
+
+        // 2026-01-01T00:00:00Z - winter epoch, no DST ambiguity under EST5.
+        // `i64` matches the 64-bit `time_t` used by glibc, musl 1.2+, and Apple
+        // libc on the targets we build; avoids the deprecated `libc::time_t`
+        // alias that triggers a hard error on musl under `-D deprecated`.
+        let utc_epoch: i64 = 1_767_225_600;
+        // SAFETY: `tm` is a plain-old-data layout; zero-init is valid.
+        let mut local_tm: libc::tm = unsafe { std::mem::zeroed() };
+        // SAFETY: `localtime_r` writes into a stack-allocated `tm` we own.
+        // The returned pointer aliases that buffer; we only read `tm_hour`.
+        let ret = unsafe { libc::localtime_r(&utc_epoch, &mut local_tm) };
+        assert!(!ret.is_null(), "localtime_r returned null for EST5 epoch");
+
+        // EST5 is UTC-5 with no DST: 00:00 UTC -> 19:00 previous day local.
+        assert_eq!(
+            local_tm.tm_hour, 19,
+            "tzset cache miss: expected hour=19 under TZ=EST5, got {}",
+            local_tm.tm_hour
+        );
+
+        // Restore `TZ` and re-prime libc so later tests in the same process
+        // observe the original timezone.
+        // SAFETY: still holding `_guard`; the mutation is exclusive.
+        unsafe {
+            match original {
+                Some(value) => std::env::set_var("TZ", value),
+                None => std::env::remove_var("TZ"),
+            }
+            tzset();
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn drop_privileges_fails_for_nonexistent_uid_when_root() {
