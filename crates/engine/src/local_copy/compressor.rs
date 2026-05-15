@@ -212,7 +212,11 @@ mod tests {
         if compress::zstd::SUPPORTS_MULTITHREAD {
             assert!(some.is_ok());
         } else {
-            assert_eq!(some.unwrap_err().kind(), io::ErrorKind::Unsupported);
+            let err = match some {
+                Ok(_) => panic!("expected Unsupported when zstdmt is off"),
+                Err(e) => e,
+            };
+            assert_eq!(err.kind(), io::ErrorKind::Unsupported);
         }
     }
 
