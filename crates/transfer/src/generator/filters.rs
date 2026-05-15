@@ -271,8 +271,7 @@ impl GeneratorContext {
 /// the pattern string. This restores them so downstream rule compilation
 /// observes the user's original intent.
 fn reconstruct_pattern(wire_rule: &FilterRuleWireFormat) -> String {
-    let mut pattern =
-        String::with_capacity(wire_rule.pattern.len() + 2);
+    let mut pattern = String::with_capacity(wire_rule.pattern.len() + 2);
     if wire_rule.anchored && !wire_rule.pattern.starts_with('/') {
         pattern.push('/');
     }
