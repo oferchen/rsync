@@ -1,4 +1,5 @@
 use std::io;
+use std::num::NonZeroU8;
 
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::{CompressionLevel, CountingZlibEncoder};
@@ -25,20 +26,37 @@ pub enum ActiveCompressor {
 impl ActiveCompressor {
     /// Creates a compressor for `algorithm` using the provided compression `level`.
     pub fn new(algorithm: CompressionAlgorithm, level: CompressionLevel) -> io::Result<Self> {
+        Self::new_with_workers(algorithm, level, None)
+    }
+
+    /// Creates a compressor with an optional zstd worker thread count.
+    /// `workers` only affects zstd; other algorithms ignore the value.
+    /// upstream: `token.c:701` plumbs `do_compression_threads` into
+    /// `ZSTD_c_nbWorkers`.
+    pub fn new_with_workers(
+        algorithm: CompressionAlgorithm,
+        level: CompressionLevel,
+        workers: Option<NonZeroU8>,
+    ) -> io::Result<Self> {
         match algorithm {
             CompressionAlgorithm::Zlib => Ok(Self::Zlib(CountingZlibEncoder::new(level))),
             #[cfg(feature = "lz4")]
             CompressionAlgorithm::Lz4 => Ok(Self::Lz4(CountingLz4Encoder::new(level))),
             #[cfg(feature = "zstd")]
-            CompressionAlgorithm::Zstd => CountingZstdEncoder::new(level).map(Self::Zstd),
+            CompressionAlgorithm::Zstd => {
+                CountingZstdEncoder::new_with_workers(level, workers).map(Self::Zstd)
+            }
             #[allow(unreachable_patterns)]
-            _ => Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "compression algorithm {} is not supported",
-                    algorithm.name()
-                ),
-            )),
+            _ => {
+                let _ = workers;
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "compression algorithm {} is not supported",
+                        algorithm.name()
+                    ),
+                ))
+            }
         }
     }
 
@@ -171,6 +189,31 @@ mod tests {
         assert!(compressor.is_ok());
         let compressor = compressor.unwrap();
         assert!(matches!(compressor, ActiveCompressor::Zstd(_)));
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn active_compressor_zstd_workers_dispatches_to_encoder() {
+        // None produces a single-threaded encoder. Some(_) either succeeds
+        // (zstdmt on) or returns Unsupported (zstdmt off). Never silently drops.
+        let none = ActiveCompressor::new_with_workers(
+            CompressionAlgorithm::Zstd,
+            CompressionLevel::Default,
+            None,
+        )
+        .expect("workers=None");
+        assert!(matches!(none, ActiveCompressor::Zstd(_)));
+
+        let some = ActiveCompressor::new_with_workers(
+            CompressionAlgorithm::Zstd,
+            CompressionLevel::Default,
+            NonZeroU8::new(4),
+        );
+        if compress::zstd::SUPPORTS_MULTITHREAD {
+            assert!(some.is_ok());
+        } else {
+            assert_eq!(some.unwrap_err().kind(), io::ErrorKind::Unsupported);
+        }
     }
 
     #[cfg(feature = "zstd")]

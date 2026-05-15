@@ -8,11 +8,20 @@
 //! accounting to reuse the same code paths as zlib compression.
 
 use std::io::{self, BufReader, IoSliceMut, Read, Write};
+use std::num::NonZeroU8;
 
 use crate::algorithm::CompressionAlgorithm;
 use crate::common::{CountingSink, CountingWriter};
 use crate::zlib::CompressionLevel;
 use zstd::stream::{read::Decoder as ZstdDecoder, write::Encoder as ZstdEncoder};
+
+/// Indicates whether this build has multithreaded zstd compression compiled in.
+///
+/// `true` when the `zstdmt` Cargo feature is enabled, allowing
+/// `--compress-threads=N` (N > 0) to engage real zstd worker threads. `false`
+/// otherwise, in which case requesting workers returns
+/// [`std::io::ErrorKind::Unsupported`] so the caller can fall back gracefully.
+pub const SUPPORTS_MULTITHREAD: bool = cfg!(feature = "zstdmt");
 
 /// Streaming encoder that records the number of compressed bytes produced.
 pub struct CountingZstdEncoder<W = CountingSink>
@@ -37,6 +46,16 @@ impl CountingZstdEncoder<CountingSink> {
     /// ```
     pub fn new(level: CompressionLevel) -> io::Result<Self> {
         Self::with_sink(CountingSink, level)
+    }
+
+    /// Like [`new`](Self::new) but plumbs `--compress-threads=N` through to
+    /// zstd's `ZSTD_c_nbWorkers`. `None` matches upstream's
+    /// `do_compression_threads = 0` default.
+    pub fn new_with_workers(
+        level: CompressionLevel,
+        workers: Option<NonZeroU8>,
+    ) -> io::Result<Self> {
+        Self::with_sink_workers(CountingSink, level, workers)
     }
 
     /// Completes the stream and returns the total number of compressed bytes generated.
@@ -65,8 +84,25 @@ where
     /// assert!(bytes_written > 0);
     /// ```
     pub fn with_sink(sink: W, level: CompressionLevel) -> io::Result<Self> {
+        Self::with_sink_workers(sink, level, None)
+    }
+
+    /// Like [`with_sink`](Self::with_sink) but plumbs `--compress-threads=N`
+    /// through to `ZSTD_c_nbWorkers`. `None` keeps zstd single-threaded
+    /// (matches upstream's `do_compression_threads = 0` default). Requesting
+    /// `Some(_)` when the `zstdmt` Cargo feature is disabled returns
+    /// `Unsupported` so callers can fall back gracefully.
+    ///
+    /// upstream: `token.c:701`, `options.c:89`.
+    pub fn with_sink_workers(
+        sink: W,
+        level: CompressionLevel,
+        workers: Option<NonZeroU8>,
+    ) -> io::Result<Self> {
         let writer = CountingWriter::new(sink);
-        let encoder = ZstdEncoder::new(writer, zstd_level(level)).map_err(io::Error::other)?;
+        let mut encoder =
+            ZstdEncoder::new(writer, zstd_level(level)).map_err(io::Error::other)?;
+        configure_workers(&mut encoder, workers)?;
         Ok(Self { inner: encoder })
     }
 
@@ -218,6 +254,26 @@ pub fn decompress_into(input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> 
 #[must_use]
 pub const fn default_algorithm() -> CompressionAlgorithm {
     CompressionAlgorithm::Zstd
+}
+
+// upstream: token.c:701 - ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_nbWorkers, do_compression_threads).
+fn configure_workers<W: Write>(
+    encoder: &mut ZstdEncoder<'static, CountingWriter<W>>,
+    workers: Option<NonZeroU8>,
+) -> io::Result<()> {
+    let Some(n) = workers else { return Ok(()) };
+    #[cfg(feature = "zstdmt")]
+    {
+        encoder.multithread(u32::from(n.get())).map_err(io::Error::other)
+    }
+    #[cfg(not(feature = "zstdmt"))]
+    {
+        let _ = (encoder, n);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "zstd multithreaded compression requires the `zstdmt` Cargo feature",
+        ))
+    }
 }
 
 // upstream: token.c:init_compression_level() - ZSTD_CLEVEL_DEFAULT is 3,
@@ -528,6 +584,27 @@ mod tests {
         let decompressed = decompress_to_vec(&compressed).expect("decompress");
         let expected: Vec<u8> = tokens.iter().flat_map(|t| t.iter().copied()).collect();
         assert_eq!(decompressed, expected);
+    }
+
+    #[test]
+    fn workers_path_round_trip_and_smoke() {
+        // None matches upstream's `do_compression_threads = 0`. Some(_) either
+        // succeeds under `zstdmt` or returns Unsupported - never silently drops.
+        for workers in [None, NonZeroU8::new(4)] {
+            let result = CountingZstdEncoder::with_sink_workers(
+                Vec::new(),
+                CompressionLevel::Default,
+                workers,
+            );
+            if workers.is_some() && !SUPPORTS_MULTITHREAD {
+                assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+                continue;
+            }
+            let mut encoder = result.expect("encoder");
+            encoder.write(b"payload").unwrap();
+            let (compressed, _) = encoder.finish_into_inner().unwrap();
+            assert_eq!(decompress_to_vec(&compressed).unwrap(), b"payload");
+        }
     }
 
     #[test]
