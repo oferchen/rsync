@@ -133,6 +133,23 @@ When `INFO_GTE(PROGRESS, 2)`:
 19. **No `want_progress_now` / `instant_progress` equivalent**: upstream forces a single tick when external code sets the flag (e.g. before printing a non-progress line). We have no path to flush a final tick out of band.
 20. **No 1500 ms backfill of the start anchor**: upstream's `ph_start` heuristic seeds from the previous file's last sample if recent (`progress.c:208-218`). Our `overall_start` is fixed at observer construction (`progress.rs:181`) and per-file elapsed comes from the engine, so the boundary case (long pause then resume) reports a low rate for the first second of the new file.
 
+## 4a. Stalled-Transfer Remaining-Time Rendering
+
+### Upstream (`progress.c:102-125`)
+
+- After computing `rate` from the window delta, upstream picks `remain` with the ternary `remain = rate ? (double) (size - ofs) / rate / 1000.0 : 0.0;` (`progress.c:105`). When the oldest retained sample's `ofs` equals the current `ofs` (a stalled window: network paused, sender starved, etc.), `rate` collapses to `0` and `remain` becomes `0.0`.
+- The render guard `if (remain < 0 || remain > 9999.0 * 3600.0)` (`progress.c:118`) is false for `remain == 0.0`, so the line prints `   0:00:00` rather than the `??:??:??` placeholder.
+- The placeholder is reserved for the negative-ETA branch and the >9999h clamp; a true stall renders as `0:00:00`.
+
+### Ours
+
+- `RemainingTimeEstimator::remaining_seconds` returns `Some(0.0)` when the window is primed and `bytes_delta == 0` (`format/remaining.rs`), mirroring upstream's ternary collapse.
+- `render` then emits `0:00:00`, byte-identical to upstream's snprintf output (minus upstream's left-padded width, which is restored by `live.rs`'s `{:>10}` field formatter).
+
+### Discrepancies
+
+D7. **Stalled-transfer rendering** (RESOLVED): `remaining_seconds` returns `Some(0.0)` on a primed-but-stalled window so the rendered line matches upstream's `   0:00:00` output during a stall. Previously the function returned `None`, which rendered `??:??:??` and diverged from upstream. upstream: progress.c:105 rprint_progress.
+
 ## 5. Final Summary Line ("sent X bytes ...")
 
 ### Upstream (`main.c:451-461`)
@@ -183,7 +200,8 @@ total size is {total_size_display}  speedup is {speedup:.2}{dry_run_suffix}
 | 4 | Rate divisor base | `progress.c:108-111` | `rate.rs:81-87` | major |
 | 5 | ETA vs elapsed | `progress.c:97-105` | `live.rs:117-124,161-168` | RESOLVED |
 | 6 | ETA width | `progress.c:121-122` | `format/remaining.rs:106-114` | RESOLVED |
-| 7 | In-flight tail | `progress.c:100` | `live.rs:103-106` | major |
+| 7 | Stalled-transfer remaining-time | `progress.c:105` | `format/remaining.rs::remaining_seconds` | RESOLVED |
+| 7b | In-flight tail | `progress.c:100` | `live.rs:103-106` | major |
 | 8 | `to-chk` vs `ir-chk` | `progress.c:78-82` | `live.rs:106`, `render.rs:192` | major |
 | 9 | xfr#N counter source | `progress.c:78-82` | `progress.rs:215-217` | major |
 | 10 | First-tick path line vs CR | `progress.c:129`, `progress.c:158-165` | `live.rs:79-101` | minor |
@@ -205,9 +223,10 @@ total size is {total_size_display}  speedup is {speedup:.2}{dry_run_suffix}
 | 26 | Leading blank line | `main.c:452` | `render.rs:83-89` (caller-driven) | minor |
 | 27 | Speedup grouping | `main.c:459` | `render.rs:326` | minor |
 
-Total discrepancies recorded: **27** (one row, #25, agrees by coincidence).
-Resolved to date: D5, D6, D17, D18 (sliding-window remaining-time estimator;
-see `crates/cli/src/frontend/progress/format/remaining.rs`).
+Total discrepancies recorded: **28** (one row, #25, agrees by coincidence).
+Resolved to date: D5, D6, D7, D17, D18 (sliding-window remaining-time
+estimator and stalled-transfer rendering; see
+`crates/cli/src/frontend/progress/format/remaining.rs`).
 
 ## 7. Verification Recipe
 
