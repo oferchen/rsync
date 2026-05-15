@@ -61,8 +61,26 @@ impl GeneratorContext {
         self.file_list.reserve(FLIST_START);
         self.full_paths.reserve(FLIST_START);
 
+        let relative_paths = self.config.flags.relative;
+        // upstream: flist.c:send_implied_dirs() - every parent directory of a
+        // --relative source must be present in the file list so the receiver
+        // can find it via flist_find_name() (generator.c:1313). We track
+        // emitted ancestors across sources to avoid duplicate entries.
+        let mut implied_ancestors: HashSet<PathBuf> = HashSet::new();
         for base_path in base_paths {
-            self.walk_path(base_path, base_path.clone())?;
+            // upstream: flist.c:2316 - --relative splits on "/./" so the dir
+            // before the anchor is the base and everything after is the
+            // transmitted relative name. Without an anchor the entire path is
+            // the relative name (with the leading "/" stripped post-sort).
+            let (base, path) = if relative_paths {
+                relative_walk_base(base_path)
+            } else {
+                (base_path.clone(), base_path.clone())
+            };
+            if relative_paths {
+                self.emit_implied_parents(&base, &path, &mut implied_ancestors)?;
+            }
+            self.walk_path(&base, path)?;
         }
 
         // upstream: flist.c:f_name_cmp() - sort both arrays via indirect permutation.
@@ -224,6 +242,113 @@ impl GeneratorContext {
 
         Ok(count)
     }
+
+    /// Emits a directory entry for every implied ancestor of a `--relative`
+    /// source path between `base` and `path`.
+    ///
+    /// Without inc-recurse, upstream rsync requires every parent directory of
+    /// a relative source to be present in the file list so the receiver's
+    /// `flist_find_name()` lookup at `generator.c:1313` succeeds. This walks
+    /// from the path closest to `base` down to the source itself (exclusive),
+    /// stat-ing each ancestor and recording it once via `implied_seen` to
+    /// deduplicate across multiple source arguments.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1901-1980` - `send_implied_dirs()`
+    /// - `generator.c:1300-1315` - parent dir presence check
+    fn emit_implied_parents(
+        &mut self,
+        base: &Path,
+        path: &Path,
+        implied_seen: &mut HashSet<PathBuf>,
+    ) -> io::Result<()> {
+        let relative = path.strip_prefix(base).unwrap_or(path);
+        let parent = match relative.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => return Ok(()),
+        };
+
+        // Build ancestor list from shallowest to deepest, excluding the
+        // source path itself (which walk_path will record).
+        let mut ancestors: Vec<PathBuf> = Vec::new();
+        let mut current = parent.to_path_buf();
+        loop {
+            ancestors.push(current.clone());
+            match current.parent() {
+                Some(p) if !p.as_os_str().is_empty() => current = p.to_path_buf(),
+                _ => break,
+            }
+        }
+
+        for relative_ancestor in ancestors.into_iter().rev() {
+            if !implied_seen.insert(relative_ancestor.clone()) {
+                continue;
+            }
+            let full = base.join(&relative_ancestor);
+            let meta = match std::fs::symlink_metadata(&full) {
+                Ok(m) if m.is_dir() => m,
+                _ => continue,
+            };
+            if let Ok(entry) = self.create_entry(&full, relative_ancestor, &meta) {
+                self.push_file_item(entry, full);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Splits a source path for `--relative` mode into (base, full path).
+///
+/// Mirrors upstream rsync's `--relative` handling in `flist.c:2316-2350`:
+///
+/// - When the path contains `/./`, everything before the anchor becomes the
+///   base (treated as `dir` upstream) and everything after becomes the
+///   transmitted relative name.
+/// - Without an anchor, the entire path is the relative name. Absolute paths
+///   keep their root; the receiver strips the leading `/` post-sort
+///   (`flist.c:3071-3084`). Relative paths use `.` as the base so
+///   `strip_prefix` yields the original path verbatim.
+///
+/// The returned `base` is what `walk_path` strips from each child path to
+/// compute its wire-side relative name.
+fn relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
+    // upstream: flist.c:2316 - `if ((p = strstr(fbuf, "/./")) != NULL)`
+    if let Some(anchor) = find_dot_dir_anchor(path) {
+        let path_str = path.as_os_str().to_string_lossy();
+        let (head, tail) = path_str.split_at(anchor);
+        // Skip the "/./" separator (3 chars) and any extra leading slashes.
+        let rest = tail[3..].trim_start_matches('/');
+        let base = if head.is_empty() {
+            PathBuf::from("/")
+        } else {
+            PathBuf::from(head)
+        };
+        let full = if rest.is_empty() {
+            base.clone()
+        } else {
+            base.join(rest)
+        };
+        return (base, full);
+    }
+
+    // upstream: flist.c:2329 - no "/./" anchor: the entire path is the
+    // relative name. Use "/" as base for absolute paths (the leading slash is
+    // stripped by the receiver per flist.c:3071) and "." for relative paths.
+    let base = if path.has_root() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(".")
+    };
+    (base, path.to_path_buf())
+}
+
+/// Locates the byte offset of `/./` in a path, used as the `--relative`
+/// anchor separator.
+fn find_dot_dir_anchor(path: &Path) -> Option<usize> {
+    let s = path.as_os_str().to_str()?;
+    s.find("/./")
 }
 
 /// Applies a source-based permutation to two parallel slices in-place.

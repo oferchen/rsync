@@ -2161,6 +2161,125 @@ mod files_from {
         assert!(names.contains(&"."), "expected dot entry in {names:?}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn relative_absolute_source_preserves_full_prefix() {
+        // upstream: flist.c:2329 - no "/./" anchor on an absolute source path
+        // sends the entire path (minus the leading slash, stripped post-sort
+        // by the receiver) as the relative name. Regression test for #4074.
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("usr").join("bin");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("ar"), b"x").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.relative = true;
+        config.flags.recursive = true;
+        config.args = vec![OsString::from(&src_dir)];
+        let mut ctx = GeneratorContext::new(&handshake, config);
+
+        ctx.build_file_list(&[src_dir.clone()]).unwrap();
+        let names: Vec<String> = ctx
+            .file_list()
+            .iter()
+            .map(|e| e.path().to_string_lossy().into_owned())
+            .collect();
+
+        // The transmitted relative name for the source directory must contain
+        // the parent components (e.g. ".../usr/bin"), not collapse to ".".
+        let temp_suffix = src_dir.strip_prefix("/").unwrap().to_string_lossy();
+        assert!(
+            names.iter().any(|n| n == &temp_suffix),
+            "expected source dir relative name {temp_suffix:?} in {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.ends_with("usr/bin/ar")),
+            "expected child to retain path prefix in {names:?}"
+        );
+        // Every parent ancestor must be present so the receiver can resolve
+        // generator.c:1313 parent-lookup without ABORTING.
+        for ancestor in src_dir
+            .ancestors()
+            .skip(1)
+            .take_while(|p| p.parent().is_some())
+        {
+            let rel = ancestor.strip_prefix("/").unwrap().to_string_lossy();
+            if rel.is_empty() {
+                continue;
+            }
+            assert!(
+                names.iter().any(|n| n == &rel),
+                "missing implied parent {rel:?} in {names:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relative_dot_anchor_splits_base_and_relative() {
+        // upstream: flist.c:2316 - `/./` anchor splits source: dir before the
+        // anchor is treated as the base, the rest becomes the relative name.
+        let temp_dir = TempDir::new().unwrap();
+        let anchored = temp_dir.path().join("root");
+        let leaf = anchored.join("usr").join("bin");
+        std::fs::create_dir_all(&leaf).unwrap();
+        std::fs::write(leaf.join("ar"), b"x").unwrap();
+
+        // Construct path with explicit "/./" separator.
+        let src_with_anchor = PathBuf::from(format!("{}/./usr/bin", anchored.to_string_lossy()));
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.relative = true;
+        config.flags.recursive = true;
+        let mut ctx = GeneratorContext::new(&handshake, config);
+        ctx.build_file_list(&[src_with_anchor]).unwrap();
+
+        let names: Vec<String> = ctx
+            .file_list()
+            .iter()
+            .map(|e| e.path().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "usr/bin"),
+            "expected anchored relative name 'usr/bin' in {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "usr/bin/ar"),
+            "expected child 'usr/bin/ar' in {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "usr"),
+            "expected implied parent 'usr' in {names:?}"
+        );
+    }
+
+    #[test]
+    fn non_relative_mode_uses_basename() {
+        // Without --relative, a directory source still collapses to "." with
+        // children named by basename only. Guards against the relative-mode
+        // fix accidentally changing default behaviour.
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("payload");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("file.txt"), b"x").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.relative = false;
+        config.flags.recursive = true;
+        let mut ctx = GeneratorContext::new(&handshake, config);
+        ctx.build_file_list(&[src_dir]).unwrap();
+
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(names.contains(&"."), "expected '.' entry in {names:?}");
+        assert!(
+            names.contains(&"file.txt"),
+            "expected 'file.txt' in {names:?}"
+        );
+    }
+
     #[test]
     fn build_file_list_with_base_skips_missing_files() {
         let temp_dir = TempDir::new().unwrap();
