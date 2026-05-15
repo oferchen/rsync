@@ -31,7 +31,6 @@ fn info_progress2_enables_progress_output() {
     assert!(metadata.file_type().is_fifo());
 }
 
-
 #[test]
 fn info_none_disables_progress_output() {
     use tempfile::tempdir;
