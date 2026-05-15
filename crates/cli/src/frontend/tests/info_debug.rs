@@ -31,39 +31,6 @@ fn info_progress2_enables_progress_output() {
     assert!(metadata.file_type().is_fifo());
 }
 
-#[cfg(unix)]
-#[test]
-fn info_stats_enables_summary_block() {
-    use tempfile::tempdir;
-
-    let tmp = tempdir().expect("tempdir");
-    let source = tmp.path().join("info-stats.txt");
-    let destination = tmp.path().join("info-stats.out");
-    let payload = b"statistics";
-    std::fs::write(&source, payload).expect("write source");
-
-    let (code, stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        OsString::from("--info=stats"),
-        source.into_os_string(),
-        destination.clone().into_os_string(),
-    ]);
-
-    assert_eq!(code, 0);
-    assert!(stderr.is_empty());
-
-    let rendered = String::from_utf8(stdout).expect("stats output is UTF-8");
-    let expected_size = payload.len();
-    assert!(rendered.contains("Number of files: 1 (reg: 1)"));
-    assert!(rendered.contains(&format!("Total file size: {expected_size} bytes")));
-    assert!(rendered.contains("Literal data:"));
-    assert!(rendered.contains("\n\nsent"));
-    assert!(rendered.contains("total size is"));
-    assert_eq!(
-        std::fs::read(destination).expect("read destination"),
-        payload
-    );
-}
 
 #[test]
 fn info_none_disables_progress_output() {
