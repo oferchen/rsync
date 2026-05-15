@@ -34,7 +34,7 @@ pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) progress_mode: Option<ProgressMode>,
     pub(crate) human_readable_mode: HumanReadableMode,
     pub(crate) itemize_changes: bool,
-    pub(crate) stats: bool,
+    pub(crate) stats_level: u8,
     pub(crate) verbosity: u8,
     pub(crate) list_only: bool,
     pub(crate) dry_run: bool,
@@ -61,7 +61,7 @@ where
         progress_mode: requested_progress_mode,
         human_readable_mode,
         itemize_changes,
-        stats,
+        stats_level,
         verbosity,
         list_only,
         dry_run,
@@ -92,7 +92,8 @@ where
     match result {
         Ok(summary) => {
             let progress_rendered_live = live_progress.as_ref().is_some_and(LiveProgress::rendered);
-            let suppress_updated_only_totals = itemize_changes && !stats && verbosity == 0;
+            let suppress_updated_only_totals =
+                itemize_changes && stats_level == 0 && verbosity == 0;
 
             if let Some(observer) = live_progress
                 && let Err(error) = observer.finish()
@@ -108,7 +109,7 @@ where
                     &summary,
                     verbosity,
                     requested_progress_mode,
-                    stats,
+                    stats_level,
                     progress_rendered_live,
                     list_only,
                     dry_run,
@@ -134,7 +135,7 @@ where
                     summary: &summary,
                     log: &mut log,
                     verbosity,
-                    stats,
+                    stats_level,
                     list_only,
                     name_level,
                     name_overridden,
@@ -172,7 +173,7 @@ struct EmitLogOutputParams<'a> {
     summary: &'a ClientSummary,
     log: &'a mut LogFileConfig,
     verbosity: u8,
-    stats: bool,
+    stats_level: u8,
     list_only: bool,
     name_level: NameOutputLevel,
     name_overridden: bool,
@@ -185,7 +186,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         summary,
         log,
         verbosity,
-        stats,
+        stats_level,
         list_only,
         name_level,
         name_overridden,
@@ -196,7 +197,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         summary,
         verbosity,
         None,
-        stats,
+        stats_level,
         false,
         list_only,
         false,

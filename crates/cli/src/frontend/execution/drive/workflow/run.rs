@@ -316,13 +316,23 @@ where
         Err(unsupported) => return fail_with_message(unsupported.to_message(), stderr),
     };
 
+    // upstream: options.c:2055 `if (do_stats) parse_output_words("stats2", ...)`
+    // (or "stats3" with `-vv`). The legacy `--stats` flag maps to level 2; with
+    // higher verbosity it bumps to level 3. A subsequent `--info=statsN` token
+    // overrides this default inside `parse_info_settings`.
+    let initial_stats_level: u8 = if stats {
+        if verbosity > 1 { 3 } else { 2 }
+    } else {
+        0
+    };
+
     let settings_inputs = options::SettingsInputs {
         info: &info,
         debug: &debug,
         itemize_changes,
         out_format: out_format.as_ref(),
         initial_progress,
-        initial_stats: stats,
+        initial_stats_level,
         initial_name_level,
         initial_name_overridden,
         bwlimit: &bwlimit,
@@ -345,7 +355,7 @@ where
     let options::DerivedSettings {
         out_format_template,
         progress_mode,
-        stats,
+        stats_level,
         name_level,
         name_overridden,
         debug_flags_list,
@@ -765,7 +775,7 @@ where
         inc_recursive_send: inc_recursive,
         verbosity,
         progress_mode,
-        stats,
+        stats: stats_level > 0,
         debug_flags_list,
         partial,
         preallocate,
@@ -852,7 +862,7 @@ where
             progress_mode,
             human_readable_mode,
             itemize_changes,
-            stats,
+            stats_level,
             verbosity,
             list_only,
             dry_run,

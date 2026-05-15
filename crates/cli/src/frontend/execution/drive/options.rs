@@ -34,7 +34,7 @@ pub(crate) struct SettingsInputs<'a> {
     pub(crate) itemize_changes: bool,
     pub(crate) out_format: Option<&'a OsString>,
     pub(crate) initial_progress: ProgressSetting,
-    pub(crate) initial_stats: bool,
+    pub(crate) initial_stats_level: u8,
     pub(crate) initial_name_level: NameOutputLevel,
     pub(crate) initial_name_overridden: bool,
     pub(crate) bwlimit: &'a Option<BandwidthArgument>,
@@ -58,7 +58,7 @@ pub(crate) struct SettingsInputs<'a> {
 pub(crate) struct DerivedSettings {
     pub(crate) out_format_template: Option<OutFormat>,
     pub(crate) progress_mode: Option<ProgressMode>,
-    pub(crate) stats: bool,
+    pub(crate) stats_level: u8,
     pub(crate) name_level: NameOutputLevel,
     pub(crate) name_overridden: bool,
     pub(crate) debug_flags_list: Vec<OsString>,
@@ -90,7 +90,7 @@ pub(crate) enum SettingsOutcome {
 /// Result of parsing info flags.
 struct InfoFlagsResult {
     progress_setting: ProgressSetting,
-    stats: bool,
+    stats_level: u8,
     name_level: NameOutputLevel,
     name_overridden: bool,
 }
@@ -101,7 +101,7 @@ fn parse_info_settings<Out, Err>(
     stderr: &mut MessageSink<Err>,
     info_args: &[OsString],
     initial_progress: ProgressSetting,
-    initial_stats: bool,
+    initial_stats_level: u8,
     initial_name_level: NameOutputLevel,
     initial_name_overridden: bool,
 ) -> Result<InfoFlagsResult, i32>
@@ -110,14 +110,14 @@ where
     Err: Write,
 {
     let mut progress_setting = initial_progress;
-    let mut stats = initial_stats;
+    let mut stats_level = initial_stats_level;
     let mut name_level = initial_name_level;
     let mut name_overridden = initial_name_overridden;
 
     if info_args.is_empty() {
         return Ok(InfoFlagsResult {
             progress_setting,
-            stats,
+            stats_level,
             name_level,
             name_overridden,
         });
@@ -137,8 +137,11 @@ where
                 ProgressSetting::Unspecified => {}
                 value => progress_setting = value,
             }
+            // upstream: options.c parse_output_words assigns the level verbatim
+            // (clamped to MAX_OUT_LEVEL). `--info=statsN` therefore overrides
+            // the legacy `--stats` flag's default level instead of OR-ing with it.
             if let Some(level) = settings.stats {
-                stats = level > 0;
+                stats_level = level;
             }
             if let Some(level) = settings.name {
                 name_level = level;
@@ -158,7 +161,7 @@ where
 
             Ok(InfoFlagsResult {
                 progress_setting,
-                stats,
+                stats_level,
                 name_level,
                 name_overridden,
             })
@@ -525,7 +528,7 @@ where
         stderr,
         inputs.info,
         inputs.initial_progress,
-        inputs.initial_stats,
+        inputs.initial_stats_level,
         inputs.initial_name_level,
         inputs.initial_name_overridden,
     ) {
@@ -575,7 +578,7 @@ where
     SettingsOutcome::Proceed(Box::new(DerivedSettings {
         out_format_template,
         progress_mode: info_result.progress_setting.resolved(),
-        stats: info_result.stats,
+        stats_level: info_result.stats_level,
         name_level: info_result.name_level,
         name_overridden: info_result.name_overridden,
         debug_flags_list,
