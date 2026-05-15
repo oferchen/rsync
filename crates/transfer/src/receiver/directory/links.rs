@@ -9,6 +9,7 @@ use std::fs;
 use std::path::Path;
 
 use logging::{debug_log, info_log};
+use protocol::flist::{trace_leader_is, trace_looking_for_leader, trace_virtual_first};
 
 use crate::generator::ItemFlags;
 use crate::receiver::ReceiverContext;
@@ -181,7 +182,7 @@ impl ReceiverContext {
             }
 
             // Second pass: link followers to their leaders.
-            for entry in &self.file_list {
+            for (follower_ndx, entry) in self.file_list.iter().enumerate() {
                 if !entry.flags().hlinked() || entry.flags().hlink_first() {
                     continue;
                 }
@@ -190,9 +191,14 @@ impl ReceiverContext {
                     None => continue,
                 };
 
+                let entry_name = entry.path().display().to_string();
                 let leader_path = match tracker.leader_path(leader_idx) {
                     Some(p) => p.to_path_buf(),
                     None => {
+                        // upstream: hlink.c HLINK debug emissions
+                        // No leader recorded: matches `virtual first` in upstream
+                        // when a prior file in the group was skipped.
+                        trace_virtual_first(follower_ndx as i32, &entry_name, leader_idx as i32);
                         debug_log!(
                             Recv,
                             1,
@@ -203,6 +209,16 @@ impl ReceiverContext {
                         continue;
                     }
                 };
+                // upstream: hlink.c HLINK debug emissions
+                // Pre-resolution diagnostic plus the final `leader is` message.
+                trace_looking_for_leader(follower_ndx as i32, &entry_name, leader_idx as i32);
+                trace_leader_is(
+                    follower_ndx as i32,
+                    &entry_name,
+                    leader_idx as i32,
+                    leader_idx as i32,
+                    &leader_path.display().to_string(),
+                );
 
                 let relative_path = entry.path();
                 let link_path = dest_dir.join(relative_path);
@@ -429,6 +445,50 @@ mod tests {
         assert_eq!(
             first, second,
             "io_uring LINKAT availability must be consistent"
+        );
+    }
+
+    /// Verifies the receiver-side `--debug=HLINK` follower emission shape
+    /// matches upstream `hlink.c:hard_link_check()` byte-for-byte.
+    ///
+    /// upstream: hlink.c HLINK debug emissions
+    #[test]
+    fn hardlink_debug_hlink_leader_emission_matches_upstream() {
+        use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+        use protocol::flist::{trace_leader_is, trace_looking_for_leader, trace_virtual_first};
+
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.hlink = 2;
+        init(cfg);
+        let _ = drain_events();
+
+        trace_looking_for_leader(4, "dir/follower", 1);
+        trace_leader_is(4, "dir/follower", 1, 1, "dest/leader");
+        trace_virtual_first(5, "dir/orphan", 2);
+
+        let msgs: Vec<String> = drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Hlink,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            msgs.iter()
+                .any(|m| m == "hlink for 4 (dir/follower,1): looking for a leader")
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m == "hlink for 4 (dir/follower,1): leader is 1 (dest/leader)")
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m == "hlink for 5 (dir/orphan,2): virtual first")
         );
     }
 }
