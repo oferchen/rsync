@@ -2334,8 +2334,11 @@ fn pooled_bytes_budget_drops_oversized_buffers() {
 
     let b1 = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 300 * 1024 * 1024);
     let b2 = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 300 * 1024 * 1024);
-    assert!(b1.capacity() >= ADAPTIVE_BUFFER_HUGE);
-    assert!(b2.capacity() >= ADAPTIVE_BUFFER_HUGE);
+    // BufferGuard derefs to &[u8]; the slice length reflects the requested
+    // adaptive size and is sufficient to confirm the fixture before exercising
+    // the budget rejection path on drop.
+    assert!(b1.len() >= ADAPTIVE_BUFFER_HUGE);
+    assert!(b2.len() >= ADAPTIVE_BUFFER_HUGE);
     drop(b1);
     drop(b2);
 
