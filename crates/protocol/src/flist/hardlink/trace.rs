@@ -46,7 +46,14 @@ pub fn trace_hashtable_for_dev(role: ProcessRole, dev: u64) {
 /// upstream: hlink.c:305 - `"hlink for %d (%s,%d): virtual first"`.
 #[inline]
 pub fn trace_virtual_first(ndx: i32, name: &str, gnum: i32) {
-    debug_log!(Hlink, 2, "hlink for {} ({},{}): virtual first", ndx, name, gnum);
+    debug_log!(
+        Hlink,
+        2,
+        "hlink for {} ({},{}): virtual first",
+        ndx,
+        name,
+        gnum
+    );
 }
 
 /// Traces a follower deferred while the leader transfer is in flight (level 2).

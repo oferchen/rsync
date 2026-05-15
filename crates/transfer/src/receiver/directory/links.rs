@@ -198,11 +198,7 @@ impl ReceiverContext {
                         // upstream: hlink.c HLINK debug emissions
                         // No leader recorded: matches `virtual first` in upstream
                         // when a prior file in the group was skipped.
-                        trace_virtual_first(
-                            follower_ndx as i32,
-                            &entry_name,
-                            leader_idx as i32,
-                        );
+                        trace_virtual_first(follower_ndx as i32, &entry_name, leader_idx as i32);
                         debug_log!(
                             Recv,
                             1,
