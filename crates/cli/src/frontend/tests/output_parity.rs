@@ -47,12 +47,20 @@ fn create_known_summary(file_contents: &[(&str, &[u8])]) -> (ClientSummary, Temp
 }
 
 fn render_stats(summary: &ClientSummary, human_readable: HumanReadableMode) -> String {
+    render_stats_at_level(summary, human_readable, 2)
+}
+
+fn render_stats_at_level(
+    summary: &ClientSummary,
+    human_readable: HumanReadableMode,
+    level: u8,
+) -> String {
     let mut rendered = Vec::new();
     emit_transfer_summary(
         summary,
         0,
         None,
-        true,  // stats
+        level, // stats_level
         false, // progress_already_rendered
         false, // list_only
         false, // dry_run
@@ -74,7 +82,7 @@ fn render_verbose(summary: &ClientSummary, verbosity: u8) -> String {
         summary,
         verbosity,
         None,
-        false, // stats
+        0,     // stats_level
         false, // progress_already_rendered
         false, // list_only
         false, // dry_run
@@ -141,14 +149,17 @@ fn parity_stats_output_contains_all_upstream_field_labels() {
         output.contains("File list size:"),
         "missing 'File list size:' label in:\n{output}"
     );
-    assert!(
-        output.contains("File list generation time:"),
-        "missing 'File list generation time:' label in:\n{output}"
-    );
-    assert!(
-        output.contains("File list transfer time:"),
-        "missing 'File list transfer time:' label in:\n{output}"
-    );
+    // File list timing lines are emitted only when at least one timing exceeds
+    // 1 ms, matching upstream's `if (stats.flist_buildtime)` guard
+    // (main.c:437). Local-only transfers may complete sub-millisecond, in which
+    // case both lines are absent (this matches upstream rsync behaviour, so the
+    // assertion below tolerates either presence).
+    if output.contains("File list generation time:") {
+        assert!(
+            output.contains("File list transfer time:"),
+            "transfer-time line must accompany generation-time line:\n{output}"
+        );
+    }
     assert!(
         output.contains("Total bytes sent:"),
         "missing 'Total bytes sent:' label in:\n{output}"
@@ -164,7 +175,9 @@ fn parity_stats_output_field_order_matches_upstream() {
     let (summary, _temp) = create_known_summary(&[("order.txt", b"test content")]);
     let output = render_stats(&summary, HumanReadableMode::Disabled);
 
-    // Upstream rsync emits stats in a fixed order; verify ours matches
+    // Upstream rsync emits stats in a fixed order. The File-list timing
+    // lines are conditional on `stats.flist_buildtime > 0` (main.c:437);
+    // when both are sub-millisecond they are omitted on both sides.
     let labels = [
         "Number of files:",
         "Number of created files:",
@@ -183,9 +196,15 @@ fn parity_stats_output_field_order_matches_upstream() {
 
     let mut last_pos = 0;
     for label in &labels {
-        let pos = output.find(label).unwrap_or_else(|| {
+        let Some(pos) = output.find(label) else {
+            // Tolerate absent flist-timing labels (sub-ms transfers).
+            if label.starts_with("File list generation time:")
+                || label.starts_with("File list transfer time:")
+            {
+                continue;
+            }
             panic!("label {label:?} not found in stats output:\n{output}");
-        });
+        };
         assert!(
             pos >= last_pos,
             "label {label:?} at position {pos} appears before previous label at {last_pos}; order mismatch in:\n{output}"
@@ -444,7 +463,7 @@ fn parity_totals_only_without_stats_flag() {
         &summary,
         1, // verbosity
         None,
-        false, // stats=false
+        0, // stats_level (off)
         false,
         false, // list_only
         false, // dry_run
@@ -488,6 +507,121 @@ fn parity_totals_human_readable_mode_uses_units() {
     assert!(
         totals_line.contains("bytes/sec"),
         "totals line should still end with 'bytes/sec': {totals_line:?}"
+    );
+}
+
+// upstream: main.c output_summary (rsync-3.4.2:416-465) and handle_stats
+// (rsync-3.4.2:325-385) - --info=stats1/2/3 gating
+#[test]
+fn parity_stats_level_1_emits_only_summary_lines() {
+    let (summary, _temp) = create_known_summary(&[("lvl1.txt", b"level one")]);
+    let output = render_stats_at_level(&summary, HumanReadableMode::Disabled, 1);
+
+    // Level 1 emits only the "sent X bytes received Y bytes" + "total size"
+    // pair, matching upstream's INFO_GTE(STATS, 1) block (main.c:451-461).
+    assert!(
+        output.contains("sent "),
+        "level 1 must include 'sent' summary line:\n{output}"
+    );
+    assert!(
+        output.contains("total size is "),
+        "level 1 must include 'total size is' summary line:\n{output}"
+    );
+    assert!(
+        output.contains("speedup is "),
+        "level 1 must include speedup token:\n{output}"
+    );
+
+    // Level-2 detail block lines must be absent at level 1.
+    for forbidden in [
+        "Number of files:",
+        "Number of created files:",
+        "Number of deleted files:",
+        "Number of regular files transferred:",
+        "Total file size:",
+        "Total transferred file size:",
+        "Literal data:",
+        "Matched data:",
+        "File list size:",
+        "Total bytes sent:",
+        "Total bytes received:",
+    ] {
+        assert!(
+            !output.contains(forbidden),
+            "level 1 must NOT include '{forbidden}':\n{output}"
+        );
+    }
+}
+
+#[test]
+fn parity_stats_level_2_emits_full_detail_block_plus_summary() {
+    let (summary, _temp) = create_known_summary(&[("lvl2.txt", b"level two")]);
+    let output = render_stats_at_level(&summary, HumanReadableMode::Disabled, 2);
+
+    // Level 2 emits the full INFO_GTE(STATS, 2) detail block (main.c:418-449)
+    // followed by the level-1 summary (main.c:451-461).
+    for required in [
+        "Number of files:",
+        "Number of created files:",
+        "Number of deleted files:",
+        "Number of regular files transferred:",
+        "Total file size:",
+        "Total transferred file size:",
+        "Literal data:",
+        "Matched data:",
+        "File list size:",
+        "Total bytes sent:",
+        "Total bytes received:",
+        "sent ",
+        "total size is ",
+    ] {
+        assert!(
+            output.contains(required),
+            "level 2 must include '{required}':\n{output}"
+        );
+    }
+
+    // The detail block must precede the summary lines (single blank line
+    // separator, matching upstream's `rprintf(FCLIENT, "\n")` at main.c:452).
+    let bytes_received_pos = output
+        .find("Total bytes received:")
+        .expect("Total bytes received: must be present at level 2");
+    let sent_pos = output
+        .find("\nsent ")
+        .expect("sent summary must follow the detail block at level 2");
+    assert!(
+        bytes_received_pos < sent_pos,
+        "detail block must precede summary at level 2:\n{output}"
+    );
+}
+
+#[test]
+fn parity_stats_level_3_matches_level_2_plus_summary() {
+    // Upstream level 3 adds malloc/flist heap statistics from every process
+    // (main.c:333-337 calls show_malloc_stats/show_flist_stats). oc-rsync has
+    // no native heap statistics to surface, so level 3 emits the same user-
+    // facing block as level 2; the difference is purely in optional heap
+    // diagnostics which upstream itself only renders on MEM_ALLOC_INFO
+    // platforms. Asserting parity of the user-visible block is the relevant
+    // contract for wire-compatible scripting consumers.
+    let (summary, _temp) = create_known_summary(&[("lvl3.txt", b"level three")]);
+    let level_2 = render_stats_at_level(&summary, HumanReadableMode::Disabled, 2);
+    let level_3 = render_stats_at_level(&summary, HumanReadableMode::Disabled, 3);
+
+    assert_eq!(
+        level_3, level_2,
+        "level 3 user-visible output must match level 2 byte-for-byte"
+    );
+}
+
+#[test]
+fn parity_stats_level_0_emits_nothing() {
+    let (summary, _temp) = create_known_summary(&[("lvl0.txt", b"silent")]);
+    let output = render_stats_at_level(&summary, HumanReadableMode::Disabled, 0);
+
+    assert!(
+        output.is_empty(),
+        "level 0 must produce no stats output:\n{output:?}"
     );
 }
 
@@ -562,7 +696,7 @@ fn parity_verbose_v2_includes_descriptor_and_bytes() {
         &summary,
         2, // -vv
         None,
-        false,
+        0, // stats_level (off)
         false,
         false, // list_only
         false, // dry_run
