@@ -2,6 +2,7 @@
 //! `--compress-choice`, `--compress-level`, skip-compress suffix list) on
 //! [`LocalCopyOptions`].
 
+use std::num::NonZeroU8;
 use std::path::Path;
 
 use compress::algorithm::CompressionAlgorithm;
@@ -61,6 +62,22 @@ impl LocalCopyOptions {
     pub fn with_skip_compress(mut self, list: SkipCompressList) -> Self {
         self.skip_compress = list;
         self
+    }
+
+    /// Applies a `--compress-threads=N` request, forwarded to
+    /// `ZSTD_c_nbWorkers` when zstd is the active codec.
+    /// upstream: `options.c:89` / `token.c:701`.
+    #[must_use]
+    #[doc(alias = "--compress-threads")]
+    pub const fn with_compression_threads(mut self, workers: Option<NonZeroU8>) -> Self {
+        self.compression_threads = workers;
+        self
+    }
+
+    /// Returns the configured worker count for zstd compression, if any.
+    #[must_use]
+    pub const fn compression_threads(&self) -> Option<NonZeroU8> {
+        self.compression_threads
     }
 
     /// Returns whether compression is enabled for payload handling.
@@ -233,6 +250,17 @@ mod tests {
             .compress(false)
             .with_compression_algorithm(CompressionAlgorithm::Zstd);
         assert!(opts.effective_compression_algorithm().is_none());
+    }
+
+    #[test]
+    fn with_compression_threads_round_trips() {
+        assert_eq!(LocalCopyOptions::new().compression_threads(), None);
+        let opts = LocalCopyOptions::new().with_compression_threads(NonZeroU8::new(4));
+        assert_eq!(opts.compression_threads(), NonZeroU8::new(4));
+        assert_eq!(
+            opts.with_compression_threads(None).compression_threads(),
+            None
+        );
     }
 
     #[test]
