@@ -222,12 +222,7 @@ impl ReceiverContext {
                                 // upstream: hlink.c:223 - "%s is uptodate"
                                 // emitted at INFO_GTE(NAME, 2) when the
                                 // destination already hard-links to the leader.
-                                info_log!(
-                                    Name,
-                                    2,
-                                    "{} is uptodate",
-                                    relative_path.display()
-                                );
+                                info_log!(Name, 2, "{} is uptodate", relative_path.display());
                                 continue;
                             }
                         }
@@ -353,9 +348,7 @@ mod tests {
     /// upstream: hlink.c:223 (`"is uptodate"`) and hlink.c:236 (`"=>"`).
     #[test]
     fn hardlink_name_level_emission_shape_matches_upstream() {
-        use logging::{
-            DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init,
-        };
+        use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
 
         let mut cfg = VerbosityConfig::default();
         cfg.info.name = 2;
@@ -393,9 +386,7 @@ mod tests {
     /// the emission level.
     #[test]
     fn hardlink_name_emissions_suppressed_at_level_zero() {
-        use logging::{
-            DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init,
-        };
+        use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
 
         let cfg = VerbosityConfig::default();
         init(cfg);

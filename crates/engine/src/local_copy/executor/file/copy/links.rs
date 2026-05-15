@@ -389,9 +389,7 @@ mod tests {
     //! upstream: log.c log_item / send_directory NAME emissions
     //! upstream: hlink.c:236 ("=>"), generator.c:1010/1133 ("is uptodate").
 
-    use logging::{
-        DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init,
-    };
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
 
     fn init_name_level(level: u8) {
         let mut cfg = VerbosityConfig::default();
