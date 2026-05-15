@@ -131,6 +131,16 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
 ///
 /// Maps [`FilterRuleSpec`] (client-side representation) to [`FilterRuleWireFormat`]
 /// (protocol wire representation) for transmission to the remote server.
+///
+/// The `FilterRuleWireFormat::pattern` field stores the bare pattern with the
+/// leading `/` (anchored) and trailing `/` (directory-only) stripped. Those
+/// modifiers are encoded as separate flags and re-emitted by the wire
+/// serializer; leaving them in the pattern produces a double `/` on the wire
+/// (e.g. `*//` for `--include='*/'`) which upstream rsync misinterprets.
+///
+/// upstream: `exclude.c:1238-1240` - leading `/` is parsed as the
+/// `FILTRULE_ABS_PATH` modifier. `exclude.c:get_rule_prefix()` (and
+/// `serialize_rule` here) re-append the trailing `/` for directory-only rules.
 pub(crate) fn build_wire_format_rules(
     client_rules: &[FilterRuleSpec],
 ) -> Result<Vec<FilterRuleWireFormat>, ClientError> {
@@ -147,11 +157,12 @@ pub(crate) fn build_wire_format_rules(
             FilterRuleKind::ExcludeIfPresent => {
                 // upstream: ExcludeIfPresent is transmitted as Exclude with 'e' flag
                 // (FILTRULE_EXCLUDE_SELF).
+                let (pattern, anchored, directory_only) = split_pattern_modifiers(spec.pattern());
                 wire_rules.push(FilterRuleWireFormat {
                     rule_type: RuleType::Exclude,
-                    pattern: spec.pattern().to_owned(),
-                    anchored: spec.pattern().starts_with('/'),
-                    directory_only: spec.pattern().ends_with('/'),
+                    pattern,
+                    anchored,
+                    directory_only,
                     no_inherit: false,
                     cvs_exclude: false,
                     word_split: false,
@@ -167,11 +178,12 @@ pub(crate) fn build_wire_format_rules(
             }
         };
 
+        let (pattern, anchored, directory_only) = split_pattern_modifiers(spec.pattern());
         let mut wire_rule = FilterRuleWireFormat {
             rule_type,
-            pattern: spec.pattern().to_owned(),
-            anchored: spec.pattern().starts_with('/'),
-            directory_only: spec.pattern().ends_with('/'),
+            pattern,
+            anchored,
+            directory_only,
             no_inherit: false,
             cvs_exclude: false,
             word_split: false,
@@ -193,6 +205,23 @@ pub(crate) fn build_wire_format_rules(
     }
 
     Ok(wire_rules)
+}
+
+/// Separates anchor (`/`) and directory (`/`) modifiers from the pattern body.
+///
+/// Returns `(pattern, anchored, directory_only)` where `pattern` excludes both
+/// the leading and trailing `/` when present. Bare `/` (which represents both
+/// modifiers on the root) is preserved as the pattern so it round-trips through
+/// the wire correctly.
+fn split_pattern_modifiers(raw: &str) -> (String, bool, bool) {
+    if raw == "/" {
+        return (raw.to_owned(), true, false);
+    }
+    let anchored = raw.starts_with('/');
+    let directory_only = raw.len() > 1 && raw.ends_with('/');
+    let start = usize::from(anchored);
+    let end = raw.len() - usize::from(directory_only);
+    (raw[start..end].to_owned(), anchored, directory_only)
 }
 
 /// Applies common server flags from client configuration to a server config.
@@ -351,7 +380,10 @@ mod tests {
 
         assert_eq!(rules.len(), 1);
         assert!(rules[0].anchored);
-        assert_eq!(rules[0].pattern, "/tmp");
+        // The leading `/` becomes the `anchored` flag and is stripped from
+        // the pattern body so that the wire serializer does not emit it
+        // twice (once as the prefix modifier and once as a literal).
+        assert_eq!(rules[0].pattern, "tmp");
     }
 
     #[test]
@@ -361,7 +393,52 @@ mod tests {
 
         assert_eq!(rules.len(), 1);
         assert!(rules[0].directory_only);
-        assert_eq!(rules[0].pattern, "cache/");
+        // Trailing `/` becomes the `directory_only` flag; the pattern body
+        // is the bare name so that serialization appends a single slash on
+        // the wire (otherwise upstream sees `cache//` and misparses it).
+        assert_eq!(rules[0].pattern, "cache");
+    }
+
+    #[test]
+    fn directory_only_wildcard_round_trips_without_double_slash() {
+        // upstream: `--include='*/'` produces wire bytes `+ */` with one
+        // trailing slash. Storing the slash both in the pattern and via
+        // the `directory_only` flag would double-encode it on the wire and
+        // cause upstream rsync to treat the rule as `*/` instead of `*`,
+        // matching only at depth 1 and breaking deeper directory traversal
+        // when combined with a trailing `--exclude='*'`.
+        let spec = FilterRuleSpec::include("*/");
+        let rules = build_wire_format_rules(&[spec]).expect("should convert dir wildcard");
+
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].directory_only);
+        assert_eq!(rules[0].pattern, "*");
+    }
+
+    #[test]
+    fn anchored_directory_only_preserves_both_flags() {
+        let spec = FilterRuleSpec::exclude("/build/");
+        let rules =
+            build_wire_format_rules(&[spec]).expect("should convert anchored directory rule");
+
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].anchored);
+        assert!(rules[0].directory_only);
+        assert_eq!(rules[0].pattern, "build");
+    }
+
+    #[test]
+    fn bare_root_slash_is_preserved() {
+        // `/` is the rare degenerate case where the slash is both anchored
+        // and (formally) directory-only. Keep the slash in the pattern so
+        // the wire is not empty after stripping.
+        let spec = FilterRuleSpec::exclude("/");
+        let rules = build_wire_format_rules(&[spec]).expect("should convert bare slash rule");
+
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].anchored);
+        assert!(!rules[0].directory_only);
+        assert_eq!(rules[0].pattern, "/");
     }
 
     #[test]

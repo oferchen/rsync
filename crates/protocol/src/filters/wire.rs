@@ -528,6 +528,34 @@ mod tests {
         assert_eq!(parsed[0].pattern, "cache");
     }
 
+    /// Pattern stored on `FilterRuleWireFormat` must omit the trailing `/`
+    /// because `serialize_rule` re-appends it for directory-only rules.
+    /// Storing both produces `*//` on the wire, which upstream parses as
+    /// the pattern `*/` (slash-bearing, anchored-style) and breaks the
+    /// `--include='*/' --exclude='*'` directory-traversal idiom.
+    ///
+    /// upstream: `exclude.c:923` - patterns with internal slashes are
+    /// treated as anchored matches.
+    #[test]
+    fn directory_only_wildcard_emits_single_trailing_slash() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat::include("*".to_owned()).with_directory_only(true);
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        // 4-byte length prefix + payload + 4-byte zero terminator.
+        // Payload must be exactly `+ */` (4 bytes) - one trailing slash.
+        assert_eq!(&buf[..4], &4i32.to_le_bytes()[..]);
+        assert_eq!(&buf[4..8], b"+ */");
+        assert_eq!(&buf[8..], &0i32.to_le_bytes()[..]);
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert!(parsed[0].directory_only);
+        assert_eq!(parsed[0].pattern, "*");
+    }
+
     #[test]
     fn sender_side_filter_v29() {
         let protocol = ProtocolVersion::from_supported(29).unwrap();
