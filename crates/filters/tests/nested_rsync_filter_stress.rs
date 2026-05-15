@@ -69,11 +69,7 @@ fn build_tree() -> TempDir {
 
 /// Push scopes for `root`, then every ancestor between `root` and `subdir`.
 /// Returns the guards in pop order so the caller can release them.
-fn enter_to(
-    chain: &mut FilterChain,
-    root: &Path,
-    subdir: &Path,
-) -> Vec<filters::DirFilterGuard> {
+fn enter_to(chain: &mut FilterChain, root: &Path, subdir: &Path) -> Vec<filters::DirFilterGuard> {
     let rel = subdir.strip_prefix(root).unwrap();
     let mut current = root.to_path_buf();
     let mut guards = vec![chain.enter_directory(&current).unwrap()];
@@ -249,7 +245,12 @@ fn snapshot_decision_matrix() {
         (nested.clone(), "allowed/secret", false, false),
         (nested.clone(), "allowed/nested/notes.txt", false, false),
         (nested.clone(), "allowed/nested/keep.md", false, true),
-        (inner.clone(), "allowed/nested/deep/inner/keep.md", false, true),
+        (
+            inner.clone(),
+            "allowed/nested/deep/inner/keep.md",
+            false,
+            true,
+        ),
         (inner, "allowed/nested/deep/inner/drop.md", false, false),
     ];
 
@@ -258,7 +259,8 @@ fn snapshot_decision_matrix() {
         let guards = enter_to(&mut chain, root, subdir);
         let got = chain.allows(Path::new(path), *is_dir);
         assert_eq!(
-            got, *expected,
+            got,
+            *expected,
             "subdir={} path={} is_dir={} expected={} got={}",
             subdir.display(),
             path,
