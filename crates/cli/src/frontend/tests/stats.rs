@@ -69,6 +69,7 @@ fn stats_human_readable_combined_formats_totals() {
     assert!(rendered.contains("Total bytes sent: 1.54K (1,536)"));
 }
 
+#[cfg(unix)]
 #[test]
 fn stats_transfer_renders_summary_block() {
     use tempfile::tempdir;
