@@ -617,13 +617,17 @@ mod tests {
                     workers,
                 );
                 if workers.is_some() && !compress::zstd::SUPPORTS_MULTITHREAD {
-                    assert_eq!(
-                        result.expect_err("zstdmt disabled").kind(),
-                        std::io::ErrorKind::Unsupported
-                    );
+                    let err = match result {
+                        Ok(_) => panic!("expected Unsupported when zstdmt is off"),
+                        Err(e) => e,
+                    };
+                    assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
                     continue;
                 }
-                let mut writer = result.expect("encoder");
+                let mut writer = match result {
+                    Ok(w) => w,
+                    Err(e) => panic!("encoder construction failed: {e}"),
+                };
                 writer.write_all(data).unwrap();
                 writer.finish().unwrap();
                 assert_eq!(zstd_decompress(&buf).unwrap(), data);
