@@ -361,6 +361,7 @@
 pub mod cpu_features;
 pub mod crc32c;
 mod rolling;
+pub mod simd_self_test;
 pub mod strong;
 
 #[cfg(test)]
@@ -435,6 +436,13 @@ pub use strong::xxh3_simd_available;
 /// semantics. Re-exported here so callers can use `checksums::SimdLevel`
 /// without depending on the module path.
 pub use cpu_features::{SimdLevel, set_simd_override, simd_override};
+
+/// Cross-validate every SIMD checksum implementation against scalar references.
+///
+/// See [`simd_self_test`] for full coverage details. Re-exported so callers
+/// can write `checksums::run_simd_self_test()` without depending on the
+/// submodule path.
+pub use simd_self_test::{SimdAlgorithm, SimdParityError, run_simd_self_test};
 
 /// Re-exports from the [`strong::strategy`] module for runtime checksum algorithm selection.
 ///
