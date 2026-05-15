@@ -16,7 +16,7 @@ pub(crate) fn emit_transfer_summary(
     summary: &ClientSummary,
     verbosity: u8,
     progress_mode: Option<ProgressMode>,
-    stats: bool,
+    stats_level: u8,
     progress_already_rendered: bool,
     list_only: bool,
     dry_run: bool,
@@ -29,6 +29,7 @@ pub(crate) fn emit_transfer_summary(
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     let events = summary.events();
+    let stats_on = stats_level > 0;
 
     if list_only {
         let mut wrote_listing = false;
@@ -37,11 +38,11 @@ pub(crate) fn emit_transfer_summary(
             wrote_listing = true;
         }
 
-        if stats {
+        if stats_on {
             if wrote_listing {
                 writeln!(writer)?;
             }
-            emit_stats(summary, writer, human_readable_mode, dry_run)?;
+            emit_stats(summary, writer, human_readable_mode, dry_run, stats_level)?;
         } else if verbosity > 0 {
             if wrote_listing {
                 writeln!(writer)?;
@@ -79,11 +80,11 @@ pub(crate) fn emit_transfer_summary(
             && (!progress_rendered || verbosity > 1))
             || (verbosity == 0 && name_enabled));
 
-    if formatted_rendered && (emit_verbose_listing || stats || verbosity > 0) {
+    if formatted_rendered && (emit_verbose_listing || stats_on || verbosity > 0) {
         writeln!(writer)?;
     }
 
-    if progress_rendered && (emit_verbose_listing || stats || verbosity > 0) {
+    if progress_rendered && (emit_verbose_listing || stats_on || verbosity > 0) {
         writeln!(writer)?;
     }
 
@@ -96,7 +97,7 @@ pub(crate) fn emit_transfer_summary(
             human_readable_mode,
             writer,
         )?;
-        if stats {
+        if stats_on {
             writeln!(writer)?;
         }
     }
@@ -105,8 +106,8 @@ pub(crate) fn emit_transfer_summary(
     let suppress_name_totals =
         suppress_updated_only_totals && matches!(name_level, NameOutputLevel::UpdatedOnly);
 
-    if stats {
-        emit_stats(summary, writer, human_readable_mode, dry_run)?;
+    if stats_on {
+        emit_stats(summary, writer, human_readable_mode, dry_run, stats_level)?;
     } else if verbosity > 0 || (name_enabled && !suppress_name_totals) {
         emit_totals(summary, writer, human_readable_mode, dry_run)?;
     }
@@ -201,16 +202,49 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
 
 /// Emits a statistics summary mirroring the subset of counters supported by the local engine.
 ///
-/// Line ordering, label spelling, and the trailing blank line before the totals
-/// trailer follow upstream rsync's `output_summary` (`main.c:416-465`). The
-/// helper deliberately omits the upstream leading `\n` (`main.c:419`) because
-/// the caller (`emit_transfer_summary`) emits a blank line between prior
-/// output blocks and the stats block.
+/// Output is gated by `level`, matching upstream rsync's `INFO_GTE(STATS, N)`
+/// checks in `output_summary` (`main.c:416-465`):
+///
+/// - level 0: emits nothing.
+/// - level 1: emits only the trailing `sent X / total size is Y` summary.
+/// - level 2+: emits the full file-count + byte-breakdown block followed by
+///   the level-1 summary. The `File list generation/transfer time` lines are
+///   only emitted when the corresponding counter is non-zero, matching
+///   upstream's `if (stats.flist_buildtime)` guard.
+///
+/// Line ordering and label spelling track upstream byte-for-byte. The leading
+/// `\n` (`main.c:419`) is intentionally omitted; the caller is responsible
+/// for the blank-line separator between prior output blocks and stats.
+///
+/// upstream: main.c output_summary (rsync-3.4.2 lines 416-465)
+/// upstream: main.c handle_stats (rsync-3.4.2 lines 325-385)
 pub(crate) fn emit_stats<W: Write + ?Sized>(
     summary: &ClientSummary,
     stdout: &mut W,
     human_readable: HumanReadableMode,
     dry_run: bool,
+    level: u8,
+) -> io::Result<()> {
+    if level == 0 {
+        return Ok(());
+    }
+
+    if level >= 2 {
+        emit_stats_detail_block(summary, stdout, human_readable)?;
+        writeln!(stdout)?;
+    }
+
+    emit_totals(summary, stdout, human_readable, dry_run)
+}
+
+/// Emits the level-2+ detail block: file counts, byte-breakdown, file-list
+/// timing, and total bytes sent/received.
+///
+/// upstream: main.c output_summary block under `INFO_GTE(STATS, 2)` (rsync-3.4.2:418-449)
+fn emit_stats_detail_block<W: Write + ?Sized>(
+    summary: &ClientSummary,
+    stdout: &mut W,
+    human_readable: HumanReadableMode,
 ) -> io::Result<()> {
     let files = summary.files_copied();
     let files_total = summary.regular_files_total();
@@ -230,6 +264,8 @@ pub(crate) fn emit_stats<W: Write + ?Sized>(
     let total_size = summary.total_source_bytes();
     let matched_bytes = summary.matched_bytes();
     let file_list_size = summary.file_list_size();
+    let file_list_generation_ms = summary.file_list_generation_time().as_millis();
+    let file_list_transfer_ms = summary.file_list_transfer_time().as_millis();
     let file_list_generation = summary.file_list_generation_time().as_secs_f64();
     let file_list_transfer = summary.file_list_transfer_time().as_secs_f64();
 
@@ -280,19 +316,22 @@ pub(crate) fn emit_stats<W: Write + ?Sized>(
     writeln!(stdout, "Literal data: {literal_bytes_display} bytes")?;
     writeln!(stdout, "Matched data: {matched_bytes_display} bytes")?;
     writeln!(stdout, "File list size: {file_list_size_display}")?;
-    writeln!(
-        stdout,
-        "File list generation time: {file_list_generation:.3} seconds"
-    )?;
-    writeln!(
-        stdout,
-        "File list transfer time: {file_list_transfer:.3} seconds"
-    )?;
+    // upstream: main.c:437 `if (stats.flist_buildtime)` gates both timing
+    // lines. The upstream counter is a millisecond integer, so sub-millisecond
+    // durations suppress the lines just as on the C side.
+    if file_list_generation_ms > 0 || file_list_transfer_ms > 0 {
+        writeln!(
+            stdout,
+            "File list generation time: {file_list_generation:.3} seconds"
+        )?;
+        writeln!(
+            stdout,
+            "File list transfer time: {file_list_transfer:.3} seconds"
+        )?;
+    }
     writeln!(stdout, "Total bytes sent: {bytes_sent_display}")?;
     writeln!(stdout, "Total bytes received: {bytes_received_display}")?;
-    writeln!(stdout)?;
-
-    emit_totals(summary, stdout, human_readable, dry_run)
+    Ok(())
 }
 
 /// Emits the summary lines reported by verbose transfers.
