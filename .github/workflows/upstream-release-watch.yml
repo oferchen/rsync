@@ -1,0 +1,95 @@
+# Upstream Release Watcher
+#
+# Polls https://download.samba.org/pub/rsync/NEWS once a week to detect new
+# upstream rsync releases, and opens (or refreshes) a single tracking issue
+# whenever the latest release differs from the pin in workspace Cargo.toml.
+#
+# Cadence
+#   - schedule: Mondays at 08:00 UTC (cron '0 8 * * 1').
+#   - workflow_dispatch: manual one-shot runs for debugging.
+#
+# Issue-update policy
+#   - At most one open tracking issue exists at a time, titled
+#     "Upstream rsync release watcher tracking".
+#   - If upstream matches the pin: no issue activity.
+#   - If upstream is ahead and an open issue already references the same new
+#     version: post a "still pending" reminder comment.
+#   - If upstream is ahead and an open issue references an older version:
+#     edit the issue body so it tracks the new version.
+#   - If no open issue exists: create one whose body contains the NEWS
+#     section for the new version.
+
+name: Upstream Release Watcher
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-release-watcher
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Check upstream rsync release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ISSUE_TITLE: "Upstream rsync release watcher tracking"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run upstream release check
+        id: check
+        run: |
+          set +e
+          out=$(bash tools/ci/check_upstream_release.sh); status=$?
+          set -e
+          echo "$out"
+          {
+            echo "status=$status"
+            printf '%s\n' "$out"
+          } >>"$GITHUB_OUTPUT"
+          [[ "$status" -ne 2 ]] || exit 2
+
+      - name: Open or refresh tracking issue
+        if: steps.check.outputs.status == '1'
+        env:
+          LATEST: ${{ steps.check.outputs.latest }}
+          PINNED: ${{ steps.check.outputs.pinned }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --max-time 30 \
+            https://download.samba.org/pub/rsync/NEWS >NEWS.txt
+          section=$(awk -v v="$LATEST" '
+            $0 ~ "^# NEWS for rsync " v "( |$)" { capture=1; print; next }
+            capture && /^# NEWS for rsync / { exit }
+            capture { print }
+          ' NEWS.txt)
+          new_body=$(printf '%s\n\n%s\n\n## NEWS for rsync %s\n\n%s\n' \
+            "Upstream rsync $LATEST is available; this repository pins $PINNED." \
+            "Source: https://download.samba.org/pub/rsync/NEWS" \
+            "$LATEST" "$section")
+          existing=$(gh issue list --state open \
+            --search "in:title \"$ISSUE_TITLE\"" \
+            --json number,title,body \
+            --jq ".[] | select(.title == \"$ISSUE_TITLE\")" | head -n 1)
+          if [[ -z "$existing" ]]; then
+            gh issue create --title "$ISSUE_TITLE" --body "$new_body"
+            exit 0
+          fi
+          number=$(printf '%s' "$existing" | jq -r '.number')
+          body=$(printf '%s' "$existing" | jq -r '.body')
+          if printf '%s' "$body" | grep -qF "Upstream rsync $LATEST"; then
+            gh issue comment "$number" \
+              --body "Reminder: $LATEST still pending (pin is $PINNED)."
+          else
+            gh issue edit "$number" --body "$new_body"
+          fi
