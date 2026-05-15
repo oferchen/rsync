@@ -27,7 +27,10 @@ pub mod optimized_search;
 mod ring_buffer;
 mod script;
 
-pub use fuzzy::{FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, compute_similarity_score};
+pub use fuzzy::{
+    FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, compute_similarity_score,
+    trace_fuzzy_basis_selected, trace_fuzzy_distance, trace_fuzzy_size_mtime_match,
+};
 pub use generator::{DeltaGenerator, generate_delta};
 pub use index::{DeltaSignatureIndex, MatchedBlocks};
 pub use script::{DeltaScript, DeltaToken, apply_delta};

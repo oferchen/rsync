@@ -54,8 +54,10 @@
 
 mod scoring;
 mod search;
+mod trace;
 
 pub use scoring::compute_similarity_score;
+pub use trace::{trace_fuzzy_basis_selected, trace_fuzzy_distance, trace_fuzzy_size_mtime_match};
 
 use std::path::PathBuf;
 
