@@ -44,7 +44,7 @@ fn emit_transfer_summary_list_only_emits_listing_and_stats() {
         &summary,
         1,
         None,
-        true,
+        2, // stats_level
         false,
         true,
         false,
@@ -74,7 +74,7 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
         &summary,
         2,
         ProgressSetting::PerFile.resolved(),
-        false,
+        0, // stats_level
         false,
         false,
         false,
@@ -105,7 +105,7 @@ fn emit_transfer_summary_out_format_adds_separator_before_stats() {
         &summary,
         1,
         None,
-        true,
+        2, // stats_level
         false,
         false,
         false,

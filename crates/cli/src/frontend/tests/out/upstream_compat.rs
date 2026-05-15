@@ -228,7 +228,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         &summary,
         1,
         None,
-        false,
+        0, // stats_level
         false,
         false,
         false,
@@ -247,7 +247,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         &summary,
         1,
         None,
-        false,
+        0, // stats_level
         false,
         false,
         false,
