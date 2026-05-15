@@ -82,6 +82,7 @@ mod file_list;
 mod filters;
 mod item_flags;
 pub(crate) mod itemize;
+mod open_source;
 mod protocol_io;
 #[cfg(test)]
 mod tests;
@@ -707,8 +708,14 @@ impl GeneratorContext {
     /// `--no-io-uring` flag). Smaller files use a standard `BufReader` to avoid
     /// the overhead of creating an io_uring ring per file.
     ///
-    /// This threshold-based dual-path mirrors the existing pattern used for
-    /// parallel stat (`ParallelThresholds`) and adaptive buffer sizing.
+    /// When `--open-noatime` is in effect the io_uring fast path is bypassed
+    /// because `IoUringReader::open` does not accept custom open flags;
+    /// matching upstream `do_open` semantics is the user-requested invariant.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `syscall.c:228 do_open` / `syscall.c:687 do_open_nofollow` (3.4.2
+    ///   propagates `O_NOATIME` through both paths).
     fn open_source_reader(
         &self,
         path: &std::path::Path,
@@ -720,7 +727,10 @@ impl GeneratorContext {
         // pays off for larger reads where batched syscalls reduce total cost.
         const IO_URING_READ_THRESHOLD: u64 = 1024 * 1024;
 
-        if file_size >= IO_URING_READ_THRESHOLD
+        let use_noatime = self.config.write.open_noatime;
+
+        if !use_noatime
+            && file_size >= IO_URING_READ_THRESHOLD
             && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
         {
             match fast_io::reader_from_path_with_depth(
@@ -735,7 +745,7 @@ impl GeneratorContext {
             }
         }
 
-        let f = std::fs::File::open(path)?;
+        let f = open_source::open_source_with_noatime(path, use_noatime)?;
         Ok(Box::new(std::io::BufReader::with_capacity(
             adaptive_buffer_size(file_size),
             f,
