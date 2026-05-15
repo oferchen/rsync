@@ -676,6 +676,39 @@ mod tests {
     }
 
     #[test]
+    fn receive_entries_sorted_after_skips() {
+        // upstream: xattrs.c qsort_cmp - 3.4.2 fix uses temp_xattr.count, not
+        // the wire count. Verifies that entries skipped via `continue` (here,
+        // the rsync.%stat internal attr at preserve_xattrs == 1) do not leave
+        // an unsorted tail in the cached XattrList.
+        let mut cache = XattrCache::new();
+        let mut buf = Vec::new();
+
+        let rpre = RSYNC_PREFIX;
+        let internal_name = format!("{rpre}%stat");
+        write_literal_xattr(
+            &mut buf,
+            &[
+                (b"zeta", b"z"),
+                (internal_name.as_bytes(), b"internal"),
+                (b"alpha", b"a"),
+                (b"middle", b"m"),
+            ],
+        );
+
+        let mut cursor = Cursor::new(buf);
+        cache.receive_xattr(&mut cursor, false, 1).unwrap();
+
+        let list = cache.get(0).unwrap();
+        // Internal entry filtered, remaining three sorted by local name.
+        assert_eq!(list.len(), 3);
+        let names: Vec<&[u8]> = list.entries().iter().map(|e| e.name()).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
+    }
+
+    #[test]
     fn is_rsync_internal_attr_detection() {
         let rpre = RSYNC_PREFIX;
         let stat_name = format!("{rpre}%stat").into_bytes();
