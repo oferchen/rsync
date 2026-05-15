@@ -75,6 +75,17 @@ pub struct WriteConfig {
     /// [`fast_io::ZeroCopyPolicy::Disabled`], the receiver routes through
     /// portable `read`/`write` loops and the sender skips `sendfile(2)`.
     pub zero_copy_policy: fast_io::ZeroCopyPolicy,
+    /// Open source files with `O_NOATIME` (`--open-noatime`).
+    ///
+    /// Linux/Android only; ignored on other targets where `O_NOATIME` is
+    /// not defined. Mirrors upstream `do_open` / `do_open_nofollow`
+    /// (rsync 3.4.2 propagates `O_NOATIME` through both paths).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `syscall.c:228` - `do_open()` ORs `O_NOATIME` into flags.
+    /// - `syscall.c:687` - `do_open_nofollow()` (added in 3.4.2).
+    pub open_noatime: bool,
 }
 
 impl Default for WriteConfig {
@@ -89,6 +100,7 @@ impl Default for WriteConfig {
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             io_uring_depth: None,
             zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,
+            open_noatime: false,
         }
     }
 }

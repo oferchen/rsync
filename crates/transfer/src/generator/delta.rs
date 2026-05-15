@@ -293,6 +293,7 @@ pub(super) fn compute_file_checksum(
     _compat_flags: Option<&protocol::CompatibilityFlags>,
     source_path: &Path,
     block_length: u32,
+    use_noatime: bool,
 ) -> io::Result<([u8; ChecksumVerifier::MAX_DIGEST_LEN], usize)> {
     let mut verifier = ChecksumVerifier::for_algorithm(algorithm);
 
@@ -311,7 +312,10 @@ pub(super) fn compute_file_checksum(
                 let file = match source_file.as_mut() {
                     Some(f) => f,
                     None => {
-                        source_file = Some(fs::File::open(source_path)?);
+                        source_file = Some(super::open_source::open_source_with_noatime(
+                            source_path,
+                            use_noatime,
+                        )?);
                         source_file.as_mut().unwrap()
                     }
                 };
@@ -405,6 +409,7 @@ pub(super) fn write_delta_with_compression<W: Write>(
     encoder: Option<&mut CompressedTokenEncoder>,
     is_zlib: bool,
     source_path: &Path,
+    use_noatime: bool,
 ) -> io::Result<()> {
     match encoder {
         Some(encoder) => {
@@ -415,7 +420,9 @@ pub(super) fn write_delta_with_compression<W: Write>(
             let needs_dict_sync =
                 is_zlib && ops.iter().any(|op| matches!(op, DeltaOp::Copy { .. }));
             let mut source_file = if needs_dict_sync {
-                Some(io::BufReader::new(fs::File::open(source_path)?))
+                Some(io::BufReader::new(
+                    super::open_source::open_source_with_noatime(source_path, use_noatime)?,
+                ))
             } else {
                 None
             };
