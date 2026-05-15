@@ -138,6 +138,31 @@ fn parse_args_recognises_dirs_flag() {
 }
 
 #[test]
+fn parse_args_dirs_short_and_long_are_equivalent() {
+    // upstream 3.4.2 NEWS: "Added the missing --dirs long option."
+    // oc-rsync exposes both -d and --dirs via the same clap entry
+    // (see crates/cli/src/frontend/command_builder/sections/build_base_command/transfer.rs).
+    let from_short = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("-d"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse -d");
+
+    let from_long = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--dirs"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse --dirs");
+
+    assert_eq!(from_short.dirs, Some(true));
+    assert_eq!(from_short.dirs, from_long.dirs);
+}
+
+#[test]
 fn parse_args_recognises_no_dirs_flag() {
     let parsed = parse_args([
         OsString::from(RSYNC),
