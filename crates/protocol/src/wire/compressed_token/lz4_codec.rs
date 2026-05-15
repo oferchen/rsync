@@ -341,6 +341,14 @@ impl Lz4TokenDecoder {
             let mut buf = [0u8; 4];
             reader.read_exact(&mut buf)?;
             self.rx_token = i32::from_le_bytes(buf);
+            // upstream: token.c:844-847 (3.4.2) - reject negative absolute
+            // token to prevent block-index wrap into the valid range.
+            if self.rx_token < 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid token number in compressed stream",
+                ));
+            }
 
             if flag & 1 != 0 {
                 let mut run_buf = [0u8; 2];
