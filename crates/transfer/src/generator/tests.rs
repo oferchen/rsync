@@ -2498,4 +2498,3 @@ fn server_mode_flushes_writer_before_filter_list_read() {
         "writer must be flushed in server mode before reading filter list"
     );
 }
-
