@@ -9,7 +9,7 @@ use std::num::NonZeroU8;
 use std::path::PathBuf;
 
 use engine::delta::{SignatureLayoutParams, calculate_signature_layout};
-use engine::fuzzy::FuzzyMatcher;
+use engine::fuzzy::{FuzzyMatcher, trace_fuzzy_basis_selected};
 use engine::signature::{FileSignature, generate_file_signature};
 use protocol::ProtocolVersion;
 
@@ -173,6 +173,13 @@ fn try_fuzzy_match(
 
     let fuzzy_matcher = FuzzyMatcher::with_level(fuzzy_level).with_fuzzy_basis_dirs(basis_dirs);
     let fuzzy_match = fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)?;
+    // upstream: generator.c:1775 - announce the selected fuzzy basis at
+    // FUZZY,1 the moment the matcher returns a candidate, before we attempt
+    // to open it.
+    trace_fuzzy_basis_selected(
+        &relative_path.display().to_string(),
+        &fuzzy_match.path.display().to_string(),
+    );
     try_open_file(&fuzzy_match.path)
 }
 

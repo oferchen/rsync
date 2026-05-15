@@ -12,6 +12,7 @@ use std::fs;
 use std::path::Path;
 
 use super::scoring::compute_similarity_score;
+use super::trace::trace_fuzzy_distance;
 use super::{FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher};
 
 impl FuzzyMatcher {
@@ -128,6 +129,11 @@ fn search_directory(
 
         let score =
             compute_similarity_score(target_name, &candidate_name, target_size, metadata.len());
+
+        // upstream: generator.c:884 - emit a per-candidate FUZZY,2 distance
+        // line so log parsers see each candidate considered, even those
+        // below the selection threshold.
+        trace_fuzzy_distance(&candidate_name, score);
 
         if score >= min_score {
             update_best_match(&mut best_match, FuzzyMatch { path, score }, min_score);
