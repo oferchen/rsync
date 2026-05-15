@@ -10,10 +10,10 @@
 //! - `uidlist.c:407-414` - `send_id_lists()` for name-based ownership
 //! - `sender.c:120` - `receive_sums()` reads signature blocks
 
-use std::io::{self, Read, Write};
-use std::time::Instant;
+use std::io::{self, IoSlice, Read, Write};
+use std::time::{Duration, Instant};
 
-use logging::{PhaseTimer, debug_log};
+use logging::{PhaseTimer, debug_log, info_log};
 use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
 use protocol::wire::SignatureBlock;
@@ -206,7 +206,8 @@ impl GeneratorContext {
     pub fn send_file_list<W: Write>(&mut self, writer: &mut W) -> io::Result<usize> {
         let _t = PhaseTimer::new("file-list-send");
         // upstream: stats.flist_xfertime
-        self.timing.flist_xfer_start = Some(Instant::now());
+        let entry_instant = Instant::now();
+        self.timing.flist_xfer_start = Some(entry_instant);
 
         let mut flist_writer = self.build_flist_writer();
 
@@ -220,6 +221,11 @@ impl GeneratorContext {
             .map_or(0, |&(_, ndx_start)| ndx_start);
         flist_writer.set_first_ndx(initial_ndx_start);
 
+        // Wrap the wire writer in a first-byte latency probe. Cost is one
+        // branch per buffered write call - no per-entry sampling.
+        // upstream: flist.c send_file_list / send_dir_name first-byte timing
+        let mut probed = FirstByteWriter::new(writer, entry_instant);
+
         // When INC_RECURSE, only send initial segment entries; the rest
         // are sent via the SegmentScheduler during the transfer loop.
         let count = self
@@ -229,7 +235,7 @@ impl GeneratorContext {
         for i in 0..count {
             let entry = &self.file_list[i];
             self.prepare_pending_acl(entry, i, &mut flist_writer);
-            flist_writer.write_entry(writer, entry)?;
+            flist_writer.write_entry(&mut probed, entry)?;
         }
 
         // upstream: flist.c:2518 - write io_error with end marker (SAFE_FILE_LIST)
@@ -238,14 +244,48 @@ impl GeneratorContext {
         } else {
             None
         };
-        flist_writer.write_end(writer, io_error_for_end)?;
-        writer.flush()?;
+        flist_writer.write_end(&mut probed, io_error_for_end)?;
+        probed.flush()?;
+
+        let first_byte_latency = probed.first_byte_latency();
 
         // upstream: flist.c:send_file_entry() uses static variables - cache writer
         // to preserve compression state across sub-lists.
         self.incremental.flist_writer_cache = Some(flist_writer);
 
         self.timing.flist_xfer_end = Some(Instant::now());
+        self.timing.flist_first_byte_latency = first_byte_latency;
+
+        if let Some(latency) = first_byte_latency {
+            // INC_RECURSE diagnostic I1: time from function entry to first
+            // wire byte. Surfaced at -vv (info=flist1) and -v --info=stats3.
+            info_log!(
+                Flist,
+                1,
+                "send_file_list first-byte latency: {} us",
+                latency.as_micros()
+            );
+            info_log!(
+                Stats,
+                3,
+                "file list first-byte latency: {} us",
+                latency.as_micros()
+            );
+            debug_log!(
+                Flist,
+                2,
+                "send_file_list first-byte latency: {:?} ({} entries)",
+                latency,
+                count
+            );
+            #[cfg(feature = "tracing")]
+            ::tracing::info!(
+                target: "rsync::flist",
+                latency_us = latency.as_micros() as u64,
+                entries = count,
+                "send_file_list first-byte latency"
+            );
+        }
 
         Ok(self.file_list.len())
     }
@@ -431,5 +471,58 @@ pub fn calculate_duration_ms(start: Option<Instant>, end: Option<Instant>) -> u6
     match (start, end) {
         (Some(s), Some(e)) => e.duration_since(s).as_millis() as u64,
         _ => 0,
+    }
+}
+
+/// `Write` adapter that records the elapsed time until the first non-empty
+/// write reaches the underlying writer.
+///
+/// Used by [`GeneratorContext::send_file_list`] to instrument the gap between
+/// function entry and the first wire byte. This is INC_RECURSE diagnostic
+/// counter I1 (#2196) - the receiver-visible startup latency of the file
+/// list stream.
+///
+/// upstream: flist.c send_file_list / send_dir_name first-byte timing
+struct FirstByteWriter<'w, W: Write> {
+    inner: &'w mut W,
+    entry: Instant,
+    first_byte_latency: Option<Duration>,
+}
+
+impl<'w, W: Write> FirstByteWriter<'w, W> {
+    fn new(inner: &'w mut W, entry: Instant) -> Self {
+        Self {
+            inner,
+            entry,
+            first_byte_latency: None,
+        }
+    }
+
+    fn first_byte_latency(&self) -> Option<Duration> {
+        self.first_byte_latency
+    }
+
+    fn record(&mut self, n: usize) {
+        if n > 0 && self.first_byte_latency.is_none() {
+            self.first_byte_latency = Some(self.entry.elapsed());
+        }
+    }
+}
+
+impl<W: Write> Write for FirstByteWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.record(n);
+        Ok(n)
+    }
+
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        let n = self.inner.write_vectored(bufs)?;
+        self.record(n);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
     }
 }
