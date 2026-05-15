@@ -11,7 +11,9 @@
 
 use rustc_hash::FxHashMap;
 
+use super::trace::trace_hashtable_for_dev;
 use super::types::{DevIno, HardlinkEntry, HardlinkLookup};
+use crate::flist::trace::ProcessRole;
 
 /// Table for tracking hardlinks by (dev, ino) pairs.
 ///
@@ -37,6 +39,11 @@ use super::types::{DevIno, HardlinkEntry, HardlinkLookup};
 pub struct HardlinkTable {
     /// Map from (dev, ino) to hardlink entry.
     entries: FxHashMap<DevIno, HardlinkEntry>,
+    /// Devices for which the per-device bucket has already been announced via
+    /// `--debug=HLINK` level 3.
+    ///
+    /// upstream: hlink.c:74-81 - one HLINK,3 emission per new device.
+    announced_devices: FxHashMap<u64, ()>,
 }
 
 impl HardlinkTable {
@@ -51,6 +58,17 @@ impl HardlinkTable {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             entries: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
+            announced_devices: FxHashMap::default(),
+        }
+    }
+
+    /// Emits the `--debug=HLINK` level 3 hashtable-creation message the first
+    /// time a device is observed, matching upstream `idev_find()`.
+    ///
+    /// upstream: hlink.c:74-81 - one HLINK,3 emission per new device.
+    pub fn announce_device(&mut self, role: ProcessRole, dev: u64) {
+        if self.announced_devices.insert(dev, ()).is_none() {
+            trace_hashtable_for_dev(role, dev);
         }
     }
 
@@ -104,5 +122,6 @@ impl HardlinkTable {
     /// Clears all entries from the table.
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.announced_devices.clear();
     }
 }
