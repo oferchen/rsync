@@ -414,12 +414,16 @@ impl GeneratorContext {
             self.maybe_emit_itemize(writer, &iflags, ndx, itemize)?;
 
             if let Some(cb) = progress.as_mut() {
+                // upstream: progress.c:80 - "to" once the final sub-list has been
+                // sent, "ir" while more sub-lists are still pending.
+                let flist_eof = !inc_recurse || self.incremental.flist_eof_sent;
                 let event = super::super::TransferProgressEvent {
                     path: file_entry.path(),
                     file_bytes: bytes_sent,
                     total_file_bytes: Some(file_entry.size()),
                     files_done: files_transferred,
                     total_files: self.file_list.len(),
+                    flist_eof,
                 };
                 cb.on_file_transferred(&event);
             }
