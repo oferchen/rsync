@@ -241,11 +241,8 @@ mod tests {
     fn per_file_renders_to_chk_when_flist_complete() {
         let mut buf: Vec<u8> = Vec::new();
         {
-            let mut live = LiveProgress::new(
-                &mut buf,
-                ProgressMode::PerFile,
-                HumanReadableMode::Disabled,
-            );
+            let mut live =
+                LiveProgress::new(&mut buf, ProgressMode::PerFile, HumanReadableMode::Disabled);
             live.on_progress(&make_update(true));
         }
         let output = String::from_utf8(buf).expect("utf8");
@@ -257,11 +254,8 @@ mod tests {
     fn per_file_renders_ir_chk_when_flist_pending() {
         let mut buf: Vec<u8> = Vec::new();
         {
-            let mut live = LiveProgress::new(
-                &mut buf,
-                ProgressMode::PerFile,
-                HumanReadableMode::Disabled,
-            );
+            let mut live =
+                LiveProgress::new(&mut buf, ProgressMode::PerFile, HumanReadableMode::Disabled);
             live.on_progress(&make_update(false));
         }
         let output = String::from_utf8(buf).expect("utf8");

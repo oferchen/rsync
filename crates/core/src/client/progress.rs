@@ -430,15 +430,8 @@ mod tests {
             Duration::ZERO,
             Arc::from(Path::new("/d")),
         );
-        let update = ClientProgressUpdate::from_transfer_event(
-            event,
-            1,
-            2,
-            None,
-            0,
-            Duration::ZERO,
-            false,
-        );
+        let update =
+            ClientProgressUpdate::from_transfer_event(event, 1, 2, None, 0, Duration::ZERO, false);
         assert!(!update.flist_eof());
     }
 }
