@@ -135,7 +135,7 @@ impl ClientProgressUpdate {
     ///
     /// Used by the SSH/daemon transfer adapter to convert per-file progress
     /// events from the transfer crate into client progress updates.
-    pub(crate) fn from_transfer_event(
+    pub fn from_transfer_event(
         event: ClientEvent,
         files_done: usize,
         total_files: usize,
