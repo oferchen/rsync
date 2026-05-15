@@ -408,6 +408,7 @@ impl TransferProgressCallback for ServerProgressAdapter<'_> {
             event.total_file_bytes,
             self.overall_transferred,
             self.start.elapsed(),
+            event.flist_eof,
         );
 
         self.observer.on_progress(&update);

@@ -229,4 +229,36 @@ mod tests {
         let rate = compute_rate(500, Duration::from_millis(500)).unwrap();
         assert!((rate - 1000.0).abs() < 0.001);
     }
+
+    /// Upstream `rprint_progress` (progress.c:108-116) caps its unit scaling
+    /// at `GB/s` and never substitutes a sentinel for the rate field. The
+    /// numeric value is printed verbatim with the `%7.2f` format, growing
+    /// the field width when the value exceeds 7 chars. We mirror this:
+    /// extreme rates stay in `GB/s` units with no placeholder substitution.
+    /// upstream: progress.c:108-116 rprint_progress
+    #[test]
+    fn progress_rate_has_no_overflow_sentinel() {
+        let huge = 1_000_000_000_000.0_f64; // 1 TB/s
+        let rendered = format_progress_rate_decimal(huge);
+        assert!(
+            rendered.ends_with("GB/s"),
+            "extreme rates must remain in GB/s units: {rendered}"
+        );
+        assert!(!rendered.contains("??"), "no sentinel for rate: {rendered}");
+    }
+
+    /// Verifies the three upstream rate tiers (`kB/s`, `MB/s`, `GB/s`) using
+    /// base-1024 scaling. upstream: progress.c:108-116 rprint_progress.
+    #[test]
+    fn progress_rate_unit_tiers_mirror_upstream() {
+        // Below 1024 B/s prints in kB/s with the fractional value.
+        let kb = format_progress_rate_decimal(512.0);
+        assert!(kb.ends_with("kB/s"), "{kb}");
+        // 1 MiB/s prints in MB/s.
+        let mb = format_progress_rate_decimal(1024.0 * 1024.0);
+        assert!(mb.ends_with("MB/s"), "{mb}");
+        // 1 GiB/s prints in GB/s.
+        let gb = format_progress_rate_decimal(1024.0 * 1024.0 * 1024.0);
+        assert!(gb.ends_with("GB/s"), "{gb}");
+    }
 }
