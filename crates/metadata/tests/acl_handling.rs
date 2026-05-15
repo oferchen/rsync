@@ -1149,6 +1149,43 @@ mod apply_acls_from_cache_tests {
         );
         assert!(result.is_ok());
     }
+
+    // upstream: acls.c send_acl / receive_acl, 3.4.2 fix at recv_ida_entries
+    // line 716. Documents the non-root ACL ID-mapping behaviour audited in
+    // docs/audits/upstream-3.4.2-acl-non-root-parity.md (#618, #2230).
+    //
+    // Upstream 3.4.2 remaps unknown user IDs in inc-recurse ACL streams via
+    // match_uid(); oc-rsync does not remap, but its EPERM/EINVAL fall-through
+    // in apply_acls_from_cache keeps the transfer green when the kernel cannot
+    // install an unknown UID. This test pins that contract so any future
+    // change that promotes the silent drop into a hard error gets caught.
+    #[test]
+    fn apply_from_cache_unmapped_user_id_does_not_fail_transfer() {
+        // The fall-through only matters for non-root effective UIDs; root
+        // can install nearly any ACL, so skip when running privileged.
+        if rustix::process::geteuid().as_raw() == 0 {
+            return;
+        }
+
+        let temp = create_tempdir();
+        let file = temp.path().join("acl_unmapped_user.txt");
+        fs::write(&file, b"data").expect("write file");
+
+        // Pick a high UID that is virtually guaranteed not to resolve in CI.
+        let unmapped_uid: u32 = 4_294_967_000;
+        let mut acl = RsyncAcl::from_mode(0o644);
+        acl.names
+            .push(protocol::acl::IdAccess::user(unmapped_uid, 0o6));
+
+        let mut cache = AclCache::new();
+        let ndx = cache.store_access(acl);
+
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+        assert!(
+            result.is_ok(),
+            "non-root receiver should fall through unknown UID, got {result:?}"
+        );
+    }
 }
 
 #[cfg(not(all(
