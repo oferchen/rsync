@@ -588,6 +588,11 @@ NEON) are used where available, with automatic scalar fallbacks.
 :   Select compression algorithm. Valid values: **zlib**, **zstd**, **lz4**.
     Also available as **--zc**.
 
+**--compress-threads**=*N*
+:   Set the number of worker threads zstd uses internally. A value of **0**
+    (the default) lets zstd choose. Positive values up to **64** are accepted.
+    Also available as **--zt**.
+
 **--old-compress**
 :   Use old-style (zlib) compression.
 
