@@ -6,7 +6,7 @@
 //! and accessor submodules.
 
 use std::ffi::OsString;
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::{NonZeroU8, NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -110,6 +110,9 @@ pub struct LocalCopyOptions {
     pub(super) compression_algorithm: CompressionAlgorithm,
     pub(super) compression_level_override: Option<CompressionLevel>,
     pub(super) compression_level: CompressionLevel,
+    /// Worker count for `ZSTD_c_nbWorkers`, only meaningful for zstd.
+    /// upstream: `token.c:701`, `options.c:89`.
+    pub(super) compression_threads: Option<NonZeroU8>,
     pub(super) skip_compress: SkipCompressList,
     pub(super) open_noatime: bool,
     pub(super) whole_file: Option<bool>,
@@ -265,6 +268,7 @@ impl LocalCopyOptions {
             compression_algorithm: CompressionAlgorithm::default_algorithm(),
             compression_level_override: None,
             compression_level: CompressionLevel::Default,
+            compression_threads: None,
             skip_compress: SkipCompressList::default(),
             open_noatime: false,
             whole_file: None,

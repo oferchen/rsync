@@ -5,6 +5,7 @@
 //! is applied after multiplex framing.
 
 use std::io::{self, IoSlice, Write};
+use std::num::NonZeroU8;
 
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::{CompressionLevel, CountingZlibEncoder};
@@ -60,6 +61,18 @@ impl<W: Write> CompressedWriter<W> {
         algorithm: CompressionAlgorithm,
         level: CompressionLevel,
     ) -> io::Result<Self> {
+        Self::with_workers(inner, algorithm, level, None)
+    }
+
+    /// Like [`new`](Self::new) but plumbs `--compress-threads=N` through to
+    /// `ZSTD_c_nbWorkers` when zstd is the active codec. `workers` is ignored
+    /// for zlib and LZ4. upstream: `token.c:701`.
+    pub fn with_workers(
+        inner: W,
+        algorithm: CompressionAlgorithm,
+        level: CompressionLevel,
+        workers: Option<NonZeroU8>,
+    ) -> io::Result<Self> {
         // Buffer size matching upstream rsync's IO_BUFFER_SIZE (32KB)
         // This reduces flush frequency and improves compression ratio
         const BUFFER_SIZE: usize = 32 * 1024;
@@ -77,10 +90,13 @@ impl<W: Write> CompressedWriter<W> {
             #[cfg(feature = "zstd")]
             CompressionAlgorithm::Zstd => {
                 let sink = Vec::with_capacity(BUFFER_SIZE);
-                EncoderVariant::Zstd(CountingZstdEncoder::with_sink(sink, level)?)
+                EncoderVariant::Zstd(CountingZstdEncoder::with_sink_workers(
+                    sink, level, workers,
+                )?)
             }
             #[allow(unreachable_patterns)]
             _ => {
+                let _ = workers;
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!(
@@ -584,6 +600,38 @@ mod tests {
 
             let decompressed = zstd_decompress(&buf).unwrap();
             assert_eq!(decompressed, data);
+        }
+
+        #[test]
+        fn with_workers_round_trip_and_smoke() {
+            // None matches upstream's `do_compression_threads = 0`. Some(_)
+            // either succeeds under `zstdmt` or returns Unsupported - never
+            // panic, never silently drop the setting.
+            let data = b"zstd workers test";
+            for workers in [None, std::num::NonZeroU8::new(4)] {
+                let mut buf = Vec::new();
+                let result = CompressedWriter::with_workers(
+                    &mut buf,
+                    CompressionAlgorithm::Zstd,
+                    CompressionLevel::Default,
+                    workers,
+                );
+                if workers.is_some() && !compress::zstd::SUPPORTS_MULTITHREAD {
+                    let err = match result {
+                        Ok(_) => panic!("expected Unsupported when zstdmt is off"),
+                        Err(e) => e,
+                    };
+                    assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+                    continue;
+                }
+                let mut writer = match result {
+                    Ok(w) => w,
+                    Err(e) => panic!("encoder construction failed: {e}"),
+                };
+                writer.write_all(data).unwrap();
+                writer.finish().unwrap();
+                assert_eq!(zstd_decompress(&buf).unwrap(), data);
+            }
         }
 
         #[test]
