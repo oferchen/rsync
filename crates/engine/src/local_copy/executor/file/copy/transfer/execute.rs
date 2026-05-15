@@ -11,7 +11,7 @@ use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use logging::debug_log;
+use logging::{debug_log, info_log};
 
 use ::metadata::MetadataOptions;
 
@@ -712,6 +712,10 @@ fn record_metadata_only_skip(
         record_path.display(),
         reason
     );
+    // upstream: rsync.c:672-676 - rprintf(FCLIENT, "%s is uptodate\n", fname)
+    // at INFO_GTE(NAME, 2) when a quick-check or content-equal path reuses
+    // the existing destination instead of transferring.
+    info_log!(Name, 2, "{} is uptodate", record_path.display());
     ::metadata::apply_file_metadata_if_changed(destination, metadata, existing, metadata_options)
         .map_err(crate::local_copy::map_metadata_error)?;
 
