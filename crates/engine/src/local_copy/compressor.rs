@@ -25,6 +25,7 @@ pub enum ActiveCompressor {
 
 impl ActiveCompressor {
     /// Creates a compressor for `algorithm` using the provided compression `level`.
+    #[cfg(test)]
     pub fn new(algorithm: CompressionAlgorithm, level: CompressionLevel) -> io::Result<Self> {
         Self::new_with_workers(algorithm, level, None)
     }
