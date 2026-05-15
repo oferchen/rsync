@@ -184,12 +184,24 @@ impl GeneratorContext {
         let mut merge_configs = Vec::new();
 
         for wire_rule in wire_rules {
-            // Convert wire RuleType to FilterRule
+            // The wire format stores the bare pattern in `pattern` and carries
+            // the anchored / directory-only modifiers as separate flags. The
+            // `filters` crate, however, encodes those modifiers as leading and
+            // trailing `/` in the pattern string itself, so reattach them
+            // before constructing the rule. Without this, `--include='*/'`
+            // would be received as the plain pattern `*` and lose its
+            // directory-only semantics, leading to a subsequent `--exclude='*'`
+            // swallowing directories that the user intended to traverse.
+            //
+            // upstream: exclude.c:get_rule_prefix() encodes anchored as the
+            // `/` modifier and directory-only as a trailing slash on the
+            // pattern body.
+            let reconstructed_pattern = reconstruct_pattern(wire_rule);
             let mut rule = match wire_rule.rule_type {
-                RuleType::Include => FilterRule::include(&wire_rule.pattern),
-                RuleType::Exclude => FilterRule::exclude(&wire_rule.pattern),
-                RuleType::Protect => FilterRule::protect(&wire_rule.pattern),
-                RuleType::Risk => FilterRule::risk(&wire_rule.pattern),
+                RuleType::Include => FilterRule::include(reconstructed_pattern),
+                RuleType::Exclude => FilterRule::exclude(reconstructed_pattern),
+                RuleType::Protect => FilterRule::protect(reconstructed_pattern),
+                RuleType::Risk => FilterRule::risk(reconstructed_pattern),
                 RuleType::Clear => {
                     // Clear rule removes all previous rules
                     rules.push(
@@ -231,13 +243,8 @@ impl GeneratorContext {
                 rule = rule.with_negate(true);
             }
 
-            if wire_rule.anchored {
-                rule = rule.anchor_to_root();
-            }
-
-            // Note: directory_only, no_inherit, cvs_exclude, word_split, exclude_from_merge
-            // are pattern modifiers handled by the filters crate during compilation
-            // We store them in the pattern itself as upstream does
+            // Note: no_inherit, cvs_exclude, word_split, exclude_from_merge
+            // are pattern modifiers handled by the filters crate during compilation.
 
             rules.push(rule);
         }
@@ -255,6 +262,24 @@ impl GeneratorContext {
 
         Ok((filter_set, merge_configs))
     }
+}
+
+/// Reassembles the pattern body with leading/trailing `/` modifiers re-applied.
+///
+/// Wire format separates the anchored (`/`) and directory-only (`/`) modifiers
+/// from the pattern body, while the `filters` crate expects them embedded in
+/// the pattern string. This restores them so downstream rule compilation
+/// observes the user's original intent.
+fn reconstruct_pattern(wire_rule: &FilterRuleWireFormat) -> String {
+    let mut pattern = String::with_capacity(wire_rule.pattern.len() + 2);
+    if wire_rule.anchored && !wire_rule.pattern.starts_with('/') {
+        pattern.push('/');
+    }
+    pattern.push_str(&wire_rule.pattern);
+    if wire_rule.directory_only && !pattern.ends_with('/') {
+        pattern.push('/');
+    }
+    pattern
 }
 
 /// Converts a wire-format DirMerge rule into a `DirMergeConfig`.
