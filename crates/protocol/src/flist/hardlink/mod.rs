@@ -15,7 +15,12 @@
 mod table;
 #[cfg(test)]
 mod tests;
+mod trace;
 mod types;
 
 pub use table::HardlinkTable;
+pub use trace::{
+    trace_found_flist_match, trace_hashtable_for_dev, trace_leader_is, trace_looking_for_leader,
+    trace_virtual_first, trace_waiting_for,
+};
 pub use types::{DevIno, HardlinkEntry, HardlinkLookup};

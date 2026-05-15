@@ -11,7 +11,7 @@
 //! - `uidlist.c:add_uid()` / `add_gid()` - ID collection during file list building
 
 #[cfg(unix)]
-use protocol::flist::{DevIno, HardlinkLookup, HardlinkTable};
+use protocol::flist::{DevIno, HardlinkLookup, HardlinkTable, ProcessRole};
 
 use super::super::GeneratorContext;
 
@@ -51,6 +51,9 @@ impl GeneratorContext {
 
             let wire_ndx = ndx_start + i as u32;
             let dev_ino = DevIno::new(dev as u64, ino as u64);
+            // upstream: hlink.c HLINK debug emissions - announce per-device
+            // hashtable creation on first observation.
+            table.announce_device(ProcessRole::Generator, dev_ino.dev);
             match table.find_or_insert(dev_ino, wire_ndx) {
                 HardlinkLookup::First(_) => {
                     // Leader: mark with u32::MAX (XMIT_HLINK_FIRST on wire)
