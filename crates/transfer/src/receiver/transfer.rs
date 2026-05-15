@@ -14,7 +14,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use logging::{PhaseTimer, info_log};
+use logging::{PhaseTimer, debug_log, info_log};
 use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
 use protocol::flist::FileEntry;
 use protocol::stats::DeleteStats;
@@ -846,6 +846,12 @@ impl ReceiverContext {
         &mut self,
         reader: crate::reader::ServerReader<R>,
     ) -> io::Result<(crate::reader::ServerReader<R>, usize, PipelineSetup)> {
+        // upstream: generator.c:2260-2261 - emitted at the top of generate_files,
+        // just before the per-segment dispatch loop. The receiver-side transfer
+        // setup is the closest analog (every `run*` entry point routes through
+        // setup_transfer).
+        debug_log!(Genr, 1, "generator starting pid={}", std::process::id());
+
         let mut reader = if self.should_activate_input_multiplex() {
             reader.activate_multiplex().map_err(|e| {
                 io::Error::new(

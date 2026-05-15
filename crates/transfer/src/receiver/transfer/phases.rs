@@ -12,6 +12,7 @@
 
 use std::io::{self, Read, Write};
 
+use logging::debug_log;
 use protocol::CompatibilityFlags;
 use protocol::codec::{
     NDX_DEL_STATS, NDX_DONE, NdxCodec, NdxCodecEnum, ProtocolCodec, create_ndx_codec,
@@ -52,20 +53,40 @@ impl ReceiverContext {
                 self.read_expected_ndx_done(ndx_read_codec, reader, "segment completion")?;
             }
 
-            for _phase in 2..=max_phase {
+            // upstream: generator.c:2355-2357 - phase++ then "generate_files phase=%d"
+            // The first `phase++` after the per-segment loop advances 0 -> 1.
+            let mut phase: i32 = 1;
+            debug_log!(Genr, 1, "generate_files phase={}", phase);
+
+            for _phase_step in 2..=max_phase {
                 ndx_write_codec.write_ndx_done(&mut *writer)?;
                 writer.flush()?;
                 self.read_expected_ndx_done(ndx_read_codec, reader, "phase transition")?;
+                // upstream: generator.c:2366-2368 - phase++ on each additional
+                // iteration (covers the redo phase).
+                phase += 1;
+                debug_log!(Genr, 1, "generate_files phase={}", phase);
             }
 
             ndx_write_codec.write_ndx_done(&mut *writer)?;
             writer.flush()?;
+
+            // upstream: generator.c:2391-2394 - protocol >= 29 emits a final
+            // phase=3 for the delay-updates pass. INC_RECURSE implies
+            // protocol >= 30, so this always fires once on this branch.
+            if self.protocol.supports_multi_phase() {
+                phase += 1;
+                debug_log!(Genr, 1, "generate_files phase={}", phase);
+            }
         } else {
             let mut phase: i32 = 0;
             loop {
                 ndx_write_codec.write_ndx_done(&mut *writer)?;
                 writer.flush()?;
                 phase += 1;
+                // upstream: generator.c:2355-2357, 2366-2368, 2392-2394
+                // "generate_files phase=%d" emitted after each phase++.
+                debug_log!(Genr, 1, "generate_files phase={}", phase);
                 if phase > max_phase {
                     break;
                 }
@@ -197,6 +218,118 @@ impl ReceiverContext {
 
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
+        // upstream: generator.c:2436-2437 - "generate_files finished" emitted at
+        // the bottom of generate_files() after the final goodbye handshake.
+        debug_log!(Genr, 1, "generate_files finished");
+
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod genr_debug_emission_tests {
+    //! Wording tests for `--debug=GENR` producer emissions.
+    //!
+    //! Each test asserts the exact wire string that upstream rsync 3.4.1
+    //! emits from `generator.c generate_files` and `recv_generator` under
+    //! `DEBUG_GTE(GENR, 1)`. Strings are matched byte-for-byte because
+    //! interop harnesses grep for these literals.
+
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, debug_log, drain_events, init};
+    use std::path::PathBuf;
+
+    fn init_genr_level1() {
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.genr = 1;
+        init(cfg);
+        let _ = drain_events();
+    }
+
+    fn genr_messages() -> Vec<String> {
+        drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Genr,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn generator_starting_matches_upstream() {
+        // upstream: generator.c:2260-2261 - "generator starting pid=%d"
+        init_genr_level1();
+        let pid: u32 = 12345;
+        debug_log!(Genr, 1, "generator starting pid={}", pid);
+        let msgs = genr_messages();
+        assert!(
+            msgs.iter().any(|m| m == "generator starting pid=12345"),
+            "missing upstream wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn recv_generator_per_file_matches_upstream() {
+        // upstream: generator.c:1234-1235 - "recv_generator(%s,%d)"
+        init_genr_level1();
+        let name = PathBuf::from("dir/file.txt");
+        let ndx: i32 = 7;
+        debug_log!(Genr, 1, "recv_generator({},{})", name.display(), ndx);
+        let msgs = genr_messages();
+        assert!(
+            msgs.iter().any(|m| m == "recv_generator(dir/file.txt,7)"),
+            "missing upstream wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn generate_files_phase_matches_upstream() {
+        // upstream: generator.c:2355-2357, 2366-2368, 2392-2394
+        // "generate_files phase=%d" - the phase counter advances 1 -> 2 -> 3
+        // across the regular, redo, and protocol-29+ delay-updates phases.
+        init_genr_level1();
+        for phase in 1..=3 {
+            debug_log!(Genr, 1, "generate_files phase={}", phase);
+        }
+        let msgs = genr_messages();
+        for phase in 1..=3 {
+            let expected = format!("generate_files phase={phase}");
+            assert!(
+                msgs.iter().any(|m| m == &expected),
+                "missing upstream wording {expected:?}: {msgs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn generate_files_finished_matches_upstream() {
+        // upstream: generator.c:2436-2437 - "generate_files finished"
+        init_genr_level1();
+        debug_log!(Genr, 1, "generate_files finished");
+        let msgs = genr_messages();
+        assert!(
+            msgs.iter().any(|m| m == "generate_files finished"),
+            "missing upstream wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn genr_emissions_suppressed_when_disabled() {
+        let cfg = VerbosityConfig::default();
+        init(cfg);
+        let _ = drain_events();
+        debug_log!(Genr, 1, "generator starting pid=1");
+        debug_log!(Genr, 1, "recv_generator(foo,0)");
+        debug_log!(Genr, 1, "generate_files phase=1");
+        debug_log!(Genr, 1, "generate_files finished");
+        let msgs = genr_messages();
+        assert!(
+            msgs.is_empty(),
+            "Genr debug emissions must be gated; got: {msgs:?}"
+        );
     }
 }
