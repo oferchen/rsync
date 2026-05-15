@@ -100,8 +100,7 @@ where
         workers: Option<NonZeroU8>,
     ) -> io::Result<Self> {
         let writer = CountingWriter::new(sink);
-        let mut encoder =
-            ZstdEncoder::new(writer, zstd_level(level)).map_err(io::Error::other)?;
+        let mut encoder = ZstdEncoder::new(writer, zstd_level(level)).map_err(io::Error::other)?;
         configure_workers(&mut encoder, workers)?;
         Ok(Self { inner: encoder })
     }
@@ -264,7 +263,9 @@ fn configure_workers<W: Write>(
     let Some(n) = workers else { return Ok(()) };
     #[cfg(feature = "zstdmt")]
     {
-        encoder.multithread(u32::from(n.get())).map_err(io::Error::other)
+        encoder
+            .multithread(u32::from(n.get()))
+            .map_err(io::Error::other)
     }
     #[cfg(not(feature = "zstdmt"))]
     {

@@ -107,7 +107,10 @@ impl ZstdStrategy {
     /// Creates a zstd strategy at the given compression level.
     #[must_use]
     pub const fn new(level: CompressionLevel) -> Self {
-        Self { level, workers: None }
+        Self {
+            level,
+            workers: None,
+        }
     }
 
     /// Creates a Zstd strategy with default compression level.
@@ -136,8 +139,7 @@ impl Default for ZstdStrategy {
 impl CompressionStrategy for ZstdStrategy {
     fn compress(&self, input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
         let initial_len = output.len();
-        let mut encoder =
-            CountingZstdEncoder::with_sink_workers(output, self.level, self.workers)?;
+        let mut encoder = CountingZstdEncoder::with_sink_workers(output, self.level, self.workers)?;
         encoder.write(input)?;
         let (returned_output, _bytes_written) = encoder.finish_into_inner()?;
 
