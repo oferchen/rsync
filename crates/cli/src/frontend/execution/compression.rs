@@ -186,7 +186,9 @@ pub(crate) fn parse_compress_threads(argument: &OsStr) -> Result<Option<NonZeroU
         Ok(0) => Ok(None),
         Ok(value @ 1..=COMPRESS_THREADS_MAX) => {
             let byte = u8::try_from(value).expect("range 1..=64 fits in u8");
-            Ok(Some(NonZeroU8::new(byte).expect("range guarantees non-zero")))
+            Ok(Some(
+                NonZeroU8::new(byte).expect("range guarantees non-zero"),
+            ))
         }
         Ok(_) => Err(rsync_error!(
             1,
@@ -268,7 +270,8 @@ mod tests {
 
     #[test]
     fn parse_compress_threads_rejects_negative() {
-        let error = parse_compress_threads(OsStr::new("-1")).expect_err("negative should be rejected");
+        let error =
+            parse_compress_threads(OsStr::new("-1")).expect_err("negative should be rejected");
         let rendered = error.to_string();
         assert!(rendered.contains("--compress-threads=-1 must be between 0 and 64"));
     }
@@ -283,8 +286,7 @@ mod tests {
 
     #[test]
     fn parse_compress_threads_rejects_above_cap() {
-        let error =
-            parse_compress_threads(OsStr::new("99")).expect_err("99 should exceed the cap");
+        let error = parse_compress_threads(OsStr::new("99")).expect_err("99 should exceed the cap");
         let rendered = error.to_string();
         assert!(rendered.contains("must be between 0 and 64"));
     }
