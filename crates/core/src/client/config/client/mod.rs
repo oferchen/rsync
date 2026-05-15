@@ -101,6 +101,13 @@ pub struct ClientConfig {
     pub(super) explicit_compress_choice: bool,
     pub(super) compression_level: Option<CompressionLevel>,
     pub(super) compression_setting: CompressionSetting,
+    /// Worker thread count requested via `--compress-threads=N` (zstd's
+    /// `ZSTD_c_nbWorkers`). Stored here but not yet wired into the zstd
+    /// strategy; consumed by `compress/strategy/zstd.rs` in a follow-up.
+    ///
+    /// Upstream: `options.c:89 do_compression_threads`,
+    /// `token.c:701 ZSTD_c_nbWorkers`.
+    pub(super) compression_threads: Option<std::num::NonZeroU8>,
     pub(super) skip_compress: SkipCompressList,
     pub(super) open_noatime: bool,
     pub(super) whole_file: Option<bool>,
@@ -270,6 +277,7 @@ impl Default for ClientConfig {
             explicit_compress_choice: false,
             compression_level: None,
             compression_setting: CompressionSetting::default(),
+            compression_threads: None,
             skip_compress: SkipCompressList::default(),
             open_noatime: false,
             whole_file: None,

@@ -1,5 +1,5 @@
 use super::*;
-use std::num::{NonZeroU32, NonZeroUsize};
+use std::num::{NonZeroU8, NonZeroU32, NonZeroUsize};
 
 impl ClientConfigBuilder {
     builder_setter! {
@@ -67,6 +67,25 @@ impl ClientConfigBuilder {
     #[doc(alias = "--skip-compress")]
     pub fn skip_compress(mut self, list: SkipCompressList) -> Self {
         self.skip_compress = list;
+        self
+    }
+
+    /// Records the requested zstd worker thread count.
+    ///
+    /// `None` (the default) lets the codec pick its own worker count. The
+    /// value is currently stored without being forwarded to the encoder; the
+    /// zstd `ZSTD_c_nbWorkers` wiring lives in `compress/strategy/zstd.rs`
+    /// and is applied in a follow-up change.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:760-761` - `--compress-threads` / `--zt` long options.
+    /// - `token.c:701` - `ZSTD_CCtx_setParameter(.., ZSTD_c_nbWorkers, ..)`.
+    #[must_use]
+    #[doc(alias = "--compress-threads")]
+    #[doc(alias = "--zt")]
+    pub const fn compression_threads(mut self, threads: Option<NonZeroU8>) -> Self {
+        self.compression_threads = threads;
         self
     }
 

@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 
 use std::ffi::OsString;
-use std::num::{NonZeroU32, NonZeroUsize};
+use std::num::{NonZeroU8, NonZeroU32, NonZeroUsize};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -48,6 +48,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) compress: bool,
     pub(crate) compression_level_override: Option<compress::zlib::CompressionLevel>,
     pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
+    pub(crate) compression_threads: Option<NonZeroU8>,
     pub(crate) open_noatime: bool,
     pub(crate) owner: bool,
     pub(crate) owner_override: Option<uid_t>,
@@ -196,6 +197,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .compression_setting(inputs.compression_setting)
         .compress(inputs.compress)
         .compression_level(inputs.compression_level_override)
+        .compression_threads(inputs.compression_threads)
         .open_noatime(inputs.open_noatime)
         .owner(inputs.owner)
         .owner_override(inputs.owner_override)
