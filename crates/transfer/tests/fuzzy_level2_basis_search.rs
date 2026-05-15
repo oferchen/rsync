@@ -354,3 +354,70 @@ fn whole_file_bypasses_fuzzy_search() {
         "whole_file mode should bypass all basis file search"
     );
 }
+
+/// Verifies that `--debug=FUZZY` level 1 emits the upstream-format
+/// `"fuzzy basis selected for ..."` line whenever the receiver basis search
+/// selects a fuzzy candidate.
+///
+/// upstream: generator.c:1775-1778 - `DEBUG_GTE(FUZZY, 1)` branch in
+/// `recv_generator()`.
+#[test]
+fn fuzzy_basis_selection_emits_debug_fuzzy_line() {
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    let temp = TempDir::new().expect("create temp dir");
+    let dest_dir = temp.path().join("dest");
+    std::fs::create_dir_all(&dest_dir).expect("create dest");
+
+    // Seed a similar-named candidate in the destination directory so the
+    // fuzzy matcher returns a hit.
+    let content = generate_content(8_192, 0x37);
+    std::fs::write(dest_dir.join("report_v1.bin"), &content).expect("write basis");
+
+    let target_path = dest_dir.join("report_v2.bin");
+    let relative_path = Path::new("report_v2.bin");
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.fuzzy = 1;
+    init(cfg);
+    let _ = drain_events();
+
+    let config = BasisFileConfig {
+        file_path: &target_path,
+        dest_dir: &dest_dir,
+        relative_path,
+        target_size: content.len() as u64,
+        fuzzy_level: 1,
+        reference_directories: &[],
+        protocol: protocol::ProtocolVersion::try_from(32u8).unwrap(),
+        checksum_length: NonZeroU8::new(16).unwrap(),
+        checksum_algorithm: signature::SignatureAlgorithm::Md4,
+        whole_file: false,
+    };
+
+    let result = find_basis_file_with_config(&config);
+    assert!(
+        !result.is_empty(),
+        "fuzzy level 1 should locate report_v1.bin as a basis"
+    );
+
+    let msgs: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug {
+                flag: DebugFlag::Fuzzy,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        msgs.iter().any(
+            |m| m.starts_with("fuzzy basis selected for report_v2.bin: ")
+                && m.contains("report_v1.bin")
+        ),
+        "expected upstream-format FUZZY,1 selection line; got {msgs:?}"
+    );
+}
