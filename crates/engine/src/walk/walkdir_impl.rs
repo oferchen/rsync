@@ -4,11 +4,20 @@
 //! walkdir, with sorted results matching upstream rsync's ordering.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use jwalk::{Parallelism, WalkDir};
 
 use super::{DirectoryWalker, WalkConfig, WalkEntry, WalkError};
+
+/// Returns `true` if the error indicates the path no longer exists.
+///
+/// upstream: flist.c interpret_stat_error - ENOENT during walk indicates a
+/// vanished entry, which upstream rsync logs and skips rather than failing.
+fn is_not_found(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::NotFound
+}
 
 /// Type alias for the boxed jwalk iterator to reduce type complexity.
 type JwalkIterator =
@@ -160,6 +169,14 @@ impl Iterator for WalkdirWalker {
                     let metadata = match dir_entry.metadata() {
                         Ok(m) => m,
                         Err(e) => {
+                            // upstream: flist.c send_directory / interpret_stat_error -
+                            // a file or directory that vanished between readdir() and
+                            // stat() is logged and skipped, not propagated. Without
+                            // this, a racing rename or unlink during a parallel walk
+                            // aborts the entire traversal.
+                            if is_not_found(&e) {
+                                continue;
+                            }
                             return Some(Err(WalkError::Walk(format!(
                                 "failed to read metadata for '{}': {}",
                                 dir_entry.path().display(),
@@ -182,6 +199,14 @@ impl Iterator for WalkdirWalker {
                     return Some(Ok(WalkEntry::new(path, metadata, depth)));
                 }
                 Err(e) => {
+                    // upstream: flist.c send_directory - opendir() returning
+                    // ENOENT below the root means the directory vanished
+                    // mid-walk; skip it silently rather than aborting. The
+                    // root itself is reported because upstream only ignores
+                    // top-level ENOENT with --ignore-missing-args.
+                    if e.depth() > 0 && e.io_error().is_some_and(is_not_found) {
+                        continue;
+                    }
                     return Some(Err(WalkError::Walk(e.to_string())));
                 }
             }
@@ -333,6 +358,41 @@ mod tests {
         assert!(walker.config().is_one_file_system());
         let entries: Vec<_> = walker.flatten().collect();
         assert!(!entries.is_empty());
+    }
+
+    /// Regression: a subdirectory deleted between `readdir()` and the
+    /// subsequent stat must not abort the walk - upstream rsync emits a
+    /// "directory has vanished" warning and continues. Simulate the race
+    /// by deleting a subdirectory before iteration consumes its entry.
+    ///
+    /// upstream: flist.c send_directory / interpret_stat_error
+    #[cfg(unix)]
+    #[test]
+    fn tolerates_vanished_subdirectory_mid_walk() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("survivor.txt"), b"ok").unwrap();
+        let doomed = dir.path().join("doomed");
+        fs::create_dir(&doomed).unwrap();
+        fs::write(doomed.join("inner.txt"), b"bye").unwrap();
+
+        // Remove the subdir before walking - jwalk will see it in readdir()
+        // but ENOENT during stat/opendir, mirroring the race upstream covers.
+        fs::remove_dir_all(&doomed).unwrap();
+
+        let walker = WalkdirWalker::new(dir.path(), WalkConfig::default());
+        let results: Vec<_> = walker.collect();
+
+        let errors: Vec<_> = results.iter().filter(|r| r.is_err()).collect();
+        assert!(
+            errors.is_empty(),
+            "vanished subdirectory must not produce a walk error: {errors:?}"
+        );
+        let names: Vec<_> = results
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .filter_map(|e| e.file_name().map(|n| n.to_string_lossy().to_string()))
+            .collect();
+        assert!(names.iter().any(|n| n == "survivor.txt"));
     }
 
     #[cfg(unix)]
