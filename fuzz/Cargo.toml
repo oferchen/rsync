@@ -14,9 +14,19 @@ libfuzzer-sys = "0.4"
 [dependencies.protocol]
 path = "../crates/protocol"
 
+[dependencies.checksums]
+path = "../crates/checksums"
+
 [[bin]]
 name = "protocol_wire"
 path = "fuzz_targets/protocol_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "simd_checksum_parity"
+path = "fuzz_targets/simd_checksum_parity.rs"
 test = false
 doc = false
 bench = false
