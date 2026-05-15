@@ -228,6 +228,35 @@ mod tests {
         assert_eq!(sanitize_path("foo///bar///baz"), "foo/bar/baz");
     }
 
+    // Parity with upstream rsync 3.4.2 "removal of multiple leading slashes"
+    // fix (commit d4c4f67, NEWS.md:71). Pins the leading-slash collapse
+    // behaviour against any future regression to a pair-replace strategy.
+    // upstream: util1.c sanitize_path leading-slash skip + main-loop discard
+    #[test]
+    fn leading_double_slash_collapsed() {
+        assert_eq!(sanitize_path("//foo"), "foo");
+    }
+
+    #[test]
+    fn leading_triple_slash_collapsed() {
+        assert_eq!(sanitize_path("///foo"), "foo");
+    }
+
+    #[test]
+    fn leading_quintuple_slash_collapsed() {
+        assert_eq!(sanitize_path("/////bar"), "bar");
+    }
+
+    #[test]
+    fn leading_slashes_with_interior_double_slash() {
+        assert_eq!(sanitize_path("///foo//bar"), "foo/bar");
+    }
+
+    #[test]
+    fn all_slashes_becomes_dot() {
+        assert_eq!(sanitize_path("/////"), ".");
+    }
+
     #[test]
     fn absolute_dotdot_traversal_blocked() {
         assert_eq!(sanitize_path("/../../etc/passwd"), "etc/passwd");
