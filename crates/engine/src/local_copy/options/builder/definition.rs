@@ -61,6 +61,7 @@ pub struct LocalCopyOptionsBuilder {
     pub(super) compression_algorithm: CompressionAlgorithm,
     pub(super) compression_level_override: Option<CompressionLevel>,
     pub(super) compression_level: CompressionLevel,
+    pub(super) compression_threads: Option<std::num::NonZeroU8>,
     pub(super) skip_compress: SkipCompressList,
 
     pub(super) open_noatime: bool,
@@ -193,6 +194,7 @@ impl LocalCopyOptionsBuilder {
             compression_algorithm: CompressionAlgorithm::default_algorithm(),
             compression_level_override: None,
             compression_level: CompressionLevel::Default,
+            compression_threads: None,
             skip_compress: SkipCompressList::default(),
             open_noatime: false,
             whole_file: None,

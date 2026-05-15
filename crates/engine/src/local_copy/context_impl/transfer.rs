@@ -8,11 +8,13 @@ impl<'a> CopyContext<'a> {
             return Ok(None);
         }
 
-        ActiveCompressor::new(self.compression_algorithm(), self.compression_level())
-            .map(Some)
-            .map_err(|error| {
-                LocalCopyError::io("initialise compression", source, error)
-            })
+        ActiveCompressor::new_with_workers(
+            self.compression_algorithm(),
+            self.compression_level(),
+            self.compression_threads(),
+        )
+        .map(Some)
+        .map_err(|error| LocalCopyError::io("initialise compression", source, error))
     }
 
     fn register_limiter_bytes(&mut self, bytes: u64) {

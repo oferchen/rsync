@@ -528,6 +528,9 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .with_skip_compress(config.skip_compress().clone())
             .compress(config.compress())
             .with_compression_level_override(config.compression_level())
+            // upstream: options.c:89 do_compression_threads, plumbed into
+            // ZSTD_c_nbWorkers by token.c:701 when zstd is selected.
+            .with_compression_threads(config.compression_threads())
     }
 
     fn apply_metadata_preservation(
