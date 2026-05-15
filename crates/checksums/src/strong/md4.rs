@@ -299,6 +299,24 @@ mod tests {
     }
 
     #[test]
+    fn md4_seeded_empty_input_matches_seed_only_digest() {
+        // upstream: checksum.c get_checksum2 (MD4 path) - rsync 3.4.2 NEWS:
+        // "Fixed an uninitialized buf1 on the first call to get_checksum2()
+        // in the MD4 path (fixes #673)". With an empty buffer and a non-zero
+        // seed, upstream copies zero bytes into buf1 then writes the seed at
+        // offset 0 via SIVAL(buf1, 0, seed). Our streaming path has no buf1
+        // cache; this test pins the equivalent contract: digest_with_seed
+        // over an empty input must equal MD4 over the 4-byte LE seed alone.
+        let seed: i32 = 0x12345678;
+        let seeded_empty = Md4::digest_with_seed(seed, b"");
+        let seed_only = Md4::digest(&seed.to_le_bytes());
+        assert_eq!(
+            seeded_empty, seed_only,
+            "empty input + non-zero seed must hash exactly the 4 seed bytes"
+        );
+    }
+
+    #[test]
     fn md4_seeded_negative_seed_is_le_two_complement() {
         // i32::to_le_bytes preserves two's complement; verify wire equivalence.
         let seed: i32 = -1;
