@@ -154,6 +154,53 @@ pub(crate) fn parse_bandwidth_limit(argument: &OsStr) -> Result<Option<Bandwidth
     }
 }
 
+/// Upper bound for `--compress-threads`. Mirrors zstd's documented worker cap
+/// and matches what upstream rsync 3.4.2 accepts before clamping. Upstream
+/// silently clamps negative values to 0; we reject them so users get a clear
+/// diagnostic instead.
+const COMPRESS_THREADS_MAX: i32 = 64;
+
+/// Parses `--compress-threads=N` into an optional worker count.
+///
+/// Returns `Ok(None)` for `0` (delegates the choice to zstd, matching
+/// `do_compression_threads = 0` in upstream `options.c:89`). Returns
+/// `Ok(Some(n))` for positive integers up to [`COMPRESS_THREADS_MAX`].
+/// Rejects negative values, non-numeric input, and out-of-range positive
+/// integers with a user-facing error message.
+///
+/// # Upstream Reference
+///
+/// - `options.c:760-761` - `{"compress-threads", 0, POPT_ARG_INT, &do_compression_threads, 0, 0, 0 }`.
+/// - `options.c:2016-2017` - upstream clamps negative values to 0.
+pub(crate) fn parse_compress_threads(argument: &OsStr) -> Result<Option<NonZeroU8>, Message> {
+    let original = argument.to_string_lossy().into_owned();
+    let trimmed = original.trim();
+
+    if trimmed.is_empty() {
+        return Err(
+            rsync_error!(1, "--compress-threads={} is invalid", original).with_role(Role::Client),
+        );
+    }
+
+    match trimmed.parse::<i32>() {
+        Ok(0) => Ok(None),
+        Ok(value @ 1..=COMPRESS_THREADS_MAX) => {
+            let byte = u8::try_from(value).expect("range 1..=64 fits in u8");
+            Ok(Some(NonZeroU8::new(byte).expect("range guarantees non-zero")))
+        }
+        Ok(_) => Err(rsync_error!(
+            1,
+            "--compress-threads={} must be between 0 and {}",
+            trimmed,
+            COMPRESS_THREADS_MAX
+        )
+        .with_role(Role::Client)),
+        Err(_) => Err(
+            rsync_error!(1, "--compress-threads={} is invalid", original).with_role(Role::Client),
+        ),
+    }
+}
+
 pub(crate) fn parse_compress_level_argument(value: &OsStr) -> Result<CompressionSetting, Message> {
     match parse_compress_level_value(value) {
         Ok(CompressLevelArg::Disable) => Ok(CompressionSetting::disabled()),
@@ -205,5 +252,40 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("invalid compression algorithm"));
         assert!(message.contains("brotli"));
+    }
+
+    #[test]
+    fn parse_compress_threads_accepts_positive_value() {
+        let parsed = parse_compress_threads(OsStr::new("4")).expect("4 should parse");
+        assert_eq!(parsed.map(NonZeroU8::get), Some(4));
+    }
+
+    #[test]
+    fn parse_compress_threads_zero_means_zstd_default() {
+        let parsed = parse_compress_threads(OsStr::new("0")).expect("0 should parse");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn parse_compress_threads_rejects_negative() {
+        let error = parse_compress_threads(OsStr::new("-1")).expect_err("negative should be rejected");
+        let rendered = error.to_string();
+        assert!(rendered.contains("--compress-threads=-1 must be between 0 and 64"));
+    }
+
+    #[test]
+    fn parse_compress_threads_rejects_non_numeric() {
+        let error =
+            parse_compress_threads(OsStr::new("abc")).expect_err("non-numeric should be rejected");
+        let rendered = error.to_string();
+        assert!(rendered.contains("--compress-threads=abc is invalid"));
+    }
+
+    #[test]
+    fn parse_compress_threads_rejects_above_cap() {
+        let error =
+            parse_compress_threads(OsStr::new("99")).expect_err("99 should exceed the cap");
+        let rendered = error.to_string();
+        assert!(rendered.contains("must be between 0 and 64"));
     }
 }

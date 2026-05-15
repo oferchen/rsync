@@ -337,6 +337,9 @@ pub struct ParsedArgs {
     /// `--compress-choice` - compression algorithm (e.g., `zlib`, `zstd`).
     pub compress_choice: Option<OsString>,
 
+    /// `--compress-threads` - zstd worker thread count (raw, validated later).
+    pub compress_threads: Option<OsString>,
+
     /// `--old-compress` - force zlib compression.
     pub old_compress: bool,
 

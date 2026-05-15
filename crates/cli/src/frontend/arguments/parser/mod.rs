@@ -612,6 +612,7 @@ where
 
     let compress_level = matches.remove_one::<OsString>("compress-level");
     let compress_choice = matches.remove_one::<OsString>("compress-choice");
+    let compress_threads = matches.remove_one::<OsString>("compress-threads");
     let old_compress = matches.get_flag("old-compress");
     let new_compress = matches.get_flag("new-compress");
     let skip_compress = matches.remove_one::<OsString>("skip-compress");
@@ -742,6 +743,7 @@ where
         no_compress,
         compress_level,
         compress_choice,
+        compress_threads,
         old_compress,
         new_compress,
         skip_compress,

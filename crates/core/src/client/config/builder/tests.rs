@@ -1661,6 +1661,20 @@ fn compression_setting_level_enables_compress() {
 }
 
 #[test]
+fn compression_threads_default_is_none() {
+    let config = builder().build();
+    assert_eq!(config.compression_threads(), None);
+}
+
+#[test]
+fn compression_threads_setter_propagates_to_config() {
+    use std::num::NonZeroU8;
+    let threads = NonZeroU8::new(4).expect("4 is non-zero");
+    let config = builder().compression_threads(Some(threads)).build();
+    assert_eq!(config.compression_threads(), Some(threads));
+}
+
+#[test]
 fn compress_false_after_level_clears_everything() {
     use std::num::NonZeroU8;
     for n in 1u8..=9 {
