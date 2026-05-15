@@ -2448,3 +2448,60 @@ mod iconv_integration {
         assert_eq!(target.as_os_str().as_bytes(), wire);
     }
 }
+
+// Parity with upstream rsync 3.4.2 "removal of multiple leading slashes"
+// fix (commit d4c4f67, NEWS.md:71). The upstream fix lives in `support/rrsync`;
+// here we pin the equivalent oc-rsync site (`clean_and_validate_name`) so any
+// future refactor that switches to a pair-replace strategy is caught.
+// upstream: util1.c clean_fname leading-slash skip + flist.c:3079 strip_root
+mod leading_slash_parity {
+    use super::*;
+
+    fn run(name: &[u8], relative_paths: bool) -> Result<Vec<u8>, std::io::ErrorKind> {
+        let reader = FileListReader::new(test_protocol()).with_relative_paths(relative_paths);
+        reader
+            .clean_and_validate_name(name.to_vec())
+            .map_err(|e| e.kind())
+    }
+
+    #[test]
+    fn relative_double_leading_slash_stripped() {
+        assert_eq!(run(b"//foo", true).unwrap(), b"foo");
+    }
+
+    #[test]
+    fn relative_triple_leading_slash_stripped() {
+        assert_eq!(run(b"///foo", true).unwrap(), b"foo");
+    }
+
+    #[test]
+    fn relative_quintuple_leading_slash_stripped() {
+        assert_eq!(run(b"/////bar", true).unwrap(), b"bar");
+    }
+
+    #[test]
+    fn relative_leading_with_interior_doubles() {
+        assert_eq!(run(b"///foo//bar", true).unwrap(), b"foo/bar");
+    }
+
+    #[test]
+    fn relative_only_slashes_becomes_dot() {
+        assert_eq!(run(b"/////", true).unwrap(), b".");
+    }
+
+    #[test]
+    fn non_relative_double_leading_slash_rejected() {
+        assert_eq!(
+            run(b"//foo", false).unwrap_err(),
+            std::io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn non_relative_triple_leading_slash_rejected() {
+        assert_eq!(
+            run(b"///foo", false).unwrap_err(),
+            std::io::ErrorKind::InvalidData
+        );
+    }
+}
