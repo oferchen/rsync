@@ -4,6 +4,7 @@
 //! transitions where the global I/O buffer state is modified at runtime.
 
 use std::io::{self, IoSlice, Write};
+use std::num::NonZeroU8;
 use std::sync::{Arc, Mutex};
 
 use compress::algorithm::CompressionAlgorithm;
@@ -75,6 +76,17 @@ impl<W: Write> ServerWriter<W> {
         algorithm: CompressionAlgorithm,
         level: CompressionLevel,
     ) -> io::Result<Self> {
+        self.activate_compression_with_workers(algorithm, level, None)
+    }
+
+    /// Like [`activate_compression`](Self::activate_compression) but plumbs
+    /// `--compress-threads=N` into `ZSTD_c_nbWorkers`. upstream: `token.c:701`.
+    pub fn activate_compression_with_workers(
+        self,
+        algorithm: CompressionAlgorithm,
+        level: CompressionLevel,
+        workers: Option<NonZeroU8>,
+    ) -> io::Result<Self> {
         match self {
             Self::Multiplex(mux) => {
                 // upstream: io.c:write_buf() tees data to batch_fd at the
@@ -83,7 +95,7 @@ impl<W: Write> ServerWriter<W> {
                 // compressed wire bytes, matching upstream behavior. The
                 // batch header records do_compression=true so replay knows
                 // to decompress.
-                let compressed = CompressedWriter::new(mux, algorithm, level)?;
+                let compressed = CompressedWriter::with_workers(mux, algorithm, level, workers)?;
                 Ok(Self::Compressed(compressed))
             }
             Self::Plain(_) => Err(io::Error::new(
