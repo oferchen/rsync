@@ -358,6 +358,11 @@ impl ReceiverContext {
                         total_file_bytes: Some(file_entry.size()),
                         files_done: files_transferred,
                         total_files,
+                        // Receiver-side INC_RECURSE collects every sub-list via
+                        // `receive_extra_file_lists` before the pipeline begins,
+                        // so the file list is always complete when progress is
+                        // emitted. upstream: progress.c:79-82 rprint_progress.
+                        flist_eof: true,
                     };
                     cb.on_file_transferred(&event);
                 }

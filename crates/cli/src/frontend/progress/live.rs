@@ -129,9 +129,13 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                     write!(self.writer, "\r")?;
                 }
 
+                // upstream: progress.c:80 - chk-prefix is "to" once the file
+                // list is complete, "ir" while INC_RECURSE sub-lists are still
+                // arriving on the wire.
+                let chk_prefix = if update.flist_eof() { "to" } else { "ir" };
                 write!(
                     self.writer,
-                    "{size_field} {percent_field} {rate_field} {time_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
+                    "{size_field} {percent_field} {rate_field} {time_field} (xfr#{xfr_index}, {chk_prefix}-chk={remaining}/{total})"
                 )?;
 
                 if update.is_final() {
@@ -174,9 +178,13 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                     write!(self.writer, "\r")?;
                 }
 
+                // upstream: progress.c:80 - chk-prefix is "to" once the file
+                // list is complete, "ir" while INC_RECURSE sub-lists are still
+                // arriving on the wire.
+                let chk_prefix = if update.flist_eof() { "to" } else { "ir" };
                 write!(
                     self.writer,
-                    "{size_field} {percent_field} {rate_field} {time_field} (xfr#{xfr_index}, to-chk={remaining}/{total})"
+                    "{size_field} {percent_field} {rate_field} {time_field} (xfr#{xfr_index}, {chk_prefix}-chk={remaining}/{total})"
                 )?;
 
                 if final_tick {
@@ -196,5 +204,68 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
             }
             Err(error) => self.record_error(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::client::{ClientEvent, ClientEventKind};
+    use engine::local_copy::LocalCopyChangeSet;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    fn make_update(flist_eof: bool) -> ClientProgressUpdate {
+        let event = ClientEvent::for_test(
+            PathBuf::from("file.bin"),
+            ClientEventKind::DataCopied,
+            true,
+            None,
+            LocalCopyChangeSet::new(),
+        );
+        ClientProgressUpdate::from_transfer_event(
+            event,
+            1,
+            3,
+            Some(2_048),
+            1_024,
+            Duration::from_secs(1),
+            flist_eof,
+        )
+    }
+
+    /// upstream: progress.c:78-82 - the per-file trailer prints `to-chk` once
+    /// the file list is complete, `ir-chk` while INC_RECURSE sub-lists are
+    /// still arriving.
+    #[test]
+    fn per_file_renders_to_chk_when_flist_complete() {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut live = LiveProgress::new(
+                &mut buf,
+                ProgressMode::PerFile,
+                HumanReadableMode::Disabled,
+            );
+            live.on_progress(&make_update(true));
+        }
+        let output = String::from_utf8(buf).expect("utf8");
+        assert!(output.contains("to-chk="), "missing to-chk: {output}");
+        assert!(!output.contains("ir-chk="), "unexpected ir-chk: {output}");
+    }
+
+    #[test]
+    fn per_file_renders_ir_chk_when_flist_pending() {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut live = LiveProgress::new(
+                &mut buf,
+                ProgressMode::PerFile,
+                HumanReadableMode::Disabled,
+            );
+            live.on_progress(&make_update(false));
+        }
+        let output = String::from_utf8(buf).expect("utf8");
+        assert!(output.contains("ir-chk="), "missing ir-chk: {output}");
+        assert!(!output.contains("to-chk="), "unexpected to-chk: {output}");
     }
 }

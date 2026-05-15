@@ -54,6 +54,7 @@ pub struct ClientProgressUpdate {
     overall_transferred: u64,
     overall_total_bytes: Option<u64>,
     overall_elapsed: Duration,
+    flist_eof: bool,
 }
 
 impl ClientProgressUpdate {
@@ -108,6 +109,19 @@ impl ClientProgressUpdate {
     pub const fn overall_elapsed(&self) -> Duration {
         self.overall_elapsed
     }
+
+    /// Reports whether the file list is complete (no more INC_RECURSE
+    /// sub-lists pending).
+    ///
+    /// Mirrors upstream's `flist_eof` flag, which controls whether the
+    /// per-file progress line ends with `to-chk=...` (complete) or
+    /// `ir-chk=...` (incremental-recursive still in flight).
+    ///
+    /// upstream: progress.c:79-82 rprint_progress
+    #[must_use]
+    pub const fn flist_eof(&self) -> bool {
+        self.flist_eof
+    }
 }
 
 /// Observer invoked for each progress update generated during client execution.
@@ -128,6 +142,7 @@ impl ClientProgressUpdate {
         total_bytes: Option<u64>,
         overall_transferred: u64,
         overall_elapsed: Duration,
+        flist_eof: bool,
     ) -> Self {
         Self {
             event,
@@ -139,6 +154,7 @@ impl ClientProgressUpdate {
             overall_transferred,
             overall_total_bytes: None,
             overall_elapsed,
+            flist_eof,
         }
     }
 }
@@ -239,6 +255,9 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             overall_transferred: self.overall_transferred,
             overall_total_bytes: self.overall_total_bytes,
             overall_elapsed: self.overall_start.elapsed(),
+            // Local copies enumerate the file list eagerly before transferring,
+            // so the list is always complete when progress is emitted.
+            flist_eof: true,
         };
 
         self.observer.on_progress(&update);
@@ -279,6 +298,9 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             overall_transferred: self.overall_transferred,
             overall_total_bytes: self.overall_total_bytes,
             overall_elapsed: self.overall_start.elapsed(),
+            // Local copies do not use INC_RECURSE: the file list is enumerated
+            // eagerly before any progress event is emitted.
+            flist_eof: true,
         };
 
         self.observer.on_progress(&update);
@@ -313,6 +335,7 @@ mod tests {
             overall_transferred: 5000,
             overall_total_bytes: Some(10000),
             overall_elapsed: Duration::from_secs(5),
+            flist_eof: true,
         }
     }
 
@@ -387,5 +410,35 @@ mod tests {
         observer.on_progress(&update);
 
         assert_eq!(updates, vec![5]);
+    }
+
+    /// upstream: progress.c:79-82 - `flist_eof ? "to" : "ir"` switches the
+    /// chk-prefix on the trailing per-file summary. Verify the flag is
+    /// surfaced through the public accessor.
+    #[test]
+    fn flist_eof_default_true_matches_completed_list() {
+        let update = create_test_update(10, 5, 5, true);
+        assert!(update.flist_eof());
+    }
+
+    #[test]
+    fn flist_eof_can_be_false_for_inc_recurse() {
+        let event = ClientEvent::from_progress(
+            Path::new("a"),
+            0,
+            None,
+            Duration::ZERO,
+            Arc::from(Path::new("/d")),
+        );
+        let update = ClientProgressUpdate::from_transfer_event(
+            event,
+            1,
+            2,
+            None,
+            0,
+            Duration::ZERO,
+            false,
+        );
+        assert!(!update.flist_eof());
     }
 }
