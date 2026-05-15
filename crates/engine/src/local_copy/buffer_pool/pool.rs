@@ -784,7 +784,11 @@ impl<A: BufferAllocator> BufferPool<A> {
         // count-based cap, so reject up-front when the budget is set and
         // this buffer alone would exceed remaining headroom.
         if let Some(budget) = self.pooled_bytes_budget
-            && self.pooled_bytes.load(Ordering::Relaxed).saturating_add(buffer_bytes) > budget
+            && self
+                .pooled_bytes
+                .load(Ordering::Relaxed)
+                .saturating_add(buffer_bytes)
+                > budget
         {
             self.allocator.deallocate(buffer);
             return;

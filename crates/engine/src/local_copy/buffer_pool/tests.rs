@@ -2330,8 +2330,7 @@ fn pooled_bytes_budget_drops_oversized_buffers() {
     // Tight byte budget (16 KB) with generous count cap (8). Holding two
     // 1 MB adaptive buffers concurrently and dropping both forces one
     // through the central admission path. The byte budget rejects it.
-    let pool =
-        Arc::new(BufferPool::with_buffer_size(8, 4096).with_pooled_bytes_budget(16 * 1024));
+    let pool = Arc::new(BufferPool::with_buffer_size(8, 4096).with_pooled_bytes_budget(16 * 1024));
 
     let b1 = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 300 * 1024 * 1024);
     let b2 = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 300 * 1024 * 1024);
