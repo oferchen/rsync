@@ -43,10 +43,14 @@ impl GeneratorContext {
             }
         };
 
-        self.walk_path_with_metadata(base, path, metadata)
+        self.walk_path_with_metadata(base, path, metadata, true)
     }
 
     /// Walks a path with pre-resolved metadata, skipping the initial stat call.
+    ///
+    /// `is_top_level` is `true` only for the direct source arguments; recursive
+    /// descents into directory children always pass `false`. The flag controls
+    /// whether the directory entry receives `XMIT_TOP_DIR` (upstream `FLAG_TOP_DIR`).
     ///
     /// This is the inner implementation shared by [`walk_path`] (which resolves
     /// metadata itself) and the batched-stat path (which pre-resolves metadata
@@ -56,6 +60,7 @@ impl GeneratorContext {
         base: &Path,
         path: PathBuf,
         metadata: std::fs::Metadata,
+        is_top_level: bool,
     ) -> io::Result<()> {
         let relative = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
 
@@ -121,7 +126,7 @@ impl GeneratorContext {
             }
         }
 
-        let entry = match self.create_entry(&path, relative, &metadata) {
+        let mut entry = match self.create_entry(&path, relative, &metadata) {
             Ok(e) => e,
             Err(e) => {
                 // upstream: flist.c - rsyserr for make_file() failures
@@ -135,6 +140,17 @@ impl GeneratorContext {
                 return Ok(());
             }
         };
+
+        // upstream: flist.c:2287 - top-level source directories carry
+        // FLAG_TOP_DIR so delete_in_dir() can scope deletions. Under
+        // --relative the directory entry has a non-empty relative name (e.g.
+        // "tmp/dbg/src/usr/bin") instead of ".", but it still needs the flag.
+        if is_top_level && metadata.is_dir() {
+            entry.set_flags(protocol::flist::FileFlags::new(
+                protocol::flist::XMIT_TOP_DIR,
+                0,
+            ));
+        }
 
         // upstream: flist.c:send_file_list() - scan directory before recording entry
         let should_recurse = metadata.is_dir() && self.config.flags.recursive;
@@ -288,7 +304,7 @@ impl GeneratorContext {
                         }
                     }
 
-                    self.walk_path_with_metadata(base, path, meta)?;
+                    self.walk_path_with_metadata(base, path, meta, false)?;
                 }
                 Err(e) => {
                     self.log_stat_error(&path, &e);
