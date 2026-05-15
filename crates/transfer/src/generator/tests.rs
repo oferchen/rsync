@@ -2199,7 +2199,11 @@ mod files_from {
         );
         // Every parent ancestor must be present so the receiver can resolve
         // generator.c:1313 parent-lookup without ABORTING.
-        for ancestor in src_dir.ancestors().skip(1).take_while(|p| p.parent().is_some()) {
+        for ancestor in src_dir
+            .ancestors()
+            .skip(1)
+            .take_while(|p| p.parent().is_some())
+        {
             let rel = ancestor.strip_prefix("/").unwrap().to_string_lossy();
             if rel.is_empty() {
                 continue;
@@ -2223,10 +2227,7 @@ mod files_from {
         std::fs::write(leaf.join("ar"), b"x").unwrap();
 
         // Construct path with explicit "/./" separator.
-        let src_with_anchor = PathBuf::from(format!(
-            "{}/./usr/bin",
-            anchored.to_string_lossy()
-        ));
+        let src_with_anchor = PathBuf::from(format!("{}/./usr/bin", anchored.to_string_lossy()));
 
         let handshake = test_handshake();
         let mut config = test_config();
