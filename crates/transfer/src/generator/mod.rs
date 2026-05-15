@@ -89,7 +89,7 @@ mod tests;
 mod transfer;
 
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ::filters::FilterChain;
 use protocol::codec::{MonotonicNdxWriter, NdxCodecEnum};
@@ -228,6 +228,12 @@ struct TransferTiming {
     flist_xfer_start: Option<Instant>,
     /// When file list transfer ended (for flist_xfertime statistic).
     flist_xfer_end: Option<Instant>,
+    /// Elapsed time from `send_file_list` entry to the first byte hitting the
+    /// wire. Diagnostic counter for sender-side INC_RECURSE (#2089) - tracks
+    /// how long the receiver waits before observing any file list data.
+    ///
+    /// upstream: flist.c send_file_list / send_dir_name first-byte timing
+    flist_first_byte_latency: Option<Duration>,
     /// Total bytes read from network during transfer (for total_read statistic).
     total_bytes_read: u64,
 }
@@ -240,6 +246,7 @@ impl TransferTiming {
             flist_build_end: None,
             flist_xfer_start: None,
             flist_xfer_end: None,
+            flist_first_byte_latency: None,
             total_bytes_read: 0,
         }
     }
@@ -815,6 +822,13 @@ pub struct GeneratorStats {
     pub flist_buildtime_ms: u64,
     /// File list transfer time in milliseconds (upstream: `stats.flist_xfertime`).
     pub flist_xfertime_ms: u64,
+    /// Elapsed time from `send_file_list` entry to the first byte written to
+    /// the wire. Diagnostic counter for sender-side INC_RECURSE (#2089).
+    ///
+    /// `None` when `send_file_list` was never invoked or no bytes were written.
+    ///
+    /// upstream: flist.c send_file_list / send_dir_name first-byte timing
+    pub flist_first_byte_latency: Option<Duration>,
     /// Accumulated deletion statistics from the receiver via `NDX_DEL_STATS`.
     pub delete_stats: DeleteStats,
     /// Accumulated I/O error flags from file list building and transfer.
