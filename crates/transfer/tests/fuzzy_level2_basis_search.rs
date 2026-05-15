@@ -414,9 +414,10 @@ fn fuzzy_basis_selection_emits_debug_fuzzy_line() {
         .collect();
 
     assert!(
-        msgs.iter()
-            .any(|m| m.starts_with("fuzzy basis selected for report_v2.bin: ")
-                && m.contains("report_v1.bin")),
+        msgs.iter().any(
+            |m| m.starts_with("fuzzy basis selected for report_v2.bin: ")
+                && m.contains("report_v1.bin")
+        ),
         "expected upstream-format FUZZY,1 selection line; got {msgs:?}"
     );
 }

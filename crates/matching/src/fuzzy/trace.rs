@@ -102,9 +102,8 @@ mod tests {
         trace_fuzzy_basis_selected("dir/report_2024.csv", "dir/report_2023.csv");
         let msgs = fuzzy_messages();
         assert!(
-            msgs.iter().any(
-                |m| m == "fuzzy basis selected for dir/report_2024.csv: dir/report_2023.csv"
-            ),
+            msgs.iter()
+                .any(|m| m == "fuzzy basis selected for dir/report_2024.csv: dir/report_2023.csv"),
             "expected upstream-format FUZZY,1 emission, got {msgs:?}"
         );
     }
