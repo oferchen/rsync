@@ -14,7 +14,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use logging::info_log;
+use logging::{debug_gte, debug_log, info_log};
 use metadata::{MetadataOptions, apply_metadata_with_cached_stat};
 use protocol::flist::FileEntry;
 
@@ -44,6 +44,23 @@ impl ReceiverContext {
         stats: &mut TransferStats,
         acl_cache: Option<&protocol::acl::AclCache>,
     ) -> Vec<(usize, &'a FileEntry, PathBuf)> {
+        // upstream: generator.c:1234-1235 - "recv_generator(%s,%d)" emitted at
+        // the top of recv_generator() for every file the generator considers
+        // (regular files, directories, symlinks, devices, specials). Skipping
+        // the loop when the flag is off keeps the hot path allocation-free.
+        if debug_gte(logging::DebugFlag::Genr, 1) {
+            for (flat_idx, entry) in self.file_list.iter().enumerate() {
+                let ndx = self.flat_to_wire_ndx(flat_idx);
+                debug_log!(
+                    Genr,
+                    1,
+                    "recv_generator({},{})",
+                    entry.path().display(),
+                    ndx
+                );
+            }
+        }
+
         // Phase A: Filter candidates (cheap, in-memory checks only).
         let daemon_filters = self.daemon_filter_set();
         let candidates: Vec<(usize, &FileEntry)> = self

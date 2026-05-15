@@ -263,7 +263,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `generator.c:2321` - `ndx = i + cur_flist->ndx_start`
-    fn flat_to_wire_ndx(&self, flat_idx: usize) -> i32 {
+    pub(in crate::receiver) fn flat_to_wire_ndx(&self, flat_idx: usize) -> i32 {
         let seg_idx = self
             .ndx_segments
             .partition_point(|&(start, _)| start <= flat_idx)
