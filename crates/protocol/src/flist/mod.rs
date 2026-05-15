@@ -50,7 +50,11 @@ pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
 pub use dir_tree::DirectoryTree;
 pub use entry::{FileEntry, FileType};
 pub use flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_SAME_RDEV_PRE28, XMIT_TOP_DIR};
-pub use hardlink::{DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable};
+pub use hardlink::{
+    DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable, trace_found_flist_match,
+    trace_hashtable_for_dev, trace_leader_is, trace_looking_for_leader, trace_virtual_first,
+    trace_waiting_for,
+};
 pub use incremental::{
     FinalizationResult, FinalizationStats, IncrementalFileList, IncrementalFileListBuilder,
     IncrementalFileListIter, OrphanEntry, ReadyEntryAction, StreamingFileList,
