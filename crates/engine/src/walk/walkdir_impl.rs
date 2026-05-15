@@ -174,7 +174,7 @@ impl Iterator for WalkdirWalker {
                             // stat() is logged and skipped, not propagated. Without
                             // this, a racing rename or unlink during a parallel walk
                             // aborts the entire traversal.
-                            if is_not_found(&e) {
+                            if e.io_error().is_some_and(is_not_found) {
                                 continue;
                             }
                             return Some(Err(WalkError::Walk(format!(
