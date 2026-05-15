@@ -334,7 +334,10 @@ mod tests {
         );
 
         // 2026-01-01T00:00:00Z - winter epoch, no DST ambiguity under EST5.
-        let utc_epoch: libc::time_t = 1_767_225_600;
+        // `i64` matches the 64-bit `time_t` used by glibc, musl 1.2+, and Apple
+        // libc on the targets we build; avoids the deprecated `libc::time_t`
+        // alias that triggers a hard error on musl under `-D deprecated`.
+        let utc_epoch: i64 = 1_767_225_600;
         // SAFETY: `tm` is a plain-old-data layout; zero-init is valid.
         let mut local_tm: libc::tm = unsafe { std::mem::zeroed() };
         // SAFETY: `localtime_r` writes into a stack-allocated `tm` we own.
