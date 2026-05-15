@@ -277,6 +277,15 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Enables `--open-noatime` propagation for source-file reads.
+    ///
+    /// Linux/Android only; ignored on other platforms. Mirrors upstream
+    /// `syscall.c:228 do_open` / `syscall.c:687 do_open_nofollow`.
+    pub fn open_noatime(&mut self, enabled: bool) -> &mut Self {
+        self.write.open_noatime = enabled;
+        self
+    }
+
     /// Sets the I/O-level zero-copy policy.
     pub fn zero_copy_policy(&mut self, policy: fast_io::ZeroCopyPolicy) -> &mut Self {
         self.write.zero_copy_policy = policy;

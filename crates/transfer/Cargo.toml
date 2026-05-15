@@ -34,6 +34,10 @@ tokio-util = { workspace = true, optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-fs = { path = "../apple-fs" }
 
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+# libc is needed for O_NOATIME flag in source-file open (upstream syscall.c:228,687).
+libc = "0.2"
+
 [target.'cfg(unix)'.dependencies]
 checksums = { path = "../checksums" }
 
@@ -116,6 +120,9 @@ test-support = { path = "../test-support" }
 criterion = "0.8"
 proptest = "1.4"
 rand = "0.9"
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
+filetime = "0.2"
 
 [[bench]]
 name = "map_file_benchmark"

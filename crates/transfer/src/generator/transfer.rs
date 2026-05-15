@@ -338,6 +338,7 @@ impl GeneratorContext {
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
+                let use_noatime = self.config.write.open_noatime;
                 let (checksum_buf, checksum_len) = compute_file_checksum(
                     &delta_script,
                     checksum_algorithm,
@@ -345,6 +346,7 @@ impl GeneratorContext {
                     self.compat_flags.as_ref(),
                     source_path,
                     block_length,
+                    use_noatime,
                 )?;
                 let delta_total_bytes = delta_script.total_bytes();
                 let wire_ops = script_to_wire_delta(delta_script, block_length);
@@ -363,6 +365,7 @@ impl GeneratorContext {
                     },
                     is_zlib,
                     source_path,
+                    use_noatime,
                 )?;
                 writer.write_all(&checksum_buf[..checksum_len])?;
                 bytes_sent += delta_total_bytes;
