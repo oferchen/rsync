@@ -2355,9 +2355,8 @@ fn pooled_bytes_budget_high_retains_normally() {
     // Generous byte budget admits buffers up to the count cap. Hold 16
     // buffers concurrently to bypass the single-slot TLS cache and
     // exercise central admission for every drop.
-    let pool = Arc::new(
-        BufferPool::with_buffer_size(4, 4096).with_pooled_bytes_budget(1024 * 1024),
-    );
+    let pool =
+        Arc::new(BufferPool::with_buffer_size(4, 4096).with_pooled_bytes_budget(1024 * 1024));
     let guards: Vec<_> = (0..16)
         .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
         .collect();
