@@ -87,6 +87,17 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
         )
+        // upstream: options.c --compress-threads / NEWS-3.4.2
+        .arg(
+            Arg::new("compress-threads")
+                .long("compress-threads")
+                .visible_alias("zt")
+                .value_name("N")
+                .help("Set zstd worker thread count (0 lets zstd choose).")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
         .arg(
             Arg::new("old-compress")
                 .long("old-compress")

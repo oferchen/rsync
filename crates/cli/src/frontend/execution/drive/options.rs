@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 use std::io::Write;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU8, NonZeroU32};
 
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
@@ -14,8 +14,9 @@ use logging_sink::MessageSink;
 
 use super::super::{
     parse_bandwidth_limit, parse_block_size_argument, parse_compress_choice, parse_compress_level,
-    parse_compress_level_argument, parse_debug_flags, parse_info_flags, parse_max_alloc_argument,
-    parse_max_delete_argument, parse_modify_window_argument, parse_size_limit_argument,
+    parse_compress_level_argument, parse_compress_threads, parse_debug_flags, parse_info_flags,
+    parse_max_alloc_argument, parse_max_delete_argument, parse_modify_window_argument,
+    parse_size_limit_argument,
 };
 use super::messages::fail_with_message;
 use crate::frontend::{
@@ -47,6 +48,7 @@ pub(crate) struct SettingsInputs<'a> {
     pub(crate) no_compress: bool,
     pub(crate) compress_level: &'a Option<OsString>,
     pub(crate) compress_choice: &'a Option<OsString>,
+    pub(crate) compress_threads: &'a Option<OsString>,
     pub(crate) skip_compress: &'a Option<OsString>,
     pub(crate) log_file: Option<&'a OsString>,
     pub(crate) log_file_format: Option<&'a OsString>,
@@ -72,6 +74,7 @@ pub(crate) struct DerivedSettings {
     pub(crate) skip_compress_list: Option<SkipCompressList>,
     pub(crate) compression_setting: CompressionSetting,
     pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
+    pub(crate) compression_threads: Option<NonZeroU8>,
     pub(crate) log_file_path: Option<OsString>,
     pub(crate) log_file_template: Option<OutFormat>,
 }
@@ -314,6 +317,7 @@ struct CompressionResult {
     skip_compress_list: Option<SkipCompressList>,
     compression_setting: CompressionSetting,
     compression_algorithm: Option<CompressionAlgorithm>,
+    compression_threads: Option<NonZeroU8>,
 }
 
 /// Parses all compression-related settings.
@@ -323,11 +327,19 @@ fn parse_compression_settings<Err>(
     no_compress: bool,
     compress_level: &Option<OsString>,
     compress_choice: &Option<OsString>,
+    compress_threads: &Option<OsString>,
     skip_compress: &Option<OsString>,
 ) -> Result<CompressionResult, i32>
 where
     Err: Write,
 {
+    let compression_threads = match compress_threads.as_ref() {
+        Some(value) => match parse_compress_threads(value.as_os_str()) {
+            Ok(threads) => threads,
+            Err(message) => return Err(fail_with_message(message, stderr)),
+        },
+        None => None,
+    };
     let mut compress = compress_flag;
     let mut compression_level_override = None;
     let mut compression_algorithm = None;
@@ -423,6 +435,7 @@ where
         skip_compress_list,
         compression_setting,
         compression_algorithm,
+        compression_threads,
     })
 }
 
@@ -547,6 +560,7 @@ where
         inputs.no_compress,
         inputs.compress_level,
         inputs.compress_choice,
+        inputs.compress_threads,
         inputs.skip_compress,
     ) {
         Ok(result) => result,
@@ -577,6 +591,7 @@ where
         skip_compress_list: compression.skip_compress_list,
         compression_setting: compression.compression_setting,
         compression_algorithm: compression.compression_algorithm,
+        compression_threads: compression.compression_threads,
         log_file_path: log.log_file_path,
         log_file_template: log.log_file_template,
     }))
