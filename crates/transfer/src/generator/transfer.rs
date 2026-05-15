@@ -819,6 +819,7 @@ impl GeneratorContext {
             bytes_read: self.timing.total_bytes_read,
             flist_buildtime_ms: flist_buildtime,
             flist_xfertime_ms: flist_xfertime,
+            flist_first_byte_latency: self.timing.flist_first_byte_latency,
             delete_stats: self.delete_stats,
             io_error: self.io_error,
         })
