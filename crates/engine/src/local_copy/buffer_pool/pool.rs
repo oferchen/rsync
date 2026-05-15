@@ -109,6 +109,24 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     /// every adaptive-resize evaluation. Thread-local cached buffers are
     /// not counted against this limit.
     soft_capacity: AtomicUsize,
+    /// Optional byte-budget cap for the central pool.
+    ///
+    /// When `Some`, a returned buffer is only admitted if
+    /// `pooled_bytes + buffer.capacity()` is within the budget. Otherwise
+    /// the buffer is deallocated. The cap is hybrid with `soft_capacity`:
+    /// whichever fires first prevents admission.
+    ///
+    /// Defending against very-large adaptive buffers that would otherwise
+    /// blow through the count-based cap. A value of `None` preserves the
+    /// historical count-only behavior.
+    pooled_bytes_budget: Option<u64>,
+    /// Total `capacity()` of buffers currently held in the central queue.
+    ///
+    /// Maintained alongside `central_count` so the byte-budget check on
+    /// return can be performed atomically. Always present so callers that
+    /// configure no byte cap pay only a single relaxed atomic update per
+    /// admit/pop - negligible compared to the cost of the queue operation.
+    pooled_bytes: AtomicU64,
     /// Size of each buffer in bytes.
     buffer_size: usize,
     /// Allocation strategy for creating and disposing of buffers.
@@ -184,6 +202,8 @@ impl BufferPool {
             buffers: ArrayQueue::new(queue_capacity(max_buffers)),
             central_count: AtomicUsize::new(0),
             soft_capacity: AtomicUsize::new(max_buffers),
+            pooled_bytes_budget: None,
+            pooled_bytes: AtomicU64::new(0),
             buffer_size: COPY_BUFFER_SIZE,
             allocator: DefaultAllocator,
             memory_cap: None,
@@ -210,6 +230,8 @@ impl BufferPool {
             buffers: ArrayQueue::new(queue_capacity(max_buffers)),
             central_count: AtomicUsize::new(0),
             soft_capacity: AtomicUsize::new(max_buffers),
+            pooled_bytes_budget: None,
+            pooled_bytes: AtomicU64::new(0),
             buffer_size,
             allocator: DefaultAllocator,
             memory_cap: None,
@@ -241,6 +263,8 @@ impl<A: BufferAllocator> BufferPool<A> {
             buffers: ArrayQueue::new(queue_capacity(max_buffers)),
             central_count: AtomicUsize::new(0),
             soft_capacity: AtomicUsize::new(max_buffers),
+            pooled_bytes_budget: None,
+            pooled_bytes: AtomicU64::new(0),
             buffer_size,
             allocator,
             memory_cap: None,
@@ -271,6 +295,33 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn with_memory_cap(mut self, max_bytes: usize) -> Self {
         self.memory_cap = Some(MemoryCap::new(max_bytes));
+        self
+    }
+
+    /// Sets a byte-budget cap on the central pool's retained memory.
+    ///
+    /// When configured, a returned buffer is only kept if the total pooled
+    /// bytes plus the buffer's capacity would stay within `max_bytes`.
+    /// Otherwise the buffer is deallocated instead of pooled. This bounds
+    /// the pool's resident memory regardless of how large individual
+    /// adaptive buffers grow - a use case the count-based soft cap alone
+    /// cannot defend against.
+    ///
+    /// The cap is hybrid with the count-based soft capacity: whichever
+    /// fires first prevents admission. Thread-local cached buffers (one
+    /// slot per thread) are not counted against this budget since they
+    /// are conceptually "in use" by their owning thread.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `max_bytes` is zero.
+    #[must_use]
+    pub fn with_pooled_bytes_budget(mut self, max_bytes: u64) -> Self {
+        assert!(
+            max_bytes > 0,
+            "pooled bytes budget must be greater than zero"
+        );
+        self.pooled_bytes_budget = Some(max_bytes);
         self
     }
 
@@ -728,6 +779,16 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// hard capacity is at least [`DEFAULT_QUEUE_CAPACITY`] >= any soft
     /// cap). On rejection (count >= capacity), the buffer is deallocated.
     fn admit_or_deallocate(&self, buffer: Vec<u8>, capacity: usize) {
+        let buffer_bytes = buffer.capacity() as u64;
+        // Byte-budget check: a single large buffer can blow through the
+        // count-based cap, so reject up-front when the budget is set and
+        // this buffer alone would exceed remaining headroom.
+        if let Some(budget) = self.pooled_bytes_budget
+            && self.pooled_bytes.load(Ordering::Relaxed).saturating_add(buffer_bytes) > budget
+        {
+            self.allocator.deallocate(buffer);
+            return;
+        }
         let mut current = self.central_count.load(Ordering::Relaxed);
         loop {
             if current >= capacity {
@@ -741,6 +802,7 @@ impl<A: BufferAllocator> BufferPool<A> {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
+                    self.pooled_bytes.fetch_add(buffer_bytes, Ordering::Relaxed);
                     // Slot reserved - push must succeed because the queue's
                     // hard capacity is >= any value central_count can reach.
                     if let Err(buffer) = self.buffers.push(buffer) {
@@ -748,6 +810,7 @@ impl<A: BufferAllocator> BufferPool<A> {
                         // deallocate. Unreachable given the queue sizing
                         // invariant in `queue_capacity`.
                         self.central_count.fetch_sub(1, Ordering::Relaxed);
+                        self.pooled_bytes.fetch_sub(buffer_bytes, Ordering::Relaxed);
                         self.allocator.deallocate(buffer);
                     }
                     return;
@@ -768,6 +831,8 @@ impl<A: BufferAllocator> BufferPool<A> {
         match self.buffers.pop() {
             Some(buffer) => {
                 self.central_count.fetch_sub(1, Ordering::Relaxed);
+                self.pooled_bytes
+                    .fetch_sub(buffer.capacity() as u64, Ordering::Relaxed);
                 self.total_hits.fetch_add(1, Ordering::Relaxed);
                 if let Some(pressure) = &self.pressure {
                     pressure.record_hit();
@@ -814,6 +879,8 @@ impl<A: BufferAllocator> BufferPool<A> {
                     match self.buffers.pop() {
                         Some(buf) => {
                             self.central_count.fetch_sub(1, Ordering::Relaxed);
+                            self.pooled_bytes
+                                .fetch_sub(buf.capacity() as u64, Ordering::Relaxed);
                             self.allocator.deallocate(buf);
                         }
                         None => break,
@@ -873,6 +940,22 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// Returns the configured memory cap in bytes, or `None` if uncapped.
     pub fn memory_cap(&self) -> Option<usize> {
         self.memory_cap.as_ref().map(|cap| cap.limit())
+    }
+
+    /// Returns the configured byte budget for retained buffers, or `None` if uncapped.
+    #[must_use]
+    pub fn pooled_bytes_budget(&self) -> Option<u64> {
+        self.pooled_bytes_budget
+    }
+
+    /// Returns the total `capacity()` of buffers currently held in the central queue.
+    ///
+    /// Excludes thread-local cached buffers. Primarily useful for testing
+    /// and observability. The returned value is a relaxed snapshot that
+    /// may briefly race with concurrent admissions and pops.
+    #[must_use]
+    pub fn pooled_bytes(&self) -> u64 {
+        self.pooled_bytes.load(Ordering::Relaxed)
     }
 
     /// Returns `true` if adaptive resizing is enabled.

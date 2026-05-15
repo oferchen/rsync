@@ -2324,3 +2324,94 @@ fn controlled_acquire_end_to_end_feedback_loop() {
         "buffer size should stabilize in feedback loop: min={min_s}, max={max_s}, mean={mean}, range_pct={range_pct:.2}"
     );
 }
+
+#[test]
+fn pooled_bytes_budget_drops_oversized_buffers() {
+    // Tight byte budget (16 KB) with generous count cap (8). Holding two
+    // 1 MB adaptive buffers concurrently and dropping both forces one
+    // through the central admission path. The byte budget rejects it.
+    let pool =
+        Arc::new(BufferPool::with_buffer_size(8, 4096).with_pooled_bytes_budget(16 * 1024));
+
+    let b1 = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 300 * 1024 * 1024);
+    let b2 = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 300 * 1024 * 1024);
+    assert!(b1.capacity() >= ADAPTIVE_BUFFER_HUGE);
+    assert!(b2.capacity() >= ADAPTIVE_BUFFER_HUGE);
+    drop(b1);
+    drop(b2);
+
+    // Central queue must reject the oversize buffer; the TLS slot may
+    // hold the other but it is not counted against `pooled_bytes`.
+    assert_eq!(pool.available(), 0);
+    assert!(
+        pool.pooled_bytes() <= pool.pooled_bytes_budget().unwrap(),
+        "pooled_bytes={} exceeded budget={}",
+        pool.pooled_bytes(),
+        pool.pooled_bytes_budget().unwrap()
+    );
+}
+
+#[test]
+fn pooled_bytes_budget_high_retains_normally() {
+    // Generous byte budget admits buffers up to the count cap. Hold 16
+    // buffers concurrently to bypass the single-slot TLS cache and
+    // exercise central admission for every drop.
+    let pool = Arc::new(
+        BufferPool::with_buffer_size(4, 4096).with_pooled_bytes_budget(1024 * 1024),
+    );
+    let guards: Vec<_> = (0..16)
+        .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+        .collect();
+    drop(guards);
+
+    // The count cap fires before the byte budget. All four slots stay
+    // populated and pooled_bytes equals 4 * 4096.
+    assert_eq!(pool.available(), 4);
+    assert!(pool.pooled_bytes() <= pool.pooled_bytes_budget().unwrap());
+    assert!(pool.pooled_bytes() >= 4 * 4096);
+}
+
+#[test]
+fn count_cap_still_enforced_without_byte_budget() {
+    // Regression: with no byte budget the historical count-only behavior
+    // remains in effect. Three returns into a 2-slot pool retain two.
+    let pool = BufferPool::new(2);
+    assert!(pool.pooled_bytes_budget().is_none());
+
+    let b1 = pool.acquire();
+    let b2 = pool.acquire();
+    let b3 = pool.acquire();
+    drop(b1);
+    drop(b2);
+    drop(b3);
+
+    assert_eq!(pool.available(), 2);
+}
+
+#[test]
+fn pooled_bytes_tracks_admission_and_pop() {
+    let pool = Arc::new(BufferPool::with_buffer_size(4, 4096));
+    assert_eq!(pool.pooled_bytes(), 0);
+
+    // Burst-acquire to force all returns through the central queue.
+    let guards: Vec<_> = (0..16)
+        .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+        .collect();
+    drop(guards);
+    assert_eq!(pool.available(), 4);
+    assert!(pool.pooled_bytes() >= 4 * 4096);
+
+    // Draining the queue must decrement pooled_bytes back to zero.
+    let drained: Vec<_> = (0..4)
+        .map(|_| BufferPool::acquire_from(Arc::clone(&pool)))
+        .collect();
+    assert_eq!(pool.available(), 0);
+    assert_eq!(pool.pooled_bytes(), 0);
+    drop(drained);
+}
+
+#[test]
+#[should_panic(expected = "pooled bytes budget must be greater than zero")]
+fn pooled_bytes_budget_rejects_zero() {
+    let _ = BufferPool::new(4).with_pooled_bytes_budget(0);
+}
