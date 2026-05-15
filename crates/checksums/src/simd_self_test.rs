@@ -304,7 +304,11 @@ mod tests {
         for (size_idx, &size) in INPUT_SIZES.iter().enumerate() {
             for pattern_idx in 0..PATTERNS_PER_SIZE {
                 let buf = generate_pattern(size, size_idx, pattern_idx);
-                assert_eq!(buf.len(), size, "pattern {pattern_idx} at size {size} truncated");
+                assert_eq!(
+                    buf.len(),
+                    size,
+                    "pattern {pattern_idx} at size {size} truncated"
+                );
             }
         }
     }
@@ -314,7 +318,10 @@ mod tests {
     /// duplicate inputs.
     #[test]
     fn patterns_are_distinct_at_non_trivial_sizes() {
-        let size_idx = INPUT_SIZES.iter().position(|&s| s == 1024).expect("1024 in sweep");
+        let size_idx = INPUT_SIZES
+            .iter()
+            .position(|&s| s == 1024)
+            .expect("1024 in sweep");
         let p0 = generate_pattern(1024, size_idx, 0);
         let p1 = generate_pattern(1024, size_idx, 1);
         let p2 = generate_pattern(1024, size_idx, 2);
@@ -344,8 +351,17 @@ mod tests {
 
     #[test]
     fn algorithm_names_are_distinct() {
-        assert_ne!(SimdAlgorithm::Rolling.name(), SimdAlgorithm::Md4Batch.name());
-        assert_ne!(SimdAlgorithm::Rolling.name(), SimdAlgorithm::Md5Batch.name());
-        assert_ne!(SimdAlgorithm::Md4Batch.name(), SimdAlgorithm::Md5Batch.name());
+        assert_ne!(
+            SimdAlgorithm::Rolling.name(),
+            SimdAlgorithm::Md4Batch.name()
+        );
+        assert_ne!(
+            SimdAlgorithm::Rolling.name(),
+            SimdAlgorithm::Md5Batch.name()
+        );
+        assert_ne!(
+            SimdAlgorithm::Md4Batch.name(),
+            SimdAlgorithm::Md5Batch.name()
+        );
     }
 }
