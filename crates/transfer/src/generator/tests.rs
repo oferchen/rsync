@@ -206,6 +206,50 @@ fn send_single_file_entry() {
 }
 
 #[test]
+fn send_file_list_records_first_byte_latency() {
+    // INC_RECURSE diagnostic I1 (#2196): the first-byte timer must fire when
+    // send_file_list writes any wire bytes.
+    let (_handshake, mut ctx) = test_generator();
+    let entry = protocol::flist::FileEntry::new_file("probe.txt".into(), 42, 0o644);
+    ctx.file_list.push(entry);
+
+    let mut output = Vec::new();
+    ctx.send_file_list(&mut output).unwrap();
+
+    let latency = ctx
+        .timing
+        .flist_first_byte_latency
+        .expect("first-byte latency must be recorded when wire bytes are written");
+    // Instant::elapsed() is monotonic and the gap from entry through
+    // build_flist_writer + write_entry + flush spans many syscalls; the
+    // sampled duration is non-zero on every supported platform.
+    assert!(
+        latency > std::time::Duration::ZERO,
+        "first-byte latency should be a non-zero elapsed duration, got {latency:?}"
+    );
+    assert!(
+        ctx.timing.flist_xfer_start.is_some(),
+        "flist_xfer_start must also be set"
+    );
+}
+
+#[test]
+fn send_file_list_first_byte_latency_recorded_for_empty_list() {
+    // Even with no entries, send_file_list writes a one-byte end marker, so
+    // the first-byte probe should still fire.
+    let (_handshake, mut ctx) = test_generator();
+
+    let mut output = Vec::new();
+    ctx.send_file_list(&mut output).unwrap();
+
+    assert_eq!(output, vec![0u8]);
+    assert!(
+        ctx.timing.flist_first_byte_latency.is_some(),
+        "first-byte latency should be recorded once the end marker is flushed"
+    );
+}
+
+#[test]
 fn build_and_send_round_trip() {
     use crate::receiver::ReceiverContext;
 
