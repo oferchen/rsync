@@ -1442,3 +1442,59 @@ fn compressed_batch_multi_file_delta_roundtrip() {
     assert_eq!(f2_blocks, vec![0]);
     assert_eq!(f2_literals, f2_lit);
 }
+
+/// Regression test for task #2225 / upstream 3.4.2 token.c fix.
+///
+/// A peer sending `TOKEN_LONG` followed by a negative `i32` previously
+/// wrapped the wire value into a large `u32` block index. After the
+/// run-length expansion repeatedly incremented `rx_token`, the index
+/// could wrap back into a valid basis-block range and the receiver
+/// would copy the wrong block. Upstream 3.4.2 rejects the negative
+/// wire value at the decoder with `RERR_PROTOCOL`; oc-rsync now mirrors
+/// that by returning `io::ErrorKind::InvalidData`.
+///
+/// Reference: upstream `token.c:595-598` (zlib), `token.c:844-847`
+/// (zlibx/lz4), `token.c:1013-1016` (zstd).
+fn assert_rejects_negative_token(mut decoder: CompressedTokenDecoder) {
+    let mut wire = Vec::new();
+    wire.push(TOKEN_LONG);
+    wire.extend_from_slice(&(-1i32).to_le_bytes());
+
+    let mut cursor = Cursor::new(&wire);
+    let err = decoder
+        .recv_token(&mut cursor)
+        .expect_err("decoder must reject negative token");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(err.to_string(), "invalid token number in compressed stream");
+}
+
+#[test]
+fn zlib_decoder_rejects_negative_absolute_token() {
+    assert_rejects_negative_token(CompressedTokenDecoder::new());
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn zstd_decoder_rejects_negative_absolute_token() {
+    assert_rejects_negative_token(CompressedTokenDecoder::new_zstd().unwrap());
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn lz4_decoder_rejects_negative_absolute_token() {
+    assert_rejects_negative_token(CompressedTokenDecoder::new_lz4());
+}
+
+#[test]
+fn zlib_decoder_rejects_i32_min_token() {
+    let mut decoder = CompressedTokenDecoder::new();
+    let mut wire = Vec::new();
+    wire.push(TOKEN_LONG);
+    wire.extend_from_slice(&i32::MIN.to_le_bytes());
+
+    let mut cursor = Cursor::new(&wire);
+    let err = decoder
+        .recv_token(&mut cursor)
+        .expect_err("decoder must reject i32::MIN");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
