@@ -598,10 +598,17 @@ mod tests {
                 workers,
             );
             if workers.is_some() && !SUPPORTS_MULTITHREAD {
-                assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
+                let err = match result {
+                    Ok(_) => panic!("expected Unsupported for {workers:?}"),
+                    Err(e) => e,
+                };
+                assert_eq!(err.kind(), io::ErrorKind::Unsupported);
                 continue;
             }
-            let mut encoder = result.expect("encoder");
+            let mut encoder = match result {
+                Ok(e) => e,
+                Err(e) => panic!("encoder construction failed: {e}"),
+            };
             encoder.write(b"payload").unwrap();
             let (compressed, _) = encoder.finish_into_inner().unwrap();
             assert_eq!(decompress_to_vec(&compressed).unwrap(), b"payload");
