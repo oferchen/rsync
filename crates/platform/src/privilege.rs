@@ -22,9 +22,26 @@ use std::path::Path;
 /// working directory is set to `/`. All subsequent path operations resolve
 /// relative to the new root.
 ///
+/// Caches timezone data via `tzset()` before the chroot syscall so that
+/// any subsequent `localtime`/`strftime` call inside the jail still resolves
+/// the local offset. glibc reads `/etc/localtime` lazily on the first
+/// conversion; after chroot the file is no longer reachable and timestamps
+/// silently fall back to UTC.
+///
 /// No-op on non-Unix platforms.
+///
+/// upstream: clientserver.c:979-980 (3.4.2) - `tzset()` called immediately
+/// before `chroot(module_chdir)`; same fix at clientserver.c:1306 before
+/// the daemon-level `chroot(lp_daemon_chroot())`.
 #[cfg(unix)]
+#[allow(unsafe_code)]
 pub fn apply_chroot(path: &Path) -> io::Result<()> {
+    // SAFETY: `tzset` is a thread-safe POSIX call with no parameters and no
+    // pointer arguments. It reads `/etc/localtime` (or `$TZ`) and updates the
+    // process-wide timezone state guarded by libc's internal lock.
+    unsafe {
+        libc::tzset();
+    }
     nix::unistd::chroot(path).map_err(nix_to_io)?;
     std::env::set_current_dir("/")?;
     Ok(())
@@ -238,6 +255,24 @@ mod tests {
         assert!(
             err.kind() == io::ErrorKind::PermissionDenied || err.kind() == io::ErrorKind::NotFound,
             "expected PermissionDenied or NotFound, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// `apply_chroot` invokes `tzset()` before the chroot syscall to cache
+    /// `/etc/localtime` while the file is still reachable. The call is
+    /// idempotent and side-effect free, so even when the subsequent chroot
+    /// fails (e.g., non-existent path, non-root caller) the function must
+    /// still surface the original chroot error verbatim.
+    ///
+    /// upstream: clientserver.c:979-980 (3.4.2) - `tzset()` before chroot.
+    #[cfg(unix)]
+    #[test]
+    fn apply_chroot_tzset_does_not_mask_chroot_failure() {
+        let err = apply_chroot(Path::new("/nonexistent_oc_tzset_xyz_42")).unwrap_err();
+        assert!(
+            err.kind() == io::ErrorKind::PermissionDenied || err.kind() == io::ErrorKind::NotFound,
+            "tzset must not alter the surfaced chroot error: got {:?}",
             err.kind()
         );
     }
