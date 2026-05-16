@@ -125,7 +125,7 @@ impl TempFileStrategy for AnonymousTempFileStrategy {
 
     fn commit(&self, handle: TempFileHandle, destination: &Path) -> io::Result<()> {
         if let TempFileKind::Anonymous { fd_for_link } = handle.kind {
-            // Remove existing destination so linkat does not fail with EEXIST.
+            // linkat fails with EEXIST if the destination is already present.
             remove_if_exists(destination)?;
             crate::link_anonymous_tmpfile(&fd_for_link, destination)
         } else {

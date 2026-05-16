@@ -18,19 +18,15 @@ use super::types::{CopyMethod, CopyResult};
 pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::Result<CopyResult> {
     use std::fs::File;
 
-    // Try FICLONE first - instant CoW clone, O(1) regardless of file size.
-    // Opens both files because FICLONE operates on file descriptors.
-    // upstream: does not use FICLONE, this is an oc-rsync optimization.
+    // upstream: does not use FICLONE; this is an oc-rsync optimization.
     match try_ficlone_impl(src, dst) {
         Ok(()) => return Ok(CopyResult::new(0, CopyMethod::Ficlone)),
         Err(_) => {
-            // FICLONE failed (unsupported fs, cross-device, etc.) - fall through
             let _ = std::fs::remove_file(dst);
         }
     }
 
-    // Threshold below which copy_file_range overhead exceeds benefit
-    // (matches copy_file_range module constant)
+    // Matches the threshold used by the copy_file_range module.
     const CFR_THRESHOLD: u64 = 64 * 1024;
 
     if size_hint >= CFR_THRESHOLD {
@@ -41,14 +37,11 @@ pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::
                 return Ok(CopyResult::new(bytes, CopyMethod::CopyFileRange));
             }
             Err(_) => {
-                // copy_file_range failed (cross-device on old kernel, NFS, FUSE, etc.)
-                // Clean up partial destination and fall through to std::fs::copy
                 let _ = std::fs::remove_file(dst);
             }
         }
     }
 
-    // Fallback to standard copy (which itself may use copy_file_range internally)
     let bytes = std::fs::copy(src, dst)?;
     Ok(CopyResult::new(bytes, CopyMethod::StandardCopy))
 }
@@ -65,27 +58,23 @@ pub(super) fn platform_copy_impl(
     dst: &Path,
     _size_hint: u64,
 ) -> io::Result<CopyResult> {
-    // Try CoW clone first (instant, zero data copied)
     match clonefile_impl(src, dst) {
         Ok(()) => {
             return Ok(CopyResult::new(0, CopyMethod::Clonefile));
         }
         Err(_) => {
-            // clonefile failed (cross-device, HFS+, destination exists, etc.)
-            // Clean up any partial destination
             let _ = std::fs::remove_file(dst);
         }
     }
 
-    // Try fcopyfile - kernel-accelerated data-only copy via file descriptors.
-    // Faster than userspace buffered copy on all macOS filesystems.
+    // fcopyfile is a kernel-accelerated data-only copy faster than userspace
+    // buffered copy on all macOS filesystems.
     match fcopyfile_impl(src, dst) {
         Ok(()) => {
             let metadata = std::fs::metadata(dst)?;
             return Ok(CopyResult::new(metadata.len(), CopyMethod::Copyfile));
         }
         Err(_) => {
-            // fcopyfile failed - clean up and fall through to standard copy
             let _ = std::fs::remove_file(dst);
         }
     }
@@ -112,7 +101,6 @@ pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::
         match try_refs_reflink_impl(src, dst) {
             Ok(()) => return Ok(CopyResult::new(0, CopyMethod::ReFsReflink)),
             Err(_) => {
-                // Reflink failed (cross-volume, alignment issue, etc.) - fall through
                 let _ = std::fs::remove_file(dst);
             }
         }
@@ -123,7 +111,6 @@ pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::
     match try_copy_file_ex(src, dst, use_no_buffering) {
         Ok(bytes) => Ok(CopyResult::new(bytes, CopyMethod::CopyFileEx)),
         Err(_) => {
-            // CopyFileExW failed, clean up and fall back
             let _ = std::fs::remove_file(dst);
             let bytes = std::fs::copy(src, dst)?;
             Ok(CopyResult::new(bytes, CopyMethod::StandardCopy))
@@ -364,12 +351,10 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
     let file_size = std::fs::metadata(src)?.len();
 
     if file_size == 0 {
-        // Empty file - just create the destination
         std::fs::File::create(dst)?;
         return Ok(());
     }
 
-    // Round up to cluster boundary for the ioctl
     let aligned_size = file_size.div_ceil(cluster_size) * cluster_size;
 
     let src_wide: Vec<u16> = src
@@ -378,7 +363,6 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
         .chain(std::iter::once(0))
         .collect();
 
-    // Open source for reading.
     // SAFETY: src_wide is a valid null-terminated UTF-16 path.
     // GENERIC_READ and FILE_SHARE_READ allow concurrent readers.
     // OPEN_EXISTING fails if the file does not exist.
@@ -404,15 +388,15 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
         .chain(std::iter::once(0))
         .collect();
 
-    // Open/create destination for writing.
-    // CREATE_ALWAYS (2) creates new or overwrites existing.
-    // SAFETY: dst_wide is a valid null-terminated UTF-16 path.
-    // GENERIC_READ | GENERIC_WRITE grants the access required by the ioctl.
+    // SAFETY: dst_wide is a valid null-terminated UTF-16 path. CREATE_ALWAYS
+    // creates new or overwrites existing. GENERIC_READ | GENERIC_WRITE grants
+    // the access required by the ioctl. Share-mode 0 enforces exclusive access
+    // while setting up the clone.
     let dst_raw_handle = unsafe {
         CreateFileW(
             dst_wide.as_ptr(),
             GENERIC_READ | GENERIC_WRITE,
-            0, // Exclusive access while setting up the clone
+            0,
             std::ptr::null(),
             CREATE_ALWAYS,
             FILE_ATTRIBUTE_NORMAL,
@@ -427,12 +411,11 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
         return Err(err);
     }
 
-    // Wrap the destination handle in a File for RAII cleanup and set_len().
-    // SAFETY: dst_raw_handle is a valid handle just returned by CreateFileW.
-    // Ownership transfers to the File; it will call CloseHandle on drop.
+    // SAFETY: dst_raw_handle is a valid handle just returned by CreateFileW;
+    // ownership transfers to the File which closes it on drop.
     let dst_file = unsafe { std::fs::File::from_raw_handle(dst_raw_handle) };
 
-    // Pre-size destination to the cluster-aligned size required by the ioctl.
+    // Pre-size to the cluster-aligned size required by the ioctl.
     if let Err(e) = dst_file.set_len(aligned_size) {
         // SAFETY: src_handle is a valid open handle.
         unsafe { CloseHandle(src_handle) };
@@ -467,8 +450,8 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
         )
     };
 
-    // Close source handle. dst_file will close dst_handle on drop.
-    // SAFETY: src_handle is a valid open handle.
+    // SAFETY: src_handle is a valid open handle; dst_file will close
+    // dst_handle on drop.
     unsafe { CloseHandle(src_handle) };
 
     if ioctl_result == 0 {
@@ -477,7 +460,8 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
         return Err(err);
     }
 
-    // Truncate destination to the actual file size (ioctl used cluster-aligned size).
+    // Truncate from the cluster-aligned size used by the ioctl down to the
+    // real file size.
     dst_file.set_len(file_size)?;
 
     Ok(())

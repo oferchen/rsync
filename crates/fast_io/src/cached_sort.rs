@@ -25,7 +25,6 @@ pub use permutation::Permutation;
 /// Implement this trait for types that will be used as sort keys.
 pub trait CachedSortKey: Ord + Clone {}
 
-// Blanket implementation for common key types
 impl CachedSortKey for String {}
 impl CachedSortKey for Vec<u8> {}
 impl CachedSortKey for i64 {}
@@ -61,13 +60,8 @@ where
         return;
     }
 
-    // Extract keys once
     let keys: Vec<K> = items.iter().map(&key_fn).collect();
-
-    // Sort indices by keys using permutation crate
     let mut perm = permutation::sort_by(&keys, |a, b| a.cmp(b));
-
-    // Apply permutation to items
     perm.apply_slice_in_place(items);
 }
 
@@ -118,11 +112,7 @@ where
     // Preserved by par_iter().map().collect() (rayon preserves index order).
     // Violation permutes items by wrong keys, producing incorrectly sorted file lists.
     let keys: Vec<K> = items.par_iter().map(&key_fn).collect();
-
-    // Sort indices by keys
     let mut perm = permutation::sort_by(&keys, |a, b| a.cmp(b));
-
-    // Apply permutation
     perm.apply_slice_in_place(items);
 }
 
@@ -162,7 +152,7 @@ impl FileEntrySortKey {
 
 impl Ord for FileEntrySortKey {
     fn cmp(&self, other: &Self) -> Ordering {
-        // "." always comes first
+        // "." always sorts first.
         match (self.path_bytes.as_slice(), other.path_bytes.as_slice()) {
             (b".", b".") => return Ordering::Equal,
             (b".", _) => return Ordering::Less,
@@ -170,7 +160,8 @@ impl Ord for FileEntrySortKey {
             _ => {}
         }
 
-        // Compare byte by byte with implicit '/' for directories
+        // Byte-by-byte compare with implicit '/' for directories. At a
+        // mismatch, files sort before directories at the same level.
         let mut i = 0;
         loop {
             let ch_a = self.effective_byte_at(i);
@@ -190,7 +181,6 @@ impl Ord for FileEntrySortKey {
             }
 
             if ch_a != ch_b {
-                // Check if we're at a directory boundary
                 let remaining_a = &self.path_bytes[i..];
                 let remaining_b = &other.path_bytes[i..];
 
@@ -200,7 +190,6 @@ impl Ord for FileEntrySortKey {
                 let a_is_dir_here = a_has_sep || self.is_dir;
                 let b_is_dir_here = b_has_sep || other.is_dir;
 
-                // Files sort before directories at same level
                 match (a_is_dir_here, b_is_dir_here) {
                     (true, false) => return Ordering::Greater,
                     (false, true) => return Ordering::Less,
