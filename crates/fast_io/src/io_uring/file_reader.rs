@@ -68,8 +68,8 @@ impl IoUringReader {
         let fixed_fd_slot = if config.register_files {
             let fds = [raw_fd];
             match ring.submitter().register_files(&fds) {
-                Ok(()) => 0,           // registered at slot 0
-                Err(_) => NO_FIXED_FD, // silent fallback
+                Ok(()) => 0,
+                Err(_) => NO_FIXED_FD,
             }
         } else {
             NO_FIXED_FD
@@ -168,7 +168,6 @@ impl IoUringReader {
 
         let mut output = vec![0u8; size];
 
-        // Try READ_FIXED path when registered buffers are available.
         if let Some(ref reg) = self.registered_buffers {
             let slot_count = reg.available().min(self.sq_entries as usize);
             if slot_count > 0 {
@@ -197,7 +196,6 @@ impl IoUringReader {
             }
         }
 
-        // Fallback: regular Read SQEs.
         let chunk_size = self.buffer_size;
         let max_batch = self.sq_entries as usize;
         let total_chunks = size.div_ceil(chunk_size);
@@ -209,9 +207,9 @@ impl IoUringReader {
             let batch_count = (total_chunks - chunks_done).min(max_batch);
             let base_offset = (chunks_done * chunk_size) as u64;
 
-            // Build per-slot buffer slices. Each slot borrows a region of `output`
-            // through raw pointers to avoid multiple mutable borrows.
-            // Track (offset_in_output, len, bytes_done) per slot.
+            // Track (offset_in_output, len, bytes_done) per slot. Each slot
+            // borrows a disjoint region of `output` through raw pointers to
+            // avoid multiple mutable borrows.
             let mut slots: Vec<(usize, usize, usize)> = Vec::with_capacity(batch_count);
 
             for i in 0..batch_count {

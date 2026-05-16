@@ -248,7 +248,6 @@ impl IoUringWriter {
     pub fn write_all_batched(&mut self, data: &[u8], offset: u64) -> io::Result<()> {
         let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
 
-        // Try WRITE_FIXED path.
         if let Some(ref reg) = self.registered_buffers {
             let slot_count = reg.available().min(self.sq_entries as usize);
             if slot_count > 0 {
@@ -282,7 +281,6 @@ impl IoUringWriter {
             }
         }
 
-        // Fallback: regular Write.
         let written = submit_write_batch(
             &mut self.ring,
             fd,
@@ -315,7 +313,6 @@ impl IoUringWriter {
         let len = self.buffer_pos;
         let offset = self.bytes_written;
 
-        // Try WRITE_FIXED path when registered buffers are available.
         if let Some(ref reg) = self.registered_buffers {
             let slot_count = reg.available().min(self.sq_entries as usize);
             if slot_count > 0 {
@@ -345,7 +342,6 @@ impl IoUringWriter {
             }
         }
 
-        // Fallback: submit directly from the internal buffer using regular Write.
         // Safety: the buffer is not modified until submit_write_batch returns,
         // and the kernel only reads from these pointers during submit_and_wait.
         let written = submit_write_batch(
