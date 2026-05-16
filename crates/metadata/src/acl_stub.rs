@@ -102,6 +102,18 @@ pub fn apply_acls_from_cache(
     Ok(())
 }
 
+/// Returns the umask-derived default permissions for `dir`.
+///
+/// iOS/tvOS/watchOS lack POSIX default-ACL support, so this stub returns
+/// `ACCESSPERMS & ~umask` without emitting `--debug=ACL` output. Mirrors
+/// upstream's `#ifdef SUPPORT_ACLS` guard at `generator.c:1337-1340`.
+#[allow(clippy::module_name_repetitions)]
+#[must_use]
+pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
+    let _ = dir;
+    0o777u32 & !(orig_umask & 0o777)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

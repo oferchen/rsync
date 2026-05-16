@@ -116,7 +116,7 @@ Producer counts come from
 
 | Flag       | Upstream `DEBUG_GTE` max | oc-rsync cap | Side bits | Upstream `debug_words[]` help (verbatim) | Production producers | Status |
 |------------|:------------------------:|:------------:|-----------|------------------------------------------|----------------------|--------|
-| ACL        | 1 | u8::MAX | W_SND\|W_REC | Debug extra ACL info | none | missing |
+| ACL        | 1 | u8::MAX | W_SND\|W_REC | Debug extra ACL info | `crates/metadata/src/acl_exacl.rs::default_perms_for_dir` (1 site at level 1, upstream-verbatim wording from `acls.c:1133-1134`), invoked from `crates/transfer/src/receiver/directory/creation.rs::create_directories` when `acls && !perms` (upstream `generator.c:1337-1340`). Helper lives in `crates/protocol/src/acl/trace.rs`. | impl (G3 partial - ACL RESOLVED) |
 | BACKUP     | 1 (help says 1-2) | 2 | W_REC | Debug backup actions (levels 1-2) | none | missing |
 | BIND       | 1 | u8::MAX | W_CLI | Debug socket bind actions | none | missing |
 | CHDIR      | 1 | u8::MAX | W_CLI\|W_SRV | Debug when the current directory changes | none | missing |
@@ -144,10 +144,9 @@ Producer counts come from
 Total: 24 upstream `DEBUG_*` flags, matching `COUNT_DEBUG = DEBUG_TIME + 1`
 (`rsync.h:1462`). Status roll-up:
 
-- **impl**: 8 - DUP, FILTER, FLIST, GENR, ICONV, NSTR, SEND, TIME.
+- **impl**: 9 - ACL, DUP, FILTER, FLIST, GENR, ICONV, NSTR, SEND, TIME.
 - **partial**: 7 - CONNECT, DEL, DELTASUM, EXIT, IO, PROTO, RECV.
-- **missing**: 9 - ACL, BACKUP, BIND, CHDIR, CMD, FUZZY, HASH,
-  HLINK, OWN.
+- **missing**: 8 - BACKUP, BIND, CHDIR, CMD, FUZZY, HASH, HLINK, OWN.
 
 `SEND` (D13) is now wired into the generator's send loop with the
 five upstream-verbatim messages from `sender.c send_files` (lines
@@ -303,7 +302,7 @@ requested level before the event materialises.
 |----|----------|--------|-------------|
 | G1 | Low | open | `ALL<N>` and `NONE0` syntactic forms are rejected as unknown tokens (`flags/debug.rs:279`). Upstream accepts them (`options.c:443-445`, `:452-453`, `:450-451`) and applies the trailing digit. Fix: extend `DebugFlagSettings::apply` to detect `all<digit>` and `none<digit>` before falling through to `parse_flag_and_level`, then call `enable_all_to_level(N)` / `disable_all()`. Cap N at 4 to match `MAX_OUT_LEVEL`. |
 | G2 | Low | open | Per-flag cap missing for upstream-max-1 flags. `acl`, `bind`, `chdir`, `dup`, `genr`, `hash`, `nstr`, `proto`, `recv`, `send` accept any `u8` value (no `if level > N` guard in `flags/debug.rs::apply`). Upstream silently clamps to `MAX_OUT_LEVEL = 4`. Fix: add `if level > 4 { return Err(debug_flag_error(display)); }` guards on those arms, or a single shared cap before the per-flag dispatch. |
-| G3 | High | open | 9 flags have no production producer (ACL, BACKUP, BIND, CHDIR, CMD, FUZZY, HASH, HLINK, OWN). The previously listed GENR, ICONV, NSTR, and SEND emissions are now wired (D14, I-ICONV, NSTR follow-up, D13 RESOLVED). Owning crates for the remaining producers: `metadata` (ACL, OWN, HLINK), `engine` (BACKUP, FUZZY), `transfer`/`rsync_io` (BIND, CMD), `checksums` (HASH), `core` (CHDIR). |
+| G3 | High | open | 8 flags have no production producer (BACKUP, BIND, CHDIR, CMD, FUZZY, HASH, HLINK, OWN). The previously listed ACL, GENR, ICONV, NSTR, and SEND emissions are now wired (D14, I-ACL, I-ICONV, NSTR follow-up, D13 RESOLVED). Owning crates for the remaining producers: `metadata` (OWN, HLINK), `engine` (BACKUP, FUZZY), `transfer`/`rsync_io` (BIND, CMD), `checksums` (HASH), `core` (CHDIR). |
 | G4 | Low | open | `limit_output_verbosity` (upstream `options.c:527-553`) is not implemented. User-supplied per-flag levels are not clamped to the peer's `-v` ceiling during option exchange. Mitigation: implement on `server_options` parsing path and re-run the ladder with `LIMIT_PRIORITY` to compute the cap. |
 | G5 | Low | open | `make_output_option` (upstream `options.c:340-425`) is not implemented. Remote command forwarding of user-priority debug flags relies on raw passthrough rather than upstream's deduplicated `--debug=ALL2,NONREG0,...` style. User-visible effect is limited to the exact command string the peer sees in `ps` output. |
 | G6 | Low | open | `--debug=help` text omits the per-verbosity summary block (`0)`, `1)`, ..., `5)`) that upstream's `output_item_help` prints at `options.c:499-509`. Cosmetic but useful for discovery. |
@@ -314,7 +313,7 @@ requested level before the event materialises.
 
 | Flag | Suggested insertion crate | Suggested call site |
 |------|---------------------------|---------------------|
-| ACL  | `crates/metadata/src/acl/` | After every ACL apply / read, on the `rsync::acl` target. Upstream emits in `acls.c:make_acl()` and `set_acl()`. |
+| ACL  | wired in `crates/metadata/src/acl_exacl.rs::default_perms_for_dir` (level 1) with the helper in `crates/protocol/src/acl/trace.rs`; invoked from `crates/transfer/src/receiver/directory/creation.rs::create_directories` per unique parent when `acls && !perms`. Upstream emits at `acls.c:1133-1134` only (sole `DEBUG_GTE(ACL, 1)` site); the audit's earlier `make_acl()`/`set_acl()` guidance was incorrect - neither function carries an `ACL` debug emission in `acls.c`. |
 | BACKUP | `crates/engine/src/local_copy/backup.rs` | Before each backup file rename. Upstream emits in `backup.c:make_bak_dir`. |
 | BIND | `crates/rsync_io/src/socket/` | After `bind()` succeeds on the listener. Upstream emits in `socket.c:open_socket_in`. |
 | CHDIR | `crates/core/src/client/path/` and `crates/daemon/src/jail/` | After every `chdir()` syscall. Upstream emits in `util1.c:do_chdir`. |

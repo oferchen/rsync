@@ -65,6 +65,18 @@ pub fn apply_acls_from_cache(
     Ok(())
 }
 
+/// Returns the umask-derived default permissions for `dir`.
+///
+/// Platforms without POSIX default-ACL support fall straight through to the
+/// `ACCESSPERMS & ~umask` baseline; no `--debug=ACL` line is emitted because
+/// upstream guards `default_perms_for_dir` behind `#ifdef SUPPORT_ACLS`
+/// (`generator.c:1337-1340`).
+#[allow(clippy::module_name_repetitions)]
+#[must_use]
+pub fn default_perms_for_dir(_dir: &Path, orig_umask: u32) -> u32 {
+    0o777u32 & !(orig_umask & 0o777)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
