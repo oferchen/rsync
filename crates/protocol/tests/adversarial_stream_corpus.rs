@@ -183,6 +183,15 @@ const MULTIPLEX_CASES: &[Case] = &[
         bytes: &[0, 0, 0, 7],
         expected: Outcome::Ok,
     },
+    Case {
+        // Bug it catches: random bytes that look like a multiplex header must
+        // never crash the reader. We do not assert whether the parser accepts
+        // or rejects them; either is allowed as long as no panic surfaces.
+        // This anchors the no-panic contract for arbitrary-shaped inputs.
+        name: "multiplex_arbitrary_no_panic_contract",
+        bytes: &[0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x11, 0x22, 0x33],
+        expected: Outcome::NoPanic,
+    },
 ];
 
 #[test]
@@ -256,6 +265,15 @@ enum GreetingOutcome {
 
 /// Adversarial inputs targeting `parse_legacy_daemon_greeting`.
 const LEGACY_GREETING_CASES: &[(&str, &str, GreetingOutcome)] = &[
+    // Bug it catches: the canonical well-formed protocol-32 greeting must
+    // round-trip cleanly. Establishes the success baseline so the rest of
+    // the corpus' Err cases prove rejection of malformed inputs rather
+    // than blanket failure.
+    (
+        "legacy_canonical_protocol_32",
+        "@RSYNCD: 32.0\n",
+        GreetingOutcome::Ok,
+    ),
     // Bug it catches: a single `@` must not be misclassified as a complete
     // legacy greeting. Anything missing the full prefix is malformed.
     ("legacy_one_byte_prefix", "@", GreetingOutcome::Err),
