@@ -134,7 +134,6 @@ fn try_clonefile_impl(src: &Path, dst: &Path) -> io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
-    // Convert paths to C strings
     let src_c = CString::new(src.as_os_str().as_bytes()).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -144,10 +143,9 @@ fn try_clonefile_impl(src: &Path, dst: &Path) -> io::Result<()> {
     let dst_c = CString::new(dst.as_os_str().as_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "dest path contains null byte"))?;
 
-    // Call clonefile(src, dst, 0)
-    // Flag 0 means no special options (CLONE_NOFOLLOW = 1 could be used for symlinks)
-    // SAFETY: We're passing valid C strings to clonefile. The syscall is safe to call
-    // with valid paths. Any errors are returned via errno and converted to io::Error.
+    // SAFETY: Passing valid C strings to clonefile. Flag 0 means no special
+    // options (CLONE_NOFOLLOW = 1 could be used for symlinks). Errors are
+    // returned via errno and converted to io::Error.
     let ret = unsafe { libc::clonefile(src_c.as_ptr(), dst_c.as_ptr(), 0) };
 
     if ret == 0 {
