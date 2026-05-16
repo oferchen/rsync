@@ -5,6 +5,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use logging::info_log;
+
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
     CopyContext, CopyOutcome, LocalCopyAction, LocalCopyArgumentError, LocalCopyError,
@@ -225,6 +227,16 @@ fn process_single_source(
                                 .as_deref()
                                 .and_then(|p| non_empty_path(p))
                                 .or_else(|| source_path.file_name().map(Path::new));
+                            // upstream: flist.c:1319 - INFO_GTE(MOUNT, 1) gates
+                            // `rprintf(FINFO, "[%s] skipping mount-point dir %s", who_am_i(),
+                            // thisname)` when `-xx` prunes a root-level mount-point source.
+                            // The role prefix is added downstream by the renderer.
+                            info_log!(
+                                Mount,
+                                1,
+                                "skipping mount-point dir {}",
+                                source_path.display()
+                            );
                             context.record_skipped_mount_point(record_relative);
                             return Ok(());
                         }
