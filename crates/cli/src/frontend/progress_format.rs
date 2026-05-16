@@ -284,7 +284,6 @@ impl ProgressFormatter {
         xfr_num: usize,
         to_check: usize,
     ) -> String {
-        // Calculate approximate percentage
         let percent = if total_files > 0 {
             let pct = (files_done as f64 / total_files as f64) * 100.0;
             format!("{pct:>5.2}%")
