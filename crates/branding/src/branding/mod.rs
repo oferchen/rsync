@@ -2,16 +2,10 @@
 
 //! Branding constants and helpers shared across the workspace.
 //!
-//! The `branding` module centralises the program names and filesystem
-//! locations that the workspace exposes publicly. Higher-level crates rely on
-//! these constants when rendering banners or searching for configuration files
-//! so that packaging, documentation, and runtime behaviour remain aligned. The
-//! module records both the upstream-compatible `rsync`/`rsyncd` names (used by
-//! symlinks and remote invocations) and the branded single binary `oc-rsync`
-//! together with convenience accessors that allow the CLI and daemon crates to
-//! select the correct identity for a given execution mode. By funnelling
-//! branding details through this module we keep string literals out of business
-//! logic and make it trivial to update paths or names in one place.
+//! Records both the upstream-compatible `rsync`/`rsyncd` names (used by
+//! symlinks and remote invocations) and the branded single binary `oc-rsync`,
+//! together with convenience accessors that let the CLI and daemon crates
+//! select the correct identity for a given execution mode.
 
 use std::sync::OnceLock;
 

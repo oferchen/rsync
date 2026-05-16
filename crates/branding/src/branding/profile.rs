@@ -13,14 +13,10 @@ use super::constants::{
 
 /// Describes the public-facing identity used by a binary distribution.
 ///
-/// The structure captures the canonical client and daemon program names
-/// together with the configuration directory, configuration file, and secrets file that ship with the
-/// distribution. Higher layers select the appropriate
-/// [`BrandProfile`] to render banners, locate configuration files, or display
-/// diagnostic messages without duplicating string literals across the
-/// codebase. The profiles are intentionally lightweight and `Copy` so they can
-/// be used in constant contexts such as rustdoc examples and compile-time
-/// assertions.
+/// Captures the canonical client and daemon program names together with the
+/// configuration directory, configuration file, and secrets file that ship
+/// with the distribution. Profiles are `Copy` so they can be used in constant
+/// contexts such as rustdoc examples and compile-time assertions.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct BrandProfile {
     client_program_name: &'static str,

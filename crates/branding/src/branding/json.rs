@@ -2,12 +2,8 @@
 
 //! JSON serialisation helpers for workspace branding metadata.
 //!
-//! The [`manifest_json`] and [`manifest_json_pretty`] helpers expose cached JSON
-//! renderings of the [`BrandManifest`][super::manifest::BrandManifest]. Emitting
-//! the serialised form directly from the branding module keeps automation and
-//! packaging tooling aligned with the canonical runtime metadata without
-//! re-parsing `Cargo.toml` or re-implementing serialisation logic in
-//! higher-level crates.
+//! The [`manifest_json`] and [`manifest_json_pretty`] helpers expose cached
+//! JSON renderings of the [`BrandManifest`][super::manifest::BrandManifest].
 
 use std::sync::OnceLock;
 
@@ -27,9 +23,7 @@ fn render_manifest_json(pretty: bool) -> String {
 /// Returns the cached JSON representation of the workspace branding manifest.
 ///
 /// The returned string is cached for the lifetime of the process and reflects
-/// the data exposed by [`manifest`]. Callers that need structured metadata can
-/// parse the JSON into their preferred representation without duplicating the
-/// serialisation logic.
+/// the data exposed by [`manifest`].
 ///
 /// ```
 /// let json = branding::branding::manifest_json();
@@ -44,9 +38,7 @@ pub fn manifest_json() -> &'static str {
 /// Returns the cached pretty-printed JSON representation of the branding
 /// manifest.
 ///
-/// This helper mirrors [`manifest_json`] but emits human-readable output with
-/// indentation so configuration management systems can store the manifest
-/// snapshot directly.
+/// Mirrors [`manifest_json`] but emits indented human-readable output.
 ///
 /// ```
 /// let json = branding::branding::manifest_json_pretty();
