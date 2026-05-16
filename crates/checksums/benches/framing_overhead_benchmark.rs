@@ -154,17 +154,13 @@ fn bench_md4_framing(c: &mut Criterion) {
         for &block_size in BLOCK_SIZES {
             let id = format!("{size}_block_{block_size}");
 
-            group.bench_with_input(
-                BenchmarkId::new("framed_unseeded", &id),
-                &buf,
-                |b, buf| {
-                    b.iter(|| {
-                        for_each_block(buf, block_size, |block| {
-                            black_box(Md4::digest(black_box(block)));
-                        });
+            group.bench_with_input(BenchmarkId::new("framed_unseeded", &id), &buf, |b, buf| {
+                b.iter(|| {
+                    for_each_block(buf, block_size, |block| {
+                        black_box(Md4::digest(black_box(block)));
                     });
-                },
-            );
+                });
+            });
 
             group.bench_with_input(BenchmarkId::new("framed_seeded", &id), &buf, |b, buf| {
                 b.iter(|| {
@@ -200,17 +196,13 @@ fn bench_md5_framing(c: &mut Criterion) {
         for &block_size in BLOCK_SIZES {
             let id = format!("{size}_block_{block_size}");
 
-            group.bench_with_input(
-                BenchmarkId::new("framed_unseeded", &id),
-                &buf,
-                |b, buf| {
-                    b.iter(|| {
-                        for_each_block(buf, block_size, |block| {
-                            black_box(Md5::digest(black_box(block)));
-                        });
+            group.bench_with_input(BenchmarkId::new("framed_unseeded", &id), &buf, |b, buf| {
+                b.iter(|| {
+                    for_each_block(buf, block_size, |block| {
+                        black_box(Md5::digest(black_box(block)));
                     });
-                },
-            );
+                });
+            });
 
             let proper_seed = Md5Seed::proper(SEED_I32);
             group.bench_with_input(BenchmarkId::new("framed_seeded", &id), &buf, |b, buf| {
@@ -247,17 +239,13 @@ fn bench_xxh3_framing(c: &mut Criterion) {
 
         for &block_size in BLOCK_SIZES {
             let id = format!("{size}_block_{block_size}");
-            group.bench_with_input(
-                BenchmarkId::new("framed_unseeded", &id),
-                &buf,
-                |b, buf| {
-                    b.iter(|| {
-                        for_each_block(buf, block_size, |block| {
-                            black_box(Xxh3::digest(0, black_box(block)));
-                        });
+            group.bench_with_input(BenchmarkId::new("framed_unseeded", &id), &buf, |b, buf| {
+                b.iter(|| {
+                    for_each_block(buf, block_size, |block| {
+                        black_box(Xxh3::digest(0, black_box(block)));
                     });
-                },
-            );
+                });
+            });
 
             group.bench_with_input(BenchmarkId::new("framed_seeded", &id), &buf, |b, buf| {
                 b.iter(|| {
