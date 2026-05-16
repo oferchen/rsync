@@ -89,6 +89,7 @@ mod tests;
 mod transfer;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use ::filters::FilterChain;
@@ -161,6 +162,45 @@ pub mod io_error_flags {
 /// - `flist.c:46` - `#define MIN_FILECNT_LOOKAHEAD 1000`
 /// - `sender.c:send_files()` line 250 - `send_extra_file_list(f, MIN_FILECNT_LOOKAHEAD)`
 pub const MIN_FILECNT_LOOKAHEAD: usize = 1000;
+
+/// Total invocations of `wire_to_flat_ndx` + `flat_to_wire_ndx` across all
+/// generator transfers in this process. Diagnostic counter for sender-side
+/// INC_RECURSE (#2199, I4) - quantifies how often the NDX conversion hot path
+/// fires per transfer relative to the file count.
+///
+/// Sampled at end-of-transfer in `GeneratorContext::run` via
+/// [`ndx_convert_totals`] and emitted via `tracing::debug!`.
+static NDX_CONVERT_CALLS: AtomicU64 = AtomicU64::new(0);
+
+/// Cumulative `partition_point` comparison depth (approximated as
+/// `floor(log2(len)) + 1`) summed across every NDX conversion call.
+/// Diagnostic counter for sender-side INC_RECURSE (#2199, I4) - lets
+/// operators see when the segment table grows large enough for the
+/// binary-search cost to matter.
+static NDX_CONVERT_CMPS: AtomicU64 = AtomicU64::new(0);
+
+/// Approximate number of comparisons a binary search performs on a sorted
+/// slice of length `len`. Returns `floor(log2(len)) + 1`, matching the worst
+/// case of `[T]::partition_point` on the segment table.
+fn partition_point_depth(len: usize) -> u64 {
+    if len == 0 {
+        return 0;
+    }
+    u64::from((len as u64).ilog2()) + 1
+}
+
+/// Snapshot of the global NDX conversion counters.
+///
+/// Returns `(call_count, cumulative_partition_point_depth)`. Used by the
+/// generator finalize path to emit an end-of-transfer diagnostic line and by
+/// unit tests that assert the counters monotonically grow.
+#[must_use]
+pub fn ndx_convert_totals() -> (u64, u64) {
+    (
+        NDX_CONVERT_CALLS.load(Ordering::Relaxed),
+        NDX_CONVERT_CMPS.load(Ordering::Relaxed),
+    )
+}
 
 /// A pending file list sub-segment for incremental recursion sending.
 ///
@@ -461,31 +501,37 @@ impl GeneratorContext {
     ///
     /// Uses `partition_point` for O(log n) lookup, matching `flat_to_wire_ndx`.
     ///
+    /// Updates the [`NDX_CONVERT_CALLS`] / [`NDX_CONVERT_CMPS`] counters used
+    /// for INC_RECURSE diagnostic I4 (#2199).
+    ///
     /// # Upstream Reference
     ///
     /// - `rsync.c:424` - `i = ndx - cur_flist->ndx_start`
     fn wire_to_flat_ndx(&self, wire_ndx: i32) -> usize {
-        let seg_idx = self
-            .incremental
-            .ndx_segments
+        let segments = &self.incremental.ndx_segments;
+        NDX_CONVERT_CALLS.fetch_add(1, Ordering::Relaxed);
+        NDX_CONVERT_CMPS.fetch_add(partition_point_depth(segments.len()), Ordering::Relaxed);
+        let seg_idx = segments
             .partition_point(|&(_, ndx_start)| ndx_start <= wire_ndx)
             .saturating_sub(1);
-        let (flat_start, ndx_start) = self.incremental.ndx_segments[seg_idx];
+        let (flat_start, ndx_start) = segments[seg_idx];
         flat_start + (wire_ndx - ndx_start) as usize
     }
 
     /// Converts a flat file list array index to a wire NDX value.
     ///
+    /// Updates the [`NDX_CONVERT_CALLS`] / [`NDX_CONVERT_CMPS`] counters used
+    /// for INC_RECURSE diagnostic I4 (#2199).
+    ///
     /// # Upstream Reference
     ///
     /// - `generator.c:2321` - `ndx = i + cur_flist->ndx_start`
     fn flat_to_wire_ndx(&self, flat_idx: usize) -> i32 {
-        let seg_idx = self
-            .incremental
-            .ndx_segments
-            .partition_point(|&(start, _)| start <= flat_idx)
-            - 1;
-        let (flat_start, ndx_start) = self.incremental.ndx_segments[seg_idx];
+        let segments = &self.incremental.ndx_segments;
+        NDX_CONVERT_CALLS.fetch_add(1, Ordering::Relaxed);
+        NDX_CONVERT_CMPS.fetch_add(partition_point_depth(segments.len()), Ordering::Relaxed);
+        let seg_idx = segments.partition_point(|&(start, _)| start <= flat_idx) - 1;
+        let (flat_start, ndx_start) = segments[seg_idx];
         ndx_start + (flat_idx - flat_start) as i32
     }
 
