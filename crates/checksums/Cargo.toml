@@ -80,3 +80,7 @@ harness = false
 [[bench]]
 name = "framing_overhead_benchmark"
 harness = false
+
+[[bench]]
+name = "md4_multibuffer_benchmark"
+harness = false
