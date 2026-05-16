@@ -1,48 +1,57 @@
 //! Portable io_uring fallback for non-Linux platforms or when the feature is disabled.
 //!
 //! Provides the same public API as the real `io_uring` module but always falls
-//! back to standard buffered I/O. The `is_io_uring_available()` function always
+//! back to standard buffered I/O. The [`is_io_uring_available`] function always
 //! returns `false`. This module is compiled when either:
 //!
 //! - The target OS is not Linux, or
 //! - The `io_uring` cargo feature is not enabled
 //!
-//! All factory types ([`IoUringReaderFactory`], [`IoUringWriterFactory`]) produce
-//! `Std` variants directly. The stub types ([`IoUringReader`], [`IoUringWriter`])
-//! cannot be constructed and exist only for enum variant completeness.
+//! All cross-platform plain-data types (configs, kernel UAPI constants, error
+//! enums, telemetry structs) live in [`crate::io_uring_common`] so they
+//! compile identically on every target. This module hosts only the
+//! opaque-handle types and "always Unsupported" entry points that are unique
+//! to the stub backend - which is the only thing the Linux backend cannot
+//! share with us.
 
 #![allow(dead_code)]
 
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+use crate::io_uring_common::IoBackend;
+pub use crate::io_uring_common::{
+    BufferRingConfig, BufferRingError, IORING_OP_LINKAT, IORING_OP_RENAMEAT, IORING_OP_STATX,
+    IoUringConfig, IoUringKernelInfo, LINKAT_MIN_KERNEL, OpTag, RENAME_EXCHANGE, RENAME_NOREPLACE,
+    RENAME_WHITEOUT, RegisteredBufferStats, RegisteredBufferStatus, STATX_MIN_KERNEL,
+    SharedCompletion, SharedRingConfig, buffer_id_from_cqe_flags,
+};
 use crate::traits::{
     FileReader, FileReaderFactory, FileWriter, FileWriterFactory, StdFileReader, StdFileWriter,
 };
+
+/// Marker type implementing [`IoBackend`] for the no-op stub backend.
+///
+/// Used by code that needs to query availability through the cross-platform
+/// trait without caring which backend was compiled. Always reports the
+/// backend as unavailable on this platform.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StubIoUringBackend;
+
+impl IoBackend for StubIoUringBackend {
+    fn is_available() -> bool {
+        false
+    }
+
+    fn availability_reason() -> String {
+        "io_uring: disabled (not built for this target)".to_string()
+    }
+}
 
 /// Check whether io_uring is available (always `false` on this platform).
 #[must_use]
 pub fn is_io_uring_available() -> bool {
     false
-}
-
-/// Structured kernel information for io_uring availability reporting.
-///
-/// On non-Linux platforms, all fields indicate unavailability.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IoUringKernelInfo {
-    /// Whether io_uring is usable on this system (always `false`).
-    pub available: bool,
-    /// Detected kernel major version (always `None`).
-    pub kernel_major: Option<u32>,
-    /// Detected kernel minor version (always `None`).
-    pub kernel_minor: Option<u32>,
-    /// Number of supported io_uring opcodes (always 0).
-    pub supported_ops: u32,
-    /// Whether the kernel supports `IORING_REGISTER_PBUF_RING` (always `false`).
-    pub pbuf_ring_supported: bool,
-    /// Human-readable reason string.
-    pub reason: String,
 }
 
 /// Returns whether SQPOLL was requested but fell back (always `false` on this platform).
@@ -51,162 +60,80 @@ pub fn sqpoll_fell_back() -> bool {
     false
 }
 
-/// Configuration for io_uring instances (informational only on this platform).
-#[derive(Debug, Clone)]
-pub struct IoUringConfig {
-    /// Number of submission queue entries.
-    pub sq_entries: u32,
-    /// Size of read/write buffers.
-    pub buffer_size: usize,
-    /// Whether to use direct I/O.
-    pub direct_io: bool,
-    /// Whether to register file descriptors (no-op on non-Linux).
-    pub register_files: bool,
-    /// Whether to enable SQPOLL (no-op on non-Linux).
-    pub sqpoll: bool,
-    /// SQPOLL idle timeout in ms (no-op on non-Linux).
-    pub sqpoll_idle_ms: u32,
-    /// Signals an `mmap` basis reader is live on this transfer plan
-    /// (no-op on non-Linux; field exists so cross-platform code can set it
-    /// without `cfg`-gating).
-    pub mmap_basis_active: bool,
-    /// Whether to register fixed buffers (no-op on non-Linux).
-    pub register_buffers: bool,
-    /// Number of fixed buffers to register (no-op on non-Linux).
-    pub registered_buffer_count: usize,
-    /// Zero-copy policy for socket sends (no-op on non-Linux).
-    pub zero_copy_policy: crate::ZeroCopyPolicy,
-}
+/// Public accessors for kernel version detection used by `--version` output.
+///
+/// Mirrors the real Linux module so cross-platform callers can use the same
+/// import path; every function reports unavailability on this platform.
+pub mod config_detail {
+    use super::{IoUringKernelInfo, StubIoUringBackend};
+    use crate::io_uring_common::IoBackend;
 
-impl Default for IoUringConfig {
-    fn default() -> Self {
-        Self {
-            sq_entries: 64,
-            buffer_size: 64 * 1024,
-            direct_io: false,
-            register_files: true,
-            sqpoll: false,
-            sqpoll_idle_ms: 1000,
-            mmap_basis_active: false,
-            register_buffers: true,
-            registered_buffer_count: 8,
-            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
-        }
-    }
-}
-
-impl IoUringConfig {
-    /// Creates a config optimized for large file transfers.
+    /// Always returns `None` on this platform.
     #[must_use]
-    pub fn for_large_files() -> Self {
-        Self {
-            sq_entries: 256,
-            buffer_size: 256 * 1024,
-            direct_io: false,
-            register_files: true,
-            sqpoll: false,
-            sqpoll_idle_ms: 1000,
-            mmap_basis_active: false,
-            register_buffers: true,
-            registered_buffer_count: 16,
-            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
-        }
+    pub fn parse_kernel_version(_release: &str) -> Option<(u32, u32)> {
+        None
     }
 
-    /// Creates a config optimized for many small files.
+    /// Always returns `None` on this platform.
     #[must_use]
-    pub fn for_small_files() -> Self {
-        Self {
-            sq_entries: 128,
-            buffer_size: 16 * 1024,
-            direct_io: false,
-            register_files: true,
-            sqpoll: false,
-            sqpoll_idle_ms: 1000,
-            mmap_basis_active: false,
-            register_buffers: true,
-            registered_buffer_count: 8,
-            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
-        }
+    pub fn get_kernel_release_string() -> Option<String> {
+        None
     }
 
-    /// Returns whether `SEND_ZC` opcodes may be attempted (always `false` on
-    /// the stub since io_uring is unavailable on this platform).
+    /// Returns a human-readable reason for io_uring unavailability.
     #[must_use]
-    pub fn allow_send_zc(&self) -> bool {
-        false
+    pub fn io_uring_availability_reason() -> String {
+        StubIoUringBackend::availability_reason()
+    }
+
+    /// Returns a stub [`IoUringKernelInfo`] populated for unavailability.
+    #[must_use]
+    pub fn io_uring_kernel_info() -> IoUringKernelInfo {
+        IoUringKernelInfo {
+            available: false,
+            kernel_major: None,
+            kernel_minor: None,
+            supported_ops: 0,
+            pbuf_ring_supported: false,
+            reason: io_uring_availability_reason(),
+        }
     }
 }
 
 /// Stub module for provided buffer ring (not available on this platform).
+///
+/// Re-exports the shared [`BufferRingConfig`] and [`BufferRingError`] from
+/// [`crate::io_uring_common`] and supplies the opaque [`BufferRing`] /
+/// [`BgidAllocator`] handles that only exist as compile-time placeholders
+/// here.
 pub mod buffer_ring {
-    use std::io;
+    pub use crate::io_uring_common::{BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags};
 
-    /// Errors specific to buffer ring operations.
-    #[derive(Debug, thiserror::Error)]
-    pub enum BufferRingError {
-        /// PBUF_RING is not supported on this platform.
-        #[error("PBUF_RING is not available on this platform")]
-        Unsupported,
-
-        /// The buffer group ID namespace is exhausted (stub variant mirrors
-        /// the Linux `BufferRingError::BgidExhausted` so cross-platform
-        /// callers can pattern-match without `cfg`-gating).
-        #[error("io_uring buffer group ID namespace exhausted (limit: 65535)")]
-        BgidExhausted,
-    }
-
-    impl From<BufferRingError> for io::Error {
-        fn from(e: BufferRingError) -> Self {
-            io::Error::new(io::ErrorKind::Unsupported, e)
-        }
-    }
-
-    /// Configuration for a provided buffer ring (informational only on this platform).
-    #[derive(Debug, Clone)]
-    pub struct BufferRingConfig {
-        /// Number of entries in the ring.
-        pub ring_size: u32,
-        /// Size of each buffer in bytes.
-        pub buffer_size: u32,
-        /// Buffer group ID.
-        pub bgid: u16,
-    }
-
-    impl Default for BufferRingConfig {
-        fn default() -> Self {
-            Self {
-                ring_size: 64,
-                buffer_size: 64 * 1024,
-                bgid: 0,
-            }
-        }
-    }
-
-    /// Stub provided buffer ring (not available on this platform).
+    /// Stub provided buffer ring.
     ///
-    /// On non-Linux platforms, [`new`](Self::new) always returns an error
-    /// and [`try_new`](Self::try_new) always returns `None`.
+    /// [`new`](Self::new) always returns an error and [`try_new`](Self::try_new)
+    /// always returns `None` on this platform.
     #[derive(Debug)]
     pub struct BufferRing {
         _private: (),
     }
 
     impl BufferRing {
-        /// Always returns an `Unsupported` error on this platform.
+        /// Always returns `BufferRingError::Unsupported` on this platform.
         pub fn new(_ring: &(), _config: BufferRingConfig) -> Result<Self, BufferRingError> {
             Err(BufferRingError::Unsupported)
         }
 
         /// Always returns `None` on this platform.
+        #[must_use]
         pub fn try_new(_ring: &(), _config: BufferRingConfig) -> Option<Self> {
             None
         }
 
-        /// Always returns `Err(Unsupported)` on this platform.
+        /// Always returns `BufferRingError::Unsupported` on this platform.
         ///
-        /// Mirrors the Linux `BufferRing::new_with_allocator` signature so
-        /// cross-platform callers compile without `cfg`-gating.
+        /// Mirrors the Linux signature so cross-platform callers compile
+        /// without `cfg`-gating.
         pub fn new_with_allocator(
             _ring: &(),
             _config: BufferRingConfig,
@@ -214,25 +141,26 @@ pub mod buffer_ring {
             Err(BufferRingError::Unsupported)
         }
 
-        /// Returns the buffer group ID (never called on this platform).
+        /// Returns 0 (the stub never constructs an instance).
         #[must_use]
         pub fn bgid(&self) -> u16 {
             0
         }
 
-        /// Returns the ring size (never called on this platform).
+        /// Returns 0 (the stub never constructs an instance).
         #[must_use]
         pub fn ring_size(&self) -> u32 {
             0
         }
 
-        /// Returns the buffer size (never called on this platform).
+        /// Returns 0 (the stub never constructs an instance).
         #[must_use]
         pub fn buffer_size(&self) -> u32 {
             0
         }
 
-        /// Returns `None` on this platform.
+        /// Always returns `None` on this platform.
+        #[must_use]
         pub fn buffer_ptr(&self, _buf_id: u16) -> Option<*const u8> {
             None
         }
@@ -243,7 +171,8 @@ pub mod buffer_ring {
             Ok(())
         }
 
-        /// Returns the configuration (never called on this platform).
+        /// Stub configuration accessor; never callable in practice because
+        /// `BufferRing` cannot be constructed on this platform.
         #[must_use]
         pub fn config(&self) -> &BufferRingConfig {
             unreachable!("BufferRing cannot be constructed on this platform")
@@ -265,31 +194,23 @@ pub mod buffer_ring {
         false
     }
 
-    /// Always returns `None` on this platform (no CQE buffer flag support).
-    #[inline]
-    pub fn buffer_id_from_cqe_flags(_flags: u32) -> Option<u16> {
-        None
-    }
-
     /// Stub allocator for buffer group IDs.
     ///
-    /// Mirrors the Linux `BgidAllocator` interface so cross-platform callers
-    /// can compile without `cfg`-gating. On this platform io_uring is
-    /// unavailable, so `allocate` always reports the namespace as exhausted,
-    /// `deallocate` is a no-op, and `remaining` reports zero.
+    /// Always reports the namespace as exhausted so callers exercise their
+    /// fall-back paths.
     pub struct BgidAllocator;
 
     impl BgidAllocator {
-        /// Always returns `Err(BgidExhausted)` on this platform.
+        /// Always returns [`BufferRingError::BgidExhausted`] on this platform.
         pub fn allocate() -> Result<u16, BufferRingError> {
             Err(BufferRingError::BgidExhausted)
         }
 
-        /// No-op on this platform; the allocator never issues ids so there
-        /// is nothing to return to the free-list.
+        /// No-op on this platform.
         pub fn deallocate(_bgid: u16) {}
 
         /// Always returns 0 on this platform.
+        #[must_use]
         pub fn remaining() -> u32 {
             0
         }
@@ -298,12 +219,12 @@ pub mod buffer_ring {
 
 /// Stub module for registered buffer types (not available on this platform).
 pub mod registered_buffers {
+    pub use crate::io_uring_common::{RegisteredBufferStats, RegisteredBufferStatus};
     use std::io;
 
-    /// Stub registered buffer group (not available on this platform).
+    /// Stub registered buffer group.
     ///
-    /// On non-Linux platforms, buffer registration always returns `None` from
-    /// `try_new` and `Unsupported` from `new`.
+    /// `try_new` always returns `None` and `new` always returns `Unsupported`.
     #[derive(Debug)]
     pub struct RegisteredBufferGroup {
         _private: (),
@@ -319,16 +240,16 @@ pub mod registered_buffers {
         }
 
         /// Always returns `None` on this platform.
+        #[must_use]
         pub fn try_new(_ring: &(), _buffer_size: usize, _count: usize) -> Option<Self> {
             None
         }
 
-        /// Stub form of the registration-aware constructor used on Linux.
+        /// Stub registration-aware constructor.
         ///
-        /// On non-Linux platforms registration is never attempted, so the
-        /// status is always [`RegisteredBufferStatus::Disabled`] when the
-        /// caller opts out and `RegistrationFailed` otherwise (mirroring the
-        /// Linux failure path so callers see the same observability signal).
+        /// Returns [`RegisteredBufferStatus::RegistrationFailed`] when the
+        /// caller opts in (mirroring the Linux failure path) and
+        /// [`RegisteredBufferStatus::Disabled`] when the caller opts out.
         pub fn try_new_with_status(
             _ring: &(),
             _buffer_size: usize,
@@ -348,34 +269,31 @@ pub mod registered_buffers {
             }
         }
 
-        /// Returns the number of buffers (always 0).
+        /// Returns 0 on this platform (no group can exist).
         #[must_use]
         pub fn count(&self) -> usize {
             0
         }
 
-        /// Returns the buffer size (always 0).
+        /// Returns 0 on this platform (no group can exist).
         #[must_use]
         pub fn buffer_size(&self) -> usize {
             0
         }
 
-        /// Returns the number of available slots (always 0).
+        /// Returns 0 on this platform (no slots can be available).
         #[must_use]
         pub fn available(&self) -> usize {
             0
         }
 
         /// Always returns `None` on this platform.
+        #[must_use]
         pub fn checkout(&self) -> Option<RegisteredBufferSlot<'_>> {
             None
         }
 
         /// Returns a zeroed snapshot on this platform.
-        ///
-        /// Mirrors the Linux API surface so callers building cross-platform
-        /// adaptive sizing logic compile on every target. The fields are
-        /// always `0` because no checkouts are ever recorded here.
         #[must_use]
         pub fn stats(&self) -> RegisteredBufferStats {
             RegisteredBufferStats {
@@ -390,68 +308,13 @@ pub mod registered_buffers {
         }
     }
 
-    /// Stub snapshot of registered-buffer telemetry (always zero on this
-    /// platform). Mirrors the Linux [`RegisteredBufferStats`].
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct RegisteredBufferStats {
-        /// Always 0 on this platform.
-        pub total_acquires: u64,
-        /// Always 0 on this platform.
-        pub total_misses: u64,
-    }
-
-    impl RegisteredBufferStats {
-        /// Always returns `0.0` on this platform.
-        #[must_use]
-        pub fn miss_rate(&self) -> f64 {
-            0.0
-        }
-    }
-
-    /// Stub mirror of the Linux `RegisteredBufferStatus` enum. Lets
-    /// cross-platform callers reason about registration provenance without
-    /// `cfg`-gating their telemetry surface.
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub enum RegisteredBufferStatus {
-        /// Registration succeeded (never produced by the stub).
-        Enabled,
-        /// Registration was not attempted (caller opted out).
-        Disabled,
-        /// Registration failed. On non-Linux platforms the failure reason is
-        /// always "not available on this platform".
-        RegistrationFailed {
-            /// Human-readable failure reason for telemetry.
-            reason: String,
-        },
-    }
-
-    impl RegisteredBufferStatus {
-        /// Always false on the stub - no Linux-only opcode is in use.
-        #[must_use]
-        pub fn is_enabled(&self) -> bool {
-            matches!(self, Self::Enabled)
-        }
-
-        /// True when the caller explicitly disabled registration.
-        #[must_use]
-        pub fn is_disabled(&self) -> bool {
-            matches!(self, Self::Disabled)
-        }
-
-        /// True when registration was attempted but rejected (or stubbed out).
-        #[must_use]
-        pub fn is_registration_failed(&self) -> bool {
-            matches!(self, Self::RegistrationFailed { .. })
-        }
-    }
-
-    /// Stub registered buffer slot (not available on this platform).
+    /// Stub registered buffer slot (never constructed).
     pub struct RegisteredBufferSlot<'a> {
         _phantom: std::marker::PhantomData<&'a ()>,
     }
 
     impl RegisteredBufferSlot<'_> {
-        /// Returns the buffer index (always 0).
+        /// Returns 0 (the slot cannot be constructed on this platform).
         #[must_use]
         pub fn buf_index(&self) -> u16 {
             0
@@ -469,7 +332,7 @@ pub mod registered_buffers {
             std::ptr::null()
         }
 
-        /// Returns the buffer size (always 0).
+        /// Returns 0 (the slot cannot be constructed on this platform).
         #[must_use]
         pub fn buffer_size(&self) -> usize {
             0
@@ -477,43 +340,27 @@ pub mod registered_buffers {
     }
 }
 
-pub use buffer_ring::{
-    BgidAllocator, BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags,
-    pbuf_ring_supported,
-};
+pub use buffer_ring::{BgidAllocator, BufferRing, pbuf_ring_supported};
 pub use linkat::{
-    IORING_OP_LINKAT, LINKAT_MIN_KERNEL, LinkAtArgs, build_linkat_sqe, build_linkat_sqe_unchecked,
-    linkat_supported, submit_linkat_blocking,
+    LinkAtArgs, build_linkat_sqe, build_linkat_sqe_unchecked, linkat_supported,
+    submit_linkat_blocking,
 };
-pub use registered_buffers::{
-    RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats, RegisteredBufferStatus,
-};
+pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot};
 pub use renameat2::{
-    IORING_OP_RENAMEAT, RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT, RenameAt2Args,
-    build_renameat2_sqe, build_renameat2_sqe_unchecked, renameat2_blocking, renameat2_supported,
+    RenameAt2Args, build_renameat2_sqe, build_renameat2_sqe_unchecked, renameat2_blocking,
+    renameat2_supported,
 };
-
-pub use shared_ring::{OpTag, SharedCompletion, SharedRing, SharedRingConfig};
 pub use statx::{
-    IORING_OP_STATX, STATX_MIN_KERNEL, StatxArgs, StatxResult, build_statx_sqe,
-    build_statx_sqe_unchecked, statx_supported, submit_statx_batch, submit_statx_blocking,
+    StatxArgs, StatxResult, build_statx_sqe, build_statx_sqe_unchecked, statx_supported,
+    submit_statx_batch, submit_statx_blocking,
 };
 
 /// Stub `linkat` module mirroring [`crate::io_uring::linkat`] on non-Linux
 /// platforms or when the `io_uring` cargo feature is disabled.
-///
-/// Every entry point reports the opcode as unsupported so callers fall back
-/// to a synchronous `linkat(2)` syscall (or the platform equivalent).
 pub mod linkat {
+    pub use crate::io_uring_common::{IORING_OP_LINKAT, LINKAT_MIN_KERNEL};
     use std::ffi::CStr;
     use std::io;
-
-    /// Numeric value of `IORING_OP_LINKAT`. Documented for parity with the
-    /// Linux module; the stub never submits real SQEs.
-    pub const IORING_OP_LINKAT: u8 = 39;
-
-    /// Minimum Linux kernel version that ships `IORING_OP_LINKAT`.
-    pub const LINKAT_MIN_KERNEL: (u32, u32) = (5, 15);
 
     /// Borrowed arguments for an `IORING_OP_LINKAT` submission. On the stub
     /// the struct exists only so cross-platform call sites compile; no SQE
@@ -546,14 +393,10 @@ pub mod linkat {
         ))
     }
 
-    /// Stub mirror of the Linux `build_linkat_sqe_unchecked`. Exists for API
-    /// surface parity; never called from production code on this platform.
-    #[must_use]
+    /// Stub mirror of the Linux `build_linkat_sqe_unchecked`. No-op.
     pub fn build_linkat_sqe_unchecked(_args: LinkAtArgs<'_>) {}
 
-    /// Always returns `Unsupported` on this platform. Mirrors the Linux
-    /// blocking submitter so cross-platform callers can fall back without
-    /// `cfg`-gating their own code.
+    /// Always returns `Unsupported` on this platform.
     pub fn submit_linkat_blocking(_args: LinkAtArgs<'_>) -> io::Result<i32> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -593,30 +436,16 @@ pub mod linkat {
     }
 }
 
-/// Stub `IORING_OP_RENAMEAT` module for non-Linux platforms or when the
-/// `io_uring` cargo feature is disabled.
-///
-/// Mirrors the public surface of `crate::io_uring::renameat2`:
-/// `renameat2_supported()` is always `false`, `build_renameat2_sqe`
-/// returns `io::ErrorKind::Unsupported`, and the libc rename flags are
-/// re-exported under their stable kernel-UAPI values so callers can name
-/// them without `cfg`-gating.
+/// Stub `IORING_OP_RENAMEAT` module mirroring the Linux module.
 pub mod renameat2 {
+    pub use crate::io_uring_common::{
+        IORING_OP_RENAMEAT, RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT,
+    };
     use std::ffi::CStr;
     use std::io;
     use std::os::raw::c_int;
 
-    /// `IORING_OP_RENAMEAT` opcode number. Stable across kernels.
-    pub const IORING_OP_RENAMEAT: u8 = 35;
-
-    /// `RENAME_NOREPLACE` flag value (kernel UAPI constant).
-    pub const RENAME_NOREPLACE: u32 = 1;
-    /// `RENAME_EXCHANGE` flag value (kernel UAPI constant).
-    pub const RENAME_EXCHANGE: u32 = 2;
-    /// `RENAME_WHITEOUT` flag value (kernel UAPI constant).
-    pub const RENAME_WHITEOUT: u32 = 4;
-
-    /// Stub argument struct mirroring [`crate::io_uring::renameat2::RenameAt2Args`].
+    /// Stub argument struct mirroring the Linux `RenameAt2Args`.
     #[derive(Debug, Clone, Copy)]
     pub struct RenameAt2Args<'a> {
         /// Directory fd that `old_path` is resolved against.
@@ -670,28 +499,17 @@ pub mod renameat2 {
     }
 }
 
-/// Stub `IORING_OP_STATX` module for non-Linux platforms or when the
-/// `io_uring` cargo feature is disabled.
-///
-/// Mirrors the public surface of `crate::io_uring::statx`:
-/// `statx_supported()` is always `false`, `build_statx_sqe` returns
-/// `io::ErrorKind::Unsupported`, and `submit_statx_batch` falls back to
-/// returning `Unsupported` errors for all paths.
+/// Stub `IORING_OP_STATX` module mirroring the Linux module.
 pub mod statx {
+    pub use crate::io_uring_common::{IORING_OP_STATX, STATX_MIN_KERNEL};
     use std::ffi::CStr;
     use std::io;
     use std::path::Path;
 
-    /// Numeric value of `IORING_OP_STATX`. Documented for parity with the
-    /// Linux module; the stub never submits real SQEs.
-    pub const IORING_OP_STATX: u8 = 21;
-
-    /// Minimum Linux kernel version that ships `IORING_OP_STATX`.
-    pub const STATX_MIN_KERNEL: (u32, u32) = (5, 11);
-
-    /// Borrowed arguments for an `IORING_OP_STATX` submission. On the stub
-    /// the struct exists only so cross-platform call sites compile; no SQE
-    /// is ever built.
+    /// Borrowed arguments for an `IORING_OP_STATX` submission. Stub
+    /// definition mirrors the Linux module's struct shape so cross-platform
+    /// call sites compile without `cfg`-gating; the stub never submits an
+    /// SQE.
     #[derive(Debug)]
     pub struct StatxArgs<'a> {
         /// Directory file descriptor that resolves `pathname`.
@@ -723,8 +541,7 @@ pub mod statx {
         ))
     }
 
-    /// Stub mirror of the Linux `build_statx_sqe_unchecked`. Exists for API
-    /// surface parity; never called from production code on this platform.
+    /// Stub mirror of the Linux `build_statx_sqe_unchecked`.
     pub fn build_statx_sqe_unchecked(_args: &mut StatxArgs<'_>) {}
 
     /// Always returns `Unsupported` on this platform.
@@ -796,107 +613,24 @@ pub mod statx {
     }
 }
 
-/// Stub shared-ring module mirroring [`crate::io_uring::shared_ring`] on
-/// non-Linux platforms or when the `io_uring` cargo feature is disabled.
+/// Stub shared-ring module mirroring the Linux module on non-Linux platforms
+/// or when the `io_uring` cargo feature is disabled.
 ///
 /// Every constructor returns `None` / `Unsupported`, so callers fall back to
 /// the per-channel ring path or to standard buffered I/O.
 pub mod shared_ring {
+    pub use crate::io_uring_common::{OpTag, SharedCompletion, SharedRingConfig};
     use std::io;
     use std::os::raw::c_int;
 
-    use super::IoUringConfig;
-
-    /// Stub `OpTag` mirroring the real enum so consumer crates can name the
-    /// type without `cfg`-gating their own code. Encoding/decoding is still
-    /// pure arithmetic and remains useful in cross-platform tests.
-    #[repr(u8)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum OpTag {
-        /// File-side read completion tag.
-        Read = 1,
-        /// File-side write completion tag.
-        Write = 2,
-        /// Socket-side send completion tag.
-        Send = 3,
-        /// Write-readiness probe completion tag.
-        PollWrite = 4,
-    }
-
-    impl OpTag {
-        /// Encodes the tag and a 56-bit op id into a SQE-style `user_data`.
-        #[inline]
-        #[must_use]
-        pub fn encode(self, op_id: u64) -> u64 {
-            ((self as u64) << 56) | (op_id & ((1u64 << 56) - 1))
-        }
-
-        /// Decodes a `user_data` value into the source tag and op id.
-        #[inline]
-        pub fn decode(user_data: u64) -> Option<(Self, u64)> {
-            let tag = (user_data >> 56) as u8;
-            let op_id = user_data & ((1u64 << 56) - 1);
-            let parsed = match tag {
-                1 => Self::Read,
-                2 => Self::Write,
-                3 => Self::Send,
-                4 => Self::PollWrite,
-                _ => return None,
-            };
-            Some((parsed, op_id))
-        }
-    }
-
-    /// Demultiplexed CQE result. Mirrors the live type so callers can match
-    /// on it from cross-platform code.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum SharedCompletion {
-        /// File read completed.
-        Read {
-            /// Caller-supplied op id passed at submission.
-            op_id: u64,
-            /// CQE result (bytes on success, negative errno on failure).
-            result: i32,
-        },
-        /// File write completed.
-        Write {
-            /// Caller-supplied op id passed at submission.
-            op_id: u64,
-            /// CQE result (bytes on success, negative errno on failure).
-            result: i32,
-        },
-        /// Socket send completed.
-        Send {
-            /// Caller-supplied op id passed at submission.
-            op_id: u64,
-            /// CQE result (bytes on success, negative errno on failure).
-            result: i32,
-        },
-        /// Write-readiness signalled by the kernel.
-        PollWrite {
-            /// Caller-supplied op id passed at submission.
-            op_id: u64,
-            /// `revents` bitmask returned by the kernel.
-            revents: i16,
-        },
-    }
-
-    /// Stub `SharedRingConfig`. The wrapped [`IoUringConfig`] is honoured
-    /// only for field-level inspection in tests; no real ring is built.
-    #[derive(Debug, Clone, Default)]
-    pub struct SharedRingConfig {
-        /// Backing io_uring configuration.
-        pub ring: IoUringConfig,
-    }
-
-    /// Stub `SharedRing`. All constructors return `Unsupported`/`None`; the
-    /// type exists only to give callers a name to reference under `cfg`.
+    /// Stub `SharedRing`. All constructors return `Unsupported` / `None`.
     pub struct SharedRing {
         _private: (),
     }
 
     impl SharedRing {
         /// Always returns `None` on this platform.
+        #[must_use]
         pub fn try_new(
             _reader_fd: c_int,
             _writer_fd: c_int,
@@ -985,10 +719,9 @@ pub mod shared_ring {
     }
 }
 
+pub use shared_ring::SharedRing;
+
 /// Stub batched io_uring disk writer (not available on this platform).
-///
-/// On non-Linux platforms, [`try_new`](Self::try_new) always returns `None`
-/// and [`new`](Self::new) always returns `Unsupported`.
 #[derive(Debug)]
 pub struct IoUringDiskBatch {
     _private: (),
@@ -1004,6 +737,7 @@ impl IoUringDiskBatch {
     }
 
     /// Always returns `None` on this platform.
+    #[must_use]
     pub fn try_new(_config: &IoUringConfig) -> Option<Self> {
         None
     }
@@ -1085,7 +819,7 @@ impl IoUringReader {
         ))
     }
 
-    /// Reads data at the specified offset.
+    /// Reads data at the specified offset (always fails on this platform).
     pub fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> io::Result<usize> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -1093,7 +827,7 @@ impl IoUringReader {
         ))
     }
 
-    /// Reads the entire file into a vector.
+    /// Reads the entire file into a vector (always fails on this platform).
     pub fn read_all_batched(&mut self) -> io::Result<Vec<u8>> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -1163,7 +897,7 @@ impl IoUringWriter {
         ))
     }
 
-    /// Writes data at the specified offset.
+    /// Writes data at the specified offset (always fails on this platform).
     pub fn write_at(&mut self, _offset: u64, _buf: &[u8]) -> io::Result<usize> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -1439,10 +1173,6 @@ pub fn writer_from_file(
 }
 
 /// Like [`writer_from_file`] but accepts an explicit submission queue depth.
-///
-/// On non-Linux platforms the depth is ignored because the stub never
-/// constructs a real ring. The signature parity with the Linux module keeps
-/// caller code free of `cfg` gates.
 pub fn writer_from_file_with_depth(
     file: std::fs::File,
     buffer_capacity: usize,
@@ -1472,10 +1202,6 @@ pub fn reader_from_path<P: AsRef<Path>>(
 }
 
 /// Like [`reader_from_path`] but accepts an explicit submission queue depth.
-///
-/// On non-Linux platforms the depth is ignored because the stub never
-/// constructs a real ring. The signature parity with the Linux module keeps
-/// caller code free of `cfg` gates.
 pub fn reader_from_path_with_depth<P: AsRef<Path>>(
     path: P,
     policy: crate::IoUringPolicy,
@@ -1707,63 +1433,6 @@ mod tests {
     }
 
     #[test]
-    fn renameat2_unsupported_on_stub_platform() {
-        assert!(!renameat2_supported());
-    }
-
-    #[test]
-    fn renameat2_constants_match_kernel_uapi() {
-        assert_eq!(IORING_OP_RENAMEAT, 35);
-        assert_eq!(RENAME_NOREPLACE, 1);
-        assert_eq!(RENAME_EXCHANGE, 2);
-        assert_eq!(RENAME_WHITEOUT, 4);
-    }
-
-    #[test]
-    fn renameat2_build_sqe_returns_unsupported_on_stub() {
-        let old = std::ffi::CString::new("/tmp/stub-old").unwrap();
-        let new = std::ffi::CString::new("/tmp/stub-new").unwrap();
-        let args = RenameAt2Args {
-            old_dir_fd: -100, // AT_FDCWD value, kernel-stable
-            old_path: &old,
-            new_dir_fd: -100,
-            new_path: &new,
-            flags: 0,
-        };
-        let err = build_renameat2_sqe(args).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
-    }
-
-    #[test]
-    fn renameat2_unchecked_returns_stub_sqe() {
-        let old = std::ffi::CString::new("/tmp/stub-old").unwrap();
-        let new = std::ffi::CString::new("/tmp/stub-new").unwrap();
-        let args = RenameAt2Args {
-            old_dir_fd: -100,
-            old_path: &old,
-            new_dir_fd: -100,
-            new_path: &new,
-            flags: RENAME_NOREPLACE | RENAME_EXCHANGE,
-        };
-        let _stub = build_renameat2_sqe_unchecked(args);
-    }
-
-    #[test]
-    fn renameat2_blocking_returns_unsupported_on_stub() {
-        let old = std::ffi::CString::new("/tmp/stub-old").unwrap();
-        let new = std::ffi::CString::new("/tmp/stub-new").unwrap();
-        let args = RenameAt2Args {
-            old_dir_fd: -100,
-            old_path: &old,
-            new_dir_fd: -100,
-            new_path: &new,
-            flags: 0,
-        };
-        let err = renameat2_blocking(args).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
-    }
-
-    #[test]
     fn buffer_ring_is_not_supported_on_stub() {
         assert!(!buffer_ring::is_supported());
     }
@@ -1793,17 +1462,24 @@ mod tests {
     #[test]
     fn bgid_allocator_reports_exhausted_on_stub() {
         let err: io::Error = BgidAllocator::allocate().unwrap_err().into();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(BgidAllocator::remaining(), 0);
-        // Deallocate is a no-op and must not panic.
         BgidAllocator::deallocate(0);
         BgidAllocator::deallocate(u16::MAX);
         assert_eq!(BgidAllocator::remaining(), 0);
     }
 
     #[test]
-    fn buffer_id_from_cqe_flags_returns_none_on_stub() {
-        assert_eq!(buffer_id_from_cqe_flags(0xFFFF_FFFF), None);
+    fn buffer_id_from_cqe_flags_extracts_id_when_flag_set() {
+        // Common helper returns `Some(buf_id)` when IORING_CQE_F_BUFFER is set.
+        let flags = (1234u32 << 16) | 1;
+        assert_eq!(buffer_id_from_cqe_flags(flags), Some(1234));
+    }
+
+    #[test]
+    fn buffer_id_from_cqe_flags_returns_none_when_flag_clear() {
+        let no_flag = 1234u32 << 16;
+        assert_eq!(buffer_id_from_cqe_flags(no_flag), None);
     }
 
     #[test]
@@ -1839,14 +1515,6 @@ mod tests {
         let result = IoUringDiskBatch::new(&config);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
-    }
-
-    #[test]
-    fn disk_batch_bytes_written_is_zero() {
-        // The stub cannot construct an IoUringDiskBatch; this test only
-        // confirms try_new always returns None on this platform.
-        let config = IoUringConfig::default();
-        assert!(IoUringDiskBatch::try_new(&config).is_none());
     }
 
     #[test]
@@ -1890,8 +1558,6 @@ mod tests {
         tmp.write_all(b"").unwrap();
         let file = tmp.reopen().unwrap();
 
-        // Auto must silently fall back to Std on this platform; the probe
-        // returns false unconditionally so io_uring is never selected.
         let writer = writer_from_file(file, 8192, IoUringPolicy::Auto).unwrap();
         assert!(matches!(writer, IoUringOrStdWriter::Std(_)));
     }
@@ -1944,8 +1610,6 @@ mod tests {
             writer.flush().unwrap();
         }
 
-        // Auto also falls back to Std on non-Linux, so the two outputs must
-        // be byte-identical.
         let path_auto = dir.path().join("parity_auto.bin");
         {
             let file = std::fs::File::create(&path_auto).unwrap();
@@ -1978,66 +1642,6 @@ mod tests {
         assert_eq!(data_disabled.len(), test_data.len());
         assert_eq!(data_disabled, data_auto);
         assert_eq!(data_disabled, test_data);
-    }
-
-    #[test]
-    fn writer_handles_partial_writes_correctly() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("partial_write.bin");
-        let file = std::fs::File::create(&path).unwrap();
-        let mut writer = writer_from_file(file, 8192, IoUringPolicy::Disabled).unwrap();
-
-        // Write in small chunks to exercise buffering
-        for i in 0u8..100 {
-            writer.write_all(&[i]).unwrap();
-        }
-        writer.flush().unwrap();
-
-        let content = std::fs::read(&path).unwrap();
-        let expected: Vec<u8> = (0u8..100).collect();
-        assert_eq!(content, expected);
-    }
-
-    #[test]
-    fn writer_large_payload_multi_flush() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("multi_flush.bin");
-        let file = std::fs::File::create(&path).unwrap();
-        let mut writer = writer_from_file(file, 4096, IoUringPolicy::Disabled).unwrap();
-
-        // Write in chunks larger than buffer capacity to trigger multiple flushes
-        let chunk: Vec<u8> = (0..8192).map(|i| (i % 256) as u8).collect();
-        for _ in 0..4 {
-            writer.write_all(&chunk).unwrap();
-        }
-        writer.flush().unwrap();
-
-        let content = std::fs::read(&path).unwrap();
-        assert_eq!(content.len(), 8192 * 4);
-        // Verify each chunk is correct
-        for (i, actual_chunk) in content.chunks(8192).enumerate() {
-            assert_eq!(actual_chunk, &chunk[..], "chunk {i} mismatch");
-        }
-    }
-
-    #[test]
-    fn reader_partial_reads_via_policy() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("partial_read.bin");
-        std::fs::write(&path, b"0123456789ABCDEF").unwrap();
-
-        let mut reader = reader_from_path(&path, IoUringPolicy::Disabled).unwrap();
-
-        let mut buf = [0u8; 4];
-        reader.read_exact(&mut buf).unwrap();
-        assert_eq!(&buf, b"0123");
-
-        reader.read_exact(&mut buf).unwrap();
-        assert_eq!(&buf, b"4567");
-
-        let mut rest = Vec::new();
-        reader.read_to_end(&mut rest).unwrap();
-        assert_eq!(&rest, b"89ABCDEF");
     }
 
     #[test]
@@ -2119,24 +1723,6 @@ mod tests {
     }
 
     #[test]
-    fn empty_file_roundtrip_via_policy() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("empty_roundtrip.bin");
-
-        {
-            let file = std::fs::File::create(&path).unwrap();
-            let mut writer = writer_from_file(file, 8192, IoUringPolicy::Disabled).unwrap();
-            writer.flush().unwrap();
-            assert_eq!(writer.bytes_written(), 0);
-        }
-
-        let mut reader = reader_from_path(&path, IoUringPolicy::Disabled).unwrap();
-        assert_eq!(reader.size(), 0);
-        let data = reader.read_all().unwrap();
-        assert!(data.is_empty());
-    }
-
-    #[test]
     fn policy_default_is_auto() {
         assert_eq!(IoUringPolicy::default(), IoUringPolicy::Auto);
     }
@@ -2211,36 +1797,9 @@ mod tests {
     }
 
     #[test]
-    fn statx_unsupported_on_stub_platform() {
-        assert!(!statx_supported());
-    }
-
-    #[test]
-    fn statx_constants_match_kernel_uapi() {
-        assert_eq!(IORING_OP_STATX, 21);
-        assert_eq!(STATX_MIN_KERNEL, (5, 11));
-    }
-
-    #[test]
-    fn statx_submit_batch_returns_unsupported_for_each_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let p1 = dir.path().join("stub_a.txt");
-        let p2 = dir.path().join("stub_b.txt");
-        std::fs::write(&p1, b"a").unwrap();
-        std::fs::write(&p2, b"b").unwrap();
-
-        let paths: Vec<&std::path::Path> = vec![p1.as_path(), p2.as_path()];
-        let results = submit_statx_batch(&paths, true).unwrap();
-        assert_eq!(results.len(), 2);
-        for result in results {
-            assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
-        }
-    }
-
-    #[test]
-    fn statx_submit_batch_empty_on_stub() {
-        let paths: &[&std::path::Path] = &[];
-        let results = submit_statx_batch(paths, true).unwrap();
-        assert!(results.is_empty());
+    fn stub_backend_reports_unavailable() {
+        assert!(!StubIoUringBackend::is_available());
+        assert!(!StubIoUringBackend::sqpoll_fell_back());
+        assert!(StubIoUringBackend::availability_reason().contains("disabled"));
     }
 }

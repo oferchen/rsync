@@ -64,21 +64,7 @@ use io_uring::{opcode, squeue, types};
 
 use super::config::is_io_uring_available;
 
-/// Numeric value of `IORING_OP_STATX`.
-///
-/// The kernel UAPI (`include/uapi/linux/io_uring.h`) assigns opcode 21 to
-/// `IORING_OP_STATX` starting in Linux 5.11. The `io-uring` crate's
-/// [`io_uring::Probe::is_supported`] takes a raw `u8`, so we record the
-/// numeric value here rather than relying on a `CODE` associated constant.
-pub const IORING_OP_STATX: u8 = 21;
-
-/// Minimum Linux kernel version that ships `IORING_OP_STATX`.
-///
-/// Documented for diagnostic and capability-string output. The runtime
-/// probe still asks the kernel directly via `IORING_REGISTER_PROBE` because
-/// kernels may backport or disable individual opcodes independently of the
-/// reported `uname` release.
-pub const STATX_MIN_KERNEL: (u32, u32) = (5, 11);
+pub use crate::io_uring_common::{IORING_OP_STATX, STATX_MIN_KERNEL};
 
 /// Cached probe result on Linux. Populated lazily on first call.
 #[cfg(target_os = "linux")]

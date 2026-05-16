@@ -78,11 +78,9 @@ const IORING_OFF_PBUF_RING: u64 = 0x80000000;
 /// Minimum kernel version for PBUF_RING support.
 const MIN_PBUF_RING_KERNEL: (u32, u32) = (5, 19);
 
-/// CQE flag indicating the buffer ID is valid.
-const IORING_CQE_F_BUFFER: u32 = 1 << 0;
-
-/// Buffer ID shift in CQE flags.
-const IORING_CQE_BUFFER_SHIFT: u32 = 16;
+pub use crate::io_uring_common::{BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags};
+#[cfg(test)]
+use crate::io_uring_common::{IORING_CQE_BUFFER_SHIFT, IORING_CQE_F_BUFFER};
 
 /// Matches `struct io_uring_buf_reg` from the kernel.
 #[repr(C)]
@@ -103,134 +101,20 @@ struct IoUringBuf {
     resv: u16,
 }
 
-/// Errors specific to buffer ring operations.
-#[derive(Debug, thiserror::Error)]
-pub enum BufferRingError {
-    /// PBUF_RING is not supported on this kernel.
-    #[error("PBUF_RING requires Linux 5.19+ (detected {major}.{minor})")]
-    KernelTooOld {
-        /// Detected kernel major version.
-        major: u32,
-        /// Detected kernel minor version.
-        minor: u32,
-    },
-
-    /// Could not detect the kernel version.
-    #[error("could not detect kernel version for PBUF_RING support check")]
-    KernelVersionUnknown,
-
-    /// Ring size is invalid (must be power of 2 and > 0).
-    #[error("ring size must be a power of 2 and > 0, got {0}")]
-    InvalidRingSize(u32),
-
-    /// Buffer size is invalid (must be > 0).
-    #[error("buffer size must be > 0")]
-    InvalidBufferSize,
-
-    /// The `mmap` call for the ring region failed.
-    #[error("mmap for PBUF_RING failed: {0}")]
-    MmapFailed(io::Error),
-
-    /// The `IORING_REGISTER_PBUF_RING` syscall failed.
-    #[error("IORING_REGISTER_PBUF_RING failed: {0}")]
-    RegisterFailed(io::Error),
-
-    /// Buffer memory allocation failed.
-    #[error("buffer allocation failed: {0}")]
-    AllocationFailed(io::Error),
-
-    /// `buf_id` argument is outside the configured ring range.
-    ///
-    /// Returned by [`BufferRing::recycle_buffer`] when the caller supplies a
-    /// buffer ID that does not correspond to any entry in the ring. Acting on
-    /// such an ID would advance the ring tail past valid entries and write a
-    /// bogus `IoUringBuf` into kernel-shared memory, which can corrupt
-    /// subsequent buffer selection or trigger undefined behaviour in
-    /// downstream io_uring submissions, so the recycle is refused instead.
-    #[error("buf_id {buf_id} out of range for ring size {ring_size}")]
-    BufferIdOutOfRange {
-        /// Offending buffer ID supplied by the caller.
-        buf_id: u16,
-        /// Configured ring size at the time of the call.
-        ring_size: u32,
-    },
-
-    /// The buffer group ID namespace (u16, 65 536 values) is exhausted.
-    ///
-    /// io_uring identifies provided buffer groups with a 16-bit Buffer Group
-    /// ID (bgid). The kernel stores this in `struct io_uring_buf_reg.bgid`
-    /// (upstream: io_uring/kbuf.c, `io_register_pbuf_ring()`), bounding the
-    /// per-process namespace to `u16::MAX + 1 = 65 536` distinct groups.
-    /// [`BgidAllocator::allocate`] returns this error when the monotonic
-    /// counter would exceed `u16::MAX`. Callers must drop existing
-    /// [`BufferRing`] instances (which triggers `IORING_UNREGISTER_PBUF_RING`)
-    /// to reclaim kernel slots before allocating further IDs.
-    #[error("io_uring buffer group ID namespace exhausted (limit: 65535)")]
-    BgidExhausted,
-}
-
-impl From<BufferRingError> for io::Error {
-    fn from(e: BufferRingError) -> Self {
-        match &e {
-            BufferRingError::KernelTooOld { .. } | BufferRingError::KernelVersionUnknown => {
-                io::Error::new(io::ErrorKind::Unsupported, e)
-            }
-            BufferRingError::InvalidRingSize(_)
-            | BufferRingError::InvalidBufferSize
-            | BufferRingError::BufferIdOutOfRange { .. }
-            | BufferRingError::BgidExhausted => io::Error::new(io::ErrorKind::InvalidInput, e),
-            BufferRingError::MmapFailed(_)
-            | BufferRingError::RegisterFailed(_)
-            | BufferRingError::AllocationFailed(_) => io::Error::other(e),
-        }
-    }
-}
-
-/// Configuration for a provided buffer ring.
+/// Validates a [`BufferRingConfig`] for use with the Linux backend.
 ///
-/// Controls the ring dimensions and buffer group identity.
-#[derive(Debug, Clone)]
-pub struct BufferRingConfig {
-    /// Number of entries in the ring (must be a power of 2).
-    ///
-    /// Each entry corresponds to one buffer. The kernel selects from
-    /// available entries at I/O completion time.
-    pub ring_size: u32,
-
-    /// Size of each individual buffer in bytes.
-    ///
-    /// Should be large enough for the expected I/O size. Page-aligned
-    /// sizes are recommended for optimal performance.
-    pub buffer_size: u32,
-
-    /// Buffer group ID for this ring.
-    ///
-    /// SQEs reference this group ID to select buffers from this ring.
-    /// Multiple rings can coexist with different group IDs.
-    pub bgid: u16,
-}
-
-impl Default for BufferRingConfig {
-    fn default() -> Self {
-        Self {
-            ring_size: 64,
-            buffer_size: 64 * 1024, // 64 KB
-            bgid: 0,
-        }
+/// The plain-data [`BufferRingConfig`] lives in [`crate::io_uring_common`]
+/// so the non-Linux stub can expose the identical field layout; this
+/// validator is the only Linux-only behaviour and stays here next to the
+/// rest of the ring construction code.
+fn validate_buffer_ring_config(c: &BufferRingConfig) -> Result<(), BufferRingError> {
+    if c.ring_size == 0 || !c.ring_size.is_power_of_two() {
+        return Err(BufferRingError::InvalidRingSize(c.ring_size));
     }
-}
-
-impl BufferRingConfig {
-    /// Validates the configuration parameters.
-    fn validate(&self) -> Result<(), BufferRingError> {
-        if self.ring_size == 0 || !self.ring_size.is_power_of_two() {
-            return Err(BufferRingError::InvalidRingSize(self.ring_size));
-        }
-        if self.buffer_size == 0 {
-            return Err(BufferRingError::InvalidBufferSize);
-        }
-        Ok(())
+    if c.buffer_size == 0 {
+        return Err(BufferRingError::InvalidBufferSize);
     }
+    Ok(())
 }
 
 /// Maximum number of distinct buffer group IDs available per process.
@@ -507,7 +391,7 @@ impl BufferRing {
     /// - Memory allocation or `mmap` fails
     /// - The `IORING_REGISTER_PBUF_RING` syscall fails
     pub fn new(ring: &RawIoUring, config: BufferRingConfig) -> Result<Self, BufferRingError> {
-        config.validate()?;
+        validate_buffer_ring_config(&config)?;
         check_kernel_version()?;
 
         let ring_fd = ring.as_raw_fd();
@@ -846,20 +730,6 @@ impl Drop for BufferRing {
     }
 }
 
-/// Extracts the buffer ID from CQE flags.
-///
-/// When a read completes using a provided buffer, the kernel sets
-/// `IORING_CQE_F_BUFFER` in the flags and encodes the buffer ID in
-/// the upper 16 bits. Returns `None` if the buffer flag is not set.
-#[inline]
-pub fn buffer_id_from_cqe_flags(flags: u32) -> Option<u16> {
-    if flags & IORING_CQE_F_BUFFER != 0 {
-        Some((flags >> IORING_CQE_BUFFER_SHIFT) as u16)
-    } else {
-        None
-    }
-}
-
 use std::os::unix::io::AsRawFd;
 
 /// Checks that the running kernel supports PBUF_RING.
@@ -900,7 +770,7 @@ mod tests {
             ring_size: 0,
             ..Default::default()
         };
-        assert!(config.validate().is_err());
+        assert!(validate_buffer_ring_config(&config).is_err());
     }
 
     #[test]
@@ -909,7 +779,7 @@ mod tests {
             ring_size: 3,
             ..Default::default()
         };
-        assert!(config.validate().is_err());
+        assert!(validate_buffer_ring_config(&config).is_err());
     }
 
     #[test]
@@ -918,7 +788,7 @@ mod tests {
             buffer_size: 0,
             ..Default::default()
         };
-        assert!(config.validate().is_err());
+        assert!(validate_buffer_ring_config(&config).is_err());
     }
 
     #[test]
@@ -928,7 +798,7 @@ mod tests {
             buffer_size: 4096,
             bgid: 1,
         };
-        assert!(config.validate().is_ok());
+        assert!(validate_buffer_ring_config(&config).is_ok());
     }
 
     #[test]
@@ -938,7 +808,7 @@ mod tests {
             buffer_size: 256 * 1024,
             bgid: 0,
         };
-        assert!(config.validate().is_ok());
+        assert!(validate_buffer_ring_config(&config).is_ok());
     }
 
     #[test]
