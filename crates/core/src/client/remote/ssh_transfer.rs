@@ -311,6 +311,11 @@ fn build_ssh_connection(
     // (compat.c:799-806 filesfrom_convert / protect-args iconv gating).
     if !stdin_args.is_empty() {
         let arg_refs: Vec<&str> = stdin_args.iter().map(String::as_str).collect();
+        // upstream: rsync.c:296-297 - DEBUG_GTE(CMD, 1) emits
+        // `print_child_argv("protected args:", args + i + 1)` right before the
+        // per-arg `iconvbufs(ic_send, ...)` loop. `arg_refs` is the same
+        // payload we are about to ship over stdin.
+        protocol::cmd::trace_protected_args(&arg_refs);
         let iconv_converter = if config.protect_args().unwrap_or(false) {
             config.iconv().resolve_converter()
         } else {
