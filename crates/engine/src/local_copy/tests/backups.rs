@@ -1803,3 +1803,109 @@ fn backup_with_checksum_mode() {
     assert_eq!(fs::read(&backup).expect("read backup"), b"old checksum content");
     assert_eq!(fs::read(dest_root.join("file.txt")).expect("read dest"), b"new checksum content");
 }
+
+/// Verifies that backing up a destination file emits the upstream
+/// `--info=BACKUP` notice through the diagnostic event queue.
+///
+/// Mirrors `backup.c:352` in upstream rsync 3.4.1:
+/// ```c
+/// if (INFO_GTE(BACKUP, 1))
+///     rprintf(FINFO, "backed up %s to %s\n", fname, buf);
+/// ```
+/// The emission must use the destination path being replaced and the
+/// computed backup path, in that order, with no trailing period.
+#[test]
+fn backup_emits_info_backup_notice() {
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+
+    // Enable BACKUP at level 1 (upstream's --info=BACKUP threshold).
+    let mut cfg = VerbosityConfig::from_verbose_level(0);
+    cfg.info.backup = 1;
+    init(cfg);
+    let _ = drain_events();
+
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"updated").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    fs::write(&existing, b"original").expect("write dest");
+
+    let operands = vec![ctx.source.into_os_string(), ctx.dest.into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().backup(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Backup,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    let dest_display = existing.display().to_string();
+    let backup_display = dest_root.join("file.txt~").display().to_string();
+    let expected = format!("backed up {dest_display} to {backup_display}");
+
+    assert!(
+        messages.iter().any(|m| m == &expected),
+        "expected upstream-format BACKUP,1 notice {expected:?}; got {messages:?}"
+    );
+}
+
+/// Verifies that the default verbosity configuration (no `--info=BACKUP`)
+/// suppresses the notice, matching upstream's `INFO_GTE(BACKUP, 1)` gate
+/// (backup.c:352). BACKUP is not in `info_verbosity[0]`, so it stays silent
+/// unless explicitly enabled.
+#[test]
+fn backup_default_verbosity_suppresses_info_backup_notice() {
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+
+    init(VerbosityConfig::from_verbose_level(0));
+    let _ = drain_events();
+
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"updated").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    fs::write(dest_root.join("file.txt"), b"original").expect("write dest");
+
+    let operands = vec![ctx.source.into_os_string(), ctx.dest.into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().backup(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let backup_msgs: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Backup,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        backup_msgs.is_empty(),
+        "expected no BACKUP notice at default verbosity; got {backup_msgs:?}"
+    );
+}
