@@ -67,19 +67,20 @@ which iterates `info_words[]`, then `ALL`, `NONE`, `HELP`, then
 `Options added at each level of verbosity` for each verbosity row in
 `info_verbosity[]`.
 
-Our help text is a fixed string at
-`crates/cli/src/frontend/execution/flags/info.rs:228-246` (`INFO_HELP_TEXT`).
-The drive layer prints it at
+Our help text is the fixed `INFO_HELP_TEXT` string in
+`crates/cli/src/frontend/execution/flags/info.rs`, reproduced byte-for-byte
+from upstream's runtime output (preface line, `"%-10s %s\n"` rows for every
+`info_words[]` entry, `ALL`/`NONE`/`HELP` rows quoting the sentinel's
+`--info` help, and the `Options added at each level of verbosity` summary
+block). The drive layer prints it at
 `crates/cli/src/frontend/execution/drive/options.rs:123-131` and exits with
-status 0 on `help_requested`. Differences from upstream:
+status 0 on `help_requested`. Parity status: **byte-equivalent to upstream
+3.4.1 (C3)**.
 
-- We do not print the per-verbosity-level summary block (`0) NONREG`,
-  `1) COPY,DEL,...`, `2) BACKUP,MISC2,...`).
-- We document `no` and `-` prefix forms (`--info=noprogress`) and level
-  suffixes (`--info=stats2`, `--info=flist0`); upstream documents the prefix
-  form only via the parser's `none`/`all` keywords.
-- We omit upstream's first line `Use OPT or OPT1 for level 1 output, OPT2 for
-  level 2, etc.; OPT0 silences.`
+The internal `no<flag>` / `-<flag>` parser extension is deliberately not
+advertised in the help text - the parser still accepts these tokens for
+server-side forwarding and backwards compatibility, but only the upstream
+spellings (`flag0`, `none`) appear in `--info=help`.
 
 ## --info=NONE
 
@@ -228,8 +229,9 @@ levels 0-5. Differences:
 3. NAME is parsed into an enum; restoring a numeric path keeps the
    `INFO_GTE(NAME, 1/2)` shape for downstream consumers and aligns the wire
    `make_output_option` reproduction.
-4. `--info=help` output should add the per-verbosity summary block to match
-   upstream's `output_item_help`.
+4. `--info=help` output is byte-equivalent to upstream's `output_item_help`
+   (C3, resolved): preface line, per-flag table, ALL/NONE/HELP rows, and the
+   `Options added at each level of verbosity` block all match upstream 3.4.1.
 5. Implicit additions when `--progress` or `-P` are set (`FLIST2,PROGRESS`
    and conditional `name`) are not applied; this affects user-visible defaults
    on push pulls without explicit `--info=NAME`.
