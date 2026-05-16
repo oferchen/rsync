@@ -1,56 +1,13 @@
 //! Fuzzy basis file matching for delta transfers.
 //!
-//! When `--fuzzy` is enabled, this module searches the destination directory
-//! for files with similar names that can serve as basis files for delta
-//! transfer, reducing data transfer even when no exact match exists.
+//! With `--fuzzy` enabled, the destination directory (and at level 2 the
+//! `--compare-dest`/`--copy-dest`/`--link-dest` directories) is scanned for
+//! similarly-named files that can serve as basis files for delta transfer.
+//! Candidates are scored on extension, prefix, suffix, and size similarity;
+//! the highest-scoring file above the minimum threshold wins.
 //!
-//! # Upstream Reference
-//!
-//! This implementation mirrors upstream rsync's fuzzy matching algorithm from:
-//! - `generator.c:1580-1700` - `find_fuzzy_basis()` function
-//! - `generator.c:1450-1530` - `fuzzy_find()` scoring algorithm
-//!
-//! # Algorithm
-//!
-//! The fuzzy matching algorithm compares candidate filenames against the target
-//! filename using a multi-factor scoring system:
-//!
-//! 1. **Extension matching** - Files with the same extension score higher
-//! 2. **Prefix matching** - Longer common prefixes increase the score
-//! 3. **Suffix matching** - Common suffixes (before extension) add points
-//! 4. **Size similarity** - Files with similar sizes get a bonus
-//!
-//! The highest-scoring file above the minimum threshold is selected as the
-//! fuzzy basis file.
-//!
-//! # Fuzzy Levels
-//!
-//! - **Level 1** (`--fuzzy`): Search only in the destination directory
-//! - **Level 2** (`-yy`): Also search in `--compare-dest`, `--copy-dest`, and
-//!   `--link-dest` directories
-//!
-//! # Examples
-//!
-//! ```
-//! use matching::FuzzyMatcher;
-//! use std::ffi::OsStr;
-//! use std::path::Path;
-//!
-//! # use tempfile::TempDir;
-//! # use std::fs;
-//! # let temp = TempDir::new().unwrap();
-//! # fs::write(temp.path().join("report_2023.csv"), "old").unwrap();
-//!
-//! let matcher = FuzzyMatcher::new();
-//! let result = matcher.find_fuzzy_basis(
-//!     OsStr::new("report_2024.csv"),
-//!     temp.path(),
-//!     1000, // target size
-//! );
-//!
-//! // Will find "report_2023.csv" as a fuzzy match
-//! assert!(result.is_some());
-//! ```
+//! upstream: generator.c:1580-1700 `find_fuzzy_basis()`,
+//! generator.c:1450-1530 `fuzzy_find()`.
 
 mod scoring;
 mod search;
@@ -61,48 +18,36 @@ pub use trace::{trace_fuzzy_basis_selected, trace_fuzzy_distance, trace_fuzzy_si
 
 use std::path::PathBuf;
 
-/// Score threshold for considering a file as a fuzzy match.
-/// Files must score above this to be considered as basis candidates.
-///
-/// Upstream rsync uses a similar threshold to filter out poor matches.
+/// Minimum score for a candidate to be considered a fuzzy basis match.
 const MIN_FUZZY_SCORE: u32 = 10;
 
-/// Bonus score for matching file extension.
-///
-/// Extension matches are weighted heavily because they indicate
-/// the same file type, which correlates with similar content structure.
+/// Bonus when target and candidate share a file extension.
 const EXTENSION_MATCH_BONUS: u32 = 50;
 
-/// Points per character of matching prefix.
+/// Points awarded per matching prefix character.
 ///
-/// Prefix matches are the strongest indicator of file similarity,
-/// as filesystem naming conventions typically place distinguishing
-/// information at the end (versions, dates, etc.).
+/// Naming conventions typically place distinguishing information at the
+/// tail, so prefix matches are the strongest similarity signal.
 const PREFIX_MATCH_POINTS: u32 = 10;
 
-/// Points per character of matching suffix (before extension).
+/// Points awarded per matching suffix character (before extension).
 ///
-/// Suffix matches contribute to similarity but are weighted lower
-/// than prefix matches to avoid over-weighting accidental matches.
+/// Weighted lower than prefix matches to avoid over-weighting accidental
+/// tail collisions.
 const SUFFIX_MATCH_POINTS: u32 = 8;
 
-/// Bonus for similar file size (within 50% of target).
-///
-/// Size similarity indicates the files likely contain similar amounts
-/// of data, making delta transfers more efficient.
+/// Bonus when candidate size is within 50% of the target size.
 const SIZE_SIMILARITY_BONUS: u32 = 30;
 
-/// Fuzzy level for single --fuzzy flag.
-/// Searches only in the destination directory.
+/// Fuzzy level for a single `--fuzzy` flag; searches the destination directory.
 pub const FUZZY_LEVEL_1: u8 = 1;
 
-/// Fuzzy level for -yy (double --fuzzy).
-/// Searches in destination directory AND reference directories
-/// (`--compare-dest`, `--copy-dest`, `--link-dest`).
+/// Fuzzy level for `-yy`; searches destination directory plus reference
+/// directories (`--compare-dest`, `--copy-dest`, `--link-dest`).
 ///
-/// Upstream `options.c:2120`: when `fuzzy_basis > 1`, the value is set
-/// to `basis_dir_cnt + 1`, making the fuzzy search iterate over the
-/// dest dir (index 0) plus each reference directory.
+/// upstream: options.c:2120 - when `fuzzy_basis > 1`, the value is set to
+/// `basis_dir_cnt + 1` so the search iterates over the dest dir (index 0)
+/// plus each reference directory.
 pub const FUZZY_LEVEL_2: u8 = 2;
 
 /// Result of fuzzy matching search.
@@ -118,24 +63,7 @@ pub struct FuzzyMatch {
 
 /// Fuzzy matcher for finding similar basis files.
 ///
-/// # Upstream Reference
-///
-/// Mirrors the behavior of `find_fuzzy_basis()` in `generator.c:1580`.
-///
-/// # Examples
-///
-/// ```
-/// use matching::FuzzyMatcher;
-/// use std::path::PathBuf;
-///
-/// // Level 1 fuzzy: search only destination directory
-/// let matcher1 = FuzzyMatcher::new();
-///
-/// // Level 2 fuzzy: also search reference directories
-/// let ref_dirs = vec![PathBuf::from("/backup/old")];
-/// let matcher2 = FuzzyMatcher::with_level(2)
-///     .with_fuzzy_basis_dirs(ref_dirs);
-/// ```
+/// upstream: generator.c:1580 `find_fuzzy_basis()`.
 #[derive(Debug, Default)]
 pub struct FuzzyMatcher {
     /// Fuzzy matching level (1 or 2).
@@ -147,13 +75,7 @@ pub struct FuzzyMatcher {
 }
 
 impl FuzzyMatcher {
-    /// Creates a new fuzzy matcher with default settings (level 1).
-    ///
-    /// # Defaults
-    ///
-    /// - Fuzzy level: 1 (search only destination directory)
-    /// - Minimum score: 10 (filters out very poor matches)
-    /// - No additional fuzzy basis directories
+    /// Creates a new level-1 fuzzy matcher with the default minimum score.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -164,18 +86,6 @@ impl FuzzyMatcher {
     }
 
     /// Creates a new fuzzy matcher with the specified level.
-    ///
-    /// # Arguments
-    ///
-    /// * `level` - Fuzzy matching level (1 or 2)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use matching::FuzzyMatcher;
-    ///
-    /// let matcher = FuzzyMatcher::with_level(2); // -yy mode
-    /// ```
     #[must_use]
     pub const fn with_level(level: u8) -> Self {
         Self {
@@ -185,56 +95,29 @@ impl FuzzyMatcher {
         }
     }
 
-    /// Sets additional fuzzy basis directories (for level 2 fuzzy matching).
+    /// Sets additional fuzzy basis directories searched at level 2.
     ///
-    /// These directories are searched in addition to the destination directory
-    /// when fuzzy level is 2 (`-yy`). Corresponds to `--compare-dest`,
-    /// `--copy-dest`, and `--link-dest` directories in upstream rsync.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use matching::FuzzyMatcher;
-    /// use std::path::PathBuf;
-    ///
-    /// let dirs = vec![PathBuf::from("/backup/2023"), PathBuf::from("/backup/2022")];
-    /// let matcher = FuzzyMatcher::with_level(2)
-    ///     .with_fuzzy_basis_dirs(dirs);
-    /// ```
+    /// Corresponds to `--compare-dest`, `--copy-dest`, and `--link-dest`
+    /// directories in upstream rsync.
     pub fn with_fuzzy_basis_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
         self.fuzzy_basis_dirs = dirs;
         self
     }
 
-    /// Sets the minimum score threshold.
-    ///
-    /// Files with scores below this threshold will not be considered as
-    /// fuzzy matches. Lower thresholds allow more distant matches but may
-    /// result in less efficient delta transfers.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use matching::FuzzyMatcher;
-    ///
-    /// // Require higher similarity
-    /// let strict_matcher = FuzzyMatcher::new().with_min_score(100);
-    ///
-    /// // Allow looser matches
-    /// let relaxed_matcher = FuzzyMatcher::new().with_min_score(5);
-    /// ```
+    /// Overrides the minimum score threshold; candidates below the threshold
+    /// are discarded.
     pub const fn with_min_score(mut self, score: u32) -> Self {
         self.min_score = score;
         self
     }
 
-    /// Gets the current fuzzy level.
+    /// Returns the current fuzzy level.
     #[must_use]
     pub const fn fuzzy_level(&self) -> u8 {
         self.fuzzy_level
     }
 
-    /// Gets the current minimum score threshold.
+    /// Returns the current minimum score threshold.
     #[must_use]
     pub const fn min_score(&self) -> u32 {
         self.min_score
