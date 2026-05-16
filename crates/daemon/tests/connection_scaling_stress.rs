@@ -195,12 +195,18 @@ fn classify_error(error: &std::io::Error) -> ConnectionOutcome {
     if error.kind() == ErrorKind::ConnectionRefused {
         return ConnectionOutcome::Refused;
     }
-    // EMFILE / ENFILE surface as raw_os_error on Unix.
-    #[cfg(unix)]
-    if let Some(code) = error.raw_os_error()
-        && (code == libc::EMFILE || code == libc::ENFILE)
-    {
-        return ConnectionOutcome::Emfile;
+    // EMFILE / ENFILE surface as raw_os_error on Unix. On Windows the
+    // equivalents are WSAEMFILE (10024) for socket() exhaustion and
+    // ERROR_TOO_MANY_OPEN_FILES (4) for general handle exhaustion.
+    if let Some(code) = error.raw_os_error() {
+        #[cfg(unix)]
+        if code == libc::EMFILE || code == libc::ENFILE {
+            return ConnectionOutcome::Emfile;
+        }
+        #[cfg(windows)]
+        if code == 10024 || code == 4 {
+            return ConnectionOutcome::Emfile;
+        }
     }
     ConnectionOutcome::Other
 }
