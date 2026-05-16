@@ -45,6 +45,12 @@ pub(crate) fn send_daemon_arguments(
         full_args.clone()
     };
 
+    // upstream: clientserver.c:348-349 - DEBUG_GTE(CMD, 1) emits
+    // `print_child_argv("sending daemon args:", sargs)` immediately before the
+    // per-arg write loop. `sargs` is the same payload we are about to ship,
+    // so emit against `phase1_args` regardless of the protect-args mode.
+    protocol::cmd::trace_sending_daemon_args(&phase1_args);
+
     let terminator = if protocol.as_u8() >= 30 { b'\0' } else { b'\n' };
 
     for arg in &phase1_args {
@@ -76,6 +82,12 @@ pub(crate) fn send_daemon_arguments(
     if protect {
         let mut secluded = vec!["rsync"];
         secluded.extend(full_args.iter().map(String::as_str));
+        // upstream: rsync.c:296-297 - DEBUG_GTE(CMD, 1) emits
+        // `print_child_argv("protected args:", args + i + 1)` right before the
+        // per-arg `iconvbufs(ic_send, ...)` loop. Upstream's argv begins after
+        // the original NULL terminator at `args + i + 1`, which is the
+        // post-`"rsync"` payload - emit the matching shape here.
+        protocol::cmd::trace_protected_args(&secluded[1..]);
         let iconv_converter = config.iconv().resolve_converter();
         protocol::secluded_args::send_secluded_args(stream, &secluded, iconv_converter.as_ref())
             .map_err(|e| {
