@@ -716,7 +716,7 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
             | u32::from(other_obj_perms.unwrap_or(0));
         // upstream: acls.c:1133-1134 - DEBUG_GTE(ACL, 1) emission
         trace_default_perms_for_dir(perms, &dir_label);
-        return perms;
+        perms
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
