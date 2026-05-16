@@ -232,8 +232,8 @@ pub fn flush_rate_totals() -> u64 {
 }
 
 /// Total invocations of `prepare_pending_acl` across all generator transfers
-/// in this process. Diagnostic counter for sender-side INC_RECURSE (#2200, I5)
-/// - quantifies how often the per-entry ACL prep fires per segment relative to
+/// in this process. Diagnostic counter for sender-side INC_RECURSE (#2200, I5);
+/// quantifies how often the per-entry ACL prep fires per segment relative to
 /// the file count.
 ///
 /// Sampled at end-of-transfer in `GeneratorContext::run` via
@@ -242,7 +242,7 @@ static PREPARE_ACL_CALLS: AtomicU64 = AtomicU64::new(0);
 
 /// Cumulative elapsed time spent inside `prepare_pending_acl`, in nanoseconds,
 /// summed across every invocation. Diagnostic counter for sender-side
-/// INC_RECURSE (#2200, I5) - lets operators see when filesystem ACL reads
+/// INC_RECURSE (#2200, I5); lets operators see when filesystem ACL reads
 /// become a measurable share of segment-encoding time.
 static PREPARE_ACL_ELAPSED_NS: AtomicU64 = AtomicU64::new(0);
 
