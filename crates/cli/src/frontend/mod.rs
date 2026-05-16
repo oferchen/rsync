@@ -277,12 +277,7 @@ where
                 Some(mode) => {
                     let mut adapter = OutbufAdapter::new(stdout, mode);
                     let exit_code = execute(parsed, &mut adapter, &mut stderr_sink);
-                    // Flush any pending diagnostic events to stderr
-                    let _ = flush_diagnostics(
-                        &mut adapter,
-                        stderr_sink.writer_mut(),
-                        true, // Route all diagnostics to stderr
-                    );
+                    let _ = flush_diagnostics(&mut adapter, stderr_sink.writer_mut(), true);
                     if let Err(error) = adapter.flush() {
                         let message =
                             rsync_error!(1, "failed to flush stdout: {error}", error = error)
@@ -297,12 +292,7 @@ where
                 }
                 None => {
                     let exit_code = execute(parsed, stdout, &mut stderr_sink);
-                    // Flush any pending diagnostic events to stderr
-                    let _ = flush_diagnostics(
-                        stdout,
-                        stderr_sink.writer_mut(),
-                        true, // Route all diagnostics to stderr
-                    );
+                    let _ = flush_diagnostics(stdout, stderr_sink.writer_mut(), true);
                     exit_code
                 }
             }

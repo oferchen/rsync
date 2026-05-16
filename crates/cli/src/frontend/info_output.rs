@@ -247,13 +247,11 @@ pub fn parse_info_flags(flags_str: &str) -> Result<InfoFlags, InfoFlagError> {
             continue;
         }
 
-        // Check for ALL keyword
         if token.eq_ignore_ascii_case("all") {
             levels.set_all(1);
             continue;
         }
 
-        // Check for ALL with level (e.g., ALL2)
         if let Some(rest) = token.strip_prefix("ALL") {
             if rest.is_empty() {
                 levels.set_all(1);
@@ -266,7 +264,6 @@ pub fn parse_info_flags(flags_str: &str) -> Result<InfoFlags, InfoFlagError> {
             continue;
         }
 
-        // Case-insensitive ALL check
         if let Some(rest) = token.to_lowercase().strip_prefix("all") {
             if rest.is_empty() {
                 levels.set_all(1);
@@ -279,13 +276,11 @@ pub fn parse_info_flags(flags_str: &str) -> Result<InfoFlags, InfoFlagError> {
             continue;
         }
 
-        // Check for NONE keyword
         if token.eq_ignore_ascii_case("none") {
             levels.set_all(0);
             continue;
         }
 
-        // Parse individual flag
         let (flag_name, level) = parse_flag_token(token)?;
         let flag = parse_flag_name(flag_name)?;
         levels.set(flag, level);
@@ -300,7 +295,6 @@ fn parse_flag_token(token: &str) -> Result<(&str, u8), InfoFlagError> {
         return Err(InfoFlagError::new("empty flag token".to_owned()));
     }
 
-    // Find where the digits start
     let digit_start = token.find(|c: char| c.is_ascii_digit());
 
     match digit_start {
@@ -312,10 +306,7 @@ fn parse_flag_token(token: &str) -> Result<(&str, u8), InfoFlagError> {
                 .map_err(|_| InfoFlagError::new(format!("invalid level in flag: {token}")))?;
             Ok((name, level))
         }
-        None => {
-            // No digits, default to level 1
-            Ok((token, 1))
-        }
+        None => Ok((token, 1)),
     }
 }
 

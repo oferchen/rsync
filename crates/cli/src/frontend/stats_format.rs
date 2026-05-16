@@ -244,7 +244,6 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        // Speedup line: "total size is X  speedup is Y.ZZ"
         let speedup = calculate_speedup(
             self.data.total_file_size,
             self.data.total_bytes_sent,
