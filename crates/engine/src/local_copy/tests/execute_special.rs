@@ -193,6 +193,113 @@ fn execute_without_specials_records_skip_event() {
     }));
 }
 
+/// Verifies that skipping a non-regular source emits the upstream
+/// `--info=NONREG` notice through the diagnostic event queue.
+///
+/// NONREG sits in upstream's `info_verbosity[0]` table (options.c:240) and
+/// is therefore enabled by default at level 1, independent of `-v`. The
+/// emitted wording mirrors `generator.c:1687`:
+/// `skipping non-regular file "<path>"`.
+#[cfg(unix)]
+#[test]
+fn skipping_non_regular_emits_info_nonreg_notice() {
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+
+    // Default verbose level 0 already enables nonreg=1 (matches upstream).
+    init(VerbosityConfig::from_verbose_level(0));
+    let _ = drain_events();
+
+    let temp = create_tempdir();
+    let source_fifo = temp.path().join("skip.pipe");
+    mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
+
+    let destination = temp.path().join("dest.pipe");
+    let operands = vec![
+        source_fifo.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let _ = plan
+        .execute_with_report(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().collect_events(true),
+        )
+        .expect("copy executes");
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Nonreg,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "skipping non-regular file \"skip.pipe\""),
+        "expected upstream-format NONREG,1 notice; got {messages:?}"
+    );
+}
+
+/// Verifies that `--info=nononreg` (level 0) suppresses the NONREG notice,
+/// matching upstream's `INFO_GTE(NONREG, 1)` gate (generator.c:1684).
+#[cfg(unix)]
+#[test]
+fn nononreg_suppresses_info_nonreg_notice() {
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+
+    let mut cfg = VerbosityConfig::from_verbose_level(0);
+    cfg.info.nonreg = 0;
+    init(cfg);
+    let _ = drain_events();
+
+    let temp = create_tempdir();
+    let source_fifo = temp.path().join("muted.pipe");
+    mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
+
+    let destination = temp.path().join("dest.pipe");
+    let operands = vec![
+        source_fifo.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let _ = plan
+        .execute_with_report(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().collect_events(true),
+        )
+        .expect("copy executes");
+
+    let nonreg_msgs: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Nonreg,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    // Restore default so subsequent tests in the same thread see the
+    // upstream baseline.
+    init(VerbosityConfig::from_verbose_level(0));
+    let _ = drain_events();
+
+    assert!(
+        nonreg_msgs.is_empty(),
+        "NONREG emissions must be gated by info.nonreg; got: {nonreg_msgs:?}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn execute_copies_devices_as_regular_files_when_requested() {
