@@ -264,15 +264,15 @@ pub use core::server::{
 
 /// Re-export the native server entry point for direct embedding.
 ///
-/// This allows embedders to run the server without constructing CLI arguments.
-/// The server can be invoked with a pre-built `ServerConfig` and stdio streams.
+/// Lets embedders run the server with a pre-built `ServerConfig` and stdio
+/// streams instead of constructing CLI arguments.
 pub use core::server::run_server_stdio;
 
 /// Executes the server with a pre-built configuration and stdio streams.
 ///
-/// This is a convenience wrapper around `run_server_stdio` that provides
-/// a simpler API for embedders who want to run the server programmatically
-/// without constructing command-line arguments.
+/// Convenience wrapper around `run_server_stdio` for embedders that want to
+/// run the server programmatically without constructing command-line
+/// arguments.
 ///
 /// # Example
 ///

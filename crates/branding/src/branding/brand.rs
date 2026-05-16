@@ -20,18 +20,15 @@ use serde::ser::{Serialize, Serializer};
 
 /// Identifies the brand associated with an executable name.
 ///
-/// The workspace recognises both upstream-compatible names (`rsync`/`rsyncd`),
-/// typically provided via symlinks or remote invocations, and the branded
-/// single binary (`oc-rsync`). Centralising the mapping keeps higher layers free
-/// from string comparisons and ensures configuration paths, help banners, and
-/// diagnostics stay consistent across entry points. The [`Brand::profile`]
-/// method exposes the corresponding [`BrandProfile`], which in turn provides
-/// program names and filesystem locations for the selected distribution.
+/// The workspace recognises both upstream-compatible names (`rsync`/`rsyncd`)
+/// and the branded single binary (`oc-rsync`). The [`Brand::profile`] method
+/// exposes the corresponding [`BrandProfile`], providing program names and
+/// filesystem locations for the selected distribution.
 ///
 /// `Brand` implements [`FromStr`], allowing environment variables such as
-/// [`OC_RSYNC_BRAND`][super::brand_override_env_var] to accept human-readable aliases.
-/// The parser tolerates ASCII case differences, leading/trailing whitespace, and
-/// versioned program names.
+/// [`OC_RSYNC_BRAND`][super::brand_override_env_var] to accept human-readable
+/// aliases. The parser tolerates ASCII case differences, leading/trailing
+/// whitespace, and versioned program names.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Brand {
     /// Upstream-compatible binaries (`rsync` and `rsyncd`).

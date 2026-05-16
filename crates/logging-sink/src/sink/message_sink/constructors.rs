@@ -30,10 +30,7 @@ impl<W> MessageSink<W> {
     /// Creates a sink from an explicit [`MessageScratch`] and [`LineMode`].
     ///
     /// Higher layers that manage scratch buffers manually can reuse their
-    /// allocations across sinks by passing the existing scratch value into this
-    /// constructor. The [`MessageScratch`] is stored by value, mirroring the
-    /// ownership model used throughout the workspace to avoid hidden
-    /// allocations.
+    /// allocations across sinks by passing the existing scratch value.
     #[must_use]
     pub const fn with_parts(writer: W, scratch: MessageScratch, line_mode: LineMode) -> Self {
         Self::with_parts_and_brand(writer, scratch, line_mode, Brand::Upstream)
@@ -63,9 +60,9 @@ impl<W> MessageSink<W> {
 
     /// Consumes the sink and returns the writer, scratch buffer, and line mode.
     ///
-    /// The returned [`MessageScratch`] can be reused to build another
-    /// [`MessageSink`] via [`with_parts`](Self::with_parts), avoiding repeated
-    /// zeroing of scratch storage when logging contexts are recycled.
+    /// The returned [`MessageScratch`] can be reused via
+    /// [`with_parts`](Self::with_parts), avoiding repeated scratch zeroing
+    /// when logging contexts are recycled.
     #[must_use]
     pub fn into_parts(self) -> (W, MessageScratch, LineMode, Brand) {
         (self.writer, self.scratch, self.line_mode, self.brand)

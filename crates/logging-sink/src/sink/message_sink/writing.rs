@@ -18,11 +18,8 @@ where
 
     /// Writes a single message using the sink's current [`LineMode`].
     ///
-    /// The method accepts borrowed or owned [`Message`] values via
-    /// [`Borrow<Message>`], allowing call sites to forward diagnostics without
-    /// cloning. This matches the flexibility offered by
-    /// [`std::io::Write::write_all`], making it inexpensive to reuse the same
-    /// sink for ad-hoc or batched message emission.
+    /// Accepts borrowed or owned [`Message`] values via [`Borrow<Message>`] so
+    /// call sites can forward diagnostics without cloning.
     pub fn write<M>(&mut self, message: M) -> io::Result<()>
     where
         M: Borrow<Message>,
@@ -33,11 +30,9 @@ where
 
     /// Writes `message` using an explicit [`LineMode`] without mutating the sink.
     ///
-    /// The helper mirrors [`write`](Self::write) but allows callers to override
-    /// the newline behaviour for a single message. This is useful when most
-    /// diagnostics should follow the sink's configured mode yet specific
-    /// messages must be emitted without a trailing newline (for example,
-    /// progress indicators that are overwritten in-place).
+    /// Mirrors [`write`](Self::write) but lets callers override the newline
+    /// behaviour for a single message (for example, progress indicators that
+    /// are overwritten in-place).
     pub fn write_with_mode<M>(&mut self, message: M, line_mode: LineMode) -> io::Result<()>
     where
         M: Borrow<Message>,
@@ -90,11 +85,9 @@ where
 
     /// Writes each message from the iterator to the underlying writer.
     ///
-    /// The iterator may yield borrowed or owned [`Message`] values. Items that
-    /// implement [`Borrow<Message>`] are accepted to avoid forcing callers to
-    /// materialise intermediate references when they already own the messages.
-    /// This keeps the method ergonomic for code that batches diagnostics in
-    /// collections such as [`Vec<Message>`] or arrays.
+    /// Items may be borrowed or owned [`Message`] values via
+    /// [`Borrow<Message>`], so callers can pass collections such as
+    /// [`Vec<Message>`] or arrays directly.
     pub fn write_all<I, M>(&mut self, messages: I) -> io::Result<()>
     where
         I: IntoIterator<Item = M>,
@@ -110,11 +103,8 @@ where
 
     /// Writes each message from the iterator using the provided [`LineMode`].
     ///
-    /// This mirrors [`write_all`](Self::write_all) but allows callers to batch
-    /// messages that require a specific newline mode without mutating the sink's
-    /// configuration. The helper is useful when most diagnostics should follow
-    /// the sink's [`LineMode::WithNewline`] default yet a subset (such as
-    /// progress updates) must be rendered without trailing newlines.
+    /// Mirrors [`write_all`](Self::write_all) but lets callers batch messages
+    /// with a specific newline mode without mutating the sink's configuration.
     pub fn write_all_with_mode<I, M>(&mut self, messages: I, line_mode: LineMode) -> io::Result<()>
     where
         I: IntoIterator<Item = M>,
