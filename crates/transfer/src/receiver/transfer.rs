@@ -116,9 +116,9 @@ impl ReceiverContext {
         );
         let mut token_buffer = TokenBuffer::with_default_capacity();
 
-        // Create token reader once for the entire transfer session.
         // upstream: token.c uses a single compression context across all files.
-        // For zstd, the DCtx must persist across file boundaries (continuous stream).
+        // For zstd the DCtx must persist across file boundaries (continuous
+        // stream), so create the reader once and reuse it across the session.
         let compression = self.negotiated_algorithms.map(|n| n.compression);
         let mut token_reader = TokenReader::new(compression);
 
@@ -174,11 +174,10 @@ impl ReceiverContext {
                 info_log!(Name, 1, "{}", relative_path.display());
             }
 
-            // Convert flat index to wire NDX using segment boundary table.
             let ndx = self.flat_to_wire_ndx(file_idx);
             ndx_write_codec.write_ndx(&mut *writer, ndx)?;
 
-            // For protocol >= 29, sender expects iflags after NDX
+            // upstream: protocol >= 29 sender expects iflags after NDX.
             if self.protocol.supports_iflags() {
                 writer.write_all(&SenderAttrs::ITEM_TRANSFER.to_le_bytes())?;
             }
@@ -443,9 +442,8 @@ impl ReceiverContext {
                 engine::trace_make_backup_rename(&file_path.display().to_string());
             }
 
-            // On Linux 5.11+ with io_uring, submits IORING_OP_RENAMEAT instead of
-            // synchronous rename(2). Falls back to std::fs::rename on all other
-            // platforms or when the kernel lacks the opcode.
+            // upstream: Linux 5.11+ io_uring submits IORING_OP_RENAMEAT; we
+            // fall back to std::fs::rename on other platforms or older kernels.
             if let Some(result) = fast_io::try_rename_via_io_uring(temp_guard.path(), &file_path) {
                 result?;
             } else {
