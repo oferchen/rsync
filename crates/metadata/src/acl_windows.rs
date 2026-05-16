@@ -476,6 +476,19 @@ pub fn apply_acls_from_cache(
     apply_rsync_acl_to_path(destination, &reconstructed)
 }
 
+/// Returns the umask-derived default permissions for `dir`.
+///
+/// Windows lacks POSIX default ACLs, so this returns `ACCESSPERMS & ~umask`
+/// without emitting `--debug=ACL` output. Mirrors upstream's `#ifdef
+/// SUPPORT_ACLS` guard at `generator.c:1337-1340`, which only consults the
+/// directory's default ACL on POSIX targets.
+#[allow(clippy::module_name_repetitions)]
+#[must_use]
+pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
+    let _ = dir;
+    0o777u32 & !(orig_umask & 0o777)
+}
+
 /// Restores stripped permission entries from `mode`, mirroring the
 /// receiver-side logic in `acl_exacl::reconstruct_acl`.
 ///

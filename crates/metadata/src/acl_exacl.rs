@@ -57,7 +57,9 @@ use std::path::Path;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use exacl::AclOption;
 use exacl::{AclEntry, AclEntryKind, Perm, getfacl, setfacl};
-use protocol::acl::{AclCache, IdAccess, NAME_IS_USER, NO_ENTRY, RsyncAcl};
+use protocol::acl::{
+    AclCache, IdAccess, NAME_IS_USER, NO_ENTRY, RsyncAcl, trace_default_perms_for_dir,
+};
 
 use crate::MetadataError;
 
@@ -642,6 +644,90 @@ pub fn apply_acls_from_cache(
     Ok(())
 }
 
+/// Computes the default permission bits a child of `dir` should inherit.
+///
+/// Mirrors upstream rsync's `default_perms_for_dir` (`acls.c:1083-1139`):
+///
+/// 1. Start from `ACCESSPERMS & ~umask` (the POSIX default).
+/// 2. Read the directory's default POSIX ACL.
+/// 3. When the ACL has a `user_obj` entry, fold its bits into the returned
+///    permission mask via `rsync_acl_get_perms`.
+/// 4. When `--debug=ACL` is at level 1, emit `got ACL-based default perms %o
+///    for directory %s` (`acls.c:1133-1134`).
+///
+/// Unsupported filesystems and missing default ACLs both fall back to the
+/// umask-derived default without emitting; only the successful ACL lookup
+/// produces the upstream debug line.
+///
+/// On platforms that do not expose POSIX default ACLs (e.g. macOS), this
+/// function returns the umask-derived default and never emits, matching the
+/// `#ifdef SUPPORT_ACLS` gating at `generator.c:1337-1340`.
+///
+/// # Upstream Reference
+///
+/// - `acls.c:1083-1139` `default_perms_for_dir`
+/// - `generator.c:1337-1340` and `receiver.c:846-851` - the two call sites
+///   that fold the returned bits into `dest_mode()` when `--perms` is off.
+#[allow(clippy::module_name_repetitions)]
+#[must_use]
+pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
+    // upstream: acls.c:1093 - perms = ACCESSPERMS & ~orig_umask
+    let default_perms = 0o777u32 & !(orig_umask & 0o777);
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        let dir_label = dir.to_string_lossy();
+        let entries = match getfacl(dir, Some(AclOption::DEFAULT_ACL)) {
+            Ok(e) => e,
+            Err(_) => return default_perms,
+        };
+
+        if entries.is_empty() {
+            return default_perms;
+        }
+
+        // upstream: acls.c:1131 - racl.user_obj != NO_ENTRY guard
+        let mut user_obj_perms: Option<u8> = None;
+        let mut group_obj_perms: Option<u8> = None;
+        let mut other_obj_perms: Option<u8> = None;
+        for entry in &entries {
+            let perms = exacl_perms_to_rsync(entry.perms);
+            match entry.kind {
+                AclEntryKind::User if entry.name.is_empty() && user_obj_perms.is_none() => {
+                    user_obj_perms = Some(perms);
+                }
+                AclEntryKind::Group if entry.name.is_empty() && group_obj_perms.is_none() => {
+                    group_obj_perms = Some(perms);
+                }
+                AclEntryKind::Other if other_obj_perms.is_none() => {
+                    other_obj_perms = Some(perms);
+                }
+                _ => {}
+            }
+        }
+
+        let Some(user_obj) = user_obj_perms else {
+            return default_perms;
+        };
+        // upstream: acls.c:1132 - perms = rsync_acl_get_perms(&racl)
+        //   = (user_obj << 6) | (group_obj << 3) | other_obj
+        let perms = (u32::from(user_obj) << 6)
+            | (u32::from(group_obj_perms.unwrap_or(0)) << 3)
+            | u32::from(other_obj_perms.unwrap_or(0));
+        // upstream: acls.c:1133-1134 - DEBUG_GTE(ACL, 1) emission
+        trace_default_perms_for_dir(perms, &dir_label);
+        return perms;
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    {
+        // macOS and other targets without POSIX default ACLs: no emission,
+        // matches upstream's `#ifdef SUPPORT_ACLS` guard at generator.c:1337.
+        let _ = dir;
+        default_perms
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -875,5 +961,123 @@ mod tests {
         // Index 99 does not exist - should be a no-op, not an error
         let result = apply_acls_from_cache(&file, &cache, 99, None, true, Some(0o644));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn default_perms_for_dir_no_acl_returns_umask_default() {
+        // No default ACL: upstream returns ACCESSPERMS & ~orig_umask without
+        // emitting `DEBUG_GTE(ACL, 1)`.
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("no_default_acl");
+        std::fs::create_dir(&target).expect("create dir");
+
+        assert_eq!(default_perms_for_dir(&target, 0o022), 0o755);
+        assert_eq!(default_perms_for_dir(&target, 0o077), 0o700);
+        assert_eq!(default_perms_for_dir(&target, 0), 0o777);
+    }
+
+    #[test]
+    fn default_perms_for_dir_missing_dir_returns_umask_default() {
+        // getfacl error path: upstream falls back to umask-derived default
+        // and never emits. Verify the same here.
+        let dir = tempdir().expect("tempdir");
+        let missing = dir.path().join("nonexistent");
+
+        assert_eq!(default_perms_for_dir(&missing, 0o022), 0o755);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    fn default_perms_for_dir_emits_when_default_acl_present() {
+        // upstream: acls.c:1131-1134 - DEBUG_GTE(ACL, 1) fires when the
+        // directory's default ACL unpacked into a user_obj entry.
+        use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("with_default_acl");
+        std::fs::create_dir(&target).expect("create dir");
+
+        // Install a default ACL: user::rwx, group::r-x, other::r-x.
+        let default_entries = vec![
+            exacl::AclEntry::allow_user("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+            exacl::AclEntry::allow_group("", Perm::READ | Perm::EXECUTE, None),
+            exacl::AclEntry::allow_other(Perm::READ | Perm::EXECUTE, None),
+        ];
+        if setfacl(&[&target], &default_entries, Some(AclOption::DEFAULT_ACL)).is_err() {
+            // Filesystem doesn't support default ACLs (e.g., tmpfs without acl mount).
+            // Skip the emission assertion; this is the same fallback upstream takes.
+            return;
+        }
+
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.acl = 1;
+        init(cfg);
+        let _ = drain_events();
+
+        let perms = default_perms_for_dir(&target, 0o022);
+        assert_eq!(perms, 0o755);
+
+        let messages: Vec<String> = drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Acl,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect();
+        let expected = format!(
+            "got ACL-based default perms 755 for directory {}",
+            target.display()
+        );
+        assert!(
+            messages.iter().any(|m| m == &expected),
+            "expected emission {expected:?}, got {messages:?}"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    fn default_perms_for_dir_no_emission_when_disabled() {
+        // upstream: DEBUG_GTE(ACL, 1) is gated; level 0 suppresses the line
+        // even when the default ACL unpacks successfully.
+        use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("with_default_acl_silent");
+        std::fs::create_dir(&target).expect("create dir");
+
+        let default_entries = vec![
+            exacl::AclEntry::allow_user("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+            exacl::AclEntry::allow_group("", Perm::READ, None),
+            exacl::AclEntry::allow_other(Perm::empty(), None),
+        ];
+        if setfacl(&[&target], &default_entries, Some(AclOption::DEFAULT_ACL)).is_err() {
+            return;
+        }
+
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.acl = 0;
+        init(cfg);
+        let _ = drain_events();
+
+        let _ = default_perms_for_dir(&target, 0o022);
+        let messages: Vec<String> = drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Acl,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            messages.is_empty(),
+            "ACL debug must be suppressed at level 0, got {messages:?}"
+        );
     }
 }
