@@ -104,7 +104,6 @@ impl DirectoryTree {
             self.nodes[sibling].next_sibling = Some(node_idx);
         }
 
-        // Set cursor to first real node if not yet set
         if self.cursor.is_none() {
             self.cursor = Some(node_idx);
         }
