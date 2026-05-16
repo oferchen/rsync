@@ -176,32 +176,21 @@ pub fn output_flist(role: ProcessRole, entries: &[FileEntry], first_ndx: i32) {
 /// ```
 #[inline]
 pub fn output_flist_entry(role: ProcessRole, ndx: i32, entry: &FileEntry) {
-    // Build the path string
     let name_str = entry.name();
-
-    // Determine if this is root (empty path or ".")
     let is_root = name_str.is_empty() || name_str == ".";
     let root_marker = if is_root { "root " } else { "" };
-
-    // Add trailing slash for directories
     let trailing = if entry.is_dir() && !name_str.ends_with('/') {
         "/"
     } else {
         ""
     };
-
-    // Format length with commas
     let len_str = format_number(entry.size() as usize);
-
-    // Format UID/GID
     let uid_str = entry
         .uid()
         .map_or(String::new(), |uid| format!(" uid={uid}"));
     let gid_str = entry
         .gid()
         .map_or(String::new(), |gid| format!(" gid={gid}"));
-
-    // Get flags value
     let flags = entry.flags();
     let flags_value = flags.primary as u32 | ((flags.extended as u32) << 8);
 
