@@ -3,6 +3,10 @@ use std::io::{self, Read, Write};
 use logging::debug_log;
 
 use crate::ProtocolVersion;
+use crate::nstr::{
+    CLVL_NOT_SPECIFIED, NstrCategory, NstrSide, trace_checksum_summary, trace_compress_summary,
+    trace_recv_list, trace_send_list,
+};
 
 use super::algorithms::{
     ChecksumAlgorithm, CompressionAlgorithm, SUPPORTED_CHECKSUMS, supported_compressions,
@@ -240,15 +244,15 @@ pub fn negotiate_capabilities_with_override(
     // The greeting is just informational; the actual selection uses vstrings.
     let _ = is_daemon_mode; // Exchange happens in all modes when do_negotiation=true
 
-    // upstream: compat.c:521-525 send_negotiate_str
-    // Server emits "Server <type> list (on server): <list>", client emits
-    // "Client <type> list (on client): <list>" at DEBUG_GTE(NSTR, am_server?3:2).
-    let (local_side, remote_side, local_lc) = if is_server {
-        ("Server", "Client", "server")
+    // upstream: compat.c:521-525 send_negotiate_str and compat.c:373-378
+    // recv_negotiate_str. Both emit "<side> <type> list (on <local>): <list>"
+    // at DEBUG_GTE(NSTR, am_server?3:2); see crates/protocol/src/nstr/trace.rs
+    // for the byte-for-byte helpers.
+    let side = if is_server {
+        NstrSide::Server
     } else {
-        ("Client", "Server", "client")
+        NstrSide::Client
     };
-    let send_level = if is_server { 3 } else { 2 };
 
     // Send our supported algorithm lists. upstream: compat.c:541-544
     // When --checksum-choice overrides the selection, advertise only that
@@ -258,42 +262,25 @@ pub fn negotiate_capabilities_with_override(
         Some(algo) => algo.as_str().to_owned(),
         None => SUPPORTED_CHECKSUMS.join(" "),
     };
-    debug_log!(
-        Nstr,
-        send_level,
-        "{local_side} checksum list (on {local_lc}): {checksum_list}"
-    );
+    trace_send_list(side, NstrCategory::Checksum, &checksum_list);
     write_vstring(stdout, &checksum_list)?;
 
     if send_compression {
         let compression_list = supported_compressions().join(" ");
-        debug_log!(
-            Nstr,
-            send_level,
-            "{local_side} compress list (on {local_lc}): {compression_list}"
-        );
+        trace_send_list(side, NstrCategory::Compress, &compression_list);
         write_vstring(stdout, &compression_list)?;
     }
 
     stdout.flush()?;
 
     // Read the remote side's algorithm lists. upstream: compat.c:373-378
-    // recv_negotiate_str emits "<remote> <type> list (on <local>): <list>"
-    // at DEBUG_GTE(NSTR, am_server?3:2).
+    // recv_negotiate_str emits "<remote> <type> list (on <local>): <list>".
     let remote_checksum_list = read_vstring(stdin)?;
-    debug_log!(
-        Nstr,
-        send_level,
-        "{remote_side} checksum list (on {local_lc}): {remote_checksum_list}"
-    );
+    trace_recv_list(side, NstrCategory::Checksum, &remote_checksum_list);
 
     let remote_compression_list = if send_compression {
         let list = read_vstring(stdin)?;
-        debug_log!(
-            Nstr,
-            send_level,
-            "{remote_side} compress list (on {local_lc}): {list}"
-        );
+        trace_recv_list(side, NstrCategory::Compress, &list);
         Some(list)
     } else {
         None
@@ -340,23 +327,31 @@ pub fn negotiate_capabilities_with_override(
         CompressionAlgorithm::None
     };
 
-    // upstream: compat.c:866 "Client negotiated <type>: <name>"
-    // (NSTR level 1, daemon auth checksum; we reuse the wording for the
-    // bidirectional checksum negotiation summary).
-    let nego_level = if is_server { 3 } else { 1 };
-    debug_log!(
-        Nstr,
-        nego_level,
-        "{local_side} negotiated checksum: {}",
-        checksum.as_str()
-    );
-    // upstream: compat.c:215 "<side> negotiated compress: <name> (level <N>)"
+    // upstream: checksum.c:206-211 parse_checksum_choice -
+    //   "%s%s checksum: %s\n" at DEBUG_GTE(NSTR, am_server?3:1).
+    // The " negotiated" qualifier fires iff valid_checksums.negotiated_nni
+    // is set; --checksum-choice forces selection without negotiation
+    // (compat.c:175-187), in which case the qualifier renders blank.
+    let checksum_negotiated = checksum_override.is_none();
+    trace_checksum_summary(side, checksum_negotiated, checksum.as_str());
+
+    // upstream: compat.c:213-219 parse_compress_choice -
+    //   "%s%s compress: %s (level %d)\n" at DEBUG_GTE(NSTR, am_server?3:1).
+    // The (level <N>) clause always renders; upstream prints
+    // do_compression_level verbatim, which is CLVL_NOT_SPECIFIED
+    // (INT_MIN) when the user did not pass --compress-level. The whole
+    // emission is gated on `do_compression != CPRES_NONE || level !=
+    // CLVL_NOT_SPECIFIED`; the negotiator does not own a user-supplied
+    // level, so it always passes CLVL_NOT_SPECIFIED and only emits when
+    // compression is active.
     if compression != CompressionAlgorithm::None {
-        debug_log!(
-            Nstr,
-            nego_level,
-            "{local_side} negotiated compress: {}",
-            compression.as_str()
+        let compression_negotiated =
+            compression_override.is_none() && remote_compression_list.is_some();
+        trace_compress_summary(
+            side,
+            compression_negotiated,
+            compression.as_str(),
+            CLVL_NOT_SPECIFIED,
         );
     }
     Ok(NegotiationResult {
