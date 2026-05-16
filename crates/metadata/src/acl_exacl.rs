@@ -367,26 +367,10 @@ fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
     Ok(())
 }
 
-/// Clears the default ACL from a directory.
+/// Clears the default ACL from a directory (Linux/FreeBSD only).
 ///
-/// On Linux and FreeBSD, directories can have default ACLs that are
-/// automatically applied to newly created files within the directory.
-/// This function removes the default ACL by setting it to an empty list.
-///
-/// # Platform Support
-///
-/// Only compiled on Linux and FreeBSD, where default ACLs are supported.
-/// macOS does not use default ACLs in its extended ACL model.
-///
-/// # Errors
-///
-/// Returns [`MetadataError`] if clearing the ACL fails, except for
-/// unsupported filesystem errors which are silently ignored.
-///
-/// # Note
-///
-/// Setting an empty default ACL is the standard way to clear it on
-/// POSIX ACL systems. This is equivalent to `setfacl -k` on the command line.
+/// Setting an empty default ACL removes it (equivalent to `setfacl -k`).
+/// Unsupported-filesystem errors are silently ignored.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn clear_default_acl(path: &Path) -> Result<(), MetadataError> {
     if let Err(e) = setfacl(&[path], &[], Some(AclOption::DEFAULT_ACL)) {
@@ -401,31 +385,14 @@ fn clear_default_acl(path: &Path) -> Result<(), MetadataError> {
     Ok(())
 }
 
-/// Checks if an I/O error indicates an unsupported filesystem.
+/// Returns `true` when an I/O error indicates an unsupported filesystem
+/// (FAT/VFAT, network mounts without ACL support, missing kernel xattrs).
 ///
-/// Determines whether an error should be treated as "filesystem doesn't
-/// support ACLs" rather than a true error. This allows graceful degradation
-/// when copying files across different filesystem types.
+/// Checks `ErrorKind`, then raw OS error codes (`ENOTSUP`, `ENOENT`, `EINVAL`,
+/// `ENODATA`, `EPERM`), then common error message substrings as a last resort.
 ///
-/// # Detection Strategy
-///
-/// The function uses multiple detection methods in order:
-/// 1. **Error kind matching**: Checks for `Unsupported`, `InvalidInput`, `NotFound`
-/// 2. **OS error codes**: Checks for `ENOTSUP`, `ENOENT`, `EINVAL`, `ENODATA`, `EPERM`
-/// 3. **Error message parsing**: Looks for common error message patterns
-///
-/// # Common Scenarios
-///
-/// This function returns `true` for:
-/// - FAT/VFAT filesystems (don't support ACLs)
-/// - Network mounts without ACL support
-/// - Permission errors when reading ACLs
-/// - Missing xattr support in the kernel
-///
-/// # Upstream Reference
-///
-/// Matches upstream rsync's `no_acl_syscall_error()` behavior where errors
-/// from filesystems that don't support ACLs are silently ignored.
+/// upstream: `acls.c:no_acl_syscall_error()` - errors from filesystems that
+/// do not support ACLs are silently ignored.
 fn is_unsupported_error(e: &io::Error) -> bool {
     matches!(
         e.kind(),
