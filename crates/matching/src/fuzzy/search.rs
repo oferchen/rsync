@@ -1,11 +1,6 @@
-//! Directory search logic for fuzzy basis file matching.
+//! Directory search and best-match selection for [`FuzzyMatcher`].
 //!
-//! Implements the directory scanning and best-match selection that
-//! `FuzzyMatcher` uses to find similar basis files.
-//!
-//! # Upstream Reference
-//!
-//! Mirrors `generator.c:1580` - `find_fuzzy_basis()`.
+//! upstream: generator.c:1580 `find_fuzzy_basis()`.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -16,53 +11,15 @@ use super::trace::trace_fuzzy_distance;
 use super::{FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher};
 
 impl FuzzyMatcher {
-    /// Finds the best fuzzy match for a file in the destination directory.
+    /// Finds the best fuzzy match for `target_name` in `dest_dir`.
     ///
-    /// Searches the parent directory of `dest_path` for files with similar
-    /// names. If fuzzy level is 2, also searches the configured
-    /// `fuzzy_basis_dirs`.
+    /// Each candidate file in the destination directory is scored against
+    /// the target by name and size similarity. Exact-name matches are
+    /// skipped. At level 2 the configured `fuzzy_basis_dirs` are also
+    /// scanned. The highest-scoring candidate above the minimum threshold
+    /// is returned, or `None` if no candidate qualifies.
     ///
-    /// # Algorithm
-    ///
-    /// 1. Read all files from destination directory
-    /// 2. Skip exact name matches (not fuzzy)
-    /// 3. Score each candidate file based on name and size similarity
-    /// 4. If level 2, also search fuzzy basis directories
-    /// 5. Return the highest-scoring file above the minimum threshold
-    ///
-    /// # Arguments
-    ///
-    /// * `target_name` - Name of the file we're looking for a basis for
-    /// * `dest_dir` - Destination directory to search
-    /// * `target_size` - Size of the source file (for size similarity bonus)
-    ///
-    /// # Returns
-    ///
-    /// The best matching file if one is found with score above threshold.
-    ///
-    /// # Upstream Reference
-    ///
-    /// Mirrors `generator.c:1580` - `find_fuzzy_basis()`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use matching::FuzzyMatcher;
-    /// use std::ffi::OsStr;
-    /// # use tempfile::TempDir;
-    /// # use std::fs;
-    /// # let temp = TempDir::new().unwrap();
-    /// # fs::write(temp.path().join("file_v1.txt"), "old").unwrap();
-    ///
-    /// let matcher = FuzzyMatcher::new();
-    /// let result = matcher.find_fuzzy_basis(
-    ///     OsStr::new("file_v2.txt"),
-    ///     temp.path(),
-    ///     100,
-    /// );
-    ///
-    /// assert!(result.is_some());
-    /// ```
+    /// upstream: generator.c:1580 `find_fuzzy_basis()`.
     pub fn find_fuzzy_basis(
         &self,
         target_name: &OsStr,
@@ -143,10 +100,8 @@ fn search_directory(
     best_match
 }
 
-/// Updates the best match if the new candidate has a higher score and meets the threshold.
-///
-/// This function is inlined for performance as it's called in the hot path
-/// of fuzzy matching during file scanning.
+/// Replaces `best` with `candidate` when `candidate` outscores it and meets
+/// the threshold.
 #[inline]
 fn update_best_match(best: &mut Option<FuzzyMatch>, candidate: FuzzyMatch, min_score: u32) {
     if candidate.score < min_score {

@@ -122,9 +122,8 @@ impl DeltaSignatureIndex {
             return None;
         }
 
-        // zsync-style bithash prefilter: rejects ~7/8 of post-tag misses
-        // using both sum halves before the hash-table probe. One-sided, so
-        // never produces a false negative.
+        // zsync-style one-sided bithash prefilter (no false negatives)
+        // rejects ~7/8 of post-tag misses before the hash-table probe.
         if !self.bithash.contains(digest.value()) {
             return None;
         }
