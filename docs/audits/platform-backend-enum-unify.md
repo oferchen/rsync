@@ -334,10 +334,22 @@ If the broad super-enum (rejected) were taken:
 
 1. **Reject** unification into a single `PlatformBackend` enum. The clusters
    are intentionally separate.
-2. **Adopt** Cluster B normalisation (`BackendPolicy` generic + four type
+2. **Adopt** Cluster B normalisation (`BackendPolicy` generic + three type
    aliases) as a small follow-up to this audit.
 3. **Defer** Cluster C consolidation to the existing
    `init-time-backend-selection.md` (#2116) workstream.
 4. **Defer** the `GuardStrategy` / `TempFileKind` merge as a separate engine
    cleanup; it is a one-file refactor and not blocked by anything else.
 5. **Leave** Clusters A, D, and E alone.
+
+## 10. Status
+
+- Recommendation 1 (reject super-enum): standing.
+- Recommendation 2 (Cluster B normalisation): **DONE**. `BackendPolicy` lives
+  in `crates/fast_io/src/policy.rs` with `IoUringPolicy`, `IocpPolicy`, and
+  `ZeroCopyPolicy` defined as `pub type` aliases. `CowPolicy` retains its
+  two-variant shape per section 4.3. All consumer call sites compile without
+  edits because the alias preserves variant names (`Auto`, `Enabled`,
+  `Disabled`).
+- Recommendation 3 (Cluster C): tracked under #2116.
+- Recommendation 4 (`GuardStrategy` / `TempFileKind`): open.

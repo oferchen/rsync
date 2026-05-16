@@ -3,14 +3,52 @@
 //! These enums let callers steer runtime selection of fast-path I/O
 //! mechanisms (io_uring, IOCP, kernel zero-copy, copy-on-write reflink)
 //! and map onto the corresponding CLI flags.
+//!
+//! Three subsystem opt-in/opt-out enums share the same `Auto / Enabled /
+//! Disabled` shape: [`IoUringPolicy`], [`IocpPolicy`], and [`ZeroCopyPolicy`].
+//! They are type aliases of the canonical [`BackendPolicy`] enum to avoid
+//! duplicated rustdoc, `Default`, and pattern-matching boilerplate while
+//! preserving each name at the API surface. [`CowPolicy`] keeps a separate
+//! two-variant definition because reflink is best-effort and has no
+//! `Enabled` semantics.
 
 #[allow(unused_imports)]
 use crate::platform_copy;
 
+/// Three-way opt-in/opt-out policy shared by every fast-path I/O subsystem.
+///
+/// `Auto` lets the runtime pick the best mechanism the host supports;
+/// `Enabled` forces the subsystem and errors out if it is unavailable;
+/// `Disabled` always routes through the portable buffered fallback.
+///
+/// This is the canonical type used by [`IoUringPolicy`], [`IocpPolicy`], and
+/// [`ZeroCopyPolicy`]. Each alias preserves the original name for source
+/// compatibility and CLI-flag wiring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BackendPolicy {
+    /// Auto-detect availability at runtime (default).
+    ///
+    /// Uses the fast path when the host supports it and silently falls back
+    /// to standard buffered I/O otherwise. This is the recommended setting
+    /// for production use.
+    #[default]
+    Auto,
+    /// Force the fast path. Returns an error if the subsystem is unavailable.
+    ///
+    /// Useful for testing or when the fast path is required for performance
+    /// guarantees. Fails with `ErrorKind::Unsupported` on platforms or kernels
+    /// that do not support the requested mechanism.
+    Enabled,
+    /// Disable the fast path; always use standard buffered I/O.
+    ///
+    /// Useful for benchmarking or diagnosing fast-path related issues.
+    Disabled,
+}
+
 /// Policy controlling io_uring usage for file and socket I/O.
 ///
-/// This enum allows callers to explicitly enable, disable, or auto-detect
-/// io_uring support. It is used by CLI flags `--io-uring` and `--no-io-uring`.
+/// Alias of [`BackendPolicy`]. Steered by the CLI flags `--io-uring` and
+/// `--no-io-uring`.
 ///
 /// # Runtime detection
 ///
@@ -37,27 +75,7 @@ use crate::platform_copy;
 /// | `IORING_REGISTER_FILES` | 5.6 | Fixed-file descriptors, ~50ns/SQE savings |
 /// | `IORING_SETUP_SQPOLL` | 5.6 | Kernel-side SQ polling, needs `CAP_SYS_NICE` |
 /// | `IORING_OP_SEND` (socket I/O) | 5.6 | Used for socket writer batching |
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum IoUringPolicy {
-    /// Auto-detect io_uring availability at runtime (default).
-    ///
-    /// Uses io_uring on Linux 5.6+ when the `io_uring` feature is enabled
-    /// and the kernel supports it. Falls back to standard buffered I/O
-    /// otherwise. This is the recommended setting for production use.
-    #[default]
-    Auto,
-    /// Force io_uring usage. Returns an error if io_uring is unavailable.
-    ///
-    /// Useful for testing or when io_uring is required for performance
-    /// guarantees. Fails with `ErrorKind::Unsupported` on non-Linux
-    /// platforms, kernels older than 5.6, or when seccomp blocks the
-    /// syscalls.
-    Enabled,
-    /// Disable io_uring; always use standard buffered I/O.
-    ///
-    /// Useful for benchmarking or diagnosing io_uring-related issues.
-    Disabled,
-}
+pub type IoUringPolicy = BackendPolicy;
 
 /// Policy controlling copy-on-write reflink usage for whole-file copies.
 ///
@@ -74,6 +92,10 @@ pub enum IoUringPolicy {
 /// The default is [`CowPolicy::Auto`], which delegates to
 /// [`platform_copy::DefaultPlatformCopy`] and uses the best available reflink
 /// mechanism with portable fallback.
+///
+/// Unlike [`BackendPolicy`], reflink is best-effort: there is no `Enabled`
+/// variant because forcing reflink without filesystem support would have no
+/// useful semantics. The two-variant shape keeps this distinction explicit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CowPolicy {
     /// Auto-detect reflink support and use it when available (default).
@@ -93,8 +115,8 @@ pub enum CowPolicy {
 
 /// Policy controlling IOCP usage for file I/O on Windows.
 ///
-/// This enum allows callers to explicitly enable, disable, or auto-detect
-/// IOCP support. It mirrors [`IoUringPolicy`] for the Windows platform.
+/// Alias of [`BackendPolicy`]. Mirrors [`IoUringPolicy`] for the Windows
+/// platform.
 ///
 /// # Runtime detection
 ///
@@ -102,35 +124,19 @@ pub enum CowPolicy {
 /// creates a test completion port and caches the result. On Windows Vista+,
 /// IOCP is always available. Files smaller than 64 KB use standard I/O
 /// regardless of this policy since the async overhead exceeds the benefit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum IocpPolicy {
-    /// Auto-detect IOCP availability at runtime (default).
-    ///
-    /// Uses IOCP on Windows when the `iocp` feature is enabled.
-    /// Falls back to standard buffered I/O otherwise.
-    #[default]
-    Auto,
-    /// Force IOCP usage. Returns an error if IOCP is unavailable.
-    ///
-    /// Useful for testing or when IOCP is required for performance.
-    /// Fails with `ErrorKind::Unsupported` on non-Windows platforms.
-    Enabled,
-    /// Disable IOCP; always use standard buffered I/O.
-    ///
-    /// Useful for benchmarking or diagnosing IOCP-related issues.
-    Disabled,
-}
+pub type IocpPolicy = BackendPolicy;
 
 /// Policy controlling I/O-level zero-copy syscalls (`sendfile`, `splice`,
 /// `copy_file_range`, io_uring `IORING_OP_SEND_ZC`).
 ///
-/// This enum gates kernel zero-copy data movement between file descriptors
-/// and sockets. It is orthogonal to filesystem-level reflink/CoW cloning
-/// (controlled by the separate cow policy). When [`ZeroCopyPolicy::Disabled`]
-/// is in effect, callers route through standard userspace `read`/`write`
-/// loops; the wrapped [`platform_copy::DefaultPlatformCopy`] strategy is
-/// replaced by [`platform_copy::NoZeroCopyPlatformCopy`] which forces a
-/// portable buffered copy.
+/// Alias of [`BackendPolicy`]. Gates kernel zero-copy data movement between
+/// file descriptors and sockets. Orthogonal to filesystem-level reflink/CoW
+/// cloning (controlled by the separate [`CowPolicy`]). When
+/// [`ZeroCopyPolicy::Disabled`] is in effect, callers route through standard
+/// userspace `read`/`write` loops; the wrapped
+/// [`platform_copy::DefaultPlatformCopy`] strategy is replaced by
+/// [`platform_copy::NoZeroCopyPlatformCopy`] which forces a portable buffered
+/// copy.
 ///
 /// # Precedence with the cow policy
 ///
@@ -148,37 +154,44 @@ pub enum IocpPolicy {
 /// set to [`ZeroCopyPolicy::Disabled`], the chain is bypassed and callers
 /// use [`std::fs::copy`] (which still uses kernel optimizations on some
 /// platforms but skips `copy_file_range`/`sendfile`/`splice` direct calls).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ZeroCopyPolicy {
-    /// Auto-detect zero-copy availability at runtime (default).
-    ///
-    /// Uses `sendfile`, `splice`, `copy_file_range`, and io_uring `SEND_ZC`
-    /// when the kernel supports them. Falls back to standard buffered I/O
-    /// otherwise. This is the recommended setting for production use.
-    #[default]
-    Auto,
-    /// Force zero-copy usage where supported.
-    ///
-    /// Useful for testing or benchmarking the zero-copy code paths.
-    /// On platforms or filesystems that do not support a particular
-    /// syscall, the call still falls back to standard I/O - this policy
-    /// does not error, it simply opts in to the optimization where
-    /// possible.
-    Enabled,
-    /// Disable zero-copy; always use standard buffered read/write.
-    ///
-    /// Useful for benchmarking, diagnosing zero-copy related issues,
-    /// or working around kernels where `sendfile`/`splice` are blocked
-    /// by seccomp filters. When set, callers route through portable
-    /// userspace copy loops and io_uring socket sends fall back from
-    /// `IORING_OP_SEND_ZC` to `IORING_OP_SEND`.
-    Disabled,
-}
+pub type ZeroCopyPolicy = BackendPolicy;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::splice::{is_splice_available, is_splice_enabled};
+
+    #[test]
+    fn backend_policy_default_is_auto() {
+        assert_eq!(BackendPolicy::default(), BackendPolicy::Auto);
+    }
+
+    #[test]
+    fn backend_policy_variants_are_distinct() {
+        assert_ne!(BackendPolicy::Auto, BackendPolicy::Enabled);
+        assert_ne!(BackendPolicy::Auto, BackendPolicy::Disabled);
+        assert_ne!(BackendPolicy::Enabled, BackendPolicy::Disabled);
+    }
+
+    #[test]
+    fn aliases_resolve_to_backend_policy() {
+        let a: IoUringPolicy = IoUringPolicy::Auto;
+        let b: IocpPolicy = IocpPolicy::Auto;
+        let c: ZeroCopyPolicy = ZeroCopyPolicy::Auto;
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+        assert_eq!(c, BackendPolicy::Auto);
+    }
+
+    #[test]
+    fn cow_policy_default_is_auto() {
+        assert_eq!(CowPolicy::default(), CowPolicy::Auto);
+    }
+
+    #[test]
+    fn cow_policy_variants_are_distinct() {
+        assert_ne!(CowPolicy::Auto, CowPolicy::Disabled);
+    }
 
     #[test]
     fn zero_copy_policy_default_is_auto() {
