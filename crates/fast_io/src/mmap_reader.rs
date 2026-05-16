@@ -30,7 +30,7 @@ use std::path::Path;
 ///
 /// Files at or above this size will attempt mmap first, falling back to
 /// buffered I/O if the mapping fails (e.g., on NFS, FUSE, procfs).
-pub const MMAP_THRESHOLD: u64 = 64 * 1024; // 64 KB
+pub const MMAP_THRESHOLD: u64 = 64 * 1024;
 
 /// A memory-mapped file reader.
 ///
@@ -180,7 +180,6 @@ impl FileReader for MmapReader {
     }
 
     fn read_all(&mut self) -> io::Result<Vec<u8>> {
-        // For mmap, we can just clone the slice
         Ok(self.mmap[self.position..].to_vec())
     }
 }
@@ -259,8 +258,7 @@ impl FileReaderFactory for AdaptiveReaderFactory {
         let size = metadata.len();
 
         if size >= self.threshold {
-            // Attempt mmap; fall back to buffered I/O on failure.
-            // mmap can fail on certain filesystems (NFS, FUSE, procfs, etc.).
+            // mmap can fail on NFS, FUSE, procfs, etc.; fall back to buffered I/O.
             match MmapReader::open(path) {
                 Ok(reader) => Ok(AdaptiveReader::Mmap(reader)),
                 Err(_) => Ok(AdaptiveReader::Std(crate::traits::StdFileReader::open(

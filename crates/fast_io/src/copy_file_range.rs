@@ -84,19 +84,16 @@ const COPY_FILE_RANGE_THRESHOLD: u64 = 64 * 1024; // 64KB
 /// # }
 /// ```
 pub fn copy_file_contents(source: &File, destination: &File, length: u64) -> io::Result<u64> {
-    // Tier 1: io_uring batched read/write (Linux 5.6+, large files)
     if length >= IO_URING_COPY_THRESHOLD {
         if let Ok(copied) = try_io_uring_copy(source, destination, length) {
             return Ok(copied);
         }
     }
-    // Tier 2: copy_file_range zero-copy (Linux 4.5+)
     if length >= COPY_FILE_RANGE_THRESHOLD {
         if let Ok(copied) = try_copy_file_range(source, destination, length) {
             return Ok(copied);
         }
     }
-    // Tier 3: standard buffered read/write
     copy_file_contents_readwrite(source, destination, length)
 }
 
@@ -113,19 +110,16 @@ pub fn copy_file_contents_buffered(
     length: u64,
     buffer: &mut [u8],
 ) -> io::Result<u64> {
-    // Tier 1: io_uring batched read/write (Linux 5.6+, large files)
     if length >= IO_URING_COPY_THRESHOLD {
         if let Ok(copied) = try_io_uring_copy(source, destination, length) {
             return Ok(copied);
         }
     }
-    // Tier 2: copy_file_range zero-copy (Linux 4.5+)
     if length >= COPY_FILE_RANGE_THRESHOLD {
         if let Ok(copied) = try_copy_file_range(source, destination, length) {
             return Ok(copied);
         }
     }
-    // Tier 3: buffered read/write with caller-provided buffer
     copy_file_contents_readwrite_with_buffer(source, destination, length, buffer)
 }
 
@@ -238,7 +232,6 @@ fn try_io_uring_copy(source: &File, destination: &File, length: u64) -> io::Resu
             ));
         }
 
-        // Handle short writes by adjusting source offset back
         if bytes_written < bytes_read {
             src_offset -= (bytes_read - bytes_written) as u64;
         }
@@ -297,8 +290,7 @@ fn try_copy_file_range(source: &File, destination: &File, length: u64) -> io::Re
     let mut remaining = length;
 
     while remaining > 0 {
-        // copy_file_range takes size_t, which is usize, but returns ssize_t (isize)
-        // Limit chunk size to i64::MAX to avoid overflow issues
+        // Limit chunk to i64::MAX so the ssize_t return cannot overflow.
         let chunk = remaining.min(i64::MAX as u64) as usize;
 
         // SAFETY: File descriptors are valid (derived from &File references).
@@ -307,11 +299,11 @@ fn try_copy_file_range(source: &File, destination: &File, length: u64) -> io::Re
         let result = unsafe {
             libc::copy_file_range(
                 src_fd,
-                std::ptr::null_mut(), // Use current position for source
+                std::ptr::null_mut(),
                 dst_fd,
-                std::ptr::null_mut(), // Use current position for destination
+                std::ptr::null_mut(),
                 chunk,
-                0, // flags (must be 0)
+                0,
             )
         };
 
@@ -367,7 +359,7 @@ fn copy_file_contents_readwrite(source: &File, destination: &File, length: u64) 
     let mut reader = io::BufReader::new(source);
     let mut writer = io::BufWriter::new(destination);
     let mut total = 0u64;
-    let mut buf = vec![0u8; 256 * 1024]; // 256KB buffer
+    let mut buf = vec![0u8; 256 * 1024];
     let mut remaining = length;
 
     while remaining > 0 {

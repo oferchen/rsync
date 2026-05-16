@@ -100,7 +100,6 @@ impl IoUringDiskBatch {
     ///
     /// Returns an error if flushing the previous file fails.
     pub fn begin_file(&mut self, file: File) -> io::Result<()> {
-        // Flush and finalize the previous file.
         self.flush_current()?;
         self.finalize_current_file();
 
@@ -182,7 +181,6 @@ impl IoUringDiskBatch {
             self.submit_fsync(&active)?;
         }
 
-        // Unregister the fd from the ring.
         self.unregister_fd(&active);
 
         Ok((active.file, bytes_written))
@@ -277,7 +275,6 @@ impl IoUringDiskBatch {
     fn finalize_current_file(&mut self) {
         if let Some(active) = self.current_file.take() {
             self.unregister_fd(&active);
-            // File is dropped here, closing the fd.
         }
     }
 }
@@ -295,7 +292,6 @@ impl Write for IoUringDiskBatch {
 
 impl Drop for IoUringDiskBatch {
     fn drop(&mut self) {
-        // Best-effort flush on drop.
         let _ = self.flush_current();
         self.finalize_current_file();
     }

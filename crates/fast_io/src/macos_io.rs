@@ -94,7 +94,7 @@ impl MacosWriter {
             nocache_enabled,
             pending: Vec::new(),
             pending_bytes: 0,
-            flush_threshold: 256 * 1024, // 256 KB default flush threshold
+            flush_threshold: 256 * 1024,
         })
     }
 

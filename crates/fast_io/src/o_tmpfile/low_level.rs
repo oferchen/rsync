@@ -82,7 +82,6 @@ mod linux {
     }
 
     fn probe_o_tmpfile(dir: &Path) -> bool {
-        // O_TMPFILE requires O_WRONLY or O_RDWR
         let dir_cstr = match CString::new(dir.as_os_str().as_bytes()) {
             Ok(c) => c,
             Err(_) => return false,

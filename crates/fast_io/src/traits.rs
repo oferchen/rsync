@@ -44,7 +44,7 @@ pub trait FileWriter: Write {
 
     /// Pre-allocates space for the file (advisory).
     fn preallocate(&mut self, _size: u64) -> io::Result<()> {
-        Ok(()) // Default: no-op
+        Ok(())
     }
 }
 
