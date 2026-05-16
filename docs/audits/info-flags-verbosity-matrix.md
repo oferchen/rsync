@@ -299,7 +299,7 @@ re-evaluated and the implementation already matches upstream.
 | I14 | All       | Low      | OPEN   | Unknown-token message text differs: upstream `Unknown --info item: "FOO"`, oc-rsync `invalid --info flag 'FOO': use --info=help for supported flags`. Same exit code (1). |
 | I15 | All       | Low      | OPEN   | Server-side mode (`am_server`) should suppress unknown-token errors (`options.c:465`); oc-rsync errors unconditionally. |
 | I16 | All       | Low      | RESOLVED | `InfoFlagSpec::priority` on every `INFO_FLAG_SPECS` entry now mirrors upstream's `info_verbosity[]` group index (`options.c:239-243`); a daemon-side `limit_output_verbosity()` consumer can read priorities from the spec table without re-deriving them. |
-| I17 | Help text | Low      | OPEN   | Help text in `info.rs:228-246` advertises hard-coded `(levels 1-2)` / `(levels 1-3)` ranges; upstream's `output_item_help()` (`options.c:474-509`) prints the per-verbosity additions dynamically. The two diverge whenever upstream's `info_verbosity[]` is edited. |
+| I17 | Help text | Low      | RESOLVED | `INFO_HELP_TEXT` in `crates/cli/src/frontend/execution/flags/info.rs` now reproduces upstream's `output_item_help()` (`options.c:474-509`) byte-for-byte: the `"%-10s %s\n"` table, the ALL/NONE/HELP synthetic rows that quote the sentinel's `--info` help, and the per-verbosity summary block driven by `info_verbosity[]`. C3 done. |
 
 ## 6. Recommended fixes
 

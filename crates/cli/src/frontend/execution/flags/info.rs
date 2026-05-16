@@ -290,21 +290,36 @@ fn parse_info_flags_inner(
     Ok(settings)
 }
 
-pub(crate) const INFO_HELP_TEXT: &str = "The following --info flags are supported:\n\
-    all         Enable all informational output currently implemented.\n\
-    none        Disable all informational output handled by this build.\n\
-    BACKUP      Mention files backed up.\n\
-    COPY        Mention files copied locally on the receiving side.\n\
-    DEL         Mention deletions on the receiving side.\n\
-    FLIST       Mention file-list receiving/sending (levels 1-2).\n\
-    MISC        Mention miscellaneous information (levels 1-2).\n\
-    MOUNT       Mention mounts that were found or skipped.\n\
-    NAME        Mention 1) updated file/dir names, 2) unchanged names.\n\
-    NONREG      Mention skipped non-regular files (default 1, 0 disables).\n\
-    PROGRESS    Mention 1) per-file progress or 2) total transfer progress.\n\
-    REMOVE      Mention files removed on the sending side.\n\
-    SKIP        Mention files skipped due to transfer overrides (levels 1-2).\n\
-    STATS       Mention statistics at end of run (levels 1-3).\n\
-    SYMSAFE     Mention symlinks that are unsafe.\n\
+// upstream: options.c output_item_help (rsync-3.4.1:474-510). The text is
+// reproduced byte-for-byte from upstream's runtime output so `--info=help`
+// matches `rsync --info=help`. The format string is `"%-10s %s\n"`: each
+// name is left-padded to 10 columns, followed by a single space and the
+// help text. ALL/NONE descriptions inline the sentinel's `--info` help
+// (options.c:489-495). The per-verbosity summary block is rendered by
+// upstream's `make_output_option` over `info_verbosity[]` (options.c:239-
+// 243) and emits one line per non-empty level in `info_words[]` order.
+pub(crate) const INFO_HELP_TEXT: &str = "\
+Use OPT or OPT1 for level 1 output, OPT2 for level 2, etc.; OPT0 silences.\n\
 \n\
-Level suffixes may be used (for example, --info=stats2 or --info=flist0).\n";
+BACKUP     Mention files backed up\n\
+COPY       Mention files copied locally on the receiving side\n\
+DEL        Mention deletions on the receiving side\n\
+FLIST      Mention file-list receiving/sending (levels 1-2)\n\
+MISC       Mention miscellaneous information (levels 1-2)\n\
+MOUNT      Mention mounts that were found or skipped\n\
+NAME       Mention 1) updated file/dir names, 2) unchanged names\n\
+NONREG     Mention skipped non-regular files (default 1, 0 disables)\n\
+PROGRESS   Mention 1) per-file progress or 2) total transfer progress\n\
+REMOVE     Mention files removed on the sending side\n\
+SKIP       Mention files skipped due to transfer overrides (levels 1-2)\n\
+STATS      Mention statistics at end of run (levels 1-3)\n\
+SYMSAFE    Mention symlinks that are unsafe\n\
+\n\
+ALL        Set all --info options (e.g. all4)\n\
+NONE       Silence all --info options (same as all0)\n\
+HELP       Output this help message\n\
+\n\
+Options added at each level of verbosity:\n\
+0) NONREG\n\
+1) COPY,DEL,FLIST,MISC,NAME,STATS,SYMSAFE\n\
+2) BACKUP,MISC2,MOUNT,NAME2,REMOVE,SKIP\n";
