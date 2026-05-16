@@ -90,7 +90,6 @@ impl FileListReader {
             return Ok(FlagsResult::EndOfList);
         }
 
-        // Read extended flags
         // upstream: flist.c:2628 - extended flags only exist in protocol >= 28.
         // In protocol < 28, bit 2 is XMIT_SAME_RDEV_pre28, not XMIT_EXTENDED_FLAGS.
         let (ext_byte, ext16_byte) = if use_varint {
@@ -123,7 +122,6 @@ impl FileListReader {
             return Ok(FlagsResult::IoError(error));
         }
 
-        // Build flags structure
         let flags = if ext_byte != 0 || ext16_byte != 0 || (primary_byte & XMIT_EXTENDED_FLAGS) != 0
         {
             FileFlags::new_with_extended16(primary_byte, ext_byte, ext16_byte)
