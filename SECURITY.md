@@ -4,7 +4,7 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.6.x   | :white_check_mark: |
+| 0.6.x   | :white_check_mark: (current: 0.6.2) |
 | 0.5.x   | :warning: critical fixes only |
 | < 0.5   | :x:                |
 
@@ -39,7 +39,7 @@ oc-rsync leverages Rust's memory safety to eliminate entire vulnerability classe
 ### Unsafe Code Policy
 
 Crates that enforce `#![deny(unsafe_code)]` with no allow-listed exceptions:
-- `daemon`, `cli`, `core`, `transfer`, `batch`, `filters`, `signature`, `match`, `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`, `compress`, `apple-fs`, `flist` - business logic, parsers, orchestration, and high-level I/O wrappers
+- `daemon`, `cli`, `core`, `transfer`, `batch`, `filters`, `signature`, `matching`, `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`, `compress`, `apple-fs`, `flist`, `embedding`, `test-support` - business logic, parsers, orchestration, and high-level I/O wrappers
 
 Crates with `#![deny(unsafe_code)]` and targeted `#[allow(unsafe_code)]` for documented FFI/SIMD boundaries:
 - `metadata` - Ownership and privilege FFI (UID/GID lookup via `getpwuid_r`/`getgrnam_r`, `setuid`/`setgid`, `setattrlist`)
@@ -69,11 +69,31 @@ oc-rsync monitors upstream rsync CVEs to verify continued non-applicability. Rec
 | CVE-2024-12088 | --safe-links bypass | Mitigated | Rust path handling |
 | CVE-2024-12747 | Symlink race condition | Mitigated | TOCTOU is OS-level |
 
+### Upstream rsync 3.4.2 audits
+
+In v0.6.2 the codebase was audited against every fix that landed in upstream rsync 3.4.2 (released 2026). The equivalent code paths were verified safe in oc-rsync:
+
+- Compressed-stream negative-token decoder bounds (#2225)
+- Xattr `qsort` element-count parity (#2226)
+- `clean_fname()` buffer-underflow parity (#2227)
+- Allocator zeroing pattern (calloc + realloc-expand) (#2228)
+- Y2038 safety in syscall paths (Int32x32To64 equivalent) (#2229)
+- ACL ID mapping for non-root users (#2230, closes #618)
+- FreeBSD many-xattrs handling parity (#2231)
+- "Directory has vanished" error path (#2232)
+- Removal of multiple leading slashes (#2233)
+- Daemon `chrono::Local` pre-init before `chroot` (#2234)
+- `--open-noatime` propagation through sender source-file opens (#2236)
+- AVX2 `get_checksum1` `mul_one` uninitialised-regression audit (#2222)
+- MD4 `get_checksum2` `buf1` uninitialised-regression audit (#2223)
+- SIMD vs scalar self-test that cross-validates AVX2/SSE2/NEON paths at startup (#2224)
+
 ### Monitoring Process
 
 1. **Subscribe to rsync-announce**: https://lists.samba.org/mailman/listinfo/rsync-announce
 2. **Monitor NVD**: https://nvd.nist.gov/vuln/search?query=rsync
 3. **GitHub Security Advisories**: Watch this repository for security advisories
+4. **Scheduled CI watcher**: `tools/ci/check_upstream_release.sh` runs weekly via GitHub Actions and opens a tracking issue when a new upstream rsync release ships, so new CVEs are surfaced automatically
 
 ### When New CVEs Are Published
 
@@ -86,17 +106,20 @@ For each new upstream rsync CVE:
 
 ## Fuzzing
 
-The protocol crate includes cargo-fuzz targets for security-critical parsing:
+The repo ships cargo-fuzz targets for security-critical parsing and SIMD parity:
 
 ```bash
-cd crates/protocol/fuzz
+cd fuzz
 cargo +nightly fuzz run fuzz_varint
 cargo +nightly fuzz run fuzz_delta
 cargo +nightly fuzz run fuzz_multiplex_frame
 cargo +nightly fuzz run fuzz_legacy_greeting
+cargo +nightly fuzz run simd_checksum_parity
 ```
 
-See `crates/protocol/fuzz/README.md` for detailed fuzzing instructions.
+`simd_checksum_parity` cross-validates the AVX2, SSE2, NEON, and scalar
+rolling/strong checksum paths against random inputs (see #2103). See `fuzz/README.md`
+for detailed fuzzing instructions.
 
 ## Hardening Notes
 
