@@ -231,6 +231,45 @@ pub fn flush_rate_totals() -> u64 {
     FLUSH_CALLS.load(Ordering::Relaxed)
 }
 
+/// Total invocations of `prepare_pending_acl` across all generator transfers
+/// in this process. Diagnostic counter for sender-side INC_RECURSE (#2200, I5);
+/// quantifies how often the per-entry ACL prep fires per segment relative to
+/// the file count.
+///
+/// Sampled at end-of-transfer in `GeneratorContext::run` via
+/// [`prepare_acl_totals`] and emitted via `tracing::debug!`.
+static PREPARE_ACL_CALLS: AtomicU64 = AtomicU64::new(0);
+
+/// Cumulative elapsed time spent inside `prepare_pending_acl`, in nanoseconds,
+/// summed across every invocation. Diagnostic counter for sender-side
+/// INC_RECURSE (#2200, I5); lets operators see when filesystem ACL reads
+/// become a measurable share of segment-encoding time.
+static PREPARE_ACL_ELAPSED_NS: AtomicU64 = AtomicU64::new(0);
+
+/// Records one `prepare_pending_acl` invocation and adds its elapsed wall
+/// time (in nanoseconds, saturating to `u64::MAX`) to the cumulative counter.
+/// Used by `GeneratorContext::prepare_pending_acl` to bump
+/// [`PREPARE_ACL_CALLS`] / [`PREPARE_ACL_ELAPSED_NS`] for INC_RECURSE
+/// diagnostic I5 (#2200).
+pub(crate) fn record_prepare_acl(elapsed: Duration) {
+    PREPARE_ACL_CALLS.fetch_add(1, Ordering::Relaxed);
+    let ns = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
+    PREPARE_ACL_ELAPSED_NS.fetch_add(ns, Ordering::Relaxed);
+}
+
+/// Snapshot of the global `prepare_pending_acl` counters.
+///
+/// Returns `(call_count, cumulative_elapsed_ns)`. Used by the generator
+/// finalize path to emit an end-of-transfer diagnostic line and by unit tests
+/// that assert the counters monotonically grow.
+#[must_use]
+pub fn prepare_acl_totals() -> (u64, u64) {
+    (
+        PREPARE_ACL_CALLS.load(Ordering::Relaxed),
+        PREPARE_ACL_ELAPSED_NS.load(Ordering::Relaxed),
+    )
+}
+
 /// A pending file list sub-segment for incremental recursion sending.
 ///
 /// References entries in `GeneratorContext::file_list` by range rather than

@@ -851,6 +851,27 @@ impl GeneratorContext {
             "generator writer.flush totals"
         );
 
+        // INC_RECURSE diagnostic I5 (#2200): emit cumulative
+        // prepare_pending_acl call count and elapsed wall time. Aggregated
+        // across all generator transfers in this process so operators can
+        // see how often per-entry ACL prep fires per segment and what share
+        // of segment-encoding time it consumes.
+        let (acl_calls, acl_elapsed_ns) = super::prepare_acl_totals();
+        debug_log!(
+            Genr,
+            1,
+            "generator prepare_pending_acl totals: calls={} elapsed_ns={}",
+            acl_calls,
+            acl_elapsed_ns
+        );
+        #[cfg(feature = "tracing")]
+        ::tracing::debug!(
+            target: "rsync::generator::prepare_acl",
+            calls = acl_calls,
+            elapsed_ns = acl_elapsed_ns,
+            "generator prepare_pending_acl totals"
+        );
+
         Ok(GeneratorStats {
             files_listed: file_count,
             files_transferred: transfer_result.files_transferred,
