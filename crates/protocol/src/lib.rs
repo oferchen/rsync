@@ -134,6 +134,8 @@ pub mod idlist;
 mod legacy;
 mod multiplex;
 mod negotiation;
+/// `--debug=NSTR` producer emissions for algorithm-negotiation strings.
+pub mod nstr;
 /// Secluded-args (protect-args) stdin argument transmission protocol.
 ///
 /// When `--protect-args` is active, arguments are sent over stdin as

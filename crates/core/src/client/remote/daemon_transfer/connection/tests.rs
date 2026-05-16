@@ -47,6 +47,45 @@ fn parse_protocol_from_greeting_extracts_version() {
 }
 
 #[test]
+fn extract_digest_list_strips_trailing_newline() {
+    // upstream: compat.c:843-844 - the level-2 NSTR echo must render the
+    // digest list verbatim, without the greeting's trailing newline.
+    let greeting = "@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n";
+    let list = extract_digest_list_from_greeting(greeting);
+    assert_eq!(list, Some("sha512 sha256 sha1 md5 md4"));
+}
+
+#[test]
+fn extract_digest_list_handles_crlf() {
+    let greeting = "@RSYNCD: 30.0 md5 md4\r\n";
+    let list = extract_digest_list_from_greeting(greeting);
+    assert_eq!(list, Some("md5 md4"));
+}
+
+#[test]
+fn extract_digest_list_returns_none_for_version_only() {
+    let greeting = "@RSYNCD: 29.0\n";
+    let list = extract_digest_list_from_greeting(greeting);
+    assert!(list.is_none());
+}
+
+#[test]
+fn extract_digest_list_returns_none_for_blank_after_version() {
+    let greeting = "@RSYNCD: 30.0\r\n";
+    let list = extract_digest_list_from_greeting(greeting);
+    assert!(list.is_none());
+}
+
+#[test]
+fn extract_digest_list_preserves_unknown_tokens() {
+    // upstream: compat.c:844 emits the raw banner string, including
+    // unknown algorithm names. Parity matters for the diagnostic.
+    let greeting = "@RSYNCD: 31.0 sha512 unknown sha1 bogus md4\n";
+    let list = extract_digest_list_from_greeting(greeting);
+    assert_eq!(list, Some("sha512 unknown sha1 bogus md4"));
+}
+
+#[test]
 fn parse_protocol_from_greeting_handles_version_only() {
     let greeting = "@RSYNCD: 28.0\n";
     let protocol = parse_protocol_from_greeting(greeting).unwrap();
