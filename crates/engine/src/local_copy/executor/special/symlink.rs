@@ -11,6 +11,8 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
+use logging::info_log;
+
 use crate::local_copy::remove_existing_destination;
 #[cfg(all(any(unix, windows), feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
@@ -211,6 +213,15 @@ pub(crate) fn copy_symlink(
     // If the link is unsafe but we were told to copy what it points to, do that.
     if unsafe_target {
         if context.copy_unsafe_links_enabled() {
+            // upstream: flist.c:217 - INFO_GTE(SYMSAFE, 1) fires before
+            // an unsafe symlink is dereferenced into a regular entry.
+            info_log!(
+                Symsafe,
+                1,
+                "copying unsafe symlink \"{}\" -> \"{}\"",
+                source.display(),
+                target.display()
+            );
             let target_metadata = follow_symlink_metadata(source)?;
             let target_type = target_metadata.file_type();
 

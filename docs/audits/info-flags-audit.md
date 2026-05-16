@@ -46,7 +46,7 @@ excluded.
 | REMOVE    | 1 (W_SND)          | Mention files removed on the sending side                          | `crates/cli/src/frontend/execution/flags/info.rs:146-149`, `info_output.rs:334`. No upper cap.                                                                                                                                                                                                                                       | None in production. Upstream `--remove-source-files` notifications gate on `INFO_GTE(REMOVE, 1)`; we have `--remove-source-files` plumbing in `crates/core` but no info gate before logging.                                                                                                                                            | Stub        |
 | SKIP      | 2 (W_REC)          | Mention files skipped due to transfer overrides (levels 1-2)       | `crates/cli/src/frontend/execution/flags/info.rs:150-156` rejects `level > 2`; `info_output.rs:335` does not enforce.                                                                                                                                                                                                                | None in production. Upstream `INFO_GTE(SKIP, 1/2)` fires in `generator.c:1367/1385/1387/1693/1701/1710`. Equivalent generator paths in `crates/engine/src/generator/*` do not consult the gate.                                                                                                                                          | Parsed-only |
 | STATS     | 3 (W_CLI\|W_SRV)   | Mention statistics at end of run (levels 1-3)                      | `crates/cli/src/frontend/execution/flags/info.rs:92-98` rejects `level > 3`; `info_output.rs:336` does not enforce.                                                                                                                                                                                                                  | `crates/cli/src/frontend/progress/diagnostic.rs:167` and `crates/cli/src/frontend/execution/drive/summary.rs` consume the boolean derived from `stats > 0`. Upstream's three-level emission (`STATS, 1/2/3` in `cleanup.c:224`, `generator.c:2377/2422`, `main.c:333/418/451`) is collapsed into a single boolean in our renderer. | Partial     |
-| SYMSAFE   | 1 (W_SND\|W_REC)   | Mention symlinks that are unsafe                                   | `crates/cli/src/frontend/execution/flags/info.rs:157-160`, `info_output.rs:337`. No upper cap.                                                                                                                                                                                                                                       | None in production. Upstream `INFO_GTE(SYMSAFE, 1)` fires in `backup.c:291` and `flist.c:216`. Our symlink-safety code in `crates/filters` and `crates/transfer/src/file_list/*` does not gate on the flag.                                                                                                                                | Stub        |
+| SYMSAFE   | 1 (W_SND\|W_REC)   | Mention symlinks that are unsafe                                   | `crates/cli/src/frontend/execution/flags/info.rs:157-160`, `info_output.rs:337`. No upper cap.                                                                                                                                                                                                                                       | `crates/transfer/src/generator/file_list/walk.rs::resolve_symlink_metadata` and the batched-stat fixup in the same file emit `copying unsafe symlink "<path>" -> "<target>"` via `info_log!(Symsafe, 1, ...)` on the sender side when `--copy-unsafe-links` triggers a dereference. `crates/engine/src/local_copy/executor/special/symlink.rs::copy_symlink` emits the same notice on the local-copy path. `crates/engine/src/local_copy/context_impl/state.rs::backup_existing_entry` emits `not backing up unsafe symlink "<dest>" -> "<target>"` on the cross-device backup fallback when `--safe-links` refuses to recreate the symlink. All three mirror upstream `flist.c:217` and `backup.c:292`. | Match       |
 
 Legend:
 
@@ -199,7 +199,7 @@ levels 0-5. Differences:
 ## Summary of parity gaps
 
 1. Per-flag emission gating is absent for DEL, FLIST, MISC, REMOVE,
-   SKIP, SYMSAFE. BACKUP is wired through `backup_existing_entry` in
+   SKIP. BACKUP is wired through `backup_existing_entry` in
    `crates/engine/src/local_copy/context_impl/state.rs`; NONREG is wired
    through `record_skipped_non_regular` in
    `crates/engine/src/local_copy/context_impl/reporting.rs`; COPY is wired
@@ -208,12 +208,18 @@ levels 0-5. Differences:
    path in `crates/engine/src/local_copy/executor/file/copy/transfer/execute.rs`;
    MOUNT is wired through the cross-device skip sites in
    `crates/engine/src/local_copy/executor/directory/recursive/entry.rs` and
-   `crates/engine/src/local_copy/executor/sources/orchestration.rs`.
+   `crates/engine/src/local_copy/executor/sources/orchestration.rs`;
+   SYMSAFE is wired through the sender-side walker in
+   `crates/transfer/src/generator/file_list/walk.rs`, the local-copy
+   dereference branch in
+   `crates/engine/src/local_copy/executor/special/symlink.rs`, and the
+   cross-device backup fallback in
+   `crates/engine/src/local_copy/context_impl/state.rs`.
    Adding `info_gte(InfoFlag::*, n)` guards at the upstream call sites
    listed above is required to graduate each remaining flag from "stub"
    or "parsed-only" to "match". Suggested insertion crates:
    `crates/engine/src/generator/*` (FLIST, SKIP),
-   `crates/transfer/src/file_list/*` (FLIST, SYMSAFE),
+   `crates/transfer/src/file_list/*` (FLIST),
    `crates/core/src/client/remote/*` (REMOVE),
    `crates/protocol/src/multiplex/*` and `crates/batch/src/*` (MISC).
 2. STATS is collapsed into a boolean. The renderer in
