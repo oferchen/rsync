@@ -130,6 +130,7 @@ pub mod iocp;
 #[path = "iocp_stub.rs"]
 pub mod iocp;
 
+mod io_uring_common;
 mod io_uring_depth;
 mod io_uring_ops;
 mod policy;
@@ -206,6 +207,7 @@ pub use io_uring::{
     socket_reader_from_fd, socket_writer_from_fd,
 };
 
+pub use io_uring_common::IoBackend;
 pub use io_uring_depth::{
     IO_URING_DEPTH_MAX, IO_URING_DEPTH_MIN, IoUringDepthError, validate_io_uring_depth,
 };

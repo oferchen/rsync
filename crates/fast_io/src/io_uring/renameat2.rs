@@ -48,15 +48,9 @@ use io_uring::{IoUring as RawIoUring, opcode, squeue, types};
 
 use super::config::is_io_uring_available;
 
-pub use libc::{RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT};
-
-/// `IORING_OP_RENAMEAT` opcode number.
-///
-/// Hard-coded because `io_uring::Probe::is_supported` takes a raw `u8` and
-/// the io-uring 0.7 crate does not expose a `CODE` constant on
-/// `opcode::RenameAt`. The value matches `include/uapi/linux/io_uring.h`
-/// (kernel 5.11+).
-pub const IORING_OP_RENAMEAT: u8 = 35;
+pub use crate::io_uring_common::{
+    IORING_OP_RENAMEAT, RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT,
+};
 
 /// Cached result of the RENAMEAT2 opcode probe.
 static RENAMEAT2_SUPPORTED: OnceLock<bool> = OnceLock::new();

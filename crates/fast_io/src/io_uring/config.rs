@@ -66,31 +66,7 @@ fn get_kernel_release() -> Option<String> {
     }
 }
 
-/// Structured kernel information for io_uring availability reporting.
-///
-/// Provides machine-readable fields for callers that need to act on
-/// kernel version or op count (e.g., `--version` output, debug logging).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IoUringKernelInfo {
-    /// Whether io_uring is usable on this system.
-    pub available: bool,
-    /// Detected kernel major version, if parseable.
-    pub kernel_major: Option<u32>,
-    /// Detected kernel minor version, if parseable.
-    pub kernel_minor: Option<u32>,
-    /// Number of supported io_uring opcodes (0 if unavailable or probe failed).
-    pub supported_ops: u32,
-    /// Whether the kernel supports `IORING_REGISTER_PBUF_RING` (Linux 5.19+).
-    ///
-    /// Determined by the kernel-version probe in
-    /// [`super::buffer_ring::pbuf_ring_supported`]. `false` does not preclude
-    /// classic provided buffers (`IORING_OP_PROVIDE_BUFFERS` /
-    /// `IORING_REGISTER_BUFFERS`); see the fallback chain documented on
-    /// `crate::io_uring::buffer_ring`.
-    pub pbuf_ring_supported: bool,
-    /// Human-readable reason string (same as `io_uring_availability_reason()`).
-    pub reason: String,
-}
+pub use crate::io_uring_common::IoUringKernelInfo;
 
 /// Public accessors for kernel version detection used by `--version` output.
 pub mod config_detail {
@@ -305,152 +281,15 @@ pub(crate) fn check_io_uring_reason() -> IoUringProbeResult {
     }
 }
 
-/// Configuration for io_uring instances.
+pub use crate::io_uring_common::IoUringConfig;
+
+/// Linux-only ring-construction methods for the shared [`IoUringConfig`].
 ///
-/// Controls ring size, buffer dimensions, and optional kernel features.
-/// All features require Linux 5.6+. The defaults (64 SQ entries, 64 KB buffers,
-/// fd registration enabled, SQPOLL disabled) are tuned for general rsync
-/// workloads. Use [`for_large_files`](Self::for_large_files) or
-/// [`for_small_files`](Self::for_small_files) for specialized workloads.
-#[derive(Debug, Clone)]
-pub struct IoUringConfig {
-    /// Number of submission queue entries (must be power of 2).
-    pub sq_entries: u32,
-    /// Size of read/write buffers.
-    pub buffer_size: usize,
-    /// Whether to use direct I/O (O_DIRECT).
-    pub direct_io: bool,
-    /// Whether to register the file descriptor with io_uring.
-    ///
-    /// When enabled, the fd is registered via `IORING_REGISTER_FILES` at open
-    /// time, eliminating per-op file table lookups in the kernel. This saves
-    /// ~50ns per SQE on high-fd-count processes.
-    pub register_files: bool,
-    /// Whether to enable kernel-side SQ polling (`IORING_SETUP_SQPOLL`).
-    ///
-    /// When enabled, a kernel thread continuously polls the submission queue,
-    /// eliminating the `io_uring_enter` syscall on submit. Requires elevated
-    /// privileges or `CAP_SYS_NICE` on most kernels. Falls back to normal
-    /// submission if setup fails.
-    pub sqpoll: bool,
-    /// Idle timeout (ms) for the SQPOLL kernel thread before it goes to sleep.
-    /// Only relevant when `sqpoll` is true. Default: 1000ms.
-    pub sqpoll_idle_ms: u32,
-    /// Signals that an `mmap`-backed reader (e.g. `MmapReader` /
-    /// `MmapStrategy`) is live on this transfer plan and may share buffers
-    /// with this ring.
-    ///
-    /// Set by the caller before [`build_ring`](Self::build_ring) when the
-    /// upstream selector cannot guarantee `BufferedMap` for the basis file
-    /// (see `BasisWriterKind` in `crates/transfer/src/delta_apply/`). When
-    /// `true`, `build_ring` refuses to enable SQPOLL even if `sqpoll == true`
-    /// and falls back to a regular ring with a single warning emitted via
-    /// `logging::debug_log!`.
-    ///
-    /// The pairing of SQPOLL with an mmap'd file region is unsafe on
-    /// pre-6.x Linux kernels: the SQPOLL kthread runs without the user
-    /// `mm` context, so cold-page faults on mapped pages are serviced via
-    /// `task_work` on the original task. Under load this loops between
-    /// kthread submission and userspace fault-in, and on concurrent
-    /// truncation surfaces as in-kernel `SIGBUS`. See
-    /// `docs/audits/io-uring-sqpoll-mmap-interaction.md` (companion audits
-    /// `docs/audits/mmap-iouring-sqpoll-pagefaults.md` and
-    /// `docs/audits/io_uring_sqpoll_mmap_pagefault.md`) for the long-form
-    /// discussion and upstream-kernel references.
-    pub mmap_basis_active: bool,
-    /// Whether to register fixed buffers for `READ_FIXED`/`WRITE_FIXED` operations.
-    ///
-    /// When enabled, a [`RegisteredBufferGroup`](super::RegisteredBufferGroup) is
-    /// created alongside the ring, pinning page-aligned buffers in kernel memory.
-    /// This eliminates per-SQE `get_user_pages()` overhead - a significant win for
-    /// high-throughput sequential I/O.
-    ///
-    /// Falls back silently to regular `Read`/`Write` opcodes if registration fails.
-    pub register_buffers: bool,
-    /// Number of fixed buffers to register. Only relevant when `register_buffers`
-    /// is true. Capped at 1024 by the kernel. Default: 8.
-    pub registered_buffer_count: usize,
-    /// Zero-copy policy for socket sends.
-    ///
-    /// When set to [`ZeroCopyPolicy::Enabled`](crate::ZeroCopyPolicy::Enabled),
-    /// io_uring socket writers prefer `IORING_OP_SEND_ZC` (Linux 6.0+) for
-    /// reduced CPU overhead via kernel-side page pinning. When set to
-    /// [`ZeroCopyPolicy::Disabled`](crate::ZeroCopyPolicy::Disabled),
-    /// they fall back to regular `IORING_OP_SEND` and avoid registering
-    /// page-pinned buffers for socket I/O. The default
-    /// [`ZeroCopyPolicy::Auto`](crate::ZeroCopyPolicy::Auto) selects
-    /// `IORING_OP_SEND` since `SEND_ZC` only outperforms `SEND` on large
-    /// pinned-buffer transfers; future revisions may flip the default once
-    /// `SEND_ZC` is wired through the buffer-ring path.
-    pub zero_copy_policy: crate::ZeroCopyPolicy,
-}
-
-impl Default for IoUringConfig {
-    fn default() -> Self {
-        Self {
-            sq_entries: 64,
-            buffer_size: 64 * 1024,
-            direct_io: false,
-            register_files: true,
-            sqpoll: false,
-            sqpoll_idle_ms: 1000,
-            mmap_basis_active: false,
-            register_buffers: true,
-            registered_buffer_count: 8,
-            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
-        }
-    }
-}
-
+/// The plain-data struct lives in [`crate::io_uring_common`] so the
+/// non-Linux stub can expose the identical field layout without duplicating
+/// the definition. The `build_ring` method below is the only platform-gated
+/// behaviour: it requires the `io_uring` crate which is Linux-only.
 impl IoUringConfig {
-    /// Creates a config optimized for large file transfers.
-    #[must_use]
-    pub fn for_large_files() -> Self {
-        Self {
-            sq_entries: 256,
-            buffer_size: 256 * 1024,
-            direct_io: false,
-            register_files: true,
-            sqpoll: false,
-            sqpoll_idle_ms: 1000,
-            mmap_basis_active: false,
-            register_buffers: true,
-            registered_buffer_count: 16,
-            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
-        }
-    }
-
-    /// Creates a config optimized for many small files.
-    #[must_use]
-    pub fn for_small_files() -> Self {
-        Self {
-            sq_entries: 128,
-            buffer_size: 16 * 1024,
-            direct_io: false,
-            register_files: true,
-            sqpoll: false,
-            sqpoll_idle_ms: 1000,
-            mmap_basis_active: false,
-            register_buffers: true,
-            registered_buffer_count: 8,
-            zero_copy_policy: crate::ZeroCopyPolicy::Auto,
-        }
-    }
-
-    /// Returns whether socket writers may attempt `IORING_OP_SEND_ZC`.
-    ///
-    /// `SEND_ZC` (Linux 6.0+) reduces CPU overhead via kernel-side page
-    /// pinning but only outperforms `IORING_OP_SEND` for large pinned-buffer
-    /// transfers. Returns `true` only when the policy is
-    /// [`ZeroCopyPolicy::Enabled`](crate::ZeroCopyPolicy::Enabled).
-    /// `Auto` and `Disabled` both return `false` so the default path uses
-    /// regular `IORING_OP_SEND`; flipping `Auto` to opt in is reserved for a
-    /// future revision once `SEND_ZC` is wired to the registered-buffer ring.
-    #[must_use]
-    pub fn allow_send_zc(&self) -> bool {
-        matches!(self.zero_copy_policy, crate::ZeroCopyPolicy::Enabled)
-    }
-
     /// Builds an `IoUring` instance from this config.
     ///
     /// Tries SQPOLL first if requested; falls back to a plain ring on
