@@ -120,6 +120,7 @@ test-support = { path = "../test-support" }
 criterion = "0.8"
 proptest = "1.4"
 rand = "0.9"
+crossbeam-channel = { workspace = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
 filetime = "0.2"
@@ -138,4 +139,8 @@ harness = false
 
 [[bench]]
 name = "reorder_buffer_large_scale"
+harness = false
+
+[[bench]]
+name = "parallel_stat_collector_contention"
 harness = false
