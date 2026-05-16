@@ -73,8 +73,8 @@ impl<W: Write> CompressedWriter<W> {
         level: CompressionLevel,
         workers: Option<NonZeroU8>,
     ) -> io::Result<Self> {
-        // Buffer size matching upstream rsync's IO_BUFFER_SIZE (32KB)
-        // This reduces flush frequency and improves compression ratio
+        // upstream: io.c IO_BUFFER_SIZE (32KB). Reduces flush frequency and
+        // improves compression ratio.
         const BUFFER_SIZE: usize = 32 * 1024;
 
         let encoder = match algorithm {
@@ -153,9 +153,8 @@ impl<W: Write> CompressedWriter<W> {
     /// upstream: `token.c:send_deflated_token()` lines 433-434 uses
     /// `Z_SYNC_FLUSH` at token boundaries for independent decompressibility.
     fn flush_compressed(&mut self) -> io::Result<()> {
-        // First, sync-flush the encoder so all pending data in the deflate
-        // state is materialized into the encoder's Vec sink.
-        // upstream: token.c uses Z_SYNC_FLUSH after each token's data.
+        // upstream: token.c uses Z_SYNC_FLUSH after each token's data so the
+        // encoder's pending deflate state is materialized into the sink.
         match &mut self.encoder {
             EncoderVariant::Zlib(encoder) => encoder.flush()?,
             #[cfg(feature = "lz4")]
@@ -164,10 +163,7 @@ impl<W: Write> CompressedWriter<W> {
             EncoderVariant::Zstd(encoder) => encoder.flush()?,
         }
 
-        // Drain the sink (now contains all flushed output) to inner writer
         self.drain_sink()?;
-
-        // Flush the underlying writer
         self.inner.flush()
     }
 
@@ -182,7 +178,7 @@ impl<W: Write> CompressedWriter<W> {
     ///
     /// Returns an error if finishing the compression stream or flushing fails.
     pub fn finish(mut self) -> io::Result<W> {
-        // Finish the encoder - this writes final trailer bytes to the sink
+        // finish_into_inner writes the final trailer bytes to the sink.
         match self.encoder {
             EncoderVariant::Zlib(encoder) => {
                 let (sink, _bytes) = encoder.finish_into_inner()?;
@@ -206,7 +202,6 @@ impl<W: Write> CompressedWriter<W> {
             }
         }
 
-        // Final flush of underlying writer
         self.inner.flush()?;
         Ok(self.inner)
     }
@@ -234,11 +229,8 @@ impl<W: Write> CompressedWriter<W> {
 
 impl<W: Write> Write for CompressedWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // Batch recording happens at the MultiplexWriter level (compressed
-        // wire bytes), not here. upstream: io.c:write_buf() tees after
-        // compression.
-
-        // Compress input data - this writes to the encoder's internal Vec<u8> sink
+        // upstream: io.c:write_buf() tees compressed wire bytes at the
+        // MultiplexWriter level, not here.
         match &mut self.encoder {
             EncoderVariant::Zlib(encoder) => encoder.write(buf)?,
             #[cfg(feature = "lz4")]
@@ -247,7 +239,6 @@ impl<W: Write> Write for CompressedWriter<W> {
             EncoderVariant::Zstd(encoder) => encoder.write(buf)?,
         }
 
-        // Check if we should flush compressed data to underlying writer
         let current_size = match &self.encoder {
             EncoderVariant::Zlib(encoder) => encoder.get_ref().len(),
             #[cfg(feature = "lz4")]
@@ -260,7 +251,7 @@ impl<W: Write> Write for CompressedWriter<W> {
             self.drain_sink()?;
         }
 
-        // Always report full write to match upstream behavior
+        // Report full write to match upstream behavior.
         Ok(buf.len())
     }
 
