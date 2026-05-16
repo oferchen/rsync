@@ -438,6 +438,9 @@ impl ReceiverContext {
                     }
                 }
                 fs::rename(&file_path, &backup_path)?;
+                // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on RENAME
+                // success branch of link_or_rename.
+                engine::trace_make_backup_rename(&file_path.display().to_string());
             }
 
             // On Linux 5.11+ with io_uring, submits IORING_OP_RENAMEAT instead of
