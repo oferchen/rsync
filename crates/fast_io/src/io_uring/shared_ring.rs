@@ -69,7 +69,9 @@ use std::os::unix::io::RawFd;
 use io_uring::{IoUring as RawIoUring, opcode, types};
 
 use super::batching::{NO_FIXED_FD, maybe_fixed_file};
-use super::config::{IoUringConfig, is_io_uring_available};
+use super::config::is_io_uring_available;
+#[cfg(test)]
+use super::config::IoUringConfig;
 use super::registered_buffers::RegisteredBufferGroup;
 
 /// io_uring opcode value for `IORING_OP_POLL_ADD`.

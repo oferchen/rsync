@@ -79,6 +79,7 @@ const IORING_OFF_PBUF_RING: u64 = 0x80000000;
 const MIN_PBUF_RING_KERNEL: (u32, u32) = (5, 19);
 
 pub use crate::io_uring_common::{BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags};
+#[cfg(test)]
 use crate::io_uring_common::{IORING_CQE_BUFFER_SHIFT, IORING_CQE_F_BUFFER};
 
 /// Matches `struct io_uring_buf_reg` from the kernel.
