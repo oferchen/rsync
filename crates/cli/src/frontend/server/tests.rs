@@ -801,3 +801,66 @@ fn parse_server_args_iconv_and_timeout_strip_to_dest() {
     assert_eq!(flags, "-vlogDtpre.iLsfxCIvu");
     assert_eq!(pos_args, vec![OsString::from("dest/")]);
 }
+
+#[test]
+fn is_known_server_long_flag_compression_choices() {
+    // upstream: options.c:2809-2814 - server_options() emits these whenever the
+    // negotiated codec is not the default CPRES_ZLIB carried by the compact `-z`
+    // flag. Without them in the known list, the dest path is silently corrupted
+    // (same failure mode as the iconv/timeout regression above).
+    assert!(is_known_server_long_flag("--new-compress"));
+    assert!(is_known_server_long_flag("--old-compress"));
+    assert!(is_known_server_long_flag("--compress-choice=zstd"));
+    assert!(is_known_server_long_flag("--compress-choice=zlib"));
+    assert!(is_known_server_long_flag("--zc=lz4"));
+}
+
+#[test]
+fn parse_server_long_flags_captures_compress_choice() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--compress-choice=zstd"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.compress_choice.as_deref(), Some("zstd"));
+}
+
+#[test]
+fn parse_server_long_flags_compress_choice_zc_alias() {
+    let args = vec![OsString::from("--server"), OsString::from("--zc=lz4")];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.compress_choice.as_deref(), Some("lz4"));
+}
+
+#[test]
+fn parse_server_long_flags_new_compress_maps_to_zlibx() {
+    let args = vec![OsString::from("--server"), OsString::from("--new-compress")];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.compress_choice.as_deref(), Some("zlibx"));
+}
+
+#[test]
+fn parse_server_long_flags_old_compress_maps_to_zlib() {
+    let args = vec![OsString::from("--server"), OsString::from("--old-compress")];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.compress_choice.as_deref(), Some("zlib"));
+}
+
+#[test]
+fn parse_server_args_compress_choice_strips_from_dest() {
+    // Regression: with `-z` upstream picks the highest priority codec (ZSTD on
+    // protocol 32) and sends `--compress-choice=zstd`. Before the fix this fell
+    // through to positional args, corrupting the destination path identically to
+    // the iconv/timeout regression.
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-vlogDtpre.iLsfxCIvuz"),
+        OsString::from("--compress-choice=zstd"),
+        OsString::from("--timeout=10"),
+        OsString::from("."),
+        OsString::from("dest/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-vlogDtpre.iLsfxCIvuz");
+    assert_eq!(pos_args, vec![OsString::from("dest/")]);
+}

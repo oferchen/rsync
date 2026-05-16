@@ -370,7 +370,11 @@ pub fn run_server_with_handshake<W: Write>(
         let choice = config.connection.compress_choice.map(|algo| algo.as_str());
         (config.flags.compress || choice.is_some(), choice)
     } else if let Some(args) = handshake.client_args.as_deref() {
-        // Check compact flag strings for 'z' (CPRES_ZLIB only)
+        // Daemon-mode server: client args are the verbatim argv emitted by
+        // upstream's server_options() before they were parsed into ServerConfig.
+        // Scan them directly so the daemon path mirrors upstream's compat.c logic.
+
+        // Check compact flag strings for 'z' (CPRES_ZLIB only).
         let has_z = args
             .iter()
             .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg.contains('z'));
@@ -393,7 +397,16 @@ pub fn run_server_with_handshake<W: Write>(
 
         (has_z || choice.is_some(), choice)
     } else {
-        (false, None)
+        // SSH server mode: handshake.client_args is None because the CLI
+        // frontend has already parsed the argv into ServerConfig. Recover the
+        // compression intent from the parsed flag string (`config.flags.compress`
+        // for `-z`) and the explicit `--compress-choice` / `--new-compress` /
+        // `--old-compress` long options preserved on `config.connection`.
+        // upstream: options.c:2696-2805 - server_options() emits `-z` in the
+        // compact arg string for CPRES_ZLIB, and the long-form variants for
+        // other algorithms. Both flow through to ServerConfig here.
+        let choice = config.connection.compress_choice.map(|algo| algo.as_str());
+        (config.flags.compress || choice.is_some(), choice)
     };
 
     // upstream: compat.c:543 - compression vstrings are only exchanged when

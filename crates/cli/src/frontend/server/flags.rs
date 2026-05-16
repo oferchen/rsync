@@ -83,6 +83,15 @@ pub(super) struct ServerLongFlags {
     /// `make_output_option(info_words, info_levels, ...)`, so the server
     /// receives `--info=...` whenever the client has non-default info levels.
     pub(super) info: Vec<OsString>,
+    /// Explicit compression algorithm forwarded by the client.
+    ///
+    /// upstream: options.c:2800-2805 - `server_options()` emits long-form
+    /// `--new-compress` (zlibx), `--old-compress` (zlib), or
+    /// `--compress-choice=ALGO` (zstd/lz4) whenever the negotiated codec is
+    /// not the default CPRES_ZLIB carried by the compact `-z` flag. Capturing
+    /// the value here lets the server bypass vstring negotiation and use the
+    /// same algorithm as the client.
+    pub(super) compress_choice: Option<String>,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -122,6 +131,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         timeout: None,
         reference_directories: Vec::new(),
         info: Vec::new(),
+        compress_choice: None,
     };
 
     for arg in args {
@@ -151,6 +161,12 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             "--ignore-existing" => flags.ignore_existing = true,
             // upstream: options.c:2833 - --existing (--ignore-non-existing) sent as long-form arg
             "--existing" | "--ignore-non-existing" => flags.existing_only = true,
+            // upstream: options.c:2800-2805 - non-ZLIB compression algorithms
+            // come across the wire as bare long flags. Mapping them to the
+            // wire-name strings keeps parity with how the daemon path resolves
+            // CompressionAlgorithm in `transfer::run_server_with_handshake`.
+            "--new-compress" => flags.compress_choice = Some("zlibx".to_owned()),
+            "--old-compress" => flags.compress_choice = Some("zlib".to_owned()),
             _ => {
                 parse_value_bearing_flag(&s, &mut flags);
             }
@@ -188,6 +204,13 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.timeout = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--io-uring-depth=") {
         flags.io_uring_depth = Some(value.to_owned());
+    // upstream: options.c:2800-2805 - `--compress-choice=ALGO` / `--zc=ALGO`
+    // names the negotiated codec when it is not the default CPRES_ZLIB.
+    } else if let Some(value) = s
+        .strip_prefix("--compress-choice=")
+        .or_else(|| s.strip_prefix("--zc="))
+    {
+        flags.compress_choice = Some(value.to_owned());
     // upstream: options.c:2928-2931 - server_options() forwards info levels.
     // Capture the raw value so run_server_mode can parse it tolerantly via
     // parse_info_flags_server (mirroring `am_server` in parse_output_words).
@@ -245,8 +268,12 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--existing"
             | "--ignore-non-existing"
     ) || arg == "-s"
+        || arg == "--new-compress"
+        || arg == "--old-compress"
         || arg.starts_with("--checksum-seed=")
         || arg.starts_with("--checksum-choice=")
+        || arg.starts_with("--compress-choice=")
+        || arg.starts_with("--zc=")
         || arg.starts_with("--compare-dest=")
         || arg.starts_with("--copy-dest=")
         || arg.starts_with("--link-dest=")
