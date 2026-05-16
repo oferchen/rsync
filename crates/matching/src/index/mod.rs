@@ -414,4 +414,37 @@ impl DeltaSignatureIndex {
     pub fn tag_admits(&self, sum1: u16) -> bool {
         self.tag_table[sum1 as usize]
     }
+
+    /// Slot count of the underlying compact lookup table.
+    ///
+    /// The lookup table is a flat `Vec<u64>` open-addressing hash whose
+    /// footprint dominates the cache behaviour of a hot lookup loop.
+    /// Bench harnesses use this to bin index sizes against the local CPU
+    /// cache hierarchy (L1 / L2 / LLC / main memory).
+    #[must_use]
+    pub fn lookup_capacity(&self) -> usize {
+        self.lookup.capacity()
+    }
+
+    /// Byte size of the underlying compact lookup table allocation.
+    ///
+    /// Equal to `lookup_capacity() * 8` for the current 8-byte slot layout.
+    /// Reported separately so harnesses keep working if the slot width
+    /// changes (#2072 packed-key candidate).
+    #[must_use]
+    pub fn lookup_bytes(&self) -> usize {
+        self.lookup.capacity() * core::mem::size_of::<u64>()
+    }
+
+    /// Drives the compact lookup probe directly, skipping the tag-table
+    /// and bithash prefilters and the strong-checksum verify.
+    ///
+    /// Returns the number of basis block indices yielded by the
+    /// `find_all` iterator at the requested `(sum1, sum2)` key. Bench
+    /// harnesses use this to isolate the cache cost of the open-addressed
+    /// probe chain itself from the surrounding match pipeline.
+    #[must_use]
+    pub fn lookup_probe(&self, sum1: u16, sum2: u16) -> usize {
+        self.lookup.find_all(sum1, sum2).count()
+    }
 }
