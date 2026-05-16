@@ -56,7 +56,7 @@ pub fn format_itemize(change: &ItemizeChange) -> String {
             '.'
         });
 
-        // Position 4: Time (T takes precedence over t)
+        // Position 4: Time
         result.push(if change.time_set_to_transfer {
             'T'
         } else if change.time_changed {
@@ -74,7 +74,7 @@ pub fn format_itemize(change: &ItemizeChange) -> String {
         // Position 7: Group
         result.push(if change.group_changed { 'g' } else { '.' });
 
-        // Position 8: Access/Create time (both, atime only, ctime only, or neither)
+        // Position 8: Access/Create time
         result.push(match (change.atime_changed, change.ctime_changed) {
             (true, true) => 'b',
             (true, false) => 'u',
