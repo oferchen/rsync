@@ -248,10 +248,8 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
         return run_loopback_benchmarks(workspace, &options);
     }
 
-    // Determine benchmark URLs based on mode
     let urls = match options.mode {
         BenchmarkMode::Local => {
-            // Check if daemon is running, start if needed
             if !check_daemon_running(options.port) {
                 println!("Starting rsync daemon on port {}...", options.port);
                 start_daemon(workspace, &options)?;
@@ -265,7 +263,6 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
         }
         BenchmarkMode::Remote => {
             if options.urls.is_empty() {
-                // Use default public mirrors
                 REMOTE_MIRRORS.iter().map(|m| m.url.to_string()).collect()
             } else {
                 options.urls.clone()
@@ -281,7 +278,6 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
     }
     println!();
 
-    // Determine versions to benchmark
     let versions = if options.versions.is_empty() {
         detect_versions(workspace)?
     } else {
@@ -290,15 +286,12 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
 
     println!("Versions to benchmark: {versions:?}\n");
 
-    // Build versions if needed
     let mut binaries: HashMap<String, PathBuf> = HashMap::new();
 
-    // Always include upstream rsync
     if let Some(rsync_path) = find_upstream_rsync() {
         binaries.insert("upstream".to_string(), rsync_path);
     }
 
-    // Build current development version
     if !options.skip_build {
         println!("Building current development version...");
         build_release(workspace)?;
@@ -308,7 +301,6 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
         binaries.insert("dev".to_string(), current_binary);
     }
 
-    // Build tagged versions
     for version in &versions {
         if version == "dev" || version == "upstream" {
             continue;
@@ -326,7 +318,6 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
         }
     }
 
-    // Run benchmarks
     let dest_dir = options.bench_dir.join("bench-dest");
     let mut all_results: Vec<BenchmarkResultSet> = Vec::new();
 
@@ -347,7 +338,6 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
             url_results.push(result);
         }
 
-        // Sort by mean time
         url_results.sort_by(|a, b| a.mean.cmp(&b.mean));
         all_results.push(BenchmarkResultSet {
             url: url.clone(),
@@ -383,13 +373,11 @@ fn list_mirrors() -> TaskResult<()> {
 
 /// Extracts a short name from a URL for display.
 fn url_short_name(url: &str) -> String {
-    // Check predefined mirrors first
     for mirror in REMOTE_MIRRORS {
         if url == mirror.url {
             return mirror.name.to_string();
         }
     }
-    // Extract hostname
     url.strip_prefix("rsync://")
         .and_then(|s| s.split('/').next())
         .unwrap_or("unknown")
@@ -407,7 +395,6 @@ struct BenchmarkResultSet {
 /// Checks if rsync daemon is running on the given port.
 fn check_daemon_running(port: u16) -> bool {
     use std::net::TcpStream;
-    // Try IPv4 first, then IPv6
     TcpStream::connect(format!("127.0.0.1:{port}"))
         .or_else(|_| TcpStream::connect(format!("[::1]:{port}")))
         .map(|_| true)
@@ -419,32 +406,27 @@ fn stop_daemon(options: &BenchmarkOptions) {
     let pid_path = options.bench_dir.join("rsyncd.pid");
     if let Ok(pid_str) = fs::read_to_string(&pid_path) {
         if let Ok(pid) = pid_str.trim().parse::<i32>() {
-            // Kill existing daemon
             let _ = Command::new("kill").arg(pid.to_string()).status();
             std::thread::sleep(Duration::from_millis(100));
         }
     }
-    // Remove stale pid file
     let _ = fs::remove_file(&pid_path);
 }
 
 /// Starts an rsync daemon for benchmarking.
 fn start_daemon(workspace: &Path, options: &BenchmarkOptions) -> TaskResult<()> {
-    // Stop any existing daemon first
     stop_daemon(options);
 
     let conf_path = options.bench_dir.join("rsyncd.conf");
     let pid_path = options.bench_dir.join("rsyncd.pid");
     let log_path = options.bench_dir.join("rsyncd.log");
 
-    // Check if kernel source exists, download if not
     let kernel_dir = options.bench_dir.join("kernel-src");
     if !kernel_dir.exists() {
         println!("Downloading Linux kernel source for benchmarking...");
         download_kernel_source(&options.bench_dir)?;
     }
 
-    // Write daemon config
     let config = format!(
         r#"port = {}
 pid file = {}
@@ -582,10 +564,8 @@ fn build_release(workspace: &Path) -> TaskResult<()> {
 
 /// Builds a specific tagged version.
 fn build_version(workspace: &Path, version: &str, output: &Path) -> TaskResult<()> {
-    // Create a worktree for building the version
     let worktree_dir = workspace.join("target").join(format!("worktree-{version}"));
 
-    // Clean up existing worktree
     let _ = Command::new("git")
         .args([
             "worktree",
@@ -596,7 +576,6 @@ fn build_version(workspace: &Path, version: &str, output: &Path) -> TaskResult<(
         .current_dir(workspace)
         .status();
 
-    // Create worktree
     let status = Command::new("git")
         .args(["worktree", "add", worktree_dir.to_str().unwrap(), version])
         .current_dir(workspace)
@@ -609,7 +588,6 @@ fn build_version(workspace: &Path, version: &str, output: &Path) -> TaskResult<(
         });
     }
 
-    // Build in worktree
     let status = Command::new("cargo")
         .args(["build", "--release"])
         .current_dir(&worktree_dir)
@@ -622,11 +600,9 @@ fn build_version(workspace: &Path, version: &str, output: &Path) -> TaskResult<(
         });
     }
 
-    // Copy binary
     let binary = worktree_dir.join("target/release/oc-rsync");
     fs::copy(&binary, output)?;
 
-    // Clean up worktree
     let _ = Command::new("git")
         .args([
             "worktree",
@@ -650,11 +626,10 @@ fn run_benchmark(
     let mut results = Vec::with_capacity(runs);
 
     for i in 0..runs {
-        // Clean destination
         let _ = fs::remove_dir_all(dest_dir);
         fs::create_dir_all(dest_dir)?;
 
-        // Sync to drop caches (best effort)
+        // Best-effort cache drop before timing.
         let _ = Command::new("sync").status();
 
         let start = Instant::now();
@@ -945,7 +920,6 @@ fn generate_loopback_data(bench_dir: &Path, profile: DataProfile) -> TaskResult<
     let data_dir = bench_dir.join("loopback-data");
     let marker = data_dir.join(".profile");
 
-    // Check if data already matches requested profile
     let profile_name = format!("{profile:?}");
     if marker.exists() {
         if let Ok(existing) = fs::read_to_string(&marker) {
@@ -959,14 +933,13 @@ fn generate_loopback_data(bench_dir: &Path, profile: DataProfile) -> TaskResult<
         }
     }
 
-    // Clean and regenerate
     let _ = fs::remove_dir_all(&data_dir);
     fs::create_dir_all(&data_dir)?;
 
     let (file_count, dir_count) = profile_params(profile);
     println!("Generating {profile_name} test data: {file_count} files in {dir_count} dirs...");
 
-    // Create directory structure (2 levels)
+    // Build a two-level directory structure to spread file_count across dir_count buckets.
     let dirs_per_level = (dir_count as f64).sqrt().ceil() as usize;
     let mut dir_paths: Vec<PathBuf> = Vec::with_capacity(dir_count);
     for i in 0..dirs_per_level {
@@ -1014,7 +987,6 @@ fn generate_loopback_data(bench_dir: &Path, profile: DataProfile) -> TaskResult<
         if size == 0 {
             fs::File::create(&file_path)?;
         } else {
-            // Fill buffer with deterministic data
             for chunk in buf[..size].chunks_mut(8) {
                 let val = next_rand();
                 let bytes = val.to_le_bytes();
@@ -1030,7 +1002,6 @@ fn generate_loopback_data(bench_dir: &Path, profile: DataProfile) -> TaskResult<
         }
     }
 
-    // Write marker
     fs::write(&marker, &profile_name)?;
 
     let total_bytes: u64 = walkdir_size(&data_dir);

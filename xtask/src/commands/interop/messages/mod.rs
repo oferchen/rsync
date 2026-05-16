@@ -12,7 +12,6 @@ use std::path::Path;
 
 /// Execute message format validation.
 pub fn execute(workspace: &Path, options: MessagesOptions) -> TaskResult<()> {
-    // Create log directory if specified
     if let Some(ref log_dir) = options.log_dir {
         std::fs::create_dir_all(log_dir).map_err(|e| {
             crate::error::TaskError::Io(std::io::Error::new(
@@ -41,7 +40,7 @@ fn regenerate_goldens(workspace: &Path, options: MessagesOptions) -> TaskResult<
     eprintln!("[interop] Message validation: Regenerate mode");
     eprintln!("[interop] Note: Message scenarios use the same scenarios as exit code testing");
 
-    // Load exit code scenarios (we reuse them to capture messages)
+    // Reuse exit code scenarios to capture their messages.
     let scenarios_path = workspace.join("tests/interop/exit_codes/scenarios.toml");
     if !scenarios_path.exists() {
         return Err(crate::error::TaskError::Metadata(format!(
@@ -58,10 +57,8 @@ fn regenerate_goldens(workspace: &Path, options: MessagesOptions) -> TaskResult<
         runnable_scenarios.len()
     );
 
-    // Detect upstream binaries
     let upstream_binaries = upstream::detect_upstream_binaries(workspace)?;
 
-    // Filter by version if specified
     let binaries_to_test: Vec<_> = if let Some(ref version) = options.version {
         upstream_binaries
             .into_iter()
@@ -84,7 +81,6 @@ fn regenerate_goldens(workspace: &Path, options: MessagesOptions) -> TaskResult<
         }
     }
 
-    // For each upstream version, run scenarios and collect messages
     for binary in &binaries_to_test {
         eprintln!(
             "\n[interop] Generating golden messages for upstream rsync {}...",
@@ -94,13 +90,11 @@ fn regenerate_goldens(workspace: &Path, options: MessagesOptions) -> TaskResult<
         let mut golden = golden::GoldenMessages::new(binary.version.clone());
         let mut total_messages = 0;
 
-        // Run each scenario and collect messages
         for scenario in &runnable_scenarios {
             if options.verbose {
                 eprintln!("[interop] Running scenario '{}'", scenario.name);
             }
 
-            // Convert exit code scenario to message scenario
             let msg_scenario = extractor::MessageScenario {
                 name: scenario.name.clone(),
                 args: scenario.args.clone(),
@@ -108,7 +102,6 @@ fn regenerate_goldens(workspace: &Path, options: MessagesOptions) -> TaskResult<
                 description: scenario.description.clone(),
             };
 
-            // Execute and extract messages
             let extractor_opts = ExtractorOptions {
                 verbose: options.verbose,
                 show_output: options.show_output,
@@ -117,7 +110,6 @@ fn regenerate_goldens(workspace: &Path, options: MessagesOptions) -> TaskResult<
             };
             match msg_scenario.execute(binary.binary_path(), &extractor_opts) {
                 Ok(messages) => {
-                    // Normalize and store messages
                     let normalized = normalizer::normalize_messages(&messages);
                     for msg in &normalized {
                         golden.add_message(msg, &scenario.name);
@@ -143,7 +135,6 @@ fn regenerate_goldens(workspace: &Path, options: MessagesOptions) -> TaskResult<
             }
         }
 
-        // Save golden file
         golden::save_golden(workspace, &golden)?;
         eprintln!(
             "[interop] Generated golden file with {} messages from {} scenarios",
@@ -163,7 +154,6 @@ fn validate_messages(workspace: &Path, options: MessagesOptions) -> TaskResult<(
     eprintln!("[interop] Message validation: Validate mode");
     eprintln!("[interop] Note: This validates message format stability against upstream");
 
-    // Load scenarios
     let scenarios = super::exit_codes::scenarios::load_scenarios(workspace)?;
     let runnable_scenarios = super::exit_codes::scenarios::filter_runnable(scenarios);
 
@@ -172,10 +162,8 @@ fn validate_messages(workspace: &Path, options: MessagesOptions) -> TaskResult<(
         runnable_scenarios.len()
     );
 
-    // Detect upstream binaries
     let upstream_binaries = upstream::detect_upstream_binaries(workspace)?;
 
-    // Filter by version if specified
     let binaries_to_test: Vec<_> = if let Some(ref version) = options.version {
         upstream_binaries
             .into_iter()
@@ -196,22 +184,18 @@ fn validate_messages(workspace: &Path, options: MessagesOptions) -> TaskResult<(
 
     let mut validation_failed = false;
 
-    // Validate against each upstream version
     for binary in &binaries_to_test {
         eprintln!(
             "\n[interop] Validating messages against upstream rsync {}...",
             binary.version
         );
 
-        // Load golden file
         let golden = golden::load_golden(workspace, &binary.version)?;
 
         let mut total_checked = 0;
         let mut total_differences = 0;
 
-        // Run scenarios and compare messages
         for scenario in &runnable_scenarios {
-            // Convert to message scenario
             let msg_scenario = extractor::MessageScenario {
                 name: scenario.name.clone(),
                 args: scenario.args.clone(),
@@ -219,7 +203,6 @@ fn validate_messages(workspace: &Path, options: MessagesOptions) -> TaskResult<(
                 description: scenario.description.clone(),
             };
 
-            // Execute and extract messages
             let extractor_opts = ExtractorOptions {
                 verbose: options.verbose,
                 show_output: options.show_output,
@@ -230,16 +213,13 @@ fn validate_messages(workspace: &Path, options: MessagesOptions) -> TaskResult<(
                 Ok(messages) => {
                     let actual_normalized = normalizer::normalize_messages(&messages);
 
-                    // Convert actual messages to format expected by matcher
                     let actual_for_matcher: Vec<(String, Option<String>)> = actual_normalized
                         .iter()
                         .map(|m| (m.text.clone(), m.role.clone()))
                         .collect();
 
-                    // Get matchers and groups for this scenario
                     let (matchers, groups) = golden.get_matchers_for_scenario(&scenario.name);
 
-                    // Validate using the new matcher infrastructure
                     let result =
                         matcher::validate_messages(&actual_for_matcher, &matchers, &groups);
 
