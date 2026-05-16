@@ -1757,6 +1757,134 @@ fn execute_copy_unsafe_links_in_tree_preserves_safe_and_dereferences_unsafe() {
     assert_eq!(summary.files_copied(), 2); // inside.txt + dereferenced unsafe
 }
 
+/// Verifies that the `--copy-unsafe-links` dereference path emits the
+/// `--info=SYMSAFE` notice once for each unsafe symlink that gets
+/// followed.
+///
+/// Mirrors `flist.c:216` in upstream rsync 3.4.1:
+/// ```c
+/// if (copy_unsafe_links && unsafe_symlink(linkbuf, path)) {
+///     if (INFO_GTE(SYMSAFE, 1)) {
+///         rprintf(FINFO, "copying unsafe symlink \"%s\" -> \"%s\"\n",
+///                 path, linkbuf);
+///     }
+///     return x_stat(path, stp, NULL);
+/// }
+/// ```
+#[cfg(unix)]
+#[test]
+fn copy_unsafe_links_emits_info_symsafe_notice() {
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+    use std::os::unix::fs::symlink;
+
+    let mut cfg = VerbosityConfig::from_verbose_level(0);
+    cfg.info.symsafe = 1;
+    init(cfg);
+    let _ = drain_events();
+
+    let temp = create_tempdir();
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    let outside_target = temp.path().join("outside.txt");
+    fs::write(&outside_target, b"outside content").expect("write outside");
+
+    let unsafe_link = source_root.join("unsafe_link");
+    symlink(&outside_target, &unsafe_link).expect("create unsafe symlink");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .links(true)
+            .copy_unsafe_links(true),
+    )
+    .expect("copy succeeds");
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Symsafe,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    let expected = format!(
+        "copying unsafe symlink \"{}\" -> \"{}\"",
+        unsafe_link.display(),
+        outside_target.display()
+    );
+    assert!(
+        messages.iter().any(|m| m == &expected),
+        "expected upstream-format SYMSAFE,1 notice {expected:?}; got {messages:?}"
+    );
+}
+
+/// Verifies that the default verbosity configuration (no `--info=SYMSAFE`)
+/// suppresses the notice during a `--copy-unsafe-links` dereference,
+/// matching upstream's `INFO_GTE(SYMSAFE, 1)` gate (flist.c:216).
+#[cfg(unix)]
+#[test]
+fn copy_unsafe_links_default_verbosity_suppresses_info_symsafe_notice() {
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+    use std::os::unix::fs::symlink;
+
+    init(VerbosityConfig::from_verbose_level(0));
+    let _ = drain_events();
+
+    let temp = create_tempdir();
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    let outside_target = temp.path().join("outside.txt");
+    fs::write(&outside_target, b"outside content").expect("write outside");
+
+    let unsafe_link = source_root.join("unsafe_link");
+    symlink(&outside_target, &unsafe_link).expect("create unsafe symlink");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .links(true)
+            .copy_unsafe_links(true),
+    )
+    .expect("copy succeeds");
+
+    let symsafe_msgs: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Symsafe,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        symsafe_msgs.is_empty(),
+        "expected no SYMSAFE notice at default verbosity; got {symsafe_msgs:?}"
+    );
+}
+
 
 #[cfg(unix)]
 #[test]
