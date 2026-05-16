@@ -372,10 +372,6 @@ pub struct TestArgs {
     pub install_nextest: bool,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Task tree conversion
-// ─────────────────────────────────────────────────────────────────────────────
-
 use crate::task::Task;
 use crate::task::tasks::{
     DocPackageTask, DocsTask, EnforceLimitsTask, NoBinariesTask, NoPlaceholdersTask, PackageTask,
@@ -476,8 +472,6 @@ impl CommandExt for TestArgs {
     }
 }
 
-// Simple leaf tasks for commands without complex decomposition.
-
 use std::time::Duration;
 
 /// Task for performance benchmarking.
@@ -572,7 +566,6 @@ mod tests {
 
     #[test]
     fn verify_cli_structure() {
-        // This test ensures the CLI structure is valid
         Cli::command().debug_assert();
     }
 
