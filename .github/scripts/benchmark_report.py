@@ -25,7 +25,9 @@ IO_URING_MODES = {
 }
 
 SSH_TRANSPORT_MODES = {
-    "ssh_transport": "SSH Transport: Subprocess vs russh",
+    "ssh_transport": (
+        "SSH Transport: upstream vs oc-rsync subprocess vs oc-rsync russh"
+    ),
 }
 
 EXTRA_MODES = {
@@ -119,22 +121,62 @@ def main():
 
         print()
 
-    # SSH transport: subprocess vs embedded russh
+    # SSH transport: 3-way (upstream vs oc-rsync subprocess vs oc-rsync russh)
+    # when the new fields are present; otherwise fall back to the legacy
+    # subprocess-vs-russh 2-bar render.
     for mode, label in SSH_TRANSPORT_MODES.items():
         tests = by_mode.get(mode, [])
         if not tests:
             continue
 
-        print(f"### {label}\n")
-        print("| Test | Subprocess (ssh) | Embedded (russh) | Ratio |")
-        print("|------|------------------|------------------|-------|")
+        three_way = all("upstream_ssh" in t for t in tests)
 
-        for t in tests:
-            sub = t["upstream"]["mean"]
-            russh = t["oc_rsync"]["mean"]
-            ratio = t["ratio"]
-            ind = ratio_indicator(ratio)
-            print(f"| {t['name']} | {sub:.3f}s | {russh:.3f}s | {ind} {ratio:.2f}x |")
+        print(f"### {label}\n")
+        if three_way:
+            print(
+                "| Test "
+                "| Upstream (ssh) "
+                "| oc-rsync (ssh) "
+                "| oc-rsync (russh) "
+                "| oc-sub / upstream "
+                "| russh / oc-sub |"
+            )
+            print(
+                "|------"
+                "|----------------"
+                "|----------------"
+                "|------------------"
+                "|-------------------"
+                "|----------------|"
+            )
+            for t in tests:
+                up = t["upstream_ssh"]["mean"]
+                sub = t["oc_subprocess"]["mean"]
+                russh = t["oc_russh"]["mean"]
+                r_sub = t.get("ratio_sub_vs_upstream", 0.0)
+                r_russh = t.get("ratio_russh_vs_sub", 0.0)
+                ind_sub = ratio_indicator(r_sub)
+                ind_russh = ratio_indicator(r_russh)
+                print(
+                    f"| {t['name']} "
+                    f"| {up:.3f}s "
+                    f"| {sub:.3f}s "
+                    f"| {russh:.3f}s "
+                    f"| {ind_sub} {r_sub:.2f}x "
+                    f"| {ind_russh} {r_russh:.2f}x |"
+                )
+        else:
+            print("| Test | Subprocess (ssh) | Embedded (russh) | Ratio |")
+            print("|------|------------------|------------------|-------|")
+            for t in tests:
+                sub = t["upstream"]["mean"]
+                russh = t["oc_rsync"]["mean"]
+                ratio = t["ratio"]
+                ind = ratio_indicator(ratio)
+                print(
+                    f"| {t['name']} | {sub:.3f}s | {russh:.3f}s "
+                    f"| {ind} {ratio:.2f}x |"
+                )
 
         print()
 
