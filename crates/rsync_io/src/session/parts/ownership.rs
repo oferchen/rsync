@@ -10,64 +10,8 @@ use super::state::{BinaryHandshakeComponents, HandshakePartsResult, LegacyHandsh
 impl<R> SessionHandshakeParts<R> {
     /// Releases the parts structure and returns the replaying stream parts captured during negotiation.
     ///
-    /// The returned [`NegotiatedStreamParts`] retain the buffered prologue, decision, and transport,
-    /// allowing callers to inspect or transform the replay data without first rebuilding a
-    /// [`crate::session::SessionHandshake`]. This mirrors [`Self::stream`] for owned access and keeps the
-    /// high-level API aligned with the variant-specific helpers exposed by
-    /// [`BinaryHandshakeParts`] and [`LegacyDaemonHandshakeParts`].
-    ///
-    /// # Examples
-    ///
-    /// Reconstruct a binary negotiation and extract the replaying stream parts while preserving the
-    /// buffered handshake prefix.
-    ///
-    /// ```
-    /// use protocol::ProtocolVersion;
-    /// use rsync_io::negotiate_session;
-    /// use std::io::{self, Cursor, Read, Write};
-    ///
-    /// #[derive(Clone, Debug)]
-    /// struct Loopback {
-    ///     reader: Cursor<Vec<u8>>,
-    ///     written: Vec<u8>,
-    /// }
-    ///
-    /// impl Loopback {
-    ///     fn new(advertisement: [u8; 4]) -> Self {
-    ///         Self {
-    ///             reader: Cursor::new(advertisement.to_vec()),
-    ///             written: Vec::new(),
-    ///         }
-    ///     }
-    /// }
-    ///
-    /// impl Read for Loopback {
-    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-    ///         self.reader.read(buf)
-    ///     }
-    /// }
-    ///
-    /// impl Write for Loopback {
-    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-    ///         self.written.extend_from_slice(buf);
-    ///         Ok(buf.len())
-    ///     }
-    ///
-    ///     fn flush(&mut self) -> io::Result<()> {
-    ///         Ok(())
-    ///     }
-    /// }
-    ///
-    /// let remote = ProtocolVersion::from_supported(31).unwrap();
-    /// let transport = Loopback::new(u32::from(remote.as_u8()).to_le_bytes());
-    /// let parts = negotiate_session(transport, ProtocolVersion::NEWEST)
-    ///     .unwrap()
-    ///     .into_stream_parts();
-    /// let stream_parts = parts.clone().into_stream_parts();
-    ///
-    /// assert_eq!(stream_parts.decision(), parts.decision());
-    /// assert_eq!(stream_parts.buffered(), parts.stream().buffered());
-    /// ```
+    /// The returned [`NegotiatedStreamParts`] retain the buffered prologue,
+    /// decision, and transport. Owned counterpart to [`Self::stream`].
     #[must_use]
     pub fn into_stream_parts(self) -> NegotiatedStreamParts<R> {
         match self {
@@ -153,11 +97,7 @@ impl<R> SessionHandshakeParts<R> {
 
     /// Consumes the parts structure, returning the binary handshake parts when available.
     ///
-    /// The helper mirrors [`Self::into_binary`] but rebuilds the strongly typed
-    /// [`BinaryHandshakeParts`] wrapper so callers can reuse convenience
-    /// accessors without recreating the full [`BinaryHandshake`]. Returning the
-    /// original value on mismatch matches the ergonomics of [`TryFrom`]
-    /// conversions provided elsewhere in the crate.
+    /// Returns the original value on mismatch, matching [`TryFrom`] ergonomics.
     pub fn into_binary_parts(self) -> Result<BinaryHandshakeParts<R>, SessionHandshakeParts<R>> {
         match self {
             SessionHandshakeParts::Binary(parts) => Ok(parts),
@@ -178,11 +118,8 @@ impl<R> SessionHandshakeParts<R> {
 
     /// Consumes the parts structure, returning the legacy handshake parts when available.
     ///
-    /// The returned [`LegacyDaemonHandshakeParts`] retains the parsed greeting
-    /// and negotiated protocol while exposing the additional helper methods
-    /// implemented by the legacy-specific wrapper. Returning the original value
-    /// when the negotiation was binary mirrors the ergonomics of
-    /// [`Self::into_legacy`] and the [`TryFrom`] conversions below.
+    /// Returns the original value on mismatch, matching [`Self::into_legacy`]
+    /// and [`TryFrom`] ergonomics.
     pub fn into_legacy_parts(
         self,
     ) -> Result<LegacyDaemonHandshakeParts<R>, SessionHandshakeParts<R>> {
