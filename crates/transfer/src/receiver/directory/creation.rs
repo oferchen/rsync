@@ -73,8 +73,38 @@ impl ReceiverContext {
 
         let mut failed_dir_paths: std::collections::HashSet<PathBuf> =
             std::collections::HashSet::new();
+        // upstream: generator.c:1337-1340 - probe each new parent directory's
+        // default POSIX ACL when !preserve_perms so dest_mode() folds the bits
+        // in. The probe also drives the `DEBUG_GTE(ACL, 1)` emission in
+        // `acls.c:1133-1134`. Mirror the gating exactly: only probe when
+        // ACLs are preserved and the user did not pass --perms.
+        #[cfg(all(
+            feature = "acl",
+            any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+        ))]
+        let probe_default_perms = self.config.flags.acls && !self.config.flags.perms;
+        #[cfg(all(
+            feature = "acl",
+            any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+        ))]
+        let mut probed_parents: std::collections::HashSet<PathBuf> =
+            std::collections::HashSet::new();
         for (_, dir_path) in &dir_entries {
             if !dir_path.exists() {
+                #[cfg(all(
+                    feature = "acl",
+                    any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+                ))]
+                if probe_default_perms {
+                    if let Some(parent) = dir_path.parent() {
+                        if probed_parents.insert(parent.to_path_buf()) {
+                            // upstream: generator.c:1339 dflt_perms = default_perms_for_dir(dn)
+                            // Pass umask = 0; upstream prints the ACL-derived bits, not
+                            // the umask-derived fallback, so the trace value is umask-independent.
+                            let _ = ::metadata::default_perms_for_dir(parent, 0);
+                        }
+                    }
+                }
                 if let Err(e) = fs::create_dir_all(dir_path) {
                     if e.kind() == io::ErrorKind::PermissionDenied {
                         // upstream: receiver.c - permission denied on mkdir is non-fatal,
