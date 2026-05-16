@@ -23,11 +23,8 @@ use std::io::{self, Read, Write};
 /// - **MSG_ERROR variants**: Printed to stderr and skipped
 /// - **Other messages**: Skipped (handled at higher protocol levels)
 pub struct MultiplexReader<R> {
-    /// The underlying reader from which multiplexed messages are received
     inner: R,
-    /// Buffer for holding message payloads across multiple read() calls
     buffer: Vec<u8>,
-    /// Current position in the buffer for partial reads
     pos: usize,
 }
 
@@ -143,7 +140,6 @@ impl<R: Read> Read for MultiplexReader<R> {
 /// - 3 bytes for payload length (enforcing the 16MB limit)
 /// - 1 byte for message code (always 0 for MSG_DATA)
 pub struct MultiplexWriter<W> {
-    /// The underlying writer to which multiplexed messages are sent
     inner: W,
 }
 
