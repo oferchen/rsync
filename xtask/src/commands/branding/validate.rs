@@ -261,17 +261,6 @@ mod tests {
         ));
     }
 
-    // #[test]
-    // fn validate_branding_rejects_distinct_daemon_binary() {
-    //     let mut branding = sample_branding();
-    //     branding.daemon_bin = String::from("oc-rsync");
-    //     let error = validate_branding(&branding).unwrap_err();
-    //     assert!(matches!(
-    //         error,
-    //         TaskError::Validation(message) if message.contains("must match client binary")
-    //     ));
-    // }
-
     #[test]
     fn validate_branding_rejects_empty_brand() {
         let mut branding = sample_branding();

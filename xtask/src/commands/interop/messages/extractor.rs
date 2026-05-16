@@ -49,7 +49,6 @@ impl Message {
         let role = if let Some(start) = text.rfind('[') {
             if let Some(end) = text[start..].find(']') {
                 let trailer = &text[start + 1..start + end];
-                // Check if it's a role (not a code or other bracket content)
                 if trailer.contains("sender")
                     || trailer.contains("receiver")
                     || trailer.contains("generator")
@@ -57,7 +56,6 @@ impl Message {
                     || trailer.contains("client")
                     || trailer.contains("daemon")
                 {
-                    // Extract just the role part (before any =)
                     let role_part = trailer.split('=').next().unwrap_or(trailer);
                     Some(role_part.trim().to_owned())
                 } else {
@@ -161,7 +159,6 @@ impl MessageScenario {
             );
         }
 
-        // Run setup commands if specified
         if let Some(ref setup) = self.setup {
             if options.verbose {
                 eprintln!("[extractor] Running setup: {}", setup);
@@ -180,13 +177,12 @@ impl MessageScenario {
                 })?;
         }
 
-        // Replace "rsync" in args with the actual binary path
+        // Replace literal "rsync" in args with the actual binary path.
         let mut cmd_args = self.args.clone();
         if !cmd_args.is_empty() && cmd_args[0] == "rsync" {
             cmd_args[0] = rsync_binary.to_string_lossy().to_string();
         }
 
-        // Add --log-file if log_dir is specified
         if let Some(ref log_dir) = options.log_dir {
             let version_str = options.version.as_deref().unwrap_or("unknown");
             let log_file = format!("{}/{}-{}-msg.log", log_dir, self.name, version_str);
@@ -197,7 +193,6 @@ impl MessageScenario {
             eprintln!("[extractor] Executing: {:?}", cmd_args);
         }
 
-        // Execute and capture output
         let mut cmd = Command::new(rsync_binary);
         cmd.args(&cmd_args[1..])
             .current_dir(work_dir)

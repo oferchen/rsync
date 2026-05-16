@@ -11,7 +11,6 @@ use std::path::Path;
 
 /// Execute exit code validation.
 pub fn execute(workspace: &Path, options: ExitCodesOptions) -> TaskResult<()> {
-    // Create log directory if specified
     if let Some(ref log_dir) = options.log_dir {
         std::fs::create_dir_all(log_dir).map_err(|e| {
             crate::error::TaskError::Io(std::io::Error::new(
@@ -37,7 +36,6 @@ pub fn execute(workspace: &Path, options: ExitCodesOptions) -> TaskResult<()> {
 fn regenerate_goldens(workspace: &Path, options: ExitCodesOptions) -> TaskResult<()> {
     use super::shared::upstream;
 
-    // Load test scenarios
     let all_scenarios = scenarios::load_scenarios(workspace)?;
     let runnable_scenarios = scenarios::filter_runnable(all_scenarios);
 
@@ -47,10 +45,8 @@ fn regenerate_goldens(workspace: &Path, options: ExitCodesOptions) -> TaskResult
         scenarios::load_scenarios(workspace)?.len()
     );
 
-    // Detect upstream binaries
     let upstream_binaries = upstream::detect_upstream_binaries(workspace)?;
 
-    // Filter by version if specified
     let binaries_to_test: Vec<_> = if let Some(ref version) = options.version {
         upstream_binaries
             .into_iter()
@@ -73,7 +69,6 @@ fn regenerate_goldens(workspace: &Path, options: ExitCodesOptions) -> TaskResult
         }
     }
 
-    // Run scenarios against each upstream version and generate golden files
     for binary in &binaries_to_test {
         eprintln!(
             "\n[interop] Generating golden file for upstream rsync {}...",
@@ -89,7 +84,6 @@ fn regenerate_goldens(workspace: &Path, options: ExitCodesOptions) -> TaskResult
         let results =
             runner::run_scenarios(&runnable_scenarios, binary.binary_path(), &runner_opts)?;
 
-        // Generate and save golden file
         let golden = golden::generate_golden(binary.version.clone(), &results);
         golden::save_golden(workspace, &golden)?;
 
@@ -105,7 +99,6 @@ fn regenerate_goldens(workspace: &Path, options: ExitCodesOptions) -> TaskResult
 
 /// Validate exit codes against golden files.
 fn validate_exit_codes(workspace: &Path, options: ExitCodesOptions) -> TaskResult<()> {
-    // Load test scenarios
     let all_scenarios = scenarios::load_scenarios(workspace)?;
     let runnable_scenarios = scenarios::filter_runnable(all_scenarios);
 
@@ -114,18 +107,11 @@ fn validate_exit_codes(workspace: &Path, options: ExitCodesOptions) -> TaskResul
         runnable_scenarios.len()
     );
 
-    // Check which implementation to test
     let impl_name = options.implementation.as_deref().unwrap_or("upstream");
 
     match impl_name {
-        "oc-rsync" => {
-            // Test our oc-rsync implementation against all upstream golden files
-            validate_oc_rsync(workspace, &runnable_scenarios, options)
-        }
-        "upstream" => {
-            // Test upstream rsync (original behavior)
-            validate_upstream(workspace, &runnable_scenarios, options)
-        }
+        "oc-rsync" => validate_oc_rsync(workspace, &runnable_scenarios, options),
+        "upstream" => validate_upstream(workspace, &runnable_scenarios, options),
         other => Err(crate::error::TaskError::Usage(format!(
             "Unknown implementation '{}'. Use 'upstream' or 'oc-rsync'",
             other
@@ -143,14 +129,12 @@ fn validate_oc_rsync(
 
     eprintln!("[interop] Validating oc-rsync against upstream golden files...");
 
-    // Detect oc-rsync binary
     let oc_binary = oc_rsync::detect_oc_rsync_binary(workspace)?;
     eprintln!(
         "[interop] Found oc-rsync at: {}",
         oc_binary.binary_path().display()
     );
 
-    // We need to validate against all upstream versions' golden files
     let upstream_versions = super::shared::upstream::UPSTREAM_VERSIONS;
     let versions_to_test: Vec<_> = if let Some(ref version) = options.version {
         vec![version.as_str()]
@@ -166,10 +150,8 @@ fn validate_oc_rsync(
             version
         );
 
-        // Load golden file for this upstream version
         let golden = golden::load_golden(workspace, version)?;
 
-        // Run scenarios with oc-rsync
         let runner_opts = RunnerOptions {
             verbose: options.verbose,
             show_output: options.show_output,
@@ -179,7 +161,6 @@ fn validate_oc_rsync(
         let results =
             runner::run_scenarios(runnable_scenarios, oc_binary.binary_path(), &runner_opts)?;
 
-        // Validate results against golden
         let errors = golden::validate_against_golden(&results, &golden);
 
         if errors.is_empty() {
@@ -219,10 +200,8 @@ fn validate_upstream(
 ) -> TaskResult<()> {
     use super::shared::upstream;
 
-    // Detect upstream binaries
     let upstream_binaries = upstream::detect_upstream_binaries(workspace)?;
 
-    // Filter by version if specified
     let binaries_to_test: Vec<_> = if let Some(ref version) = options.version {
         upstream_binaries
             .into_iter()
@@ -243,17 +222,14 @@ fn validate_upstream(
 
     let mut validation_failed = false;
 
-    // Validate against each upstream version
     for binary in &binaries_to_test {
         eprintln!(
             "\n[interop] Validating against upstream rsync {}...",
             binary.version
         );
 
-        // Load golden file
         let golden = golden::load_golden(workspace, &binary.version)?;
 
-        // Run scenarios
         let runner_opts = RunnerOptions {
             verbose: options.verbose,
             show_output: options.show_output,
@@ -263,7 +239,6 @@ fn validate_upstream(
         let results =
             runner::run_scenarios(runnable_scenarios, binary.binary_path(), &runner_opts)?;
 
-        // Validate results
         let errors = golden::validate_against_golden(&results, &golden);
 
         if errors.is_empty() {
