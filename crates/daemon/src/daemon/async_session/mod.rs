@@ -1,16 +1,10 @@
 //! Tokio-based async session handling for the rsync daemon.
 //!
 //! Provides async alternatives to the synchronous session handling path,
-//! available only when the `async` feature is enabled. Includes a TCP
-//! listener with configurable connection limits, per-session timeout support,
-//! `SessionRegistry` integration for concurrent session tracking, and
-//! graceful shutdown via broadcast channels.
-//!
-//! # Submodules
-//!
-//! - [`listener`] - TCP listener setup and connection acceptance.
-//! - [`session`] - Per-connection session handling, rate limiting, and IP limiting.
-//! - [`shutdown`] - Error and shutdown types.
+//! available only when the `async` feature is enabled. Includes a TCP listener
+//! with configurable connection limits, per-session timeout support,
+//! `SessionRegistry` integration for concurrent session tracking, and graceful
+//! shutdown via broadcast channels.
 //!
 //! # Example
 //!
