@@ -366,7 +366,6 @@ fn default_ssh_config_path() -> Option<PathBuf> {
     home_dir().map(|h| h.join(".ssh").join("config"))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
