@@ -124,15 +124,18 @@ OPENSSL_TESTS = [
     },
 ]
 
-# SSH transport comparison: subprocess `ssh` (host:path operand) vs embedded
-# russh (`ssh://` URI operand). Only run if OC_RSYNC_RUSSH is set.
+# SSH transport comparison: upstream rsync over OpenSSH subprocess, oc-rsync
+# over OpenSSH subprocess (`host:path` operand), and oc-rsync over embedded
+# russh (`ssh://host/path` URI operand). Only run if OC_RSYNC_RUSSH is set.
 # The default oc-rsync binary handles the subprocess form; the russh-built
-# binary handles the URI form via the embedded transport.
+# binary handles the URI form via the embedded transport. Upstream rsync is
+# always invoked through OpenSSH.
 RUSSH_TESTS = [
     {
         "id": "ssh_transport_pull_initial",
         "name": "Initial pull",
         "mode": "ssh_transport",
+        "upstream_args": "-av --timeout=30 localhost:{src}/ {dst}/",
         "subprocess_args": "-av --timeout=30 localhost:{src}/ {dst}/",
         "russh_args": "-av --timeout=30 ssh://localhost{src}/ {dst}/",
         "reset": True,
@@ -141,6 +144,7 @@ RUSSH_TESTS = [
         "id": "ssh_transport_pull_nochange",
         "name": "No-change pull",
         "mode": "ssh_transport",
+        "upstream_args": "-av --timeout=30 localhost:{src}/ {dst}/",
         "subprocess_args": "-av --timeout=30 localhost:{src}/ {dst}/",
         "russh_args": "-av --timeout=30 ssh://localhost{src}/ {dst}/",
         "reset": False,
@@ -149,6 +153,7 @@ RUSSH_TESTS = [
         "id": "ssh_transport_push_initial",
         "name": "Initial push",
         "mode": "ssh_transport",
+        "upstream_args": "-av --timeout=30 {src}/ localhost:{dst}/",
         "subprocess_args": "-av --timeout=30 {src}/ localhost:{dst}/",
         "russh_args": "-av --timeout=30 {src}/ ssh://localhost{dst}/",
         "reset": True,
@@ -157,6 +162,7 @@ RUSSH_TESTS = [
         "id": "ssh_transport_push_nochange",
         "name": "No-change push",
         "mode": "ssh_transport",
+        "upstream_args": "-av --timeout=30 {src}/ localhost:{dst}/",
         "subprocess_args": "-av --timeout=30 {src}/ localhost:{dst}/",
         "russh_args": "-av --timeout=30 {src}/ ssh://localhost{dst}/",
         "reset": False,
@@ -558,25 +564,31 @@ def main():
                 file=sys.stderr,
             )
 
-        # SSH transport: subprocess vs embedded russh
+        # SSH transport: 3-way comparison
+        #   1. upstream rsync over OpenSSH subprocess (host:path)
+        #   2. oc-rsync over OpenSSH subprocess (host:path)
+        #   3. oc-rsync over embedded russh (ssh://host/path)
         if OC_RSYNC_RUSSH and os.path.isfile(OC_RSYNC_RUSSH):
-            print("Running SSH transport (subprocess vs russh)...", file=sys.stderr)
+            print(
+                "Running SSH transport (upstream vs oc-rsync subprocess vs russh)...",
+                file=sys.stderr,
+            )
+            dst_upstream_pull = f"{tmpdir}/dst_upstream_pull"
             dst_sub_pull = f"{tmpdir}/dst_sub_pull"
             dst_russh_pull = f"{tmpdir}/dst_russh_pull"
+            dst_upstream_push = f"{tmpdir}/dst_upstream_push"
             dst_sub_push = f"{tmpdir}/dst_sub_push"
             dst_russh_push = f"{tmpdir}/dst_russh_push"
 
             def reset_transport_pull():
-                shutil.rmtree(dst_sub_pull, ignore_errors=True)
-                shutil.rmtree(dst_russh_pull, ignore_errors=True)
-                os.makedirs(dst_sub_pull, exist_ok=True)
-                os.makedirs(dst_russh_pull, exist_ok=True)
+                for d in (dst_upstream_pull, dst_sub_pull, dst_russh_pull):
+                    shutil.rmtree(d, ignore_errors=True)
+                    os.makedirs(d, exist_ok=True)
 
             def reset_transport_push():
-                shutil.rmtree(dst_sub_push, ignore_errors=True)
-                shutil.rmtree(dst_russh_push, ignore_errors=True)
-                os.makedirs(dst_sub_push, exist_ok=True)
-                os.makedirs(dst_russh_push, exist_ok=True)
+                for d in (dst_upstream_push, dst_sub_push, dst_russh_push):
+                    shutil.rmtree(d, ignore_errors=True)
+                    os.makedirs(d, exist_ok=True)
 
             for test in RUSSH_TESTS:
                 test_id = test["id"]
@@ -593,33 +605,49 @@ def main():
                         reset_transport_pull()
 
                 if is_push:
+                    upstream_dst = dst_upstream_push
                     sub_dst, russh_dst = dst_sub_push, dst_russh_push
                 else:
+                    upstream_dst = dst_upstream_pull
                     sub_dst, russh_dst = dst_sub_pull, dst_russh_pull
 
+                upstream_args = test["upstream_args"].format(src=src, dst=upstream_dst)
                 sub_args = test["subprocess_args"].format(src=src, dst=sub_dst)
                 russh_args = test["russh_args"].format(src=src, dst=russh_dst)
 
+                upstream_result = benchmark(f"{UPSTREAM} {upstream_args}")
                 sub_result = benchmark(f"{OC_RSYNC} {sub_args}")
                 russh_result = benchmark(f"{OC_RSYNC_RUSSH} {russh_args}")
 
-                ratio = (
+                ratio_russh_vs_sub = (
                     russh_result["mean"] / sub_result["mean"]
                     if sub_result["mean"] > 0
                     else 0
                 )
+                ratio_sub_vs_upstream = (
+                    sub_result["mean"] / upstream_result["mean"]
+                    if upstream_result["mean"] > 0
+                    else 0
+                )
 
-                # "upstream" field repurposed as the subprocess baseline so the
-                # report/chart can render this as a two-bar comparison without
-                # special-casing the data shape.
+                # The new fields `upstream_ssh`, `oc_subprocess`, `oc_russh`
+                # describe the 3-way comparison directly. The legacy `upstream`,
+                # `oc_rsync`, and `ratio` fields are kept (subprocess vs russh)
+                # so older chart/report renderers continue to work unchanged.
                 results["tests"].append(
                     {
                         "id": test_id,
                         "name": name,
                         "mode": mode,
+                        "upstream_ssh": upstream_result,
+                        "oc_subprocess": sub_result,
+                        "oc_russh": russh_result,
+                        "ratio_russh_vs_sub": round(ratio_russh_vs_sub, 2),
+                        "ratio_sub_vs_upstream": round(ratio_sub_vs_upstream, 2),
+                        # Backwards-compat shape for two-bar renderers.
                         "upstream": sub_result,
                         "oc_rsync": russh_result,
-                        "ratio": round(ratio, 2),
+                        "ratio": round(ratio_russh_vs_sub, 2),
                     }
                 )
         elif OC_RSYNC_RUSSH:
