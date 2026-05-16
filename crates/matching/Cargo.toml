@@ -67,3 +67,8 @@ required-features = ["bench-internal"]
 name = "prune_duplicate_heavy"
 harness = false
 required-features = ["bench-internal"]
+
+[[bench]]
+name = "compact_keys_cache"
+harness = false
+required-features = ["bench-internal"]
