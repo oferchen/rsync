@@ -272,8 +272,7 @@ fn fixtures() -> &'static [Fixture] {
             if *n > cap {
                 eprintln!(
                     "compact_keys_cache[{label}]: skipped (requested={n} > cap={cap}); set \
-                     {env}={n} to opt in",
-                    env = MAX_ENTRIES_ENV,
+                     {MAX_ENTRIES_ENV}={n} to opt in",
                 );
                 continue;
             }
