@@ -84,6 +84,13 @@
 
 /// ACL (Access Control List) wire protocol encoding and decoding.
 pub mod acl;
+/// `--debug=CHDIR` producer emissions for current-directory changes.
+///
+/// Hosts the trace helper that mirrors upstream rsync 3.4.1's single
+/// `DEBUG_GTE(CHDIR, 1)` emission from `util1.c::change_dir`. Wires from
+/// every successful `chdir()` syscall (notably the daemon chroot setup
+/// in `crates/daemon/src/daemon/sections/privilege.rs::apply_chroot`).
+pub mod chdir;
 /// `--debug=CMD` producer emissions for remote command construction.
 ///
 /// Hosts the trace helpers that mirror upstream rsync 3.4.1's
