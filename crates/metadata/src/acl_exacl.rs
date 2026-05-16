@@ -57,9 +57,9 @@ use std::path::Path;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use exacl::AclOption;
 use exacl::{AclEntry, AclEntryKind, Perm, getfacl, setfacl};
-use protocol::acl::{AclCache, IdAccess, NAME_IS_USER, NO_ENTRY, RsyncAcl};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use protocol::acl::trace_default_perms_for_dir;
+use protocol::acl::{AclCache, IdAccess, NAME_IS_USER, NO_ENTRY, RsyncAcl};
 
 use crate::MetadataError;
 
