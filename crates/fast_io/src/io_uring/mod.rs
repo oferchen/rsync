@@ -143,8 +143,31 @@ pub use statx::{
     build_statx_sqe_unchecked, statx_supported, submit_statx_batch, submit_statx_blocking,
 };
 
+use crate::io_uring_common::IoBackend;
 use crate::traits::{FileReader, FileReaderFactory, FileWriterFactory};
 use batching::try_register_fd;
+
+/// Marker type implementing [`IoBackend`] for the live Linux io_uring backend.
+///
+/// Provides the cross-platform `IoBackend` view of this module so callers can
+/// query availability through a single trait regardless of whether the
+/// process was compiled with the Linux backend or the no-op stub.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LinuxIoUringBackend;
+
+impl IoBackend for LinuxIoUringBackend {
+    fn is_available() -> bool {
+        is_io_uring_available()
+    }
+
+    fn availability_reason() -> String {
+        config::config_detail::io_uring_availability_reason()
+    }
+
+    fn sqpoll_fell_back() -> bool {
+        sqpoll_fell_back()
+    }
+}
 
 /// Reads an entire file using io_uring if available, falling back to standard I/O.
 ///
