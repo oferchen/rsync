@@ -872,6 +872,27 @@ impl GeneratorContext {
             "generator prepare_pending_acl totals"
         );
 
+        // INC_RECURSE diagnostic I2 (#2197): emit cumulative
+        // encode_and_send_segment dispatch count and elapsed wall time.
+        // Aggregated across all generator transfers in this process so
+        // operators can see how often per-directory sub-lists are flushed to
+        // the wire and what share of transfer time their encoding consumes.
+        let (segment_calls, segment_elapsed_ns) = super::segment_dispatch_totals();
+        debug_log!(
+            Genr,
+            1,
+            "generator encode_and_send_segment totals: calls={} elapsed_ns={}",
+            segment_calls,
+            segment_elapsed_ns
+        );
+        #[cfg(feature = "tracing")]
+        ::tracing::debug!(
+            target: "rsync::generator::segment_dispatch",
+            calls = segment_calls,
+            elapsed_ns = segment_elapsed_ns,
+            "generator encode_and_send_segment totals"
+        );
+
         Ok(GeneratorStats {
             files_listed: file_count,
             files_transferred: transfer_result.files_transferred,
