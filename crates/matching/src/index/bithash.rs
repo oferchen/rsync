@@ -118,9 +118,13 @@ impl BitHash {
 
     /// Returns the fraction of bits currently set, in `[0.0, 1.0]`.
     ///
-    /// Useful for the `bench-bithash` rejection-rate harness described in
+    /// Useful for the `bench-internal` rejection-rate harness described in
     /// `docs/design/zsync-bithash.md` section 7. Cheap on small bithashes,
-    /// linear in the bit count for large ones; not on any hot path.
+    /// linear in the bit count for large ones; not on any hot path. The
+    /// `#[allow(dead_code)]` keeps default release builds quiet: the
+    /// accessor is referenced only by the `bench-internal`-gated
+    /// `DeltaSignatureIndex::bithash_utilization` in `index/mod.rs` and
+    /// by the unit tests in `bithash_tests.rs`.
     #[allow(dead_code)]
     pub(super) fn utilization(&self) -> f64 {
         let set: u32 = self.bits.iter().map(|w| w.count_ones()).sum();
