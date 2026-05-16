@@ -457,6 +457,11 @@ impl<'a> CopyContext<'a> {
 
     /// Renames or copies an existing destination entry to the backup location
     /// when `--backup` is enabled.
+    ///
+    /// Emits an `--info=BACKUP` notice mirroring upstream rsync 3.4.1
+    /// (backup.c:352) under `INFO_GTE(BACKUP, 1)` once the backup has been
+    /// placed successfully. The wording matches upstream byte-for-byte:
+    /// `backed up <fname> to <buf>`.
     pub(super) fn backup_existing_entry(
         &mut self,
         destination: &Path,
@@ -516,6 +521,15 @@ impl<'a> CopyContext<'a> {
                 return Err(LocalCopyError::io("create backup", backup_path, error));
             }
         }
+
+        // upstream: backup.c:352 - INFO_GTE(BACKUP, 1) fires on success label
+        info_log!(
+            Backup,
+            1,
+            "backed up {} to {}",
+            destination.display(),
+            backup_path.display()
+        );
 
         Ok(())
     }
