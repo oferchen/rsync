@@ -348,6 +348,51 @@ fn flush_rate_totals_is_observable_without_flushing() {
 }
 
 #[test]
+fn prepare_acl_call_counter_increments() {
+    // INC_RECURSE diagnostic I5 (#2200): every record_prepare_acl invocation
+    // must bump the global PREPARE_ACL_CALLS counter. The assertion uses >=
+    // because the counter is shared across the process and other tests may
+    // run concurrently.
+    use super::{prepare_acl_totals, record_prepare_acl};
+    use std::time::Duration;
+
+    let (calls_before, ns_before) = prepare_acl_totals();
+
+    record_prepare_acl(Duration::from_nanos(100));
+    record_prepare_acl(Duration::from_nanos(200));
+    record_prepare_acl(Duration::from_nanos(300));
+
+    let (calls_after, ns_after) = prepare_acl_totals();
+    assert!(
+        calls_after >= calls_before + 3,
+        "expected at least 3 new prepare_acl calls (before={calls_before}, after={calls_after})"
+    );
+    assert!(
+        ns_after >= ns_before + 600,
+        "cumulative elapsed_ns should grow by at least 600 \
+         (before={ns_before}, after={ns_after})"
+    );
+}
+
+#[test]
+fn prepare_acl_totals_observable_without_prep() {
+    // INC_RECURSE diagnostic I5 (#2200): the totals snapshot must be readable
+    // without triggering any ACL prep. Constructing a generator must not bump
+    // the counter on its own, so two adjacent reads with no intervening
+    // record_prepare_acl call must return identical values.
+    use super::prepare_acl_totals;
+
+    let (_handshake, _ctx) = test_generator();
+    let first = prepare_acl_totals();
+    let second = prepare_acl_totals();
+
+    assert_eq!(
+        first, second,
+        "prepare_acl_totals must be a pure read (first={first:?}, second={second:?})"
+    );
+}
+
+#[test]
 fn build_and_send_round_trip() {
     use crate::receiver::ReceiverContext;
 
