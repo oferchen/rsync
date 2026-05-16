@@ -26,6 +26,7 @@ unstable compiler flags.
 | ---------------------- | ------------------------------------------------------------------------ |
 | `protocol_wire`        | `protocol::BorrowedMessageFrames` (multiplex frames)                     |
 | `simd_checksum_parity` | `checksums` rolling + MD4/MD5 batch SIMD dispatchers vs scalar reference |
+| `filter_differential`  | `filters::FilterSet` decisions vs upstream rsync 3.4.2 (spawns rsync)    |
 
 ## Running
 
@@ -34,7 +35,13 @@ From the repository root:
 ```bash
 cargo +nightly fuzz run protocol_wire
 cargo +nightly fuzz run simd_checksum_parity
+cargo +nightly fuzz run filter_differential
 ```
+
+`filter_differential` shells out to a real `rsync` binary per input, so
+throughput is roughly 200-500 exec/sec versus 100k+ for the in-process
+targets. Use `tools/ci/run_filter_fuzz.sh` for a wrapped invocation with
+binary discovery and a configurable duration.
 
 Useful flags:
 
@@ -72,7 +79,6 @@ coverage-guided search takes care of reaching deeper code paths.
 Good candidates for future targets:
 
 - File list decoding (`protocol::flist`)
-- Filter rule parsing (`protocol::filters`)
 - Varint and varlong decoders
 - ACL and xattr wire decoders
 
