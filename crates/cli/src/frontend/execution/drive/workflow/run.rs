@@ -538,13 +538,9 @@ where
             .with_checksum_seed(batch_checksum_seed),
         )
     } else {
-        read_batch.as_ref().map(|path| {
-            BatchConfig::new(
-                BatchMode::Read,
-                path.to_string_lossy().into_owned(),
-                32, // Default protocol version
-            )
-        })
+        read_batch
+            .as_ref()
+            .map(|path| BatchConfig::new(BatchMode::Read, path.to_string_lossy().into_owned(), 32))
     };
 
     let numeric_ids = numeric_ids_option.unwrap_or(false);
@@ -793,7 +789,7 @@ where
         inplace: inplace_enabled,
         append: append_enabled,
         append_verify,
-        whole_file: whole_file_enabled, // Pass Option<bool> through for tri-state semantics
+        whole_file: whole_file_enabled,
         xxh64_dedup,
         timeout: timeout_setting,
         connect_timeout: connect_timeout_setting,
