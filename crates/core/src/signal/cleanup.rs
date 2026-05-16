@@ -211,7 +211,6 @@ impl CleanupManagerState {
     }
 
     fn cleanup(&mut self) {
-        // Run cleanup callbacks in reverse order (LIFO).
         while let Some(callback) = self.cleanup_callbacks.pop() {
             callback();
         }
@@ -221,7 +220,6 @@ impl CleanupManagerState {
 
     fn cleanup_temp_files(&mut self) {
         for path in &self.temp_files {
-            // Best-effort cleanup - ignore errors
             let _ = std::fs::remove_file(path);
         }
         self.temp_files.clear();
