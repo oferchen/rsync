@@ -222,6 +222,25 @@ impl ReceiverContext {
         // the bottom of generate_files() after the final goodbye handshake.
         debug_log!(Genr, 1, "generate_files finished");
 
+        // INC_RECURSE diagnostic I4 (#2199): emit cumulative NDX conversion
+        // call count and partition_point comparison depth from the receiver
+        // side. Aggregated across all receiver transfers in this process.
+        let (ndx_calls, ndx_cmps) = crate::receiver::ndx_convert_totals();
+        debug_log!(
+            Genr,
+            1,
+            "receiver ndx_convert totals: calls={} partition_point_depth={}",
+            ndx_calls,
+            ndx_cmps
+        );
+        #[cfg(feature = "tracing")]
+        ::tracing::debug!(
+            target: "rsync::receiver::ndx_convert",
+            calls = ndx_calls,
+            partition_point_depth = ndx_cmps,
+            "receiver ndx_convert totals"
+        );
+
         Ok(())
     }
 }
