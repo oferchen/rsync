@@ -33,6 +33,7 @@
 mod constants;
 mod definition;
 mod entry;
+pub mod trace;
 mod wire;
 
 pub use constants::*;
@@ -40,6 +41,7 @@ pub use definition::{
     AclDefinition, AclEntry, AclPerms, AclTag, read_acl_definition, write_acl_definition,
 };
 pub use entry::{AclCache, AclTagType, IdAccess, IdaEntries, RsyncAcl, get_perms};
+pub use trace::trace_default_perms_for_dir;
 pub use wire::{
     AclType, RecvAclResult, receive_acl_cached, recv_acl, recv_ida_entries, recv_rsync_acl,
     send_acl, send_ida_entries, send_rsync_acl,

@@ -53,5 +53,6 @@ xattr = ["dep:xattr"]
 acl = ["dep:exacl"]
 
 [dev-dependencies]
+logging = { path = "../logging" }
 tempfile = "3.15"
 test-support = { path = "../test-support" }
