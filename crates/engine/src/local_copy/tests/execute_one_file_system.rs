@@ -754,3 +754,149 @@ fn level_zero_does_not_skip_any_mount_points() {
     assert!(dest_root.join("local.txt").exists());
     assert!(dest_root.join("mount").join("other.txt").exists());
 }
+
+/// Verifies that pruning a cross-device child directory emits the upstream
+/// `--info=MOUNT` notice through the diagnostic event queue.
+///
+/// Mirrors `flist.c:1319-1323` in upstream rsync 3.4.1:
+/// ```c
+/// if (INFO_GTE(MOUNT, 1)) {
+///     rprintf(FINFO, "[%s] skipping mount-point dir %s\n",
+///             who_am_i(), thisname);
+/// }
+/// ```
+/// The role prefix is added downstream by the renderer; the payload sent into
+/// the diagnostic queue carries the bare `skipping mount-point dir <path>`
+/// wording.
+#[test]
+fn one_file_system_emits_info_mount_notice() {
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+
+    // Enable MOUNT at level 1 (upstream's --info=MOUNT threshold).
+    let mut cfg = VerbosityConfig::from_verbose_level(0);
+    cfg.info.mount = 1;
+    init(cfg);
+    let _ = drain_events();
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let mount_point = source_root.join("mount_point");
+    let inside_mount = mount_point.join("subdir");
+
+    fs::create_dir_all(&inside_mount).expect("create inside_mount");
+    fs::write(source_root.join("local.txt"), b"same fs").expect("write local");
+    fs::write(mount_point.join("mount_root.txt"), b"other fs").expect("write mount_root");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.clone().into_os_string(),
+        dest_root.into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    with_device_id_override(
+        |path, _metadata| {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mount_point"))
+            {
+                Some(2)
+            } else {
+                Some(1)
+            }
+        },
+        || {
+            plan.execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().one_file_system(true),
+            )
+        },
+    )
+    .expect("copy succeeds");
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Mount,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    let expected = format!(
+        "skipping mount-point dir {}",
+        source_root.join("mount_point").display()
+    );
+
+    assert!(
+        messages.iter().any(|m| m == &expected),
+        "expected upstream-format MOUNT,1 notice {expected:?}; got {messages:?}"
+    );
+}
+
+/// Verifies that the default verbosity configuration (no `--info=MOUNT`)
+/// suppresses the notice, matching upstream's `INFO_GTE(MOUNT, 1)` gate
+/// (flist.c:1319). MOUNT is not in `info_verbosity[0]`, so it stays silent
+/// unless explicitly enabled.
+#[test]
+fn one_file_system_default_verbosity_suppresses_info_mount_notice() {
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+
+    init(VerbosityConfig::from_verbose_level(0));
+    let _ = drain_events();
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let mount_point = source_root.join("mount_point");
+
+    fs::create_dir_all(&mount_point).expect("create mount");
+    fs::write(source_root.join("local.txt"), b"same fs").expect("write local");
+    fs::write(mount_point.join("mount_root.txt"), b"other fs").expect("write mount_root");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    with_device_id_override(
+        |path, _metadata| {
+            if path
+                .components()
+                .any(|c| c.as_os_str() == std::ffi::OsStr::new("mount_point"))
+            {
+                Some(2)
+            } else {
+                Some(1)
+            }
+        },
+        || {
+            plan.execute_with_options(
+                LocalCopyExecution::Apply,
+                LocalCopyOptions::default().one_file_system(true),
+            )
+        },
+    )
+    .expect("copy succeeds");
+
+    let mount_msgs: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Mount,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        mount_msgs.is_empty(),
+        "default verbosity should suppress MOUNT notices; got {mount_msgs:?}"
+    );
+}
