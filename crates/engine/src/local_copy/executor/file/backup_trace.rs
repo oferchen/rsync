@@ -149,7 +149,10 @@ mod tests {
         trace_make_backup_device("a");
         trace_make_backup_symlink("a");
         trace_make_backup_copy("a");
-        assert!(backup_messages().is_empty(), "level 0 must suppress emissions");
+        assert!(
+            backup_messages().is_empty(),
+            "level 0 must suppress emissions"
+        );
     }
 
     /// Level 1 enables every site - matches `-vvv` and `--debug=BACKUP`.
