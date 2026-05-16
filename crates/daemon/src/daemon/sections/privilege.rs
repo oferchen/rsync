@@ -4,14 +4,23 @@
 /// the caller so the daemon refuses to serve rather than continuing without the
 /// requested isolation.
 ///
+/// On success, fires the `--debug=CHDIR` emission to mirror upstream
+/// `util1.c:1168-1169` (`[%s] change_dir(%s)`). Upstream's
+/// `clientserver.c:987` calls `change_dir(module_chdir, CD_NORMAL)`
+/// immediately after `chroot(module_chdir)`; in oc-rsync the
+/// `platform::privilege::apply_chroot` call performs both the chroot and the
+/// follow-up `chdir("/")`, so the post-syscall `curr_dir` is `"/"` (the new
+/// root). The emission carries the upstream `who_am_i()` role string for the
+/// daemon's pre-fork code path (`"Receiver"`, see `rsync.c:823-830`).
+///
 /// Caveat: chroot is process-wide, so in our thread-per-connection model this
 /// affects every concurrent session. Per-module chroot only works correctly
 /// when the daemon serves a single module or all modules share the same root.
 /// See `docs/DAEMON_PROCESS_MODEL.md`.
 ///
-/// upstream: `clientserver.c:978-985` `rsync_module()` - `chroot(module_chdir)`
-/// after sanitising the module path; `@ERROR: chroot failed` returned to the
-/// client when it fails.
+/// upstream: `clientserver.c:978-987` `rsync_module()` - `chroot(module_chdir)`
+/// then `change_dir(module_chdir, CD_NORMAL)` after sanitising the module
+/// path; `@ERROR: chroot failed` returned to the client when chroot fails.
 #[cfg(unix)]
 fn apply_chroot(module_path: &Path, log_sink: &SharedLogSink) -> io::Result<()> {
     if let Err(err) = platform::privilege::apply_chroot(module_path) {
@@ -20,6 +29,8 @@ fn apply_chroot(module_path: &Path, log_sink: &SharedLogSink) -> io::Result<()> 
         log_message(log_sink, &message);
         return Err(err);
     }
+
+    protocol::chdir::trace_change_dir(protocol::chdir::ChdirRole::PreForkReceiver, "/");
 
     let text = format!("chroot applied: '{}'", module_path.display());
     let message = rsync_info!(text).with_role(Role::Daemon);
