@@ -2225,6 +2225,7 @@ dependencies = [
  "exacl",
  "filetime",
  "libc",
+ "logging",
  "protocol",
  "rustix",
  "tempfile",
