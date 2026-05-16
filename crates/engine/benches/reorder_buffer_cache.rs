@@ -81,8 +81,9 @@
 //!        and packs more items into a cache line.
 //!     2. Split storage into hot (sequence-index) and cold (payload)
 //!        arenas so drain-time scans only touch the index.
-//!     For a 1M-file transfer, even a 2-3x reduction in LLC traffic
-//!     should be visible end-to-end via the existing throughput benches.
+//!
+//!   For a 1M-file transfer, even a 2-3x reduction in LLC traffic should
+//!   be visible end-to-end via the existing throughput benches.
 
 #![deny(unsafe_code)]
 
