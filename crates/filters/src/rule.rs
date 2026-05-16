@@ -5,7 +5,7 @@
 //! (e.g., [`FilterRule::include`], [`FilterRule::exclude`]) and configured
 //! with builder-style modifier methods.
 //!
-//! // upstream: exclude.c - filter_rule struct and FILTRULE_* flags
+//! upstream: exclude.c - filter_rule struct and FILTRULE_* flags
 
 use crate::FilterAction;
 
@@ -63,9 +63,9 @@ pub struct FilterRule {
     pub(crate) perishable: bool,
     pub(crate) xattr_only: bool,
     pub(crate) negate: bool,
-    // `e` modifier - forces rule to act as exclude
+    /// `e` modifier: forces rule to act as exclude regardless of action.
     pub(crate) exclude_only: bool,
-    // `n` modifier - for merge rules, don't inherit parent rules
+    /// `n` modifier: on merge rules, do not inherit parent-directory rules.
     pub(crate) no_inherit: bool,
 }
 
