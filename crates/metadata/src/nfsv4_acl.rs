@@ -349,7 +349,6 @@ impl Nfs4Acl {
         let mut offset = 0;
 
         while offset + 16 <= data.len() {
-            // Read ACE header (16 bytes minimum)
             let ace_type = u32::from_be_bytes(
                 data[offset..offset + 4]
                     .try_into()
@@ -378,7 +377,6 @@ impl Nfs4Acl {
             ) as usize;
             offset += 4;
 
-            // Read who string
             if offset + who_len > data.len() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -391,7 +389,6 @@ impl Nfs4Acl {
                 .to_owned();
             offset += who_len;
 
-            // Align to 4 bytes
             let padding = (4 - (who_len % 4)) % 4;
             offset += padding;
 
@@ -421,16 +418,12 @@ impl Nfs4Acl {
     /// - N bytes: who string (UTF-8)
     /// - 0-3 bytes: padding to 4-byte alignment
     ///
-    /// # Returns
-    ///
-    /// A byte vector containing the serialized ACL. For an empty ACL,
-    /// returns an empty vector.
+    /// An empty ACL serializes to an empty vector.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut data = Vec::new();
 
         for ace in &self.aces {
-            // Write ACE header
             data.extend_from_slice(&(ace.ace_type as u32).to_be_bytes());
             data.extend_from_slice(&ace.flags.as_raw().to_be_bytes());
             data.extend_from_slice(&ace.mask.as_raw().to_be_bytes());
@@ -439,7 +432,6 @@ impl Nfs4Acl {
             data.extend_from_slice(&(who_bytes.len() as u32).to_be_bytes());
             data.extend_from_slice(who_bytes);
 
-            // Align to 4 bytes
             let padding = (4 - (who_bytes.len() % 4)) % 4;
             data.extend(std::iter::repeat_n(0u8, padding));
         }
@@ -462,25 +454,14 @@ impl Nfs4Acl {
 /// Retrieves the NFSv4 ACL by reading the `system.nfs4_acl` extended attribute
 /// and parsing it into an [`Nfs4Acl`] structure.
 ///
-/// # Arguments
-///
-/// * `path` - Path to the file
-/// * `follow_symlinks` - If `true`, follows symlinks and reads the target's ACL.
-///   If `false`, reads the ACL of the symlink itself (though symlinks typically
-///   don't have ACLs).
-///
-/// # Returns
-///
-/// - `Ok(Some(acl))` if the file has an NFSv4 ACL
-/// - `Ok(None)` if the file has no NFSv4 ACL or the filesystem doesn't support them
-/// - `Err(...)` for other I/O errors
+/// Returns `Ok(None)` when the file has no NFSv4 ACL or the filesystem does
+/// not support them (`ENODATA`, `ENOTSUP`/`EOPNOTSUPP`, `ENOENT`). When
+/// `follow_symlinks` is false, reads the symlink's own ACL (rarely present).
 ///
 /// # Errors
 ///
-/// Returns [`MetadataError`] if reading or parsing the ACL fails, except for:
-/// - `ENODATA`: No ACL present (returns `Ok(None)`)
-/// - `ENOTSUP`/`EOPNOTSUPP`: Filesystem doesn't support ACLs (returns `Ok(None)`)
-/// - `ENOENT`: File not found during attribute read (returns `Ok(None)`)
+/// Returns [`MetadataError`] if reading or parsing the ACL fails. Unsupported
+/// or missing attributes are mapped to `Ok(None)` rather than an error.
 ///
 /// # Platform Support
 ///
@@ -518,27 +499,15 @@ pub fn get_nfsv4_acl(path: &Path, follow_symlinks: bool) -> Result<Option<Nfs4Ac
     }
 }
 
-/// Sets the NFSv4 ACL on a file.
+/// Sets the NFSv4 ACL on a file via the `system.nfs4_acl` extended attribute.
 ///
-/// Writes the ACL to the `system.nfs4_acl` extended attribute. If the ACL
-/// is `None` or empty, removes the NFSv4 ACL attribute from the file.
-///
-/// # Arguments
-///
-/// * `path` - Path to the file
-/// * `acl` - The ACL to set, or `None` to remove the ACL
-/// * `follow_symlinks` - If `true`, sets the ACL on the symlink target.
-///   If `false`, sets the ACL on the symlink itself.
+/// When `acl` is `None` or empty, removes the attribute instead. When
+/// `follow_symlinks` is false, operates on the symlink itself.
 ///
 /// # Errors
 ///
-/// Returns [`MetadataError`] if writing or removing the ACL fails. The error
-/// is suppressed if removing a non-existent attribute (`ENODATA`/`ENOENT`).
-///
-/// # Platform Support
-///
-/// Requires filesystem support for the `system.nfs4_acl` extended attribute.
-/// Commonly supported on Linux NFSv4 mounts and some local filesystems.
+/// Returns [`MetadataError`] if writing or removing the ACL fails. Removing
+/// a non-existent attribute (`ENODATA`/`ENOENT`) is not an error.
 pub fn set_nfsv4_acl(
     path: &Path,
     acl: Option<&Nfs4Acl>,
@@ -557,13 +526,11 @@ pub fn set_nfsv4_acl(
             result.map_err(|e| MetadataError::new("write NFSv4 ACL", path, e))
         }
         _ => {
-            // Remove the ACL
             let result = if follow_symlinks {
                 xattr::remove_deref(path, name)
             } else {
                 xattr::remove(path, name)
             };
-            // Ignore ENODATA (attribute doesn't exist)
             match result {
                 Ok(()) => Ok(()),
                 Err(e) if e.raw_os_error() == Some(libc::ENODATA) => Ok(()),
@@ -574,37 +541,16 @@ pub fn set_nfsv4_acl(
     }
 }
 
-/// Synchronizes NFSv4 ACLs from source to destination.
+/// Synchronizes NFSv4 ACLs from `source` to `destination`.
 ///
-/// Copies the NFSv4 ACL from the source file to the destination, replicating
-/// the exact access control configuration. If the source has no NFSv4 ACL,
-/// any existing ACL on the destination is removed.
-///
-/// # Arguments
-///
-/// * `source` - Path to the source file
-/// * `destination` - Path to the destination file
-/// * `follow_symlinks` - If `true`, follows symlinks on both source and destination.
-///   If `false`, operates on the symlinks themselves.
-///
-/// # Behavior
-///
-/// 1. Reads the NFSv4 ACL from the source file
-/// 2. If source has an ACL, applies it to the destination
-/// 3. If source has no ACL, removes any existing ACL from destination
-///
-/// This ensures the destination's NFSv4 ACL state matches the source.
+/// When the source has no NFSv4 ACL, any existing ACL on the destination is
+/// removed. Requires both filesystems to support `system.nfs4_acl`.
 ///
 /// # Errors
 ///
 /// Returns [`MetadataError`] if reading the source ACL or writing to the
-/// destination fails. Unsupported filesystem errors (no NFSv4 ACL support)
-/// are treated as "no ACL present" and do not trigger an error.
-///
-/// # Platform Support
-///
-/// Requires both source and destination filesystems to support the
-/// `system.nfs4_acl` extended attribute.
+/// destination fails. Unsupported-filesystem errors are treated as "no ACL
+/// present" and do not trigger an error.
 pub fn sync_nfsv4_acls(
     source: &Path,
     destination: &Path,
@@ -614,26 +560,11 @@ pub fn sync_nfsv4_acls(
     set_nfsv4_acl(destination, acl.as_ref(), follow_symlinks)
 }
 
-/// Returns `true` if the path has an NFSv4 ACL.
+/// Returns `true` if the path has a non-empty NFSv4 ACL.
 ///
-/// This is a convenience function that checks whether a file has an NFSv4 ACL
-/// without requiring error handling.
-///
-/// # Arguments
-///
-/// * `path` - Path to check
-/// * `follow_symlinks` - Whether to follow symlinks
-///
-/// # Returns
-///
-/// - `true` if the file has a non-empty NFSv4 ACL
-/// - `false` if the file has no ACL, the filesystem doesn't support ACLs,
-///   or an error occurred while reading
-///
-/// # Note
-///
-/// This function suppresses all errors and returns `false` if any error occurs.
-/// Use [`get_nfsv4_acl`] if you need to distinguish between errors and missing ACLs.
+/// Convenience wrapper around [`get_nfsv4_acl`] that suppresses errors and
+/// returns `false` on missing ACLs, unsupported filesystems, or read errors.
+/// Use [`get_nfsv4_acl`] directly when error distinction matters.
 #[must_use]
 pub fn has_nfsv4_acl(path: &Path, follow_symlinks: bool) -> bool {
     get_nfsv4_acl(path, follow_symlinks)
