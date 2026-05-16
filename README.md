@@ -12,7 +12,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.6.1 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.2 (and 3.4.1, protocols 28-32).
+**Release:** 0.6.2 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.2 (and 3.4.1, protocols 28-32).
 
 All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
 
@@ -55,7 +55,7 @@ The primary platform is Linux. macOS is well-supported with parity for all metad
 
 Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
-### What's New (v0.6.1)
+### What's New (v0.6.2)
 
 **Protocol & interop**
 - INC_RECURSE sender enabled by default for both push and pull directions
