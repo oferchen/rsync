@@ -57,9 +57,10 @@ fn quote_arg(arg: &OsStr) -> String {
 #[must_use]
 pub fn print_child_argv<S: AsRef<OsStr>>(prefix: &str, argv: &[S]) -> String {
     let mut out = String::from(prefix);
+    out.push(' ');
     for arg in argv {
-        out.push(' ');
         out.push_str(&quote_arg(arg.as_ref()));
+        out.push(' ');
     }
     out.push(' ');
     out.push_str(&format!("({} args)", argv.len()));
