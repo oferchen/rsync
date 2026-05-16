@@ -132,10 +132,10 @@ const DEFAULT_MAX_ENTRIES: usize = 1 << 20;
 const MAX_ENTRIES_ENV: &str = "MATCHING_BENCH_MAX_ENTRIES";
 
 const SIZES: &[(&str, usize)] = &[
-    ("l1", 1 << 10),    // 1024 entries -> ~32 KiB lookup table
-    ("l2", 1 << 14),    // 16384 entries -> ~512 KiB lookup table
-    ("llc", 1 << 20),   // 1 Mi entries -> ~32 MiB lookup table
-    ("ram", 1 << 23),   // 8 Mi entries -> ~256 MiB lookup table (opt-in)
+    ("l1", 1 << 10),  // 1024 entries -> ~32 KiB lookup table
+    ("l2", 1 << 14),  // 16384 entries -> ~512 KiB lookup table
+    ("llc", 1 << 20), // 1 Mi entries -> ~32 MiB lookup table
+    ("ram", 1 << 23), // 8 Mi entries -> ~256 MiB lookup table (opt-in)
 ];
 
 /// Returns the maximum entry count the bench will allocate.
@@ -155,7 +155,11 @@ fn max_entries_cap() -> usize {
 /// Produces the same byte stream on every run so cachegrind diffs and
 /// perf re-runs are directly comparable. No `rand` dependency.
 fn xorshift_bytes(seed: u64, len: usize) -> Vec<u8> {
-    let mut state = if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed };
+    let mut state = if seed == 0 {
+        0x9E37_79B9_7F4A_7C15
+    } else {
+        seed
+    };
     let mut out = vec![0u8; len];
     for chunk in out.chunks_mut(8) {
         state ^= state << 13;
