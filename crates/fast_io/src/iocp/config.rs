@@ -20,13 +20,13 @@ static SKIP_EVENT_AVAILABLE: AtomicBool = AtomicBool::new(false);
 ///
 /// Files smaller than this are read/written synchronously since the IOCP
 /// setup overhead exceeds the async benefit for tiny files.
-pub const IOCP_MIN_FILE_SIZE: u64 = 64 * 1024; // 64 KB
+pub const IOCP_MIN_FILE_SIZE: u64 = 64 * 1024;
 
 /// Default number of concurrent I/O operations per completion port.
 pub const DEFAULT_CONCURRENT_OPS: u32 = 4;
 
 /// Default I/O buffer size for IOCP operations.
-pub const DEFAULT_BUFFER_SIZE: usize = 64 * 1024; // 64 KB
+pub const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
 
 /// Configuration for IOCP instances.
 #[derive(Debug, Clone)]
