@@ -5,11 +5,9 @@ use std::mem;
 impl<W> MessageSink<W> {
     /// Maps the sink's writer into a different type while preserving existing state.
     ///
-    /// The helper consumes the sink, applies the provided conversion to the
-    /// underlying writer, and returns a new sink that reuses the previous
-    /// [`core::message::MessageScratch`]. This mirrors patterns such as `BufWriter::into_inner`
-    /// where callers often want to hand ownership of the buffered writer to a
-    /// higher layer without reinitialising per-sink state.
+    /// Consumes the sink, applies the conversion to the underlying writer, and
+    /// returns a new sink that reuses the previous
+    /// [`core::message::MessageScratch`].
     #[must_use]
     pub fn map_writer<F, W2>(self, f: F) -> MessageSink<W2>
     where
@@ -54,11 +52,10 @@ impl<W> MessageSink<W> {
 
     /// Replaces the underlying writer while preserving the sink's scratch buffer and [`crate::line_mode::LineMode`].
     ///
-    /// The previous writer is returned to the caller so buffered diagnostics can be inspected or
-    /// flushed before it is dropped. This avoids rebuilding the entire [`MessageSink`] when the
-    /// destination changes -for example, when switching from standard output to a log file mid-run.
-    /// The method performs an in-place swap, keeping the existing [`core::message::MessageScratch`] zeroed and
-    /// reusing it for subsequent writes.
+    /// The previous writer is returned so buffered diagnostics can be
+    /// inspected or flushed before it is dropped. Useful when the destination
+    /// changes mid-run (for example, switching from standard output to a log
+    /// file).
     #[must_use = "the returned writer contains diagnostics produced before the replacement"]
     pub const fn replace_writer(&mut self, mut writer: W) -> W {
         mem::swap(&mut self.writer, &mut writer);

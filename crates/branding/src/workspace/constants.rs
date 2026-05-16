@@ -1,19 +1,13 @@
 //! String-based workspace metadata exported as compile-time constants.
 //!
-//! These values originate from the workspace manifest and are compiled into the
-//! crate by the build script. Keeping the literals in a dedicated module lets
-//! other helpers share them without re-reading the manifest.
+//! Values originate from the workspace manifest and are compiled in by the
+//! build script.
 
 /// Canonical brand identifier configured for this distribution.
 #[doc(alias = "oc")]
 pub const BRAND: &str = crate::generated::BRAND;
 
 /// Returns the canonical brand identifier configured for this distribution.
-///
-/// This helper avoids exposing the raw constant directly to callers while still
-/// participating in constant evaluation. Code that only needs the brand string
-/// can call [`brand()`] instead of materialising the full [`Metadata`](super::Metadata)
-/// snapshot.
 ///
 /// # Examples
 ///
@@ -34,8 +28,7 @@ pub const UPSTREAM_VERSION: &str = crate::generated::UPSTREAM_VERSION;
 /// Returns the upstream rsync base version targeted by this build.
 ///
 /// The value matches the upstream release string rendered in `--version`
-/// output and documentation banners. Callers that only need the version text
-/// can rely on this helper instead of reading it through [`Metadata`](super::Metadata).
+/// output and documentation banners.
 ///
 /// # Examples
 ///
@@ -54,9 +47,6 @@ pub const RUST_VERSION: &str = crate::generated::RUST_VERSION;
 
 /// Returns the oc-rsync release version string advertised by binaries.
 ///
-/// The helper is used by banner renderers that need the branded identifier
-/// without constructing a [`Metadata`](super::Metadata) snapshot.
-///
 /// # Examples
 ///
 /// ```
@@ -74,9 +64,6 @@ pub const fn rust_version() -> &'static str {
 pub const CLIENT_PROGRAM_NAME: &str = crate::generated::CLIENT_PROGRAM_NAME;
 
 /// Returns the canonical client binary name shipped with the distribution.
-///
-/// This helper mirrors [`Metadata::client_program_name`](super::Metadata::client_program_name)
-/// while remaining `const`, which simplifies usage from static contexts.
 ///
 /// # Examples
 ///

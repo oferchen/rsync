@@ -1,7 +1,7 @@
 //! Validation utilities for branding configuration.
 //!
-//! This module provides testable validation functions used by build.rs
-//! and other parts of the branding infrastructure.
+//! Provides testable validation functions used by `build.rs` and other parts
+//! of the branding infrastructure.
 
 use std::path::Path;
 
