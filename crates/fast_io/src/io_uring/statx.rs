@@ -19,10 +19,18 @@
 //!   probe gate. Reserved for tests that exercise the encoder in isolation
 //!   on every platform.
 //! - [`submit_statx_blocking`] - synchronously submits a single STATX SQE on
-//!   a throwaway ring and returns the populated `libc::statx` result.
+//!   a throwaway ring and returns the populated [`rustix::fs::Statx`] result.
 //! - [`submit_statx_batch`] - submits multiple STATX SQEs as independent
 //!   operations on a single ring and returns all results. Falls back to
 //!   synchronous `statx(2)` via `rustix` when the kernel lacks the opcode.
+//!
+//! # Why [`rustix::fs::Statx`] instead of `libc::statx`
+//!
+//! The `libc` crate only exposes `statx` (and `STATX_*` constants) on glibc
+//! targets. On `linux-musl` builds the symbols are absent, which broke
+//! cross-compiles. `rustix` ships its own `#[repr(C)]` mirror of the kernel
+//! ABI on every Linux target, so we use it as the public type throughout
+//! this module to keep musl, glibc, and other libcs in lockstep.
 //!
 //! # Path lifetime contract
 //!
@@ -96,12 +104,13 @@ pub struct StatxArgs<'a> {
     /// - `libc::AT_SYMLINK_NOFOLLOW` for not following symlinks (like `lstat`)
     /// - `libc::AT_EMPTY_PATH` when using `dirfd` as the target itself
     pub flags: i32,
-    /// Mask of fields to request. Use `libc::STATX_BASIC_STATS` for the
-    /// common fields (mode, nlink, uid, gid, ino, size, blocks, timestamps).
+    /// Mask of fields to request. Use [`rustix::fs::StatxFlags::BASIC_STATS`]
+    /// (via [`rustix::fs::StatxFlags::bits`]) for the common fields (mode,
+    /// nlink, uid, gid, ino, size, blocks, timestamps).
     pub mask: u32,
     /// Output buffer for the kernel to write the statx result into.
     /// Must be zero-initialized before submission.
-    pub statx_buf: &'a mut libc::statx,
+    pub statx_buf: &'a mut rustix::fs::Statx,
 }
 
 /// Returns whether `IORING_OP_STATX` is usable on this system.
@@ -182,7 +191,7 @@ pub fn build_statx_sqe_unchecked(args: &mut StatxArgs<'_>) -> squeue::Entry {
     opcode::Statx::new(
         types::Fd(args.dirfd),
         args.pathname.as_ptr(),
-        (args.statx_buf as *mut libc::statx).cast::<types::statx>(),
+        (args.statx_buf as *mut rustix::fs::Statx).cast::<types::statx>(),
     )
     .flags(args.flags)
     .mask(args.mask)
@@ -211,8 +220,8 @@ pub fn submit_statx_blocking(
     pathname: &CStr,
     flags: i32,
     mask: u32,
-) -> io::Result<libc::statx> {
-    let mut statx_buf: libc::statx = unsafe { std::mem::zeroed() };
+) -> io::Result<rustix::fs::Statx> {
+    let mut statx_buf: rustix::fs::Statx = unsafe { std::mem::zeroed() };
     {
         let mut args = StatxArgs {
             dirfd,
@@ -247,9 +256,9 @@ pub fn submit_statx_blocking(
 
 /// Result of a single statx operation within a batch.
 ///
-/// On success, contains the populated `libc::statx` struct. On failure,
-/// contains the I/O error from the kernel or the fallback path.
-pub type StatxResult = io::Result<libc::statx>;
+/// On success, contains the populated [`rustix::fs::Statx`] struct. On
+/// failure, contains the I/O error from the kernel or the fallback path.
+pub type StatxResult = io::Result<rustix::fs::Statx>;
 
 /// Submits multiple `IORING_OP_STATX` operations as independent SQEs on a
 /// single io_uring instance and returns all results.
@@ -311,12 +320,12 @@ fn submit_statx_batch_io_uring(
     } else {
         libc::AT_SYMLINK_NOFOLLOW
     };
-    let mask: u32 = libc::STATX_BASIC_STATS;
+    let mask: u32 = rustix::fs::StatxFlags::BASIC_STATS.bits();
 
     // Allocate CString paths and statx buffers upfront so they stay alive
     // across submission and completion.
     let mut c_paths: Vec<Option<CString>> = Vec::with_capacity(count);
-    let mut statx_bufs: Vec<libc::statx> = vec![unsafe { std::mem::zeroed() }; count];
+    let mut statx_bufs: Vec<rustix::fs::Statx> = vec![unsafe { std::mem::zeroed() }; count];
     let mut path_errors: Vec<Option<io::Error>> = (0..count).map(|_| None).collect();
 
     for (i, path) in paths.iter().enumerate() {
@@ -346,7 +355,7 @@ fn submit_statx_batch_io_uring(
             let sqe = opcode::Statx::new(
                 types::Fd(libc::AT_FDCWD),
                 c_path.as_ptr(),
-                (&mut statx_bufs[i] as *mut libc::statx).cast::<types::statx>(),
+                (&mut statx_bufs[i] as *mut rustix::fs::Statx).cast::<types::statx>(),
             )
             .flags(flags)
             .mask(mask)
@@ -427,11 +436,8 @@ fn fallback_statx_single(path: &Path, follow_symlinks: bool) -> StatxResult {
         };
         let mask = StatxFlags::BASIC_STATS;
 
-        let result = rustix::fs::statx(rustix::fs::CWD, path, flags, mask)
-            .map_err(|e| io::Error::from_raw_os_error(e.raw_os_error()))?;
-
-        // Convert rustix::fs::Statx to libc::statx field by field.
-        Ok(rustix_statx_to_libc(&result))
+        rustix::fs::statx(rustix::fs::CWD, path, flags, mask)
+            .map_err(|e| io::Error::from_raw_os_error(e.raw_os_error()))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -442,30 +448,6 @@ fn fallback_statx_single(path: &Path, follow_symlinks: bool) -> StatxResult {
             "statx is not available on this platform",
         ))
     }
-}
-
-/// Converts a `rustix::fs::Statx` to a `libc::statx`.
-///
-/// The two types have identical layouts on Linux but different Rust types.
-/// We start from a zeroed struct and populate known public fields to avoid
-/// depending on internal padding field names (`__spare2`, `__spare3`,
-/// `__statx_timestamp_pad1`) which may change between libc crate versions.
-#[cfg(target_os = "linux")]
-#[allow(unsafe_code)]
-fn rustix_statx_to_libc(src: &rustix::fs::Statx) -> libc::statx {
-    // Both types are #[repr(C)] representations of the kernel `struct statx`.
-    // Field-by-field copy is fragile because rustix exposes some fields as
-    // newtype wrappers (e.g. `StatxAttributes`) depending on its backend
-    // feature configuration, while libc uses plain integers. A byte-level
-    // copy sidesteps the type mismatch entirely.
-    const _: () =
-        assert!(std::mem::size_of::<rustix::fs::Statx>() == std::mem::size_of::<libc::statx>());
-    const _: () =
-        assert!(std::mem::align_of::<rustix::fs::Statx>() == std::mem::align_of::<libc::statx>());
-    // SAFETY: Both types represent the same kernel struct with identical
-    // size and alignment (verified by const assertions above). All bit
-    // patterns of the C struct are valid for both representations.
-    unsafe { std::ptr::read((src as *const rustix::fs::Statx).cast::<libc::statx>()) }
 }
 
 #[cfg(test)]
@@ -500,18 +482,23 @@ mod tests {
         }
     }
 
+    /// Convenience: rustix's `BASIC_STATS` bitflag value as a raw `u32`.
+    fn basic_stats_mask() -> u32 {
+        rustix::fs::StatxFlags::BASIC_STATS.bits()
+    }
+
     #[test]
     fn build_statx_sqe_returns_unsupported_when_probe_false() {
         if statx_supported() {
             return; // probe says yes; cannot exercise the unsupported branch
         }
         let path = c"/tmp/test";
-        let mut buf: libc::statx = unsafe { std::mem::zeroed() };
+        let mut buf: rustix::fs::Statx = unsafe { std::mem::zeroed() };
         let err = build_statx_sqe(&mut StatxArgs {
             dirfd: libc::AT_FDCWD,
             pathname: path,
             flags: 0,
-            mask: libc::STATX_BASIC_STATS,
+            mask: basic_stats_mask(),
             statx_buf: &mut buf,
         })
         .unwrap_err();
@@ -521,13 +508,13 @@ mod tests {
     #[test]
     fn build_statx_sqe_unchecked_smoke() {
         let path = c"/tmp/test";
-        let mut buf: libc::statx = unsafe { std::mem::zeroed() };
+        let mut buf: rustix::fs::Statx = unsafe { std::mem::zeroed() };
         // Construct without panic and tag with user_data.
         let _tagged = build_statx_sqe_unchecked(&mut StatxArgs {
             dirfd: libc::AT_FDCWD,
             pathname: path,
             flags: libc::AT_SYMLINK_NOFOLLOW,
-            mask: libc::STATX_BASIC_STATS,
+            mask: basic_stats_mask(),
             statx_buf: &mut buf,
         })
         .user_data(0xCAFE_F00D);
@@ -539,12 +526,12 @@ mod tests {
             return;
         }
         let path = c"/tmp/test";
-        let mut buf: libc::statx = unsafe { std::mem::zeroed() };
+        let mut buf: rustix::fs::Statx = unsafe { std::mem::zeroed() };
         let _entry = build_statx_sqe(&mut StatxArgs {
             dirfd: libc::AT_FDCWD,
             pathname: path,
             flags: 0,
-            mask: libc::STATX_BASIC_STATS,
+            mask: basic_stats_mask(),
             statx_buf: &mut buf,
         })
         .expect("probe true implies SQE builds")
@@ -558,7 +545,7 @@ mod tests {
         }
         // /proc/self/exe always exists on Linux.
         let path = c"/proc/self/exe";
-        let result = submit_statx_blocking(libc::AT_FDCWD, path, 0, libc::STATX_BASIC_STATS);
+        let result = submit_statx_blocking(libc::AT_FDCWD, path, 0, basic_stats_mask());
         let statx_buf = result.expect("statx on /proc/self/exe should succeed");
         // The file must be a regular file or symlink.
         assert!(
@@ -575,8 +562,7 @@ mod tests {
             return;
         }
         let path = c"/nonexistent/path/that/does/not/exist";
-        let err =
-            submit_statx_blocking(libc::AT_FDCWD, path, 0, libc::STATX_BASIC_STATS).unwrap_err();
+        let err = submit_statx_blocking(libc::AT_FDCWD, path, 0, basic_stats_mask()).unwrap_err();
         assert_eq!(err.raw_os_error(), Some(libc::ENOENT));
     }
 
@@ -590,7 +576,7 @@ mod tests {
             libc::AT_FDCWD,
             path,
             libc::AT_SYMLINK_NOFOLLOW,
-            libc::STATX_BASIC_STATS,
+            basic_stats_mask(),
         );
         // /proc/self/exe is a symlink; with AT_SYMLINK_NOFOLLOW it should
         // report as a symlink.
