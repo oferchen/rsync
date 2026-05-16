@@ -364,11 +364,30 @@ impl GeneratorContext {
     /// and passes them to the writer via `set_pending_acl`. The writer will
     /// strip base permission entries before sending.
     ///
+    /// Updates the `PREPARE_ACL_CALLS` / `PREPARE_ACL_ELAPSED_NS` counters
+    /// used for INC_RECURSE diagnostic I5 (#2200). The timer wraps the entire
+    /// body so the no-op early-return path is still accounted for in the
+    /// per-segment call count.
+    ///
     /// # Upstream Reference
     ///
     /// Mirrors `flist.c:1627-1656` where `get_acl()` reads filesystem ACLs
     /// and `send_acl()` strips and sends them.
     fn prepare_pending_acl(
+        &self,
+        entry: &protocol::flist::FileEntry,
+        index: usize,
+        flist_writer: &mut protocol::flist::FileListWriter,
+    ) {
+        let started = Instant::now();
+        self.prepare_pending_acl_inner(entry, index, flist_writer);
+        super::record_prepare_acl(started.elapsed());
+    }
+
+    /// Body of [`Self::prepare_pending_acl`] without the timing wrapper, so
+    /// the counter updates remain in a single place and the elapsed window
+    /// excludes only the `Instant::now()` pair itself.
+    fn prepare_pending_acl_inner(
         &self,
         entry: &protocol::flist::FileEntry,
         index: usize,
