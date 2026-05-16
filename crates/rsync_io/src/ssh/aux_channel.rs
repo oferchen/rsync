@@ -25,9 +25,40 @@ use std::io::{self, BufRead, BufReader, Read};
 use std::process::{ChildStderr, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
+
+/// Maximum time to block in [`StderrAuxChannel::join`] waiting for the drain
+/// thread to exit after the SSH child has already been reaped. The drain
+/// thread blocks on `read(2)` against the kernel stderr endpoint; EOF
+/// normally arrives the instant the last writer closes, but if the ssh
+/// client re-execs a helper (ssh-askpass, ControlMaster persistence) the
+/// helper inherits the write end and EOF can lag the parent's exit by
+/// arbitrarily long. We abandon the drain thread after this deadline so
+/// the rsync process can return to the user; the orphaned thread exits
+/// naturally when the process terminates.
+const DRAIN_JOIN_TIMEOUT: Duration = Duration::from_millis(50);
+
+/// Polls [`JoinHandle::is_finished`] until the handle exits or the timeout
+/// elapses, then calls [`JoinHandle::join`] if the thread finished. Returns
+/// `true` when the thread was joined, `false` when it was abandoned.
+fn join_with_timeout(handle: JoinHandle<()>, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while !handle.is_finished() {
+        if Instant::now() >= deadline {
+            // Leak the JoinHandle (and therefore the underlying thread)
+            // intentionally. The thread is parked in a kernel read and
+            // will exit when the process terminates.
+            std::mem::forget(handle);
+            return false;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    let _ = handle.join();
+    true
+}
 
 use logging::debug_log;
 
@@ -60,9 +91,22 @@ pub(super) trait StderrAuxChannel: Send {
     /// while the drain thread is still running.
     fn collected(&self) -> Vec<u8>;
 
+    /// Closes the parent read side so an in-flight blocking `read()` in the
+    /// drain thread returns immediately. Idempotent.
+    ///
+    /// Callers should invoke this once the child process has exited - the
+    /// drain thread is then only useful for whatever bytes are already
+    /// buffered, and on socketpair-backed channels the read can block past
+    /// child exit if any descendant inherited the child's stderr fd (the
+    /// ssh client occasionally re-execs helpers that keep the fd alive
+    /// briefly after the main `ssh` exits).
+    fn shutdown_read(&self);
+
     /// Joins the drain thread, blocking until it finishes.
     ///
-    /// Idempotent - subsequent calls are no-ops.
+    /// Idempotent - subsequent calls are no-ops. Callers that already know
+    /// the child has exited should call [`shutdown_read`](Self::shutdown_read)
+    /// first to guarantee the drain thread is not blocked in `read()`.
     fn join(&mut self);
 
     /// Joins the drain thread and prints collected stderr when `status`
@@ -72,6 +116,7 @@ pub(super) trait StderrAuxChannel: Send {
     /// flow (panic, early return) where the caller never invoked
     /// `wait_with_stderr`.
     fn join_and_surface_on_error(&mut self, status: &io::Result<ExitStatus>) {
+        self.shutdown_read();
         self.join();
 
         if let Ok(exit) = status {
@@ -122,10 +167,20 @@ impl StderrAuxChannel for PipeStderrChannel {
         snapshot(&self.buffer)
     }
 
+    fn shutdown_read(&self) {
+        // Anonymous pipes have no safe out-of-band wake-up. We rely on
+        // [`join`] using a bounded timeout so the drain thread can be
+        // abandoned when the child has exited but EOF has not yet
+        // propagated (e.g. a fork()ed ssh helper still holds the write
+        // end). The thread exits naturally once the kernel closes the
+        // write end on process teardown.
+    }
+
     fn join(&mut self) {
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        join_with_timeout(handle, DRAIN_JOIN_TIMEOUT);
     }
 }
 
@@ -146,6 +201,11 @@ impl Drop for PipeStderrChannel {
 pub(super) struct SocketpairStderrChannel {
     handle: Option<JoinHandle<()>>,
     buffer: Arc<Mutex<Vec<u8>>>,
+    /// Cloned reference to the parent socketpair endpoint. The drain thread
+    /// owns the original `UnixStream`; this clone lets [`shutdown_read`]
+    /// wake the parked read by calling `shutdown(Both)` from outside the
+    /// thread. `try_clone` failures degrade gracefully to the timeout path.
+    parent_clone: Option<UnixStream>,
 }
 
 #[cfg(unix)]
@@ -160,6 +220,8 @@ impl SocketpairStderrChannel {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let thread_buffer = Arc::clone(&buffer);
 
+        let parent_clone = parent_end.try_clone().ok();
+
         let handle = thread::Builder::new()
             .name("ssh-stderr-drain-socketpair".into())
             .spawn(move || drain_loop(parent_end, &thread_buffer))
@@ -168,6 +230,7 @@ impl SocketpairStderrChannel {
         Self {
             handle: Some(handle),
             buffer,
+            parent_clone,
         }
     }
 }
@@ -178,10 +241,21 @@ impl StderrAuxChannel for SocketpairStderrChannel {
         snapshot(&self.buffer)
     }
 
-    fn join(&mut self) {
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+    fn shutdown_read(&self) {
+        if let Some(ref sock) = self.parent_clone {
+            // Shutting down the read half makes the drain thread's
+            // pending `read()` return 0 immediately, breaking the loop
+            // and letting the thread exit. This is the safe equivalent
+            // of closing the fd while another thread reads from it.
+            let _ = sock.shutdown(std::net::Shutdown::Both);
         }
+    }
+
+    fn join(&mut self) {
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        join_with_timeout(handle, DRAIN_JOIN_TIMEOUT);
     }
 }
 
