@@ -12,7 +12,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.6.1 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.2 (and 3.4.1, protocols 28-32).
+**Release:** 0.6.2 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.2 (and 3.4.1, protocols 28-32).
 
 All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
 
@@ -55,55 +55,66 @@ The primary platform is Linux. macOS is well-supported with parity for all metad
 
 Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
-### What's New (v0.6.1)
+### What's New (v0.6.2)
 
-**Protocol & interop**
-- INC_RECURSE sender enabled by default for both push and pull directions
-- Rolling checksum now sign-extends bytes to match upstream's `schar` semantics, fixing block-match parity at protocol >= 30
-- `--jump-host` for multi-hop SSH transports, with a dedicated proxy-jump interop test against upstream 3.4.1
+**Bug fixes**
+- `--include='*/'` followed by `--exclude='*'` now allows directory traversal while excluding leaf files, matching upstream byte-for-byte (#4107). Slash modifiers are stripped before wire serialisation and rebuilt on the receiver.
+- `--relative` single-source daemon-push path stripping aligned with upstream (#4074)
 
-**Charset translation (`--iconv`)**
-- End-to-end iconv pipeline: file list ingest (receiver) and emit (sender), symlink targets, `--files-from`, and secluded args all flow through `FilenameConverter`
-- Client-side resolver now uses UTF-8 as the wire charset, matching upstream `rsync.c:130-140`
-- `--iconv` forwarded to remote rsync server args (SSH) and to daemon args (`rsync://`), mirroring upstream `options.c:2716-2723`
-- Server-mode flag parser recognises `--iconv=` and `--timeout=` so they no longer leak into positional args and corrupt the destination path
-- Daemon module `charset =` directive wires per-module iconv into the runtime
-- Golden byte tests for iconv-converted filenames; live interop test against upstream 3.4.1
+**`--info` producer emissions (upstream parity)**
+- `--info=NONREG` (default-on) reports skipped non-regular source files (`generator.c:1687`)
+- `--info=MOUNT` reports `--one-file-system` mount-boundary skips (`flist.c:1319`, `generator.c:325`)
+- `--info=SYMSAFE` reports unsafe symlink rejections (`backup.c:291`, `flist.c:216`)
+- `--info=BACKUP` reports `--backup` rename successes (`backup.c:352`)
+- `--info=COPY` reports `--copy-dest`/`--link-dest`/`--compare-dest` alt-base resolution (`generator.c:919`)
+- `--info=STATS` level 1/2/3 distinction restored - level 1 emits only the trailing summary, level 2 adds the file-count detail block, level 3 surfaces heap stats (`main.c:416-465`)
 
-**Daemon**
-- `fake super = yes` module directive consumed by daemon and transfer paths
-- `charset =` module directive wired into the iconv runtime
+**`--debug` producer emissions (upstream parity)**
+- `--debug=ACL` daemon-side default-ACL probes (`acls.c:1133-1134`)
+- `--debug=BACKUP` rename/replace/cross-device internal decisions
+- `--debug=BIND` `socket()`/`bind()` failure diagnostics per address family (`socket.c:432-470`)
+- `--debug=CHDIR` post-`chroot` `change_dir` notice in the daemon (`util1.c:1168-1169`)
+- `--debug=CMD` SSH command construction and secluded-args transmission (`util1.c:98-117`, `pipe.c:54-55`)
+- `--debug=FUZZY` fuzzy basis selection (`generator.c`)
+- `--debug=GENR` generator entry points
+- `--debug=HASH` delta-signature hashtable lifecycle (`hashtable.c:45-103`)
+- `--debug=HLINK` (previously merged) hardlink resolution
+- `--debug=ICONV` iconv setup/probe lines (`rsync.c:99-145`)
+- `--debug=OWN` uid/gid lookup and `chown` diagnostics (`rsync.c:537-545`, `uidlist.c:287-291`)
+- `--info=help` / `--debug=help` golden output now byte-matches upstream (`options.c:499-509`)
 
-**Windows platform**
-- Native NTFS ACL round-trip (`-A`) via `windows-rs` `GetSecurityInfo` / `SetSecurityInfo`
-- Extended attributes (`-X`) stored as NTFS Alternate Data Streams
-- IOCP socket I/O via `WSARecv` / `WSASend` for daemon and SSH transports
+**INC_RECURSE instrumentation (sender-side)**
+- First-byte latency in `send_file_list`
+- `wire_to_flat_ndx` / `flat_to_wire_ndx` partition_point counters
+- `writer.flush()` call-rate on the transfer hot path
+- `prepare_pending_acl` per-segment call count and elapsed time
+- `encode_and_send_segment` per-segment dispatch counter
 
-**macOS platform**
-- AppleDouble (`._` resource-fork sidecars) wire-compatible with upstream rsync
+**Compression**
+- `--compress-threads=N` flag wires through to `ZSTD_c_nbWorkers` for multi-threaded zstd (3.4.2 parity)
 
-**Compatibility**
-- `--fake-super` mode for unprivileged metadata preservation via xattrs, with `am_root` forced false so ownership is encoded in `user.rsync.%stat` rather than applied
-- `-oBatchMode=yes` injection now gated on `is_ssh_program()` so non-OpenSSH transports (e.g. `rsh`) are no longer corrupted
+**Checksums**
+- SIMD vs scalar self-test added (cargo-fuzz target + unit test) cross-validating AVX2, SSE2, NEON, and scalar implementations at startup (3.4.2 parity)
 
-**Performance**
-- io_uring shared submission ring across reader and writer worker pools
-- io_uring SEND-path deadlock eliminated under sustained TCP back-pressure
+**Upstream interop**
+- Pinned upstream interop matrix bumped to rsync **3.4.2** (in addition to 3.0.9, 3.1.3, 3.4.1)
+- Scheduled GitHub Actions watcher for new upstream releases
 
-**Security & code quality**
-- `SensitiveBytes` uses the `zeroize` crate to scrub daemon credentials and auth secrets on drop
-- Safe `syslog` crate replaces hand-rolled FFI in the logging-sink crate
-- `setsockopt` FFI consolidated into the `fast_io` crate per the unsafe-code policy
+**Code quality**
+- Comment audit pass across all 25 workspace crates: restating comments removed, public-item `///` rustdoc applied, every `// upstream:` source reference preserved
+- Removed redundant `#[must_use]` from `Result`/`Option` returning functions across the workspace (#2123)
+- Filter-rule sender-side directive support
+- Compressed-stream negative-token decoder hardened against 3.4.2 regression pattern
 
-**Testing & CI**
-- Property tests added for compress codec round-trip, rolling-checksum SIMD/scalar parity, FilterChain precedence/anchoring, and bwlimit rate/burst pacing
-- CI fail-fast guard rejects stale `Cargo.lock`
-- `standalone:delta-stats` and `iconv-local-ssh` cleared from `KNOWN_FAILURES`
+**Daemon & metadata**
+- Daemon `chrono::Local` pre-initialised before `chroot` so timezone-aware log timestamps survive jail entry (3.4.2 parity)
+- `--open-noatime` properly propagated through sender source-file opens (3.4.2 parity)
+- ACL ID mapping audited against 3.4.2 non-root mapping fix (#618)
+- `clean_fname()` buffer underflow, xattr qsort parity, allocator-zeroing, and Y2038 paths all audited against 3.4.2
 
 **Documentation**
-- SSH transport timeout coverage matrix
-- Eliminate-path matrix for `tools/ci/known_failures.conf`
-- Audit confirming filter rules match upstream's iconv policy
+- Deployment / TLS guide expanded
+- Filter-flags audit, info-flags audit, and debug-flags-verbosity matrix kept current
 
 ### Interop Testing
 
