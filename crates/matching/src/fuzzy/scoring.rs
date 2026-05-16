@@ -1,11 +1,6 @@
-//! Similarity scoring algorithm for fuzzy basis file matching.
+//! Similarity scoring for fuzzy basis file matching.
 //!
-//! Computes a multi-factor similarity score between two filenames,
-//! considering extension, prefix, suffix, and file size.
-//!
-//! # Upstream Reference
-//!
-//! Mirrors the scoring logic in `generator.c:1450-1530` - `fuzzy_find()`.
+//! upstream: generator.c:1450-1530 `fuzzy_find()`.
 
 use super::{
     EXTENSION_MATCH_BONUS, PREFIX_MATCH_POINTS, SIZE_SIMILARITY_BONUS, SUFFIX_MATCH_POINTS,
@@ -13,61 +8,22 @@ use super::{
 
 /// Computes a similarity score between two filenames.
 ///
-/// # Algorithm
+/// Scoring factors (higher is better):
 ///
-/// The scoring algorithm considers multiple factors:
+/// 1. **Extension match** (+50) - same file extension
+/// 2. **Common prefix** (+10 per char) - matching characters at the start
+/// 3. **Common suffix** (+8 per char) - matching characters before extension
+/// 4. **Size similarity** (+30) - file sizes within 50% of each other
 ///
-/// 1. **Extension match** (+50 points) - Same file extension
-/// 2. **Common prefix** (+10 per char) - Matching characters at the start
-/// 3. **Common suffix** (+8 per char) - Matching characters before extension
-/// 4. **Size similarity** (+30 points) - File sizes within 50% of each other
-///
-/// Higher scores indicate better matches. The minimum useful score is
-/// typically around 10 points.
-///
-/// # Upstream Reference
-///
-/// Mirrors the scoring logic in `generator.c:1450-1530` - `fuzzy_find()`.
-///
-/// # Arguments
-///
-/// * `target` - The name we're trying to match
-/// * `candidate` - A potential match candidate
-/// * `target_size` - Size of the target file
-/// * `candidate_size` - Size of the candidate file
-///
-/// # Returns
-///
-/// A similarity score where higher values indicate better matches.
+/// upstream: generator.c:1450-1530 `fuzzy_find()`.
 ///
 /// # Examples
 ///
 /// ```
 /// use matching::compute_similarity_score;
 ///
-/// // Same extension and similar names
-/// let score = compute_similarity_score(
-///     "report_2024.csv",
-///     "report_2023.csv",
-///     1000,
-///     950
-/// );
-/// assert!(score > 100, "Should score highly: {}", score);
-///
-/// // Different extensions score lower than same extension
-/// let score_diff_ext = compute_similarity_score(
-///     "data.csv",
-///     "data.txt",
-///     1000,
-///     1000
-/// );
-/// let score_same_ext = compute_similarity_score(
-///     "data.csv",
-///     "data.csv",
-///     1000,
-///     1000
-/// );
-/// assert!(score_diff_ext < score_same_ext, "Different extensions score lower");
+/// let score = compute_similarity_score("report_2024.csv", "report_2023.csv", 1000, 950);
+/// assert!(score > 100);
 /// ```
 pub fn compute_similarity_score(
     target: &str,
@@ -107,23 +63,11 @@ pub fn compute_similarity_score(
     score
 }
 
-/// Splits a filename into base name and extension.
+/// Splits a filename into base name and extension at the last '.'.
 ///
-/// # Algorithm
-///
-/// Finds the last '.' in the filename and splits there, with special handling:
-/// - Hidden files (starting with '.') without another '.' have no extension
-/// - Trailing dots are not considered extensions
-/// - Double extensions like ".tar.gz" are split at the last dot
-///
-/// # Examples
-///
-/// ```
-/// # use matching::compute_similarity_score;
-/// // These examples show the splitting logic indirectly through scoring
-/// assert!(compute_similarity_score("file.txt", "data.txt", 1, 1) > 50);
-/// assert!(compute_similarity_score(".hidden", ".config", 1, 1) < 50);
-/// ```
+/// Hidden files (starting with '.') with no further dot have no extension;
+/// trailing dots are not extensions; double extensions like `.tar.gz` split
+/// at the last dot.
 fn split_name_extension(name: &str) -> (&str, &str) {
     match name.rfind('.') {
         Some(pos) if pos > 0 && pos < name.len() - 1 => (&name[..pos], &name[pos + 1..]),
@@ -133,20 +77,9 @@ fn split_name_extension(name: &str) -> (&str, &str) {
 
 /// Computes the length of the common prefix between two strings.
 ///
-/// # Optimization
-///
-/// This function is optimized for ASCII filenames (the common case) with
-/// a fast byte-comparison path, but falls back to correct Unicode handling
-/// when necessary.
-///
-/// # Examples
-///
-/// ```
-/// # use matching::compute_similarity_score;
-/// // Common prefix "report_202" contributes to high score
-/// let score = compute_similarity_score("report_2024", "report_2023", 1, 1);
-/// assert!(score > 80);
-/// ```
+/// Optimized for ASCII filenames with a fast byte-comparison path; falls
+/// back to Unicode-aware comparison when the byte prefix straddles a
+/// multibyte sequence.
 #[inline]
 fn common_prefix_length(a: &str, b: &str) -> usize {
     let a_bytes = a.as_bytes();
@@ -178,20 +111,9 @@ fn common_prefix_length(a: &str, b: &str) -> usize {
 
 /// Computes the length of the common suffix between two strings.
 ///
-/// # Optimization
-///
-/// This function is optimized for ASCII filenames (the common case) with
-/// a fast byte-comparison path from the end, but falls back to correct
-/// Unicode handling when necessary.
-///
-/// # Examples
-///
-/// ```
-/// # use matching::compute_similarity_score;
-/// // Common suffix "_backup" contributes to similarity
-/// let score = compute_similarity_score("data_backup", "config_backup", 1, 1);
-/// assert!(score > 40);
-/// ```
+/// Optimized for ASCII filenames with a tail byte-comparison path; falls
+/// back to Unicode-aware reverse comparison when the byte suffix straddles
+/// a multibyte sequence.
 #[inline]
 fn common_suffix_length(a: &str, b: &str) -> usize {
     let a_bytes = a.as_bytes();
