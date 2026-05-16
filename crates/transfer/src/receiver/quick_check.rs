@@ -8,6 +8,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+use logging::info_log;
 use protocol::flist::FileEntry;
 
 use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
@@ -196,25 +197,60 @@ pub(super) fn try_reference_dest(
                 if let Some(parent) = dest_path.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
-                if fs::copy(&ref_path, &dest_path).is_ok() {
-                    if let Err(e) = apply_metadata_from_file_entry(&dest_path, entry, metadata_opts)
-                    {
-                        metadata_errors.push((dest_path.clone(), e.to_string()));
+                match fs::copy(&ref_path, &dest_path) {
+                    Ok(_) => {
+                        if let Err(e) =
+                            apply_metadata_from_file_entry(&dest_path, entry, metadata_opts)
+                        {
+                            metadata_errors.push((dest_path.clone(), e.to_string()));
+                        }
+                        if let Err(e) = apply_acls_from_receiver_cache(
+                            &dest_path,
+                            entry,
+                            acl_cache,
+                            !entry.is_symlink(),
+                        ) {
+                            metadata_errors.push((dest_path, e.to_string()));
+                        }
+                        return true;
                     }
-                    if let Err(e) = apply_acls_from_receiver_cache(
-                        &dest_path,
-                        entry,
-                        acl_cache,
-                        !entry.is_symlink(),
-                    ) {
-                        metadata_errors.push((dest_path, e.to_string()));
+                    Err(error) => {
+                        // upstream: generator.c:919 - rsyserr(FINFO, errno,
+                        // "copy_file %s => %s", full_fname(src), copy_to)
+                        // under INFO_GTE(COPY, 1). The flag is part of
+                        // info_verbosity[1] (options.c:241) so this fires at
+                        // `-v` or `--info=COPY`. Wording mirrors upstream's
+                        // rsyserr format: `copy_file SRC => DST: ERRSTR (ERRNO)`.
+                        let errno = error.raw_os_error().unwrap_or(0);
+                        info_log!(
+                            Copy,
+                            1,
+                            "copy_file {} => {}: {} ({})",
+                            ref_path.display(),
+                            dest_path.display(),
+                            io_error_message(&error),
+                            errno
+                        );
                     }
-                    return true;
                 }
             }
         }
     }
     false
+}
+
+/// Strips the trailing `" (os error N)"` suffix that `std::io::Error::Display`
+/// appends to OS errors so the rendered message matches upstream `rsyserr`'s
+/// `strerror(errno)` form. Non-OS errors are returned as-is.
+fn io_error_message(error: &std::io::Error) -> String {
+    let display = error.to_string();
+    if let Some(errno) = error.raw_os_error() {
+        let suffix = format!(" (os error {errno})");
+        if let Some(trimmed) = display.strip_suffix(&suffix) {
+            return trimmed.to_string();
+        }
+    }
+    display
 }
 
 /// Computes a file's checksum and compares it against an expected value.
@@ -293,5 +329,163 @@ mod io_uring_linkat_tests {
 
         let result = fast_io::hard_link(&src, &dst);
         assert!(result.is_err());
+    }
+}
+
+/// Pinning tests for `--info=COPY` emissions on `--copy-dest` failures.
+///
+/// upstream: generator.c:919 - `INFO_GTE(COPY, 1)` gates an `rsyserr` call in
+/// `copy_altdest_file()` whose wording reads:
+///   `copy_file SRC => DST: STRERROR (ERRNO)`
+/// COPY sits in `info_verbosity[1]` (options.c:241) so the flag is enabled at
+/// `-v` and any explicit `--info=COPY`.
+#[cfg(unix)]
+#[cfg(test)]
+mod info_copy_emission_tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+    use metadata::MetadataOptions;
+    use protocol::flist::FileEntry;
+
+    use super::try_reference_dest;
+    use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
+
+    fn copy_messages() -> Vec<String> {
+        drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Info {
+                    flag: InfoFlag::Copy,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn init_copy_level(level: u8) {
+        let mut cfg = VerbosityConfig::from_verbose_level(0);
+        cfg.info.copy = level;
+        init(cfg);
+        let _ = drain_events();
+    }
+
+    /// Verifies that when `--copy-dest` cannot write the destination,
+    /// `try_reference_dest` emits the upstream-format COPY notice via the
+    /// diagnostic queue.
+    #[test]
+    fn copy_dest_failure_emits_info_copy_notice() {
+        init_copy_level(1);
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let ref_dir = temp.path().join("ref");
+        fs::create_dir_all(&ref_dir).expect("create ref dir");
+
+        // Populate the alternate-base file the receiver wants to copy.
+        let relative = PathBuf::from("payload.bin");
+        let payload = b"alt-base contents";
+        fs::write(ref_dir.join(&relative), payload).expect("write ref file");
+
+        // Make the destination directory read-only so `fs::copy` fails.
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+        let mut perms = fs::metadata(&dest_dir).expect("dest meta").permissions();
+        perms.set_mode(0o500);
+        fs::set_permissions(&dest_dir, perms).expect("chmod dest");
+
+        let entry = FileEntry::new_file(relative.clone(), payload.len() as u64, 0o644);
+        let reference = ReferenceDirectory {
+            kind: ReferenceDirectoryKind::Copy,
+            path: ref_dir.clone(),
+        };
+        let metadata_opts = MetadataOptions::default();
+        let mut metadata_errors = Vec::new();
+
+        let handled = try_reference_dest(
+            &entry,
+            &dest_dir,
+            std::slice::from_ref(&reference),
+            false,
+            true,
+            None,
+            &metadata_opts,
+            &mut metadata_errors,
+            None,
+        );
+
+        // Restore writable permissions so tempdir cleanup succeeds.
+        let mut restore = fs::metadata(&dest_dir).expect("dest meta").permissions();
+        restore.set_mode(0o700);
+        let _ = fs::set_permissions(&dest_dir, restore);
+
+        assert!(
+            !handled,
+            "expected failed alt-base copy to bubble up as unhandled"
+        );
+
+        let messages = copy_messages();
+        assert!(
+            messages.iter().any(|m| m.starts_with("copy_file ")
+                && m.contains(" => ")
+                && m.contains("payload.bin")),
+            "expected upstream-format COPY,1 notice; got {messages:?}"
+        );
+    }
+
+    /// Verifies that `--info=nocopy` (level 0) suppresses the emission,
+    /// mirroring upstream's `INFO_GTE(COPY, 1)` gate.
+    #[test]
+    fn nocopy_suppresses_info_copy_notice() {
+        init_copy_level(0);
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let ref_dir = temp.path().join("ref");
+        fs::create_dir_all(&ref_dir).expect("create ref dir");
+        let relative = PathBuf::from("muted.bin");
+        let payload = b"silent payload";
+        fs::write(ref_dir.join(&relative), payload).expect("write ref file");
+
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+        let mut perms = fs::metadata(&dest_dir).expect("dest meta").permissions();
+        perms.set_mode(0o500);
+        fs::set_permissions(&dest_dir, perms).expect("chmod dest");
+
+        let entry = FileEntry::new_file(relative.clone(), payload.len() as u64, 0o644);
+        let reference = ReferenceDirectory {
+            kind: ReferenceDirectoryKind::Copy,
+            path: ref_dir,
+        };
+        let metadata_opts = MetadataOptions::default();
+        let mut metadata_errors = Vec::new();
+
+        let _ = try_reference_dest(
+            &entry,
+            &dest_dir,
+            std::slice::from_ref(&reference),
+            false,
+            true,
+            None,
+            &metadata_opts,
+            &mut metadata_errors,
+            None,
+        );
+
+        let mut restore = fs::metadata(&dest_dir).expect("dest meta").permissions();
+        restore.set_mode(0o700);
+        let _ = fs::set_permissions(&dest_dir, restore);
+
+        // Restore the default so later tests in this thread see the upstream baseline.
+        init(VerbosityConfig::from_verbose_level(0));
+        let _ = drain_events();
+
+        assert!(
+            copy_messages().is_empty(),
+            "COPY notice must be gated at level 1"
+        );
     }
 }
