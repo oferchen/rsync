@@ -50,15 +50,10 @@ use crate::lazy_metadata::LazyMetadata;
 /// incurring the overhead of filesystem metadata queries.
 #[derive(Debug)]
 pub struct LazyFileListEntry {
-    /// Absolute path to the file.
     full_path: PathBuf,
-    /// Path relative to traversal root.
     relative_path: PathBuf,
-    /// Lazy metadata wrapper.
     metadata: LazyMetadata,
-    /// Depth from traversal root (root = 0).
     depth: usize,
-    /// Whether this is the traversal root entry.
     is_root: bool,
 }
 
