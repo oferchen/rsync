@@ -142,6 +142,27 @@ where
         }
     }
 
+    // upstream: options.c:2800-2805 - `--compress-choice`, `--new-compress`, and
+    // `--old-compress` carry the explicit codec when the negotiated algorithm is
+    // not the default CPRES_ZLIB. Without forwarding it into `ServerConfig`, the
+    // SSH server path skips compression entirely (handshake.client_args is None
+    // in SSH mode), so the receiver tries to decode upstream's compressed token
+    // stream as plain tokens and eventually misaligns onto a multiplex frame
+    // boundary.
+    if let Some(name) = &long_flags.compress_choice {
+        match protocol::CompressionAlgorithm::parse(name) {
+            Ok(algo) => config.connection.compress_choice = Some(algo),
+            Err(e) => {
+                write_server_error(
+                    stderr,
+                    program_brand,
+                    format!("invalid compression algorithm '{name}': {e}"),
+                );
+                return 1;
+            }
+        }
+    }
+
     match run_server_stdio(config, &mut stdin, stdout, None) {
         Ok(_stats) => 0,
         Err(e) => {
