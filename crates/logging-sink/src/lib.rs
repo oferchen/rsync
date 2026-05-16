@@ -74,11 +74,9 @@ mod line_mode;
 mod sink;
 /// Syslog backend for daemon-mode logging.
 ///
-/// This module is only available on Unix platforms. It provides facility/tag
-/// configuration and an RAII guard for the syslog connection, matching upstream
-/// rsync's `log.c` behaviour of routing daemon diagnostics through syslog when
-/// no explicit log file is configured. Backed by the safe `syslog` crate, which
-/// speaks the BSD/RFC 3164 wire protocol over a Unix socket (no libc FFI).
+/// Unix-only. Routes daemon diagnostics through the safe `syslog` crate
+/// (BSD/RFC 3164 over a Unix socket, no libc FFI) when no explicit log file
+/// is configured, matching upstream rsync's `log.c` behaviour.
 #[cfg(unix)]
 pub mod syslog;
 

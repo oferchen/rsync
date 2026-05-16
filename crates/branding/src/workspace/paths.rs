@@ -25,14 +25,6 @@ pub fn daemon_secrets_path() -> &'static Path {
 
 /// Returns the upstream-compatible daemon configuration directory as a [`Path`].
 ///
-/// The helper mirrors [`metadata().legacy_daemon_config_dir()`](crate::workspace::Metadata::legacy_daemon_config_dir)
-/// so callers that need to reference the historical installation layout (for
-/// example, when validating compatibility symlinks or scanning legacy
-/// configuration locations) can do so without repeating string literals. The
-/// return value is derived from the workspace metadata populated by
-/// `build.rs`, ensuring the Rust binaries, packaging assets, and documentation
-/// remain aligned.
-///
 /// # Examples
 ///
 /// ```
@@ -50,10 +42,8 @@ pub fn legacy_daemon_config_dir() -> &'static Path {
 
 /// Returns the upstream-compatible daemon configuration file as a [`Path`].
 ///
-/// The workspace still honours `/etc/rsyncd.conf` for operators that rely on
-/// the historical location. Exposing the value through this helper keeps the
-/// string centralised so tests, packaging validation, and documentation can
-/// reference the path without duplicating literals.
+/// The workspace honours `/etc/rsyncd.conf` for operators that rely on the
+/// historical location.
 ///
 /// # Examples
 ///
@@ -71,11 +61,6 @@ pub fn legacy_daemon_config_path() -> &'static Path {
 }
 
 /// Returns the upstream-compatible daemon secrets file as a [`Path`].
-///
-/// Packaging still installs a legacy secrets file for deployments that expect
-/// the upstream layout. Centralising the path avoids drift between the
-/// workspace metadata, runtime lookups, and the packaged configuration
-/// templates.
 ///
 /// # Examples
 ///

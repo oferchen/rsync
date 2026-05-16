@@ -4,13 +4,9 @@
 //!
 //! The [`manifest()`] accessor returns a [`BrandManifest`] struct that captures
 //! the canonical program names, configuration paths, and version metadata for
-//! the workspace. Callers can retrieve brand-specific program names or
-//! filesystem locations via [`BrandManifest::profile_for`] and its convenience
-//! accessors. Higher layers use the manifest to render banners, build help
-//! text, and locate configuration files without duplicating string literals or
-//! re-parsing the workspace manifest at runtime. The manifest is constructed on
-//! first use from [`crate::workspace::metadata()`] and cached for the lifetime of
-//! the process so callers can obtain references to the data at negligible cost.
+//! the workspace. The manifest is constructed on first use from
+//! [`crate::workspace::metadata()`] and cached for the lifetime of the
+//! process.
 
 use serde::Serialize;
 use std::fmt;
@@ -36,12 +32,9 @@ pub struct BrandManifest {
 
 /// Concise, brand-specific view of the workspace metadata.
 ///
-/// Instances of this structure are produced via
-/// [`BrandManifest::summary_for`] and expose the canonical program names,
-/// configuration paths, and version metadata associated with a given brand.
-/// The summary keeps branding details and release identifiers in one place so
-/// packaging automation, documentation generators, and entry points can surface
-/// consistent human-readable descriptions without duplicating string literals.
+/// Instances are produced via [`BrandManifest::summary_for`] and expose the
+/// canonical program names, configuration paths, and version metadata
+/// associated with a given brand.
 ///
 /// ```
 /// use branding::branding::{manifest, Brand};
