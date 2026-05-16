@@ -14,9 +14,6 @@ use super::types::{AggregateStats, ConnectionId, ConnectionInfo, IpStats};
 
 /// Thread-safe connection pool for tracking active daemon connections.
 ///
-/// Uses `DashMap` for lock-free concurrent access, enabling multiple threads
-/// to query and update connection state without blocking the main accept loop.
-///
 /// # Example
 ///
 /// ```ignore
@@ -24,33 +21,21 @@ use super::types::{AggregateStats, ConnectionId, ConnectionInfo, IpStats};
 /// use std::net::SocketAddr;
 ///
 /// let pool = ConnectionPool::new();
-///
-/// // Register a new connection
 /// let addr: SocketAddr = "192.168.1.100:12345".parse().unwrap();
 /// let id = pool.register(addr);
-///
-/// // Set the module being accessed
 /// pool.set_module(&id, "documents".to_string());
-///
-/// // Update byte counters
 /// pool.add_bytes(&id, 1024, 512);
 ///
-/// // Check rate limits by IP
-/// let ip_addr = addr.ip();
-/// if pool.connections_from_ip(&ip_addr) >= 10 {
-///     println!("Rate limit exceeded for {}", ip_addr);
+/// if pool.connections_from_ip(&addr.ip()) >= 10 {
+///     println!("Rate limit exceeded");
 /// }
 ///
-/// // Unregister when done
 /// pool.unregister(&id);
 /// ```
 #[derive(Debug)]
 pub struct ConnectionPool {
-    /// Active connections indexed by ID.
     connections: DashMap<ConnectionId, ConnectionInfo>,
-    /// Per-IP statistics for rate limiting.
     ip_stats: DashMap<IpAddr, IpStats>,
-    /// Next connection ID to assign.
     next_id: AtomicU64,
 }
 
