@@ -63,7 +63,9 @@ const LOCALE_PLACEHOLDER: &str = "[LOCALE]";
 /// the locale-default branch.
 #[inline]
 pub fn trace_peer_charset(role: IconvRole, charset: Option<&str>) {
-    let label = charset.filter(|s| !s.is_empty()).unwrap_or(LOCALE_PLACEHOLDER);
+    let label = charset
+        .filter(|s| !s.is_empty())
+        .unwrap_or(LOCALE_PLACEHOLDER);
     debug_log!(Iconv, 1, "[{}] charset: {}", role, label);
 }
 
@@ -158,7 +160,10 @@ mod tests {
             .iter()
             .filter(|s| s.as_str() == "[server] charset: [LOCALE]")
             .count();
-        assert_eq!(locale, 2, "locale placeholder must render for None and empty: {m:?}");
+        assert_eq!(
+            locale, 2,
+            "locale placeholder must render for None and empty: {m:?}"
+        );
     }
 
     #[test]

@@ -1,6 +1,4 @@
-use protocol::iconv::{
-    FilenameConverter, IconvRole, converter_from_locale, trace_peer_charset,
-};
+use protocol::iconv::{FilenameConverter, IconvRole, converter_from_locale, trace_peer_charset};
 use thiserror::Error;
 
 /// Describes the requested iconv charset conversion behaviour.
