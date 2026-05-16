@@ -15,8 +15,11 @@
 //!
 //! Spilled items are indexed by `(sequence_number -> file_offset)` in a
 //! `BTreeMap` so reload is O(log S) where S is the number of spilled items.
-//! The temporary file is created via the `tempfile` crate and deleted
-//! automatically when the buffer is dropped (RAII cleanup).
+//! By default the temporary file is created via the `tempfile` crate
+//! (`SpooledTempFile`) and deleted automatically when the buffer is dropped
+//! (RAII cleanup). Callers may supply an explicit spill directory via
+//! [`SpillableReorderBuffer::with_spill_dir`], which is more resilient when
+//! the directory is shared across long-running transfers.
 //!
 //! # Spill strategy
 //!
@@ -26,6 +29,17 @@
 //! soon. Items within a small "hot zone" around `next_expected` are kept
 //! in memory to avoid thrashing.
 //!
+//! # Error handling
+//!
+//! Every disk operation surfaces its error to the caller via [`SpillError`].
+//! Earlier revisions panicked on I/O failure, which translated heavy-transfer
+//! ENOSPC and temp-directory-vanish events into process crashes. The current
+//! API returns errors so the receiver can map them to rsync exit code 11
+//! ([`FileIo`](https://github.com/RsyncProject/rsync/blob/master/errcode.h))
+//! and abort cleanly. When an explicit spill directory disappears mid-transfer
+//! the buffer attempts a single `create_dir_all` recovery before propagating
+//! the failure.
+//!
 //! # Upstream Reference
 //!
 //! Upstream rsync processes files sequentially in `recv_files()` and never
@@ -34,7 +48,9 @@
 //! has no upstream equivalent.
 
 use std::collections::BTreeMap;
+use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 
 use super::reorder::{CapacityExceeded, ReorderBuffer};
 
@@ -50,6 +66,71 @@ pub const DEFAULT_SPILL_THRESHOLD: usize = 64 * 1024 * 1024;
 /// spilled to avoid repeated disk round-trips for items about to be
 /// delivered.
 const HOT_ZONE: u64 = 16;
+
+/// Errors surfaced by the spill layer.
+///
+/// Producers should treat any [`SpillError::Io`] as fatal for the affected
+/// transfer: ENOSPC, missing spill directories, and partial writes all
+/// indicate that the disk backing the reorder buffer can no longer be
+/// trusted. The receiver maps these to exit code 11 ([`FileIo`]) so the
+/// transfer aborts with the same semantics as upstream rsync's I/O failures.
+///
+/// [`FileIo`]: https://github.com/RsyncProject/rsync/blob/master/errcode.h
+#[derive(Debug)]
+pub enum SpillError {
+    /// Capacity bound from the underlying ring buffer was exceeded.
+    Capacity(CapacityExceeded),
+    /// Disk I/O failed while reading or writing spilled items.
+    Io(io::Error),
+}
+
+impl SpillError {
+    /// Returns the underlying I/O error if this is an I/O failure.
+    #[must_use]
+    pub fn io_error(&self) -> Option<&io::Error> {
+        match self {
+            SpillError::Io(e) => Some(e),
+            SpillError::Capacity(_) => None,
+        }
+    }
+
+    /// Returns `true` if this error indicates the disk is out of space.
+    #[must_use]
+    pub fn is_out_of_space(&self) -> bool {
+        self.io_error()
+            .is_some_and(|e| e.kind() == io::ErrorKind::StorageFull)
+    }
+}
+
+impl std::fmt::Display for SpillError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SpillError::Capacity(_) => write!(f, "reorder buffer capacity exceeded"),
+            SpillError::Io(e) => write!(f, "reorder spill I/O failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for SpillError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            SpillError::Capacity(_) => None,
+            SpillError::Io(e) => Some(e),
+        }
+    }
+}
+
+impl From<CapacityExceeded> for SpillError {
+    fn from(e: CapacityExceeded) -> Self {
+        SpillError::Capacity(e)
+    }
+}
+
+impl From<io::Error> for SpillError {
+    fn from(e: io::Error) -> Self {
+        SpillError::Io(e)
+    }
+}
 
 /// Codec for serializing and deserializing items to the spill file.
 ///
@@ -79,6 +160,35 @@ pub trait SpillCodec: Sized {
     fn estimated_size(&self) -> usize;
 }
 
+/// Backing storage for spilled bytes.
+///
+/// Two flavours are supported:
+///
+/// - `Spooled` - the default. Wraps `tempfile::SpooledTempFile`, which keeps
+///   small spills in memory and rolls over to disk past a threshold. The OS
+///   deletes the file when the buffer is dropped.
+/// - `Directory` - opens a single anonymous tempfile inside a caller-provided
+///   directory. If the directory vanishes mid-transfer (operator cleanup,
+///   container restart) the buffer performs one `create_dir_all` retry
+///   before surfacing the error.
+enum SpillBackend {
+    Spooled(tempfile::SpooledTempFile),
+    Directory(File),
+}
+
+impl SpillBackend {
+    fn file(&mut self) -> &mut dyn ReadWriteSeek {
+        match self {
+            SpillBackend::Spooled(f) => f,
+            SpillBackend::Directory(f) => f,
+        }
+    }
+}
+
+/// Trait object alias to keep the [`SpillBackend::file`] accessor honest.
+trait ReadWriteSeek: Read + Write + Seek {}
+impl<T: Read + Write + Seek + ?Sized> ReadWriteSeek for T {}
+
 /// Reorder buffer with transparent spill-to-tempfile for bounded memory.
 ///
 /// Wraps a [`ReorderBuffer<T>`] and adds disk-backed overflow when the
@@ -102,8 +212,8 @@ pub trait SpillCodec: Sized {
 ///
 /// buf.insert(1, DeltaResult::success(1u32, 100, 50, 50).with_sequence(1)).unwrap();
 /// buf.insert(0, DeltaResult::success(0u32, 200, 100, 100).with_sequence(0)).unwrap();
-/// assert_eq!(buf.next_in_order().unwrap().ndx().get(), 0);
-/// assert_eq!(buf.next_in_order().unwrap().ndx().get(), 1);
+/// assert_eq!(buf.next_in_order().unwrap().unwrap().ndx().get(), 0);
+/// assert_eq!(buf.next_in_order().unwrap().unwrap().ndx().get(), 1);
 /// ```
 pub struct SpillableReorderBuffer<T: SpillCodec> {
     /// The underlying in-memory reorder buffer.
@@ -114,14 +224,20 @@ pub struct SpillableReorderBuffer<T: SpillCodec> {
     threshold: usize,
     /// Spilled items: sequence number -> byte offset in the spill file.
     spill_index: BTreeMap<u64, u64>,
-    /// Temporary file for spilled items. Created lazily on first spill.
-    spill_file: Option<tempfile::SpooledTempFile>,
+    /// Temporary storage for spilled items. Created lazily on first spill.
+    spill_file: Option<SpillBackend>,
+    /// Caller-supplied spill directory for the directory-backed flavour.
+    /// `None` means use a spooled tempfile.
+    spill_dir: Option<PathBuf>,
     /// Current write position in the spill file.
     spill_write_pos: u64,
     /// Running count of spill-to-disk events (for diagnostics).
     spill_count: u64,
     /// Running count of reload-from-disk events (for diagnostics).
     reload_count: u64,
+    /// Running count of `create_dir_all` retries after the spill directory
+    /// disappeared mid-transfer.
+    dir_recreate_count: u64,
 }
 
 impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
@@ -134,6 +250,7 @@ impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
             .field("spilled_count", &self.spill_index.len())
             .field("spill_events", &self.spill_count)
             .field("reload_events", &self.reload_count)
+            .field("dir_recreate_count", &self.dir_recreate_count)
             .finish()
     }
 }
@@ -151,6 +268,8 @@ pub struct SpillStats {
     pub memory_used: usize,
     /// Configured spill threshold in bytes.
     pub threshold: usize,
+    /// Number of times the spill directory was re-created after vanishing.
+    pub dir_recreate_events: u64,
 }
 
 impl<T: SpillCodec> SpillableReorderBuffer<T> {
@@ -171,10 +290,47 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             threshold,
             spill_index: BTreeMap::new(),
             spill_file: None,
+            spill_dir: None,
             spill_write_pos: 0,
             spill_count: 0,
             reload_count: 0,
+            dir_recreate_count: 0,
         }
+    }
+
+    /// Creates a spillable reorder buffer that backs its spill file with an
+    /// explicit on-disk directory.
+    ///
+    /// The directory is created if it does not exist. If it later disappears
+    /// during a transfer (operator cleanup, tmpfs eviction, container restart)
+    /// the buffer recreates it once before propagating the underlying error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the directory cannot be created.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `capacity` is zero.
+    pub fn with_spill_dir(
+        capacity: usize,
+        threshold: usize,
+        dir: impl Into<PathBuf>,
+    ) -> io::Result<Self> {
+        let dir = dir.into();
+        fs::create_dir_all(&dir)?;
+        Ok(Self {
+            inner: ReorderBuffer::new(capacity),
+            memory_used: 0,
+            threshold,
+            spill_index: BTreeMap::new(),
+            spill_file: None,
+            spill_dir: Some(dir),
+            spill_write_pos: 0,
+            spill_count: 0,
+            reload_count: 0,
+            dir_recreate_count: 0,
+        })
     }
 
     /// Creates a spillable reorder buffer with the default 64 MB threshold.
@@ -197,16 +353,13 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     ///
     /// # Errors
     ///
-    /// Returns [`CapacityExceeded`] if the sequence offset from
-    /// `next_expected` exceeds the ring buffer capacity (same as
-    /// [`ReorderBuffer::insert`]).
-    ///
-    /// # Panics
-    ///
-    /// Panics if a spill I/O operation fails. In production the temp file
-    /// resides on the same filesystem as the transfer destination, so I/O
-    /// failures indicate a fatal disk condition.
-    pub fn insert(&mut self, sequence: u64, item: T) -> Result<(), CapacityExceeded> {
+    /// Returns [`SpillError::Capacity`] if the sequence offset from
+    /// `next_expected` exceeds the ring buffer capacity. Returns
+    /// [`SpillError::Io`] if a spill write fails (ENOSPC, missing temp
+    /// directory, partial write, encoder failure). On I/O failure the
+    /// affected item is preserved in memory; on capacity failure no
+    /// insert occurs.
+    pub fn insert(&mut self, sequence: u64, item: T) -> Result<(), SpillError> {
         let item_size = item.estimated_size();
         self.inner.insert(sequence, item)?;
         self.memory_used += item_size;
@@ -216,7 +369,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
 
         // Spill excess items if over threshold.
         if self.memory_used > self.threshold {
-            self.spill_excess();
+            self.spill_excess()?;
         }
 
         Ok(())
@@ -226,7 +379,12 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     ///
     /// Mirrors [`ReorderBuffer::force_insert`] but also tracks memory
     /// and triggers spill when needed.
-    pub fn force_insert(&mut self, sequence: u64, item: T) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpillError::Io`] if a spill write fails after the insert.
+    /// The newly inserted item is preserved in memory on failure.
+    pub fn force_insert(&mut self, sequence: u64, item: T) -> Result<(), SpillError> {
         let item_size = item.estimated_size();
         self.inner.force_insert(sequence, item);
         self.memory_used += item_size;
@@ -234,8 +392,10 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         self.spill_index.remove(&sequence);
 
         if self.memory_used > self.threshold {
-            self.spill_excess();
+            self.spill_excess()?;
         }
+
+        Ok(())
     }
 
     /// Returns the next in-order item if available.
@@ -243,20 +403,26 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// First checks the in-memory buffer. If the next expected item was
     /// spilled to disk, it is reloaded transparently and the delivery
     /// cursor advances.
-    pub fn next_in_order(&mut self) -> Option<T> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpillError::Io`] if reloading a spilled item from disk
+    /// fails (missing spill file, short read, decoder error). `Ok(None)`
+    /// is returned when no item is ready for delivery.
+    pub fn next_in_order(&mut self) -> Result<Option<T>, SpillError> {
         // Try in-memory first.
         if let Some(item) = self.inner.next_in_order() {
             self.memory_used = self.memory_used.saturating_sub(item.estimated_size());
-            return Some(item);
+            return Ok(Some(item));
         }
 
         // Check if the next expected sequence is spilled.
         let next = self.inner.next_expected();
-        let &offset = self.spill_index.get(&next)?;
+        let Some(&offset) = self.spill_index.get(&next) else {
+            return Ok(None);
+        };
 
-        let item = self
-            .reload_item(offset)
-            .unwrap_or_else(|e| panic!("failed to reload spilled item at offset {offset}: {e}"));
+        let item = self.reload_item(offset)?;
         self.spill_index.remove(&next);
         self.reload_count += 1;
 
@@ -268,7 +434,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             result.is_some(),
             "force_insert at next_expected must succeed"
         );
-        result
+        Ok(result)
     }
 
     /// Drains all contiguous in-order items starting from `next_expected`.
@@ -276,12 +442,19 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// Handles both in-memory and spilled items transparently. Items are
     /// yielded as long as the next expected sequence number is available
     /// either in memory or on disk.
-    pub fn drain_ready(&mut self) -> Vec<T> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpillError::Io`] if reloading a spilled item fails. Any
+    /// items already drained before the failure are discarded along with
+    /// the error; callers that need them should drain incrementally via
+    /// [`next_in_order`](Self::next_in_order).
+    pub fn drain_ready(&mut self) -> Result<Vec<T>, SpillError> {
         let mut items = Vec::new();
-        while let Some(item) = self.next_in_order() {
+        while let Some(item) = self.next_in_order()? {
             items.push(item);
         }
-        items
+        Ok(items)
     }
 
     /// Returns the next sequence number expected for in-order delivery.
@@ -317,6 +490,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             reload_events: self.reload_count,
             memory_used: self.memory_used,
             threshold: self.threshold,
+            dir_recreate_events: self.dir_recreate_count,
         }
     }
 
@@ -326,17 +500,23 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         self.threshold
     }
 
+    /// Returns the configured spill directory, if any.
+    #[must_use]
+    pub fn spill_dir(&self) -> Option<&Path> {
+        self.spill_dir.as_deref()
+    }
+
     /// Spills the highest-sequence items to disk until memory usage drops
     /// below the threshold.
     ///
     /// Items close to `next_expected` are preserved in memory when possible
     /// (the "hot zone"). If the hot zone alone exceeds the threshold, the
     /// hot zone shrinks to ensure at least one item can be spilled.
-    fn spill_excess(&mut self) {
+    fn spill_excess(&mut self) -> Result<(), SpillError> {
         let next = self.inner.next_expected();
         let count = self.inner.buffered_count();
         if count == 0 {
-            return;
+            return Ok(());
         }
 
         // The hot zone protects items near next_expected from thrashing.
@@ -370,48 +550,87 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
                         self.spill_count += 1;
                     }
                     Err(e) => {
-                        // Re-insert the item on spill failure.
+                        // Re-insert the item on spill failure so the caller
+                        // can retry or shut down without losing the result.
                         self.inner.force_insert(seq, item);
-                        panic!("spill I/O failed: {e}");
+                        return Err(SpillError::Io(e));
                     }
                 }
             }
         }
+        Ok(())
     }
 
     /// Serializes a single item to the spill file.
+    ///
+    /// On [`io::ErrorKind::NotFound`] for a directory-backed buffer this
+    /// invokes [`recreate_spill_dir`](Self::recreate_spill_dir) and retries
+    /// once. All other errors (ENOSPC, partial writes via the
+    /// [`Write::write_all`] contract, encoder failures) bubble up unchanged.
     fn spill_item(&mut self, sequence: u64, item: &T) -> io::Result<()> {
-        let file = self.spill_file.get_or_insert_with(|| {
-            // Use SpooledTempFile: keeps small spills in memory (up to 1 MB),
-            // rolls over to disk for larger volumes. This avoids disk I/O
-            // for transient pressure spikes.
-            tempfile::SpooledTempFile::new(1024 * 1024)
-        });
-
-        file.seek(SeekFrom::Start(self.spill_write_pos))?;
-
-        // Write the payload to a temporary buffer first to get the length.
+        // Encode payload up front so a codec error never leaves a partial
+        // record in the spill file.
         let mut payload = Vec::new();
         item.encode(&mut payload)?;
+        if payload.len() > u32::MAX as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "spill record exceeds u32::MAX bytes",
+            ));
+        }
         let len = payload.len() as u32;
 
-        // Write length-prefixed record: [u32 len][payload].
-        file.write_all(&len.to_le_bytes())?;
-        file.write_all(&payload)?;
+        match self.write_record(&len.to_le_bytes(), &payload) {
+            Ok(written) => {
+                self.spill_index.insert(sequence, self.spill_write_pos);
+                self.spill_write_pos += written;
+                Ok(())
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound && self.spill_dir.is_some() => {
+                // Temp directory vanished mid-transfer. Recovery is only
+                // safe when no prior items had been spilled - otherwise
+                // those items are lost on disk and silently continuing
+                // would corrupt the transfer. With prior items present
+                // we surface NotFound; the caller treats it as a fatal
+                // I/O error and the transfer aborts with exit 11.
+                if !self.spill_index.is_empty() {
+                    return Err(e);
+                }
+                self.recreate_spill_dir()?;
+                let written = self.write_record(&len.to_le_bytes(), &payload)?;
+                self.spill_index.insert(sequence, self.spill_write_pos);
+                self.spill_write_pos += written;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
 
-        // Record the offset for this sequence.
-        self.spill_index.insert(sequence, self.spill_write_pos);
-        self.spill_write_pos += 4 + payload.len() as u64;
-
-        Ok(())
+    /// Writes a length-prefixed record to the spill file, opening it lazily.
+    ///
+    /// Returns the number of bytes written (always `header.len() + payload.len()`
+    /// on success). All `write_all` calls obey the standard library contract
+    /// of returning [`io::ErrorKind::WriteZero`] on partial writes.
+    fn write_record(&mut self, header: &[u8], payload: &[u8]) -> io::Result<u64> {
+        let dir = self.spill_dir.clone();
+        let backend = match self.spill_file.as_mut() {
+            Some(b) => b,
+            None => self.spill_file.insert(open_backend(dir.as_deref())?),
+        };
+        let file = backend.file();
+        file.seek(SeekFrom::Start(self.spill_write_pos))?;
+        file.write_all(header)?;
+        file.write_all(payload)?;
+        Ok(header.len() as u64 + payload.len() as u64)
     }
 
     /// Reloads a single item from the spill file at the given offset.
     fn reload_item(&mut self, offset: u64) -> io::Result<T> {
-        let file = self
+        let backend = self
             .spill_file
             .as_mut()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "spill file not initialized"))?;
+        let file = backend.file();
 
         file.seek(SeekFrom::Start(offset))?;
 
@@ -425,6 +644,45 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         file.read_exact(&mut payload)?;
 
         T::decode(&mut payload.as_slice())
+    }
+
+    /// Re-creates the spill directory after a [`io::ErrorKind::NotFound`].
+    ///
+    /// Drops any stale file handle, attempts `create_dir_all` once, and
+    /// resets the in-flight write cursor and spill index. On retry success
+    /// the next write opens a fresh tempfile. Any items previously spilled
+    /// to the vanished file are now unrecoverable; the caller's transfer
+    /// must treat the surrounding error as fatal if it needed those items.
+    fn recreate_spill_dir(&mut self) -> io::Result<()> {
+        let Some(dir) = self.spill_dir.clone() else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "spill backend has no directory to re-create",
+            ));
+        };
+        // Drop the stale file handle before recreating the parent so the
+        // OS does not keep a deleted inode pinned in our process.
+        self.spill_file = None;
+        fs::create_dir_all(&dir)?;
+        self.spill_write_pos = 0;
+        self.spill_index.clear();
+        self.dir_recreate_count += 1;
+        Ok(())
+    }
+}
+
+/// Opens the appropriate backend for a spill file.
+fn open_backend(dir: Option<&Path>) -> io::Result<SpillBackend> {
+    match dir {
+        Some(dir) => Ok(SpillBackend::Directory(tempfile::tempfile_in(dir)?)),
+        None => {
+            // SpooledTempFile keeps small spills in memory (up to 1 MB) and
+            // rolls over to disk for larger volumes, avoiding disk I/O for
+            // transient pressure spikes.
+            Ok(SpillBackend::Spooled(tempfile::SpooledTempFile::new(
+                1024 * 1024,
+            )))
+        }
     }
 }
 
@@ -449,6 +707,47 @@ mod tests {
         }
     }
 
+    /// Codec wrapper whose `encode` fails on demand. Used to inject ENOSPC
+    /// and partial-write scenarios without touching the real filesystem.
+    #[derive(Clone, Copy)]
+    struct FailingCodec {
+        value: u64,
+        size: usize,
+        fail_kind: Option<io::ErrorKind>,
+    }
+
+    impl SpillCodec for FailingCodec {
+        fn encode(&self, w: &mut dyn Write) -> io::Result<()> {
+            if let Some(kind) = self.fail_kind {
+                return Err(io::Error::new(kind, "injected encode failure"));
+            }
+            w.write_all(&self.value.to_le_bytes())?;
+            // Pad to claimed size so memory accounting matches.
+            if self.size > 8 {
+                w.write_all(&vec![0u8; self.size - 8])?;
+            }
+            Ok(())
+        }
+
+        fn decode(r: &mut dyn Read) -> io::Result<Self> {
+            let mut buf = [0u8; 8];
+            r.read_exact(&mut buf)?;
+            Ok(Self {
+                value: u64::from_le_bytes(buf),
+                size: 8,
+                fail_kind: None,
+            })
+        }
+
+        fn estimated_size(&self) -> usize {
+            self.size
+        }
+    }
+
+    fn drain_all<T: SpillCodec>(buf: &mut SpillableReorderBuffer<T>) -> Vec<T> {
+        buf.drain_ready().expect("drain should succeed")
+    }
+
     #[test]
     fn no_spill_under_threshold() {
         let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(64, 1024); // 1 KB threshold
@@ -463,7 +762,7 @@ mod tests {
         assert_eq!(stats.spill_events, 0);
         assert_eq!(stats.memory_used, 80); // 10 * 8 bytes
 
-        let items = buf.drain_ready();
+        let items = drain_all(&mut buf);
         assert_eq!(items.len(), 10);
         for (i, &val) in items.iter().enumerate() {
             assert_eq!(val, i as u64 * 10);
@@ -485,7 +784,7 @@ mod tests {
         assert!(stats.spill_events > 0, "expected spill events, got 0");
 
         // Despite spilling, items should drain correctly in order.
-        let items = buf.drain_ready();
+        let items = drain_all(&mut buf);
         assert_eq!(items.len(), 16);
         for (i, &val) in items.iter().enumerate() {
             assert_eq!(val, i as u64 * 100, "wrong value at index {i}");
@@ -507,7 +806,7 @@ mod tests {
         buf.insert(2, 20).unwrap();
         buf.insert(0, 0).unwrap();
 
-        let items = buf.drain_ready();
+        let items = drain_all(&mut buf);
         assert_eq!(items.len(), 8);
         let expected: Vec<u64> = (0..8).map(|i| i * 10).collect();
         assert_eq!(items, expected);
@@ -540,7 +839,7 @@ mod tests {
         buf.insert(1, 10).unwrap();
         buf.insert(0, 0).unwrap();
 
-        let items = buf.drain_ready();
+        let items = drain_all(&mut buf);
         assert_eq!(items, vec![0, 10, 20, 30]);
 
         // Phase 2: Insert 4..8.
@@ -549,7 +848,7 @@ mod tests {
         buf.insert(5, 50).unwrap();
         buf.insert(4, 40).unwrap();
 
-        let items = buf.drain_ready();
+        let items = drain_all(&mut buf);
         assert_eq!(items, vec![40, 50, 60, 70]);
 
         assert!(buf.is_empty());
@@ -575,7 +874,7 @@ mod tests {
         assert!(stats.spill_events > 0, "should spill above threshold");
 
         // All items still deliver correctly.
-        let items = buf.drain_ready();
+        let items = drain_all(&mut buf);
         assert_eq!(items, vec![0, 1, 2, 3, 4, 5]);
     }
 
@@ -586,26 +885,26 @@ mod tests {
         assert!(buf.is_empty());
         assert_eq!(buf.buffered_count(), 0);
         assert_eq!(buf.next_expected(), 0);
-        assert!(buf.next_in_order().is_none());
-        assert!(buf.drain_ready().is_empty());
+        assert!(buf.next_in_order().unwrap().is_none());
+        assert!(drain_all(&mut buf).is_empty());
     }
 
     #[test]
     fn force_insert_with_spill() {
         let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(4, 24); // 3 items before spill
 
-        buf.force_insert(0, 0);
-        buf.force_insert(1, 10);
-        buf.force_insert(2, 20);
-        buf.force_insert(3, 30);
-        buf.force_insert(10, 100); // beyond capacity, triggers grow + possibly spill
+        buf.force_insert(0, 0).unwrap();
+        buf.force_insert(1, 10).unwrap();
+        buf.force_insert(2, 20).unwrap();
+        buf.force_insert(3, 30).unwrap();
+        buf.force_insert(10, 100).unwrap(); // beyond capacity, triggers grow + possibly spill
 
         // Drain what's available.
-        let items = buf.drain_ready();
+        let items = drain_all(&mut buf);
         assert_eq!(items, vec![0, 10, 20, 30]);
 
         // Items 4-9 are missing, so 10 is not yet deliverable.
-        assert!(buf.next_in_order().is_none());
+        assert!(buf.next_in_order().unwrap().is_none());
     }
 
     #[test]
@@ -621,7 +920,7 @@ mod tests {
         assert_eq!(stats.threshold, 32);
 
         // Drain all - should trigger reloads.
-        let items = buf.drain_ready();
+        let items = drain_all(&mut buf);
         assert_eq!(items.len(), 10);
 
         let stats = buf.spill_stats();
@@ -642,7 +941,7 @@ mod tests {
             buf.insert(i, i * 7).unwrap();
         }
 
-        let items = buf.drain_ready();
+        let items = drain_all(&mut buf);
         assert_eq!(items.len(), 100);
         for (i, &val) in items.iter().enumerate() {
             assert_eq!(val, i as u64 * 7, "wrong value at position {i}");
@@ -724,7 +1023,7 @@ mod tests {
         )
         .unwrap();
 
-        let items = buf.drain_ready();
+        let items = drain_all(&mut buf);
         assert_eq!(items.len(), 3);
         assert_eq!(items[0].ndx().get(), 10);
         assert!(items[0].is_success());
@@ -732,5 +1031,199 @@ mod tests {
         assert!(items[1].needs_retry());
         assert_eq!(items[2].ndx().get(), 20);
         assert!(items[2].is_success());
+    }
+
+    // ---- Hardening tests for ENOSPC / temp-dir vanish / partial writes ----
+
+    #[test]
+    fn enospc_during_spill_propagates_as_io_error() {
+        // Threshold is tiny so the very next insert must spill. The codec
+        // returns ENOSPC, simulating the kernel rejecting the spill write.
+        let mut buf: SpillableReorderBuffer<FailingCodec> = SpillableReorderBuffer::new(8, 16);
+        let healthy = FailingCodec {
+            value: 0,
+            size: 8,
+            fail_kind: None,
+        };
+        let healthy2 = FailingCodec {
+            value: 1,
+            size: 16,
+            fail_kind: None,
+        };
+        let poison = FailingCodec {
+            value: 99,
+            size: 64,
+            fail_kind: Some(io::ErrorKind::StorageFull),
+        };
+
+        // Seed two healthy items so the spill candidate set is non-empty.
+        buf.insert(0, healthy).unwrap();
+        buf.insert(1, healthy2).unwrap();
+
+        // Inserting the poisoned item pushes us over the threshold and the
+        // codec rejects with ENOSPC during the spill write.
+        let err = buf
+            .insert(2, poison)
+            .expect_err("ENOSPC must surface as an error");
+
+        match err {
+            SpillError::Io(ref e) => assert_eq!(e.kind(), io::ErrorKind::StorageFull),
+            SpillError::Capacity(_) => panic!("expected I/O error, got capacity"),
+        }
+        assert!(err.is_out_of_space(), "is_out_of_space should be true");
+    }
+
+    #[test]
+    fn partial_write_surfaces_as_write_zero() {
+        // A writer that accepts one byte and then returns zero models the
+        // ENOSPC-mid-record case the std library surfaces as `WriteZero`
+        // through the `Write::write_all` contract.
+        struct OneByteWriter {
+            wrote: bool,
+        }
+        impl Write for OneByteWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                if self.wrote {
+                    Ok(0)
+                } else {
+                    self.wrote = true;
+                    Ok(1)
+                }
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = OneByteWriter { wrote: false };
+        let codec = FailingCodec {
+            value: 7,
+            size: 64,
+            fail_kind: None,
+        };
+        let err = codec
+            .encode(&mut writer)
+            .expect_err("partial write must surface");
+        assert_eq!(err.kind(), io::ErrorKind::WriteZero);
+    }
+
+    #[test]
+    fn temp_dir_vanish_recreates_when_no_prior_spills() {
+        // Vanish-before-first-spill is the recoverable case: no data has
+        // been written yet, so re-creating the directory and retrying
+        // is safe.
+        let scratch = tempfile::tempdir().expect("create scratch root");
+        let spill_dir = scratch.path().join("spill");
+        let mut buf: SpillableReorderBuffer<u64> =
+            SpillableReorderBuffer::with_spill_dir(16, 8, &spill_dir)
+                .expect("setup spill directory");
+
+        // Operator wipes the spill directory before any spill happens.
+        fs::remove_dir_all(&spill_dir).expect("remove spill dir");
+        assert!(!spill_dir.exists());
+
+        // These inserts trigger spills. The first spill finds the dir
+        // missing, recreates it once, and retries successfully.
+        buf.insert(0, 100).unwrap();
+        buf.insert(1, 200).unwrap();
+        buf.insert(2, 300).unwrap();
+
+        let stats = buf.spill_stats();
+        assert_eq!(
+            stats.dir_recreate_events, 1,
+            "expected exactly one dir recreate, got {}",
+            stats.dir_recreate_events
+        );
+        assert!(spill_dir.exists(), "spill dir should be back");
+        assert!(stats.spill_events > 0, "spill must have occurred");
+    }
+
+    #[test]
+    fn temp_dir_vanish_after_prior_spills_returns_error() {
+        // Vanish after prior spills is unrecoverable: those items live
+        // only on the now-missing disk. We surface the I/O error rather
+        // than silently lose them.
+        let scratch = tempfile::tempdir().expect("create scratch root");
+        let spill_dir = scratch.path().join("spill");
+        let mut buf: SpillableReorderBuffer<u64> =
+            SpillableReorderBuffer::with_spill_dir(16, 8, &spill_dir)
+                .expect("setup spill directory");
+
+        // Prime the buffer with at least one successful spill.
+        buf.insert(0, 100).unwrap();
+        buf.insert(1, 200).unwrap();
+        assert!(buf.spill_stats().spilled_items > 0);
+
+        // Operator wipes the spill directory mid-transfer. Drop the stale
+        // file handle so the next write opens a fresh tempfile and observes
+        // the missing parent.
+        buf.spill_file = None;
+        fs::remove_dir_all(&spill_dir).expect("remove spill dir");
+
+        // The next insert that triggers a spill should surface NotFound
+        // (or another io::Error) without panicking and without recreating
+        // the directory: prior items are unrecoverable.
+        let mut saw_error = false;
+        for i in 2u64..6 {
+            if let Err(e) = buf.insert(i, i * 100) {
+                assert!(matches!(e, SpillError::Io(_)), "expected I/O error");
+                saw_error = true;
+                break;
+            }
+        }
+        assert!(saw_error, "expected spill failure after dir vanish");
+        assert_eq!(
+            buf.spill_stats().dir_recreate_events,
+            0,
+            "must not silently recreate when prior items exist"
+        );
+    }
+
+    #[test]
+    fn dir_recreate_failure_surfaces_io_error() {
+        // Point the spill dir at a path whose parent is a regular file:
+        // create_dir_all is guaranteed to fail with NotADirectory or similar.
+        let scratch = tempfile::tempdir().expect("create scratch root");
+        let blocker = scratch.path().join("blocker");
+        fs::write(&blocker, b"not a directory").expect("write blocker file");
+        let invalid_dir = blocker.join("spill");
+
+        // with_spill_dir performs the first create_dir_all eagerly. The
+        // failure must surface cleanly rather than panicking.
+        let err = SpillableReorderBuffer::<u64>::with_spill_dir(8, 8, &invalid_dir)
+            .expect_err("expected create_dir_all to fail");
+        // Different platforms map "parent is a file" to different ErrorKinds
+        // (NotADirectory on modern Linux, Other on older toolchains, sometimes
+        // AlreadyExists on macOS); any io::Error meets the contract.
+        let _ = err.kind();
+    }
+
+    #[test]
+    fn directory_backed_spill_round_trip() {
+        // Sanity: the directory backend yields the same byte-for-byte
+        // results as the default spooled backend.
+        let scratch = tempfile::tempdir().expect("create scratch root");
+        let mut buf: SpillableReorderBuffer<u64> =
+            SpillableReorderBuffer::with_spill_dir(64, 24, scratch.path().join("spill"))
+                .expect("setup spill directory");
+
+        for i in (0..16).rev() {
+            buf.insert(i, i * 11).unwrap();
+        }
+        let items = drain_all(&mut buf);
+        let expected: Vec<u64> = (0..16).map(|i| i * 11).collect();
+        assert_eq!(items, expected);
+        assert!(buf.spill_stats().spill_events > 0);
+    }
+
+    #[test]
+    fn spill_error_display_and_source() {
+        let cap_err = SpillError::from(CapacityExceeded);
+        assert_eq!(format!("{cap_err}"), "reorder buffer capacity exceeded");
+        assert!(std::error::Error::source(&cap_err).is_none());
+
+        let io_err = SpillError::from(io::Error::new(io::ErrorKind::StorageFull, "disk full"));
+        assert!(format!("{io_err}").contains("disk full"));
+        assert!(std::error::Error::source(&io_err).is_some());
     }
 }
