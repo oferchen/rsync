@@ -103,9 +103,6 @@ impl SessionInfo {
 
 /// Thread-safe registry for tracking active daemon sessions.
 ///
-/// Uses DashMap for lock-free concurrent access, allowing multiple
-/// threads to query session state without blocking the main accept loop.
-///
 /// # Example
 ///
 /// ```ignore
@@ -113,20 +110,10 @@ impl SessionInfo {
 /// use std::net::SocketAddr;
 ///
 /// let registry = SessionRegistry::new();
-///
-/// // Register a new session
 /// let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
 /// let id = registry.register(addr, None);
-///
-/// // Update session state
 /// registry.set_module(&id, "documents".to_string());
 /// registry.set_state(&id, SessionState::Transferring);
-///
-/// // Query active sessions
-/// let active = registry.active_count();
-/// println!("Active sessions: {}", active);
-///
-/// // Remove when done
 /// registry.unregister(&id);
 /// ```
 #[derive(Debug)]
