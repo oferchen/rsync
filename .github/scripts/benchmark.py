@@ -15,7 +15,7 @@ import sys
 import tempfile
 import time
 
-UPSTREAM = "target/interop/upstream-src/rsync-3.4.1/rsync"
+UPSTREAM = "target/interop/upstream-src/rsync-3.4.2/rsync"
 OC_RSYNC = "target/release/oc-rsync"
 OC_RSYNC_OPENSSL = os.environ.get("OC_RSYNC_OPENSSL", "")
 OC_RSYNC_RUSSH = os.environ.get("OC_RSYNC_RUSSH", "")
