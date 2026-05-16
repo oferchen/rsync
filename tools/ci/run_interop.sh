@@ -9432,6 +9432,18 @@ run_comprehensive_interop_case() {
 
   rm -rf "$od" "$ud"; mkdir -p "$od" "$ud"
 
+  # Per-version private copy of the source tree. comp_run_scenario mutates
+  # the source for some scenarios (sparse adds sparse_test.bin, merge-filter
+  # adds .rsync-filter, etc.). The parent loop fans out one subshell per
+  # version, so a shared comp_src races: the sparse scenario in one
+  # subshell can leave its augmentation file visible to the update
+  # scenario in another subshell, causing the update verifier to find an
+  # unexpected file with the wrong mtime. A local copy isolates each
+  # version's mutations.
+  local local_src="${workdir}/comp-source-${tag}"
+  rm -rf "$local_src"
+  cp -a "$comp_src" "$local_src"
+
   write_rust_daemon_conf "$ocf" "$opf" "$oc_port" "$od" "c-${tag}"
   write_upstream_conf "$ucf" "$upf" "$upstream_port" "$ud" "c-${tag}" "$up_identity"
 
@@ -9553,7 +9565,7 @@ run_comprehensive_interop_case() {
     [[ -n "$protocol_flag" ]] && flags="$flags $protocol_flag"
     total=$((total + 1))
     echo "  [upstream ${version}→oc] ${name}${sfx}"
-    if comp_run_scenario "$name" "$upstream_binary" "$flags" "$comp_src" \
+    if comp_run_scenario "$name" "$upstream_binary" "$flags" "$local_src" \
         "rsync://127.0.0.1:${oc_port}/interop" "$od" "$olf" "$vtype"; then
       echo "    PASS"
       passed=$((passed + 1))
@@ -9578,7 +9590,7 @@ run_comprehensive_interop_case() {
     [[ -n "$protocol_flag" ]] && flags="$flags $protocol_flag"
     total=$((total + 1))
     echo "  [oc→upstream ${version}] ${name}${sfx}"
-    if comp_run_scenario "$name" "$oc_client" "$flags" "$comp_src" \
+    if comp_run_scenario "$name" "$oc_client" "$flags" "$local_src" \
         "rsync://127.0.0.1:${upstream_port}/interop" "$ud" "$ulf" "$vtype"; then
       echo "    PASS"
       passed=$((passed + 1))
@@ -9601,7 +9613,7 @@ run_comprehensive_interop_case() {
     echo "  [oc-rsync SSH] local SSH transfer${sfx}"
     local ssh_dir="${workdir}/ssh-${tag}"
     mkdir -p "$ssh_dir"
-    if run_ssh_interop_test "$oc_client" "$comp_src" "$ssh_dir" "$olf"; then
+    if run_ssh_interop_test "$oc_client" "$local_src" "$ssh_dir" "$olf"; then
       echo "    PASS"
       passed=$((passed + 1))
     else
