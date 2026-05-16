@@ -49,13 +49,13 @@ use std::io::{self, Read, Write};
 ///
 /// Small files benefit from the simpler read/write path due to lower syscall overhead.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const SENDFILE_THRESHOLD: u64 = 64 * 1024; // 64KB
+const SENDFILE_THRESHOLD: u64 = 64 * 1024;
 
 /// Maximum bytes per sendfile call (Linux limit to avoid signal interruption).
 ///
 /// Linux `sendfile` can be interrupted by signals, so we limit each call to ~2GB.
 #[cfg(target_os = "linux")]
-const SENDFILE_CHUNK_SIZE: usize = 0x7fff_f000; // ~2GB
+const SENDFILE_CHUNK_SIZE: usize = 0x7fff_f000;
 
 /// Maximum bytes per Darwin `sendfile` call.
 ///
@@ -64,7 +64,7 @@ const SENDFILE_CHUNK_SIZE: usize = 0x7fff_f000; // ~2GB
 /// simple and avoid pinning a single socket for too long when other I/O is
 /// waiting.
 #[cfg(target_os = "macos")]
-const SENDFILE_CHUNK_SIZE: u64 = 0x7fff_f000; // ~2GB
+const SENDFILE_CHUNK_SIZE: u64 = 0x7fff_f000;
 
 /// Transfers file contents to a writer, using buffered read/write.
 ///
@@ -456,7 +456,7 @@ fn try_sendfile_macos(source: &File, dest_fd: i32, length: u64) -> io::Result<u6
 #[cfg(target_os = "linux")]
 fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
     let mut reader = io::BufReader::new(source);
-    let mut buf = vec![0u8; 256 * 1024]; // 256KB buffer
+    let mut buf = vec![0u8; 256 * 1024];
     let mut total: u64 = 0;
     let mut remaining = length;
 
@@ -495,7 +495,7 @@ fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64
 #[cfg(all(unix, not(target_os = "linux")))]
 fn copy_via_fd_write(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
     let mut reader = io::BufReader::new(source);
-    let mut buf = vec![0u8; 256 * 1024]; // 256KB buffer
+    let mut buf = vec![0u8; 256 * 1024];
     let mut total: u64 = 0;
     let mut remaining = length;
 
@@ -554,7 +554,7 @@ fn copy_via_readwrite<W: Write>(
     length: u64,
 ) -> io::Result<u64> {
     let mut reader = io::BufReader::new(source);
-    let mut buf = vec![0u8; 256 * 1024]; // 256KB buffer
+    let mut buf = vec![0u8; 256 * 1024];
     let mut total: u64 = 0;
     let mut remaining = length;
 

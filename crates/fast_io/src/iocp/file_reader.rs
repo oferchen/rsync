@@ -61,10 +61,9 @@ impl IocpReader {
         let port = CompletionPort::new(1)?;
         port.associate(handle, 0)?;
 
-        // Get file size via standard File (borrows the handle)
         let size = {
-            // SAFETY: FromRawHandle borrows the handle; we don't take ownership
-            // since we close it manually in Drop.
+            // SAFETY: FromRawHandle borrows the handle; mem::forget below
+            // prevents File from closing it because Drop closes it manually.
             #[allow(unsafe_code)]
             let file = unsafe {
                 use std::os::windows::io::FromRawHandle;
@@ -72,7 +71,6 @@ impl IocpReader {
             };
             let metadata = file.metadata()?;
             let len = metadata.len();
-            // Prevent File from closing our handle
             std::mem::forget(file);
             len
         };
@@ -144,7 +142,7 @@ impl IocpReader {
                 &mut transferred,
                 &mut key,
                 &mut overlapped_out,
-                u32::MAX, // INFINITE
+                u32::MAX,
             )
         };
 

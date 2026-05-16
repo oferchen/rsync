@@ -82,7 +82,6 @@ mod platform {
     pub(super) fn is_refs_filesystem_impl(path: &Path) -> io::Result<bool> {
         let volume_root = get_volume_root(path)?;
 
-        // Check cache first
         {
             let guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(map) = guard.as_ref() {
@@ -92,10 +91,8 @@ mod platform {
             }
         }
 
-        // Query the filesystem type
         let is_refs = query_filesystem_name(&volume_root)?;
 
-        // Cache the result
         {
             let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
             let map = guard.get_or_insert_with(HashMap::new);
@@ -122,9 +119,9 @@ mod platform {
         // MAX_PATH (260) is sufficient for volume root paths.
         let mut buffer = vec![0u16; 260];
 
-        // SAFETY: `wide_path` is a valid null-terminated UTF-16 string.
-        // `buffer` is a properly sized output buffer. `GetVolumePathNameW`
-        // writes at most `buffer.len()` wide chars including the null terminator.
+        // SAFETY: `wide_path` is a valid null-terminated UTF-16 string;
+        // `buffer` is sized correctly and `GetVolumePathNameW` writes at most
+        // `buffer.len()` wide chars including the null terminator.
         let result = unsafe {
             GetVolumePathNameW(wide_path.as_ptr(), buffer.as_mut_ptr(), buffer.len() as u32)
         };
@@ -152,15 +149,13 @@ mod platform {
 
         let wide_root = to_wide(volume_root);
 
-        // Open a handle to the volume root directory.
-        // FILE_FLAG_BACKUP_SEMANTICS is required to open directories.
         // SAFETY: `wide_root` is a valid null-terminated UTF-16 path to an
-        // existing volume root directory. The share flags allow concurrent
-        // access. The handle is closed via `CloseHandle` below.
+        // existing volume root directory. FILE_FLAG_BACKUP_SEMANTICS is
+        // required to open a directory handle. The handle is closed below.
         let handle = unsafe {
             CreateFileW(
                 wide_root.as_ptr(),
-                0, // No access needed - just querying volume info
+                0,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 std::ptr::null(),
                 OPEN_EXISTING,
@@ -169,34 +164,30 @@ mod platform {
             )
         };
 
-        // INVALID_HANDLE_VALUE is -1 as isize, which is usize::MAX / isize::MAX+1
-        // depending on the windows-sys version. Compare against the actual constant.
         if handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
             return Err(io::Error::last_os_error());
         }
 
-        // Query filesystem name - buffer of 64 wide chars is more than enough
-        // for filesystem names like "NTFS", "ReFS", "FAT32", "exFAT".
+        // 64 wide chars is ample for "NTFS", "ReFS", "FAT32", "exFAT", etc.
         let mut fs_name_buf = [0u16; 64];
-        // SAFETY: `handle` is a valid open handle. The null pointers for
-        // volume name, serial, component length, and flags are allowed -
-        // `GetVolumeInformationByHandleW` skips those output parameters when
-        // null. `fs_name_buf` is a properly sized output buffer.
+        // SAFETY: `handle` is a valid open handle. NULL pointers for the
+        // unused output parameters are explicitly allowed by
+        // `GetVolumeInformationByHandleW`.
         let result = unsafe {
             GetVolumeInformationByHandleW(
                 handle,
-                std::ptr::null_mut(), // lpVolumeNameBuffer - not needed
-                0,                    // nVolumeNameSize
-                std::ptr::null_mut(), // lpVolumeSerialNumber
-                std::ptr::null_mut(), // lpMaximumComponentLength
-                std::ptr::null_mut(), // lpFileSystemFlags
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
                 fs_name_buf.as_mut_ptr(),
                 fs_name_buf.len() as u32,
             )
         };
 
-        // Close the handle regardless of the query result.
-        // SAFETY: `handle` is a valid handle that was successfully opened above.
+        // SAFETY: `handle` was successfully opened above; close regardless
+        // of the query result.
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(handle);
         }

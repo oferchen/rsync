@@ -177,7 +177,6 @@ pub mod config_detail {
 /// atomic load with `Relaxed` ordering (sub-nanosecond).
 #[must_use]
 pub fn is_io_uring_available() -> bool {
-    // Fast path: use cached result
     if IO_URING_CHECKED.load(Ordering::Relaxed) {
         return IO_URING_AVAILABLE.load(Ordering::Relaxed);
     }
@@ -390,7 +389,7 @@ impl Default for IoUringConfig {
     fn default() -> Self {
         Self {
             sq_entries: 64,
-            buffer_size: 64 * 1024, // 64 KB
+            buffer_size: 64 * 1024,
             direct_io: false,
             register_files: true,
             sqpoll: false,
@@ -409,7 +408,7 @@ impl IoUringConfig {
     pub fn for_large_files() -> Self {
         Self {
             sq_entries: 256,
-            buffer_size: 256 * 1024, // 256 KB
+            buffer_size: 256 * 1024,
             direct_io: false,
             register_files: true,
             sqpoll: false,
@@ -426,7 +425,7 @@ impl IoUringConfig {
     pub fn for_small_files() -> Self {
         Self {
             sq_entries: 128,
-            buffer_size: 16 * 1024, // 16 KB
+            buffer_size: 16 * 1024,
             direct_io: false,
             register_files: true,
             sqpoll: false,
