@@ -4066,6 +4066,7 @@ dependencies = [
  "checksums",
  "compress",
  "criterion",
+ "crossbeam-channel",
  "crossbeam-queue",
  "engine",
  "fast_io",
