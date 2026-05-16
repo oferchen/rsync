@@ -76,3 +76,7 @@ harness = false
 [[bench]]
 name = "pipelined_benchmark"
 harness = false
+
+[[bench]]
+name = "framing_overhead_benchmark"
+harness = false
