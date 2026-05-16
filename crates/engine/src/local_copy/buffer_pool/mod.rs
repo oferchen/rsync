@@ -93,6 +93,7 @@
 
 mod allocator;
 mod buffer_controller;
+mod byte_budget;
 mod global;
 mod guard;
 mod memory_cap;
