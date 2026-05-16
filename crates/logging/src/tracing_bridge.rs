@@ -179,10 +179,9 @@ where
         let level = metadata.level();
         let verbosity_level = Self::level_to_verbosity_level(level);
 
-        // Try to map to debug flag first (more specific)
+        // Try debug flag first (more specific), fall back to info flag.
         if let Some(debug_flag) = Self::target_to_debug_flag(target) {
             if debug_gte(debug_flag, verbosity_level) {
-                // Collect the message from the event
                 let mut visitor = MessageVisitor::default();
                 event.record(&mut visitor);
                 if let Some(message) = visitor.message {
@@ -192,7 +191,6 @@ where
             return;
         }
 
-        // Fall back to info flag
         if let Some(info_flag) = Self::target_to_info_flag(target) {
             if info_gte(info_flag, verbosity_level) {
                 let mut visitor = MessageVisitor::default();
