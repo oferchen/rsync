@@ -122,7 +122,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         return std::array::from_fn(|i| super::super::md5_scalar::digest(inputs[i]));
     }
 
-    // Prepare padded buffers
     let padded_storage: Vec<Vec<u8>> = inputs
         .iter()
         .map(|input| {
@@ -140,7 +139,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let block_counts: [usize; 4] = std::array::from_fn(|i| padded_storage[i].len() / 64);
     let max_blocks = block_counts.iter().max().copied().unwrap_or(0);
 
-    // Initialize state
     let mut a = vdupq_n_u32(INIT_A);
     let mut b = vdupq_n_u32(INIT_B);
     let mut c = vdupq_n_u32(INIT_C);
@@ -149,7 +147,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     for block_idx in 0..max_blocks {
         let block_offset = block_idx * 64;
 
-        // Create mask for active lanes
         let lane_active: [u32; 4] = std::array::from_fn(|lane| {
             if block_idx < block_counts[lane] {
                 0xFFFF_FFFF
@@ -159,7 +156,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         });
         let mask = vld1q_u32(lane_active.as_ptr());
 
-        // Load message words
+        // Transpose: word `word_idx` from all 4 lanes packed into one vector.
         let mut m = [vdupq_n_u32(0); 16];
         for (word_idx, m_word) in m.iter_mut().enumerate() {
             let word_offset = block_offset + word_idx * 4;
@@ -290,20 +287,17 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         round4!(c, d, a, b, 2, 62, 15);
         round4!(b, c, d, a, 9, 63, 21);
 
-        // Add saved state
         let new_a = vaddq_u32(a, aa);
         let new_b = vaddq_u32(b, bb);
         let new_c = vaddq_u32(c, cc);
         let new_d = vaddq_u32(d, dd);
 
-        // Blend using mask
         a = vbslq_u32(mask, new_a, aa);
         b = vbslq_u32(mask, new_b, bb);
         c = vbslq_u32(mask, new_c, cc);
         d = vbslq_u32(mask, new_d, dd);
     }
 
-    // Extract results
     let mut results = [[0u8; 16]; 4];
 
     #[repr(C, align(16))]

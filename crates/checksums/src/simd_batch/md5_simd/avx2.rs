@@ -127,15 +127,13 @@ unsafe fn rotl(x: __m256i, n: i32) -> __m256i {
 /// `is_x86_feature_detected!("avx2")` before calling.
 #[target_feature(enable = "avx2")]
 pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
-    // Find the maximum length to determine block count
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
-    // For very large inputs, fall back to scalar to avoid huge allocations
+    // Fall back to scalar for inputs that would require excessive padding allocations.
     if max_len > MAX_INPUT_SIZE {
         return std::array::from_fn(|i| super::super::md5_scalar::digest(inputs[i]));
     }
 
-    // Prepare padded buffers for each input and track block counts
     let padded_storage: Vec<Vec<u8>> = inputs
         .iter()
         .map(|input| {
@@ -151,21 +149,18 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
         })
         .collect();
 
-    // Track block counts per lane
     let block_counts: [usize; 8] = std::array::from_fn(|i| padded_storage[i].len() / 64);
     let max_blocks = block_counts.iter().max().copied().unwrap_or(0);
 
-    // Initialize state (8 lanes)
     let mut a = _mm256_set1_epi32(INIT_A as i32);
     let mut b = _mm256_set1_epi32(INIT_B as i32);
     let mut c = _mm256_set1_epi32(INIT_C as i32);
     let mut d = _mm256_set1_epi32(INIT_D as i32);
 
-    // Process blocks - use masking for lanes with fewer blocks
+    // Lanes with fewer blocks are masked out so trailing rounds do not corrupt their state.
     for block_idx in 0..max_blocks {
         let block_offset = block_idx * 64;
 
-        // Create mask for active lanes (lanes that have data for this block)
         let lane_active: [i32; 8] = std::array::from_fn(|lane| {
             if block_idx < block_counts[lane] {
                 -1
@@ -184,7 +179,7 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
             lane_active[7],
         );
 
-        // Load message words (transposed: word i from all 8 inputs)
+        // Transpose: word `word_idx` from all 8 lanes packed into one vector.
         let mut m = [_mm256_setzero_si256(); 16];
         #[allow(clippy::needless_range_loop)]
         for word_idx in 0..16 {
@@ -205,19 +200,16 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
             );
         }
 
-        // Save state for this block
         let aa = a;
         let bb = b;
         let cc = c;
         let dd = d;
 
-        // 64 rounds - unrolled for performance
         macro_rules! round {
             ($i:expr, $f:expr, $g:expr) => {{
                 let k_i = _mm256_set1_epi32(K[$i] as i32);
                 let temp = _mm256_add_epi32(_mm256_add_epi32(a, $f), _mm256_add_epi32(k_i, m[$g]));
 
-                // Rotate left by S[i]
                 let rotated = rotl(temp, S[$i] as i32);
 
                 a = d;
@@ -255,21 +247,18 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
             round!(i, f, g);
         }
 
-        // Compute new state
         let new_a = _mm256_add_epi32(a, aa);
         let new_b = _mm256_add_epi32(b, bb);
         let new_c = _mm256_add_epi32(c, cc);
         let new_d = _mm256_add_epi32(d, dd);
 
-        // Blend: use new state for active lanes, preserve old state for inactive lanes
-        // blendv selects from second operand where mask bit is set
+        // blendv selects from `new_*` where the mask sign bit is set, otherwise `aa`/`bb`/...
         a = _mm256_blendv_epi8(aa, new_a, mask);
         b = _mm256_blendv_epi8(bb, new_b, mask);
         c = _mm256_blendv_epi8(cc, new_c, mask);
         d = _mm256_blendv_epi8(dd, new_d, mask);
     }
 
-    // Extract results
     let mut results = [[0u8; 16]; 8];
 
     #[repr(C, align(32))]

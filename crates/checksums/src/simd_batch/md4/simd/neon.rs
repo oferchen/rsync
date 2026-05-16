@@ -58,15 +58,13 @@ macro_rules! rotl_const {
 #[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
-    // Find the maximum length to determine block count
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
-    // For very large inputs, fall back to scalar to avoid huge allocations
+    // Fall back to scalar for inputs that would require excessive padding allocations.
     if max_len > MAX_INPUT_SIZE {
         return std::array::from_fn(|i| super::super::scalar::digest(inputs[i]));
     }
 
-    // Prepare padded buffers for each input and track block counts
     let padded_storage: Vec<Vec<u8>> = inputs
         .iter()
         .map(|input| {
@@ -82,21 +80,17 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         })
         .collect();
 
-    // Track block counts per lane
     let block_counts: [usize; 4] = std::array::from_fn(|i| padded_storage[i].len() / 64);
     let max_blocks = block_counts.iter().max().copied().unwrap_or(0);
 
-    // Initialize state (4 lanes)
     let mut a = vdupq_n_u32(INIT_A);
     let mut b = vdupq_n_u32(INIT_B);
     let mut c = vdupq_n_u32(INIT_C);
     let mut d = vdupq_n_u32(INIT_D);
 
-    // Process blocks
     for block_idx in 0..max_blocks {
         let block_offset = block_idx * 64;
 
-        // Create mask for active lanes
         let lane_active: [u32; 4] = std::array::from_fn(|lane| {
             if block_idx < block_counts[lane] {
                 0xFFFF_FFFF
@@ -106,7 +100,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         });
         let mask = vld1q_u32(lane_active.as_ptr());
 
-        // Load message words (transposed: word i from all 4 inputs)
+        // Transpose: word `word_idx` from all 4 lanes packed into one vector.
         let mut m = [vdupq_n_u32(0); 16];
         #[allow(clippy::needless_range_loop)]
         for word_idx in 0..16 {
@@ -125,7 +119,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
             m[word_idx] = vld1q_u32(words.as_ptr());
         }
 
-        // Save state for this block
         let aa = a;
         let bb = b;
         let cc = c;
@@ -135,7 +128,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         let k1 = vdupq_n_u32(K[0]);
         macro_rules! round1_step {
             ($i:expr, $shift:expr) => {{
-                // F = (B & C) | (~B & D)
                 let f_val = vorrq_u32(
                     vandq_u32(b, c),
                     vbicq_u32(d, b), // ~B & D = D & ~B = vbic(D, B)
@@ -170,8 +162,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         let k2 = vdupq_n_u32(K[1]);
         macro_rules! round2_step {
             ($mi:expr, $shift:expr) => {{
-                // G = (B & C) | (B & D) | (C & D)
-                // Equivalent to: (B & C) | (D & (B | C))
+                // (B & C) | (D & (B | C)) is an alternate form of majority(B,C,D).
                 let g_val = vorrq_u32(vandq_u32(b, c), vandq_u32(d, vorrq_u32(b, c)));
                 let temp = vaddq_u32(vaddq_u32(a, g_val), vaddq_u32(k2, m[M2[$mi]]));
                 let rotated = rotl_const!(temp, $shift);
@@ -203,7 +194,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         let k3 = vdupq_n_u32(K[2]);
         macro_rules! round3_step {
             ($mi:expr, $shift:expr) => {{
-                // H = B ^ C ^ D
                 let h_val = veorq_u32(veorq_u32(b, c), d);
                 let temp = vaddq_u32(vaddq_u32(a, h_val), vaddq_u32(k3, m[M3[$mi]]));
                 let rotated = rotl_const!(temp, $shift);
@@ -231,20 +221,17 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         round3_step!(14, 11);
         round3_step!(15, 15);
 
-        // Compute new state
         let new_a = vaddq_u32(a, aa);
         let new_b = vaddq_u32(b, bb);
         let new_c = vaddq_u32(c, cc);
         let new_d = vaddq_u32(d, dd);
 
-        // Blend: use new state for active lanes, preserve old state for inactive lanes
         a = vbslq_u32(mask, new_a, aa);
         b = vbslq_u32(mask, new_b, bb);
         c = vbslq_u32(mask, new_c, cc);
         d = vbslq_u32(mask, new_d, dd);
     }
 
-    // Extract results
     let mut results = [[0u8; 16]; 4];
 
     #[repr(C, align(16))]
