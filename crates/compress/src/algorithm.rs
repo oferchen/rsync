@@ -201,7 +201,6 @@ mod tests {
     #[test]
     fn default_algorithm_matches_upstream_precedence() {
         let default = CompressionAlgorithm::default_algorithm();
-        // Upstream rsync 3.4.1 negotiation precedence: zstd > lz4 > zlib
         #[cfg(feature = "zstd")]
         assert_eq!(default, CompressionAlgorithm::Zstd);
         #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
@@ -308,13 +307,11 @@ mod tests {
 
     #[test]
     fn zlib_default_level_matches_upstream() {
-        // upstream: token.c - Z_DEFAULT_COMPRESSION resolves to 6
         assert_eq!(ZLIB_DEFAULT_LEVEL, 6);
     }
 
     #[test]
     fn zstd_default_level_matches_upstream() {
-        // upstream: token.c - ZSTD_CLEVEL_DEFAULT is 3
         assert_eq!(ZSTD_DEFAULT_LEVEL, 3);
     }
 
@@ -325,7 +322,6 @@ mod tests {
 
     #[test]
     fn zstd_best_level_matches_upstream_max() {
-        // upstream: token.c - capped at 19 (ZSTD_maxCLevel without ultra)
         assert_eq!(ZSTD_BEST_LEVEL, 19);
     }
 

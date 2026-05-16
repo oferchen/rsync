@@ -213,9 +213,8 @@ impl CompressionStrategy for Lz4Strategy {
     }
 
     fn decompress(&self, input: &[u8], output: &mut Vec<u8>) -> io::Result<usize> {
-        // Allocate output buffer based on raw module's safety limit.
-        // The raw header encodes compressed size; decompressed size is bounded
-        // by MAX_DECOMPRESSED_SIZE to prevent memory exhaustion.
+        // Output bounded by MAX_BLOCK_SIZE (raw module's safety limit) to
+        // prevent memory exhaustion attacks.
         let decompressed = raw::decompress_block_to_vec(input, raw::MAX_BLOCK_SIZE)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
         let len = decompressed.len();

@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn decompress_invalid_magic_returns_error() {
-        // LZ4 frame magic is 0x184D2204
+        // LZ4 frame magic is 0x184D2204; all-zero input lacks it.
         let invalid_frame = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
         let result = decompress_to_vec(&invalid_frame);
         assert!(result.is_err(), "invalid magic should fail");
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn compress_empty_input_produces_valid_frame() {
         let compressed = compress_to_vec(&[], CompressionLevel::Default).expect("compress empty");
-        // Valid LZ4 frame for empty input still has magic + descriptor + end marker
+        // Empty payload still emits magic + descriptor + end marker.
         assert!(
             !compressed.is_empty(),
             "empty input should produce frame header"
@@ -309,8 +309,7 @@ mod tests {
     }
 
     // upstream: token.c:send_deflated_token() flushes the compressor after each
-    // token so the receiver can decompress incrementally; the tests below
-    // exercise that contract.
+    // token so the receiver can decompress incrementally.
 
     #[test]
     fn flush_emits_compressed_block() {
@@ -351,7 +350,7 @@ mod tests {
 
     #[test]
     fn flush_after_each_token_all_data_recoverable() {
-        // upstream: token.c per-token pattern - write data, flush, repeat.
+        // upstream: token.c per-token pattern.
         let tokens: &[&[u8]] = &[
             b"token one: file header metadata",
             b"token two: delta literal run",
@@ -392,9 +391,8 @@ mod tests {
 
     #[test]
     fn flush_produces_incrementally_decompressible_output() {
-        // Verifies flush materializes buffered data into the sink rather than
-        // holding it in the encoder's internal state, so the finalized frame
-        // contains token1 even though the test interleaves writes around it.
+        // Verifies flush materializes buffered data into the sink so the
+        // finalized frame contains token1 even with interleaved writes.
         let mut encoder = CountingLz4Encoder::with_sink(Vec::new(), CompressionLevel::Default);
 
         let token1 = b"incremental decompression test - token one data payload";
