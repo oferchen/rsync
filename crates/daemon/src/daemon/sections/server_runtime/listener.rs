@@ -78,20 +78,57 @@ fn log_progress_summary(
     }
 }
 
+/// Returns the upstream-equivalent address-family integer for `addr`.
+///
+/// Mirrors upstream's `resp->ai_family` value passed to the
+/// `"socket(...) failed"` / `"bind() failed: ... (address-family %d)"`
+/// debug emissions. Linux uses `AF_INET = 2` and `AF_INET6 = 10` (see
+/// `<bits/socket.h>`), which oc-rsync reproduces verbatim so the trace
+/// output stays byte-comparable with upstream `socket.c:432-470`.
+const fn address_family_int(addr: SocketAddr) -> i32 {
+    if addr.is_ipv4() { 2 } else { 10 }
+}
+
+/// `SOCK_STREAM` numeric value used by upstream `socket(2)` calls.
+///
+/// upstream: `socket.c:429-430` - `socket(resp->ai_family, resp->ai_socktype,
+/// resp->ai_protocol)` where `ai_socktype == SOCK_STREAM` for the TCP
+/// listener path (`open_socket_in(SOCK_STREAM, ...)` at
+/// `clientserver.c:1099`). Linux defines `SOCK_STREAM = 1`.
+const UPSTREAM_SOCK_STREAM: i32 = 1;
+/// `IPPROTO_TCP` numeric value used by upstream `socket(2)` calls.
+///
+/// upstream: `socket.c:429-430` - `resp->ai_protocol` is set by
+/// `getaddrinfo` to `IPPROTO_TCP` (`6`) when `ai_socktype == SOCK_STREAM`.
+const UPSTREAM_IPPROTO_TCP: i32 = 6;
+
 /// Creates a TCP listener bound to `addr` with an explicit listen backlog.
 ///
 /// Uses `socket2` to create the socket, bind, and call `listen(2)` with the
 /// specified backlog, rather than relying on the standard library's hardcoded
 /// default (128). This matches upstream rsync's `socket.c` which calls
 /// `listen(sp[i], lp_listen_backlog())`.
+///
+/// Failed `socket(2)` and `bind(2)` syscalls are reported through the
+/// `--debug=BIND` producer (`protocol::bind::trace`), mirroring upstream
+/// `socket.c:432-470` per-address-family accumulation. The errors are
+/// propagated to the caller unchanged.
 fn bind_with_backlog(addr: SocketAddr, backlog: i32) -> io::Result<TcpListener> {
     let domain = if addr.is_ipv4() {
         socket2::Domain::IPV4
     } else {
         socket2::Domain::IPV6
     };
-    let socket =
-        socket2::Socket::new(domain, socket2::Type::STREAM, Some(socket2::Protocol::TCP))?;
+    let family = address_family_int(addr);
+    let socket = socket2::Socket::new(domain, socket2::Type::STREAM, Some(socket2::Protocol::TCP))
+        .inspect_err(|err| {
+            protocol::bind::trace_socket_failure(
+                family,
+                UPSTREAM_SOCK_STREAM,
+                UPSTREAM_IPPROTO_TCP,
+                err,
+            );
+        })?;
 
     // Allow port reuse so the daemon can restart quickly without waiting for
     // TIME_WAIT sockets to expire. Mirrors standard TcpListener::bind behaviour.
@@ -103,7 +140,9 @@ fn bind_with_backlog(addr: SocketAddr, backlog: i32) -> io::Result<TcpListener> 
         socket.set_only_v6(true)?;
     }
 
-    socket.bind(&addr.into())?;
+    socket
+        .bind(&addr.into())
+        .inspect_err(|err| protocol::bind::trace_bind_failure(family, err))?;
     socket.listen(backlog)?;
 
     Ok(socket.into())

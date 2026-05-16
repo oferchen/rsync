@@ -84,6 +84,12 @@
 
 /// ACL (Access Control List) wire protocol encoding and decoding.
 pub mod acl;
+/// `--debug=BIND` producer emissions for daemon listener setup.
+///
+/// Hosts the trace helpers that mirror upstream rsync 3.4.1's
+/// `DEBUG_GTE(BIND, 1)` diagnostics emitted from `socket.c::open_socket_in`
+/// while iterating per-address-family during daemon listener setup.
+pub mod bind;
 /// `--debug=CHDIR` producer emissions for current-directory changes.
 ///
 /// Hosts the trace helper that mirrors upstream rsync 3.4.1's single
