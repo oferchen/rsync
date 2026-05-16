@@ -83,6 +83,7 @@ const WORKER_COUNTS: &[usize] = &[1, 4, 8, 16];
 /// payload representative of `(PathBuf-like, file_size)` without dragging
 /// in real allocations that would dominate the measurement.
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 struct StatRecord {
     index: u64,
     size: u64,
