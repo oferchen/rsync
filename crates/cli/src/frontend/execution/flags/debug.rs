@@ -351,34 +351,49 @@ pub(crate) fn parse_debug_flags(values: &[OsString]) -> Result<DebugFlagSettings
     Ok(settings)
 }
 
-pub(crate) const DEBUG_HELP_TEXT: &str = "The following --debug flags are supported:\n\
-    all         Enable all diagnostic categories currently implemented.\n\
-    none        Disable diagnostic output.\n\
-    ACL         Debug extra ACL info.\n\
-    BACKUP      Debug backup actions (levels 1-2).\n\
-    BIND        Debug socket bind actions.\n\
-    CHDIR       Debug when the current directory changes.\n\
-    CONNECT     Debug connection events (levels 1-2).\n\
-    CMD         Debug commands+options that are issued (levels 1-2).\n\
-    DEL         Debug delete actions (levels 1-3).\n\
-    DELTASUM    Debug delta-transfer checksumming (levels 1-4).\n\
-    DUP         Debug weeding of duplicate names.\n\
-    EXIT        Debug exit events (levels 1-3).\n\
-    FILTER      Debug filter actions (levels 1-3).\n\
-    FLIST       Debug file-list operations (levels 1-4).\n\
-    FUZZY       Debug fuzzy scoring (levels 1-2).\n\
-    GENR        Debug generator functions.\n\
-    HASH        Debug hashtable code.\n\
-    HLINK       Debug hard-link actions (levels 1-3).\n\
-    ICONV       Debug iconv character conversions (levels 1-2).\n\
-    IO          Debug I/O routines (levels 1-4).\n\
-    NSTR        Debug negotiation strings.\n\
-    OWN         Debug ownership changes in users & groups (levels 1-2).\n\
-    PROTO       Debug protocol information.\n\
-    RECV        Debug receiver functions.\n\
-    SEND        Debug sender functions.\n\
-    TIME        Debug setting of modified times (levels 1-2).\n\
+// upstream: options.c output_item_help (rsync-3.4.1:474-510). Reproduced
+// byte-for-byte from upstream's runtime output so `--debug=help` matches
+// `rsync --debug=help`. Layout matches `"%-10s %s\n"` from options.c:478.
+// ALL/NONE descriptions inline the sentinel's `--debug` help
+// (options.c:489-495). The per-verbosity summary lines are rendered by
+// upstream's `make_output_option` over `debug_verbosity[]`
+// (options.c:228-235) and emit names in `debug_words[]` order
+// (options.c:289-315). Levels 0-1 are empty in `debug_verbosity[]`, so the
+// summary block lists levels 2-5 only.
+pub(crate) const DEBUG_HELP_TEXT: &str = "\
+Use OPT or OPT1 for level 1 output, OPT2 for level 2, etc.; OPT0 silences.\n\
 \n\
-Flags may be prefixed with 'no' or '-' to disable a category. Multiple flags\n\
-may be combined by separating them with commas. Level suffixes may be used\n\
-(for example, --debug=io2 or --debug=flist0).\n";
+ACL        Debug extra ACL info\n\
+BACKUP     Debug backup actions (levels 1-2)\n\
+BIND       Debug socket bind actions\n\
+CHDIR      Debug when the current directory changes\n\
+CONNECT    Debug connection events (levels 1-2)\n\
+CMD        Debug commands+options that are issued (levels 1-2)\n\
+DEL        Debug delete actions (levels 1-3)\n\
+DELTASUM   Debug delta-transfer checksumming (levels 1-4)\n\
+DUP        Debug weeding of duplicate names\n\
+EXIT       Debug exit events (levels 1-3)\n\
+FILTER     Debug filter actions (levels 1-3)\n\
+FLIST      Debug file-list operations (levels 1-4)\n\
+FUZZY      Debug fuzzy scoring (levels 1-2)\n\
+GENR       Debug generator functions\n\
+HASH       Debug hashtable code\n\
+HLINK      Debug hard-link actions (levels 1-3)\n\
+ICONV      Debug iconv character conversions (levels 1-2)\n\
+IO         Debug I/O routines (levels 1-4)\n\
+NSTR       Debug negotiation strings\n\
+OWN        Debug ownership changes in users & groups (levels 1-2)\n\
+PROTO      Debug protocol information\n\
+RECV       Debug receiver functions\n\
+SEND       Debug sender functions\n\
+TIME       Debug setting of modified times (levels 1-2)\n\
+\n\
+ALL        Set all --debug options (e.g. all4)\n\
+NONE       Silence all --debug options (same as all0)\n\
+HELP       Output this help message\n\
+\n\
+Options added at each level of verbosity:\n\
+2) BIND,CONNECT,CMD,DEL,DELTASUM,DUP,FILTER,FLIST,ICONV\n\
+3) ACL,BACKUP,CONNECT2,DEL2,DELTASUM2,EXIT,FILTER2,FLIST2,FUZZY,GENR,OWN,RECV,SEND,TIME\n\
+4) CMD2,DEL3,DELTASUM3,EXIT2,FLIST3,ICONV2,OWN2,PROTO,TIME2\n\
+5) CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK\n";
