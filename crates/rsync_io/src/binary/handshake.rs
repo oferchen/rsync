@@ -9,17 +9,10 @@ use super::BinaryHandshakeParts;
 
 /// Result of completing the binary rsync protocol negotiation.
 ///
-/// The structure mirrors the legacy daemon helper but targets transports that
-/// use the binary handshake (e.g. remote-shell sessions). It exposes the
-/// negotiated protocol version together with the remote peer's advertisement
-/// while retaining the replaying stream so higher layers can continue the
-/// exchange without losing buffered bytes consumed during negotiation
-/// detection.
-///
-/// When the underlying transport implements [`Clone`], the handshake can be
-/// cloned to stage multiple views of the same negotiated session. The cloned
-/// value retains the replay buffer and metadata so both instances continue in
-/// lockstep without rereading from the transport.
+/// Targets transports that use the binary handshake (e.g. remote-shell
+/// sessions). Exposes the negotiated protocol version and the remote peer's
+/// advertisement while retaining the replaying stream so higher layers can
+/// continue the exchange without losing buffered bytes.
 #[derive(Clone, Debug)]
 pub struct BinaryHandshake<R> {
     stream: NegotiatedStream<R>,
@@ -51,9 +44,8 @@ impl<R> BinaryHandshake<R> {
 
     /// Returns the protocol version the local peer advertised to the remote side.
     ///
-    /// Binary negotiations transmit the caller's desired protocol (subject to `--protocol` caps) before
-    /// the remote advertisement is read. Capturing the value allows diagnostics to reference both sides
-    /// of the negotiation without requiring the original caller to stash the requested version.
+    /// Captured here so diagnostics can reference both sides of the negotiation
+    /// (subject to `--protocol` caps).
     #[doc(alias = "--protocol")]
     #[must_use]
     pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
@@ -62,12 +54,10 @@ impl<R> BinaryHandshake<R> {
 
     /// Returns the compatibility flags advertised by the remote peer.
     ///
-    /// Compatibility flags are exchanged after the protocol negotiation when
-    /// both sides speak the binary handshake (protocol 30 or newer). They
-    /// describe optional behaviours supported by the sender. Upstream rsync
-    /// propagates future bits even when the local build does not understand
-    /// their semantics; callers can use [`CompatibilityFlags::has_unknown_bits`]
-    /// to detect that condition and surface downgraded diagnostics.
+    /// Exchanged after protocol negotiation when both sides speak the binary
+    /// handshake (protocol 30+). Upstream rsync propagates future bits even
+    /// when their semantics are unknown; use [`CompatibilityFlags::has_unknown_bits`]
+    /// to detect that condition.
     #[must_use]
     pub const fn remote_compatibility_flags(&self) -> CompatibilityFlags {
         self.remote_compatibility_flags
@@ -90,61 +80,9 @@ impl<R> BinaryHandshake<R> {
 
     /// Reports whether the caller's desired cap reduced the negotiated protocol version.
     ///
-    /// Upstream rsync clamps the negotiated protocol to the minimum of the peer's advertisement and
-    /// the caller's requested cap (as configured via `--protocol`). When the requested value is
-    /// lower than the remote protocol, the transfer is forced to speak the older version. This
-    /// helper exposes that condition so higher layers can surface diagnostics or adjust feature
-    /// negotiation in parity with the C implementation.
-    ///
-    /// # Examples
-    ///
-    /// Force the negotiation to protocol 29 even though the peer advertises 31. The helper reports
-    /// that the user-imposed cap took effect, mirroring the observable behaviour of
-    /// `rsync --protocol=29`.
-    ///
-    /// ```
-    /// use protocol::ProtocolVersion;
-    /// use rsync_io::negotiate_binary_session;
-    /// use std::io::{self, Cursor, Read, Write};
-    ///
-    /// #[derive(Debug)]
-    /// struct Loopback {
-    ///     reader: Cursor<Vec<u8>>,
-    ///     written: Vec<u8>,
-    /// }
-    ///
-    /// impl Loopback {
-    ///     fn new(advertised: ProtocolVersion) -> Self {
-    ///         let bytes = u32::from(advertised.as_u8()).to_le_bytes();
-    ///         Self { reader: Cursor::new(bytes.to_vec()), written: Vec::new() }
-    ///     }
-    /// }
-    ///
-    /// impl Read for Loopback {
-    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-    ///         self.reader.read(buf)
-    ///     }
-    /// }
-    ///
-    /// impl Write for Loopback {
-    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-    ///         self.written.extend_from_slice(buf);
-    ///         Ok(buf.len())
-    ///     }
-    ///
-    ///     fn flush(&mut self) -> io::Result<()> {
-    ///         Ok(())
-    ///     }
-    /// }
-    ///
-    /// let remote = ProtocolVersion::from_supported(31).unwrap();
-    /// let desired = ProtocolVersion::from_supported(29).unwrap();
-    /// let transport = Loopback::new(remote);
-    /// let handshake = negotiate_binary_session(transport, desired).unwrap();
-    ///
-    /// assert!(handshake.local_protocol_was_capped());
-    /// assert_eq!(handshake.negotiated_protocol(), desired);
-    /// ```
+    /// Upstream rsync clamps the negotiated protocol to the minimum of the
+    /// peer's advertisement and the caller's `--protocol` cap. Returns `true`
+    /// when the cap forced a downgrade.
     #[doc(alias = "--protocol")]
     #[must_use]
     pub const fn local_protocol_was_capped(&self) -> bool {
@@ -171,11 +109,8 @@ impl<R> BinaryHandshake<R> {
 
     /// Rehydrates a [`NegotiationPrologueSniffer`] using the captured negotiation snapshot.
     ///
-    /// The helper invokes [`NegotiationPrologueSniffer::rehydrate_from_parts`] with the buffered
-    /// transcript captured during negotiation, mirroring the functionality available via
-    /// [`BinaryHandshakeParts::stream_parts`]. Callers that retain the handshake wrapper can
-    /// therefore rebuild sniffers without unpacking the parts structure or replaying the underlying
-    /// transport, matching the ergonomics provided by the session-level helpers.
+    /// Invokes [`NegotiationPrologueSniffer::rehydrate_from_parts`] without
+    /// unpacking the parts structure or replaying the underlying transport.
     pub fn rehydrate_sniffer(
         &self,
         sniffer: &mut NegotiationPrologueSniffer,
@@ -254,10 +189,8 @@ impl<R> BinaryHandshake<R> {
 
     /// Reconstructs a [`BinaryHandshake`] from its components.
     ///
-    /// The helper complements [`Self::into_components`] by allowing callers to temporarily extract
-    /// the handshake metadata and replaying stream and later rebuild the wrapper without rerunning
-    /// the negotiation. Debug builds assert that the supplied stream captured a binary negotiation
-    /// so mismatched variants are detected early.
+    /// Complements [`Self::into_components`]. Debug builds assert that the
+    /// supplied stream captured a binary negotiation.
     #[must_use]
     pub fn from_components(
         remote_advertised: u32,
@@ -283,11 +216,8 @@ impl<R> BinaryHandshake<R> {
 
     /// Maps the inner transport while preserving the negotiated metadata.
     ///
-    /// This helper forwards to [`NegotiatedStream::map_inner`], allowing callers to
-    /// install additional instrumentation or adapters around the underlying
-    /// transport without losing the negotiated protocol versions. The replay
-    /// buffer captured during negotiation is retained so higher layers can
-    /// resume reading or writing immediately after the transformation.
+    /// Forwards to [`NegotiatedStream::map_inner`]; the replay buffer captured
+    /// during negotiation is retained.
     #[must_use]
     pub fn map_stream_inner<F, T>(self, map: F) -> BinaryHandshake<T>
     where
@@ -312,8 +242,8 @@ impl<R> BinaryHandshake<R> {
 
     /// Attempts to transform the inner transport while preserving the negotiated metadata.
     ///
-    /// The closure returns the replacement reader on success or a tuple containing the error and
-    /// original reader on failure, mirroring [`NegotiatedStream::try_map_inner`].
+    /// On failure the closure returns `(error, original_reader)`, mirroring
+    /// [`NegotiatedStream::try_map_inner`].
     pub fn try_map_stream_inner<F, T, E>(
         self,
         map: F,
@@ -351,10 +281,7 @@ impl<R> BinaryHandshake<R> {
 
     /// Decomposes the handshake into the negotiated protocol metadata and replaying stream parts.
     ///
-    /// Returning [`NegotiatedStreamParts`] allows higher layers to temporarily take ownership of
-    /// the buffered negotiation bytes (for example to wrap the underlying transport) without
-    /// dropping the recorded remote advertisement. The tuple mirrors
-    /// [`Self::into_components`], but hands back the split representation so callers can inspect or
+    /// Hands back a [`NegotiatedStreamParts`] so callers can inspect or
     /// transform the inner reader before reassembling a [`NegotiatedStream`].
     #[must_use]
     pub fn into_stream_parts(
@@ -387,11 +314,8 @@ impl<R> BinaryHandshake<R> {
 
     /// Reconstructs a [`BinaryHandshake`] from previously extracted stream parts.
     ///
-    /// Higher layers occasionally need to stash the negotiated protocol metadata while they wrap the
-    /// underlying transport with instrumentation or adapters. This helper accepts the values returned
-    /// by [`Self::into_stream_parts`] and rebuilds the handshake without rerunning the negotiation or
-    /// replaying buffered bytes. The negotiation decision is asserted in debug builds so binary and
-    /// legacy parts cannot be mixed inadvertently.
+    /// Accepts values returned by [`Self::into_stream_parts`]. Debug builds
+    /// assert the negotiation decision so binary and legacy parts cannot mix.
     #[must_use]
     pub fn from_stream_parts(
         remote_advertised: u32,
