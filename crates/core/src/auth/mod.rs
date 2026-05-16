@@ -272,18 +272,14 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         return false;
     }
 
-    // XOR all bytes together - any difference sets bits in the accumulator.
-    // Using fold ensures all iterations happen regardless of intermediate values.
+    // Fold over every byte pair so the loop runs to completion regardless of
+    // where the first difference occurs; any divergent byte sets bits in the
+    // accumulator.
     let diff = a
         .iter()
         .zip(b.iter())
         .fold(0u8, |acc, (x, y)| acc | (x ^ y));
 
-    // Convert to bool without branching on intermediate values.
-    // wrapping_sub(1) on 0 gives 255 (0xFF), on any non-zero gives < 255.
-    // Right-shifting by 8 bits gives 0 for 0xFF and 0 for anything else that
-    // doesn't overflow. Instead, we use the fact that 0u8 == 0 is true.
-    // The fold above ensures constant-time iteration.
     diff == 0
 }
 

@@ -309,12 +309,10 @@ pub fn parse_shell_command(command: &str) -> Vec<String> {
 /// );
 /// ```
 pub fn parse_ssh_uri(uri: &str) -> Option<(Option<&str>, &str, &str)> {
-    // Check for rsync daemon syntax (host::module)
     if let Some(double_colon_pos) = uri.find("::") {
         let host_part = &uri[..double_colon_pos];
         let path_part = &uri[double_colon_pos..];
 
-        // Parse user@host if present
         if let Some(at_pos) = host_part.find('@') {
             let user = &host_part[..at_pos];
             let host = &host_part[at_pos + 1..];
@@ -324,12 +322,10 @@ pub fn parse_ssh_uri(uri: &str) -> Option<(Option<&str>, &str, &str)> {
         }
     }
 
-    // Check for SSH syntax (user@host:path or host:path)
     let colon_pos = uri.find(':')?;
     let host_part = &uri[..colon_pos];
     let path_part = &uri[colon_pos + 1..];
 
-    // Parse user@host if present
     if let Some(at_pos) = host_part.find('@') {
         let user = &host_part[..at_pos];
         let host = &host_part[at_pos + 1..];
@@ -359,7 +355,6 @@ pub fn needs_quoting(arg: &str) -> bool {
         return true;
     }
 
-    // Characters that require quoting in shell arguments
     const SPECIAL_CHARS: &[char] = &[
         ' ', '\t', '\n', '\'', '"', '\\', '$', '`', '!', '*', '?', '[', ']', '(', ')', '{', '}',
         '<', '>', '|', '&', ';', '#', '~',
@@ -387,8 +382,8 @@ pub fn quote_shell_arg(arg: &str) -> Cow<'_, str> {
         return Cow::Borrowed(arg);
     }
 
-    // Use single quotes and escape any single quotes in the string
-    // by ending the quote, adding an escaped quote, and starting a new quote
+    // Escape any single quotes by ending the quote, inserting an escaped
+    // quote, and starting a new quote: 'text'\''more'.
     let quoted = arg.replace('\'', r"'\''");
     Cow::Owned(format!("'{quoted}'"))
 }
