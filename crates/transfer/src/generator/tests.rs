@@ -308,6 +308,46 @@ fn ndx_convert_partition_point_depth_grows() {
 }
 
 #[test]
+fn flush_with_count_increments_global_counter() {
+    // INC_RECURSE diagnostic I3 (#2198): every flush on the generator
+    // transfer hot path must bump the global FLUSH_CALLS counter. The
+    // assertion uses >= because the counter is shared across the process and
+    // other tests may run concurrently.
+    use super::{flush_rate_totals, flush_with_count};
+
+    let before = flush_rate_totals();
+
+    let mut sink: Vec<u8> = Vec::new();
+    flush_with_count(&mut sink).unwrap();
+    flush_with_count(&mut sink).unwrap();
+    flush_with_count(&mut sink).unwrap();
+
+    let after = flush_rate_totals();
+    assert!(
+        after >= before + 3,
+        "expected at least 3 new flush calls (before={before}, after={after})"
+    );
+}
+
+#[test]
+fn flush_rate_totals_is_observable_without_flushing() {
+    // INC_RECURSE diagnostic I3 (#2198): the totals snapshot must be readable
+    // without triggering any flush. Constructing a generator must not bump
+    // the counter on its own, so two adjacent reads with no intervening
+    // flush_with_count call must return identical values.
+    use super::flush_rate_totals;
+
+    let (_handshake, _ctx) = test_generator();
+    let first = flush_rate_totals();
+    let second = flush_rate_totals();
+
+    assert_eq!(
+        first, second,
+        "flush_rate_totals must be a pure read (first={first}, second={second})"
+    );
+}
+
+#[test]
 fn build_and_send_round_trip() {
     use crate::receiver::ReceiverContext;
 
