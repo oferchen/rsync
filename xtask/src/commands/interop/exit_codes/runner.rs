@@ -39,7 +39,6 @@ pub fn run_scenario(
     rsync_binary: &Path,
     options: &RunnerOptions,
 ) -> TaskResult<ScenarioResult> {
-    // Create a temporary directory for this test
     let temp_dir = tempfile::tempdir().map_err(|e| {
         TaskError::Io(std::io::Error::new(
             e.kind(),
@@ -60,7 +59,6 @@ pub fn run_scenario(
         );
     }
 
-    // Run setup commands if specified
     if let Some(ref setup) = scenario.setup {
         if options.verbose {
             eprintln!("[runner] Running setup: {}", setup);
@@ -86,14 +84,12 @@ pub fn run_scenario(
         }
     }
 
-    // Execute rsync with the scenario arguments
-    // Replace "rsync" in args with the actual binary path
+    // Replace literal "rsync" in args with the actual binary path.
     let mut cmd_args = scenario.args.clone();
     if !cmd_args.is_empty() && cmd_args[0] == "rsync" {
         cmd_args[0] = rsync_binary.to_string_lossy().to_string();
     }
 
-    // Add --log-file if log_dir is specified
     if let Some(ref log_dir) = options.log_dir {
         let version_str = options.version.as_deref().unwrap_or("unknown");
         let log_file = format!("{}/{}-{}.log", log_dir, scenario.name, version_str);
@@ -104,7 +100,6 @@ pub fn run_scenario(
         eprintln!("[runner] Executing: {:?}", cmd_args);
     }
 
-    // Choose between capturing output or discarding it
     let output = if options.show_output {
         Command::new(&cmd_args[0])
             .args(&cmd_args[1..])
@@ -134,7 +129,6 @@ pub fn run_scenario(
     let actual_exit_code = output.status.code().unwrap_or(-1);
     let passed = actual_exit_code == scenario.exit_code;
 
-    // Display output if requested
     if options.show_output {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);

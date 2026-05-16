@@ -128,7 +128,6 @@ impl BehaviorHarness {
 
     /// Run a single scenario and compare results.
     pub fn run_scenario(&self, scenario: &BehaviorScenario) -> TaskResult<ComparisonResult> {
-        // Create temporary work directory
         let temp_dir = tempfile::tempdir().map_err(|e| {
             TaskError::Io(std::io::Error::new(
                 e.kind(),
@@ -154,10 +153,8 @@ impl BehaviorHarness {
             show_output: self.options.show_output,
         };
 
-        // Set up test environment (shared for both runs)
         setup_scenario(scenario, work_dir, &run_options)?;
 
-        // Run with upstream rsync first (to a clean dest directory)
         let upstream_result = run_scenario(
             scenario,
             &self.upstream_binary,
@@ -166,11 +163,9 @@ impl BehaviorHarness {
             &run_options,
         )?;
 
-        // Set up fresh environment for oc-rsync
-        // (We need to re-run setup because dest may have been modified)
+        // Re-run setup because the upstream run may have modified dest.
         setup_scenario(scenario, work_dir, &run_options)?;
 
-        // Run with oc-rsync
         let oc_rsync_result = run_scenario(
             scenario,
             &self.oc_rsync_binary,
@@ -179,10 +174,8 @@ impl BehaviorHarness {
             &run_options,
         )?;
 
-        // Compare results
         let differences = compare_results(scenario, &oc_rsync_result, &upstream_result);
 
-        // Cleanup
         let _ = cleanup_scenario(scenario, work_dir, &run_options);
 
         Ok(ComparisonResult {
@@ -201,7 +194,6 @@ impl BehaviorHarness {
     ) -> TaskResult<Vec<ComparisonResult>> {
         let mut results = Vec::new();
 
-        // Filter by specific scenario if requested
         let scenarios_to_run: Vec<_> = if let Some(ref name) = self.options.scenario {
             scenarios.iter().filter(|s| s.name == *name).collect()
         } else {

@@ -5,7 +5,6 @@ use std::time::Duration;
 
 /// Compiles workspace binaries with cargo build.
 pub struct CargoBuildTask {
-    // TODO: Use profile and target fields in actual build execution
     #[allow(dead_code)]
     pub profile: Option<&'static str>,
     #[allow(dead_code)]
