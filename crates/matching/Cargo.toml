@@ -31,6 +31,13 @@ checksums = { path = "../checksums", default-features = false }
 default = []
 # Structured logging instrumentation for performance analysis
 tracing = ["dep:tracing"]
+# Internal benchmark scaffolding: exposes additional accessors and toggles
+# used only by the bench harnesses in `benches/`. Never enabled by default,
+# never propagated to workspace `default-features`, the CLI `features`
+# table, or the daemon. There is no way to turn it on from a release
+# `oc-rsync` invocation. See `docs/design/zsync-bithash.md` section 7 and
+# `docs/design/zsync-prune.md` benchmark plan.
+bench-internal = []
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
@@ -45,3 +52,18 @@ harness = false
 [[bench]]
 name = "profiling_analysis"
 harness = false
+
+[[bench]]
+name = "bithash_rejection"
+harness = false
+required-features = ["bench-internal"]
+
+[[bench]]
+name = "seq_match_redundant"
+harness = false
+required-features = ["bench-internal"]
+
+[[bench]]
+name = "prune_duplicate_heavy"
+harness = false
+required-features = ["bench-internal"]
