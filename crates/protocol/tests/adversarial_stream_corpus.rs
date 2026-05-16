@@ -577,9 +577,10 @@ fn filter_list_pattern_with_embedded_nul_is_lossy_but_safe() {
     bytes.extend_from_slice(&(rule_body.len() as i32).to_le_bytes());
     bytes.extend_from_slice(rule_body);
     bytes.extend_from_slice(&0_i32.to_le_bytes());
-    let mut cursor = Cursor::new(&bytes[..]);
     let protocol = ProtocolVersion::from_supported(32).expect("v32 supported");
-    assert_no_panic("filter_pattern_embedded_nul", || {
+    let bytes_ref = bytes.clone();
+    assert_no_panic("filter_pattern_embedded_nul", move || {
+        let mut cursor = Cursor::new(&bytes_ref[..]);
         let _ = read_filter_list(&mut cursor, protocol);
     });
 }
