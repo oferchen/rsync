@@ -28,7 +28,8 @@ use super::delta::{
 use super::item_flags::ItemFlags;
 use super::protocol_io::calculate_duration_ms;
 use super::{
-    GeneratorContext, GeneratorStats, SegmentScheduler, TransferLoopResult, is_early_close_error,
+    GeneratorContext, GeneratorStats, SegmentScheduler, TransferLoopResult, flush_with_count,
+    is_early_close_error,
 };
 use crate::delta_config::DeltaGeneratorConfig;
 use crate::receiver::SumHead;
@@ -135,7 +136,7 @@ impl GeneratorContext {
             // for input via select(). Our Read/Write traits are independent, so
             // we must explicitly flush before blocking on read to prevent deadlock
             // when buffered delta data hasn't reached the receiver yet.
-            writer.flush()?;
+            flush_with_count(writer)?;
 
             // upstream: sender.c:210-462 - read NDX request from receiver
             let ndx = match ndx_read_codec.read_ndx(&mut *reader) {
@@ -159,7 +160,7 @@ impl GeneratorContext {
                             flist_done_remaining -= 1;
                             if let Err(e) = ndx_write_codec
                                 .write_ndx_done(&mut *writer)
-                                .and_then(|()| writer.flush())
+                                .and_then(|()| flush_with_count(&mut *writer))
                             {
                                 if tolerant && is_early_close_error(&e) {
                                     break;
@@ -180,7 +181,7 @@ impl GeneratorContext {
                         debug_log!(Send, 1, "send_files phase={}", phase);
                         if let Err(e) = ndx_write_codec
                             .write_ndx_done(&mut *writer)
-                            .and_then(|()| writer.flush())
+                            .and_then(|()| flush_with_count(&mut *writer))
                         {
                             if tolerant && is_early_close_error(&e) {
                                 break;
@@ -275,7 +276,7 @@ impl GeneratorContext {
                     cb.on_itemize(&format!("{name}\n"));
                 }
                 files_transferred += 1;
-                writer.flush()?;
+                flush_with_count(writer)?;
                 continue;
             }
 
@@ -487,7 +488,7 @@ impl GeneratorContext {
         // goodbye handshake. Without it, the client hangs waiting for this marker.
         if let Err(e) = ndx_write_codec
             .write_ndx_done(&mut *writer)
-            .and_then(|()| writer.flush())
+            .and_then(|()| flush_with_count(&mut *writer))
         {
             if !(tolerant && is_early_close_error(&e)) {
                 return Err(e);
@@ -830,6 +831,24 @@ impl GeneratorContext {
             calls = ndx_calls,
             partition_point_depth = ndx_cmps,
             "generator ndx_convert totals"
+        );
+
+        // INC_RECURSE diagnostic I3 (#2198): emit cumulative writer.flush()
+        // call count from the generator transfer hot path. Aggregated across
+        // all generator transfers in this process so operators can see how
+        // often the sender forces a flush relative to file counts.
+        let flush_calls = super::flush_rate_totals();
+        debug_log!(
+            Send,
+            1,
+            "generator writer.flush totals: calls={}",
+            flush_calls
+        );
+        #[cfg(feature = "tracing")]
+        ::tracing::debug!(
+            target: "rsync::generator::flush_rate",
+            calls = flush_calls,
+            "generator writer.flush totals"
         );
 
         Ok(GeneratorStats {
