@@ -334,7 +334,6 @@ mod tests {
     fn all_levels_produce_valid_output() {
         let input = b"The quick brown fox jumps over the lazy dog";
 
-        // Test levels 1-22 (zstd's supported range)
         for level in 1..=22 {
             let level_config =
                 CompressionLevel::Precise(std::num::NonZeroU8::new(level).expect("non-zero level"));
@@ -348,7 +347,6 @@ mod tests {
 
     #[test]
     fn higher_levels_produce_smaller_output() {
-        // Use highly compressible data with larger size for meaningful compression differences
         let mut input = Vec::new();
         for _ in 0..50 {
             input.extend_from_slice(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -359,14 +357,13 @@ mod tests {
 
         let level_1 = CompressionLevel::Precise(std::num::NonZeroU8::new(1).unwrap());
         let level_10 = CompressionLevel::Precise(std::num::NonZeroU8::new(10).unwrap());
+        // Caps at 19 rather than 22: ultra-high levels have diminishing returns.
         let level_19 = CompressionLevel::Precise(std::num::NonZeroU8::new(19).unwrap());
 
         let compressed_1 = compress_to_vec(&input, level_1).expect("compress level 1");
         let compressed_10 = compress_to_vec(&input, level_10).expect("compress level 10");
         let compressed_19 = compress_to_vec(&input, level_19).expect("compress level 19");
 
-        // Higher levels should compress better or equal for highly compressible data
-        // Note: We use level 19 instead of 22 since ultra-high levels may have diminishing returns
         assert!(
             compressed_10.len() <= compressed_1.len(),
             "level 10 ({} bytes) should be <= level 1 ({} bytes)",
@@ -380,7 +377,6 @@ mod tests {
             compressed_10.len()
         );
 
-        // Verify all decompress correctly
         assert_eq!(decompress_to_vec(&compressed_1).unwrap(), input);
         assert_eq!(decompress_to_vec(&compressed_10).unwrap(), input);
         assert_eq!(decompress_to_vec(&compressed_19).unwrap(), input);
@@ -391,12 +387,10 @@ mod tests {
         let input = b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. \
                       Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.";
 
-        // Test level 0 (None)
         let compressed = compress_to_vec(input, CompressionLevel::None).expect("compress level 0");
         let decompressed = decompress_to_vec(&compressed).expect("decompress level 0");
         assert_eq!(decompressed, input, "round-trip failed at level 0");
 
-        // Test preset levels
         for level_config in [
             CompressionLevel::Fast,
             CompressionLevel::Default,
@@ -409,7 +403,6 @@ mod tests {
             assert_eq!(decompressed, input, "round-trip failed at {level_config:?}");
         }
 
-        // Test all precise levels 1-22
         for level in 1..=22 {
             let level_config =
                 CompressionLevel::Precise(std::num::NonZeroU8::new(level).expect("non-zero level"));
@@ -425,7 +418,6 @@ mod tests {
     fn counting_encoder_all_levels() {
         let input = b"test data for counting encoder";
 
-        // Test that CountingZstdEncoder works with all levels
         for level in 1..=22 {
             let level_config =
                 CompressionLevel::Precise(std::num::NonZeroU8::new(level).expect("non-zero level"));
@@ -443,7 +435,6 @@ mod tests {
 
     #[test]
     fn compression_ratio_improves_with_level() {
-        // Create highly repetitive data
         let mut input = Vec::new();
         for _ in 0..100 {
             input.extend_from_slice(b"The same text repeated over and over again. ");
@@ -457,12 +448,10 @@ mod tests {
         let compressed_5 = compress_to_vec(&input, level_5).expect("compress level 5");
         let compressed_15 = compress_to_vec(&input, level_15).expect("compress level 15");
 
-        // Verify all produce valid output
         assert_eq!(decompress_to_vec(&compressed_1).unwrap(), input);
         assert_eq!(decompress_to_vec(&compressed_5).unwrap(), input);
         assert_eq!(decompress_to_vec(&compressed_15).unwrap(), input);
 
-        // Verify compression ratio improves
         assert!(
             compressed_5.len() <= compressed_1.len(),
             "level 5 should compress better than level 1"
@@ -472,7 +461,6 @@ mod tests {
             "level 15 should compress better than level 5"
         );
 
-        // Verify we actually achieved compression
         assert!(
             compressed_15.len() < input.len() / 2,
             "highly repetitive data should compress to less than 50%"
@@ -523,9 +511,9 @@ mod tests {
         }
     }
 
-    // Per-token flush tests - verify that flush produces output enabling
-    // incremental decompression, matching the upstream per-token pattern
-    // (token.c:send_deflated_token).
+    // upstream: token.c:send_deflated_token() - per-token flush enables
+    // incremental decompression on the receiver. Tests below verify the
+    // encoder mirrors that contract.
 
     #[test]
     fn flush_emits_compressed_data() {

@@ -42,13 +42,16 @@ pub enum FileCategory {
 
 impl FileCategory {
     /// Returns whether this category typically benefits from compression.
+    ///
+    /// PDFs and Office documents are usually pre-compressed internally.
+    /// Unknown categories default to compressible (optimistic).
     #[must_use]
     pub const fn is_compressible(self) -> bool {
         match self {
             Self::Image | Self::Video | Self::Audio | Self::Archive => false,
-            Self::Document => false, // PDFs and Office docs are usually pre-compressed
+            Self::Document => false,
             Self::Text | Self::Data | Self::Executable => true,
-            Self::Unknown => true, // Optimistic default
+            Self::Unknown => true,
         }
     }
 }

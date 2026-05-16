@@ -9,7 +9,6 @@ use super::*;
 fn default_skip_list_includes_common_formats() {
     let decider = CompressionDecider::with_default_skip_list();
 
-    // Images
     assert!(decider.skip_extensions().contains("jpg"));
     assert!(decider.skip_extensions().contains("jpeg"));
     assert!(decider.skip_extensions().contains("png"));
@@ -17,21 +16,18 @@ fn default_skip_list_includes_common_formats() {
     assert!(decider.skip_extensions().contains("webp"));
     assert!(decider.skip_extensions().contains("heic"));
 
-    // Video
     assert!(decider.skip_extensions().contains("mp4"));
     assert!(decider.skip_extensions().contains("mkv"));
     assert!(decider.skip_extensions().contains("avi"));
     assert!(decider.skip_extensions().contains("mov"));
     assert!(decider.skip_extensions().contains("webm"));
 
-    // Audio
     assert!(decider.skip_extensions().contains("mp3"));
     assert!(decider.skip_extensions().contains("flac"));
     assert!(decider.skip_extensions().contains("ogg"));
     assert!(decider.skip_extensions().contains("m4a"));
     assert!(decider.skip_extensions().contains("aac"));
 
-    // Archives
     assert!(decider.skip_extensions().contains("zip"));
     assert!(decider.skip_extensions().contains("gz"));
     assert!(decider.skip_extensions().contains("bz2"));
@@ -40,7 +36,6 @@ fn default_skip_list_includes_common_formats() {
     assert!(decider.skip_extensions().contains("rar"));
     assert!(decider.skip_extensions().contains("zst"));
 
-    // Documents
     assert!(decider.skip_extensions().contains("pdf"));
 }
 
@@ -90,7 +85,6 @@ fn should_compress_unknown_extension_returns_auto_detect() {
 fn should_compress_with_content_makes_decision() {
     let decider = CompressionDecider::with_default_skip_list();
 
-    // Text content should compress
     let text_content = b"Hello, world! This is some compressible text content.";
     assert_eq!(
         decider.should_compress(Path::new("file.txt"), Some(text_content)),
@@ -102,7 +96,6 @@ fn should_compress_with_content_makes_decision() {
 fn magic_byte_detection_jpeg() {
     let decider = CompressionDecider::with_default_skip_list();
 
-    // JPEG magic bytes
     let jpeg_header = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10];
     assert_eq!(
         decider.should_compress(Path::new("unknown"), Some(&jpeg_header)),
@@ -114,7 +107,6 @@ fn magic_byte_detection_jpeg() {
 fn magic_byte_detection_png() {
     let decider = CompressionDecider::with_default_skip_list();
 
-    // PNG magic bytes
     let png_header = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
     assert_eq!(
         decider.should_compress(Path::new("unknown"), Some(&png_header)),
@@ -126,7 +118,6 @@ fn magic_byte_detection_png() {
 fn magic_byte_detection_gzip() {
     let decider = CompressionDecider::with_default_skip_list();
 
-    // gzip magic bytes
     let gzip_header = [0x1f, 0x8b, 0x08, 0x00];
     assert_eq!(
         decider.should_compress(Path::new("unknown"), Some(&gzip_header)),
@@ -138,7 +129,6 @@ fn magic_byte_detection_gzip() {
 fn magic_byte_detection_zip() {
     let decider = CompressionDecider::with_default_skip_list();
 
-    // ZIP magic bytes
     let zip_header = [b'P', b'K', 0x03, 0x04];
     assert_eq!(
         decider.should_compress(Path::new("unknown"), Some(&zip_header)),
@@ -150,7 +140,6 @@ fn magic_byte_detection_zip() {
 fn magic_byte_detection_pdf() {
     let decider = CompressionDecider::with_default_skip_list();
 
-    // PDF magic bytes
     let pdf_header = b"%PDF-1.5";
     assert_eq!(
         decider.should_compress(Path::new("unknown"), Some(pdf_header)),
@@ -189,7 +178,6 @@ fn parse_skip_compress_list_whitespace() {
 fn auto_detect_compressible_repetitive_data() {
     let decider = CompressionDecider::new();
 
-    // Highly repetitive data should compress well
     let data = vec![b'a'; 4096];
     assert!(decider.auto_detect_compressible(&data).unwrap());
 }
@@ -198,11 +186,10 @@ fn auto_detect_compressible_repetitive_data() {
 fn auto_detect_compressible_random_like_data() {
     let decider = CompressionDecider::new();
 
-    // Pseudo-random data using a better mixing function (PCG-like)
+    // PCG-style PRNG generates high-entropy bytes that resist compression.
     let mut state: u64 = 0x853c49e6748fea9b;
     let data: Vec<u8> = (0..4096)
         .map(|_| {
-            // PCG-style PRNG for high-quality randomness
             state = state
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407);
@@ -212,7 +199,6 @@ fn auto_detect_compressible_random_like_data() {
         })
         .collect();
 
-    // High-entropy data should not compress well (ratio >= threshold)
     assert!(!decider.auto_detect_compressible(&data).unwrap());
 }
 
@@ -289,7 +275,6 @@ fn set_compression_threshold() {
     decider.set_compression_threshold(0.85);
     assert!((decider.compression_threshold() - 0.85).abs() < f64::EPSILON);
 
-    // Test clamping
     decider.set_compression_threshold(1.5);
     assert!((decider.compression_threshold() - 1.0).abs() < f64::EPSILON);
 
@@ -303,9 +288,8 @@ fn set_sample_size() {
     decider.set_sample_size(8192);
     assert_eq!(decider.sample_size(), 8192);
 
-    // Test minimum
     decider.set_sample_size(10);
-    assert_eq!(decider.sample_size(), 64); // Minimum is 64
+    assert_eq!(decider.sample_size(), 64);
 }
 
 #[test]
@@ -316,7 +300,6 @@ fn toggle_magic_detection() {
     decider.set_use_magic_detection(false);
     assert!(!decider.use_magic_detection());
 
-    // With magic detection disabled, JPEG header should not trigger skip
     let jpeg_header = [0xff, 0xd8, 0xff, 0xe0];
     assert_eq!(
         decider.should_compress(Path::new("unknown"), Some(&jpeg_header)),
@@ -341,21 +324,18 @@ fn file_category_compressible() {
 fn riff_container_detection() {
     let decider = CompressionDecider::with_default_skip_list();
 
-    // AVI (RIFF....AVI )
     let avi_header = b"RIFF\x00\x00\x00\x00AVI ";
     assert_eq!(
         decider.should_compress(Path::new("unknown"), Some(avi_header)),
         CompressionDecision::Skip
     );
 
-    // WAV (RIFF....WAVE)
     let wav_header = b"RIFF\x00\x00\x00\x00WAVE";
     assert_eq!(
         decider.should_compress(Path::new("unknown"), Some(wav_header)),
         CompressionDecision::Skip
     );
 
-    // WEBP (RIFF....WEBP)
     let webp_header = b"RIFF\x00\x00\x00\x00WEBP";
     assert_eq!(
         decider.should_compress(Path::new("unknown"), Some(webp_header)),
@@ -368,7 +348,7 @@ fn magic_signature_matches() {
     let sig = MagicSignature::new(0, b"TEST", FileCategory::Unknown);
     assert!(sig.matches(b"TEST1234"));
     assert!(!sig.matches(b"NOPE1234"));
-    assert!(!sig.matches(b"TES")); // Too short
+    assert!(!sig.matches(b"TES"));
 }
 
 #[test]
@@ -384,13 +364,11 @@ fn adaptive_compressor_basic() {
     let mut output = Vec::new();
     let mut compressor = AdaptiveCompressor::new(&mut output, decider, CompressionLevel::Fast);
 
-    // Write compressible data
     let data = vec![b'a'; 8192];
     compressor.write_all(&data).unwrap();
 
     let output = compressor.finish().unwrap();
 
-    // Compressible data should result in smaller output
     assert!(output.len() < data.len());
 }
 
@@ -400,7 +378,6 @@ fn adaptive_compressor_forced_decision() {
     let mut output = Vec::new();
     let mut compressor = AdaptiveCompressor::new(&mut output, decider, CompressionLevel::Fast);
 
-    // Force no compression
     compressor.set_decision(false);
     assert_eq!(compressor.compression_enabled(), Some(false));
 
@@ -408,7 +385,6 @@ fn adaptive_compressor_forced_decision() {
     compressor.write_all(data).unwrap();
     let output = compressor.finish().unwrap();
 
-    // Output should be identical to input (no compression)
     assert_eq!(&output[..], data);
 }
 
@@ -420,13 +396,10 @@ fn adaptive_compressor_small_write() {
     let mut output = Vec::new();
     let mut compressor = AdaptiveCompressor::new(&mut output, decider, CompressionLevel::Default);
 
-    // Write less than sample size
+    // Below sample size: decision remains deferred until finish forces it.
     compressor.write_all(b"small").unwrap();
-
-    // Decision shouldn't be made yet
     assert_eq!(compressor.compression_enabled(), None);
 
-    // Finish should still work
     let _ = compressor.finish().unwrap();
 }
 
@@ -478,7 +451,6 @@ fn suffix_borrow_str_lookup() {
     set.insert(Suffix::new("jpg"));
     set.insert(Suffix::new("png"));
 
-    // HashSet::contains works with &str via Borrow<str>
     assert!(set.contains("jpg"));
     assert!(set.contains("png"));
     assert!(!set.contains("gif"));
