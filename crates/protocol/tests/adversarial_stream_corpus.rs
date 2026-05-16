@@ -35,15 +35,15 @@
 use std::io::{self, Cursor};
 use std::panic;
 
+use protocol::filters::read_filter_list;
+use protocol::wire::file_entry::XMIT_LONG_NAME;
+use protocol::wire::file_entry_decode::decode_name;
 use protocol::wire::{read_delta_op, read_token};
 use protocol::{
     EnvelopeError, MAX_PAYLOAD_LENGTH, MESSAGE_HEADER_LEN, MessageCode, MessageHeader,
     NegotiationPrologueDetector, ProtocolVersion, parse_legacy_daemon_greeting, read_int,
     read_longint, read_varint, recv_msg,
 };
-use protocol::filters::read_filter_list;
-use protocol::wire::file_entry_decode::decode_name;
-use protocol::wire::file_entry::XMIT_LONG_NAME;
 
 /// Documented outcome a corpus entry expects from its parser.
 #[derive(Clone, Copy, Debug)]
@@ -67,11 +67,7 @@ struct Case {
 }
 
 /// Asserts `result` matches `expected` and reports `name` on failure.
-fn assert_outcome<T: std::fmt::Debug>(
-    name: &str,
-    expected: Outcome,
-    result: io::Result<T>,
-) {
+fn assert_outcome<T: std::fmt::Debug>(name: &str, expected: Outcome, result: io::Result<T>) {
     match (expected, &result) {
         (Outcome::Ok, Ok(_)) | (Outcome::NoPanic, Ok(_)) | (Outcome::NoPanic, Err(_)) => {}
         (Outcome::Err(kind), Err(err)) => {
@@ -165,8 +161,7 @@ const MULTIPLEX_CASES: &[Case] = &[
         name: "multiplex_header_pretending_inside_payload",
         bytes: &[
             // Outer header: MSG_INFO with 8-byte payload.
-            8, 0, 0, 9,
-            // Payload bytes 0..3: child-shaped header. Bytes 4..8: "abcd".
+            8, 0, 0, 9, // Payload bytes 0..3: child-shaped header. Bytes 4..8: "abcd".
             4, 0, 0, 7, b'a', b'b', b'c', b'd',
         ],
         expected: Outcome::Ok,
@@ -268,7 +263,11 @@ const LEGACY_GREETING_CASES: &[(&str, &str, GreetingOutcome)] = &[
     ("legacy_prefix_only", "@RSYNCD:", GreetingOutcome::Err),
     // Bug it catches: prefix plus whitespace but no digits must be rejected,
     // not parsed as protocol 0 or panic on missing digits.
-    ("legacy_prefix_no_digits", "@RSYNCD: \n", GreetingOutcome::Err),
+    (
+        "legacy_prefix_no_digits",
+        "@RSYNCD: \n",
+        GreetingOutcome::Err,
+    ),
     // Bug it catches: a malformed subprotocol marker (dot without digits)
     // must surface as an error, not silently accept an empty subprotocol.
     (
@@ -331,16 +330,13 @@ fn negotiation_detector_handles_every_prefix_truncation() {
     // must never panic and must surface a deterministic classification.
     for take in 1..=FULL_LEGACY_BANNER.len() {
         let chunk = &FULL_LEGACY_BANNER[..take];
-        assert_no_panic(
-            "negotiation_detector_prefix_truncation",
-            || {
-                let mut detector = NegotiationPrologueDetector::new();
-                let _ = detector.observe(chunk);
-                // Buffered prefix must remain a sub-slice of the input
-                // (i.e., no extra bytes appear, no allocations leak).
-                let _ = detector.buffered_prefix().len();
-            },
-        );
+        assert_no_panic("negotiation_detector_prefix_truncation", || {
+            let mut detector = NegotiationPrologueDetector::new();
+            let _ = detector.observe(chunk);
+            // Buffered prefix must remain a sub-slice of the input
+            // (i.e., no extra bytes appear, no allocations leak).
+            let _ = detector.buffered_prefix().len();
+        });
     }
 }
 
@@ -567,8 +563,7 @@ fn filter_list_terminator_only_parses_empty_list() {
     let bytes = [0_u8; 4];
     let mut cursor = Cursor::new(&bytes[..]);
     let protocol = ProtocolVersion::from_supported(32).expect("v32 supported");
-    let rules =
-        read_filter_list(&mut cursor, protocol).expect("zero-terminator parses cleanly");
+    let rules = read_filter_list(&mut cursor, protocol).expect("zero-terminator parses cleanly");
     assert!(rules.is_empty());
 }
 
