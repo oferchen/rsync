@@ -330,20 +330,18 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         round4!(c, d, a, b, 2, 62, 15);
         round4!(b, c, d, a, 9, 63, 21);
 
-        // Add saved state
         let new_a = _mm_add_epi32(a, aa);
         let new_b = _mm_add_epi32(b, bb);
         let new_c = _mm_add_epi32(c, cc);
         let new_d = _mm_add_epi32(d, dd);
 
-        // SSE4.1 blendv for efficient conditional selection
+        // blendv is the SSE4.1 win over SSE2's AND/ANDN/OR ternary.
         a = _mm_blendv_epi8(aa, new_a, mask);
         b = _mm_blendv_epi8(bb, new_b, mask);
         c = _mm_blendv_epi8(cc, new_c, mask);
         d = _mm_blendv_epi8(dd, new_d, mask);
     }
 
-    // Extract results
     let mut results = [[0u8; 16]; 4];
 
     #[repr(C, align(16))]

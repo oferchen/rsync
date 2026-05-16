@@ -52,15 +52,13 @@ struct Aligned512([u32; 16]);
 /// instruction fault.
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
-    // Find the maximum length to determine block count
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
-    // For very large inputs, fall back to scalar
+    // Fall back to scalar for inputs that would require excessive padding allocations.
     if max_len > 1024 * 1024 {
         return std::array::from_fn(|i| super::super::scalar::digest(inputs[i]));
     }
 
-    // Prepare padded buffers for each input
     let padded_storage: Vec<Vec<u8>> = inputs
         .iter()
         .map(|input| {
@@ -75,21 +73,17 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
         })
         .collect();
 
-    // Track block counts per lane
     let block_counts: [usize; 16] = std::array::from_fn(|i| padded_storage[i].len() / 64);
     let max_blocks = block_counts.iter().max().copied().unwrap_or(0);
 
-    // Initialize state in aligned storage
     let mut state_a = Aligned512([INIT_A; 16]);
     let mut state_b = Aligned512([INIT_B; 16]);
     let mut state_c = Aligned512([INIT_C; 16]);
     let mut state_d = Aligned512([INIT_D; 16]);
 
-    // Process each block
     for block_idx in 0..max_blocks {
         let block_offset = block_idx * 64;
 
-        // Compute lane mask for active lanes
         let mask_bits: u16 = block_counts
             .iter()
             .enumerate()
@@ -101,7 +95,7 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
                 }
             });
 
-        // Prepare message words in transposed format (word i from all 16 lanes)
+        // Transpose: word `word_idx` from all 16 lanes packed into one vector.
         let mut m: [Aligned512; 16] = std::array::from_fn(|_| Aligned512([0u32; 16]));
 
         for (word_idx, m_word) in m.iter_mut().enumerate() {
@@ -115,7 +109,6 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
             }
         }
 
-        // Process block using inline assembly
         process_block_avx512(
             &mut state_a,
             &mut state_b,
@@ -126,7 +119,6 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
         );
     }
 
-    // Extract results
     let mut results = [[0u8; 16]; 16];
     for (lane, result) in results.iter_mut().enumerate() {
         result[0..4].copy_from_slice(&state_a.0[lane].to_le_bytes());
@@ -210,12 +202,8 @@ unsafe fn process_block_avx512(
         options(nostack),
     );
 
-    // Round 1: F = (B & C) | (~B & D), K = 0
-    // Using vpternlogd with imm8 = 0xCA implements (B & C) | (~B & D)
-    // Shift amounts: 3, 7, 11, 19
-
-    // Round 1 macro - processes one step
-    // F = (B & C) | (~B & D), add M[i], rotate by shift
+    // Round 1: F = (B & C) | (~B & D), K = 0, shifts [3, 7, 11, 19].
+    // vpternlogd imm8 = 0xCA implements F over (B, C, D).
     macro_rules! round1 {
         ($m_reg:literal, $s:literal) => {
             asm!(

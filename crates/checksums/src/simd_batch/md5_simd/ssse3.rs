@@ -160,7 +160,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         return std::array::from_fn(|i| super::super::md5_scalar::digest(inputs[i]));
     }
 
-    // Prepare padded buffers
     let padded_storage: Vec<Vec<u8>> = inputs
         .iter()
         .map(|input| {
@@ -178,14 +177,10 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let block_counts: [usize; 4] = std::array::from_fn(|i| padded_storage[i].len() / 64);
     let max_blocks = block_counts.iter().max().copied().unwrap_or(0);
 
-    // Initialize state
     let mut a = _mm_set1_epi32(INIT_A as i32);
     let mut b = _mm_set1_epi32(INIT_B as i32);
     let mut c = _mm_set1_epi32(INIT_C as i32);
     let mut d = _mm_set1_epi32(INIT_D as i32);
-
-    // SSSE3 shuffle mask for transposing bytes (identity for little-endian)
-    // This can be used for more complex transformations if needed
 
     for block_idx in 0..max_blocks {
         let block_offset = block_idx * 64;
@@ -204,7 +199,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
             lane_active[3],
         );
 
-        // Load message words with SSSE3 optimization
+        // Transpose: word `word_idx` from all 4 lanes packed into one vector.
         let mut m = [_mm_setzero_si128(); 16];
         for (word_idx, m_word) in m.iter_mut().enumerate() {
             let word_offset = block_offset + word_idx * 4;
@@ -336,13 +331,12 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         round4!(c, d, a, b, 2, 62, 15);
         round4!(b, c, d, a, 9, 63, 21);
 
-        // Add saved state
         let new_a = _mm_add_epi32(a, aa);
         let new_b = _mm_add_epi32(b, bb);
         let new_c = _mm_add_epi32(c, cc);
         let new_d = _mm_add_epi32(d, dd);
 
-        // Blend using mask
+        // SSSE3 has no blendv; emulate with AND/ANDN/OR.
         let not_mask = _mm_xor_si128(mask, _mm_set1_epi32(-1));
         a = _mm_or_si128(_mm_and_si128(mask, new_a), _mm_and_si128(not_mask, aa));
         b = _mm_or_si128(_mm_and_si128(mask, new_b), _mm_and_si128(not_mask, bb));
@@ -350,7 +344,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         d = _mm_or_si128(_mm_and_si128(mask, new_d), _mm_and_si128(not_mask, dd));
     }
 
-    // Extract results
     let mut results = [[0u8; 16]; 4];
 
     #[repr(C, align(16))]

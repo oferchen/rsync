@@ -115,7 +115,6 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         return std::array::from_fn(|i| super::super::md5_scalar::digest(inputs[i]));
     }
 
-    // Prepare padded buffers
     let padded_storage: Vec<Vec<u8>> = inputs
         .iter()
         .map(|input| {
@@ -133,7 +132,6 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let block_counts: [usize; 4] = std::array::from_fn(|i| padded_storage[i].len() / 64);
     let max_blocks = block_counts.iter().max().copied().unwrap_or(0);
 
-    // Initialize state
     let mut a = u32x4_splat(INIT_A);
     let mut b = u32x4_splat(INIT_B);
     let mut c = u32x4_splat(INIT_C);
@@ -142,7 +140,6 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     for block_idx in 0..max_blocks {
         let block_offset = block_idx * 64;
 
-        // Create mask for active lanes
         let lane_active: [u32; 4] = std::array::from_fn(|lane| {
             if block_idx < block_counts[lane] {
                 0xFFFF_FFFF
@@ -157,7 +154,7 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
             lane_active[3],
         );
 
-        // Load message words
+        // Transpose: word `word_idx` from all 4 lanes packed into one vector.
         let mut m = [u32x4_splat(0); 16];
         for (word_idx, m_word) in m.iter_mut().enumerate() {
             let word_offset = block_offset + word_idx * 4;
@@ -288,20 +285,18 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         round4!(c, d, a, b, 2, 62, 15);
         round4!(b, c, d, a, 9, 63, 21);
 
-        // Add saved state
         let new_a = i32x4_add(a, aa);
         let new_b = i32x4_add(b, bb);
         let new_c = i32x4_add(c, cc);
         let new_d = i32x4_add(d, dd);
 
-        // Blend using mask (bitselect: mask ? new : old)
+        // bitselect(new, old, mask) = (new & mask) | (old & ~mask).
         a = v128_bitselect(new_a, aa, mask);
         b = v128_bitselect(new_b, bb, mask);
         c = v128_bitselect(new_c, cc, mask);
         d = v128_bitselect(new_d, dd, mask);
     }
 
-    // Extract results
     let mut results = [[0u8; 16]; 4];
 
     let a_arr = [

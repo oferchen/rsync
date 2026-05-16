@@ -324,7 +324,6 @@ impl Dispatcher {
 
         for chunk in chunks {
             if chunk.len() == 16 {
-                // Full batch of 16 - use AVX-512
                 let batch: [&[u8]; 16] = [
                     chunk[0].as_ref(),
                     chunk[1].as_ref(),
@@ -347,7 +346,6 @@ impl Dispatcher {
                 let digests = unsafe { simd::avx512::digest_x16(&batch) };
                 results.extend_from_slice(&digests);
             } else {
-                // Partial batch - pad with empty inputs
                 let mut batch: [&[u8]; 16] = [&[]; 16];
                 for (i, input) in chunk.iter().enumerate() {
                     batch[i] = input.as_ref();
@@ -369,7 +367,6 @@ impl Dispatcher {
 
         for chunk in chunks {
             if chunk.len() == 8 {
-                // Full batch of 8 - use SIMD
                 let batch: [&[u8]; 8] = [
                     chunk[0].as_ref(),
                     chunk[1].as_ref(),
@@ -384,7 +381,6 @@ impl Dispatcher {
                 let digests = unsafe { simd::avx2::digest_x8(&batch) };
                 results.extend_from_slice(&digests);
             } else {
-                // Partial batch - pad with empty inputs
                 let mut batch: [&[u8]; 8] = [&[]; 8];
                 for (i, input) in chunk.iter().enumerate() {
                     batch[i] = input.as_ref();
@@ -508,7 +504,6 @@ impl Dispatcher {
 
         for chunk in chunks {
             if chunk.len() == 4 {
-                // Full batch of 4 - use NEON
                 let batch: [&[u8]; 4] = [
                     chunk[0].as_ref(),
                     chunk[1].as_ref(),
@@ -519,7 +514,6 @@ impl Dispatcher {
                 let digests = unsafe { simd::neon::digest_x4(&batch) };
                 results.extend_from_slice(&digests);
             } else {
-                // Partial batch - pad with empty inputs
                 let mut batch: [&[u8]; 4] = [&[]; 4];
                 for (i, input) in chunk.iter().enumerate() {
                     batch[i] = input.as_ref();
