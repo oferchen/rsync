@@ -2,6 +2,7 @@
 
 mod append;
 mod backup;
+mod backup_trace;
 mod comparison;
 mod copy;
 mod guard;
@@ -12,6 +13,10 @@ mod sparse;
 
 pub use backup::compute_backup_path;
 pub(crate) use backup::copy_entry_to_backup;
+pub use backup_trace::{
+    trace_make_backup_copy, trace_make_backup_device, trace_make_backup_hlink,
+    trace_make_backup_rename, trace_make_backup_symlink,
+};
 #[cfg(test)]
 pub(crate) use comparison::files_checksum_match;
 pub(crate) use comparison::{CopyComparison, DEFAULT_XXH64_DEDUP_SIZE_LIMIT, should_skip_copy};
