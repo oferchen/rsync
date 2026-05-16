@@ -84,6 +84,14 @@
 
 /// ACL (Access Control List) wire protocol encoding and decoding.
 pub mod acl;
+/// `--debug=CMD` producer emissions for remote command construction.
+///
+/// Hosts the trace helpers that mirror upstream rsync 3.4.1's
+/// `DEBUG_GTE(CMD, N)` diagnostics emitted from `pipe.c`,
+/// `clientserver.c`, `rsync.c`, and `main.c` during remote command
+/// construction, secluded-args transmission, and daemon argument
+/// forwarding.
+pub mod cmd;
 /// Protocol version-aware encoding/decoding using the Strategy pattern.
 ///
 /// This module includes both [`codec::ProtocolCodec`] for general wire encoding and
