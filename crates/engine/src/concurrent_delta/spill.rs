@@ -173,14 +173,14 @@ pub trait SpillCodec: Sized {
 ///   before surfacing the error.
 enum SpillBackend {
     Spooled(tempfile::SpooledTempFile),
-    Directory { dir: PathBuf, file: File },
+    Directory(File),
 }
 
 impl SpillBackend {
     fn file(&mut self) -> &mut dyn ReadWriteSeek {
         match self {
             SpillBackend::Spooled(f) => f,
-            SpillBackend::Directory { file, .. } => file,
+            SpillBackend::Directory(f) => f,
         }
     }
 }
@@ -674,13 +674,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
 /// Opens the appropriate backend for a spill file.
 fn open_backend(dir: Option<&Path>) -> io::Result<SpillBackend> {
     match dir {
-        Some(dir) => {
-            let file = tempfile::tempfile_in(dir)?;
-            Ok(SpillBackend::Directory {
-                dir: dir.to_path_buf(),
-                file,
-            })
-        }
+        Some(dir) => Ok(SpillBackend::Directory(tempfile::tempfile_in(dir)?)),
         None => {
             // SpooledTempFile keeps small spills in memory (up to 1 MB) and
             // rolls over to disk for larger volumes, avoiding disk I/O for
