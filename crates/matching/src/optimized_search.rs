@@ -1,41 +1,9 @@
-//! Optimized hash search algorithm matching upstream rsync's `match.c` approach.
+//! Two-level block match search mirroring upstream rsync's `match.c`.
 //!
-//! This module implements a two-level matching strategy for finding matching blocks
-//! during delta transfer:
-//! 1. Fast rolling checksum lookup with tag table for quick rejection
-//! 2. Slow strong checksum verification for confirmed matches
-//!
-//! # Performance optimizations
-//!
-//! - **Tag table**: O(1) rejection of non-matching rolling checksums using low 16 bits
-//! - **Hash table with chaining**: Fast lookup of blocks by rolling checksum
-//! - **Sorted optimization**: Pre-sorted blocks enable sequential scan for large block sets
-//!
-//! # Example
-//!
-//! ```rust
-//! use matching::optimized_search::{BlockEntry, BlockHashTable};
-//!
-//! let blocks = vec![
-//!     BlockEntry {
-//!         index: 0,
-//!         checksum: 0x12345678,
-//!         strong_checksum: vec![0xab, 0xcd, 0xef, 0x01],
-//!         block_len: 4096,
-//!     },
-//!     BlockEntry {
-//!         index: 1,
-//!         checksum: 0x9abcdef0,
-//!         strong_checksum: vec![0x12, 0x34, 0x56, 0x78],
-//!         block_len: 4096,
-//!     },
-//! ];
-//!
-//! let table = BlockHashTable::new(blocks);
-//! let strong = vec![0xab, 0xcd, 0xef, 0x01];
-//! let matched = table.find_match(0x12345678, &strong);
-//! assert!(matched.is_some());
-//! ```
+//! Each lookup first rejects via the tag table (low 16 bits of the rolling
+//! checksum), then probes the hash table keyed by full rolling checksum, then
+//! verifies with the strong checksum. The sorted constructor enables a
+//! sequential-scan optimization for large block sets.
 
 use rustc_hash::FxHashMap;
 
@@ -63,7 +31,7 @@ pub struct TagTable {
 }
 
 impl TagTable {
-    /// Build a tag table from a set of block entries.
+    /// Builds a tag table from a set of block entries.
     pub fn new(blocks: &[BlockEntry]) -> Self {
         let mut tags = vec![false; TAG_TABLE_SIZE];
         for block in blocks {
@@ -73,7 +41,10 @@ impl TagTable {
         Self { tags }
     }
 
-    /// Check if a rolling checksum might match any block (false = definitely no match).
+    /// Returns `true` if a rolling checksum may match an indexed block.
+    ///
+    /// A `false` return is definitive; `true` may be a false positive that
+    /// the strong checksum will then reject.
     #[inline]
     pub fn might_match(&self, checksum: u32) -> bool {
         let tag = (checksum & 0xFFFF) as usize;
@@ -95,7 +66,7 @@ pub struct BlockHashTable {
 }
 
 impl BlockHashTable {
-    /// Build a hash table from block entries.
+    /// Builds a hash table from block entries.
     pub fn new(blocks: Vec<BlockEntry>) -> Self {
         let tag_table = TagTable::new(&blocks);
         let mut table = FxHashMap::default();
@@ -115,7 +86,8 @@ impl BlockHashTable {
         }
     }
 
-    /// Build a hash table with pre-sorted blocks (enables sequential scan optimization).
+    /// Builds a hash table with pre-sorted blocks, enabling the sequential-scan
+    /// optimization for large block sets.
     pub fn new_sorted(mut blocks: Vec<BlockEntry>) -> Self {
         blocks.sort_by_key(|b| b.checksum);
 
@@ -137,9 +109,9 @@ impl BlockHashTable {
         }
     }
 
-    /// Find blocks matching a given rolling checksum.
-    /// Returns indices into the blocks array.
-    /// Uses tag table for O(1) rejection of non-matches.
+    /// Returns indices of blocks whose rolling checksum equals `checksum`.
+    ///
+    /// The tag table rejects non-matches in O(1) before the hash probe.
     pub fn find_weak_matches(&self, checksum: u32) -> &[usize] {
         if !self.tag_table.might_match(checksum) {
             return &[];
@@ -151,8 +123,7 @@ impl BlockHashTable {
             .unwrap_or(&[])
     }
 
-    /// Verify a weak match against a strong checksum.
-    /// Returns the block entry if both checksums match.
+    /// Returns the block entry if its strong checksum equals `strong`.
     pub fn verify_match(&self, block_idx: usize, strong: &[u8]) -> Option<&BlockEntry> {
         let block = &self.blocks[block_idx];
         if block.strong_checksum == strong {
@@ -162,10 +133,8 @@ impl BlockHashTable {
         }
     }
 
-    /// Find a matching block using two-level lookup:
-    /// 1. Tag table quick rejection
-    /// 2. Rolling checksum match
-    /// 3. Strong checksum verification
+    /// Finds a matching block via tag-table rejection, rolling-checksum
+    /// lookup, then strong-checksum verification.
     pub fn find_match(&self, rolling_checksum: u32, strong_checksum: &[u8]) -> Option<&BlockEntry> {
         let weak_matches = self.find_weak_matches(rolling_checksum);
 
@@ -178,17 +147,18 @@ impl BlockHashTable {
         None
     }
 
-    /// Number of blocks in the table.
+    /// Returns the number of blocks in the table.
     pub fn len(&self) -> usize {
         self.blocks.len()
     }
 
-    /// Whether the table is empty.
+    /// Returns `true` if the table contains no blocks.
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
 
-    /// Whether blocks are sorted (sequential scan optimization enabled).
+    /// Returns `true` if blocks are sorted by checksum (sequential-scan
+    /// optimization enabled).
     pub fn is_sorted(&self) -> bool {
         self.sorted
     }
