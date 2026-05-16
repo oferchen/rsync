@@ -58,6 +58,7 @@ COLOR_PURE_RUST = "#58a6ff"
 COLOR_OPENSSL = "#d2a8ff"
 COLOR_STD_IO = "#da8b45"
 COLOR_IO_URING = "#3fb950"
+COLOR_SSH_UPSTREAM = "#6e7681"
 COLOR_SSH_SUBPROCESS = "#56d4dd"
 COLOR_SSH_RUSSH = "#ffa657"
 COLOR_TITLE = "#e6edf3"
@@ -94,7 +95,9 @@ MODE_LABELS = {
     "memory": "Memory Usage",
     "checksum_openssl": "Checksum: OpenSSL vs Pure Rust",
     "io_uring": "io_uring vs Standard I/O",
-    "ssh_transport": "SSH Transport: Subprocess vs russh",
+    "ssh_transport": (
+        "SSH Transport: upstream vs oc-rsync subprocess vs oc-rsync russh"
+    ),
 }
 MODE_CLI_HINTS = {
     "local": "rsync -av src/ dst/",
@@ -110,7 +113,10 @@ MODE_CLI_HINTS = {
     "memory": "rsync -av (peak RSS measurement)",
     "checksum_openssl": "rsync -avc src/ dst/",
     "io_uring": "--io-uring vs --no-io-uring",
-    "ssh_transport": "host:path (subprocess) vs ssh://host/path (russh)",
+    "ssh_transport": (
+        "upstream ssh vs oc-rsync host:path (subprocess) "
+        "vs oc-rsync ssh://host/path (russh)"
+    ),
 }
 
 # Modes where bars represent alternative labels instead of upstream vs oc-rsync
@@ -138,13 +144,24 @@ class BarSpec:
 
 @dataclass(frozen=True)
 class TestPair:
-    """A pair of bars (upstream + oc-rsync) for one test scenario."""
+    """A pair of bars (upstream + oc-rsync) for one test scenario.
+
+    Some modes (e.g. the 3-way SSH transport comparison) include an optional
+    third bar and a second ratio annotation. When `third` is set:
+      - `upstream` carries the first leg (e.g. upstream rsync over ssh)
+      - `oc_rsync` carries the second leg (e.g. oc-rsync subprocess ssh)
+      - `third` carries the third leg (e.g. oc-rsync embedded russh)
+      - `ratio` annotates third vs oc_rsync (russh / subprocess)
+      - `ratio_secondary` annotates oc_rsync vs upstream (oc-sub / upstream)
+    """
 
     name: str
     upstream: BarSpec
     oc_rsync: BarSpec
     ratio: float
     center_y: float
+    third: BarSpec | None = None
+    ratio_secondary: float | None = None
 
 
 @dataclass(frozen=True)
@@ -174,13 +191,23 @@ class ChartLayout:
 # ---------------------------------------------------------------------------
 
 
+def _is_three_way_ssh(mode: str, t: dict) -> bool:
+    """True when this row should render as the 3-way SSH transport bar group."""
+    return mode in SSH_TRANSPORT_MODES and "upstream_ssh" in t
+
+
 def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
     """Compute y-positions for every element and overall chart dimensions."""
     all_times = []
-    for mode_tests in tests_by_mode.values():
+    for mode, mode_tests in tests_by_mode.items():
         for t in mode_tests:
-            all_times.append(t["upstream"]["mean"])
-            all_times.append(t["oc_rsync"]["mean"])
+            if _is_three_way_ssh(mode, t):
+                all_times.append(t["upstream_ssh"]["mean"])
+                all_times.append(t["oc_subprocess"]["mean"])
+                all_times.append(t["oc_russh"]["mean"])
+            else:
+                all_times.append(t["upstream"]["mean"])
+                all_times.append(t["oc_rsync"]["mean"])
 
     max_time = max(all_times) if all_times else 1.0
     scale = BAR_AREA_WIDTH / (max_time * 1.1)
@@ -209,36 +236,90 @@ def compute_layout(tests_by_mode: dict[str, list[dict]]) -> ChartLayout:
             if j > 0:
                 y += GROUP_GAP
 
+            three_way = _is_three_way_ssh(mode, t)
+
             up_y = y
             oc_y = y + BAR_HEIGHT + BAR_GAP
-            center_y = y + BAR_HEIGHT + BAR_GAP / 2
+            third_y = y + 2 * (BAR_HEIGHT + BAR_GAP)
 
-            up_w = max(t["upstream"]["mean"] * scale, MIN_BAR_WIDTH)
-            oc_w = max(t["oc_rsync"]["mean"] * scale, MIN_BAR_WIDTH)
+            if three_way:
+                # Center vertically between bar 1 and bar 3.
+                center_y = y + (3 * BAR_HEIGHT + 2 * BAR_GAP) / 2
+            else:
+                center_y = y + BAR_HEIGHT + BAR_GAP / 2
+
+            if three_way:
+                up_t = t["upstream_ssh"]["mean"]
+                oc_t = t["oc_subprocess"]["mean"]
+                third_t = t["oc_russh"]["mean"]
+            else:
+                up_t = t["upstream"]["mean"]
+                oc_t = t["oc_rsync"]["mean"]
+                third_t = None
+
+            up_w = max(up_t * scale, MIN_BAR_WIDTH)
+            oc_w = max(oc_t * scale, MIN_BAR_WIDTH)
+            third_w = (
+                max(third_t * scale, MIN_BAR_WIDTH) if third_t is not None else None
+            )
 
             if mode in OPENSSL_MODES:
                 bar1_color, bar1_label = COLOR_PURE_RUST, "pure Rust"
                 bar2_color, bar2_label = COLOR_OPENSSL, "OpenSSL"
+                bar3_color, bar3_label = None, None
             elif mode in IO_URING_MODES:
                 bar1_color, bar1_label = COLOR_STD_IO, "standard I/O"
                 bar2_color, bar2_label = COLOR_IO_URING, "io_uring"
+                bar3_color, bar3_label = None, None
             elif mode in SSH_TRANSPORT_MODES:
-                bar1_color, bar1_label = COLOR_SSH_SUBPROCESS, "subprocess"
-                bar2_color, bar2_label = COLOR_SSH_RUSSH, "russh"
+                if three_way:
+                    bar1_color, bar1_label = (
+                        COLOR_SSH_UPSTREAM, "upstream (ssh subprocess)"
+                    )
+                    bar2_color, bar2_label = (
+                        COLOR_SSH_SUBPROCESS, "oc-rsync (ssh subprocess)"
+                    )
+                    bar3_color, bar3_label = (
+                        COLOR_SSH_RUSSH, "oc-rsync (russh embedded)"
+                    )
+                else:
+                    bar1_color, bar1_label = COLOR_SSH_SUBPROCESS, "subprocess"
+                    bar2_color, bar2_label = COLOR_SSH_RUSSH, "russh"
+                    bar3_color, bar3_label = None, None
             else:
                 bar1_color, bar1_label = COLOR_UPSTREAM, "upstream"
                 bar2_color, bar2_label = COLOR_OC_RSYNC, "oc-rsync"
+                bar3_color, bar3_label = None, None
+
+            third_bar = None
+            ratio_secondary = None
+            if three_way and third_w is not None and bar3_color is not None:
+                third_bar = BarSpec(
+                    third_y, third_w, third_t, bar3_color, bar3_label
+                )
+                # Primary ratio = russh / oc subprocess.
+                # Secondary ratio = oc subprocess / upstream.
+                ratio_primary = t.get("ratio_russh_vs_sub", t.get("ratio", 0.0))
+                ratio_secondary = t.get("ratio_sub_vs_upstream", 0.0)
+            else:
+                ratio_primary = t.get("ratio", 0.0)
 
             pairs.append(
                 TestPair(
                     name=t["name"],
-                    upstream=BarSpec(up_y, up_w, t["upstream"]["mean"], bar1_color, bar1_label),
-                    oc_rsync=BarSpec(oc_y, oc_w, t["oc_rsync"]["mean"], bar2_color, bar2_label),
-                    ratio=t["ratio"],
+                    upstream=BarSpec(up_y, up_w, up_t, bar1_color, bar1_label),
+                    oc_rsync=BarSpec(oc_y, oc_w, oc_t, bar2_color, bar2_label),
+                    ratio=ratio_primary,
                     center_y=center_y,
+                    third=third_bar,
+                    ratio_secondary=ratio_secondary,
                 )
             )
-            y += 2 * BAR_HEIGHT + BAR_GAP
+
+            if three_way:
+                y += 3 * BAR_HEIGHT + 2 * BAR_GAP
+            else:
+                y += 2 * BAR_HEIGHT + BAR_GAP
 
         groups.append(ModeGroup(
             label=MODE_LABELS[mode],
@@ -390,6 +471,8 @@ class ChartBuilder:
             )
             self._add_bar(pair.upstream, scale)
             self._add_bar(pair.oc_rsync, scale)
+            if pair.third is not None:
+                self._add_bar(pair.third, scale)
             self._add_speedup(pair)
 
     def add_legend(
@@ -398,6 +481,7 @@ class ChartBuilder:
         has_openssl: bool = False,
         has_io_uring: bool = False,
         has_ssh_transport: bool = False,
+        has_ssh_3way: bool = False,
     ) -> None:
         cx = CHART_WIDTH / 2
         self._parts.append(f'<g transform="translate({cx - 160}, {y:.0f})">')
@@ -447,18 +531,50 @@ class ChartBuilder:
         if has_ssh_transport:
             row += 1
             ry = row * 18
-            self._parts.append(
-                f'<rect x="0" y="{ry}" width="12" height="12" rx="2" fill="{COLOR_SSH_SUBPROCESS}"/>'
-            )
-            self._parts.append(
-                f'<text x="16" y="{ry + 10}" font-size="11" fill="{COLOR_LABEL}">SSH subprocess</text>'
-            )
-            self._parts.append(
-                f'<rect x="170" y="{ry}" width="12" height="12" rx="2" fill="{COLOR_SSH_RUSSH}"/>'
-            )
-            self._parts.append(
-                f'<text x="186" y="{ry + 10}" font-size="11" fill="{COLOR_LABEL}">SSH russh (embedded)</text>'
-            )
+            if has_ssh_3way:
+                self._parts.append(
+                    f'<rect x="0" y="{ry}" width="12" height="12" rx="2" '
+                    f'fill="{COLOR_SSH_UPSTREAM}"/>'
+                )
+                self._parts.append(
+                    f'<text x="16" y="{ry + 10}" font-size="11" '
+                    f'fill="{COLOR_LABEL}">upstream rsync (ssh)</text>'
+                )
+                self._parts.append(
+                    f'<rect x="170" y="{ry}" width="12" height="12" rx="2" '
+                    f'fill="{COLOR_SSH_SUBPROCESS}"/>'
+                )
+                self._parts.append(
+                    f'<text x="186" y="{ry + 10}" font-size="11" '
+                    f'fill="{COLOR_LABEL}">oc-rsync (ssh subprocess)</text>'
+                )
+                row += 1
+                ry = row * 18
+                self._parts.append(
+                    f'<rect x="0" y="{ry}" width="12" height="12" rx="2" '
+                    f'fill="{COLOR_SSH_RUSSH}"/>'
+                )
+                self._parts.append(
+                    f'<text x="16" y="{ry + 10}" font-size="11" '
+                    f'fill="{COLOR_LABEL}">oc-rsync (russh embedded)</text>'
+                )
+            else:
+                self._parts.append(
+                    f'<rect x="0" y="{ry}" width="12" height="12" rx="2" '
+                    f'fill="{COLOR_SSH_SUBPROCESS}"/>'
+                )
+                self._parts.append(
+                    f'<text x="16" y="{ry + 10}" font-size="11" '
+                    f'fill="{COLOR_LABEL}">SSH subprocess</text>'
+                )
+                self._parts.append(
+                    f'<rect x="170" y="{ry}" width="12" height="12" rx="2" '
+                    f'fill="{COLOR_SSH_RUSSH}"/>'
+                )
+                self._parts.append(
+                    f'<text x="186" y="{ry + 10}" font-size="11" '
+                    f'fill="{COLOR_LABEL}">SSH russh (embedded)</text>'
+                )
         self._parts.append("</g>")
 
     def render(self) -> str:
@@ -493,12 +609,29 @@ class ChartBuilder:
     def _add_speedup(self, pair: TestPair) -> None:
         text, color = ratio_text(pair.ratio)
         x = CHART_WIDTH - RIGHT_MARGIN + 10
-        y = pair.center_y + 4
-        self._parts.append(
-            f'<text x="{x}" y="{y:.1f}" '
-            f'font-size="11" font-weight="600" fill="{color}">'
-            f"{escape(text)}</text>"
-        )
+        if pair.ratio_secondary is not None:
+            # Stack two ratios for the 3-way comparison: oc-sub vs upstream
+            # above, russh vs oc-sub below.
+            sec_text, sec_color = ratio_text(pair.ratio_secondary)
+            y_top = pair.center_y - 4
+            y_bot = pair.center_y + 12
+            self._parts.append(
+                f'<text x="{x}" y="{y_top:.1f}" '
+                f'font-size="10" font-weight="600" fill="{sec_color}">'
+                f"oc/up {escape(sec_text)}</text>"
+            )
+            self._parts.append(
+                f'<text x="{x}" y="{y_bot:.1f}" '
+                f'font-size="10" font-weight="600" fill="{color}">'
+                f"ru/oc {escape(text)}</text>"
+            )
+        else:
+            y = pair.center_y + 4
+            self._parts.append(
+                f'<text x="{x}" y="{y:.1f}" '
+                f'font-size="11" font-weight="600" fill="{color}">'
+                f"{escape(text)}</text>"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -515,9 +648,16 @@ def generate_chart(data: dict) -> str:
     has_openssl = any(m in OPENSSL_MODES for m in tests_by_mode)
     has_io_uring = any(m in IO_URING_MODES for m in tests_by_mode)
     has_ssh_transport = any(m in SSH_TRANSPORT_MODES for m in tests_by_mode)
+    has_ssh_3way = any(
+        m in SSH_TRANSPORT_MODES and any("upstream_ssh" in t for t in ts)
+        for m, ts in tests_by_mode.items()
+    )
     layout = compute_layout(tests_by_mode)
 
-    extra_legend_rows = int(has_openssl) + int(has_io_uring) + int(has_ssh_transport)
+    extra_legend_rows = (
+        int(has_openssl) + int(has_io_uring) + int(has_ssh_transport)
+        + int(has_ssh_3way)
+    )
     extra_legend = extra_legend_rows * 18
     chart_height = layout.chart_height + extra_legend
 
@@ -541,6 +681,7 @@ def generate_chart(data: dict) -> str:
         has_openssl,
         has_io_uring,
         has_ssh_transport,
+        has_ssh_3way,
     )
 
     return builder.render()
