@@ -39,7 +39,6 @@ impl From<DocPackageArgs> for DocPackageOptions {
 pub fn execute(workspace: &Path, options: DocPackageOptions) -> Result<(), TaskError> {
     println!("Building API documentation...");
 
-    // Build rustdoc with --no-deps to focus on workspace crates
     let mut cmd = Command::new("cargo");
     cmd.arg("doc")
         .arg("--workspace")
@@ -62,10 +61,8 @@ pub fn execute(workspace: &Path, options: DocPackageOptions) -> Result<(), TaskE
 
     println!("Documentation built successfully");
 
-    // Create output directory
     std::fs::create_dir_all(&options.output)?;
 
-    // Package documentation
     let doc_dir = workspace.join("target/doc");
     let tarball_name = "oc-rsync-rustdoc.tar.gz";
     let tarball_path = options.output.join(tarball_name);

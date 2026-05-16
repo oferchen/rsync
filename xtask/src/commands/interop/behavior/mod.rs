@@ -20,7 +20,6 @@ use std::path::Path;
 pub fn execute(workspace: &Path, options: BehaviorOptions) -> TaskResult<()> {
     eprintln!("[behavior] Starting behavior comparison tests...");
 
-    // Load scenarios
     let all_scenarios = scenarios::load_scenarios(workspace)?;
     let runnable = scenarios::filter_runnable(all_scenarios);
 
@@ -30,7 +29,6 @@ pub fn execute(workspace: &Path, options: BehaviorOptions) -> TaskResult<()> {
         scenarios::load_scenarios(workspace)?.len()
     );
 
-    // Create the test harness
     let harness = harness::BehaviorHarness::new(workspace, &options)?;
 
     eprintln!(
@@ -42,10 +40,8 @@ pub fn execute(workspace: &Path, options: BehaviorOptions) -> TaskResult<()> {
         harness.upstream_rsync_path().display()
     );
 
-    // Run comparison tests
     let results = harness.run_scenarios(&runnable)?;
 
-    // Report results
     let passed = results.iter().filter(|r| r.passed()).count();
     let failed = results.len() - passed;
 

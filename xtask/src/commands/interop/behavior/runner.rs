@@ -193,7 +193,6 @@ pub fn run_scenario(
     dest_subdir: &str,
     options: &RunOptions,
 ) -> TaskResult<RunResult> {
-    // Create the destination directory for this run
     let dest_dir = work_dir.join(dest_subdir);
     fs::create_dir_all(&dest_dir).map_err(|e| {
         TaskError::Io(std::io::Error::new(
@@ -202,10 +201,9 @@ pub fn run_scenario(
         ))
     })?;
 
-    // Build the command arguments, rewriting relative paths to absolute
+    // Rewrite relative dest/, src/, and filelist paths to absolute paths under work_dir.
     let mut cmd_args = scenario.args.clone();
 
-    // Rewrite dest/ references to point to the actual dest directory
     for arg in &mut cmd_args {
         if arg == "dest/" || arg.ends_with("dest/") {
             *arg = format!("{}/", dest_dir.display());
@@ -215,7 +213,6 @@ pub fn run_scenario(
         }
     }
 
-    // Also handle src/ paths
     let src_dir = work_dir.join("src");
     for arg in &mut cmd_args {
         if arg == "src/" || arg == "src" {
@@ -226,9 +223,7 @@ pub fn run_scenario(
         }
     }
 
-    // Handle other file references in work_dir
     for arg in &mut cmd_args {
-        // Handle files like filelist.txt that should be in work_dir
         if !arg.starts_with('/') && !arg.starts_with('-') {
             if let Some(file_name) = arg.strip_prefix("filelist") {
                 *arg = format!("{}/filelist{}", work_dir.display(), file_name);
@@ -244,7 +239,6 @@ pub fn run_scenario(
         );
     }
 
-    // Execute the command with the rsync binary as the program
     let output = Command::new(rsync_binary)
         .args(&cmd_args)
         .current_dir(work_dir)
@@ -269,7 +263,6 @@ pub fn run_scenario(
         }
     }
 
-    // Collect file state from destination
     let files = if dest_dir.exists() {
         FileState::from_directory(&dest_dir).map_err(|e| {
             TaskError::Io(std::io::Error::new(
@@ -295,7 +288,6 @@ pub fn setup_scenario(
     work_dir: &Path,
     options: &RunOptions,
 ) -> TaskResult<()> {
-    // Create work directory
     fs::create_dir_all(work_dir).map_err(|e| {
         TaskError::Io(std::io::Error::new(
             e.kind(),
@@ -303,7 +295,6 @@ pub fn setup_scenario(
         ))
     })?;
 
-    // Run setup commands if specified
     if let Some(ref setup) = scenario.setup {
         if options.verbose {
             eprintln!("[runner] Running setup: {}", setup);
@@ -338,7 +329,6 @@ pub fn cleanup_scenario(
     work_dir: &Path,
     _options: &RunOptions,
 ) -> TaskResult<()> {
-    // Run cleanup commands if specified
     if let Some(ref cleanup) = scenario.cleanup {
         let _ = Command::new("bash")
             .arg("-c")
