@@ -5,6 +5,8 @@
 //! `generator.c:recv_generator()`.
 use std::path::Path;
 
+use logging::info_log;
+
 use crate::local_copy::{
     CopyContext, LocalCopyError, copy_device, copy_fifo, copy_file, copy_symlink,
 };
@@ -41,6 +43,16 @@ pub(super) fn process_planned_entry(
             return Ok(false);
         }
         EntryAction::SkipMountPoint => {
+            // upstream: flist.c:1319 - INFO_GTE(MOUNT, 1) gates
+            // `rprintf(FINFO, "[%s] skipping mount-point dir %s", who_am_i(), thisname)`
+            // when `--one-file-system` (`-xx`) prunes a cross-device directory.
+            // The role prefix (`[sender]`) is added downstream by the renderer.
+            info_log!(
+                Mount,
+                1,
+                "skipping mount-point dir {}",
+                planned.entry.path.display()
+            );
             context.record_skipped_mount_point(record_relative);
             return Ok(false);
         }
