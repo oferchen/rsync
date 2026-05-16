@@ -332,12 +332,19 @@ fn run_client_internal(
 /// buffer pool.
 ///
 /// Calls [`init_global_buffer_pool`] with [`GlobalBufferPoolConfig::default`]
-/// adjusted to carry the requested memory cap. The first caller wins per
+/// adjusted to carry the requested byte budget. The first caller wins per
 /// process: subsequent invocations and lazy initialisations are no-ops, so
 /// the cap only takes effect when this runs before any subsystem has
 /// acquired a buffer. That matches the lifetime of a typical CLI invocation
 /// (one client per process). Library callers that already initialised the
 /// pool retain whatever cap they chose.
+///
+/// The CLI flag drives the soft byte budget on pool retention rather than
+/// the hard outstanding-memory cap: `--max-alloc` is meant to bound how
+/// much memory the pool retains across calls, not to block transfers when
+/// the budget is hit. When the pool retention budget is full, returning
+/// buffers are deallocated and counted via the pool's overflow counter;
+/// subsequent acquires allocate fresh outside the pool.
 ///
 /// Mirrors upstream rsync `options.c:1943-1950`, where `max_alloc` is set
 /// once during option processing and consumed by allocation paths thereafter.
@@ -357,7 +364,7 @@ fn apply_max_alloc(config: &ClientConfig) {
         return;
     }
     let cfg = GlobalBufferPoolConfig {
-        memory_cap: Some(limit_usize),
+        byte_budget: Some(limit_usize),
         ..GlobalBufferPoolConfig::default()
     };
     // `Err` means another caller (typically a library embedder) already

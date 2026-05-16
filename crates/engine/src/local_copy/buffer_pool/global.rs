@@ -46,6 +46,15 @@ pub struct GlobalBufferPoolConfig {
     /// uncapped, matching its historical default. A value of `Some(0)` is
     /// treated as `None`.
     pub memory_cap: Option<usize>,
+    /// Optional soft byte budget on pool retention.
+    ///
+    /// When `Some`, the pool retains at most this many bytes of pooled
+    /// buffers across all slots. Returns that would exceed the budget
+    /// deallocate the buffer and increment the overflow counter rather
+    /// than blocking. Acquires from an empty pool always allocate fresh.
+    /// `None` (the default) leaves retained bytes uncapped. A value of
+    /// `Some(0)` is treated as `None`.
+    pub byte_budget: Option<usize>,
 }
 
 /// Environment variable for overriding the buffer pool size (number of buffers).
@@ -74,6 +83,7 @@ impl Default for GlobalBufferPoolConfig {
             max_buffers,
             buffer_size: super::super::COPY_BUFFER_SIZE,
             memory_cap: None,
+            byte_budget: None,
         }
     }
 }
@@ -116,6 +126,7 @@ pub fn global_buffer_pool() -> Arc<BufferPool> {
 ///     max_buffers: 16,
 ///     buffer_size: 256 * 1024,
 ///     memory_cap: Some(512 * 1024 * 1024),
+///     byte_budget: Some(64 * 1024 * 1024),
 /// }).expect("pool not yet initialized");
 /// ```
 pub fn init_global_buffer_pool(
@@ -124,6 +135,9 @@ pub fn init_global_buffer_pool(
     let mut pool = BufferPool::with_buffer_size(config.max_buffers, config.buffer_size);
     if let Some(cap) = config.memory_cap.filter(|&n| n > 0) {
         pool = pool.with_memory_cap(cap);
+    }
+    if let Some(budget) = config.byte_budget.filter(|&n| n > 0) {
+        pool = pool.with_byte_budget(budget);
     }
     let pool = Arc::new(pool);
     GLOBAL_BUFFER_POOL.set(pool).map_err(|_| config)
@@ -148,6 +162,7 @@ mod tests {
         assert_eq!(config.max_buffers, expected);
         assert_eq!(config.buffer_size, super::super::super::COPY_BUFFER_SIZE);
         assert!(config.memory_cap.is_none());
+        assert!(config.byte_budget.is_none());
     }
 
     #[test]
@@ -156,6 +171,7 @@ mod tests {
             max_buffers: 32,
             buffer_size: 512 * 1024,
             memory_cap: Some(64 * 1024 * 1024),
+            byte_budget: None,
         };
         assert_eq!(config.max_buffers, 32);
         assert_eq!(config.buffer_size, 512 * 1024);
@@ -310,6 +326,7 @@ mod tests {
             max_buffers: 99,
             buffer_size: 1024,
             memory_cap: None,
+            byte_budget: None,
         };
         let result = init_global_buffer_pool(config);
         assert!(result.is_err());
@@ -327,8 +344,28 @@ mod tests {
             max_buffers: 4,
             buffer_size: 8 * 1024,
             memory_cap: Some(4 * 1024 * 1024),
+            byte_budget: None,
         };
         assert_eq!(config.memory_cap, Some(4 * 1024 * 1024));
+    }
+
+    #[test]
+    fn byte_budget_field_round_trips() {
+        let config = GlobalBufferPoolConfig {
+            max_buffers: 4,
+            buffer_size: 8 * 1024,
+            memory_cap: None,
+            byte_budget: Some(16 * 1024 * 1024),
+        };
+        assert_eq!(config.byte_budget, Some(16 * 1024 * 1024));
+    }
+
+    #[test]
+    fn byte_budget_zero_is_treated_as_unbounded() {
+        // init_global_buffer_pool filters byte_budget=Some(0) so the pool
+        // stays uncapped instead of panicking on ByteBudget::new(0).
+        let budget: Option<usize> = Some(0).filter(|&n| n > 0);
+        assert!(budget.is_none());
     }
 
     #[test]

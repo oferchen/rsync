@@ -13,6 +13,7 @@ use crossbeam_queue::ArrayQueue;
 
 use super::allocator::{BufferAllocator, DefaultAllocator};
 use super::buffer_controller::{AdaptiveBufferController, ControllerConfig};
+use super::byte_budget::ByteBudget;
 use super::guard::{BorrowedBufferGuard, BufferGuard};
 use super::memory_cap::MemoryCap;
 use super::pressure::{PressureTracker, ResizeAction};
@@ -77,6 +78,18 @@ fn queue_capacity(max_buffers: usize) -> usize {
 /// returned (backpressure). Use `try_acquire` / `try_acquire_from` for
 /// non-blocking semantics that return `None` at the cap.
 ///
+/// # Byte Budget
+///
+/// An orthogonal soft cap can be set via [`with_byte_budget`](Self::with_byte_budget).
+/// The byte budget bounds total bytes of buffers *retained* in the pool
+/// rather than outstanding. When admitting a returning buffer would push
+/// retained bytes past the budget, the buffer is deallocated and the
+/// overflow counter ([`total_byte_overflows`](Self::total_byte_overflows))
+/// increments. Acquires never block; on pool miss they always allocate
+/// fresh. This bounds the failure mode where a handful of large adaptive
+/// buffers blow past the memory budget that a count cap alone cannot
+/// express.
+///
 /// # Buffer Lifecycle
 ///
 /// 1. **Acquire** - check thread-local slot, then pop from the lock-free
@@ -115,6 +128,16 @@ pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
     allocator: A,
     /// Optional hard memory cap with backpressure.
     memory_cap: Option<MemoryCap>,
+    /// Optional soft byte budget on pool retention.
+    ///
+    /// When set, `admit_or_deallocate` checks this in addition to the count
+    /// cap. The pool admits a buffer only when both the count slot and the
+    /// byte budget have room; otherwise the buffer is deallocated and the
+    /// budget's overflow counter increments. This prevents a handful of
+    /// large adaptive buffers from blowing past a reasonable memory budget
+    /// that a count cap alone cannot express. Acquire remains non-blocking:
+    /// callers always get a buffer (fresh allocation on pool miss).
+    byte_budget: Option<ByteBudget>,
     /// Optional throughput tracker for dynamic buffer sizing.
     ///
     /// When present, the pool tracks transfer throughput via EMA and uses
@@ -187,6 +210,7 @@ impl BufferPool {
             buffer_size: COPY_BUFFER_SIZE,
             allocator: DefaultAllocator,
             memory_cap: None,
+            byte_budget: None,
             throughput: None,
             pressure: None,
             buffer_controller: None,
@@ -213,6 +237,7 @@ impl BufferPool {
             buffer_size,
             allocator: DefaultAllocator,
             memory_cap: None,
+            byte_budget: None,
             throughput: None,
             pressure: None,
             buffer_controller: None,
@@ -244,6 +269,7 @@ impl<A: BufferAllocator> BufferPool<A> {
             buffer_size,
             allocator,
             memory_cap: None,
+            byte_budget: None,
             throughput: None,
             pressure: None,
             buffer_controller: None,
@@ -271,6 +297,35 @@ impl<A: BufferAllocator> BufferPool<A> {
     #[must_use]
     pub fn with_memory_cap(mut self, max_bytes: usize) -> Self {
         self.memory_cap = Some(MemoryCap::new(max_bytes));
+        self
+    }
+
+    /// Sets a soft byte budget on pool retention.
+    ///
+    /// Caps the total bytes of buffers retained in the central pool. The
+    /// effective admission cap is `min(count_cap, byte_cap)`: a buffer is
+    /// admitted only when both a count slot and the byte budget have room.
+    /// When either limit would be exceeded, the buffer is deallocated; the
+    /// byte-budget rejection path additionally increments
+    /// [`total_byte_overflows`](Self::total_byte_overflows). Acquire never
+    /// blocks - callers always get a buffer (fresh allocation on pool miss).
+    ///
+    /// This addresses a failure mode of the count-only cap: a small number
+    /// of adaptive large-file buffers (e.g. 1 MiB each) blow past any
+    /// reasonable memory budget even with a modest slot count. Pairing the
+    /// count slot with a byte budget bounds retained memory directly.
+    ///
+    /// Orthogonal to [`with_memory_cap`](Self::with_memory_cap), which sets
+    /// a hard ceiling on outstanding (checked-out) memory and blocks
+    /// acquires beyond the cap. Either, both, or neither may be configured.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `max_bytes` is zero. Pass no byte budget at all to leave
+    /// the pool uncapped on retained bytes.
+    #[must_use]
+    pub fn with_byte_budget(mut self, max_bytes: usize) -> Self {
+        self.byte_budget = Some(ByteBudget::new(max_bytes));
         self
     }
 
@@ -727,10 +782,31 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// the lock-free [`ArrayQueue`] (always succeeds because the queue's
     /// hard capacity is at least [`DEFAULT_QUEUE_CAPACITY`] >= any soft
     /// cap). On rejection (count >= capacity), the buffer is deallocated.
+    ///
+    /// When a byte budget is configured, the budget reservation runs first
+    /// so a rejection short-circuits before any count-slot contention. A
+    /// reservation that succeeded but then loses the count-slot race is
+    /// released before deallocation so the budget stays accurate.
     fn admit_or_deallocate(&self, buffer: Vec<u8>, capacity: usize) {
+        // Byte budget gate (if configured) - reserve bytes before claiming
+        // a count slot so the count slot is not held when the byte cap
+        // rejects admission. Overflow counter increments inside try_reserve.
+        let buffer_bytes = buffer.capacity();
+        if let Some(budget) = &self.byte_budget
+            && !budget.try_reserve(buffer_bytes)
+        {
+            self.allocator.deallocate(buffer);
+            return;
+        }
+
         let mut current = self.central_count.load(Ordering::Relaxed);
         loop {
             if current >= capacity {
+                // Count cap rejected admission - release the byte reservation
+                // we made above so it does not permanently shrink the budget.
+                if let Some(budget) = &self.byte_budget {
+                    budget.release(buffer_bytes);
+                }
                 self.allocator.deallocate(buffer);
                 return;
             }
@@ -748,6 +824,9 @@ impl<A: BufferAllocator> BufferPool<A> {
                         // deallocate. Unreachable given the queue sizing
                         // invariant in `queue_capacity`.
                         self.central_count.fetch_sub(1, Ordering::Relaxed);
+                        if let Some(budget) = &self.byte_budget {
+                            budget.release(buffer_bytes);
+                        }
                         self.allocator.deallocate(buffer);
                     }
                     return;
@@ -768,6 +847,9 @@ impl<A: BufferAllocator> BufferPool<A> {
         match self.buffers.pop() {
             Some(buffer) => {
                 self.central_count.fetch_sub(1, Ordering::Relaxed);
+                if let Some(budget) = &self.byte_budget {
+                    budget.release(buffer.capacity());
+                }
                 self.total_hits.fetch_add(1, Ordering::Relaxed);
                 if let Some(pressure) = &self.pressure {
                     pressure.record_hit();
@@ -814,6 +896,9 @@ impl<A: BufferAllocator> BufferPool<A> {
                     match self.buffers.pop() {
                         Some(buf) => {
                             self.central_count.fetch_sub(1, Ordering::Relaxed);
+                            if let Some(budget) = &self.byte_budget {
+                                budget.release(buf.capacity());
+                            }
                             self.allocator.deallocate(buf);
                         }
                         None => break,
@@ -873,6 +958,33 @@ impl<A: BufferAllocator> BufferPool<A> {
     /// Returns the configured memory cap in bytes, or `None` if uncapped.
     pub fn memory_cap(&self) -> Option<usize> {
         self.memory_cap.as_ref().map(|cap| cap.limit())
+    }
+
+    /// Returns the configured byte budget for pool retention, or `None`
+    /// if no byte budget is set.
+    pub fn byte_budget(&self) -> Option<usize> {
+        self.byte_budget.as_ref().map(|b| b.limit())
+    }
+
+    /// Returns the current bytes retained in the central pool, or `0`
+    /// if no byte budget is configured.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        self.byte_budget.as_ref().map(|b| b.retained()).unwrap_or(0)
+    }
+
+    /// Returns the cumulative count of admission rejections due to the
+    /// byte budget being full.
+    ///
+    /// Each rejected admission means a returning buffer was deallocated
+    /// rather than retained and a subsequent acquire on an empty pool
+    /// will allocate fresh. Always zero when no byte budget is configured.
+    #[must_use]
+    pub fn total_byte_overflows(&self) -> u64 {
+        self.byte_budget
+            .as_ref()
+            .map(|b| b.overflows())
+            .unwrap_or(0)
     }
 
     /// Returns `true` if adaptive resizing is enabled.
@@ -938,6 +1050,7 @@ impl<A: BufferAllocator> BufferPool<A> {
             total_hits: self.total_hits(),
             total_misses: self.total_misses(),
             total_growths: self.total_growths(),
+            total_byte_overflows: self.total_byte_overflows(),
         }
     }
 
@@ -995,10 +1108,11 @@ impl<A: BufferAllocator> Drop for BufferPool<A> {
         if std::env::var("OC_RSYNC_BUFFER_POOL_STATS").as_deref() == Ok("1") {
             let stats = self.stats();
             eprintln!(
-                "BufferPool stats: reuses={} allocations={} growths={} hit_rate={:.1}%",
+                "BufferPool stats: reuses={} allocations={} growths={} byte_overflows={} hit_rate={:.1}%",
                 stats.total_hits,
                 stats.total_misses,
                 stats.total_growths,
+                stats.total_byte_overflows,
                 self.hit_rate() * 100.0,
             );
         }
@@ -1020,6 +1134,10 @@ pub struct BufferPoolStats {
     /// Number of times the adaptive resizer increased the pool's soft
     /// capacity. Zero when adaptive resizing is not enabled.
     pub total_growths: u64,
+    /// Number of admission rejections due to the byte budget being full
+    /// on return. Each rejection means the returning buffer was
+    /// deallocated rather than retained. Zero when no byte budget is set.
+    pub total_byte_overflows: u64,
 }
 
 impl BufferPoolStats {

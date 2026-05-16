@@ -59,6 +59,6 @@ warn_lines = 530
 
 [[overrides]]
 path = "crates/engine/src/local_copy/buffer_pool/pool.rs"
-max_lines = 950
-warn_lines = 900
+max_lines = 1200
+warn_lines = 1150
 

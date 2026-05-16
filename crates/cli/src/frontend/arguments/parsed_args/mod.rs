@@ -475,12 +475,15 @@ pub struct ParsedArgs {
     /// `--temp-dir`, `-T` - directory for temporary files during transfer.
     pub temp_dir: Option<PathBuf>,
 
-    /// `--max-alloc=SIZE` - hard cap on outstanding buffer-pool memory.
+    /// `--max-alloc=SIZE` - soft byte budget on buffer-pool retention.
     ///
     /// Stored as the raw user-supplied string. The downstream parser in
     /// `execution::options` resolves the K/M/G/T/P/E suffixes, rejects zero
     /// and out-of-range values, and forwards the resulting byte count to the
-    /// global buffer pool's `MemoryCap`.
+    /// global buffer pool's byte budget. When the pool's retained bytes
+    /// reach the budget, returning buffers are deallocated rather than
+    /// pooled and the pool's overflow counter increments. Acquires never
+    /// block: callers always get a buffer (fresh allocation on miss).
     pub max_alloc: Option<OsString>,
 
     /// `--iconv` - character set conversion specification.
