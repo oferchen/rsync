@@ -515,6 +515,28 @@ impl<'a> CopyContext<'a> {
                 })?;
             }
             Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                // upstream: backup.c:290 - when copying across devices, the
+                // symlink fallback honours --safe-links. Unsafe symlinks are
+                // not recreated at the backup location and SYMSAFE,1 fires.
+                if file_type.is_symlink()
+                    && self.options.safe_links_enabled()
+                    && let Ok(target) = fs::read_link(destination)
+                {
+                    let safety_rel = destination
+                        .strip_prefix(self.destination_root())
+                        .unwrap_or(destination);
+                    if !symlink_target_is_safe(&target, safety_rel) {
+                        // upstream: backup.c:291 - INFO_GTE(SYMSAFE, 1)
+                        info_log!(
+                            Symsafe,
+                            1,
+                            "not backing up unsafe symlink \"{}\" -> \"{}\"",
+                            destination.display(),
+                            target.display()
+                        );
+                        return Ok(());
+                    }
+                }
                 copy_entry_to_backup(destination, &backup_path, file_type)?;
             }
             Err(error) => {

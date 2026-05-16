@@ -1909,3 +1909,94 @@ fn backup_default_verbosity_suppresses_info_backup_notice() {
         "expected no BACKUP notice at default verbosity; got {backup_msgs:?}"
     );
 }
+
+/// Verifies that the cross-device backup branch refuses to recreate an
+/// unsafe symlink and emits the `--info=SYMSAFE` notice.
+///
+/// Mirrors `backup.c:290-294` in upstream rsync 3.4.1:
+/// ```c
+/// if (safe_symlinks && unsafe_symlink(sl, fname)) {
+///     if (INFO_GTE(SYMSAFE, 1)) {
+///         rprintf(FINFO, "not backing up unsafe symlink \"%s\" -> \"%s\"\n",
+///                 fname, sl);
+///     }
+///     ret = 2;
+/// }
+/// ```
+/// The wording is asserted byte-for-byte so interop harnesses that grep
+/// for the literal continue to find it.
+#[test]
+fn symsafe_skip_backup_wording_matches_upstream() {
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.info.symsafe = 1;
+    init(cfg);
+    let _ = drain_events();
+
+    let fname = Path::new("dest/sub/link");
+    let sl = Path::new("../../outside");
+    info_log!(
+        Symsafe,
+        1,
+        "not backing up unsafe symlink \"{}\" -> \"{}\"",
+        fname.display(),
+        sl.display()
+    );
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Symsafe,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "not backing up unsafe symlink \"dest/sub/link\" -> \"../../outside\""),
+        "expected upstream-format SYMSAFE,1 notice; got {messages:?}"
+    );
+}
+
+/// Verifies the default verbosity (no `--info=SYMSAFE`) suppresses the
+/// notice, matching upstream's `INFO_GTE(SYMSAFE, 1)` gate at
+/// `backup.c:291`. SYMSAFE is in `info_verbosity[1]`, so it stays silent
+/// unless `-v` or `--info=SYMSAFE` raises it above zero.
+#[test]
+fn symsafe_default_verbosity_suppresses_notice() {
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
+
+    init(VerbosityConfig::default());
+    let _ = drain_events();
+
+    info_log!(
+        Symsafe,
+        1,
+        "not backing up unsafe symlink \"{}\" -> \"{}\"",
+        "x",
+        "y"
+    );
+
+    let symsafe_msgs: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Symsafe,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        symsafe_msgs.is_empty(),
+        "expected no SYMSAFE notice at default verbosity; got {symsafe_msgs:?}"
+    );
+}

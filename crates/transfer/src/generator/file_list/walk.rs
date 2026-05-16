@@ -13,6 +13,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use logging::info_log;
+
 use crate::role_trailer::error_location;
 
 use super::super::GeneratorContext;
@@ -292,6 +294,15 @@ impl GeneratorContext {
                                 target.as_os_str(),
                                 relative,
                             ) {
+                                // upstream: flist.c:217 - INFO_GTE(SYMSAFE, 1)
+                                // fires before the target is dereferenced.
+                                info_log!(
+                                    Symsafe,
+                                    1,
+                                    "copying unsafe symlink \"{}\" -> \"{}\"",
+                                    path.display(),
+                                    target.display()
+                                );
                                 match std::fs::metadata(&path) {
                                     Ok(followed) => meta = followed,
                                     Err(e) => {
@@ -364,6 +375,15 @@ impl GeneratorContext {
             let relative = path.strip_prefix(base).unwrap_or(path);
             if super::super::super::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative)
             {
+                // upstream: flist.c:217 - INFO_GTE(SYMSAFE, 1) fires before
+                // the unsafe symlink is dereferenced into a regular entry.
+                info_log!(
+                    Symsafe,
+                    1,
+                    "copying unsafe symlink \"{}\" -> \"{}\"",
+                    path.display(),
+                    target.display()
+                );
                 return std::fs::metadata(path);
             }
         }
@@ -421,5 +441,81 @@ mod rsyserr_wording_tests {
                 "template {template:?} did not match upstream wording"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod symsafe_emission_tests {
+    //! Wording tests for `--info=SYMSAFE` producer emissions on the
+    //! sender side.
+    //!
+    //! Upstream rsync 3.4.1 fires `INFO_GTE(SYMSAFE, 1)` at `flist.c:217`
+    //! when `--copy-unsafe-links` triggers a dereference. The exact line
+    //! emitted (per `rprintf(FINFO, ...)`) is matched byte-for-byte so
+    //! interop harnesses that grep for the literal continue to find it.
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
+
+    fn init_symsafe_level1() {
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.symsafe = 1;
+        init(cfg);
+        let _ = drain_events();
+    }
+
+    fn symsafe_messages() -> Vec<String> {
+        drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Info {
+                    flag: InfoFlag::Symsafe,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn copying_unsafe_symlink_wording_matches_upstream() {
+        // upstream: flist.c:217 -
+        //     rprintf(FINFO, "copying unsafe symlink \"%s\" -> \"%s\"\n",
+        //             path, linkbuf);
+        init_symsafe_level1();
+        let path = std::path::Path::new("src/link");
+        let target = std::path::Path::new("/etc/passwd");
+        info_log!(
+            Symsafe,
+            1,
+            "copying unsafe symlink \"{}\" -> \"{}\"",
+            path.display(),
+            target.display()
+        );
+        let msgs = symsafe_messages();
+        assert!(
+            msgs.iter()
+                .any(|m| m == "copying unsafe symlink \"src/link\" -> \"/etc/passwd\""),
+            "missing upstream wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn symsafe_emissions_suppressed_when_disabled() {
+        // Default `VerbosityConfig` leaves `info.symsafe == 0`, mirroring
+        // upstream's pre-`-v` state. The macro must not synthesise an event.
+        init(VerbosityConfig::default());
+        let _ = drain_events();
+        info_log!(
+            Symsafe,
+            1,
+            "copying unsafe symlink \"{}\" -> \"{}\"",
+            "x",
+            "y"
+        );
+        let msgs = symsafe_messages();
+        assert!(
+            msgs.is_empty(),
+            "SYMSAFE emissions must be gated; got: {msgs:?}"
+        );
     }
 }
