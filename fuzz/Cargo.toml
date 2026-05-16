@@ -10,12 +10,17 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+tempfile = "3.15"
 
 [dependencies.protocol]
 path = "../crates/protocol"
 
 [dependencies.checksums]
 path = "../crates/checksums"
+
+[dependencies.filters]
+path = "../crates/filters"
 
 [[bin]]
 name = "protocol_wire"
@@ -27,6 +32,13 @@ bench = false
 [[bin]]
 name = "simd_checksum_parity"
 path = "fuzz_targets/simd_checksum_parity.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filter_differential"
+path = "fuzz_targets/filter_differential.rs"
 test = false
 doc = false
 bench = false
