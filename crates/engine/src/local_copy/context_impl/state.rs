@@ -497,8 +497,11 @@ impl<'a> CopyContext<'a> {
                 .map_err(|error| LocalCopyError::io("create backup directory", parent, error))?;
         }
 
-        match fs::rename(destination, &backup_path) {
-            Ok(()) => {}
+        // Track which backup strategy succeeded so we can emit the matching
+        // upstream `--debug=BACKUP` trace (RENAME, COPY, or SYMLINK).
+        // upstream: backup.c:link_or_rename and the fall-through copy_file path.
+        let strategy = match fs::rename(destination, &backup_path) {
+            Ok(()) => BackupStrategy::Rename,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 if let Err(remove_error) = fs::remove_file(&backup_path)
@@ -513,6 +516,7 @@ impl<'a> CopyContext<'a> {
                 fs::rename(destination, &backup_path).map_err(|rename_error| {
                     LocalCopyError::io("create backup", backup_path.clone(), rename_error)
                 })?;
+                BackupStrategy::Rename
             }
             Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
                 // upstream: backup.c:290 - when copying across devices, the
@@ -538,10 +542,26 @@ impl<'a> CopyContext<'a> {
                     }
                 }
                 copy_entry_to_backup(destination, &backup_path, file_type)?;
+                if file_type.is_symlink() {
+                    BackupStrategy::Symlink
+                } else {
+                    BackupStrategy::Copy
+                }
             }
             Err(error) => {
                 return Err(LocalCopyError::io("create backup", backup_path, error));
             }
+        };
+
+        // upstream: backup.c:201-202,216-217,299-300,333-334 - DEBUG_GTE(BACKUP, 1)
+        // emits one of HLINK/RENAME/SYMLINK/COPY per success path. oc-rsync's
+        // local-copy executor uses rename as the primary strategy and falls back
+        // to copy or symlink across filesystem boundaries.
+        let destination_display = destination.display().to_string();
+        match strategy {
+            BackupStrategy::Rename => trace_make_backup_rename(&destination_display),
+            BackupStrategy::Copy => trace_make_backup_copy(&destination_display),
+            BackupStrategy::Symlink => trace_make_backup_symlink(&destination_display),
         }
 
         // upstream: backup.c:352 - INFO_GTE(BACKUP, 1) fires on success label

@@ -34,7 +34,8 @@ use super::{
     SparseWriteState, SparseWriter, compute_backup_path, copy_entry_to_backup,
     delete_extraneous_entries, filter_program_local_error, follow_symlink_metadata,
     load_dir_merge_rules_recursive, map_metadata_error, remove_source_entry_if_requested,
-    resolve_dir_merge_path, should_skip_copy, symlink_target_is_safe, write_sparse_chunk,
+    resolve_dir_merge_path, should_skip_copy, symlink_target_is_safe, trace_make_backup_copy,
+    trace_make_backup_rename, trace_make_backup_symlink, write_sparse_chunk,
 };
 use crate::delta::DeltaSignatureIndex;
 use crate::signature::SignatureBlock;
@@ -369,6 +370,19 @@ pub(crate) enum CreatedEntryKind {
     Fifo,
     Device,
     HardLink,
+}
+
+/// Strategy used to place an existing destination into the backup
+/// location. Mirrors upstream rsync's `make_backup` success branches
+/// (RENAME / COPY / SYMLINK / DEVICE / HLINK) for `--debug=BACKUP`
+/// reporting; oc-rsync's local-copy executor exercises only RENAME,
+/// COPY (cross-device fallback for regular files), and SYMLINK
+/// (cross-device fallback for symlinks).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BackupStrategy {
+    Rename,
+    Copy,
+    Symlink,
 }
 
 include!("context_impl/state.rs");

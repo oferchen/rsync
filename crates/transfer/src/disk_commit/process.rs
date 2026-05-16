@@ -8,7 +8,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use engine::compute_backup_path;
+use engine::{compute_backup_path, trace_make_backup_rename};
 use protocol::acl::AclCache;
 
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
@@ -445,7 +445,8 @@ fn apply_metadata_acls_and_xattrs(
 ///
 /// Mirrors upstream `backup.c:make_backup()` which renames the existing file
 /// to the backup path. Parent directories are created if needed when using
-/// `--backup-dir`.
+/// `--backup-dir`. On success, emits the upstream `--debug=BACKUP` RENAME
+/// notice (`backup.c:216-217`).
 fn make_backup(file_path: &Path, config: &BackupConfig) -> io::Result<()> {
     if !file_path.exists() {
         return Ok(());
@@ -465,7 +466,11 @@ fn make_backup(file_path: &Path, config: &BackupConfig) -> io::Result<()> {
         }
     }
 
-    fs::rename(file_path, &backup_path)
+    fs::rename(file_path, &backup_path)?;
+    // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on the RENAME success
+    // branch of link_or_rename. disk_commit always uses rename here.
+    trace_make_backup_rename(&file_path.display().to_string());
+    Ok(())
 }
 
 /// Finalizes a checksum verifier into a `ComputedChecksum`.
