@@ -389,3 +389,237 @@ fn md4_pre_protocol_30_strong_checksum_path_round_trips() {
     assert_eq!(script.literal_bytes(), block_size as u64);
     assert_eq!(script.copy_bytes(), basis.len() as u64);
 }
+
+/// Basis size for the 1 MB shifted-insertion adversary. Sized at exactly one
+/// mebibyte so the basis spans 1024 blocks at `LARGE_BLOCK_LEN`, which is well
+/// above the rsum-bucket and bithash-saturation thresholds. The bigger the
+/// basis, the harder it is for a purely tag-table-based prefilter to keep
+/// rejection rates high, which is exactly the regime the bithash and seq-match
+/// optimisations target. See `project_zsync_optimizations.md` for the planned
+/// optimisation surface this fixture guards.
+const LARGE_BASIS_LEN: usize = 1024 * 1024;
+
+/// Block length for the 1 MB shifted-insertion runs. 1024 lands on a clean
+/// power-of-two boundary that lets `LARGE_BASIS_LEN / LARGE_BLOCK_LEN` divide
+/// cleanly, so we can express insert positions as integer block multiples
+/// without rounding artefacts.
+const LARGE_BLOCK_LEN: u32 = 1024;
+
+/// xorshift64* PRNG core. Deterministic, full 2^64 - 1 period, no allocations,
+/// no external crate. Used to generate the 1 MB basis without committing the
+/// raw bytes to the test tree.
+#[inline]
+fn xorshift64_star(state: &mut u64) -> u64 {
+    let mut x = *state;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    *state = x;
+    x.wrapping_mul(0x2545_f491_4f6c_dd1d)
+}
+
+/// Builds a deterministic basis of `len` bytes from a seeded xorshift64* PRNG.
+/// Two callers with the same `seed` produce byte-identical output; different
+/// seeds produce independent streams.
+fn make_basis_xorshift(len: usize, seed: u64) -> Vec<u8> {
+    let mut state = seed | 1; // xorshift seed must be non-zero
+    let mut out = Vec::with_capacity(len);
+    while out.len() < len {
+        let word = xorshift64_star(&mut state).to_le_bytes();
+        let take = (len - out.len()).min(word.len());
+        out.extend_from_slice(&word[..take]);
+    }
+    out
+}
+
+/// Builds a filler region whose bytes cannot match any window in a basis
+/// produced by [`make_basis_xorshift`] with the same seed: every filler byte
+/// has its high bit set, while the xorshift64* output produces every bit
+/// uniformly. Although there is a 1/256 chance any single basis byte happens
+/// to also have the high bit set, no full `block_len`-byte window of the
+/// inserted run will collide with the basis hash because the rolling
+/// checksum's strong-checksum gate rejects unrelated content with probability
+/// essentially equal to `2^(-strong_len*8)`.
+fn make_insertion_filler(len: usize, seed: u64) -> Vec<u8> {
+    let mut state = seed.wrapping_add(0x9E37_79B9_7F4A_7C15) | 1;
+    let mut out = Vec::with_capacity(len);
+    while out.len() < len {
+        let word = xorshift64_star(&mut state).to_le_bytes();
+        for &b in &word[..(len - out.len()).min(word.len())] {
+            out.push(b | 0x80);
+        }
+    }
+    out
+}
+
+/// One row of the parameterised shifted-insertion fixture vector. Each row
+/// drives a single basis/source pair through the delta pipeline and exercises
+/// a specific `(N, M)` combination against the 1 MB basis.
+struct ShiftedInsertionCase {
+    /// Human-readable label used in assertion messages so failures point
+    /// directly at the offending row of the fixture vector.
+    label: &'static str,
+    /// Insert offset in bytes. Always `<= LARGE_BASIS_LEN`.
+    m: usize,
+    /// Insert length in bytes. The resulting source is `LARGE_BASIS_LEN + n`
+    /// bytes long.
+    n: usize,
+}
+
+/// Asserts the delta references basis blocks both before and after the
+/// insertion point, proving the rolling-hash re-synchronised across the
+/// shift. The list of expected block indices is split into "before" (block
+/// indices `< m / block_len`) and "after" (block indices `>= ceil(m /
+/// block_len)`). For an aligned insert both halves are contiguous; for an
+/// unaligned insert at most one mid-stride block at the boundary can be
+/// dropped, which the assertion explicitly tolerates.
+fn assert_matches_span_insertion(
+    case: &ShiftedInsertionCase,
+    script: &DeltaScript,
+    basis_len: usize,
+    block_len: usize,
+) {
+    let total_blocks = basis_len / block_len;
+    let boundary_block = case.m / block_len;
+
+    let mut copy_indices: Vec<u64> = Vec::new();
+    for tok in script.tokens() {
+        if let DeltaToken::Copy { index, len } = tok {
+            let run = (*len / block_len).max(1);
+            for k in 0..run {
+                copy_indices.push(*index + k as u64);
+            }
+        }
+    }
+
+    let before: Vec<u64> = copy_indices
+        .iter()
+        .copied()
+        .filter(|&idx| (idx as usize) < boundary_block)
+        .collect();
+    let after: Vec<u64> = copy_indices
+        .iter()
+        .copied()
+        .filter(|&idx| (idx as usize) >= boundary_block)
+        .collect();
+
+    assert!(
+        !before.is_empty() || boundary_block == 0,
+        "{}: expected matches before the insertion (M={}, boundary_block={})",
+        case.label,
+        case.m,
+        boundary_block,
+    );
+    assert!(
+        !after.is_empty() || boundary_block == total_blocks,
+        "{}: expected matches after the insertion (M={}, boundary_block={}, total_blocks={})",
+        case.label,
+        case.m,
+        boundary_block,
+        total_blocks,
+    );
+
+    // Combined coverage: the rolling hash must survive the shift well enough
+    // that we lose at most one boundary block. Anything worse points at a
+    // prefilter regression that drops aligned matches after a shift.
+    let lost = total_blocks.saturating_sub(copy_indices.len());
+    assert!(
+        lost <= 1,
+        "{}: lost {lost} blocks across the shift, expected at most 1 \
+         (M={}, N={}, before={}, after={})",
+        case.label,
+        case.m,
+        case.n,
+        before.len(),
+        after.len(),
+    );
+}
+
+/// 1 MB shifted-insertion fixture vector. The `(N, M)` combinations cover:
+///
+/// - Block-aligned insertions at the start, middle, and tail of the basis.
+/// - Unaligned insertions at sub-block, sub-word, and tail-edge offsets.
+/// - Multi-block insertions large enough to span a full bithash-bucket
+///   refill window.
+///
+/// Every row reuses the same 1 MB basis (built once per case) to keep
+/// allocation pressure bounded; the pipeline rebuilds its index from
+/// the signature on each call.
+#[test]
+fn shifted_insertion_1mib_basis_matches_span_the_shift() {
+    let block_len = LARGE_BLOCK_LEN;
+    let block_size = block_len as usize;
+    let basis = make_basis_xorshift(LARGE_BASIS_LEN, 0xC0FF_EE15_BAAD_F00D);
+    assert_eq!(basis.len(), LARGE_BASIS_LEN);
+
+    let cases = [
+        ShiftedInsertionCase {
+            label: "head-aligned-1block",
+            m: 0,
+            n: block_size,
+        },
+        ShiftedInsertionCase {
+            label: "mid-aligned-1block",
+            m: (LARGE_BASIS_LEN / 2) - ((LARGE_BASIS_LEN / 2) % block_size),
+            n: block_size,
+        },
+        ShiftedInsertionCase {
+            label: "mid-aligned-4blocks",
+            m: (LARGE_BASIS_LEN / 4) - ((LARGE_BASIS_LEN / 4) % block_size),
+            n: 4 * block_size,
+        },
+        ShiftedInsertionCase {
+            label: "near-tail-aligned",
+            m: LARGE_BASIS_LEN - 2 * block_size,
+            n: block_size,
+        },
+        ShiftedInsertionCase {
+            label: "mid-unaligned-1byte",
+            m: (LARGE_BASIS_LEN / 2) + 1,
+            n: 1,
+        },
+        ShiftedInsertionCase {
+            label: "mid-unaligned-7bytes",
+            m: (LARGE_BASIS_LEN / 3) + 13,
+            n: 7,
+        },
+        ShiftedInsertionCase {
+            label: "quarter-unaligned-large",
+            m: (LARGE_BASIS_LEN / 4) + (block_size / 2),
+            n: 3 * block_size + 5,
+        },
+    ];
+
+    let algorithm = SignatureAlgorithm::Md5 {
+        seed_config: Md5Seed::none(),
+    };
+    let index = build_index(&basis, block_len, algorithm).expect("index built for 1 MB basis");
+
+    for case in &cases {
+        let mut source = Vec::with_capacity(LARGE_BASIS_LEN + case.n);
+        source.extend_from_slice(&basis[..case.m]);
+        source.extend(make_insertion_filler(case.n, 0xDEAD_BEEF_1234_5678));
+        source.extend_from_slice(&basis[case.m..]);
+
+        let script = generate_delta(Cursor::new(&source), &index)
+            .unwrap_or_else(|err| panic!("{}: delta generation failed: {err}", case.label));
+
+        assert_eq!(
+            script.total_bytes(),
+            source.len() as u64,
+            "{}: total bytes",
+            case.label,
+        );
+
+        assert!(
+            script.literal_bytes() >= case.n as u64,
+            "{}: literal_bytes={} must cover at least the {} inserted bytes",
+            case.label,
+            script.literal_bytes(),
+            case.n,
+        );
+
+        assert_round_trip(&basis, &source, &index, &script);
+        assert_matches_span_insertion(case, &script, basis.len(), block_size);
+    }
+}

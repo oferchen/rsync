@@ -19,6 +19,8 @@ mod bithash_tests;
 #[cfg(test)]
 mod matched_blocks_tests;
 #[cfg(test)]
+mod sparse_match_tests;
+#[cfg(test)]
 mod tests;
 
 use std::collections::VecDeque;
