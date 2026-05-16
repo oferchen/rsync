@@ -8,14 +8,9 @@ use std::collections::TryReserveError;
 
 /// Result of performing the legacy ASCII daemon negotiation.
 ///
-/// The structure exposes the negotiated protocol version together with the
-/// parsed greeting metadata while retaining the replaying stream so higher
-/// layers can continue consuming control messages or file lists.
-///
-/// When the underlying transport implements [`Clone`], the handshake can be
-/// cloned to stage multiple consumers for the same negotiated session. The
-/// replay buffer, greeting, and negotiated protocol are duplicated so both
-/// instances progress independently without rereading from the transport.
+/// Exposes the negotiated protocol version and parsed greeting while retaining
+/// the replaying stream so higher layers can continue consuming control
+/// messages or file lists.
 #[doc(alias = "@RSYNCD")]
 #[derive(Clone, Debug)]
 pub struct LegacyDaemonHandshake<R> {
@@ -33,9 +28,8 @@ impl<R> LegacyDaemonHandshake<R> {
 
     /// Returns the protocol version the client advertised to the daemon.
     ///
-    /// For the legacy exchange the client echoes the final negotiated protocol back to the server, so
-    /// this value mirrors [`Self::negotiated_protocol`] while exposing the same API surface as the
-    /// binary handshake helpers that track the client's advertisement explicitly.
+    /// Mirrors [`Self::negotiated_protocol`] (the legacy client echoes the
+    /// final value); exposed for API symmetry with the binary handshake.
     #[doc(alias = "--protocol")]
     #[must_use]
     pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
@@ -77,58 +71,9 @@ impl<R> LegacyDaemonHandshake<R> {
 
     /// Reports whether the caller's desired cap reduced the negotiated protocol version.
     ///
-    /// The negotiated protocol equals the minimum of the daemon's advertised protocol and the
-    /// caller's requested cap (configured via `--protocol`). When the caller limits the session to an
-    /// older version, certain protocol features become unavailable. This helper mirrors upstream
-    /// rsync by exposing that condition so higher layers can render matching diagnostics.
-    ///
-    /// # Examples
-    ///
-    /// Limit the daemon negotiation to protocol 29 even though the server banner advertises 31.
-    ///
-    /// ```
-    /// use protocol::ProtocolVersion;
-    /// use rsync_io::negotiate_legacy_daemon_session;
-    /// use std::io::{self, Cursor, Read, Write};
-    ///
-    /// #[derive(Debug)]
-    /// struct MemoryTransport {
-    ///     reader: Cursor<Vec<u8>>,
-    ///     written: Vec<u8>,
-    ///     flushes: usize,
-    /// }
-    ///
-    /// impl MemoryTransport {
-    ///     fn new(input: &[u8]) -> Self {
-    ///         Self { reader: Cursor::new(input.to_vec()), written: Vec::new(), flushes: 0 }
-    ///     }
-    /// }
-    ///
-    /// impl Read for MemoryTransport {
-    ///     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-    ///         self.reader.read(buf)
-    ///     }
-    /// }
-    ///
-    /// impl Write for MemoryTransport {
-    ///     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-    ///         self.written.extend_from_slice(buf);
-    ///         Ok(buf.len())
-    ///     }
-    ///
-    ///     fn flush(&mut self) -> io::Result<()> {
-    ///         self.flushes += 1;
-    ///         Ok(())
-    ///     }
-    /// }
-    ///
-    /// let desired = ProtocolVersion::from_supported(29).unwrap();
-    /// let transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
-    /// let handshake = negotiate_legacy_daemon_session(transport, desired).unwrap();
-    ///
-    /// assert!(handshake.local_protocol_was_capped());
-    /// assert_eq!(handshake.negotiated_protocol(), desired);
-    /// ```
+    /// The negotiated protocol equals the minimum of the daemon's advertisement
+    /// and the caller's `--protocol` cap. Returns `true` when the cap forced a
+    /// downgrade.
     #[doc(alias = "--protocol")]
     #[must_use]
     pub const fn local_protocol_was_capped(&self) -> bool {
@@ -174,11 +119,8 @@ impl<R> LegacyDaemonHandshake<R> {
 
     /// Rehydrates a [`NegotiationPrologueSniffer`] using the captured negotiation snapshot.
     ///
-    /// The helper mirrors the functionality exposed by
-    /// [`LegacyDaemonHandshakeParts::stream_parts`], reusing
-    /// [`NegotiationPrologueSniffer::rehydrate_from_parts`] with the buffered transcript captured
-    /// during negotiation. Callers can therefore rebuild sniffers without decomposing the session
-    /// into parts or replaying the underlying transport.
+    /// Invokes [`NegotiationPrologueSniffer::rehydrate_from_parts`] without
+    /// decomposing the session into parts or replaying the underlying transport.
     pub fn rehydrate_sniffer(
         &self,
         sniffer: &mut NegotiationPrologueSniffer,

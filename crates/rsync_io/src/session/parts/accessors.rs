@@ -15,19 +15,12 @@ impl<R> SessionHandshakeParts<R> {
     }
 
     /// Reports whether the extracted handshake originated from a binary negotiation.
-    ///
-    /// The helper mirrors [`crate::session::SessionHandshake::is_binary`], keeping the
-    /// convenience available even after the handshake has been decomposed into
-    /// its parts.
     #[must_use]
     pub const fn is_binary(&self) -> bool {
         matches!(self, SessionHandshakeParts::Binary(_))
     }
 
     /// Reports whether the extracted handshake originated from the legacy ASCII negotiation.
-    ///
-    /// This mirrors [`crate::session::SessionHandshake::is_legacy`] and returns `true` when the
-    /// parts were produced from a legacy `@RSYNCD:` daemon exchange.
     #[must_use]
     pub const fn is_legacy(&self) -> bool {
         matches!(self, SessionHandshakeParts::Legacy(_))
