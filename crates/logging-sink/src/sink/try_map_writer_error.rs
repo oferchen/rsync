@@ -4,13 +4,10 @@ use super::MessageSink;
 
 /// Error returned by [`MessageSink::try_map_writer`] when the conversion closure fails.
 ///
-/// The structure preserves ownership of the original [`MessageSink`] together with the
-/// error reported by the conversion attempt. This mirrors `std::io::IntoInnerError`
-/// so callers can recover the sink and either retry with a different mapping or continue
-/// using the existing writer. Helper accessors expose both components without forcing
-/// additional allocations, and the wrapper implements rich ergonomics such as [`Clone`],
-/// [`as_ref`](Self::as_ref), and [`map_parts`](Self::map_parts) so preserved state can be
-/// inspected or transformed without dropping buffered diagnostics.
+/// Preserves ownership of the original [`MessageSink`] together with the error
+/// reported by the conversion attempt, mirroring `std::io::IntoInnerError` so
+/// callers can recover the sink and either retry with a different mapping or
+/// continue using the existing writer.
 pub struct TryMapWriterError<W, E> {
     sink: MessageSink<W>,
     error: E,

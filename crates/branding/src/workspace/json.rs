@@ -1,13 +1,8 @@
 //! JSON serialisation helpers for [`crate::workspace`] metadata.
 //!
-//! The workspace exposes compile-time metadata via [`metadata`](super::metadata),
-//! which higher layers use to render banners and locate configuration files.
-//! Packaging automation and documentation tooling often require the same data
-//! in a structured format, so this module publishes cached JSON renderings
-//! derived from the canonical [`Metadata`](super::Metadata) snapshot. Keeping
-//! the serialisation logic here prevents callers from re-implementing it and
-//! guarantees the output stays in sync with the compile-time constants emitted
-//! by the build script.
+//! Publishes cached JSON renderings derived from the canonical
+//! [`Metadata`](super::Metadata) snapshot so packaging automation and
+//! documentation tooling can consume the same data in a structured format.
 
 use std::sync::OnceLock;
 
@@ -27,9 +22,7 @@ fn render_metadata_json(pretty: bool) -> String {
 /// Returns the cached JSON representation of the workspace metadata snapshot.
 ///
 /// The returned string mirrors [`metadata()`](super::metadata) and is cached
-/// for the lifetime of the process. Callers that only need a structured view of
-/// the branding and version details can parse the JSON without duplicating the
-/// serialisation logic.
+/// for the lifetime of the process.
 ///
 /// ```
 /// let json = branding::workspace::metadata_json();
@@ -45,9 +38,7 @@ pub fn metadata_json() -> &'static str {
 /// Returns the cached pretty-printed JSON representation of the workspace
 /// metadata snapshot.
 ///
-/// This helper mirrors [`metadata_json`] but renders human-friendly output with
-/// indentation so configuration validation and documentation generation can
-/// consume the data directly.
+/// Mirrors [`metadata_json`] but renders indented human-friendly output.
 ///
 /// ```
 /// let json = branding::workspace::metadata_json_pretty();

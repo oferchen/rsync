@@ -7,13 +7,10 @@ pub const PROTOCOL_VERSION: u32 = crate::generated::PROTOCOL_VERSION;
 
 /// Returns the configured protocol version as an 8-bit integer.
 ///
-/// The workspace manifest records the highest supported protocol as a decimal
-/// integer. Upstream rsync encodes negotiated protocol numbers in a single
-/// byte, so the manifest value must remain within the `u8` range. The helper
-/// performs the bounds check at compile time and therefore causes compilation
-/// to fail immediately if the manifest is updated inconsistently. Callers that
-/// render diagnostics or capability banners can rely on this accessor without
-/// repeating the conversion logic.
+/// Upstream rsync encodes negotiated protocol numbers in a single byte, so the
+/// manifest value must remain within the `u8` range. The bounds check runs at
+/// compile time, failing the build immediately if the manifest is updated
+/// inconsistently.
 ///
 /// # Examples
 ///
@@ -36,10 +33,9 @@ pub const fn protocol_version_u8() -> u8 {
 
 /// Returns the configured protocol version as a [`NonZeroU8`].
 ///
-/// Upstream rsync has never advertised protocol version `0`. Encoding the value
-/// as [`NonZeroU8`] allows call sites to rely on this invariant without
-/// repeating ad-hoc checks. The helper reuses [`protocol_version_u8`] to
-/// preserve the compile-time bounds validation against the manifest metadata.
+/// Upstream rsync has never advertised protocol version `0`. Encoding the
+/// value as [`NonZeroU8`] lets call sites rely on this invariant without
+/// repeating ad-hoc checks.
 ///
 /// # Examples
 ///

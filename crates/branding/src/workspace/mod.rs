@@ -2,14 +2,11 @@
 
 //! Workspace metadata exported as compile-time constants.
 //!
-//! The [`crates/core`](crate) build script reads `[workspace.metadata.oc_rsync]`
-//! from the repository `Cargo.toml` and emits the values below as
-//! `cargo:rustc-env` pairs. Centralising the brand and packaging details here
-//! keeps the binary front-ends and supporting crates free from duplicated string
-//! literals. Callers should prefer these helpers instead of hard-coding program
-//! names or configuration paths. Consumers that need the entire metadata set can
-//! use [`metadata()`](crate::workspace::metadata) to obtain a snapshot that mirrors
-//! the manifest entries.
+//! The build script reads `[workspace.metadata.oc_rsync]` from the repository
+//! `Cargo.toml` and emits the values below as `cargo:rustc-env` pairs. Callers
+//! should prefer these helpers instead of hard-coding program names or
+//! configuration paths. Use [`metadata()`](crate::workspace::metadata) to
+//! obtain a snapshot of the full metadata set.
 
 mod constants;
 mod json;

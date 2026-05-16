@@ -3,12 +3,11 @@ use crate::line_mode::LineMode;
 
 /// RAII guard that temporarily overrides a [`MessageSink`]'s [`LineMode`].
 ///
-/// Instances of this guard are created by [`MessageSink::scoped_line_mode`]. While the guard is
-/// alive, all writes issued through it or the underlying sink use the scoped line mode. Dropping the
-/// guard automatically restores the previous line mode, mirroring upstream rsync's practice of
-/// toggling newline behaviour when rendering progress updates. The guard implements
-/// [`Deref`](std::ops::Deref) and [`DerefMut`](std::ops::DerefMut) so callers can seamlessly invoke
-/// sink methods without additional boilerplate.
+/// Created by [`MessageSink::scoped_line_mode`]. While the guard is alive,
+/// writes issued through it or the underlying sink use the scoped line mode;
+/// dropping the guard restores the previous mode. Implements
+/// [`Deref`](std::ops::Deref) and [`DerefMut`](std::ops::DerefMut) so callers
+/// can invoke sink methods directly.
 #[must_use = "dropping the guard immediately restores the previous line mode"]
 pub struct LineModeGuard<'a, W> {
     sink: Option<&'a mut MessageSink<W>>,
@@ -31,11 +30,10 @@ impl<'a, W> LineModeGuard<'a, W> {
 
     /// Consumes the guard without restoring the previous [`LineMode`].
     ///
-    /// Dropping a [`LineModeGuard`] normally reinstates the configuration that was in effect
-    /// before [`MessageSink::scoped_line_mode`] was called. This helper intentionally skips that
-    /// restoration so the temporary override becomes the sink's new baseline. It returns the
-    /// underlying [`MessageSink`], allowing callers to continue writing messages or adjust the line
-    /// mode again explicitly.
+    /// Dropping a [`LineModeGuard`] normally reinstates the configuration that
+    /// was in effect before [`MessageSink::scoped_line_mode`] was called. This
+    /// helper skips that restoration so the temporary override becomes the
+    /// sink's new baseline.
     ///
     /// # Examples
     ///
