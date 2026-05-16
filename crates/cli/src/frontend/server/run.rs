@@ -208,7 +208,7 @@ fn apply_value_flags<Err: Write>(
                     && limit_usize > 0
                 {
                     let cfg = engine::local_copy::GlobalBufferPoolConfig {
-                        memory_cap: Some(limit_usize),
+                        byte_budget: Some(limit_usize),
                         ..engine::local_copy::GlobalBufferPoolConfig::default()
                     };
                     let _ = engine::local_copy::init_global_buffer_pool(cfg);
