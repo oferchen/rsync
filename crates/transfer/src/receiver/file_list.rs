@@ -263,18 +263,24 @@ impl ReceiverContext {
 
         // upstream: uidlist.c:467 - recv_uid_list()
         if self.config.flags.owner {
-            self.uid_list
-                .read(reader, id0_names, protocol_version, |name| {
-                    lookup_user_by_name(name).ok().flatten()
-                })?;
+            self.uid_list.read_with_kind(
+                reader,
+                id0_names,
+                protocol_version,
+                Some(protocol::idlist::IdKind::Uid),
+                |name| lookup_user_by_name(name).ok().flatten(),
+            )?;
         }
 
         // upstream: uidlist.c:471 - recv_gid_list()
         if self.config.flags.group {
-            self.gid_list
-                .read(reader, id0_names, protocol_version, |name| {
-                    lookup_group_by_name(name).ok().flatten()
-                })?;
+            self.gid_list.read_with_kind(
+                reader,
+                id0_names,
+                protocol_version,
+                Some(protocol::idlist::IdKind::Gid),
+                |name| lookup_group_by_name(name).ok().flatten(),
+            )?;
         }
 
         Ok(())
@@ -309,13 +315,23 @@ impl ReceiverContext {
         let protocol_version = self.protocol.as_u8();
 
         if self.config.flags.owner {
-            self.uid_list
-                .read(reader, id0_names, protocol_version, |_| None)?;
+            self.uid_list.read_with_kind(
+                reader,
+                id0_names,
+                protocol_version,
+                Some(protocol::idlist::IdKind::Uid),
+                |_| None,
+            )?;
         }
 
         if self.config.flags.group {
-            self.gid_list
-                .read(reader, id0_names, protocol_version, |_| None)?;
+            self.gid_list.read_with_kind(
+                reader,
+                id0_names,
+                protocol_version,
+                Some(protocol::idlist::IdKind::Gid),
+                |_| None,
+            )?;
         }
 
         Ok(())
