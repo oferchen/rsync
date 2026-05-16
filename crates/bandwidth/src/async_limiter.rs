@@ -38,10 +38,6 @@ pub struct AsyncRateLimiter {
     last_replenish: Instant,
 }
 
-// SAFETY: no interior mutability beyond what `&mut self` provides.
-// The struct is trivially `Send + Sync` when behind a `Mutex` or used with
-// `&mut self` methods, which is the expected pattern for async rate limiters.
-
 impl AsyncRateLimiter {
     /// Creates a new rate limiter with the specified bytes-per-second rate.
     ///
@@ -86,20 +82,16 @@ impl AsyncRateLimiter {
             return;
         }
 
-        // Deficit: how many tokens we still need after draining what we have.
         let deficit = bytes - self.tokens;
         self.tokens = 0;
 
-        // Calculate sleep duration: deficit / rate seconds.
         let sleep_nanos = (deficit as u128) * 1_000_000_000 / (self.rate.get() as u128);
         let sleep_duration = Duration::from_nanos(sleep_nanos as u64);
 
         tokio::time::sleep(sleep_duration).await;
 
-        // After sleeping, replenish tokens for the time we slept. The
-        // replenish call uses the elapsed wall-clock time which includes
-        // the sleep, so any extra time beyond our target also generates
-        // tokens.
+        // Replenish uses elapsed wall-clock time, which includes the sleep,
+        // so any drift beyond the target also generates tokens.
         self.replenish();
     }
 
@@ -121,7 +113,8 @@ impl AsyncRateLimiter {
     pub fn set_rate(&mut self, bytes_per_second: u64) {
         let rate =
             NonZeroU64::new(bytes_per_second).expect("bytes_per_second must be greater than zero");
-        // Replenish any tokens accumulated under the old rate first.
+        // Drain accumulated tokens under the old rate before swapping it in,
+        // otherwise the rate change would silently discard prior allowance.
         self.replenish();
         self.rate = rate;
         self.burst = rate.get();
@@ -155,8 +148,7 @@ impl AsyncRateLimiter {
         let elapsed = now.duration_since(self.last_replenish);
         self.last_replenish = now;
 
-        // Calculate tokens earned: elapsed_secs * rate.
-        // Use nanos for precision: (elapsed_nanos * rate) / 1_000_000_000.
+        // Compute in nanoseconds to keep precision for sub-second elapsed windows.
         let elapsed_nanos = elapsed.as_nanos();
         let earned = (elapsed_nanos * (self.rate.get() as u128)) / 1_000_000_000;
         let earned = earned.min(u64::MAX as u128) as u64;
