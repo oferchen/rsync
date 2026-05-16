@@ -240,7 +240,6 @@ impl Md4Dispatcher {
                 let digests = unsafe { simd::avx512::digest_x16(&batch) };
                 results.extend_from_slice(&digests);
             } else {
-                // Partial batch - pad with empty inputs
                 let mut batch: [&[u8]; 16] = [&[]; 16];
                 for (i, input) in chunk.iter().enumerate() {
                     batch[i] = input.as_ref();
@@ -276,7 +275,6 @@ impl Md4Dispatcher {
                 let digests = unsafe { simd::avx2::digest_x8(&batch) };
                 results.extend_from_slice(&digests);
             } else {
-                // Partial batch - pad with empty inputs
                 let mut batch: [&[u8]; 8] = [&[]; 8];
                 for (i, input) in chunk.iter().enumerate() {
                     batch[i] = input.as_ref();
@@ -339,7 +337,6 @@ impl Md4Dispatcher {
                 let digests = unsafe { simd::neon::digest_x4(&batch) };
                 results.extend_from_slice(&digests);
             } else {
-                // Partial batch - pad with empty inputs
                 let mut batch: [&[u8]; 4] = [&[]; 4];
                 for (i, input) in chunk.iter().enumerate() {
                     batch[i] = input.as_ref();
