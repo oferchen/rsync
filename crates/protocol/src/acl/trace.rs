@@ -96,6 +96,9 @@ mod tests {
         trace_default_perms_for_dir(0o750, "/var/spool");
         let m = acl_messages();
         assert_eq!(m.len(), 1);
-        assert_eq!(m[0], "got ACL-based default perms 750 for directory /var/spool");
+        assert_eq!(
+            m[0],
+            "got ACL-based default perms 750 for directory /var/spool"
+        );
     }
 }
