@@ -587,11 +587,15 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
                 Ok(())
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound && self.spill_dir.is_some() => {
-                // Temp directory vanished mid-transfer. Re-create once and
-                // retry from scratch (a new file at offset 0). Items already
-                // spilled to the vanished file are now unrecoverable; the
-                // spill_index is cleared so a later delivery cannot return
-                // half-truths from offsets that no longer exist.
+                // Temp directory vanished mid-transfer. Recovery is only
+                // safe when no prior items had been spilled - otherwise
+                // those items are lost on disk and silently continuing
+                // would corrupt the transfer. With prior items present
+                // we surface NotFound; the caller treats it as a fatal
+                // I/O error and the transfer aborts with exit 11.
+                if !self.spill_index.is_empty() {
+                    return Err(e);
+                }
                 self.recreate_spill_dir()?;
                 let written = self.write_record(&len.to_le_bytes(), &payload)?;
                 self.spill_index.insert(sequence, self.spill_write_pos);
@@ -1110,39 +1114,75 @@ mod tests {
     }
 
     #[test]
-    fn temp_dir_vanish_triggers_one_recreate() {
+    fn temp_dir_vanish_recreates_when_no_prior_spills() {
+        // Vanish-before-first-spill is the recoverable case: no data has
+        // been written yet, so re-creating the directory and retrying
+        // is safe.
         let scratch = tempfile::tempdir().expect("create scratch root");
         let spill_dir = scratch.path().join("spill");
         let mut buf: SpillableReorderBuffer<u64> =
             SpillableReorderBuffer::with_spill_dir(16, 8, &spill_dir)
                 .expect("setup spill directory");
 
-        // First inserts trigger spills, populating the directory.
+        // Operator wipes the spill directory before any spill happens.
+        fs::remove_dir_all(&spill_dir).expect("remove spill dir");
+        assert!(!spill_dir.exists());
+
+        // These inserts trigger spills. The first spill finds the dir
+        // missing, recreates it once, and retries successfully.
         buf.insert(0, 100).unwrap();
         buf.insert(1, 200).unwrap();
         buf.insert(2, 300).unwrap();
-        let initial_recreates = buf.spill_stats().dir_recreate_events;
+
+        let stats = buf.spill_stats();
+        assert_eq!(
+            stats.dir_recreate_events, 1,
+            "expected exactly one dir recreate, got {}",
+            stats.dir_recreate_events
+        );
+        assert!(spill_dir.exists(), "spill dir should be back");
+        assert!(stats.spill_events > 0, "spill must have occurred");
+    }
+
+    #[test]
+    fn temp_dir_vanish_after_prior_spills_returns_error() {
+        // Vanish after prior spills is unrecoverable: those items live
+        // only on the now-missing disk. We surface the I/O error rather
+        // than silently lose them.
+        let scratch = tempfile::tempdir().expect("create scratch root");
+        let spill_dir = scratch.path().join("spill");
+        let mut buf: SpillableReorderBuffer<u64> =
+            SpillableReorderBuffer::with_spill_dir(16, 8, &spill_dir)
+                .expect("setup spill directory");
+
+        // Prime the buffer with at least one successful spill.
+        buf.insert(0, 100).unwrap();
+        buf.insert(1, 200).unwrap();
+        assert!(buf.spill_stats().spilled_items > 0);
 
         // Operator wipes the spill directory mid-transfer. Drop the stale
         // file handle so the next write opens a fresh tempfile and observes
         // the missing parent.
         buf.spill_file = None;
         fs::remove_dir_all(&spill_dir).expect("remove spill dir");
-        assert!(!spill_dir.exists());
 
-        // The next insert that triggers a spill must re-create the
-        // directory once and continue without error.
-        buf.insert(3, 400).unwrap();
-        buf.insert(4, 500).unwrap();
-        buf.insert(5, 600).unwrap();
-
-        let stats = buf.spill_stats();
-        assert!(
-            stats.dir_recreate_events > initial_recreates,
-            "expected at least one dir recreate, got {}",
-            stats.dir_recreate_events
+        // The next insert that triggers a spill should surface NotFound
+        // (or another io::Error) without panicking and without recreating
+        // the directory: prior items are unrecoverable.
+        let mut saw_error = false;
+        for i in 2u64..6 {
+            if let Err(e) = buf.insert(i, i * 100) {
+                assert!(matches!(e, SpillError::Io(_)), "expected I/O error");
+                saw_error = true;
+                break;
+            }
+        }
+        assert!(saw_error, "expected spill failure after dir vanish");
+        assert_eq!(
+            buf.spill_stats().dir_recreate_events,
+            0,
+            "must not silently recreate when prior items exist"
         );
-        assert!(spill_dir.exists(), "spill dir should be back");
     }
 
     #[test]
