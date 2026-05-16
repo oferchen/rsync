@@ -24,6 +24,10 @@
 //! - `uidlist.c` - UID/GID list management
 //! - `io.h:21-43` - `read_varint30()`/`write_varint30()` inline functions
 
+pub mod trace;
+
+pub use trace::{IdKind, trace_id_maps_to, trace_process_gids, trace_set_gid, trace_set_uid};
+
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 
@@ -235,6 +239,31 @@ impl IdList {
     where
         F: Fn(&[u8]) -> Option<u32>,
     {
+        self.read_with_kind(reader, id0_names, protocol_version, None, name_to_id)
+    }
+
+    /// Reads an ID list from the wire, emitting `--debug=OWN` traces.
+    ///
+    /// Behaves identically to [`IdList::read`] but additionally fires the
+    /// upstream `DEBUG_GTE(OWN, 2)` per-entry trace for every id resolved.
+    /// Callers that want the mapping diagnostics pass `Some(IdKind::Uid)` or
+    /// `Some(IdKind::Gid)`; passing `None` is equivalent to [`IdList::read`].
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `uidlist.c:243-294` - `recv_add_id()` performs the resolution and
+    ///   emits `"%sid %u(%s) maps to %u"` at level 2 (line 287).
+    pub fn read_with_kind<R: Read + ?Sized, F>(
+        &mut self,
+        reader: &mut R,
+        id0_names: bool,
+        protocol_version: u8,
+        kind: Option<IdKind>,
+        name_to_id: F,
+    ) -> io::Result<()>
+    where
+        F: Fn(&[u8]) -> Option<u32>,
+    {
         // Read (id, name) pairs until id=0
         loop {
             // Use varint30 decoding (int for proto < 30, varint for proto >= 30)
@@ -246,6 +275,10 @@ impl IdList {
             let id = id_signed as u32;
 
             let (name, local_id) = self.read_name_and_resolve(reader, id, &name_to_id)?;
+            // upstream: uidlist.c:287-291 - `"%sid %u(%s) maps to %u"`.
+            if let Some(k) = kind {
+                trace_id_maps_to(k, id, name.as_deref(), local_id);
+            }
             self.entries.insert(id, IdEntry { name, local_id });
             self.order.push(id);
         }
@@ -253,6 +286,11 @@ impl IdList {
         // With ID0_NAMES, read id=0's name
         if id0_names {
             let (name, local_id) = self.read_name_and_resolve(reader, 0, &name_to_id)?;
+            // upstream: uidlist.c:287-291 - the id=0 entry is processed by the
+            // same `recv_add_id` path and therefore also fires the level-2 trace.
+            if let Some(k) = kind {
+                trace_id_maps_to(k, 0, name.as_deref(), local_id);
+            }
             self.entries.insert(0, IdEntry { name, local_id });
             self.order.push(0);
         }
@@ -516,5 +554,78 @@ mod tests {
         let mut buf = Vec::new();
         list.write(&mut buf, false, 30).unwrap();
         assert_eq!(buf, vec![0]); // Just terminator
+    }
+
+    #[test]
+    fn read_with_kind_emits_per_entry_trace() {
+        // upstream: uidlist.c:287-291 - "%sid %u(%s) maps to %u" fires for
+        // every recv_add_id, including the id=0 entry under ID0_NAMES.
+        use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.own = 2;
+        init(cfg);
+        let _ = drain_events();
+
+        // wire: varint(1), len(4), "root", varint(0), len(4), "root" (id=0 name)
+        let data = vec![1, 4, b'r', b'o', b'o', b't', 0, 4, b'r', b'o', b'o', b't'];
+        let mut list = IdList::new();
+        list.read_with_kind(&mut data.as_slice(), true, 30, Some(IdKind::Uid), |name| {
+            if name == b"root" { Some(0) } else { None }
+        })
+        .unwrap();
+
+        let messages: Vec<String> = drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Own,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            messages.iter().any(|s| s == "uid 1(root) maps to 0"),
+            "missing uid 1 trace: {messages:?}"
+        );
+        assert!(
+            messages.iter().any(|s| s == "uid 0(root) maps to 0"),
+            "missing id=0 trace: {messages:?}"
+        );
+    }
+
+    #[test]
+    fn read_with_kind_none_suppresses_trace() {
+        // Passing `kind = None` must behave identically to `read` and
+        // not emit anything regardless of the configured debug level.
+        use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.own = 2;
+        init(cfg);
+        let _ = drain_events();
+
+        let data = vec![1, 4, b'r', b'o', b'o', b't', 0];
+        let mut list = IdList::new();
+        list.read_with_kind(&mut data.as_slice(), false, 30, None, |_| Some(0))
+            .unwrap();
+
+        let messages: Vec<String> = drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Own,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            messages.is_empty(),
+            "kind=None must suppress OWN trace, got {messages:?}"
+        );
     }
 }
