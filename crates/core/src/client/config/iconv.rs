@@ -1,4 +1,6 @@
-use protocol::iconv::{FilenameConverter, converter_from_locale};
+use protocol::iconv::{
+    FilenameConverter, IconvRole, converter_from_locale, trace_peer_charset,
+};
 use thiserror::Error;
 
 /// Describes the requested iconv charset conversion behaviour.
@@ -138,7 +140,14 @@ impl IconvSetting {
     pub fn resolve_converter(&self) -> Option<FilenameConverter> {
         match self {
             Self::Unspecified | Self::Disabled => None,
-            Self::LocaleDefault => Some(converter_from_locale()),
+            Self::LocaleDefault => {
+                // upstream: rsync.c:142-145 - the level-1 emission fires
+                // after the iconv contexts open. For --iconv=. the local
+                // charset is locale-default, rendered as "[LOCALE]" via
+                // None.
+                trace_peer_charset(IconvRole::Client, None);
+                Some(converter_from_locale())
+            }
             Self::Explicit { local, .. } => {
                 // upstream: rsync.c:130-140 - wire is always UTF-8; only the
                 // local-side charset matters for this peer's transcoding. The
@@ -146,7 +155,12 @@ impl IconvSetting {
                 // remote CLI by remote::invocation::builder so the peer opens
                 // its own iconv context.
                 match FilenameConverter::new(local, "UTF-8") {
-                    Ok(converter) => Some(converter),
+                    Ok(converter) => {
+                        // upstream: rsync.c:142-145 - `[%s] charset: %s`
+                        // emits once after both ic_send/ic_recv succeed.
+                        trace_peer_charset(IconvRole::Client, Some(local));
+                        Some(converter)
+                    }
                     Err(_error) => {
                         #[cfg(feature = "tracing")]
                         tracing::warn!(
@@ -332,5 +346,111 @@ mod tests {
             remote: Some("UTF-8".to_owned()),
         };
         assert!(setting.resolve_converter().is_none());
+    }
+
+    mod debug_iconv_emissions {
+        //! Pinning tests for `--debug=ICONV,1` producer wiring at
+        //! converter-construction time. The emission shape and gating
+        //! tests live in `protocol::iconv::trace`; this module verifies
+        //! that `IconvSetting::resolve_converter` invokes the producer
+        //! once per successful converter.
+
+        use super::IconvSetting;
+        use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+        fn init_iconv(level: u8) {
+            let mut cfg = VerbosityConfig::default();
+            cfg.debug.iconv = level;
+            init(cfg);
+            let _ = drain_events();
+        }
+
+        fn iconv_messages() -> Vec<String> {
+            drain_events()
+                .into_iter()
+                .filter_map(|event| match event {
+                    DiagnosticEvent::Debug {
+                        flag: DebugFlag::Iconv,
+                        message,
+                        ..
+                    } => Some(message),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        #[test]
+        fn locale_default_emits_locale_placeholder() {
+            // upstream: rsync.c:142-145 - `--iconv=.` renders charset as
+            // "[LOCALE]" because *charset evaluates to NUL after
+            // setup_iconv resolves the default.
+            init_iconv(1);
+            let _ = IconvSetting::LocaleDefault.resolve_converter();
+            let m = iconv_messages();
+            assert!(
+                m.iter().any(|s| s == "[client] charset: [LOCALE]"),
+                "missing locale-default emission: {m:?}"
+            );
+        }
+
+        #[cfg(feature = "iconv")]
+        #[test]
+        fn explicit_charset_emits_charset_name() {
+            // upstream: rsync.c:142-145 - explicit `--iconv=LOCAL` (or
+            // LOCAL,REMOTE) names the charset directly.
+            init_iconv(1);
+            let setting = IconvSetting::Explicit {
+                local: "ISO-8859-1".to_owned(),
+                remote: Some("UTF-8".to_owned()),
+            };
+            let _ = setting.resolve_converter();
+            let m = iconv_messages();
+            assert!(
+                m.iter().any(|s| s == "[client] charset: ISO-8859-1"),
+                "missing explicit-charset emission: {m:?}"
+            );
+        }
+
+        #[test]
+        fn unspecified_and_disabled_do_not_emit() {
+            // upstream: setup_iconv early-returns when iconv_opt is unset
+            // (rsync.c:115-116); no DEBUG_GTE(ICONV, 1) fires.
+            init_iconv(2);
+            let _ = IconvSetting::Unspecified.resolve_converter();
+            let _ = IconvSetting::Disabled.resolve_converter();
+            assert!(
+                iconv_messages().is_empty(),
+                "unspecified/disabled must not emit"
+            );
+        }
+
+        #[test]
+        fn level0_suppresses_resolve_converter_emission() {
+            // upstream: DEBUG_GTE(ICONV, 1) is false when --debug=ICONV is off.
+            init_iconv(0);
+            let _ = IconvSetting::LocaleDefault.resolve_converter();
+            assert!(
+                iconv_messages().is_empty(),
+                "level-0 must gate the resolve_converter emission"
+            );
+        }
+
+        #[test]
+        fn malformed_charset_does_not_emit() {
+            // upstream: rsync.c:130-134 - iconv_open failure aborts via
+            // exit_cleanup before the DEBUG_GTE(ICONV, 1) emission. We
+            // mirror the same ordering by skipping the trace when
+            // FilenameConverter::new errors out.
+            init_iconv(1);
+            let setting = IconvSetting::Explicit {
+                local: "definitely-not-a-real-charset".to_owned(),
+                remote: Some("UTF-8".to_owned()),
+            };
+            assert!(setting.resolve_converter().is_none());
+            assert!(
+                iconv_messages().is_empty(),
+                "failed conversion must not emit the success-path level-1 line"
+            );
+        }
     }
 }

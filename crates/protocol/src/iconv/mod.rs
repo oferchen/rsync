@@ -29,10 +29,14 @@
 mod converter;
 mod error;
 mod pair;
+pub mod trace;
 
 pub use converter::{EncodingConverter, FilenameConverter, converter_from_locale};
 pub use error::{ConversionError, EncodingError};
 pub use pair::EncodingPair;
+pub use trace::{
+    IconvRole, trace_msg_checking_charset, trace_msg_checking_via_isprint, trace_peer_charset,
+};
 
 #[cfg(test)]
 mod tests {
