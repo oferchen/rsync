@@ -2,6 +2,12 @@
 
 Tracking issue: oc-rsync task #2106.
 
+**Status: historical.** All divergences catalogued in section 4 have been
+resolved. The per-row Status column and the FIXED markers in section 4
+record the PR that landed each fix. The document is preserved as a
+historical record of the upstream-vs-oc-rsync conflict matrix and the
+remediation that brought oc-rsync to parity.
+
 This audit narrows in on the **transfer-mode flag family** -
 `--checksum`, `--checksum-choice`, `--checksum-seed`, `--inplace`,
 `--whole-file` / `--no-whole-file`, `--append` / `--append-verify`,
@@ -256,12 +262,9 @@ Footnote validation sites:
   the path length).
 - [g] `--append --whole-file` is rejected upstream at
   `options.c:2382-2387` with the message `--append cannot be used with
-  --whole-file`. **oc-rsync currently does not reject the pair**; it
-  silently suppresses the `W` capability char at
-  `crates/core/src/client/remote/flags.rs:96-99` and the local-copy
-  path forces delta semantics at
-  `crates/engine/src/local_copy/executor/file/copy/transfer/execute.rs:315`.
-  See gap G3.
+  --whole-file`. oc-rsync now rejects the pair at config build time in
+  `ClientConfigBuilder::validate`, matching upstream's message and
+  exit code. See gap G3 (FIXED, PR #4049).
 - [h] `--append --partial-dir` is rejected upstream
   (`options.c:2406-2414`, via the `--append` -> `inplace = 1`
   promotion). oc-rsync rejects the pair at
@@ -276,9 +279,11 @@ Footnote validation sites:
   `delay_updates` is supplied without an explicit `partial_dir`
   (`options.c:2403-2404`). oc-rsync mirrors this:
   `partial_directory(Some(...))` flips `partial = true`
-  (`crates/core/src/client/config/builder/tests.rs:910-914`), but the
-  `delay_updates -> partial_dir = .~tmp~` promotion is performed at
-  the engine layer rather than the config builder. See gap G4.
+  (`crates/core/src/client/config/builder/tests.rs:910-914`), and the
+  `delay_updates -> partial_dir = .~tmp~` promotion runs at config
+  build time via
+  `LocalCopyOptions::apply_delay_updates_partial_dir_default`. See
+  gap G4 (FIXED, PR #4050).
 - [k] `--delay-updates --partial-dir=DIR` is accepted. Upstream
   honours `DIR` for the staging tree (`options.c:2434-2438`).
   oc-rsync accepts the pair by absence of any check.
@@ -307,9 +312,11 @@ Conformance tests:
 
 ## 4. Divergences (gaps)
 
-Ordered by user-facing impact.
+Ordered by user-facing impact. All four entries are now FIXED; the
+descriptions are preserved as historical context, with the resolving
+PR cited in each heading and in the **Status** bullet.
 
-### G1 - `--checksum-choice=none` does not promote `--whole-file` (RESOLVED)
+### G1 - `--checksum-choice=none` does not promote `--whole-file` (FIXED, PR #4066)
 
 - **Upstream behaviour.**
   `target/interop/upstream-src/rsync-3.4.1/checksum.c:197-198` sets
@@ -325,14 +332,14 @@ Ordered by user-facing impact.
   whenever `checksum_choice.transfer_is_none()` returns true. The
   promotion is unconditional, matching upstream's silent override of
   `--no-whole-file`.
-- **Status.** Resolved in #2139/#2140/#2141. Regression tests live in
+- **Status.** FIXED in PR #4066. Regression tests live in
   `crates/core/src/client/config/builder/tests.rs`
   (`checksum_choice_none_promotes_whole_file`,
   `checksum_choice_none_overrides_explicit_no_whole_file`) and
   `crates/cli/tests/option_combinations_flags.rs`
   (`test_checksum_choice_none_parses`).
 
-### G2 - `--inplace --partial-dir` cannot be enabled even when peer advertises `CF_INPLACE_PARTIAL_DIR` (RESOLVED)
+### G2 - `--inplace --partial-dir` cannot be enabled even when peer advertises `CF_INPLACE_PARTIAL_DIR` (FIXED, PR #4064)
 
 - **Upstream behaviour.** `compat.c:777-778` enables `inplace_partial`
   when both peers negotiate `CF_INPLACE_PARTIAL_DIR` (bit 6,
@@ -345,62 +352,63 @@ Ordered by user-facing impact.
   `CompatibilityFlags::INPLACE_PARTIAL_DIR`, the
   `--inplace`/`--append` + `--partial-dir` combination is accepted;
   otherwise the upstream parse-time rejection is preserved.
-- **Status.** Resolved (#2142/#2143/#2144). The strict `validate()`
+- **Status.** FIXED in PR #4064. The strict `validate()`
   default remains so callers without negotiated capability bits still
   match upstream's `options.c:2406-2414` behaviour.
 
-### G3 - `--append --whole-file` accepted instead of rejected
+### G3 - `--append --whole-file` accepted instead of rejected (FIXED, PR #4049)
 
 - **Upstream behaviour.** `options.c:2382-2387` rejects the pair with
   `--append cannot be used with --whole-file`, exit code 1.
-- **oc-rsync behaviour.** Accepted; the `W` capability char is
-  silently suppressed at
-  `crates/core/src/client/remote/flags.rs:96-99`. The user gets the
+- **oc-rsync behaviour (historical).** Accepted; the `W` capability
+  char was silently suppressed at
+  `crates/core/src/client/remote/flags.rs:96-99`. The user got the
   `--append` semantics but no diagnostic.
-- **Impact.** Permissive divergence. A user script that depends on
-  upstream rejecting the combination (for example to fail-fast on a
-  misconfigured cron job) will succeed unexpectedly under oc-rsync.
+- **Impact (historical).** Permissive divergence. A user script that
+  depends on upstream rejecting the combination (for example to
+  fail-fast on a misconfigured cron job) would succeed unexpectedly
+  under oc-rsync.
+- **Status.** FIXED in PR #4049. `ClientConfigBuilder::validate`
+  now rejects the pair at config build time with the upstream message
+  `--append cannot be used with --whole-file`, matching
+  `options.c:2382-2387`.
 
-### G4 - `--delay-updates` promotion to `partial_dir = ".~tmp~"` happens after the config builder
+### G4 - `--delay-updates` promotion to `partial_dir = ".~tmp~"` happens after the config builder (FIXED, PR #4050)
 
 - **Upstream behaviour.** `options.c:2403-2404` synthesises a partial
   directory when `--delay-updates` is supplied without
   `--partial-dir`. The synthesised value is then used everywhere
   downstream as if the user had supplied `--partial-dir=.~tmp~`.
-- **oc-rsync behaviour.** The promotion is not performed in
-  `ClientConfigBuilder` (the builder still sees
-  `partial_dir = None`); it is reconstructed in the engine layer when
-  the delay-updates rename batch is materialised
+- **oc-rsync behaviour (historical).** The promotion was not performed
+  in `ClientConfigBuilder` (the builder saw `partial_dir = None`); it
+  was reconstructed in the engine layer when the delay-updates rename
+  batch was materialised
   (`crates/engine/src/local_copy/tests/execute_delay_updates.rs`).
-  This is observable when a caller introspects the post-build config:
-  `config.partial_directory()` returns `None` even though delay-updates
-  is on. No wire divergence, but the API surface differs from
+  This was observable when a caller introspected the post-build config:
+  `config.partial_directory()` returned `None` even though delay-updates
+  was on. No wire divergence, but the API surface differed from
   upstream's effective state.
-- **Impact.** Internal-API divergence; no user-visible effect on the
-  wire.
+- **Impact (historical).** Internal-API divergence; no user-visible
+  effect on the wire.
+- **Status.** FIXED in PR #4050. The promotion is centralised in
+  `LocalCopyOptions::apply_delay_updates_partial_dir_default` and runs
+  as a deterministic finalisation step in
+  `LocalCopyOptionsBuilder::build_unchecked()`, so the post-build
+  config reflects the synthesised `partial_dir` exactly as upstream
+  does at `options.c:2403`.
 
-## 5. Recommended next-fix
+## 5. Resolution summary (historical)
 
-**Fix G3 (`--append --whole-file` rejection) first.** Rationale:
+All four divergences catalogued above have been remediated. The table
+below records the resolving PR for each row:
 
-1. It is the only **permissive** divergence in the table. Permissive
-   gaps risk silently shipping data that upstream would refuse - the
-   exact failure mode the existing `cli-argument-parity-vs-rsync-manpage.md`
-   audit prioritises.
-2. The fix is localised. Add a single conflict cell to
-   `ClientConfigBuilder::validate`
-   (`crates/core/src/client/config/builder/mod.rs:276-296`) mirroring
-   upstream's `options.c:2382-2387` message string, plus a regression
-   test in `tests.rs:1055-1116`.
-3. The fix needs no protocol or wire changes; it is purely a
-   config-time check.
-4. G1 (`--checksum-choice=none` -> `whole_file`) is resolved (see
-   section 4). G2 (`CF_INPLACE_PARTIAL_DIR` runtime relaxation) is
-   resolved by `validate_with_capabilities`, which threads the
-   negotiated `CF_*` bits into the builder while keeping the strict
-   default in place.
-5. G4 is internal API only; defer until the rename-batch path is
-   refactored independently.
+| Gap | Summary | Resolving PR |
+|-----|---------|--------------|
+| G1 | `--checksum-choice=none` promotes `whole_file = 1` | #4066 |
+| G2 | `--inplace --partial-dir` gated on `CF_INPLACE_PARTIAL_DIR` | #4064 |
+| G3 | `--append --whole-file` rejected at config build time | #4049 |
+| G4 | `--delay-updates` partial_dir promotion centralised in the builder | #4050 |
 
-Suggested commit shape for the G3 follow-up:
-`fix: reject --append --whole-file at config build time (#2106)`.
+With these merges, oc-rsync's transfer-mode flag handling matches
+upstream rsync 3.4.1's `options.c` and `checksum.c` semantics for the
+flag family enumerated in section 1.
