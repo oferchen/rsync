@@ -29,7 +29,6 @@ where
         let metadata = file.metadata()?;
         let size = metadata.len();
 
-        // For small files, read entirely into memory
         if size <= config.max_memory_file_size {
             let mut data = Vec::with_capacity(size as usize);
             let mut reader = BufReader::with_capacity(config.buffer_size, file);
@@ -37,7 +36,6 @@ where
             return Ok((D::digest(&data), size));
         }
 
-        // For large files, try mmap for zero-copy hashing
         if size >= MMAP_THRESHOLD {
             if let Ok(mmap) = MmapReader::open(path) {
                 let _ = mmap.advise_sequential();
@@ -45,7 +43,6 @@ where
             }
         }
 
-        // Fallback: stream in chunks via buffered I/O
         let mut hasher = D::new();
         let mut reader = BufReader::with_capacity(config.buffer_size, file);
         let mut buffer = vec![0u8; config.buffer_size];
@@ -224,7 +221,6 @@ where
         let metadata = file.metadata()?;
         let size = metadata.len();
 
-        // For small files, read entirely into memory
         if size <= config.max_memory_file_size {
             let mut data = Vec::with_capacity(size as usize);
             let mut reader = BufReader::with_capacity(config.buffer_size, file);
@@ -232,7 +228,6 @@ where
             return Ok((D::digest_with_seed(seed, &data), size));
         }
 
-        // For large files, try mmap for zero-copy hashing
         if size >= MMAP_THRESHOLD {
             if let Ok(mmap) = MmapReader::open(path) {
                 let _ = mmap.advise_sequential();
@@ -240,7 +235,6 @@ where
             }
         }
 
-        // Fallback: stream in chunks via buffered I/O
         let mut hasher = D::with_seed(seed);
         let mut reader = BufReader::with_capacity(config.buffer_size, file);
         let mut buffer = vec![0u8; config.buffer_size];
@@ -334,8 +328,8 @@ where
         let size = metadata.len();
         let estimated_blocks = (size as usize).div_ceil(block_size);
 
-        // For files above the mmap threshold, map the entire file and slice
-        // blocks directly from mapped memory - zero read syscalls.
+        // For files above the mmap threshold, slice blocks directly from
+        // mapped memory - zero read syscalls.
         if size >= MMAP_THRESHOLD {
             if let Ok(mmap) = MmapReader::open(path) {
                 let _ = mmap.advise_sequential();
@@ -356,7 +350,6 @@ where
             }
         }
 
-        // Fallback: buffered I/O block-by-block
         let mut signatures = Vec::with_capacity(estimated_blocks);
         let mut reader = BufReader::with_capacity(buffer_size, file);
         let mut buffer = vec![0u8; block_size];

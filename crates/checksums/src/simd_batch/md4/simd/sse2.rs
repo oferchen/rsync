@@ -81,7 +81,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         return std::array::from_fn(|i| super::super::scalar::digest(inputs[i]));
     }
 
-    // Prepare padded buffers
     let padded_storage: Vec<Vec<u8>> = inputs
         .iter()
         .map(|input| {
@@ -99,7 +98,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let block_counts: [usize; 4] = std::array::from_fn(|i| padded_storage[i].len() / 64);
     let max_blocks = block_counts.iter().max().copied().unwrap_or(0);
 
-    // Initialize state (4 lanes)
     let mut a = _mm_set1_epi32(INIT_A as i32);
     let mut b = _mm_set1_epi32(INIT_B as i32);
     let mut c = _mm_set1_epi32(INIT_C as i32);
@@ -108,7 +106,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     for block_idx in 0..max_blocks {
         let block_offset = block_idx * 64;
 
-        // Create mask for active lanes
         let lane_active: [i32; 4] = std::array::from_fn(|lane| {
             if block_idx < block_counts[lane] {
                 -1
@@ -123,7 +120,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
             lane_active[3],
         );
 
-        // Load message words (transposed)
+        // Transpose: word `word_idx` from all 4 lanes packed into one vector.
         let mut m = [_mm_setzero_si128(); 16];
         for (word_idx, m_word) in m.iter_mut().enumerate() {
             let word_offset = block_offset + word_idx * 4;
@@ -239,7 +236,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         round3!(14, 11);
         round3!(15, 15);
 
-        // Add saved state
         let new_a = _mm_add_epi32(a, aa);
         let new_b = _mm_add_epi32(b, bb);
         let new_c = _mm_add_epi32(c, cc);
@@ -253,7 +249,6 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         d = _mm_or_si128(_mm_and_si128(mask, new_d), _mm_and_si128(not_mask, dd));
     }
 
-    // Extract results
     let mut results = [[0u8; 16]; 4];
 
     #[repr(C, align(16))]

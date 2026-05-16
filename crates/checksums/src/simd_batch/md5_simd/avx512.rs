@@ -118,15 +118,13 @@ struct Aligned512([u32; 16]);
 /// instruction fault.
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
-    // Find the maximum length to determine block count
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
-    // For very large inputs, fall back to scalar to avoid huge allocations
+    // Fall back to scalar for inputs that would require excessive padding allocations.
     if max_len > MAX_INPUT_SIZE {
         return std::array::from_fn(|i| super::super::md5_scalar::digest(inputs[i]));
     }
 
-    // Prepare padded buffers for each input
     let padded_storage: Vec<Vec<u8>> = inputs
         .iter()
         .map(|input| {
@@ -142,24 +140,21 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
         })
         .collect();
 
-    // Track block counts per lane
     let block_counts: [usize; 16] = std::array::from_fn(|i| padded_storage[i].len() / 64);
     let max_blocks = block_counts.iter().max().copied().unwrap_or(0);
 
-    // Initialize state (16 lanes) - stored transposed
+    // State and message storage held transposed: each Aligned512 stores one
+    // 32-bit lane component for all 16 inputs side by side.
     let mut state_a = Aligned512([INIT_A; 16]);
     let mut state_b = Aligned512([INIT_B; 16]);
     let mut state_c = Aligned512([INIT_C; 16]);
     let mut state_d = Aligned512([INIT_D; 16]);
 
-    // Message words storage (16 words × 16 lanes, transposed)
     let mut m_storage: [Aligned512; 16] = std::array::from_fn(|_| Aligned512([0; 16]));
 
-    // Process blocks
     for block_idx in 0..max_blocks {
         let block_offset = block_idx * 64;
 
-        // Create mask for active lanes
         let mask_bits: u16 = block_counts
             .iter()
             .enumerate()
@@ -171,7 +166,7 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
                 }
             });
 
-        // Load message words (transposed: word i from all 16 inputs)
+        // Transpose: word `word_idx` from all 16 lanes packed into one vector.
         for (word_idx, m_word) in m_storage.iter_mut().enumerate() {
             let word_offset = block_offset + word_idx * 4;
             for (lane, padded) in padded_storage.iter().enumerate() {
@@ -183,7 +178,6 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
             }
         }
 
-        // Process block using AVX-512 assembly
         process_block_avx512(
             &mut state_a,
             &mut state_b,
@@ -194,7 +188,6 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
         );
     }
 
-    // Extract results
     std::array::from_fn(|lane| {
         let mut digest = [0u8; 16];
         digest[0..4].copy_from_slice(&state_a.0[lane].to_le_bytes());

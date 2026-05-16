@@ -89,19 +89,17 @@ const K: [u32; 64] = [
 pub fn digest(input: &[u8]) -> Digest {
     let mut state = [INIT_A, INIT_B, INIT_C, INIT_D];
 
-    // Process complete 64-byte blocks
     let mut offset = 0;
     while offset + 64 <= input.len() {
         process_block(&mut state, &input[offset..offset + 64]);
         offset += 64;
     }
 
-    // Pad and process final block(s)
     let remaining = &input[offset..];
     let bit_len = (input.len() as u64) * 8;
 
-    // Padding: append 1 bit, then zeros, then 64-bit length
-    let mut padded = [0u8; 128]; // Max 2 blocks needed
+    // MD5 padding: append 0x80, then zeros, then 64-bit length.
+    let mut padded = [0u8; 128];
     padded[..remaining.len()].copy_from_slice(remaining);
     padded[remaining.len()] = 0x80;
 
@@ -113,7 +111,6 @@ pub fn digest(input: &[u8]) -> Digest {
         process_block(&mut state, &padded[64..128]);
     }
 
-    // Convert state to bytes (little-endian)
     let mut output = [0u8; 16];
     output[0..4].copy_from_slice(&state[0].to_le_bytes());
     output[4..8].copy_from_slice(&state[1].to_le_bytes());
@@ -126,7 +123,6 @@ pub fn digest(input: &[u8]) -> Digest {
 fn process_block(state: &mut [u32; 4], block: &[u8]) {
     debug_assert_eq!(block.len(), 64);
 
-    // Parse block into 16 little-endian u32 words
     let mut m = [0u32; 16];
     for (i, chunk) in block.chunks_exact(4).enumerate() {
         m[i] = u32::from_le_bytes(chunk.try_into().unwrap());
