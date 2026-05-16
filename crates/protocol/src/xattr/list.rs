@@ -162,8 +162,6 @@ impl FromIterator<XattrEntry> for XattrList {
 mod tests {
     use super::*;
 
-    // --- Constructor tests ---
-
     #[test]
     fn new_creates_empty_list() {
         let list = XattrList::new();
@@ -211,8 +209,6 @@ mod tests {
         assert_eq!(list.len(), 2);
     }
 
-    // --- Push and len/is_empty ---
-
     #[test]
     fn push_increments_len() {
         let mut list = XattrList::new();
@@ -237,8 +233,6 @@ mod tests {
         assert_eq!(list.entries()[1].name(), b"user.a");
         assert_eq!(list.entries()[2].name(), b"user.b");
     }
-
-    // --- Entries accessors ---
 
     #[test]
     fn entries_returns_all_entries() {
@@ -273,8 +267,6 @@ mod tests {
         let mut list = XattrList::new();
         assert!(list.entries_mut().is_empty());
     }
-
-    // --- Iterators ---
 
     #[test]
     fn iter_yields_all_entries_in_order() {
@@ -366,8 +358,6 @@ mod tests {
         assert_eq!(count, 2);
     }
 
-    // --- FromIterator ---
-
     #[test]
     fn from_iterator_collects_entries() {
         let entries = vec![
@@ -395,8 +385,6 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list.entries()[0].name(), b"user.only");
     }
-
-    // --- Abbreviated tracking ---
 
     #[test]
     fn has_abbreviated_empty_list() {
@@ -473,8 +461,6 @@ mod tests {
         assert_eq!(list.abbreviated_indices(), vec![0, 1]);
     }
 
-    // --- Todo tracking ---
-
     #[test]
     fn todo_indices_empty_list() {
         let list = XattrList::new();
@@ -513,8 +499,6 @@ mod tests {
 
         assert_eq!(list.todo_indices(), vec![0, 1]);
     }
-
-    // --- mark_todo ---
 
     #[test]
     fn mark_todo_first_index() {
@@ -571,8 +555,6 @@ mod tests {
         assert!(list.entries()[0].state().needs_send());
         assert_eq!(list.todo_indices(), vec![0]);
     }
-
-    // --- set_full_value ---
 
     #[test]
     fn set_full_value_resolves_abbreviation() {
@@ -631,8 +613,6 @@ mod tests {
         assert_eq!(list.abbreviated_indices(), vec![1]);
         assert!(list.has_abbreviated());
     }
-
-    // --- sort_by_name ---
 
     #[test]
     fn sort_by_name_empty_list() {
@@ -734,8 +714,6 @@ mod tests {
         assert_eq!(list.entries()[2].name(), b"user.z");
     }
 
-    // --- find_by_name ---
-
     #[test]
     fn find_by_name_exists() {
         let mut list = XattrList::new();
@@ -789,8 +767,6 @@ mod tests {
         assert!(list.find_by_name(b"notempty").is_none());
     }
 
-    // --- find_index_by_name ---
-
     #[test]
     fn find_index_by_name_all_positions() {
         let mut list = XattrList::new();
@@ -827,8 +803,6 @@ mod tests {
         assert_eq!(list.find_index_by_name(b"user.dup"), Some(0));
     }
 
-    // --- Clone / PartialEq / Debug ---
-
     #[test]
     fn clone_produces_equal_list() {
         let mut list = XattrList::new();
@@ -863,8 +837,6 @@ mod tests {
         assert!(debug.contains("XattrList"));
     }
 
-    // --- Many entries ---
-
     #[test]
     fn many_entries_push_and_access() {
         let mut list = XattrList::new();
@@ -897,8 +869,6 @@ mod tests {
 
         assert_eq!(list.find_index_by_name(b"user.attr025"), Some(25));
     }
-
-    // --- Combined state transitions ---
 
     #[test]
     fn mark_todo_then_check_todo_indices() {
