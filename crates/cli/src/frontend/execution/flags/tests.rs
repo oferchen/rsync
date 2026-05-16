@@ -826,10 +826,36 @@ fn info_help_text_lists_all_keywords() {
     }
 }
 
+// upstream: options.c output_item_help (rsync-3.4.1:489-495) renders the
+// ALL/NONE pseudo-flags in uppercase using the same `"%-10s %s\n"` table
+// row as the per-flag entries. The descriptive text inlines lowercase
+// `all4` / `all0` examples; keep both shapes covered.
 #[test]
 fn info_help_text_mentions_all_and_none() {
-    assert!(INFO_HELP_TEXT.contains("all"));
-    assert!(INFO_HELP_TEXT.contains("none"));
+    assert!(INFO_HELP_TEXT.contains("ALL"));
+    assert!(INFO_HELP_TEXT.contains("NONE"));
+    assert!(INFO_HELP_TEXT.contains("HELP"));
+    assert!(INFO_HELP_TEXT.contains("(e.g. all4)"));
+    assert!(INFO_HELP_TEXT.contains("(same as all0)"));
+}
+
+// upstream: options.c output_item_help (rsync-3.4.1:499-509) prints the
+// per-verbosity summary block. info has three populated rows.
+#[test]
+fn info_help_text_lists_verbosity_summary() {
+    assert!(INFO_HELP_TEXT.contains("Options added at each level of verbosity:"));
+    assert!(INFO_HELP_TEXT.contains("0) NONREG"));
+    assert!(INFO_HELP_TEXT.contains("1) COPY,DEL,FLIST,MISC,NAME,STATS,SYMSAFE"));
+    assert!(INFO_HELP_TEXT.contains("2) BACKUP,MISC2,MOUNT,NAME2,REMOVE,SKIP"));
+}
+
+// upstream: options.c output_item_help (rsync-3.4.1:483) prints the
+// "OPT or OPT1 ... OPT0 silences" preface verbatim.
+#[test]
+fn info_help_text_includes_opt_preface() {
+    assert!(INFO_HELP_TEXT.starts_with(
+        "Use OPT or OPT1 for level 1 output, OPT2 for level 2, etc.; OPT0 silences.\n"
+    ));
 }
 
 // `no<flag>` / `-<flag>` are an internal-only extension not present in
@@ -883,10 +909,41 @@ fn debug_help_text_lists_all_keywords() {
     }
 }
 
+// upstream: options.c output_item_help (rsync-3.4.1:489-495) renders the
+// ALL/NONE pseudo-flags in uppercase and inlines lowercase `all4` / `all0`
+// example tokens in the descriptive text.
 #[test]
 fn debug_help_text_mentions_all_and_none() {
-    assert!(DEBUG_HELP_TEXT.contains("all"));
-    assert!(DEBUG_HELP_TEXT.contains("none"));
+    assert!(DEBUG_HELP_TEXT.contains("ALL"));
+    assert!(DEBUG_HELP_TEXT.contains("NONE"));
+    assert!(DEBUG_HELP_TEXT.contains("HELP"));
+    assert!(DEBUG_HELP_TEXT.contains("(e.g. all4)"));
+    assert!(DEBUG_HELP_TEXT.contains("(same as all0)"));
+}
+
+// upstream: options.c output_item_help (rsync-3.4.1:499-509) prints the
+// per-verbosity summary block. debug_verbosity has levels 0 and 1 empty,
+// so the summary lists levels 2-5 only (options.c:228-235).
+#[test]
+fn debug_help_text_lists_verbosity_summary() {
+    assert!(DEBUG_HELP_TEXT.contains("Options added at each level of verbosity:"));
+    assert!(DEBUG_HELP_TEXT.contains("2) BIND,CONNECT,CMD,DEL,DELTASUM,DUP,FILTER,FLIST,ICONV"));
+    assert!(DEBUG_HELP_TEXT.contains(
+        "3) ACL,BACKUP,CONNECT2,DEL2,DELTASUM2,EXIT,FILTER2,FLIST2,FUZZY,GENR,OWN,RECV,SEND,TIME"
+    ));
+    assert!(
+        DEBUG_HELP_TEXT.contains("4) CMD2,DEL3,DELTASUM3,EXIT2,FLIST3,ICONV2,OWN2,PROTO,TIME2")
+    );
+    assert!(DEBUG_HELP_TEXT.contains("5) CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK"));
+}
+
+// upstream: options.c output_item_help (rsync-3.4.1:483) prints the
+// "OPT or OPT1 ... OPT0 silences" preface verbatim.
+#[test]
+fn debug_help_text_includes_opt_preface() {
+    assert!(DEBUG_HELP_TEXT.starts_with(
+        "Use OPT or OPT1 for level 1 output, OPT2 for level 2, etc.; OPT0 silences.\n"
+    ));
 }
 
 // upstream: options.c parse_output_words - "all<N>" sets every flag to
