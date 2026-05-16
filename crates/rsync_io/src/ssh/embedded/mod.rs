@@ -19,6 +19,8 @@ mod handler;
 #[cfg(feature = "embedded-ssh")]
 mod resolve;
 #[cfg(feature = "embedded-ssh")]
+mod ssh_config;
+#[cfg(feature = "embedded-ssh")]
 mod types;
 
 #[cfg(feature = "embedded-ssh")]
