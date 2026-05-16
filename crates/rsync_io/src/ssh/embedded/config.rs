@@ -3,12 +3,13 @@
 //! Provides `SshConfig` with sensible defaults and a builder API for
 //! programmatic construction, plus `from_url()` for parsing `ssh://` URLs.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use url::Url;
 
 use super::error::SshError;
+use super::ssh_config::{ResolvedHost, resolve_host as resolve_ssh_config_host};
 use super::types::{IpPreference, StrictHostKeyChecking};
 
 /// Default SSH port.
@@ -216,6 +217,61 @@ impl SshConfig {
         self
     }
 
+    /// Merges directives from the user's `~/.ssh/config` into this config.
+    ///
+    /// `host_alias` is the host token the user typed on the command line
+    /// (the value before any `Hostname` rewrite) so that wildcard `Host`
+    /// patterns match against the same string OpenSSH would see.
+    ///
+    /// Values already explicitly set on the config win over the file:
+    /// only fields left at their URL/default state are overwritten. The
+    /// method never fails - a missing, unreadable, or malformed config
+    /// file is silently treated as empty.
+    pub fn apply_ssh_config(&mut self, host_alias: &str) -> &mut Self {
+        if let Some(path) = default_ssh_config_path() {
+            self.apply_ssh_config_from(&path, host_alias);
+        }
+        self
+    }
+
+    /// Variant of [`apply_ssh_config`] that reads from a caller-supplied
+    /// path. Exposed for testing and for callers that ship a non-default
+    /// config location.
+    pub fn apply_ssh_config_from(&mut self, path: &Path, host_alias: &str) -> &mut Self {
+        let resolved = resolve_ssh_config_host(path, host_alias);
+        self.merge_resolved_host(&resolved);
+        self
+    }
+
+    fn merge_resolved_host(&mut self, resolved: &ResolvedHost) {
+        // OpenSSH semantics: `Hostname` rewrites the connect target after
+        // the alias has been used for `Host` pattern matching, so it must
+        // always win over the alias the user typed on the URL.
+        if let Some(ref host) = resolved.hostname {
+            self.host = host.clone();
+        }
+        // For every other directive, URL/explicit value wins over the
+        // file - we only fill in fields the user left at their defaults.
+        if self.username.is_none()
+            && let Some(ref user) = resolved.user
+        {
+            self.username = Some(user.clone());
+        }
+        if self.port == DEFAULT_PORT
+            && let Some(port) = resolved.port
+        {
+            self.port = port;
+        }
+        if resolved.identities_only == Some(true) {
+            self.identity_files.clear();
+        }
+        for ident in &resolved.identity_files {
+            if !self.identity_files.contains(ident) {
+                self.identity_files.push(ident.clone());
+            }
+        }
+    }
+
     /// Parses an `ssh://` URL into an `SshConfig` and remote path.
     ///
     /// Accepted formats:
@@ -288,16 +344,26 @@ impl SshConfig {
         };
         let password = parsed.password().map(str::to_owned);
 
-        let config = Self {
+        let mut config = Self {
             host: host.to_owned(),
             port,
             username,
             password,
             ..Self::default()
         };
+        // Honor user's ~/.ssh/config Host blocks for the typed alias.
+        // URL-supplied fields win over file directives (handled by
+        // merge_resolved_host's "only if default" checks below).
+        config.apply_ssh_config(host);
 
         Ok((config, remote_path))
     }
+}
+
+/// Returns the default `~/.ssh/config` path, or `None` if `$HOME` /
+/// `$USERPROFILE` is not set.
+fn default_ssh_config_path() -> Option<PathBuf> {
+    home_dir().map(|h| h.join(".ssh").join("config"))
 }
 
 #[cfg(test)]
