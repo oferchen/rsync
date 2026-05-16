@@ -52,8 +52,8 @@ pub(super) fn convert_server_stats_to_summary(
     if exit_code != 0 {
         summary.set_io_error_exit_code(exit_code);
     } else if error_count > 0 {
-        // Remote sender reported errors via MSG_ERROR - treat as partial transfer.
-        summary.set_io_error_exit_code(23); // RERR_PARTIAL
+        // Remote sender reported errors via MSG_ERROR - treat as RERR_PARTIAL (23).
+        summary.set_io_error_exit_code(23);
     }
 
     summary
