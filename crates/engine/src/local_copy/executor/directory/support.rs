@@ -72,7 +72,8 @@ fn read_directory_entries_sorted_sequential(
 fn read_directory_entries_sorted_parallel(
     path: &Path,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
-    // Phase 1: Collect paths sequentially (read_dir iteration must be sequential)
+    // Phase 1: Collect paths sequentially - read_dir iteration is inherently
+    // sequential on every platform.
     let read_dir =
         fs::read_dir(path).map_err(|error| LocalCopyError::io("read directory", path, error))?;
 
@@ -83,7 +84,6 @@ fn read_directory_entries_sorted_parallel(
         pending.push((entry.file_name(), entry.path()));
     }
 
-    // For small directories, use sequential metadata fetching to avoid overhead
     if pending.len() < PARALLEL_THRESHOLD {
         let mut entries = Vec::with_capacity(pending.len());
         for (file_name, entry_path) in pending {
@@ -100,9 +100,8 @@ fn read_directory_entries_sorted_parallel(
         return Ok(entries);
     }
 
-    // Ordering: local copy requires deterministic directory listing order.
-    // Parallel metadata fetch loses traversal order, so sort_unstable_by() is
-    // applied after collection. Omitting the sort produces non-deterministic copies.
+    // Parallel metadata fetch loses traversal order; sort is applied after
+    // collection so local copies stay deterministic.
     let results: Vec<Result<DirectoryEntry, (PathBuf, std::io::Error)>> = pending
         .into_par_iter()
         .map(
@@ -117,7 +116,6 @@ fn read_directory_entries_sorted_parallel(
         )
         .collect();
 
-    // Collect results, returning first error encountered
     let mut entries = Vec::with_capacity(results.len());
     for result in results {
         match result {
@@ -132,7 +130,6 @@ fn read_directory_entries_sorted_parallel(
         }
     }
 
-    // Sort to maintain deterministic ordering (parallel fetch order is non-deterministic)
     entries.sort_unstable_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
     Ok(entries)
 }
@@ -154,7 +151,7 @@ fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
     {
         use std::os::windows::ffi::OsStrExt;
 
-        // Direct iterator comparison avoids two Vec allocations per comparison
+        // Iterator comparison avoids two Vec allocations per call.
         left.encode_wide().cmp(right.encode_wide())
     }
 

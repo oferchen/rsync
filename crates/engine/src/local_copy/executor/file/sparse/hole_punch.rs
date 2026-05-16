@@ -51,47 +51,39 @@ pub(crate) fn punch_hole(
         return Ok(());
     }
 
-    // Ensure position doesn't exceed i64::MAX for fallocate
+    // fallocate's offset/length args are signed; fall back when either would
+    // overflow i64.
     if pos > i64::MAX as u64 || len > i64::MAX as u64 {
         return write_zeros_fallback(file, path, len);
     }
 
     let fd = file.as_fd();
 
-    // Strategy 1: Try PUNCH_HOLE | KEEP_SIZE (creates actual filesystem hole)
+    // Strategy 1: PUNCH_HOLE | KEEP_SIZE creates an actual filesystem hole.
     let punch_flags = FallocateFlags::PUNCH_HOLE | FallocateFlags::KEEP_SIZE;
     match fallocate(fd, punch_flags, pos, len) {
         Ok(()) => {
-            // Seek to pos + len after successful hole punch
             file.seek(SeekFrom::Start(pos + len))
                 .map_err(|e| LocalCopyError::io("seek after hole punch", path, e))?;
             return Ok(());
         }
-        Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
-            // PUNCH_HOLE not supported, try ZERO_RANGE
-        }
-        Err(_errno) => {
-            // Unexpected error, fall through to ZERO_RANGE fallback
-        }
+        Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {}
+        Err(_) => {}
     }
 
-    // Strategy 2: Try ZERO_RANGE (zeroes range without allocation on some systems)
+    // Strategy 2: ZERO_RANGE zeroes the range without allocation on some
+    // filesystems.
     match fallocate(fd, FallocateFlags::ZERO_RANGE, pos, len) {
         Ok(()) => {
-            // Seek to pos + len after successful zero range
             file.seek(SeekFrom::Start(pos + len))
                 .map_err(|e| LocalCopyError::io("seek after zero range", path, e))?;
             return Ok(());
         }
-        Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
-            // ZERO_RANGE not supported, fall back to writing zeros
-        }
-        Err(_errno) => {
-            // Unexpected error, fall through to write zeros
-        }
+        Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {}
+        Err(_) => {}
     }
 
-    // Strategy 3: Write zeros (universal but allocates space)
+    // Strategy 3: write zeros - universal but allocates disk space.
     write_zeros_fallback(file, path, len)
 }
 
@@ -116,7 +108,6 @@ pub(crate) fn punch_hole(
         return Ok(());
     }
 
-    // Seek to the starting position before writing zeros
     file.seek(SeekFrom::Start(pos))
         .map_err(|e| LocalCopyError::io("seek before writing zeros", path, e))?;
 
