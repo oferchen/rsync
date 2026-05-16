@@ -210,12 +210,6 @@ pub(super) fn apply_crtime_from_entry(
 }
 
 /// Sets the creation time (birth time) of a file on macOS via `setattrlist(2)`.
-///
-/// # Safety
-///
-/// Calls into the libc `setattrlist` function through FFI. The `attrlist`
-/// struct and buffer are stack-allocated with correct layout and size,
-/// and the path is converted to a NUL-terminated C string before passing.
 // upstream: rsync.c uses utimensat for mtime/atime; crtime uses setattrlist on macOS
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]

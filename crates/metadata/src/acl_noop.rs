@@ -12,10 +12,7 @@ use std::sync::Once;
 
 /// Emits a one-time warning that ACLs are not supported on this platform.
 ///
-/// # Upstream Reference
-///
-/// Matches upstream rsync behavior of informing users when ACL support
-/// is requested but unavailable (options.c:1854).
+/// upstream: `options.c:1854` - "ACLs are not supported on this %s\n".
 fn warn_acl_unsupported() {
     static WARN_ONCE: Once = Once::new();
     WARN_ONCE.call_once(|| {
