@@ -315,9 +315,7 @@ fn ensure_fd_capacity(_required: u64) -> Result<u64, String> {
 fn run_scenario(label: &'static str, target_connections: u32) -> StressResult {
     let required_fds = u64::from(target_connections) * 2 + FD_HEADROOM;
     if let Err(message) = ensure_fd_capacity(required_fds) {
-        eprintln!(
-            "[daemon-stress] {label}: skipping (insufficient file descriptors: {message})"
-        );
+        eprintln!("[daemon-stress] {label}: skipping (insufficient file descriptors: {message})");
         return StressResult {
             label,
             target_connections,
