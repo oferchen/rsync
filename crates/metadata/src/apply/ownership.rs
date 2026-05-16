@@ -14,6 +14,8 @@ use crate::id_lookup::{map_gid, map_uid};
 #[cfg(unix)]
 use crate::ownership;
 #[cfg(unix)]
+use protocol::idlist::{trace_set_gid, trace_set_uid};
+#[cfg(unix)]
 use rustix::fs::{self as unix_fs, AtFlags, CWD};
 #[cfg(unix)]
 use rustix::process::{RawGid, RawUid};
@@ -23,6 +25,37 @@ use std::io;
 use std::os::fd::BorrowedFd;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+
+/// Emits the upstream level-1 `set uid of`/`set gid of` traces for a chown.
+///
+/// upstream: `rsync.c:535-545` - `DEBUG_GTE(OWN, 1)` block emitted from
+/// `set_file_attrs` before `do_lchown`. The trace fires only for the fields
+/// that actually change against `existing`; when `existing` is unknown we
+/// emit using `from = 0` to match upstream's behaviour for fresh inodes
+/// where `sxp->st` is the just-allocated stat block.
+#[cfg(unix)]
+fn trace_chown_change(
+    destination: &Path,
+    owner: Option<unix_fs::Uid>,
+    group: Option<unix_fs::Gid>,
+    existing: Option<&fs::Metadata>,
+) {
+    let path = destination.display().to_string();
+    if let Some(new_uid) = owner {
+        let new_raw: u32 = new_uid.as_raw();
+        let from = existing.map(|m| m.uid()).unwrap_or(new_raw);
+        if from != new_raw {
+            trace_set_uid(&path, from, new_raw);
+        }
+    }
+    if let Some(new_gid) = group {
+        let new_raw: u32 = new_gid.as_raw();
+        let from = existing.map(|m| m.gid()).unwrap_or(new_raw);
+        if from != new_raw {
+            trace_set_gid(&path, from, new_raw);
+        }
+    }
+}
 
 /// Resolves the target UID and GID after applying overrides, mappings, and
 /// numeric-id rules. Returns `(None, None)` when no ownership change is
@@ -134,6 +167,9 @@ pub(super) fn set_owner_like(
             AtFlags::SYMLINK_NOFOLLOW
         };
 
+        // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
+        trace_chown_change(destination, owner, group, existing);
+
         unix_fs::chownat(CWD, destination, owner, group, flags).map_err(|error| {
             MetadataError::new("preserve ownership", destination, io::Error::from(error))
         })?
@@ -171,6 +207,9 @@ pub(super) fn set_owner_like_with_fd(
             return Ok(());
         }
     }
+
+    // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
+    trace_chown_change(destination, owner, group, existing);
 
     unix_fs::fchown(fd, owner, group).map_err(|error| {
         MetadataError::new("preserve ownership", destination, io::Error::from(error))
@@ -270,6 +309,9 @@ pub(super) fn apply_ownership_from_entry(
         };
 
         if needs_chown {
+            // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
+            trace_chown_change(destination, owner, group, cached_meta);
+
             chownat(CWD, destination, owner, group, AtFlags::empty()).map_err(|error| {
                 MetadataError::new("preserve ownership", destination, io::Error::from(error))
             })?;
@@ -341,4 +383,136 @@ pub(super) fn apply_ownership_from_entry(
     _cached_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod own_debug_tests {
+    //! `--debug=OWN` level-1 emission tests for the chown helpers.
+    //!
+    //! These exercise the trace path without performing a real `chownat`
+    //! (which would require root). The helper resolves the uid/gid pair
+    //! and decides whether each side changed against `existing`; the
+    //! pinning is on the upstream wire shapes from `rsync.c:535-545`.
+
+    use super::*;
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    fn init_at(level: u8) {
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.own = level;
+        init(cfg);
+        let _ = drain_events();
+    }
+
+    fn own_messages() -> Vec<String> {
+        drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Own,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn fake_existing(path: &PathBuf) -> fs::Metadata {
+        fs::write(path, b"").expect("write probe");
+        fs::metadata(path).expect("probe metadata")
+    }
+
+    #[test]
+    fn level1_set_uid_emits_with_destination_path() {
+        // upstream: rsync.c:537-540 - "set uid of %s from %u to %u".
+        init_at(1);
+
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("probe");
+        let meta = fake_existing(&path);
+        let current_uid = meta.uid() as u64;
+        let new_uid = current_uid as u32 ^ 1; // any value distinct from current
+        let owner = Some(ownership::uid_from_raw(new_uid as RawUid));
+
+        trace_chown_change(&path, owner, None, Some(&meta));
+
+        let expected = format!(
+            "set uid of {} from {} to {}",
+            path.display(),
+            current_uid,
+            new_uid
+        );
+        let m = own_messages();
+        assert!(
+            m.iter().any(|s| s == &expected),
+            "missing {expected:?}, got {m:?}"
+        );
+    }
+
+    #[test]
+    fn level1_set_gid_emits_with_destination_path() {
+        // upstream: rsync.c:541-545 - "set gid of %s from %u to %u".
+        init_at(1);
+
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("probe");
+        let meta = fake_existing(&path);
+        let current_gid = meta.gid() as u64;
+        let new_gid = current_gid as u32 ^ 1;
+        let group = Some(ownership::gid_from_raw(new_gid as RawGid));
+
+        trace_chown_change(&path, None, group, Some(&meta));
+
+        let expected = format!(
+            "set gid of {} from {} to {}",
+            path.display(),
+            current_gid,
+            new_gid
+        );
+        let m = own_messages();
+        assert!(
+            m.iter().any(|s| s == &expected),
+            "missing {expected:?}, got {m:?}"
+        );
+    }
+
+    #[test]
+    fn level1_no_emission_when_uid_unchanged() {
+        // upstream: rsync.c:536-540 - `if (change_uid)` gates the uid trace.
+        init_at(1);
+
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("probe");
+        let meta = fake_existing(&path);
+        let same_uid = meta.uid() as u32;
+        let owner = Some(ownership::uid_from_raw(same_uid as RawUid));
+
+        trace_chown_change(&path, owner, None, Some(&meta));
+        assert!(
+            own_messages().is_empty(),
+            "uid unchanged must not emit the level-1 trace"
+        );
+    }
+
+    #[test]
+    fn level0_suppresses_set_uid_set_gid() {
+        // upstream: DEBUG_GTE(OWN, 1) is false when --debug=OWN is disabled.
+        init_at(0);
+
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("probe");
+        let meta = fake_existing(&path);
+        let owner = Some(ownership::uid_from_raw(((meta.uid() as u32) ^ 1) as RawUid));
+        let group = Some(ownership::gid_from_raw(((meta.gid() as u32) ^ 1) as RawGid));
+
+        trace_chown_change(&path, owner, group, Some(&meta));
+        assert!(
+            own_messages().is_empty(),
+            "level-0 must suppress all OWN traces"
+        );
+    }
 }

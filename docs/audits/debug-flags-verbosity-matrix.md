@@ -135,7 +135,7 @@ Producer counts come from
 | ICONV      | 2 | 2 | W_CLI\|W_SRV | Debug iconv character conversions (levels 1-2) | `crates/core/src/client/config/iconv.rs:resolve_converter` (1 site at level 1, upstream-verbatim wording from `rsync.c:142-145`); helper emissions for the level-2 message-charset probe live in `crates/protocol/src/iconv/trace.rs` (upstream `rsync.c:99-110`). | impl (G3 partial - ICONV RESOLVED) |
 | IO         | 4 | 4 | W_CLI\|W_SRV | Debug I/O routines (levels 1-4) | `crates/transfer/src/disk_commit/thread.rs:117,125,132,149,153,155` plus `tracing::*(target: "rsync::io", ...)` in `crates/protocol/src/debug_io.rs`, `crates/fast_io/src/debug_io.rs`, `crates/rsync_io/src/debug_io.rs` (`debug_io.rs` trace funcs not called from production - see gap G3) | partial (levels 1 and 3 emitted via `debug_log!`; trace-func helpers unwired) |
 | NSTR       | 2 | u8::MAX | W_CLI\|W_SRV | Debug negotiation strings | `crates/protocol/src/negotiation/capabilities/negotiate.rs` (6 sites covering levels 1-3, upstream-verbatim wording from `compat.c:215,373-378,521-525,866`) | impl |
-| OWN        | 2 | 2 | W_REC | Debug ownership changes in users & groups (levels 1-2) | none | missing |
+| OWN        | 2 | 2 | W_REC | Debug ownership changes in users & groups (levels 1-2) | `crates/metadata/src/apply/ownership.rs::trace_chown_change` invoked from `set_owner_like`, `set_owner_like_with_fd`, and `apply_ownership_from_entry` (3 sites at level 1, upstream-verbatim wording from `rsync.c:537-540,541-545`); `crates/protocol/src/idlist/mod.rs::IdList::read_with_kind` invoked from `crates/transfer/src/receiver/file_list.rs::receive_id_lists` (level 2, upstream-verbatim wording from `uidlist.c:287-291`). Helper lives in `crates/protocol/src/idlist/trace.rs`. | impl (G3 partial - OWN RESOLVED) |
 | PROTO      | 1 | u8::MAX | W_CLI\|W_SRV | Debug protocol information | `crates/protocol/src/negotiation/capabilities/negotiate.rs`, `crates/protocol/src/multiplex/io/send.rs`, `crates/protocol/src/multiplex/io/recv.rs` (6 sites at levels 1-2) | partial (level 2 not in upstream range) |
 | RECV       | 1 | u8::MAX | W_REC | Debug receiver functions | `crates/transfer/src/receiver/directory/links.rs:264` (1 site at level 2) | partial (level 2 not in upstream range) |
 | SEND       | 1 | u8::MAX | W_SND | Debug sender functions | `crates/transfer/src/generator/transfer.rs` (5 sites at level 1, upstream-verbatim wording from `sender.c:217,254,277,445,457`); `crates/engine/src/local_copy/debug_send.rs` trace helpers remain unwired (see gap G3) | impl (D13 RESOLVED) |
@@ -144,9 +144,9 @@ Producer counts come from
 Total: 24 upstream `DEBUG_*` flags, matching `COUNT_DEBUG = DEBUG_TIME + 1`
 (`rsync.h:1462`). Status roll-up:
 
-- **impl**: 10 - ACL, BACKUP, DUP, FILTER, FLIST, GENR, ICONV, NSTR, SEND, TIME.
+- **impl**: 11 - ACL, BACKUP, DUP, FILTER, FLIST, GENR, ICONV, NSTR, OWN, SEND, TIME.
 - **partial**: 7 - CONNECT, DEL, DELTASUM, EXIT, IO, PROTO, RECV.
-- **missing**: 7 - BIND, CHDIR, CMD, FUZZY, HASH, HLINK, OWN.
+- **missing**: 6 - BIND, CHDIR, CMD, FUZZY, HASH, HLINK.
 
 `SEND` (D13) is now wired into the generator's send loop with the
 five upstream-verbatim messages from `sender.c send_files` (lines
@@ -302,7 +302,7 @@ requested level before the event materialises.
 |----|----------|--------|-------------|
 | G1 | Low | open | `ALL<N>` and `NONE0` syntactic forms are rejected as unknown tokens (`flags/debug.rs:279`). Upstream accepts them (`options.c:443-445`, `:452-453`, `:450-451`) and applies the trailing digit. Fix: extend `DebugFlagSettings::apply` to detect `all<digit>` and `none<digit>` before falling through to `parse_flag_and_level`, then call `enable_all_to_level(N)` / `disable_all()`. Cap N at 4 to match `MAX_OUT_LEVEL`. |
 | G2 | Low | open | Per-flag cap missing for upstream-max-1 flags. `acl`, `bind`, `chdir`, `dup`, `genr`, `hash`, `nstr`, `proto`, `recv`, `send` accept any `u8` value (no `if level > N` guard in `flags/debug.rs::apply`). Upstream silently clamps to `MAX_OUT_LEVEL = 4`. Fix: add `if level > 4 { return Err(debug_flag_error(display)); }` guards on those arms, or a single shared cap before the per-flag dispatch. |
-| G3 | High | open | 7 flags have no production producer (BIND, CHDIR, CMD, FUZZY, HASH, HLINK, OWN). The previously listed ACL, BACKUP, GENR, ICONV, NSTR, and SEND emissions are now wired (D14, I-ACL, I-ICONV, NSTR follow-up, D13 RESOLVED, BACKUP RESOLVED). Owning crates for the remaining producers: `metadata` (OWN, HLINK), `engine` (FUZZY), `transfer`/`rsync_io` (BIND, CMD), `checksums` (HASH), `core` (CHDIR). |
+| G3 | High | open | 6 flags have no production producer (BIND, CHDIR, CMD, FUZZY, HASH, HLINK). The previously listed ACL, BACKUP, GENR, ICONV, NSTR, OWN, and SEND emissions are now wired (D14, I-ACL, I-ICONV, NSTR follow-up, OWN follow-up, D13 RESOLVED, BACKUP RESOLVED). Owning crates for the remaining producers: `metadata` (HLINK), `engine` (FUZZY), `transfer`/`rsync_io` (BIND, CMD), `checksums` (HASH), `core` (CHDIR). |
 | G4 | Low | open | `limit_output_verbosity` (upstream `options.c:527-553`) is not implemented. User-supplied per-flag levels are not clamped to the peer's `-v` ceiling during option exchange. Mitigation: implement on `server_options` parsing path and re-run the ladder with `LIMIT_PRIORITY` to compute the cap. |
 | G5 | Low | open | `make_output_option` (upstream `options.c:340-425`) is not implemented. Remote command forwarding of user-priority debug flags relies on raw passthrough rather than upstream's deduplicated `--debug=ALL2,NONREG0,...` style. User-visible effect is limited to the exact command string the peer sees in `ps` output. |
 | G6 | Low | open | `--debug=help` text omits the per-verbosity summary block (`0)`, `1)`, ..., `5)`) that upstream's `output_item_help` prints at `options.c:499-509`. Cosmetic but useful for discovery. |
@@ -323,7 +323,7 @@ requested level before the event materialises.
 | HLINK | `crates/transfer/src/receiver/directory/links.rs` (extend existing RECV emitter) | When a hardlink master/follower is resolved. Upstream emits in `hlink.c:hard_link_one`. |
 | ICONV | wired in `crates/core/src/client/config/iconv.rs::resolve_converter` (level 1) with helpers in `crates/protocol/src/iconv/trace.rs` for the level-2 message-charset probe. Upstream emits at `rsync.c:99-110,142-145` (`setup_iconv`); none of upstream's emissions live in `flist.c`. |
 | NSTR | `crates/rsync_io/src/negotiation/` | During server/client capability string exchange. Upstream emits in `compat.c:set_allow_inc_recurse` and friends. |
-| OWN | `crates/metadata/src/ownership/` | When uid/gid mapping is consulted. Upstream emits in `uidlist.c:map_uid` / `map_gid`. |
+| OWN | wired in `crates/metadata/src/apply/ownership.rs::trace_chown_change` (level 1) invoked from `set_owner_like`, `set_owner_like_with_fd`, and `apply_ownership_from_entry` immediately before each `chownat`/`fchown`; and in `crates/protocol/src/idlist/mod.rs::IdList::read_with_kind` (level 2) invoked from `crates/transfer/src/receiver/file_list.rs::receive_id_lists`. Helper lives in `crates/protocol/src/idlist/trace.rs`. Upstream emits at `rsync.c:535-545` (`set uid of`/`set gid of`) and `uidlist.c:287-291` (`%sid %u(%s) maps to %u`); the level-2 `process has N gids` probe at `uidlist.c:218-227` has no oc-rsync counterpart because the `is_in_group` machinery is not ported, so the helper exists for parity but is not wired. |
 | SEND | Connect `crates/transfer/src/sender/file.rs` to the existing `crates/engine/src/local_copy/debug_send.rs::trace_send_file_start`/`trace_send_file_end` helpers. The subsystem is already implemented but unused. |
 
 Each row is a follow-up task; this audit only enumerates them. The
