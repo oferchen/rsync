@@ -109,6 +109,12 @@ impl SshConnection {
             Some(mut child) => {
                 drop(guard);
                 let status = child.wait();
+                // The child has exited; wake the stderr drain before joining
+                // so we don't block waiting for an EOF that may never arrive
+                // (an ssh helper subprocess can inherit the write end).
+                if let Some(ref drain) = self.stderr_drain {
+                    drain.shutdown_read();
+                }
                 if let Some(ref mut drain) = self.stderr_drain {
                     drain.join();
                 }
@@ -134,6 +140,9 @@ impl SshConnection {
             Some(mut child) => {
                 drop(guard);
                 let status = child.wait();
+                if let Some(ref drain) = self.stderr_drain {
+                    drain.shutdown_read();
+                }
                 if let Some(ref mut drain) = self.stderr_drain {
                     drain.join();
                 }
@@ -447,6 +456,9 @@ impl SshChildHandle {
     /// error output has been forwarded.
     pub fn wait(mut self) -> io::Result<ExitStatus> {
         let status = self.child.wait();
+        if let Some(ref drain) = self.stderr_drain {
+            drain.shutdown_read();
+        }
         if let Some(ref mut drain) = self.stderr_drain {
             drain.join();
         }
@@ -460,6 +472,12 @@ impl SshChildHandle {
     /// is consumed.
     pub fn wait_with_stderr(mut self) -> io::Result<(ExitStatus, Vec<u8>)> {
         let status = self.child.wait();
+        // Wake the drain thread now that the child is reaped; a re-execed
+        // ssh helper may still hold the write end open so EOF cannot be
+        // relied on by itself.
+        if let Some(ref drain) = self.stderr_drain {
+            drain.shutdown_read();
+        }
         if let Some(ref mut drain) = self.stderr_drain {
             drain.join();
         }
