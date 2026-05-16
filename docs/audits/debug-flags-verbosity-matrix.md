@@ -217,23 +217,21 @@ then prints the synthetic `ALL`/`NONE`/`HELP` rows
 with `HELP_PRIORITY` against each `debug_verbosity[j]` row and
 formatting the resulting `levels[]` array with `make_output_option`.
 
-oc-rsync prints a fixed string at `DEBUG_HELP_TEXT`
-(`flags/debug.rs:354-384`). Divergences from upstream:
+oc-rsync prints the fixed `DEBUG_HELP_TEXT` constant in
+`crates/cli/src/frontend/execution/flags/debug.rs`, reproduced
+byte-for-byte from upstream's runtime output. The constant now mirrors
+the preface (`Use OPT or OPT1 ... OPT0 silences.`), the 24-row
+`"%-10s %s\n"` flag table in `debug_words[]` order, the synthetic
+`ALL`/`NONE`/`HELP` rows quoting the sentinel's `--debug` help
+(`options.c:489-495`), and the per-verbosity summary block for the four
+populated levels (2-5; `debug_verbosity[]` slots 0 and 1 are empty in
+upstream, so those lines are intentionally omitted). Parity status:
+**byte-equivalent to upstream 3.4.1 (C3)**.
 
-1. The synthetic `ALL`/`NONE`/`HELP` table includes `ALL` and `none`
-   but not the level-suffix form (`ALL2`, `NONE0`) - matches the gap
-   in section 3.
-2. The per-verbosity summary block (`0)`, `1)`, ..., `5)`) is not
-   printed; users cannot discover which flags `-vvv` would enable
-   without consulting the source or `man rsync`.
-3. The leading line `Use OPT or OPT1 for level 1 output, OPT2 for
-   level 2, etc.; OPT0 silences.` from `options.c:483` is omitted;
-   the trailing paragraph documents the `no`/`-` prefix and level
-   suffix forms instead (`flags/debug.rs:382-384`).
-4. The flag rows use a fixed `<NAME>    <help>` layout with 12-column
-   name padding; upstream uses `"%-10s %s\n"` (`options.c:478`,
-   `:486`). The width difference is cosmetic but observable when
-   comparing `--debug=help` output byte-for-byte.
+The internal `no<flag>` / `-<flag>` parser extension is deliberately
+not advertised in the help text; the parser still accepts these tokens
+for backwards compatibility, but only the upstream spellings (`flag0`,
+`none`) appear in `--debug=help`.
 
 ## 6. `make_output_option` and remote forwarding
 
@@ -333,9 +331,12 @@ PR for #2113 lands the audit only - no code changes.
 
 Once gaps G1-G3 are addressed, add the following test fixtures:
 
-- `tests/cli/debug_help.txt` - golden output of
-  `oc-rsync --debug=help` to lock the table layout once it matches
-  upstream `output_item_help`.
+- `tests/cli/debug_help.txt` - replaced by inline byte-comparison
+  assertions in `crates/cli/src/frontend/tests/info_debug.rs`
+  (`debug_help_lists_supported_flags`) and the structural assertions
+  in `crates/cli/src/frontend/execution/flags/tests.rs`
+  (`debug_help_text_lists_verbosity_summary` and friends), which lock
+  the table layout against upstream `output_item_help` (C3 done).
 - `tests/cli/debug_all_levels.rs` - assert that `--debug=ALL2` and
   `--debug=NONE0` are accepted (G1) and that `--debug=ACL5`,
   `--debug=BIND9`, etc. are rejected with the per-flag cap error (G2).
