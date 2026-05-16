@@ -375,3 +375,43 @@ impl DeltaSignatureIndex {
         self as *const Self as usize
     }
 }
+
+/// Bench-only accessors used by the harnesses in `crates/matching/benches/`.
+///
+/// Behind the internal `bench-internal` feature flag so the surface never
+/// reaches release builds. See `docs/design/zsync-bithash.md` section 7
+/// for the rejection-rate methodology these accessors support.
+#[cfg(feature = "bench-internal")]
+impl DeltaSignatureIndex {
+    /// Returns the fraction of bithash bits currently set, in `[0.0, 1.0]`.
+    ///
+    /// At saturation the bithash carries one set bit per indexed block
+    /// (1/8 density target), so a uniform-random rsum probe rejects with
+    /// probability roughly `1.0 - utilization`.
+    #[must_use]
+    pub fn bithash_utilization(&self) -> f64 {
+        self.bithash.utilization()
+    }
+
+    /// Returns `true` when the bithash prefilter would let `rsum` through
+    /// to the strong-checksum verify step.
+    ///
+    /// Mirrors the inner `bithash.contains(...)` probe in
+    /// [`Self::find_match_bytes_filtered`], without the tag-table or
+    /// strong-checksum work. Lets the bench harness count rejection rate
+    /// without instrumenting the production hot path.
+    #[must_use]
+    pub fn bithash_admits(&self, rsum: u32) -> bool {
+        self.bithash.contains(rsum)
+    }
+
+    /// Returns `true` when the `tag_table` would let `sum1` through to
+    /// the bithash probe.
+    ///
+    /// Mirrors the first-line tag-table gate so the bench can isolate
+    /// post-tag bithash rejection from the upstream-style fast path.
+    #[must_use]
+    pub fn tag_admits(&self, sum1: u16) -> bool {
+        self.tag_table[sum1 as usize]
+    }
+}

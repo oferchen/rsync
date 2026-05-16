@@ -66,7 +66,7 @@ pub struct DeltaGenerator {
     /// Test-only knob disabling the matched-block pruning bitmap so the
     /// property tests can compare prune-on against prune-off output. The
     /// production path always prunes; see `docs/design/zsync-prune.md`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "bench-internal"))]
     prune_matched: bool,
 }
 
@@ -76,7 +76,7 @@ impl DeltaGenerator {
     pub const fn new() -> Self {
         Self {
             buffer_len: DEFAULT_BUFFER_LEN,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "bench-internal"))]
             prune_matched: true,
         }
     }
@@ -96,6 +96,21 @@ impl DeltaGenerator {
     #[cfg(test)]
     #[must_use]
     pub(crate) fn with_prune_matched(mut self, enabled: bool) -> Self {
+        self.prune_matched = enabled;
+        self
+    }
+
+    /// Bench-only switch mirroring [`Self::with_prune_matched`], used by
+    /// the harness in `crates/matching/benches/prune_duplicate_heavy.rs`
+    /// to compare prune-on against prune-off match throughput on
+    /// duplicate-heavy basis data.
+    ///
+    /// Behind the internal `bench-internal` feature flag so the surface
+    /// never reaches release builds. See `docs/design/zsync-prune.md`
+    /// benchmark plan binding (#2071) for the methodology.
+    #[cfg(all(not(test), feature = "bench-internal"))]
+    #[must_use]
+    pub fn with_prune_matched(mut self, enabled: bool) -> Self {
         self.prune_matched = enabled;
         self
     }
@@ -153,9 +168,9 @@ impl DeltaGenerator {
         // basis indices; the bitmap leaves those siblings findable until each
         // is consumed independently. See docs/design/zsync-prune.md.
         let mut matched_blocks = MatchedBlocks::with_block_count(index.block_count());
-        #[cfg(test)]
+        #[cfg(any(test, feature = "bench-internal"))]
         let prune_matched = self.prune_matched;
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "bench-internal")))]
         let prune_matched = true;
 
         let mut buffer = vec![0u8; self.buffer_len.max(block_len)];
