@@ -298,11 +298,32 @@ impl GeneratorContext {
     /// 3. Write end-of-list marker (0 byte)
     /// 4. Update NDX translation table
     ///
+    /// Updates the `SEGMENT_DISPATCH_CALLS` / `SEGMENT_DISPATCH_ELAPSED_NS`
+    /// counters used for INC_RECURSE diagnostic I2 (#2197). The timer wraps
+    /// the entire body so the zero-entry early-return path is still accounted
+    /// for in the per-transfer dispatch count.
+    ///
     /// # Upstream Reference
     ///
     /// - `flist.c:send_extra_file_list()` - sends one directory's entries
     /// - `flist.c:2931` - `ndx_start = prev->ndx_start + prev->used + 1`
     pub(super) fn encode_and_send_segment<W: Write>(
+        &mut self,
+        writer: &mut W,
+        segment: &super::PendingSegment,
+        flist_writer: &mut protocol::flist::FileListWriter,
+        ndx_codec: &mut NdxCodecEnum,
+    ) -> io::Result<()> {
+        let started = Instant::now();
+        let result = self.encode_and_send_segment_inner(writer, segment, flist_writer, ndx_codec);
+        super::record_segment_dispatch(started.elapsed());
+        result
+    }
+
+    /// Body of [`Self::encode_and_send_segment`] without the timing wrapper,
+    /// so the counter updates remain in a single place and the elapsed window
+    /// excludes only the `Instant::now()` pair itself.
+    fn encode_and_send_segment_inner<W: Write>(
         &mut self,
         writer: &mut W,
         segment: &super::PendingSegment,

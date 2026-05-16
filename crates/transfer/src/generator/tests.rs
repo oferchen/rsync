@@ -393,6 +393,51 @@ fn prepare_acl_totals_observable_without_prep() {
 }
 
 #[test]
+fn segment_dispatch_call_counter_increments() {
+    // INC_RECURSE diagnostic I2 (#2197): every record_segment_dispatch
+    // invocation must bump the global SEGMENT_DISPATCH_CALLS counter. The
+    // assertion uses >= because the counter is shared across the process and
+    // other tests may run concurrently.
+    use super::{record_segment_dispatch, segment_dispatch_totals};
+    use std::time::Duration;
+
+    let (calls_before, ns_before) = segment_dispatch_totals();
+
+    record_segment_dispatch(Duration::from_nanos(150));
+    record_segment_dispatch(Duration::from_nanos(250));
+    record_segment_dispatch(Duration::from_nanos(350));
+
+    let (calls_after, ns_after) = segment_dispatch_totals();
+    assert!(
+        calls_after >= calls_before + 3,
+        "expected at least 3 new segment dispatch calls (before={calls_before}, after={calls_after})"
+    );
+    assert!(
+        ns_after >= ns_before + 750,
+        "cumulative elapsed_ns should grow by at least 750 \
+         (before={ns_before}, after={ns_after})"
+    );
+}
+
+#[test]
+fn segment_dispatch_totals_observable_without_dispatch() {
+    // INC_RECURSE diagnostic I2 (#2197): the totals snapshot must be readable
+    // without dispatching any segment. Constructing a generator must not bump
+    // the counter on its own, so two adjacent reads with no intervening
+    // record_segment_dispatch call must return identical values.
+    use super::segment_dispatch_totals;
+
+    let (_handshake, _ctx) = test_generator();
+    let first = segment_dispatch_totals();
+    let second = segment_dispatch_totals();
+
+    assert_eq!(
+        first, second,
+        "segment_dispatch_totals must be a pure read (first={first:?}, second={second:?})"
+    );
+}
+
+#[test]
 fn build_and_send_round_trip() {
     use crate::receiver::ReceiverContext;
 

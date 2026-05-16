@@ -270,6 +270,47 @@ pub fn prepare_acl_totals() -> (u64, u64) {
     )
 }
 
+/// Total invocations of `encode_and_send_segment` across all generator
+/// transfers in this process. Diagnostic counter for sender-side INC_RECURSE
+/// (#2197, I2); quantifies how often per-directory segments are dispatched
+/// from the transfer loop and the segment scheduler, relative to the file
+/// count and the `MIN_FILECNT_LOOKAHEAD` throttling threshold.
+///
+/// Sampled at end-of-transfer in `GeneratorContext::run` via
+/// [`segment_dispatch_totals`] and emitted via `tracing::debug!`.
+static SEGMENT_DISPATCH_CALLS: AtomicU64 = AtomicU64::new(0);
+
+/// Cumulative elapsed time spent inside `encode_and_send_segment`, in
+/// nanoseconds, summed across every invocation. Diagnostic counter for
+/// sender-side INC_RECURSE (#2197, I2); lets operators see what share of the
+/// transfer wall time is spent encoding and pushing sub-list bytes onto the
+/// wire.
+static SEGMENT_DISPATCH_ELAPSED_NS: AtomicU64 = AtomicU64::new(0);
+
+/// Records one `encode_and_send_segment` invocation and adds its elapsed wall
+/// time (in nanoseconds, saturating to `u64::MAX`) to the cumulative counter.
+/// Used by `GeneratorContext::encode_and_send_segment` to bump
+/// [`SEGMENT_DISPATCH_CALLS`] / [`SEGMENT_DISPATCH_ELAPSED_NS`] for
+/// INC_RECURSE diagnostic I2 (#2197).
+pub(crate) fn record_segment_dispatch(elapsed: Duration) {
+    SEGMENT_DISPATCH_CALLS.fetch_add(1, Ordering::Relaxed);
+    let ns = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
+    SEGMENT_DISPATCH_ELAPSED_NS.fetch_add(ns, Ordering::Relaxed);
+}
+
+/// Snapshot of the global `encode_and_send_segment` counters.
+///
+/// Returns `(call_count, cumulative_elapsed_ns)`. Used by the generator
+/// finalize path to emit an end-of-transfer diagnostic line and by unit tests
+/// that assert the counters monotonically grow.
+#[must_use]
+pub fn segment_dispatch_totals() -> (u64, u64) {
+    (
+        SEGMENT_DISPATCH_CALLS.load(Ordering::Relaxed),
+        SEGMENT_DISPATCH_ELAPSED_NS.load(Ordering::Relaxed),
+    )
+}
+
 /// A pending file list sub-segment for incremental recursion sending.
 ///
 /// References entries in `GeneratorContext::file_list` by range rather than
