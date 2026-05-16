@@ -247,7 +247,7 @@ fn current_rss_bytes() -> Option<u64> {
     if rc != 0 {
         return None;
     }
-    let raw = i64::from(usage.ru_maxrss);
+    let raw = usage.ru_maxrss;
     if raw <= 0 {
         return None;
     }
