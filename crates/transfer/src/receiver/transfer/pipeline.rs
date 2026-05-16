@@ -93,9 +93,9 @@ impl ReceiverContext {
             append: self.config.flags.append,
         };
 
-        // Create the token reader once for the entire transfer session.
         // upstream: token.c uses a single compression context across all files.
-        // For zstd, the DCtx must persist across file boundaries (continuous stream).
+        // For zstd the DCtx must persist across file boundaries (continuous
+        // stream), so the reader is built once and reused for the session.
         let mut token_reader = request_config.create_token_reader();
 
         let mut pipeline = PipelineState::new(pipeline_config);
@@ -156,7 +156,6 @@ impl ReceiverContext {
                     }
                 }
 
-                // Fill the pipeline with requests.
                 // Collect a batch of files, compute signatures (potentially in
                 // parallel for incremental sync), then send requests sequentially.
                 {
@@ -322,7 +321,7 @@ impl ReceiverContext {
                     file_idx,
                 );
 
-                // Non-blocking: collect any ready disk results
+                // Non-blocking: collect any ready disk results.
                 let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_ready_results()?;
                 bytes_received += disk_bytes;
                 metadata_errors.extend(disk_meta_errors);
