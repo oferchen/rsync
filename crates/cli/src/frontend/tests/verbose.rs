@@ -216,11 +216,18 @@ fn verbose_transfer_reports_skipped_specials() {
     ]);
 
     assert_eq!(code, 0);
-    assert!(stderr.is_empty());
     assert!(std::fs::symlink_metadata(&destination).is_err());
 
-    let rendered = String::from_utf8(stdout).expect("verbose output is UTF-8");
-    assert!(rendered.contains("skipping non-regular file \"skip.pipe\""));
+    // The upstream-format NONREG notice (generator.c:1687) must appear on
+    // either stream: emit_verbose renders it to stdout at -v, and the
+    // default-on `--info=NONREG` emission feeds the diagnostic queue.
+    let stdout_text = String::from_utf8(stdout).expect("verbose stdout is UTF-8");
+    let stderr_text = String::from_utf8(stderr).expect("verbose stderr is UTF-8");
+    let notice = "skipping non-regular file \"skip.pipe\"";
+    assert!(
+        stdout_text.contains(notice) || stderr_text.contains(notice),
+        "expected NONREG notice on stdout or stderr\nstdout: {stdout_text:?}\nstderr: {stderr_text:?}"
+    );
 }
 
 #[test]
