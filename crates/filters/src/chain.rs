@@ -53,9 +53,9 @@ use crate::{FilterError, FilterRule, FilterSet};
 #[derive(Clone, Debug)]
 pub struct DirMergeConfig {
     filename: String,
-    // upstream: exclude.c - FILTRULE_NO_INHERIT flag
+    /// upstream: exclude.c - FILTRULE_NO_INHERIT flag
     inherit: bool,
-    // upstream: exclude.c - `e` modifier on dir-merge rules
+    /// upstream: exclude.c - `e` modifier on dir-merge rules
     exclude_self: bool,
     sender_only: bool,
     receiver_only: bool,
