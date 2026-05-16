@@ -183,15 +183,10 @@ impl AsyncSignatureConfig {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub struct AsyncSignatureGenerator {
-    /// Sender for work requests.
     request_sender: Sender<WorkerMessage>,
-    /// Receiver for results.
     result_receiver: Receiver<SignatureResult>,
-    /// Worker thread handles.
     workers: Vec<JoinHandle<()>>,
-    /// Configuration.
     config: AsyncSignatureConfig,
-    /// Next request ID.
     next_request_id: u64,
 }
 

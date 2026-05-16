@@ -152,7 +152,6 @@ impl VerbosityConfig {
                 config.debug.proto = 1;
             }
             _ => {
-                // Level 5+
                 // upstream debug_verbosity[5] = "CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK"
                 config.info.nonreg = 1;
                 config.info.copy = 1;
@@ -275,7 +274,6 @@ fn parse_flag_token(token: &str) -> Result<(&str, u8), String> {
         return Err("empty flag token".to_owned());
     }
 
-    // Find where the digits start
     let digit_start = token.find(|c: char| c.is_ascii_digit());
 
     match digit_start {
@@ -287,10 +285,7 @@ fn parse_flag_token(token: &str) -> Result<(&str, u8), String> {
                 .map_err(|_| format!("invalid level in flag: {token}"))?;
             Ok((name, level))
         }
-        None => {
-            // No digits, default to level 1
-            Ok((token, 1))
-        }
+        None => Ok((token, 1)),
     }
 }
 
