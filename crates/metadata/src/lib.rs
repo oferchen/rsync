@@ -160,16 +160,16 @@ pub mod fake_super;
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
 ))]
-pub use acl_exacl::{apply_acls_from_cache, get_rsync_acl, sync_acls};
+pub use acl_exacl::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
 
 #[cfg(all(
     feature = "acl",
     any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
-pub use acl_stub::{apply_acls_from_cache, get_rsync_acl, sync_acls};
+pub use acl_stub::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
 
 #[cfg(all(feature = "acl", windows))]
-pub use acl_windows::{apply_acls_from_cache, get_rsync_acl, sync_acls};
+pub use acl_windows::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
 
 #[cfg(not(any(
     all(
@@ -185,7 +185,7 @@ pub use acl_windows::{apply_acls_from_cache, get_rsync_acl, sync_acls};
     ),
     all(feature = "acl", windows),
 )))]
-pub use acl_noop::{apply_acls_from_cache, get_rsync_acl, sync_acls};
+pub use acl_noop::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
 
 pub use apply::{
     apply_directory_metadata, apply_directory_metadata_with_options, apply_file_metadata,
