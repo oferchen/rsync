@@ -530,9 +530,7 @@ impl GeneratorContext {
         let segments = &self.incremental.ndx_segments;
         NDX_CONVERT_CALLS.fetch_add(1, Ordering::Relaxed);
         NDX_CONVERT_CMPS.fetch_add(partition_point_depth(segments.len()), Ordering::Relaxed);
-        let seg_idx = segments
-            .partition_point(|&(start, _)| start <= flat_idx)
-            - 1;
+        let seg_idx = segments.partition_point(|&(start, _)| start <= flat_idx) - 1;
         let (flat_start, ndx_start) = segments[seg_idx];
         ndx_start + (flat_idx - flat_start) as i32
     }
