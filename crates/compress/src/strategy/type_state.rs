@@ -407,7 +407,6 @@ mod tests {
         let selected = default_pipeline()
             .exchange_capabilities(&["none", "zlib"])
             .select_algorithm(true);
-        // Server iterates remote list: "none" appears first and is supported
         assert_eq!(selected.selected_algorithm_name(), "none");
     }
 
@@ -416,7 +415,6 @@ mod tests {
         let selected = default_pipeline()
             .exchange_capabilities(&["none", "zlibx"])
             .select_algorithm(false);
-        // Client iterates local list: zlibx appears before "none" locally
         assert_eq!(selected.selected_algorithm_name(), "zlibx");
     }
 
@@ -539,15 +537,12 @@ mod tests {
 
     #[test]
     fn consuming_transitions_prevent_reuse() {
-        // This test verifies the consuming nature of transitions at runtime.
-        // The pipeline moves through states and prior references are dropped.
+        // Each transition consumes the previous handle; only the final
+        // strategy is reachable.
         let pipeline = default_pipeline();
         let exchanged = pipeline.exchange_capabilities(&["zlib"]);
-        // `pipeline` is now consumed - cannot be used
         let selected = exchanged.select_algorithm(false);
-        // `exchanged` is now consumed - cannot be used
         let strategy = selected.into_strategy();
-        // `selected` is now consumed - cannot be used
         assert_eq!(strategy.algorithm_name(), "zlib");
     }
 
@@ -584,7 +579,6 @@ mod tests {
             .exchange_capabilities(&["zlib", "none"])
             .select_algorithm(false)
             .into_strategy();
-        // Strategy should work regardless of level
         let mut compressed = Vec::new();
         strategy.compress(b"test data", &mut compressed).unwrap();
         assert!(!compressed.is_empty());
@@ -604,8 +598,7 @@ mod tests {
         let selected = default_pipeline()
             .exchange_capabilities(&["zlibx", "zlib", "none"])
             .select_algorithm(true);
-        // Server iterates remote: zlibx maps to zlib kind which is supported
-        // The name returned by the negotiator depends on from_name mapping
+        // zlibx resolves to the Zlib kind; either spelling is acceptable.
         let name = selected.selected_algorithm_name();
         assert!(name == "zlib" || name == "zlibx");
     }

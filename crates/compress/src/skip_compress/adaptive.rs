@@ -83,7 +83,7 @@ impl<W: Write> AdaptiveCompressor<W> {
 
     /// Finishes the compression stream and returns the inner writer.
     pub fn finish(mut self) -> io::Result<W> {
-        // Force a decision for small files that never reached the sample size.
+        // Force a decision for files smaller than the sample size.
         if !self.decision_made {
             self.make_decision()?;
         }

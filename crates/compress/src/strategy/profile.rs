@@ -149,11 +149,9 @@ impl ProtocolCompressionProfile {
     }
 }
 
-// Compile-time invariants for the LEGACY/MODERN profile constants. Stronger
-// than runtime tests: a regression here is a build failure, not a test
-// failure. Stated as `const _: () = assert!(...)` so they fold at compile
-// time, which also keeps clippy::assertions_on_constants from firing on the
-// equivalent runtime form.
+// Compile-time invariants: a regression here is a build failure, not a test
+// failure. `const _: () = assert!(...)` also sidesteps
+// clippy::assertions_on_constants.
 const _: () = assert!(!ProtocolCompressionProfile::LEGACY.supports_vstring_negotiation);
 const _: () = assert!(ProtocolCompressionProfile::MODERN.supports_vstring_negotiation);
 
@@ -300,8 +298,6 @@ mod tests {
 
     #[test]
     fn for_protocol_matches_old_kind_threshold_below_30() {
-        // Pre-30 always resolved to Zlib in the legacy
-        // CompressionAlgorithmKind::for_protocol_version match arm.
         for v in [0u8, 1, 10, 20, 27, 28, 29] {
             let p = ProtocolCompressionProfile::for_protocol(v);
             assert_eq!(p.fallback_codec, CompressionAlgorithmKind::Zlib);

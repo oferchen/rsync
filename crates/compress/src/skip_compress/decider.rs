@@ -142,8 +142,10 @@ impl CompressionDecider {
     }
 
     /// Sets the sample size for auto-detection.
+    ///
+    /// Values below 64 bytes are clamped: smaller samples do not yield
+    /// meaningful compression ratios.
     pub fn set_sample_size(&mut self, size: usize) {
-        // 64 bytes is the smallest sample that yields meaningful ratio measurements.
         self.sample_size = size.max(64);
     }
 
@@ -171,7 +173,7 @@ impl CompressionDecider {
     /// `AutoDetect` when no content is available for analysis.
     #[must_use]
     pub fn should_compress(&self, path: &Path, first_block: Option<&[u8]>) -> CompressionDecision {
-        // Extension lookup is the fastest path; check it before any content inspection.
+        // Extension lookup runs before content inspection: it is O(1).
         if let Some(ext) = Self::extract_extension(path) {
             if self.skip_extensions.contains(ext.as_str()) {
                 return CompressionDecision::Skip;
@@ -192,7 +194,6 @@ impl CompressionDecider {
             return CompressionDecision::Compress;
         }
 
-        // No content available; defer to caller's auto-detection pass.
         CompressionDecision::AutoDetect
     }
 
@@ -214,11 +215,10 @@ impl CompressionDecider {
     /// ```
     pub fn auto_detect_compressible(&self, sample: &[u8]) -> io::Result<bool> {
         if sample.is_empty() {
-            // Empty input has nothing to skip and is trivially "compressible".
             return Ok(true);
         }
 
-        // Use the fastest level: detection only needs ratio, not optimal output.
+        // Detection only needs the ratio, not optimal output: use the fastest level.
         let mut encoder = CountingZlibEncoder::new(CompressionLevel::Fast);
         encoder.write_all(sample)?;
         let compressed_len = encoder.finish()? as usize;
@@ -233,7 +233,7 @@ impl CompressionDecider {
         let file_name = path.file_name()?.to_str()?;
         let lower = file_name.to_ascii_lowercase();
 
-        // Compound suffixes like `.tar.gz` must match the full filename to win
+        // Compound suffixes (`.tar.gz`) must match the full filename to win
         // over the trailing simple extension (`gz`).
         for compound in COMPOUND_EXTENSIONS {
             if lower.ends_with(compound) {
@@ -250,7 +250,8 @@ impl CompressionDecider {
     fn detect_category_by_magic(&self, data: &[u8]) -> Option<FileCategory> {
         for sig in KNOWN_SIGNATURES {
             if sig.matches(data) {
-                // Special handling for RIFF container (can be AVI, WAV, or WEBP)
+                // RIFF is a container; the fourcc at offset 8 disambiguates
+                // AVI, WAV, and WEBP.
                 if sig.bytes == b"RIFF" {
                     if data.len() >= 12 {
                         let fourcc = &data[8..12];
@@ -258,10 +259,9 @@ impl CompressionDecider {
                             b"AVI " => FileCategory::Video,
                             b"WAVE" => FileCategory::Audio,
                             b"WEBP" => FileCategory::Image,
-                            _ => continue, // Unknown RIFF subtype, check other signatures
+                            _ => continue,
                         });
                     } else {
-                        // Incomplete RIFF header - not enough data to determine type
                         continue;
                     }
                 }

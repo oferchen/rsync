@@ -67,8 +67,7 @@ fn algorithm_kind_all() {
 
 #[test]
 fn algorithm_kind_for_protocol_version() {
-    // Pre-30 always defaults to Zlib (upstream: compat.c:556-563 - no
-    // vstring negotiation, fallback is "zlib").
+    // upstream: compat.c:556-563 - pre-30 has no vstring negotiation; zlib.
     assert_eq!(
         CompressionAlgorithmKind::for_protocol_version(28),
         CompressionAlgorithmKind::Zlib
@@ -78,9 +77,7 @@ fn algorithm_kind_for_protocol_version() {
         CompressionAlgorithmKind::Zlib
     );
 
-    // Protocol 30+ prefers Zstd when the zstd feature is compiled in
-    // (upstream: compat.c:101-102 valid_compressions_items[]). Without
-    // the feature the default falls back to Zlib.
+    // upstream: compat.c:101-102 - zstd first when SUPPORT_ZSTD is defined.
     #[cfg(feature = "zstd")]
     {
         assert_eq!(
@@ -160,10 +157,8 @@ fn zlib_strategy_different_levels() {
     fast.compress(COMPRESSIBLE_DATA, &mut fast_out).unwrap();
     best.compress(COMPRESSIBLE_DATA, &mut best_out).unwrap();
 
-    // Best should generally produce smaller or similar output
     assert!(best_out.len() <= fast_out.len() + 5);
 
-    // Both should decompress correctly
     let mut fast_decompressed = Vec::new();
     let mut best_decompressed = Vec::new();
     fast.decompress(&fast_out, &mut fast_decompressed).unwrap();
@@ -369,7 +364,7 @@ fn selector_protocol_version_28_returns_zlib() {
 
 #[test]
 fn selector_protocol_version_legacy_below_30_always_zlib() {
-    // Pre-30 has no vstring negotiation; upstream defaults to "zlib".
+    // upstream: compat.c:556-563 - no vstring negotiation; defaults to zlib.
     for v in 0..30u8 {
         let strategy = CompressionStrategySelector::for_protocol_version(v);
         assert_eq!(
@@ -383,8 +378,7 @@ fn selector_protocol_version_legacy_below_30_always_zlib() {
 #[cfg(feature = "zstd")]
 #[test]
 fn selector_protocol_version_modern_30_plus_zstd() {
-    // Protocol >= 30 with zstd compiled in: the canonical default kind is
-    // zstd (upstream: compat.c:101-102 valid_compressions_items[]).
+    // upstream: compat.c:101-102 valid_compressions_items[] - zstd first.
     for v in [30u8, 31, 32, 40, 100, 255] {
         let strategy = CompressionStrategySelector::for_protocol_version(v);
         assert_eq!(
@@ -422,9 +416,7 @@ fn kind_for_protocol_below_30_always_zlib() {
 #[cfg(feature = "zstd")]
 #[test]
 fn kind_for_protocol_30_and_above_zstd() {
-    // Upstream: compat.c:101-102 - zstd is the first preference whenever
-    // SUPPORT_ZSTD is defined and vstring negotiation is available
-    // (protocol >= 30).
+    // upstream: compat.c:101-102 - zstd first when SUPPORT_ZSTD is defined.
     for v in [30u8, 31, 32, 40, 100, 255] {
         assert_eq!(
             CompressionAlgorithmKind::for_protocol_version(v),
@@ -543,7 +535,6 @@ fn negotiate_only_none_kind() {
 
 #[test]
 fn kind_from_name_zlibx_maps_to_zlib() {
-    // "zlibx" is an alias for zlib in from_name
     let kind = CompressionAlgorithmKind::from_name("zlibx");
     assert_eq!(kind, Some(CompressionAlgorithmKind::Zlib));
 }
@@ -635,8 +626,6 @@ fn selector_for_algorithm_lz4() {
 
 #[test]
 fn negotiate_local_preference_order_wins() {
-    // When local lists Zlib before None, and remote has both,
-    // Zlib should be selected (not None).
     let local = vec![
         CompressionAlgorithmKind::Zlib,
         CompressionAlgorithmKind::None,
@@ -817,7 +806,7 @@ fn negotiate_none_kind_roundtrip() {
 
 #[test]
 fn kind_for_protocol_version_boundary_29_is_zlib() {
-    // Pre-30 always defaults to Zlib (upstream: compat.c:556-563).
+    // upstream: compat.c:556-563.
     assert_eq!(
         CompressionAlgorithmKind::for_protocol_version(29),
         CompressionAlgorithmKind::Zlib
