@@ -361,8 +361,36 @@ pub(in crate::local_copy) fn execute_transfer(
     };
 
     let (mut reader, copy_source) = if let Some(ref override_path) = copy_source_override {
-        let file = open_source_file(override_path, context.open_noatime_enabled())
-            .map_err(|error| LocalCopyError::io("copy file", override_path.clone(), error))?;
+        let file = match open_source_file(override_path, context.open_noatime_enabled()) {
+            Ok(file) => file,
+            Err(error) => {
+                // upstream: generator.c:919 - rsyserr(FINFO, errno,
+                // "copy_file %s => %s", full_fname(src), copy_to) under
+                // INFO_GTE(COPY, 1). The override path is the alt-base
+                // (`--copy-dest` / `--link-dest` after cross-device degrade)
+                // candidate; failing to open it is the local-copy analog of
+                // upstream's `copy_file()` failure. Wording mirrors
+                // `rsyserr`'s `copy_file SRC => DST: STRERROR (ERRNO)` form.
+                let errno = error.raw_os_error().unwrap_or(0);
+                let display = error.to_string();
+                let suffix = format!(" (os error {errno})");
+                let trimmed = display.strip_suffix(&suffix).unwrap_or(&display);
+                info_log!(
+                    Copy,
+                    1,
+                    "copy_file {} => {}: {} ({})",
+                    override_path.display(),
+                    destination.display(),
+                    trimmed,
+                    errno
+                );
+                return Err(LocalCopyError::io(
+                    "copy file",
+                    override_path.clone(),
+                    error,
+                ));
+            }
+        };
         (file, override_path.as_path())
     } else {
         (reader, source)
