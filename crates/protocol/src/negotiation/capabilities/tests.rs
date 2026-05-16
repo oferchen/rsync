@@ -238,7 +238,9 @@ fn test_negotiate_nstr_messages_match_upstream_wording_client() {
 }
 
 /// Confirms `--debug=nstr` level 1 emits upstream's per-side "negotiated"
-/// summary (compat.c:215, 866) using exact wording.
+/// summary (checksum.c:206-211, compat.c:213-219) using exact wording,
+/// including the `(level <N>)` clause that upstream always renders for the
+/// compress summary.
 #[test]
 fn test_negotiate_nstr_summary_matches_upstream_wording_client() {
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
@@ -274,11 +276,73 @@ fn test_negotiate_nstr_summary_matches_upstream_wording_client() {
             .any(|m| m == "Client negotiated checksum: md5"),
         "missing upstream level-1 checksum summary: {messages:?}"
     );
+    // upstream: compat.c:215-218 - "(level %d)" renders verbatim, even
+    // when --compress-level was not supplied (CLVL_NOT_SPECIFIED = INT_MIN).
+    let expected_compress = format!("Client negotiated compress: zlib (level {})", i32::MIN);
     assert!(
-        messages
-            .iter()
-            .any(|m| m == "Client negotiated compress: zlib"),
+        messages.iter().any(|m| m == &expected_compress),
         "missing upstream level-1 compress summary: {messages:?}"
+    );
+}
+
+/// Confirms `--checksum-choice` suppresses the `" negotiated"` qualifier
+/// in the per-side summary, mirroring upstream's
+/// `valid_checksums.negotiated_nni == NULL` branch (checksum.c:209).
+#[test]
+fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.nstr = 1;
+    init(cfg);
+    let _ = drain_events();
+
+    let protocol = ProtocolVersion::try_from(32).unwrap();
+    // Peer advertises md5 so the forced choice succeeds.
+    let client_response = b"\x03md5\x04zlib";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    let _ = negotiate_capabilities_with_override(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        &NegotiationConfig {
+            do_negotiation: true,
+            send_compression: true,
+            is_daemon_mode: false,
+            is_server: false,
+            checksum_override: Some(ChecksumAlgorithm::MD5),
+            compression_override: None,
+        },
+    )
+    .unwrap();
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug {
+                flag: DebugFlag::Nstr,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    // upstream: checksum.c:209 - the " negotiated" qualifier renders only
+    // when valid_checksums.negotiated_nni is set. --checksum-choice
+    // bypasses negotiate_the_strings() (compat.c:175-187), so the
+    // qualifier must render blank here.
+    assert!(
+        messages.iter().any(|m| m == "Client checksum: md5"),
+        "missing forced-choice checksum summary: {messages:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|m| m == "Client negotiated checksum: md5"),
+        "forced-choice summary must not include ' negotiated': {messages:?}"
     );
 }
 

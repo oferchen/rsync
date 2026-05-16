@@ -9,6 +9,7 @@ use std::net::TcpStream;
 use std::path::Path;
 
 use protocol::ProtocolVersion;
+use protocol::nstr::{trace_daemon_auth_negotiated, trace_daemon_greeting_auth_list};
 
 use crate::auth::{DaemonAuthDigest, parse_daemon_digest_list, select_daemon_digest};
 
@@ -110,17 +111,27 @@ fn parse_protocol_from_greeting(greeting: &str) -> Result<ProtocolVersion, Clien
 ///
 /// Returns the list of advertised digests for authentication.
 fn parse_digest_list_from_greeting(greeting: &str) -> Vec<DaemonAuthDigest> {
+    parse_daemon_digest_list(extract_digest_list_from_greeting(greeting))
+}
+
+/// Extracts the raw digest-list slice from a daemon greeting.
+///
+/// Returns the substring after the protocol version (trimmed of trailing
+/// newlines) so callers can emit it verbatim for `--debug=NSTR`
+/// diagnostics. Returns `None` when no digest list is present.
+fn extract_digest_list_from_greeting(greeting: &str) -> Option<&str> {
     let rest = greeting.get(9..).unwrap_or("");
 
     let after_version = rest
         .split_once(char::is_whitespace)
-        .map_or("", |(_, rest)| rest);
+        .map_or("", |(_, rest)| rest)
+        .trim_end_matches(['\r', '\n']);
 
-    parse_daemon_digest_list(if after_version.is_empty() {
+    if after_version.is_empty() {
         None
     } else {
         Some(after_version)
-    })
+    }
 }
 
 /// Performs the rsync daemon handshake protocol.
@@ -168,6 +179,14 @@ pub(crate) fn perform_daemon_handshake(
     // upstream: exchange_protocols line 178 - sscanf(buf, "@RSYNCD: %d.%d", ...)
     let remote_protocol = parse_protocol_from_greeting(&greeting)?;
     let advertised_digests = parse_digest_list_from_greeting(&greeting);
+
+    // upstream: compat.c:843-844 - `am_client && DEBUG_GTE(NSTR, 2)` emits
+    // "Client auth list (on client): <list>" using the raw token sequence
+    // from `valid_auth_checksums`. The daemon greeting carries the same
+    // list verbatim, so we echo whatever the server advertised.
+    if let Some(list) = extract_digest_list_from_greeting(&greeting) {
+        trace_daemon_greeting_auth_list(list);
+    }
 
     // upstream: compat.c:832-845 - for protocol 30+, client must include
     // supported auth digests.
@@ -249,6 +268,11 @@ pub(crate) fn perform_daemon_handshake(
 
             // upstream: compat.c:858 - fallback depends on protocol version
             let digest = select_daemon_digest(&advertised_digests, remote_protocol.as_u8());
+
+            // upstream: compat.c:865-868 - `DEBUG_GTE(NSTR, 1)` emits
+            // "Client negotiated auth: <name>" after the strongest mutual
+            // digest is selected.
+            trace_daemon_auth_negotiated(digest.name());
 
             let auth_context = DaemonAuthContext::new(username, secret, digest);
             send_daemon_auth_credentials(&mut reader, &auth_context, challenge, &request.address)?;
