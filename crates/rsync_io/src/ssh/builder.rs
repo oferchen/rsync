@@ -9,6 +9,7 @@ use super::aux_channel::{build_stderr_channel, configure_stderr_channel};
 use super::connection::SshConnection;
 use super::parse::{RemoteShellParseError, parse_remote_shell};
 use logging::debug_log;
+use protocol::cmd::{trace_cmd_argv, trace_opening_connection};
 
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
@@ -307,16 +308,20 @@ impl SshCommand {
     pub fn spawn(&self) -> io::Result<SshConnection> {
         let (program, args) = self.command_parts();
 
-        debug_log!(
-            Cmd,
-            1,
-            "spawning ssh: {} {}",
-            program.to_string_lossy(),
-            args.iter()
-                .map(|a| a.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
+        // upstream: pipe.c:54-55 - "opening connection using:" precedes every
+        // remote-shell spawn. The argv passed to upstream is the full child
+        // command (program + args), so we prepend the program here.
+        // upstream: main.c:620-624 - DEBUG_GTE(CMD, 2) follows with the
+        // per-index `cmd[i]=value` enumeration once argv is finalised. Both
+        // helpers gate internally on `DebugFlag::Cmd`; the surrounding
+        // `debug_gte` check avoids the Vec allocation when CMD is disabled.
+        if logging::debug_gte(logging::DebugFlag::Cmd, 1) {
+            let full_argv: Vec<OsString> = std::iter::once(program.clone())
+                .chain(args.iter().cloned())
+                .collect();
+            trace_opening_connection(&full_argv);
+            trace_cmd_argv(&full_argv);
+        }
 
         let mut command = Command::new(&program);
         command.stdin(Stdio::piped());
