@@ -132,7 +132,6 @@ impl PressureTracker {
 
         let miss_rate = misses as f64 / total as f64;
 
-        // High miss rate: pool is too small.
         if miss_rate > MISS_RATE_GROW_THRESHOLD {
             let new_capacity = (current_capacity * GROW_FACTOR).min(MAX_CAPACITY);
             if new_capacity > current_capacity {
@@ -141,16 +140,15 @@ impl PressureTracker {
             return ResizeAction::Hold;
         }
 
-        // Low utilization: pool is too large.
         let utilization = if current_capacity > 0 {
             current_available as f64 / current_capacity as f64
         } else {
             0.0
         };
 
-        // Only shrink when the pool is mostly idle AND miss rate is low.
-        // The low miss rate check prevents shrinking when all buffers are
-        // checked out (available = 0, utilization = 0) but demand is high.
+        // Only shrink when the pool is mostly idle AND the miss rate is low.
+        // The miss-rate gate prevents shrinking when buffers are all checked
+        // out (available = 0, utilization = 0) but demand is high.
         let _ = hits; // Suppress unused warning; hits contribute to total.
         if utilization < UTILIZATION_SHRINK_THRESHOLD && miss_rate < MISS_RATE_GROW_THRESHOLD / 2.0
         {

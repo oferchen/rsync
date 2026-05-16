@@ -445,11 +445,7 @@ impl DeltaResult {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SpillCodec implementation for DeltaResult
-// ---------------------------------------------------------------------------
-//
-// Binary format (all little-endian):
+// Binary spill format for `DeltaResult` (all little-endian):
 //   [u32  ndx]
 //   [u64  sequence]
 //   [u64  bytes_written]
@@ -458,7 +454,6 @@ impl DeltaResult {
 //   [u8   status_tag]     0 = Success, 1 = NeedsRedo, 2 = Failed
 //   [u32  reason_len]     (only if status_tag != 0)
 //   [u8*  reason_bytes]   (only if status_tag != 0)
-
 impl super::spill::SpillCodec for DeltaResult {
     fn encode(&self, w: &mut dyn std::io::Write) -> std::io::Result<()> {
         w.write_all(&self.ndx.get().to_le_bytes())?;

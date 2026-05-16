@@ -89,7 +89,7 @@ impl DeferredSync {
     pub fn new(strategy: SyncStrategy) -> Self {
         let threshold = match strategy {
             SyncStrategy::Batched(n) => n,
-            _ => 100, // Default threshold
+            _ => 100,
         };
 
         Self {
@@ -132,9 +132,7 @@ impl DeferredSync {
             SyncStrategy::Batched(_) | SyncStrategy::Deferred => {
                 self.pending_files.push(path);
             }
-            SyncStrategy::None => {
-                // No-op
-            }
+            SyncStrategy::None => {}
         }
         Ok(())
     }
@@ -166,12 +164,9 @@ impl DeferredSync {
     /// on error.
     pub fn flush(&mut self) -> io::Result<()> {
         match self.strategy {
-            SyncStrategy::None => {
-                // No-op
-            }
-            SyncStrategy::Immediate => {
-                // Already synced immediately
-            }
+            // `None` and `Immediate` need no flush: the former never queues,
+            // the latter already synced at register-time.
+            SyncStrategy::None | SyncStrategy::Immediate => {}
             SyncStrategy::DirectoryLevel => {
                 self.flush_directories()?;
             }
@@ -187,7 +182,9 @@ impl DeferredSync {
 
     /// Flushes pending files.
     fn flush_files(&self) -> io::Result<()> {
-        // If we have many files, try to use syncfs for efficiency
+        // For large batches, syncfs() amortises the syscall cost across the
+        // entire filesystem in one call. Fall back to per-file fsync on
+        // platforms without syncfs or when the call fails.
         #[cfg(target_os = "linux")]
         if self.pending_files.len() > 10 {
             if let Some(first) = self.pending_files.first() {
@@ -197,10 +194,9 @@ impl DeferredSync {
             }
         }
 
-        // Fall back to individual syncs
         for path in &self.pending_files {
             if let Err(e) = sync_file(path) {
-                // Log but continue - file might have been moved/deleted
+                // A vanished file is not a fatal sync error; skip and continue.
                 if e.kind() != io::ErrorKind::NotFound {
                     return Err(e);
                 }
@@ -252,8 +248,10 @@ impl Default for DeferredSync {
 }
 
 /// Syncs a single file to disk.
+///
+/// Opens the file read+write because Windows `FlushFileBuffers` requires write
+/// access; a read-only handle silently no-ops the flush.
 fn sync_file(path: &Path) -> io::Result<()> {
-    // On Windows, FlushFileBuffers requires write access; read-only won't work.
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -287,7 +285,6 @@ fn sync_filesystem(path: &Path) -> io::Result<()> {
 #[cfg(not(target_os = "linux"))]
 #[allow(dead_code)] // REASON: call site is cfg-gated to linux; this stub used only in tests
 fn sync_filesystem(_path: &Path) -> io::Result<()> {
-    // Not available on this platform
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "syncfs not available",
