@@ -130,7 +130,7 @@ Producer counts come from
 | FLIST      | 4 | 4 | W_SND\|W_REC | Debug file-list operations (levels 1-4) | `crates/flist/src/file_list_walker.rs:32,89,101,119,130,241`, `crates/transfer/src/generator/file_list/{inc_recurse.rs:46,mod.rs:103,219}`, `crates/transfer/src/generator/transfer.rs:188,202,212,217`, `crates/transfer/src/receiver/file_list.rs:154,215,226`, `crates/protocol/src/flist/sort.rs:208,375`, `crates/protocol/src/flist/incremental/{ready_entry.rs,mod.rs}`, `crates/protocol/src/flist/read/{flags.rs,metadata.rs,mod.rs,name.rs}` (23 sites covering levels 1-4) | impl |
 | FUZZY      | 2 | 2 | W_REC | Debug fuzzy scoring (levels 1-2) | none | missing |
 | GENR       | 1 | u8::MAX | W_REC | Debug generator functions | `crates/transfer/src/receiver/transfer.rs:setup_transfer` (1 site at level 1), `crates/transfer/src/receiver/transfer/candidates.rs:build_files_to_transfer` (1 site at level 1), `crates/transfer/src/receiver/transfer/phases.rs:exchange_phase_done` and `:finalize_transfer` (3 sites at level 1, upstream-verbatim wording from `generator.c:1234,2260,2356,2367,2393,2436`) | impl (D14 RESOLVED) |
-| HASH       | 1 | u8::MAX | W_SND\|W_REC | Debug hashtable code | none | missing |
+| HASH       | 1 | u8::MAX | W_SND\|W_REC | Debug hashtable code | `crates/matching/src/index/trace.rs` (created/destroyed/growing helpers) wired into `DeltaSignatureIndex::from_signature_with_role`, `:rebuild`, and `Drop` (3 sites at level 1, upstream-verbatim wording from `hashtable.c:45-53,60-63,100-103`) | impl (G3 partial - HASH RESOLVED) |
 | HLINK      | 3 (help says 1-3) | 3 | W_SND\|W_REC | Debug hard-link actions (levels 1-3) | none | missing |
 | ICONV      | 2 | 2 | W_CLI\|W_SRV | Debug iconv character conversions (levels 1-2) | `crates/core/src/client/config/iconv.rs:resolve_converter` (1 site at level 1, upstream-verbatim wording from `rsync.c:142-145`); helper emissions for the level-2 message-charset probe live in `crates/protocol/src/iconv/trace.rs` (upstream `rsync.c:99-110`). | impl (G3 partial - ICONV RESOLVED) |
 | IO         | 4 | 4 | W_CLI\|W_SRV | Debug I/O routines (levels 1-4) | `crates/transfer/src/disk_commit/thread.rs:117,125,132,149,153,155` plus `tracing::*(target: "rsync::io", ...)` in `crates/protocol/src/debug_io.rs`, `crates/fast_io/src/debug_io.rs`, `crates/rsync_io/src/debug_io.rs` (`debug_io.rs` trace funcs not called from production - see gap G3) | partial (levels 1 and 3 emitted via `debug_log!`; trace-func helpers unwired) |
@@ -144,9 +144,9 @@ Producer counts come from
 Total: 24 upstream `DEBUG_*` flags, matching `COUNT_DEBUG = DEBUG_TIME + 1`
 (`rsync.h:1462`). Status roll-up:
 
-- **impl**: 11 - ACL, BACKUP, DUP, FILTER, FLIST, GENR, ICONV, NSTR, OWN, SEND, TIME.
+- **impl**: 12 - ACL, BACKUP, DUP, FILTER, FLIST, GENR, HASH, ICONV, NSTR, OWN, SEND, TIME.
 - **partial**: 7 - CONNECT, DEL, DELTASUM, EXIT, IO, PROTO, RECV.
-- **missing**: 6 - BIND, CHDIR, CMD, FUZZY, HASH, HLINK.
+- **missing**: 5 - BIND, CHDIR, CMD, FUZZY, HLINK.
 
 `SEND` (D13) is now wired into the generator's send loop with the
 five upstream-verbatim messages from `sender.c send_files` (lines
@@ -302,7 +302,7 @@ requested level before the event materialises.
 |----|----------|--------|-------------|
 | G1 | Low | open | `ALL<N>` and `NONE0` syntactic forms are rejected as unknown tokens (`flags/debug.rs:279`). Upstream accepts them (`options.c:443-445`, `:452-453`, `:450-451`) and applies the trailing digit. Fix: extend `DebugFlagSettings::apply` to detect `all<digit>` and `none<digit>` before falling through to `parse_flag_and_level`, then call `enable_all_to_level(N)` / `disable_all()`. Cap N at 4 to match `MAX_OUT_LEVEL`. |
 | G2 | Low | open | Per-flag cap missing for upstream-max-1 flags. `acl`, `bind`, `chdir`, `dup`, `genr`, `hash`, `nstr`, `proto`, `recv`, `send` accept any `u8` value (no `if level > N` guard in `flags/debug.rs::apply`). Upstream silently clamps to `MAX_OUT_LEVEL = 4`. Fix: add `if level > 4 { return Err(debug_flag_error(display)); }` guards on those arms, or a single shared cap before the per-flag dispatch. |
-| G3 | High | open | 6 flags have no production producer (BIND, CHDIR, CMD, FUZZY, HASH, HLINK). The previously listed ACL, BACKUP, GENR, ICONV, NSTR, OWN, and SEND emissions are now wired (D14, I-ACL, I-ICONV, NSTR follow-up, OWN follow-up, D13 RESOLVED, BACKUP RESOLVED). Owning crates for the remaining producers: `metadata` (HLINK), `engine` (FUZZY), `transfer`/`rsync_io` (BIND, CMD), `checksums` (HASH), `core` (CHDIR). |
+| G3 | High | open | 5 flags have no production producer (BIND, CHDIR, CMD, FUZZY, HLINK). The previously listed ACL, BACKUP, GENR, HASH, ICONV, NSTR, OWN, and SEND emissions are now wired (D14, I-ACL, I-ICONV, NSTR follow-up, OWN follow-up, D13 RESOLVED, BACKUP RESOLVED, HASH RESOLVED). Owning crates for the remaining producers: `metadata` (HLINK), `engine` (FUZZY), `transfer`/`rsync_io` (BIND, CMD), `core` (CHDIR). |
 | G4 | Low | open | `limit_output_verbosity` (upstream `options.c:527-553`) is not implemented. User-supplied per-flag levels are not clamped to the peer's `-v` ceiling during option exchange. Mitigation: implement on `server_options` parsing path and re-run the ladder with `LIMIT_PRIORITY` to compute the cap. |
 | G5 | Low | open | `make_output_option` (upstream `options.c:340-425`) is not implemented. Remote command forwarding of user-priority debug flags relies on raw passthrough rather than upstream's deduplicated `--debug=ALL2,NONREG0,...` style. User-visible effect is limited to the exact command string the peer sees in `ps` output. |
 | G6 | Low | open | `--debug=help` text omits the per-verbosity summary block (`0)`, `1)`, ..., `5)`) that upstream's `output_item_help` prints at `options.c:499-509`. Cosmetic but useful for discovery. |
@@ -319,7 +319,7 @@ requested level before the event materialises.
 | CHDIR | `crates/core/src/client/path/` and `crates/daemon/src/jail/` | After every `chdir()` syscall. Upstream emits in `util1.c:do_chdir`. |
 | CMD | `crates/cli/src/frontend/execution/drive/options.rs` | When `--server` argv is built and when SSH command line is constructed. Upstream emits in `options.c:server_options` and `pipe.c:do_cmd`. |
 | FUZZY | `crates/transfer/src/generator/fuzzy.rs` (if present, else `match` crate) | When a fuzzy basis is selected. Upstream emits in `generator.c:find_fuzzy`. |
-| HASH | `crates/checksums/src/strong/` and `crates/match/src/hashtable.rs` | At hashtable construction and lookup. Upstream emits in `match.c:build_hash_table`. |
+| HASH | wired in `crates/matching/src/index/builder.rs::from_signature_with_role` (created at level 1), `:rebuild` (growing at level 1), and `crates/matching/src/index/mod.rs::Drop` (destroyed at level 1). Helpers live in `crates/matching/src/index/trace.rs` and mirror upstream `hashtable.c:45-53,60-63,100-103`. |
 | HLINK | `crates/transfer/src/receiver/directory/links.rs` (extend existing RECV emitter) | When a hardlink master/follower is resolved. Upstream emits in `hlink.c:hard_link_one`. |
 | ICONV | wired in `crates/core/src/client/config/iconv.rs::resolve_converter` (level 1) with helpers in `crates/protocol/src/iconv/trace.rs` for the level-2 message-charset probe. Upstream emits at `rsync.c:99-110,142-145` (`setup_iconv`); none of upstream's emissions live in `flist.c`. |
 | NSTR | `crates/rsync_io/src/negotiation/` | During server/client capability string exchange. Upstream emits in `compat.c:set_allow_inc_recurse` and friends. |

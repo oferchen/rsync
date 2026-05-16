@@ -32,5 +32,8 @@ pub use fuzzy::{
     trace_fuzzy_basis_selected, trace_fuzzy_distance, trace_fuzzy_size_mtime_match,
 };
 pub use generator::{DeltaGenerator, generate_delta};
-pub use index::{DeltaSignatureIndex, MatchedBlocks};
+pub use index::{
+    DeltaSignatureIndex, HASH_KEY_BITS, HashtableRole, MatchedBlocks, trace_hashtable_created,
+    trace_hashtable_destroyed, trace_hashtable_growing,
+};
 pub use script::{DeltaScript, DeltaToken, apply_delta};
