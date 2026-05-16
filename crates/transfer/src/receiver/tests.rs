@@ -3835,3 +3835,65 @@ fn receive_file_list_ignore_errors_suppresses_io_error() {
         "ignore_errors should suppress io_error accumulation"
     );
 }
+
+#[test]
+fn receiver_ndx_convert_call_counter_increments() {
+    // INC_RECURSE diagnostic I4 (#2199): every flat_to_wire_ndx invocation
+    // must bump the global call counter. The assertion uses >= because the
+    // counter is shared across the process and other tests may run
+    // concurrently.
+    use super::ndx_convert_totals;
+
+    let handshake = test_handshake();
+    let config = test_config();
+    let ctx = ReceiverContext::new(&handshake, config);
+
+    let (calls_before, _) = ndx_convert_totals();
+
+    let _ = ctx.flat_to_wire_ndx(0);
+    let _ = ctx.flat_to_wire_ndx(0);
+    let _ = ctx.flat_to_wire_ndx(0);
+
+    let (calls_after, _) = ndx_convert_totals();
+    assert!(
+        calls_after >= calls_before + 3,
+        "expected at least 3 new ndx_convert calls (before={calls_before}, after={calls_after})"
+    );
+}
+
+#[test]
+fn receiver_ndx_convert_partition_point_depth_grows() {
+    // INC_RECURSE diagnostic I4 (#2199): the cumulative partition_point depth
+    // must monotonically grow as the segment table is queried. A 4-segment
+    // table contributes at least depth(4)=3 per call. Uses >= because the
+    // counter is shared across the process.
+    use super::{ndx_convert_totals, partition_point_depth};
+
+    let handshake = test_handshake();
+    let config = test_config();
+    let mut ctx = ReceiverContext::new(&handshake, config);
+    // Default ndx_segments has one entry; extend it to four.
+    ctx.ndx_segments.push((10, 11));
+    ctx.ndx_segments.push((20, 22));
+    ctx.ndx_segments.push((30, 33));
+
+    let per_call_depth = partition_point_depth(ctx.ndx_segments.len());
+    assert!(
+        per_call_depth >= 3,
+        "expected partition_point_depth(4) >= 3, got {per_call_depth}"
+    );
+
+    const N: u64 = 8;
+    let (_, cmps_before) = ndx_convert_totals();
+    for _ in 0..N {
+        let _ = ctx.flat_to_wire_ndx(0);
+    }
+    let (_, cmps_after) = ndx_convert_totals();
+
+    assert!(
+        cmps_after >= cmps_before + N * per_call_depth,
+        "cumulative partition_point depth should grow by at least {} \
+         (before={cmps_before}, after={cmps_after})",
+        N * per_call_depth
+    );
+}

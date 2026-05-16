@@ -812,6 +812,26 @@ impl GeneratorContext {
         let flist_xfertime =
             calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
 
+        // INC_RECURSE diagnostic I4 (#2199): emit cumulative NDX conversion
+        // call count and partition_point comparison depth. Aggregated across
+        // all generator transfers in this process so operators can see how
+        // hot the wire/flat conversion path is relative to file counts.
+        let (ndx_calls, ndx_cmps) = super::ndx_convert_totals();
+        debug_log!(
+            Genr,
+            1,
+            "generator ndx_convert totals: calls={} partition_point_depth={}",
+            ndx_calls,
+            ndx_cmps
+        );
+        #[cfg(feature = "tracing")]
+        ::tracing::debug!(
+            target: "rsync::generator::ndx_convert",
+            calls = ndx_calls,
+            partition_point_depth = ndx_cmps,
+            "generator ndx_convert totals"
+        );
+
         Ok(GeneratorStats {
             files_listed: file_count,
             files_transferred: transfer_result.files_transferred,
