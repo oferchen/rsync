@@ -1,17 +1,9 @@
-// Comprehensive tests for MessageCode and LogCode handling
-//
-// These tests verify:
-// - Wire format compatibility with upstream rsync 3.4.1
-// - Complete coverage of all message code variants
-// - Edge cases in parsing, formatting, and conversion
-// - Semantic correctness of message classification
-// - Cross-component integration between MessageCode and LogCode
+//! Comprehensive tests for MessageCode and LogCode handling, covering wire
+//! format compatibility with upstream rsync 3.4.1, complete variant coverage,
+//! parsing/conversion edge cases, and cross-component integration.
 
 use super::*;
 use std::collections::HashMap;
-
-// Wire Format Compatibility Tests
-// These tests verify that our message codes match upstream rsync's exact values
 
 /// Verifies that all message codes have the exact numeric values expected by
 /// upstream rsync 3.4.1. These values are defined in rsync.h and must match

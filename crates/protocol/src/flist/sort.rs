@@ -127,27 +127,26 @@ fn compare_with_keys(bytes_a: &[u8], key_a: &SortKey, bytes_b: &[u8], key_b: &So
     let a_is_dir = key_a.is_dir;
     let b_is_dir = key_b.is_dir;
 
-    // Compare byte by byte, treating directory names as having implicit '/'
+    // Compare byte by byte, treating directory names as having an implicit
+    // trailing '/' (so `dir` compares as `dir/`).
     let mut i = 0;
     loop {
-        // Get effective byte at position i, with implicit '/' for directories at end
         let ch_a = if i < bytes_a.len() {
             bytes_a[i]
         } else if i == bytes_a.len() && a_is_dir {
-            b'/' // Implicit trailing slash for directory
+            b'/'
         } else {
-            0 // Past end
+            0
         };
 
         let ch_b = if i < bytes_b.len() {
             bytes_b[i]
         } else if i == bytes_b.len() && b_is_dir {
-            b'/' // Implicit trailing slash for directory
+            b'/'
         } else {
-            0 // Past end
+            0
         };
 
-        // Check for end condition
         let a_done = i > bytes_a.len() || (i == bytes_a.len() && !a_is_dir);
         let b_done = i > bytes_b.len() || (i == bytes_b.len() && !b_is_dir);
 
