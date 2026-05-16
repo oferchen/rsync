@@ -44,6 +44,7 @@ use checksums::RollingChecksum;
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use filters::FilterRule;
+use logging::info_log;
 use protocol::flist::FileListWriter;
 
 /// Aggregated result of a local copy operation, containing the transfer
