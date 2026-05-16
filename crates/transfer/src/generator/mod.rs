@@ -88,6 +88,7 @@ mod protocol_io;
 mod tests;
 mod transfer;
 
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -200,6 +201,34 @@ pub fn ndx_convert_totals() -> (u64, u64) {
         NDX_CONVERT_CALLS.load(Ordering::Relaxed),
         NDX_CONVERT_CMPS.load(Ordering::Relaxed),
     )
+}
+
+/// Total `writer.flush()` invocations on the generator transfer hot path across
+/// all generator transfers in this process. Diagnostic counter for sender-side
+/// INC_RECURSE (#2198, I3) - quantifies how often the sender forces a flush
+/// per file and per NDX-control echo, relative to the file count.
+///
+/// Sampled at end-of-transfer in `GeneratorContext::run` via
+/// [`flush_rate_totals`] and emitted via `tracing::debug!`.
+static FLUSH_CALLS: AtomicU64 = AtomicU64::new(0);
+
+/// Records a flush invocation on the generator transfer hot path. Used by the
+/// transfer loop (per-iteration, NDX_DONE echo, dry-run, final NDX_DONE) to
+/// bump [`FLUSH_CALLS`] for INC_RECURSE diagnostic I3 (#2198).
+pub(crate) fn flush_with_count<W: Write>(writer: &mut W) -> io::Result<()> {
+    FLUSH_CALLS.fetch_add(1, Ordering::Relaxed);
+    writer.flush()
+}
+
+/// Snapshot of the global generator flush counter.
+///
+/// Returns the cumulative number of `writer.flush()` calls recorded by
+/// [`flush_with_count`]. Used by the generator finalize path to emit an
+/// end-of-transfer diagnostic line and by unit tests that assert the counter
+/// monotonically grows.
+#[must_use]
+pub fn flush_rate_totals() -> u64 {
+    FLUSH_CALLS.load(Ordering::Relaxed)
 }
 
 /// A pending file list sub-segment for incremental recursion sending.
