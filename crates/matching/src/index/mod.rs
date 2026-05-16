@@ -12,6 +12,7 @@ mod bithash;
 mod builder;
 mod compact_lookup;
 mod matched_blocks;
+mod trace;
 
 #[cfg(test)]
 mod bithash_tests;
@@ -29,6 +30,10 @@ use signature::{SignatureAlgorithm, SignatureBlock};
 use bithash::BitHash;
 use compact_lookup::CompactLookup;
 pub use matched_blocks::MatchedBlocks;
+pub use trace::{
+    HASH_KEY_BITS, HashtableRole, trace_created as trace_hashtable_created,
+    trace_destroyed as trace_hashtable_destroyed, trace_growing as trace_hashtable_growing,
+};
 
 /// Size of the tag table for quick rolling checksum rejection (2^16 entries).
 ///
@@ -61,9 +66,29 @@ pub struct DeltaSignatureIndex {
     /// the bithash rejects ~7/8 of post-tag misses before the hash probe.
     /// Mirrors zsync's `librcksum/rsum.c:362-366` probe expression.
     bithash: BitHash,
+    /// Role used for `--debug=HASH` `[<role>]` prefixes on the create,
+    /// grow, and destroy lifecycle emissions. Mirrors upstream
+    /// `who_am_i()` (`hashtable.c:51,61,101`).
+    role: HashtableRole,
+    /// Slot count tracked across rebuilds for the matching destroy emission.
+    last_traced_size: usize,
 }
 
 impl DeltaSignatureIndex {
+    /// Returns the role used for `--debug=HASH` `[<role>]` prefixes.
+    #[must_use]
+    pub const fn role(&self) -> HashtableRole {
+        self.role
+    }
+
+    /// Overrides the role used in subsequent HASH emissions.
+    ///
+    /// Useful for call sites that build the index in a generic helper
+    /// and only learn the actual `who_am_i()` value later.
+    pub fn set_role(&mut self, role: HashtableRole) {
+        self.role = role;
+    }
+
     /// Returns the canonical block length expressed in bytes.
     #[must_use]
     pub const fn block_length(&self) -> usize {
@@ -122,8 +147,9 @@ impl DeltaSignatureIndex {
             return None;
         }
 
-        // zsync-style one-sided bithash prefilter (no false negatives)
-        // rejects ~7/8 of post-tag misses before the hash-table probe.
+        // zsync-style bithash prefilter: rejects ~7/8 of post-tag misses
+        // using both sum halves before the hash-table probe. One-sided, so
+        // never produces a false negative.
         if !self.bithash.contains(digest.value()) {
             return None;
         }
@@ -318,5 +344,32 @@ impl DeltaSignatureIndex {
             offset = end;
         }
         run
+    }
+}
+
+impl Drop for DeltaSignatureIndex {
+    /// Emits `--debug=HASH` level 1 destroy diagnostic, mirroring upstream
+    /// rsync's `hashtable_destroy` (`hashtable.c:60-63`).
+    ///
+    /// Clones produced by `#[derive(Clone)]` carry the same `role` and
+    /// `last_traced_size`, so each clone's drop fires an independent
+    /// upstream-format line - the count matches the create count when
+    /// callers honour the `Drop` contract.
+    fn drop(&mut self) {
+        let id = self.identifier();
+        trace::trace_destroyed(self.role, id, self.last_traced_size);
+    }
+}
+
+impl DeltaSignatureIndex {
+    /// Returns a stable identifier for `--debug=HASH` emissions.
+    ///
+    /// Upstream prints `(long)tbl` (the heap address of the hashtable
+    /// struct). We approximate that with the address of the index's
+    /// own struct so the create/destroy emissions for a single index
+    /// share the same identifier.
+    #[inline]
+    pub(super) fn identifier(&self) -> usize {
+        self as *const Self as usize
     }
 }
