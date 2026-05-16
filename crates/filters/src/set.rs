@@ -10,8 +10,8 @@
 //! Both chains use first-match-wins semantics. If no rule matches in the
 //! include/exclude chain, the path is included by default.
 //!
-//! // upstream: exclude.c:check_filter() - first-match-wins evaluation loop
-//! // upstream: exclude.c:parse_filter_str() - rule parsing and compilation
+//! upstream: exclude.c:check_filter() - first-match-wins evaluation loop
+//! upstream: exclude.c:parse_filter_str() - rule parsing and compilation
 
 use std::path::Path;
 use std::sync::Arc;
