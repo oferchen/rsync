@@ -821,7 +821,6 @@ fn compression_level_none_roundtrip() {
     let compressed = compress_to_vec(&payload, CompressionLevel::None).expect("compress none");
     let decompressed = decompress_to_vec(&compressed).expect("decompress none");
     assert_eq!(decompressed, payload);
-    // Level None stores data verbatim - compressed size >= original
     assert!(compressed.len() >= payload.len());
 }
 
@@ -976,7 +975,6 @@ fn large_data_streaming_roundtrip() {
 
 #[test]
 fn incompressible_data_roundtrip() {
-    // Random-like data that resists compression
     let payload: Vec<u8> = (0..512).map(|i| ((i * 137 + 73) % 256) as u8).collect();
     let compressed =
         compress_to_vec(&payload, CompressionLevel::Best).expect("compress incompressible");
@@ -998,8 +996,8 @@ fn decompress_truncated_data_returns_error() {
         compress_to_vec(&payload, CompressionLevel::Default).expect("compress succeeds");
     let truncated = &compressed[..compressed.len() / 2];
     let result = decompress_to_vec(truncated);
-    // Truncated data may decompress partially or fail - either is acceptable
-    // as long as it does not panic
+    // Truncated input may yield a partial decode or an error; both are
+    // acceptable provided the call does not panic.
     if let Ok(partial) = result {
         assert!(partial.len() < payload.len());
     }
@@ -1014,7 +1012,8 @@ fn decoder_partial_reads_accumulate_byte_count() {
 
     let mut total_read = 0;
     let mut collected = Vec::new();
-    let mut buf = [0u8; 7]; // Small buffer to force multiple reads
+    // Small buffer forces multiple read() iterations to exercise accumulation.
+    let mut buf = [0u8; 7];
     loop {
         let n = decoder.read(&mut buf).expect("read succeeds");
         if n == 0 {
@@ -1094,7 +1093,6 @@ fn best_produces_smaller_output_than_fast() {
 fn none_level_does_not_shrink_data() {
     let payload = b"ABCDEFGHIJ".repeat(100);
     let compressed = compress_to_vec(&payload, CompressionLevel::None).expect("compress none");
-    // Level 0 stores uncompressed - output should be >= input
     assert!(
         compressed.len() >= payload.len(),
         "None level should not shrink data: compressed={} original={}",

@@ -531,7 +531,7 @@ mod tests {
     fn read_compressed_block_io_error() {
         use std::io::Cursor;
 
-        // Header advertises 16 bytes of payload that the cursor never supplies.
+        // Header advertises 16 bytes the cursor never supplies.
         let mut cursor = Cursor::new(vec![0x40, 0x10]);
         let result = read_compressed_block(&mut cursor, 1000);
         assert!(matches!(result, Err(RawLz4Error::Io(_))));
@@ -627,17 +627,16 @@ mod tests {
 
     #[test]
     fn compress_incompressible_data_near_max() {
-        // Pseudo-random fill exercises the expansion case where LZ4 output
-        // can grow past the input size.
+        // LCG (Numerical Recipes constants) yields high-entropy bytes that
+        // exercise the expansion case where LZ4 output can exceed input size.
         let mut input = Vec::with_capacity(MAX_BLOCK_SIZE);
         let mut state: u32 = 0xDEAD_BEEF;
         for _ in 0..MAX_BLOCK_SIZE {
-            // LCG (Numerical Recipes constants) yields non-compressible bytes.
             state = state.wrapping_mul(1664525).wrapping_add(1013904223);
             input.push((state >> 24) as u8);
         }
 
-        // Either outcome is valid - the LCG output may or may not exceed
+        // Either outcome is valid; LCG output may or may not exceed
         // MAX_BLOCK_SIZE once compressed.
         let result = compress_block_to_vec(&input);
         match result {
