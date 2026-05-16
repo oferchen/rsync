@@ -174,32 +174,26 @@ impl PipelineController {
     /// 3. Read more entries
     /// 4. Process responses
     pub fn next_priority(&self) -> Option<PipelinePriority> {
-        // Error state is terminal
         if matches!(self.state, PipelineState::Error(_)) {
             return None;
         }
 
-        // Check if complete
         if self.is_complete() {
             return None;
         }
 
-        // Priority 1: Process ready entries
         if self.has_ready_entries() {
             return Some(PipelinePriority::ProcessReadyEntries);
         }
 
-        // Priority 2: Fill pipeline (if not full and wire not exhausted)
         if self.can_fill() {
             return Some(PipelinePriority::FillPipeline);
         }
 
-        // Priority 3: Read more entries (if wire not exhausted and pipeline not empty)
         if !self.wire_exhausted && !self.pending_entries.is_empty() {
             return Some(PipelinePriority::ReadMoreEntries);
         }
 
-        // Priority 4: Process responses
         if self.has_pending_responses() {
             return Some(PipelinePriority::ProcessOneResponse);
         }

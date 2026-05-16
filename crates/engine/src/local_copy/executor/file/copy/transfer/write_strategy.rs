@@ -135,7 +135,8 @@ pub(in crate::local_copy) fn open_destination_writer(
             Ok(file)
         }
         WriteStrategy::Inplace => {
-            // For inplace with delta, do NOT truncate - we read existing blocks
+            // Inplace + delta must NOT truncate: the existing blocks are the
+            // basis the delta reads from.
             let should_truncate = delta_signature.is_none();
             fs::OpenOptions::new()
                 .create(true)

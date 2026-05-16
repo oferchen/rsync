@@ -3,8 +3,8 @@
 //! Recreates symlinks at the destination, optionally munging unsafe targets
 //! (absolute paths or `..` escapes) when `--safe-links` or `--munge-links`
 //! is active.
-
-// upstream: receiver.c - symlink handling, syscall.c:do_symlink()
+//!
+//! upstream: receiver.c - symlink handling, syscall.c:do_symlink()
 
 use std::fs;
 use std::io;
