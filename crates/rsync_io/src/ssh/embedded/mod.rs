@@ -21,6 +21,8 @@ mod resolve;
 #[cfg(feature = "embedded-ssh")]
 mod ssh_config;
 #[cfg(feature = "embedded-ssh")]
+pub mod sync_bridge;
+#[cfg(feature = "embedded-ssh")]
 mod types;
 
 #[cfg(feature = "embedded-ssh")]
@@ -35,5 +37,10 @@ pub use error::SshError;
 pub use handler::SshClientHandler;
 #[cfg(feature = "embedded-ssh")]
 pub use resolve::resolve_host;
+#[cfg(feature = "embedded-ssh")]
+pub use sync_bridge::{
+    DEFAULT_CHANNEL_CAPACITY, SyncAsyncBridge, SyncReader as BridgeSyncReader,
+    SyncWriter as BridgeSyncWriter, into_sync_halves, into_sync_halves_with_capacity,
+};
 #[cfg(feature = "embedded-ssh")]
 pub use types::{IpPreference, StrictHostKeyChecking};
