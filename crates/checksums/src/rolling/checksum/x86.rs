@@ -324,6 +324,11 @@ pub(crate) fn accumulate_chunk_sse2_for_tests(
     len: usize,
     chunk: &[u8],
 ) -> (u32, u32, usize) {
+    // SAFETY: SSE2 is part of the x86_64 baseline ABI, so the `target_feature
+    // = "sse2"` precondition on `accumulate_chunk_sse2` is always satisfied
+    // here. `chunk` is a valid `&[u8]` borrow; the SIMD implementation uses
+    // unaligned loads (`_mm_loadu_si128`) and bounds-checks each 16-byte
+    // block before consuming it, falling back to scalar for the remainder.
     unsafe { accumulate_chunk_sse2(s1, s2, len, chunk) }
 }
 
@@ -334,5 +339,11 @@ pub(crate) fn accumulate_chunk_avx2_for_tests(
     len: usize,
     chunk: &[u8],
 ) -> (u32, u32, usize) {
+    // SAFETY: This helper is only invoked from tests gated on
+    // `is_x86_feature_detected!("avx2")`, satisfying the `target_feature =
+    // "avx2"` precondition of `accumulate_chunk_avx2`. `chunk` is a valid
+    // `&[u8]` borrow; the SIMD implementation uses unaligned loads
+    // (`_mm256_loadu_si256`) and bounds-checks each 32-byte block before
+    // consuming it, falling back to scalar for any remainder.
     unsafe { accumulate_chunk_avx2(s1, s2, len, chunk) }
 }

@@ -316,6 +316,12 @@ mod tests {
             b"test input 7",
         ];
 
+        // SAFETY: AVX2 availability was verified above via
+        // `is_x86_feature_detected!("avx2")`, satisfying the
+        // `target_feature = "avx2"` precondition of `digest_x8`. `inputs`
+        // is a fixed-length array of 8 valid `&[u8]` borrows; `digest_x8`
+        // internally bounds-checks each lane and falls back to scalar
+        // for lengths above `MAX_INPUT_SIZE`.
         let results = unsafe { digest_x8(&inputs) };
 
         for (i, input) in inputs.iter().enumerate() {
@@ -358,6 +364,11 @@ mod tests {
             "d41d8cd98f00b204e9800998ecf8427e",
         ];
 
+        // SAFETY: AVX2 availability was verified above via
+        // `is_x86_feature_detected!("avx2")`, satisfying the
+        // `target_feature = "avx2"` precondition of `digest_x8`. `inputs`
+        // is a fixed-length array of 8 valid `&[u8]` borrows that outlive
+        // the call.
         let results = unsafe { digest_x8(&inputs) };
 
         for i in 0..8 {
@@ -390,6 +401,11 @@ mod tests {
             &input0, &input1, &input2, &input3, &input4, &input5, &input6, &input7,
         ];
 
+        // SAFETY: AVX2 availability was verified above via
+        // `is_x86_feature_detected!("avx2")`, satisfying the
+        // `target_feature = "avx2"` precondition of `digest_x8`. `inputs`
+        // borrows 8 owned `Vec<u8>` buffers that outlive the call;
+        // `digest_x8` bounds-checks each lane independently.
         let results = unsafe { digest_x8(&inputs) };
 
         for (i, input) in inputs.iter().enumerate() {

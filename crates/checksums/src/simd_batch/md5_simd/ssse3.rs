@@ -390,6 +390,11 @@ mod tests {
         }
 
         let inputs: [&[u8]; 4] = [b"", b"a", b"abc", b"message digest"];
+        // SAFETY: SSSE3 availability was verified above via
+        // `is_x86_feature_detected!("ssse3")`, satisfying the
+        // `target_feature = "ssse3"` precondition of `digest_x4`.
+        // `inputs` is a fixed-length array of 4 valid `&[u8]` borrows;
+        // `digest_x4` bounds-checks each lane.
         let results = unsafe { digest_x4(&inputs) };
 
         for (i, input) in inputs.iter().enumerate() {
@@ -416,6 +421,11 @@ mod tests {
             "f96b697d7cb7938d525a2f31aaf161d0",
         ];
 
+        // SAFETY: SSSE3 availability was verified above via
+        // `is_x86_feature_detected!("ssse3")`, satisfying the
+        // `target_feature = "ssse3"` precondition of `digest_x4`.
+        // `inputs` is a fixed-length array of 4 valid `&[u8]` borrows
+        // that outlive the call.
         let results = unsafe { digest_x4(&inputs) };
 
         for i in 0..4 {

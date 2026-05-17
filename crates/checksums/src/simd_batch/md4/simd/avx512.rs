@@ -433,6 +433,11 @@ mod tests {
             b"test input 15",
         ];
 
+        // SAFETY: AVX-512F and AVX-512BW availability were verified above
+        // via `is_x86_feature_detected!`, satisfying the
+        // `target_feature = "avx512f,avx512bw"` precondition of
+        // `digest_x16`. `inputs` is a fixed-length array of 16 valid
+        // `&[u8]` borrows; `digest_x16` bounds-checks each lane.
         let results = unsafe { digest_x16(&inputs) };
 
         for (i, input) in inputs.iter().enumerate() {
@@ -491,6 +496,11 @@ mod tests {
             "bde52cb31de33e46245e05fbdbd6fb24",
         ];
 
+        // SAFETY: AVX-512F and AVX-512BW availability were verified above
+        // via `is_x86_feature_detected!`, satisfying the
+        // `target_feature = "avx512f,avx512bw"` precondition of
+        // `digest_x16`. `inputs` is a fixed-length array of 16 valid
+        // `&[u8]` borrows that outlive the call.
         let results = unsafe { digest_x16(&inputs) };
 
         for i in 0..16 {
@@ -532,6 +542,11 @@ mod tests {
             &input9, &input10, &input11, &input12, &input13, &input14, &input15,
         ];
 
+        // SAFETY: AVX-512F and AVX-512BW availability were verified above
+        // via `is_x86_feature_detected!`, satisfying the
+        // `target_feature = "avx512f,avx512bw"` precondition of
+        // `digest_x16`. `inputs` borrows 16 owned `Vec<u8>` buffers that
+        // outlive the call; `digest_x16` bounds-checks each lane.
         let results = unsafe { digest_x16(&inputs) };
 
         for (i, input) in inputs.iter().enumerate() {
