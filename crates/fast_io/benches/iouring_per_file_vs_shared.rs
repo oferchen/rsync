@@ -307,7 +307,5 @@ criterion_main!(iouring_per_file_vs_shared);
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
-    eprintln!(
-        "iouring_per_file_vs_shared: skipped (Linux-only bench; requires io_uring_setup(2))"
-    );
+    eprintln!("iouring_per_file_vs_shared: skipped (Linux-only bench; requires io_uring_setup(2))");
 }
