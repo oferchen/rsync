@@ -25,18 +25,18 @@ signature = { path = "../signature" }
 matching = { path = "../matching" }
 batch = { path = "../batch" }
 fast_io = { path = "../fast_io", default-features = false }
-thiserror = "2.0"
+thiserror = { workspace = true }
 rayon = { workspace = true }
 crossbeam-channel = { workspace = true }
-crossbeam-queue = "0.3"
+crossbeam-queue = { workspace = true }
 tracing = { workspace = true, optional = true }
 globset = "0.4"
 jwalk = { workspace = true }
 rustc-hash = { workspace = true }
-rustix = { version = "1.1", features = ["fs", "process"] }
-tempfile = "3.15"
+rustix = { workspace = true, features = ["fs", "process"] }
+tempfile = { workspace = true }
 tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
-filetime = { version = "0.2", optional = true }
+filetime = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-fs = { path = "../apple-fs" }
@@ -50,7 +50,7 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 # libc is needed for O_NOATIME (Linux), clonefile (macOS), posix_fadvise, syncfs
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc = { workspace = true }
 
 [features]
 default = ["zstd", "lz4", "xattr", "lazy-metadata"]
@@ -121,18 +121,18 @@ async = ["dep:tokio", "dep:filetime"]
 tracing = ["dep:tracing"]
 
 [dev-dependencies]
-filetime = "0.2"
-tempfile = "3.15"
+filetime = { workspace = true }
+tempfile = { workspace = true }
 test-support = { path = "../test-support" }
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
 apple-fs = { path = "../apple-fs" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-proptest = "1.8"
+proptest = { workspace = true }
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = "1.6"
-libc = "0.2"
-criterion = { version = "0.8", features = ["html_reports"] }
+libc = { workspace = true }
+criterion = { workspace = true }
 dashmap = { workspace = true }
 
 [[bench]]

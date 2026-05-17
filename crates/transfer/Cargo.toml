@@ -23,9 +23,9 @@ filters = { path = "../filters" }
 compress = { path = "../compress" }
 logging = { path = "../logging" }
 fast_io = { path = "../fast_io", default-features = false }
-crossbeam-queue = "0.3"
+crossbeam-queue = { workspace = true }
 getrandom = "0.4"
-thiserror = "2.0"
+thiserror = { workspace = true }
 tracing = { workspace = true, optional = true }
 rayon = { workspace = true }
 tokio = { workspace = true, optional = true }
@@ -36,7 +36,7 @@ apple-fs = { path = "../apple-fs" }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 # libc is needed for O_NOATIME flag in source-file open (upstream syscall.c:228,687).
-libc = "0.2"
+libc = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 checksums = { path = "../checksums" }
@@ -128,15 +128,15 @@ async = ["dep:tokio", "dep:tokio-util"]
 tracing = ["dep:tracing"]
 
 [dev-dependencies]
-tempfile = "3.15"
+tempfile = { workspace = true }
 test-support = { path = "../test-support" }
-criterion = "0.8"
-proptest = "1.4"
-rand = "0.9"
+criterion = { workspace = true }
+proptest = { workspace = true }
+rand = { workspace = true }
 crossbeam-channel = { workspace = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
-filetime = "0.2"
+filetime = { workspace = true }
 
 [[bench]]
 name = "map_file_benchmark"

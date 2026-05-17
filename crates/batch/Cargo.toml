@@ -13,11 +13,11 @@ repository.workspace = true
 zstd = ["protocol/zstd"]
 
 [dependencies]
-thiserror = "2.0"
+thiserror = { workspace = true }
 protocol = { path = "../protocol" }
 metadata = { path = "../metadata" }
-filetime = "0.2"
+filetime = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3.15"
+tempfile = { workspace = true }
 protocol = { path = "../protocol" }

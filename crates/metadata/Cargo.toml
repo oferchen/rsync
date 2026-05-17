@@ -16,11 +16,11 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-filetime = "0.2"
+filetime = { workspace = true }
 protocol = { path = "../protocol" }
-rustix = { version = "1.1", features = ["fs", "process"] }
-libc = "0.2"
-thiserror = "2.0"
+rustix = { workspace = true, features = ["fs", "process"] }
+libc = { workspace = true }
+thiserror = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 xattr = { version = "1.6", optional = true }
@@ -54,5 +54,5 @@ acl = ["dep:exacl"]
 
 [dev-dependencies]
 logging = { path = "../logging" }
-tempfile = "3.15"
+tempfile = { workspace = true }
 test-support = { path = "../test-support" }

@@ -5,7 +5,7 @@
 //! Run with: `cargo bench -p checksums --features parallel`
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use rand::Rng;
+use rand::RngExt;
 use std::hint::black_box;
 
 use checksums::RollingChecksum;
@@ -16,7 +16,7 @@ use checksums::strong::{Md5, Sha256, Xxh3};
 
 /// Generate random data of the specified size.
 fn generate_random_data(size: usize) -> Vec<u8> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut data = vec![0u8; size];
     rng.fill(&mut data[..]);
     data
