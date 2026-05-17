@@ -190,3 +190,7 @@ harness = false
 [[bench]]
 name = "delete_end_to_end"
 harness = false
+
+[[bench]]
+name = "per_op_thresholds"
+harness = false
