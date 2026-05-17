@@ -1154,3 +1154,177 @@ mod passthrough_tests {
         assert!(drained[2].needs_retry());
     }
 }
+
+mod metrics_tests {
+    use super::super::*;
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    #[test]
+    fn metrics_start_zeroed() {
+        let buf: ReorderBuffer<u32> = ReorderBuffer::new(8);
+        let m = buf.metrics();
+        assert_eq!(m.stall_duration, Duration::ZERO);
+        assert_eq!(m.current_depth, 0);
+        assert_eq!(m.max_depth, 0);
+    }
+
+    #[test]
+    fn in_order_inserts_record_no_stall() {
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(8);
+        buf.insert(0, 0).unwrap();
+        buf.insert(1, 1).unwrap();
+        buf.insert(2, 2).unwrap();
+        let m = buf.metrics();
+        assert_eq!(m.stall_duration, Duration::ZERO);
+        assert_eq!(m.current_depth, 3);
+        assert_eq!(m.max_depth, 3);
+    }
+
+    #[test]
+    fn max_depth_tracks_high_water() {
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(16);
+        for i in 0..5 {
+            buf.insert(i, i as u32).unwrap();
+        }
+        assert_eq!(buf.metrics().max_depth, 5);
+        // Drain three; depth falls but high-water stays.
+        for _ in 0..3 {
+            let _ = buf.next_in_order();
+        }
+        let m = buf.metrics();
+        assert_eq!(m.current_depth, 2);
+        assert_eq!(m.max_depth, 5);
+    }
+
+    #[test]
+    fn out_of_order_insert_accumulates_stall_until_gap_closes() {
+        let mut buf: ReorderBuffer<&'static str> = ReorderBuffer::new(8);
+        // Seq 1 arrives first; next_expected is 0 so the buffer stalls.
+        buf.insert(1, "second").unwrap();
+        // Pre-close snapshot: stall has begun and is non-zero after a wait.
+        sleep(Duration::from_millis(10));
+        let mid = buf.metrics();
+        assert!(
+            mid.stall_duration >= Duration::from_millis(10),
+            "expected stall >= 10ms while gap open, got {:?}",
+            mid.stall_duration,
+        );
+        assert_eq!(mid.current_depth, 1);
+        assert_eq!(mid.max_depth, 1);
+        // Close the gap; stall accumulates to the closing event and stops.
+        buf.insert(0, "first").unwrap();
+        let after_close = buf.metrics();
+        assert!(after_close.stall_duration >= mid.stall_duration);
+        assert_eq!(after_close.current_depth, 2);
+        assert_eq!(after_close.max_depth, 2);
+        // Draining all items must not extend stall further.
+        let _ = buf.next_in_order();
+        let _ = buf.next_in_order();
+        let drained = buf.metrics();
+        // Allow microsecond jitter from the close event being recorded slightly
+        // after the snapshot was taken.
+        assert!(
+            drained.stall_duration >= after_close.stall_duration,
+            "stall must be monotonic",
+        );
+        // Once the buffer is empty, further sleeps don't grow the counter.
+        let before_idle = drained.stall_duration;
+        sleep(Duration::from_millis(10));
+        let after_idle = buf.metrics().stall_duration;
+        assert_eq!(
+            after_idle, before_idle,
+            "idle buffer must not accumulate stall time",
+        );
+    }
+
+    #[test]
+    fn multiple_stalls_accumulate() {
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(8);
+        // First stall window.
+        buf.insert(1, 1).unwrap();
+        sleep(Duration::from_millis(5));
+        buf.insert(0, 0).unwrap();
+        let first = buf.metrics().stall_duration;
+        assert!(first >= Duration::from_millis(5));
+        // Drain everything; idle.
+        while buf.next_in_order().is_some() {}
+        // Second stall window with a fresh gap.
+        buf.insert(3, 3).unwrap();
+        sleep(Duration::from_millis(5));
+        buf.insert(2, 2).unwrap();
+        let second = buf.metrics().stall_duration;
+        assert!(
+            second >= first + Duration::from_millis(5),
+            "second stall must add to the first: first={first:?} second={second:?}",
+        );
+    }
+
+    #[test]
+    fn stall_continues_across_take_when_gap_remains() {
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(8);
+        // Two out-of-order items leave a gap at seq 0.
+        buf.insert(1, 1).unwrap();
+        buf.insert(2, 2).unwrap();
+        sleep(Duration::from_millis(5));
+        // Removing seq 2 via take() does not close the gap.
+        let taken = buf.take(2);
+        assert_eq!(taken, Some(2));
+        sleep(Duration::from_millis(5));
+        // Close the gap; total stall should cover both sleeps.
+        buf.insert(0, 0).unwrap();
+        let m = buf.metrics();
+        assert!(
+            m.stall_duration >= Duration::from_millis(10),
+            "expected >=10ms stall across take(), got {:?}",
+            m.stall_duration,
+        );
+    }
+
+    #[test]
+    fn metrics_snapshot_includes_in_flight_stall() {
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(8);
+        buf.insert(1, 1).unwrap();
+        sleep(Duration::from_millis(5));
+        let snap_a = buf.metrics();
+        sleep(Duration::from_millis(5));
+        let snap_b = buf.metrics();
+        assert!(
+            snap_b.stall_duration > snap_a.stall_duration,
+            "in-flight stall snapshots must increase: a={:?} b={:?}",
+            snap_a.stall_duration,
+            snap_b.stall_duration,
+        );
+    }
+
+    #[test]
+    fn force_insert_tracks_depth_and_stall() {
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(2);
+        // force_insert past capacity grows the ring and registers a stall.
+        buf.force_insert(3, 30);
+        sleep(Duration::from_millis(5));
+        let mid = buf.metrics();
+        assert_eq!(mid.current_depth, 1);
+        assert_eq!(mid.max_depth, 1);
+        assert!(mid.stall_duration >= Duration::from_millis(5));
+        // Closing the gap stops the stall counter from growing further.
+        for seq in 0..3 {
+            buf.force_insert(seq, seq as u32 * 10);
+        }
+        let closed = buf.metrics();
+        assert_eq!(closed.max_depth, 4);
+    }
+
+    #[test]
+    fn passthrough_tracks_depth_only() {
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::passthrough();
+        buf.insert(5, 50).unwrap();
+        buf.insert(3, 30).unwrap();
+        sleep(Duration::from_millis(5));
+        let m = buf.metrics();
+        // Bypass mode has no sequence gap, so stalls never engage.
+        assert_eq!(m.stall_duration, Duration::ZERO);
+        assert_eq!(m.current_depth, 2);
+        assert_eq!(m.max_depth, 2);
+    }
+}
