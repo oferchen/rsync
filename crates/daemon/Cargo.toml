@@ -18,6 +18,11 @@ default = []
 sd-notify = ["dep:sd-notify", "core/sd-notify"]
 # Async runtime support - enables tokio-based async I/O for daemon operations
 async = ["dep:tokio", "core/async"]
+# Hybrid async listener: tokio accept loop dispatching sync workers via
+# spawn_blocking. Skeleton path tracked under issue #1935; opt-in at build time
+# and not yet wired as the default. See
+# `docs/design/daemon-tokio-async-listener-impl.md` for the rollout plan.
+async-daemon = ["dep:tokio"]
 # Concurrent session tracking - enables efficient shared state for multi-session daemons
 concurrent-sessions = ["dep:dashmap"]
 # Extended attributes (xattr) preservation during transfers
@@ -42,7 +47,7 @@ logging-sink = { path = "../logging-sink" }
 fs2 = "0.4"
 socket2 = { version = "0.6", features = ["all"] }
 tempfile = "3.15"
-tokio = { workspace = true, optional = true, features = ["net", "io-util", "sync", "rt", "time"] }
+tokio = { workspace = true, optional = true, features = ["net", "io-util", "sync", "rt", "rt-multi-thread", "time", "macros"] }
 dashmap = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
