@@ -181,7 +181,7 @@ pub mod work_queue;
 
 pub use adaptive::{AdaptiveCapacityPolicy, ReorderStats};
 pub use consumer::DeltaConsumer;
-pub use reorder::{Metrics as ReorderMetrics, ReorderBuffer};
+pub use reorder::{HistogramStats, Metrics as ReorderMetrics, ReorderBuffer};
 pub use spill::{SpillCodec, SpillError, SpillStats, SpillableReorderBuffer};
 pub use strategy::{DeltaStrategy, DeltaTransferStrategy, WholeFileStrategy};
 pub use types::{DeltaResult, DeltaResultStatus, DeltaWork, DeltaWorkKind, FileNdx};
