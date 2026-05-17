@@ -73,6 +73,16 @@
 //! Daemon-mode TCP sockets and local-disk transfers DO benefit from
 //! `fast_io`: TCP uses the socket fast path, and on-disk file I/O uses
 //! the io_uring read/write submission paths.
+//!
+//! # Wire primitive choice
+//!
+//! The wire deliberately uses anonymous pipes rather than socketpairs.
+//! The disposition - including both the two-socketpairs-per-direction
+//! variant matching upstream and the single bidirectional socketpair
+//! variant - is recorded in `docs/audits/ssh-socketpair-vs-pipes.md`
+//! (#1938) and `docs/audits/ssh-single-socketpair-bidirectional.md`
+//! (#1687). The stderr channel is socketpair-backed on Unix; see
+//! `aux_channel.rs` for that path.
 
 mod aux_channel;
 mod builder;
