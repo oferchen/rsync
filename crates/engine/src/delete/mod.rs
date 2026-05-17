@@ -18,14 +18,23 @@
 //! - [`DirTraversalCursor`] - yields directories in upstream's depth-first,
 //!   `f_name_cmp`-ascending order. Backed by a tree built from observed
 //!   flist segments.
+//! - [`emitter`] - single-threaded drain that consumes [`DeletePlanMap`]
+//!   entries in [`DirTraversalCursor`] order, issuing one unlink per
+//!   planned entry. Guarantees the wall-clock event sequence (`unlink`
+//!   syscall order, `*deleting` itemize lines, `NDX_DEL_STATS` framing)
+//!   matches upstream rsync 3.4.1 byte for byte.
 //!
 //! # Upstream Reference
 //!
 //! - `target/interop/upstream-src/rsync-3.4.1/generator.c:272-387`
 //!   (`delete_in_dir`, `do_delete_pass`).
+//! - `target/interop/upstream-src/rsync-3.4.1/delete.c:82-225`
+//!   (`delete_item`, dispatch by `S_ISDIR` / `S_ISLNK` / `IS_DEVICE` /
+//!   `IS_SPECIAL`).
 //! - `target/interop/upstream-src/rsync-3.4.1/flist.c:3217-3343`
 //!   (`f_name_cmp`).
 
+pub mod emitter;
 mod plan;
 mod plan_map;
 mod traversal;
