@@ -47,6 +47,7 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 use protocol::flist::FileEntry;
 
 use super::emitter::{DeleteEmitter, DeleteFs, EmitterErrorPolicy};
+use super::error::DeleteError;
 use super::extras::compute_extras;
 use super::plan::DeletePlan;
 use super::plan_map::DeletePlanMap;
@@ -62,41 +63,6 @@ use super::traversal::DirTraversalCursor;
 struct CursorObservation {
     dir: PathBuf,
     children: Vec<FileEntry>,
-}
-
-/// Attempts [`Arc::try_unwrap`], logging a structured warning with the
-/// surviving strong/weak counts before returning the original `Arc` on
-/// failure. Retained as the documented fallback path for fragile drain
-/// sites that have not yet adopted channel-shutdown handoff; the cursor
-/// handoff in [`DeleteContext::into_emitter`] no longer needs it.
-pub(crate) fn try_unwrap_or_log<T>(arc: Arc<T>, kind: &'static str) -> Result<T, Arc<T>> {
-    match Arc::try_unwrap(arc) {
-        Ok(value) => Ok(value),
-        Err(arc) => {
-            #[cfg(feature = "tracing")]
-            {
-                let strong = Arc::strong_count(&arc);
-                let weak = Arc::weak_count(&arc);
-                tracing::warn!(
-                    target: "engine::delete",
-                    strong_count = strong,
-                    weak_count = weak,
-                    kind = kind,
-                    "Arc::try_unwrap failed during drain - extra clones outlived the producer"
-                );
-            }
-            #[cfg(not(feature = "tracing"))]
-            {
-                // Without the tracing feature compiled in we cannot emit
-                // a structured warning; the typed-error path at the call
-                // site still surfaces strong_count and kind to the
-                // caller. Touch `kind` so unused-variable lints stay
-                // happy under the cfg gate.
-                let _ = kind;
-            }
-            Err(arc)
-        }
-    }
 }
 
 /// Re-exposes the four upstream timing modes so the emitter and its
@@ -472,10 +438,9 @@ impl DeleteContext {
     ///
     /// Surfaces any fatal error from [`DeleteEmitter::emit_all`].
     pub fn emit_one<F: DeleteFs>(self, fs: F) -> io::Result<DrainOutcome<F>> {
-        self.into_emitter(fs).and_then(|mut emitter| {
-            emitter.emit_all()?;
-            Ok(DrainOutcome::from_emitter(emitter))
-        })
+        let mut emitter = self.into_emitter(fs)?;
+        emitter.emit_all()?;
+        Ok(DrainOutcome::from_emitter(emitter))
     }
 
     /// Drains every published plan through a freshly-built emitter. Used
@@ -507,21 +472,18 @@ impl DeleteContext {
     ///
     /// # Errors
     ///
-    /// Returns [`io::ErrorKind::Other`] when the plan map `Arc` is still
-    /// shared (no other code holds the inner channel handles, so the
-    /// cursor side never fails this way).
-    fn into_emitter<F: DeleteFs>(self, fs: F) -> io::Result<DeleteEmitter<F>> {
-        // `try_unwrap_or_log` is the transition-era fallback for sites
-        // that have not yet adopted channel-shutdown handoff. The cursor
-        // path below now uses the channel-shutdown form; the plan map
-        // remains on the `try_unwrap` path with diagnostic logging so
-        // operators see the surviving strong count when a future leak
-        // surfaces here.
-        let plans = try_unwrap_or_log(self.plans, "DeletePlanMap").map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                "DeleteContext::into_emitter: DeletePlanMap still shared",
-            )
+    /// Returns a typed [`DeleteError`] (mapped to [`io::Error`] at the
+    /// public `emit_*` boundary) when the plan map `Arc` is still shared
+    /// or the cursor receiver has already been taken. The error carries
+    /// the observed [`Arc::strong_count`] so a leaked clone is visible
+    /// in operator diagnostics. The cursor side cannot fail with a
+    /// "still shared" error under channel-shutdown semantics - workers
+    /// only hold sender clones, never `Arc<DirTraversalCursor>`.
+    fn into_emitter<F: DeleteFs>(self, fs: F) -> Result<DeleteEmitter<F>, DeleteError> {
+        let plans = Arc::try_unwrap(self.plans).map_err(|still_shared| {
+            DeleteError::PlanMapStillShared {
+                strong_count: Arc::strong_count(&still_shared),
+            }
         })?;
 
         // Drop the master sender so the receive loop can observe channel
@@ -539,12 +501,7 @@ impl DeleteContext {
             .lock()
             .expect("DeleteContext cursor_rx mutex poisoned")
             .take()
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    "DeleteContext::into_emitter: cursor receiver already taken",
-                )
-            })?;
+            .ok_or(DeleteError::CursorReceiverAlreadyTaken)?;
 
         let mut cursor = DirTraversalCursor::new(self.cursor_root);
         while let Ok(obs) = rx.recv() {
@@ -900,6 +857,44 @@ mod tests {
         assert!(ctx.delete_excluded);
         let ctx = DeleteContext::new(PathBuf::from("/"), EmitterTiming::During);
         assert!(!ctx.delete_excluded);
+    }
+
+    #[test]
+    fn into_emitter_reports_plan_map_still_shared_with_strong_count() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plans = Arc::new(DeletePlanMap::new());
+        let ctx =
+            DeleteContext::with_shared_plan_map(Arc::clone(&plans), tmp.path().to_path_buf(), true);
+        // The caller still holds `plans`; the drain must surface the
+        // residual strong-count via the typed error.
+        let err = ctx
+            .into_emitter(RecordingDeleteFs::new())
+            .expect_err("plan map is still shared");
+        match err {
+            DeleteError::PlanMapStillShared { strong_count } => {
+                assert!(
+                    strong_count >= 2,
+                    "expected strong_count >= 2, got {strong_count}"
+                );
+            }
+            other => panic!("expected PlanMapStillShared, got {other:?}"),
+        }
+        drop(plans);
+    }
+
+    #[test]
+    fn emit_one_propagates_typed_error_through_io_error() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plans = Arc::new(DeletePlanMap::new());
+        let ctx =
+            DeleteContext::with_shared_plan_map(Arc::clone(&plans), tmp.path().to_path_buf(), true);
+        let err = ctx
+            .emit_one(RecordingDeleteFs::new())
+            .expect_err("plan map still shared surfaces as io::Error");
+        let msg = err.to_string();
+        assert!(msg.contains("DeletePlanMap"));
+        assert!(msg.contains("strong_count="));
+        drop(plans);
     }
 
     #[test]

@@ -193,7 +193,7 @@ pub use adaptive::{AdaptiveCapacityPolicy, ReorderStats};
 pub use config::ConcurrentDeltaConfig;
 pub use consumer::{DeltaConsumer, DeltaConsumerStats};
 #[cfg(feature = "parallel-receive-delta")]
-pub use parallel_apply::{DeltaChunk, ParallelDeltaApplier};
+pub use parallel_apply::{DeltaChunk, ParallelApplyError, ParallelDeltaApplier};
 pub use reorder::{HistogramStats, Metrics as ReorderMetrics, ReorderBuffer};
 pub use spill::policy::{ReclaimMode, SpillCompression, SpillGranularity, SpillPolicy};
 pub use spill::{SpillCodec, SpillError, SpillStats, SpillableReorderBuffer};
