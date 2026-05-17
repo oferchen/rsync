@@ -769,6 +769,14 @@ impl<A: BufferAllocator> BufferPool<A> {
             self.admit_or_deallocate(buffer, capacity);
         }
 
+        // Periodic donation (slab feature only): every Mth return on this
+        // thread, pop the slab's oldest buffer and route it to the central
+        // overflow queue so idle threads do not pin retention forever.
+        #[cfg(feature = "thread-slab-pool")]
+        if let Some(donated) = super::thread_slab::take_donation() {
+            self.admit_or_deallocate(donated, capacity);
+        }
+
         // Release outstanding memory and wake blocked acquirers.
         self.track_return(returned_len);
     }

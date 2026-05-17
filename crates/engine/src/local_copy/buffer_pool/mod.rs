@@ -100,6 +100,8 @@ mod memory_cap;
 mod pool;
 mod pressure;
 mod thread_local_cache;
+#[cfg(feature = "thread-slab-pool")]
+mod thread_slab;
 /// EMA-based throughput tracker for dynamic buffer sizing.
 pub mod throughput;
 

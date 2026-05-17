@@ -90,6 +90,15 @@ parallel = []
 # Trade-offs: Relaxes the single-producer compile-time invariant
 multi-producer = []
 
+# Per-thread buffer slab (#1271, #1370) - replaces the single-slot thread-local
+# cache in front of BufferPool with a depth-bounded LIFO slab per thread.
+# Benefits: Removes central-queue cursor traffic on every return for workers
+# that hold multiple buffers; cross-thread returns still fall through to the
+# central overflow queue. Bounded per-thread byte cap (default 1 MiB).
+# Trade-offs: Higher steady-state idle memory (N threads * byte_cap) vs the
+# single-slot path; only beneficial above ~32 worker threads per pool.
+thread-slab-pool = []
+
 # ============================================================================
 # Runtime Features
 # ============================================================================
