@@ -169,7 +169,10 @@ pub use acl_exacl::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl,
 pub use acl_stub::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
 
 #[cfg(all(feature = "acl", windows))]
-pub use acl_windows::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
+pub use acl_windows::{
+    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, read_dacl_sddl,
+    read_sddl_with_sacl, sync_acls, write_dacl_sddl,
+};
 
 #[cfg(not(any(
     all(
