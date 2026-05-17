@@ -161,3 +161,7 @@ harness = false
 [[bench]]
 name = "parallel_dispatch_overhead"
 harness = false
+
+[[bench]]
+name = "sp_vs_mp_workqueue"
+harness = false
