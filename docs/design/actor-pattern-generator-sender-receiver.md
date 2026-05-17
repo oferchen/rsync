@@ -1,181 +1,340 @@
-# Actor Pattern for Generator / Sender / Receiver Roles (#2136)
+# Actor Pattern for Generator / Sender / Receiver (#2136)
 
-## 1. Scope
+Status: Design.
+Audience: maintainers of `crates/transfer`, `crates/engine`, and the
+async migration working group.
+Scope: evaluate whether the three rsync wire-protocol roles - Generator,
+Sender, Receiver - should be modelled as supervised `tokio::spawn`-ed
+tasks (Erlang / Akka actor style: bounded mailboxes, one supervisor
+that restarts crashed actors) once the async migration plan
+(`docs/design/async-migration-plan.md`, #1594) lands.
 
-This note evaluates whether the three rsync wire-protocol roles -
-Generator, Sender, Receiver - should be expressed as supervised actors
-with typed message channels, instead of the current mix of dedicated OS
-threads, lock-free SPSC channels, and inline rayon parallelism. The
-question is not "is the actor pattern attractive in the abstract" but
-"does the wire protocol leave any throughput on the table that an actor
-model would unlock, and at what code-base cost."
+The migration plan commits the project to tokio for daemon accept,
+SSH transport, and the receiver pipeline. The natural follow-on
+question is whether the rsync session itself should be reshaped as a
+supervision tree of actors. This note answers that question.
 
-The conclusion this note arrives at is: the protocol-bound
-single-threaded ordering documented at task #1197
-(`docs/architecture/parallelization.md:50-90,93-141`) bounds the wins
-from any concurrency reshape. An actor refactor of the production hot
-path is not justified. A bounded actor surface, gated behind a build
-feature `async-pipeline`, is justified for two scenarios that the
-current topology does not serve well: multi-host fan-out and
-test-only fault injection. Section 6 lays out that recommendation.
+**Recommendation: reject for the production hot path; adopt the
+actor surface only for the multi-host fan-out driver and for
+fault-injection tests, behind `--features async-pipeline`.** Section 5
+spells out the rationale.
 
-## 2. Current Threading Model
+## 1. Current shape - blocking threads, not actors
 
-### 2.1 The three roles
+The three roles are reified in `crates/transfer/` and call into
+`crates/engine/`. They are blocking OS threads connected by
+hand-tuned synchronous channels. No tokio task surface, no inbox,
+no supervisor.
 
-The role boundaries follow upstream rsync's process model
-(`generator.c`, `sender.c`, `receiver.c`) and are reified in
-`crates/transfer/src/`:
+### 1.1 The three roles today
 
-| Role | Module | Entry point | Upstream cite |
-|------|--------|-------------|---------------|
-| Generator | `crates/transfer/src/generator/mod.rs:1-89` | `Generator::run` at `generator/transfer.rs:696` | `generator.c:2226 generate_files()` |
-| Sender (server-side, paired with Generator) | `crates/transfer/src/generator/transfer.rs:10` | shares the Generator entry; the local process owns both halves | `sender.c:199 send_files()` |
-| Receiver | `crates/transfer/src/receiver/mod.rs:99-100` | `ReceiverContext::run` at `receiver/transfer.rs` | `receiver.c:720 recv_files()` |
+| Role | Entry point | Upstream cite |
+|------|-------------|---------------|
+| Generator | `Generator::run` at `crates/transfer/src/generator/transfer.rs:731`; per-loop body at `:48` (`run_transfer_loop`) | `generator.c:2226 generate_files()` |
+| Sender (server-side, paired with Generator) | shares the Generator entry; `crates/transfer/src/generator/mod.rs:32-78` documents the role split | `sender.c:199 send_files()` |
+| Receiver | `ReceiverContext::run` at `crates/transfer/src/receiver/transfer.rs:55`; pipelined variants at `:519`, `:680` | `receiver.c:720 recv_files()` |
 
 The repository does not have a dedicated `sender` module: the local
 side that walks the file tree, sends the file list, services NDX
 requests, and emits delta data is named `generator` after upstream's
-process role split. In the upstream split-process layout, the
-generator child forks off a sender child; in oc-rsync the two roles
-share an OS thread because Rust is single-process, single-binary.
+process role split. Upstream's generator child forks off a sender
+child; oc-rsync runs the two halves on a single OS thread because
+Rust is single-process, single-binary.
 
-### 2.2 OS threads currently in flight
+### 1.2 OS threads in flight on a steady-state transfer
 
-Per the parallelization architecture
-(`docs/architecture/parallelization.md:104-114`) and the spawn sites
-below, a steady-state remote transfer uses up to four OS threads:
+Per `docs/architecture/parallelization.md:104-114` and the spawn
+sites below, a remote transfer uses up to four OS threads:
 
-1. **Generator/Sender thread** - the local process when running as
-   sender. Walks the local tree (`generator/file_list/walk.rs`),
+1. **Generator/Sender thread** - local process when running as
+   sender. Walks the local tree (`crates/transfer/src/generator/file_list/walk.rs`),
    sends the file list, reads NDX requests + signatures, emits
-   deltas. Single-threaded by protocol order. Cite
-   `generator/transfer.rs:696` (`Generator::run`).
-2. **Receiver network thread** - the local process when running as
+   deltas. Single-threaded by protocol order. Entry:
+   `crates/transfer/src/generator/transfer.rs:731` (`Generator::run`).
+2. **Receiver network thread** - local process when running as
    receiver, or the local generator thread when remote is the sender.
-   Reads delta tokens from the wire and produces `FileMessage` items
-   into the SPSC channel. Cite
-   `crates/transfer/src/receiver/transfer/pipeline.rs:38`
-   (`run_pipeline_loop_decoupled`).
+   Reads delta tokens from the wire and produces `FileMessage`
+   items into the SPSC channel. Entry:
+   `crates/transfer/src/receiver/transfer.rs:519`
+   (`run_pipelined`) and `:680` (`run_pipelined_incremental`).
 3. **Disk-commit thread** - dedicated OS thread spawned at
-   `crates/transfer/src/disk_commit/thread.rs:53-56` with name
-   `"disk-commit"`. Owns all file I/O on the receive path: temp-file
-   create, write, fsync, atomic rename, metadata application.
+   `crates/transfer/src/disk_commit/thread.rs:47-56`
+   (`spawn_disk_thread`), named `"disk-commit"`. Owns all file
+   I/O on the receive path: temp-file create, write, fsync,
+   atomic rename, metadata application. Main loop at
+   `crates/transfer/src/disk_commit/thread.rs:172-234`
+   (`disk_thread_main`).
 4. **Rayon worker pool** - shared across the workspace. Used for
    parallel `stat` (`crates/transfer/src/parallel_io.rs:124`),
    parallel signature generation
    (`crates/signature/src/parallel.rs:84,207`), and parallel
-   directory metadata application. Threshold-gated:
-   `PARALLEL_STAT_THRESHOLD = 64`,
-   `PARALLEL_THRESHOLD_BYTES = 256 KB`
-   (`docs/architecture/parallelization.md:84-89`).
+   directory metadata application. Threshold-gated
+   (`PARALLEL_STAT_THRESHOLD = 64`,
+   `PARALLEL_THRESHOLD_BYTES = 256 KB`;
+   `docs/architecture/parallelization.md:84-89`).
 
-### 2.3 Channels between the threads
+The engine-side companions are blocking too: the concurrent-delta
+work queue (`crates/engine/src/concurrent_delta/work_queue/bounded.rs:88-104`)
+uses `crossbeam_channel::bounded` with capacity
+`2 * rayon::current_num_threads()`; the work-stealing rayon pool
+runs the strong-checksum compute.
 
-The hot-path inter-thread plumbing is uniformly synchronous and
-deliberately avoids park/wake costs:
+### 1.3 Inter-thread plumbing today
+
+The hot-path channels are uniformly synchronous and deliberately
+avoid park/wake costs:
 
 - **Network -> disk-commit**: lock-free SPSC at
   `crates/transfer/src/pipeline/spsc.rs:1-15`, capacity 128 slots
-  (`disk_commit.rs DEFAULT_CHANNEL_CAPACITY`). Spin-wait on
-  `crossbeam_queue::ArrayQueue`; zero syscalls.
-- **Disk-commit -> network (commit results)**: second SPSC, capacity
-  256 slots. Returns `io::Result<CommitResult>` per file.
-- **Disk-commit -> network (buffer return)**: third SPSC, capacity
-  256 slots. Recycles `Vec<u8>` write buffers to amortise allocation.
+  (`DEFAULT_CHANNEL_CAPACITY`). Spin-wait on
+  `crossbeam_queue::ArrayQueue`; zero syscalls in the steady state.
+- **Disk-commit -> network (commit results)**: second SPSC,
+  capacity 256 slots. Returns `io::Result<CommitResult>` per file.
+- **Disk-commit -> network (buffer return)**: third SPSC,
+  capacity 256 slots. Recycles `Vec<u8>` write buffers to amortise
+  allocation.
 - **Local-copy delta work queue**: bounded
-  `crossbeam_channel::bounded` with capacity
-  `2 * rayon::current_num_threads()`
+  `crossbeam_channel::bounded`
   (`crates/engine/src/concurrent_delta/work_queue/bounded.rs:88-104`).
   Single-producer (the wire reader), multi-consumer (rayon pool).
 
-No channel currently crosses an async boundary on the hot path. The
-async surfaces enumerated in `docs/design/async-migration-plan.md:62-95`
-are feature-gated and do not run in the production transfer loop.
+No channel currently crosses an async boundary on the hot path.
+The async surfaces enumerated in
+`docs/design/async-migration-plan.md:62-95` are feature-gated and
+do not run in the production transfer loop.
 
-### 2.4 What the topology already exploits
+### 1.4 Failure model today
 
-- **Wire I/O parallel with disk I/O**: receiver thread reads while
-  disk-commit writes the previous file, gated by the SPSC.
-- **CPU work batched off the wire-critical path**: signature
-  generation and quick-check stats run on rayon when the batch is
-  large enough; short bursts run inline.
-- **In-flight request window**: the pipelined receiver fills a
-  sliding window of file requests
-  (`run_pipeline_loop_decoupled`) so each send/receive amortises
-  round-trip latency across many small files.
+- An I/O error in any role returns `Err` from `Generator::run` /
+  `ReceiverContext::run`, which propagates up through the
+  orchestrating `core::session()` call.
+- The disk-commit thread reports failures through its result SPSC
+  and is joined by the receiver. No restart.
+- Panics abort the whole transfer; there is no supervisor that
+  catches a panicking role and tries again.
 
-## 3. The Single-Threaded Wire Constraint
+This is upstream-faithful: rsync 3.4.1's process model also has
+no restart story. If `generate_files` or `recv_files` dies, the
+session dies.
 
-`docs/architecture/parallelization.md:50-90` and
-`docs/audits/async-ssh-transport.md:270-299` already document this.
-Restated for completeness:
+## 2. Actor sketch - tokio tasks, mailboxes, one supervisor
 
-- The protocol assigns each file a sequential index. The sender
-  emits deltas in that order; the receiver acknowledges in that
-  order; the generator processes acks in that order
-  (`docs/architecture/parallelization.md:117-122`).
-- The network-facing part of each role is single-threaded by design
-  (`docs/architecture/parallelization.md:122`).
-- Out-of-order delivery would require a wire-protocol extension and
-  is not compatible with upstream rsync 3.4.1
-  (`docs/architecture/parallelization.md:135-137`).
-- Task #1197 ("Document single-threaded wire protocol pipeline
-  limitation", status: done) is the policy anchor;
-  `docs/audits/async-ssh-transport.md:296-299` cites it as the
-  reason async transport I/O cannot unlock new wire-level
-  parallelism.
+The canonical actor reshape, in the tokio idiom the migration plan
+already commits us to, would look like this:
 
-This bounds every concurrency reshape proposal. An actor refactor
-that puts Generator, Sender, and Receiver on separate cooperative
-tasks does not change how many bytes the wire can move per second.
-It only changes how the existing bytes are scheduled.
+```text
+TransferSupervisor (tokio::spawn)
+        |
+        +---- Generator actor (tokio::spawn)
+        |       inbox: mpsc::Receiver<GeneratorMsg>
+        |       state: file list cursor, NDX window, signature buffer
+        |
+        +---- Sender actor (tokio::spawn)
+        |       inbox: mpsc::Receiver<SenderMsg>
+        |       state: delta emitter, basis cache, token buffer
+        |
+        +---- Receiver actor (tokio::spawn)
+                inbox: mpsc::Receiver<ReceiverMsg>
+                state: temp file map, in-flight window, commit join handle
+```
 
-## 4. Actor Pattern: What It Is and What It Would Cost
+### 2.1 Message surface
 
-### 4.1 Definition for this note
+Each role is reachable only through a typed enum on a bounded
+inbox.
 
-By "actor" this note means the canonical trio:
+```rust
+pub enum GeneratorMsg {
+    ReceivedNdx(NdxIndex),
+    ReceivedSignature(SumHead, Vec<BlockChecksum>),
+    PhaseRedo,
+    Cancelled,
+    Shutdown,
+}
 
-1. **Identity**: each role is owned by one task; the task is the only
-   site that can mutate the role's state.
-2. **Typed message channel**: callers speak to the role through an
-   enum of input messages, not through `&mut Role` calls. The trio
-   above would expose `GeneratorMsg`, `SenderMsg`, `ReceiverMsg`.
-3. **Supervised lifecycle**: a parent supervisor starts the actors,
-   propagates cancellation, and observes failure (analogous to
-   Erlang's `link` / `monitor`).
+pub enum SenderMsg {
+    ScheduleFile { ndx: NdxIndex, basis: BasisHandle },
+    DeltaBudgetReplenished,
+    Cancelled,
+}
 
-The async runtime is incidental; the pattern works on OS threads or
-on tokio. In oc-rsync's workspace, the realistic vehicles would be
-either `crossbeam_channel::Sender<RoleMsg>` driving a thread per
-role, or `tokio::sync::mpsc::Sender<RoleMsg>` driving a tokio task
-per role.
+pub enum ReceiverMsg {
+    DeltaToken(DeltaToken),
+    FileCommitted(NdxIndex, CommitResult),
+    DiskError(io::Error),
+    Cancelled,
+    Shutdown,
+}
+```
 
-### 4.2 What changes vs today
+The actor body is a `loop { match inbox.recv().await { ... } }`.
+Every send is `inbox.send(msg).await`, which yields when the
+mailbox is full, giving structured backpressure for free.
 
-Mapping the trio onto the current code:
+### 2.2 The supervisor
 
-- The Generator's `run` method
-  (`generator/transfer.rs:696`) becomes a `loop { match rx.recv()? }`
-  over `GeneratorMsg::{ReceivedNdx, ReceivedSignature, Cancelled,
-  Shutdown}`.
-- The Sender (the half of `Generator::run` that produces deltas)
-  becomes a separate task driven by `SenderMsg::{ScheduleFile,
-  Cancelled}`.
-- The Receiver's `run_pipeline_loop_decoupled`
-  (`receiver/transfer/pipeline.rs:38`) becomes a `loop` over
-  `ReceiverMsg::{DeltaToken, ReceivedFile, Cancelled, Shutdown}`.
-- The disk-commit thread already looks like an actor in shape
-  (`disk_commit/thread.rs:172-234`): it owns its state, takes
-  typed `FileMessage` over a channel, returns typed
-  `io::Result<CommitResult>`. The only missing element is an
-  explicit supervisor that can cancel it cooperatively rather than
-  by dropping the SPSC ends.
+`TransferSupervisor` owns the three `JoinHandle`s and a
+`CancellationToken` (the daemon side already pulls in
+`tokio_util::sync::CancellationToken`; reuse). It selects on:
 
-### 4.3 Concrete cost
+- each actor's `JoinHandle` completing (clean exit, error, or
+  panic),
+- the parent cancellation token firing,
+- a timeout for hung actors.
 
-- **Code reshape**: every call site that today does
+On a non-panic error, the supervisor logs and propagates the
+error to the orchestrator. On a panic, the supervisor would
+*notionally* restart the actor; section 4 explains why "restart
+the Generator" is not a real recovery for this protocol.
+
+The disk-commit thread already looks like an actor in shape
+(`crates/transfer/src/disk_commit/thread.rs:172-234`): it owns
+its state, takes typed `FileMessage` over a channel, returns
+typed `io::Result<CommitResult>`. The only missing element is
+an explicit supervisor that can cancel it cooperatively rather
+than by dropping the SPSC ends.
+
+### 2.3 Where the bridge to sync would sit
+
+The receiver pipeline already integrates a
+`CancellationToken` in the feature-gated async path at
+`crates/transfer/src/pipeline/async_pipeline.rs:151-155`. The
+rayon CPU work and the disk-commit thread would stay sync and
+be reached from the actors via `tokio::task::spawn_blocking`
+following the contract pinned in
+`docs/design/spawn-blocking-bridge.md` (#4196). No change to
+the engine's compute model: the actor is a wire driver, not a
+compute pool.
+
+## 3. Pros - what this shape would buy
+
+### 3.1 Clean failure isolation
+
+Today, a panic in any of the three roles aborts the whole
+process. With the supervisor, a panic in the Sender (for
+example, a malformed basis-cache invariant) can be caught,
+logged with a stable error trailer, and surfaced as a typed
+session error rather than a process abort. The supervisor is
+the single place to integrate with `core::error` and the role
+trailers (`[sender]`, `[receiver]`, `[generator]`) already in
+the codebase.
+
+### 3.2 Structured mailbox backpressure
+
+`mpsc::Sender::send().await` yields when the mailbox is full.
+Today, the receiver's pipeline uses a hand-tuned spin-wait on
+`crossbeam_queue::ArrayQueue` (`pipeline/spsc.rs:1-15`). The
+spin-wait is faster in the steady state but does not compose
+with other async work the future fan-out driver might want to
+schedule. A bounded mpsc gives uniform backpressure semantics
+across the runtime - useful for the multi-host case in section 5.
+
+### 3.3 Per-actor observability
+
+`ActorMsg` traffic is traceable end-to-end: every message that
+enters or leaves the mailbox can be logged with `tracing`
+spans. The existing `PhaseTimer` macros and role trailers in
+`crates/transfer/src/error.rs` already partition by role; the
+actor surface would let us partition by *message kind* within
+the role, which is finer than today's `PhaseTimer`.
+
+### 3.4 Test-mode fault injection
+
+Today, simulating a stuck disk thread or a malformed delta
+requires monkey-patching the SPSC ends. With a typed message
+surface, a test can substitute a mock `Receiver` that emits
+`ReceiverMsg::DeltaToken` patterns the wire would not normally
+produce, exercising the Generator's error handling without
+driving a real transfer. This is a real improvement over the
+current test ergonomics (`crates/transfer/tests/`,
+approximately 60 integration tests).
+
+### 3.5 Multi-host fan-out becomes natural
+
+A future driver that wants to run N concurrent rsync transports
+against N hosts (the batch use case sketched at
+`docs/audits/async-ssh-transport.md:232-242`) needs a
+per-connection supervisor that owns one Generator + one Receiver
+actor pair. The fan-out is an async-runtime problem - exactly
+what the migration plan's later phases anticipate.
+
+## 4. Cons - what this shape would cost
+
+### 4.1 "Restart on crash" does not exist for this protocol
+
+This is the load-bearing objection.
+
+Rsync's wire protocol is a single ordered conversation. The
+Generator's state includes:
+
+- the current file-list cursor (in INC_RECURSE mode, an open
+  segment generator),
+- the NDX window of in-flight signature requests,
+- the phase-1 / phase-2 toggle (`SHORT_SUM_LENGTH` vs
+  `MAX_SUM_LENGTH`; `crates/signature/src/block_size.rs`),
+- the multiplex frame state (`MSG_*` framing on the wire),
+- any partial varint mid-decode.
+
+If the Generator panics mid-transfer, none of that state is
+reconstructible from the peer. The peer has no protocol-level
+"please rewind to NDX 17 and resume": it speaks rsync 3.4.1,
+which has no resume primitive inside a session. The only
+correct recovery is to tear the whole session down and
+reconnect, which is *exactly* what `Err` propagation does
+today.
+
+So the supervisor's "restart the actor" capability, the
+defining feature of the actor pattern as Erlang/Akka use it,
+is a no-op for the Generator and Receiver. The supervisor
+can only do one useful thing on failure: cancel the other
+two actors, drain the disk-commit thread, and surface the
+error. That is a `Result::Err` with three lines of select!,
+not an actor framework.
+
+### 4.2 Supervision tree overhead at zero throughput gain
+
+The wire is sequential by protocol design
+(`docs/architecture/parallelization.md:50-90`,
+`docs/audits/async-ssh-transport.md:270-299`; task #1197
+"single-threaded wire protocol limitation", status: done). An
+actor refactor that puts Generator, Sender, and Receiver on
+separate cooperative tasks does not change how many bytes the
+wire can move per second. It only changes how the existing
+bytes are scheduled.
+
+Concretely:
+
+- The SPSC pipeline costs zero syscalls in the steady state.
+- `tokio::sync::mpsc` costs a park/wake per cross-task send
+  when the receiver is parked, plus the runtime's work-stealing
+  bookkeeping (`docs/design/async-migration-plan.md:179-185`).
+- The disk-commit boundary is the only place the topology
+  currently benefits from a queue; replacing the SPSC with an
+  mpsc adds wake-up cost for no throughput gain.
+
+### 4.3 Complicates the state machines #2134 just covered
+
+`docs/design/type-state-protocol-phases.md` (#2134, recently
+landed) makes the explicit recommendation that within-phase
+state machines stay as runtime enums while only the
+*phase-boundary* invariants are encoded in the type system.
+That recommendation is bounded by exactly the same constraint
+that bounds this note: rsync's protocol stages are sequential,
+not parallel, and the within-phase data flow is
+multi-threaded on the existing topology (sender thread + disk
+thread + rayon pool).
+
+An actor reshape would put the within-phase data flow on the
+typed-message surface (`GeneratorMsg`, `ReceiverMsg`) while
+the phase-boundary surface stays type-state. Now we have *two*
+state-machine encodings for the same role: a type-state
+on the phase axis and a message-enum on the within-phase
+axis, and any phase transition has to thread through both.
+#2134 deliberately avoided that combinatorial cost.
+
+### 4.4 Code-base churn
+
+- **Call-site reshape**: every site that today does
   `generator.process_signature(buf)` becomes
   `tx.send(GeneratorMsg::Signature(buf)).await`. This ripples
   through `crates/transfer/src/generator/protocol_io.rs`,
@@ -183,97 +342,66 @@ Mapping the trio onto the current code:
   `crates/transfer/src/receiver/transfer/`,
   `crates/transfer/src/receiver/wire.rs`. Order-of-magnitude:
   three to four hundred call sites.
-- **Channel allocation**: each actor needs its inbound queue.
-  The current SPSC trio at `pipeline/spsc.rs` is hand-tuned; an
-  actor model usually wants `flume::bounded` or
-  `tokio::sync::mpsc::channel`, both of which add park/wake
-  costs the SPSC explicitly avoids
-  (`pipeline/spsc.rs:1-15`,
-  `docs/design/async-migration-plan.md:179-185`).
+- **Channel allocation**: each actor needs its inbound queue;
+  the hand-tuned SPSC trio at `pipeline/spsc.rs` would either
+  stay (and we get a hybrid mpsc-plus-SPSC topology) or be
+  replaced (and we lose the zero-syscall steady state).
 - **Cancellation plumbing**: typed cancellation is the actor
-  pattern's clear win, but the receiver's existing
-  `CancellationToken` integration in
-  `crates/transfer/src/pipeline/async_pipeline.rs:151-155` is
-  feature-gated. Generalising it to the sync hot path is a net
-  add of plumbing the sync path does not currently need (the
-  sync path cancels via `Result::Err` propagating out of `run`).
-- **Test-suite churn**: every integration test that drives the
-  receiver via `ReceiverContext::run` would need to switch to
-  message-passing harnesses. Approximately 60 integration tests
-  under `crates/transfer/tests/` and `tests/`.
+  pattern's clear win, but the sync path cancels via
+  `Result::Err` propagating out of `run`; generalising the
+  feature-gated `CancellationToken` to the sync hot path is
+  net new plumbing.
+- **Test-suite churn**: integration tests that drive the
+  receiver via `ReceiverContext::run` would need
+  message-passing harnesses. Approximately 60 tests under
+  `crates/transfer/tests/` and `tests/`.
 
-### 4.4 What it does not buy
+### 4.5 Distributor minimal-build path
 
-- **No new wire-level parallelism.** Section 3 holds: an actor
-  cannot serve files out of order without breaking the protocol.
-- **No lower throughput floor.** The disk-commit channel already
-  decouples wire from disk; that is the only cross-thread hop
-  on the hot path. Adding more actor hops adds latency, not
-  throughput.
-- **No simpler concurrency invariants.** The existing topology
-  has exactly one shared mutable surface (the SPSC), bounded by
-  capacity, with a single-producer / single-consumer compile-time
-  invariant. An actor model multiplies the number of channels
-  proportionally to the number of message variants per role.
+`docs/audits/tokio-dependency-boundary-2026.md` defines the
+seven-crate tokio allow-list any new async surface must
+respect. A default-on actor refactor would pull tokio onto the
+sync hot path, breaking the
+`--no-default-features` tokio-free build distributors rely on.
 
-## 5. Tradeoff Table
+## 5. Recommendation - opinionated
 
-| Axis | Current (rayon + dedicated threads + SPSC) | Actor refactor (typed messages, supervised lifecycle) |
-|------|-------------------------------------------|--------------------------------------------------------|
-| Wire-throughput ceiling | Bounded by protocol order (#1197) | Same; not relaxed by actors |
-| Inter-thread channel cost | 0 syscalls (SPSC spin-wait) | Park/wake or task wake per message |
-| Cancellation semantics | `Result::Err` propagation, `Drop` of SPSC ends | Typed `Cancelled` message; cooperative |
-| Failure propagation | Result returned from `run`; supervisor implicit | Explicit `link` / `monitor` analogue, supervised tree |
-| Test-mode fault injection | Hard: requires monkey-patching channels | Easy: substitute a mock actor for any role |
-| Multi-host fan-out | Not supported in one process | Natural: spawn one supervisor tree per host |
-| Local-copy fast path | Direct call into `engine::local_copy::executor` | Wraps every call in a message; perf regression risk |
-| Code-base churn | None (status quo) | ~300-400 call sites, ~60 tests |
-| Async runtime dependency | None on hot path | Adds tokio-or-equivalent to the seven-crate set already in `docs/audits/tokio-dependency-boundary-2026.md` |
-| Build-graph impact | None | Pulls `flume` or `tokio::sync` onto sync builds unless feature-gated |
-| Distributor minimal-build path | `--no-default-features` is tokio-free | Stays tokio-free only if the actor surface is fully feature-gated |
-| Crash isolation | Whole transfer aborts on any thread panic | Supervisor can restart a sub-actor with a new file batch |
-| Observability | `PhaseTimer` macros plus role trailers in errors | `ActorMsg` traffic is traceable end-to-end |
+### 5.1 Reject the actor pattern for the production hot path
 
-The wire-throughput row is the load-bearing one. Every other axis is
-a code-quality tradeoff; the ceiling row decides whether the rest
-matter for production transfers.
+The Generator, Sender, and Receiver as they exist today are
+the minimum threading surface the wire protocol allows: one OS
+thread per direction plus one disk-commit thread. The
+disk-commit boundary is the only place the topology benefits
+from a queue, and the SPSC already gives that boundary a
+zero-syscall implementation. The supervisor's defining feature
+(restart on crash) is a no-op against a sequential protocol
+with no resume primitive (section 4.1). The wire-throughput
+ceiling is set by protocol order, not by scheduling
+(section 4.2; #1197). Two state-machine encodings for the same
+role contradicts the bounded type-state recommendation #2134
+just landed (section 4.3).
 
-## 6. Recommendation
-
-### 6.1 Do not refactor the production hot path
-
-The Generator, Sender, and Receiver as they exist today are the
-minimum threading surface the wire protocol allows: one OS thread per
-direction plus one disk-commit thread. The disk-commit boundary is
-the only place the topology benefits from a queue, and the SPSC
-already gives that boundary a zero-syscall implementation. Replacing
-this with an actor mesh would add a park/wake cost
-(`docs/design/async-migration-plan.md:179-185`) for no throughput
-gain.
-
-The sync hot path stays as documented in
-`docs/architecture/parallelization.md` and in the parallelization
+**Do not reshape the production hot path as actors.** The sync
+hot path stays as documented in
+`docs/architecture/parallelization.md` and in the parallelism
 sections of `docs/design/async-migration-plan.md:170-185`.
 
-### 6.2 Ship actor-as-feature behind `--features async-pipeline`
+### 5.2 Adopt actors for two narrow use cases, behind a feature flag
 
-Two scenarios benefit from an actor surface, neither of which is
-served by today's topology:
+Two scenarios benefit from a typed actor surface; neither is
+served by today's topology and neither runs on the production
+hot path:
 
-1. **Multi-host fan-out from one process.** A future driver that
-   wants to run N concurrent rsync transports against N hosts (the
-   batch use case sketched at
-   `docs/audits/async-ssh-transport.md:232-242`) needs a
-   per-connection supervisor that owns one Generator + one Receiver
-   actor pair. The fan-out is an async-runtime problem, which is
-   exactly what `docs/design/async-migration-plan.md` Phase 3 is
-   evaluating.
-2. **Fault-injection tests.** Today, simulating a stuck disk thread
-   or a malformed delta requires monkey-patching the SPSC ends.
-   With a typed message surface, a test can substitute a mock
-   `Receiver` that emits `ReceiverMsg::DeltaToken` patterns the
-   wire would not normally produce, exercising the Generator's
-   error handling without driving a real transfer.
+1. **Multi-host fan-out from one driver process.** A future
+   command-line or daemon driver that wants N concurrent rsync
+   sessions against N hosts wants a per-session supervisor and
+   a top-level supervisor over those. The actor shape is the
+   natural fit; the migration plan's phase 5 anticipates this
+   under the same `#2136` tracker.
+2. **Fault-injection tests.** A typed message surface lets a
+   test substitute a mock `Receiver` or a mock `Sender` that
+   emits patterns the real wire would not produce. This is a
+   real ergonomics win over the current SPSC monkey-patching.
 
 The proposed shape:
 
@@ -282,93 +410,112 @@ The proposed shape:
 - Three concrete impls behind `--features async-pipeline`:
   `GeneratorActor`, `SenderActor`, `ReceiverActor`. Each impl
   wraps the existing `Generator::run` /
-  `ReceiverContext::run_pipeline_loop_decoupled` and translates
-  between the typed message channel and the existing API.
-- Supervisor type `TransferSupervisor` that owns the actor handles
-  and propagates cancellation through
-  `tokio_util::sync::CancellationToken`, reusing the channel
-  primitives already pinned in workspace `Cargo.toml`.
-- Feature flag default: off. The feature pulls the same tokio
-  surface as `--features async` (the umbrella at
-  `Cargo.toml:107`); see
-  `docs/design/async-migration-plan.md:480-498` for how to compose
-  with the existing `async-daemon` / `async-ssh` /
-  `async-transfer` family.
+  `ReceiverContext::run_pipelined` and translates between the
+  typed message channel and the existing API.
+- `TransferSupervisor` owns the actor handles and propagates
+  cancellation through `tokio_util::sync::CancellationToken`.
+  Engine compute stays sync and is reached via
+  `spawn_blocking` per the bridge contract in
+  `docs/design/spawn-blocking-bridge.md` (#4196).
+- Feature flag default: off. Pulls the same tokio surface as
+  `--features async`. Sits as phase 4.5 in the migration plan
+  ordering, or as a compose-only feature under the umbrella
+  `--features async-default` (phase 5).
 
-### 6.3 Why feature-gated, not default-on
+### 5.3 What stays out of scope
 
-- **Minimal-binary path stays clean.** Distributors who build with
-  `--no-default-features` continue to get a tokio-free oc-rsync
-  (`docs/audits/tokio-dependency-boundary-2026.md`).
-- **Hot-path SPSC stays unchanged.** The disk-commit boundary is
-  not converted to an actor. The SPSC's spin-wait remains the
-  network-to-disk hop on the production receiver.
-- **Existing async work is the natural carrier.** Phases 2-5 of
-  `docs/design/async-migration-plan.md:196-345` already migrate
-  daemon accept, SSH transport, and the receiver pipeline behind
-  feature flags. The actor surface fits as Phase 4.5 or as a
-  separate compose-only feature; either way the umbrella
-  `--features async-default` (Phase 5) is the only build that
-  enables actors by default.
-
-### 6.4 Out of scope
-
-- Any wire-protocol change that would let an actor mesh exploit
-  out-of-order delivery. Tracked-and-shelved at
-  `docs/design/parallel-chunks-design.md` (tag: SHELVED 2026-03-28)
-  and explicitly forbidden by user policy
-  (no wire protocol features for narrow perf wins).
+- Any wire-protocol change that would let an actor mesh
+  exploit out-of-order delivery. Shelved at
+  `docs/plans/2026-03-28-parallel-chunks-design.md`
+  (SHELVED 2026-03-28) and forbidden by user policy (no wire
+  protocol features for narrow perf wins).
 - Replacing rayon with an actor-based work scheduler. Rayon's
   work-stealing pool dominates the threshold-gated CPU paths
-  (`docs/architecture/parallelization.md:84-89`); actors are the
-  wrong abstraction for fan-out CPU compute.
+  (`docs/architecture/parallelization.md:84-89`); actors are
+  the wrong abstraction for fan-out CPU compute.
 - Splitting the SPSC into N actor-style mailboxes. The single
   consumer is correct by construction
-  (`crates/transfer/src/pipeline/spsc.rs:67-94`); multiplying it
-  multiplies syscalls.
+  (`crates/transfer/src/pipeline/spsc.rs:67-94`); multiplying
+  it multiplies syscalls.
+- Converting the disk-commit thread into an actor. It already
+  is one in shape (typed inbox, typed outbox, owned state);
+  the only thing missing is a name. If the actor surface lands
+  for the multi-host case, the disk-commit thread can be
+  reskinned as an actor for uniformity, but it is not a
+  prerequisite.
 
-## 7. References
+## 6. Cross-references
+
+Async / runtime plan:
+
+- `docs/design/async-migration-plan.md` (#1594, PR #4186) -
+  phase 4 receiver pipeline default and phase 5 rayon-tokio
+  composition; the natural carrier for an actor surface.
+  Issue #2136 is itemised there as the actor-pattern session
+  model under phase 5.
+- `docs/design/spawn-blocking-bridge.md` (#1751, PR #4196) -
+  the bridge contract any actor that touches rayon or io_uring
+  must respect.
+- `docs/design/async-channel-abstraction.md` (#1591) - the
+  `TransferChannel` trait the actor surface would reuse for
+  sync/async bridges.
+- #1935 - async daemon listener implementation. First
+  production-bound tokio surface; precedent for how the
+  supervisor would attach in the daemon mode of `oc-rsync`.
+
+State-machine adjacency:
+
+- `docs/design/type-state-protocol-phases.md` (#2134, recently
+  merged) - the bounded type-state recommendation that
+  constrains how much within-phase machinery should be encoded
+  in the type system. Section 4.3 above shows why an actor
+  reshape would contradict that bound.
 
 Architecture and audits:
 
 - `docs/architecture/parallelization.md:50-90,93-141` -
-  parallelism inventory, wire-protocol single-thread invariant.
+  parallelism inventory and the wire-protocol single-thread
+  invariant; the load-bearing constraint for this note.
 - `docs/audits/async-ssh-transport.md:270-299` - cites task
-  #1197; bounds async-transport gains by the same wire constraint.
+  #1197; bounds async-transport gains by the same wire
+  constraint.
 - `docs/audits/tokio-dependency-boundary-2026.md` - the
   seven-crate tokio allow-list any actor feature must respect.
 
-Adjacent designs:
+Multi-host carrier candidates:
 
-- `docs/design/async-migration-plan.md` - Phase 4 receiver pipeline
-  default and Phase 5 rayon-tokio composition; the natural carrier
-  for an actor surface.
-- `docs/design/async-channel-abstraction.md` - the `TransferChannel`
-  trait the actor surface would reuse for sync/async bridges.
 - `docs/design/arc-wrapped-worksender-multi-producer.md` - the
   multi-producer shape that complements multi-host fan-out.
-- `docs/design/multi-producer-workqueue.md` - Design A (vector of
-  senders) versus Design B (Arc-shared sender), feeds the
+- `docs/design/multi-producer-workqueue.md` - design A (vector
+  of senders) versus design B (Arc-shared sender), feeds the
   multi-host actor case.
 
 Source citations:
 
-- Generator role entry: `crates/transfer/src/generator/transfer.rs:696`
-  (`Generator::run`).
+- Generator role entry:
+  `crates/transfer/src/generator/transfer.rs:731` (`Generator::run`);
+  per-loop body at `:48` (`run_transfer_loop`).
 - Receiver role entry:
-  `crates/transfer/src/receiver/transfer/pipeline.rs:38`
-  (`run_pipeline_loop_decoupled`).
-- Disk-commit thread:
-  `crates/transfer/src/disk_commit/thread.rs:47-64`
-  (`spawn_disk_thread`), `:172-234` (`disk_thread_main`).
+  `crates/transfer/src/receiver/transfer.rs:55` (`run`),
+  `:519` (`run_pipelined`), `:680`
+  (`run_pipelined_incremental`).
+- Disk-commit thread spawn:
+  `crates/transfer/src/disk_commit/thread.rs:47-56`
+  (`spawn_disk_thread`); main loop:
+  `crates/transfer/src/disk_commit/thread.rs:172-234`
+  (`disk_thread_main`).
 - Lock-free SPSC: `crates/transfer/src/pipeline/spsc.rs:1-120`.
-- Sender-side INC_RECURSE state machine narrative:
+- Sender-side INC_RECURSE state-machine narrative:
   `crates/transfer/src/generator/mod.rs:32-78`.
+- Concurrent-delta work queue:
+  `crates/engine/src/concurrent_delta/work_queue/bounded.rs:88-104`.
 
 Tracked tasks:
 
 - #1197 - single-threaded wire protocol limitation: done.
-- #1591 - channel abstraction: prerequisite for any actor surface
-  bridging sync producers and async consumers.
-- #1594 - async migration plan: Phase 4 is the natural carrier.
+- #1591 - channel abstraction.
+- #1594 / PR #4186 - async migration plan.
+- #1751 / PR #4196 - spawn_blocking bridge contract.
+- #1935 - async daemon listener implementation.
+- #2134 - type-state for protocol negotiation phases: merged.
 - #2136 - this note.
