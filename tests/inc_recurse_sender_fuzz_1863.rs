@@ -125,10 +125,6 @@ impl Rng {
         self.gen_range(lo as u64, hi as u64) as usize
     }
 
-    fn gen_bool(&mut self, p_percent: u32) -> bool {
-        (self.next_u64() % 100) < u64::from(p_percent)
-    }
-
     fn fill_bytes(&mut self, buf: &mut [u8]) {
         let len = buf.len();
         let mut i = 0;
