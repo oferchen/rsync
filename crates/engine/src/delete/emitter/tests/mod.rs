@@ -18,6 +18,7 @@ use protocol::flist::FileEntry;
 
 use super::super::{DeleteEntry, DeleteEntryKind, DeletePlan};
 use super::{DeleteEvent, DeleteFs, RecordingDeleteFs};
+use crate::util::poison::lock_or_recover;
 
 mod cohort;
 mod dispatch;
@@ -60,10 +61,7 @@ impl ScriptedDeleteFs {
     }
 
     pub(super) fn fail(self, path: &str, kind: io::ErrorKind) -> Self {
-        self.rules
-            .lock()
-            .expect("rules mutex")
-            .push((PathBuf::from(path), kind));
+        lock_or_recover(&self.rules).push((PathBuf::from(path), kind));
         self
     }
 
@@ -72,7 +70,7 @@ impl ScriptedDeleteFs {
     }
 
     fn maybe_fail(&self, path: &Path) -> Option<io::Error> {
-        let mut rules = self.rules.lock().expect("rules mutex");
+        let mut rules = lock_or_recover(&self.rules);
         let position = rules.iter().position(|(p, _)| p == path)?;
         let (_, kind) = rules.remove(position);
         Some(io::Error::new(kind, "scripted failure"))

@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use super::super::DeleteEntryKind;
+use crate::util::poison::lock_or_recover;
 
 /// Filesystem operations the emitter needs to issue a deletion.
 ///
@@ -148,19 +149,20 @@ impl RecordingDeleteFs {
     }
 
     /// Returns a snapshot of the recorded events in dispatch order.
+    ///
+    /// The event log is append-only scratch data; a poisoned mutex still
+    /// yields a debuggable trace, so recovery via [`lock_or_recover`] is
+    /// preferred over aborting the test thread.
     #[must_use]
     pub fn events(&self) -> Vec<DeleteEvent> {
-        self.events.lock().expect("recorder mutex poisoned").clone()
+        lock_or_recover(&self.events).clone()
     }
 
     fn record(&self, path: &Path, kind: DeleteEntryKind) {
-        self.events
-            .lock()
-            .expect("recorder mutex poisoned")
-            .push(DeleteEvent {
-                path: path.to_path_buf(),
-                kind,
-            });
+        lock_or_recover(&self.events).push(DeleteEvent {
+            path: path.to_path_buf(),
+            kind,
+        });
     }
 }
 
