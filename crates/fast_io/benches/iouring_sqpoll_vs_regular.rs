@@ -133,7 +133,7 @@ fn io_uring_usable() -> bool {
 /// this returns `false` and the SQPOLL group skips.
 #[cfg(target_os = "linux")]
 fn sqpoll_usable() -> bool {
-    IoUring::builder()
+    IoUring::<io_uring::squeue::Entry>::builder()
         .setup_sqpoll(SQPOLL_IDLE_MS)
         .build(SQ_ENTRIES)
         .is_ok()
@@ -284,7 +284,7 @@ fn bench_iouring_sqpoll(c: &mut Criterion) {
             || {
                 let dir = TempDir::new().expect("tempdir");
                 let (paths, payload) = prepare_workload(&dir);
-                let ring = IoUring::builder()
+                let ring = IoUring::<io_uring::squeue::Entry>::builder()
                     .setup_sqpoll(SQPOLL_IDLE_MS)
                     .build(SQ_ENTRIES)
                     .expect("sqpoll ring");
