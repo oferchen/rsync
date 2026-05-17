@@ -7,19 +7,32 @@ use io_uring::IoUring as RawIoUring;
 
 use super::batching::{sqe_fd, submit_send_batch, try_register_fd};
 use super::config::IoUringConfig;
+use super::send_zc;
 
-/// io_uring-based socket writer using `IORING_OP_SEND`.
+/// Payload-length floor below which `IORING_OP_SEND_ZC` is skipped in favour
+/// of regular `IORING_OP_SEND`.
+///
+/// SEND_ZC pins the user pages via `get_user_pages_fast` and waits for the
+/// notification CQE before reusing the slot; for sub-page sends the
+/// page-pin overhead dominates and SEND_ZC loses to plain SEND. 16 KiB is
+/// the threshold from `docs/design/iouring-send-zc.md` section 5
+/// (workload B regression guard).
+const SEND_ZC_MIN_BYTES: usize = 16 * 1024;
+
+/// io_uring-based socket writer using `IORING_OP_SEND` (and optionally
+/// `IORING_OP_SEND_ZC`).
 ///
 /// Replaces direct `write()` calls on `TcpStream` by batching sends through
 /// the io_uring ring. Maintains an internal write buffer, flushing via
 /// batched send SQEs.
 ///
-/// `SEND_ZC` is gated by [`IoUringConfig::allow_send_zc`] - currently
-/// `false` for both `Auto` and `Disabled` policies, so this writer always
-/// emits regular `IORING_OP_SEND` SQEs. When the
-/// [`ZeroCopyPolicy::Enabled`](crate::ZeroCopyPolicy::Enabled) opt-in path
-/// is wired through the registered-buffer ring, `allow_send_zc` will switch
-/// to selecting `IORING_OP_SEND_ZC` here.
+/// When [`IoUringConfig::allow_send_zc`] is set and the running kernel
+/// advertises `IORING_OP_SEND_ZC` (Linux 6.0+), the big-write fast path
+/// switches to the zero-copy primitive. Sub-page writes stay on regular
+/// `IORING_OP_SEND` because SEND_ZC's page-pin overhead loses to SEND for
+/// small payloads. The kernel probe in [`send_zc::is_supported`] is cached
+/// process-wide; an unsupported result silently degrades to SEND so the
+/// writer never blocks startup on the probe outcome.
 pub struct IoUringSocketWriter {
     ring: RawIoUring,
     fd: RawFd,
@@ -28,8 +41,10 @@ pub struct IoUringSocketWriter {
     buffer_pos: usize,
     buffer_size: usize,
     sq_entries: u32,
-    #[allow(dead_code)]
-    allow_send_zc: bool,
+    /// True when the configured policy permits SEND_ZC **and** the running
+    /// kernel advertises `IORING_OP_SEND_ZC`. Resolved once at construction
+    /// so the hot path never re-probes.
+    send_zc_active: bool,
 }
 
 impl IoUringSocketWriter {
@@ -40,6 +55,7 @@ impl IoUringSocketWriter {
     pub fn from_raw_fd(fd: RawFd, config: &IoUringConfig) -> io::Result<Self> {
         let ring = config.build_ring()?;
         let fixed_fd_slot = try_register_fd(&ring, fd, config.register_files);
+        let send_zc_active = config.allow_send_zc() && send_zc::is_supported();
 
         Ok(Self {
             ring,
@@ -49,33 +65,76 @@ impl IoUringSocketWriter {
             buffer_pos: 0,
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
-            allow_send_zc: config.allow_send_zc(),
+            send_zc_active,
         })
     }
 
-    /// Flushes the internal buffer via batched `IORING_OP_SEND` submissions.
+    /// Returns `true` when this writer will attempt `IORING_OP_SEND_ZC` for
+    /// payloads at or above [`SEND_ZC_MIN_BYTES`]. Exposed for diagnostics
+    /// and tests; the production hot path consults the field directly.
+    #[must_use]
+    pub fn send_zc_active(&self) -> bool {
+        self.send_zc_active
+    }
+
+    /// Submits `data` via SEND_ZC when policy + kernel + payload size all
+    /// agree, falling back to the batched SEND path on `Unsupported` or
+    /// when SEND_ZC is disabled. Returns the byte count actually sent.
+    fn submit_send(&mut self, data: &[u8]) -> io::Result<usize> {
+        if self.send_zc_active && data.len() >= SEND_ZC_MIN_BYTES {
+            match send_zc::try_send_zc(&mut self.ring, self.fd, data, 0) {
+                Ok(n) => return Ok(n),
+                Err(e) if e.kind() == io::ErrorKind::Unsupported => {
+                    // Stop trying SEND_ZC for the lifetime of this writer:
+                    // the kernel cache already memoised the negative probe,
+                    // but turning off the per-writer flag avoids a futile
+                    // syscall on every subsequent flush.
+                    self.send_zc_active = false;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        let fd = sqe_fd(self.fd, self.fixed_fd_slot);
+        submit_send_batch(
+            &mut self.ring,
+            fd,
+            data,
+            self.buffer_size,
+            self.sq_entries as usize,
+            self.fixed_fd_slot,
+        )
+    }
+
+    /// Flushes the internal buffer via SEND_ZC or batched SEND submissions.
     fn flush_buffer(&mut self) -> io::Result<()> {
         if self.buffer_pos == 0 {
             return Ok(());
         }
 
-        let fd = sqe_fd(self.fd, self.fixed_fd_slot);
         let len = self.buffer_pos;
-
-        let sent = submit_send_batch(
-            &mut self.ring,
-            fd,
-            &self.buffer[..len],
-            self.buffer_size,
-            self.sq_entries as usize,
-            self.fixed_fd_slot,
-        )?;
-
-        if sent != len {
-            return Err(io::Error::new(
-                io::ErrorKind::WriteZero,
-                "batched send incomplete",
-            ));
+        let mut sent_total = 0;
+        while sent_total < len {
+            // SAFETY: `as_ptr()` returns a pointer into `self.buffer`, whose
+            // backing storage lives until `self` is dropped. The slice
+            // bounds are `sent_total..len`, both bounded by
+            // `self.buffer_size`. We rebuild the slice on each iteration so
+            // it does not alias the `&mut self` borrow consumed by
+            // `submit_send`. SEND_ZC's `try_send_zc` waits for the
+            // notification CQE before returning, so the kernel has released
+            // its page reference by the time we regain control; SEND
+            // copies bytes into kernel socket buffers synchronously and is
+            // similarly safe to call on a borrowed slice.
+            let chunk = unsafe {
+                std::slice::from_raw_parts(self.buffer.as_ptr().add(sent_total), len - sent_total)
+            };
+            let n = self.submit_send(chunk)?;
+            if n == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "batched send incomplete",
+                ));
+            }
+            sent_total += n;
         }
 
         self.buffer_pos = 0;
@@ -98,15 +157,11 @@ impl Write for IoUringSocketWriter {
         self.flush_buffer()?;
 
         if buf.len() >= self.buffer_size {
-            let fd = sqe_fd(self.fd, self.fixed_fd_slot);
-            let sent = submit_send_batch(
-                &mut self.ring,
-                fd,
-                buf,
-                self.buffer_size,
-                self.sq_entries as usize,
-                self.fixed_fd_slot,
-            )?;
+            // Caller's slice is borrowed for the lifetime of this call;
+            // `submit_send` either copies via SEND or waits for the SEND_ZC
+            // notification CQE before returning, so the caller is free to
+            // reuse `buf` once we return.
+            let sent = self.submit_send(buf)?;
             return Ok(sent);
         }
 

@@ -95,6 +95,7 @@ pub mod linkat;
 pub mod linked_chain;
 pub mod registered_buffers;
 pub mod renameat2;
+pub mod send_zc;
 pub mod session_pool;
 pub mod shared_ring;
 mod socket_factory;
@@ -130,6 +131,7 @@ pub use linked_chain::{CqeResult, LinkedChain, read_then_write};
 pub use registered_buffers::{
     RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats, RegisteredBufferStatus,
 };
+pub use send_zc::{is_supported as send_zc_supported, try_send_zc};
 
 /// Internal re-exports of the underlying `io-uring` crate types used by
 /// `#[doc(hidden)]` test helpers (see `registered_buffers::submit_read_fixed_batch`).
