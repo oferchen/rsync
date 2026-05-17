@@ -1,44 +1,58 @@
 //! Thread-local buffer cache for zero-synchronization acquire/return.
 //!
-//! Provides a single-slot per-thread cache that sits in front of the central
+//! Provides per-thread caching that sits in front of the central
 //! [`BufferPool`](super::BufferPool). When a rayon worker acquires a buffer,
-//! the thread-local slot is checked first (zero synchronization, ~2 ns). On
-//! return, the buffer is stored in the slot if empty, avoiding the central
-//! pool's lock-free queue entirely for the common single-buffer-per-thread
-//! pattern.
+//! the thread-local cache is checked first (zero synchronization, ~2 ns). On
+//! return, the buffer is stored in the cache, avoiding the central pool's
+//! lock-free queue entirely for the common single-buffer-per-thread pattern.
 //!
 //! # Design
 //!
-//! The cache holds at most **one** buffer per thread via `thread_local!` with
-//! `RefCell<Option<Vec<u8>>>`. This matches the dominant workload where each
-//! rayon worker holds exactly one buffer at a time (one per file or one per
-//! delta chunk). Overflow (slot occupied on return) routes to the central pool.
+//! Two implementations are available, selected at compile time:
+//!
+//! - **Default (no feature)** - a single-slot `RefCell<Option<Vec<u8>>>` per
+//!   thread. Matches the dominant workload where each rayon worker holds
+//!   exactly one buffer at a time. Overflow (slot occupied on return) routes
+//!   to the central pool.
+//! - **`thread-slab-pool` feature** - a depth-bounded LIFO `Vec<Vec<u8>>` per
+//!   thread (see [`super::thread_slab`]). Useful when worker threads hold
+//!   multiple buffers concurrently (delta apply, prefetch pipelines) and
+//!   benefit from a warmer cache without paying central-queue cursor traffic
+//!   on every return.
+//!
+//! Both implementations expose the same [`try_take`] / [`try_store`] surface
+//! so `pool.rs` is unchanged across the feature switch.
 //!
 //! # Cross-Platform
 //!
 //! Uses only `std::thread_local!` and `std::cell::RefCell` - fully portable
 //! across Linux, macOS, and Windows with zero external dependencies.
 
+#[cfg(not(feature = "thread-slab-pool"))]
 use std::cell::RefCell;
 
+#[cfg(not(feature = "thread-slab-pool"))]
 thread_local! {
     /// Per-thread buffer cache slot. Initialized empty (no allocation until first store).
     static LOCAL_BUF: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
 }
 
-/// Takes the cached buffer from the thread-local slot, if present.
+/// Takes the cached buffer from this thread's cache, if any.
 ///
-/// Returns `Some(buffer)` if the slot was occupied, `None` if empty.
-/// Zero synchronization - purely thread-local access.
+/// Default build: pops the single TLS slot. With `thread-slab-pool`: pops
+/// the warmest entry from the per-thread LIFO slab.
+#[cfg(not(feature = "thread-slab-pool"))]
 pub(super) fn try_take() -> Option<Vec<u8>> {
     LOCAL_BUF.with(|cell| cell.borrow_mut().take())
 }
 
-/// Attempts to store a buffer in the thread-local slot.
+/// Stores a buffer in this thread's cache.
 ///
-/// If the slot is empty, stores the buffer and returns `None`.
-/// If the slot is occupied, returns `Some(buffer)` unchanged - the caller
-/// should route it to the central pool.
+/// Default build: stores into the single TLS slot if empty, otherwise
+/// returns `Some(buf)` so the caller routes to the central pool. With
+/// `thread-slab-pool`: pushes onto the per-thread slab if both slot and
+/// byte caps allow, otherwise returns `Some(buf)` for the same routing.
+#[cfg(not(feature = "thread-slab-pool"))]
 pub(super) fn try_store(buf: Vec<u8>) -> Option<Vec<u8>> {
     LOCAL_BUF.with(|cell| {
         let mut slot = cell.borrow_mut();
@@ -49,4 +63,14 @@ pub(super) fn try_store(buf: Vec<u8>) -> Option<Vec<u8>> {
             Some(buf)
         }
     })
+}
+
+#[cfg(feature = "thread-slab-pool")]
+pub(super) fn try_take() -> Option<Vec<u8>> {
+    super::thread_slab::try_take()
+}
+
+#[cfg(feature = "thread-slab-pool")]
+pub(super) fn try_store(buf: Vec<u8>) -> Option<Vec<u8>> {
+    super::thread_slab::try_store(buf)
 }
