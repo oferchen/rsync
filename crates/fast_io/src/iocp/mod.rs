@@ -41,6 +41,8 @@ pub use config::{
     skip_event_optimization_available,
 };
 pub use disk_batch::IocpDiskBatch;
+#[doc(hidden)]
+pub use disk_batch::{clear_injected_write_error_for_test, inject_next_write_error_for_test};
 pub use error::IocpError;
 pub use file_factory::{
     IocpOrStdReader, IocpOrStdWriter, IocpReaderFactory, IocpWriterFactory, reader_from_path,
