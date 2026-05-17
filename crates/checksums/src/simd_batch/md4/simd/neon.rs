@@ -275,6 +275,10 @@ mod tests {
     fn neon_md4_matches_scalar() {
         let inputs: [&[u8]; 4] = [b"", b"a", b"abc", b"message digest"];
 
+        // SAFETY: NEON is mandatory on aarch64 (ARMv8-A baseline), so
+        // `digest_x4`'s "NEON available" precondition holds whenever this
+        // module is compiled in (gated by `#[cfg(target_arch = "aarch64")]`).
+        // `inputs` is a fixed-length array of 4 valid `&[u8]` borrows.
         let results = unsafe { digest_x4(&inputs) };
 
         for (i, input) in inputs.iter().enumerate() {
@@ -299,6 +303,10 @@ mod tests {
             "d9130a8164549fe818874806e1c7014b",
         ];
 
+        // SAFETY: NEON is mandatory on aarch64 (ARMv8-A baseline), so
+        // `digest_x4`'s "NEON available" precondition holds whenever this
+        // module is compiled in. `inputs` is a fixed-length array of 4
+        // valid `&[u8]` borrows that outlive the call.
         let results = unsafe { digest_x4(&inputs) };
 
         for i in 0..4 {
@@ -320,6 +328,10 @@ mod tests {
 
         let inputs: [&[u8]; 4] = [&input0, &input1, &input2, &input3];
 
+        // SAFETY: NEON is mandatory on aarch64 (ARMv8-A baseline), so
+        // `digest_x4`'s "NEON available" precondition holds whenever this
+        // module is compiled in. `inputs` borrows 4 owned `Vec<u8>` buffers
+        // that outlive the call; `digest_x4` bounds-checks each lane.
         let results = unsafe { digest_x4(&inputs) };
 
         for (i, input) in inputs.iter().enumerate() {
