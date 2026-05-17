@@ -93,6 +93,13 @@ io_uring = ["fast_io/io_uring"]
 # Benefits: Overlapped async file I/O via kernel completion ports
 iocp = ["fast_io/iocp"]
 
+# vmsplice zero-copy disk writer for already-demuxed literal chunks
+# (Linux-only). Selected by the disk-commit thread when io_uring/IOCP are not
+# in play and the chunk is large + page-aligned; otherwise falls back to the
+# buffered writer. Default off until benchmarks justify promotion. See
+# docs/design/splice-vmsplice-zero-copy.md.
+vmsplice = ["fast_io/vmsplice"]
+
 # ============================================================================
 # Protocol Features
 # ============================================================================

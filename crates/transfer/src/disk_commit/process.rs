@@ -309,6 +309,16 @@ fn make_writer<'a>(
             )));
         }
     }
+    // vmsplice path: only when neither io_uring nor IOCP claimed the file. It
+    // gates per-chunk inside VmspliceFileWriter, falling back to plain write
+    // for chunks below 64 KiB or with unaligned pointers - the design doc's
+    // shape B. Sparse and append require Seek, so they keep using Buffered.
+    #[cfg(all(target_os = "linux", feature = "vmsplice"))]
+    {
+        if !use_sparse && append_offset == 0 {
+            return Ok(Writer::Vmsplice(fast_io::VmspliceFileWriter::new(file)?));
+        }
+    }
     Ok(Writer::Buffered(ReusableBufWriter::new(file, write_buf)))
 }
 
