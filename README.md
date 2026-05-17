@@ -209,6 +209,7 @@ release binary on modern Linux/macOS/Windows hosts; everything marked
 | `thread-slab-pool` | `engine` | no | Per-thread bounded LIFO slab in front of `BufferPool`; pays off above ~32 workers (#1271, #1370). | experimental |
 | `vmsplice` | `fast_io`, `transfer` | no | Linux `vmsplice(2)` + `splice(2)` zero-copy writer for large page-aligned chunks. | experimental |
 | `async-ssh` | `core`, `rsync_io` | no | Wires `AsyncSshTransport` into the client remote path; opt-in at runtime via `OC_RSYNC_ASYNC_SSH=1` (#1593, #1796, #1805, #1806). | experimental |
+| `ssh-socketpair-stderr` | `rsync_io` | no | Constructs the SSH child's stderr over a `socketpair(AF_UNIX, SOCK_STREAM)` instead of an anonymous pipe, enabling epoll/kqueue-integrated async drain (Linux recommended; Windows shim pending SSE-5). See `docs/design/socketpair-stderr-channel.md` (#2371, #2372). | experimental |
 | `async-daemon` | `daemon` | no | Hybrid tokio accept loop dispatching sync workers via `spawn_blocking` (#1935). | experimental |
 | `concurrent-sessions` | `daemon` | no | Shared `dashmap` session state for multi-session daemons. | experimental |
 | `tracing` | `core`, `engine`, `transfer`, `daemon` | no | Structured `tracing` instrumentation for diagnostics. | stable |
