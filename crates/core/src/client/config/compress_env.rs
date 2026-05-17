@@ -81,6 +81,9 @@ mod tests {
         #[allow(unsafe_code)]
         fn remove(key: &'static str) -> Self {
             let previous = env::var_os(key);
+            // SAFETY: callers hold `ENV_MUTEX`, so no other thread can run
+            // `getenv`/`unsetenv` concurrently. `remove_var` is unsafe in Rust
+            // 2024 only because of cross-thread races, which the mutex prevents.
             unsafe {
                 env::remove_var(key);
             }
@@ -90,6 +93,9 @@ mod tests {
         #[allow(unsafe_code)]
         fn set(key: &'static str, value: &OsStr) -> Self {
             let previous = env::var_os(key);
+            // SAFETY: callers hold `ENV_MUTEX`, so no other thread can run
+            // `getenv`/`setenv` concurrently. `set_var` is unsafe in Rust 2024
+            // only because of cross-thread races, which the mutex prevents.
             unsafe {
                 env::set_var(key, value);
             }
@@ -100,6 +106,8 @@ mod tests {
     #[allow(unsafe_code)]
     impl Drop for EnvGuard {
         fn drop(&mut self) {
+            // SAFETY: the originating test still holds `ENV_MUTEX` while `Drop`
+            // runs, so the restoration call cannot race with other mutations.
             if let Some(value) = self.previous.take() {
                 unsafe {
                     env::set_var(self.key, value);

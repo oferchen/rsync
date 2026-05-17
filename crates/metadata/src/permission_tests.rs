@@ -386,12 +386,16 @@ mod tests {
             set_mode(&source, test_mode);
             let metadata = fs::metadata(&source).expect("metadata");
 
-            // Change umask
+            // SAFETY: `umask` is a thread-unsafe libc call; the surrounding
+            // test holds the per-binary nextest serial slot configured for
+            // umask-sensitive tests so no other thread mutates umask
+            // concurrently.
             let old_umask = unsafe { umask(test_umask as mode_t) };
 
             apply_file_metadata(&dest, &metadata).expect("apply metadata");
 
-            // Restore umask
+            // SAFETY: see above; restoring the prior umask value while still
+            // holding the serial slot.
             unsafe { umask(old_umask) };
 
             // Verify permissions are preserved exactly, regardless of umask
@@ -419,9 +423,13 @@ mod tests {
         set_mode(&source, 0o777);
         let metadata = fs::metadata(&source).expect("metadata");
 
-        // Apply with very restrictive umask
+        // SAFETY: `umask` is a thread-unsafe libc call; the surrounding
+        // test holds the per-binary nextest serial slot configured for
+        // umask-sensitive tests so no other thread mutates umask concurrently.
         let old_umask = unsafe { umask(0o077 as mode_t) };
         apply_file_metadata(&dest, &metadata).expect("apply metadata");
+        // SAFETY: see above; restoring the prior umask value while still
+        // holding the serial slot.
         unsafe { umask(old_umask) };
 
         // Permissions should still be 0o777, not restricted by umask
@@ -443,9 +451,13 @@ mod tests {
         set_mode(&source, 0o600);
         let metadata = fs::metadata(&source).expect("metadata");
 
-        // Apply with permissive umask
+        // SAFETY: `umask` is a thread-unsafe libc call; the surrounding
+        // test holds the per-binary nextest serial slot configured for
+        // umask-sensitive tests so no other thread mutates umask concurrently.
         let old_umask = unsafe { umask(0o000 as mode_t) };
         apply_file_metadata(&dest, &metadata).expect("apply metadata");
+        // SAFETY: see above; restoring the prior umask value while still
+        // holding the serial slot.
         unsafe { umask(old_umask) };
 
         // Permissions should still be 0o600, not expanded by umask
@@ -466,9 +478,13 @@ mod tests {
         set_mode(&source, 0o6755);
         let metadata = fs::metadata(&source).expect("metadata");
 
-        // Apply with restrictive umask
+        // SAFETY: `umask` is a thread-unsafe libc call; the surrounding
+        // test holds the per-binary nextest serial slot configured for
+        // umask-sensitive tests so no other thread mutates umask concurrently.
         let old_umask = unsafe { umask(0o077 as mode_t) };
         apply_file_metadata(&dest, &metadata).expect("apply metadata");
+        // SAFETY: see above; restoring the prior umask value while still
+        // holding the serial slot.
         unsafe { umask(old_umask) };
 
         // Special bits should be preserved

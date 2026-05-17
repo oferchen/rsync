@@ -49,6 +49,9 @@ mod tests {
     impl EnvGuard {
         fn set(key: &'static str, value: &str) -> Self {
             let previous = env::var_os(key);
+            // SAFETY: callers hold `ENV_MUTEX`, so no other thread can call
+            // `getenv`/`setenv` concurrently. `set_var` is unsafe in Rust 2024
+            // only because of cross-thread races, which the mutex prevents.
             unsafe {
                 env::set_var(key, value);
             }
@@ -57,6 +60,8 @@ mod tests {
 
         fn remove(key: &'static str) -> Self {
             let previous = env::var_os(key);
+            // SAFETY: see `set` above; the mutex serialises every environment
+            // mutation in this module.
             unsafe {
                 env::remove_var(key);
             }
@@ -66,6 +71,9 @@ mod tests {
 
     impl Drop for EnvGuard {
         fn drop(&mut self) {
+            // SAFETY: `Drop` runs at scope exit while the test still holds
+            // `ENV_MUTEX`, so no concurrent reader/writer can race the
+            // restoration call.
             if let Some(value) = self.previous.take() {
                 unsafe {
                     env::set_var(self.key, value);

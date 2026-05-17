@@ -471,6 +471,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn switch_to_current_user_succeeds() {
+        // SAFETY: `geteuid`/`getegid` are POSIX accessors with no inputs and
+        // no side effects beyond returning the calling process's IDs.
         let euid = unsafe { libc::geteuid() };
         let egid = unsafe { libc::getegid() };
         let ids = CopyAsIds {
@@ -481,7 +483,7 @@ mod tests {
         assert_eq!(guard.original_euid(), euid);
         assert_eq!(guard.original_egid(), egid);
         drop(guard);
-        // Verify we are back to the original identity
+        // SAFETY: see above; pure read of the calling process's effective IDs.
         assert_eq!(unsafe { libc::geteuid() }, euid);
         assert_eq!(unsafe { libc::getegid() }, egid);
     }
@@ -489,6 +491,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn switch_without_group_preserves_egid() {
+        // SAFETY: `geteuid`/`getegid` are POSIX accessors with no inputs and
+        // no side effects beyond returning the calling process's IDs.
         let euid = unsafe { libc::geteuid() };
         let egid = unsafe { libc::getegid() };
         let ids = CopyAsIds {
@@ -498,6 +502,7 @@ mod tests {
         let guard = switch_effective_ids(&ids).unwrap();
         assert!(!guard.switched_egid);
         drop(guard);
+        // SAFETY: see above; pure read of the calling process's effective gid.
         assert_eq!(unsafe { libc::getegid() }, egid);
     }
 

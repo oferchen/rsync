@@ -479,6 +479,9 @@ mod tests {
         #[allow(unsafe_code)]
         fn set(key: &'static str, value: &str) -> Self {
             let original = std::env::var_os(key);
+            // SAFETY: callers hold `ENV_MUTEX`, so no other thread can call
+            // `getenv`/`setenv` concurrently. `set_var` is unsafe in Rust 2024
+            // only because of cross-thread races, which the mutex prevents.
             unsafe {
                 std::env::set_var(key, value);
             }
@@ -489,6 +492,9 @@ mod tests {
     impl Drop for EnvGuard {
         #[allow(unsafe_code)]
         fn drop(&mut self) {
+            // SAFETY: the originating test still holds `ENV_MUTEX` when this
+            // `Drop` runs, so the restoration call cannot race with other env
+            // mutations.
             match self.original.take() {
                 Some(value) => unsafe {
                     std::env::set_var(self.key, value);

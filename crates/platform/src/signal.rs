@@ -138,6 +138,10 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
         }
     }
 
+    // SAFETY: `handler` is a static `extern "system" fn` with the signature
+    // expected by `PHANDLER_ROUTINE`. The Windows console preserves the
+    // handler pointer for the lifetime of the process, so no dangling pointer
+    // can be invoked.
     unsafe { SetConsoleCtrlHandler(Some(handler), true) }.map_err(|e| {
         io::Error::new(
             io::ErrorKind::Other,

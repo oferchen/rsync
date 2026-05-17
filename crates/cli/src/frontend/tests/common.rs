@@ -215,6 +215,9 @@ pub(super) struct EnvGuard {
 impl EnvGuard {
     pub(super) fn set(key: &'static str, value: &OsStr) -> Self {
         let previous = std::env::var_os(key);
+        // SAFETY: callers must hold `ENV_LOCK` (see `run_with_args` and other
+        // helpers in this module) so no other thread races on `getenv`/`setenv`.
+        // `set_var` is unsafe in Rust 2024 only because of cross-thread races.
         unsafe {
             std::env::set_var(key, value);
         }
@@ -225,6 +228,8 @@ impl EnvGuard {
     #[allow(dead_code)]
     pub(super) fn remove(key: &'static str) -> Self {
         let previous = std::env::var_os(key);
+        // SAFETY: see `set` above; the caller-held `ENV_LOCK` serialises every
+        // mutation of the process environment in this module.
         unsafe {
             std::env::remove_var(key);
         }
@@ -235,6 +240,9 @@ impl EnvGuard {
 #[allow(unsafe_code)]
 impl Drop for EnvGuard {
     fn drop(&mut self) {
+        // SAFETY: the test that constructed this guard still holds `ENV_LOCK`
+        // when `Drop` runs (Drop fires before the lock guard is released), so
+        // the restoration call cannot race with other env mutations.
         if let Some(value) = self.previous.take() {
             unsafe {
                 std::env::set_var(self.key, value);

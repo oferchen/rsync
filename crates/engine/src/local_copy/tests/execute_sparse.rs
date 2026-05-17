@@ -800,6 +800,9 @@ fn execute_sparse_creates_actual_filesystem_holes() {
     const SEEK_DATA: i32 = 3;
     const SEEK_HOLE: i32 = 4;
 
+    // SAFETY: `fd` is a valid file descriptor borrowed from `dest_file`, which
+    // outlives the `unsafe` block. `lseek` only inspects the descriptor and
+    // accepts any `i64` offset; there is no aliasing or memory access risk.
     unsafe {
         // Start at beginning
         let first_data = libc::lseek(fd, 0, SEEK_DATA);

@@ -29,8 +29,15 @@ pub fn has_statx_support() -> bool {
     use std::ffi::CString;
 
     let path = CString::new(".").unwrap();
+    // SAFETY: `libc::statx` is a POD `repr(C)` structure; the zero pattern is
+    // a valid initial state and the kernel populates it before any field is
+    // read.
     let mut statx_buf: libc::statx = unsafe { std::mem::zeroed() };
 
+    // SAFETY: `path` is a valid NUL-terminated C string that outlives the
+    // call. `statx_buf` is sized and aligned correctly. All other arguments
+    // are valid kernel constants. The call returns -1 on failure and never
+    // mutates user memory outside `statx_buf`.
     let ret = unsafe {
         libc::syscall(
             libc::SYS_statx,
@@ -137,8 +144,15 @@ fn statx_with_mask(
         libc::AT_SYMLINK_NOFOLLOW
     };
 
+    // SAFETY: `libc::statx` is a POD `repr(C)` structure; the zero pattern is
+    // a valid initial state and the kernel populates it before any field is
+    // read.
     let mut statx_buf: libc::statx = unsafe { std::mem::zeroed() };
 
+    // SAFETY: `c_path` is a valid NUL-terminated C string that outlives the
+    // call; `dir_fd` is either `AT_FDCWD` or a borrowed file descriptor from
+    // the caller. `statx_buf` is sized and aligned correctly and the kernel
+    // will not write outside it.
     let ret = unsafe {
         libc::syscall(
             libc::SYS_statx,

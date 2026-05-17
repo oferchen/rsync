@@ -82,6 +82,8 @@ mod tests {
         let _lock = TEST_LOCK.lock().unwrap();
         let key = "PLATFORM_ENV_TEST_SET";
 
+        // SAFETY: the surrounding test holds `TEST_LOCK`, serialising every
+        // environment mutation in this module so no other thread can race.
         #[allow(unsafe_code)]
         unsafe {
             env::remove_var(key);
@@ -100,6 +102,8 @@ mod tests {
         let _lock = TEST_LOCK.lock().unwrap();
         let key = "PLATFORM_ENV_TEST_REMOVE";
 
+        // SAFETY: the surrounding test holds `TEST_LOCK`, serialising every
+        // environment mutation in this module so no other thread can race.
         #[allow(unsafe_code)]
         unsafe {
             env::set_var(key, "original");
@@ -112,6 +116,8 @@ mod tests {
 
         assert_eq!(env::var(key).unwrap(), "original");
 
+        // SAFETY: the surrounding test holds `TEST_LOCK`, serialising every
+        // environment mutation in this module so no other thread can race.
         #[allow(unsafe_code)]
         unsafe {
             env::remove_var(key);
@@ -123,6 +129,8 @@ mod tests {
         let _lock = TEST_LOCK.lock().unwrap();
         let key = "PLATFORM_ENV_TEST_OVERWRITE";
 
+        // SAFETY: the surrounding test holds `TEST_LOCK`, serialising every
+        // environment mutation in this module so no other thread can race.
         #[allow(unsafe_code)]
         unsafe {
             env::set_var(key, "old_value");
@@ -135,6 +143,8 @@ mod tests {
 
         assert_eq!(env::var(key).unwrap(), "old_value");
 
+        // SAFETY: the surrounding test holds `TEST_LOCK`, serialising every
+        // environment mutation in this module so no other thread can race.
         #[allow(unsafe_code)]
         unsafe {
             env::remove_var(key);
@@ -146,6 +156,8 @@ mod tests {
         let _lock = TEST_LOCK.lock().unwrap();
         let key = "PLATFORM_ENV_TEST_NESTED";
 
+        // SAFETY: the surrounding test holds `TEST_LOCK`, serialising every
+        // environment mutation in this module so no other thread can race.
         #[allow(unsafe_code)]
         unsafe {
             env::remove_var(key);
@@ -169,6 +181,8 @@ mod tests {
         let _lock = TEST_LOCK.lock().unwrap();
         let key = "PLATFORM_ENV_TEST_REMOVE_NONEXIST";
 
+        // SAFETY: the surrounding test holds `TEST_LOCK`, serialising every
+        // environment mutation in this module so no other thread can race.
         #[allow(unsafe_code)]
         unsafe {
             env::remove_var(key);
