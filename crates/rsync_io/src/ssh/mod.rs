@@ -93,6 +93,8 @@ mod connection;
 pub mod embedded;
 mod operand;
 mod parse;
+#[cfg(feature = "ssh-socketpair-stderr")]
+pub mod socketpair_stderr;
 
 #[cfg(feature = "async-ssh")]
 pub use async_transport::AsyncSshTransport;
