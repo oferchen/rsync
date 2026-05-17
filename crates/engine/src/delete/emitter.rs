@@ -1,40 +1,39 @@
 //! Single-threaded emitter for the parallel-deterministic delete pipeline.
 //!
-//! Scaffolds [`DeleteEmitter`], the drain task that consumes
-//! [`DeletePlan`]s from a [`DeletePlanMap`] in the order dictated by
-//! [`DirTraversalCursor`] (upstream depth-first traversal) and issues one
-//! filesystem operation per planned entry through a [`DeleteFs`] trait.
+//! Hosts [`DeleteEmitter`], the drain task that consumes [`DeletePlan`]s
+//! from a [`DeletePlanMap`] in the order dictated by [`DirTraversalCursor`]
+//! (upstream depth-first traversal) and issues one filesystem operation
+//! per planned entry through a [`DeleteFs`] trait.
 //!
-//! # Task scope (DDP-C1, #2259)
+//! # Task scope
 //!
-//! This task lands:
-//!
-//! - The [`DeleteFs`] trait and its production implementation
-//!   [`RealDeleteFs`].
-//! - A [`RecordingDeleteFs`] test fake that captures the syscall sequence.
-//! - The [`DeleteEmitter`] struct, its constructor, and the skeleton
-//!   [`DeleteEmitter::emit_all`] loop that walks the cursor, takes the plan
-//!   for each directory, and dispatches each entry to the [`DeleteFs`]
-//!   trait while incrementing [`DeleteStats`].
-//!
-//! Out of scope (later tasks in the DDP-C series):
-//!
-//! - Live syscall dispatch refinements (DDP-C2, #2260).
-//! - Error policy (`io_error & IOERR_GENERAL`, `--max-delete`, `ENOTEMPTY`)
-//!   per upstream `delete.c:130-225` and `generator.c:272-298` (DDP-C3,
-//!   #2261).
-//! - Wiring through `MsgInfoSender` for `*deleting` itemize lines
-//!   (DDP-C-series follow-ups).
+//! - DDP-C1 (#2259) - trait, fakes, scaffold drain loop.
+//! - DDP-C2 (#2260) - full dispatch by entry kind matching upstream
+//!   `delete.c::delete_item` (`rmdir` for empty dirs, recursive descent on
+//!   `ENOTEMPTY` via a nested plan or `remove_dir_all` fallback that
+//!   mirrors `delete_dir_contents`, `unlink` for everything else).
+//! - DDP-C3 (#2261) - [`EmitterErrorPolicy`] mirroring upstream's
+//!   continue-vs-abort behaviour: non-fatal errors set the `io_error`
+//!   flag (upstream `IOERR_GENERAL`) and the drain keeps going; fatal
+//!   classifications abort and surface an [`io::Error`] mapped to
+//!   `RERR_PARTIAL` (23) / `RERR_VANISHED` (24).
+//! - DDP-C4 (#2262) - unit tests for synthetic plan sequences.
 //!
 //! # Upstream reference
 //!
+//! - `target/interop/upstream-src/rsync-3.4.1/delete.c:48-122`
+//!   (`delete_dir_contents`): recursive directory peel used when an
+//!   `rmdir` would fail with `ENOTEMPTY`.
 //! - `target/interop/upstream-src/rsync-3.4.1/delete.c:130-225`
 //!   (`delete_item`): dispatch by `S_ISDIR` / `S_ISLNK` / `IS_DEVICE` /
-//!   `IS_SPECIAL`, with `do_rmdir` for directories and `robust_unlink` for
-//!   everything else.
+//!   `IS_SPECIAL`, with `do_rmdir` for directories and `robust_unlink`
+//!   for everything else; `ENOTEMPTY` recurses, other errors are logged
+//!   and reported via `DR_FAILURE`.
 //! - `target/interop/upstream-src/rsync-3.4.1/generator.c:272-347`
 //!   (`delete_in_dir`): reverse iteration over the sorted destination
 //!   listing, one `delete_item` call per non-matched entry.
+//! - `target/interop/upstream-src/rsync-3.4.1/errcode.h`: `RERR_PARTIAL`
+//!   (23) and `RERR_VANISHED` (24).
 
 use std::fs;
 use std::io;
@@ -43,7 +42,20 @@ use std::sync::Mutex;
 
 use protocol::DeleteStats;
 
-use super::{DeleteEntryKind, DeletePlanMap, DirTraversalCursor};
+use super::{DeleteEntryKind, DeletePlan, DeletePlanMap, DirTraversalCursor};
+
+// ----------------------------------------------------------------------------
+// Upstream exit-code constants surfaced by this module.
+// ----------------------------------------------------------------------------
+
+/// Exit code for partial transfers caused by an I/O failure during the
+/// delete pass. Mirrors upstream `errcode.h::RERR_PARTIAL` and
+/// `core::exit_code::ExitCode::PartialTransfer`.
+pub const EMITTER_PARTIAL_EXIT_CODE: i32 = 23;
+
+/// Exit code reported when a destination entry vanished mid-pass. Mirrors
+/// upstream `errcode.h::RERR_VANISHED` and `core::exit_code::ExitCode::Vanished`.
+pub const EMITTER_VANISHED_EXIT_CODE: i32 = 24;
 
 // ----------------------------------------------------------------------------
 // DeleteFs trait and implementations.
@@ -54,8 +66,11 @@ use super::{DeleteEntryKind, DeletePlanMap, DirTraversalCursor};
 /// The trait carves one method per upstream-distinguishable entry kind
 /// (`delete.c:144-176`). Splitting `unlink_file` from `unlink_symlink` /
 /// `unlink_device` / `unlink_special` lets unit tests assert the exact
-/// dispatch table even though all four currently route to `unlink(2)` in the
-/// production implementation. Directories use `rmdir(2)`.
+/// dispatch table even though all four currently route to `unlink(2)` in
+/// the production implementation. Directories use `rmdir(2)`; the
+/// recursive [`Self::remove_dir_all`] hook mirrors upstream's
+/// `delete_dir_contents` fallback when a directory cannot be emptied via
+/// its own published plan.
 ///
 /// All methods take `&self` so a single [`DeleteFs`] value can be shared
 /// across the emitter and any future helpers. The production impl is
@@ -76,14 +91,24 @@ pub trait DeleteFs {
 
     /// Unlinks a FIFO or socket.
     fn unlink_special(&self, path: &Path) -> io::Result<()>;
+
+    /// Recursively removes a directory and everything beneath it.
+    ///
+    /// Invoked by the emitter when [`Self::rmdir`] returns
+    /// [`io::ErrorKind::DirectoryNotEmpty`] and no nested
+    /// [`super::DeletePlan`] has been published for the offending child
+    /// (upstream `delete.c:48-122 delete_dir_contents`).
+    fn remove_dir_all(&self, path: &Path) -> io::Result<()>;
 }
 
 /// Production [`DeleteFs`] implementation backed by `std::fs`.
 ///
 /// All file-like kinds route to [`fs::remove_file`] (Unix `unlink(2)`,
 /// Windows `DeleteFileW`). Directories route to [`fs::remove_dir`]
-/// (`rmdir(2)`). This mirrors upstream `delete_item` (`delete.c:161-175`):
-/// `do_rmdir` for `S_ISDIR`, `robust_unlink` for everything else.
+/// (`rmdir(2)`); the recursive fallback routes to [`fs::remove_dir_all`]
+/// to match upstream `delete_dir_contents`. This mirrors upstream
+/// `delete_item` (`delete.c:161-175`): `do_rmdir` for `S_ISDIR`,
+/// `robust_unlink` for everything else.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RealDeleteFs;
 
@@ -107,6 +132,10 @@ impl DeleteFs for RealDeleteFs {
     fn unlink_special(&self, path: &Path) -> io::Result<()> {
         fs::remove_file(path)
     }
+
+    fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+        fs::remove_dir_all(path)
+    }
 }
 
 /// Event captured by [`RecordingDeleteFs`] for each emitter dispatch.
@@ -118,8 +147,8 @@ pub struct DeleteEvent {
     pub kind: DeleteEntryKind,
 }
 
-/// Test fake that records every [`DeleteFs`] dispatch and never touches the
-/// filesystem.
+/// Test fake that records every [`DeleteFs`] dispatch and never touches
+/// the filesystem.
 ///
 /// Used by the emitter unit tests to assert ordering invariants without
 /// staging real files. The recorded sequence is the ground truth for the
@@ -179,6 +208,54 @@ impl DeleteFs for RecordingDeleteFs {
         self.record(path, DeleteEntryKind::Special);
         Ok(())
     }
+
+    fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+        // Mirror upstream's recursive peel as a single Dir event so the
+        // unit tests can assert "the emitter fell back to recursion for
+        // this path".
+        self.record(path, DeleteEntryKind::Dir);
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Error policy.
+// ----------------------------------------------------------------------------
+
+/// Policy controlling how the emitter reacts to per-entry I/O failures.
+///
+/// Mirrors upstream rsync's `--ignore-errors` and continue-on-error
+/// behaviour (`delete.c:178-207`). The two booleans are orthogonal:
+///
+/// - `ignore_errors`: when `true`, non-fatal failures are logged but the
+///   shared `io_error` flag is NOT set. Matches upstream `--ignore-errors`
+///   which suppresses the `IOERR_GENERAL` bit so the run can still exit 0.
+/// - `continue_on_error`: when `true`, non-fatal failures do not abort the
+///   drain - the emitter records the error in `io_error` (unless
+///   suppressed by `ignore_errors`) and moves on to the next entry. When
+///   `false`, the first non-fatal failure also stops the drain.
+///
+/// Fatal classifications (see [`DeleteEmitter::is_fatal_error`]) always
+/// abort the drain regardless of these flags so the caller can surface
+/// the failure with a non-zero exit code.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct EmitterErrorPolicy {
+    /// Suppress the `io_error` flag for non-fatal failures.
+    pub ignore_errors: bool,
+    /// Keep draining after a non-fatal failure.
+    pub continue_on_error: bool,
+}
+
+impl Default for EmitterErrorPolicy {
+    /// Upstream's default: surface non-fatal errors via `io_error` but
+    /// keep going. Matches `delete.c:178-207`: errors flip the flag and
+    /// the loop in `delete_dir_contents` continues to the next entry.
+    fn default() -> Self {
+        Self {
+            ignore_errors: false,
+            continue_on_error: true,
+        }
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -187,15 +264,21 @@ impl DeleteFs for RecordingDeleteFs {
 
 /// Single-threaded drain task that issues deletions for one transfer.
 ///
-/// Owns a [`DeleteFs`] dispatcher, a counter [`DeleteStats`], the published
-/// [`DeletePlanMap`], and a [`DirTraversalCursor`]. All four are taken by
-/// value so the emitter is the unique writer of every observable side
-/// effect (single-emitter invariant; section 2.3 of the design).
+/// Owns a [`DeleteFs`] dispatcher, a counter [`DeleteStats`], the
+/// published [`DeletePlanMap`], a [`DirTraversalCursor`], and an
+/// [`EmitterErrorPolicy`]. All collaborators are taken by value so the
+/// emitter is the unique writer of every observable side effect
+/// (single-emitter invariant; section 2.3 of the design).
 pub struct DeleteEmitter<F: DeleteFs> {
     fs: F,
     stats: DeleteStats,
     plans: DeletePlanMap,
     cursor: DirTraversalCursor,
+    policy: EmitterErrorPolicy,
+    /// Accumulated non-fatal I/O error state. Bit 0 mirrors upstream's
+    /// `IOERR_GENERAL`; the field is exposed via [`Self::io_error`] for
+    /// callers that need to compute the final exit code.
+    io_error: i32,
     /// Directory pulled from `cursor` whose plan was not yet published.
     /// Held across `emit_all` calls so the drain can resume once the plan
     /// arrives. `None` while the cursor is fully drained or not yet
@@ -203,49 +286,92 @@ pub struct DeleteEmitter<F: DeleteFs> {
     pending: Option<PathBuf>,
 }
 
+/// Upstream `IOERR_GENERAL`: the only bit the delete pass currently sets.
+const IOERR_GENERAL: i32 = 1;
+
 impl<F: DeleteFs> DeleteEmitter<F> {
-    /// Builds an emitter from its three owned collaborators.
+    /// Builds an emitter with the default [`EmitterErrorPolicy`].
     #[must_use]
     pub fn new(fs: F, plans: DeletePlanMap, cursor: DirTraversalCursor) -> Self {
+        Self::with_policy(fs, plans, cursor, EmitterErrorPolicy::default())
+    }
+
+    /// Builds an emitter with a caller-supplied [`EmitterErrorPolicy`].
+    #[must_use]
+    pub fn with_policy(
+        fs: F,
+        plans: DeletePlanMap,
+        cursor: DirTraversalCursor,
+        policy: EmitterErrorPolicy,
+    ) -> Self {
         Self {
             fs,
             stats: DeleteStats::new(),
             plans,
             cursor,
+            policy,
+            io_error: 0,
             pending: None,
         }
     }
 
-    /// Returns the running deletion statistics. The counter is mutated only
-    /// inside [`Self::emit_all`].
+    /// Returns the running deletion statistics. The counter is mutated
+    /// only inside [`Self::emit_all`].
     #[must_use]
     pub fn stats(&self) -> DeleteStats {
         self.stats
     }
 
-    /// Borrows the underlying [`DeleteFs`] dispatcher. Useful for tests that
-    /// hold a [`RecordingDeleteFs`] and want to inspect events without
-    /// dropping the emitter.
+    /// Borrows the underlying [`DeleteFs`] dispatcher. Useful for tests
+    /// that hold a [`RecordingDeleteFs`] and want to inspect events
+    /// without dropping the emitter.
     #[must_use]
     pub fn fs(&self) -> &F {
         &self.fs
     }
 
-    /// Drains every ready directory in upstream traversal order, issuing one
-    /// [`DeleteFs`] call per planned entry and incrementing the matching
-    /// [`DeleteStats`] counter.
+    /// Returns the accumulated `io_error` bitmask. Non-zero means at
+    /// least one non-fatal I/O failure occurred during the drain and the
+    /// caller should report exit code [`EMITTER_PARTIAL_EXIT_CODE`].
+    #[must_use]
+    pub fn io_error(&self) -> i32 {
+        self.io_error
+    }
+
+    /// Maps the current `io_error` state to the upstream exit code the
+    /// caller should surface when the drain completed without a fatal
+    /// abort. Returns `0` on a clean run, `24` if every failure was a
+    /// vanished-file race, and `23` for any other I/O error. Mirrors
+    /// upstream `main.c::cleanup_and_exit` which prefers `RERR_VANISHED`
+    /// only when no other error class was observed.
+    #[must_use]
+    pub fn exit_code(&self) -> i32 {
+        if self.io_error == 0 {
+            0
+        } else if self.io_error == IOERR_VANISHED_ONLY {
+            EMITTER_VANISHED_EXIT_CODE
+        } else {
+            EMITTER_PARTIAL_EXIT_CODE
+        }
+    }
+
+    /// Drains every ready directory in upstream traversal order, issuing
+    /// one [`DeleteFs`] call per planned entry and incrementing the
+    /// matching [`DeleteStats`] counter.
     ///
-    /// Returns when the cursor exposes a directory whose plan has not been
-    /// published yet (the parallel `compute_extras` worker is still
+    /// Returns when the cursor exposes a directory whose plan has not
+    /// been published yet (the parallel `compute_extras` worker is still
     /// running). The caller may invoke `emit_all` again once more plans
     /// have landed.
     ///
     /// # Errors
     ///
-    /// Surfaces the first [`io::Error`] returned by [`DeleteFs`]. Upstream's
-    /// continue-on-failure policy (`delete.c:178-207`) is implemented in
-    /// task DDP-C3 (#2261); the scaffold stops at the first error so test
-    /// fakes can prove the dispatch is being exercised.
+    /// Surfaces an [`io::Error`] only on a fatal classification (see
+    /// [`Self::is_fatal_error`]) or when
+    /// [`EmitterErrorPolicy::continue_on_error`] is `false` and a
+    /// non-fatal failure occurs. Non-fatal failures under the default
+    /// policy set [`Self::io_error`] and the drain continues, matching
+    /// upstream `delete.c:178-207`.
     pub fn emit_all(&mut self) -> io::Result<()> {
         loop {
             let dir = match self.pending.take() {
@@ -256,27 +382,119 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                 },
             };
             let Some(plan) = self.plans.take(&dir) else {
-                // Plan for this directory has not landed yet. Park the dir
-                // so a later `emit_all` call resumes from this point.
+                // Plan for this directory has not landed yet. Park the
+                // dir so a later `emit_all` call resumes from this point.
                 self.pending = Some(dir);
                 return Ok(());
             };
-            for entry in &plan.extras {
-                let full = plan.directory.join(&entry.name);
-                self.dispatch(entry.kind, &full)?;
-                Self::increment_stat(&mut self.stats, entry.kind);
+            self.drain_plan(&plan)?;
+        }
+    }
+
+    /// Walks one published plan, dispatching each entry under the
+    /// configured [`EmitterErrorPolicy`]. Used by both the top-level
+    /// drain and the ENOTEMPTY recursive fallback so a nested directory
+    /// gets the same continue-on-error semantics as a top-level one,
+    /// matching upstream `delete_dir_contents` (`delete.c:86-109`) which
+    /// iterates the dirlist and keeps going after each per-entry
+    /// failure.
+    fn drain_plan(&mut self, plan: &DeletePlan) -> io::Result<()> {
+        for entry in &plan.extras {
+            let full = plan.directory.join(&entry.name);
+            self.run_entry(entry.kind, &full)?;
+        }
+        Ok(())
+    }
+
+    /// Issues one [`DeleteFs`] call, updates stats on success, and
+    /// applies the error policy on failure. Fatal failures abort by
+    /// returning `Err`; non-fatal failures under the default policy
+    /// record `io_error` and return `Ok(())` so the caller's loop
+    /// continues.
+    fn run_entry(&mut self, kind: DeleteEntryKind, path: &Path) -> io::Result<()> {
+        match self.dispatch(kind, path) {
+            Ok(()) => {
+                Self::increment_stat(&mut self.stats, kind);
+                Ok(())
+            }
+            Err(err) => {
+                if Self::is_fatal_error(&err) {
+                    // Fatal: abort the drain. Upstream maps these to
+                    // RERR_PARTIAL via `rsyserr(FERROR_XFER, ...)` plus
+                    // `exit_cleanup` in `delete.c:201-205`.
+                    return Err(err);
+                }
+                self.record_nonfatal(&err);
+                if !self.policy.continue_on_error {
+                    return Err(err);
+                }
+                Ok(())
             }
         }
     }
 
-    fn dispatch(&self, kind: DeleteEntryKind, path: &Path) -> io::Result<()> {
+    /// Dispatches one planned entry. Directories route through
+    /// [`Self::dispatch_dir`] so the `ENOTEMPTY` fallback can recurse via
+    /// a nested plan or [`DeleteFs::remove_dir_all`].
+    fn dispatch(&mut self, kind: DeleteEntryKind, path: &Path) -> io::Result<()> {
         match kind {
             DeleteEntryKind::File => self.fs.unlink_file(path),
-            DeleteEntryKind::Dir => self.fs.rmdir(path),
+            DeleteEntryKind::Dir => self.dispatch_dir(path),
             DeleteEntryKind::Symlink => self.fs.unlink_symlink(path),
             DeleteEntryKind::Device => self.fs.unlink_device(path),
             DeleteEntryKind::Special => self.fs.unlink_special(path),
         }
+    }
+
+    /// Handles a directory entry. Tries `rmdir` first (upstream
+    /// `delete.c:161-163`); on [`io::ErrorKind::DirectoryNotEmpty`] takes
+    /// the nested directory's published plan and drains it through the
+    /// shared [`Self::drain_plan`] loop, or falls back to
+    /// [`DeleteFs::remove_dir_all`] when no plan was published (upstream
+    /// `delete.c:48-122 delete_dir_contents`). The retried `rmdir` after
+    /// a successful drain matches `delete_item`'s second pass.
+    fn dispatch_dir(&mut self, path: &Path) -> io::Result<()> {
+        match self.fs.rmdir(path) {
+            Ok(()) => Ok(()),
+            Err(err) if is_not_empty(&err) => {
+                if let Some(plan) = self.plans.take(path) {
+                    self.drain_plan(&plan)?;
+                    // Retry the rmdir now that the contents are gone.
+                    self.fs.rmdir(path)
+                } else {
+                    self.fs.remove_dir_all(path)
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Records a non-fatal failure into `io_error`, honouring
+    /// [`EmitterErrorPolicy::ignore_errors`]. Errors with
+    /// [`io::ErrorKind::NotFound`] still flip the dedicated vanished bit
+    /// so the caller can report exit code 24 when nothing else went
+    /// wrong.
+    fn record_nonfatal(&mut self, err: &io::Error) {
+        if self.policy.ignore_errors {
+            return;
+        }
+        if err.kind() == io::ErrorKind::NotFound {
+            self.io_error |= IOERR_VANISHED_ONLY;
+        } else {
+            self.io_error |= IOERR_GENERAL;
+        }
+    }
+
+    /// Classifies an error as fatal. Fatal classifications abort the
+    /// drain and surface to the caller verbatim.
+    ///
+    /// Upstream treats `EPERM` and `EACCES` on the destination as
+    /// fatal-class errors during the delete pass: they signal the
+    /// receiver cannot make progress and the run should exit with
+    /// `RERR_PARTIAL` immediately rather than spinning through the rest
+    /// of the plan (see `delete.c:201-205` rsyserr + `cleanup_and_exit`).
+    fn is_fatal_error(err: &io::Error) -> bool {
+        matches!(err.kind(), io::ErrorKind::PermissionDenied)
     }
 
     fn increment_stat(stats: &mut DeleteStats, kind: DeleteEntryKind) {
@@ -288,6 +506,24 @@ impl<F: DeleteFs> DeleteEmitter<F> {
             DeleteEntryKind::Special => stats.specials = stats.specials.saturating_add(1),
         }
     }
+}
+
+/// Sentinel bit set when the only failure observed was a vanished
+/// destination entry ([`io::ErrorKind::NotFound`]). Distinct from
+/// `IOERR_GENERAL` so the caller can map a vanished-only run to exit
+/// code 24 instead of 23.
+const IOERR_VANISHED_ONLY: i32 = 1 << 1;
+
+/// `true` if the error reports the directory is not empty. Handles both
+/// the stable [`io::ErrorKind::DirectoryNotEmpty`] and the raw
+/// `ENOTEMPTY` errno path for older platforms.
+fn is_not_empty(err: &io::Error) -> bool {
+    if err.kind() == io::ErrorKind::DirectoryNotEmpty {
+        return true;
+    }
+    // ENOTEMPTY is 39 on Linux, 66 on BSD/macOS. Keep the check raw so
+    // it works on any platform without a libc dep.
+    matches!(err.raw_os_error(), Some(39) | Some(66))
 }
 
 #[cfg(test)]
@@ -316,23 +552,109 @@ mod tests {
         FileEntry::new_directory(path, 0o755)
     }
 
+    // ------------------------------------------------------------------
+    // Scripted DeleteFs that fails configured paths with configured
+    // errors. Used by the error-policy tests below.
+    // ------------------------------------------------------------------
+
+    /// Failure plan: for each (path, errno) pair, the next call against
+    /// that path returns the matching error before falling back to the
+    /// recording behaviour.
+    #[derive(Default)]
+    struct ScriptedDeleteFs {
+        inner: RecordingDeleteFs,
+        rules: Mutex<Vec<(PathBuf, io::ErrorKind)>>,
+    }
+
+    impl ScriptedDeleteFs {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn fail(self, path: &str, kind: io::ErrorKind) -> Self {
+            self.rules
+                .lock()
+                .expect("rules mutex")
+                .push((PathBuf::from(path), kind));
+            self
+        }
+
+        fn events(&self) -> Vec<DeleteEvent> {
+            self.inner.events()
+        }
+
+        fn maybe_fail(&self, path: &Path) -> Option<io::Error> {
+            let mut rules = self.rules.lock().expect("rules mutex");
+            let position = rules.iter().position(|(p, _)| p == path)?;
+            let (_, kind) = rules.remove(position);
+            Some(io::Error::new(kind, "scripted failure"))
+        }
+    }
+
+    impl DeleteFs for ScriptedDeleteFs {
+        fn unlink_file(&self, path: &Path) -> io::Result<()> {
+            if let Some(err) = self.maybe_fail(path) {
+                return Err(err);
+            }
+            self.inner.unlink_file(path)
+        }
+
+        fn rmdir(&self, path: &Path) -> io::Result<()> {
+            if let Some(err) = self.maybe_fail(path) {
+                return Err(err);
+            }
+            self.inner.rmdir(path)
+        }
+
+        fn unlink_symlink(&self, path: &Path) -> io::Result<()> {
+            if let Some(err) = self.maybe_fail(path) {
+                return Err(err);
+            }
+            self.inner.unlink_symlink(path)
+        }
+
+        fn unlink_device(&self, path: &Path) -> io::Result<()> {
+            if let Some(err) = self.maybe_fail(path) {
+                return Err(err);
+            }
+            self.inner.unlink_device(path)
+        }
+
+        fn unlink_special(&self, path: &Path) -> io::Result<()> {
+            if let Some(err) = self.maybe_fail(path) {
+                return Err(err);
+            }
+            self.inner.unlink_special(path)
+        }
+
+        fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+            if let Some(err) = self.maybe_fail(path) {
+                return Err(err);
+            }
+            self.inner.remove_dir_all(path)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // DDP-C1 scaffold tests (kept here verbatim - the dispatch matrix
+    // is still the load-bearing invariant for the upstream-parity check
+    // in section 9.1 of the design).
+    // ------------------------------------------------------------------
+
     #[test]
     fn empty_plan_map_returns_immediately() {
-        // Cursor with no observations still emits its root once, but with
-        // no plan published the emitter parks and returns cleanly without
-        // touching the fs.
         let cursor = DirTraversalCursor::new(PathBuf::from("root"));
         let mut emitter =
             DeleteEmitter::new(RecordingDeleteFs::new(), DeletePlanMap::new(), cursor);
         emitter.emit_all().expect("empty drain succeeds");
         assert!(emitter.fs().events().is_empty());
         assert_eq!(emitter.stats(), DeleteStats::default());
+        assert_eq!(emitter.io_error(), 0);
+        assert_eq!(emitter.exit_code(), 0);
     }
 
     #[test]
     fn dispatch_table_matches_planned_kind() {
-        // One directory holds one entry per upstream kind so we observe the
-        // full dispatch matrix (delete.c:144-176) in a single drain.
         let plans = DeletePlanMap::new();
         plans.insert(plan(
             "d",
@@ -383,17 +705,11 @@ mod tests {
         assert_eq!(stats.devices, 1);
         assert_eq!(stats.specials, 1);
         assert_eq!(stats.total(), 5);
+        assert_eq!(emitter.io_error(), 0);
     }
 
     #[test]
     fn three_dirs_emit_in_cursor_order_within_plan_order() {
-        // Three directories, each with two entries. The emitter must drain
-        // them in cursor order (the upstream traversal order); within each
-        // directory it must walk `extras` in the order the plan stores
-        // them, which the design specifies as `compare_file_entries`
-        // ascending then reversed (generator.c:320). The plans below are
-        // already pre-reversed, so the expected sequence is exactly the
-        // order they appear in the plan.
         let plans = DeletePlanMap::new();
         plans.insert(plan(
             "root/a",
@@ -416,8 +732,6 @@ mod tests {
                 entry("c_one", DeleteEntryKind::Device),
             ],
         ));
-        // Pre-populate the root so it has no extras of its own, then
-        // observe its three child directories in cursor order.
         plans.insert(plan("root", vec![]));
         let mut cursor = DirTraversalCursor::new(PathBuf::from("root"));
         cursor.observe_segment(
@@ -453,12 +767,6 @@ mod tests {
 
     #[test]
     fn cursor_outpaces_plans_parks_at_gap_and_resumes() {
-        // Cursor yields root then root/a, root/b, root/c. Only root, a,
-        // and b have plans on the first drain. The emitter must walk root
-        // and `a`, then park at `b` once it sees no plan published yet (it
-        // would have processed b only if its plan were present). A later
-        // publication of `b` and `c` plus a second `emit_all` must
-        // complete the drain.
         let plans = DeletePlanMap::new();
         plans.insert(plan("root", vec![]));
         plans.insert(plan("root/a", vec![entry("x", DeleteEntryKind::File)]));
@@ -486,8 +794,6 @@ mod tests {
             vec![PathBuf::from("root/a/x")],
         );
 
-        // Publish the missing plans and resume. The parked directory
-        // (root/b) drains first, then the cursor advances to root/c.
         emitter
             .plans
             .insert(plan("root/b", vec![entry("y", DeleteEntryKind::Symlink)]));
@@ -514,10 +820,6 @@ mod tests {
 
     #[test]
     fn real_delete_fs_round_trip_on_tempdir() {
-        // Smoke test that RealDeleteFs maps each kind to the expected
-        // std::fs primitive. Symlink, device, and special kinds aren't
-        // exercised here (Unix-only, root-required); they share the same
-        // remove_file path as File so this still proves the wiring.
         let tmp = tempfile::tempdir().expect("tempdir");
         let file = tmp.path().join("f");
         std::fs::write(&file, b"x").expect("write file");
@@ -530,5 +832,303 @@ mod tests {
 
         assert!(!file.exists());
         assert!(!dir.exists());
+    }
+
+    // ------------------------------------------------------------------
+    // DDP-C4 (#2262) - new unit tests for synthetic plan sequences.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn mixed_kind_plan_preserves_input_dispatch_order() {
+        // A single plan that touches every upstream-distinguishable kind
+        // in a non-sorted order must dispatch in exactly the order
+        // entries appear in `plan.extras` (the order phase-1 already
+        // froze via `sort_by_name`). This is the load-bearing
+        // upstream-parity invariant from section 9.1.
+        let plans = DeletePlanMap::new();
+        plans.insert(plan(
+            "d",
+            vec![
+                entry("a-file", DeleteEntryKind::File),
+                entry("b-dir", DeleteEntryKind::Dir),
+                entry("c-link", DeleteEntryKind::Symlink),
+                entry("d-dev", DeleteEntryKind::Device),
+                entry("e-fifo", DeleteEntryKind::Special),
+            ],
+        ));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let mut emitter = DeleteEmitter::new(RecordingDeleteFs::new(), plans, cursor);
+        emitter.emit_all().expect("drain succeeds");
+
+        let kinds: Vec<DeleteEntryKind> = emitter.fs().events().iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                DeleteEntryKind::File,
+                DeleteEntryKind::Dir,
+                DeleteEntryKind::Symlink,
+                DeleteEntryKind::Device,
+                DeleteEntryKind::Special,
+            ],
+        );
+    }
+
+    #[test]
+    fn non_empty_dir_recurses_via_nested_plan() {
+        // The directory `d/sub` has a published nested plan with two
+        // entries. The parent plan deletes `d/sub` as a Dir; the
+        // emitter's first rmdir attempt yields ENOTEMPTY, so the
+        // emitter must drain the nested plan (in plan order) and retry
+        // rmdir, mirroring upstream `delete_dir_contents` +
+        // `delete_item` retry (`delete.c:48-122`, `:161-163`).
+        let fs = ScriptedDeleteFs::new().fail("d/sub", io::ErrorKind::DirectoryNotEmpty);
+        let plans = DeletePlanMap::new();
+        plans.insert(plan("d", vec![entry("sub", DeleteEntryKind::Dir)]));
+        plans.insert(plan(
+            "d/sub",
+            vec![
+                entry("inner-file", DeleteEntryKind::File),
+                entry("inner-link", DeleteEntryKind::Symlink),
+            ],
+        ));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let mut emitter = DeleteEmitter::new(fs, plans, cursor);
+        emitter.emit_all().expect("drain succeeds");
+
+        // Expected sequence: rmdir(sub) failed and was never recorded,
+        // then inner-file unlink, inner-link unlink, then the retried
+        // rmdir(sub) succeeded.
+        let events = emitter.fs().events();
+        assert_eq!(
+            events,
+            vec![
+                DeleteEvent {
+                    path: PathBuf::from("d/sub/inner-file"),
+                    kind: DeleteEntryKind::File,
+                },
+                DeleteEvent {
+                    path: PathBuf::from("d/sub/inner-link"),
+                    kind: DeleteEntryKind::Symlink,
+                },
+                DeleteEvent {
+                    path: PathBuf::from("d/sub"),
+                    kind: DeleteEntryKind::Dir,
+                },
+            ],
+        );
+        assert_eq!(emitter.io_error(), 0);
+        assert_eq!(emitter.stats().dirs, 1);
+    }
+
+    #[test]
+    fn non_empty_dir_without_plan_falls_back_to_remove_dir_all() {
+        // When `d/orphan` has no published plan, ENOTEMPTY must route
+        // through `DeleteFs::remove_dir_all`, mirroring upstream's
+        // `delete_dir_contents` peel.
+        let fs = ScriptedDeleteFs::new().fail("d/orphan", io::ErrorKind::DirectoryNotEmpty);
+        let plans = DeletePlanMap::new();
+        plans.insert(plan("d", vec![entry("orphan", DeleteEntryKind::Dir)]));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let mut emitter = DeleteEmitter::new(fs, plans, cursor);
+        emitter.emit_all().expect("drain succeeds");
+
+        // The recorder logs `remove_dir_all` as a single Dir event on
+        // the directory path.
+        assert_eq!(
+            emitter.fs().events(),
+            vec![DeleteEvent {
+                path: PathBuf::from("d/orphan"),
+                kind: DeleteEntryKind::Dir,
+            }],
+        );
+        assert_eq!(emitter.io_error(), 0);
+        assert_eq!(emitter.stats().dirs, 1);
+    }
+
+    #[test]
+    fn nonfatal_error_in_middle_keeps_draining_and_sets_io_error() {
+        // The middle entry fails with EBUSY (Other). Continue policy is
+        // on by default, so subsequent entries must still process and
+        // io_error must reflect IOERR_GENERAL.
+        let fs = ScriptedDeleteFs::new().fail("d/middle", io::ErrorKind::Other);
+        let plans = DeletePlanMap::new();
+        plans.insert(plan(
+            "d",
+            vec![
+                entry("first", DeleteEntryKind::File),
+                entry("middle", DeleteEntryKind::File),
+                entry("last", DeleteEntryKind::File),
+            ],
+        ));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let mut emitter = DeleteEmitter::new(fs, plans, cursor);
+        emitter.emit_all().expect("drain succeeds on non-fatal err");
+
+        let paths: Vec<PathBuf> = emitter
+            .fs()
+            .events()
+            .iter()
+            .map(|e| e.path.clone())
+            .collect();
+        // `middle` was never recorded because it errored before the
+        // recording branch. `first` and `last` both succeeded.
+        assert_eq!(
+            paths,
+            vec![PathBuf::from("d/first"), PathBuf::from("d/last")],
+        );
+        assert_eq!(emitter.io_error(), IOERR_GENERAL);
+        assert_eq!(emitter.exit_code(), EMITTER_PARTIAL_EXIT_CODE);
+        // Only successful entries bump the stats.
+        assert_eq!(emitter.stats().files, 2);
+    }
+
+    #[test]
+    fn fatal_eperm_aborts_drain_and_returns_err() {
+        // EPERM on the destination is fatal under upstream's policy:
+        // the drain must stop and the caller must surface the error.
+        let fs = ScriptedDeleteFs::new().fail("d/second", io::ErrorKind::PermissionDenied);
+        let plans = DeletePlanMap::new();
+        plans.insert(plan(
+            "d",
+            vec![
+                entry("first", DeleteEntryKind::File),
+                entry("second", DeleteEntryKind::File),
+                entry("third", DeleteEntryKind::File),
+            ],
+        ));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let mut emitter = DeleteEmitter::new(fs, plans, cursor);
+        let err = emitter
+            .emit_all()
+            .expect_err("fatal classification aborts drain");
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+
+        let paths: Vec<PathBuf> = emitter
+            .fs()
+            .events()
+            .iter()
+            .map(|e| e.path.clone())
+            .collect();
+        // `third` is never reached because the drain aborted.
+        assert_eq!(paths, vec![PathBuf::from("d/first")]);
+        assert_eq!(emitter.stats().files, 1);
+    }
+
+    #[test]
+    fn ignore_errors_suppresses_io_error_flag() {
+        // With ignore_errors=true the drain still continues but
+        // io_error stays zero - matching upstream `--ignore-errors`.
+        let fs = ScriptedDeleteFs::new().fail("d/bad", io::ErrorKind::Other);
+        let plans = DeletePlanMap::new();
+        plans.insert(plan(
+            "d",
+            vec![
+                entry("ok", DeleteEntryKind::File),
+                entry("bad", DeleteEntryKind::File),
+            ],
+        ));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let policy = EmitterErrorPolicy {
+            ignore_errors: true,
+            continue_on_error: true,
+        };
+        let mut emitter = DeleteEmitter::with_policy(fs, plans, cursor, policy);
+        emitter.emit_all().expect("drain succeeds");
+
+        assert_eq!(emitter.io_error(), 0);
+        assert_eq!(emitter.exit_code(), 0);
+        assert_eq!(emitter.stats().files, 1);
+    }
+
+    #[test]
+    fn vanished_only_maps_to_exit_24() {
+        // NotFound on a destination entry is a vanished-race; when it's
+        // the sole failure, the run must report exit code 24
+        // (RERR_VANISHED), not 23.
+        let fs = ScriptedDeleteFs::new().fail("d/gone", io::ErrorKind::NotFound);
+        let plans = DeletePlanMap::new();
+        plans.insert(plan(
+            "d",
+            vec![
+                entry("here", DeleteEntryKind::File),
+                entry("gone", DeleteEntryKind::File),
+            ],
+        ));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let mut emitter = DeleteEmitter::new(fs, plans, cursor);
+        emitter.emit_all().expect("drain succeeds");
+
+        assert_eq!(emitter.io_error(), IOERR_VANISHED_ONLY);
+        assert_eq!(emitter.exit_code(), EMITTER_VANISHED_EXIT_CODE);
+        assert_eq!(emitter.stats().files, 1);
+    }
+
+    #[test]
+    fn continue_off_aborts_on_first_nonfatal_error() {
+        // continue_on_error=false stops at the first non-fatal failure
+        // and surfaces the error to the caller.
+        let fs = ScriptedDeleteFs::new().fail("d/two", io::ErrorKind::Other);
+        let plans = DeletePlanMap::new();
+        plans.insert(plan(
+            "d",
+            vec![
+                entry("one", DeleteEntryKind::File),
+                entry("two", DeleteEntryKind::File),
+                entry("three", DeleteEntryKind::File),
+            ],
+        ));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let policy = EmitterErrorPolicy {
+            ignore_errors: false,
+            continue_on_error: false,
+        };
+        let mut emitter = DeleteEmitter::with_policy(fs, plans, cursor, policy);
+        emitter
+            .emit_all()
+            .expect_err("non-fatal failure aborts when continue is off");
+
+        let paths: Vec<PathBuf> = emitter
+            .fs()
+            .events()
+            .iter()
+            .map(|e| e.path.clone())
+            .collect();
+        assert_eq!(paths, vec![PathBuf::from("d/one")]);
+        assert_eq!(emitter.io_error(), IOERR_GENERAL);
+    }
+
+    #[test]
+    fn fully_drained_plan_map_yields_clean_ok() {
+        // Plan-map exhaustion: after one successful drain the cursor is
+        // empty, a second emit_all is a no-op that returns Ok(()) with
+        // no new events and no io_error.
+        let plans = DeletePlanMap::new();
+        plans.insert(plan("d", vec![entry("x", DeleteEntryKind::File)]));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let mut emitter = DeleteEmitter::new(RecordingDeleteFs::new(), plans, cursor);
+        emitter.emit_all().expect("first drain succeeds");
+        let after_first = emitter.fs().events().len();
+        emitter.emit_all().expect("second drain is a no-op");
+        assert_eq!(emitter.fs().events().len(), after_first);
+        assert_eq!(emitter.io_error(), 0);
+        assert_eq!(emitter.exit_code(), 0);
     }
 }
