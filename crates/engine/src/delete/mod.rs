@@ -35,10 +35,12 @@
 //!   (`f_name_cmp`).
 
 pub mod emitter;
+mod extras;
 mod plan;
 mod plan_map;
 mod traversal;
 
+pub use extras::compute_extras;
 pub use plan::{DeleteEntry, DeleteEntryKind, DeletePlan, HardlinkCohortId};
 pub use plan_map::DeletePlanMap;
 pub use traversal::DirTraversalCursor;
