@@ -1,536 +1,529 @@
-# Multi-Producer WorkQueue for Multi-Root Transfer Support (#1382)
+# Multi-producer WorkQueue for parallel generator fan-in (#1405)
 
-## Summary
+Tracking: oc-rsync task #1405. This note is the production design discussion
+for letting multiple generator threads fan in to a single bounded
+`WorkQueue`. It builds on the audit in #4173 and the SP-vs-MP bench in
+#4209, narrows the design space to the variants tracked at #1610 and
+#1569, and recommends a final disposition for the `multi-producer` cargo
+feature.
 
-The bounded delta `WorkQueue` (`crates/engine/src/concurrent_delta/work_queue/`)
-is documented and enforced as Single-Producer Multiple-Consumer (SPMC). One
-upstream thread - the wire reader during a remote transfer, or the planning
-thread during a local copy - feeds `DeltaWork` items into a single
-`WorkQueueSender`, and a rayon-driven pool of consumers drains them in
-parallel. The single-producer invariant is enforced at compile time: the
-sender is `Send` but not `Clone` outside the `multi-producer` feature gate
-(`crates/engine/src/concurrent_delta/work_queue/bounded.rs:48-50,74-81`).
+Companion documents:
 
-Multi-root transfers (`oc-rsync foo/ bar/ baz/ dst/`) and the in-progress
-parallel directory enumeration work (#1573) need a multi-producer story.
-With one queue and N enumerator threads, directory walks can run in parallel
-across roots while the consumer side keeps draining work as it lands. The
-crossbeam channel underneath is already MPMC; the SPMC restriction is ours
-and is documented at #1614.
+- `docs/audits/workqueue-sender-multi-producer-audit.md` (#4173) - the
+  call-site inventory whose top-line conclusion this design accepts:
+  every live producer is single-producer today.
+- `docs/design/arc-workqueuesender.md` (#1610) - the Arc-wrapped sender
+  design space.
+- `docs/design/arc-workqueue-sender-eval.md` - the focused evaluation
+  that rejects Arc-wrapping as a separate primitive.
+- `docs/audits/multi-root-transfer-scenarios.md` and
+  `docs/design/parallel-source-enumeration.md` - the multi-root and
+  enumeration scoping work (#1382, #1573).
+- `docs/design/lockfree-mpsc-drain-design.md` - the consumer-side
+  fan-in design that the #4214 bench informs.
 
-This note evaluates three multi-producer designs, recommends design A
-(Clone-based fan-in) with an explicit producer-count contract, and
-specifies the API, ordering, backpressure, drain, and migration semantics
-needed to land it without disturbing the wire-protocol single-producer
-path. There is zero wire-protocol impact - work-queue coordination is
-internal to the engine.
+This is design only. No source files are modified; no cargo features
+are flipped.
 
-## Problem Statement
+## 1. Current SP / MP shape
 
-### Today: serial enumeration of multiple roots
+`WorkQueueSender` is the single producer-side handle to the bounded
+concurrent-delta queue. Two configurations exist today:
 
-When a user invokes `oc-rsync foo/ bar/ baz/ dst/`, the local-copy
-executor iterates the source list sequentially:
+1. **Default build (single-producer).** The sender is `Send + !Clone`:
 
-```text
-crates/engine/src/local_copy/executor/sources/orchestration.rs:79
-    for source in plan.sources() {
-        let result = process_single_source(...);
-        ...
-    }
-```
+   - `crates/engine/src/concurrent_delta/work_queue/bounded.rs:48-50`
+     defines the newtype `pub struct WorkQueueSender { tx: Sender<DeltaWork> }`.
+   - `crates/engine/src/concurrent_delta/work_queue/bounded.rs:74-81`
+     declares `WorkQueueSender::send`, the only mutator.
+   - The absence of a `Clone` impl in `bounded.rs` is the compile-time
+     SPMC invariant. The module-level contract is documented at
+     `crates/engine/src/concurrent_delta/work_queue/mod.rs:11-35`.
 
-Each call drives a directory walk via the abstractions in
-`crates/engine/src/walk/` (`DirectoryWalker` trait, `WalkdirWalker`,
-`FilteredWalker`, `WalkConfig`, `WalkEntry`). Walks for `foo/`, `bar/`, and
-`baz/` run one after the other. Per-root I/O latency therefore stacks
-linearly even though the trees are disjoint and the consumers (rayon
-workers feeding the delta pipeline) are idle whenever the walker is
-blocked on `getdents`/`readdir`.
+2. **`multi-producer` feature (gated).** Cloning is added behind a
+   cargo feature:
 
-The receiver-side wire path is genuinely single-stream and stays
-single-producer (see `multi_producer_audit.rs:8-19`). The
-opportunity is on the local-copy and pre-sender enumeration paths where
-work can be produced concurrently if the queue allows it.
+   - `crates/engine/Cargo.toml:88-91` declares
+     `multi-producer = []` with no default-feature pull-in.
+   - `crates/engine/src/concurrent_delta/work_queue/multi_producer.rs:10-23`
+     supplies the gated `impl Clone for WorkQueueSender`, delegating to
+     `crossbeam_channel::Sender::clone` (an `Arc` refcount bump on the
+     underlying channel).
 
-### Today: SPMC contract
+The #4173 audit
+(`docs/audits/workqueue-sender-multi-producer-audit.md:29-65`) tallies
+three live production producer sites, all on the receiver wire path
+(`crates/transfer/src/delta_pipeline.rs:185`, `:296-308`, `:337-340`,
+`:452-465`, `:318-322`), and verifies that every one is correctly
+single-producer. The cargo feature is therefore latent infrastructure
+plus the integration-test coverage at
+`crates/engine/tests/multi_producer_work_queue.rs:51-501`.
 
-`crates/engine/src/concurrent_delta/work_queue/bounded.rs:11-21` documents
-the invariant:
+## 2. Parallel-generator use case
 
-> This is SPMC rather than MPMC because the rsync wire protocol is
-> inherently single-threaded on the receiving side. `WorkQueueSender`
-> enforces this by being `Send` but not `Clone`, preventing multiple
-> producers at compile time.
+The "parallel generator fan-in" question this task asks is: under what
+circumstances would multiple generator threads on the sender side
+actually want to feed a shared `WorkQueue`, and does the answer
+motivate promoting the feature to default-on?
 
-The crossbeam channel underneath
-(`crossbeam_channel::bounded` in `bounded.rs:8,102`) is naturally MPMC -
-the SPMC restriction is enforced only by withholding `Clone`. The
-`multi-producer` cargo feature
-(`crates/engine/Cargo.toml:90`) flips this on by adding a `Clone` impl in
-`crates/engine/src/concurrent_delta/work_queue/multi_producer.rs:10-23`,
-but no production call site uses it yet. Tests behind the same feature
-gate exercise multi-producer behaviour
-(`crates/engine/src/concurrent_delta/work_queue/tests.rs:560-771`),
-including the closure semantics the design below depends on.
+### Upstream precedent
 
-### What multi-root needs
+Upstream rsync's generator is single-threaded. The driver function
+`generate_files` at
+`target/interop/upstream-src/rsync-3.4.1/generator.c:2226` runs in one
+process. The `recv_generator` per-file routine handles stat, delta
+request, hardlink resolution, and metadata fix-up serially. The
+upstream model is one generator process, one sender process, one
+receiver process, communicating through pipes or sockets. There is no
+upstream code path with multiple generator threads writing into a
+shared work queue.
 
-A multi-producer queue allows one rayon thread per source root to walk
-concurrently and to fan its `DeltaWork` items into the same shared
-queue. Because directory walks are I/O-bound and stat-heavy, parallelism
-across disjoint roots is approximately linear in the number of roots up
-to the queue capacity bound.
+This is the load-bearing point. Anything we build with multiple
+generators feeding one queue is an oc-rsync extension, not upstream
+parity. The project convention is to avoid adding non-upstream
+patterns without a strong, measured justification.
 
-The design must keep three properties intact:
+### Scenarios where parallel generators *plausibly* want fan-in
 
-1. The wire-protocol receive path stays single-producer with no behaviour
-   change (the channel must still close when the lone wire reader drops
-   its sender).
-2. The `ReorderBuffer` (`crates/engine/src/concurrent_delta/reorder.rs`)
-   continues to deliver results in sequence order, regardless of how
-   many producers fed the queue.
-3. Backpressure remains effective per producer, so a fast walker cannot
-   force the engine to buffer an unbounded number of work items.
+The audit at `docs/audits/workqueue-sender-multi-producer-audit.md:245-275`
+already rules out the obvious cases for the receiver-side queue. For
+the *sender-side* generator-to-shared-queue question, the candidate
+scenarios are:
 
-## Current SPMC Design
+1. **Multi-root push** (`oc-rsync /a/ /b/ /c/ host:dst/`). Each source
+   root could be enumerated and have deltas requested in parallel by
+   one generator thread per root, fanning into a single shared queue
+   that feeds the wire writer. The wire writer remains single-threaded
+   because the protocol multiplexes one stream. This scenario is the
+   subject of the multi-root design at
+   `docs/audits/multi-root-transfer-scenarios.md` (#1382) and is
+   distinct from the *receiver* path the #4173 audit covers.
 
-```text
-+----------------+        bounded(N)         +-----------------+
-| wire reader OR | ------------------------> | rayon workers   |
-| local planner  |    crossbeam_channel       | drain_parallel  |
-|  (single tx)   | ------------------------> |   (M consumers) |
-+----------------+                            +-----------------+
-        ^                                              |
-        |  blocks when full                            v
-        +-----------+                          ReorderBuffer
-                    |                                  |
-                    +-- monotonic seq# (single-       v
-                        threaded counter)        in-order sink
-```
+2. **Parallel `--files-from` reader plus walker.** When
+   `--files-from` is in effect, a reader thread parses the input list
+   while a walker thread visits any directories the input references.
+   Two independent producers, one shared downstream queue.
 
-- One `WorkQueueSender` (`bounded.rs:48-50`).
-- One or more `WorkQueueReceiver` consumers, but in practice exactly
-  one receiver fed into `drain_parallel` or `drain_parallel_into`
-  (`crates/engine/src/concurrent_delta/work_queue/drain.rs:14-156`),
-  which spawns rayon tasks per item.
-- Capacity defaults to `2 * rayon::current_num_threads()`
-  (`bounded.rs:88-92`, `capacity.rs:7-8,32-38`); adaptive sizing per
-  average file size lives in `capacity.rs:40-76`.
-- Sequence numbers are assigned by the single producer with a plain
-  counter; the audit comment in `multi_producer_audit.rs:140-167`
-  emphasises the zero-overhead nature of this assignment.
-- Channel close is automatic: when the sole `WorkQueueSender` drops,
-  the iterator yielded by `WorkQueueIter`
-  (`crates/engine/src/concurrent_delta/work_queue/iter.rs:29-35`)
-  returns `None`, ending the rayon scope inside `drain_parallel`.
+3. **Per-source async generators.** Once an async runtime sits behind
+   each source root (the longer-term direction in
+   `docs/design/async-channel-abstraction.md`), each per-source future
+   becomes one producer. The number of producers is bounded by the
+   source-root count, known at construction time.
 
-## Three Multi-Producer Designs
+In every other scenario - incremental recursion segments, the
+receiver wire path, local-to-local copy - parallel generation has
+been ruled out either by the wire-protocol single-stream invariant
+(`multi_producer_audit.rs:36-95`) or because the code path does not
+use `WorkQueue` at all (the local copy executor uses `rayon::par_iter`
+directly: see `crates/engine/src/local_copy/executor/file/`).
 
-### Design A: Multiple `WorkQueueSender` clones (recommended)
+### Why this matters for #1405
 
-Each producer holds its own `WorkQueueSender`, all referencing the same
-underlying `crossbeam_channel::Sender`. This is exactly what the
-existing `multi-producer` cargo feature provides
-(`work_queue/multi_producer.rs:10-23`); the existing tests at
-`tests.rs:560-771` already cover correctness:
+The candidate scenarios above are all *sender-side* fan-in. The audit
+in #4173 evaluated the *receiver-side* queue and found zero current
+producers. For the sender-side queue we have:
 
-- `clone_sender_multiple_producers` shows two producers feeding one queue.
-- `multi_producer_many_senders` runs eight cloned senders concurrently.
-- `multi_producer_receiver_completes_only_when_all_senders_dropped`
-  pins the close semantics: the consumer iterator terminates only after
-  every cloned sender drops, matching crossbeam's MPMC disconnect rule.
-- `multi_producer_send_error_after_receiver_drop` confirms that all
-  cloned senders observe `SendError` as soon as the receiver drops.
+- The producer count is always small and known at construction time
+  (`plan.sources().len()` or "reader + walker" = 2). It is never an
+  unbounded dynamic set.
+- The downstream consumer (wire writer or local-copy applier) is
+  single-threaded. Fan-in collapses immediately back to a single
+  consumer.
+- The upstream baseline is one generator thread. We are paying for an
+  extension that has no parity benefit.
 
-**Strengths.**
+The decision then turns on whether the fan-in throughput gain
+*measured by #4209* exceeds the cost of relaxing the SP-only compile
+time invariant, plus the cost of the per-call-site sequence
+coordination MP requires.
 
-- Matches crossbeam's natural close semantics. The channel disconnects
-  only when the reference count of the underlying sender hits zero, so
-  RAII-driven thread joins close the queue automatically.
-- Zero per-send overhead. Cloning increments crossbeam's internal Arc
-  refcount once at construction; sends are unaffected.
-- No runtime synchronisation beyond what crossbeam already does.
-- Preserves the SPMC code path for the wire reader unchanged - no clone
-  call, no extra sender, no behavioural difference.
+## 3. MP designs
 
-**Issue.**
+Three production-shapes have been seriously considered. They differ in
+how producers acquire a sender and how the channel close is signalled.
 
-- The number of producers must be known at construction time so that
-  exactly that many `WorkQueueSender` handles are emitted and dropped.
-  An off-by-one mismatch (one sender that never drops) leaves the
-  consumer waiting forever. The recommended API surfaces this contract
-  explicitly.
+### Design A: Cloneable sender on the feature flag (#1569, what we have)
 
-### Design B: Arc-wrapped sender
+Each producer holds its own `WorkQueueSender`. The sender implements
+`Clone` only when the `multi-producer` cargo feature is on. The
+underlying `crossbeam_channel::Sender` is already an `Arc`; cloning
+the wrapper bumps that refcount. Channel close happens when the last
+clone drops, by crossbeam's natural disconnect semantics.
 
-A single `Arc<WorkQueueSender>` is shared among producers. The channel
-closes when the last `Arc` drops. This is the variant tracked at #1610.
+This is the existing implementation at
+`crates/engine/src/concurrent_delta/work_queue/multi_producer.rs:17-23`.
+Tests at `crates/engine/tests/multi_producer_work_queue.rs:51-501`
+exercise it at 4-16 producers.
 
 **Strengths.**
 
-- Producer count can be dynamic; new producers can join by cloning the
-  Arc at runtime.
+- Zero overhead vs single-producer: `WorkQueueSender::send` is one
+  crossbeam send call regardless of how many clones exist.
+- Crossbeam's MPMC channel handles close-on-last-drop correctly; no
+  additional synchronisation primitive is needed.
+- The compile-time invariant survives in the default build because the
+  `Clone` impl is feature-gated.
 
 **Issues.**
 
-- Extra atomic refcount on every send call site (the `Arc::clone` cost
-  is amortised, but every producer thread holds an `Arc` indirection).
-- Less idiomatic than crossbeam's native MPMC sender. Crossbeam already
-  uses an Arc internally; layering another one is redundant.
-- Hides the producer-count contract instead of making it explicit, which
-  is the wrong trade-off for our use cases (multi-root and parallel
-  enumeration both know N up front).
+- Producer count is implicit. Two cloned senders that both stay alive
+  past the expected handoff hang `drain_parallel` forever.
+- The audit at `docs/audits/workqueue-sender-multi-producer-audit.md:285-307`
+  warns that "two ways to do the same thing" (Clone via feature flag
+  vs Arc always available) makes the audit harder to keep
+  authoritative if both ship.
 
-### Design C: Producer pool with explicit join
+### Design B: Arc-wrapped sender (#1610)
 
-Build N producer threads with a barrier; the queue closes when the
-barrier hits N. The receiver pulls until barrier-closed.
+A shared `Arc<WorkQueueSender>` is passed to each producer thread. The
+channel closes when the last `Arc` drops. Producer count can be
+dynamic; producers join by cloning the `Arc` at runtime.
 
-**Strengths.**
+The full design space lives at `docs/design/arc-workqueuesender.md`
+(#1610). The focused evaluation at
+`docs/design/arc-workqueue-sender-eval.md` rejects this primitive on
+four grounds:
 
-- Explicit lifecycle control - no reliance on Drop ordering.
+1. **Redundant indirection.** `crossbeam_channel::Sender` is already
+   an internal `Arc`. Wrapping the public sender in another `Arc`
+   doubles the refcount layer.
+2. **No type-system signalling.** `Arc<WorkQueueSender>` does not
+   surface "this is shared" in the signature. A reviewer cannot tell
+   whether SPMC is intended.
+3. **No new capability.** Any future call site that needs shared
+   ownership without `Clone` can wrap the sender in `Arc` at the call
+   site (`Arc::new(tx)`) without library support.
+4. **Two ways to do the same thing.** Same audit-discipline issue as
+   Design A's "ships alongside Clone" failure mode, but with the
+   primitive permanently in the default build instead of behind a
+   feature flag.
 
-**Issues.**
+### Design C: Explicit producer-vector constructor (the #1382 proposal)
 
-- Producer count must still be known up front, so the supposed
-  flexibility advantage over Design A is illusory.
-- Requires a second synchronisation primitive on top of the channel.
-- Doesn't compose with rayon's work-stealing pool because barriers
-  block worker threads; the wire reader path would need a different
-  termination story.
-
-## Recommendation: Design A (Clone) with a Producer-Count Contract
-
-Design A is the right shape for our use cases. Multi-root transfers
-know the producer count at construction (it equals
-`plan.sources().len()`); parallel enumeration knows it at the point we
-decide how many walker threads to spawn. We get the close-on-last-drop
-semantics for free from crossbeam.
-
-The recommendation is to keep the existing `bounded()` /
-`bounded_with_capacity()` constructors (single-producer) and add an
-explicit constructor that surfaces the contract:
+Replace the bare `Clone` impl with a constructor that returns
+exactly N senders and a single receiver:
 
 ```rust
-/// Returns one receiver and exactly `n` independent senders. The channel
-/// closes when all `n` senders have been dropped. Each sender is `Send`
-/// and may be passed to a producer thread; the senders do not implement
-/// `Clone` so the producer count cannot drift.
 pub fn with_producers(n: NonZeroUsize)
     -> (Vec<WorkQueueSender>, WorkQueueReceiver);
-
-pub fn with_producers_and_capacity(n: NonZeroUsize, capacity: usize)
-    -> (Vec<WorkQueueSender>, WorkQueueReceiver);
 ```
 
-The existing `Clone` impl gated by `multi-producer` is retained for the
-narrower use case where producers fan out from one upstream walker that
-needs to hand a sender to each child it spawns. The two use cases differ:
+The senders themselves remain `!Clone`. The producer count is
+visible in the type (a `Vec` of length N). The multi-root scenarios
+audit at `docs/audits/multi-root-transfer-scenarios.md:584-625`
+considers this shape and rejects it for the multi-root case on the
+grounds that the wire path cannot benefit (see audit section 6).
 
-- `with_producers(n)` is the *static fan-in* case: N independent
-  enumerator threads, each owning one sender.
-- `Clone` is the *fan-out from a single root* case: a single coordinator
-  spawns workers on demand and clones the sender each time. The
-  coordinator must remember to drop its own sender after spawning.
+For the #1405 question, Design C is interesting because it surfaces
+the producer-count contract that Design A hides. But it requires a
+new library API, and the lookalike `with_producers` is itself another
+"way to do the same thing" sitting next to the existing feature-gated
+`Clone`.
 
-Both can coexist; `with_producers` builds N senders by cloning the
-underlying crossbeam handle internally and then dropping the seed
-sender, so the public API does not expose `Clone` unless the feature
-flag is on.
+### Disposition
 
-## API Sketch
+The three designs are mutually exclusive only at the API surface. The
+underlying channel mechanism is identical in all three (cloning the
+crossbeam sender). The choice is therefore about how the public API
+expresses the producer-count contract and where the compile-time
+invariant lives.
 
-```rust
-use std::num::NonZeroUsize;
+## 4. Ordering guarantees
 
-// Existing - unchanged.
-pub fn bounded() -> (WorkQueueSender, WorkQueueReceiver);
-pub fn bounded_with_capacity(capacity: usize)
-    -> (WorkQueueSender, WorkQueueReceiver);
-
-// New - explicit multi-producer construction.
-pub fn with_producers(n: NonZeroUsize)
-    -> (Vec<WorkQueueSender>, WorkQueueReceiver);
-pub fn with_producers_and_capacity(n: NonZeroUsize, capacity: usize)
-    -> (Vec<WorkQueueSender>, WorkQueueReceiver);
-```
-
-Sketch of the implementation, mirroring the existing constructor at
-`bounded.rs:99-104`:
-
-```rust
-pub fn with_producers_and_capacity(
-    n: NonZeroUsize,
-    capacity: usize,
-) -> (Vec<WorkQueueSender>, WorkQueueReceiver) {
-    assert!(capacity > 0, "work queue capacity must be non-zero");
-    let (tx, rx) = crossbeam_channel::bounded(capacity);
-    let senders = (0..n.get())
-        .map(|_| WorkQueueSender { tx: tx.clone() })
-        .collect();
-    drop(tx); // seed sender goes away; only the n cloned senders remain.
-    (senders, WorkQueueReceiver { rx })
-}
-```
-
-`WorkQueueSender` continues to be `Send + !Clone` outside the
-`multi-producer` feature, so the only way for callers to obtain
-multiple senders is through `with_producers`. That keeps the
-producer-count contract observable in the type system: a `Vec` with
-length N is the proof.
-
-`bounded()` is implemented as `with_producers_and_capacity(NonZeroUsize::new(1).unwrap(), default_capacity()).pop()` semantically, except it returns the one sender directly to keep the existing API ergonomic.
-
-## Wire-Compat Invariants
-
-Zero impact on the wire protocol. The work queue is internal engine
-coordination only; no bytes traverse a network as a result of this
-change. The wire-protocol receive path documented in
-`multi_producer_audit.rs:8-19` continues to use `bounded()` /
-`bounded_with_capacity()` and stays single-producer.
-
-The protocol-level golden tests in `crates/protocol/tests/golden/` are
-untouched. The interop harness (`tools/ci/run_interop.sh`) is
-unaffected; multi-root transfers are local-copy operations and never
-hit the wire.
-
-## Ordering Semantics
-
-The receive path's existing contract is "monotonic sequence numbers
+The receiver-side ordering contract is "monotonic sequence numbers
 assigned by the single producer; the consumer's `ReorderBuffer` walks
 the sequence in order"
-(`reorder.rs:1-26`,
-`multi_producer_audit.rs:113-138`). Multi-producer changes the source
-of the sequence number but not the receiver's contract.
+(`crates/engine/src/concurrent_delta/reorder.rs:1-26`,
+`crates/transfer/src/delta_pipeline.rs:298-300`). The audit at
+`docs/audits/workqueue-sender-multi-producer-audit.md:160-174`
+emphasises that the `&mut self` sequence assignment in
+`ParallelDeltaPipeline::submit_work` is the load-bearing single-point
+counter.
 
-Two viable allocation strategies:
+### SP - trivial FIFO
 
-1. **Per-producer ranges (recommended for multi-root).** When the
-   producer count and the work bound per producer are known, give each
-   producer a disjoint sequence range. For multi-root, the planning
-   step that builds the file list per source can also assign a base
-   sequence offset:
+The bounded channel is naturally FIFO when one producer sends. The
+sequence counter is incremented inside `submit_work` and never races.
+No coordination beyond `&mut self` is needed. Cost: zero atomics on
+the hot path.
 
-   ```text
-   producer 0 (foo/) -> seq [0, len(foo/))
-   producer 1 (bar/) -> seq [len(foo/), len(foo/) + len(bar/))
-   producer 2 (baz/) -> seq [len(foo/) + len(bar/), total)
-   ```
+### MP - sequence coordination required
 
-   No coordination, no atomic operations on the hot path. The
-   `ReorderBuffer` capacity must be at least the maximum producer
-   range in use simultaneously; today's adaptive policy
-   (`adaptive.rs`) already grows under sustained pressure.
+With N producers, FIFO is no longer free. Two strategies, both
+demonstrated in tests:
 
-2. **Atomic global counter (fallback when ranges aren't predictable).**
-   A shared `AtomicU64::fetch_add(1, Ordering::Relaxed)` per send. The
-   `multi_producer_requires_atomic_sequence_coordination` test at
-   `tests.rs:172-214` already shows this pattern works, at the cost of
-   one atomic per item.
+1. **Atomic global counter.** Each producer fetches the next sequence
+   via `AtomicU64::fetch_add(1, Ordering::Relaxed)` before send. The
+   pattern is exercised by
+   `crates/engine/src/concurrent_delta/multi_producer_audit.rs:181-197`
+   under the `multi-producer` feature gate. Cost: one atomic increment
+   per item, plus the implicit ordering edge between the increment
+   and the channel send.
 
-For multi-root the per-producer-range approach is the right default:
-each root's file count is known after enumeration, and the receiver's
-`ReorderBuffer` continues to walk a contiguous sequence.
+2. **Per-producer disjoint ranges.** When each producer's item count
+   is known in advance (multi-root: count files per root; reader +
+   walker: count input lines), allocate a contiguous sequence range
+   per producer. No atomics on the hot path. The multi-root scenarios
+   audit at `docs/audits/multi-root-transfer-scenarios.md:549-565`
+   discusses the invariants this would have to preserve.
 
-When per-producer ranges are sparse (e.g., a producer enumerates 1000
-items but its allocated range is 10000), the `ReorderBuffer` would
-stall waiting for non-existent sequences. Mitigations:
+### Does the consumer care?
 
-- Allocate ranges *after* enumeration completes, so the range size
-  matches the actual emission count exactly. This requires a two-pass
-  walker (count, then emit) or a pre-walk index.
-- Allow producers to publish a "no more items in my range" sentinel
-  that compacts the gap. This is more complex and is deferred until a
-  use case demands it.
+For the receiver pipeline, yes: the `ReorderBuffer`'s ring layout
+(`crates/engine/src/concurrent_delta/reorder.rs:64-80`) silently
+overwrites if two items map to the same slot. Sequence-number
+collisions corrupt output. The atomic-coordinator or range-allocation
+discipline is mandatory.
 
-## Backpressure
+For the *sender-side* fan-in scenarios in section 2, the downstream
+consumer is the wire writer. The wire writer serialises file entries
+into the multiplexed stream and stamps them with NDX in arrival
+order. As long as each generator thread submits self-consistent work
+items, the wire writer assigns its own ordering. The sequence number
+on the queue side is then internal bookkeeping for the consumer
+thread, not an ordering primitive visible to the protocol.
 
-The bounded channel still applies. Each producer awaits the bound
-independently - `crossbeam_channel::Sender::send` blocks per call until
-the channel has room. With N producers all blocked on a full queue,
-they will each unblock as the consumers drain items. The crossbeam
-documentation guarantees that pending sends are released roughly in
-arrival order (a single internal mutex picks one waiter per slot), so
-fairness is approximate but bounded - no producer is starved
-indefinitely as long as consumers keep draining.
+This is a meaningful distinction. Receiver-side MP would *require*
+sequence coordination; sender-side MP can in principle elide it if
+the wire writer is allowed to reorder. None of today's plumbing makes
+that elision possible because `ParallelDeltaPipeline::submit_work` is
+the only place that stamps sequence numbers, and it lives on the
+receiver path.
 
-In practice the queue depth is set by `default_capacity()` =
-`2 * rayon::current_num_threads()`. For multi-root transfers with N
-roots and T rayon threads, the depth might be tuned upward to `2 * T +
-N` so each producer always has at least one slot regardless of how
-many other producers are blocked. The adaptive policy in
-`capacity.rs:40-76` is unchanged but its multipliers may need
-re-evaluation under high producer counts; that is a follow-up
-benchmark, not a correctness issue.
+## 5. Capacity and backpressure
 
-## Interaction With `drain_parallel`
+The current capacity policy is `2 * rayon::current_num_threads()`
+(`crates/engine/src/concurrent_delta/work_queue/bounded.rs:88-92`,
+`crates/engine/src/concurrent_delta/work_queue/capacity.rs:7-8,
+32-38`).
 
-`drain_parallel` and `drain_parallel_into`
-(`drain.rs:57-90,136-156`) iterate the receiver until the channel
-disconnects. Today, channel disconnect happens when the lone
-`WorkQueueSender` drops. With multi-producer, the channel disconnects
-only when *all* cloned senders drop. This is the crossbeam behaviour
-that
-`multi_producer_receiver_completes_only_when_all_senders_dropped`
-already verifies (`tests.rs:651-697`).
+### SP backpressure
 
-The drain functions need no changes. They block on
-`WorkQueueIter::next` (`iter.rs:29-35`) until the channel ends, which
-is the desired termination condition for both single-producer and
-multi-producer cases.
+`crossbeam_channel::Sender::send` blocks when the queue is full. The
+single producer waits, the consumers drain, the producer unblocks.
+Per-item latency is the consumer's drain rate.
 
-The corresponding RAII test
-(`receiver_drop_signals_producer_raii` at `tests.rs:861-900`) ensures
-that producers do not hang if the receiver drops first - that property
-is preserved automatically by crossbeam in the multi-producer case
-because all cloned senders share one underlying disconnect flag.
+### MP backpressure with N producers
 
-## Migration Plan
+When the queue fills, all N producers can be blocked simultaneously
+on independent `send` calls. Crossbeam picks one waiter per freed
+slot (a single internal mutex enforces approximate arrival order).
+Consequences:
 
-Three call sites benefit from multi-producer in the near term:
+- Total in-flight work is still bounded by capacity. No memory blow-up.
+- Wakeup throughput scales with the consumer's drain rate divided by
+  the per-item cost. With N producers, *each* producer sees roughly
+  `1/N` of the wakeups. A producer's perceived send latency therefore
+  goes up linearly in N at saturation.
+- Fairness is approximate. A consistently slow consumer combined with
+  one fast producer and N-1 slow producers can starve a slow producer
+  for many slots even though no producer is permanently starved.
 
-### 1. Multi-root local-copy transfers
+The bench at `crates/engine/benches/sp_vs_mp_workqueue.rs` (PR #4209)
+holds capacity constant across SP and MP groups
+(`sp_vs_mp_workqueue.rs:50-60`) to isolate the producer-count effect
+from the capacity effect. Capacity tuning for MP is therefore a
+separate question: should `default_capacity()` grow with the producer
+count to keep per-producer latency in check?
 
-Site: `crates/engine/src/local_copy/executor/sources/orchestration.rs:79`.
-Today the `for source in plan.sources()` loop is sequential. Migration
-runs each iteration in its own rayon task, with each task owning one
-of the N senders returned from `with_producers(plan.sources().len())`.
-The `process_single_source` function consumes the sender for the
-duration of its walk. Sequence-range allocation: producer i gets the
-range `[base_i, base_i + count_i)`, where `count_i` is determined by a
-quick pre-walk or by the planner if file counts are already known
-during file-list construction.
+If MP graduates to default-on, a follow-up exercise would tune
+`default_capacity()` upward to keep per-producer latency comparable
+to the SP case at saturation (an N-producer queue likely wants
+capacity at least `2 * T + N` so each producer always has at least
+one slot in flight). This is a tuning question, not a v1 correctness
+requirement.
 
-### 2. Parallel `--files-from` reader plus main walker
+## 6. Bench evidence
 
-When `--files-from` is in effect, today's reader synchronously parses
-the input file before the main walker starts. The reader and the
-walker can run concurrently, each as one of two producers, using
-`with_producers(NonZeroUsize::new(2).unwrap())`. The reader handles
-explicitly listed paths; the walker handles any directories the reader
-referenced. Sequence ranges: reserve a range for the reader sized to
-its input length; the walker takes the rest.
+Two benches inform this question:
 
-### 3. Future: per-source async readers
+### PR #4209 - SP vs MP overhead
 
-Once the async pipeline (#1591, see
-`docs/design/async-channel-abstraction.md`) lands, each source root
-could be backed by an async reader feeding into the shared queue via a
-sync-to-async bridge channel. This is a longer-term integration; the
-multi-producer queue becomes the join point at the boundary between
-async producers and the synchronous rayon consumer pool.
+`crates/engine/benches/sp_vs_mp_workqueue.rs` runs two Criterion
+groups, both moving 100K `DeltaWork` items through the queue:
 
-The wire-protocol receive path in `transfer/src/delta_pipeline.rs:185`
-(documented in `multi_producer_audit.rs:8-19`) does **not** migrate.
-It stays single-producer. The audit document is updated to reference
-this design note.
+- `sp/1p/100k`: one producer, default-build sender path
+  (`sp_vs_mp_workqueue.rs:51-54`).
+- `mp/4p/100k`: four producers, gated `Clone` impl
+  (`sp_vs_mp_workqueue.rs:56-60`), only compiled with
+  `--features multi-producer`.
 
-## Risks
+The bench's top-of-file decision criteria
+(`sp_vs_mp_workqueue.rs:19-32`) name the thresholds that promote MP
+to default-on:
 
-### Producer-count mismatch causes deadlock
+- MP within 5% of SP: feature can graduate to default-on with no
+  measurable regression for SP-only callers.
+- MP slower than SP by 15%+: feature stays opt-in.
+- MP faster than SP by 15%+: feature is a strict win for any future
+  fan-in caller.
 
-If callers create `with_producers(n)` but only drop `n - 1` senders,
-the channel never disconnects, and `drain_parallel` waits forever.
-Mitigation:
+For #1405 to recommend MP-by-default, the bench must show MP
+throughput within 5% of SP at the 4-producer / 100K-item point, *and*
+a real caller has to materialise (section 7).
 
-- The `Vec<WorkQueueSender>` returned by `with_producers` makes the
-  count visible. Callers iterate the vec to spawn threads, so missing
-  a sender means missing a thread, which is easy to spot.
-- A debug-only assertion can record sender drops via a shared
-  `Arc<AtomicUsize>` and emit a warning if the counter does not reach
-  zero within a transfer-end deadline. This is observability only; the
-  primary defence is the API shape.
+### PR #4214 - drain_parallel alternatives
 
-### Sequence-number collision across producers
+The drain-side fan-in bench at
+`crates/engine/benches/drain_parallel_alternatives.rs` (committed in
+the bench tree, referenced by
+`docs/design/lockfree-mpsc-drain-design.md:168-243`) compares three
+consumer-side collectors: sharded `Mutex<Vec>`, per-thread `Vec` with
+final concat, and crossbeam MPSC. Worker counts 4, 8, 16. Item counts
+10K and 100K.
 
-Two producers issuing the same sequence number corrupts the
-`ReorderBuffer`'s assumption of unique slots. The buffer's ring layout
-(`reorder.rs:64-80`) silently overwrites if two items map to the same
-slot. Mitigation:
+For #1405, the #4214 bench is necessary context but not directly
+deciding. The consumer side is single in our scenarios; the bench
+informs `drain_parallel` itself, which is the same code path
+regardless of producer count. If #4214's MPSC arm wins by a wide
+margin and the producer-side switch to MP requires us to swap
+`drain_parallel`'s collector, the two benches must be read together
+before flipping the default.
 
-- Per-producer ranges (the recommended allocation strategy) make
-  collisions impossible by construction.
-- For the atomic-counter fallback, the test
-  `multi_producer_requires_atomic_sequence_coordination`
-  (`tests.rs:172-214`) shows the safe pattern: `fetch_add(1)` per
-  item.
-- A debug assertion in `ReorderBuffer::insert` could detect duplicate
-  slot writes (`Some` overwriting `Some`) and panic; this is cheap and
-  catches integration bugs early.
+### What the benches would need to show to motivate MP-by-default
 
-### Fairness stalls if one producer is much faster
+- **#4209 MP arm within 5% of SP.** Producer-side overhead is not the
+  bottleneck.
+- **#4214 result does not regress under MP fan-in.** The drain path
+  handles the changed arrival pattern without throughput loss.
+- **A real caller exists.** Neither bench is sufficient on its own;
+  the multi-root or `--files-from` parallel generator path has to
+  actually be wired up and exercised by an integration test that
+  shows wall-time improvement on a representative workload.
 
-With one fast producer and one slow producer feeding a small bounded
-queue, the slow producer may rarely get a slot. This does not cause
-data loss or incorrectness but can starve some sources of progress.
-Mitigation:
+Until all three are true, the bench numbers alone do not motivate the
+default-on switch.
 
-- Tune capacity per producer count (see the Backpressure section).
-- For severely skewed workloads, partition the transfer so each source
-  gets its own bounded sub-queue and a final merge step on the
-  consumer side. This is a future optimisation, not a v1 requirement.
+## 7. Recommendation
 
-### Adaptive capacity policy under multi-producer
+**Keep `WorkQueueSender` `Send + !Clone` in the default build. Keep
+the `multi-producer` cargo feature gated and opt-in. Do not introduce
+`Arc<WorkQueueSender>` as a separate primitive. Do not add
+`with_producers(n)` until a real caller emerges.**
 
-The adaptive policy in `concurrent_delta/adaptive.rs` keys on the gap
-between the consumer's `next_expected` and the highest occupied slot
-in the `ReorderBuffer`. With multi-producer + per-range sequencing,
-that high-water gap can spike when producers complete their ranges
-out of order (e.g., producer 2 finishes before producer 0). The buffer
-will hold producer 2's full range while waiting for producer 0's first
-item, which inflates the gap signal. Mitigation:
+The three components of this recommendation:
 
-- Set the buffer's adaptive minimum to at least the largest expected
-  per-producer range, so the gap-driven shrink does not thrash.
-- Audit the adaptive policy under representative multi-root workloads
-  before enabling by default.
+1. **Default build stays single-producer.** The compile-time SPMC
+   invariant
+   (`crates/engine/src/concurrent_delta/work_queue/bounded.rs:48-50`,
+   absence of `Clone`) is the cheapest possible enforcement of the
+   audit's "all live producers are SP" conclusion (#4173). Until #4209
+   produces a positive crossover and a real caller is staged, no
+   production code can construct a second producer by accident.
 
-## Tracking (follow-up TODOs, not added to the persistent list)
+2. **`multi-producer` feature stays gated and opt-in.** The feature
+   covers every variant of Design A. Its tests at
+   `crates/engine/tests/multi_producer_work_queue.rs:51-501` already
+   exercise 4-16 producers, ordering, drop-disconnect, and
+   backpressure. The cost of keeping it gated is one `#[cfg]` in the
+   sender module and a benches-only compile flag; the benefit is the
+   compile-time SPMC invariant in production builds.
 
-- Implementation: introduce `with_producers` and
-  `with_producers_and_capacity` in
-  `crates/engine/src/concurrent_delta/work_queue/bounded.rs`, mirroring
-  the existing constructors.
-- Multi-root integration test: extend
-  `crates/engine/src/local_copy/tests/` with a 4-root tree exercising
-  the parallel walker path and asserting the consumer drains in order
-  via the `ReorderBuffer`.
-- Sequence-range allocation: add a planner step that computes
-  `(base, len)` per source root and threads it into the producer
-  closure. Today the planner builds `plan.sources()` without per-root
-  sequence metadata; the change is local to
-  `crates/engine/src/local_copy/executor/sources/`.
-- Benchmark on a 4-root tree: extend `scripts/benchmark.sh` to run
-  `oc-rsync r1/ r2/ r3/ r4/ dst/` against the upstream binary and
-  capture wall time vs serial enumeration.
-- Audit update: amend
-  `crates/engine/src/concurrent_delta/multi_producer_audit.rs` to
-  reference this design note in the "Multi-Producer Opportunities"
-  section, replacing the current "Not beneficial" verdicts for the
-  local-copy enumeration case.
+3. **No Arc-wrapped primitive.** The evaluation at
+   `docs/design/arc-workqueue-sender-eval.md:55-76` documents the
+   reasoning. The primitive duplicates indirection, surfaces no new
+   capability, and breaks the "one obvious way" rule.
 
-## Appendix: Why Not Just Use `Clone` Today?
+The implicit fourth component: **promote the feature to default-on
+only when both bench thresholds are crossed *and* a real caller is
+queued behind the change.** Today, neither is true. The audit at
+#4173 finds zero current producers; the bench at #4209 publishes
+numbers but no caller has been wired. Flipping the default on
+speculation would relax a compile-time invariant for no measurable
+gain, and would force every reviewer to re-derive "is this site
+allowed to clone the sender?" on every PR.
 
-The `multi-producer` feature flag already exists and is exercised by
-tests. The reason this design note advocates an explicit
-`with_producers(n)` constructor instead of telling callers to enable
-the feature flag and clone is twofold:
+The cost of being wrong in the conservative direction is low: a
+future PR that genuinely needs MP turns on the feature flag in its
+crate's `Cargo.toml` and gets `Clone`. The cost of being wrong in
+the aggressive direction is high: an accidental second producer leaks
+into production, sequence coordination is silently dropped, and the
+`ReorderBuffer` corrupts output (see ordering section above).
 
-1. **The producer-count contract is the actual subtle bit.** Callers
-   who clone freely can easily leave a sender alive longer than
-   intended (e.g., the original sender in the planner thread that
-   spawned workers). Returning a `Vec<WorkQueueSender>` of length N
-   forces the caller to think about the count and own all N handles
-   explicitly.
+The conservative direction wins.
 
-2. **Crate-wide invariants stay enforceable.** The wire-protocol
-   receive path and any future call site that needs strict SPMC keep
-   compiling against a non-`Clone` sender. Only callers that opt into
-   `with_producers` get the multi-producer contract, and they get it
-   without needing the global feature flag.
+## 8. Document the cost so reviewers can reject naive MP refactors
 
-The feature flag and its `Clone` impl remain useful for the
-fan-out-from-one-coordinator pattern and for tests; the new
-constructor is the recommended path for multi-root and parallel
-enumeration.
+A common failure mode is a reviewer who reads "the crossbeam channel
+underneath is already MPMC" in the module documentation
+(`crates/engine/src/concurrent_delta/work_queue/mod.rs:11-35`) and
+concludes that adding a `.clone()` to the sender at one call site is
+free. It is not.
+
+The hidden costs:
+
+- **Sequence coordination becomes mandatory.** Sites 1, 2, and 3 in
+  the audit (`docs/audits/workqueue-sender-multi-producer-audit.md:147-220`)
+  rely on `&mut self` to advance the sequence counter. A second
+  producer requires either an atomic global counter or per-producer
+  ranges. The audit at
+  `multi_producer_audit.rs:174-214` shows the atomic pattern.
+- **Close semantics flip.** With one producer, drop-on-shutdown ends
+  the consumer iterator instantly
+  (`crates/transfer/src/delta_pipeline.rs:318-322`). With N producers,
+  the consumer iterator blocks until the *last* clone drops. A
+  forgotten clone hangs `drain_parallel` forever.
+- **Backpressure characteristics change** (section 5). N producers
+  blocking on a queue sized for one producer increases tail latency
+  proportionally.
+- **The default-build compile-time invariant is destroyed at that
+  site.** Once `Clone` is invoked anywhere in production, the
+  workspace must be re-audited at every PR.
+
+Reviewers should treat any PR that adds `.clone()` on a
+`WorkQueueSender` (or enables the `multi-producer` feature for the
+`engine` crate dependency) as a substantive design change subject to
+this document's recommendations.
+
+## 9. Risks of the recommendation
+
+### Risk: a real caller materialises and we are not ready
+
+Mitigation: the integration tests at
+`crates/engine/tests/multi_producer_work_queue.rs:51-501` already
+cover the fan-in semantics. The library code path is one feature
+flag away. The lag between "real caller needs MP" and "MP available
+in their build" is small.
+
+### Risk: the SP-vs-MP bench (#4209) shows MP is materially faster
+
+Mitigation: revisit this recommendation. If MP is strictly faster
+even with one producer (which would be surprising, since it adds an
+atomic clone count), then the default-build cost of allowing `Clone`
+is genuinely negative and the gate becomes purely a compile-time
+single-producer enforcement convenience. Re-read section 7 in light
+of the bench data and consider promoting.
+
+### Risk: the multi-root or `--files-from` parallel paths land independently
+
+Mitigation: the multi-root scenarios audit at
+`docs/audits/multi-root-transfer-scenarios.md:642-699` already
+recommends closing #1405 as not-required because the wire path
+cannot benefit from per-root multi-producer dispatch. If a future
+maintainer overrides that recommendation and ships a multi-root
+parallel generator, this document's recommendation does not block
+it: the multi-root code can opt into the `multi-producer` cargo
+feature locally at its crate boundary, and the audit at #4173 grows
+by exactly one row. The default build still has zero MP producers.
+
+## 10. Decision
+
+Keep the current shape:
+
+- `WorkQueueSender` remains `Send + !Clone` in the default build
+  (`crates/engine/src/concurrent_delta/work_queue/bounded.rs:48-50`).
+- The `multi-producer` cargo feature
+  (`crates/engine/Cargo.toml:88-91`) remains opt-in. Its `Clone` impl
+  at `crates/engine/src/concurrent_delta/work_queue/multi_producer.rs:10-23`
+  stays as the single MP entry point.
+- `Arc<WorkQueueSender>` is not introduced
+  (`docs/design/arc-workqueue-sender-eval.md` recommendation
+  reaffirmed).
+- Promotion to default-on is blocked on three independent signals:
+  - PR #4209 bench shows MP within 5% of SP.
+  - PR #4214 bench shows no drain-side regression under MP fan-in.
+  - A real caller (multi-root push, parallel `--files-from`, async
+    per-source generators) is staged and ready to use MP.
+
+Until all three are true, the recommendation is to leave the feature
+where it is and document why. This document is that documentation.
