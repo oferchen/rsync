@@ -144,3 +144,7 @@ harness = false
 [[bench]]
 name = "parallel_stat_collector_contention"
 harness = false
+
+[[bench]]
+name = "par_bridge_vs_deque"
+harness = false
