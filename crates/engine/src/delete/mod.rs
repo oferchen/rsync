@@ -23,6 +23,12 @@
 //!   planned entry. Guarantees the wall-clock event sequence (`unlink`
 //!   syscall order, `*deleting` itemize lines, `NDX_DEL_STATS` framing)
 //!   matches upstream rsync 3.4.1 byte for byte.
+//! - [`CohortIndex`] - read-only hardlink cohort snapshot built per
+//!   INC_RECURSE segment and shared by `std::sync::Arc` across phase-1
+//!   [`compute_extras_with_cohorts`] workers and the single emitter.
+//!   Powers cohort-aware itemize bookkeeping without changing the
+//!   unlink decision (upstream `delete.c:130-225` always unlinks; the
+//!   kernel reconciles ref counts).
 //!
 //! # Upstream Reference
 //!
@@ -34,17 +40,19 @@
 //! - `target/interop/upstream-src/rsync-3.4.1/flist.c:3217-3343`
 //!   (`f_name_cmp`).
 
+mod cohort_index;
 pub mod emitter;
 mod extras;
 mod plan;
 mod plan_map;
 mod traversal;
 
+pub use cohort_index::CohortIndex;
 pub use emitter::{
-    DeleteEmitter, DeleteEvent, DeleteFs, EMITTER_PARTIAL_EXIT_CODE, EMITTER_VANISHED_EXIT_CODE,
-    EmitterErrorPolicy, RealDeleteFs, RecordingDeleteFs,
+    CohortDeleteRecord, DeleteEmitter, DeleteEvent, DeleteFs, EMITTER_PARTIAL_EXIT_CODE,
+    EMITTER_VANISHED_EXIT_CODE, EmitterErrorPolicy, RealDeleteFs, RecordingDeleteFs,
 };
-pub use extras::compute_extras;
+pub use extras::{compute_extras, compute_extras_with_cohorts};
 pub use plan::{DeleteEntry, DeleteEntryKind, DeletePlan, HardlinkCohortId};
 pub use plan_map::DeletePlanMap;
 pub use traversal::DirTraversalCursor;
