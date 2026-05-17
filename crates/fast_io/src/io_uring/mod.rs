@@ -86,6 +86,7 @@
 
 mod batching;
 pub mod buffer_ring;
+pub mod cancel;
 mod config;
 mod disk_batch;
 mod file_factory;
@@ -112,6 +113,10 @@ use std::os::unix::io::AsRawFd;
 pub use buffer_ring::{
     BgidAllocator, BufferRing, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags,
     pbuf_ring_supported,
+};
+pub use cancel::{
+    ASYNC_CANCEL_FD_MIN_KERNEL, ASYNC_CANCEL_MIN_KERNEL, CancelOutcome, IORING_OP_ASYNC_CANCEL,
+    cancel_all_by_fd, cancel_by_user_data,
 };
 pub use config::{
     IoUringConfig, IoUringKernelInfo, config_detail, is_io_uring_available, sqpoll_fell_back,
