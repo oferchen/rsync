@@ -134,6 +134,7 @@ pub mod delta;
 pub mod error;
 pub mod hardlink;
 pub mod local_copy;
+pub mod util;
 pub mod walk;
 
 #[doc(hidden)]
@@ -233,6 +234,10 @@ pub use signature::{
 
 /// Directory traversal abstractions for file list generation.
 pub use walk::{DirectoryWalker, FilteredWalker, WalkConfig, WalkEntry, WalkError, WalkdirWalker};
+
+/// Poison-tolerant lock acquisition helpers for `Mutex`/`RwLock` state that
+/// remains valid after a panicking thread is unwound.
+pub use util::poison::{lock_or_recover, read_or_recover, write_or_recover};
 
 /// Async I/O operations (available with `async` feature).
 #[cfg(feature = "async")]
