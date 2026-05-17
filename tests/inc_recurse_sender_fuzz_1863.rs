@@ -488,10 +488,7 @@ fn discover_upstream_targets() -> Vec<UpstreamTarget> {
     let mut out = Vec::new();
     for version in ["3.0.9", "3.1.3", "3.4.1"] {
         if let Some(p) = upstream_rsync_binary(version) {
-            out.push(UpstreamTarget {
-                version,
-                binary: p,
-            });
+            out.push(UpstreamTarget { version, binary: p });
         }
     }
     if let Ok(override_path) = env::var("OC_RSYNC_FUZZ_UPSTREAM_BIN") {
