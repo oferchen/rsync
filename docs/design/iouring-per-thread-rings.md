@@ -1,7 +1,24 @@
 # io_uring per-thread rings + work stealing (#2243)
 
-Tracking issue: oc-rsync task #2243. This is a docs-only design note;
-no code lands in this PR.
+Tracking issue: oc-rsync task #2243.
+
+## Status
+
+A per-thread ring primitive is implemented as
+[`fast_io::ThreadLocalRingPool`](../../crates/fast_io/src/io_uring/session_pool.rs)
+alongside the existing shared-ring pool. The primitive lazily builds one
+ring per OS thread on first acquire and holds it in thread-local storage,
+so the submit and reap paths hold no lock. Consumer migrations
+(`file_writer`, `file_reader`, `disk_batch`, `registered_buffers`) are
+opt-in and land one at a time as the bench evidence in section 5 is
+collected.
+
+The work-stealing alternative discussed in section 3.3 was rejected on
+the grounds laid out in that section: stolen SQEs cannot use the
+originating ring's registered buffers or fixed-file table, so the
+per-thread fast path is lost the moment a steal happens. The
+implemented primitive instead falls back to back-pressure on `SQ full`
+per section 3.4.
 
 Sibling design notes and audits this document layers on top of:
 
