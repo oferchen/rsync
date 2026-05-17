@@ -148,3 +148,7 @@ harness = false
 [[bench]]
 name = "par_bridge_vs_deque"
 harness = false
+
+[[bench]]
+name = "sync_channel_overhead"
+harness = false
