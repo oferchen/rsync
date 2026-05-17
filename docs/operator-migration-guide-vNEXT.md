@@ -249,6 +249,68 @@ be combined.
 - **Build.** `cargo build --release --features vmsplice`
   (Linux only; no-op on other targets).
 
+### Receiver spill tunability (`SpillPolicy`)
+
+The concurrent-delta receiver bounds its `ReorderBuffer` through a
+process-wide `SpillPolicy` introduced in STN-1 (design) and STN-2
+(struct). The default policy keeps the historical behaviour - no spill,
+everything in memory, byte-equivalent to the previous release - so
+existing operators see no behavioural change.
+
+- **What it does.** When `threshold_bytes` is set, the receiver writes
+  the oldest-eligible items in the reorder window to a tempfile once
+  the in-memory footprint crosses the threshold and reloads them when
+  they reach the head of the delivery order. The on-disk format is a
+  length-prefixed binary payload; compression is opt-in.
+- **Defaults.** `threshold_bytes = None` (spill disabled),
+  `dir = None` (defers to **std::env::temp_dir**(3) via a 1 MiB
+  spooled tempfile), `reclaim_mode = KeepInMemory`,
+  `granularity = WholeBatch`, `compression = None`. The defaults
+  table and rationale are in
+  [`docs/design/spill-policy-public-api.md`](design/spill-policy-public-api.md)
+  section 2.
+- **Environment variables.** All five `SpillPolicy` fields are
+  reachable through `OC_RSYNC_SPILL_*` env vars; precedence (highest
+  wins) is CLI flag > env var > programmatic policy > default.
+
+| Variable | Maps to | Accepted values |
+|----------|---------|-----------------|
+| `OC_RSYNC_SPILL_THRESHOLD_BYTES` | `threshold_bytes` | Integer with optional `K`/`M`/`G` suffix (case-insensitive, base 1024). Empty string clears. `0` is rejected. |
+| `OC_RSYNC_SPILL_DIR` | `dir` | Absolute or relative path. Created on first spill via `create_dir_all`. |
+| `OC_RSYNC_SPILL_RECLAIM` | `reclaim_mode` | `keep` (default) or `re-spill`. |
+| `OC_RSYNC_SPILL_GRANULARITY` | `granularity` | `whole-batch` (default) or `per-item`. |
+| `OC_RSYNC_SPILL_COMPRESSION` | `compression` | `none` (default), `zstd`, or `zstd:LEVEL` where `LEVEL` is in `[-22, 22]`. |
+
+- **When to override.**
+  - *Memory-constrained receivers* (containers with tight cgroup
+    memory limits, embedded targets) should set
+    `OC_RSYNC_SPILL_THRESHOLD_BYTES` to a value below the cgroup
+    limit (typical starting point: 64 MiB) and point
+    `OC_RSYNC_SPILL_DIR` at a fast tmpfs or local SSD.
+  - *Adversarial fan-out workloads* (deep INC_RECURSE trees with
+    many unfinished segments held in the reorder window) benefit
+    from `OC_RSYNC_SPILL_RECLAIM=re-spill` to keep the post-reload
+    footprint bounded under sustained pressure.
+  - *Slow or SMR spill directories* should set
+    `OC_RSYNC_SPILL_COMPRESSION=zstd` to trade CPU for disk
+    bandwidth; default level 3 is usually appropriate, raise to
+    `zstd:7` only when the spill device is the bottleneck.
+  - *Diagnostic granularity* on benchmark runs:
+    `OC_RSYNC_SPILL_GRANULARITY=per-item` smooths the memory curve
+    at the cost of more syscalls per spill event.
+- **When to stay on the default.** Every workload that fits inside
+  the documented 64 MiB high-water mark on the audit baseline. Spill
+  is opt-in for a reason: the in-memory path is the fastest and
+  byte-stable.
+- **CLI flags.** `--spill-dir` and `--spill-threshold-bytes` are
+  planned for STN-11 and will land in a future release; they shadow
+  the two highest-value env vars. The remaining three knobs stay
+  env-only.
+- **References.** Public-API surface and validation rules:
+  [`docs/design/spill-policy-public-api.md`](design/spill-policy-public-api.md).
+  Spillable buffer internals:
+  [`docs/design/reorderbuffer-spill-to-tempfile.md`](design/reorderbuffer-spill-to-tempfile.md).
+
 ### Combining flags
 
 The feature flags are independent. A common production combination
