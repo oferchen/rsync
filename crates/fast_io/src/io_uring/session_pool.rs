@@ -21,17 +21,33 @@
 //!   single relaxed [`AtomicUsize`] - the contention point at high concurrency
 //!   is the per-ring mutex, not the selector.
 //!
-//! This module introduces the primitive only. Existing
-//! [`crate::io_uring::shared_ring::SharedRing`] consumers stay on their
-//! single-mutex pattern; migrations land one consumer at a time in follow-up
-//! work tracked alongside the design at
-//! `docs/design/iouring-session-ring-pool.md` and
-//! `docs/design/iouring-session-ring-pool-impl.md`.
+//! Two pool primitives live in this module:
+//!
+//! - [`SessionRingPool`] - bounded fleet shared across threads behind per-slot
+//!   mutexes. Round-robin selection.
+//! - [`ThreadLocalRingPool`] - one ring per OS thread, lazily constructed on
+//!   first acquire. Zero locking on the submit path because the ring never
+//!   leaves the thread that built it. See
+//!   `docs/design/iouring-per-thread-rings.md` (#2243).
+//!
+//! Consumers pick the primitive that matches their concurrency model. Rayon
+//! workers, the disk-commit thread, and any other pinned thread benefit from
+//! the thread-local variant. The session-mutex pool remains the right answer
+//! when a small ring fleet must be shared across many short-lived sessions.
+//!
+//! Existing [`crate::io_uring::shared_ring::SharedRing`] consumers stay on
+//! their single-owner pattern; migrations land one consumer at a time in
+//! follow-up work tracked alongside the designs at
+//! `docs/design/iouring-session-ring-pool.md`,
+//! `docs/design/iouring-session-ring-pool-impl.md`, and
+//! `docs/design/iouring-per-thread-rings.md`.
 
+use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
+use std::thread::ThreadId;
 
 use io_uring::IoUring as RawIoUring;
 
@@ -266,12 +282,191 @@ fn build_ring(config: &SessionPoolConfig) -> std::io::Result<RawIoUring> {
         .map_err(|e| std::io::Error::other(format!("io_uring init failed: {e}")))
 }
 
+thread_local! {
+    /// Per-thread io_uring rings keyed by pool identity.
+    ///
+    /// Stored as a `Vec<(pool_id, Box<RefCell<...>>)>` rather than a
+    /// `HashMap` to keep the access path branch-light: in the common case one
+    /// thread interacts with one pool, so the linear scan over a single entry
+    /// beats hashing. Each pool's slot is boxed so the inner `RefCell` has a
+    /// stable heap address - this lets [`ThreadLocalRingPool::acquire`] hand
+    /// the inner cell out across the outer-vector borrow boundary without
+    /// risking pointer invalidation when a sibling pool later grows the
+    /// vector. The inner `RefCell` enforces single-borrow at runtime; nested
+    /// acquires from the same thread fail loudly instead of silently
+    /// deadlocking the way a `Mutex` would.
+    #[allow(clippy::type_complexity)]
+    static THREAD_RINGS: RefCell<Vec<(usize, Box<RefCell<Option<RawIoUring>>>)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// Process-wide counter for [`ThreadLocalRingPool`] identity.
+///
+/// Each pool grabs a unique id at construction. Thread-local storage uses the
+/// id to disambiguate rings owned by different pools so two pools living on
+/// the same thread cannot collide.
+static NEXT_POOL_ID: AtomicUsize = AtomicUsize::new(1);
+
+/// Pool that hands each calling thread its own io_uring ring.
+///
+/// Where [`SessionRingPool`] shares `N` rings across threads behind per-slot
+/// mutexes, `ThreadLocalRingPool` lazily allocates one ring per thread the
+/// first time that thread calls [`acquire`](Self::acquire). The ring lives in
+/// thread-local storage and never crosses thread boundaries, so the submit and
+/// reap path holds no lock at all. The trade-off is more pinned kernel pages
+/// at high thread fan-in - the design note at
+/// `docs/design/iouring-per-thread-rings.md` (#2243) covers the resource
+/// accounting and the work-stealing alternative that was rejected on the
+/// grounds that stolen SQEs cannot reference the owning ring's registered
+/// buffers or fixed-file table.
+///
+/// # Concurrency model
+///
+/// - Cloning the pool is cheap (`Arc` of the shared config). Multiple clones
+///   share the same per-thread rings on each thread because they share the
+///   same pool id.
+/// - Two distinct pools sharing a thread each get their own ring slot.
+/// - Re-entrant [`acquire`](Self::acquire) calls on the same thread return
+///   `None` (the inner [`RefCell`] is already borrowed). This mirrors the
+///   `Mutex` poison-style fallback in [`SessionRingPool::acquire`].
+pub struct ThreadLocalRingPool {
+    id: usize,
+    config: Arc<SessionPoolConfig>,
+    /// Lower bound on the number of threads that have ever held a lease.
+    /// Useful for diagnostics; exposed via [`thread_count`](Self::thread_count).
+    thread_count: Arc<AtomicUsize>,
+}
+
+impl ThreadLocalRingPool {
+    /// Builds a thread-local ring pool with the supplied per-ring config.
+    ///
+    /// No ring is constructed up front; the first [`acquire`](Self::acquire)
+    /// call on each thread builds that thread's ring. This is the right shape
+    /// for rayon pools where the worker count is large but only a subset
+    /// touches io_uring at any given time.
+    #[must_use]
+    pub fn new(config: SessionPoolConfig) -> Self {
+        Self {
+            id: NEXT_POOL_ID.fetch_add(1, Ordering::Relaxed),
+            config: Arc::new(config),
+            thread_count: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Returns the per-pool configuration shared with every thread.
+    #[must_use]
+    pub fn config(&self) -> &SessionPoolConfig {
+        &self.config
+    }
+
+    /// Returns a lower bound on the number of distinct threads that have ever
+    /// successfully leased a ring from this pool.
+    ///
+    /// This is the count of rings the pool has caused to be constructed; it
+    /// only grows. It is the cheapest proxy for "how much kernel state does
+    /// this pool pin" without walking every live thread.
+    #[must_use]
+    pub fn thread_count(&self) -> usize {
+        self.thread_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the id of the calling thread, useful for diagnostics in tests
+    /// that want to confirm rings stay pinned to their constructing thread.
+    #[must_use]
+    pub fn current_thread_id() -> ThreadId {
+        thread::current().id()
+    }
+
+    /// Leases the calling thread's ring, constructing it on first use.
+    ///
+    /// Returns `None` when:
+    /// - `io_uring_setup(2)` rejects this thread's ring (caller falls back to
+    ///   standard I/O).
+    /// - The calling thread already holds an outstanding lease from this pool
+    ///   (re-entrant submit/reap is not supported).
+    pub fn acquire(&self) -> Option<ThreadLocalRingLease<'_>> {
+        // Step 1: ensure the slot exists for this pool on this thread, then
+        // capture the stable heap address of the inner cell. The outer
+        // `THREAD_RINGS` borrow is released before the inner borrow is
+        // handed to the lease so unrelated pool acquires on the same thread
+        // remain unblocked.
+        let raw_cell_ptr: *const RefCell<Option<RawIoUring>> =
+            THREAD_RINGS.with(|cell| -> Option<*const RefCell<Option<RawIoUring>>> {
+                let mut slots = cell.borrow_mut();
+                if let Some(idx) = slots.iter().position(|(pid, _)| *pid == self.id) {
+                    return Some(&*slots[idx].1 as *const _);
+                }
+                slots.push((self.id, Box::new(RefCell::new(None))));
+                let idx = slots.len() - 1;
+                Some(&*slots[idx].1 as *const _)
+            })?;
+
+        // SAFETY: `raw_cell_ptr` references the heap-allocated `RefCell`
+        // owned by a `Box` stored inside the thread-local `THREAD_RINGS`
+        // vector. The thread-local outlives any code that runs on this
+        // thread, the vector only grows (entries are never removed or
+        // re-shuffled), and boxing the cell guarantees that future growth of
+        // the outer vector cannot move the pointed-to `RefCell`. The cell is
+        // `RefCell`, not `&mut`, so concurrent shared reads from elsewhere
+        // on this thread remain sound.
+        let cell: &RefCell<Option<RawIoUring>> = unsafe { &*raw_cell_ptr };
+
+        let mut guard = cell.try_borrow_mut().ok()?;
+        if guard.is_none() {
+            let ring = build_ring(&self.config).ok()?;
+            *guard = Some(ring);
+            self.thread_count.fetch_add(1, Ordering::Relaxed);
+        }
+        Some(ThreadLocalRingLease { guard })
+    }
+}
+
+impl Clone for ThreadLocalRingPool {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            config: Arc::clone(&self.config),
+            thread_count: Arc::clone(&self.thread_count),
+        }
+    }
+}
+
+/// RAII lease wrapping the calling thread's ring from a
+/// [`ThreadLocalRingPool`].
+///
+/// Holds the per-thread [`RefCell`] borrow. Drop releases the borrow so the
+/// same thread can acquire again. The lease is intentionally `!Send`: rings
+/// must not migrate between threads (the kernel ring fd is owned by the
+/// constructing process, but submission and completion must happen on the
+/// same thread to keep SQE/CQE ordering coherent and to avoid sharing the
+/// `!Sync` `IoUring` cursor across threads).
+pub struct ThreadLocalRingLease<'pool> {
+    guard: std::cell::RefMut<'pool, Option<RawIoUring>>,
+}
+
+impl<'pool> Deref for ThreadLocalRingLease<'pool> {
+    type Target = RawIoUring;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard
+            .as_ref()
+            .expect("thread-local ring slot is populated for the duration of a lease")
+    }
+}
+
+impl<'pool> DerefMut for ThreadLocalRingLease<'pool> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.guard
+            .as_mut()
+            .expect("thread-local ring slot is populated for the duration of a lease")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
-    use std::sync::Arc;
-    use std::sync::Barrier;
+    use std::sync::{Arc, Barrier};
 
     fn test_config(rings: usize) -> SessionPoolConfig {
         SessionPoolConfig {
@@ -417,5 +612,147 @@ mod tests {
         let pool = pool_result.expect("pool builds");
         assert!(pool.acquire_slot(2).is_none());
         assert!(pool.acquire_slot(usize::MAX).is_none());
+    }
+
+    /// Returns true when the host cannot honour `io_uring_setup(2)` so a
+    /// `ThreadLocalRingPool` test should bail out gracefully (matches the
+    /// pattern at `crates/fast_io/benches/iouring_per_file_vs_shared.rs:97`).
+    fn thread_local_pool_unavailable() -> bool {
+        !super::super::config::is_io_uring_available()
+    }
+
+    #[test]
+    fn thread_local_pool_returns_same_ring_id_for_repeated_acquire() {
+        if thread_local_pool_unavailable() {
+            eprintln!("skipping thread-local pool test: io_uring unavailable");
+            return;
+        }
+        let pool = ThreadLocalRingPool::new(test_config(1));
+        let fd_first = {
+            let lease = pool.acquire().expect("first acquire builds a ring");
+            use std::os::unix::io::AsRawFd;
+            lease.as_raw_fd()
+        };
+        let fd_second = {
+            let lease = pool
+                .acquire()
+                .expect("second acquire on same thread reuses the slot");
+            use std::os::unix::io::AsRawFd;
+            lease.as_raw_fd()
+        };
+        assert_eq!(
+            fd_first, fd_second,
+            "consecutive same-thread acquires must hand back the same ring fd"
+        );
+        assert_eq!(pool.thread_count(), 1);
+    }
+
+    #[test]
+    fn thread_local_pool_distinct_threads_get_distinct_rings() {
+        if thread_local_pool_unavailable() {
+            eprintln!("skipping thread-local pool test: io_uring unavailable");
+            return;
+        }
+        let pool = ThreadLocalRingPool::new(test_config(1));
+        let threads = 4usize;
+        let barrier = Arc::new(Barrier::new(threads));
+        let mut handles = Vec::with_capacity(threads);
+        for _ in 0..threads {
+            let pool = pool.clone();
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                use std::os::unix::io::AsRawFd;
+                let lease = pool.acquire().expect("worker can acquire a ring");
+                let id = (thread::current().id(), lease.as_raw_fd());
+                drop(lease);
+                id
+            }));
+        }
+        let mut seen = HashSet::new();
+        for handle in handles {
+            let (tid, fd) = handle.join().expect("worker did not panic");
+            assert!(
+                seen.insert((tid, fd)),
+                "duplicate (thread, fd) tuple {tid:?} {fd} - rings leaked across threads"
+            );
+        }
+        assert_eq!(
+            pool.thread_count(),
+            threads,
+            "every worker thread must have built exactly one ring"
+        );
+    }
+
+    #[test]
+    fn thread_local_pool_reentrant_acquire_returns_none() {
+        if thread_local_pool_unavailable() {
+            eprintln!("skipping thread-local pool test: io_uring unavailable");
+            return;
+        }
+        let pool = ThreadLocalRingPool::new(test_config(1));
+        let outer = pool.acquire().expect("first lease succeeds");
+        let inner = pool.acquire();
+        assert!(
+            inner.is_none(),
+            "nested acquire on same thread must fail rather than deadlock"
+        );
+        drop(outer);
+        // Once the outer lease is released the same thread can acquire again.
+        let after = pool.acquire();
+        assert!(after.is_some(), "post-drop acquire must succeed");
+    }
+
+    #[test]
+    fn thread_local_pool_two_pools_keep_separate_slots() {
+        if thread_local_pool_unavailable() {
+            eprintln!("skipping thread-local pool test: io_uring unavailable");
+            return;
+        }
+        let pool_a = ThreadLocalRingPool::new(test_config(1));
+        let pool_b = ThreadLocalRingPool::new(test_config(1));
+        use std::os::unix::io::AsRawFd;
+        let fd_a = pool_a.acquire().expect("pool A acquire").as_raw_fd();
+        let fd_b = pool_b.acquire().expect("pool B acquire").as_raw_fd();
+        assert_ne!(
+            fd_a, fd_b,
+            "two distinct pools on the same thread must own distinct rings"
+        );
+        assert_eq!(pool_a.thread_count(), 1);
+        assert_eq!(pool_b.thread_count(), 1);
+    }
+
+    #[test]
+    fn thread_local_pool_clone_shares_per_thread_ring() {
+        if thread_local_pool_unavailable() {
+            eprintln!("skipping thread-local pool test: io_uring unavailable");
+            return;
+        }
+        let pool = ThreadLocalRingPool::new(test_config(1));
+        let twin = pool.clone();
+        use std::os::unix::io::AsRawFd;
+        let fd_original = pool.acquire().expect("original acquire").as_raw_fd();
+        let fd_twin = twin.acquire().expect("twin acquire").as_raw_fd();
+        assert_eq!(
+            fd_original, fd_twin,
+            "clones of the same pool must share the per-thread ring"
+        );
+        assert_eq!(pool.thread_count(), 1);
+    }
+
+    #[test]
+    fn thread_local_pool_acquire_returns_none_when_setup_rejected() {
+        // entries_per_ring = 0 is rejected by io_uring_setup(2). On hosts
+        // without io_uring at all the bail-out path also returns None, so the
+        // assertion holds in both environments.
+        let cfg = SessionPoolConfig {
+            ring_count: 1,
+            entries_per_ring: 0,
+            flags: 0,
+            sqpoll_idle_ms: 0,
+        };
+        let pool = ThreadLocalRingPool::new(cfg);
+        assert!(pool.acquire().is_none());
+        assert_eq!(pool.thread_count(), 0);
     }
 }
