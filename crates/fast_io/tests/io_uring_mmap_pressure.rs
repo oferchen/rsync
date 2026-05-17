@@ -70,6 +70,9 @@ fn io_uring_reads_tolerate_mmap_madv_dontneed() {
     // processes during the lifetime of the map; the test owns the file
     // exclusively, so the mapping is sound.
     let map_file = std::fs::File::open(&path).expect("open for mmap");
+    // SAFETY: the test owns the file exclusively for its lifetime; no other
+    // process mutates the contents during the mapping, so the kernel's view
+    // remains stable as required by `Mmap`.
     let mmap = unsafe {
         MmapOptions::new()
             .len(FILE_SIZE)

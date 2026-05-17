@@ -93,6 +93,9 @@ pub(super) fn submit_write_batch(
                     .user_data(idx as u64);
                 let entry = maybe_fixed_file(entry, fixed_fd_slot);
 
+                // SAFETY: `entry` references `data` and the file fd; both
+                // outlive `submit_and_wait` below, so the SQE buffer pointer
+                // remains valid until the kernel finishes the write.
                 unsafe {
                     ring.submission()
                         .push(&entry)
@@ -320,6 +323,9 @@ pub(super) fn submit_send_batch(
                 .user_data(idx as u64);
                 let entry = maybe_fixed_file(entry, fixed_fd_slot);
 
+                // SAFETY: `entry` references `data` and the socket fd; the
+                // borrow is held until `submit_and_wait` returns, after which
+                // the kernel no longer reads from the submitted buffer.
                 unsafe {
                     ring.submission()
                         .push(&entry)

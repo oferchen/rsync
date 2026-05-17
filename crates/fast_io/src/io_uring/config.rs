@@ -79,6 +79,9 @@ pub(super) fn parse_kernel_version(release: &str) -> Option<(u32, u32)> {
 
 /// Gets the kernel release string using libc uname.
 fn get_kernel_release() -> Option<String> {
+    // SAFETY: `utsname` is zero-initialised then fully populated by `uname`,
+    // which is sound for the POD struct; the release field is a NUL-terminated
+    // byte array that remains valid for the duration of the `CStr` borrow.
     unsafe {
         let mut utsname: libc::utsname = std::mem::zeroed();
         if libc::uname(&mut utsname) != 0 {
