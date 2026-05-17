@@ -863,6 +863,8 @@ fn test_drop_flushes_writer() {
 /// Creates a Unix socket pair suitable for testing socket read/write.
 fn make_socket_pair() -> (RawFd, RawFd) {
     let mut fds = [0i32; 2];
+    // SAFETY: `fds` provides the two-int storage `socketpair(2)` expects;
+    // the call writes both fds and returns 0 on success.
     let ret = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
     assert_eq!(ret, 0, "socketpair failed");
     (fds[0], fds[1])
@@ -870,6 +872,8 @@ fn make_socket_pair() -> (RawFd, RawFd) {
 
 /// Closes a raw file descriptor.
 fn close_fd(fd: RawFd) {
+    // SAFETY: the caller passes a fd produced by `make_socket_pair` (or
+    // similar) and does not reuse it after this call, satisfying `close(2)`.
     unsafe {
         libc::close(fd);
     }

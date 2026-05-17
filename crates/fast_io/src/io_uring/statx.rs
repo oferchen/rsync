@@ -207,6 +207,9 @@ pub fn submit_statx_blocking(
     flags: i32,
     mask: u32,
 ) -> io::Result<rustix::fs::Statx> {
+    // SAFETY: `Statx` is a plain POSIX struct of integer fields, so the
+    // all-zero bit pattern is a valid (if uninteresting) value that the
+    // kernel will overwrite during the statx call.
     let mut statx_buf: rustix::fs::Statx = unsafe { std::mem::zeroed() };
     {
         let mut args = StatxArgs {
@@ -311,6 +314,8 @@ fn submit_statx_batch_io_uring(
     // Allocate CString paths and statx buffers upfront so they stay alive
     // across submission and completion.
     let mut c_paths: Vec<Option<CString>> = Vec::with_capacity(count);
+    // SAFETY: `Statx` is a POD struct of integer fields; an all-zero bit
+    // pattern is valid, and the kernel overwrites every populated entry.
     let mut statx_bufs: Vec<rustix::fs::Statx> = vec![unsafe { std::mem::zeroed() }; count];
     let mut path_errors: Vec<Option<io::Error>> = (0..count).map(|_| None).collect();
 
@@ -479,6 +484,8 @@ mod tests {
             return; // probe says yes; cannot exercise the unsupported branch
         }
         let path = c"/tmp/test";
+        // SAFETY: `Statx` is POD; zeroing yields a valid placeholder buffer
+        // that the SQE builder treats as a write destination.
         let mut buf: rustix::fs::Statx = unsafe { std::mem::zeroed() };
         let err = build_statx_sqe(&mut StatxArgs {
             dirfd: libc::AT_FDCWD,
@@ -494,6 +501,8 @@ mod tests {
     #[test]
     fn build_statx_sqe_unchecked_smoke() {
         let path = c"/tmp/test";
+        // SAFETY: `Statx` is POD; zeroing yields a valid placeholder buffer
+        // that the SQE builder treats as a write destination.
         let mut buf: rustix::fs::Statx = unsafe { std::mem::zeroed() };
         // Construct without panic and tag with user_data.
         let _tagged = build_statx_sqe_unchecked(&mut StatxArgs {
@@ -512,6 +521,8 @@ mod tests {
             return;
         }
         let path = c"/tmp/test";
+        // SAFETY: `Statx` is POD; zeroing yields a valid placeholder buffer
+        // that the SQE builder treats as a write destination.
         let mut buf: rustix::fs::Statx = unsafe { std::mem::zeroed() };
         let _entry = build_statx_sqe(&mut StatxArgs {
             dirfd: libc::AT_FDCWD,

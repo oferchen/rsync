@@ -154,6 +154,9 @@ pub(super) struct FdReader(pub(super) RawFd);
 
 impl Read for FdReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // SAFETY: `self.0` is a fd whose validity is guaranteed by the owner
+        // (see struct docs); `buf` provides a `buf.len()`-byte writable
+        // region, exactly what `read(2)` expects.
         let ret = unsafe { libc::read(self.0, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len()) };
         if ret < 0 {
             Err(io::Error::last_os_error())
@@ -171,6 +174,9 @@ pub(super) struct FdWriter(pub(super) RawFd);
 
 impl Write for FdWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // SAFETY: `self.0` is a fd whose validity is guaranteed by the owner
+        // (see struct docs); `buf` provides a `buf.len()`-byte readable
+        // region, exactly what `write(2)` expects.
         let ret = unsafe { libc::write(self.0, buf.as_ptr().cast::<libc::c_void>(), buf.len()) };
         if ret < 0 {
             Err(io::Error::last_os_error())

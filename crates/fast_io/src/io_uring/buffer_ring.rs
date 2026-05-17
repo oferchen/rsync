@@ -458,8 +458,16 @@ impl BufferRing {
 
         // Populate ring entries with buffer addresses.
         for i in 0..ring_entries {
+            // SAFETY: `i < ring_entries` and the mmap covers
+            // `ring_entries * entry_size` bytes plus the tail word, so the
+            // computed entry pointer stays within the mapping.
             let entry_ptr = unsafe { ring_ptr.add(i * entry_size).cast::<IoUringBuf>() };
+            // SAFETY: `i < ring_entries` and the buffer arena is
+            // `ring_entries * buf_size` bytes, so the offset is in bounds.
             let buf_addr = unsafe { buffers_ptr.add(i * buf_size) };
+            // SAFETY: `entry_ptr` points into the freshly mmap'd ring with
+            // proper alignment for `IoUringBuf` (16-byte struct in a
+            // page-aligned mapping); no concurrent reader exists yet.
             unsafe {
                 ptr::write(
                     entry_ptr,
@@ -477,7 +485,12 @@ impl BufferRing {
         // The tail pointer is at offset `ring_entries * entry_size` from the base
         // in the mmap'd region (the kernel reads it from there).
         let tail_offset = ring_entries * entry_size;
+        // SAFETY: the mmap reserves space for the tail word at this offset
+        // (see `ring_mmap_size = ring_entries * entry_size + size_of::<u16>()`)
+        // and is `u16`-aligned because `entry_size` is a multiple of 2.
         let tail_ptr = unsafe { ring_ptr.add(tail_offset).cast::<u16>() };
+        // SAFETY: `tail_ptr` is valid and aligned per the comment above; no
+        // other thread has access to the mapping yet.
         unsafe {
             ptr::write(tail_ptr, ring_entries as u16);
         }
@@ -603,6 +616,9 @@ impl BufferRing {
             return None;
         }
         let offset = usize::from(buf_id) * self.config.buffer_size as usize;
+        // SAFETY: `buf_id < ring_size` was just bounds-checked, so `offset`
+        // is within the buffer arena allocated for `ring_size * buffer_size`
+        // bytes.
         Some(unsafe { self.buffers_ptr.add(offset) })
     }
 
@@ -617,6 +633,10 @@ impl BufferRing {
     pub unsafe fn buffer_slice(&self, buf_id: u16, len: usize) -> Option<&[u8]> {
         let ptr = self.buffer_ptr(buf_id)?;
         let clamped = len.min(self.config.buffer_size as usize);
+        // SAFETY: `ptr` is a valid base into the arena (verified by
+        // `buffer_ptr`), `clamped <= buffer_size` keeps us inside the
+        // buffer, and the caller's `unsafe` contract guarantees the kernel
+        // initialised those bytes and is not concurrently recycling them.
         Some(unsafe { std::slice::from_raw_parts(ptr, clamped) })
     }
 
@@ -650,11 +670,18 @@ impl BufferRing {
         let index = usize::from(tail & mask as u16);
 
         let entry_size = std::mem::size_of::<IoUringBuf>();
+        // SAFETY: `index = tail & (ring_size - 1) < ring_size`, so the offset
+        // stays within the `ring_size * entry_size` portion of the mmap.
         let entry_ptr = unsafe { self.ring_ptr.add(index * entry_size).cast::<IoUringBuf>() };
 
         let buf_offset = usize::from(buf_id) * self.config.buffer_size as usize;
+        // SAFETY: `buf_id < ring_size` (checked above), so `buf_offset` lies
+        // inside the buffer arena allocated at construction.
         let buf_addr = unsafe { self.buffers_ptr.add(buf_offset) };
 
+        // SAFETY: `entry_ptr` is in-bounds and properly aligned for
+        // `IoUringBuf`; the atomic tail increment guarantees no other thread
+        // writes to the same slot concurrently.
         unsafe {
             ptr::write(
                 entry_ptr,
@@ -669,8 +696,15 @@ impl BufferRing {
 
         // Write the updated tail to the shared memory location that the kernel reads.
         let tail_offset = self.config.ring_size as usize * entry_size;
+        // SAFETY: `tail_offset` points at the kernel-shared tail word that
+        // sits immediately after the entry array (sized into the mmap at
+        // construction). The pointer is `u16`-aligned because `entry_size`
+        // is a multiple of 2 and the mapping is page-aligned.
         let tail_ptr = unsafe { self.ring_ptr.add(tail_offset).cast::<AtomicU16>() };
         let new_tail = tail.wrapping_add(1);
+        // SAFETY: `tail_ptr` references the shared tail word; reborrowing as
+        // an `AtomicU16` is sound because the kernel uses single-word loads
+        // with matching alignment per the io_uring buffer-ring ABI.
         unsafe { &*tail_ptr }.store(new_tail, Ordering::Release);
         Ok(())
     }
