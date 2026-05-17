@@ -112,4 +112,22 @@ impl BgidAllocator {
     pub fn remaining() -> u32 {
         0
     }
+
+    /// Always returns 0 on this platform.
+    ///
+    /// Parity stub for [`crate::io_uring::buffer_ring::BgidAllocator::bgid_reused_count`]
+    /// so cross-platform callers compile without `cfg`-gating.
+    #[must_use]
+    pub fn bgid_reused_count() -> u64 {
+        0
+    }
+
+    /// Always returns 0 on this platform.
+    ///
+    /// Parity stub for [`crate::io_uring::buffer_ring::BgidAllocator::bgid_freshly_allocated_count`]
+    /// so cross-platform callers compile without `cfg`-gating.
+    #[must_use]
+    pub fn bgid_freshly_allocated_count() -> u64 {
+        0
+    }
 }

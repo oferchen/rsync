@@ -59,7 +59,7 @@
 
 use std::io;
 use std::ptr;
-use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use io_uring::IoUring as RawIoUring;
@@ -148,6 +148,22 @@ fn bgid_free_list() -> &'static Mutex<Vec<u16>> {
     FREE_LIST.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+/// Process-wide counter of bgids satisfied from the free-list.
+///
+/// Incremented exactly once per [`BgidAllocator::allocate`] call that
+/// returns a previously-deallocated id. Paired with
+/// [`BGID_FRESH_COUNT`] so observers can compute the recycle ratio
+/// (`reused / (reused + fresh)`) without taking the free-list mutex.
+static BGID_REUSED_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Process-wide counter of bgids minted from [`NEXT_BGID`].
+///
+/// Incremented exactly once per [`BgidAllocator::allocate`] call that
+/// advances the monotonic counter (free-list empty). Counts only
+/// successful allocations; the `fetch_add` / `fetch_sub` boundary undo on
+/// namespace exhaustion is not reflected here.
+static BGID_FRESH_COUNT: AtomicU64 = AtomicU64::new(0);
+
 /// Allocator for io_uring buffer group IDs (bgid).
 ///
 /// io_uring provided buffer rings (PBUF_RING) are identified by a 16-bit
@@ -199,6 +215,7 @@ impl BgidAllocator {
             .expect("bgid free-list poisoned")
             .pop()
         {
+            BGID_REUSED_COUNT.fetch_add(1, Ordering::Relaxed);
             return Ok(id);
         }
 
@@ -207,6 +224,7 @@ impl BgidAllocator {
         // depend on this value being observed in a particular order.
         let id = NEXT_BGID.fetch_add(1, Ordering::Relaxed);
         if id < BGID_NAMESPACE_SIZE {
+            BGID_FRESH_COUNT.fetch_add(1, Ordering::Relaxed);
             Ok(id as u16)
         } else {
             // Cap the counter at BGID_NAMESPACE_SIZE rather than letting it
@@ -263,6 +281,31 @@ impl BgidAllocator {
             .expect("bgid free-list poisoned")
             .len() as u32;
         BGID_NAMESPACE_SIZE - used + free
+    }
+
+    /// Returns the cumulative number of allocations satisfied from the
+    /// free-list since process start.
+    ///
+    /// Pair with [`freshly_allocated_count`](Self::freshly_allocated_count)
+    /// to compute the recycle ratio. Useful for benchmark assertions that
+    /// the free-list-first policy is in effect, and for operators monitoring
+    /// daemon bgid churn. The counter never decreases; wrap-around at
+    /// `u64::MAX` is not a practical concern.
+    #[must_use]
+    pub fn bgid_reused_count() -> u64 {
+        BGID_REUSED_COUNT.load(Ordering::Relaxed)
+    }
+
+    /// Returns the cumulative number of allocations that minted a fresh
+    /// bgid from the monotonic counter since process start.
+    ///
+    /// Increments only when the free-list was empty at the moment of
+    /// allocation. Pair with [`bgid_reused_count`](Self::bgid_reused_count)
+    /// to compute the recycle ratio. The counter never decreases; failed
+    /// allocations (namespace exhausted) are excluded.
+    #[must_use]
+    pub fn bgid_freshly_allocated_count() -> u64 {
+        BGID_FRESH_COUNT.load(Ordering::Relaxed)
     }
 }
 
@@ -1085,11 +1128,14 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Snapshots, then clears, `NEXT_BGID` and the free-list. The returned
-    /// guard restores both on drop so tests leave global state untouched.
+    /// Snapshots, then clears, `NEXT_BGID`, the free-list, and the
+    /// observability counters. The returned guard restores all four on
+    /// drop so tests leave global state untouched.
     struct BgidStateGuard {
         prev_counter: u32,
         prev_free_list: Vec<u16>,
+        prev_reused: u64,
+        prev_fresh: u64,
         _serializer: std::sync::MutexGuard<'static, ()>,
     }
 
@@ -1097,6 +1143,8 @@ mod tests {
         fn snapshot() -> Self {
             let serializer = bgid_test_lock();
             let prev_counter = NEXT_BGID.swap(0, Ordering::Relaxed);
+            let prev_reused = BGID_REUSED_COUNT.swap(0, Ordering::Relaxed);
+            let prev_fresh = BGID_FRESH_COUNT.swap(0, Ordering::Relaxed);
             let prev_free_list = {
                 let mut list = bgid_free_list().lock().expect("free-list poisoned");
                 std::mem::take(&mut *list)
@@ -1104,6 +1152,8 @@ mod tests {
             Self {
                 prev_counter,
                 prev_free_list,
+                prev_reused,
+                prev_fresh,
                 _serializer: serializer,
             }
         }
@@ -1112,6 +1162,8 @@ mod tests {
     impl Drop for BgidStateGuard {
         fn drop(&mut self) {
             NEXT_BGID.store(self.prev_counter, Ordering::Relaxed);
+            BGID_REUSED_COUNT.store(self.prev_reused, Ordering::Relaxed);
+            BGID_FRESH_COUNT.store(self.prev_fresh, Ordering::Relaxed);
             let mut list = bgid_free_list().lock().expect("free-list poisoned");
             *list = std::mem::take(&mut self.prev_free_list);
         }
@@ -1219,5 +1271,70 @@ mod tests {
             list_len, 1,
             "duplicate deallocate must not push the same bgid twice"
         );
+    }
+
+    #[test]
+    fn bgid_allocator_reuse_counter_tracks_freed_ids() {
+        let _guard = BgidStateGuard::snapshot();
+        // Allocate ten ids, return them, allocate ten more. Every id in the
+        // second pass must be sourced from the free-list.
+        let mut first = Vec::with_capacity(10);
+        for _ in 0..10 {
+            first.push(BgidAllocator::allocate().expect("initial allocation"));
+        }
+        assert_eq!(BgidAllocator::bgid_reused_count(), 0);
+        assert_eq!(BgidAllocator::bgid_freshly_allocated_count(), 10);
+
+        for id in &first {
+            BgidAllocator::deallocate(*id);
+        }
+
+        for _ in 0..10 {
+            let _ = BgidAllocator::allocate().expect("post-deallocate allocation");
+        }
+        assert!(
+            BgidAllocator::bgid_reused_count() >= 10,
+            "expected at least 10 reuses, got {}",
+            BgidAllocator::bgid_reused_count()
+        );
+        assert_eq!(
+            BgidAllocator::bgid_freshly_allocated_count(),
+            10,
+            "fresh count must not advance when the free-list satisfies the request"
+        );
+    }
+
+    #[test]
+    fn bgid_allocator_fresh_counter_advances_without_deallocs() {
+        let _guard = BgidStateGuard::snapshot();
+        for _ in 0..100 {
+            let _ = BgidAllocator::allocate().expect("fresh allocation");
+        }
+        assert_eq!(
+            BgidAllocator::bgid_reused_count(),
+            0,
+            "no deallocs means no reuses"
+        );
+        assert_eq!(
+            BgidAllocator::bgid_freshly_allocated_count(),
+            100,
+            "every allocation should advance the fresh counter"
+        );
+    }
+
+    #[test]
+    fn bgid_allocator_exhaustion_does_not_advance_fresh_counter() {
+        let _guard = BgidStateGuard::snapshot();
+        NEXT_BGID.store(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
+        assert!(matches!(
+            BgidAllocator::allocate(),
+            Err(BufferRingError::BgidExhausted)
+        ));
+        assert_eq!(
+            BgidAllocator::bgid_freshly_allocated_count(),
+            0,
+            "failed allocations must not bump the fresh counter"
+        );
+        assert_eq!(BgidAllocator::bgid_reused_count(), 0);
     }
 }
