@@ -165,3 +165,7 @@ harness = false
 [[bench]]
 name = "sp_vs_mp_workqueue"
 harness = false
+
+[[bench]]
+name = "drain_parallel_alternatives"
+harness = false
