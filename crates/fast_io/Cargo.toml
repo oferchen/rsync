@@ -119,6 +119,15 @@ name = "iouring_sqpoll_vs_regular"
 harness = false
 required-features = ["io_uring"]
 
+# Linux-only bench: mmap vs IORING_OP_READ_FIXED + SQPOLL on a 1 GiB
+# basis-read workload. Gated by OC_RSYNC_BENCH_IOURING_RING=1 and
+# OC_RSYNC_BENCH_IOURING_SQPOLL=1 (the latter only for the read_fixed cell;
+# the mmap cell needs no gate). Resolves the design tension documented in
+# docs/design/mmap-vs-sqpoll-conflict-resolution.md (follow-up to #2158).
+[[bench]]
+name = "mmap_vs_read_fixed_basis"
+harness = false
+
 # Windows-only bench: IOCP writer path (IocpDiskBatch) vs std::fs and
 # BufWriter baselines across 4 KiB / 64 KiB / 1 MiB payloads. The bench
 # file is cfg-gated to `target_os = "windows"` and the `iocp` feature; on
