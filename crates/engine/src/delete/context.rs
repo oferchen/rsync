@@ -460,8 +460,6 @@ mod tests {
         FileEntry::new_directory(path, 0o755)
     }
 
-    // --- observe_segment_for_delete (DDP-B3 surface) ---------------------
-
     #[test]
     fn disabled_context_publishes_nothing() {
         let dir = TempDir::new().unwrap();
@@ -587,8 +585,6 @@ mod tests {
         assert_eq!(plan.extras.len(), 2);
         assert!(plan.is_sorted());
     }
-
-    // --- timing-mode drain surface (DDP-E1-E5) --------------------------
 
     #[test]
     fn timing_predicates_partition_modes() {

@@ -46,10 +46,6 @@ use super::cohort_index::CohortIndex;
 use super::plan::HardlinkCohortId;
 use super::{DeleteEntryKind, DeletePlan, DeletePlanMap, DirTraversalCursor};
 
-// ----------------------------------------------------------------------------
-// Upstream exit-code constants surfaced by this module.
-// ----------------------------------------------------------------------------
-
 /// Exit code for partial transfers caused by an I/O failure during the
 /// delete pass. Mirrors upstream `errcode.h::RERR_PARTIAL` and
 /// `core::exit_code::ExitCode::PartialTransfer`.
@@ -58,10 +54,6 @@ pub const EMITTER_PARTIAL_EXIT_CODE: i32 = 23;
 /// Exit code reported when a destination entry vanished mid-pass. Mirrors
 /// upstream `errcode.h::RERR_VANISHED` and `core::exit_code::ExitCode::Vanished`.
 pub const EMITTER_VANISHED_EXIT_CODE: i32 = 24;
-
-// ----------------------------------------------------------------------------
-// DeleteFs trait and implementations.
-// ----------------------------------------------------------------------------
 
 /// Filesystem operations the emitter needs to issue a deletion.
 ///
@@ -249,10 +241,6 @@ impl DeleteFs for RecordingDeleteFs {
     }
 }
 
-// ----------------------------------------------------------------------------
-// Error policy.
-// ----------------------------------------------------------------------------
-
 /// Policy controlling how the emitter reacts to per-entry I/O failures.
 ///
 /// Mirrors upstream rsync's `--ignore-errors` and continue-on-error
@@ -288,10 +276,6 @@ impl Default for EmitterErrorPolicy {
         }
     }
 }
-
-// ----------------------------------------------------------------------------
-// Emitter.
-// ----------------------------------------------------------------------------
 
 /// Single-threaded drain task that issues deletions for one transfer.
 ///
@@ -702,11 +686,6 @@ mod tests {
         FileEntry::new_directory(path, 0o755)
     }
 
-    // ------------------------------------------------------------------
-    // Scripted DeleteFs that fails configured paths with configured
-    // errors. Used by the error-policy tests below.
-    // ------------------------------------------------------------------
-
     /// Failure plan: for each (path, errno) pair, the next call against
     /// that path returns the matching error before falling back to the
     /// recording behaviour.
@@ -784,12 +763,6 @@ mod tests {
             self.inner.remove_dir_all(path)
         }
     }
-
-    // ------------------------------------------------------------------
-    // DDP-C1 scaffold tests (kept here verbatim - the dispatch matrix
-    // is still the load-bearing invariant for the upstream-parity check
-    // in section 9.1 of the design).
-    // ------------------------------------------------------------------
 
     #[test]
     fn empty_plan_map_returns_immediately() {
@@ -983,10 +956,6 @@ mod tests {
         assert!(!file.exists());
         assert!(!dir.exists());
     }
-
-    // ------------------------------------------------------------------
-    // DDP-C4 (#2262) - new unit tests for synthetic plan sequences.
-    // ------------------------------------------------------------------
 
     #[test]
     fn mixed_kind_plan_preserves_input_dispatch_order() {
@@ -1282,15 +1251,11 @@ mod tests {
         assert_eq!(emitter.exit_code(), 0);
     }
 
-    // ------------------------------------------------------------------
-    // DDP-D2 (#2264) - hardlink-aware delete via CohortIndex snapshot.
-    //
     // Per `docs/design/hardlink-delete-audit.md` Option A and upstream
     // `delete.c:130-225`, the emitter still unlinks every destination
     // path even when the cohort retains other refs (the kernel
     // reconciles ref counts). The snapshot powers cohort-aware itemize
     // bookkeeping via `cohort_records`, not the unlink decision itself.
-    // ------------------------------------------------------------------
 
     fn tagged_entry(name: &str, kind: DeleteEntryKind, cohort: HardlinkCohortId) -> DeleteEntry {
         DeleteEntry::with_cohort(OsString::from(name), kind, cohort)
