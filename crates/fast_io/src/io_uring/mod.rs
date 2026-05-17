@@ -92,6 +92,7 @@ mod file_factory;
 mod file_reader;
 mod file_writer;
 pub mod linkat;
+pub mod linked_chain;
 pub mod registered_buffers;
 pub mod renameat2;
 pub mod session_pool;
@@ -125,6 +126,7 @@ pub use linkat::{
     IORING_OP_LINKAT, LINKAT_MIN_KERNEL, LinkAtArgs, build_linkat_sqe, build_linkat_sqe_unchecked,
     linkat_supported, submit_linkat_blocking,
 };
+pub use linked_chain::{CqeResult, LinkedChain, read_then_write};
 pub use registered_buffers::{
     RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats, RegisteredBufferStatus,
 };
