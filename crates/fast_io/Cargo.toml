@@ -91,3 +91,12 @@ harness = false
 [[bench]]
 name = "splice_pipe"
 harness = false
+
+# Linux-only bench: per-file vs shared io_uring ring on a 100K small-file
+# workload. Gated by the OC_RSYNC_BENCH_IOURING_RING=1 env var because each
+# iteration writes 100K files. See the file's module doc for the run recipe
+# and what the numbers inform on task #2243.
+[[bench]]
+name = "iouring_per_file_vs_shared"
+harness = false
+required-features = ["io_uring"]
