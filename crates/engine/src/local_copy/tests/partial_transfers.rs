@@ -17,6 +17,9 @@ struct PartialEnvGuard {
 impl PartialEnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var_os(key);
+        // SAFETY: tests using `PartialEnvGuard` run under nextest test-groups
+        // configured with `max-threads = 1`, serialising every environment
+        // mutation. `set_var` is unsafe in Rust 2024 only for cross-thread races.
         unsafe {
             std::env::set_var(key, value);
         }
@@ -27,6 +30,9 @@ impl PartialEnvGuard {
 #[allow(unsafe_code)]
 impl Drop for PartialEnvGuard {
     fn drop(&mut self) {
+        // SAFETY: `Drop` runs while the test that constructed the guard still
+        // holds its slot in the serialised nextest test-group, so no other
+        // thread can race the restoration call.
         if let Some(value) = self.previous.take() {
             unsafe {
                 std::env::set_var(self.key, value);

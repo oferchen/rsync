@@ -248,6 +248,9 @@ mod tests {
     impl EnvGuard {
         fn set(key: &'static str, value: &str) -> Self {
             let previous = std::env::var_os(key);
+            // SAFETY: callers acquire `ENV_MUTEX` before constructing this
+            // guard, serialising every environment mutation in this module.
+            // `set_var` is unsafe in Rust 2024 only for cross-thread races.
             unsafe {
                 std::env::set_var(key, value);
             }
@@ -258,6 +261,9 @@ mod tests {
     #[allow(unsafe_code)]
     impl Drop for EnvGuard {
         fn drop(&mut self) {
+            // SAFETY: the originating test still holds `ENV_MUTEX` when this
+            // `Drop` runs, so the restoration call cannot race with other env
+            // mutations.
             if let Some(value) = self.previous.take() {
                 unsafe {
                     std::env::set_var(self.key, value);
