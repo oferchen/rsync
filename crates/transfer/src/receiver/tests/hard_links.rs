@@ -1,0 +1,430 @@
+//! Hardlink surface: `create_hardlinks` behaviour, dry-run gating, and
+//! the `HardlinkApplyTracker` lifecycle across incremental segments.
+
+use std::ffi::OsString;
+
+use protocol::ProtocolVersion;
+
+use super::support::{
+    TestDeletionWriter, make_hlink_follower, make_hlink_leader, receiver_with_hardlinks,
+    test_handshake,
+};
+use crate::config::ServerConfig;
+use crate::flags::ParsedServerFlags;
+use crate::role::ServerRole;
+
+use super::super::ReceiverContext;
+
+#[test]
+fn create_hardlinks_links_follower_to_leader() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    let leader_file = dest.join("leader.txt");
+    std::fs::write(&leader_file, "shared content").unwrap();
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", 14, 42),
+        make_hlink_follower("follower.txt", 14, 42),
+    ];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    let follower_file = dest.join("follower.txt");
+    assert!(follower_file.exists(), "follower should be created");
+    assert_eq!(
+        std::fs::read_to_string(&follower_file).unwrap(),
+        "shared content"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn create_hardlinks_shares_inode() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    let leader_file = dest.join("a.txt");
+    std::fs::write(&leader_file, "inode check").unwrap();
+
+    let entries = vec![
+        make_hlink_leader("a.txt", 11, 100),
+        make_hlink_follower("b.txt", 11, 100),
+        make_hlink_follower("c.txt", 11, 100),
+    ];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    let meta_a = std::fs::metadata(dest.join("a.txt")).unwrap();
+    let meta_b = std::fs::metadata(dest.join("b.txt")).unwrap();
+    let meta_c = std::fs::metadata(dest.join("c.txt")).unwrap();
+
+    assert_eq!(meta_a.ino(), meta_b.ino(), "b should share inode with a");
+    assert_eq!(meta_a.ino(), meta_c.ino(), "c should share inode with a");
+    assert_eq!(meta_a.nlink(), 3, "nlink should be 3");
+}
+
+#[test]
+fn create_hardlinks_across_directories() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    std::fs::create_dir_all(dest.join("dir_a")).unwrap();
+    let leader_file = dest.join("dir_a/file.txt");
+    std::fs::write(&leader_file, "cross-dir").unwrap();
+
+    let entries = vec![
+        make_hlink_leader("dir_a/file.txt", 9, 50),
+        make_hlink_follower("dir_b/file.txt", 9, 50),
+    ];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    let follower = dest.join("dir_b/file.txt");
+    assert!(
+        follower.exists(),
+        "follower in different dir should be created"
+    );
+    assert_eq!(std::fs::read_to_string(&follower).unwrap(), "cross-dir");
+}
+
+#[test]
+fn create_hardlinks_multiple_groups() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    std::fs::write(dest.join("g1_leader.txt"), "group1").unwrap();
+    std::fs::write(dest.join("g2_leader.txt"), "group2").unwrap();
+
+    let entries = vec![
+        make_hlink_leader("g1_leader.txt", 6, 10),
+        make_hlink_follower("g1_follower.txt", 6, 10),
+        make_hlink_leader("g2_leader.txt", 6, 20),
+        make_hlink_follower("g2_follower.txt", 6, 20),
+    ];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    assert_eq!(
+        std::fs::read_to_string(dest.join("g1_follower.txt")).unwrap(),
+        "group1"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dest.join("g2_follower.txt")).unwrap(),
+        "group2"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn create_hardlinks_skips_already_linked() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    let leader = dest.join("leader.txt");
+    let follower = dest.join("follower.txt");
+    std::fs::write(&leader, "already linked").unwrap();
+    std::fs::hard_link(&leader, &follower).unwrap();
+
+    let leader_ino = std::fs::metadata(&leader).unwrap().ino();
+    let follower_ino = std::fs::metadata(&follower).unwrap().ino();
+    assert_eq!(leader_ino, follower_ino);
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", 14, 77),
+        make_hlink_follower("follower.txt", 14, 77),
+    ];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    let meta = std::fs::metadata(&follower).unwrap();
+    assert_eq!(meta.ino(), leader_ino);
+}
+
+#[test]
+fn create_hardlinks_replaces_existing_file() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    let leader = dest.join("leader.txt");
+    let follower = dest.join("follower.txt");
+    std::fs::write(&leader, "correct").unwrap();
+    std::fs::write(&follower, "wrong content").unwrap();
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", 7, 88),
+        make_hlink_follower("follower.txt", 7, 88),
+    ];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    assert_eq!(std::fs::read_to_string(&follower).unwrap(), "correct");
+}
+
+#[test]
+fn create_hardlinks_skipped_when_disabled() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    std::fs::write(dest.join("leader.txt"), "content").unwrap();
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", 7, 1),
+        make_hlink_follower("follower.txt", 7, 1),
+    ];
+
+    let handshake = test_handshake();
+    let config = ServerConfig {
+        role: ServerRole::Receiver,
+        protocol: ProtocolVersion::try_from(32u8).unwrap(),
+        flag_string: "-logDtpre.".to_owned(),
+        flags: ParsedServerFlags {
+            hard_links: false,
+            ..Default::default()
+        },
+        args: vec![OsString::from(".")],
+        ..Default::default()
+    };
+    let mut ctx = ReceiverContext::new(&handshake, config);
+    ctx.file_list = entries;
+
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    assert!(
+        !dest.join("follower.txt").exists(),
+        "follower should not be created when hard_links is disabled"
+    );
+}
+
+#[test]
+fn create_hardlinks_skipped_in_dry_run() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    std::fs::write(dest.join("leader.txt"), "content").unwrap();
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", 7, 1),
+        make_hlink_follower("follower.txt", 7, 1),
+    ];
+
+    let handshake = test_handshake();
+    let config = ServerConfig {
+        role: ServerRole::Receiver,
+        protocol: ProtocolVersion::try_from(32u8).unwrap(),
+        flag_string: "-logDtpHnre.".to_owned(),
+        flags: ParsedServerFlags {
+            hard_links: true,
+            dry_run: true,
+            ..Default::default()
+        },
+        args: vec![OsString::from(".")],
+        ..Default::default()
+    };
+    let mut ctx = ReceiverContext::new(&handshake, config);
+    ctx.file_list = entries;
+
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    assert!(
+        !dest.join("follower.txt").exists(),
+        "follower should not be created in dry_run mode"
+    );
+}
+
+#[test]
+fn create_hardlinks_follower_without_leader_is_skipped() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    let entries = vec![make_hlink_follower("orphan.txt", 10, 999)];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    assert!(
+        !dest.join("orphan.txt").exists(),
+        "orphan follower should not create a file"
+    );
+}
+
+/// Verifies that the HardlinkApplyTracker is initialized when hard_links is enabled.
+#[test]
+fn tracker_initialized_when_hard_links_enabled() {
+    let handshake = test_handshake();
+    let config = ServerConfig {
+        role: ServerRole::Receiver,
+        protocol: ProtocolVersion::try_from(32u8).unwrap(),
+        flag_string: "-logDtpHre.".to_owned(),
+        flags: ParsedServerFlags {
+            hard_links: true,
+            ..Default::default()
+        },
+        args: vec![OsString::from(".")],
+        ..Default::default()
+    };
+    let ctx = ReceiverContext::new(&handshake, config);
+    assert!(
+        ctx.hardlink_tracker.is_some(),
+        "tracker should be initialized when hard_links is enabled"
+    );
+}
+
+/// Verifies that the tracker is NOT initialized when hard_links is disabled.
+#[test]
+fn tracker_not_initialized_when_hard_links_disabled() {
+    let handshake = test_handshake();
+    let config = ServerConfig {
+        role: ServerRole::Receiver,
+        protocol: ProtocolVersion::try_from(32u8).unwrap(),
+        flag_string: "-logDtpre.".to_owned(),
+        flags: ParsedServerFlags {
+            hard_links: false,
+            ..Default::default()
+        },
+        args: vec![OsString::from(".")],
+        ..Default::default()
+    };
+    let ctx = ReceiverContext::new(&handshake, config);
+    assert!(
+        ctx.hardlink_tracker.is_none(),
+        "tracker should not be initialized when hard_links is disabled"
+    );
+}
+
+/// Verifies that create_hardlinks populates the tracker's leader map and
+/// that the tracker is restored (not consumed) after the operation.
+#[test]
+fn create_hardlinks_populates_tracker() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    std::fs::write(dest.join("a.txt"), "content-a").unwrap();
+    std::fs::write(dest.join("b.txt"), "content-b").unwrap();
+
+    let entries = vec![
+        make_hlink_leader("a.txt", 9, 10),
+        make_hlink_follower("a_link.txt", 9, 10),
+        make_hlink_leader("b.txt", 9, 20),
+        make_hlink_follower("b_link.txt", 9, 20),
+    ];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    assert!(
+        dest.join("a_link.txt").exists(),
+        "follower a_link.txt should exist"
+    );
+    assert!(
+        dest.join("b_link.txt").exists(),
+        "follower b_link.txt should exist"
+    );
+
+    let tracker = ctx
+        .hardlink_tracker
+        .as_ref()
+        .expect("tracker should be restored");
+    assert_eq!(
+        tracker.leader_count(),
+        2,
+        "tracker should have 2 leaders recorded"
+    );
+    assert_eq!(
+        tracker.deferred_count(),
+        0,
+        "no deferred followers should remain"
+    );
+}
+
+/// Verifies that the tracker correctly tracks leaders across multiple
+/// create_hardlinks calls (e.g., incremental file list segments).
+#[cfg(unix)]
+#[test]
+fn create_hardlinks_tracker_preserves_state_across_calls() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    std::fs::write(dest.join("leader.txt"), "persistent").unwrap();
+
+    let entries_1 = vec![make_hlink_leader("leader.txt", 10, 50)];
+    let mut ctx = receiver_with_hardlinks(entries_1);
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    let tracker = ctx.hardlink_tracker.as_ref().unwrap();
+    assert_eq!(tracker.leader_count(), 1);
+
+    ctx.file_list = vec![
+        make_hlink_leader("leader.txt", 10, 50),
+        make_hlink_follower("follower.txt", 10, 50),
+    ];
+    ctx.create_hardlinks(dest, &mut writer);
+
+    assert!(dest.join("follower.txt").exists());
+    let leader_ino = std::fs::metadata(dest.join("leader.txt")).unwrap().ino();
+    let follower_ino = std::fs::metadata(dest.join("follower.txt")).unwrap().ino();
+    assert_eq!(
+        leader_ino, follower_ino,
+        "follower should share inode with leader"
+    );
+}
+
+/// Verifies that three followers in the same group all share the leader's inode.
+#[cfg(unix)]
+#[test]
+fn create_hardlinks_multiple_followers_same_group() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    std::fs::write(dest.join("original.txt"), "shared data").unwrap();
+
+    let entries = vec![
+        make_hlink_leader("original.txt", 11, 7),
+        make_hlink_follower("copy1.txt", 11, 7),
+        make_hlink_follower("copy2.txt", 11, 7),
+        make_hlink_follower("copy3.txt", 11, 7),
+    ];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+    ctx.create_hardlinks(dest, &mut writer);
+
+    let leader_ino = std::fs::metadata(dest.join("original.txt")).unwrap().ino();
+    for name in &["copy1.txt", "copy2.txt", "copy3.txt"] {
+        let follower_ino = std::fs::metadata(dest.join(name)).unwrap().ino();
+        assert_eq!(
+            leader_ino, follower_ino,
+            "{name} should share inode with leader"
+        );
+    }
+
+    let nlink = std::fs::metadata(dest.join("original.txt"))
+        .unwrap()
+        .nlink();
+    assert_eq!(nlink, 4, "link count should be 4");
+}
