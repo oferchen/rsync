@@ -210,3 +210,8 @@ harness = false
 [[bench]]
 name = "per_op_thresholds"
 harness = false
+
+[[bench]]
+name = "parallel_receive_delta_perf"
+harness = false
+required-features = ["parallel-receive-delta"]
