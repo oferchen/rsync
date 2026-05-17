@@ -372,6 +372,25 @@ impl ReceiverContext {
         self.delta_pipeline = Some(pipeline);
     }
 
+    /// Swaps the delta pipeline to the parallel apply path (#1368).
+    ///
+    /// Gated behind the `parallel-receive-delta` cargo feature so the
+    /// production binary continues to drive the sequential apply loop until
+    /// the parity gating in `docs/design/parallel-receive-delta-application.md`
+    /// closes. Callers compile this in for benchmarking and the phased
+    /// rollout described in section 6.3 of that document.
+    ///
+    /// Builds a [`ParallelDeltaPipeline`] sized to the ambient rayon pool
+    /// and installs it via [`set_delta_pipeline`](Self::set_delta_pipeline).
+    ///
+    /// [`ParallelDeltaPipeline`]: crate::delta_pipeline::ParallelDeltaPipeline
+    #[cfg(feature = "parallel-receive-delta")]
+    pub fn enable_parallel_receive_delta(&mut self) {
+        use crate::delta_pipeline::ParallelDeltaPipeline;
+        let worker_count = rayon::current_num_threads();
+        self.set_delta_pipeline(Box::new(ParallelDeltaPipeline::new(worker_count)));
+    }
+
     /// Converts a flat file list array index to a wire NDX value.
     ///
     /// Updates the [`NDX_CONVERT_CALLS`] / [`NDX_CONVERT_CMPS`] counters used
