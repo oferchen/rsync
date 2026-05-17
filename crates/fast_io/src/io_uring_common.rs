@@ -62,6 +62,22 @@ pub const IORING_OP_STATX: u8 = 21;
 /// Minimum Linux kernel version that ships `IORING_OP_STATX`.
 pub const STATX_MIN_KERNEL: (u32, u32) = (5, 11);
 
+/// Numeric value of `IORING_OP_ASYNC_CANCEL`.
+///
+/// Kernel UAPI constant from `include/uapi/linux/io_uring.h`, stable since
+/// Linux 5.5. The classic opcode cancels a single in-flight SQE matched by
+/// `user_data`. The extended match modes (cancel-by-fd, cancel-all) require
+/// Linux 5.19 and are surfaced via the `AsyncCancel2` builder.
+pub const IORING_OP_ASYNC_CANCEL: u8 = 14;
+
+/// Minimum Linux kernel version that ships `IORING_OP_ASYNC_CANCEL`
+/// (cancel-by-`user_data`).
+pub const ASYNC_CANCEL_MIN_KERNEL: (u32, u32) = (5, 5);
+
+/// Minimum Linux kernel version that ships the extended cancel match modes
+/// (`IORING_ASYNC_CANCEL_FD`, `IORING_ASYNC_CANCEL_ALL`).
+pub const ASYNC_CANCEL_FD_MIN_KERNEL: (u32, u32) = (5, 19);
+
 /// CQE flag set by the kernel when a provided-buffer ID is encoded in the
 /// CQE flags word.
 pub(crate) const IORING_CQE_F_BUFFER: u32 = 1 << 0;
@@ -220,6 +236,10 @@ pub enum OpTag {
     Send = 3,
     /// Write-readiness probe completion tag.
     PollWrite = 4,
+    /// `IORING_OP_ASYNC_CANCEL` completion tag. Used by the cancel
+    /// primitive in `crate::io_uring::cancel` so cancel CQEs are
+    /// distinguishable from target-op CQEs in the same drain pass.
+    Cancel = 5,
 }
 
 impl OpTag {
@@ -243,6 +263,7 @@ impl OpTag {
             2 => Self::Write,
             3 => Self::Send,
             4 => Self::PollWrite,
+            5 => Self::Cancel,
             _ => return None,
         };
         Some((parsed, op_id))
@@ -543,7 +564,10 @@ mod tests {
         assert_eq!(IORING_OP_RENAMEAT, 35);
         assert_eq!(IORING_OP_LINKAT, 39);
         assert_eq!(IORING_OP_STATX, 21);
+        assert_eq!(IORING_OP_ASYNC_CANCEL, 14);
         assert_eq!(LINKAT_MIN_KERNEL, (5, 15));
         assert_eq!(STATX_MIN_KERNEL, (5, 11));
+        assert_eq!(ASYNC_CANCEL_MIN_KERNEL, (5, 5));
+        assert_eq!(ASYNC_CANCEL_FD_MIN_KERNEL, (5, 19));
     }
 }

@@ -198,7 +198,7 @@ pub use temp_file_strategy::{
 };
 
 pub use io_uring::{
-    BgidAllocator, BufferRing, BufferRingConfig, BufferRingError, IORING_OP_LINKAT,
+    BgidAllocator, BufferRing, BufferRingConfig, BufferRingError, CancelOutcome, IORING_OP_LINKAT,
     IORING_OP_RENAMEAT, IORING_OP_STATX, IoUringConfig, IoUringDiskBatch, IoUringKernelInfo,
     IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory, IoUringWriter,
     IoUringWriterFactory, LINKAT_MIN_KERNEL, LinkAtArgs, OpTag, RENAME_EXCHANGE, RENAME_NOREPLACE,

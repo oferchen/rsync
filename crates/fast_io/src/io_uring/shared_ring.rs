@@ -338,6 +338,19 @@ impl SharedRing {
                     op_id,
                     revents: result as i16,
                 },
+                // The shared-ring path does not submit cancel SQEs of its
+                // own; a cancel CQE here means someone reused the
+                // shared-ring's `IoUring` instance through the cancel
+                // primitive. Surface it as InvalidData so the misuse is
+                // visible rather than silently dropping the completion.
+                OpTag::Cancel => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "OpTag::Cancel CQE reached SharedRing::reap; op_id={op_id}, result={result}"
+                        ),
+                    ));
+                }
             };
             out.push(completion);
         }
@@ -392,7 +405,13 @@ mod tests {
 
     #[test]
     fn op_tag_round_trip_preserves_id_and_kind() {
-        for tag in [OpTag::Read, OpTag::Write, OpTag::Send, OpTag::PollWrite] {
+        for tag in [
+            OpTag::Read,
+            OpTag::Write,
+            OpTag::Send,
+            OpTag::PollWrite,
+            OpTag::Cancel,
+        ] {
             for &op_id in &[0u64, 1, 42, (1u64 << 56) - 1] {
                 let encoded = tag.encode(op_id);
                 let (decoded_tag, decoded_id) =
