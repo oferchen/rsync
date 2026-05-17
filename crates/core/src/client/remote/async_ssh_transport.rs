@@ -39,7 +39,7 @@
 //! pulls in `rsync_io/async-ssh` and `dep:tokio`). Default builds remain
 //! on the synchronous transport.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io;
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
@@ -47,7 +47,7 @@ use std::time::{Duration, Instant};
 
 use engine::batch::BatchWriter;
 use rsync_io::channel_adapter::{ChannelReader, ChannelWriter};
-use rsync_io::ssh::{AsyncSshTransport, SshConnectConfig, parse_ssh_operand};
+use rsync_io::ssh::{AsyncSshTransport, SshConnectConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::Builder;
 use tokio::sync::mpsc as tokio_mpsc;
@@ -556,14 +556,6 @@ fn run_blocking_server(
     }
 }
 
-/// Returns `true` when the given operand string designates an SSH-style
-/// remote. Wrapper around [`parse_ssh_operand`] used in tests to confirm
-/// the same operand vocabulary the sync path accepts is recognised here.
-#[allow(dead_code)] // REASON: reserved for upcoming dispatch helpers.
-fn looks_like_ssh_operand(operand: &str) -> bool {
-    parse_ssh_operand(OsStr::new(operand)).is_ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -627,13 +619,6 @@ mod tests {
         for v in ["0", "false", "off", "no", "", "True", "YES", "ON"] {
             assert!(!is_truthy_env_value(v), "expected falsey for {v:?}");
         }
-    }
-
-    #[test]
-    fn looks_like_ssh_operand_accepts_user_host_path() {
-        assert!(looks_like_ssh_operand("backup@example.com:/data"));
-        assert!(looks_like_ssh_operand("example.com:/data"));
-        assert!(!looks_like_ssh_operand("/local/path"));
     }
 
     #[test]
