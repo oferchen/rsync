@@ -157,3 +157,7 @@ harness = false
 [[bench]]
 name = "reorderbuffer_memory"
 harness = false
+
+[[bench]]
+name = "parallel_dispatch_overhead"
+harness = false
