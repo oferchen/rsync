@@ -117,7 +117,7 @@ pub mod mmap_reader;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 pub mod io_uring;
 #[cfg(not(all(target_os = "linux", feature = "io_uring")))]
-#[path = "io_uring_stub.rs"]
+#[path = "io_uring_stub/mod.rs"]
 pub mod io_uring;
 
 /// Windows I/O Completion Ports (IOCP) for async file I/O.
