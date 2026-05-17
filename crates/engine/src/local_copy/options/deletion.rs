@@ -71,6 +71,36 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Enables `--delete-strict-order` opt-in semantics for `--delete-during`.
+    ///
+    /// When `true`, the executor performs upstream-style interleaved
+    /// walk-then-delete: a directory's deletion sweep runs before its children
+    /// are processed.  When `false` (the default), each directory's deletion
+    /// sweep is batched after the directory's transfers complete.  The flag is
+    /// inert unless the deletion timing is `During`.
+    ///
+    /// upstream: generator.c:1523 / generator.c:2307 - `delete_in_dir()` is
+    /// invoked on the directory entry before `recv_generator()` iterates the
+    /// directory's contents.
+    #[must_use]
+    #[doc(alias = "--delete-strict-order")]
+    #[doc(alias = "--no-delete-strict-order")]
+    pub const fn delete_strict_order(mut self, strict: bool) -> Self {
+        self.delete_strict_order = strict;
+        self
+    }
+
+    /// Reports whether `--delete-strict-order` (interleaved walk-then-delete)
+    /// is active for the current deletion timing.
+    ///
+    /// Returns `true` only when both the opt-in flag is set and the resolved
+    /// timing is `During` - the strict-order toggle has no effect on
+    /// `Before`/`Delay`/`After` timings, which already match upstream.
+    #[must_use]
+    pub const fn delete_strict_order_enabled(&self) -> bool {
+        self.delete_strict_order && self.delete_during_enabled()
+    }
+
     /// Requests that excluded destination entries be removed during deletion sweeps.
     #[must_use]
     #[doc(alias = "--delete-excluded")]
@@ -378,5 +408,36 @@ mod tests {
             .ignore_errors(true)
             .ignore_errors(false);
         assert!(!opts.ignore_errors_enabled());
+    }
+
+    #[test]
+    fn delete_strict_order_default_is_false() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.delete_strict_order_enabled());
+    }
+
+    #[test]
+    fn delete_strict_order_requires_during_timing() {
+        let opts = LocalCopyOptions::new()
+            .delete_after(true)
+            .delete_strict_order(true);
+        assert!(!opts.delete_strict_order_enabled());
+    }
+
+    #[test]
+    fn delete_strict_order_active_under_during_timing() {
+        let opts = LocalCopyOptions::new()
+            .delete_during()
+            .delete_strict_order(true);
+        assert!(opts.delete_strict_order_enabled());
+    }
+
+    #[test]
+    fn delete_strict_order_toggle_off() {
+        let opts = LocalCopyOptions::new()
+            .delete_during()
+            .delete_strict_order(true)
+            .delete_strict_order(false);
+        assert!(!opts.delete_strict_order_enabled());
     }
 }

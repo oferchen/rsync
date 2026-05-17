@@ -45,6 +45,7 @@ pub struct LocalCopyOptionsBuilder {
     pub(super) delete_timing: DeleteTiming,
     pub(super) delete_excluded: bool,
     pub(super) delete_missing_args: bool,
+    pub(super) delete_strict_order: bool,
     pub(super) max_deletions: Option<u64>,
 
     pub(super) min_file_size: Option<u64>,
@@ -181,6 +182,7 @@ impl LocalCopyOptionsBuilder {
             delete_timing: DeleteTiming::default(),
             delete_excluded: false,
             delete_missing_args: false,
+            delete_strict_order: false,
             max_deletions: None,
             min_file_size: None,
             max_file_size: None,

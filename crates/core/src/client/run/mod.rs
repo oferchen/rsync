@@ -491,6 +491,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         options
             .delete_excluded(config.delete_excluded())
             .max_deletions(config.max_delete())
+            .delete_strict_order(config.delete_strict_order())
     }
 
     fn apply_core_limits_and_bandwidth(

@@ -67,6 +67,20 @@ impl ClientConfig {
     pub const fn ignore_errors(&self) -> bool {
         self.ignore_errors
     }
+
+    /// Returns whether the `--delete-strict-order` opt-in is active.
+    ///
+    /// The toggle only affects `--delete-during` runs; other deletion timings
+    /// already match upstream's ordering.
+    ///
+    /// upstream: generator.c:1523 / generator.c:2307 - `delete_in_dir()` is
+    /// invoked before child entries are processed under interleaved semantics.
+    #[must_use]
+    #[doc(alias = "--delete-strict-order")]
+    #[doc(alias = "--no-delete-strict-order")]
+    pub const fn delete_strict_order(&self) -> bool {
+        self.delete_strict_order
+    }
 }
 
 #[cfg(test)]
@@ -129,5 +143,11 @@ mod tests {
     fn ignore_errors_default_is_false() {
         let config = default_config();
         assert!(!config.ignore_errors());
+    }
+
+    #[test]
+    fn delete_strict_order_default_is_false() {
+        let config = default_config();
+        assert!(!config.delete_strict_order());
     }
 }
