@@ -36,6 +36,7 @@ mod flags;
 mod hardlink;
 mod incremental;
 mod intern;
+mod name_cmp;
 mod read;
 #[cfg(test)]
 mod segment;
@@ -61,6 +62,7 @@ pub use incremental::{
     process_ready_entries, process_ready_entry,
 };
 pub use intern::PathInterner;
+pub use name_cmp::{f_name_cmp, f_name_cmp_components, name_cmp_eq};
 pub use read::{FileListReader, read_file_entry};
 pub use sort::{
     CleanResult, compare_file_entries, flist_clean, sort_and_clean_file_list, sort_file_list,
