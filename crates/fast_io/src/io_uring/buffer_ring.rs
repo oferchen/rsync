@@ -61,6 +61,7 @@ use std::io;
 use std::ptr;
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use io_uring::IoUring as RawIoUring;
 
@@ -137,15 +138,85 @@ const BGID_NAMESPACE_SIZE: u32 = u16::MAX as u32 + 1;
 /// `BGID_NAMESPACE_SIZE` thereafter.
 static NEXT_BGID: AtomicU32 = AtomicU32::new(0);
 
+/// Process-wide high-water mark for concurrently-allocated bgids.
+///
+/// Updated via `fetch_max` after every successful
+/// [`BgidAllocator::allocate`] call. Exposed by [`bgid_peak_used`] so
+/// operators and tests can observe the worst-case occupancy of the 16-bit
+/// namespace over the process lifetime. Never decreases; deallocation
+/// returns ids to the free-list but the peak stays.
+static PEAK_USED: AtomicU16 = AtomicU16::new(0);
+
+/// Initial capacity reserved for the bgid free-list.
+///
+/// Sized to cover the typical steady-state churn of a long-running daemon
+/// recycling buffer rings without triggering `Vec` reallocations under the
+/// free-list mutex. 4 096 entries match a common upper bound on
+/// simultaneously-open buffer rings before the namespace warning fires
+/// (50 % of u16::MAX is 32 767).
+const BGID_FREE_LIST_INITIAL_CAPACITY: usize = 1 << 12;
+
+/// Occupancy threshold (in absolute bgid count) that triggers the
+/// throttled namespace-pressure warning.
+///
+/// Set to 50 % of the 16-bit namespace so operators get early notice that
+/// the process is approaching exhaustion while there is still headroom to
+/// react.
+const BGID_OCCUPANCY_WARN_THRESHOLD: u16 = (BGID_NAMESPACE_SIZE / 2) as u16;
+
+/// Minimum interval between successive namespace-pressure warnings.
+const BGID_WARN_THROTTLE: Duration = Duration::from_secs(30);
+
 /// Process-wide free-list of returned bgids available for reuse.
 ///
 /// Populated by [`BgidAllocator::deallocate`] when a [`BufferRing`] that
 /// was issued a bgid by [`BgidAllocator::allocate`] is dropped. Drained by
 /// [`BgidAllocator::allocate`] before incrementing [`NEXT_BGID`], so the
 /// monotonic counter only advances when no reusable id is available.
+///
+/// Pre-sized to `BGID_FREE_LIST_INITIAL_CAPACITY` so the steady-state
+/// churn of a long-running daemon does not trigger `Vec` reallocations
+/// under the free-list mutex.
 fn bgid_free_list() -> &'static Mutex<Vec<u16>> {
     static FREE_LIST: OnceLock<Mutex<Vec<u16>>> = OnceLock::new();
-    FREE_LIST.get_or_init(|| Mutex::new(Vec::new()))
+    FREE_LIST.get_or_init(|| Mutex::new(Vec::with_capacity(BGID_FREE_LIST_INITIAL_CAPACITY)))
+}
+
+/// Last time the namespace-pressure warning was emitted.
+///
+/// `None` means "never emitted". Updated under the mutex so two threads
+/// observing > 50 % occupancy simultaneously do not both emit a warning.
+fn bgid_warn_last() -> &'static Mutex<Option<Instant>> {
+    static LAST: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    LAST.get_or_init(|| Mutex::new(None))
+}
+
+/// Emits a throttled `tracing::warn!` when bgid occupancy crosses 50 %.
+///
+/// The warning fires at most once per `BGID_WARN_THROTTLE` window so a
+/// hot allocation path under sustained pressure does not flood the log.
+fn maybe_warn_namespace_pressure(in_flight: u16) {
+    if in_flight < BGID_OCCUPANCY_WARN_THRESHOLD {
+        return;
+    }
+    let mut last = match bgid_warn_last().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    let now = Instant::now();
+    let fire = match *last {
+        None => true,
+        Some(t) => now.duration_since(t) >= BGID_WARN_THROTTLE,
+    };
+    if fire {
+        *last = Some(now);
+        tracing::warn!(
+            target: "fast_io::buffer_ring",
+            in_flight,
+            namespace = BGID_NAMESPACE_SIZE,
+            "io_uring bgid occupancy crossed 50% of the 16-bit namespace"
+        );
+    }
 }
 
 /// Allocator for io_uring buffer group IDs (bgid).
@@ -194,11 +265,12 @@ impl BgidAllocator {
         // Reuse a freed id when one is available. The lock is held only for
         // the pop, so contention with concurrent deallocate calls is
         // negligible in practice (one buffer ring per long-running task).
-        if let Some(id) = bgid_free_list()
+        let popped = bgid_free_list()
             .lock()
             .expect("bgid free-list poisoned")
-            .pop()
-        {
+            .pop();
+        if let Some(id) = popped {
+            record_allocation();
             return Ok(id);
         }
 
@@ -207,6 +279,7 @@ impl BgidAllocator {
         // depend on this value being observed in a particular order.
         let id = NEXT_BGID.fetch_add(1, Ordering::Relaxed);
         if id < BGID_NAMESPACE_SIZE {
+            record_allocation();
             Ok(id as u16)
         } else {
             // Cap the counter at BGID_NAMESPACE_SIZE rather than letting it
@@ -264,6 +337,56 @@ impl BgidAllocator {
             .len() as u32;
         BGID_NAMESPACE_SIZE - used + free
     }
+}
+
+/// Updates `PEAK_USED` and fires the throttled namespace-pressure
+/// warning when in-flight occupancy crosses `BGID_OCCUPANCY_WARN_THRESHOLD`.
+///
+/// Called once per successful [`BgidAllocator::allocate`] return so the
+/// high-water mark reflects every issued id, whether the slot came from
+/// the free-list or from advancing the monotonic counter.
+fn record_allocation() {
+    let in_flight = current_in_flight();
+    PEAK_USED.fetch_max(in_flight, Ordering::Relaxed);
+    maybe_warn_namespace_pressure(in_flight);
+}
+
+/// Computes the current number of allocator-issued bgids that have not
+/// been returned to the free-list.
+///
+/// Saturates at `u16::MAX` so the result always fits in `u16`. The
+/// snapshot is best-effort: under concurrent allocate/deallocate the
+/// counter and free-list reads are not atomic together, but the value
+/// never overstates occupancy because both inputs are observed under the
+/// same monotonic discipline.
+fn current_in_flight() -> u16 {
+    let issued = NEXT_BGID.load(Ordering::Relaxed).min(BGID_NAMESPACE_SIZE);
+    let free = bgid_free_list()
+        .lock()
+        .expect("bgid free-list poisoned")
+        .len() as u32;
+    issued.saturating_sub(free).min(u16::MAX as u32) as u16
+}
+
+/// Returns the high-water mark for concurrently-allocated bgids since
+/// process start.
+///
+/// Monotonic: deallocation never lowers this value. Reflects the worst
+/// observed pressure on the 16-bit bgid namespace and is intended for
+/// operational dashboards and capacity-planning tests.
+#[must_use]
+pub fn bgid_peak_used() -> u16 {
+    PEAK_USED.load(Ordering::Relaxed)
+}
+
+/// Returns the current count of allocator-issued bgids not yet returned
+/// to the free-list.
+///
+/// Saturates at `u16::MAX`. Intended for ad-hoc diagnostics; the value
+/// can change between the read and the next allocate/deallocate call.
+#[must_use]
+pub fn bgid_inflight() -> u16 {
+    current_in_flight()
 }
 
 /// Process-wide cache for the PBUF_RING support probe.
@@ -1090,6 +1213,7 @@ mod tests {
     struct BgidStateGuard {
         prev_counter: u32,
         prev_free_list: Vec<u16>,
+        prev_peak: u16,
         _serializer: std::sync::MutexGuard<'static, ()>,
     }
 
@@ -1097,6 +1221,7 @@ mod tests {
         fn snapshot() -> Self {
             let serializer = bgid_test_lock();
             let prev_counter = NEXT_BGID.swap(0, Ordering::Relaxed);
+            let prev_peak = PEAK_USED.swap(0, Ordering::Relaxed);
             let prev_free_list = {
                 let mut list = bgid_free_list().lock().expect("free-list poisoned");
                 std::mem::take(&mut *list)
@@ -1104,6 +1229,7 @@ mod tests {
             Self {
                 prev_counter,
                 prev_free_list,
+                prev_peak,
                 _serializer: serializer,
             }
         }
@@ -1112,6 +1238,7 @@ mod tests {
     impl Drop for BgidStateGuard {
         fn drop(&mut self) {
             NEXT_BGID.store(self.prev_counter, Ordering::Relaxed);
+            PEAK_USED.store(self.prev_peak, Ordering::Relaxed);
             let mut list = bgid_free_list().lock().expect("free-list poisoned");
             *list = std::mem::take(&mut self.prev_free_list);
         }
@@ -1218,6 +1345,81 @@ mod tests {
         assert_eq!(
             list_len, 1,
             "duplicate deallocate must not push the same bgid twice"
+        );
+    }
+
+    #[test]
+    fn bgid_peak_tracks_100_allocations() {
+        let _guard = BgidStateGuard::snapshot();
+        assert_eq!(bgid_peak_used(), 0);
+        for _ in 0..100 {
+            BgidAllocator::allocate().expect("allocation within namespace");
+        }
+        assert_eq!(
+            bgid_peak_used(),
+            100,
+            "peak must reflect the 100 outstanding allocations"
+        );
+        assert_eq!(bgid_inflight(), 100);
+    }
+
+    #[test]
+    fn bgid_peak_does_not_decrease_on_deallocate() {
+        let _guard = BgidStateGuard::snapshot();
+        let mut ids = Vec::with_capacity(50);
+        for _ in 0..50 {
+            ids.push(BgidAllocator::allocate().expect("allocation within namespace"));
+        }
+        assert_eq!(bgid_peak_used(), 50);
+        assert_eq!(bgid_inflight(), 50);
+
+        for id in ids {
+            BgidAllocator::deallocate(id);
+        }
+        assert_eq!(
+            bgid_peak_used(),
+            50,
+            "peak must not decrease after returning ids to the free-list"
+        );
+        assert_eq!(bgid_inflight(), 0, "all ids returned, none in flight");
+
+        // Reallocating from the free-list still updates the peak path but
+        // never lifts it above the previous high-water mark.
+        let _ = BgidAllocator::allocate().expect("reallocation from free-list");
+        assert_eq!(bgid_peak_used(), 50);
+    }
+
+    #[test]
+    fn bgid_free_list_is_pre_sized() {
+        let _guard = BgidStateGuard::snapshot();
+        let cap = bgid_free_list()
+            .lock()
+            .expect("free-list poisoned")
+            .capacity();
+        assert!(
+            cap >= BGID_FREE_LIST_INITIAL_CAPACITY,
+            "free-list pre-sized capacity {cap} must be >= {BGID_FREE_LIST_INITIAL_CAPACITY}"
+        );
+    }
+
+    #[test]
+    fn bgid_inflight_reflects_counter_minus_free_list() {
+        let _guard = BgidStateGuard::snapshot();
+        let a = BgidAllocator::allocate().expect("first");
+        let b = BgidAllocator::allocate().expect("second");
+        let _c = BgidAllocator::allocate().expect("third");
+        assert_eq!(bgid_inflight(), 3);
+
+        BgidAllocator::deallocate(a);
+        BgidAllocator::deallocate(b);
+        assert_eq!(bgid_inflight(), 1);
+    }
+
+    #[test]
+    fn bgid_warn_threshold_is_half_namespace() {
+        assert_eq!(
+            BGID_OCCUPANCY_WARN_THRESHOLD,
+            (BGID_NAMESPACE_SIZE / 2) as u16
         );
     }
 }

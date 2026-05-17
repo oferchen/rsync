@@ -113,3 +113,21 @@ impl BgidAllocator {
         0
     }
 }
+
+/// Returns 0 on non-Linux platforms; no bgids are ever issued here.
+///
+/// Mirrors the Linux accessor so cross-platform callers and metrics
+/// exporters compile without `cfg`-gating.
+#[must_use]
+pub fn bgid_peak_used() -> u16 {
+    0
+}
+
+/// Returns 0 on non-Linux platforms; no bgids are ever issued here.
+///
+/// Mirrors the Linux accessor so cross-platform callers and metrics
+/// exporters compile without `cfg`-gating.
+#[must_use]
+pub fn bgid_inflight() -> u16 {
+    0
+}
