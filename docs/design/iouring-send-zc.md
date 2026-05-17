@@ -1,264 +1,399 @@
 # IORING_OP_SEND_ZC for network zero-copy on kernel >= 6.0
 
-Tracking issue: oc-rsync #1832. Status: design. Companion to the
-fixed-buffer audit at `docs/audits/io-uring-fixed-buffer-audit.md` and
-the daemon TCP wiring tracked at #1876.
+Tracking issue: #1832. Status: design, implementation deferred.
+Companion to the borrowed-slice audit (#4218,
+`docs/design/iouring-borrowed-slice-consumer.md`) and the daemon TCP
+socket I/O work tracked at #1876
+(`docs/design/iouring-daemon-tcp.md`).
 
-This document specifies how the io_uring socket writer at
-`crates/fast_io/src/io_uring/socket_writer.rs` will graduate from
-`IORING_OP_SEND` to `IORING_OP_SEND_ZC` on kernels that support it,
-without regressing throughput, latency, or buffer safety on older
-kernels.
+This document specifies how the io_uring socket writer in
+`crates/fast_io/src/io_uring/socket_writer.rs` will, in a future
+patch, graduate from `IORING_OP_SEND` to `IORING_OP_SEND_ZC` on
+kernels that support it without regressing throughput, latency, or
+buffer safety on older kernels - and recommends the order in which
+that work should be sequenced against #1876, #4217, #4218, #4220, and
+#2243.
 
 ## 1. Current network send path
 
-The writer is a `Write` adapter that batches user writes through an
-internal buffer and submits them via io_uring SQEs.
+Today, none of the daemon, transfer, or rsync_io crates submit
+network bytes through io_uring. The dispatch fans out into three
+flavours.
 
-- `IoUringSocketWriter` is the only socket writer; it is documented as
-  a `IORING_OP_SEND` writer at
-  `crates/fast_io/src/io_uring/socket_writer.rs:1` and
-  `crates/fast_io/src/io_uring/socket_writer.rs:11-22`.
-- The `allow_send_zc` field is plumbed in at
-  `crates/fast_io/src/io_uring/socket_writer.rs:31-32` and populated
-  from `IoUringConfig::allow_send_zc()` at
-  `crates/fast_io/src/io_uring/socket_writer.rs:52`. It is currently
-  read-only and unused (`#[allow(dead_code)]`).
-- The flush path lives at
-  `crates/fast_io/src/io_uring/socket_writer.rs:57-83`: it calls
-  `submit_send_batch` with the active fixed-fd slot and a slice of the
-  internal buffer.
-- The big-write fast path at
-  `crates/fast_io/src/io_uring/socket_writer.rs:100-111` bypasses the
-  internal buffer entirely and forwards the caller's slice straight to
-  `submit_send_batch`.
-- `submit_send_batch` itself is at
-  `crates/fast_io/src/io_uring/batching.rs:270-379`. It pushes
-  `opcode::Send` SQEs (line 315) gated by a `POLLOUT` linked-timeout
-  poll at `crates/fast_io/src/io_uring/batching.rs:155-254` (issue
-  #1872 fix), and reaps one CQE per chunk at
-  `crates/fast_io/src/io_uring/batching.rs:338-369`.
-- Configuration policy lives in `IoUringConfig`. The `zero_copy_policy`
-  field is documented at
-  `crates/fast_io/src/io_uring/config.rs:354-366`. The accessor
-  `allow_send_zc()` at
-  `crates/fast_io/src/io_uring/config.rs:418-430` returns `true` only
-  for `ZeroCopyPolicy::Enabled`; `Auto` and `Disabled` both return
-  `false`. No code path consumes the `true` value yet.
+### 1.1 Daemon TCP socket (`std::net::TcpStream`)
 
-The contract today: every byte the caller hands to `write()` is copied
-once into the writer's internal `Vec<u8>` (line 93 / line 113), then
-the kernel copies it again from that `Vec<u8>` into socket buffers
-when the SEND SQE is processed. The big-write fast path skips the
-first copy but still pays the kernel-side copy. `IORING_OP_SEND_ZC` is
-about removing the second copy.
+- Accepted connections are owned as `std::net::TcpStream` and threaded
+  through every daemon section
+  (`crates/daemon/src/daemon/sections/module_access/transfer.rs:108`-`crates/daemon/src/daemon/sections/module_access/transfer.rs:109`),
+  with a per-transfer entry point that takes `read_stream` and
+  `write_stream` halves.
+- The legacy session greeting and module dispatch loop writes are
+  blocking `write_all` calls on the same `TcpStream`, with an
+  optional bandwidth-limiter chunker
+  (`crates/daemon/src/daemon/sections/session_runtime.rs:176`-`crates/daemon/src/daemon/sections/session_runtime.rs:193`).
+- The daemon multiplex `Write` wrapper that wraps payload bytes in
+  `MSG_DATA` frames is a thin shim over the underlying stream
+  (`crates/daemon/src/daemon/multiplex_stream.rs:142`-`crates/daemon/src/daemon/multiplex_stream.rs:177`).
+  It calls `protocol::send_msg` per write, which ultimately reduces
+  to `Write::write_all` on the inner `TcpStream`.
+
+### 1.2 Transfer multiplex writer (buffered + `MSG_DATA`)
+
+- `crates/transfer/src/writer/multiplex.rs:42`-`crates/transfer/src/writer/multiplex.rs:60`
+  constructs a 64 KiB `MultiplexWriter` and flushes by handing the
+  buffer to `protocol::send_msg` at
+  `crates/transfer/src/writer/multiplex.rs:54`-`crates/transfer/src/writer/multiplex.rs:56`.
+- The bulk-data fast path bypasses the internal buffer when a single
+  write exceeds the buffer size and forwards the caller slice
+  directly to `protocol::send_msg`
+  (`crates/transfer/src/writer/multiplex.rs:104`-`crates/transfer/src/writer/multiplex.rs:108`).
+- The vectored-write path emits a header `write_all` followed by per
+  slice `write_all` calls on the inner writer
+  (`crates/transfer/src/writer/multiplex.rs:159`-`crates/transfer/src/writer/multiplex.rs:162`),
+  again ending in a blocking `Write::write_all` on the underlying
+  socket.
+
+### 1.3 Protocol envelope (multiplex framing)
+
+- `protocol::send_msg` is the only frame-emitter on the wire side
+  (`crates/protocol/src/multiplex/io/send.rs:16`-`crates/protocol/src/multiplex/io/send.rs:22`).
+  For non-empty payloads it dispatches through
+  `write_all_vectored` at
+  `crates/protocol/src/multiplex/io/send.rs:130`, which prefers a
+  two-slice `writev` and falls back to sequential `write` on
+  `Unsupported` / `InvalidInput`
+  (`crates/protocol/src/multiplex/io/send.rs:255`-`crates/protocol/src/multiplex/io/send.rs:304`).
+
+### 1.4 SSH stdio path
+
+- The SSH transport in `rsync_io` uses `ChildStdin` for the writer
+  half
+  (`crates/rsync_io/src/ssh/connection.rs:234`-`crates/rsync_io/src/ssh/connection.rs:246`).
+  This is pipe I/O, not socket I/O - `IORING_OP_SEND_ZC` is socket
+  only (`getsockopt`-style preconditions), so the SSH path is out of
+  scope for #1832 and stays on the existing `Write::write` path.
+
+### 1.5 The dormant io_uring socket writer
+
+`crates/fast_io/src/io_uring/socket_writer.rs` already defines an
+`IoUringSocketWriter` documented as a `IORING_OP_SEND` writer
+(`crates/fast_io/src/io_uring/socket_writer.rs:1`,
+`crates/fast_io/src/io_uring/socket_writer.rs:11`-`crates/fast_io/src/io_uring/socket_writer.rs:22`)
+with a `#[allow(dead_code)] allow_send_zc` field plumbed in at
+`crates/fast_io/src/io_uring/socket_writer.rs:31`-`crates/fast_io/src/io_uring/socket_writer.rs:32`
+and populated from `IoUringConfig::allow_send_zc()` at
+`crates/fast_io/src/io_uring/socket_writer.rs:52`. The flush path
+calls `submit_send_batch` at
+`crates/fast_io/src/io_uring/socket_writer.rs:65`-`crates/fast_io/src/io_uring/socket_writer.rs:72`,
+the big-write fast path bypasses the internal buffer and forwards
+the caller slice at
+`crates/fast_io/src/io_uring/socket_writer.rs:100`-`crates/fast_io/src/io_uring/socket_writer.rs:110`,
+and `submit_send_batch` itself pushes `opcode::Send` SQEs at
+`crates/fast_io/src/io_uring/batching.rs:314`-`crates/fast_io/src/io_uring/batching.rs:320`
+gated by a `POLLOUT` linked-timeout poll at
+`crates/fast_io/src/io_uring/batching.rs:155`-`crates/fast_io/src/io_uring/batching.rs:253`
+(the #1872 fix). Configuration policy lives on
+`IoUringConfig::zero_copy_policy` at
+`crates/fast_io/src/io_uring_common.rs:108`-`crates/fast_io/src/io_uring_common.rs:109`,
+and the accessor `allow_send_zc()` at
+`crates/fast_io/src/io_uring_common.rs:170`-`crates/fast_io/src/io_uring_common.rs:173`
+returns `true` only for `ZeroCopyPolicy::Enabled`. No first-party
+caller in `crates/daemon/`, `crates/transfer/`, or
+`crates/rsync_io/` constructs an `IoUringSocketWriter` today; that
+wiring is the explicit subject of #1876.
+
+The contract today: every byte the caller hands to the daemon socket
+is copied once into the `MultiplexWriter` buffer
+(`crates/transfer/src/writer/multiplex.rs:110`), then the kernel
+copies it again from that buffer into socket send buffers when
+`send(2)` is processed. `IORING_OP_SEND_ZC` is about removing the
+second copy.
 
 ## 2. IORING_OP_SEND_ZC semantics
 
 `IORING_OP_SEND_ZC` is a zero-copy socket send opcode added in Linux
 6.0. The kernel does not memcpy the user buffer into socket memory;
 instead it pins the user pages with `get_user_pages_fast` and hands
-the page references to the network stack. The pages stay pinned until
-the NIC, loopback peer, or local socket consumer signals completion.
+the page references to the network stack. The pages stay pinned
+until the NIC, loopback peer, or local socket consumer signals
+completion.
 
 The completion model is the load-bearing change. A regular
 `IORING_OP_SEND` posts one CQE per SQE: `cqe.result()` is the byte
 count or `-errno`. `IORING_OP_SEND_ZC` posts **two CQEs** per SQE:
 
-1. **Notification CQE** (`IORING_CQE_F_MORE` set on the first CQE,
-   `IORING_CQE_F_NOTIF` set on the second). The first CQE reports the
-   transfer outcome as soon as the data has been queued for transmit
-   - `result()` carries the byte count or `-errno` exactly like
-   `IORING_OP_SEND`.
-2. **Release CQE.** The second CQE fires once the kernel has released
-   the user-page reference: the NIC has DMA'd the bytes, the peer has
-   ack'd (for loopback / kTLS shortcut), or the send was cancelled.
-   `result()` is unused; `flags()` carries `IORING_CQE_F_NOTIF`.
+1. **Transfer CQE** - posted as soon as the data is queued for
+   transmit. `IORING_CQE_F_MORE` is set in `flags()` to signal
+   "more CQEs with this `user_data` will follow", and `result()`
+   carries the byte count (or `-errno`) exactly like a regular SEND.
+2. **Notification CQE** - posted once the kernel has released its
+   reference to the user pages: the NIC has DMA'd the bytes, the
+   loopback peer has consumed them, or the send was cancelled.
+   `IORING_CQE_F_NOTIF` is set; `result()` is unused.
 
-The two CQEs are correlated by `user_data`. The kernel preserves the
-SQE's `user_data` on both completions, so the writer must distinguish
-them by inspecting `cqe.flags()`:
+The two CQEs share `user_data`, and the writer must demux them by
+inspecting `cqe.flags()`. The latency from submission to the
+notification CQE is workload-dependent: for loopback / `AF_UNIX`
+it is essentially the same as the transfer CQE, but for a NIC under
+backpressure it lags by the TCP send-buffer drain time plus the
+DMA-complete interrupt. The kernel test suite documents single-digit
+microseconds for warm-cache loopback and tens of microseconds for
+saturated 10 GbE.
 
-- `flags & IORING_CQE_F_MORE` (on the first CQE only) tells the
-  application "more CQEs with this user_data are coming".
-- `flags & IORING_CQE_F_NOTIF` (on the second CQE only) marks the
-  release.
-
-This doubles the CQE pressure. The `sq_entries` calibration in
-`IoUringConfig::default` (64) was sized assuming one CQE per SQE, so
-either the ring's CQ depth must be raised or the in-flight SQE count
-halved. The shared-ring path uses 2x CQ over SQ by default, which
-absorbs this safely; the dedicated socket-writer ring at
+This doubles CQE pressure. The dedicated socket-writer ring at
 `crates/fast_io/src/io_uring/socket_writer.rs:41` is built from
-`IoUringConfig::build_ring()` and inherits the io_uring crate's
-default 2x CQ ratio - that is sufficient as long as we keep
-`max_sqes` <= `sq_entries / 2`.
+`IoUringConfig::build_ring()`
+(`crates/fast_io/src/io_uring/config.rs:313`-`crates/fast_io/src/io_uring/config.rs:340`)
+and inherits the io_uring crate's default 2x CQ-over-SQ ratio. With
+`IoUringConfig::default().sq_entries == 64`
+(`crates/fast_io/src/io_uring_common.rs:115`) that gives a 128-entry
+CQ ring, sufficient for SEND_ZC as long as the writer caps in-flight
+SEND_ZC SQEs at `sq_entries / 2`.
 
-## 3. Buffer lifetime contract
+## 3. Buffer-ownership model
 
 The single most important rule: **the buffer passed to a SEND_ZC SQE
-must remain valid and unmodified until the release CQE
-(`IORING_CQE_F_NOTIF`) arrives**. Modifying it before the release CQE
-races the kernel's DMA / page handling and is undefined behaviour at
-the kernel level.
+must remain valid and unmodified until the notification CQE
+(`IORING_CQE_F_NOTIF`) arrives.** Modifying it before the
+notification races the kernel's DMA / page handling and is undefined
+behaviour at the kernel level.
 
 This breaks two assumptions baked into the current writer:
 
-1. The internal buffer is reused immediately. After
-   `flush_buffer` returns, `Write::write` at
-   `crates/fast_io/src/io_uring/socket_writer.rs:113-115` copies the
-   next caller payload into the same `Vec<u8>` storage. Under
-   `IORING_OP_SEND` this is fine because the kernel has already copied
-   the bytes. Under `IORING_OP_SEND_ZC` the release CQE may not have
-   arrived yet; reusing the slot would corrupt the in-flight send.
+1. The internal buffer is reused immediately. After `flush_buffer`
+   returns, `Write::write` at
+   `crates/fast_io/src/io_uring/socket_writer.rs:113`-`crates/fast_io/src/io_uring/socket_writer.rs:115`
+   copies the next caller payload into the same `Vec<u8>` storage.
+   Under `IORING_OP_SEND` this is fine because the kernel has
+   already copied the bytes. Under `IORING_OP_SEND_ZC` the
+   notification CQE may not have arrived yet; reusing the slot would
+   corrupt the in-flight send.
 2. The big-write fast path at
-   `crates/fast_io/src/io_uring/socket_writer.rs:100-111` borrows the
-   caller's slice. Under SEND_ZC the writer must not return from
-   `Write::write` until both CQEs have been observed for that
-   submission, otherwise the caller is free to drop or mutate the
-   slice while pages are still pinned.
+   `crates/fast_io/src/io_uring/socket_writer.rs:100`-`crates/fast_io/src/io_uring/socket_writer.rs:110`
+   borrows the caller's slice. Under SEND_ZC the writer must not
+   return from `Write::write` until both CQEs have been observed
+   for that submission, otherwise the caller is free to drop or
+   mutate the slice while pages are still pinned.
 
-Two contract options, with the design picking option B:
+### 3.1 Registered buffers as a natural fit
 
-- **Option A: synchronous wait for release.** Every SEND_ZC submission
-  blocks until both CQEs are observed. Correct, but serialises sends
-  and erases most of the latency gain.
-- **Option B: pin-counted buffer pool.** The writer owns a small pool
-  of detachable buffers. A buffer is checked out at submission, the
-  pin count is bumped to 1, and only returned to the pool when the
-  release CQE for that user_data arrives. The internal write buffer
-  becomes one slot of that pool; the big-write fast path is converted
-  into "copy into a pool slot and submit".
+The borrowed-slice audit
+(`docs/design/iouring-borrowed-slice-consumer.md`) and the
+registered-buffer machinery in
+`crates/fast_io/src/io_uring/registered_buffers.rs:105` give us the
+right primitive. A `RegisteredBufferGroup::checkout()` returns a
+`RegisteredBufferSlot<'_>` (declared at
+`crates/fast_io/src/io_uring/registered_buffers.rs:138` with the
+checkout API at
+`crates/fast_io/src/io_uring/registered_buffers.rs:385`) whose
+lifetime is bounded by the group; the slot is pinned for the
+duration of any in-flight SQE referencing it. Bumping a pin counter
+on submission and decrementing it only on the notification CQE keeps
+the existing safety story intact and reuses the same Linux-pinned
+memory the registered-buffer path already accounts to
+`RLIMIT_MEMLOCK`.
 
-The pool lives in `socket_writer.rs` next to `IoUringSocketWriter`,
-not in `registered_buffers.rs`. Registered buffers are for fixed I/O
-opcodes (`READ_FIXED` / `WRITE_FIXED`) and indexed by buffer-group ID
-- `IORING_OP_SEND_ZC` does not require pre-registration. Mixing the
-two namespaces would muddy the bgid pool described in
-`docs/design/io-uring-bgid-namespace.md`.
+Concretely, the writer migrates as follows:
 
-Pool sizing: depth 4 is the floor (matches `max_sqes = sq_entries / 2
-= 32` divided by an expected 8x batching factor). Slot size mirrors
-`IoUringConfig::buffer_size`. Total pinned memory is bounded by `pool
-depth * buffer_size`, e.g. 4 * 64 KiB = 256 KiB on the default
-config, 4 * 256 KiB = 1 MiB on `for_large_files`. This sits below the
-`RLIMIT_MEMLOCK` budget for unprivileged processes (64 KiB on stock
-Linux, but io_uring registered pages are accounted differently;
-we audit at probe time).
+- `IoUringSocketWriter` gains a small pool of `RegisteredBufferSlot`
+  handles (depth `>= sq_entries / 2`, slot size = `buffer_size`).
+- `Write::write` copies caller bytes into a checked-out slot,
+  submits `IORING_OP_SEND_ZC` with that slot's pointer, and returns
+  immediately. The slot is returned to the pool only when the
+  notification CQE for the matching `user_data` fires.
+- When the pool is exhausted, `Write::write` blocks on the next
+  notification CQE - this is the natural in-band backpressure.
 
-## 4. Kernel version probe and fallback
+The pool intentionally lives next to `IoUringSocketWriter`, not
+inside the existing buffer-group namespace
+(`docs/audits/iouring-bgid-namespace.md`). `IORING_OP_SEND_ZC` does
+not require buffer pre-registration in the buffer-group sense; the
+registered-buffer infrastructure is reused only for pinned-page
+accounting.
 
-Two-stage probe, executed at writer construction in
-`IoUringSocketWriter::from_raw_fd`:
+### 3.2 Pool sizing
 
-1. **Static gate.** `IoUringConfig::allow_send_zc()` is the policy
-   filter: `ZeroCopyPolicy::Disabled` short-circuits to
-   `IORING_OP_SEND` with no probing. `ZeroCopyPolicy::Auto` becomes
-   "probe and use if available" once this design ships;
+Floor depth = `max_sqes = sq_entries / 2 = 32` on the default config
+divided by an expected 8x batching factor, so depth 4 is the
+minimum. Slot size mirrors `IoUringConfig::buffer_size`
+(`crates/fast_io/src/io_uring_common.rs:116`). Total pinned memory
+is bounded by `depth * buffer_size`: 4 x 64 KiB = 256 KiB on the
+default config, 4 x 256 KiB = 1 MiB on the `for_large_files` preset
+at `crates/fast_io/src/io_uring_common.rs:132`-`crates/fast_io/src/io_uring_common.rs:145`.
+
+## 4. Kernel version gate
+
+Two-stage probe, executed lazily at writer construction in
+`IoUringSocketWriter::from_raw_fd`
+(`crates/fast_io/src/io_uring/socket_writer.rs:40`-`crates/fast_io/src/io_uring/socket_writer.rs:54`):
+
+1. **Static policy gate.** `IoUringConfig::allow_send_zc()` at
+   `crates/fast_io/src/io_uring_common.rs:170`-`crates/fast_io/src/io_uring_common.rs:173`
+   stays the policy filter. `ZeroCopyPolicy::Disabled` short
+   circuits to `IORING_OP_SEND` with no probing.
+   `ZeroCopyPolicy::Auto` becomes "probe and use if available";
    `ZeroCopyPolicy::Enabled` becomes "probe and fail loudly if the
    kernel rejects it".
-2. **Kernel probe.** Submit a one-shot probe via the io_uring
-   `register(IORING_REGISTER_PROBE, ...)` interface and inspect the
-   `op_supported` bit for `IORING_OP_SEND_ZC` (opcode 41). The probe
-   is cheap (one syscall per writer is acceptable; it can be cached
-   per `IoUringConfig` if it shows up in profiles).
+2. **Kernel feature probe.** Use `IORING_REGISTER_PROBE` and check
+   the `is_supported(opcode::SendZc::CODE)` bit. The mechanism is
+   the same one already used to count supported opcodes in
+   `count_supported_ops` at
+   `crates/fast_io/src/io_uring/config.rs:246`-`crates/fast_io/src/io_uring/config.rs:253`
+   - so the probe is a one-line addition next to the existing
+   io_uring kernel-availability cache
+   (`crates/fast_io/src/io_uring/config.rs:144`-`crates/fast_io/src/io_uring/config.rs:167`)
+   and reuses the same `AtomicBool`-cache pattern.
 
-The probe result is cached on `IoUringSocketWriter` as an `enum
-SendOp { Send, SendZc }` and consulted in the flush path. If the
-probe returns "unsupported", the writer falls back to
+This mirrors the runtime detection precedent: kernel-version parsing
+via `uname(2)` at
+`crates/fast_io/src/io_uring/config.rs:49`-`crates/fast_io/src/io_uring/config.rs:67`
+sets the minimum (`MIN_KERNEL_VERSION = (5, 6)` at
+`crates/fast_io/src/io_uring/config.rs:19`) and the probe pins down
+opcode-level availability. For SEND_ZC the version floor rises to
+(6, 0); the existing `IoUringProbeResult::KernelTooOld` variant
+already carries `(major, minor)` for diagnostics
+(`crates/fast_io/src/io_uring/config.rs:184`-`crates/fast_io/src/io_uring/config.rs:189`)
+and the same shape extends naturally to a `SendZcUnsupported`
+variant.
+
+The kernel-feature probe is preferred over a `uname()` check:
+distros backport features, container runtimes lie about kernel
+version, and `uname()` parses are fragile.
+`IORING_REGISTER_PROBE` is the upstream-blessed interrogation path.
+
+The probe result is cached on `IoUringSocketWriter` as a small
+`enum SendOp { Send, SendZc }` and consulted in the flush path. If
+the probe returns "unsupported", the writer falls back to
 `IORING_OP_SEND` and behaves exactly as today; the pin-counted pool
 collapses to a single slot reused immediately, matching current
 semantics.
 
-The kernel probe is preferred over a uname() check: distros backport
-features, container runtimes lie about kernel version, and uname()
-parses are fragile. `IORING_REGISTER_PROBE` is the upstream-blessed
-interrogation path.
+## 5. Bench plan
 
-## 5. Daemon TCP integration (#1876)
+Goal: prove SEND_ZC is a net win on representative oc-rsync
+workloads before flipping `ZeroCopyPolicy::Auto` to opt in.
 
-The daemon-side wiring tracked at #1876 plugs `IoUringSocketWriter`
-into the accept loop in the `daemon` crate. The integration points
-are:
+Test rig: rsync-profile container (`rust:latest`, Debian, kernel
+>= 6.0). Workspace bind-mounted; both `rsync 3.4.1` and `oc-rsync`
+binaries available.
 
-- The daemon transport layer constructs an `IoUringSocketWriter` per
-  accepted TCP connection and uses it as the `Write` half of the
-  multiplex stream. SEND_ZC is wholly invisible above the `Write`
-  trait - the socket writer keeps the same `impl Write` it has today
-  (`crates/fast_io/src/io_uring/socket_writer.rs:86-121`).
-- `IoUringConfig` for the daemon path defaults to
-  `ZeroCopyPolicy::Auto` once SEND_ZC ships. The daemon's TPC
-  benchmark plan (`docs/design/daemon-tpc-benchmark-plan.md`) is the
-  acceptance gate: SEND_ZC must demonstrate a measurable CPU
-  reduction at >= 1 GiB/s sustained or `Auto` stays on
-  `IORING_OP_SEND`.
-- Per-connection ring sizing is governed by the session ring pool
-  (`docs/design/iouring-session-ring-pool.md`); SEND_ZC's doubled CQE
-  pressure is absorbed by the existing 2x CQ-over-SQ default, but the
-  pool must verify CQ headroom at ring construction.
+Workload A - synthetic 1 GiB transfer over loopback (the target the
+issue calls out):
 
-This file documents the writer-level design only; the daemon integration
-is the consumer.
+- Generate a single 1 GiB file of pseudo-random bytes
+  (`dd if=/dev/urandom of=src/big bs=1M count=1024`).
+- Bring up an oc-rsync daemon on `127.0.0.1`; transfer to a sibling
+  module on the same daemon (worst-case: same machine, same NIC
+  loopback, where TCP-copy cost dominates).
+- Measure with `hyperfine` (3 runs, warm cache):
+  `time oc-rsync rsync://127.0.0.1/dst/`. Compare three
+  configurations: `--no-zero-copy` (forces `IORING_OP_SEND`),
+  default (`Auto`, probes SEND_ZC), `--zero-copy` (forces SEND_ZC,
+  hard-fails on pre-6.0).
+- Metrics: wall time, user+sys CPU, `perf stat -e
+  cycles,instructions,cache-misses`. The expected signal is a 25-40%
+  sys-CPU reduction on the SEND_ZC path (matching kernel-suite
+  numbers for `io_uring-net`); wall time may not move on loopback
+  but should improve on a real NIC.
 
-## 6. Throughput vs latency trade-off
+Workload B - small-file storm (regression guard):
 
-`IORING_OP_SEND_ZC` is a CPU-saving optimisation, not an unconditional
-throughput optimisation. The trade-offs:
+- 10 000 files of 4 KiB each. SEND_ZC is documented to lose to
+  regular SEND for sub-page sends, so this is the path where the
+  policy must not regress.
+- Same daemon, same `hyperfine` driver. Acceptance: SEND_ZC path
+  within 5% of SEND-only path on both wall time and sys CPU. If
+  SEND_ZC loses by more than 5%, the writer must apply a payload
+  threshold (initial proposal: `payload >= 16 KiB -> SEND_ZC`,
+  smaller -> SEND).
 
-- **Wins.** Removing the kernel memcpy saves cycles proportional to
-  the payload size. On 256 KiB sends from `for_large_files`, the
-  saved memcpy is the dominant CPU cost; SEND_ZC has measured 30-40%
-  CPU reductions in the kernel's own testing.
-- **Losses.** Two CQEs per send doubles CQE-handling overhead. For
-  small payloads (`<= 4 KiB`), the per-CQE overhead exceeds the saved
-  memcpy and SEND_ZC is slower than SEND. The kernel documents this
-  explicitly in `io_uring_enter(2)`.
-- **Pinning cost.** `get_user_pages_fast` is not free; on small,
-  short-lived sends the pinning amortisation never pays back.
+Workload C - real-NIC bench (recorded but not gating):
 
-The decision rule encoded in the writer:
+- The same 1 GiB transfer over a 10 GbE link between two
+  rsync-profile peers. Useful for the release notes; not part of
+  the merge gate because the CI runner cannot reproduce it.
 
-- `payload_size < ZC_PAYLOAD_THRESHOLD` (initial value: 16 KiB) ->
-  `IORING_OP_SEND`, regardless of `allow_send_zc()`.
-- `payload_size >= ZC_PAYLOAD_THRESHOLD` and probe says supported ->
-  `IORING_OP_SEND_ZC`.
+Acceptance gate for promoting `Auto` to consume SEND_ZC: a
+measurable CPU reduction at sustained `>= 1 GiB/s` on workload A
+**and** no regression on workload B. This is the same shape as the
+daemon TPC benchmark gate in
+`docs/design/daemon-tpc-benchmark-plan.md`.
 
-The threshold is configurable via a new `IoUringConfig::send_zc_threshold`
-field defaulting to 16 KiB. The `for_large_files` preset will lower
-this to 8 KiB once benchmarks confirm; `for_small_files` keeps the 16
-KiB floor so SEND_ZC effectively never triggers on the small-files
-preset.
+## 6. Recommendation
 
-The pin-counted buffer pool ties the latency story together. Pool
-exhaustion blocks the writer until a release CQE drains a slot, so
-pool depth is the ceiling on in-flight SEND_ZC bytes per writer. Depth
-4 with 64 KiB slots caps in-flight ZC traffic at 256 KiB per writer,
-which is comfortable below typical `tcp_wmem` (4 MiB on stock Linux).
+**Defer until #1876 lands first**, then implement.
 
-## Test plan
+Reasoning:
 
-- Unit: probe path returns `SendOp::SendZc` on a simulated 6.0 kernel
-  (mock `register(PROBE)` response), `SendOp::Send` on 5.x.
-- Unit: pin-counted pool returns the same slot only after the release
-  CQE arrives. Drive the writer with a synthetic ring that delays
-  the second CQE by N submissions; verify the writer waits.
-- Integration: daemon TPC benchmark (#1876 acceptance gate) shows CPU
-  reduction at sustained 1 GiB/s. No regression on small-files preset.
-- Interop: SEND_ZC must be transparent to the wire format. Existing
-  daemon push / pull interop tests in `tools/ci/run_interop.sh` cover
-  this; no protocol-level test is needed.
-- Negative: `ZeroCopyPolicy::Enabled` on a 5.x kernel returns a clear
-  error from `IoUringSocketWriter::from_raw_fd` instead of falling
-  back silently. `Auto` must always succeed.
+1. None of the daemon, transfer, or rsync_io crates currently route
+   network bytes through io_uring. `IoUringSocketWriter` is dead
+   code outside `fast_io`'s own tests; there is no production
+   caller for `IORING_OP_SEND_ZC` to graduate. The wiring that
+   creates that caller is the explicit subject of #1876
+   (`docs/design/iouring-daemon-tcp.md`).
+2. The same buffer-lifetime rework needed for SEND_ZC (pinned
+   slots, deferred-completion accounting) is the missing piece for
+   #4218 (borrowed-slice audit,
+   `docs/design/iouring-borrowed-slice-consumer.md`). Doing both
+   in one pass amortises the audit and the pool-sizing bench.
+3. The kernel-6.0 baseline is not yet a fair assumption in CI - the
+   musl Linux runner image is currently 5.x. Implementing SEND_ZC
+   first would land code with no integration coverage on any CI
+   runner.
+4. The `ZeroCopyPolicy::Enabled` opt-in surface and CLI flag
+   (`--zero-copy` / `--no-zero-copy`) already exist
+   (`crates/cli/src/frontend/arguments/parser/mod.rs:474`-`crates/cli/src/frontend/arguments/parser/mod.rs:479`),
+   so the user-facing change is already accounted for; the only
+   missing piece is the consumer path.
 
-## Open questions
+Concrete sequencing:
 
-- Whether to expose `send_zc_threshold` as a public CLI tunable. The
-  existing `--io-uring-policy` flag already gates the policy enum;
-  adding a threshold knob risks surface bloat. Recommend keeping it
-  internal until benchmarks demand otherwise.
-- Whether the pin-counted pool should share a backing allocator with
-  the registered-buffer pool described in
-  `docs/design/iouring-adaptive-buffer-pool.md`. They have different
-  lifetime models, so the bias is to keep them separate; revisit once
-  both ship.
+1. Land #1876 (daemon TCP through `IoUringSocketWriter`). This
+   gives SEND_ZC a real caller and a real benchmark surface.
+2. Land #4218 borrowed-slice resolution (pick the `Arc<[u8]>` or
+   pinned-slot path). SEND_ZC reuses whichever buffer-ownership
+   primitive that audit chooses.
+3. Bump CI runner to kernel >= 6.0 (or document an explicit
+   skip-on-pre-6.0 path for the SEND_ZC integration tests).
+4. Implement SEND_ZC behind the `Auto` policy, with the threshold
+   logic from section 5, gated on the
+   `IORING_REGISTER_PROBE(SendZc)` cache from section 4.
+5. Promote `Auto` to consume SEND_ZC after two consecutive green
+   runs of the workload-A / workload-B bench from section 5 plus
+   `tools/ci/run_interop.sh`.
+
+Rejecting SEND_ZC outright is not the right call: the kernel
+trajectory (Ubuntu LTS 22.04 ships 6.5, Debian 13 ships 6.1) means
+the kernel >= 6.0 floor will be the common case on every long-lived
+deployment within the next two release cycles, and a 25-40% sys-CPU
+saving on loopback transfers is large enough to justify the work
+once the prerequisites land.
+
+## 7. Cross-references
+
+- **#1876** Daemon TCP through io_uring socket I/O. Prerequisite.
+  `docs/design/iouring-daemon-tcp.md`. SEND_ZC has no first-party
+  caller until this lands; the doc explicitly defers the SEND_ZC
+  migration to #1832.
+- **#4218** Borrowed-slice consumer audit. Same buffer-lifetime
+  shape as SEND_ZC's pinned-page contract.
+  `docs/design/iouring-borrowed-slice-consumer.md`. The pin-counted
+  pool described in section 3 is the buffer-ownership primitive
+  that audit recommends adopting.
+- **#4217** Async io_uring path. Both SEND_ZC CQEs are already
+  asynchronous; the async machinery's `oneshot` waker pattern is
+  exactly what the SEND_ZC notification CQE needs.
+- **#4220** io_uring submission from rayon worker threads.
+  Composes the same way as today: SEND_ZC SQEs are pushed from
+  whatever thread owns the writer, the completion path is unchanged
+  by the source thread. Per-thread rings (#2243) and SEND_ZC are
+  orthogonal.
+- **#2243** Per-thread io_uring rings. If this lands first, the
+  SEND_ZC notification path is per-thread by construction and the
+  pool sizing in section 3 becomes per-thread, not per-writer. No
+  semantic change; just a scaling factor.
+- **Kernel-detection precedent** for the runtime probe in
+  section 4: existing io_uring availability cache at
+  `crates/fast_io/src/io_uring/config.rs:144`-`crates/fast_io/src/io_uring/config.rs:167`
+  and the `count_supported_ops` opcode-probe at
+  `crates/fast_io/src/io_uring/config.rs:246`-`crates/fast_io/src/io_uring/config.rs:253`.
