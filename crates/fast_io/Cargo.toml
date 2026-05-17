@@ -121,3 +121,16 @@ required-features = ["io_uring"]
 [[bench]]
 name = "iocp_vs_stdio"
 harness = false
+
+# Cross-platform matched-workload bench: IOCP (Windows) vs io_uring (Linux)
+# both compared against the same std::fs baseline so per-host throughput
+# can be normalised before cross-host comparison. The bench file compiles
+# on every platform but each kernel-async cell is cfg-gated to its host;
+# every host also produces the std_baseline row as a common reference.
+# Linux io_uring cells are env-gated via OC_RSYNC_BENCH_IOURING_RING=1
+# (and OC_RSYNC_BENCH_IOURING_SQPOLL=1 for the sqpoll cell). See the
+# file's module doc for the run recipe and what the numbers inform on
+# #1868.
+[[bench]]
+name = "iocp_vs_iouring_matched"
+harness = false
