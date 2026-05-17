@@ -180,6 +180,58 @@ cd rsync
 cargo build --workspace --release
 ```
 
+### Cargo features
+
+The workspace exposes the following opt-in features. Defaults are tuned for the
+release binary on modern Linux/macOS/Windows hosts; everything marked
+`experimental` is wired but not yet promoted to the default set.
+
+| Feature | Crate(s) | Default | Purpose | Status |
+|---------|----------|:-------:|---------|--------|
+| `zstd` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol`, `batch` | yes | Enables zstd compression codec and wire negotiation. | stable |
+| `lz4` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol` | yes | Enables LZ4 compression codec. | stable |
+| `zlib-ng` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol` | no | Selects the SIMD-accelerated `zlib-ng` C backend instead of pure-Rust zlib. | stable |
+| `xattr` | workspace, `cli`, `core`, `transfer`, `daemon`, `metadata` | yes | Preserves extended attributes (`-X`) on Unix and NTFS ADS on Windows. | stable |
+| `acl` | workspace, `cli`, `core`, `engine`, `transfer`, `daemon`, `metadata` | yes | Preserves POSIX/NFSv4 ACLs (`-A`) via `exacl`, NTFS ACLs via `windows-rs`. | stable |
+| `iconv` | workspace, `cli`, `core`, `transfer`, `daemon`, `protocol` | yes | Filename and symlink-target charset transcoding (`--iconv`). | stable |
+| `parallel` | workspace, `cli`, `engine`, `checksums` | yes | Rayon-based multi-core file and checksum operations. | stable |
+| `io_uring` | workspace, `transfer`, `fast_io` | yes | Linux 5.6+ batched async I/O with runtime fallback. | stable |
+| `iocp` | workspace, `transfer`, `fast_io` | yes | Windows I/O Completion Ports for overlapped file and socket I/O. | stable |
+| `copy_file_range` | workspace, `fast_io` | yes | Compat alias; the `copy_file_range` syscall is now always compiled with runtime detection. | stable |
+| `async` | workspace, `core`, `engine`, `transfer`, `daemon` | yes | Brings in tokio for async I/O paths across the orchestrator stack. | stable |
+| `openssl` | workspace, `checksums` | no | Routes MD4/MD5 through the system OpenSSL build. | stable |
+| `openssl-vendored` | workspace, `checksums` | no | Same as `openssl` but statically links a vendored OpenSSL. | stable |
+| `embedded-ssh` | workspace, `core`, `rsync_io` | no | Pure-Rust SSH client via `russh`; removes the runtime dependency on system `ssh`. | stable |
+| `sd-notify` | workspace, `core`, `daemon` | no | systemd `sd-notify` integration for the daemon. | stable |
+| `incremental-flist` | `transfer` | yes | Incremental file-list processing with failed-directory tracking. | stable |
+| `lazy-metadata` | `engine` | yes | Defers `stat()` calls until metadata is needed. | stable |
+| `multi-producer` | `engine` | no | Relaxes the single-producer compile-time invariant on `WorkQueueSender`. | experimental |
+| `thread-slab-pool` | `engine` | no | Per-thread bounded LIFO slab in front of `BufferPool`; pays off above ~32 workers (#1271, #1370). | experimental |
+| `vmsplice` | `fast_io`, `transfer` | no | Linux `vmsplice(2)` + `splice(2)` zero-copy writer for large page-aligned chunks. | experimental |
+| `async-ssh` | `core`, `rsync_io` | no | Wires `AsyncSshTransport` into the client remote path; opt-in at runtime via `OC_RSYNC_ASYNC_SSH=1` (#1593, #1796, #1805, #1806). | experimental |
+| `async-daemon` | `daemon` | no | Hybrid tokio accept loop dispatching sync workers via `spawn_blocking` (#1935). | experimental |
+| `concurrent-sessions` | `daemon` | no | Shared `dashmap` session state for multi-session daemons. | experimental |
+| `tracing` | `core`, `engine`, `transfer`, `daemon` | no | Structured `tracing` instrumentation for diagnostics. | stable |
+
+#### Choosing features for your build
+
+```bash
+# Default release build (recommended starting point).
+cargo build --workspace --release
+
+# Enable the async network paths end-to-end. async-ssh and async-daemon are
+# crate-level features, so build the affected crates directly.
+cargo build --release -p core --features async-ssh
+cargo build --release -p daemon --features async-daemon
+
+# Squeeze out maximum parallelism on a fat machine: keep the workspace
+# defaults and add the experimental engine slab and vmsplice writer.
+cargo build --workspace --release \
+    --features "parallel async io_uring" \
+  && cargo build --release -p engine --features thread-slab-pool \
+  && cargo build --release -p fast_io --features vmsplice
+```
+
 ---
 
 ## Usage
