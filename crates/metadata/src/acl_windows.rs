@@ -684,6 +684,269 @@ fn entries_have_names(entries: &IdaEntries) -> bool {
     entries.iter().any(|e| e.name.is_some())
 }
 
+/// SDDL "Everyone" well-known SID alias.
+const SDDL_EVERYONE: &str = "WD";
+/// SDDL "Authenticated Users" alias - mapped to the `other` triplet when
+/// no explicit Everyone ACE is present.
+const SDDL_AUTHENTICATED_USERS: &str = "AU";
+
+/// Decodes an SDDL rights string into rsync rwx permission bits.
+///
+/// Recognised single-letter tokens follow Microsoft's SDDL grammar:
+///
+/// - `FA` (file all) -> rwx
+/// - `FR` (file generic read) -> r
+/// - `FW` (file generic write) -> w
+/// - `FX` (file generic execute) -> x
+/// - `GA`/`GR`/`GW`/`GX` (generic all/read/write/execute) -> same mapping
+///
+/// Hex masks (`0x...`) are decoded via [`access_mask_to_rsync_perms`].
+/// Unknown tokens contribute zero bits, matching the design doc's
+/// "non-rwx access bits collapsed" rule.
+fn sddl_rights_to_perms(rights: &str) -> u8 {
+    if let Some(hex) = rights
+        .strip_prefix("0x")
+        .or_else(|| rights.strip_prefix("0X"))
+    {
+        if let Ok(mask) = u32::from_str_radix(hex, 16) {
+            return access_mask_to_rsync_perms(mask);
+        }
+        return 0;
+    }
+    let mut perms: u8 = 0;
+    let bytes = rights.as_bytes();
+    let mut idx = 0;
+    while idx + 1 < bytes.len() {
+        let token = &rights[idx..idx + 2];
+        match token {
+            "FA" | "GA" => perms |= RSYNC_PERM_READ | RSYNC_PERM_WRITE | RSYNC_PERM_EXECUTE,
+            "FR" | "GR" => perms |= RSYNC_PERM_READ,
+            "FW" | "GW" => perms |= RSYNC_PERM_WRITE,
+            "FX" | "GX" => perms |= RSYNC_PERM_EXECUTE,
+            _ => {}
+        }
+        idx += 2;
+    }
+    perms
+}
+
+/// Encodes rsync rwx permission bits as an SDDL rights string.
+///
+/// Always emits the canonical two-letter file-access tokens (`FR`, `FW`,
+/// `FX`) so the result round-trips through
+/// [`sddl_rights_to_perms`]. Returns an empty string for zero perms; the
+/// caller is expected to skip empty ACEs.
+fn perms_to_sddl_rights(perms: u8) -> String {
+    let mut out = String::with_capacity(6);
+    if perms & RSYNC_PERM_READ != 0 {
+        out.push_str("FR");
+    }
+    if perms & RSYNC_PERM_WRITE != 0 {
+        out.push_str("FW");
+    }
+    if perms & RSYNC_PERM_EXECUTE != 0 {
+        out.push_str("FX");
+    }
+    out
+}
+
+/// Splits an SDDL string into its `O:` / `G:` / `D:` / `S:` sections.
+///
+/// Returns `(owner, group, dacl, sacl)` where each component is `None`
+/// when the corresponding header is absent. The `dacl` and `sacl`
+/// payloads include the parenthesised ACE list but exclude any trailing
+/// section flags (e.g. `P`, `AI`).
+fn split_sddl(sddl: &str) -> (Option<&str>, Option<&str>, Option<&str>, Option<&str>) {
+    // Locate each section header at the start of the string or
+    // immediately after a closing ACE parenthesis. SDDL grammar
+    // guarantees the four headers appear at most once.
+    fn section<'a>(sddl: &'a str, marker: &str) -> Option<&'a str> {
+        let start = sddl.find(marker)?;
+        let after = &sddl[start + marker.len()..];
+        // Section ends at the next two-character header (`O:`, `G:`, `D:`,
+        // `S:`) that is not nested inside an ACE.
+        let mut depth: i32 = 0;
+        for (idx, ch) in after.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                ':' if depth == 0 && idx >= 1 => {
+                    // Header is the character preceding the colon plus
+                    // the colon itself. Trim it off the returned slice.
+                    let header_start = idx - 1;
+                    let prev = after.as_bytes()[header_start];
+                    if matches!(prev, b'O' | b'G' | b'D' | b'S') {
+                        return Some(after[..header_start].trim());
+                    }
+                }
+                _ => {}
+            }
+        }
+        Some(after.trim())
+    }
+    (
+        section(sddl, "O:"),
+        section(sddl, "G:"),
+        section(sddl, "D:"),
+        section(sddl, "S:"),
+    )
+}
+
+/// Parsed SDDL ACE: `(type;flags;rights;object_guid;inherit_guid;trustee)`.
+struct ParsedAce<'a> {
+    ace_type: &'a str,
+    flags: &'a str,
+    rights: &'a str,
+    trustee: &'a str,
+}
+
+/// Parses the ACE list in a DACL section.
+///
+/// Each ACE is expected to use the canonical six-field form. ACEs with
+/// fewer fields are skipped. The `dacl` argument may carry leading
+/// section flags such as `P` or `AI` ahead of the first `(`; those are
+/// discarded.
+fn parse_aces(dacl: &str) -> Vec<ParsedAce<'_>> {
+    let mut out = Vec::new();
+    let mut rest = dacl;
+    while let Some(open) = rest.find('(') {
+        let Some(close_rel) = rest[open + 1..].find(')') else {
+            break;
+        };
+        let inner = &rest[open + 1..open + 1 + close_rel];
+        let fields: Vec<&str> = inner.splitn(6, ';').collect();
+        if fields.len() == 6 {
+            out.push(ParsedAce {
+                ace_type: fields[0],
+                flags: fields[1],
+                rights: fields[2],
+                trustee: fields[5],
+            });
+        }
+        rest = &rest[open + 1 + close_rel + 1..];
+    }
+    out
+}
+
+/// Converts an SDDL security-descriptor string into a POSIX permission
+/// mode triplet (rwxrwxrwx, 9 bits in the canonical 0o000-0o777 range).
+///
+/// Mapping rules (matching `docs/design/windows-ntfs-acl-support.md`
+/// section 5.1):
+///
+/// - The first allow ACE whose trustee matches the descriptor's owner
+///   SID supplies the owner rwx bits.
+/// - The first allow ACE whose trustee matches the group SID supplies
+///   the group rwx bits.
+/// - The first allow ACE addressed to `WD` (Everyone) or, in its
+///   absence, `AU` (Authenticated Users) supplies the other rwx bits.
+///
+/// Deny ACEs, inherited ACEs (`AceFlags` carrying `ID`), and access bits
+/// outside `FR`/`FW`/`FX`/`FA` are dropped with a one-time warning to
+/// reflect documented lossy behaviour. If a triplet has no matching ACE
+/// the corresponding three bits remain `0`.
+///
+/// # Panics
+///
+/// Never panics. Malformed input returns `0`.
+#[must_use]
+pub fn dacl_to_posix_mode(sddl: &str) -> u32 {
+    let (owner, group, dacl, _sacl) = split_sddl(sddl);
+    let Some(dacl) = dacl else {
+        return 0;
+    };
+    let owner = owner.unwrap_or("");
+    let group = group.unwrap_or("");
+
+    let mut owner_perms: u8 = 0;
+    let mut group_perms: u8 = 0;
+    let mut other_perms: u8 = 0;
+    let mut owner_seen = false;
+    let mut group_seen = false;
+    let mut everyone_seen = false;
+    let mut authenticated_perms: u8 = 0;
+    let mut authenticated_seen = false;
+    let mut dropped = false;
+
+    for ace in parse_aces(dacl) {
+        if ace.flags.contains("ID") {
+            // Inherited ACE: not transmitted per design doc section 5.3.
+            dropped = true;
+            continue;
+        }
+        if !ace.ace_type.eq_ignore_ascii_case("A") {
+            if ace.ace_type.eq_ignore_ascii_case("D") {
+                dropped = true;
+            }
+            continue;
+        }
+        let perms = sddl_rights_to_perms(ace.rights);
+        if perms == 0 {
+            continue;
+        }
+        if !owner.is_empty() && ace.trustee == owner && !owner_seen {
+            owner_perms = perms;
+            owner_seen = true;
+        } else if !group.is_empty() && ace.trustee == group && !group_seen {
+            group_perms = perms;
+            group_seen = true;
+        } else if ace.trustee == SDDL_EVERYONE && !everyone_seen {
+            other_perms = perms;
+            everyone_seen = true;
+        } else if ace.trustee == SDDL_AUTHENTICATED_USERS && !authenticated_seen {
+            authenticated_perms = perms;
+            authenticated_seen = true;
+        }
+    }
+
+    if !everyone_seen && authenticated_seen {
+        other_perms = authenticated_perms;
+    }
+
+    if dropped {
+        warn_partial_apply();
+    }
+
+    (u32::from(owner_perms) << 6) | (u32::from(group_perms) << 3) | u32::from(other_perms)
+}
+
+/// Generates an SDDL security-descriptor string from a POSIX permission
+/// mode and the owning user / group SIDs.
+///
+/// The emitted DACL contains three explicit allow ACEs, in canonical
+/// order:
+///
+/// 1. Allow ACE for the owner SID with the owner triplet's rwx bits.
+/// 2. Allow ACE for the group SID with the group triplet's rwx bits.
+/// 3. Allow ACE for `WD` (Everyone) with the other triplet's rwx bits.
+///
+/// Permission triplets with no bits set are still emitted as empty
+/// rights ACEs (`(A;;;;;<SID>)`) so the round-trip preserves the
+/// distinction between "no permissions" and "ACE omitted entirely".
+///
+/// The `P` flag is set on the DACL so parent inheritance cannot silently
+/// add ACEs that were never on the source, matching section 5.2 of the
+/// design document.
+///
+/// # Panics
+///
+/// Never panics.
+#[must_use]
+pub fn posix_mode_to_dacl(mode: u32, owner_sid: &str, group_sid: &str) -> String {
+    let owner_perms = ((mode >> 6) & 0o7) as u8;
+    let group_perms = ((mode >> 3) & 0o7) as u8;
+    let other_perms = (mode & 0o7) as u8;
+
+    format!(
+        "O:{owner}G:{group}D:P(A;;{owner_rights};;;{owner})(A;;{group_rights};;;{group})(A;;{other_rights};;;WD)",
+        owner = owner_sid,
+        group = group_sid,
+        owner_rights = perms_to_sddl_rights(owner_perms),
+        group_rights = perms_to_sddl_rights(group_perms),
+        other_rights = perms_to_sddl_rights(other_perms),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -823,5 +1086,147 @@ mod tests {
         // straightforward NTFS temp file.
         let result = sync_acls(&src, &dst, true);
         assert!(result.is_ok(), "sync_acls failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn sddl_rights_decode_two_letter_tokens() {
+        assert_eq!(
+            sddl_rights_to_perms("FA"),
+            RSYNC_PERM_READ | RSYNC_PERM_WRITE | RSYNC_PERM_EXECUTE
+        );
+        assert_eq!(sddl_rights_to_perms("FR"), RSYNC_PERM_READ);
+        assert_eq!(sddl_rights_to_perms("FW"), RSYNC_PERM_WRITE);
+        assert_eq!(sddl_rights_to_perms("FX"), RSYNC_PERM_EXECUTE);
+        assert_eq!(
+            sddl_rights_to_perms("FRFX"),
+            RSYNC_PERM_READ | RSYNC_PERM_EXECUTE
+        );
+    }
+
+    #[test]
+    fn sddl_rights_decode_hex_mask() {
+        let mask = FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0;
+        let token = format!("0x{mask:x}");
+        assert_eq!(
+            sddl_rights_to_perms(&token),
+            RSYNC_PERM_READ | RSYNC_PERM_WRITE
+        );
+    }
+
+    #[test]
+    fn sddl_rights_encode_canonical_order() {
+        assert_eq!(perms_to_sddl_rights(0), "");
+        assert_eq!(perms_to_sddl_rights(RSYNC_PERM_READ), "FR");
+        assert_eq!(
+            perms_to_sddl_rights(RSYNC_PERM_READ | RSYNC_PERM_EXECUTE),
+            "FRFX"
+        );
+        assert_eq!(
+            perms_to_sddl_rights(RSYNC_PERM_READ | RSYNC_PERM_WRITE | RSYNC_PERM_EXECUTE),
+            "FRFWFX"
+        );
+    }
+
+    #[test]
+    fn posix_mode_to_dacl_uses_three_allow_aces_with_protected_flag() {
+        let sddl = posix_mode_to_dacl(0o755, "S-1-5-21-100", "S-1-5-21-200");
+        assert!(sddl.starts_with("O:S-1-5-21-100"));
+        assert!(sddl.contains("G:S-1-5-21-200"));
+        assert!(sddl.contains("D:P("));
+        // owner gets rwx
+        assert!(sddl.contains("(A;;FRFWFX;;;S-1-5-21-100)"));
+        // group gets r-x
+        assert!(sddl.contains("(A;;FRFX;;;S-1-5-21-200)"));
+        // other gets r-x via WD
+        assert!(sddl.contains("(A;;FRFX;;;WD)"));
+    }
+
+    #[test]
+    fn round_trip_mode_755_preserves_rwx_triplet() {
+        let owner = "S-1-5-21-1";
+        let group = "S-1-5-21-2";
+        let sddl = posix_mode_to_dacl(0o755, owner, group);
+        let back = dacl_to_posix_mode(&sddl);
+        assert_eq!(back, 0o755, "round-trip lost bits; sddl: {sddl}");
+    }
+
+    #[test]
+    fn round_trip_full_mode_matrix_preserves_rwx() {
+        let owner = "S-1-5-21-1000";
+        let group = "S-1-5-21-1001";
+        for mode in 0o000u32..=0o777u32 {
+            let sddl = posix_mode_to_dacl(mode, owner, group);
+            let back = dacl_to_posix_mode(&sddl);
+            assert_eq!(back, mode, "round-trip lost bits for mode {mode:03o}");
+        }
+    }
+
+    #[test]
+    fn dacl_to_posix_mode_handles_everyone_as_other() {
+        let sddl = "O:BAG:SYD:(A;;FA;;;BA)(A;;FRFX;;;SY)(A;;FR;;;WD)";
+        let mode = dacl_to_posix_mode(sddl);
+        // owner BA -> 7, group SY -> 5, other WD -> 4
+        assert_eq!(mode, 0o754);
+    }
+
+    #[test]
+    fn dacl_to_posix_mode_falls_back_to_authenticated_users() {
+        let sddl = "O:BAG:SYD:(A;;FA;;;BA)(A;;FRFX;;;SY)(A;;FRFX;;;AU)";
+        let mode = dacl_to_posix_mode(sddl);
+        // AU substitutes for missing WD -> other = 5
+        assert_eq!(mode, 0o755);
+    }
+
+    #[test]
+    fn dacl_to_posix_mode_drops_deny_aces() {
+        // Deny ACE for owner should be ignored; only the allow ACEs
+        // contribute. Lossy: the deny is logged via warn_partial_apply.
+        let sddl = "O:BAG:SYD:(D;;FW;;;BA)(A;;FRFX;;;BA)(A;;FR;;;SY)(A;;FR;;;WD)";
+        let mode = dacl_to_posix_mode(sddl);
+        // owner gets rx (5) since deny is dropped, group r (4), other r (4)
+        assert_eq!(mode, 0o544);
+    }
+
+    #[test]
+    fn dacl_to_posix_mode_drops_inherited_aces() {
+        // The (A;ID;...) ACE carries the INHERITED flag and must be
+        // skipped per design doc section 5.3.
+        let sddl = "O:BAG:SYD:(A;ID;FA;;;BA)(A;;FR;;;BA)(A;;FR;;;SY)(A;;FR;;;WD)";
+        let mode = dacl_to_posix_mode(sddl);
+        // owner picks up the explicit (non-inherited) r=4 ACE.
+        assert_eq!(mode, 0o444);
+    }
+
+    #[test]
+    fn dacl_to_posix_mode_collapses_non_rwx_bits() {
+        // DELETE | WRITE_DAC have no rwx representation; the resulting
+        // mode bits for owner should be 0.
+        let sddl = "O:BAG:SYD:(A;;0x10000;;;BA)(A;;FR;;;SY)(A;;FR;;;WD)";
+        let mode = dacl_to_posix_mode(sddl);
+        assert_eq!(mode & 0o700, 0);
+        assert_eq!(mode & 0o077, 0o044);
+    }
+
+    #[test]
+    fn dacl_to_posix_mode_returns_zero_for_missing_dacl() {
+        assert_eq!(dacl_to_posix_mode("O:BAG:SY"), 0);
+        assert_eq!(dacl_to_posix_mode(""), 0);
+    }
+
+    #[test]
+    fn split_sddl_separates_owner_group_dacl() {
+        let (o, g, d, s) = split_sddl("O:BAG:SYD:(A;;FA;;;BA)");
+        assert_eq!(o, Some("BA"));
+        assert_eq!(g, Some("SY"));
+        assert_eq!(d, Some("(A;;FA;;;BA)"));
+        assert_eq!(s, None);
+    }
+
+    #[test]
+    fn parse_aces_skips_malformed_entries() {
+        let aces = parse_aces("(A;;FA;;;BA)(broken)(A;;FR;;;WD)");
+        assert_eq!(aces.len(), 2);
+        assert_eq!(aces[0].trustee, "BA");
+        assert_eq!(aces[1].trustee, "WD");
     }
 }
