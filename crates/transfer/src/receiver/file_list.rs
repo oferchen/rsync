@@ -212,6 +212,14 @@ impl ReceiverContext {
             // upstream: flist.c:2931 - ndx_start = prev->ndx_start + prev->used + 1
             self.ndx_segments.push((flat_start, seg_ndx_start));
 
+            // DDP-B3 (#2257): if a parallel-deterministic-delete context
+            // is attached, publish a DeletePlan for this segment's
+            // content directory into the shared DeletePlanMap. Failures
+            // are logged + skipped; the legacy batched-sweep path
+            // remains the active delete driver until the emitter wiring
+            // lands (tasks DDP-E1-E5).
+            self.publish_segment_to_delete_pipeline(dir_ndx, flat_start);
+
             debug_log!(
                 Flist,
                 2,
@@ -437,6 +445,71 @@ impl ReceiverContext {
         }
 
         removed
+    }
+
+    /// Publishes one INC_RECURSE segment into the parallel-deterministic-
+    /// delete pipeline, if a [`engine::delete::DeleteContext`] has been
+    /// attached via [`super::ReceiverContext::set_delete_context`].
+    ///
+    /// `dir_ndx` is the wire NDX of the segment's parent directory (the
+    /// content directory the segment describes). `flat_start` is the
+    /// flat-array index where this segment's entries begin in
+    /// `self.file_list`; the entries slice is
+    /// `self.file_list[flat_start..]`.
+    ///
+    /// # Behaviour
+    ///
+    /// - When no context is attached, returns immediately.
+    /// - Otherwise, resolves the parent directory's destination-relative
+    ///   path via [`Self::wire_to_flat_ndx`] and
+    ///   [`protocol::flist::FileEntry::path`], then forwards the segment
+    ///   to [`engine::delete::DeleteContext::observe_segment_for_delete`].
+    /// - I/O failures from `compute_extras` are logged at level 2 and
+    ///   swallowed; the legacy batched-sweep path remains the
+    ///   authoritative delete driver, so a transient read_dir error here
+    ///   does not abort the transfer.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:272-347` `delete_in_dir()` - per-directory extras
+    ///   computation that this hook publishes a plan for.
+    pub(in crate::receiver) fn publish_segment_to_delete_pipeline(
+        &self,
+        dir_ndx: i32,
+        flat_start: usize,
+    ) {
+        let Some(ctx) = self.delete_ctx.as_ref() else {
+            return;
+        };
+        let Some(parent_flat) = self.wire_to_flat_ndx(dir_ndx) else {
+            debug_log!(
+                Flist,
+                2,
+                "delete pipeline: dir_ndx={} did not resolve to a flat index; skipping segment publish",
+                dir_ndx
+            );
+            return;
+        };
+        let Some(parent) = self.file_list.get(parent_flat) else {
+            debug_log!(
+                Flist,
+                2,
+                "delete pipeline: parent flat_idx={} out of range; skipping segment publish",
+                parent_flat
+            );
+            return;
+        };
+        let dir = parent.path().to_path_buf();
+        let entries = &self.file_list[flat_start..];
+        if let Err(err) = ctx.observe_segment_for_delete(&dir, entries) {
+            debug_log!(
+                Flist,
+                2,
+                "delete pipeline: observe_segment_for_delete({}) failed: {}; legacy sweep will still run",
+                dir.display(),
+                err
+            );
+        }
     }
 
     /// Creates an incremental file list receiver for streaming processing.
