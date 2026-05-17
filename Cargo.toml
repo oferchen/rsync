@@ -122,9 +122,9 @@ mimalloc = { workspace = true }
 [dev-dependencies]
 assert_cmd = "2.0"
 core = { path = "crates/core" }
-filetime = "0.2"
-libc = "0.2"
-tempfile = "3.15"
+filetime = { workspace = true }
+libc = { workspace = true }
+tempfile = { workspace = true }
 checksums = { path = "crates/checksums" }
 protocol = { path = "crates/protocol" }
 
@@ -213,6 +213,36 @@ rpassword = "7"
 is-terminal = "0.4"
 # Secure memory zeroization - audited, widely deployed RAII wrapper
 zeroize = "1"
+# Error derive macro - workspace-wide pin keeps every crate on the same major
+thiserror = "2.0"
+# Temporary file/dir helpers - dev-dep across nearly every crate
+tempfile = "3.15"
+# Raw POSIX/Windows C types - shared across platform-specific code
+libc = "0.2"
+# Substring search helpers (memchr/memmem) - protocol/io hot paths
+memchr = "2.7"
+# Microbenchmark harness - dev-dep across nine crates
+criterion = { version = "0.8", features = ["html_reports"] }
+# Property-based testing - dev-dep across eight crates
+proptest = "1.8"
+# Random number generator - dev-dep across checksums/transfer/rsync_io benches and tests
+rand = "0.10"
+# Lock-free MPMC queues - used by engine/transfer for reorder/work pipelines
+crossbeam-queue = "0.3"
+# Pure-Rust DEFLATE - codec backbone for protocol/compress and xtask packaging
+flate2 = "1.0"
+# File modification time helpers - metadata, engine async, dev tests
+filetime = "0.2"
+# Low-level socket configuration - shared by core and daemon listeners
+socket2 = "0.6"
+# TOML parser - branding/xtask build + tooling
+toml = "1.1"
+# CLI argument parser - shared by cli/daemon/xtask binaries
+clap = { version = "4.5", features = ["std"] }
+# Base64 codec - daemon auth + core module list parsing
+base64 = "0.22"
+# Modern syscall wrappers - used by core, engine, metadata, fast_io
+rustix = "1.1"
 
 [workspace.metadata.docs.rs]
 all-features = true

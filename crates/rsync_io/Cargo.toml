@@ -14,10 +14,10 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-thiserror = "2.0"
+thiserror = { workspace = true }
 protocol = { path = "../protocol" }
 logging = { path = "../logging" }
-memchr = "2.7"
+memchr = { workspace = true }
 shell-words = "1.1"
 russh = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
@@ -32,11 +32,11 @@ embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep
 async-ssh = ["dep:tokio"]
 
 [dev-dependencies]
-proptest = "1.4"
-rand = "0.10"
-tempfile = "3.15"
+proptest = { workspace = true }
+rand = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "rt", "macros", "net", "io-util"] }
-criterion = { version = "0.8", features = ["html_reports"] }
+criterion = { workspace = true }
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
 

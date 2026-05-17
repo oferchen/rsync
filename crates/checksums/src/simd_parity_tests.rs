@@ -326,8 +326,8 @@ mod md5_simd_parity {
     /// Test with pseudo-random data at various sizes.
     #[test]
     fn simd_md5_random_data_parity() {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::RngExt;
+        let mut rng = rand::rng();
 
         let sizes = [
             0, 1, 15, 16, 17, 31, 32, 33, 55, 56, 63, 64, 65, 127, 128, 129, 255, 256, 512, 1000,
@@ -335,7 +335,7 @@ mod md5_simd_parity {
         ];
 
         for &size in &sizes {
-            let data: Vec<u8> = (0..size).map(|_| rng.r#gen()).collect();
+            let data: Vec<u8> = (0..size).map(|_| rng.random()).collect();
             let inputs = vec![data.as_slice()];
 
             let batch_result = simd_batch::digest_batch(&inputs);
@@ -351,14 +351,14 @@ mod md5_simd_parity {
     /// Test batch of random data (multiple inputs at once).
     #[test]
     fn simd_md5_batch_random_data_parity() {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::RngExt;
+        let mut rng = rand::rng();
 
         // Generate 20 random inputs with varying sizes
         let inputs: Vec<Vec<u8>> = (0..20)
             .map(|_| {
-                let size = rng.gen_range(0..5000);
-                (0..size).map(|_| rng.r#gen()).collect()
+                let size = rng.random_range(0..5000);
+                (0..size).map(|_| rng.random()).collect()
             })
             .collect();
         let input_refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
@@ -706,8 +706,8 @@ mod md4_simd_parity {
     /// Test with pseudo-random data at various sizes.
     #[test]
     fn simd_md4_random_data_parity() {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::RngExt;
+        let mut rng = rand::rng();
 
         let sizes = [
             0, 1, 15, 16, 17, 31, 32, 33, 55, 56, 63, 64, 65, 127, 128, 129, 255, 256, 512, 1000,
@@ -715,7 +715,7 @@ mod md4_simd_parity {
         ];
 
         for &size in &sizes {
-            let data: Vec<u8> = (0..size).map(|_| rng.r#gen()).collect();
+            let data: Vec<u8> = (0..size).map(|_| rng.random()).collect();
             let inputs = vec![data.as_slice()];
 
             let batch_result = md4::digest_batch(&inputs);
@@ -731,13 +731,13 @@ mod md4_simd_parity {
     /// Test batch of random data (multiple inputs at once).
     #[test]
     fn simd_md4_batch_random_data_parity() {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::RngExt;
+        let mut rng = rand::rng();
 
         let inputs: Vec<Vec<u8>> = (0..20)
             .map(|_| {
-                let size = rng.gen_range(0..5000);
-                (0..size).map(|_| rng.r#gen()).collect()
+                let size = rng.random_range(0..5000);
+                (0..size).map(|_| rng.random()).collect()
             })
             .collect();
         let input_refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
@@ -976,13 +976,13 @@ mod xxh3_simd_parity {
     /// Test XXH3-64 with random data at various sizes.
     #[test]
     fn simd_xxh3_64_random_data_parity() {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::RngExt;
+        let mut rng = rand::rng();
 
         for _ in 0..50 {
-            let size = rng.gen_range(0..20_000);
-            let data: Vec<u8> = (0..size).map(|_| rng.r#gen()).collect();
-            let seed: u64 = rng.r#gen();
+            let size = rng.random_range(0..20_000);
+            let data: Vec<u8> = (0..size).map(|_| rng.random()).collect();
+            let seed: u64 = rng.random();
 
             let one_shot = Xxh3::digest(seed, &data);
 
@@ -1000,13 +1000,13 @@ mod xxh3_simd_parity {
     /// Test XXH3-128 with random data at various sizes.
     #[test]
     fn simd_xxh3_128_random_data_parity() {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::RngExt;
+        let mut rng = rand::rng();
 
         for _ in 0..50 {
-            let size = rng.gen_range(0..20_000);
-            let data: Vec<u8> = (0..size).map(|_| rng.r#gen()).collect();
-            let seed: u64 = rng.r#gen();
+            let size = rng.random_range(0..20_000);
+            let data: Vec<u8> = (0..size).map(|_| rng.random()).collect();
+            let seed: u64 = rng.random();
 
             let one_shot = Xxh3_128::digest(seed, &data);
 
