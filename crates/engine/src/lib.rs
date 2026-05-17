@@ -187,7 +187,8 @@ pub use delta::{
 pub use concurrent_delta::{
     AdaptiveCapacityPolicy, ConcurrentDeltaConfig, DeltaConsumerStats, DeltaResult,
     DeltaResultStatus, DeltaStrategy, DeltaTransferStrategy, DeltaWork, DeltaWorkKind, FileNdx,
-    ReorderBuffer, ReorderStats, WholeFileStrategy,
+    ReclaimMode, ReorderBuffer, ReorderStats, SpillCompression, SpillGranularity, SpillPolicy,
+    WholeFileStrategy,
 };
 
 /// Common error types for engine operations.

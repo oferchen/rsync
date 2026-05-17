@@ -54,6 +54,9 @@ use std::path::{Path, PathBuf};
 
 use super::reorder::{CapacityExceeded, ReorderBuffer};
 
+pub mod policy;
+pub use policy::{ReclaimMode, SpillCompression, SpillGranularity, SpillPolicy};
+
 /// Default memory threshold (in bytes) before spilling begins.
 ///
 /// Set to 64 MB, which accommodates roughly 64K items of 1 KB each.

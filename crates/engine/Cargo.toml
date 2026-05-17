@@ -97,6 +97,12 @@ parallel-receive-delta = []
 # Trade-offs: Relaxes the single-producer compile-time invariant
 multi-producer = []
 
+# Spill payload compression (#2336) - reserves the SpillCompression::Zstd
+# variant on SpillPolicy. The codec wiring lands separately; this flag only
+# guards the public enum variant so default builds stay free of any new
+# dependency.
+spill-compression = []
+
 # Per-thread buffer slab (#1271, #1370) - replaces the single-slot thread-local
 # cache in front of BufferPool with a depth-bounded LIFO slab per thread.
 # Benefits: Removes central-queue cursor traffic on every return for workers
