@@ -493,7 +493,12 @@ fn page_size() -> usize {
 /// The `slots` parameter provides buffer indices and pointers. Callers must
 /// ensure slots are checked out from a `RegisteredBufferGroup` that is
 /// registered with the same ring.
-pub(super) fn submit_read_fixed_batch(
+///
+/// Exposed publicly under `#[doc(hidden)]` so integration tests in
+/// `crates/fast_io/tests/` can exercise short-read paths (NFS, FUSE,
+/// slow block devices). Not part of the stable public API.
+#[doc(hidden)]
+pub fn submit_read_fixed_batch(
     ring: &mut RawIoUring,
     fd: io_uring::types::Fd,
     output: &mut [u8],
@@ -604,7 +609,18 @@ pub(super) fn submit_read_fixed_batch(
         total_read += batch_advance;
     }
 
-    Ok(total_read.min(total))
+    // submit_read_fixed_batch invariant: on the success path the reported
+    // byte count must never exceed the caller's output capacity. A regression
+    // here would let callers read uninitialised tail memory or write past
+    // their slice. The per-CQE copy is already clamped via `out_end.min(total)`
+    // so this guards the returned length itself.
+    let reported = total_read.min(total);
+    debug_assert!(
+        reported <= output.len(),
+        "submit_read_fixed_batch returned {reported} bytes for an output of {} bytes",
+        output.len()
+    );
+    Ok(reported)
 }
 
 /// Submits a batch of `WriteFixed` SQEs writing from registered buffers.
@@ -702,7 +718,11 @@ pub(super) fn submit_write_fixed_batch(
 ///
 /// Avoids lifetime complications of passing `RegisteredBufferSlot` references
 /// into the batch submission functions.
-pub(super) struct RegisteredBufferSlotInfo {
+///
+/// Exposed publicly under `#[doc(hidden)]` to allow integration tests to
+/// drive [`submit_read_fixed_batch`]. Not part of the stable public API.
+#[doc(hidden)]
+pub struct RegisteredBufferSlotInfo {
     /// Raw pointer to the registered buffer memory.
     pub ptr: *mut u8,
     /// Buffer index for `ReadFixed`/`WriteFixed` SQEs.

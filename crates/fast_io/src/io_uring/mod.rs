@@ -127,6 +127,20 @@ pub use linkat::{
 pub use registered_buffers::{
     RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats, RegisteredBufferStatus,
 };
+
+/// Internal re-exports of the underlying `io-uring` crate types used by
+/// `#[doc(hidden)]` test helpers (see `registered_buffers::submit_read_fixed_batch`).
+/// These are exposed so integration tests in `crates/fast_io/tests/` can drive
+/// the fixed-buffer batch path without taking a separate dev-dependency on the
+/// `io-uring` crate. Not part of the stable public API.
+#[doc(hidden)]
+pub mod __test_reexports {
+    pub use ::io_uring::IoUring as RawIoUring;
+    pub use ::io_uring::types::Fd;
+}
+
+#[doc(hidden)]
+pub use registered_buffers::{RegisteredBufferSlotInfo, submit_read_fixed_batch};
 pub use renameat2::{
     IORING_OP_RENAMEAT, RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT, RenameAt2Args,
     build_renameat2_sqe, build_renameat2_sqe_unchecked, renameat2_blocking, renameat2_supported,
