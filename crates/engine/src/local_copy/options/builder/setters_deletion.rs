@@ -85,18 +85,6 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
-    /// Enables `--delete-strict-order` opt-in semantics for `--delete-during`.
-    ///
-    /// When enabled together with `--delete-during`, the executor performs an
-    /// interleaved walk-then-delete in each directory instead of batching the
-    /// deletion sweep after the directory's transfers complete.  See
-    /// [`LocalCopyOptions::delete_strict_order`] for the upstream reference.
-    #[must_use]
-    pub fn delete_strict_order(mut self, strict: bool) -> Self {
-        self.delete_strict_order = strict;
-        self
-    }
-
     /// Sets the maximum number of deletions allowed.
     #[must_use]
     pub fn max_deletions(mut self, limit: Option<u64>) -> Self {

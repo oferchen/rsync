@@ -41,8 +41,6 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --delete-during  Remove destination files while processing directories.\n",
             "      --delete-delay  Defer deletions until after transfers while computing them during the run.\n",
             "      --delete-after  Remove destination files after transfers complete.\n",
-            "      --delete-strict-order  Run each directory's --delete-during sweep before its children are processed (upstream interleaved walk-then-delete; opt-in).\n",
-            "      --no-delete-strict-order  Disable --delete-strict-order (default).\n",
             "      --delete-excluded  Remove excluded destination files during deletion sweeps.\n",
             "      --max-delete=NUM  Limit deletions to NUM entries per run.\n",
             "      --min-size=SIZE  Skip files smaller than SIZE.\n",

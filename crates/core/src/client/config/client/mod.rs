@@ -62,8 +62,6 @@ pub struct ClientConfig {
     pub(super) delete_excluded: bool,
     pub(super) delete_missing_args: bool,
     pub(super) ignore_errors: bool,
-    /// `--delete-strict-order` opt-in for upstream interleaved walk-then-delete.
-    pub(super) delete_strict_order: bool,
     pub(super) max_delete: Option<u64>,
     pub(super) recursive: bool,
     pub(super) dirs: bool,
@@ -246,7 +244,6 @@ impl Default for ClientConfig {
             delete_excluded: false,
             delete_missing_args: false,
             ignore_errors: false,
-            delete_strict_order: false,
             max_delete: None,
             recursive: false,
             dirs: false,
