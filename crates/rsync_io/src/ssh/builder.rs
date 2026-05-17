@@ -366,7 +366,11 @@ impl SshCommand {
         ))
     }
 
-    fn command_parts(&self) -> (OsString, Vec<OsString>) {
+    /// Returns the `(program, args)` pair that `spawn` would hand to
+    /// `std::process::Command`. Visible to sibling modules so the async
+    /// transport in [`super::async_transport`] can reuse the same argv
+    /// composition without duplicating the option-injection logic.
+    pub(super) fn command_parts(&self) -> (OsString, Vec<OsString>) {
         let mut args = Vec::with_capacity(
             2 + self.options.len() + self.remote_command.len() + usize::from(self.port.is_some()),
         );

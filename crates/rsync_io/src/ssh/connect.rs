@@ -11,12 +11,12 @@
 //!
 //! # Scope
 //!
-//! This entry point is the synchronous primitive only. It spawns the system
+//! This entry point is the synchronous primitive. It spawns the system
 //! `ssh` binary via [`SshCommand::spawn`] and returns the existing
 //! [`SshConnection`] type for back-compat. The async variant
-//! (`AsyncSshTransport::connect`) is tracked as task #1801 and lives in a
-//! future PR; this PR deliberately does not introduce a tokio runtime
-//! dependency in the SSH transport path.
+//! ([`super::AsyncSshTransport::execute_remote_rsync`], task #1796) is
+//! gated behind the `--features async-ssh` cargo feature so default
+//! builds remain free of any tokio dependency in the SSH transport path.
 //!
 //! # Example
 //!
@@ -171,8 +171,8 @@ impl SshConnection {
     /// This is the synchronous primitive for task #1795. It returns the
     /// existing [`SshConnection`] type so callers can transition without
     /// touching their downstream read/write paths. The async variant
-    /// (`AsyncSshTransport::connect`) is task #1801 and lives in a future
-    /// PR.
+    /// ([`super::AsyncSshTransport::execute_remote_rsync`], task #1796)
+    /// is gated behind the `--features async-ssh` cargo feature.
     ///
     /// # Errors
     ///

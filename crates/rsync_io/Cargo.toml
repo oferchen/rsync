@@ -30,6 +30,8 @@ raw-cpuid = { workspace = true, optional = true }
 
 [features]
 embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep:tokio"]
+# Async SSH transport: opt-in tokio-process backing for `SshConnection`.
+# See `docs/design/async-ssh-transport.md` (#1593) for the staging plan.
 async-ssh = ["dep:tokio"]
 
 [dev-dependencies]
