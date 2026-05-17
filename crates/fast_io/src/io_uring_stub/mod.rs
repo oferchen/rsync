@@ -52,7 +52,9 @@ pub use crate::io_uring_common::{
     SharedCompletion, SharedRingConfig, buffer_id_from_cqe_flags,
 };
 
-pub use buffer_ring::{BgidAllocator, BufferRing, pbuf_ring_supported};
+pub use buffer_ring::{
+    BgidAllocator, BufferRing, bgid_inflight, bgid_peak_used, pbuf_ring_supported,
+};
 pub use cancel::{CancelOutcome, cancel_all_by_fd, cancel_by_user_data};
 pub use config::{StubIoUringBackend, config_detail, is_io_uring_available, sqpoll_fell_back};
 pub use disk_batch::IoUringDiskBatch;
