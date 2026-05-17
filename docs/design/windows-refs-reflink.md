@@ -1,5 +1,31 @@
 # Windows ReFS Reflink via FSCTL_DUPLICATE_EXTENTS_TO_FILE (#1389)
 
+## Status: Implemented
+
+The ReFS reflink path is shipped. Source of truth:
+
+- `crates/fast_io/src/platform_copy/dispatch.rs` -
+  `try_refs_reflink_impl`, `try_refs_reflink_range_impl`,
+  Windows `platform_copy_impl` dispatch chain.
+- `crates/fast_io/src/refs_detect.rs` - `is_refs_filesystem`
+  with per-volume memoization.
+- `crates/fast_io/src/platform_copy/types.rs` -
+  `CopyMethod::ReFsReflink`.
+- Public re-exports in `crates/fast_io/src/lib.rs`:
+  `try_refs_reflink`, `try_refs_reflink_range`,
+  `is_refs_filesystem`, `clear_refs_cache`.
+- Tests in `crates/fast_io/src/platform_copy/tests.rs` cover
+  non-Windows unsupported, NTFS graceful failure, missing
+  source, ioctl parameter construction, and the partial-range
+  variant.
+
+One deviation from this note: the implementation uses
+`windows-sys` (the workspace-wide convention, pinned at 0.61 in
+`crates/fast_io/Cargo.toml`) rather than the higher-level
+`windows` crate. All `unsafe` is scoped to the ioctl wrappers
+with SAFETY comments citing Win32 docs, satisfying the
+fast_io unsafe-code policy.
+
 ## Summary
 
 oc-rsync ships copy-on-write fast paths for Linux (`FICLONE` on
