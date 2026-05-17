@@ -117,6 +117,7 @@ proptest = "1.8"
 xattr = "1.6"
 libc = "0.2"
 criterion = { version = "0.8", features = ["html_reports"] }
+dashmap = { workspace = true }
 
 [[bench]]
 name = "optimizations_benchmark"
@@ -172,4 +173,8 @@ harness = false
 
 [[bench]]
 name = "drain_parallel_alternatives"
+harness = false
+
+[[bench]]
+name = "delete_plan_map_contention"
 harness = false
