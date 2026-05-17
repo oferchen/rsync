@@ -22,6 +22,11 @@ path = "../crates/checksums"
 [dependencies.filters]
 path = "../crates/filters"
 
+[dependencies.compress]
+path = "../crates/compress"
+default-features = false
+features = ["zstd", "zlib-ng"]
+
 [[bin]]
 name = "protocol_wire"
 path = "fuzz_targets/protocol_wire.rs"
@@ -46,6 +51,34 @@ bench = false
 [[bin]]
 name = "filter_rules_vs_upstream"
 path = "fuzz_targets/filter_rules_vs_upstream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "multiplex_frame_parse"
+path = "fuzz_targets/multiplex_frame_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flist_entry_decode"
+path = "fuzz_targets/flist_entry_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decompressor_zstd"
+path = "fuzz_targets/decompressor_zstd.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decompressor_zlib"
+path = "fuzz_targets/decompressor_zlib.rs"
 test = false
 doc = false
 bench = false
