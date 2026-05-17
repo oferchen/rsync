@@ -96,7 +96,7 @@ operate on local-charset names by construction:
    `FilterChain::allows()` before any iconv conversion.
 2. The receiver applies `ic_recv` inside the file-list reader, so by the
    time the file list reaches the filter chain (during
-   `--delete-excluded` pruning, deletion sweeps, or the local-copy
+   `--delete-excluded` pruning, the per-directory delete pipeline, or the local-copy
    executor), the names are already local-charset.
 3. Pattern strings are stored verbatim, exactly as upstream stores them.
 
