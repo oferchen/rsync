@@ -54,6 +54,15 @@ io_uring = ["dep:io-uring"]
 # Trade-offs: Windows-only, adds complexity for async file operations
 iocp = []
 
+# Windows TransmitFile() zero-copy file-to-socket primitive (#2301)
+# Requirements: Windows + iocp feature; sockets opened with WSA_FLAG_OVERLAPPED
+# Benefits: Single kernel-mode DMA from page cache straight to NIC, no
+#   user-space copy. Pairs with Linux sendfile(2) on the corresponding path.
+# Trade-offs: Returns ERROR_NOT_SUPPORTED on SMB/DFS shares and encrypted
+#   volumes; the caller must fall back to regular WSASend. See
+#   docs/design/windows-transmitfile-zerocopy.md for the integration plan.
+transmitfile = ["iocp"]
+
 # copy_file_range: Always compiled with runtime detection (no longer a feature gate)
 # The copy_file_range module is always available; it uses runtime detection on Linux
 # and automatic fallback to read/write on other platforms or when syscall fails.

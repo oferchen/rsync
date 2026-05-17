@@ -339,6 +339,66 @@ impl IocpSocketWriter {
     pub fn as_raw_socket(&self) -> RawSocket {
         self.socket as RawSocket
     }
+
+    /// Attempts a zero-copy `TransmitFile()` send of `length` bytes from
+    /// `file` (whose current file pointer determines the starting offset)
+    /// directly to the socket, falling back to the buffered
+    /// [`Self::send_async`] path when the kernel reports
+    /// `ERROR_NOT_SUPPORTED` (SMB / DFS / encrypted volume, etc.).
+    ///
+    /// On a successful TransmitFile this returns `Ok(length as usize)`
+    /// because the synchronous form of the primitive is all-or-nothing.
+    /// When the fast path refuses with `Unsupported`, the caller-provided
+    /// `fallback_buf` is filled from `file` (up to `length` bytes) and
+    /// emitted through `WSASend`; the returned `usize` is whatever the
+    /// fallback transmits in its first call, leaving any remainder for
+    /// the caller's outer loop. Other I/O errors (broken pipe, reset, ...)
+    /// are surfaced verbatim with no fallback attempt.
+    ///
+    /// This method is only available when the crate is built with the
+    /// `transmitfile` feature; without it the daemon TCP send path
+    /// continues to use the plain [`Self::send_async`] entry point.
+    #[cfg(feature = "transmitfile")]
+    pub fn try_transmit_file_path(
+        &mut self,
+        file: std::os::windows::io::RawHandle,
+        length: u64,
+        fallback_buf: &mut [u8],
+    ) -> io::Result<usize> {
+        use std::io::Read;
+
+        match super::transmit_file::try_transmit_file(self.as_raw_socket(), file, length) {
+            Ok(sent) => Ok(sent),
+            Err(err) if err.kind() == io::ErrorKind::Unsupported => {
+                // Per the design's section 6 (failure modes and fallback),
+                // ERROR_NOT_SUPPORTED is the trigger to revert to the
+                // existing read+WSASend loop. The fallback runs a single
+                // read+send iteration; callers loop until `length` bytes
+                // have been transferred.
+                let to_read = std::cmp::min(fallback_buf.len() as u64, length) as usize;
+                if to_read == 0 {
+                    return Ok(0);
+                }
+                // SAFETY: the RawHandle is a regular-file HANDLE owned by
+                // the caller for the duration of this call. Borrowing it
+                // through ManuallyDrop<File> avoids closing it on drop.
+                #[allow(unsafe_code)]
+                let mut borrowed = unsafe {
+                    std::mem::ManuallyDrop::new(
+                        <std::fs::File as std::os::windows::io::FromRawHandle>::from_raw_handle(
+                            file,
+                        ),
+                    )
+                };
+                let n = borrowed.read(&mut fallback_buf[..to_read])?;
+                if n == 0 {
+                    return Ok(0);
+                }
+                self.send_async(&fallback_buf[..n])
+            }
+            Err(err) => Err(err),
+        }
+    }
 }
 
 // SAFETY: IocpSocketReader holds a SOCKET (kernel handle, thread-safe) and an
@@ -604,6 +664,51 @@ mod tests {
             .expect("pump uniquely owned")
             .shutdown()
             .unwrap();
+    }
+
+    #[cfg(feature = "transmitfile")]
+    #[test]
+    fn try_transmit_file_path_round_trips_a_file() {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::os::windows::io::AsRawHandle;
+        use tempfile::NamedTempFile;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let payload: Vec<u8> = (0..65_536u32).map(|i| (i as u8).wrapping_add(13)).collect();
+
+        let expected = payload.clone();
+        let server = thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut received = Vec::with_capacity(expected.len());
+            sock.read_to_end(&mut received).unwrap();
+            received
+        });
+
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(&payload).unwrap();
+        tmp.flush().unwrap();
+        let file = OpenOptions::new().read(true).open(tmp.path()).unwrap();
+
+        let client = TcpStream::connect(addr).unwrap();
+        let pump = Arc::new(CompletionPump::new().unwrap());
+        let mut writer =
+            IocpSocketWriter::associate(client.as_raw_socket(), Arc::clone(&pump)).unwrap();
+
+        let mut fallback = vec![0u8; 64 * 1024];
+        let sent = writer
+            .try_transmit_file_path(file.as_raw_handle(), payload.len() as u64, &mut fallback)
+            .unwrap();
+        assert_eq!(sent, payload.len());
+
+        drop(writer);
+        drop(client);
+        drop(file);
+        let received = server.join().unwrap();
+        assert_eq!(received, payload);
+
+        Arc::try_unwrap(pump).ok().unwrap().shutdown().unwrap();
     }
 
     #[test]
