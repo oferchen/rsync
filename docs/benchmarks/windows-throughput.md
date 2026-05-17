@@ -102,6 +102,57 @@ BENCH_RUNS=5 BENCH_WARMUP=2 \
   bash scripts/windows_throughput_bench.sh
 ```
 
+## Drilldown mode
+
+Set `OC_RSYNC_BENCH_DRILLDOWN=1` to append three per-hotspot
+sub-scenarios to the run. They map 1:1 onto the IOCP sync points
+catalogued in
+[`docs/audits/iocp-sync-blocking-audit.md`](../audits/iocp-sync-blocking-audit.md)
+so that a future patch targeting a specific row in that audit can be
+attributed to the matching scenario without re-deriving which hotspot
+moved.
+
+| Scenario                | What it isolates                                                                 | Control                  | Audit rows |
+|-------------------------|----------------------------------------------------------------------------------|--------------------------|------------|
+| `write_only_iocp`       | `IocpWriter` per-IO blocking drain. `--whole-file --inplace` forces every byte through the write path with no temp-file rename. | `cp` (std::fs::copy)     | #1, #4, #13 |
+| `read_only_iocp`        | `IocpReader` per-IO blocking drain. `--dry-run` walks and reads the 1 GiB fixture but writes nothing. | upstream rsync `--dry-run` | #2, #3      |
+| `network_only_loopback` | `IocpSocketWriter` / `Reader` send/recv path. Pushes a 1 GiB file between two loopback rsync daemons on the same disk so disk bandwidth cancels out. | upstream rsync loopback daemon | #8 - #11    |
+
+Invocation:
+
+```sh
+# From an MSYS2 shell on a Windows host.
+OC_RSYNC_BENCH_DRILLDOWN=1 \
+  BENCH_RUNS=5 BENCH_WARMUP=2 \
+  OC_RSYNC=/c/path/to/target/release/oc-rsync.exe \
+  bash scripts/windows_throughput_bench.sh
+```
+
+The drilldown daemons bind `127.0.0.1:$BENCH_DAEMON_PORT` and
+`127.0.0.1:$((BENCH_DAEMON_PORT + 1))` (default `18730` / `18731`).
+Override `BENCH_DAEMON_PORT` if those ports are in use.
+
+### Interpretation
+
+Read each ratio the same way as the main scenarios
+(`mean(control) / mean(oc-rsync)`):
+
+- `write_only_iocp`: regression here points at the write-path changes
+  in `crates/fast_io/src/iocp/file_writer.rs` and
+  `crates/fast_io/src/iocp/disk_batch.rs`. The `cp` control caps the
+  upper bound at NTFS write bandwidth; oc-rsync should land within a
+  small factor of it.
+- `read_only_iocp`: regression here points at `file_reader.rs` or the
+  generator/sender read pipeline. Because both sides run `--dry-run`,
+  divergence is not explained by network or fsync work.
+- `network_only_loopback`: regression here implicates `socket.rs` or
+  the multiplex layer. Disk bandwidth is symmetric across both
+  commands, so the delta reflects send/recv pipelining.
+
+The drilldown sub-scenarios are **not** in the required-checks list
+and have no acceptable-band thresholds; they exist to attribute
+movement, not to gate merges.
+
 ## Tuning knobs
 
 The reusable workflow exposes these inputs (all optional):
