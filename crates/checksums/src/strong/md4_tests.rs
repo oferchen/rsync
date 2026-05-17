@@ -437,11 +437,11 @@ mod tests {
 
     #[test]
     fn md4_matches_reference_impl_random_data() {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::RngExt;
+        let mut rng = rand::rng();
 
         for size in [0, 1, 16, 63, 64, 65, 127, 128, 129, 255, 256, 1000, 10000] {
-            let data: Vec<u8> = (0..size).map(|_| rng.r#gen()).collect();
+            let data: Vec<u8> = (0..size).map(|_| rng.random()).collect();
             let our_digest = Md4::digest(&data);
             let ref_digest: [u8; 16] = md4::Md4::digest(&data).into();
             assert_eq!(our_digest, ref_digest, "Mismatch for size {size}");
