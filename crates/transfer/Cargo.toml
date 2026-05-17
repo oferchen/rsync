@@ -100,6 +100,12 @@ iocp = ["fast_io/iocp"]
 # Incremental file list processing with failed directory tracking
 incremental-flist = []
 
+# Parallel receive-side delta apply (#1368) - forwards to the engine crate's
+# `parallel-receive-delta` feature. Default off; opt-in for benchmarking the
+# parallel apply scaffold described in
+# `docs/design/parallel-receive-delta-application.md`.
+parallel-receive-delta = ["engine/parallel-receive-delta"]
+
 # ============================================================================
 # Runtime Features
 # ============================================================================

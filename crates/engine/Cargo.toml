@@ -90,6 +90,13 @@ parallel = []
 # Trade-offs: Relaxes the single-producer compile-time invariant
 multi-producer = []
 
+# Parallel receive-side delta apply (#1368) - scaffolds the per-file rayon
+# fanout for checksum verification while keeping the per-file destination
+# write serial. Default off so production receivers continue to use the
+# sequential apply loop. Opt-in for benchmarking and the phased rollout
+# described in `docs/design/parallel-receive-delta-application.md`.
+parallel-receive-delta = []
+
 # Per-thread buffer slab (#1271, #1370) - replaces the single-slot thread-local
 # cache in front of BufferPool with a depth-bounded LIFO slab per thread.
 # Benefits: Removes central-queue cursor traffic on every return for workers
