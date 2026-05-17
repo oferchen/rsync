@@ -74,7 +74,13 @@ const SHUTDOWN_KEY: usize = usize::MAX;
 ///
 /// Larger batches amortize the syscall cost across more completions but also
 /// increase per-call latency. 64 matches the io_uring CQE batch sizing used
-/// by `crates/fast_io/src/io_uring/disk_batch.rs`.
+/// by `crates/fast_io/src/io_uring/disk_batch.rs` and the
+/// `super::config::MAX_CONCURRENT_OPS` ceiling used by the auto-sized
+/// `IocpConfig::concurrent_ops`. Kept fixed rather than CPU-scaled because
+/// the drain buffer grows on demand up to [`MAX_BATCH_SIZE`] whenever the
+/// kernel signals `ERROR_INSUFFICIENT_BUFFER` (issue #1930), so wide hosts
+/// reach a higher steady-state depth without paying a larger initial
+/// allocation per pump.
 const DEFAULT_BATCH_SIZE: usize = 64;
 
 /// Hard cap on dynamic batch growth when the drain loop encounters

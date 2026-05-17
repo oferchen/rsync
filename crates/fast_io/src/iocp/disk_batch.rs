@@ -65,7 +65,12 @@ const DEFAULT_BUFFER_CAPACITY: usize = 256 * 1024;
 /// Maximum entries dequeued by a single `GetQueuedCompletionStatusEx` call.
 ///
 /// Matches the io_uring side's CQE batch sizing so both backends use the
-/// same drain granularity.
+/// same drain granularity. Kept fixed (not CPU-scaled) because the disk
+/// batch drains exactly the in-flight cohort capped by
+/// `IocpConfig::concurrent_ops`, which is already auto-sized by
+/// `super::config::default_concurrent_ops`. The clamp ceiling
+/// (`super::config::MAX_CONCURRENT_OPS`) is intentionally aligned with this
+/// constant so a single drain call can reap the entire cohort.
 const COMPLETION_DRAIN_BATCH: usize = 64;
 
 /// Wait timeout for completion drains, in milliseconds. The disk batch
