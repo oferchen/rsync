@@ -230,6 +230,18 @@ Severity scale:
   Wire-level divergence specific to macOS BSD coreutils (e.g. `rsync`
   versions linked against different `iconv`/`zlib` builds) or Windows
   path normalisation regressions cannot be caught.
+- **Status: partially closed.** `.github/workflows/_interop-macos.yml`
+  (required) runs the portable harness in
+  `tools/ci/run_interop_smoke.sh` against `brew install rsync` on
+  `macos-latest`. `.github/workflows/_interop-windows.yml` (best-effort,
+  `continue-on-error: true`) runs the same harness against MSYS2's
+  upstream rsync on `windows-latest`. Both are wired in `ci.yml` as
+  `interop-upstream-macos` and `interop-upstream-windows`. Skipped per
+  OS: xattr/ACL on both, daemon mode on both, SSH loopback on both,
+  `--list-only` parity on Windows (Cygwin path-style differences).
+  `interop-validation` still hard-codes `ubuntu-latest`; a follow-up
+  will extend that workflow when the smoke surface stabilises on
+  macOS/Windows.
 
 ### G6 - Medium - `concurrent-sessions`, `sd-notify`, `tracing`, `serde`, `async`, `async-daemon` only built on Linux
 
