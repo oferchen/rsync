@@ -35,6 +35,8 @@ mod file_writer;
 mod overlapped;
 mod pump;
 pub mod socket;
+#[cfg(feature = "transmitfile")]
+pub mod transmit_file;
 
 pub use config::{
     IOCP_MIN_FILE_SIZE, IocpConfig, iocp_availability_reason, is_iocp_available,
@@ -53,3 +55,5 @@ pub use file_writer::IocpWriter;
 pub use pump::{
     CompletionHandler, CompletionPump, IocpPumpConfig, oneshot_handler, post_completion,
 };
+#[cfg(feature = "transmitfile")]
+pub use transmit_file::{TRANSMIT_FILE_MAX_BYTES, try_transmit_file};

@@ -221,6 +221,8 @@ pub use iocp::{
     iocp_availability_reason, is_iocp_available, oneshot_handler,
     skip_event_optimization_available,
 };
+#[cfg(all(target_os = "windows", feature = "transmitfile"))]
+pub use iocp::{TRANSMIT_FILE_MAX_BYTES, try_transmit_file};
 pub use iocp::{
     reader_from_path as iocp_reader_from_path, writer_from_file as iocp_writer_from_file,
 };
