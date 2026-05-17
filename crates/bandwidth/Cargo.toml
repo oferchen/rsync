@@ -22,12 +22,12 @@ test-support = []
 async = ["dep:tokio"]
 
 [dependencies]
-memchr = "2.7"
-thiserror = "2.0"
+memchr = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true, optional = true, features = ["time"] }
 
 [dev-dependencies]
-proptest = "1.8"
+proptest = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "time"] }
 
 [[test]]

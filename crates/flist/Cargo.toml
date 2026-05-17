@@ -16,21 +16,21 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 logging = { path = "../logging" }
-rayon = { version = "1.10", optional = true }
+rayon = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-thiserror = "2.0"
+thiserror = { workspace = true }
 
 # For Unix syscalls (fstatat, statx) in batched_stat module
 [target.'cfg(unix)'.dependencies]
-libc = { version = "0.2", optional = true }
+libc = { workspace = true, optional = true }
 
 [dev-dependencies]
-tempfile = "3.15"
+tempfile = { workspace = true }
 test-support = { path = "../test-support" }
 
 [features]
 default = []
 # Parallel file list processing using rayon and batched syscalls
-parallel = ["rayon", "dep:libc"]
+parallel = ["dep:rayon", "dep:libc"]
 # Serialization support for file list types
 serde = ["dep:serde"]

@@ -43,7 +43,7 @@ iconv = ["core/iconv"]
 parallel = ["engine/lazy-metadata", "checksums/parallel"]
 
 [dependencies]
-clap = { version = "4.5.17", features = ["std"] }
+clap = { workspace = true }
 core = { path = "../core", default-features = false }
 engine = { path = "../engine", default-features = false }
 logging = { path = "../logging", features = ["tracing"] }
@@ -55,7 +55,7 @@ rsync_io = { path = "../rsync_io", package = "rsync_io" }
 fast_io = { path = "../fast_io", default-features = false }
 rayon = { workspace = true }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
-tempfile = "3.15"
+tempfile = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
@@ -73,16 +73,16 @@ checksums = { path = "../checksums", default-features = false }
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.1"
-filetime = "0.2"
-tempfile = "3.15"
+filetime = { workspace = true }
+tempfile = { workspace = true }
 test-support = { path = "../test-support" }
 filters = { path = "../filters" }
-rustix = { version = "1.1", features = ["fs"] }
-base64 = "0.22"
-libc = "0.2"
+rustix = { workspace = true, features = ["fs"] }
+base64 = { workspace = true }
+libc = { workspace = true }
 apple-fs = { path = "../apple-fs" }
 serial_test = "3.1"
-criterion = { version = "0.8", features = ["html_reports"] }
+criterion = { workspace = true }
 
 [[bench]]
 name = "startup_benchmark"
