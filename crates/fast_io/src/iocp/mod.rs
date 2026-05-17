@@ -39,7 +39,8 @@ pub mod socket;
 pub mod transmit_file;
 
 pub use config::{
-    IOCP_MIN_FILE_SIZE, IocpConfig, iocp_availability_reason, is_iocp_available,
+    IOCP_MIN_FILE_SIZE, IocpConfig, MAX_CONCURRENT_OPS, MIN_CONCURRENT_OPS,
+    concurrent_ops_for_cpus, default_concurrent_ops, iocp_availability_reason, is_iocp_available,
     skip_event_optimization_available,
 };
 pub use disk_batch::IocpDiskBatch;

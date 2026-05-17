@@ -22,11 +22,56 @@ static SKIP_EVENT_AVAILABLE: AtomicBool = AtomicBool::new(false);
 /// setup overhead exceeds the async benefit for tiny files.
 pub const IOCP_MIN_FILE_SIZE: u64 = 64 * 1024;
 
-/// Default number of concurrent I/O operations per completion port.
-pub const DEFAULT_CONCURRENT_OPS: u32 = 4;
+/// Lower bound for the auto-sized concurrent-ops depth.
+///
+/// Even on a single-CPU host we keep at least 8 overlapped `WriteFile`
+/// operations in flight so the IOCP drain loop is never starved by a
+/// pathological 1-deep submission window. Matches `IoUringConfig::default`
+/// behaviour where the SQ depth never falls below the default ring entries.
+pub const MIN_CONCURRENT_OPS: u32 = 8;
+
+/// Upper bound for the auto-sized concurrent-ops depth.
+///
+/// 64 matches the io_uring CQE batch sizing in
+/// `crates/fast_io/src/iocp/disk_batch.rs::COMPLETION_DRAIN_BATCH` and the
+/// initial drain size in `crates/fast_io/src/iocp/pump.rs::DEFAULT_BATCH_SIZE`.
+/// Keeping the submission window aligned with the drain batch lets a single
+/// `GetQueuedCompletionStatusEx` reap an entire in-flight cohort.
+pub const MAX_CONCURRENT_OPS: u32 = 64;
 
 /// Default I/O buffer size for IOCP operations.
 pub const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
+
+/// Auto-sizes the concurrent-ops depth from `cpus`.
+///
+/// Returns `(cpus * 4).clamp(MIN_CONCURRENT_OPS, MAX_CONCURRENT_OPS)`.
+/// Mirrors the io_uring SQ-entry derivation: 4 in-flight ops per logical
+/// core keeps every CPU fed without overwhelming the completion drain.
+#[must_use]
+pub const fn concurrent_ops_for_cpus(cpus: u32) -> u32 {
+    let raw = cpus.saturating_mul(4);
+    if raw < MIN_CONCURRENT_OPS {
+        MIN_CONCURRENT_OPS
+    } else if raw > MAX_CONCURRENT_OPS {
+        MAX_CONCURRENT_OPS
+    } else {
+        raw
+    }
+}
+
+/// Auto-sized default concurrent I/O operations per completion port.
+///
+/// Derives the value from `std::thread::available_parallelism()` so the
+/// in-flight depth scales with the host's logical CPU count. Falls back to
+/// `MIN_CONCURRENT_OPS` when parallelism detection fails.
+#[must_use]
+pub fn default_concurrent_ops() -> u32 {
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let cpus_u32 = u32::try_from(cpus).unwrap_or(u32::MAX);
+    concurrent_ops_for_cpus(cpus_u32)
+}
 
 /// Configuration for IOCP instances.
 #[derive(Debug, Clone)]
@@ -51,7 +96,7 @@ pub struct IocpConfig {
 impl Default for IocpConfig {
     fn default() -> Self {
         Self {
-            concurrent_ops: DEFAULT_CONCURRENT_OPS,
+            concurrent_ops: default_concurrent_ops(),
             buffer_size: DEFAULT_BUFFER_SIZE,
             unbuffered: false,
             write_through: false,
@@ -61,10 +106,14 @@ impl Default for IocpConfig {
 
 impl IocpConfig {
     /// Creates a config optimized for large file transfers.
+    ///
+    /// The concurrent-ops depth uses the CPU-derived default so wide hosts
+    /// can keep more overlapped writes in flight, matching the io_uring
+    /// large-file preset's larger SQ depth.
     #[must_use]
     pub fn for_large_files() -> Self {
         Self {
-            concurrent_ops: 8,
+            concurrent_ops: default_concurrent_ops(),
             buffer_size: 256 * 1024,
             unbuffered: false,
             write_through: false,
@@ -72,10 +121,14 @@ impl IocpConfig {
     }
 
     /// Creates a config optimized for many small files.
+    ///
+    /// The concurrent-ops depth uses the CPU-derived default; small-file
+    /// pipelines are typically syscall-bound so feeding every CPU pays off
+    /// more than a shallow fixed window.
     #[must_use]
     pub fn for_small_files() -> Self {
         Self {
-            concurrent_ops: 4,
+            concurrent_ops: default_concurrent_ops(),
             buffer_size: 16 * 1024,
             unbuffered: false,
             write_through: false,
@@ -161,7 +214,14 @@ mod tests {
     #[test]
     fn config_default_values() {
         let config = IocpConfig::default();
-        assert_eq!(config.concurrent_ops, DEFAULT_CONCURRENT_OPS);
+        assert!(
+            (MIN_CONCURRENT_OPS..=MAX_CONCURRENT_OPS).contains(&config.concurrent_ops),
+            "default concurrent_ops {} must sit inside [{}, {}]",
+            config.concurrent_ops,
+            MIN_CONCURRENT_OPS,
+            MAX_CONCURRENT_OPS,
+        );
+        assert_eq!(config.concurrent_ops, default_concurrent_ops());
         assert_eq!(config.buffer_size, DEFAULT_BUFFER_SIZE);
         assert!(!config.unbuffered);
         assert!(!config.write_through);
@@ -170,15 +230,51 @@ mod tests {
     #[test]
     fn config_large_files_preset() {
         let config = IocpConfig::for_large_files();
-        assert_eq!(config.concurrent_ops, 8);
+        assert_eq!(config.concurrent_ops, default_concurrent_ops());
         assert_eq!(config.buffer_size, 256 * 1024);
     }
 
     #[test]
     fn config_small_files_preset() {
         let config = IocpConfig::for_small_files();
-        assert_eq!(config.concurrent_ops, 4);
+        assert_eq!(config.concurrent_ops, default_concurrent_ops());
         assert_eq!(config.buffer_size, 16 * 1024);
+    }
+
+    #[test]
+    fn concurrent_ops_eight_cpu_host_yields_thirty_two() {
+        // 8 logical CPUs * 4 in-flight ops per core = 32, inside the clamp.
+        assert_eq!(concurrent_ops_for_cpus(8), 32);
+    }
+
+    #[test]
+    fn concurrent_ops_one_cpu_host_clamps_to_minimum() {
+        // 1 CPU * 4 = 4, below MIN_CONCURRENT_OPS (8) so the floor wins.
+        assert_eq!(concurrent_ops_for_cpus(1), MIN_CONCURRENT_OPS);
+        assert_eq!(concurrent_ops_for_cpus(2), MIN_CONCURRENT_OPS);
+    }
+
+    #[test]
+    fn concurrent_ops_wide_host_clamps_to_maximum() {
+        // 16 CPUs * 4 = 64, exactly the ceiling; 32 CPUs * 4 = 128, clamped.
+        assert_eq!(concurrent_ops_for_cpus(16), MAX_CONCURRENT_OPS);
+        assert_eq!(concurrent_ops_for_cpus(32), MAX_CONCURRENT_OPS);
+        assert_eq!(concurrent_ops_for_cpus(256), MAX_CONCURRENT_OPS);
+    }
+
+    #[test]
+    fn concurrent_ops_saturates_on_overflow() {
+        // u32::MAX * 4 saturates; the clamp still pins to MAX_CONCURRENT_OPS.
+        assert_eq!(concurrent_ops_for_cpus(u32::MAX), MAX_CONCURRENT_OPS);
+    }
+
+    #[test]
+    fn default_concurrent_ops_matches_detected_cpus() {
+        let cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let cpus_u32 = u32::try_from(cpus).unwrap_or(u32::MAX);
+        assert_eq!(default_concurrent_ops(), concurrent_ops_for_cpus(cpus_u32));
     }
 
     #[test]
