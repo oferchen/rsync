@@ -1,0 +1,165 @@
+name: Benchmark (Windows throughput)
+
+# Reusable workflow: Windows throughput comparison between oc-rsync
+# (built with the iocp fast-path enabled) and the upstream MSYS2 rsync
+# binary, driven by hyperfine.
+#
+# This is a soft signal, NOT a required check. Windows runners have
+# more wall-clock variance than Linux runners, and hyperfine's tail
+# latency on `windows-latest` is a known noise source. We surface the
+# numbers as artefacts and a step summary; we do not gate merges on
+# them.
+#
+# Counterpart of `_interop-windows.yml` (PR #4297) which covers
+# correctness on the same toolchain. This workflow covers throughput.
+
+on:
+  workflow_call:
+    inputs:
+      cache_version:
+        description: 'Cache version for invalidation'
+        type: string
+        default: 'v1'
+      rust_toolchain:
+        description: 'Rust toolchain version'
+        type: string
+        default: 'stable'
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        type: number
+        default: 60
+      warmup_runs:
+        description: 'Hyperfine warmup runs'
+        type: number
+        default: 1
+      measured_runs:
+        description: 'Hyperfine measured runs'
+        type: number
+        default: 3
+      large_file_mib:
+        description: 'Size of the single large fixture file (MiB)'
+        type: number
+        default: 1024
+      small_file_count:
+        description: 'Number of small fixture files'
+        type: number
+        default: 10000
+  workflow_dispatch:
+    inputs:
+      warmup_runs:
+        description: 'Hyperfine warmup runs'
+        type: number
+        default: 1
+      measured_runs:
+        description: 'Hyperfine measured runs'
+        type: number
+        default: 3
+      large_file_mib:
+        description: 'Size of the single large fixture file (MiB)'
+        type: number
+        default: 1024
+      small_file_count:
+        description: 'Number of small fixture files'
+        type: number
+        default: 10000
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark-windows:
+    name: throughput vs MSYS2 rsync (Windows, best-effort)
+    runs-on: windows-latest
+    timeout-minutes: ${{ inputs.timeout_minutes || 60 }}
+    # Best-effort: wall-clock variance on hosted Windows runners makes
+    # this a poor merge-gate. Treat the numbers as a regression sniff.
+    continue-on-error: true
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ inputs.rust_toolchain || 'stable' }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain || 'stable' }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version || 'v1' }}-${{ hashFiles('**/Cargo.lock') }}
+          key: benchmark-windows
+
+      # iocp is in the workspace default-features list, but we pass it
+      # explicitly so a future default-features change does not silently
+      # drop the fast path from the benchmark binary.
+      - name: Build oc-rsync (release, iocp)
+        run: cargo build --locked --release --features iocp --bin oc-rsync
+
+      - name: Install MSYS2 with rsync + hyperfine
+        uses: msys2/setup-msys2@61f9e5e925871ba6c9e3e8da24ede83ea27fa91f # v2.27.0
+        with:
+          msystem: MSYS
+          update: false
+          install: >-
+            rsync
+            hyperfine
+            diffutils
+            coreutils
+
+      - name: Run throughput benchmark
+        shell: msys2 {0}
+        env:
+          OC_RSYNC: ${{ github.workspace }}/target/release/oc-rsync.exe
+          UPSTREAM_RSYNC: rsync
+          BENCH_WARMUP: ${{ inputs.warmup_runs || 1 }}
+          BENCH_RUNS: ${{ inputs.measured_runs || 3 }}
+          BENCH_LARGE_MIB: ${{ inputs.large_file_mib || 1024 }}
+          BENCH_SMALL_COUNT: ${{ inputs.small_file_count || 10000 }}
+          BENCH_OUT_DIR: ${{ github.workspace }}/bench-out
+        run: |
+          oc=$(cygpath -u "$OC_RSYNC")
+          export OC_RSYNC="$oc"
+          out=$(cygpath -u "$BENCH_OUT_DIR")
+          export BENCH_OUT_DIR="$out"
+          bash scripts/windows_throughput_bench.sh
+
+      - name: Summarise results
+        if: always()
+        shell: msys2 {0}
+        run: |
+          set -eu
+          out=$(cygpath -u "${{ github.workspace }}/bench-out")
+          if [ ! -d "$out" ]; then
+              echo "No bench-out directory; benchmark was likely skipped." \
+                  >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+          fi
+          {
+              echo "## Windows throughput benchmark"
+              echo ""
+              for f in "$out"/*.json; do
+                  [ -f "$f" ] || continue
+                  echo "### $(basename "$f" .json)"
+                  echo ""
+                  echo '```json'
+                  cat "$f"
+                  echo ''
+                  echo '```'
+                  echo ""
+              done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload throughput report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-throughput-bench
+          retention-days: 30
+          if-no-files-found: ignore
+          path: bench-out/*.json
