@@ -1,5 +1,8 @@
 # Unsafe Block SAFETY Comment Audit
 
+> Status: Wired into CI as informational on 2026-05-18; flip to required once
+> violation count reaches 0 (or documented threshold).
+
 ## Scope
 
 Workspace-wide audit of `unsafe { ... }` expression blocks for SAFETY comments
