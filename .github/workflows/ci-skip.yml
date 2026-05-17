@@ -52,3 +52,15 @@ jobs:
   interop:
     name: interop
     uses: ./.github/workflows/_ci-skip-interop.yml
+
+  interop-macos:
+    name: interop with upstream rsync (macOS)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no code changes"
+
+  interop-windows:
+    name: interop with upstream rsync (Windows, best-effort)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no code changes"

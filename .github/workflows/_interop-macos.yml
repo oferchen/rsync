@@ -1,0 +1,97 @@
+name: Interop Tests (macOS)
+
+# Reusable workflow: macOS interop coverage against Homebrew-provided
+# upstream rsync. Mirrors `_interop.yml` (Linux) but uses the portable
+# `tools/ci/run_interop_smoke.sh` harness so we avoid the Debian/Ubuntu
+# package fetch path and any Linux-only fixtures.
+#
+# Scenarios covered (see `tools/ci/run_interop_smoke.sh`):
+#   - baseline upstream -> upstream local copy
+#   - oc-rsync sender + upstream receiver (push)
+#   - upstream sender + oc-rsync receiver (pull)
+#   - quick-check no-op re-run
+#   - delta update in both directions
+#   - --list-only output parity
+#
+# Intentionally NOT covered on macOS:
+#   - xattr and ACL parity (covered by Linux interop + dedicated
+#     `metadata` jobs; macOS HFS+/APFS xattr semantics differ from Linux
+#     and need a dedicated apple-fs harness, tracked separately).
+#   - daemon mode over a privileged port (GitHub macOS runners do not
+#     have a stable, locally listening rsync daemon; the smoke harness
+#     uses --rsync-path local invocation, which still exercises the
+#     full wire protocol between the two implementations).
+#   - SSH loopback push/pull (macOS sshd is not enabled on GitHub
+#     runners by default; the Linux interop job already covers this).
+
+on:
+  workflow_call:
+    inputs:
+      cache_version:
+        description: 'Cache version for invalidation'
+        type: string
+        default: 'v1'
+      rust_toolchain:
+        description: 'Rust toolchain version'
+        type: string
+        default: 'stable'
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        type: number
+        default: 25
+
+permissions:
+  contents: read
+
+jobs:
+  interop-macos:
+    name: interop with upstream rsync (macOS)
+    runs-on: macos-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ inputs.rust_toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
+          key: interop-macos
+
+      # Homebrew ships a current upstream rsync (>= 3.4.x). We do not
+      # pin to a specific upstream version on macOS because Homebrew
+      # only keeps the current bottle; the Linux job is responsible for
+      # the multi-version (3.0.9 / 3.1.3 / 3.4.1 / 3.4.2) matrix.
+      - name: Install upstream rsync via Homebrew
+        run: |
+          set -euo pipefail
+          brew update --quiet || true
+          brew install rsync
+          rsync --version | head -3
+
+      # Build through `rustup run` to bypass the cargo proxy shim,
+      # which on macOS GitHub runners can resolve to rustup-init and
+      # fail with `unexpected argument 'build'` when rust-toolchain.toml
+      # pins a toolchain that was not pre-installed. Matches the
+      # pattern in the `macos-test` job in ci.yml.
+      - name: Build oc-rsync
+        run: |
+          rustup run ${{ inputs.rust_toolchain }} \
+            cargo build --locked --release --bin oc-rsync
+
+      - name: Run portable interop smoke harness
+        env:
+          OC_RSYNC: ${{ github.workspace }}/target/release/oc-rsync
+          UPSTREAM_RSYNC: rsync
+        run: bash tools/ci/run_interop_smoke.sh
