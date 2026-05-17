@@ -1,0 +1,109 @@
+name: Interop Tests (Windows)
+
+# Reusable workflow: Windows interop smoke coverage against an
+# MSYS2-provided upstream rsync. Best-effort only.
+#
+# This is intentionally `continue-on-error: true` (and not wired into
+# branch protection) for the initial roll-out. Wire-protocol parity on
+# Windows is exercised end-to-end on Linux already; the goal of this
+# job is to surface gross regressions in path normalisation, line
+# ending handling, and binary I/O on the Windows oc-rsync binary.
+#
+# Scenarios covered (see `tools/ci/run_interop_smoke.sh`):
+#   - baseline upstream -> upstream local copy
+#   - oc-rsync sender + upstream receiver (push)
+#   - upstream sender + oc-rsync receiver (pull)
+#   - quick-check no-op re-run
+#   - delta update in both directions
+#
+# Intentionally NOT covered on Windows:
+#   - xattr / ACL / hardlinks / symlinks parity (NTFS semantics differ
+#     and are exercised by the dedicated `windows-acl-xattr` job).
+#   - daemon mode (no privileged-port loopback in the harness).
+#   - SSH loopback (no sshd on `windows-latest` by default).
+#   - --list-only format parity (Cygwin rsync renders paths with
+#     forward slashes after stripping the drive prefix; oc-rsync uses
+#     native Windows paths in some code paths -- the smoke harness
+#     skips this scenario on Windows by design).
+
+on:
+  workflow_call:
+    inputs:
+      cache_version:
+        description: 'Cache version for invalidation'
+        type: string
+        default: 'v1'
+      rust_toolchain:
+        description: 'Rust toolchain version'
+        type: string
+        default: 'stable'
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        type: number
+        default: 30
+
+permissions:
+  contents: read
+
+jobs:
+  interop-windows:
+    name: interop with upstream rsync (Windows, best-effort)
+    runs-on: windows-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    # Best-effort: do not block merges on Windows interop quirks while
+    # baseline parity is being established. Promote to required once
+    # we have a clean green run on master.
+    continue-on-error: true
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ inputs.rust_toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
+          key: interop-windows
+
+      - name: Build oc-rsync
+        run: cargo build --locked --release --bin oc-rsync
+
+      # Set up MSYS2 with a current rsync package. MSYS2 ships
+      # rsync >= 3.2 with a Cygwin-style runtime; this is the most
+      # reliable way to get a real upstream rsync binary on a Windows
+      # GitHub runner. Chocolatey's `rsync` package is unmaintained.
+      - name: Install MSYS2 with rsync
+        uses: msys2/setup-msys2@61f9e5e925871ba6c9e3e8da24ede83ea27fa91f # v2.27.0
+        with:
+          msystem: MSYS
+          update: false
+          install: >-
+            rsync
+            diffutils
+            coreutils
+
+      # Run the portable smoke harness inside the MSYS2 shell so the
+      # bash environment, GNU coreutils, and rsync are all consistent.
+      # oc-rsync.exe is the native Windows binary; rsync.exe is the
+      # MSYS2/Cygwin upstream. The harness picks up OC_RSYNC and
+      # UPSTREAM_RSYNC from the environment.
+      - name: Run portable interop smoke harness
+        shell: msys2 {0}
+        env:
+          OC_RSYNC: ${{ github.workspace }}/target/release/oc-rsync.exe
+          UPSTREAM_RSYNC: rsync
+        run: |
+          # MSYS2 sees the workspace via a /<drive>/... path.
+          oc=$(cygpath -u "$OC_RSYNC")
+          export OC_RSYNC="$oc"
+          bash tools/ci/run_interop_smoke.sh

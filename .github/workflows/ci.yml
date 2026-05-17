@@ -13,6 +13,8 @@ on:
       - '.github/workflows/ci.yml'
       - '.github/workflows/_test-features.yml'
       - '.github/workflows/_interop.yml'
+      - '.github/workflows/_interop-macos.yml'
+      - '.github/workflows/_interop-windows.yml'
       - 'docker/**'
       - 'Cross.toml'
   pull_request:
@@ -26,6 +28,8 @@ on:
       - '.github/workflows/ci.yml'
       - '.github/workflows/_test-features.yml'
       - '.github/workflows/_interop.yml'
+      - '.github/workflows/_interop-macos.yml'
+      - '.github/workflows/_interop-windows.yml'
       - 'docker/**'
       - 'Cross.toml'
   workflow_dispatch:
@@ -490,4 +494,36 @@ jobs:
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.2' }}
+      timeout_minutes: 30
+
+  # ===========================================================================
+  # macOS Interop - Smoke parity with Homebrew upstream rsync (audit G5)
+  # ---------------------------------------------------------------------------
+  # Required check. Runs the portable harness in
+  # `tools/ci/run_interop_smoke.sh` against `brew install rsync`. Skips
+  # Linux-only scenarios (xattr/ACL/daemon/SSH loopback); those stay in
+  # `interop-upstream`.
+  # ===========================================================================
+  interop-upstream-macos:
+    name: interop (macOS)
+    needs: lint
+    uses: ./.github/workflows/_interop-macos.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      timeout_minutes: 25
+
+  # ===========================================================================
+  # Windows Interop - Best-effort smoke parity with MSYS2 rsync (audit G5)
+  # ---------------------------------------------------------------------------
+  # Non-required check (the reusable workflow sets `continue-on-error:
+  # true`). Validates the Windows oc-rsync.exe binary against the
+  # MSYS2/Cygwin upstream rsync for the basic push/pull/delta scenarios.
+  # Promote to required once baseline parity is green on master.
+  # ===========================================================================
+  interop-upstream-windows:
+    name: interop (Windows, best-effort)
+    needs: lint
+    uses: ./.github/workflows/_interop-windows.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       timeout_minutes: 30
