@@ -30,9 +30,11 @@ use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
 use protocol::flist::FileEntry;
 
+use super::cohort_index::CohortIndex;
 use super::plan::{DeleteEntry, DeleteEntryKind};
 
 /// Lists `dest_dir`, subtracts every basename that appears in
@@ -74,6 +76,33 @@ pub fn compute_extras(
     dest_dir: &Path,
     segment_entries: &[FileEntry],
 ) -> io::Result<Vec<DeleteEntry>> {
+    compute_extras_with_cohorts(dest_dir, segment_entries, None)
+}
+
+/// Variant of [`compute_extras`] that attaches a hardlink cohort tag to
+/// each surviving entry whose destination basename matches a member of
+/// the supplied [`CohortIndex`].
+///
+/// The cohort tag has no effect on the unlink decision itself; matching
+/// upstream `delete.c:130-225`, every extras path is still unlinked
+/// unconditionally and the kernel reconciles ref counts. The tag exists
+/// so the [`super::DeleteEmitter`] can emit cohort-aware itemize lines
+/// without re-statting and so future diagnostics can distinguish a
+/// last-ref deletion from one of several in the same cohort.
+///
+/// `cohort_index = None` reproduces the original behaviour bit for bit
+/// and is the path taken by callers that have not yet plumbed the
+/// snapshot through.
+///
+/// # Errors
+///
+/// Same as [`compute_extras`]: any I/O failure on `read_dir` or
+/// per-entry `symlink_metadata` is surfaced to the caller.
+pub fn compute_extras_with_cohorts(
+    dest_dir: &Path,
+    segment_entries: &[FileEntry],
+    cohort_index: Option<&Arc<CohortIndex>>,
+) -> io::Result<Vec<DeleteEntry>> {
     let segment_names = segment_basenames(segment_entries);
     let read_dir = fs::read_dir(dest_dir)?;
     let mut extras = Vec::new();
@@ -85,7 +114,11 @@ pub fn compute_extras(
         }
         let metadata = fs::symlink_metadata(entry.path())?;
         let kind = classify(&metadata);
-        extras.push(DeleteEntry::new(name, kind));
+        let delete_entry = match cohort_index.and_then(|idx| idx.cohort_of(name.as_os_str())) {
+            Some(cohort) => DeleteEntry::with_cohort(name, kind, cohort),
+            None => DeleteEntry::new(name, kind),
+        };
+        extras.push(delete_entry);
     }
     Ok(extras)
 }
@@ -291,5 +324,78 @@ mod tests {
         let extras = compute_extras(dir.path(), &segment).unwrap();
         assert_eq!(extras.len(), 1);
         assert_eq!(extras[0].name, OsString::from("real"));
+    }
+
+    #[test]
+    fn compute_extras_with_cohorts_none_matches_baseline() {
+        // Passing `None` for the cohort index must reproduce the
+        // behaviour of the original compute_extras byte for bit.
+        let dir = TempDir::new().unwrap();
+        for n in ["a", "b", "c"] {
+            touch(dir.path(), n);
+        }
+        let segment = vec![flist_file("a")];
+        let baseline = compute_extras(dir.path(), &segment).unwrap();
+        let cohort_path = compute_extras_with_cohorts(dir.path(), &segment, None).unwrap();
+        let mut baseline_sorted = baseline.clone();
+        let mut cohort_sorted = cohort_path.clone();
+        baseline_sorted.sort_by(|a, b| a.name.cmp(&b.name));
+        cohort_sorted.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(baseline_sorted, cohort_sorted);
+        for entry in &cohort_path {
+            assert!(entry.hardlink_cohort.is_none());
+        }
+    }
+
+    #[test]
+    fn compute_extras_with_cohorts_tags_matching_basenames() {
+        // The dest directory carries three extras; two of them share
+        // basenames with a hardlink cohort in the segment. Those two
+        // must come back tagged; the third must come back untagged.
+        let dir = TempDir::new().unwrap();
+        for n in ["alpha", "beta", "untagged"] {
+            touch(dir.path(), n);
+        }
+        // Build a cohort segment with the two names. The segment is
+        // separate from the segment we feed to compute_extras (which
+        // excludes nothing here) - the cohort index is built once at
+        // the receiver boundary, not derived from the same slice the
+        // delete worker uses for set subtraction.
+        let mut leader = FileEntry::new_file(PathBuf::from("alpha"), 0, 0o644);
+        leader.set_hardlink_idx(u32::MAX);
+        let mut member = FileEntry::new_file(PathBuf::from("beta"), 0, 0o644);
+        member.set_hardlink_idx(0);
+        let cohort_segment = vec![leader, member];
+        let index = CohortIndex::build_from_flist_segment(&cohort_segment);
+        let extras = compute_extras_with_cohorts(dir.path(), &[], Some(&index)).unwrap();
+        let by_name: std::collections::HashMap<_, _> = extras
+            .iter()
+            .map(|e| (e.name.clone(), e.hardlink_cohort))
+            .collect();
+        let alpha_cohort = by_name[&OsString::from("alpha")];
+        let beta_cohort = by_name[&OsString::from("beta")];
+        let untagged_cohort = by_name[&OsString::from("untagged")];
+        assert!(alpha_cohort.is_some());
+        assert_eq!(alpha_cohort, beta_cohort, "same cohort id for both members");
+        assert!(untagged_cohort.is_none());
+    }
+
+    #[test]
+    fn compute_extras_with_cohorts_leaves_non_cohort_entries_untagged() {
+        let dir = TempDir::new().unwrap();
+        for n in ["x", "y"] {
+            touch(dir.path(), n);
+        }
+        // Build a non-empty cohort index that has no overlap with the
+        // destination names. Every extras row must come back without a
+        // tag.
+        let mut leader = FileEntry::new_file(PathBuf::from("unrelated"), 0, 0o644);
+        leader.set_hardlink_idx(u32::MAX);
+        let index = CohortIndex::build_from_flist_segment(&[leader]);
+        let extras = compute_extras_with_cohorts(dir.path(), &[], Some(&index)).unwrap();
+        assert_eq!(extras.len(), 2);
+        for entry in extras {
+            assert!(entry.hardlink_cohort.is_none());
+        }
     }
 }
