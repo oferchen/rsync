@@ -53,6 +53,7 @@ use protocol::idlist::IdList;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 use engine::HardlinkApplyTracker;
+use engine::delete::DeleteContext;
 
 use crate::config::ServerConfig;
 use crate::delta_pipeline::{ReceiverDeltaPipeline, SequentialDeltaPipeline};
@@ -235,6 +236,19 @@ pub struct ReceiverContext {
     /// Different operations have different overhead profiles: CPU-bound signature
     /// computation benefits from parallelism at lower counts than I/O-bound stat calls.
     parallel_thresholds: ParallelThresholds,
+    /// Optional handle into the parallel-deterministic-delete pipeline.
+    ///
+    /// When `Some`, the receiver publishes a [`engine::delete::DeletePlan`]
+    /// for every INC_RECURSE segment via
+    /// [`DeleteContext::observe_segment_for_delete`]. The plans accumulate
+    /// in the shared [`engine::delete::DeletePlanMap`] for the (not-yet-
+    /// active) emitter to drain. When `None`, the receiver behaves
+    /// identically to the legacy batched-sweep path; nothing in the
+    /// segment loop calls into the delete pipeline.
+    ///
+    /// This is wired by task DDP-B3 (#2257) and consumed by the emitter
+    /// wiring in tasks DDP-E1-E5.
+    delete_ctx: Option<Arc<DeleteContext>>,
 }
 
 impl ReceiverContext {
@@ -280,7 +294,67 @@ impl ReceiverContext {
             flist_io_error: 0,
             delta_pipeline: Some(Box::new(SequentialDeltaPipeline::new())),
             parallel_thresholds: ParallelThresholds::default(),
+            delete_ctx: None,
         }
+    }
+
+    /// Attaches a [`DeleteContext`] to the receiver.
+    ///
+    /// When set, the receiver's per-segment hook publishes one
+    /// [`engine::delete::DeletePlan`] per INC_RECURSE segment into the
+    /// context's shared [`engine::delete::DeletePlanMap`]. Plans
+    /// accumulate for later consumption by the emitter (tasks
+    /// DDP-E1-E5); the legacy batched-sweep path remains active and
+    /// continues to drive observable deletions until the emitter takes
+    /// over.
+    ///
+    /// Pass `None` to detach the context. Must be called before
+    /// [`run`](Self::run) - the context is consumed on each segment.
+    pub fn set_delete_context(&mut self, ctx: Option<Arc<DeleteContext>>) {
+        self.delete_ctx = ctx;
+    }
+
+    /// Returns a clone of the current [`DeleteContext`] handle, if any.
+    #[must_use]
+    pub fn delete_context(&self) -> Option<Arc<DeleteContext>> {
+        self.delete_ctx.as_ref().map(Arc::clone)
+    }
+
+    /// Converts a wire NDX value to a flat file list array index.
+    ///
+    /// Inverse of [`Self::flat_to_wire_ndx`]. Walks the segment table
+    /// (`ndx_segments`) to find the segment owning `wire_ndx` and
+    /// computes the flat offset within it. Returns `None` when the wire
+    /// NDX falls outside every segment's range (for example NDX 0 under
+    /// INC_RECURSE, which is reserved).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2931` - segment table layout used to do the inverse
+    ///   mapping.
+    pub(in crate::receiver) fn wire_to_flat_ndx(&self, wire_ndx: i32) -> Option<usize> {
+        let segments = &self.ndx_segments;
+        // Find the segment whose `ndx_start` is <= wire_ndx.
+        let seg_idx = segments
+            .partition_point(|&(_, ns)| ns <= wire_ndx)
+            .checked_sub(1)?;
+        let (flat_start, ndx_start) = segments[seg_idx];
+        if wire_ndx < ndx_start {
+            return None;
+        }
+        let offset = (wire_ndx - ndx_start) as usize;
+        let flat_idx = flat_start + offset;
+        // Bound by the next segment's flat_start (or file_list len for
+        // the last segment), so we never return an index past the end
+        // of the segment we located.
+        let seg_end = segments
+            .get(seg_idx + 1)
+            .map(|&(start, _)| start)
+            .unwrap_or(self.file_list.len());
+        if flat_idx >= seg_end {
+            return None;
+        }
+        Some(flat_idx)
     }
 
     /// Replaces the delta dispatch pipeline.

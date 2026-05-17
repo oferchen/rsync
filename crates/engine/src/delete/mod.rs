@@ -8,39 +8,31 @@
 //! # Components
 //!
 //! - [`DeletePlan`] - a sorted, frozen list of destination entries to
-//!   delete in one directory. Plan order matches upstream
-//!   `delete_in_dir`'s reverse iteration of `compare_file_entries`
-//!   ascending order.
+//!   delete in one directory.
 //! - [`DeletePlanMap`] - a concurrent map keyed by destination-relative
-//!   directory path. Workers publish [`DeletePlan`] values into the map
-//!   from rayon segment-dispatch threads; the single emitter pulls them
-//!   out in upstream traversal order.
+//!   directory path.
 //! - [`DirTraversalCursor`] - yields directories in upstream's depth-first,
-//!   `f_name_cmp`-ascending order. Backed by a tree built from observed
-//!   flist segments.
+//!   `f_name_cmp`-ascending order.
 //! - [`emitter`] - single-threaded drain that consumes [`DeletePlanMap`]
-//!   entries in [`DirTraversalCursor`] order, issuing one unlink per
-//!   planned entry. Guarantees the wall-clock event sequence (`unlink`
-//!   syscall order, `*deleting` itemize lines, `NDX_DEL_STATS` framing)
-//!   matches upstream rsync 3.4.1 byte for byte.
+//!   entries in [`DirTraversalCursor`] order.
 //! - [`CohortIndex`] - read-only hardlink cohort snapshot built per
-//!   INC_RECURSE segment and shared by `std::sync::Arc` across phase-1
-//!   [`compute_extras_with_cohorts`] workers and the single emitter.
-//!   Powers cohort-aware itemize bookkeeping without changing the
-//!   unlink decision (upstream `delete.c:130-225` always unlinks; the
-//!   kernel reconciles ref counts).
+//!   INC_RECURSE segment.
+//! - [`DeleteContext`] - receiver-side shared state that owns the
+//!   [`DeletePlanMap`] + [`DirTraversalCursor`] and exposes
+//!   `observe_segment_for_delete` to publish a [`DeletePlan`] per
+//!   incoming INC_RECURSE segment.
 //!
 //! # Upstream Reference
 //!
 //! - `target/interop/upstream-src/rsync-3.4.1/generator.c:272-387`
 //!   (`delete_in_dir`, `do_delete_pass`).
 //! - `target/interop/upstream-src/rsync-3.4.1/delete.c:82-225`
-//!   (`delete_item`, dispatch by `S_ISDIR` / `S_ISLNK` / `IS_DEVICE` /
-//!   `IS_SPECIAL`).
+//!   (`delete_item`).
 //! - `target/interop/upstream-src/rsync-3.4.1/flist.c:3217-3343`
 //!   (`f_name_cmp`).
 
 mod cohort_index;
+mod context;
 pub mod emitter;
 mod extras;
 mod plan;
@@ -48,6 +40,7 @@ mod plan_map;
 mod traversal;
 
 pub use cohort_index::CohortIndex;
+pub use context::DeleteContext;
 pub use emitter::{
     CohortDeleteRecord, DeleteEmitter, DeleteEvent, DeleteFs, EMITTER_PARTIAL_EXIT_CODE,
     EMITTER_VANISHED_EXIT_CODE, EmitterErrorPolicy, RealDeleteFs, RecordingDeleteFs,

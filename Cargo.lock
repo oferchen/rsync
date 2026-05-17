@@ -1261,6 +1261,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "crossbeam-queue",
+ "dashmap",
  "fast_io",
  "filetime",
  "filters",
