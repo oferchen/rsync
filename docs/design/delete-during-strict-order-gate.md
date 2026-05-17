@@ -1,10 +1,22 @@
-# `--delete-strict-order` opt-in gate (#1940)
+# `--delete-strict-order` opt-in gate (#1940) - SUPERSEDED
 
-Status: Design (task #1940; cites audit #1893, follow-up #1894)
+> **Status: SUPERSEDED.** This design is retained for historical
+> context only. The opt-in `--delete-strict-order` flag was replaced
+> by the always-on two-phase parallel-deterministic delete model
+> specified in
+> [`docs/design/parallel-deterministic-delete.md`](parallel-deterministic-delete.md)
+> (tasks #2251 - #2285). The flag is removed from the CLI surface;
+> upstream per-directory ordering is the default and only behaviour.
+> See
+> [`docs/architecture/delete-during.md`](../architecture/delete-during.md)
+> for the current architecture.
+
+Status: Design (task #1940; cites audit #1893, follow-up #1894) - superseded
 Audience: transfer, cli, filters maintainers
-Scope: introduce an opt-in `--delete-strict-order` flag that forces
-oc-rsync's `--delete-during` path onto upstream's per-directory
-interleaved order, without changing the default batched behaviour.
+Scope (historical): introduce an opt-in `--delete-strict-order` flag
+that forces oc-rsync's `--delete-during` path onto upstream's
+per-directory interleaved order, without changing the default batched
+behaviour.
 
 ## 1. Current `--delete-during` behaviour (#1893 audit)
 

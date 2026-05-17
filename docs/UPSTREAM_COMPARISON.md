@@ -513,16 +513,31 @@ If literal:
 
 ## 16. Delete Handling
 
-**Reference:** `crates/transfer/src/generator.rs`, `crates/protocol/src/stats.rs`
+**Reference:** `crates/transfer/src/generator.rs`,
+`crates/transfer/src/receiver/directory/deletion.rs`,
+`crates/protocol/src/stats.rs`
+
+### Architecture
+
+oc-rsync's receiver uses a two-phase parallel-deterministic delete
+pipeline: rayon workers compute per-directory delete plans in parallel
+(`compute_extras`), and a single emitter thread walks directories in
+upstream depth-first order to perform every `unlink`, emit every
+`*deleting` itemize line, and update every counter. The emitter
+preserves upstream rsync 3.4.1's wall-clock event sequence
+byte-for-byte while keeping candidate computation parallel. See
+[`docs/architecture/delete-during.md`](architecture/delete-during.md)
+and the full specification in
+[`docs/design/parallel-deterministic-delete.md`](design/parallel-deterministic-delete.md).
 
 ### Delete Modes
 
 | Mode | Flag | Behavior |
 |------|------|----------|
-| Before | `--delete-before` | Delete before transfer |
-| During | `--delete` | Delete while processing |
-| Delay | `--delete-delay` | Record, delete after |
-| After | `--delete-after` | Delete after transfer |
+| Before | `--delete-before` | Emitter drains plans for the whole tree before transfer |
+| During | `--delete` / `--delete-during` | Emitter interleaves per directory with the transfer loop |
+| Delay | `--delete-delay` | Emitter buffers plans during transfer, replays at finalisation |
+| After | `--delete-after` | Emitter drains plans after the transfer loop |
 
 ### Wire Protocol
 
