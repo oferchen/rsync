@@ -26,8 +26,30 @@
 //! sees files in file-list order.
 
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use super::adaptive::{AdaptiveCapacityPolicy, AdaptiveState, ReorderStats};
+
+/// Snapshot of [`ReorderBuffer`] diagnostic counters.
+///
+/// Returned by [`ReorderBuffer::metrics`]. All fields are cumulative across
+/// the buffer's lifetime except [`current_depth`](Self::current_depth), which
+/// reflects the instantaneous occupancy at the moment of capture.
+///
+/// These counters help operators diagnose pipeline stalls without resorting
+/// to ad hoc instrumentation. Stall duration grows whenever an out-of-order
+/// item is buffered ahead of the next expected sequence; max depth records
+/// the high-water mark of buffered items observed since construction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Metrics {
+    /// Total wall-clock time the buffer spent waiting for the next expected
+    /// sequence while at least one out-of-order item was buffered.
+    pub stall_duration: Duration,
+    /// Instantaneous number of items currently buffered.
+    pub current_depth: usize,
+    /// High-water mark of buffered items observed since construction.
+    pub max_depth: usize,
+}
 
 /// Collects out-of-order items and yields them in sequence order.
 ///
@@ -93,6 +115,14 @@ pub struct ReorderBuffer<T> {
     bypass: bool,
     /// FIFO queue used in bypass mode. Empty when `bypass` is `false`.
     bypass_queue: VecDeque<T>,
+    /// High-water mark of `count` observed since construction.
+    max_depth: usize,
+    /// Accumulated time spent stalled waiting for `next_expected` while
+    /// out-of-order items were buffered.
+    stall_duration: Duration,
+    /// Marker recording when the current stall began. `Some` iff the buffer
+    /// is currently stalled (count > 0 and the `next_expected` slot is empty).
+    stall_started_at: Option<Instant>,
 }
 
 /// Error returned when the reorder buffer is at capacity.
@@ -130,6 +160,9 @@ impl<T> ReorderBuffer<T> {
             adaptive: None,
             bypass: false,
             bypass_queue: VecDeque::new(),
+            max_depth: 0,
+            stall_duration: Duration::ZERO,
+            stall_started_at: None,
         }
     }
 
@@ -170,6 +203,9 @@ impl<T> ReorderBuffer<T> {
             adaptive: None,
             bypass: true,
             bypass_queue: VecDeque::new(),
+            max_depth: 0,
+            stall_duration: Duration::ZERO,
+            stall_started_at: None,
         }
     }
 
@@ -197,6 +233,36 @@ impl<T> ReorderBuffer<T> {
     #[must_use]
     pub const fn is_passthrough(&self) -> bool {
         self.bypass
+    }
+
+    /// Records a depth observation against the high-water mark.
+    fn observe_depth(&mut self) {
+        if self.count > self.max_depth {
+            self.max_depth = self.count;
+        }
+    }
+
+    /// Updates the stall timer to reflect the current buffer state.
+    ///
+    /// The buffer is "stalled" whenever it holds at least one item but the
+    /// slot for `next_expected` is empty - i.e., callers are waiting on a
+    /// gap. `Instant::now()` is only invoked on the edges (stall start and
+    /// stall end), keeping steady-state inserts allocation-free.
+    fn refresh_stall_state(&mut self) {
+        if self.bypass {
+            return;
+        }
+        let stalled = self.count > 0 && self.slots[self.head].is_none();
+        match (stalled, self.stall_started_at) {
+            (true, None) => {
+                self.stall_started_at = Some(Instant::now());
+            }
+            (false, Some(started)) => {
+                self.stall_duration = self.stall_duration.saturating_add(started.elapsed());
+                self.stall_started_at = None;
+            }
+            _ => {}
+        }
     }
 
     /// Computes the ring buffer index for a given sequence number.
@@ -232,6 +298,7 @@ impl<T> ReorderBuffer<T> {
         if self.bypass {
             self.bypass_queue.push_back(item);
             self.count += 1;
+            self.observe_depth();
             return Ok(());
         }
         // Adaptive policy may grow the ring before insert to avoid the error.
@@ -249,6 +316,8 @@ impl<T> ReorderBuffer<T> {
                 self.high_water_offset = offset_plus_one;
             }
         }
+        self.observe_depth();
+        self.refresh_stall_state();
         self.maybe_adapt_capacity();
         Ok(())
     }
@@ -345,6 +414,7 @@ impl<T> ReorderBuffer<T> {
         if self.count == 0 {
             self.high_water_offset = 0;
         }
+        self.refresh_stall_state();
         Some(item)
     }
 
@@ -381,6 +451,29 @@ impl<T> ReorderBuffer<T> {
         self.capacity
     }
 
+    /// Returns a snapshot of diagnostic counters for the buffer.
+    ///
+    /// The returned [`Metrics`] captures the cumulative stall duration, the
+    /// instantaneous occupancy, and the high-water mark of buffered items.
+    /// Operators can poll this method to surface pipeline-stall diagnostics
+    /// without instrumenting the hot path themselves.
+    ///
+    /// If a stall is currently in progress, the time since the stall began
+    /// is included in the reported duration so consumers see a monotonically
+    /// non-decreasing total even between stall-end events.
+    #[must_use]
+    pub fn metrics(&self) -> Metrics {
+        let in_flight = self
+            .stall_started_at
+            .map(|t| t.elapsed())
+            .unwrap_or_default();
+        Metrics {
+            stall_duration: self.stall_duration.saturating_add(in_flight),
+            current_depth: self.count,
+            max_depth: self.max_depth,
+        }
+    }
+
     /// Returns adaptive capacity counters (grow/shrink event totals plus the
     /// current capacity). Counters are zero for fixed-capacity buffers.
     #[must_use]
@@ -410,6 +503,7 @@ impl<T> ReorderBuffer<T> {
         if self.bypass {
             self.bypass_queue.push_back(item);
             self.count += 1;
+            self.observe_depth();
             return;
         }
         if let Some(idx) = self.slot_index(sequence) {
@@ -437,6 +531,8 @@ impl<T> ReorderBuffer<T> {
                 self.high_water_offset = offset_plus_one;
             }
         }
+        self.observe_depth();
+        self.refresh_stall_state();
     }
 
     /// Grows the ring buffer to at least `min_capacity` slots.
@@ -493,6 +589,7 @@ impl<T> ReorderBuffer<T> {
         self.count -= 1;
         // Do not adjust high_water_offset here - it remains valid as an
         // upper bound. The adaptive policy will naturally recalibrate.
+        self.refresh_stall_state();
         Some(item)
     }
 
