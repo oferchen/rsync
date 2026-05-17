@@ -50,6 +50,7 @@ use super::extras::compute_extras;
 use super::plan::DeletePlan;
 use super::plan_map::DeletePlanMap;
 use super::traversal::DirTraversalCursor;
+use crate::util::try_unwrap_or_log;
 
 /// Re-exposes the four upstream timing modes so the emitter and its
 /// context can be configured without pulling in the engine's
@@ -351,13 +352,13 @@ impl DeleteContext {
     /// [`io::ErrorKind::Other`] error if either shared handle still has
     /// outstanding references.
     fn into_emitter<F: DeleteFs>(self, fs: F) -> io::Result<DeleteEmitter<F>> {
-        let plans = Arc::try_unwrap(self.plans).map_err(|_| {
+        let plans = try_unwrap_or_log(self.plans, "delete::context::plans").map_err(|_| {
             io::Error::new(
                 io::ErrorKind::Other,
                 "DeleteContext::into_emitter: DeletePlanMap still shared",
             )
         })?;
-        let cursor = Arc::try_unwrap(self.cursor)
+        let cursor = try_unwrap_or_log(self.cursor, "delete::context::cursor")
             .map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::Other,

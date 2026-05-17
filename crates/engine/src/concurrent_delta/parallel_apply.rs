@@ -44,6 +44,7 @@ use rayon::prelude::*;
 
 use super::reorder::ReorderBuffer;
 use super::types::FileNdx;
+use crate::util::try_unwrap_or_log;
 
 /// A single contiguous segment of a per-file delta apply.
 ///
@@ -372,7 +373,7 @@ impl ParallelDeltaApplier {
                 .remove(&ndx)
                 .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))?
         };
-        let slot = Arc::try_unwrap(slot_arc)
+        let slot = try_unwrap_or_log(slot_arc, "parallel_apply::file_slot")
             .map_err(|_| io::Error::other("parallel applier file slot still in flight"))?
             .into_inner()
             .map_err(|_| io::Error::other("parallel applier file slot poisoned"))?;

@@ -134,6 +134,7 @@ pub mod delta;
 pub mod error;
 pub mod hardlink;
 pub mod local_copy;
+pub mod util;
 pub mod walk;
 
 #[doc(hidden)]
@@ -191,6 +192,9 @@ pub use concurrent_delta::{
 
 /// Common error types for engine operations.
 pub use error::{EngineError, EngineResult};
+
+/// Diagnostic helper for `Arc::try_unwrap` failures on drain paths.
+pub use util::try_unwrap_or_log;
 
 /// Fuzzy matching for finding similar basis files.
 pub use fuzzy::{
