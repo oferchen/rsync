@@ -22,6 +22,29 @@ const MIN_KERNEL_VERSION: (u32, u32) = (5, 6);
 static IO_URING_AVAILABLE: AtomicBool = AtomicBool::new(false);
 static IO_URING_CHECKED: AtomicBool = AtomicBool::new(false);
 
+/// Environment variable that forces io_uring availability to report `false`.
+///
+/// When set to a truthy value (`1`, `true`, `yes`, case-insensitive),
+/// [`is_io_uring_available`] returns `false` regardless of kernel support.
+/// Used to exercise the standard-I/O fallback path on hosts that would
+/// otherwise satisfy the kernel probe, including CI runners on older
+/// kernels and emulators.
+///
+/// The check is a single environment lookup per call. When the variable is
+/// unset (the production default), behaviour is unchanged.
+pub(crate) const DISABLE_ENV: &str = "OC_RSYNC_DISABLE_IOURING";
+
+/// Returns `true` when [`DISABLE_ENV`] is set to a truthy value.
+fn disable_via_env() -> bool {
+    match std::env::var(DISABLE_ENV) {
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
+}
+
 /// Whether SQPOLL was requested but fell back to regular submission.
 ///
 /// Set to `true` the first time `build_ring()` attempts SQPOLL and it fails
@@ -148,11 +171,18 @@ pub mod config_detail {
 /// 1. Running on Linux
 /// 2. Kernel version is 5.6 or later (parsed from `uname().release`)
 /// 3. `io_uring_setup(2)` succeeds - not blocked by seccomp or container runtime
+/// 4. The [`DISABLE_ENV`] environment variable is unset (or not truthy)
 ///
-/// The result is cached after the first call. Subsequent calls are a single
-/// atomic load with `Relaxed` ordering (sub-nanosecond).
+/// The kernel probe result is cached after the first call. The environment
+/// variable is consulted on every call so tests and operators can force the
+/// standard-I/O fallback at runtime without restarting the process. When the
+/// variable is unset the additional check is a single failed `getenv`.
 #[must_use]
 pub fn is_io_uring_available() -> bool {
+    if disable_via_env() {
+        return false;
+    }
+
     if IO_URING_CHECKED.load(Ordering::Relaxed) {
         return IO_URING_AVAILABLE.load(Ordering::Relaxed);
     }
