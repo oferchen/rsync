@@ -40,6 +40,10 @@ mod plan;
 mod plan_map;
 mod traversal;
 
+pub use emitter::{
+    DeleteEmitter, DeleteEvent, DeleteFs, EMITTER_PARTIAL_EXIT_CODE, EMITTER_VANISHED_EXIT_CODE,
+    EmitterErrorPolicy, RealDeleteFs, RecordingDeleteFs,
+};
 pub use extras::compute_extras;
 pub use plan::{DeleteEntry, DeleteEntryKind, DeletePlan, HardlinkCohortId};
 pub use plan_map::DeletePlanMap;
