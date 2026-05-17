@@ -27,9 +27,8 @@
 //! | `--delete-delay` | per-dir inside the copy walk          | [`DeleteContext::emit_all`] after all renames commit |
 //! | `--delete-excluded` (layered) | upstream of [`compute_extras`] - filter-excluded entries are appended to the segment-extras set | per timing mode above |
 //!
-//! The legacy batched sweep stays compiled behind
-//! `cfg(feature = "legacy-batched-delete")` (off by default). Task DDP-F3
-//! removes that path entirely in a follow-up.
+//! The legacy batched sweep was retired in DDP-F3 (#2272); the emitter
+//! is now the sole production unlink path for every timing mode.
 //!
 //! # Concurrency
 //!
