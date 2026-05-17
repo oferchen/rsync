@@ -230,6 +230,9 @@ fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
         )
     })?;
 
+    // SAFETY: `attrlist` is a POD `repr(C)` structure with no validity
+    // invariants; the all-zero pattern is a valid initial state. We overwrite
+    // the relevant fields immediately below before any `setattrlist` call.
     let mut attrlist: libc::attrlist = unsafe { std::mem::zeroed() };
     attrlist.bitmapcount = libc::ATTR_BIT_MAP_COUNT;
     attrlist.commonattr = libc::ATTR_CMN_CRTIME;

@@ -19,6 +19,9 @@ fn acquire_env_lock() -> MutexGuard<'static, ()> {
 
 #[allow(unsafe_code)]
 fn set_env_var(key: &'static str, value: impl AsRef<OsStr>) {
+    // SAFETY: callers serialise environment mutation through `env_lock()`, so no
+    // other thread can observe `getenv`/`setenv` mid-update. `set_var` is unsafe
+    // in Rust 2024 only because of cross-thread races, which the lock prevents.
     unsafe {
         env::set_var(key, value);
     }
@@ -27,6 +30,10 @@ fn set_env_var(key: &'static str, value: impl AsRef<OsStr>) {
 
 #[allow(unsafe_code)]
 fn remove_env_var(key: &'static str) {
+    // SAFETY: callers serialise environment mutation through `env_lock()`, so no
+    // other thread can observe `getenv`/`unsetenv` mid-update. `remove_var` is
+    // unsafe in Rust 2024 only because of cross-thread races, which the lock
+    // prevents.
     unsafe {
         env::remove_var(key);
     }

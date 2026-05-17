@@ -58,6 +58,8 @@ fn advise_sequential_impl(file: &File, file_size: u64) -> io::Result<()> {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn advise_dontneed_impl(file: &File, file_size: u64) -> io::Result<()> {
     use std::os::fd::AsRawFd;
+    // SAFETY: valid fd borrowed from `file`, offset 0, length = file size,
+    // FADV_DONTNEED is a hint that never accesses user memory.
     let ret = unsafe {
         libc::posix_fadvise(
             file.as_raw_fd(),

@@ -65,8 +65,14 @@ impl DirectoryStatBatch {
             libc::AT_SYMLINK_NOFOLLOW
         };
 
+        // SAFETY: `libc::stat` is a POD `repr(C)` structure; the zero pattern
+        // is a valid initial state and the kernel populates it before any field
+        // is read.
         let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
 
+        // SAFETY: `self.dir_fd` is a valid file descriptor borrowed from this
+        // `DirStat`. `c_name` is a NUL-terminated C string that outlives the
+        // call. `stat_buf` is sized and aligned correctly.
         let ret = unsafe { libc::fstatat(self.dir_fd, c_name.as_ptr(), &mut stat_buf, flags) };
 
         if ret != 0 {
@@ -108,8 +114,14 @@ impl DirectoryStatBatch {
             libc::AT_SYMLINK_NOFOLLOW
         };
 
+        // SAFETY: `libc::statx` is a POD `repr(C)` structure; the zero pattern
+        // is a valid initial state and the kernel populates it before any field
+        // is read.
         let mut statx_buf: libc::statx = unsafe { std::mem::zeroed() };
 
+        // SAFETY: `self.dir_fd` is a valid file descriptor borrowed from this
+        // `DirStat`. `c_name` is a NUL-terminated C string that outlives the
+        // call. `statx_buf` is sized and aligned correctly.
         let ret = unsafe {
             libc::syscall(
                 libc::SYS_statx,
