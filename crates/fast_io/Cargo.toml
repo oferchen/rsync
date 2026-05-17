@@ -134,3 +134,15 @@ harness = false
 [[bench]]
 name = "iocp_vs_iouring_matched"
 harness = false
+
+# Cross-platform synchronous copy-path bench: per-host throughput of the
+# unified DefaultPlatformCopy dispatcher (FICLONE / copy_file_range on
+# Linux, clonefile / fcopyfile on macOS, CopyFileExW / ReFS reflink on
+# Windows) against the std::fs::copy baseline. The bench file compiles
+# on every platform; the actual CopyMethod picked per cell is recorded
+# on stderr at bench start so each host's Criterion report can be
+# cross-referenced against the kernel path that ran. See the file's
+# module doc for the run recipe and what the numbers inform on #1386.
+[[bench]]
+name = "platform_copy_gap"
+harness = false
