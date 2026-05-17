@@ -41,7 +41,9 @@ fn workspace_root() -> Option<PathBuf> {
 }
 
 fn script_path(root: &Path) -> PathBuf {
-    root.join("tools").join("ci").join("test_iouring_unprivileged.sh")
+    root.join("tools")
+        .join("ci")
+        .join("test_iouring_unprivileged.sh")
 }
 
 #[test]
