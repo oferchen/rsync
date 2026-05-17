@@ -25,9 +25,6 @@ rpassword = { workspace = true, optional = true }
 is-terminal = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
-[target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
-raw-cpuid = { workspace = true, optional = true }
-
 [features]
 embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep:tokio"]
 # Async SSH transport: opt-in tokio-process backing for `SshConnection`.
