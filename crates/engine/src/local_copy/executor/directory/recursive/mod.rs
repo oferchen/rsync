@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyError, LocalCopyMetadata,
-    LocalCopyRecord,
+    CopyContext, CreatedEntryKind, DeleteTiming, LocalCopyAction, LocalCopyError,
+    LocalCopyMetadata, LocalCopyRecord, delete_extraneous_entries,
 };
 
 pub(crate) use batch::capture_batch_file_entry;
@@ -186,6 +186,19 @@ pub(crate) fn copy_directory_recursive(
     let plan = plan_directory_entries(context, &entries, relative, root_device)?;
     apply_pre_transfer_deletions(context, destination, relative, &plan)?;
 
+    // upstream: generator.c:1520-1526 and generator.c:2298-2310 - when
+    // --delete-during is active the receiver calls delete_in_dir(fbuf, ...)
+    // immediately on entering a content directory, BEFORE iterating the
+    // directory's children. The `--delete-strict-order` opt-in mirrors that
+    // ordering. Without the opt-in we batch the sweep after transfers, which
+    // is faster but yields a different deletion order.
+    let strict_order_active = plan.deletion_enabled
+        && context.options().delete_strict_order_enabled()
+        && matches!(plan.delete_timing, Some(DeleteTiming::During));
+    if strict_order_active {
+        delete_extraneous_entries(context, destination, relative, &plan.keep_names)?;
+    }
+
     {
         let cache = prefetch_directory_checksums(context, &plan, destination);
         if !cache.is_empty() {
@@ -233,14 +246,19 @@ pub(crate) fn copy_directory_recursive(
 
     context.clear_checksum_cache();
 
-    handle_post_transfer_deletions(
-        context,
-        destination,
-        relative,
-        plan.deletion_enabled,
-        plan.delete_timing,
-        &plan.keep_names,
-    )?;
+    // When strict-order was honoured above we already ran the During sweep
+    // before children processing; suppress the batched post-transfer pass for
+    // this directory so each entry is deleted exactly once.
+    if !strict_order_active {
+        handle_post_transfer_deletions(
+            context,
+            destination,
+            relative,
+            plan.deletion_enabled,
+            plan.delete_timing,
+            &plan.keep_names,
+        )?;
+    }
 
     if prune_enabled && !kept_any {
         handle_empty_directory_pruning(context, destination, created_directory_on_disk)?;

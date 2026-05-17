@@ -156,6 +156,8 @@ where
     let delete_excluded = matches.get_flag("delete-excluded");
     let ignore_errors =
         tri_state_flag_negative_first(&matches, "ignore-errors", "no-ignore-errors");
+    let delete_strict_order =
+        matches.get_flag("delete-strict-order") && !matches.get_flag("no-delete-strict-order");
     let max_delete = match matches.remove_one::<OsString>("max-delete") {
         Some(value) => {
             let s = value.to_string_lossy();
@@ -719,6 +721,7 @@ where
         delete_excluded,
         delete_missing_args,
         ignore_errors,
+        delete_strict_order,
         backup,
         backup_dir,
         backup_suffix,
