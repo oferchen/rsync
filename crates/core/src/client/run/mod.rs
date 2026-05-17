@@ -233,6 +233,18 @@ fn run_client_internal(
             }
         }
 
+        // upstream parity: SSH transfers stay on the spawned-process path by
+        // default. The async transport (#1805) is gated behind the
+        // `async-ssh` cargo feature and only activated when the
+        // `OC_RSYNC_ASYNC_SSH` env var is set, since the CLI flag is
+        // tracked separately in #1806.
+        #[cfg(feature = "async-ssh")]
+        let summary = if remote::async_ssh_enabled() {
+            remote::run_async_ssh_transfer(&config, observer, batch_writer.clone())?
+        } else {
+            remote::run_ssh_transfer(&config, observer, batch_writer.clone())?
+        };
+        #[cfg(not(feature = "async-ssh"))]
         let summary = remote::run_ssh_transfer(&config, observer, batch_writer.clone())?;
 
         if let Some(ref writer_arc) = batch_writer

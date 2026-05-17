@@ -20,6 +20,8 @@
 //! - `clientserver.c:start_daemon_client()` - Daemon URL dispatch
 //! - `options.c:server_options()` - Server flag string generation
 
+#[cfg(feature = "async-ssh")]
+pub mod async_ssh_transport;
 pub(crate) mod batch_support;
 pub mod daemon_transfer;
 #[cfg(feature = "embedded-ssh")]
@@ -28,6 +30,11 @@ pub(crate) mod flags;
 pub mod invocation;
 pub mod remote_to_remote;
 pub mod ssh_transfer;
+#[cfg(feature = "async-ssh")]
+pub use async_ssh_transport::{
+    ENV_OPT_IN as ASYNC_SSH_ENV_OPT_IN, is_enabled_by_env as async_ssh_enabled,
+    run_async_ssh_transfer,
+};
 pub use daemon_transfer::run_daemon_transfer;
 #[cfg(feature = "embedded-ssh")]
 pub(crate) use embedded_ssh_transfer::is_ssh_url;
