@@ -276,10 +276,82 @@ NEON) are used where available, with automatic scalar fallbacks.
 :   Disable creation time preservation.
 
 **-A**, **--acls**
-:   Preserve POSIX ACLs when supported (Unix only).
+:   Preserve POSIX ACLs on Linux, macOS, and FreeBSD via `exacl`.
+
+    On Windows, **--acls** preserves the NTFS discretionary ACL (DACL) via
+    `GetNamedSecurityInfoW`/`SetNamedSecurityInfoW`. The Windows path is a
+    Tier 1C partial implementation: it interoperates with upstream rsync
+    and POSIX peers through the standard cross-platform ACL wire format,
+    but it cannot represent every NTFS construct losslessly. The following
+    losses are documented and emit a one-time warning per transfer:
+
+      - **Deny ACEs are dropped.** POSIX has no deny equivalent, so explicit
+        `ACCESS_DENIED_ACE_TYPE` entries are silently omitted from the wire
+        payload.
+      - **Inherited ACEs are not transmitted.** ACEs with the
+        `INHERITED_ACE` flag are skipped; the receiver relies on the
+        destination's own inheritance chain. Mirrors how POSIX default ACLs
+        are handled as a separate stream.
+      - **The system ACL (SACL) is skipped** unless the planned
+        **--audit-acls** flag is passed and the sender holds
+        `SE_SECURITY_NAME`. Audit ACEs cannot ride the cross-platform
+        payload.
+      - **Non-`rwx` access bits collapse.** `FILE_GENERIC_READ`/`WRITE`/`EXECUTE`
+        map cleanly to `r`/`w`/`x`. Bits outside that triplet (`DELETE`,
+        `WRITE_DAC`, `WRITE_OWNER`, `SYNCHRONIZE`, generic bits) are
+        dropped on send and re-synthesised as `FILE_GENERIC_*` plus
+        `SYNCHRONIZE` on receive.
+      - **Unresolvable SIDs are dropped.** Trustee SIDs that
+        `LookupAccountSidW` cannot translate to an account name are omitted
+        from the cross-platform payload; on receive, names that
+        `LookupAccountNameW` cannot resolve cause the ACE to be dropped
+        with a warning.
+
+    The cross-platform payload is the standard upstream byte stream
+    (varint count, per-entry tag, permission triplet, optional name). A
+    second, opt-in payload encoding the full NTFS security descriptor as
+    SDDL on the existing xattr stream under
+    `user.win32.security_descriptor` is planned (see
+    **--windows-acls** below). SDDL is the textual form produced and
+    consumed by `ConvertSecurityDescriptorToStringSecurityDescriptorW`;
+    Windows-to-Windows transfers may use it for higher fidelity while
+    remaining backward-compatible with peers that only understand the
+    cross-platform payload.
+
+    See `docs/design/windows-ntfs-acl-support.md` for the full mapping
+    matrix, hardlink handling, and the implementation roadmap.
 
 **--no-acls**
-:   Disable POSIX ACL preservation.
+:   Disable ACL preservation.
+
+**--audit-acls** (planned)
+:   On Windows, request that the sender read the system ACL (SACL) in
+    addition to the DACL. Requires the `SE_SECURITY_NAME` privilege; the
+    sender skips the SACL with a warning when the privilege probe fails.
+    SACL contents are carried only in the SDDL fidelity payload (see
+    **--windows-acls**), never in the cross-platform payload. Not yet
+    wired; see `docs/design/windows-ntfs-acl-support.md` section 4.2.
+
+**--fail-on-windows-acl-loss** (planned)
+:   On Windows, abort the transfer with exit code 23 (partial transfer)
+    when an NTFS DACL contains deny ACEs, audit ACEs, inherited ACEs that
+    cannot be expressed in POSIX, or owner/group SIDs the receiver cannot
+    resolve. Use this when a transfer must either preserve the source
+    DACL verbatim or fail loudly rather than silently lower to POSIX
+    rwx. Not yet wired; see `docs/design/windows-ntfs-acl-support.md`
+    section 4.3.
+
+**--windows-acls** (planned)
+:   On Windows, opt in to the Windows-to-Windows SDDL fidelity payload in
+    addition to the cross-platform payload. When both peers advertise the
+    `W` capability bit, the sender writes the full NTFS security
+    descriptor as SDDL into the `user.win32.security_descriptor` xattr
+    via `ConvertSecurityDescriptorToStringSecurityDescriptorW`, and the
+    receiver reconstructs the descriptor verbatim via
+    `ConvertStringSecurityDescriptorToSecurityDescriptorW`. Falls back to
+    the cross-platform payload when either peer does not advertise `W`.
+    Not yet wired; see `docs/design/windows-ntfs-acl-support.md` section
+    4.2.
 
 **-X**, **--xattrs**
 :   Preserve extended attributes when supported (Unix only).
