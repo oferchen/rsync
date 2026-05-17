@@ -8,7 +8,6 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--remote-option/-M, --protect-args/-s, --no-protect-args, --secluded-args, --no-secluded-args, ",
     "--ipv4, --ipv6, --daemon, --config, --dry-run/-n, --list-only, --archive/-a, --recursive/-r, --no-recursive, ",
     "--dirs/-d, --no-dirs, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, ",
-    "--delete-strict-order, --no-delete-strict-order, ",
     "--delete-excluded, --max-delete, --min-size, --max-size, --max-alloc, --block-size, --backup/-b, --backup-dir, ",
     "--suffix, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-times, --ignore-existing, --existing, ",
     "--ignore-missing-args, --delete-missing-args, --update/-u, --modify-window, --exclude, --exclude-from, ",
