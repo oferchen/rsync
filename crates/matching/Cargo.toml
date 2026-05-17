@@ -72,3 +72,7 @@ required-features = ["bench-internal"]
 name = "compact_keys_cache"
 harness = false
 required-features = ["bench-internal"]
+
+[[bench]]
+name = "zsync_medium_dataset"
+harness = false
