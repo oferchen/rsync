@@ -292,6 +292,10 @@ mod tests {
     fn sse2_md4_matches_scalar() {
         let inputs: [&[u8]; 4] = [b"", b"a", b"abc", b"message digest"];
 
+        // SAFETY: SSE2 is part of the x86_64 baseline ABI, so the
+        // `target_feature = "sse2"` precondition of `digest_x4` is always
+        // satisfied on every x86_64 CPU. `inputs` is a fixed-length array
+        // of 4 valid `&[u8]` borrows; `digest_x4` bounds-checks each lane.
         let results = unsafe { digest_x4(&inputs) };
 
         for (i, input) in inputs.iter().enumerate() {
@@ -316,6 +320,10 @@ mod tests {
             "d9130a8164549fe818874806e1c7014b",
         ];
 
+        // SAFETY: SSE2 is part of the x86_64 baseline ABI, so the
+        // `target_feature = "sse2"` precondition of `digest_x4` always
+        // holds. `inputs` is a fixed-length array of 4 valid `&[u8]`
+        // borrows that outlive the call.
         let results = unsafe { digest_x4(&inputs) };
 
         for i in 0..4 {
@@ -336,6 +344,10 @@ mod tests {
 
         let inputs: [&[u8]; 4] = [&input0, &input1, &input2, &input3];
 
+        // SAFETY: SSE2 is part of the x86_64 baseline ABI, so the
+        // `target_feature = "sse2"` precondition of `digest_x4` always
+        // holds. `inputs` borrows 4 owned `Vec<u8>` buffers that outlive
+        // the call; `digest_x4` bounds-checks each lane.
         let results = unsafe { digest_x4(&inputs) };
 
         for (i, input) in inputs.iter().enumerate() {

@@ -149,5 +149,9 @@ pub(crate) fn accumulate_chunk_neon_for_tests(
         return accumulate_chunk_scalar_raw(s1, s2, len, chunk);
     }
 
+    // SAFETY: NEON availability was verified above via `neon_available()`
+    // (`is_aarch64_feature_detected!("neon")` cached in a `OnceLock`).
+    // `chunk` is a valid `&[u8]` borrow; the implementation processes 16-byte
+    // blocks with bounds checks and falls back to scalar for any remainder.
     unsafe { accumulate_chunk_neon_impl(s1, s2, len, chunk) }
 }
