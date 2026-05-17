@@ -53,13 +53,19 @@ use protocol::acl::IdaEntries;
 use protocol::acl::{AclCache, IdAccess, NO_ENTRY, RsyncAcl};
 use windows::Win32::Foundation::{ERROR_NOT_SUPPORTED, HLOCAL, LocalFree, WIN32_ERROR};
 use windows::Win32::Security::Authorization::{
-    GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+    ConvertSecurityDescriptorToStringSecurityDescriptorW,
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW, SDDL_REVISION_1,
+    SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
 use windows::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION, AclSizeInformation,
-    AddAccessAllowedAce, DACL_SECURITY_INFORMATION, GetAce, GetAclInformation, GetSidSubAuthority,
+    AddAccessAllowedAce, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, GetAce,
+    GetAclInformation, GetSecurityDescriptorDacl, GetSecurityDescriptorGroup,
+    GetSecurityDescriptorOwner, GetSecurityDescriptorSacl, GetSidSubAuthority,
     GetSidSubAuthorityCount, InitializeAcl, IsValidSid, LookupAccountNameW, LookupAccountSidW,
-    PSECURITY_DESCRIPTOR, PSID, SID_NAME_USE, SidTypeAlias, SidTypeGroup, SidTypeWellKnownGroup,
+    OBJECT_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR, PSID, SACL_SECURITY_INFORMATION, SID_NAME_USE, SidTypeAlias,
+    SidTypeGroup, SidTypeWellKnownGroup,
 };
 use windows::Win32::Storage::FileSystem::{
     FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
@@ -684,6 +690,285 @@ fn entries_have_names(entries: &IdaEntries) -> bool {
     entries.iter().any(|e| e.name.is_some())
 }
 
+/// Wraps a Win32-allocated `PWSTR` so it is released with [`LocalFree`]
+/// when the binding goes out of scope.
+///
+/// `ConvertSecurityDescriptorToStringSecurityDescriptorW` allocates the
+/// output string via `LocalAlloc`; callers are required to free it with
+/// `LocalFree` to avoid leaking process heap.
+struct OwnedLocalWString {
+    ptr: PWSTR,
+}
+
+impl Drop for OwnedLocalWString {
+    fn drop(&mut self) {
+        if !self.ptr.0.is_null() {
+            // SAFETY: `ptr` was allocated by
+            // `ConvertSecurityDescriptorToStringSecurityDescriptorW` and
+            // is documented to require release via `LocalFree`. We never
+            // alias it outside this struct.
+            unsafe {
+                let _ = LocalFree(Some(HLOCAL(self.ptr.0.cast())));
+            }
+        }
+    }
+}
+
+/// Computes the security-information mask used by SDDL round-trip helpers.
+///
+/// Always includes DACL, owner, and group; includes SACL when the caller
+/// opts in. SACL access requires `SE_SECURITY_NAME`, so the default keeps
+/// it disabled to match the conservative posture of [`read_dacl`].
+fn sddl_security_info(include_sacl: bool) -> OBJECT_SECURITY_INFORMATION {
+    let mut info =
+        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+    if include_sacl {
+        info |= SACL_SECURITY_INFORMATION;
+    }
+    info
+}
+
+/// Reads the security descriptor at `path` and returns it serialised as
+/// an SDDL string.
+///
+/// The descriptor includes owner, group, and DACL components. SACL data
+/// is not requested because it would require `SE_SECURITY_NAME`, which
+/// standard accounts lack. To round-trip SACL entries, use
+/// [`write_dacl_sddl`] with an SDDL payload that includes them; the OS
+/// applies them only if the calling token holds the privilege.
+///
+/// # Errors
+///
+/// Returns [`io::Error`] for Win32 failures. Filesystems that do not
+/// support security descriptors (FAT32, network mounts) propagate the
+/// underlying error.
+///
+/// # Upstream Reference
+///
+/// `GetNamedSecurityInfoW` plus
+/// `ConvertSecurityDescriptorToStringSecurityDescriptorW`; see
+/// `docs/design/windows-ntfs-acl-support.md` section 4.2.
+pub fn read_dacl_sddl(path: &Path) -> io::Result<String> {
+    read_sddl_internal(path, false)
+}
+
+/// Reads the security descriptor at `path` including the SACL.
+///
+/// Requires the calling process to hold `SE_SECURITY_NAME`. Without the
+/// privilege the call fails with `ERROR_PRIVILEGE_NOT_HELD`.
+///
+/// # Errors
+///
+/// Returns [`io::Error`] for Win32 failures.
+pub fn read_sddl_with_sacl(path: &Path) -> io::Result<String> {
+    read_sddl_internal(path, true)
+}
+
+fn read_sddl_internal(path: &Path, include_sacl: bool) -> io::Result<String> {
+    let wide = to_wide(path);
+    let mut psd = PSECURITY_DESCRIPTOR(ptr::null_mut());
+    let info = sddl_security_info(include_sacl);
+
+    // SAFETY: `wide` is NUL-terminated; `psd` lives for the call and is
+    // wrapped in `OwnedSecurityDescriptor` immediately so the allocation
+    // is released even on early returns.
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            PCWSTR(wide.as_ptr()),
+            SE_FILE_OBJECT,
+            info,
+            None,
+            None,
+            None,
+            None,
+            &mut psd,
+        )
+    };
+
+    let owned = OwnedSecurityDescriptor { pd: psd };
+    if status != WIN32_ERROR(0) {
+        return Err(win32_error("GetNamedSecurityInfoW", status));
+    }
+
+    let mut string_ptr = PWSTR(ptr::null_mut());
+    let mut string_len: u32 = 0;
+    // SAFETY: `owned.pd` is a valid kernel-allocated descriptor; the
+    // out-pointers are exclusively owned by this stack frame. The
+    // function allocates `string_ptr` via `LocalAlloc`; ownership is
+    // transferred to `OwnedLocalWString` immediately so the buffer is
+    // released even on error paths.
+    let convert = unsafe {
+        ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            owned.pd,
+            SDDL_REVISION_1,
+            info,
+            &mut string_ptr,
+            Some(&mut string_len),
+        )
+    };
+    let owned_string = OwnedLocalWString { ptr: string_ptr };
+    convert.map_err(|e| {
+        io::Error::other(format!(
+            "ConvertSecurityDescriptorToStringSecurityDescriptorW: {e}"
+        ))
+    })?;
+
+    if owned_string.ptr.0.is_null() {
+        return Err(io::Error::other(
+            "ConvertSecurityDescriptorToStringSecurityDescriptorW returned null",
+        ));
+    }
+
+    // SAFETY: `owned_string.ptr` points to a NUL-terminated UTF-16
+    // buffer; `string_len` excludes the terminator.
+    let slice = unsafe { std::slice::from_raw_parts(owned_string.ptr.0, string_len as usize) };
+    Ok(String::from_utf16_lossy(slice))
+}
+
+/// Parses an SDDL string and writes it to `path` as the security
+/// descriptor for owner, group, and DACL components.
+///
+/// The DACL is applied with `PROTECTED_DACL_SECURITY_INFORMATION` so the
+/// destination does not silently inherit additional ACEs from its parent,
+/// matching the policy laid out in
+/// `docs/design/windows-ntfs-acl-support.md` section 5.2.
+///
+/// SACL entries present in the SDDL string are applied only when the
+/// calling token holds `SE_SECURITY_NAME`. Without the privilege the OS
+/// silently ignores the SACL component; callers needing strict failure
+/// semantics should probe the privilege before calling.
+///
+/// # Errors
+///
+/// Returns [`io::Error`] for SDDL parse failures or Win32 failures while
+/// applying the descriptor.
+///
+/// # Upstream Reference
+///
+/// `ConvertStringSecurityDescriptorToSecurityDescriptorW` plus
+/// `SetNamedSecurityInfoW`; see `docs/design/windows-ntfs-acl-support.md`
+/// section 4.2.
+pub fn write_dacl_sddl(path: &Path, sddl: &str) -> io::Result<()> {
+    let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut psd = PSECURITY_DESCRIPTOR(ptr::null_mut());
+
+    // SAFETY: `sddl_wide` is NUL-terminated; `psd` is exclusive. The
+    // function allocates `psd` via `LocalAlloc`; the wrapper releases it
+    // on drop.
+    let convert = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            PCWSTR(sddl_wide.as_ptr()),
+            SDDL_REVISION_1,
+            &mut psd,
+            None,
+        )
+    };
+    let owned = OwnedSecurityDescriptor { pd: psd };
+    convert.map_err(|e| {
+        io::Error::other(format!(
+            "ConvertStringSecurityDescriptorToSecurityDescriptorW: {e}"
+        ))
+    })?;
+    if owned.pd.0.is_null() {
+        return Err(io::Error::other(
+            "ConvertStringSecurityDescriptorToSecurityDescriptorW returned null",
+        ));
+    }
+
+    // Extract owner SID, group SID, DACL, and SACL from the parsed
+    // descriptor. Each accessor reports whether the component is present.
+    let mut owner_sid = PSID(ptr::null_mut());
+    let mut owner_defaulted = windows::core::BOOL(0);
+    // SAFETY: `owned.pd` is non-null, owned, and currently the only
+    // reader of the structure.
+    unsafe {
+        GetSecurityDescriptorOwner(owned.pd, &mut owner_sid, &mut owner_defaulted)
+            .map_err(|e| io::Error::other(format!("GetSecurityDescriptorOwner: {e}")))?;
+    }
+
+    let mut group_sid = PSID(ptr::null_mut());
+    let mut group_defaulted = windows::core::BOOL(0);
+    // SAFETY: see owner branch above.
+    unsafe {
+        GetSecurityDescriptorGroup(owned.pd, &mut group_sid, &mut group_defaulted)
+            .map_err(|e| io::Error::other(format!("GetSecurityDescriptorGroup: {e}")))?;
+    }
+
+    let mut dacl_present = windows::core::BOOL(0);
+    let mut pdacl: *mut ACL = ptr::null_mut();
+    let mut dacl_defaulted = windows::core::BOOL(0);
+    // SAFETY: see owner branch above.
+    unsafe {
+        GetSecurityDescriptorDacl(owned.pd, &mut dacl_present, &mut pdacl, &mut dacl_defaulted)
+            .map_err(|e| io::Error::other(format!("GetSecurityDescriptorDacl: {e}")))?;
+    }
+
+    let mut sacl_present = windows::core::BOOL(0);
+    let mut psacl: *mut ACL = ptr::null_mut();
+    let mut sacl_defaulted = windows::core::BOOL(0);
+    // SAFETY: see owner branch above.
+    unsafe {
+        GetSecurityDescriptorSacl(owned.pd, &mut sacl_present, &mut psacl, &mut sacl_defaulted)
+            .map_err(|e| io::Error::other(format!("GetSecurityDescriptorSacl: {e}")))?;
+    }
+
+    // Compose the security-information mask from components that the
+    // SDDL string actually populated. Unmentioned components stay
+    // untouched on the destination object.
+    let mut info = OBJECT_SECURITY_INFORMATION(0);
+    let owner_arg: Option<PSID> = if !owner_sid.0.is_null() {
+        info |= OWNER_SECURITY_INFORMATION;
+        Some(owner_sid)
+    } else {
+        None
+    };
+    let group_arg: Option<PSID> = if !group_sid.0.is_null() {
+        info |= GROUP_SECURITY_INFORMATION;
+        Some(group_sid)
+    } else {
+        None
+    };
+    let dacl_arg: Option<*const ACL> = if dacl_present.as_bool() && !pdacl.is_null() {
+        info |= DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION;
+        Some(pdacl as *const ACL)
+    } else {
+        None
+    };
+    let sacl_arg: Option<*const ACL> = if sacl_present.as_bool() && !psacl.is_null() {
+        info |= SACL_SECURITY_INFORMATION;
+        Some(psacl as *const ACL)
+    } else {
+        None
+    };
+
+    if info.0 == 0 {
+        // SDDL string was syntactically valid but conveyed no
+        // components; nothing to write.
+        return Ok(());
+    }
+
+    let wide = to_wide(path);
+    // SAFETY: `owned` keeps the descriptor (and therefore the embedded
+    // SIDs and ACLs) alive until the function returns. `wide` is
+    // NUL-terminated.
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            PCWSTR(wide.as_ptr()),
+            SE_FILE_OBJECT,
+            info,
+            owner_arg,
+            group_arg,
+            dacl_arg,
+            sacl_arg,
+        )
+    };
+    drop(owned);
+    if status != WIN32_ERROR(0) {
+        return Err(win32_error("SetNamedSecurityInfoW", status));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -823,5 +1108,69 @@ mod tests {
         // straightforward NTFS temp file.
         let result = sync_acls(&src, &dst, true);
         assert!(result.is_ok(), "sync_acls failed: {:?}", result.err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn read_dacl_sddl_returns_non_empty_for_temp_file() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("test");
+        File::create(&file).expect("file");
+        let sddl = read_dacl_sddl(&file).expect("read sddl");
+        // Any NTFS DACL serialises to at least the "D:" prefix.
+        assert!(sddl.contains("D:"), "expected DACL section, got {sddl:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_dacl_sddl_round_trips_known_descriptor() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("test");
+        File::create(&file).expect("file");
+
+        // Owner BA, Group SY, DACL grants full access to BA and Everyone.
+        let canonical = "O:BAG:SYD:P(A;;FA;;;BA)(A;;FA;;;WD)";
+        write_dacl_sddl(&file, canonical).expect("write sddl");
+
+        let read_back = read_dacl_sddl(&file).expect("read sddl");
+        assert!(
+            read_back.contains("O:BA"),
+            "owner BA missing in {read_back:?}"
+        );
+        assert!(
+            read_back.contains("G:SY"),
+            "group SY missing in {read_back:?}"
+        );
+        assert!(
+            read_back.contains("(A;;FA;;;BA)"),
+            "BA ACE missing in {read_back:?}"
+        );
+        assert!(
+            read_back.contains("(A;;FA;;;WD)"),
+            "Everyone ACE missing in {read_back:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_dacl_sddl_preserves_owner_and_group() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("test");
+        File::create(&file).expect("file");
+
+        let descriptor = "O:BAG:BA D:P(A;;FA;;;BA)";
+        write_dacl_sddl(&file, descriptor).expect("write sddl");
+        let read_back = read_dacl_sddl(&file).expect("read sddl");
+        assert!(read_back.starts_with("O:BAG:BA"), "got {read_back:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_dacl_sddl_rejects_invalid_input() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("test");
+        File::create(&file).expect("file");
+        let result = write_dacl_sddl(&file, "not-a-sddl-string");
+        assert!(result.is_err(), "expected parse error, got {result:?}");
     }
 }
