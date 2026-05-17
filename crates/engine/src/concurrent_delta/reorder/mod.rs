@@ -30,6 +30,10 @@ use std::time::{Duration, Instant};
 
 use super::adaptive::{AdaptiveCapacityPolicy, AdaptiveState, ReorderStats};
 
+pub mod histogram;
+
+pub use histogram::HistogramStats;
+
 /// Snapshot of [`ReorderBuffer`] diagnostic counters.
 ///
 /// Returned by [`ReorderBuffer::metrics`]. All fields are cumulative across
@@ -40,7 +44,7 @@ use super::adaptive::{AdaptiveCapacityPolicy, AdaptiveState, ReorderStats};
 /// to ad hoc instrumentation. Stall duration grows whenever an out-of-order
 /// item is buffered ahead of the next expected sequence; max depth records
 /// the high-water mark of buffered items observed since construction.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Metrics {
     /// Total wall-clock time the buffer spent waiting for the next expected
     /// sequence while at least one out-of-order item was buffered.
@@ -49,6 +53,35 @@ pub struct Metrics {
     pub current_depth: usize,
     /// High-water mark of buffered items observed since construction.
     pub max_depth: usize,
+    /// Total number of times the consumer broke the capacity bound via
+    /// [`ReorderBuffer::force_insert`]. Surfaced as a prerequisite for the
+    /// `force_insert` removal sequencing in `docs/design/drain-parallel-consumer-thread.md`.
+    pub force_insert_count: u64,
+    /// Distribution of drain-batch sizes observed by the consumer.
+    ///
+    /// Each `drain_ready` iteration that yielded at least one item records
+    /// the batch length in a powers-of-two bucket (`1, 2, 4, ..., >=1024`).
+    /// A distribution skewed toward 1 means workers arrive nearly in order;
+    /// a heavy tail signals head-of-line pressure.
+    pub drain_batch_size_histogram: HistogramStats,
+    /// Distribution of wall-clock pauses between consecutive non-empty
+    /// drains, bucketed in microsecond decades (`<1, 1-10, ..., >=10000`).
+    /// Long pauses correlate with the conditions that trigger
+    /// `force_insert`.
+    pub drain_pause_histogram: HistogramStats,
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            stall_duration: Duration::ZERO,
+            current_depth: 0,
+            max_depth: 0,
+            force_insert_count: 0,
+            drain_batch_size_histogram: HistogramStats::new_pow2(),
+            drain_pause_histogram: HistogramStats::new_microseconds(),
+        }
+    }
 }
 
 /// Collects out-of-order items and yields them in sequence order.
@@ -123,6 +156,14 @@ pub struct ReorderBuffer<T> {
     /// Marker recording when the current stall began. `Some` iff the buffer
     /// is currently stalled (count > 0 and the `next_expected` slot is empty).
     stall_started_at: Option<Instant>,
+    /// Cumulative count of [`force_insert`](Self::force_insert) invocations.
+    force_insert_count: u64,
+    /// Distribution of drain-batch sizes recorded via
+    /// [`record_drain_batch`](Self::record_drain_batch).
+    drain_batch_size: HistogramStats,
+    /// Distribution of inter-drain pause durations recorded via
+    /// [`record_drain_pause`](Self::record_drain_pause).
+    drain_pause: HistogramStats,
 }
 
 /// Error returned when the reorder buffer is at capacity.
@@ -163,6 +204,9 @@ impl<T> ReorderBuffer<T> {
             max_depth: 0,
             stall_duration: Duration::ZERO,
             stall_started_at: None,
+            force_insert_count: 0,
+            drain_batch_size: HistogramStats::new_pow2(),
+            drain_pause: HistogramStats::new_microseconds(),
         }
     }
 
@@ -206,6 +250,9 @@ impl<T> ReorderBuffer<T> {
             max_depth: 0,
             stall_duration: Duration::ZERO,
             stall_started_at: None,
+            force_insert_count: 0,
+            drain_batch_size: HistogramStats::new_pow2(),
+            drain_pause: HistogramStats::new_microseconds(),
         }
     }
 
@@ -471,7 +518,31 @@ impl<T> ReorderBuffer<T> {
             stall_duration: self.stall_duration.saturating_add(in_flight),
             current_depth: self.count,
             max_depth: self.max_depth,
+            force_insert_count: self.force_insert_count,
+            drain_batch_size_histogram: self.drain_batch_size,
+            drain_pause_histogram: self.drain_pause,
         }
+    }
+
+    /// Records a drain-batch observation in the metrics histogram.
+    ///
+    /// Called by the consumer thread after a [`drain_ready`](Self::drain_ready)
+    /// iteration that yielded at least one item; `batch_size` is the
+    /// number of items delivered before the next gap. Zero counts are
+    /// silently dropped (no batch was produced, so the sample would
+    /// distort the distribution toward an empty bucket).
+    pub fn record_drain_batch(&mut self, batch_size: usize) {
+        self.drain_batch_size.record_count(batch_size);
+    }
+
+    /// Records the wall-clock pause between consecutive non-empty drain
+    /// iterations in the metrics histogram.
+    ///
+    /// Called by the consumer thread with the elapsed time since the
+    /// previous successful drain. Buckets are microsecond decades so
+    /// operators can read off the typical pause magnitude at a glance.
+    pub fn record_drain_pause(&mut self, pause: Duration) {
+        self.drain_pause.record_duration(pause);
     }
 
     /// Returns adaptive capacity counters (grow/shrink event totals plus the
@@ -500,6 +571,7 @@ impl<T> ReorderBuffer<T> {
     /// ring capacity, this inserts directly. For sequences beyond capacity,
     /// the ring is grown to accommodate the item.
     pub fn force_insert(&mut self, sequence: u64, item: T) {
+        self.force_insert_count = self.force_insert_count.saturating_add(1);
         if self.bypass {
             self.bypass_queue.push_back(item);
             self.count += 1;

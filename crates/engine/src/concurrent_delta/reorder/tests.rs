@@ -1327,4 +1327,79 @@ mod metrics_tests {
         assert_eq!(m.current_depth, 2);
         assert_eq!(m.max_depth, 2);
     }
+
+    #[test]
+    fn force_insert_count_starts_at_zero_and_increments() {
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(4);
+        assert_eq!(buf.metrics().force_insert_count, 0);
+        buf.force_insert(10, 100);
+        buf.force_insert(11, 110);
+        buf.force_insert(12, 120);
+        assert_eq!(buf.metrics().force_insert_count, 3);
+    }
+
+    #[test]
+    fn force_insert_count_increments_on_bypass_too() {
+        // The bypass path still accumulates the counter so operators can
+        // diagnose downstream queue pressure regardless of reordering mode.
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::passthrough();
+        buf.force_insert(0, 0);
+        buf.force_insert(0, 1);
+        assert_eq!(buf.metrics().force_insert_count, 2);
+    }
+
+    #[test]
+    fn force_insert_count_increments_when_sequence_behind_window() {
+        // Sequences below next_expected are dropped by force_insert but the
+        // call itself is still observed (it indicates upstream sent a stale
+        // result that should never have hit the consumer).
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(4);
+        buf.insert(0, 0).unwrap();
+        let _ = buf.next_in_order();
+        buf.force_insert(0, 99);
+        assert_eq!(buf.metrics().force_insert_count, 1);
+    }
+
+    #[test]
+    fn drain_batch_histogram_records_powers_of_two() {
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(16);
+        buf.record_drain_batch(1);
+        buf.record_drain_batch(2);
+        buf.record_drain_batch(3);
+        buf.record_drain_batch(8);
+        buf.record_drain_batch(8);
+        buf.record_drain_batch(2048);
+        let hist = buf.metrics().drain_batch_size_histogram;
+        let buckets = hist.buckets();
+        assert_eq!(buckets[0], 1, "bucket 1 (size=1)");
+        assert_eq!(buckets[1], 2, "bucket 2 (sizes 2,3)");
+        assert_eq!(buckets[3], 2, "bucket 8 (size=8 x2)");
+        assert_eq!(buckets[10], 1, "bucket >=1024 (size=2048)");
+        assert_eq!(hist.total_samples(), 6);
+    }
+
+    #[test]
+    fn drain_pause_histogram_records_microsecond_decades() {
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(4);
+        buf.record_drain_pause(Duration::from_nanos(100)); // <1us
+        buf.record_drain_pause(Duration::from_micros(5)); // 1-10us
+        buf.record_drain_pause(Duration::from_micros(50)); // 10-100us
+        buf.record_drain_pause(Duration::from_micros(500)); // 100-1000us
+        buf.record_drain_pause(Duration::from_millis(5)); // 1000-10000us
+        buf.record_drain_pause(Duration::from_millis(50)); // >=10000us
+        buf.record_drain_pause(Duration::from_secs(1)); // >=10000us
+        let hist = buf.metrics().drain_pause_histogram;
+        let buckets = hist.buckets();
+        assert_eq!(buckets, [1, 1, 1, 1, 1, 2]);
+        assert_eq!(hist.total_samples(), 7);
+    }
+
+    #[test]
+    fn drain_batch_zero_does_not_record() {
+        // Empty drains must not pollute the distribution.
+        let mut buf: ReorderBuffer<u32> = ReorderBuffer::new(4);
+        buf.record_drain_batch(0);
+        buf.record_drain_batch(0);
+        assert_eq!(buf.metrics().drain_batch_size_histogram.total_samples(), 0);
+    }
 }

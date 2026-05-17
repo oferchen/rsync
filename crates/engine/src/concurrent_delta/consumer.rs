@@ -44,10 +44,11 @@
 //! dispatch so downstream processing (checksum verification, temp-file
 //! commit, metadata application) sees files in file-list order.
 
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 
-use super::reorder::ReorderBuffer;
+use super::reorder::{Metrics as ReorderMetrics, ReorderBuffer};
 use super::strategy;
 use super::types::DeltaResult;
 use super::work_queue::WorkQueueReceiver;
@@ -99,6 +100,10 @@ pub struct DeltaConsumer {
     result_rx: mpsc::Receiver<DeltaResult>,
     /// Handle to the background consumer thread.
     handle: Option<JoinHandle<()>>,
+    /// Live snapshot of the reorder buffer metrics, updated by the
+    /// background thread after every force_insert and every non-empty
+    /// drain. Cheap to poll from the caller via [`Self::metrics`].
+    metrics: Arc<Mutex<ReorderMetrics>>,
 }
 
 impl DeltaConsumer {
@@ -165,6 +170,12 @@ impl DeltaConsumer {
             })
             .expect("failed to spawn delta-drain thread");
 
+        // Shared metrics snapshot updated by the reorder thread; callers can
+        // poll it through `DeltaConsumer::metrics` without blocking the
+        // delta pipeline.
+        let metrics = Arc::new(Mutex::new(ReorderMetrics::default()));
+        let metrics_thread = Arc::clone(&metrics);
+
         // Thread 2: receives streamed results, reorders (or passes through),
         // and forwards to the consumer channel.
         let handle = thread::Builder::new()
@@ -175,40 +186,54 @@ impl DeltaConsumer {
                 } else {
                     ReorderBuffer::new(reorder_capacity)
                 };
+                // Wall-clock anchor for the inter-drain pause histogram.
+                // Updated only after a drain iteration that yielded at
+                // least one item; empty drains do not constitute a pause.
+                let mut last_drain_at: Option<Instant> = None;
+                let publish = |reorder: &ReorderBuffer<DeltaResult>| {
+                    if let Ok(mut guard) = metrics_thread.lock() {
+                        *guard = reorder.metrics();
+                    }
+                };
 
                 for result in stream_rx {
                     // Insert may fail if buffer is at capacity. Drain ready
                     // items first to free space before retrying.
                     while reorder.insert(result.sequence(), result.clone()).is_err() {
-                        let mut drained_any = false;
-                        for ready in reorder.drain_ready() {
-                            drained_any = true;
-                            if result_tx.send(ready).is_err() {
-                                return;
+                        let drained =
+                            drain_and_record(&mut reorder, &result_tx, &mut last_drain_at);
+                        match drained {
+                            DrainOutcome::Disconnected => return,
+                            DrainOutcome::Empty => {
+                                // Buffer full but next_expected is not buffered.
+                                // Force insert to break the deadlock.
+                                reorder.force_insert(result.sequence(), result.clone());
+                                publish(&reorder);
+                                break;
                             }
-                        }
-                        if !drained_any {
-                            // Buffer full but next_expected is not buffered.
-                            // Force insert to break the deadlock.
-                            reorder.force_insert(result.sequence(), result.clone());
-                            break;
+                            DrainOutcome::Forwarded(_) => {
+                                publish(&reorder);
+                            }
                         }
                     }
 
                     // Forward any newly available contiguous run.
-                    for ready in reorder.drain_ready() {
-                        if result_tx.send(ready).is_err() {
-                            return;
-                        }
+                    match drain_and_record(&mut reorder, &result_tx, &mut last_drain_at) {
+                        DrainOutcome::Disconnected => return,
+                        DrainOutcome::Empty => {}
+                        DrainOutcome::Forwarded(_) => publish(&reorder),
                     }
                 }
 
                 // Drain remaining items after the stream closes.
-                for ready in reorder.drain_ready() {
-                    if result_tx.send(ready).is_err() {
-                        return;
-                    }
+                match drain_and_record(&mut reorder, &result_tx, &mut last_drain_at) {
+                    DrainOutcome::Disconnected => return,
+                    DrainOutcome::Empty => {}
+                    DrainOutcome::Forwarded(_) => publish(&reorder),
                 }
+                // Ensure the final snapshot reflects steady-state counters
+                // even if the last operation was a non-recording drain.
+                publish(&reorder);
 
                 // Wait for drain thread to finish (propagates panics).
                 let _ = drain_handle.join();
@@ -218,7 +243,24 @@ impl DeltaConsumer {
         Self {
             result_rx,
             handle: Some(handle),
+            metrics,
         }
+    }
+
+    /// Returns a snapshot of the underlying [`ReorderBuffer`] metrics.
+    ///
+    /// The snapshot is updated by the background thread after every
+    /// `force_insert` and every non-empty drain iteration. Callers may
+    /// poll this method at any cadence; it never blocks the delta
+    /// pipeline.
+    ///
+    /// On the unlikely path where the metrics lock is poisoned (a panic
+    /// in the consumer thread mid-update), a zero-initialised snapshot is
+    /// returned. The panic itself is propagated through
+    /// [`Self::join`].
+    #[must_use]
+    pub fn metrics(&self) -> ReorderMetrics {
+        self.metrics.lock().map(|g| *g).unwrap_or_default()
     }
 
     /// Tries to receive the next in-order result without blocking.
@@ -261,6 +303,46 @@ impl DeltaConsumer {
             Ok(())
         }
     }
+}
+
+/// Outcome of one [`drain_and_record`] call.
+enum DrainOutcome {
+    /// No items were ready to drain.
+    Empty,
+    /// One or more items were forwarded to the consumer channel.
+    Forwarded(usize),
+    /// The output channel is closed; the caller must abort.
+    Disconnected,
+}
+
+/// Drains the contiguous in-order run from `reorder`, forwards each item to
+/// `result_tx`, and records the batch size plus the wall-clock pause since
+/// the previous non-empty drain.
+///
+/// Bypasses the metrics path on empty drains so the histograms reflect only
+/// the work actually performed by the consumer thread.
+fn drain_and_record(
+    reorder: &mut ReorderBuffer<DeltaResult>,
+    result_tx: &mpsc::Sender<DeltaResult>,
+    last_drain_at: &mut Option<Instant>,
+) -> DrainOutcome {
+    let mut count = 0usize;
+    while let Some(ready) = reorder.next_in_order() {
+        if result_tx.send(ready).is_err() {
+            return DrainOutcome::Disconnected;
+        }
+        count += 1;
+    }
+    if count == 0 {
+        return DrainOutcome::Empty;
+    }
+    let now = Instant::now();
+    if let Some(prev) = *last_drain_at {
+        reorder.record_drain_pause(now.saturating_duration_since(prev));
+    }
+    reorder.record_drain_batch(count);
+    *last_drain_at = Some(now);
+    DrainOutcome::Forwarded(count)
 }
 
 impl IntoIterator for DeltaConsumer {
@@ -699,5 +781,93 @@ mod tests {
         ndx_values.sort_unstable();
         let expected: Vec<u32> = (0..count).collect();
         assert_eq!(ndx_values, expected);
+    }
+
+    #[test]
+    fn metrics_snapshot_starts_zeroed() {
+        let (_tx, rx) = work_queue::bounded_with_capacity(4);
+        let consumer = DeltaConsumer::spawn(rx, 8);
+        let m = consumer.metrics();
+        assert_eq!(m.force_insert_count, 0);
+        assert_eq!(m.drain_batch_size_histogram.total_samples(), 0);
+        assert_eq!(m.drain_pause_histogram.total_samples(), 0);
+    }
+
+    /// Verifies the `force_insert` counter increments end-to-end when
+    /// synthetic backpressure forces the consumer to break its capacity
+    /// bound. Reproduces the small-capacity HoL pattern from the design
+    /// doc: a producer that submits sequences out of order leaves the
+    /// `next_expected` slot empty while later sequences fill the ring.
+    #[test]
+    fn metrics_force_insert_counter_increments_under_backpressure() {
+        // Capacity 2 with 12 in-flight, where the bounded queue serialises
+        // submissions, forces every later result to race past the empty
+        // next_expected slot. The producer holds back seq 0 until the rest
+        // have queued so the reorder ring overflows.
+        let count = 12u32;
+        let (tx, rx) = work_queue::bounded_with_capacity(count as usize);
+        let producer = std::thread::spawn(move || {
+            // Submit sequences 1..count first to fill the rayon pipeline,
+            // then submit seq 0 to release the gap. The reorder ring is
+            // size 2 so it cannot absorb the late sequences; force_insert
+            // fires to keep the pipeline alive.
+            for i in 1..count {
+                let work =
+                    DeltaWork::whole_file(i, PathBuf::from("/dst"), 64).with_sequence(u64::from(i));
+                tx.send(work).unwrap();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            tx.send(DeltaWork::whole_file(0, PathBuf::from("/dst"), 64).with_sequence(0))
+                .unwrap();
+        });
+
+        let consumer = DeltaConsumer::spawn(rx, 2);
+        let results: Vec<DeltaResult> = consumer.iter().collect();
+        producer.join().unwrap();
+        assert_eq!(results.len(), count as usize);
+        let snap = consumer.metrics();
+        assert!(
+            snap.force_insert_count > 0,
+            "expected force_insert_count > 0 under backpressure, got {:?}",
+            snap,
+        );
+        consumer.join().unwrap();
+    }
+
+    /// Verifies the drain-batch histogram accumulates buckets when the
+    /// consumer delivers a contiguous run in a single drain iteration.
+    #[test]
+    fn metrics_drain_batch_histogram_accumulates() {
+        let count = 16u32;
+        let (tx, rx) = spawn_producer(count);
+        send_items(&tx, count);
+        drop(tx);
+
+        let consumer = DeltaConsumer::spawn(rx, count as usize);
+        let results: Vec<DeltaResult> = consumer.iter().collect();
+        assert_eq!(results.len(), count as usize);
+        let snap = consumer.metrics();
+        let hist = snap.drain_batch_size_histogram;
+        assert!(
+            hist.total_samples() > 0,
+            "expected at least one drain-batch sample, got {hist:?}",
+        );
+        // Sum of all bucket counts equals the number of drain iterations
+        // that produced at least one item.
+        let total_drained: u64 = hist
+            .buckets()
+            .iter()
+            .enumerate()
+            .map(|(idx, &count)| {
+                // Lower bound of bucket idx is 2^idx (except >=1024 cap).
+                let lo = 1u64 << idx.min(10);
+                lo.saturating_mul(count)
+            })
+            .sum();
+        assert!(
+            total_drained >= u64::from(count),
+            "histogram lower-bound sum {total_drained} must cover delivered count {count}",
+        );
+        consumer.join().unwrap();
     }
 }
