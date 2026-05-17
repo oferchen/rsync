@@ -1,6 +1,17 @@
 # DDP-F3: legacy batched-sweep removal readiness audit (#2272)
 
-Status: audit only - removal does NOT land in this document.
+Status: SHIPPED. The five-step removal plan in section 7 has landed:
+the `legacy-batched-delete` cargo feature is gone from
+`crates/engine/Cargo.toml`; `delete_extraneous_entries_batched`,
+`remove_extraneous_path`, and `delete_directory_tree_recursive` are
+deleted from `crates/engine/src/local_copy/executor/cleanup.rs`; and
+`delete_extraneous_entries` now unconditionally routes through the
+emitter helper. The sections below are preserved as a historical record
+of the gating analysis. The "Recommendation" in section 6 was overridden
+to maximise feature throughput; if DDP-G/H interop surfaces a regression,
+the removal commit is a single `git revert` away.
+
+Original status: audit only - removal does NOT land in this document.
 
 This audit captures the inventory of code that PR #4280 fences behind
 `cfg(feature = "legacy-batched-delete")`, the trigger conditions that

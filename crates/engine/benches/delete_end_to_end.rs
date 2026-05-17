@@ -5,11 +5,11 @@
 //!
 //! Task DDP-I3 (#2284). Together with `delete_plan_compute.rs`
 //! (DDP-I1, #2282) and `delete_emitter_unlink.rs` (DDP-I2, #2283),
-//! this bench feeds the DDP-F3 (batched sweep removal) decision: if
-//! the new pipeline lands within 5% of the legacy path on a realistic
-//! 100K-file shape, the legacy `handle_post_transfer_deletions` code
-//! in `crates/engine/src/local_copy/executor/directory/recursive/`
-//! can be retired safely.
+//! this bench fed the DDP-F3 (batched sweep removal, #2272) decision.
+//! With the legacy production path retired, the legacy arm here now
+//! serves only as a reference syscall-shape baseline so regressions in
+//! the parallel pipeline can still be compared against the original
+//! single-threaded cost model.
 //!
 //! # Two paths under test
 //!
@@ -20,20 +20,18 @@
 //!   `DeletePlanMap`. Phase 2 runs the single-threaded
 //!   `DeleteEmitter::emit_all`, which routes through `RealDeleteFs`
 //!   and actually unlinks the extras.
-//! - **Legacy batched sweep** (`legacy_batched_delete_during_100k_files`):
-//!   a faithful reproduction of the wall-clock cost model of
-//!   `crates/engine/src/local_copy/executor/directory/recursive/deletion.rs::handle_post_transfer_deletions`
-//!   ->`delete_extraneous_entries` (in
-//!   `crates/engine/src/local_copy/executor/cleanup.rs`). The legacy
-//!   path is `pub(crate)` and threaded through a `CopyContext` that
-//!   cannot be assembled from a bench crate, so this bench reproduces
-//!   its observable algorithm: a single thread visits every
-//!   directory, walks `fs::read_dir`, subtracts the keep set, and
-//!   `fs::remove_file`s each extra in turn. That matches the
-//!   syscalls the production path issues; the only thing missing is
-//!   the `CopyContext` bookkeeping, which contributes a constant
+//! - **Legacy batched sweep baseline** (`legacy_batched_delete_during_100k_files`):
+//!   a faithful reproduction of the wall-clock cost model that
+//!   `delete_extraneous_entries` (in
+//!   `crates/engine/src/local_copy/executor/cleanup.rs`) used to ship
+//!   before DDP-F3 removed it. A single thread visits every directory,
+//!   walks `fs::read_dir`, subtracts the keep set, and
+//!   `fs::remove_file`s each extra in turn. That matches the syscalls
+//!   the legacy production path used to issue; the only thing missing
+//!   is the `CopyContext` bookkeeping, which contributed a constant
 //!   per-entry overhead independent of the parallel-vs-serial axis
-//!   this bench is comparing.
+//!   this bench compares. Retained as a reference baseline; no
+//!   production code path matches this shape any more.
 //!
 //! # Workload
 //!

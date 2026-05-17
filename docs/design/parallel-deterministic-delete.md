@@ -580,6 +580,13 @@ step has its own task tag inside the #2252-#2285 range.
    audit references in `docs/architecture/delete-during.md` and
    `docs/design/delete-during-strict-order-gate.md`.
 
+   - DDP-F3 (#2272): SHIPPED. The `legacy-batched-delete` cargo feature
+     and the pre-DDP-E batched sweep helpers
+     (`delete_extraneous_entries_batched`, `remove_extraneous_path`,
+     `delete_directory_tree_recursive`) are removed from
+     `crates/engine`. The emitter is now the sole production unlink
+     path for every `--delete-*` timing mode.
+
 ## 11. Cross-references
 
 - Supersedes: #1940, `docs/design/delete-during-strict-order-gate.md`.
