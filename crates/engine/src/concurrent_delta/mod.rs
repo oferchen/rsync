@@ -170,9 +170,12 @@
 //! - `transfer::pipeline` for the pipelined receiver architecture
 
 pub mod adaptive;
+pub mod config;
 pub mod consumer;
 #[cfg(test)]
 mod multi_producer_audit;
+#[cfg(feature = "parallel-receive-delta")]
+pub mod parallel_apply;
 pub mod reorder;
 pub mod spill;
 pub mod strategy;
@@ -180,7 +183,10 @@ mod types;
 pub mod work_queue;
 
 pub use adaptive::{AdaptiveCapacityPolicy, ReorderStats};
-pub use consumer::DeltaConsumer;
+pub use config::ConcurrentDeltaConfig;
+pub use consumer::{DeltaConsumer, DeltaConsumerStats};
+#[cfg(feature = "parallel-receive-delta")]
+pub use parallel_apply::{DeltaChunk, ParallelDeltaApplier};
 pub use reorder::{HistogramStats, Metrics as ReorderMetrics, ReorderBuffer};
 pub use spill::{SpillCodec, SpillError, SpillStats, SpillableReorderBuffer};
 pub use strategy::{DeltaStrategy, DeltaTransferStrategy, WholeFileStrategy};

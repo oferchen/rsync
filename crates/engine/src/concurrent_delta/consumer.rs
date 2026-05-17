@@ -44,14 +44,50 @@
 //! dispatch so downstream processing (checksum verification, temp-file
 //! commit, metadata application) sees files in file-list order.
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
+use super::config::ConcurrentDeltaConfig;
 use super::reorder::{Metrics as ReorderMetrics, ReorderBuffer};
+use super::spill::{SpillError, SpillableReorderBuffer};
 use super::strategy;
 use super::types::DeltaResult;
 use super::work_queue::WorkQueueReceiver;
+
+/// Selects the reorder backend driven by [`DeltaConsumer::spawn_inner`].
+///
+/// Encoded as an enum rather than two booleans so future modes (e.g.
+/// hybrid memory + spill with adaptive sizing) can extend the variant set
+/// without churning the call sites.
+enum ReorderMode {
+    /// Bypass mode: passthrough FIFO, no sequence reordering.
+    Bypass,
+    /// Bare in-memory ring with the historical doubling fallback on overflow.
+    Bare { capacity: usize },
+    /// Bounded-memory ring with spill-to-tempfile when the byte threshold is
+    /// exceeded. `dir` is `None` for the default `SpooledTempFile` backend.
+    Spillable {
+        capacity: usize,
+        threshold: usize,
+        dir: Option<PathBuf>,
+    },
+}
+
+/// Snapshot of consumer-side counters surfaced for diagnostics.
+///
+/// Mirrors [`SpillStats`](super::spill::SpillStats) for operators that only
+/// hold a [`DeltaConsumer`] handle. All counters are cumulative across the
+/// consumer's lifetime; values are zero when the spill layer is not engaged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeltaConsumerStats {
+    /// Cumulative count of items written to the spill tempfile.
+    ///
+    /// Always zero when the consumer was spawned without a spill threshold.
+    pub spill_events: u64,
+}
 
 /// Ordered consumer that drains a [`WorkQueueReceiver`] in parallel and
 /// yields [`DeltaResult`] items in sequence order.
@@ -104,6 +140,9 @@ pub struct DeltaConsumer {
     /// background thread after every force_insert and every non-empty
     /// drain. Cheap to poll from the caller via [`Self::metrics`].
     metrics: Arc<Mutex<ReorderMetrics>>,
+    /// Shared counter incremented by the reorder thread on each spill-to-disk
+    /// event. Exposed via [`DeltaConsumer::stats`].
+    spill_events: Arc<AtomicU64>,
 }
 
 impl DeltaConsumer {
@@ -132,7 +171,12 @@ impl DeltaConsumer {
     /// Panics if `reorder_capacity` is zero and `bypass_reorder` is `false`.
     #[must_use]
     pub fn spawn(rx: WorkQueueReceiver, reorder_capacity: usize) -> Self {
-        Self::spawn_inner(rx, reorder_capacity, false)
+        Self::spawn_inner(
+            rx,
+            ReorderMode::Bare {
+                capacity: reorder_capacity,
+            },
+        )
     }
 
     /// Spawns background threads that drain the work queue in parallel
@@ -146,19 +190,56 @@ impl DeltaConsumer {
     /// off and files are committed immediately.
     #[must_use]
     pub fn spawn_bypass(rx: WorkQueueReceiver) -> Self {
-        Self::spawn_inner(rx, 0, true)
+        Self::spawn_inner(rx, ReorderMode::Bypass)
     }
 
-    /// Internal spawn implementation shared by ordered and bypass paths.
-    fn spawn_inner(rx: WorkQueueReceiver, reorder_capacity: usize, bypass: bool) -> Self {
+    /// Spawns background threads honouring a runtime
+    /// [`ConcurrentDeltaConfig`].
+    ///
+    /// When `cfg.spill_threshold_bytes` is `Some`, the reorder thread is
+    /// backed by a [`SpillableReorderBuffer`] instead of the bare ring
+    /// buffer. Items past the in-memory byte threshold spill to a tempfile;
+    /// they are reloaded transparently as the delivery cursor reaches them.
+    /// When the threshold is `None`, behaviour matches [`spawn`](Self::spawn).
+    ///
+    /// `reorder_capacity` is the in-memory ring window. A good default is the
+    /// total number of expected items, or at least
+    /// `2 * rayon::current_num_threads()`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `reorder_capacity` is zero.
+    #[must_use]
+    pub fn spawn_with_config(
+        rx: WorkQueueReceiver,
+        reorder_capacity: usize,
+        cfg: ConcurrentDeltaConfig,
+    ) -> Self {
+        let mode = match cfg.spill_threshold_bytes {
+            Some(threshold) => ReorderMode::Spillable {
+                capacity: reorder_capacity,
+                threshold: usize::try_from(threshold).unwrap_or(usize::MAX),
+                dir: cfg.spill_dir,
+            },
+            None => ReorderMode::Bare {
+                capacity: reorder_capacity,
+            },
+        };
+        Self::spawn_inner(rx, mode)
+    }
+
+    /// Internal spawn implementation shared by all factory paths.
+    fn spawn_inner(rx: WorkQueueReceiver, mode: ReorderMode) -> Self {
         let (result_tx, result_rx) = mpsc::channel();
+        let spill_events = Arc::new(AtomicU64::new(0));
 
         // Bounded channel between drain and reorder threads. Capacity matches
         // reorder buffer so workers can stay ahead without unbounded buffering.
-        let stream_capacity = if bypass {
-            rayon::current_num_threads() * 2
-        } else {
-            reorder_capacity.max(rayon::current_num_threads() * 2)
+        let stream_capacity = match &mode {
+            ReorderMode::Bypass => rayon::current_num_threads() * 2,
+            ReorderMode::Bare { capacity } | ReorderMode::Spillable { capacity, .. } => {
+                (*capacity).max(rayon::current_num_threads() * 2)
+            }
         };
         let (stream_tx, stream_rx) = crossbeam_channel::bounded::<DeltaResult>(stream_capacity);
 
@@ -178,62 +259,46 @@ impl DeltaConsumer {
 
         // Thread 2: receives streamed results, reorders (or passes through),
         // and forwards to the consumer channel.
+        let spill_events_thread = Arc::clone(&spill_events);
         let handle = thread::Builder::new()
             .name("delta-reorder".to_string())
             .spawn(move || {
-                let mut reorder = if bypass {
-                    ReorderBuffer::passthrough()
-                } else {
-                    ReorderBuffer::new(reorder_capacity)
-                };
-                // Wall-clock anchor for the inter-drain pause histogram.
-                // Updated only after a drain iteration that yielded at
-                // least one item; empty drains do not constitute a pause.
-                let mut last_drain_at: Option<Instant> = None;
-                let publish = |reorder: &ReorderBuffer<DeltaResult>| {
-                    if let Ok(mut guard) = metrics_thread.lock() {
-                        *guard = reorder.metrics();
+                match mode {
+                    ReorderMode::Bypass => {
+                        run_bare_loop(
+                            stream_rx,
+                            &result_tx,
+                            ReorderBuffer::passthrough(),
+                            &metrics_thread,
+                        );
                     }
-                };
-
-                for result in stream_rx {
-                    // Insert may fail if buffer is at capacity. Drain ready
-                    // items first to free space before retrying.
-                    while reorder.insert(result.sequence(), result.clone()).is_err() {
-                        let drained =
-                            drain_and_record(&mut reorder, &result_tx, &mut last_drain_at);
-                        match drained {
-                            DrainOutcome::Disconnected => return,
-                            DrainOutcome::Empty => {
-                                // Buffer full but next_expected is not buffered.
-                                // Force insert to break the deadlock.
-                                reorder.force_insert(result.sequence(), result.clone());
-                                publish(&reorder);
-                                break;
-                            }
-                            DrainOutcome::Forwarded(_) => {
-                                publish(&reorder);
-                            }
+                    ReorderMode::Bare { capacity } => {
+                        run_bare_loop(
+                            stream_rx,
+                            &result_tx,
+                            ReorderBuffer::new(capacity),
+                            &metrics_thread,
+                        );
+                    }
+                    ReorderMode::Spillable {
+                        capacity,
+                        threshold,
+                        dir,
+                    } => match build_spillable(capacity, threshold, dir) {
+                        Ok(buf) => {
+                            run_spillable_loop(stream_rx, &result_tx, buf, &spill_events_thread);
                         }
-                    }
-
-                    // Forward any newly available contiguous run.
-                    match drain_and_record(&mut reorder, &result_tx, &mut last_drain_at) {
-                        DrainOutcome::Disconnected => return,
-                        DrainOutcome::Empty => {}
-                        DrainOutcome::Forwarded(_) => publish(&reorder),
-                    }
+                        Err(e) => {
+                            // Construction failed (e.g., spill dir cannot be
+                            // created). Surface as a single failed result so
+                            // the receiver maps to exit code 11 and aborts.
+                            let _ = result_tx.send(DeltaResult::failed(
+                                0u32,
+                                format!("spill backend unavailable: {e}"),
+                            ));
+                        }
+                    },
                 }
-
-                // Drain remaining items after the stream closes.
-                match drain_and_record(&mut reorder, &result_tx, &mut last_drain_at) {
-                    DrainOutcome::Disconnected => return,
-                    DrainOutcome::Empty => {}
-                    DrainOutcome::Forwarded(_) => publish(&reorder),
-                }
-                // Ensure the final snapshot reflects steady-state counters
-                // even if the last operation was a non-recording drain.
-                publish(&reorder);
 
                 // Wait for drain thread to finish (propagates panics).
                 let _ = drain_handle.join();
@@ -244,6 +309,19 @@ impl DeltaConsumer {
             result_rx,
             handle: Some(handle),
             metrics,
+            spill_events,
+        }
+    }
+
+    /// Returns a snapshot of consumer-side diagnostic counters.
+    ///
+    /// Currently exposes the cumulative spill-to-disk event count from the
+    /// background reorder thread. Safe to call from any thread while the
+    /// consumer is running; the counters are updated lock-free.
+    #[must_use]
+    pub fn stats(&self) -> DeltaConsumerStats {
+        DeltaConsumerStats {
+            spill_events: self.spill_events.load(Ordering::Relaxed),
         }
     }
 
@@ -302,6 +380,195 @@ impl DeltaConsumer {
         } else {
             Ok(())
         }
+    }
+}
+
+/// Constructs a [`SpillableReorderBuffer`] backed by the configured backend.
+fn build_spillable(
+    capacity: usize,
+    threshold: usize,
+    dir: Option<PathBuf>,
+) -> std::io::Result<SpillableReorderBuffer<DeltaResult>> {
+    match dir {
+        Some(d) => SpillableReorderBuffer::with_spill_dir(capacity, threshold, d),
+        None => Ok(SpillableReorderBuffer::new(capacity, threshold)),
+    }
+}
+
+/// Reorder loop for the bare [`ReorderBuffer`] backend (passthrough or
+/// ring-buffer mode). Mirrors the historical control flow: drain ready items
+/// to free space, force-insert if the buffer is full and the head is missing.
+/// Publishes a metrics snapshot after every `force_insert` and every non-empty
+/// drain so callers can poll [`DeltaConsumer::metrics`] without locking the
+/// pipeline.
+fn run_bare_loop(
+    stream_rx: crossbeam_channel::Receiver<DeltaResult>,
+    result_tx: &mpsc::Sender<DeltaResult>,
+    mut reorder: ReorderBuffer<DeltaResult>,
+    metrics: &Arc<Mutex<ReorderMetrics>>,
+) {
+    let mut last_drain_at: Option<Instant> = None;
+    let publish = |reorder: &ReorderBuffer<DeltaResult>| {
+        if let Ok(mut guard) = metrics.lock() {
+            *guard = reorder.metrics();
+        }
+    };
+
+    for result in stream_rx {
+        while reorder.insert(result.sequence(), result.clone()).is_err() {
+            match drain_and_record(&mut reorder, result_tx, &mut last_drain_at) {
+                DrainOutcome::Disconnected => return,
+                DrainOutcome::Empty => {
+                    // Buffer full but next_expected is not buffered.
+                    // Force insert to break the deadlock.
+                    reorder.force_insert(result.sequence(), result.clone());
+                    publish(&reorder);
+                    break;
+                }
+                DrainOutcome::Forwarded(_) => {
+                    publish(&reorder);
+                }
+            }
+        }
+
+        match drain_and_record(&mut reorder, result_tx, &mut last_drain_at) {
+            DrainOutcome::Disconnected => return,
+            DrainOutcome::Empty => {}
+            DrainOutcome::Forwarded(_) => publish(&reorder),
+        }
+    }
+
+    match drain_and_record(&mut reorder, result_tx, &mut last_drain_at) {
+        DrainOutcome::Disconnected => return,
+        DrainOutcome::Empty => {}
+        DrainOutcome::Forwarded(_) => publish(&reorder),
+    }
+    // Ensure the final snapshot reflects steady-state counters even if the
+    // last operation was a non-recording drain.
+    publish(&reorder);
+}
+
+/// Reorder loop for the bounded-memory [`SpillableReorderBuffer`] backend.
+///
+/// The spill layer handles overflow internally: when the byte threshold is
+/// exceeded, the buffer serialises the oldest (highest-sequence) items to a
+/// tempfile and reloads them transparently on drain. The legacy
+/// "force_insert as deadlock breaker" branch is gone - capacity exhaustion
+/// becomes a spill rather than unbounded ring growth.
+///
+/// Spill-side I/O failures (ENOSPC, missing temp directory, encoder error)
+/// are mapped to a [`DeltaResult::failed`] for the offending sequence, which
+/// the receiver maps to upstream rsync exit code 11 (`FileIo`) so the
+/// transfer aborts with the same semantics as a direct I/O failure.
+fn run_spillable_loop(
+    stream_rx: crossbeam_channel::Receiver<DeltaResult>,
+    result_tx: &mpsc::Sender<DeltaResult>,
+    mut reorder: SpillableReorderBuffer<DeltaResult>,
+    spill_events: &Arc<AtomicU64>,
+) {
+    let mut prev_spill = reorder.spill_stats().spill_events;
+
+    for result in stream_rx {
+        let ndx = result.ndx();
+        loop {
+            match reorder.insert(result.sequence(), result.clone()) {
+                Ok(()) => break,
+                Err(SpillError::Capacity(_)) => {
+                    // Drain ready items first to free a ring slot.
+                    let mut drained_any = false;
+                    match reorder.drain_ready() {
+                        Ok(items) => {
+                            for ready in items {
+                                drained_any = true;
+                                if result_tx.send(ready).is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = result_tx.send(DeltaResult::failed(
+                                ndx,
+                                format!("spill reload failed: {e}"),
+                            ));
+                            return;
+                        }
+                    }
+                    if !drained_any {
+                        // The head is missing and the ring is full. Force the
+                        // insert; the spill layer keeps memory bounded by
+                        // displacing higher-sequence items to disk.
+                        if let Err(e) = reorder.force_insert(result.sequence(), result.clone()) {
+                            let _ = result_tx.send(DeltaResult::failed(
+                                ndx,
+                                format!("spill force_insert failed: {e}"),
+                            ));
+                            return;
+                        }
+                        publish_spill_events(&reorder, spill_events, &mut prev_spill);
+                        break;
+                    }
+                }
+                Err(SpillError::Io(e)) => {
+                    let _ = result_tx
+                        .send(DeltaResult::failed(ndx, format!("spill write failed: {e}")));
+                    return;
+                }
+            }
+        }
+        publish_spill_events(&reorder, spill_events, &mut prev_spill);
+
+        match reorder.drain_ready() {
+            Ok(items) => {
+                for ready in items {
+                    if result_tx.send(ready).is_err() {
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = result_tx.send(DeltaResult::failed(
+                    ndx,
+                    format!("spill reload failed: {e}"),
+                ));
+                return;
+            }
+        }
+    }
+
+    // Stream closed - drain whatever is left, including spilled entries.
+    loop {
+        match reorder.drain_ready() {
+            Ok(items) if items.is_empty() => break,
+            Ok(items) => {
+                for ready in items {
+                    if result_tx.send(ready).is_err() {
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = result_tx.send(DeltaResult::failed(
+                    0u32,
+                    format!("spill reload failed: {e}"),
+                ));
+                return;
+            }
+        }
+    }
+    publish_spill_events(&reorder, spill_events, &mut prev_spill);
+}
+
+/// Republishes the cumulative spill-to-disk event counter so callers can
+/// observe progress via [`DeltaConsumer::stats`].
+fn publish_spill_events(
+    reorder: &SpillableReorderBuffer<DeltaResult>,
+    spill_events: &Arc<AtomicU64>,
+    prev: &mut u64,
+) {
+    let current = reorder.spill_stats().spill_events;
+    if current != *prev {
+        spill_events.store(current, Ordering::Relaxed);
+        *prev = current;
     }
 }
 
@@ -869,5 +1136,141 @@ mod tests {
             "histogram lower-bound sum {total_drained} must cover delivered count {count}",
         );
         consumer.join().unwrap();
+    }
+
+    // ---- SpillableReorderBuffer wiring tests (task #1884) ----
+
+    /// Drives a 1000-item workload through the spill-enabled consumer with
+    /// a deliberately delayed head-of-line item so the reorder buffer fills
+    /// up before any contiguous run can be drained. A tight 1 KiB byte
+    /// budget guarantees the spill machinery engages while delivery remains
+    /// strictly in submission order.
+    #[test]
+    fn spillable_consumer_preserves_order_under_pressure() {
+        const COUNT: u32 = 1000;
+        // Tight budget vs ~52-byte DeltaResult: ~19 items fit before spill.
+        const THRESHOLD: u64 = 1024;
+
+        let (tx, rx) = work_queue::bounded_with_capacity(COUNT as usize);
+
+        // Send sequences 1..COUNT first so the reorder buffer fills with
+        // out-of-order items, then send seq 0 last so the head is missing
+        // until the very end. Memory pressure exceeds the threshold long
+        // before delivery becomes possible, forcing repeated spills.
+        let producer = std::thread::spawn(move || {
+            for seq in 1..COUNT {
+                let work = DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64)
+                    .with_sequence(u64::from(seq));
+                tx.send(work).unwrap();
+            }
+            // Small pause to let the reorder thread build up the buffer
+            // before the head-of-line item unblocks the drain.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            tx.send(DeltaWork::whole_file(0u32, PathBuf::from("/dst"), 64).with_sequence(0))
+                .unwrap();
+        });
+
+        let cfg = ConcurrentDeltaConfig::with_spill_threshold(THRESHOLD);
+        let consumer = DeltaConsumer::spawn_with_config(rx, COUNT as usize, cfg);
+        let results: Vec<DeltaResult> = consumer.iter().collect();
+        let stats = consumer.stats();
+        producer.join().unwrap();
+
+        assert_eq!(results.len(), COUNT as usize, "all items must be delivered");
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(
+                r.sequence(),
+                i as u64,
+                "out of order at position {i}: got seq {}",
+                r.sequence()
+            );
+            assert!(r.is_success(), "result at {i} should be success");
+        }
+        assert!(
+            stats.spill_events > 0,
+            "1 KiB budget against 1000 items must trigger spills, got {}",
+            stats.spill_events
+        );
+    }
+
+    /// Baseline comparison: the spill-enabled and non-spill paths must deliver
+    /// the same sequence of result payloads byte-for-byte. The spill layer is
+    /// a local-only memory bound, never a wire-protocol change.
+    #[test]
+    fn spillable_consumer_matches_bare_output_byte_for_byte() {
+        use crate::concurrent_delta::SpillCodec;
+        const COUNT: u32 = 256;
+
+        fn run(cfg: Option<ConcurrentDeltaConfig>) -> Vec<DeltaResult> {
+            let (tx, rx) = work_queue::bounded_with_capacity(COUNT as usize);
+            let producer = std::thread::spawn(move || {
+                for seq in (0..COUNT).rev() {
+                    let work = DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64)
+                        .with_sequence(u64::from(seq));
+                    tx.send(work).unwrap();
+                }
+            });
+            let consumer = match cfg {
+                Some(c) => DeltaConsumer::spawn_with_config(rx, COUNT as usize, c),
+                None => DeltaConsumer::spawn(rx, COUNT as usize),
+            };
+            let out: Vec<DeltaResult> = consumer.iter().collect();
+            producer.join().unwrap();
+            out
+        }
+
+        let baseline = run(None);
+        let spilled = run(Some(ConcurrentDeltaConfig::with_spill_threshold(8 * 1024)));
+
+        assert_eq!(baseline.len(), spilled.len(), "result counts must match");
+        for (i, (a, b)) in baseline.iter().zip(spilled.iter()).enumerate() {
+            assert_eq!(a.sequence(), b.sequence(), "sequence mismatch at {i}");
+            assert_eq!(a.ndx().get(), b.ndx().get(), "ndx mismatch at {i}");
+            assert_eq!(a.bytes_written(), b.bytes_written(), "bytes_written at {i}");
+            assert_eq!(a.literal_bytes(), b.literal_bytes(), "literal at {i}");
+            assert_eq!(a.matched_bytes(), b.matched_bytes(), "matched at {i}");
+            assert_eq!(a.is_success(), b.is_success(), "status at {i}");
+
+            // SpillCodec round-trips the binary encoding the spill layer uses;
+            // identical encodings prove the payloads are byte-equivalent.
+            let mut buf_a = Vec::new();
+            let mut buf_b = Vec::new();
+            a.encode(&mut buf_a).unwrap();
+            b.encode(&mut buf_b).unwrap();
+            assert_eq!(buf_a, buf_b, "encoded payload differs at {i}");
+        }
+    }
+
+    #[test]
+    fn spawn_with_config_off_matches_spawn() {
+        let cfg = ConcurrentDeltaConfig::off();
+
+        let (tx_a, rx_a) = spawn_producer(20);
+        let prod_a = std::thread::spawn(move || send_items(&tx_a, 20));
+        let baseline = DeltaConsumer::spawn(rx_a, 32).iter().collect::<Vec<_>>();
+        prod_a.join().unwrap();
+
+        let (tx_b, rx_b) = spawn_producer(20);
+        let prod_b = std::thread::spawn(move || send_items(&tx_b, 20));
+        let configured = DeltaConsumer::spawn_with_config(rx_b, 32, cfg)
+            .iter()
+            .collect::<Vec<_>>();
+        prod_b.join().unwrap();
+
+        assert_eq!(baseline.len(), configured.len());
+        for (a, b) in baseline.iter().zip(configured.iter()) {
+            assert_eq!(a.sequence(), b.sequence());
+            assert_eq!(a.ndx().get(), b.ndx().get());
+        }
+    }
+
+    #[test]
+    fn stats_zero_when_spill_disabled() {
+        let (tx, rx) = spawn_producer(10);
+        let producer = std::thread::spawn(move || send_items(&tx, 10));
+        let consumer = DeltaConsumer::spawn(rx, 16);
+        let _: Vec<DeltaResult> = consumer.iter().collect();
+        producer.join().unwrap();
+        assert_eq!(consumer.stats().spill_events, 0);
     }
 }
