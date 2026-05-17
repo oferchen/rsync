@@ -185,8 +185,20 @@ fn run_bufwriter(paths: &[PathBuf], payload: &[u8]) {
     }
 }
 
+/// Drives the four-cell criterion group that compares IOCP submission,
+/// IOCP with eight overlapped writes, std::fs, and `BufWriter<File>`.
+///
+/// # Panics
+///
+/// Panics if bench setup or measurement fails: `TempDir::new` cannot
+/// create a scratch directory, `OpenOptions::open` / `File::create`
+/// cannot create a destination file, `IocpDiskBatch::new` rejects the
+/// supplied [`IocpConfig`], or any `begin_file` / `write_data` /
+/// `commit_file` / `write_all` / `flush` call on the IOCP, std::fs, or
+/// `BufWriter` path returns an error. These are bench-setup failures
+/// and are reported via `expect(..)` so a regression surfaces as a hard
+/// stop rather than a silently skewed sample.
 #[cfg(all(target_os = "windows", feature = "iocp"))]
-#[allow(clippy::missing_panics_doc)]
 fn bench_iocp_vs_stdio(c: &mut Criterion) {
     let mut group = c.benchmark_group("iocp_vs_stdio");
     group.sample_size(10);
