@@ -117,7 +117,7 @@ is marked SUPERSEDED. The replacement is the always-on DDP model in
 
 ## 4. New opt-in feature flags
 
-vNEXT introduces five Cargo feature flags that gate new performance
+vNEXT introduces six Cargo feature flags that gate new performance
 surfaces. None are enabled by default. None change wire bytes. All can
 be combined.
 
@@ -191,6 +191,47 @@ be combined.
   Steady-state memory grows by `N_threads * byte_cap`, so do not
   enable on memory-constrained endpoints.
 - **Build.** `cargo build --release --features thread-slab-pool`.
+
+### `ssh-socketpair-stderr` (`rsync_io`, experimental)
+
+- **What it does.** Replaces the anonymous-pipe stderr channel of the
+  SSH child with a `socketpair(AF_UNIX, SOCK_STREAM, 0)` constructed
+  via `UnixStream::pair`. The parent end is a bidirectional socket that
+  can be registered with `epoll`/`kqueue` (or tokio `AsyncFd`) and woken
+  out-of-band via `shutdown(2)`, which is the seam SSE-4 uses to drive
+  the drain off a tokio task instead of a dedicated thread per
+  connection. The child still sees a plain stream of bytes on fd 2.
+  Capture semantics, line forwarding to host stderr, and the bounded
+  64 KiB ring buffer used by `stderr_output()` are unchanged.
+- **When to opt in.** Linux endpoints that already build with
+  `async-ssh` and want the SSH stderr drain integrated into the same
+  tokio reactor as the wire path, instead of consuming a per-connection
+  blocking thread; long-running fan-out clients that open many
+  concurrent SSH children where the saved drain threads matter; and
+  any deployment that wants the larger default kernel buffer
+  (~208 KiB on Linux vs 64 KiB for pipes) and `shutdown(SHUT_RD)`
+  as the wake primitive for the drain loop. macOS works too, with
+  the same `UnixStream::pair` construction.
+- **When to stay on the default.** Operators who prefer the simpler
+  pipe semantics for debugging (a pipe is unidirectional and shows up
+  as a single read-only fd in `lsof` / `procfs`); Windows endpoints,
+  where the TCP-loopback shim is still in flight under SSE-5 and
+  falls back to `Stdio::piped()` on any error; sync-only SSH
+  deployments that do not link tokio, since the existing sync
+  transport already uses the socketpair when available and gains
+  nothing from the flag. The default-off ships exactly what `master`
+  shipped before the SSE series.
+- **Build.** `cargo build --release -p rsync_io --features ssh-socketpair-stderr`.
+  Combine with `async-ssh` to actually exercise the async drain path:
+  `cargo build --release --features "async-ssh" -p core` and
+  `cargo build --release --features "ssh-socketpair-stderr" -p rsync_io`.
+- **Design reference.** Rationale, cross-platform construction, and
+  the SSE-3 through SSE-7 staging plan are in
+  [`docs/design/socketpair-stderr-channel.md`](design/socketpair-stderr-channel.md)
+  (#2371). The companion stderr-handling audit that motivated the
+  series is in
+  [`docs/audits/ssh-stderr-handling.md`](audits/ssh-stderr-handling.md)
+  (#2370).
 
 ### `vmsplice` (`fast_io`, `transfer`, Linux only)
 
@@ -367,9 +408,10 @@ targets; on macOS and Windows the platform-native build is used.
   `--delete-during` sweep. The `--delete-strict-order` opt-in flag
   from the prior prerelease becomes available again.
 - The opt-in feature flags from section 4 (`async-ssh`,
-  `async-daemon`, `parallel-receive-delta`, `thread-slab-pool`,
-  `vmsplice`) do not exist in earlier releases. Builds that enabled
-  them must drop the flag from the build command when downgrading.
+  `async-daemon`, `parallel-receive-delta`, `ssh-socketpair-stderr`,
+  `thread-slab-pool`, `vmsplice`) do not exist in earlier releases.
+  Builds that enabled them must drop the flag from the build command
+  when downgrading.
 - Wire compatibility is preserved across the rollback. A vNEXT
   client talking to a previous-version daemon (or the reverse) is a
   supported configuration; the protocol negotiation collapses to
@@ -402,6 +444,8 @@ next.
 | Daemon async runtime choice                    | `docs/design/daemon-async-runtime-choice.md`                            |
 | Daemon async accept + sync workers             | `docs/design/daemon-async-accept-sync-workers.md`                       |
 | Parallel receive-side delta application        | `docs/design/parallel-receive-delta-application.md`                     |
+| SSH stderr socketpair channel                  | `docs/design/socketpair-stderr-channel.md`                              |
+| SSH stderr handling audit                      | `docs/audits/ssh-stderr-handling.md`                                    |
 | Per-thread buffer slab                         | `docs/design/per-thread-buffer-slab.md`                                 |
 | vmsplice / splice zero copy                    | `docs/design/splice-vmsplice-zero-copy.md`                              |
 | io_uring session ring pool                     | `docs/design/iouring-session-ring-pool.md`                              |
