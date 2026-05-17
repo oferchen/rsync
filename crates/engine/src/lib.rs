@@ -129,6 +129,7 @@
 pub mod async_io;
 
 pub mod concurrent_delta;
+pub mod delete;
 pub mod delta;
 pub mod error;
 pub mod hardlink;
