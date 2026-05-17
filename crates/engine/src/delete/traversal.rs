@@ -125,24 +125,35 @@ impl DirTraversalCursor {
             return Some(self.root.clone());
         }
 
-        while let Some(frame) = self.stack.last_mut() {
-            let kids = self.child_dirs.get(&frame.dir);
-            match kids {
-                Some(list) if frame.next_child_ix < list.len() => {
-                    let next = list[frame.next_child_ix].clone();
-                    frame.next_child_ix += 1;
+        loop {
+            // Inspect the top frame without holding a mutable borrow
+            // across the subsequent `self.stack.push` / `pop` calls.
+            let (dir, ix) = match self.stack.last() {
+                Some(frame) => (frame.dir.clone(), frame.next_child_ix),
+                None => return None,
+            };
+            let next_child = self
+                .child_dirs
+                .get(&dir)
+                .and_then(|list| list.get(ix).cloned());
+            match next_child {
+                Some(next) => {
+                    // Advance the parent's child-iterator, then descend.
+                    if let Some(top) = self.stack.last_mut() {
+                        top.next_child_ix = ix + 1;
+                    }
                     self.stack.push(Frame {
                         dir: next.clone(),
                         next_child_ix: 0,
                     });
                     return Some(next);
                 }
-                _ => {
+                None => {
+                    // No more children for this directory; backtrack.
                     self.stack.pop();
                 }
             }
         }
-        None
     }
 
     /// Returns `true` when the cursor has emitted everything it can.
