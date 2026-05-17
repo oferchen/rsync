@@ -597,3 +597,82 @@ fn delete_after_works_with_dry_run() {
         );
     }
 }
+
+// upstream: generator.c:1520-1526, generator.c:2298-2310
+// `delete_in_dir()` runs on a content directory before `recv_generator()`
+// iterates its children, so every extraneous entry in that directory is
+// deleted before any new content is copied into it.
+#[test]
+fn delete_strict_order_runs_sweep_before_children() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let subdir = source.join("subdir");
+    fs::create_dir_all(&subdir).expect("create subdir");
+    fs::write(subdir.join("new.txt"), b"new content").expect("write source new");
+
+    let dest = temp.path().join("dest");
+    let dest_subdir = dest.join("source").join("subdir");
+    fs::create_dir_all(&dest_subdir).expect("create dest subdir");
+    fs::write(dest_subdir.join("extra.txt"), b"extraneous").expect("write extraneous");
+
+    let operands = vec![source.into_os_string(), dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .delete_during()
+        .delete_strict_order(true)
+        .collect_events(true);
+    assert!(options.delete_strict_order_enabled());
+
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("strict-order copy succeeds");
+
+    assert!(!dest_subdir.join("extra.txt").exists());
+    assert!(dest_subdir.join("new.txt").exists());
+
+    let subdir_rel = PathBuf::from("source").join("subdir");
+    let extra_rel = subdir_rel.join("extra.txt");
+    let new_rel = subdir_rel.join("new.txt");
+
+    let mut delete_idx = None;
+    let mut copy_idx = None;
+    for (i, record) in report.records().iter().enumerate() {
+        match record.action() {
+            LocalCopyAction::EntryDeleted if record.relative_path() == extra_rel => {
+                delete_idx = Some(i);
+            }
+            LocalCopyAction::DataCopied if record.relative_path() == new_rel => {
+                copy_idx = Some(i);
+            }
+            _ => {}
+        }
+    }
+
+    let delete_idx = delete_idx.expect("extraneous entry deleted");
+    let copy_idx = copy_idx.expect("new entry copied");
+    assert!(
+        delete_idx < copy_idx,
+        "strict-order: subdir/extra.txt deletion must precede subdir/new.txt copy",
+    );
+    assert_eq!(report.summary().items_deleted(), 1);
+}
+
+#[test]
+fn delete_strict_order_inactive_without_during_timing() {
+    // Sanity check the gating: the opt-in must be inert under non-During timings.
+    let opts_after = LocalCopyOptions::default()
+        .delete_after(true)
+        .delete_strict_order(true);
+    assert!(!opts_after.delete_strict_order_enabled());
+
+    let opts_before = LocalCopyOptions::default()
+        .delete_before(true)
+        .delete_strict_order(true);
+    assert!(!opts_before.delete_strict_order_enabled());
+
+    let opts_delay = LocalCopyOptions::default()
+        .delete_delay(true)
+        .delete_strict_order(true);
+    assert!(!opts_delay.delete_strict_order_enabled());
+}

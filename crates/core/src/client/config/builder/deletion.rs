@@ -85,4 +85,23 @@ impl ClientConfigBuilder {
         self.ignore_errors = ignore;
         self
     }
+
+    /// Enables `--delete-strict-order` opt-in semantics for `--delete-during`.
+    ///
+    /// When enabled together with `--delete-during`, the local-copy executor
+    /// runs each directory's deletion sweep before its children are processed,
+    /// mirroring upstream rsync's interleaved walk-then-delete. With the
+    /// opt-in disabled (the default) deletions are batched after the
+    /// directory's transfers complete.
+    ///
+    /// upstream: generator.c:1520-1526 / generator.c:2298-2310 -
+    /// `delete_in_dir()` is invoked on the directory entry before
+    /// `recv_generator()` iterates its contents.
+    #[must_use]
+    #[doc(alias = "--delete-strict-order")]
+    #[doc(alias = "--no-delete-strict-order")]
+    pub const fn delete_strict_order(mut self, strict: bool) -> Self {
+        self.delete_strict_order = strict;
+        self
+    }
 }
