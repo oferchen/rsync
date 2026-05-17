@@ -35,7 +35,7 @@
 //! ## `reorderbuffer_only`
 //! Pre-allocates 100K out-of-order sequence numbers, then inserts them into a
 //! freshly constructed [`ReorderBuffer`] and drains in order. Single-threaded
-//! - no channel, no spawn. Isolates the ring-buffer insert + drain cost from
+//! (no channel, no spawn). Isolates the ring-buffer insert + drain cost from
 //! every other dispatch component.
 //!
 //! # Pre-allocation contract
