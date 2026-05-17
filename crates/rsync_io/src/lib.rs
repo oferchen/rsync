@@ -66,6 +66,8 @@
 //!   reported to the user.
 
 mod binary;
+#[cfg(feature = "async-ssh")]
+pub mod channel_adapter;
 mod daemon;
 mod handshake_util;
 mod negotiation;
