@@ -199,8 +199,18 @@ fn ring_write(ring: &mut IoUring, file: &File, payload: &[u8]) -> std::io::Resul
     Ok(())
 }
 
+/// Runs the `stdfs` baseline cell: one synchronous `write(2)` per file
+/// against `std::fs::File`. Establishes the floor the io_uring groups
+/// are measured against.
+///
+/// # Panics
+///
+/// Panics if bench setup or measurement fails: `TempDir::new` cannot
+/// create a scratch directory, or any `File::create` / `write_all`
+/// call returns an error. These are bench-setup failures and are
+/// surfaced via `expect(..)` so a regression aborts the sample rather
+/// than producing a silently skewed number.
 #[cfg(target_os = "linux")]
-#[allow(clippy::missing_panics_doc)]
 fn bench_stdfs(c: &mut Criterion) {
     let mut group = c.benchmark_group("iouring_sqpoll_vs_regular");
     group.sample_size(10);
@@ -226,8 +236,21 @@ fn bench_stdfs(c: &mut Criterion) {
     group.finish();
 }
 
+/// Runs the `iouring_regular` cell: io_uring with default submission,
+/// one `io_uring_enter(2)` per batch. Skips cleanly when the host
+/// kernel does not accept `io_uring_setup(2)` or the gate env var is
+/// unset.
+///
+/// # Panics
+///
+/// Panics if bench setup or measurement fails: `TempDir::new` cannot
+/// create a scratch directory, `IoUring::new` rejects the request on
+/// a host that previously reported the ring as usable, `File::create`
+/// returns an error, or `ring_write` (which forwards SQE submission
+/// and completion errors) fails. These are bench-setup failures and
+/// are surfaced via `expect(..)` so a regression aborts the sample
+/// rather than producing a silently skewed number.
 #[cfg(target_os = "linux")]
-#[allow(clippy::missing_panics_doc)]
 fn bench_iouring_regular(c: &mut Criterion) {
     if !iouring_enabled() {
         eprintln!(
@@ -263,8 +286,23 @@ fn bench_iouring_regular(c: &mut Criterion) {
     group.finish();
 }
 
+/// Runs the `iouring_sqpoll` cell: io_uring with `IORING_SETUP_SQPOLL`
+/// so the kernel poll thread reaps SQEs without a per-batch syscall.
+/// Skips cleanly when the host kernel rejects SQPOLL setup (needs
+/// `CAP_SYS_NICE` on pre-5.13 kernels) or the SQPOLL gate env var is
+/// unset.
+///
+/// # Panics
+///
+/// Panics if bench setup or measurement fails: `TempDir::new` cannot
+/// create a scratch directory, `IoUring::builder().setup_sqpoll(..).
+/// build(..)` rejects the request on a host that previously reported
+/// SQPOLL as usable, `File::create` returns an error, or `ring_write`
+/// (which forwards SQE submission and completion errors) fails. These
+/// are bench-setup failures and are surfaced via `expect(..)` so a
+/// regression aborts the sample rather than producing a silently
+/// skewed number.
 #[cfg(target_os = "linux")]
-#[allow(clippy::missing_panics_doc)]
 fn bench_iouring_sqpoll(c: &mut Criterion) {
     if !sqpoll_enabled() {
         eprintln!(
