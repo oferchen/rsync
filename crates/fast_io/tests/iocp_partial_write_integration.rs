@@ -40,7 +40,7 @@ use std::io::{self, Write};
 use std::os::windows::io::FromRawHandle;
 use std::path::Path;
 
-use fast_io::{IocpConfig, IocpDiskBatch, IocpWriter, is_iocp_available};
+use fast_io::{FileWriter, IocpConfig, IocpDiskBatch, IocpWriter, is_iocp_available};
 use tempfile::tempdir;
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 use windows_sys::Win32::Storage::FileSystem::{
