@@ -43,6 +43,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::os::windows::io::AsRawHandle;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_HANDLE_EOF, FALSE, HANDLE, INVALID_HANDLE_VALUE, TRUE, WAIT_TIMEOUT,
@@ -71,6 +72,70 @@ const COMPLETION_DRAIN_BATCH: usize = 64;
 /// always knows how many completions are outstanding so it waits
 /// indefinitely (`u32::MAX`) until every submitted write has been reaped.
 const DRAIN_TIMEOUT_MS: u32 = u32::MAX;
+
+/// Countdown for the test-only `WriteFile` fault injector. When non-zero,
+/// each submission decrements the counter; once it hits zero the next
+/// submission returns the OS error code stashed in
+/// [`FAULT_INJECT_ERROR_CODE`] instead of issuing `WriteFile`. The hook is
+/// dormant by default (counter == 0, error == 0) and adds a single relaxed
+/// load to the submit hot path - negligible compared to the syscall it
+/// guards.
+#[doc(hidden)]
+static FAULT_INJECT_COUNTDOWN: AtomicUsize = AtomicUsize::new(0);
+
+/// Win32 error code returned by the next fault-injected submission. Paired
+/// with [`FAULT_INJECT_COUNTDOWN`]; see [`inject_next_write_error_for_test`].
+#[doc(hidden)]
+static FAULT_INJECT_ERROR_CODE: AtomicI32 = AtomicI32::new(0);
+
+/// Arms the test-only `WriteFile` fault injector so the `nth` (1-based)
+/// upcoming submission inside [`IocpDiskBatch`] returns `os_error` instead
+/// of dispatching to the kernel. Subsequent submissions proceed normally
+/// after the single fault fires.
+///
+/// This is a test hook used by `crates/fast_io/tests/iocp_disk_full_simulation.rs`
+/// to drive deterministic ERROR_DISK_FULL coverage without provisioning a
+/// limited-capacity volume. Production code must never call it; the hook is
+/// `#[doc(hidden)]` and excluded from the public API surface.
+#[doc(hidden)]
+pub fn inject_next_write_error_for_test(nth: usize, os_error: i32) {
+    FAULT_INJECT_ERROR_CODE.store(os_error, Ordering::SeqCst);
+    FAULT_INJECT_COUNTDOWN.store(nth, Ordering::SeqCst);
+}
+
+/// Clears any pending fault-injection state. Tests should call this at the
+/// end of every case so a leftover countdown from a panicking test does not
+/// leak into a sibling test that shares the same process.
+#[doc(hidden)]
+pub fn clear_injected_write_error_for_test() {
+    FAULT_INJECT_COUNTDOWN.store(0, Ordering::SeqCst);
+    FAULT_INJECT_ERROR_CODE.store(0, Ordering::SeqCst);
+}
+
+/// Returns `Some(os_error)` if the current submission should be faulted, or
+/// `None` to dispatch normally. Atomically decrements the countdown so only
+/// one submission per arm fires.
+fn take_injected_write_error() -> Option<i32> {
+    // Cheap relaxed fast path: when no test has armed the hook (the common
+    // case in production) we do a single load and return.
+    if FAULT_INJECT_COUNTDOWN.load(Ordering::Relaxed) == 0 {
+        return None;
+    }
+    // Slow path uses SeqCst to interleave correctly with the arming store.
+    let prev = FAULT_INJECT_COUNTDOWN
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| match n {
+            0 => None,
+            n => Some(n - 1),
+        })
+        .ok()?;
+    if prev == 1 {
+        let code = FAULT_INJECT_ERROR_CODE.swap(0, Ordering::SeqCst);
+        if code != 0 {
+            return Some(code);
+        }
+    }
+    None
+}
 
 /// Batched IOCP disk writer for the disk commit phase.
 ///
@@ -514,6 +579,15 @@ fn submit_one_write(
 ) -> io::Result<Pin<Box<OverlappedOp>>> {
     let mut op = OverlappedOp::new_write(offset, data);
     let overlapped_ptr = op.as_overlapped_ptr();
+
+    // Test-only fault injection hook. Returns a synthetic Win32 error code
+    // before any kernel call so the drain loop and caller error mapping can
+    // be exercised deterministically (e.g. ERROR_DISK_FULL coverage in
+    // `crates/fast_io/tests/iocp_disk_full_simulation.rs`). Dormant in
+    // production - the inner check is a single relaxed atomic load.
+    if let Some(code) = take_injected_write_error() {
+        return Err(io::Error::from_raw_os_error(code));
+    }
 
     let mut bytes_written: u32 = 0;
 
