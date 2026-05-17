@@ -191,7 +191,7 @@ pub fn run_ssh_transfer(
 }
 
 /// Parses a single remote operand and builds the invocation args.
-fn parse_single_remote(
+pub(super) fn parse_single_remote(
     operand_str: &str,
     config: &ClientConfig,
     role: RemoteRole,
@@ -212,7 +212,7 @@ fn parse_single_remote(
 }
 
 /// Parses remote operand(s) and builds the invocation args.
-fn parse_remote_operands(
+pub(super) fn parse_remote_operands(
     remote_operands: &RemoteOperands,
     config: &ClientConfig,
     role: RemoteRole,
@@ -648,7 +648,7 @@ fn run_server_over_ssh_connection(
 }
 
 /// Builds server configuration for receiver role (pull transfer).
-fn build_server_config_for_receiver(
+pub(super) fn build_server_config_for_receiver(
     config: &ClientConfig,
     local_paths: &[String],
 ) -> Result<ServerConfig, ClientError> {
@@ -670,7 +670,7 @@ fn build_server_config_for_receiver(
 }
 
 /// Builds server configuration for generator role (push transfer).
-fn build_server_config_for_generator(
+pub(super) fn build_server_config_for_generator(
     config: &ClientConfig,
     local_paths: &[String],
 ) -> Result<ServerConfig, ClientError> {
