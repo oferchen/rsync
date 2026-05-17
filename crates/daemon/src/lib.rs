@@ -170,6 +170,9 @@
 //! # demo().unwrap();
 //! ```
 
+#[cfg(feature = "async-daemon")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async-daemon")))]
+pub mod async_listener;
 pub mod auth;
 mod cli;
 mod config;
@@ -186,5 +189,8 @@ mod tests;
 
 pub use cli::{exit_code_from, run};
 pub use config::{DaemonConfig, DaemonConfigBuilder};
+#[cfg(feature = "async-daemon")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async-daemon")))]
+pub use daemon::run_async_daemon;
 pub use daemon::run_daemon;
 pub use error::DaemonError;

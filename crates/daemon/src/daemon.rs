@@ -188,6 +188,96 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     serve_connections(options, external_signal_flags, pre_bound_listener)
 }
 
+/// Runs the daemon orchestration using the hybrid tokio listener.
+///
+/// This is the implementation skeleton tracked under issue #1935. The
+/// configuration is parsed identically to [`run_daemon`], but the accept
+/// loop is hosted on a tokio multi-thread runtime via
+/// [`crate::async_listener::run_hybrid_listener`]. Each accepted connection
+/// is handed to the existing synchronous session handler through
+/// `tokio::task::spawn_blocking`, preserving the wire protocol, auth, and
+/// transfer pipeline unchanged.
+///
+/// # Status
+///
+/// Skeleton. The default daemon CLI continues to dispatch through
+/// [`run_daemon`]; this entrypoint exists for the gated `async-daemon` CI
+/// builds and for downstream embedders that want to opt in early.
+/// Production rollout requires the trigger conditions documented in
+/// `docs/design/daemon-async-runtime-choice.md` (sustained >1k concurrent
+/// connections, blocking-pool measurements, two release cycles of green
+/// async-daemon CI).
+///
+/// # Errors
+///
+/// Returns a `DaemonError` if option parsing, config loading, runtime
+/// construction, or the initial socket bind fails.
+#[cfg(feature = "async-daemon")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async-daemon")))]
+pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
+    let external_signal_flags = config.take_signal_flags();
+    let _ = config.take_pre_bound_listener();
+    let options = RuntimeOptions::parse_with_brand(
+        config.arguments(),
+        config.brand(),
+        config.load_default_paths(),
+    )?;
+
+    let RuntimeOptions {
+        bind_address, port, ..
+    } = options;
+    let bind_addr = std::net::SocketAddr::new(bind_address, port);
+    let worker_threads = std::thread::available_parallelism()
+        .map(NonZeroUsize::get)
+        .unwrap_or(1)
+        .min(8);
+
+    // Reuse the existing platform signal handlers so SIGTERM/SIGINT (or the
+    // Windows Service stop event injected via `signal_flags`) drains the
+    // async loop the same way it drains the sync accept loop.
+    let signal_flags = match external_signal_flags {
+        Some(flags) => SignalFlags::from(flags),
+        None => register_signal_handlers().map_err(|error| {
+            DaemonError::new(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                rsync_error!(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    format!("failed to register signal handlers: {error}")
+                )
+                .with_role(Role::Daemon),
+            )
+        })?,
+    };
+    let shutdown = Arc::clone(&signal_flags.shutdown);
+
+    // Skeleton handler: log the accepted peer and drop the stream. The
+    // real per-connection wiring lives behind a follow-up that exposes the
+    // sync session handler as a callable closure; see #1935 for the rollout
+    // checklist and `docs/design/daemon-tokio-async-listener-impl.md` for
+    // the integration plan.
+    let worker: crate::async_listener::SyncWorker = Arc::new(|stream, peer| {
+        eprintln!(
+            "async-daemon (skeleton): accepted {peer}, closing immediately [daemon={}]",
+            env!("CARGO_PKG_VERSION")
+        );
+        drop(stream);
+        Ok(())
+    });
+
+    crate::async_listener::run_hybrid_listener(bind_addr, worker_threads, shutdown, worker).map_err(
+        |error| {
+            DaemonError::new(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                rsync_error!(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    format!("async-daemon listener failed: {error}")
+                )
+                .with_role(Role::Daemon),
+            )
+        },
+    )
+}
+
 include!("daemon/sections/cli_args.rs");
 
 /// Writes a [`Message`] to the given [`MessageSink`].
