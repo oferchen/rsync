@@ -509,7 +509,7 @@ NEON) are used where available, with automatic scalar fallbacks.
 :   Remove extraneous destination files after transfers complete.
 
 **--delete-excluded**
-:   Remove excluded destination files during deletion sweeps.
+:   Remove excluded destination files during deletion.
 
 **--max-delete**=*NUM*
 :   Limit the number of deletions that may occur per run.
