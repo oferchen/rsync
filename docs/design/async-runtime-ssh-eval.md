@@ -61,3 +61,9 @@ runtime.
 This decision is non-binding on schedule: it commits the project to
 tokio + russh whenever async SSH ships, and forecloses a smol/async-std
 detour. Implementation tracking continues under #1593.
+
+The full #1593 evaluation - runtime flavour (multi-thread vs
+current-thread), bridge construction (`tokio::process` vs `AsyncFd` vs
+`russh::ChannelStream`), latency-sensitive path analysis, and
+five-step sequencing - is documented separately in
+`docs/design/ssh-transport-async-io-eval.md`.
