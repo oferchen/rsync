@@ -196,8 +196,8 @@ impl DeltaConsumer {
     /// Spawns background threads honouring a runtime
     /// [`ConcurrentDeltaConfig`].
     ///
-    /// When `cfg.spill_threshold_bytes` is `Some`, the reorder thread is
-    /// backed by a [`SpillableReorderBuffer`] instead of the bare ring
+    /// When `cfg.spill_policy.threshold_bytes` is `Some`, the reorder thread
+    /// is backed by a [`SpillableReorderBuffer`] instead of the bare ring
     /// buffer. Items past the in-memory byte threshold spill to a tempfile;
     /// they are reloaded transparently as the delivery cursor reaches them.
     /// When the threshold is `None`, behaviour matches [`spawn`](Self::spawn).
@@ -215,11 +215,11 @@ impl DeltaConsumer {
         reorder_capacity: usize,
         cfg: ConcurrentDeltaConfig,
     ) -> Self {
-        let mode = match cfg.spill_threshold_bytes {
+        let mode = match cfg.spill_policy.threshold_bytes {
             Some(threshold) => ReorderMode::Spillable {
                 capacity: reorder_capacity,
                 threshold: usize::try_from(threshold).unwrap_or(usize::MAX),
-                dir: cfg.spill_dir,
+                dir: cfg.spill_policy.dir,
             },
             None => ReorderMode::Bare {
                 capacity: reorder_capacity,
