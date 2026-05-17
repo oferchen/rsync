@@ -1,12 +1,14 @@
 # Fuzz coverage matrix and gap analysis
 
-Tracking issues: #2314 (inventory), #2315 (gap analysis). Companion to
+Tracking issues: #2314 (inventory), #2315 (gap analysis), #2316
+(FCV-3 follow-up decomposition). Companion to
 `docs/design/protocol-fuzzing-harness.md`,
-`docs/design/wire-format-differential-fuzzer.md`, and
-`docs/design/differential-filter-fuzzer.md`. This audit catalogues every
-existing fuzz target in the workspace, maps the protocol-parsing entry
-points that consume untrusted bytes, and ranks the gaps so FCV-3+ has a
-clear queue.
+`docs/design/wire-format-differential-fuzzer.md`,
+`docs/design/differential-filter-fuzzer.md`, and the per-gap follow-up
+breakdown in `docs/audits/fuzz-coverage-gap-followups.md`. This audit
+catalogues every existing fuzz target in the workspace, maps the
+protocol-parsing entry points that consume untrusted bytes, and ranks
+the gaps so FCV-3+ has a clear queue.
 
 ## 1. Existing fuzz targets
 
