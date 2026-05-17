@@ -100,3 +100,14 @@ harness = false
 name = "iouring_per_file_vs_shared"
 harness = false
 required-features = ["io_uring"]
+
+# Linux-only bench: io_uring SQPOLL vs regular submission vs std::fs on a
+# 100K small-file workload. Gated by OC_RSYNC_BENCH_IOURING_RING=1 (for the
+# io_uring groups) and OC_RSYNC_BENCH_IOURING_SQPOLL=1 (for the SQPOLL group)
+# because SQPOLL needs CAP_SYS_NICE on pre-5.13 kernels. See the file's
+# module doc for the run recipe and what the numbers inform on #1626 / #2243
+# / #2045.
+[[bench]]
+name = "iouring_sqpoll_vs_regular"
+harness = false
+required-features = ["io_uring"]
