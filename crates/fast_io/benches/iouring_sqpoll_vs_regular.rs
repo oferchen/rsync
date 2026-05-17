@@ -316,7 +316,5 @@ criterion_main!(iouring_sqpoll_vs_regular);
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
-    eprintln!(
-        "iouring_sqpoll_vs_regular: skipped (Linux-only bench; requires io_uring_setup(2))"
-    );
+    eprintln!("iouring_sqpoll_vs_regular: skipped (Linux-only bench; requires io_uring_setup(2))");
 }
