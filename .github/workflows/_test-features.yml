@@ -20,37 +20,34 @@ permissions:
   contents: read
 
 jobs:
-  feature-flags:
-    name: ${{ matrix.name }}
-    runs-on: ubuntu-latest
+  # ---------------------------------------------------------------------------
+  # Cross-OS feature rows.
+  #
+  # Promoted to a cross-OS strategy matrix per the cross-platform CI coverage
+  # audit (gap G6). Every row in this matrix exercises code that compiles on
+  # Linux, macOS, and Windows. To keep within the runtime budget, only the
+  # rows that the audit flagged as OS-agnostic but Linux-only today are run
+  # across all three OS; the remaining rows stay Linux-only (they overlap
+  # with the per-OS --all-features jobs already in ci.yml).
+  # ---------------------------------------------------------------------------
+  feature-flags-cross-os:
+    name: ${{ matrix.row.name }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ inputs.timeout_minutes }}
 
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: no-default-features
-            args: "--workspace --no-default-features"
-          - name: parallel
-            args: "-p checksums -p flist --features parallel"
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        row:
           - name: async
             args: "-p daemon -p core -p protocol -p engine --features async"
-          - name: concurrent-sessions
-            args: "-p daemon --features concurrent-sessions"
           - name: tracing
             args: "-p daemon -p core -p engine --features tracing"
           - name: serde
             args: "-p logging -p protocol -p flist --features serde"
-          - name: incremental-flist
-            args: "-p transfer --features incremental-flist"
-          - name: compression
-            args: "-p compress -p protocol -p engine -p transfer --features zstd,lz4"
-          - name: io_uring
-            args: "-p transfer -p fast_io --features io_uring"
-            linux_only: true
-          - name: copy_file_range
-            args: "-p fast_io --features copy_file_range"
-            linux_only: true
+          - name: concurrent-sessions
+            args: "-p daemon --features concurrent-sessions"
 
     env:
       CARGO_TERM_COLOR: always
@@ -70,7 +67,97 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
-          key: features-${{ matrix.name }}
+          key: features-${{ matrix.row.name }}-${{ matrix.os }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build (${{ matrix.row.name }})
+        run: cargo build --locked ${{ matrix.row.args }}
+
+      - name: Test (${{ matrix.row.name }})
+        run: cargo nextest run --locked --profile ci ${{ matrix.row.args }}
+
+  # ---------------------------------------------------------------------------
+  # Linux-only feature rows.
+  #
+  # Includes:
+  # - Pre-existing rows that test the original Linux-only matrix and the
+  #   platform-gated I/O features (io_uring, copy_file_range).
+  # - New crypto / deflate backend rows (openssl, openssl-vendored, zlib-ng,
+  #   zlib-rs) per the audit's G1/G2 recommendation. Linux-only initially:
+  #   the openssl rows depend on system libssl (already pre-installed on
+  #   ubuntu-latest); zlib-ng links against libz-ng-dev. macOS/Windows can
+  #   follow once the equivalent staging is validated; tracking via the
+  #   audit's section 7 follow-ups.
+  # ---------------------------------------------------------------------------
+  feature-flags-linux:
+    name: ${{ matrix.name }} (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: no-default-features
+            args: "--workspace --no-default-features"
+            apt: ""
+          - name: parallel
+            args: "-p checksums -p flist --features parallel"
+            apt: ""
+          - name: incremental-flist
+            args: "-p transfer --features incremental-flist"
+            apt: ""
+          - name: compression
+            args: "-p compress -p protocol -p engine -p transfer --features zstd,lz4"
+            apt: ""
+          - name: io_uring
+            args: "-p transfer -p fast_io --features io_uring"
+            apt: ""
+          - name: copy_file_range
+            args: "-p fast_io --features copy_file_range"
+            apt: ""
+          - name: openssl
+            args: "-p checksums --features openssl"
+            apt: "libssl-dev pkg-config"
+          - name: openssl-vendored
+            args: "-p checksums --features openssl-vendored"
+            apt: "pkg-config"
+          - name: zlib-ng
+            args: "-p compress -p protocol --features zlib-ng"
+            apt: "zlib1g-dev"
+          - name: zlib-rs
+            args: "-p compress -p protocol --no-default-features --features zlib-rs"
+            apt: ""
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ inputs.rust_toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+
+      - name: Install APT packages
+        if: matrix.apt != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ${{ matrix.apt }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
+          key: features-${{ matrix.name }}-linux
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
@@ -78,9 +165,7 @@ jobs:
           tool: cargo-nextest
 
       - name: Build (${{ matrix.name }})
-        if: ${{ !matrix.linux_only || runner.os == 'Linux' }}
         run: cargo build --locked ${{ matrix.args }}
 
       - name: Test (${{ matrix.name }})
-        if: ${{ !matrix.linux_only || runner.os == 'Linux' }}
         run: cargo nextest run --locked --profile ci ${{ matrix.args }}
