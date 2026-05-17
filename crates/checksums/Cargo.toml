@@ -84,3 +84,7 @@ harness = false
 [[bench]]
 name = "md4_multibuffer_benchmark"
 harness = false
+
+[[bench]]
+name = "md5_multibuffer_benchmark"
+harness = false
