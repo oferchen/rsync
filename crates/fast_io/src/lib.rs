@@ -95,6 +95,7 @@ pub mod sendfile;
 pub mod socket_options;
 pub mod splice;
 pub mod syscall_batch;
+pub mod vmsplice_writer;
 
 pub mod macos_io;
 
@@ -176,6 +177,7 @@ pub use splice::{
     SplicePipe, is_splice_available, is_splice_enabled, recv_fd_to_file, try_splice_to_file,
     try_vmsplice_to_file,
 };
+pub use vmsplice_writer::{VMSPLICE_MIN_CHUNK, VmspliceFileWriter};
 
 pub use macos_io::{
     F_NOCACHE_THRESHOLD, MAX_IOV_COUNT, MacosWriter, apply_sequential_read_hint, is_nocache_set,
