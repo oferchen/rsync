@@ -140,6 +140,35 @@ impl DeleteFs for RealDeleteFs {
     }
 }
 
+/// Blanket impl so a shared reference behaves like the owned value. Lets
+/// callers reuse a single [`RealDeleteFs`] across many emitter drains
+/// without cloning, and matches the `&self` shape of every trait method.
+impl<F: DeleteFs + ?Sized> DeleteFs for &F {
+    fn unlink_file(&self, path: &Path) -> io::Result<()> {
+        (*self).unlink_file(path)
+    }
+
+    fn rmdir(&self, path: &Path) -> io::Result<()> {
+        (*self).rmdir(path)
+    }
+
+    fn unlink_symlink(&self, path: &Path) -> io::Result<()> {
+        (*self).unlink_symlink(path)
+    }
+
+    fn unlink_device(&self, path: &Path) -> io::Result<()> {
+        (*self).unlink_device(path)
+    }
+
+    fn unlink_special(&self, path: &Path) -> io::Result<()> {
+        (*self).unlink_special(path)
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+        (*self).remove_dir_all(path)
+    }
+}
+
 /// Event captured by [`RecordingDeleteFs`] for each emitter dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteEvent {
@@ -411,6 +440,15 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     #[must_use]
     pub fn fs(&self) -> &F {
         &self.fs
+    }
+
+    /// Consumes the emitter and returns the underlying [`DeleteFs`]
+    /// dispatcher. Used by callers that need to inspect the recorded
+    /// event sequence after the drain returns, since the emitter holds
+    /// the dispatcher by value.
+    #[must_use]
+    pub fn into_fs(self) -> F {
+        self.fs
     }
 
     /// Returns the accumulated `io_error` bitmask. Non-zero means at

@@ -3974,7 +3974,7 @@ fn delete_pipeline_hook_publishes_one_plan_per_segment() {
     ctx.ndx_segments = vec![(0, 1), (2, 4), (4, 7)];
 
     let map = Arc::new(DeletePlanMap::new());
-    let delete_ctx = Arc::new(DeleteContext::new(
+    let delete_ctx = Arc::new(DeleteContext::with_shared_plan_map(
         Arc::clone(&map),
         tmp.path().to_path_buf(),
         true,
