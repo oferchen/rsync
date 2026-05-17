@@ -86,12 +86,17 @@
 
 mod aux_channel;
 mod builder;
+mod connect;
 mod connection;
 pub mod embedded;
 mod operand;
 mod parse;
 
 pub use builder::SshCommand;
+pub use connect::{
+    DEFAULT_CONNECT_TIMEOUT, DEFAULT_KEEPALIVE_INTERVAL, DEFAULT_KEEPALIVE_MAX_FAILURES,
+    KeepAliveConfig, SshConnectConfig,
+};
 pub use connection::{SshChildHandle, SshConnection, SshReader, SshWriter};
 pub use operand::{RemoteOperand, RemoteOperandParseError, parse_ssh_operand};
 pub use parse::{RemoteShellParseError, parse_remote_shell};
