@@ -46,6 +46,18 @@ The remaining 11 targets run only on demand via
 `tools/ci/run_filter_fuzz.sh`, `tools/ci/run_filter_differential_fuzz.sh`,
 or direct `cargo +nightly fuzz run` invocation.
 
+### Nightly coverage report (informational)
+
+The `Fuzz Coverage Report` workflow (`.github/workflows/fuzz-coverage-report.yml`)
+runs `cargo fuzz coverage <target> -- -max_total_time=300` for every target
+in the three fuzz workspaces nightly at 03:30 UTC. Each run uploads a
+`coverage/<target>.lcov` artifact with 30-day retention, and the GitHub step
+summary lists per-target line-coverage percentages. The job is marked
+`continue-on-error: true` while baseline thresholds stabilise; promote it to
+a required check once each target has a documented minimum line-coverage
+target and the lcov totals trend monotonically upward across consecutive
+nightly runs.
+
 Maturity signals:
 
 - `fuzz/corpus/` and `fuzz/artifacts/` are absent at the top-level
