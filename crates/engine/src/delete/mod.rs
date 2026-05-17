@@ -34,6 +34,7 @@
 mod cohort_index;
 mod context;
 pub mod emitter;
+mod error;
 mod extras;
 mod plan;
 mod plan_map;
@@ -45,6 +46,7 @@ pub use emitter::{
     CohortDeleteRecord, DeleteEmitter, DeleteEvent, DeleteFs, EMITTER_PARTIAL_EXIT_CODE,
     EMITTER_VANISHED_EXIT_CODE, EmitterErrorPolicy, RealDeleteFs, RecordingDeleteFs,
 };
+pub use error::DeleteError;
 pub use extras::{compute_extras, compute_extras_with_cohorts};
 pub use plan::{DeleteEntry, DeleteEntryKind, DeletePlan, HardlinkCohortId};
 pub use plan_map::DeletePlanMap;
