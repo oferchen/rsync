@@ -23,7 +23,7 @@ Methodology:
 5. Cross-reference each crate against the permitted-unsafe list in
    `CLAUDE.md`.
 
-The audit script is checked in at `tools/audit_unsafe.py`.
+The audit script is checked in at `tools/audit/unsafe_safety_comment_audit.py`.
 
 ## Permitted vs. forbidden crates
 
@@ -81,9 +81,11 @@ serialise environment-variable mutations during tests).
 
 ## Missing SAFETY comments
 
-`CLAUDE.md` requires every `unsafe { ... }` block to be preceded by a SAFETY
-comment explaining the invariants the caller relies on. After the quick-win
-fixes in this PR the violation count dropped from **356** down to **176**.
+The unsafe-code policy requires every `unsafe { ... }` block to be preceded by
+a SAFETY comment explaining the invariants the caller relies on. After the
+quick-win fixes shipped in the earlier audit PR the violation count dropped
+from **356** down to **176**, and the follow-up SIMD pass in this PR brings it
+further to **145**.
 
 | Crate            | Missing (before) | Missing (after) | Notes |
 |------------------|-----------------:|----------------:|-------|
@@ -95,15 +97,15 @@ fixes in this PR the violation count dropped from **356** down to **176**.
 | `flist`          | 8                | 0               | Fixed: `batched_stat/dir_stat.rs` and `batched_stat/statx_support.rs` (`fstatat`/`statx` syscalls + zeroed POD buffers). |
 | `metadata`       | 16               | 0               | Fixed: `permission_tests.rs` (`umask`), `copy_as.rs` (`geteuid`/`getegid`), `apply/timestamps.rs` (zeroed `attrlist`). |
 | `platform`       | 14               | 0               | Fixed: `signal.rs` (`SetConsoleCtrlHandler`), `env.rs` (test-only env mutations under `TEST_LOCK`). |
-| `checksums`      | 31               | 31              | Outstanding. All 31 are test calls to `unsafe fn digest_xN(&inputs)` and `unsafe fn accumulate_chunk_*`. Recommendation: add a single SAFETY block per test function referencing the relevant `target_feature` precondition (`SSE2` is x86_64 baseline, NEON is mandatory on aarch64, AVX2/AVX-512/SSSE3/SSE4.1 are runtime-detected before the test runs). Mechanical follow-up. |
+| `checksums`      | 31               | 0               | Fixed in the SIMD follow-up: rolling-checksum `accumulate_chunk_{neon,sse2,avx2}` wrappers plus every MD4/MD5 batched-lane test (`digest_x4`/`x8`/`x16` for NEON, SSE2, SSSE3, SSE4.1, AVX2, AVX-512). Each SAFETY note cites the CPU feature gate (runtime `is_x86_feature_detected!` for AVX2/AVX-512/SSSE3/SSE4.1, baseline SSE2 on x86_64, mandatory NEON on aarch64) plus slice validity. |
 | `fast_io`        | 222              | 124             | Outstanding. Heaviest concentrations: `splice.rs` (50), `sendfile.rs` (24), `io_uring/buffer_ring.rs` (13), `io_uring/statx.rs` (5), test fixtures (`splice_integration.rs`, `io_uring_stub/tests.rs`, `iocp_*_integration.rs`). Recommendation: most are pure libc `pipe`/`close`/`socketpair` test scaffolding and warrant a single SAFETY note per helper function rather than per call. The 13 ring-buffer pointer arithmetic blocks in `buffer_ring.rs` deserve full per-block invariants because they manipulate kernel-shared memory. |
 | `windows-gnu-eh` | 13               | 13              | Outstanding. The crate's documentation covers the load-and-cache pattern but individual blocks lack SAFETY notes. Recommendation: add a SAFETY note at the top of each `extern "system"` resolver explaining (1) module-handle lifetime semantics, (2) function-pointer transmute conditions, and (3) thread-safety of the `OnceLock` cache. |
 
-After the fixes in this PR: **571 unsafe blocks, 176 still missing SAFETY
-comments** (-180, -50.5%). All seven crates listed as "Fixed" above now have
-zero outstanding violations.
+After the SIMD follow-up: **571 unsafe blocks, 145 still missing SAFETY
+comments** (-211 vs. the original 356, -59%). All eight crates listed as
+"Fixed" above (now including `checksums`) have zero outstanding violations.
 
-## Fixes applied in this PR
+## Fixes applied in the original audit PR
 
 The following files were updated with SAFETY justifications:
 
@@ -124,6 +126,21 @@ The following files were updated with SAFETY justifications:
 - `crates/platform/src/env.rs`
 - `crates/platform/src/signal.rs`
 
+## Fixes applied in the SIMD follow-up
+
+- `crates/checksums/src/rolling/checksum/neon.rs`
+- `crates/checksums/src/rolling/checksum/x86.rs`
+- `crates/checksums/src/simd_batch/md4/simd/avx2.rs`
+- `crates/checksums/src/simd_batch/md4/simd/avx512.rs`
+- `crates/checksums/src/simd_batch/md4/simd/neon.rs`
+- `crates/checksums/src/simd_batch/md4/simd/sse2.rs`
+- `crates/checksums/src/simd_batch/md5_simd/avx2.rs`
+- `crates/checksums/src/simd_batch/md5_simd/avx512.rs`
+- `crates/checksums/src/simd_batch/md5_simd/neon.rs`
+- `crates/checksums/src/simd_batch/md5_simd/sse2.rs`
+- `crates/checksums/src/simd_batch/md5_simd/sse41.rs`
+- `crates/checksums/src/simd_batch/md5_simd/ssse3.rs`
+
 Common patterns documented:
 
 - **Env-guard helpers** (10 sites). `std::env::{set_var, remove_var}` became
@@ -139,27 +156,25 @@ Common patterns documented:
 
 ## Follow-up tasks
 
-1. **checksums SIMD tests** (31 blocks). Add per-test-function SAFETY blocks
-   citing the relevant target-feature gate.
-2. **fast_io splice/sendfile test scaffolding** (~74 blocks). Add one SAFETY
+1. **fast_io splice/sendfile test scaffolding** (~74 blocks). Add one SAFETY
    block per helper (most blocks are duplicate `libc::close(fd)` calls that
    share the same justification: the fd was created by the test and is no
    longer in use).
-3. **fast_io `io_uring/buffer_ring.rs` pointer arithmetic** (13 blocks).
+2. **fast_io `io_uring/buffer_ring.rs` pointer arithmetic** (13 blocks).
    Document the kernel-shared mmap region invariants (entry count, alignment,
    tail update ordering).
-4. **windows-gnu-eh resolver chain** (13 blocks). Document the
+3. **windows-gnu-eh resolver chain** (13 blocks). Document the
    `OnceLock`-cached `GetProcAddress` lifecycle once at the top of the
    resolver helpers.
-5. **Policy follow-up**: either migrate the unsafe code in `platform`,
+4. **Policy follow-up**: either migrate the unsafe code in `platform`,
    `windows-gnu-eh`, `core`, `cli`, `flist`, `daemon`, `embedding`, and
-   `branding` into the permitted crates, or extend the `CLAUDE.md` allowlist
+   `branding` into the permitted crates, or extend the unsafe-code allowlist
    with explicit, narrow exceptions.
 
 ## Reproducing the audit
 
 ```sh
-python3 tools/audit_unsafe.py
+python3 tools/audit/unsafe_safety_comment_audit.py
 ```
 
 The script prints per-crate block counts, total counts, and a violations table
