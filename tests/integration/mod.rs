@@ -4,3 +4,6 @@ pub mod helpers;
 
 #[cfg(unix)]
 pub mod delete_event_order_harness;
+
+#[cfg(unix)]
+pub mod acl_xattr_interop_harness;
