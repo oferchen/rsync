@@ -153,6 +153,13 @@ pub(super) enum Writer<'a> {
     },
     #[cfg(target_os = "macos")]
     Macos(fast_io::MacosWriter),
+    /// vmsplice zero-copy writer for already-demuxed literal chunks. Selected
+    /// only when `io_uring` is not engaged (Linux + `vmsplice` feature, non-
+    /// sparse, non-append). Per-chunk it falls back to a buffered write when
+    /// the chunk is small or unaligned. See `fast_io::VmspliceFileWriter` and
+    /// `docs/design/splice-vmsplice-zero-copy.md`.
+    #[cfg(all(target_os = "linux", feature = "vmsplice"))]
+    Vmsplice(fast_io::VmspliceFileWriter),
 }
 
 impl<'a> Writer<'a> {
@@ -180,6 +187,11 @@ impl<'a> Writer<'a> {
                 debug_assert!(false, "sparse mode must select buffered writer");
                 unreachable!("sparse mode must select buffered writer")
             }
+            #[cfg(all(target_os = "linux", feature = "vmsplice"))]
+            Writer::Vmsplice(_) => {
+                debug_assert!(false, "sparse mode must select buffered writer");
+                unreachable!("sparse mode must select buffered writer")
+            }
         }
     }
 
@@ -193,6 +205,8 @@ impl<'a> Writer<'a> {
             Writer::Iocp { batch } => batch.write_data(data),
             #[cfg(target_os = "macos")]
             Writer::Macos(w) => w.write_all(data),
+            #[cfg(all(target_os = "linux", feature = "vmsplice"))]
+            Writer::Vmsplice(w) => w.write_chunk(data).map(|_| ()),
         }
     }
 
@@ -230,6 +244,19 @@ impl<'a> Writer<'a> {
                     })
                 }
             }
+            #[cfg(all(target_os = "linux", feature = "vmsplice"))]
+            Writer::Vmsplice(w) => {
+                // vmsplice writes go straight to the file fd via the kernel,
+                // so there is no userspace buffer to flush. The fsync, when
+                // requested, syncs the file the writer owns.
+                if do_fsync {
+                    w.file().sync_all().map_err(|e| {
+                        io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
+                    })
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 
@@ -243,7 +270,7 @@ impl<'a> Writer<'a> {
     #[cfg_attr(
         not(any(
             all(target_os = "linux", feature = "io_uring"),
-            all(target_os = "windows", feature = "iocp")
+            all(target_os = "windows", feature = "iocp"),
         )),
         allow(unused_variables)
     )]
@@ -266,6 +293,8 @@ impl<'a> Writer<'a> {
             }),
             #[cfg(target_os = "macos")]
             Writer::Macos(_) => Ok(()),
+            #[cfg(all(target_os = "linux", feature = "vmsplice"))]
+            Writer::Vmsplice(_) => Ok(()),
         }
     }
 }
