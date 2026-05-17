@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - "v[0-9]*.[0-9]*.[0-9]*"
+  schedule:
+    # Weekly Windows throughput sniff. Sunday 04:17 UTC keeps it well
+    # clear of the daily release-cross and interop schedules.
+    - cron: '17 4 * * 0'
   workflow_dispatch:
     inputs:
       baseline_tag:
@@ -212,3 +216,11 @@ jobs:
         run: |
           TAG="${{ steps.release_tag.outputs.tag }}"
           gh release upload "$TAG" benchmark.png benchmark_results.json benchmark_report.md --clobber
+
+  # Windows throughput sniff: runs on tag, weekly schedule, and manual
+  # dispatch. Best-effort (continue-on-error in the reusable workflow);
+  # not wired into branch protection. See docs/benchmarks/windows-throughput.md
+  # for how to read the JSON artefacts.
+  windows-throughput:
+    name: Windows throughput (vs MSYS2 rsync)
+    uses: ./.github/workflows/_benchmark-windows.yml
