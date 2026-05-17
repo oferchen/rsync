@@ -66,6 +66,13 @@ copy_file_range = []
 # This feature is kept as an empty alias for compatibility.
 syscall_batch = []
 
+# vmsplice: Linux-only zero-copy file writer that moves a userspace buffer to a
+# regular file via `vmsplice(2)` + `splice(2)`. Default off until benchmarks on
+# the trigger workload (kernel < 5.6 or io_uring disabled, large literal tokens,
+# splice-capable filesystem) justify promotion. See
+# docs/design/splice-vmsplice-zero-copy.md.
+vmsplice = []
+
 [target.'cfg(windows)'.dependencies]
 # CopyFileExW for Windows-optimized file copy with no-buffering support;
 # Win32_Networking_WinSock added for WSARecv/WSASend in iocp::socket (#1928);
