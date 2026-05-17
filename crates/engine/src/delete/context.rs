@@ -245,9 +245,10 @@ impl DeleteContext {
     ///
     /// # Panics
     ///
-    /// Panics if the cursor mutex is poisoned. A poisoned mutex
-    /// indicates an unrecoverable bug in the emitter side and is
-    /// treated the same way the plan map treats poisoned state.
+    /// Panics if the cursor mutex is poisoned. The cursor's stack ordering
+    /// is the upstream parent-before-child emission invariant; a torn
+    /// state would silently mis-order deletes, so propagation is the only
+    /// safe option (see `docs/audits/mutex-poison-policy.md`).
     pub fn observe_segment_for_delete(&self, dir: &Path, entries: &[FileEntry]) -> io::Result<()> {
         if !self.enabled {
             return Ok(());
@@ -271,6 +272,13 @@ impl DeleteContext {
     /// emitter sees parents before children. Callers invoke this whenever
     /// a directory's contents become known via an inline directory walk
     /// in the non-INC_RECURSE path.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the cursor mutex is poisoned. The cursor's stack ordering
+    /// is the upstream parent-before-child emission invariant; a torn
+    /// state would silently mis-order deletes, so propagating the panic is
+    /// the only safe option (see `docs/audits/mutex-poison-policy.md`).
     pub fn observe_directory(&self, parent: PathBuf, children: &[FileEntry]) {
         self.cursor
             .lock()
@@ -285,6 +293,14 @@ impl DeleteContext {
     /// Used by the per-dir wiring in the recursive executor: the planner
     /// has already iterated the source directory; we feed those names
     /// here instead of asking the receiver for them.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the segment-entries mutex is poisoned. The buffer is
+    /// overwritten in place; continuing with a half-written segment would
+    /// compute extras against a stale name list and unlink the wrong
+    /// files, so propagation is mandatory (see
+    /// `docs/audits/mutex-poison-policy.md`).
     pub fn begin_directory(&self, segment_entries: Vec<FileEntry>) {
         *self
             .segment_entries
@@ -301,6 +317,14 @@ impl DeleteContext {
     /// Surfaces any [`io::Error`] from [`compute_extras`] (typically
     /// `NotFound` when `dir` does not exist at the destination; callers
     /// log and skip in that case).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the segment-entries mutex is poisoned. A panic mid-clone
+    /// could leave the previous segment partially overwritten by an
+    /// in-flight [`Self::begin_directory`] call; the strict policy keeps
+    /// the wrong-file unlink risk out of the drain path (see
+    /// `docs/audits/mutex-poison-policy.md`).
     pub fn publish_plan_for(&self, dir: &Path) -> io::Result<()> {
         let entries = self
             .segment_entries
@@ -472,7 +496,7 @@ mod tests {
             .expect("disabled is a no-op");
 
         assert!(map.is_empty());
-        let mut cursor = ctx.cursor.lock().unwrap();
+        let mut cursor = ctx.cursor.lock().expect("test cursor poisoned");
         // Even with no observations, the root is still emitted, and the
         // second call drains the now-empty stack and reports exhaustion.
         assert_eq!(cursor.next_ready(), Some(PathBuf::new()));
@@ -507,7 +531,7 @@ mod tests {
         let names: Vec<&OsStr> = plan.extras.iter().map(|e| e.name.as_os_str()).collect();
         assert_eq!(names, vec![OsStr::new("d"), OsStr::new("b")]);
 
-        let mut cursor = ctx.cursor.lock().unwrap();
+        let mut cursor = ctx.cursor.lock().expect("test cursor poisoned");
         let seq: Vec<PathBuf> = std::iter::from_fn(|| cursor.next_ready()).collect();
         assert!(seq.contains(&PathBuf::from("sub/nested")));
     }
@@ -565,7 +589,7 @@ mod tests {
             true,
         );
 
-        let mut cursor = ctx.cursor.lock().unwrap();
+        let mut cursor = ctx.cursor.lock().expect("test cursor poisoned");
         assert_eq!(cursor.next_ready(), Some(PathBuf::from("from_here")));
     }
 
