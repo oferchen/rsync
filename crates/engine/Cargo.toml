@@ -178,3 +178,15 @@ harness = false
 [[bench]]
 name = "delete_plan_map_contention"
 harness = false
+
+[[bench]]
+name = "delete_plan_compute"
+harness = false
+
+[[bench]]
+name = "delete_emitter_unlink"
+harness = false
+
+[[bench]]
+name = "delete_end_to_end"
+harness = false
