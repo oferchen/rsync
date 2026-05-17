@@ -705,3 +705,34 @@ fn no_adaptive_concurrency_then_yes_last_wins() {
     .expect("parse");
     assert!(parsed.adaptive_concurrency);
 }
+
+#[test]
+fn delete_strict_order_default_is_disabled() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(!parsed.delete_strict_order);
+}
+
+#[test]
+fn delete_strict_order_flag_enables() {
+    let parsed = parse_test_args(["--delete-during", "--delete-strict-order", "src/", "dst/"])
+        .expect("parse");
+    assert!(parsed.delete_strict_order);
+}
+
+#[test]
+fn no_delete_strict_order_flag_disables() {
+    let parsed = parse_test_args(["--no-delete-strict-order", "src/", "dst/"]).expect("parse");
+    assert!(!parsed.delete_strict_order);
+}
+
+#[test]
+fn delete_strict_order_then_no_last_wins() {
+    let parsed = parse_test_args([
+        "--delete-strict-order",
+        "--no-delete-strict-order",
+        "src/",
+        "dst/",
+    ])
+    .expect("parse");
+    assert!(!parsed.delete_strict_order);
+}
