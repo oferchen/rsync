@@ -402,7 +402,13 @@ jobs:
         run: |
           # Run macOS-specific crates only (core, engine, cli have platform code).
           # Full test suite runs on Linux; macOS validates platform-specific paths.
-          rustup run ${{ matrix.toolchain }} cargo nextest run --locked -p core -p engine -p cli --all-features
+          # metadata covers the Darwin acl_exacl branch and the macOS timestamp
+          # path in crates/metadata/src/apply/timestamps.rs. apple-fs covers the
+          # AppleDouble round-trip plus the macOS-only resource fork pipeline.
+          # Tests that need root self-skip via geteuid() (see acl_handling.rs)
+          # and the resource-fork test probes xattr support and skips on
+          # filesystems that do not support it (e.g. FAT-mounted /tmp).
+          rustup run ${{ matrix.toolchain }} cargo nextest run --locked -p core -p engine -p cli -p metadata -p apple-fs --all-features
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
