@@ -30,6 +30,7 @@ raw-cpuid = { workspace = true, optional = true }
 
 [features]
 embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep:tokio"]
+async-ssh = ["dep:tokio"]
 
 [dev-dependencies]
 proptest = "1.4"
