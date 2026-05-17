@@ -153,3 +153,7 @@ harness = false
 [[bench]]
 name = "reorder_buffer_cache"
 harness = false
+
+[[bench]]
+name = "reorderbuffer_memory"
+harness = false
