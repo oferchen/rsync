@@ -1,6 +1,10 @@
 # IORING_OP_SEND_ZC for network zero-copy on kernel >= 6.0
 
-Tracking issue: #1832. Status: design, implementation deferred.
+Tracking issue: #1832. Status: primitive landed in
+`crates/fast_io/src/io_uring/send_zc.rs` and wired into
+`IoUringSocketWriter::submit_send` behind `ZeroCopyPolicy::Enabled` /
+`IoUringConfig::allow_send_zc`. The pin-counted pool described in
+section 3 remains future work for #4218.
 Companion to the borrowed-slice audit (#4218,
 `docs/design/iouring-borrowed-slice-consumer.md`) and the daemon TCP
 socket I/O work tracked at #1876
