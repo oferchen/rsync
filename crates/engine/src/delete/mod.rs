@@ -40,7 +40,7 @@ mod plan_map;
 mod traversal;
 
 pub use cohort_index::CohortIndex;
-pub use context::DeleteContext;
+pub use context::{DeleteContext, DrainOutcome, EmitterTiming};
 pub use emitter::{
     CohortDeleteRecord, DeleteEmitter, DeleteEvent, DeleteFs, EMITTER_PARTIAL_EXIT_CODE,
     EMITTER_VANISHED_EXIT_CODE, EmitterErrorPolicy, RealDeleteFs, RecordingDeleteFs,

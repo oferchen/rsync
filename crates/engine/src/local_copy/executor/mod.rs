@@ -8,6 +8,10 @@ mod sources;
 mod special;
 mod util;
 
+#[cfg(not(feature = "legacy-batched-delete"))]
+#[allow(unused_imports)]
+// REASON: kept available for direct tests that bypass the public wrapper
+pub(crate) use cleanup::delete_extraneous_entries_via_emitter;
 pub(crate) use cleanup::{delete_extraneous_entries, remove_source_entry_if_requested};
 pub(crate) use directory::ChecksumCache;
 pub(crate) use directory::{

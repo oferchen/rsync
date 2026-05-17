@@ -99,6 +99,13 @@ multi-producer = []
 # single-slot path; only beneficial above ~32 worker threads per pool.
 thread-slab-pool = []
 
+# Legacy batched delete sweep - opt-in fallback to the pre-DDP-E code path
+# Benefits: Lets operators flip back to the batched sweep while the
+#   parallel-deterministic-delete emitter is bedding in.
+# Trade-offs: Diverges from upstream rsync's per-directory unlink order;
+#   slated for removal in DDP-F3.
+legacy-batched-delete = []
+
 # ============================================================================
 # Runtime Features
 # ============================================================================
