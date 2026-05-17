@@ -688,6 +688,8 @@ mod tests {
         let source = create_temp_file(content).unwrap();
 
         let mut pipe_fds = [0i32; 2];
+        // SAFETY: `pipe_fds` is the two-int output slot `pipe(2)` writes
+        // into; the call returns 0 on success.
         let result = unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
         assert_eq!(result, 0, "Failed to create pipe");
 
@@ -696,12 +698,16 @@ mod tests {
 
         let sent = send_file_to_fd(source.as_file(), write_fd, content.len() as u64);
 
+        // SAFETY: `write_fd` was just opened by `pipe(2)` and is closed
+        // exactly once here.
         unsafe { libc::close(write_fd) };
 
         if let Ok(sent_bytes) = sent {
             assert_eq!(sent_bytes, content.len() as u64);
 
             let mut received = vec![0u8; content.len()];
+            // SAFETY: `read_fd` is still open; `received` provides
+            // `content.len()` writable bytes matching the requested length.
             let n = unsafe {
                 libc::read(
                     read_fd,
@@ -713,6 +719,8 @@ mod tests {
             assert_eq!(received, content);
         }
 
+        // SAFETY: `read_fd` was opened by `pipe(2)` and is closed exactly
+        // once here.
         unsafe { libc::close(read_fd) };
     }
 
@@ -725,6 +733,7 @@ mod tests {
         let source = create_temp_file(content).unwrap();
 
         let mut socket_fds = [0i32; 2];
+        // SAFETY: `socket_fds` is the two-int output slot the syscall fills.
         let result = unsafe {
             libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
         };
@@ -736,9 +745,13 @@ mod tests {
         let sent = send_file_to_fd(source.as_file(), send_fd, content.len() as u64).unwrap();
         assert_eq!(sent, content.len() as u64);
 
+        // SAFETY: `send_fd` was just opened by `socketpair` and is closed
+        // exactly once here.
         unsafe { libc::close(send_fd) };
 
         let mut received = vec![0u8; content.len()];
+        // SAFETY: `recv_fd` is still open; `received` provides
+        // `content.len()` writable bytes matching the requested length.
         let n = unsafe {
             libc::read(
                 recv_fd,
@@ -749,6 +762,8 @@ mod tests {
         assert_eq!(n, content.len() as isize);
         assert_eq!(received, content);
 
+        // SAFETY: `recv_fd` was opened by `socketpair` and is closed exactly
+        // once here.
         unsafe { libc::close(recv_fd) };
     }
 
@@ -762,6 +777,7 @@ mod tests {
         let source = create_temp_file(&content).unwrap();
 
         let mut pipe_fds = [0i32; 2];
+        // SAFETY: `pipe_fds` is the two-int output slot `pipe(2)` writes into.
         let result = unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
         assert_eq!(result, 0, "Failed to create pipe");
 
@@ -775,6 +791,8 @@ mod tests {
             let mut received = Vec::new();
             let mut buf = [0u8; 8192];
             loop {
+                // SAFETY: `read_fd` is owned by this thread until the
+                // `close` below; `buf` provides `buf.len()` writable bytes.
                 let n = unsafe {
                     libc::read(read_fd, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len())
                 };
@@ -783,12 +801,16 @@ mod tests {
                 }
                 received.extend_from_slice(&buf[..n as usize]);
             }
+            // SAFETY: `read_fd` is still open and is closed exactly once
+            // before the thread exits.
             unsafe { libc::close(read_fd) };
             received
         });
 
         let sent = send_file_to_fd(source.as_file(), write_fd, size as u64);
 
+        // SAFETY: `write_fd` was opened by `pipe(2)` and is closed exactly
+        // once here.
         unsafe { libc::close(write_fd) };
 
         assert!(sent.is_ok(), "sendfile should succeed");
@@ -814,6 +836,7 @@ mod tests {
         let source = create_temp_file(&content).unwrap();
 
         let mut socket_fds = [0i32; 2];
+        // SAFETY: `socket_fds` is the two-int output slot the syscall fills.
         let result = unsafe {
             libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
         };
@@ -829,6 +852,8 @@ mod tests {
             let mut received = Vec::with_capacity(expected_content.len());
             let mut buf = [0u8; 8192];
             while received.len() < expected_content.len() {
+                // SAFETY: `recv_fd` is owned by this thread until the
+                // `close` below; `buf` provides `buf.len()` writable bytes.
                 let n = unsafe {
                     libc::read(recv_fd, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len())
                 };
@@ -837,6 +862,8 @@ mod tests {
                 }
                 received.extend_from_slice(&buf[..n as usize]);
             }
+            // SAFETY: `recv_fd` is still open and is closed exactly once
+            // before the thread exits.
             unsafe { libc::close(recv_fd) };
             received
         });
@@ -846,6 +873,8 @@ mod tests {
             .expect("native macOS sendfile should succeed on a SOCK_STREAM");
         assert_eq!(sent, size as u64);
 
+        // SAFETY: `send_fd` was opened by `socketpair` and is closed exactly
+        // once here.
         unsafe { libc::close(send_fd) };
 
         let received = reader_thread.join().expect("reader thread should succeed");
@@ -865,6 +894,7 @@ mod tests {
         let source = create_temp_file(&content).unwrap();
 
         let mut socket_fds = [0i32; 2];
+        // SAFETY: `socket_fds` is the two-int output slot the syscall fills.
         let result = unsafe {
             libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, socket_fds.as_mut_ptr())
         };
@@ -878,6 +908,8 @@ mod tests {
             let mut received = Vec::with_capacity(expected.len());
             let mut buf = [0u8; 8192];
             while received.len() < expected.len() {
+                // SAFETY: `recv_fd` is owned by this thread until the
+                // `close` below; `buf` provides `buf.len()` writable bytes.
                 let n = unsafe {
                     libc::read(recv_fd, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len())
                 };
@@ -886,6 +918,7 @@ mod tests {
                 }
                 received.extend_from_slice(&buf[..n as usize]);
             }
+            // SAFETY: `recv_fd` is still open and is closed exactly once.
             unsafe { libc::close(recv_fd) };
             received
         });
@@ -893,6 +926,8 @@ mod tests {
         let sent = send_file_to_fd(source.as_file(), send_fd, content.len() as u64).unwrap();
         assert_eq!(sent, content.len() as u64);
 
+        // SAFETY: `send_fd` was opened by `socketpair` and is closed exactly
+        // once here.
         unsafe { libc::close(send_fd) };
 
         let received = reader_thread.join().expect("reader thread should succeed");
@@ -910,6 +945,7 @@ mod tests {
         let source = create_temp_file(&content).unwrap();
 
         let mut pipe_fds = [0i32; 2];
+        // SAFETY: `pipe_fds` is the two-int output slot `pipe(2)` writes into.
         let result = unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
         assert_eq!(result, 0, "Failed to create pipe");
 
@@ -921,6 +957,8 @@ mod tests {
             let mut received = Vec::with_capacity(expected.len());
             let mut buf = [0u8; 8192];
             while received.len() < expected.len() {
+                // SAFETY: `read_fd` is owned by this thread until the
+                // `close` below; `buf` provides `buf.len()` writable bytes.
                 let n = unsafe {
                     libc::read(read_fd, buf.as_mut_ptr().cast::<libc::c_void>(), buf.len())
                 };
@@ -929,6 +967,7 @@ mod tests {
                 }
                 received.extend_from_slice(&buf[..n as usize]);
             }
+            // SAFETY: `read_fd` is still open and is closed exactly once.
             unsafe { libc::close(read_fd) };
             received
         });
@@ -936,6 +975,8 @@ mod tests {
         let sent = send_file_to_fd(source.as_file(), write_fd, content.len() as u64).unwrap();
         assert_eq!(sent, content.len() as u64);
 
+        // SAFETY: `write_fd` was opened by `pipe(2)` and is closed exactly
+        // once here.
         unsafe { libc::close(write_fd) };
 
         let received = reader_thread.join().expect("reader thread should succeed");

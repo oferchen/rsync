@@ -102,6 +102,9 @@ fn buffer_slot_read_write_memory() {
 
     // Write a pattern into the buffer.
     let pattern = b"hello io_uring registered buffers!";
+    // SAFETY: the slot was just checked out, so we hold exclusive access; the
+    // slot's capacity (4096 bytes) exceeds `pattern.len()`, and the destination
+    // pointer is from the registered arena which is non-null and aligned.
     unsafe {
         ptr::copy_nonoverlapping(pattern.as_ptr(), slot.as_mut_ptr(), pattern.len());
         let read_back = slot.as_slice(pattern.len());

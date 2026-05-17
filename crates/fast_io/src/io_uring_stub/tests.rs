@@ -316,6 +316,8 @@ fn policy_default_is_auto() {
 fn socket_reader_disabled_policy_uses_std() {
     let (fd_a, fd_b) = {
         let mut fds = [0i32; 2];
+        // SAFETY: `fds` is the two-int output slot `socketpair(2)` requires;
+        // the call returns 0 and writes both fds on success.
         let ret =
             unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
         assert_eq!(ret, 0);
@@ -325,6 +327,8 @@ fn socket_reader_disabled_policy_uses_std() {
     let reader = socket_reader_from_fd(fd_b, 8192, IoUringPolicy::Disabled).unwrap();
     assert!(matches!(reader, IoUringOrStdSocketReader::Std(_)));
 
+    // SAFETY: `fd_a` and `fd_b` were just opened by `socketpair`; we close
+    // each exactly once and do not reuse them afterwards.
     unsafe {
         libc::close(fd_a);
         libc::close(fd_b);
@@ -336,6 +340,8 @@ fn socket_reader_disabled_policy_uses_std() {
 fn socket_writer_disabled_policy_uses_std() {
     let (fd_a, fd_b) = {
         let mut fds = [0i32; 2];
+        // SAFETY: `fds` is the two-int output slot `socketpair(2)` requires;
+        // the call returns 0 and writes both fds on success.
         let ret =
             unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
         assert_eq!(ret, 0);
@@ -345,6 +351,8 @@ fn socket_writer_disabled_policy_uses_std() {
     let writer = socket_writer_from_fd(fd_a, 8192, IoUringPolicy::Disabled).unwrap();
     assert!(matches!(writer, IoUringOrStdSocketWriter::Std(_)));
 
+    // SAFETY: `fd_a` and `fd_b` were just opened by `socketpair`; we close
+    // each exactly once and do not reuse them afterwards.
     unsafe {
         libc::close(fd_a);
         libc::close(fd_b);
@@ -356,6 +364,8 @@ fn socket_writer_disabled_policy_uses_std() {
 fn socket_enabled_policy_returns_error() {
     let (fd_a, fd_b) = {
         let mut fds = [0i32; 2];
+        // SAFETY: `fds` is the two-int output slot `socketpair(2)` requires;
+        // the call returns 0 and writes both fds on success.
         let ret =
             unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
         assert_eq!(ret, 0);
@@ -374,6 +384,8 @@ fn socket_enabled_policy_returns_error() {
         Ok(_) => panic!("expected Unsupported error for writer"),
     }
 
+    // SAFETY: `fd_a` and `fd_b` were just opened by `socketpair`; we close
+    // each exactly once and do not reuse them afterwards.
     unsafe {
         libc::close(fd_a);
         libc::close(fd_b);

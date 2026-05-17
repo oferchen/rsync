@@ -217,6 +217,9 @@ impl IoUringWriter {
             .user_data(0);
         let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
 
+        // SAFETY: `entry` references `buf` and the file fd; both outlive
+        // `submit_and_wait` below, so the kernel can read from the buffer
+        // before we observe completion.
         unsafe {
             self.ring
                 .submission()
@@ -404,6 +407,9 @@ impl FileWriter for IoUringWriter {
         let entry = opcode::Fsync::new(fd).build().user_data(0);
         let fsync_op = maybe_fixed_file(entry, self.fixed_fd_slot);
 
+        // SAFETY: `Fsync` carries only the file fd which remains valid for
+        // the duration of `submit_and_wait`; no user-space buffer is shared
+        // with the kernel.
         unsafe {
             self.ring
                 .submission()

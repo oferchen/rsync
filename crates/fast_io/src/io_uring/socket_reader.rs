@@ -51,6 +51,9 @@ impl IoUringSocketReader {
             .user_data(0);
         let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
 
+        // SAFETY: `entry` references `self.buffer` and the socket fd; both
+        // remain valid across `submit_and_wait`, so the kernel can write
+        // into the buffer before we observe completion.
         unsafe {
             self.ring
                 .submission()
@@ -89,6 +92,9 @@ impl Read for IoUringSocketReader {
                     .user_data(0);
                 let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
 
+                // SAFETY: `entry` references the caller's `buf` and the
+                // socket fd; both remain valid across `submit_and_wait`,
+                // letting the kernel fill the buffer directly.
                 unsafe {
                     self.ring
                         .submission()

@@ -35,6 +35,8 @@ fn recv_fd_returns_unsupported_on_non_unix() {
 #[cfg(unix)]
 fn socketpair_with_writer(content: Vec<u8>) -> (i32, std::thread::JoinHandle<()>) {
     let mut fds = [0i32; 2];
+    // SAFETY: `fds` provides the two-int output slot that `socketpair(2)`
+    // writes into; the call returns 0 on success.
     let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
     assert_eq!(rc, 0, "socketpair creation failed");
 
@@ -44,6 +46,8 @@ fn socketpair_with_writer(content: Vec<u8>) -> (i32, std::thread::JoinHandle<()>
     let handle = std::thread::spawn(move || {
         let mut offset = 0;
         while offset < content.len() {
+            // SAFETY: the fd was opened just above and is still valid; the buffer
+            // provides exactly the requested number of readable bytes.
             let n = unsafe {
                 libc::write(
                     send_fd,
@@ -54,6 +58,8 @@ fn socketpair_with_writer(content: Vec<u8>) -> (i32, std::thread::JoinHandle<()>
             assert!(n > 0, "write to socketpair failed");
             offset += n as usize;
         }
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(send_fd) };
     });
 
@@ -88,6 +94,8 @@ mod fallback {
         let received =
             recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), content.len() as u64).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -104,6 +112,8 @@ mod fallback {
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), 1_000_000).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -119,6 +129,8 @@ mod fallback {
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), 4096).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -136,6 +148,8 @@ mod fallback {
         let received =
             recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), content.len() as u64).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -153,6 +167,8 @@ mod fallback {
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -170,6 +186,8 @@ mod fallback {
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -205,6 +223,8 @@ mod linux_splice {
         let spliced =
             try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), content.len()).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -226,6 +246,8 @@ mod linux_splice {
 
         let spliced = try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), size).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -247,6 +269,8 @@ mod linux_splice {
 
         let spliced = try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), size).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -267,6 +291,8 @@ mod linux_splice {
 
         let spliced = try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), 1_000_000).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -283,13 +309,17 @@ mod linux_splice {
         let mut dest = NamedTempFile::new().unwrap();
 
         let mut fds = [0i32; 2];
+        // SAFETY: `fds` is the two-int output slot `socketpair(2)` fills.
         let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
         assert_eq!(rc, 0);
 
         // Close sender immediately.
+        // SAFETY: `fds[1]` was just opened by `socketpair` and is closed
+        // exactly once here.
         unsafe { libc::close(fds[1]) };
 
         let spliced = try_splice_to_file(fds[0], dest.as_file().as_raw_fd(), 4096).unwrap();
+        // SAFETY: `fds[0]` was opened by `socketpair`; closed exactly once.
         unsafe { libc::close(fds[0]) };
 
         assert_eq!(spliced, 0);
@@ -314,11 +344,14 @@ mod linux_splice {
         }
 
         let mut fds = [0i32; 2];
+        // SAFETY: `fds` is the two-int output slot `socketpair(2)` fills.
         let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
         assert_eq!(rc, 0);
 
         // Write some data so the splice has something to transfer.
         let data = b"test";
+        // SAFETY: the fd is still open; the buffer provides exactly the
+        // requested readable bytes, then we close the fd below.
         unsafe {
             libc::write(fds[1], data.as_ptr().cast::<libc::c_void>(), data.len());
             libc::close(fds[1]);
@@ -344,6 +377,8 @@ mod linux_splice {
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -361,6 +396,8 @@ mod linux_splice {
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 
@@ -378,6 +415,8 @@ mod linux_splice {
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
 
+        // SAFETY: the fd was opened by `socketpair`/`pipe` earlier in the test and
+        // is closed exactly once here; no further use occurs after this call.
         unsafe { libc::close(recv_fd) };
         writer.join().unwrap();
 

@@ -115,6 +115,10 @@ impl<'a> RegisteredBufferSlot<'a> {
     pub unsafe fn as_slice(&self, len: usize) -> &[u8] {
         debug_assert!(len <= self.group.buffer_size);
         let clamped = len.min(self.group.buffer_size);
+        // SAFETY: `as_ptr` returns the slot's base inside the registered
+        // arena, `clamped <= buffer_size` keeps the slice inside the slot,
+        // and the caller's `unsafe` contract guarantees the bytes were
+        // initialised and no aliasing mutable reference exists.
         unsafe { std::slice::from_raw_parts(self.as_ptr(), clamped) }
     }
 
@@ -127,6 +131,9 @@ impl<'a> RegisteredBufferSlot<'a> {
     pub unsafe fn as_mut_slice(&mut self, len: usize) -> &mut [u8] {
         debug_assert!(len <= self.group.buffer_size);
         let clamped = len.min(self.group.buffer_size);
+        // SAFETY: `&mut self` proves exclusive access to this slot, and
+        // `clamped <= buffer_size` keeps the slice within the slot's
+        // registered region; caller's contract bans concurrent kernel use.
         unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr(), clamped) }
     }
 }

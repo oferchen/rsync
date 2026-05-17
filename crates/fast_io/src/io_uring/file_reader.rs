@@ -128,6 +128,9 @@ impl IoUringReader {
             .user_data(0);
         let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
 
+        // SAFETY: `entry` references `buf` and the file fd; both outlive
+        // `submit_and_wait` below, so the kernel can safely fill the buffer
+        // before we observe completion.
         unsafe {
             self.ring
                 .submission()
@@ -244,6 +247,9 @@ impl IoUringReader {
                         .user_data(idx as u64);
                     let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
 
+                    // SAFETY: `entry` references `output` (held across the
+                    // whole batched read) and the file fd; the pointer
+                    // remains valid until `submit_and_wait` returns.
                     unsafe {
                         self.ring
                             .submission()

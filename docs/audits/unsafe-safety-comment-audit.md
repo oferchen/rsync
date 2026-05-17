@@ -1,8 +1,5 @@
 # Unsafe Block SAFETY Comment Audit
 
-> Status: Wired into CI as informational on 2026-05-18; flip to required once
-> violation count reaches 0 (or documented threshold).
-
 ## Scope
 
 Workspace-wide audit of `unsafe { ... }` expression blocks for SAFETY comments
@@ -81,11 +78,10 @@ serialise environment-variable mutations during tests).
 
 ## Missing SAFETY comments
 
-The unsafe-code policy requires every `unsafe { ... }` block to be preceded by
-a SAFETY comment explaining the invariants the caller relies on. After the
-quick-win fixes shipped in the earlier audit PR the violation count dropped
-from **356** down to **176**, and the follow-up SIMD pass in this PR brings it
-further to **145**.
+`CLAUDE.md` requires every `unsafe { ... }` block to be preceded by a SAFETY
+comment explaining the invariants the caller relies on. After the quick-win
+fixes in this PR plus the `fast_io` follow-up the violation count dropped from
+**356** down to **52**.
 
 | Crate            | Missing (before) | Missing (after) | Notes |
 |------------------|-----------------:|----------------:|-------|
@@ -97,15 +93,15 @@ further to **145**.
 | `flist`          | 8                | 0               | Fixed: `batched_stat/dir_stat.rs` and `batched_stat/statx_support.rs` (`fstatat`/`statx` syscalls + zeroed POD buffers). |
 | `metadata`       | 16               | 0               | Fixed: `permission_tests.rs` (`umask`), `copy_as.rs` (`geteuid`/`getegid`), `apply/timestamps.rs` (zeroed `attrlist`). |
 | `platform`       | 14               | 0               | Fixed: `signal.rs` (`SetConsoleCtrlHandler`), `env.rs` (test-only env mutations under `TEST_LOCK`). |
-| `checksums`      | 31               | 0               | Fixed in the SIMD follow-up: rolling-checksum `accumulate_chunk_{neon,sse2,avx2}` wrappers plus every MD4/MD5 batched-lane test (`digest_x4`/`x8`/`x16` for NEON, SSE2, SSSE3, SSE4.1, AVX2, AVX-512). Each SAFETY note cites the CPU feature gate (runtime `is_x86_feature_detected!` for AVX2/AVX-512/SSSE3/SSE4.1, baseline SSE2 on x86_64, mandatory NEON on aarch64) plus slice validity. |
-| `fast_io`        | 222              | 124             | Outstanding. Heaviest concentrations: `splice.rs` (50), `sendfile.rs` (24), `io_uring/buffer_ring.rs` (13), `io_uring/statx.rs` (5), test fixtures (`splice_integration.rs`, `io_uring_stub/tests.rs`, `iocp_*_integration.rs`). Recommendation: most are pure libc `pipe`/`close`/`socketpair` test scaffolding and warrant a single SAFETY note per helper function rather than per call. The 13 ring-buffer pointer arithmetic blocks in `buffer_ring.rs` deserve full per-block invariants because they manipulate kernel-shared memory. |
+| `fast_io`        | 222              | 0               | Fixed: io_uring SQE submission helpers (`batching.rs`, `file_reader.rs`, `file_writer.rs`, `socket_reader.rs`), buffer-ring pointer arithmetic (`buffer_ring.rs`), POD statx buffers (`statx.rs`), `uname` call (`config.rs`), registered-buffer slice helpers, fd-based socket adapters, and the splice/sendfile test scaffolding. The 13 ring-buffer blocks in `buffer_ring.rs` now carry full per-block invariants documenting the kernel-shared mmap region. |
+| `checksums`      | 31               | 31              | Outstanding. All 31 are test calls to `unsafe fn digest_xN(&inputs)` and `unsafe fn accumulate_chunk_*`. Recommendation: add a single SAFETY block per test function referencing the relevant `target_feature` precondition (`SSE2` is x86_64 baseline, NEON is mandatory on aarch64, AVX2/AVX-512/SSSE3/SSE4.1 are runtime-detected before the test runs). Mechanical follow-up. |
 | `windows-gnu-eh` | 13               | 13              | Outstanding. The crate's documentation covers the load-and-cache pattern but individual blocks lack SAFETY notes. Recommendation: add a SAFETY note at the top of each `extern "system"` resolver explaining (1) module-handle lifetime semantics, (2) function-pointer transmute conditions, and (3) thread-safety of the `OnceLock` cache. |
 
-After the SIMD follow-up: **571 unsafe blocks, 145 still missing SAFETY
-comments** (-211 vs. the original 356, -59%). All eight crates listed as
-"Fixed" above (now including `checksums`) have zero outstanding violations.
+After this follow-up: **571 unsafe blocks, 52 still missing SAFETY
+comments** (-304, -85.4% from the original 356). Eight of the eleven listed
+crates now have zero outstanding violations.
 
-## Fixes applied in the original audit PR
+## Fixes applied in this PR
 
 The following files were updated with SAFETY justifications:
 
@@ -118,6 +114,23 @@ The following files were updated with SAFETY justifications:
 - `crates/engine/src/local_copy/prefetch.rs`
 - `crates/engine/src/local_copy/tests/execute_sparse.rs`
 - `crates/engine/src/local_copy/tests/partial_transfers.rs`
+- `crates/fast_io/src/io_uring/batching.rs`
+- `crates/fast_io/src/io_uring/buffer_ring.rs`
+- `crates/fast_io/src/io_uring/config.rs`
+- `crates/fast_io/src/io_uring/file_reader.rs`
+- `crates/fast_io/src/io_uring/file_writer.rs`
+- `crates/fast_io/src/io_uring/registered_buffers/registry.rs`
+- `crates/fast_io/src/io_uring/registered_buffers/tests/registry.rs`
+- `crates/fast_io/src/io_uring/socket_factory.rs`
+- `crates/fast_io/src/io_uring/socket_reader.rs`
+- `crates/fast_io/src/io_uring/statx.rs`
+- `crates/fast_io/src/io_uring/tests.rs`
+- `crates/fast_io/src/io_uring_stub/socket_factory.rs`
+- `crates/fast_io/src/io_uring_stub/tests.rs`
+- `crates/fast_io/src/sendfile.rs`
+- `crates/fast_io/src/splice.rs`
+- `crates/fast_io/tests/io_uring_mmap_pressure.rs`
+- `crates/fast_io/tests/splice_integration.rs`
 - `crates/flist/src/batched_stat/dir_stat.rs`
 - `crates/flist/src/batched_stat/statx_support.rs`
 - `crates/metadata/src/apply/timestamps.rs`
@@ -125,21 +138,6 @@ The following files were updated with SAFETY justifications:
 - `crates/metadata/src/permission_tests.rs`
 - `crates/platform/src/env.rs`
 - `crates/platform/src/signal.rs`
-
-## Fixes applied in the SIMD follow-up
-
-- `crates/checksums/src/rolling/checksum/neon.rs`
-- `crates/checksums/src/rolling/checksum/x86.rs`
-- `crates/checksums/src/simd_batch/md4/simd/avx2.rs`
-- `crates/checksums/src/simd_batch/md4/simd/avx512.rs`
-- `crates/checksums/src/simd_batch/md4/simd/neon.rs`
-- `crates/checksums/src/simd_batch/md4/simd/sse2.rs`
-- `crates/checksums/src/simd_batch/md5_simd/avx2.rs`
-- `crates/checksums/src/simd_batch/md5_simd/avx512.rs`
-- `crates/checksums/src/simd_batch/md5_simd/neon.rs`
-- `crates/checksums/src/simd_batch/md5_simd/sse2.rs`
-- `crates/checksums/src/simd_batch/md5_simd/sse41.rs`
-- `crates/checksums/src/simd_batch/md5_simd/ssse3.rs`
 
 Common patterns documented:
 
@@ -153,22 +151,33 @@ Common patterns documented:
 - **`umask`, `geteuid`, `getegid`, `lseek`** test calls. Documented as either
   pure accessors with no inputs or thread-safety preconditions backed by the
   test framework's serial slot.
+- **io_uring SQE submission** (`batching.rs`, `file_reader.rs`,
+  `file_writer.rs`, `socket_reader.rs`). Each block cites that the entry
+  references a buffer and fd that outlive `submit_and_wait`, so the kernel
+  retains a valid view until completion.
+- **io_uring buffer-ring pointer arithmetic** (`buffer_ring.rs`). 13 blocks
+  manipulate the kernel-shared mmap region. Each cites the bounds proof for
+  the offset (entry index < ring_size, buffer offset < arena size) and the
+  alignment guarantee (page-aligned mmap + multiple-of-2 entry size).
+- **fd-based socket adapters** (`socket_factory.rs`). Document that the
+  caller owns the fd's lifetime and the buffer matches `read(2)`/`write(2)`'s
+  ABI.
+- **Splice/sendfile test scaffolding** (~120 sites). All matching the pattern
+  "fd opened by `pipe`/`socketpair`, closed exactly once, buffer satisfies
+  syscall ABI."
 
 ## Follow-up tasks
 
-1. **fast_io splice/sendfile test scaffolding** (~74 blocks). Add one SAFETY
-   block per helper (most blocks are duplicate `libc::close(fd)` calls that
-   share the same justification: the fd was created by the test and is no
-   longer in use).
-2. **fast_io `io_uring/buffer_ring.rs` pointer arithmetic** (13 blocks).
-   Document the kernel-shared mmap region invariants (entry count, alignment,
-   tail update ordering).
-3. **windows-gnu-eh resolver chain** (13 blocks). Document the
+1. **checksums SIMD tests** (31 blocks). Add per-test-function SAFETY blocks
+   citing the relevant target-feature gate.
+2. **windows-gnu-eh resolver chain** (13 blocks). Document the
    `OnceLock`-cached `GetProcAddress` lifecycle once at the top of the
    resolver helpers.
+3. **core / cli / daemon residue** (8 blocks). Migrate test scaffolding into a
+   shared helper crate already on the permitted list, or annotate in place.
 4. **Policy follow-up**: either migrate the unsafe code in `platform`,
    `windows-gnu-eh`, `core`, `cli`, `flist`, `daemon`, `embedding`, and
-   `branding` into the permitted crates, or extend the unsafe-code allowlist
+   `branding` into the permitted crates, or extend the `CLAUDE.md` allowlist
    with explicit, narrow exceptions.
 
 ## Reproducing the audit
