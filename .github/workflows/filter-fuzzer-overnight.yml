@@ -1,0 +1,162 @@
+# Differential Filter Fuzzer - Overnight Schedule
+#
+# Runs both differential filter fuzz targets nightly to accumulate the
+# equivalent of a 24h soak across roughly 1.7 days without monopolising the
+# CI fleet for a full day at a time.
+#
+# Budget:
+#   - FUZZ_DURATION seconds per target (default 3600s = 1h).
+#   - Two targets per run -> ~2h per night.
+#   - Over a week -> ~14h per target, ~28h aggregate (>24h cumulative).
+#
+# Findings:
+#   - Any file under fuzz/artifacts/ uploads as a workflow artifact and the
+#     job fails so triage starts the next morning.
+#   - See docs/process/filter-fuzzer-24h-cumulative.md for the triage flow
+#     and how to dispatch a longer manual soak.
+
+name: Filter Fuzzer Overnight
+
+on:
+  schedule:
+    # Nightly at 02:00 UTC: low contention with daytime CI traffic.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Seconds per fuzz target (default 3600 = 1h)'
+        required: false
+        default: '3600'
+
+concurrency:
+  group: filter-fuzzer-overnight
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_DURATION: ${{ github.event.inputs.duration || '3600' }}
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    # Each target budget + 30 minutes for build/upstream/setup overhead.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: filter_differential
+            runner: run_filter_fuzz.sh
+            env_var: FUZZ_SECONDS
+          - target: filter_rules_vs_upstream
+            runner: run_filter_differential_fuzz.sh
+            env_var: FUZZ_DURATION
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: nightly
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: filter-fuzzer-${{ matrix.target }}
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          version: v1
+
+      - name: Install cargo-fuzz
+        run: cargo +nightly install cargo-fuzz --locked
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-3.4.2-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-3.4.2-${{ runner.os }}-
+
+      - name: Build upstream rsync
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Locate upstream rsync
+        id: upstream
+        run: |
+          set -euo pipefail
+          for candidate in \
+              "${GITHUB_WORKSPACE}/target/interop/upstream-install/3.4.2/bin/rsync" \
+              "${GITHUB_WORKSPACE}/target/interop/upstream-install/3.4.1/bin/rsync"; do
+              if [[ -x "${candidate}" ]]; then
+                  echo "upstream=${candidate}" >>"$GITHUB_OUTPUT"
+                  echo "located upstream rsync at ${candidate}"
+                  exit 0
+              fi
+          done
+          echo "error: no upstream rsync binary built" >&2
+          exit 1
+
+      - name: Run ${{ matrix.target }}
+        env:
+          OC_RSYNC_UPSTREAM_BIN: ${{ steps.upstream.outputs.upstream }}
+        run: |
+          set -uo pipefail
+          export ${{ matrix.env_var }}="${FUZZ_DURATION}"
+          bash tools/ci/${{ matrix.runner }}
+          status=$?
+          echo "runner_status=${status}" >>"$GITHUB_ENV"
+          exit "${status}"
+
+      - name: Collect artifacts metadata
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p fuzz-report
+          if [[ -d fuzz/artifacts ]]; then
+              find fuzz/artifacts -mindepth 1 -type f -printf '%p\t%s\n' \
+                  >fuzz-report/inventory.tsv || true
+          fi
+          if [[ -s fuzz-report/inventory.tsv ]]; then
+              echo "findings recorded:" >&2
+              cat fuzz-report/inventory.tsv >&2
+          else
+              echo "no findings recorded" >fuzz-report/inventory.tsv
+          fi
+
+      - name: Upload fuzz artifacts
+        if: always() && hashFiles('fuzz/artifacts/**') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: filter-fuzz-artifacts-${{ matrix.target }}-${{ github.run_id }}
+          retention-days: 30
+          path: |
+            fuzz/artifacts/**
+            fuzz-report/**
+
+      - name: Fail if findings were uploaded
+        if: always() && hashFiles('fuzz/artifacts/**') != ''
+        run: |
+          echo "Fuzzer recorded artifacts under fuzz/artifacts/. Triage with"
+          echo "tools/ci/triage_fuzz_artifact.sh - see"
+          echo "docs/process/filter-fuzzer-24h-cumulative.md."
+          exit 1
