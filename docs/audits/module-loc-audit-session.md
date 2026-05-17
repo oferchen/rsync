@@ -1,5 +1,8 @@
 # Module LoC Enforcement Audit
 
+> **Status:** Wired into CI as informational on 2026-05-18; flip to required
+> once over-limit count reaches zero.
+
 `tools/enforce_limits.sh` invokes `cargo xtask enforce-limits`, which walks every
 `.rs` file outside `target/` and `.git/` and fails when a file exceeds either an
 explicit override in `tools/line_limits.toml` or the workspace default of
@@ -247,6 +250,10 @@ fix: move the `mod tests` (if present) into `async_ssh_transport/tests.rs`.
   `count_file_lines` behaviour.
 - 305 additional files (not touched in the last 100 commits) currently fail the
   check. They are out of scope for this audit but should be tracked separately
-  before `enforce-limits` is wired into CI.
-- Until decomposition lands, `enforce-limits` should be invoked manually before
-  publishing a release branch so the warn-threshold output is visible.
+  before `enforce-limits` is promoted to a required CI check.
+- `enforce-limits` runs in CI as an informational (non-blocking) job
+  (`continue-on-error: true`) on every push and pull request. Promote to a
+  required check on branch protection once the over-limit count reaches zero.
+- Until decomposition lands, contributors can also invoke `enforce-limits`
+  manually before publishing a release branch so the warn-threshold output is
+  visible locally.
