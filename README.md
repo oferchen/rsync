@@ -32,18 +32,18 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
 | **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
 | **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
-| **Platforms** | Linux, macOS (full); Windows (ACLs, xattrs via NTFS ADS, IOCP socket I/O; no symlinks/devices) |
+| **Platforms** | Linux, macOS (full); Windows (NTFS DACL partial, xattrs via NTFS ADS, IOCP socket I/O; no symlinks/devices) |
 
 ### Platform Support
 
-The primary platform is Linux. macOS is well-supported with parity for all metadata, ACL, and xattr features, including AppleDouble (`._foo`) resource-fork preservation. Windows builds and runs core transfer modes with native ACLs (via `windows-rs` `GetSecurityInfo`/`SetSecurityInfo`), xattrs (via NTFS Alternate Data Streams), and IOCP socket I/O (`WSARecv`/`WSASend`); symlinks and POSIX device nodes remain stubbed.
+The primary platform is Linux. macOS is well-supported with parity for all metadata, ACL, and xattr features, including AppleDouble (`._foo`) resource-fork preservation. Windows builds and runs core transfer modes with NTFS DACL preservation (via `windows-rs` `GetNamedSecurityInfoW`/`SetNamedSecurityInfoW`, currently Tier 1C partial - see the **--acls** entry in `docs/oc-rsync.1.md` and `docs/design/windows-ntfs-acl-support.md` for the documented lossy cases), xattrs (via NTFS Alternate Data Streams), and IOCP socket I/O (`WSARecv`/`WSASend`); symlinks and POSIX device nodes remain stubbed.
 
 | Feature | Linux | macOS | Windows | Notes |
 |---------|:-----:|:-----:|:-------:|-------|
 | Permissions (`-p`) | ✓ | ✓ | ⚠ | Windows preserves only the read-only flag; POSIX mode bits are not applicable. |
 | Times (`-t`) | ✓ | ✓ | ✓ | Nanosecond precision via the `filetime` crate on all platforms. |
 | File ownership (`-o`/`-g`, uid/gid) | ✓ | ✓ | ✗ | `apply_ownership_from_entry` is a no-op on non-Unix; uid/gid mapping is Unix-only. |
-| ACLs (`-A`) | ✓ | ✓ | ✓ | Uses `exacl` on Linux/macOS/FreeBSD; Windows uses `windows-rs` `GetSecurityInfo`/`SetSecurityInfo` for native NTFS ACL round-trip. |
+| ACLs (`-A`) | ✓ | ✓ | ⚠ | Uses `exacl` on Linux/macOS/FreeBSD. Windows uses `windows-rs` `GetNamedSecurityInfoW`/`SetNamedSecurityInfoW` for NTFS DACL round-trip (Tier 1C partial): deny ACEs, inherited ACEs, the SACL, non-`rwx` access bits, and unresolvable SIDs are dropped with a one-time warning. SDDL fidelity payload, `--audit-acls`, `--fail-on-windows-acl-loss`, and `--windows-acls` are planned. See `docs/design/windows-ntfs-acl-support.md` and the **--acls** entry in `docs/oc-rsync.1.md`. |
 | Extended attributes (`-X`) | ✓ | ✓ | ✓ | Linux/macOS via the `xattr` crate (macOS adds AppleDouble resource-fork support); Windows stores xattrs as NTFS Alternate Data Streams. |
 | Hardlinks (`-H`) | ✓ | ✓ | ✓ | Uses portable `std::fs::hard_link`; works on NTFS. |
 | Symbolic links | ✓ | ✓ | ✗ | `create_symlinks` is `cfg(not(unix))` no-op; symlink entries are skipped on Windows. |

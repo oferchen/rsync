@@ -327,6 +327,38 @@ grows by `N_threads * byte_cap` (default 1 MiB). Operators running
 with more than 32 worker threads per pool will see lower contention
 and slightly higher RSS.
 
+## 6a. Windows NTFS ACL behaviour
+
+`--acls`/`-A` now works on Windows targets via
+`GetNamedSecurityInfoW`/`SetNamedSecurityInfoW`, but the implementation
+is a Tier 1C partial path. Operators migrating Windows workloads should
+budget for the documented lossy cases before flipping `-A` on:
+
+- Explicit deny ACEs are dropped on send.
+- Inherited ACEs are not transmitted; the destination inheritance chain
+  takes over.
+- The system ACL (SACL) is skipped unless the planned **--audit-acls**
+  flag is passed and `SE_SECURITY_NAME` is held.
+- Non-`rwx` access bits (`DELETE`, `WRITE_DAC`, `WRITE_OWNER`, generic
+  bits) collapse to `r`/`w`/`x` plus `SYNCHRONIZE` on receive.
+- Trustee SIDs that cannot be translated to or from an account name are
+  dropped with a one-time warning.
+
+The cross-platform payload remains byte-compatible with upstream rsync
+and POSIX peers. The planned **--windows-acls** opt-in adds a higher-
+fidelity SDDL payload over the existing xattr stream for Windows-to-
+Windows transfers, and **--fail-on-windows-acl-loss** turns the lossy
+cases into a hard failure (exit code 23) for environments that need to
+preserve every NTFS ACE verbatim or abort. None of these three flags
+ship in this release; track `docs/design/windows-ntfs-acl-support.md`
+section 4 for the rollout schedule.
+
+The full mapping matrix, hardlink-safe DACL application rules, and the
+SDDL wire format details are in
+`docs/design/windows-ntfs-acl-support.md`. The user-facing
+**--acls** entry in `docs/oc-rsync.1.md` enumerates the lossy cases
+alongside the flag synopsis.
+
 ## 7. Rollback procedure
 
 If a regression surfaces in vNEXT, pin to the previous release. The
@@ -407,3 +439,4 @@ next.
 | io_uring session ring pool                     | `docs/design/iouring-session-ring-pool.md`                              |
 | io_uring per-thread rings                      | `docs/design/iouring-per-thread-rings.md`                               |
 | Cross-platform CI coverage                     | `docs/audits/cross-platform-ci-coverage.md`                             |
+| Windows NTFS ACL support                       | `docs/design/windows-ntfs-acl-support.md`                               |
