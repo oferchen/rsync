@@ -146,7 +146,9 @@ pub use renameat2::{
     IORING_OP_RENAMEAT, RENAME_EXCHANGE, RENAME_NOREPLACE, RENAME_WHITEOUT, RenameAt2Args,
     build_renameat2_sqe, build_renameat2_sqe_unchecked, renameat2_blocking, renameat2_supported,
 };
-pub use session_pool::{RingLease, SessionPoolConfig, SessionRingPool};
+pub use session_pool::{
+    RingLease, SessionPoolConfig, SessionRingPool, ThreadLocalRingLease, ThreadLocalRingPool,
+};
 pub use shared_ring::{OpTag, SharedCompletion, SharedRing, SharedRingConfig};
 pub use socket_factory::{
     IoUringOrStdSocketReader, IoUringOrStdSocketWriter, socket_reader_from_fd,
