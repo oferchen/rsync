@@ -38,10 +38,12 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use protocol::DeleteStats;
 
+use super::cohort_index::CohortIndex;
+use super::plan::HardlinkCohortId;
 use super::{DeleteEntryKind, DeletePlan, DeletePlanMap, DirTraversalCursor};
 
 // ----------------------------------------------------------------------------
@@ -275,6 +277,22 @@ pub struct DeleteEmitter<F: DeleteFs> {
     plans: DeletePlanMap,
     cursor: DirTraversalCursor,
     policy: EmitterErrorPolicy,
+    /// Read-only hardlink-cohort snapshot for the active INC_RECURSE
+    /// segment. When `Some`, every successful delete dispatch records a
+    /// cohort-tagged trace so callers can attach cohort information to
+    /// itemize lines without re-statting. The dispatch itself is
+    /// unchanged - matching upstream `delete.c:130-225`, every extras
+    /// path is unlinked unconditionally and the kernel reconciles ref
+    /// counts. The snapshot is wrapped in [`Arc`] so the same value can
+    /// be shared with phase-1 workers.
+    cohort_index: Option<Arc<CohortIndex>>,
+    /// Sequence of cohort-tagged dispatches recorded during
+    /// [`Self::emit_all`]. Each entry pairs the delete event with the
+    /// cohort id (if the entry carried one) and the source-side ref
+    /// count for that cohort at snapshot time. Populated only when the
+    /// cohort index is attached; otherwise stays empty so the legacy
+    /// code path pays no overhead.
+    cohort_log: Vec<CohortDeleteRecord>,
     /// Accumulated non-fatal I/O error state. Bit 0 mirrors upstream's
     /// `IOERR_GENERAL`; the field is exposed via [`Self::io_error`] for
     /// callers that need to compute the final exit code.
@@ -284,6 +302,29 @@ pub struct DeleteEmitter<F: DeleteFs> {
     /// arrives. `None` while the cursor is fully drained or not yet
     /// blocked.
     pending: Option<PathBuf>,
+}
+
+/// One cohort-aware delete dispatch record.
+///
+/// Produced by the emitter when a [`super::DeleteEntry`] carries a
+/// [`HardlinkCohortId`] and a [`CohortIndex`] is attached. The record
+/// pairs the destination path with the cohort tag and the source-side
+/// ref count for the cohort at snapshot time, giving callers enough
+/// information to format an upstream-style itemize line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CohortDeleteRecord {
+    /// Destination path the emitter dispatched against.
+    pub path: PathBuf,
+    /// Entry kind that drove the dispatch.
+    pub kind: DeleteEntryKind,
+    /// Cohort the entry belonged to (`None` if the destination was not
+    /// part of any tracked cohort even though the index was attached).
+    pub cohort: Option<HardlinkCohortId>,
+    /// Source-side ref count for the cohort at snapshot time, or `0`
+    /// when no cohort tag was present. Mirrors upstream's
+    /// `match_hard_links` view of "how many links the upstream sent for
+    /// this cohort".
+    pub surviving_source_refs: u32,
 }
 
 /// Upstream `IOERR_GENERAL`: the only bit the delete pass currently sets.
@@ -310,9 +351,51 @@ impl<F: DeleteFs> DeleteEmitter<F> {
             plans,
             cursor,
             policy,
+            cohort_index: None,
+            cohort_log: Vec::new(),
             io_error: 0,
             pending: None,
         }
+    }
+
+    /// Builds an emitter that consults a hardlink-cohort snapshot for
+    /// every dispatch.
+    ///
+    /// Wiring a [`CohortIndex`] does not change which paths get
+    /// unlinked - upstream `delete.c:130-225` always issues
+    /// `do_unlink`, and the kernel reconciles ref counts. The snapshot
+    /// powers the emitter's cohort log (see [`Self::cohort_records`]),
+    /// which downstream itemize formatting consumes to tag deletions
+    /// with their leader cohort.
+    #[must_use]
+    pub fn with_cohort_index(
+        fs: F,
+        plans: DeletePlanMap,
+        cursor: DirTraversalCursor,
+        policy: EmitterErrorPolicy,
+        cohort_index: Arc<CohortIndex>,
+    ) -> Self {
+        let mut emitter = Self::with_policy(fs, plans, cursor, policy);
+        emitter.cohort_index = Some(cohort_index);
+        emitter
+    }
+
+    /// Returns the recorded cohort-aware dispatch log.
+    ///
+    /// Empty when no [`CohortIndex`] is attached or when no delete
+    /// dispatch has run yet. The slice is in dispatch order, matching
+    /// the syscall order the emitter issued.
+    #[must_use]
+    pub fn cohort_records(&self) -> &[CohortDeleteRecord] {
+        &self.cohort_log
+    }
+
+    /// Borrows the attached [`CohortIndex`], if any. Useful for tests
+    /// that want to assert the emitter is consulting the snapshot the
+    /// caller handed it.
+    #[must_use]
+    pub fn cohort_index(&self) -> Option<&Arc<CohortIndex>> {
+        self.cohort_index.as_ref()
     }
 
     /// Returns the running deletion statistics. The counter is mutated
@@ -401,7 +484,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     fn drain_plan(&mut self, plan: &DeletePlan) -> io::Result<()> {
         for entry in &plan.extras {
             let full = plan.directory.join(&entry.name);
-            self.run_entry(entry.kind, &full)?;
+            self.run_entry(entry.kind, &full, entry.hardlink_cohort)?;
         }
         Ok(())
     }
@@ -411,10 +494,16 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// returning `Err`; non-fatal failures under the default policy
     /// record `io_error` and return `Ok(())` so the caller's loop
     /// continues.
-    fn run_entry(&mut self, kind: DeleteEntryKind, path: &Path) -> io::Result<()> {
+    fn run_entry(
+        &mut self,
+        kind: DeleteEntryKind,
+        path: &Path,
+        cohort: Option<HardlinkCohortId>,
+    ) -> io::Result<()> {
         match self.dispatch(kind, path) {
             Ok(()) => {
                 Self::increment_stat(&mut self.stats, kind);
+                self.record_cohort_dispatch(path, kind, cohort);
                 Ok(())
             }
             Err(err) => {
@@ -431,6 +520,29 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                 Ok(())
             }
         }
+    }
+
+    /// Appends one [`CohortDeleteRecord`] to the cohort log when a
+    /// [`CohortIndex`] is attached. The dispatch syscall itself has
+    /// already succeeded; this is pure bookkeeping.
+    fn record_cohort_dispatch(
+        &mut self,
+        path: &Path,
+        kind: DeleteEntryKind,
+        cohort: Option<HardlinkCohortId>,
+    ) {
+        let Some(index) = self.cohort_index.as_ref() else {
+            return;
+        };
+        let surviving_source_refs = cohort
+            .map(|c| index.surviving_refs_in_cohort(c))
+            .unwrap_or(0);
+        self.cohort_log.push(CohortDeleteRecord {
+            path: path.to_path_buf(),
+            kind,
+            cohort,
+            surviving_source_refs,
+        });
     }
 
     /// Dispatches one planned entry. Directories route through
@@ -1130,5 +1242,187 @@ mod tests {
         assert_eq!(emitter.fs().events().len(), after_first);
         assert_eq!(emitter.io_error(), 0);
         assert_eq!(emitter.exit_code(), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // DDP-D2 (#2264) - hardlink-aware delete via CohortIndex snapshot.
+    //
+    // Per `docs/design/hardlink-delete-audit.md` Option A and upstream
+    // `delete.c:130-225`, the emitter still unlinks every destination
+    // path even when the cohort retains other refs (the kernel
+    // reconciles ref counts). The snapshot powers cohort-aware itemize
+    // bookkeeping via `cohort_records`, not the unlink decision itself.
+    // ------------------------------------------------------------------
+
+    fn tagged_entry(name: &str, kind: DeleteEntryKind, cohort: HardlinkCohortId) -> DeleteEntry {
+        DeleteEntry::with_cohort(OsString::from(name), kind, cohort)
+    }
+
+    /// Builds a `CohortIndex` from a synthetic segment with `dest_count`
+    /// source-side refs sharing one cohort. The leader's name is
+    /// `leader`; followers are `member0`, `member1`, etc.
+    fn cohort_index_for(leader: &str, member_count: usize) -> Arc<CohortIndex> {
+        let mut entries = Vec::with_capacity(1 + member_count);
+        let mut head = FileEntry::new_file(PathBuf::from(leader), 0, 0o644);
+        head.set_hardlink_idx(u32::MAX);
+        entries.push(head);
+        for i in 0..member_count {
+            let mut e = FileEntry::new_file(PathBuf::from(format!("member{i}")), 0, 0o644);
+            e.set_hardlink_idx(0);
+            entries.push(e);
+        }
+        CohortIndex::build_from_flist_segment(&entries)
+    }
+
+    #[test]
+    fn emitter_with_cohort_index_records_cohort_per_dispatch() {
+        // The destination has three refs in one cohort (`leader`,
+        // `member0`, `member1`); the source has two (`leader` and
+        // `member0`). Upstream's policy is to unlink all three dest
+        // paths; the cohort log must reflect that with cohort tags on
+        // the two known members and no tag on the third.
+        let cohort = HardlinkCohortId::new(0);
+        let index = cohort_index_for("leader", 1); // source = leader + member0
+        let plans = DeletePlanMap::new();
+        plans.insert(plan(
+            "d",
+            vec![
+                tagged_entry("leader", DeleteEntryKind::File, cohort),
+                tagged_entry("member0", DeleteEntryKind::File, cohort),
+                entry("member1", DeleteEntryKind::File),
+            ],
+        ));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let mut emitter = DeleteEmitter::with_cohort_index(
+            RecordingDeleteFs::new(),
+            plans,
+            cursor,
+            EmitterErrorPolicy::default(),
+            Arc::clone(&index),
+        );
+        emitter.emit_all().expect("drain succeeds");
+
+        // The kernel-policy invariant: every dest path was unlinked
+        // (matches upstream `delete.c:130-225`).
+        let events = emitter.fs().events();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].path, PathBuf::from("d/leader"));
+        assert_eq!(events[1].path, PathBuf::from("d/member0"));
+        assert_eq!(events[2].path, PathBuf::from("d/member1"));
+
+        // The cohort log records the per-dispatch cohort tag.
+        let records = emitter.cohort_records();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].cohort, Some(cohort));
+        assert_eq!(records[0].surviving_source_refs, 2);
+        assert_eq!(records[1].cohort, Some(cohort));
+        assert_eq!(records[1].surviving_source_refs, 2);
+        // The orphan-on-the-dest gets no cohort tag.
+        assert_eq!(records[2].cohort, None);
+        assert_eq!(records[2].surviving_source_refs, 0);
+    }
+
+    #[test]
+    fn emitter_without_cohort_index_records_no_cohort_log() {
+        // Baseline: with no CohortIndex attached, the cohort log stays
+        // empty even when the plan carries cohort tags. This keeps the
+        // legacy hot path zero-overhead.
+        let cohort = HardlinkCohortId::new(7);
+        let plans = DeletePlanMap::new();
+        plans.insert(plan(
+            "d",
+            vec![tagged_entry("x", DeleteEntryKind::File, cohort)],
+        ));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let mut emitter = DeleteEmitter::new(RecordingDeleteFs::new(), plans, cursor);
+        emitter.emit_all().expect("drain succeeds");
+
+        assert!(emitter.cohort_index().is_none());
+        assert!(emitter.cohort_records().is_empty());
+        assert_eq!(emitter.stats().files, 1);
+    }
+
+    #[test]
+    fn emitter_cohort_index_does_not_change_dispatch_order() {
+        // Attaching a CohortIndex must not perturb the syscall order -
+        // the cohort log is observer-only. The dispatch must match
+        // exactly what the no-cohort variant produces.
+        let cohort = HardlinkCohortId::new(0);
+        let index = cohort_index_for("leader", 2);
+
+        let baseline_plans = DeletePlanMap::new();
+        baseline_plans.insert(plan(
+            "d",
+            vec![
+                entry("leader", DeleteEntryKind::File),
+                entry("member0", DeleteEntryKind::File),
+                entry("member1", DeleteEntryKind::File),
+            ],
+        ));
+        let mut baseline_cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        baseline_cursor.observe_segment(PathBuf::from("d"), &[]);
+        let mut baseline_emitter =
+            DeleteEmitter::new(RecordingDeleteFs::new(), baseline_plans, baseline_cursor);
+        baseline_emitter.emit_all().unwrap();
+        let baseline_events = baseline_emitter.fs().events();
+
+        let cohort_plans = DeletePlanMap::new();
+        cohort_plans.insert(plan(
+            "d",
+            vec![
+                tagged_entry("leader", DeleteEntryKind::File, cohort),
+                tagged_entry("member0", DeleteEntryKind::File, cohort),
+                tagged_entry("member1", DeleteEntryKind::File, cohort),
+            ],
+        ));
+        let mut cohort_cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cohort_cursor.observe_segment(PathBuf::from("d"), &[]);
+        let mut cohort_emitter = DeleteEmitter::with_cohort_index(
+            RecordingDeleteFs::new(),
+            cohort_plans,
+            cohort_cursor,
+            EmitterErrorPolicy::default(),
+            index,
+        );
+        cohort_emitter.emit_all().unwrap();
+        assert_eq!(cohort_emitter.fs().events(), baseline_events);
+    }
+
+    #[test]
+    fn cohort_log_skips_failed_dispatch() {
+        // A failed dispatch must NOT add a cohort record - the cohort
+        // log is meant to mirror successful syscalls (so it matches the
+        // emitter's stats counter, which is also success-only).
+        let cohort = HardlinkCohortId::new(0);
+        let index = cohort_index_for("leader", 0); // single-ref source
+        let fs = ScriptedDeleteFs::new().fail("d/leader", io::ErrorKind::Other);
+        let plans = DeletePlanMap::new();
+        plans.insert(plan(
+            "d",
+            vec![tagged_entry("leader", DeleteEntryKind::File, cohort)],
+        ));
+        let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+        cursor.observe_segment(PathBuf::from("d"), &[]);
+
+        let mut emitter = DeleteEmitter::with_cohort_index(
+            fs,
+            plans,
+            cursor,
+            EmitterErrorPolicy::default(),
+            index,
+        );
+        emitter
+            .emit_all()
+            .expect("non-fatal failure keeps draining");
+
+        assert!(
+            emitter.cohort_records().is_empty(),
+            "failed dispatch must not appear in cohort log",
+        );
+        assert_eq!(emitter.io_error(), IOERR_GENERAL);
     }
 }
