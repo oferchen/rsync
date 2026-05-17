@@ -111,3 +111,13 @@ required-features = ["io_uring"]
 name = "iouring_sqpoll_vs_regular"
 harness = false
 required-features = ["io_uring"]
+
+# Windows-only bench: IOCP writer path (IocpDiskBatch) vs std::fs and
+# BufWriter baselines across 4 KiB / 64 KiB / 1 MiB payloads. The bench
+# file is cfg-gated to `target_os = "windows"` and the `iocp` feature; on
+# every other host it compiles to a stub `main` that prints a skip line.
+# See the file's module doc for the run recipe and what the numbers inform
+# on #1899.
+[[bench]]
+name = "iocp_vs_stdio"
+harness = false
