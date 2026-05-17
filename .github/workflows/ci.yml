@@ -124,6 +124,31 @@ jobs:
         run: cargo xtask enforce-limits
 
   # ===========================================================================
+  # Unsafe SAFETY Comment Audit - Informational (non-blocking) check
+  # ---------------------------------------------------------------------------
+  # Runs `tools/audit/unsafe_safety_comment_audit.py` to surface `unsafe { ... }`
+  # blocks that lack a SAFETY justification or whose justification is a
+  # placeholder (TODO/FIXME/empty). Marked `continue-on-error: true` while the
+  # outstanding `fast_io` and `checksums` violations documented in
+  # `docs/audits/unsafe-safety-comment-audit.md` are being addressed. Promote to
+  # a required check once the violation count reaches zero (or a documented
+  # threshold) and the script exits non-zero on regression.
+  # ===========================================================================
+  unsafe-safety-comment-audit:
+    name: unsafe-safety-comment-audit (informational)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    timeout-minutes: 5
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run unsafe SAFETY comment audit
+        run: python3 tools/audit/unsafe_safety_comment_audit.py
+
+  # ===========================================================================
   # Test Job - Full test suite on Linux with toolchain matrix
   # ===========================================================================
   test:
