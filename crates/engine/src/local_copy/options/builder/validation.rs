@@ -109,7 +109,6 @@ impl LocalCopyOptionsBuilder {
             delete_timing: self.delete_timing,
             delete_excluded: self.delete_excluded,
             delete_missing_args: self.delete_missing_args,
-            delete_strict_order: self.delete_strict_order,
             max_deletions: self.max_deletions,
             min_file_size: self.min_file_size,
             max_file_size: self.max_file_size,

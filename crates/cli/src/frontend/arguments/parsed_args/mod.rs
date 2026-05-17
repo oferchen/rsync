@@ -226,14 +226,6 @@ pub struct ParsedArgs {
     /// `--ignore-errors` / `--no-ignore-errors` - continue deleting on I/O errors.
     pub ignore_errors: Option<bool>,
 
-    /// `--delete-strict-order` / `--no-delete-strict-order` - opt-in to
-    /// upstream's interleaved walk-then-delete for `--delete-during`.
-    ///
-    /// Disabled by default; when enabled together with `--delete-during` the
-    /// receiver runs each directory's deletion sweep before its children are
-    /// processed.  The flag is inert under any other deletion timing.
-    pub delete_strict_order: bool,
-
     /// `--max-delete` - limit on number of files to delete per run (-1 = report only).
     pub max_delete: Option<OsString>,
 

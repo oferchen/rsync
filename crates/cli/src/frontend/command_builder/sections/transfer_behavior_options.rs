@@ -298,25 +298,6 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .action(ArgAction::SetTrue),
             )
             .arg(
-                Arg::new("delete-strict-order")
-                    .long("delete-strict-order")
-                    .help(
-                        "With --delete-during, run each directory's deletion \
-                         sweep before its children are processed (upstream \
-                         interleaved walk-then-delete). Opt-in; default is \
-                         the batched post-transfer sweep.",
-                    )
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("no-delete-strict-order"),
-            )
-            .arg(
-                Arg::new("no-delete-strict-order")
-                    .long("no-delete-strict-order")
-                    .help("Disable --delete-strict-order (default).")
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("delete-strict-order"),
-            )
-            .arg(
                 Arg::new("ignore-missing-args")
                     .long("ignore-missing-args")
                     .help("Skip missing source arguments without reporting an error.")
