@@ -276,9 +276,6 @@ mod remote_tests;
 mod rsync_tests;
 #[path = "run.rs"]
 mod run_tests;
-// Disabled temporarily due to missing server module exports:
-// #[path = "server.rs"]
-// mod server_tests;
 #[path = "itemize_format_upstream.rs"]
 mod itemize_format_upstream_tests;
 #[path = "short.rs"]
