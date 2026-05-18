@@ -1,0 +1,162 @@
+use std::num::NonZeroU32;
+
+impl<'a> CopyContext<'a> {
+    pub(super) const fn copy_links_enabled(&self) -> bool {
+        self.options.copy_links_enabled()
+    }
+
+    pub(super) const fn links_enabled(&self) -> bool {
+        self.options.links_enabled()
+    }
+
+    pub(super) const fn copy_unsafe_links_enabled(&self) -> bool {
+        self.options.copy_unsafe_links_enabled()
+    }
+
+    pub(super) const fn safe_links_enabled(&self) -> bool {
+        self.options.safe_links_enabled()
+    }
+
+    pub(super) const fn munge_links_enabled(&self) -> bool {
+        self.options.munge_links_enabled()
+    }
+
+    pub(super) const fn copy_dirlinks_enabled(&self) -> bool {
+        self.options.copy_dirlinks_enabled()
+    }
+
+    pub(super) const fn keep_dirlinks_enabled(&self) -> bool {
+        self.options.keep_dirlinks_enabled()
+    }
+
+    pub(super) const fn whole_file_enabled(&self) -> bool {
+        self.options.whole_file_enabled()
+    }
+
+    pub(super) const fn open_noatime_enabled(&self) -> bool {
+        self.options.open_noatime_enabled()
+    }
+
+    pub(super) const fn sparse_enabled(&self) -> bool {
+        self.options.sparse_enabled()
+    }
+
+    pub(super) const fn append_enabled(&self) -> bool {
+        self.options.append_enabled()
+    }
+
+    pub(super) const fn append_verify_enabled(&self) -> bool {
+        self.options.append_verify_enabled()
+    }
+
+    pub(super) const fn preallocate_enabled(&self) -> bool {
+        self.options.preallocate_enabled()
+    }
+
+    #[allow(dead_code)] // Accessor retained for future use; DeferredSync handles runtime selection
+    pub(super) const fn fsync_enabled(&self) -> bool {
+        self.options.fsync_enabled()
+    }
+
+    pub(super) const fn devices_enabled(&self) -> bool {
+        self.options.devices_enabled()
+    }
+
+    pub(super) const fn copy_devices_as_files_enabled(&self) -> bool {
+        self.options.copy_devices_as_files_enabled()
+    }
+
+    pub(super) const fn specials_enabled(&self) -> bool {
+        self.options.specials_enabled()
+    }
+
+    pub(super) const fn force_replacements_enabled(&self) -> bool {
+        self.options.force_replacements_enabled()
+    }
+
+    pub(super) const fn remove_source_files_enabled(&self) -> bool {
+        self.options.remove_source_files_enabled()
+    }
+
+    pub(super) const fn compress_enabled(&self) -> bool {
+        self.options.compress_enabled()
+    }
+
+    /// Returns whether compression should be used for this file, considering
+    /// the skip-compress suffix list.
+    pub(super) fn should_compress(&self, relative: &Path) -> bool {
+        self.compress_enabled() && !self.options.should_skip_compress(relative)
+    }
+
+    pub(super) const fn compression_level(&self) -> CompressionLevel {
+        self.options.compression_level()
+    }
+
+    pub(super) const fn compression_algorithm(&self) -> CompressionAlgorithm {
+        self.options.compression_algorithm()
+    }
+
+    pub(super) const fn compression_threads(&self) -> Option<std::num::NonZeroU8> {
+        self.options.compression_threads()
+    }
+
+    pub(super) const fn block_size_override(&self) -> Option<NonZeroU32> {
+        self.options.block_size_override()
+    }
+
+    pub(super) const fn checksum_enabled(&self) -> bool {
+        self.options.checksum_enabled()
+    }
+
+    pub(super) const fn xxh64_dedup_enabled(&self) -> bool {
+        self.options.xxh64_dedup_enabled()
+    }
+
+    pub(super) const fn xxh64_dedup_size_limit(&self) -> u64 {
+        self.options.xxh64_dedup_size_limit()
+    }
+
+    pub(super) const fn size_only_enabled(&self) -> bool {
+        self.options.size_only_enabled()
+    }
+
+    pub(super) const fn ignore_times_enabled(&self) -> bool {
+        self.options.ignore_times_enabled()
+    }
+
+    pub(super) const fn ignore_existing_enabled(&self) -> bool {
+        self.options.ignore_existing_enabled()
+    }
+
+    pub(super) const fn existing_only_enabled(&self) -> bool {
+        self.options.existing_only_enabled()
+    }
+
+    pub(super) const fn ignore_missing_args_enabled(&self) -> bool {
+        self.options.ignore_missing_args_enabled()
+    }
+
+    pub(super) const fn delete_missing_args_enabled(&self) -> bool {
+        self.options.delete_missing_args_enabled()
+    }
+
+    pub(super) const fn update_enabled(&self) -> bool {
+        self.options.update_enabled()
+    }
+
+    pub(super) const fn partial_enabled(&self) -> bool {
+        self.options.partial_enabled()
+    }
+
+    pub(super) fn partial_directory_path(&self) -> Option<&Path> {
+        self.options.partial_directory_path()
+    }
+
+    pub(super) fn temp_directory_path(&self) -> Option<&Path> {
+        self.options.temp_directory_path()
+    }
+
+    pub(super) const fn inplace_enabled(&self) -> bool {
+        self.options.inplace_enabled()
+    }
+}
