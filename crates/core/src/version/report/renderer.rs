@@ -404,14 +404,13 @@ pub(crate) fn default_daemon_auth_algorithms() -> Vec<Cow<'static, str>> {
 /// Returns the list of Cargo features the binary was compiled with.
 ///
 /// Each entry is the canonical Cargo feature name as declared in the
-/// workspace `Cargo.toml`. Both core-level features (compression, ACL,
-/// xattr, iconv, async, embedded SSH) and bin-level features that
-/// forward into core (`zlib-ng`, `mmap-free-basis`) are detectable
-/// here; bin-only features that do not propagate into `core` (such as
-/// `parallel`, `io_uring`, `iocp`, `copy_file_range`, `openssl`,
-/// `openssl-vendored`, `sd-notify`, `mimalloc`) are surfaced via the
-/// existing `Capabilities` / `Optimizations` sections and the
-/// `Platform I/O` line above this one.
+/// workspace `Cargo.toml`. Only features visible to the `core` crate
+/// (compression, ACL, xattr, iconv, async, embedded SSH, zlib-ng) are
+/// detectable here; bin-only features that do not propagate into `core`
+/// (`parallel`, `io_uring`, `iocp`, `copy_file_range`, `openssl`,
+/// `openssl-vendored`, `mmap-free-basis`, `sd-notify`, `mimalloc`) are
+/// surfaced via the existing `Capabilities` / `Optimizations` sections
+/// and the `Platform I/O` line above this one.
 #[must_use]
 pub(crate) fn compiled_build_features() -> Vec<Cow<'static, str>> {
     let mut features: Vec<Cow<'static, str>> = Vec::new();
@@ -439,9 +438,6 @@ pub(crate) fn compiled_build_features() -> Vec<Cow<'static, str>> {
     }
     if cfg!(feature = "embedded-ssh") {
         features.push(Cow::Borrowed("embedded-ssh"));
-    }
-    if cfg!(feature = "mmap-free-basis") {
-        features.push(Cow::Borrowed("mmap-free-basis"));
     }
 
     features
