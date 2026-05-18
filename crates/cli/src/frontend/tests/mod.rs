@@ -43,6 +43,7 @@ mod chown_tests;
 mod clap_tests;
 #[path = "collect.rs"]
 mod collect_tests;
+#[cfg(unix)]
 #[path = "combined.rs"]
 mod combined_tests;
 mod common;
@@ -298,6 +299,7 @@ mod transfer_request_copies_tests;
 mod transfer_request_reports_tests;
 #[path = "transfer_request_with_apple_double.rs"]
 mod transfer_request_with_apple_double_tests;
+#[cfg(unix)]
 #[path = "transfer_request_with_archive.rs"]
 mod transfer_request_with_archive_tests;
 #[path = "transfer_request_with_bwlimit.rs"]
@@ -308,6 +310,7 @@ mod transfer_request_with_cvs_tests;
 mod transfer_request_with_delete_tests;
 #[path = "transfer_request_with_exclude.rs"]
 mod transfer_request_with_exclude_tests;
+#[cfg(unix)]
 #[path = "transfer_request_with_executability.rs"]
 mod transfer_request_with_executability_tests;
 #[path = "transfer_request_with_files_from.rs"]
@@ -328,18 +331,22 @@ mod transfer_request_with_include_tests;
 mod transfer_request_with_itemize_tests;
 #[path = "transfer_request_with_no.rs"]
 mod transfer_request_with_no_tests;
+#[cfg(unix)]
 #[path = "transfer_request_with_omit.rs"]
 mod transfer_request_with_omit_tests;
 #[path = "transfer_request_with_out.rs"]
 mod transfer_request_with_out_tests;
+#[cfg(unix)]
 #[path = "transfer_request_with_owner.rs"]
 mod transfer_request_with_owner_tests;
+#[cfg(unix)]
 #[path = "transfer_request_with_perms.rs"]
 mod transfer_request_with_perms_tests;
 #[path = "transfer_request_with_relative.rs"]
 mod transfer_request_with_relative_tests;
 #[path = "transfer_request_with_remove.rs"]
 mod transfer_request_with_remove_tests;
+#[cfg(unix)]
 #[path = "transfer_request_with_sparse.rs"]
 mod transfer_request_with_sparse_tests;
 #[path = "transfer_request_with_times.rs"]
