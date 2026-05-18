@@ -193,6 +193,26 @@ impl GeneratorContext {
             }
         }
 
+        // Windows ACL collection: when --acls is on (and on Windows the
+        // `acl` feature is compiled in) read the full SDDL security
+        // descriptor and attach it to the entry under the reserved
+        // `user.win32.security_descriptor` xattr slot. The receiver routes
+        // the slot through `apply_sddl_from_xattrs` so Windows->Windows
+        // transfers preserve the descriptor verbatim; non-Windows
+        // receivers drop the slot.
+        #[cfg(all(feature = "acl", windows))]
+        if self.config.flags.acls {
+            let should_read = file_type.is_file() || file_type.is_dir();
+            if should_read {
+                if let Ok(Some(sddl_entry)) = metadata::sddl_xattr_entry(full_path) {
+                    let mut list = entry.xattr_list().cloned().unwrap_or_default();
+                    list.push(sddl_entry);
+                    list.sort_by_name();
+                    entry.set_xattr_list(list);
+                }
+            }
+        }
+
         Ok(entry)
     }
 }

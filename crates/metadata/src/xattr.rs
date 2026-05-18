@@ -226,6 +226,19 @@ pub fn apply_xattrs_from_list(
 ) -> Result<(), MetadataError> {
     let mut applied_names: HashSet<Vec<u8>> = HashSet::with_capacity(xattr_list.len());
 
+    // Route the reserved Windows SDDL xattr to the DACL apply path on
+    // Windows so the descriptor lands on the security stream rather than
+    // an ADS. On other platforms the entry is dropped silently to avoid
+    // surfacing meaningless `user.win32.security_descriptor` ADS-style
+    // attributes on POSIX filesystems.
+    #[cfg(all(feature = "acl", windows))]
+    {
+        let applied = crate::acl_windows::apply_sddl_from_xattrs(destination, xattr_list)?;
+        if applied {
+            applied_names.insert(crate::acl_windows::WINDOWS_SDDL_XATTR_NAME.to_vec());
+        }
+    }
+
     for entry in xattr_list.iter() {
         // Skip abbreviated entries - they only contain a checksum, not the actual value
         if entry.is_abbreviated() {
@@ -234,6 +247,14 @@ pub fn apply_xattrs_from_list(
 
         let name_str = entry.name_str();
         if !is_xattr_permitted(&name_str) {
+            continue;
+        }
+
+        // Skip the reserved SDDL slot on every platform: Windows has
+        // already applied it via the DACL path, POSIX targets do not have
+        // a corresponding native sink.
+        if is_reserved_sddl_xattr(entry.name()) {
+            applied_names.insert(entry.name().to_vec());
             continue;
         }
 
@@ -255,6 +276,18 @@ pub fn apply_xattrs_from_list(
     }
 
     Ok(())
+}
+
+/// Reserved xattr name carrying the Windows SDDL fidelity payload.
+///
+/// Defined here as a const so non-Windows builds (which do not compile
+/// `acl_windows`) can still recognise and skip the slot.
+const RESERVED_SDDL_XATTR: &[u8] = b"user.win32.security_descriptor";
+
+/// Returns `true` when `name` matches the reserved SDDL xattr slot used
+/// to carry full Windows security descriptors over the wire.
+fn is_reserved_sddl_xattr(name: &[u8]) -> bool {
+    name == RESERVED_SDDL_XATTR
 }
 
 #[cfg(test)]
