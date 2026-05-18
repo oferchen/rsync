@@ -108,15 +108,21 @@ adaptive-basis-dispatch = []
 # for the full design.
 iouring-send-zc = ["io_uring"]
 
-# iouring-data-writes: opt-in dispatch that routes large local-copy file writes
-# through the io_uring registered-buffer write path (`IoUringFileWriter` +
-# `RegisteredBufferPool`). Default off; consumers must explicitly enable both
-# `io_uring` and `iouring-data-writes` to engage the path. Linux-only at
-# runtime via the existing `is_io_uring_available()` probe; on every other
-# platform the entry point returns `io::ErrorKind::Unsupported`. Wired by
-# IUD-5; also referenced by the `nvme_data_path_production` bench (IUD-9
-# #2369). See docs/design/iouring-receive-data-path.md.
+# iouring-data-writes: opt-in dispatch that routes large file writes through
+# the production io_uring writer wrapper (`fast_io::write_file_with_io_uring`).
+# Wired by IUD-5; declared here so the `nvme_data_path_production` bench
+# (IUD-9 #2369) can list it under `required-features`. Linux-only at runtime;
+# on every other platform the entry point returns `io::ErrorKind::Unsupported`.
 iouring-data-writes = ["io_uring"]
+
+# EXPERIMENTAL: SMR-3a - drop mmap for all basis reads. When enabled, the
+# basis-read dispatch in `engine::concurrent_delta::strategy` skips the mmap
+# branch entirely and forces io_uring (where available) or a `BufReader<File>`
+# fallback. Default off because Option 2 (size-threshold heuristic) is the
+# provisional default per `docs/design/mmap-vs-sqpoll-conflict-resolution.md`
+# until SMR-1 hardware numbers validate Option 1. See the same document for
+# the rationale and the trigger table that gates a future default flip.
+mmap-free-basis = []
 
 [target.'cfg(windows)'.dependencies]
 # CopyFileExW for Windows-optimized file copy with no-buffering support;
