@@ -27,7 +27,7 @@ use super::{SpillCodec, SpillError, SpillableReorderBuffer};
 
 /// Local test item with a tunable encoded size so threshold maths line up
 /// without depending on the shared `SpillCodec for u64` impl defined in
-/// `spill::tests`.
+/// `spill::buffer::tests`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SizedItem {
     value: u64,
