@@ -214,8 +214,12 @@ impl DeltaConsumer {
     pub fn spawn_with_config(
         rx: WorkQueueReceiver,
         reorder_capacity: usize,
-        cfg: ConcurrentDeltaConfig,
+        mut cfg: ConcurrentDeltaConfig,
     ) -> Self {
+        // STN-8/9/10: layer OC_RSYNC_SPILL_* env overrides on top of the
+        // caller-supplied policy so operators can tune the spill backend
+        // without recompiling. Absent vars leave fields unchanged.
+        super::spill::apply_env_overrides(&mut cfg.spill_policy);
         let mode = match cfg.spill_policy.threshold_bytes {
             Some(threshold) => ReorderMode::Spillable {
                 capacity: reorder_capacity,

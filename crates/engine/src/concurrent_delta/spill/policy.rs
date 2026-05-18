@@ -174,6 +174,21 @@ impl SpillPolicy {
             self.threshold_bytes = Some(bytes);
         }
     }
+
+    /// Returns [`Self::default`] with any
+    /// [`OC_RSYNC_SPILL_*`](super::env::ENV_SPILL_DIR) environment-variable
+    /// overrides applied.
+    ///
+    /// Convenience wrapper around [`super::env::apply_env_overrides`] for
+    /// call sites that want to materialise an env-driven policy without
+    /// threading a mutable reference. Invalid env values are logged and
+    /// left at the default; no variants of this constructor panic.
+    #[must_use]
+    pub fn from_env() -> Self {
+        let mut policy = Self::default();
+        super::env::apply_env_overrides(&mut policy);
+        policy
+    }
 }
 
 #[cfg(test)]
