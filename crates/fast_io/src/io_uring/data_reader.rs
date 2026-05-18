@@ -28,6 +28,8 @@
 use std::io;
 use std::path::Path;
 
+use crate::traits::FileReader;
+
 use super::config::IoUringConfig;
 use super::file_reader::IoUringReader;
 
