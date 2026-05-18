@@ -124,7 +124,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache cargo builds
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: release-linux-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
           key: ${{ matrix.arch }}
@@ -212,7 +212,7 @@ jobs:
           fi
 
       - name: Install cargo-deb and cargo-generate-rpm
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2
         with:
           tool: cargo-deb,cargo-generate-rpm
 
@@ -319,12 +319,12 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install cross
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2
         with:
           tool: cross
 
       - name: Cache cargo builds
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: release-linux-musl-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
           key: ${{ matrix.arch }}
@@ -544,7 +544,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache cargo builds
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: release-macos-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
           key: ${{ matrix.arch }}
@@ -616,7 +616,7 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Cache cargo builds
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: release-windows-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
 

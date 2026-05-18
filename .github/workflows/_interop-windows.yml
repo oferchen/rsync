@@ -70,7 +70,7 @@ jobs:
           toolchain: ${{ inputs.rust_toolchain }}
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
           key: interop-windows
@@ -83,7 +83,7 @@ jobs:
       # reliable way to get a real upstream rsync binary on a Windows
       # GitHub runner. Chocolatey's `rsync` package is unmaintained.
       - name: Install MSYS2 with rsync
-        uses: msys2/setup-msys2@61f9e5e925871ba6c9e3e8da24ede83ea27fa91f # v2.27.0
+        uses: msys2/setup-msys2@e9898307ac31d1a803454791be09ab9973336e1c # v2.31.1
         with:
           msystem: MSYS
           update: false

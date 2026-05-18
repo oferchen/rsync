@@ -69,7 +69,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
 
@@ -118,7 +118,7 @@ jobs:
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
           key: enforce-limits
@@ -178,13 +178,13 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
           key: test
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2
         with:
           tool: cargo-nextest
 
@@ -250,12 +250,12 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-windows-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2
         with:
           tool: cargo-nextest
 
@@ -301,13 +301,13 @@ jobs:
           toolchain: stable
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-windows-iocp-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
           key: windows-iocp
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2
         with:
           tool: cargo-nextest
 
@@ -359,13 +359,13 @@ jobs:
           toolchain: stable
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-windows-acl-xattr-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
           key: windows-acl-xattr
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2
         with:
           tool: cargo-nextest
 
@@ -411,7 +411,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mingw-w64
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-windows-gnu-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
 
@@ -442,12 +442,12 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-macos-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2
         with:
           tool: cargo-nextest
 
@@ -508,12 +508,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-musl-x86_64-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        uses: taiki-e/install-action@b550161ef8a7bc4f2a671c0b03a18ac9ccedea1e # v2
         with:
           tool: cargo-nextest
 
