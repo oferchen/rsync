@@ -437,8 +437,7 @@ fn metrics_force_insert_counter_increments_under_backpressure() {
     let snap = consumer.metrics();
     assert!(
         snap.force_insert_count > 0,
-        "expected force_insert_count > 0 under backpressure, got {:?}",
-        snap,
+        "expected force_insert_count > 0 under backpressure, got {snap:?}",
     );
     consumer.join().unwrap();
 }

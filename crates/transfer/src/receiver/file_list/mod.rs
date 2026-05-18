@@ -20,5 +20,4 @@ mod incremental;
 mod receive;
 mod sanitize;
 
-pub(super) use hardlinks::{match_hard_links, normalize_pre30_hardlinks};
 pub use incremental::IncrementalFileListReceiver;

@@ -64,8 +64,8 @@ mod tests {
 
     #[test]
     fn stub_build_linkat_sqe_returns_unsupported() {
-        let old = CStr::from_bytes_with_nul(b"/tmp/old\0").unwrap();
-        let new = CStr::from_bytes_with_nul(b"/tmp/new\0").unwrap();
+        let old = c"/tmp/old";
+        let new = c"/tmp/new";
         let err = build_linkat_sqe(LinkAtArgs {
             old_dirfd: 0,
             old_path: old,

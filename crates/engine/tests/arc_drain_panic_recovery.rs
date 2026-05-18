@@ -198,9 +198,10 @@ mod parallel_apply_drain {
             .recv_timeout(Duration::from_secs(10))
             .expect("worker entered writer");
 
-        let err = applier
-            .finish_file(0u32)
-            .expect_err("slot still referenced by mid-flight worker");
+        let err = match applier.finish_file(0u32) {
+            Ok(_) => panic!("slot still referenced by mid-flight worker"),
+            Err(err) => err,
+        };
 
         // Boundary: typed error survives the `From<ParallelApplyError>
         // for io::Error` conversion. The `Display` payload carries

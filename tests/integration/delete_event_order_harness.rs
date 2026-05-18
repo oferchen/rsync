@@ -62,7 +62,6 @@
 //! - `generator.c:delete_in_dir_loop()` - timing-mode dispatch.
 //! - `flist.c:delete_missing()` - DEL_DIR vs DEL_FILE classification.
 
-#![cfg(unix)]
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -83,7 +82,7 @@ pub const GATE_ENV_VAR: &str = "OC_RSYNC_DELETE_INTEROP";
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Classification of a parsed trace event.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SyscallKind {
     /// File removal (`unlink`, or `unlinkat` without `AT_REMOVEDIR`).
     Unlink,
@@ -572,13 +571,13 @@ pub fn diff_delete_groups(upstream: &[Event], oc_rsync: &[Event]) -> Vec<String>
 }
 
 /// Index of the first event matching `pred`, or `None` if no such event.
-pub fn first_index<F: FnMut(&Event) -> bool>(events: &[Event], mut pred: F) -> Option<usize> {
-    events.iter().position(|e| pred(e))
+pub fn first_index<F: FnMut(&Event) -> bool>(events: &[Event], pred: F) -> Option<usize> {
+    events.iter().position(pred)
 }
 
 /// Index of the last event matching `pred`, or `None` if no such event.
-pub fn last_index<F: FnMut(&Event) -> bool>(events: &[Event], mut pred: F) -> Option<usize> {
-    events.iter().rposition(|e| pred(e))
+pub fn last_index<F: FnMut(&Event) -> bool>(events: &[Event], pred: F) -> Option<usize> {
+    events.iter().rposition(pred)
 }
 
 /// Check `command -v <cmd>` on PATH.

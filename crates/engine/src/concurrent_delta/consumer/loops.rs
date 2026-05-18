@@ -44,7 +44,7 @@ pub(super) fn run_bare_loop(
                     publish(&reorder);
                     break;
                 }
-                DrainOutcome::Forwarded(_) => {
+                DrainOutcome::Forwarded => {
                     publish(&reorder);
                 }
             }
@@ -53,14 +53,14 @@ pub(super) fn run_bare_loop(
         match drain_and_record(&mut reorder, result_tx, &mut last_drain_at) {
             DrainOutcome::Disconnected => return,
             DrainOutcome::Empty => {}
-            DrainOutcome::Forwarded(_) => publish(&reorder),
+            DrainOutcome::Forwarded => publish(&reorder),
         }
     }
 
     match drain_and_record(&mut reorder, result_tx, &mut last_drain_at) {
         DrainOutcome::Disconnected => return,
         DrainOutcome::Empty => {}
-        DrainOutcome::Forwarded(_) => publish(&reorder),
+        DrainOutcome::Forwarded => publish(&reorder),
     }
     // Ensure the final snapshot reflects steady-state counters even if the
     // last operation was a non-recording drain.
@@ -203,7 +203,7 @@ enum DrainOutcome {
     /// No items were ready to drain.
     Empty,
     /// One or more items were forwarded to the consumer channel.
-    Forwarded(usize),
+    Forwarded,
     /// The output channel is closed; the caller must abort.
     Disconnected,
 }
@@ -235,5 +235,5 @@ fn drain_and_record(
     }
     reorder.record_drain_batch(count);
     *last_drain_at = Some(now);
-    DrainOutcome::Forwarded(count)
+    DrainOutcome::Forwarded
 }

@@ -2,9 +2,9 @@
 //!
 //! The `ssh-socketpair-stderr` Cargo feature is opt-in (see
 //! `crates/rsync_io/Cargo.toml` and
-//! `docs/design/socketpair-stderr-channel.md`). When the feature is OFF
-//! - the production default - building an [`SshCommand`], spawning a
-//! child that writes to stderr, and consuming the result via the public
+//! `docs/design/socketpair-stderr-channel.md`). When the feature is OFF,
+//! the production default, building an [`SshCommand`], spawning a child
+//! that writes to stderr, and consuming the result via the public
 //! `SshConnection::wait_with_stderr` API must still surface the child's
 //! stderr to the caller. On Unix the underlying transport may be either
 //! a socketpair (preferred) or an anonymous pipe (fallback); both paths

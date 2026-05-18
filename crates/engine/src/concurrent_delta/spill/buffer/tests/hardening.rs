@@ -40,6 +40,9 @@ fn enospc_during_spill_propagates_as_io_error() {
     match err {
         SpillError::Io(ref e) => assert_eq!(e.kind(), io::ErrorKind::StorageFull),
         SpillError::Capacity(_) => panic!("expected I/O error, got capacity"),
+        SpillError::UnsupportedCompression(tag) => {
+            panic!("expected I/O error, got unsupported compression tag 0x{tag:02x}")
+        }
     }
     assert!(err.is_out_of_space(), "is_out_of_space should be true");
 }

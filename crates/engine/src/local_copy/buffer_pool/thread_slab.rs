@@ -42,10 +42,9 @@
 //!
 //! Rust runs [`thread_local!`] destructors at thread exit and during panic
 //! unwind. The slab's `Drop` impl drains every retained buffer through
-//! [`drain_to_overflow`], which calls back into the
-//! [`SlabOverflow`] callback registered by the pool. Buffers that the
-//! overflow callback rejects (queue full) are deallocated by the callback's
-//! deallocate path so no allocations leak.
+//! `drain_to_overflow`, which calls back into the pool's overflow callback.
+//! Buffers that the overflow callback rejects (queue full) are deallocated
+//! by the callback's deallocate path so no allocations leak.
 //!
 //! No `unwrap`, `expect`, or `panic!` is allowed on the teardown path so
 //! that a panicking thread can still drain cleanly.
@@ -66,13 +65,6 @@ pub(super) const DEFAULT_SLAB_BYTE_CAP: usize = 8 * COPY_BUFFER_SIZE;
 ///
 /// Set to a power of two so the modulus compiles to a bitwise AND.
 const DONATION_INTERVAL: u64 = 64;
-
-/// Callback shape the pool registers so the slab can hand off buffers to
-/// the central overflow queue without depending on the pool's concrete type.
-///
-/// Returns `Some(buf)` if the overflow path rejected the buffer (queue full
-/// or budget exhausted) so the slab can deallocate via a separate hook.
-pub(super) type SlabOverflow = Box<dyn Fn(Vec<u8>) -> Option<Vec<u8>> + Send + Sync + 'static>;
 
 /// Per-thread LIFO buffer slab.
 #[derive(Debug)]
@@ -152,12 +144,14 @@ impl LocalSlab {
         self.return_count % DONATION_INTERVAL == 0 && !self.buffers.is_empty()
     }
 
-    /// Returns the current retained byte total.
+    /// Returns the current retained byte total. Tests-only inspector.
+    #[cfg(test)]
     pub(super) fn retained_bytes(&self) -> usize {
         self.retained_bytes
     }
 
-    /// Returns the current slot count.
+    /// Returns the current slot count. Tests-only inspector.
+    #[cfg(test)]
     pub(super) fn len(&self) -> usize {
         self.buffers.len()
     }
@@ -168,6 +162,7 @@ impl LocalSlab {
     /// Never panics: errors are absorbed by routing rejected buffers through
     /// `deallocate`. Called from the `thread_local!` destructor at thread
     /// exit or during panic unwind.
+    #[cfg(test)]
     pub(super) fn drain_to_overflow<F, G>(&mut self, overflow: F, deallocate: G)
     where
         F: Fn(Vec<u8>) -> Option<Vec<u8>>,
@@ -215,27 +210,13 @@ pub(super) fn take_donation() -> Option<Vec<u8>> {
 
 /// Returns this thread's current slab retained bytes and slot count.
 ///
-/// Used by tests and telemetry.
+/// Used by tests to verify per-thread caps remain in force.
+#[cfg(test)]
 pub(super) fn snapshot() -> (usize, usize) {
     LOCAL_SLAB.with(|cell| {
         let slab = cell.borrow();
         (slab.len(), slab.retained_bytes())
     })
-}
-
-/// Drains this thread's slab through `overflow` / `deallocate`.
-///
-/// Intended for explicit cleanup (e.g. teardown of a transient worker pool
-/// that should not retain buffers across pool reconfiguration). The
-/// thread-exit path uses the `Drop` impl on `LocalSlab` indirectly via the
-/// `thread_local!` destructor when the slab carries a global overflow hook
-/// (see [`super::pool`]).
-pub(super) fn drain<F, G>(overflow: F, deallocate: G)
-where
-    F: Fn(Vec<u8>) -> Option<Vec<u8>>,
-    G: Fn(Vec<u8>),
-{
-    LOCAL_SLAB.with(|cell| cell.borrow_mut().drain_to_overflow(overflow, deallocate));
 }
 
 #[cfg(test)]

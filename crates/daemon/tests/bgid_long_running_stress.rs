@@ -26,7 +26,7 @@
 //!     --test bgid_long_running_stress --all-features
 //! ```
 
-#![cfg(all(target_os = "linux", feature = "io_uring"))]
+#![cfg(target_os = "linux")]
 
 use fast_io::{BgidAllocator, bgid_inflight, bgid_peak_used};
 

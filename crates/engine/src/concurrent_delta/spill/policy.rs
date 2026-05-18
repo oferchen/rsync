@@ -67,10 +67,10 @@ pub enum SpillGranularity {
 /// does immediately after reloading a spilled item from disk and delivering
 /// it to the consumer.
 ///
-/// The default - [`SpillReclaim::KeepInMemory`] - matches the historical
+/// The default, [`SpillReclaim::KeepInMemory`], matches the historical
 /// behaviour: any items that were force-inserted alongside the reload stay
-/// resident in memory. The alternative - [`SpillReclaim::RespillAfterRead`]
-/// - triggers an extra `spill_excess` pass after every successful reload so
+/// resident in memory. The alternative, [`SpillReclaim::RespillAfterRead`],
+/// triggers an extra `spill_excess` pass after every successful reload so
 /// the in-memory footprint stays bounded under sustained reload traffic.
 /// Use it when many large batches stream through and RSS would otherwise
 /// drift upward over the lifetime of a long-running transfer.
