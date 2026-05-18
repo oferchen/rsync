@@ -64,5 +64,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "negotiation_prologue"
+path = "fuzz_targets/negotiation_prologue.rs"
+test = false
+doc = false
+bench = false
+
 # Standalone workspace - not part of root workspace
 [workspace]
