@@ -214,6 +214,23 @@ release binary on modern Linux/macOS/Windows hosts; everything marked
 | `concurrent-sessions` | `daemon` | no | Shared `dashmap` session state for multi-session daemons. | experimental |
 | `tracing` | `core`, `engine`, `transfer`, `daemon` | no | Structured `tracing` instrumentation for diagnostics. | stable |
 
+#### Receiver memory tuning: `SpillPolicy`
+
+The concurrent-delta receiver bounds its in-memory `ReorderBuffer` through a
+process-wide `SpillPolicy` knob. The default policy keeps everything in memory
+(byte-equivalent to prior releases). Opt in to disk-backed spill by setting
+`OC_RSYNC_SPILL_THRESHOLD_BYTES` (e.g. `64M`) and, optionally,
+`OC_RSYNC_SPILL_DIR` to point at a fast scratch directory. CLI flags
+`--spill-dir` and `--spill-threshold-bytes` are planned for STN-11 and will
+shadow the env vars when present. Full surface (env vars, reclaim mode,
+granularity, compression, validation rules, defaults table) is in
+[`docs/design/spill-policy-public-api.md`](./docs/design/spill-policy-public-api.md);
+the underlying buffer is documented in
+[`docs/design/reorderbuffer-spill-to-tempfile.md`](./docs/design/reorderbuffer-spill-to-tempfile.md).
+Operator-facing tuning guidance is in
+[`docs/operator-migration-guide-vNEXT.md`](./docs/operator-migration-guide-vNEXT.md)
+under *Receiver spill tunability*.
+
 #### Choosing features for your build
 
 ```bash
