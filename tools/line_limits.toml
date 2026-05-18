@@ -49,11 +49,6 @@ warn_lines = 1300
 # ---------------------------------------------------------------------------
 
 [[overrides]]
-path = "crates/protocol/src/flist/write/tests.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
 path = "crates/cli/src/frontend/arguments/tests.rs"
 max_lines = 3000
 warn_lines = 2800
