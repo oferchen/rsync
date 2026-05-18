@@ -570,11 +570,7 @@ mod tests {
         let tolerance = expected.div_ceil(4); // within 25% of the mean
         for (idx, counter) in counts.iter().enumerate() {
             let got = counter.load(Ordering::Relaxed);
-            let delta = if got > expected {
-                got - expected
-            } else {
-                expected - got
-            };
+            let delta = got.abs_diff(expected);
             assert!(
                 delta <= tolerance,
                 "ring {idx} took {got} leases, expected ~{expected} (tolerance {tolerance})"
