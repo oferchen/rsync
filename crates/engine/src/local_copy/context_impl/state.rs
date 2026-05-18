@@ -183,6 +183,21 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Registers a hardlink-cohort leader keyed by the reference file the
+    /// destination is being linked to. Returns `true` the first time a given
+    /// reference is seen (this destination is the cohort leader) and `false`
+    /// for subsequent followers that share the same inode.
+    ///
+    /// Used to make per-inode metadata writes (e.g. NTFS DACL writes via
+    /// `SetNamedSecurityInfoW`) O(1) per cohort instead of O(N) per follower.
+    ///
+    /// upstream: hlink.c::hard_link_check returns 1 for followers so
+    /// generator.c:1540 exits before `set_file_attrs()` and therefore never
+    /// calls `set_acl()` on a follower alias.
+    pub(super) fn register_acl_cohort_leader(&mut self, reference: &Path) -> bool {
+        self.hard_links.register_acl_cohort_leader(reference)
+    }
+
     /// Returns whether `--delay-updates` is enabled.
     pub(super) const fn delay_updates_enabled(&self) -> bool {
         self.options.delay_updates_enabled()
