@@ -1035,6 +1035,7 @@ dependencies = [
  "dashmap",
  "dns-lookup",
  "exacl",
+ "fast_io",
  "filetime",
  "fs2",
  "libc",
