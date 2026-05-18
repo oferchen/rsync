@@ -460,21 +460,27 @@ fn metrics_drain_batch_histogram_accumulates() {
         hist.total_samples() > 0,
         "expected at least one drain-batch sample, got {hist:?}",
     );
-    // Sum of all bucket counts equals the number of drain iterations
-    // that produced at least one item.
-    let total_drained: u64 = hist
+    // Bucket idx covers drain sizes in [2^idx, 2^(idx+1) - 1]; the cap
+    // bucket (idx >= 10) is unbounded above. Upper-bound sum must cover
+    // every delivered item - the previous lower-bound estimate could
+    // legitimately underestimate when drains clustered in the top half
+    // of a bucket (e.g. six drains of size three give lo=2*6=12 < 16).
+    let upper_bound_total: u64 = hist
         .buckets()
         .iter()
         .enumerate()
         .map(|(idx, &count)| {
-            // Lower bound of bucket idx is 2^idx (except >=1024 cap).
-            let lo = 1u64 << idx.min(10);
-            lo.saturating_mul(count)
+            let hi = if idx >= 10 {
+                u64::MAX
+            } else {
+                (1u64 << (idx + 1)) - 1
+            };
+            hi.saturating_mul(count)
         })
         .sum();
     assert!(
-        total_drained >= u64::from(count),
-        "histogram lower-bound sum {total_drained} must cover delivered count {count}",
+        upper_bound_total >= u64::from(count),
+        "histogram upper-bound sum {upper_bound_total} must cover delivered count {count}",
     );
     consumer.join().unwrap();
 }
