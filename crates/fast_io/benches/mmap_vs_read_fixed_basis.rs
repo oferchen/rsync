@@ -369,11 +369,11 @@ fn run_mmap_sequential(file: &File, size: u64) -> u64 {
 /// Panics if `submission().push` rejects an SQE (only possible if the
 /// ring's submission queue overflows, which would indicate
 /// `SQ_ENTRIES` is mis-sized for `REG_BUF_COUNT`), if
-/// `submit_and_wait` returns an error (kernel rejected the submission
-/// - the bench cannot proceed without completions), or if a CQE
-/// reports a negative result (kernel read error - typically EIO on a
-/// faulty storage device). Surfaced via `expect(..)` so the regression
-/// aborts the sample rather than producing a silently skewed number.
+/// `submit_and_wait` returns an error (kernel rejected the submission;
+/// the bench cannot proceed without completions), or if a CQE reports
+/// a negative result (kernel read error, typically EIO on a faulty
+/// storage device). Surfaced via `expect(..)` so the regression aborts
+/// the sample rather than producing a silently skewed number.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 fn run_read_fixed_sequential(ring: &mut IoUring, file: &File, bufs: &RegBufs, size: u64) -> u64 {
     let fd = types::Fd(file.as_raw_fd());
@@ -513,7 +513,7 @@ fn bench_read_fixed_sqpoll(c: &mut Criterion) {
                         .read(true)
                         .open(&basis)
                         .expect("basis open");
-                    let mut ring = IoUring::<io_uring::squeue::Entry>::builder()
+                    let ring = IoUring::<io_uring::squeue::Entry>::builder()
                         .setup_sqpoll(SQPOLL_IDLE_MS)
                         .build(SQ_ENTRIES)
                         .expect("sqpoll ring");
