@@ -1,64 +1,121 @@
-//! mmap vs `IORING_OP_READ_FIXED` + SQPOLL on a 1 GiB basis-read workload.
+//! mmap vs `IORING_OP_READ_FIXED` + SQPOLL on sequential basis-file
+//! reads. Bench harness only; the hardware run that picks Option 1/2/3
+//! from the design doc is tracked separately as SMR-2.
 //!
-//! Tracking issue: oc-rsync follow-up to #2158 (SQPOLL defensive disable
-//! when `mmap_basis_active`). Companion document:
+//! Companion design document:
 //! `docs/design/mmap-vs-sqpoll-conflict-resolution.md`.
 //!
 //! # What this bench measures
 //!
-//! The two cells synthesise the basis-file read pattern that the
-//! `DeltaApplicator` issues during delta application
-//! (`crates/transfer/src/delta_apply/applicator.rs:161-176`). The basis
-//! file is 1 GiB; each iteration issues a fixed number of random reads
-//! of 1 KiB to 64 KiB at random offsets, mirroring how the delta
-//! algorithm jumps around the basis file as it splices unchanged blocks
-//! into the destination.
+//! Six cells split across two dispatch styles and three basis sizes,
+//! all driven by the same sequential-read access pattern that the
+//! `DeltaApplicator` exercises when streaming long runs of COPY tokens
+//! (`crates/transfer/src/delta_apply/applicator.rs`):
 //!
-//! - `mmap_basis_read`: opens the basis file via `memmap2::MmapOptions`
-//!   and dereferences `mmap[off..off+len]` for each read. This is the
-//!   current `MmapStrategy` path
-//!   (`crates/transfer/src/map_file/mmap.rs:27, 38`) when the upstream
-//!   selector lets mmap through.
-//! - `read_fixed_basis_with_sqpoll`: opens the basis file and reads via
-//!   `IORING_OP_READ_FIXED` against a `RegisteredBufferGroup`-equivalent
-//!   set of page-aligned heap buffers, on a ring built with
-//!   `IORING_SETUP_SQPOLL`. This is the option-1 candidate from the
-//!   design doc.
+//! - `mmap/sequential/4MiB`
+//! - `mmap/sequential/64MiB`
+//! - `mmap/sequential/1GiB`  (env-gated on `OC_RSYNC_BENCH_LARGE=1`)
+//! - `read_fixed_sqpoll/sequential/4MiB`
+//! - `read_fixed_sqpoll/sequential/64MiB`
+//! - `read_fixed_sqpoll/sequential/1GiB`  (env-gated on `OC_RSYNC_BENCH_LARGE=1`)
+//!
+//! The `mmap` cells open the basis via `memmap2::MmapOptions` and walk
+//! the mapping in 1 MiB strides, touching every byte through slice
+//! iteration. The `read_fixed_sqpoll` cells open the same basis,
+//! register a small ring of 1 MiB page-aligned heap buffers via
+//! `IORING_REGISTER_BUFFERS`, and stream the file end-to-end via
+//! `IORING_OP_READ_FIXED` on a ring built with `IORING_SETUP_SQPOLL`.
+//! Both dispatch styles cover the entire basis on every iteration so
+//! `Throughput::Bytes(size)` yields a directly comparable MB/s number.
 //!
 //! # Hypothesis
 //!
-//! mmap wins on warm-cache, random-access workloads because dereferencing
-//! a populated page is a single load instruction with no syscall.
-//! `READ_FIXED` + SQPOLL wins on cold-cache or large working-set
-//! workloads because the SQPOLL kthread reaps SQEs without the
+//! mmap should win on small, fully-cacheable working sets where the
+//! page cache holds the whole file warm after the first iteration:
+//! dereferencing a populated page is a single load with no syscall.
+//! `READ_FIXED` + SQPOLL should win as the working set grows past page
+//! cache residence because the SQPOLL kthread reaps SQEs without the
 //! per-batch `io_uring_enter(2)` and `READ_FIXED` skips
 //! `iov_iter_get_pages` on each submission. The crossover point is
-//! workload-dependent; this bench is designed to surface it for the
-//! 1 GiB basis-file case.
+//! workload- and host-dependent; SMR-2 will run the bench on real
+//! NVMe hardware and pick which of the three options the design doc
+//! sketches.
 //!
 //! # When to run
 //!
-//! Linux 5.13+ for unprivileged SQPOLL; 5.6-5.12 requires `CAP_SYS_NICE`
-//! and the bench will skip cleanly when the kernel rejects the request.
+//! Linux 5.13+ for unprivileged SQPOLL; 5.6-5.12 requires
+//! `CAP_SYS_NICE` and the SQPOLL cells skip cleanly when the kernel
+//! rejects the request. The 4 MiB and 64 MiB cells are cheap enough to
+//! run on any host; the 1 GiB cells need `OC_RSYNC_BENCH_LARGE=1` to
+//! enable, both because the basis file occupies 1 GiB of scratch space
+//! and because each iteration streams a full gigabyte of data.
 //!
 //! ```sh
+//! # Mmap-only run (no kernel privileges required). Default sizes only.
+//! cargo bench -p fast_io --bench mmap_vs_read_fixed_basis
+//!
+//! # Both dispatch styles, default sizes (4 MiB and 64 MiB).
 //! OC_RSYNC_BENCH_IOURING_RING=1 \
 //! OC_RSYNC_BENCH_IOURING_SQPOLL=1 \
 //!   cargo bench -p fast_io --bench mmap_vs_read_fixed_basis
+//!
+//! # Full matrix including the 1 GiB cells.
+//! OC_RSYNC_BENCH_IOURING_RING=1 \
+//! OC_RSYNC_BENCH_IOURING_SQPOLL=1 \
+//! OC_RSYNC_BENCH_LARGE=1 \
+//!   cargo bench -p fast_io --bench mmap_vs_read_fixed_basis
 //! ```
 //!
-//! Without either gate the bench prints a skip line and exits 0.
+//! Without the SQPOLL gates the read_fixed_sqpoll cells print a skip
+//! line and exit 0. Without `OC_RSYNC_BENCH_LARGE=1` the 1 GiB cells
+//! are skipped so a default `cargo bench` stays cheap.
+//!
+//! # perf stat recipes
+//!
+//! The point of the bench is to characterize the syscall and
+//! page-fault profile of each dispatch style, not just the wall-clock
+//! throughput. `perf stat` recipes for the syscall and fault counters
+//! Linux exposes are the recommended way to consume the bench output
+//! when picking Option 1/2/3 in SMR-2:
+//!
+//! ```sh
+//! # Syscall counts (io_uring_enter, read, mmap, munmap). Useful for
+//! # confirming the SQPOLL kthread really did eliminate
+//! # io_uring_enter calls and for sizing the mmap setup cost.
+//! perf stat -e \
+//!   syscalls:sys_enter_io_uring_enter,syscalls:sys_enter_read,\
+//! syscalls:sys_enter_mmap,syscalls:sys_enter_munmap \
+//!   cargo bench -p fast_io --bench mmap_vs_read_fixed_basis
+//!
+//! # Page-fault profile. Major faults dominate when the mmap path is
+//! # cold or when the working set exceeds page-cache residence;
+//! # READ_FIXED should report ~0 faults because the kernel writes
+//! # directly into the registered buffers.
+//! perf stat -e \
+//!   minor-faults,major-faults,page-faults,context-switches,cpu-migrations \
+//!   cargo bench -p fast_io --bench mmap_vs_read_fixed_basis
+//!
+//! # CPU cycle and instruction breakdown. Mmap dereferences are a
+//! # single load per byte; READ_FIXED amortises the cost across the
+//! # ring submission + completion path. The IPC ratio is the cleanest
+//! # cross-style comparison.
+//! perf stat -e cycles,instructions,cache-references,cache-misses \
+//!   cargo bench -p fast_io --bench mmap_vs_read_fixed_basis
+//! ```
 //!
 //! # What the numbers inform
 //!
-//! Outcome -> action (see `docs/design/mmap-vs-sqpoll-conflict-resolution.md`
-//! section "Trigger conditions"):
+//! Outcome -> action (see
+//! `docs/design/mmap-vs-sqpoll-conflict-resolution.md` section
+//! "Trigger conditions"):
 //!
-//! - `read_fixed_basis_with_sqpoll` >= `mmap_basis_read`: adopt option 1
-//!   (drop mmap for SQPOLL-enabled basis reads, use READ_FIXED).
-//! - Within +/- 10%: still option 1; SQPOLL syscall savings amortise.
-//! - Regression > 10%: adopt option 2 (size-threshold heuristic) and
-//!   tune the threshold from the per-chunk-size breakdown below.
+//! - `read_fixed_sqpoll` >= `mmap` at all sizes: adopt option 1 (drop
+//!   mmap for SQPOLL-enabled basis reads, use READ_FIXED end-to-end).
+//! - mmap wins below some threshold and `read_fixed_sqpoll` wins above:
+//!   adopt option 2 (size-threshold heuristic) and pin the threshold to
+//!   the 4 MiB / 64 MiB / 1 GiB crossover the bench surfaces.
+//! - mmap wins at every size: adopt option 3 (keep mmap, accept the
+//!   SQPOLL co-issue ban from #2158).
 //!
 //! # CI gating
 //!
@@ -80,12 +137,12 @@ use std::io::Write;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use std::os::unix::io::AsRawFd;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-use std::path::PathBuf;
+use std::path::Path;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use std::ptr::NonNull;
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use io_uring::{IoUring, opcode, types};
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
@@ -93,35 +150,24 @@ use memmap2::MmapOptions;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use tempfile::TempDir;
 
-/// Basis-file size. Sized at 1 GiB to match the design-doc workload and
-/// to ensure the working set exceeds typical page-cache residence on a
-/// CI runner so cold-page costs are visible.
+/// One mebibyte. Used both as the registered-buffer slot size and as
+/// the mmap stride, so the two dispatch styles read the basis file in
+/// chunks of the same shape.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-const BASIS_BYTES: u64 = 1024 * 1024 * 1024;
+const CHUNK_BYTES: usize = 1024 * 1024;
 
-/// Number of reads per iteration. The design doc calls for 100
-/// iterations; Criterion controls iteration count via `sample_size`,
-/// and each iteration issues this many reads. Total bench wall time
-/// stays reasonable under the configured `sample_size(10)` on an NVMe
-/// host.
+/// Default basis sizes covered on every run.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-const READS_PER_ITER: usize = 100;
+const DEFAULT_SIZES: &[(u64, &str)] = &[(4 * 1024 * 1024, "4MiB"), (64 * 1024 * 1024, "64MiB")];
 
-/// Minimum read size. Matches the lower bound of the delta-apply COPY
-/// token range; smaller copies are folded into the LITERAL stream.
+/// Large basis size gated by `OC_RSYNC_BENCH_LARGE=1`. Skipped by
+/// default so a `cargo bench` from a laptop does not allocate a GiB
+/// of scratch.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-const MIN_READ: usize = 1024;
+const LARGE_SIZE: (u64, &str) = (1024 * 1024 * 1024, "1GiB");
 
-/// Maximum read size. Matches `IoUringConfig::buffer_size` for the
-/// large-file preset (`crates/fast_io/src/io_uring_common.rs:151`),
-/// so registered-buffer slots can hold any single read without
-/// chunking.
-#[cfg(all(target_os = "linux", feature = "io_uring"))]
-const MAX_READ: usize = 64 * 1024;
-
-/// SQ entries. Sized larger than the per-iteration submission count
-/// chunk so the ring never blocks on `submit_and_wait` for
-/// backpressure rather than for kernel completion latency.
+/// SQ entries. Sized comfortably above `REG_BUF_COUNT` so the ring
+/// never backpressures on submission space.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 const SQ_ENTRIES: u32 = 256;
 
@@ -131,9 +177,9 @@ const SQ_ENTRIES: u32 = 256;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 const SQPOLL_IDLE_MS: u32 = 100;
 
-/// Number of registered buffers. One per concurrent in-flight read,
-/// matching the small-files preset
-/// (`crates/fast_io/src/io_uring_common.rs:174`).
+/// Number of registered buffers. One per concurrent in-flight read;
+/// 8 matches the small-files preset in
+/// `crates/fast_io/src/io_uring_common.rs`.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 const REG_BUF_COUNT: usize = 8;
 
@@ -142,14 +188,28 @@ const REG_BUF_COUNT: usize = 8;
 const ENABLE_ENV: &str = "OC_RSYNC_BENCH_IOURING_RING";
 
 /// SQPOLL-specific gate. Set to `1` (in addition to `ENABLE_ENV`) to
-/// run the SQPOLL cell. Kept separate so unprivileged hosts can still
-/// run the mmap cell without attempting SQPOLL setup.
+/// run the SQPOLL cells. Kept separate so unprivileged hosts can still
+/// run the mmap cells without attempting SQPOLL setup.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 const SQPOLL_ENV: &str = "OC_RSYNC_BENCH_IOURING_SQPOLL";
 
+/// Large-cell gate. Set to `1` to include the 1 GiB rows.
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+const LARGE_ENV: &str = "OC_RSYNC_BENCH_LARGE";
+
+/// Returns the basis sizes selected for this run.
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+fn selected_sizes() -> Vec<(u64, &'static str)> {
+    let mut sizes: Vec<(u64, &'static str)> = DEFAULT_SIZES.to_vec();
+    if matches!(env::var(LARGE_ENV), Ok(v) if v == "1") {
+        sizes.push(LARGE_SIZE);
+    }
+    sizes
+}
+
 /// Linear-congruential pseudo-random generator. Deterministic so the
-/// two cells exercise the exact same offset / size pattern across
-/// iterations. Borrowed from Numerical Recipes; full-period 2^64.
+/// basis content is the same across runs of the bench. Borrowed from
+/// Numerical Recipes; full-period 2^64.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 struct Lcg(u64);
 
@@ -171,35 +231,16 @@ impl Lcg {
     }
 }
 
-/// Generates the random `(offset, len)` plan shared by both cells.
-///
-/// Both bench cells consume the exact same plan to make wall-time
-/// deltas attributable to dispatch style rather than offset choice.
+/// Writes a `size`-byte pseudo-random basis file at `path`. Streamed
+/// via `CHUNK_BYTES` chunks so peak RSS stays bounded.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-fn build_plan(seed: u64) -> Vec<(u64, usize)> {
-    let mut rng = Lcg::new(seed);
-    let mut plan = Vec::with_capacity(READS_PER_ITER);
-    for _ in 0..READS_PER_ITER {
-        let len_range = (MAX_READ - MIN_READ) as u64;
-        let len = MIN_READ + (rng.next_u64() % len_range) as usize;
-        let max_off = BASIS_BYTES - len as u64;
-        let off = rng.next_u64() % max_off;
-        plan.push((off, len));
-    }
-    plan
-}
-
-/// Writes a 1 GiB pseudo-random basis file at `path`. Streamed via
-/// 1 MiB chunks so peak RSS stays bounded.
-#[cfg(all(target_os = "linux", feature = "io_uring"))]
-fn build_basis(path: &PathBuf) {
+fn build_basis(path: &Path, size: u64) {
     let mut f = File::create(path).expect("basis create");
-    let chunk_size = 1024 * 1024usize;
-    let mut buf = vec![0u8; chunk_size];
+    let mut buf = vec![0u8; CHUNK_BYTES];
     let mut rng = Lcg::new(0xCAFE_F00D_DEAD_BEEFu64);
-    let mut remaining = BASIS_BYTES;
+    let mut remaining = size;
     while remaining > 0 {
-        let take = remaining.min(chunk_size as u64) as usize;
+        let take = remaining.min(CHUNK_BYTES as u64) as usize;
         for b in buf[..take].iter_mut() {
             *b = (rng.next_u64() & 0xff) as u8;
         }
@@ -217,7 +258,7 @@ fn io_uring_usable() -> bool {
 
 /// Returns `true` when the kernel accepts `io_uring_setup(2)` with
 /// `IORING_SETUP_SQPOLL`. Without `CAP_SYS_NICE` on pre-5.13 kernels
-/// this returns `false` and the SQPOLL cell skips.
+/// this returns `false` and the SQPOLL cells skip.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 fn sqpoll_usable() -> bool {
     IoUring::<io_uring::squeue::Entry>::builder()
@@ -288,56 +329,69 @@ impl Drop for RegBufs {
     }
 }
 
-/// Issues `(off, len)` reads via the mmap path. Sums the first and
-/// last byte of each window into a black-box accumulator so the
-/// optimiser cannot elide the dereference.
+/// Walks the mmap from offset 0 to `size` in `CHUNK_BYTES` strides,
+/// summing the first and last byte of every chunk into a black-box
+/// accumulator so the optimiser cannot elide the dereference.
 ///
 /// # Panics
 ///
 /// Panics if `MmapOptions::map` rejects the file (typical on a host
 /// without enough virtual address space or where the file vanished
-/// between basis creation and the read), or if a planned `(off, len)`
-/// pair would index past the mapped region (cannot happen unless
-/// `build_plan` is changed without updating `BASIS_BYTES`). Surfaced
-/// via `expect(..)` so the regression aborts the sample rather than
-/// producing a silently skewed number.
+/// between basis creation and the read). Surfaced via `expect(..)` so
+/// the regression aborts the sample rather than producing a silently
+/// skewed number.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-fn run_mmap(file: &File, plan: &[(u64, usize)]) -> u64 {
+fn run_mmap_sequential(file: &File, size: u64) -> u64 {
     // SAFETY: file is a freshly opened read-only fd referring to a
     // regular file on local storage; both preconditions of
     // MmapOptions::map.
     let mmap = unsafe { MmapOptions::new().map(file) }.expect("mmap");
     let mut acc: u64 = 0;
-    for &(off, len) in plan {
-        let slice = &mmap[off as usize..off as usize + len];
+    let mut off: usize = 0;
+    let end = size as usize;
+    while off < end {
+        let take = CHUNK_BYTES.min(end - off);
+        let slice = &mmap[off..off + take];
         acc = acc.wrapping_add(slice[0] as u64);
-        acc = acc.wrapping_add(slice[len - 1] as u64);
+        acc = acc.wrapping_add(slice[take - 1] as u64);
+        off += take;
     }
     acc
 }
 
-/// Issues `(off, len)` reads via `IORING_OP_READ_FIXED` on a SQPOLL
-/// ring. Sums the first and last byte of each completed buffer into a
-/// black-box accumulator.
+/// Streams the basis end-to-end via `IORING_OP_READ_FIXED` on a SQPOLL
+/// ring. Issues up to `REG_BUF_COUNT` reads in parallel, each filling
+/// a registered 1 MiB buffer. Sums the first and last byte of every
+/// completed chunk into a black-box accumulator.
 ///
 /// # Panics
 ///
 /// Panics if `submission().push` rejects an SQE (only possible if the
 /// ring's submission queue overflows, which would indicate
 /// `SQ_ENTRIES` is mis-sized for `REG_BUF_COUNT`), if
-/// `submit_and_wait` returns an error (kernel rejected the
-/// submission - the bench cannot proceed without completions), or if
-/// a CQE reports a negative result (kernel read error - typically EIO
-/// on a faulty storage device). Surfaced via `expect(..)` so the
-/// regression aborts the sample rather than producing a silently
-/// skewed number.
+/// `submit_and_wait` returns an error (kernel rejected the submission
+/// - the bench cannot proceed without completions), or if a CQE
+/// reports a negative result (kernel read error - typically EIO on a
+/// faulty storage device). Surfaced via `expect(..)` so the regression
+/// aborts the sample rather than producing a silently skewed number.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-fn run_read_fixed(ring: &mut IoUring, file: &File, bufs: &RegBufs, plan: &[(u64, usize)]) -> u64 {
+fn run_read_fixed_sequential(ring: &mut IoUring, file: &File, bufs: &RegBufs, size: u64) -> u64 {
     let fd = types::Fd(file.as_raw_fd());
     let mut acc: u64 = 0;
-    // Process the plan in rounds of REG_BUF_COUNT submissions; one
-    // registered buffer per in-flight SQE.
-    for round in plan.chunks(REG_BUF_COUNT) {
+    let mut offset: u64 = 0;
+    let end = size;
+
+    // Build the full list of (offset, len) chunks then submit in
+    // rounds of REG_BUF_COUNT to keep the ring saturated without
+    // exceeding the number of available registered slots.
+    let mut chunks: Vec<(u64, usize)> = Vec::new();
+    while offset < end {
+        let take = CHUNK_BYTES.min((end - offset) as usize);
+        chunks.push((offset, take));
+        offset += take as u64;
+    }
+
+    for round in chunks.chunks(REG_BUF_COUNT) {
         let n = round.len() as u32;
         for (i, &(off, len)) in round.iter().enumerate() {
             let slot = i % REG_BUF_COUNT;
@@ -346,8 +400,8 @@ fn run_read_fixed(ring: &mut IoUring, file: &File, bufs: &RegBufs, plan: &[(u64,
                     .offset(off)
                     .build()
                     .user_data(i as u64);
-            // SAFETY: the registered buffer at `slot` is valid for
-            // the duration of submit_and_wait below; the kernel
+            // SAFETY: the registered buffer at `slot` is valid for the
+            // duration of submit_and_wait below; the kernel
             // dereferences the pointer only between push and the
             // matching CQE arrival, which is fully contained in this
             // round.
@@ -366,9 +420,9 @@ fn run_read_fixed(ring: &mut IoUring, file: &File, bufs: &RegBufs, plan: &[(u64,
             let idx = cqe.user_data() as usize;
             let slot = idx % REG_BUF_COUNT;
             let len = round[idx].1;
-            // SAFETY: the registered buffer at `slot` is alive for
-            // the entirety of the round; we read the first and last
-            // byte of the chunk the kernel just wrote.
+            // SAFETY: the registered buffer at `slot` is alive for the
+            // entirety of the round; we read the first and last byte
+            // of the chunk the kernel just wrote.
             unsafe {
                 let p = bufs.ptrs[slot].as_ptr();
                 acc = acc.wrapping_add(*p as u64);
@@ -380,46 +434,48 @@ fn run_read_fixed(ring: &mut IoUring, file: &File, bufs: &RegBufs, plan: &[(u64,
     acc
 }
 
-/// Runs the `mmap_basis_read` cell. Establishes the mmap baseline.
+/// Runs the `mmap/sequential/<size>` cells. The mmap path needs no
+/// kernel privileges, so these cells always run on Linux.
 ///
 /// # Panics
 ///
 /// Panics if bench setup or measurement fails: `TempDir::new` cannot
 /// create a scratch directory, `OpenOptions::open` rejects the basis
-/// file, or `run_mmap` (which forwards mmap and slice-index errors)
-/// fails. Surfaced via `expect(..)` so the regression aborts the
-/// sample rather than producing a silently skewed number.
+/// file, or `run_mmap_sequential` (which forwards mmap and
+/// slice-index errors) fails. Surfaced via `expect(..)` so the
+/// regression aborts the sample rather than producing a silently
+/// skewed number.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 fn bench_mmap(c: &mut Criterion) {
-    let mut group = c.benchmark_group("mmap_vs_read_fixed_basis");
+    let mut group = c.benchmark_group("mmap_vs_read_fixed_basis/mmap/sequential");
     group.sample_size(10);
-    group.throughput(Throughput::Elements(READS_PER_ITER as u64));
 
-    group.bench_function("mmap_basis_read", |b| {
-        let dir = TempDir::new().expect("tempdir");
-        let basis = dir.path().join("basis.bin");
-        build_basis(&basis);
-        b.iter_with_setup(
-            || {
-                let file = OpenOptions::new()
-                    .read(true)
-                    .open(&basis)
-                    .expect("basis open");
-                let plan = build_plan(0xA5A5_5A5Au64);
-                (file, plan)
-            },
-            |(file, plan)| {
-                criterion::black_box(run_mmap(&file, &plan));
-            },
-        );
-        drop(dir);
-    });
+    for &(size, label) in selected_sizes().iter() {
+        group.throughput(Throughput::Bytes(size));
+        group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
+            let dir = TempDir::new().expect("tempdir");
+            let basis = dir.path().join("basis.bin");
+            build_basis(&basis, size);
+            b.iter_with_setup(
+                || {
+                    OpenOptions::new()
+                        .read(true)
+                        .open(&basis)
+                        .expect("basis open")
+                },
+                |file| {
+                    criterion::black_box(run_mmap_sequential(&file, size));
+                },
+            );
+            drop(dir);
+        });
+    }
 
     group.finish();
 }
 
-/// Runs the `read_fixed_basis_with_sqpoll` cell. Skips cleanly when
-/// the host kernel rejects SQPOLL setup or the SQPOLL gate env var is
+/// Runs the `read_fixed_sqpoll/sequential/<size>` cells. Skips cleanly
+/// when the host kernel rejects SQPOLL setup or the env-var gates are
 /// unset.
 ///
 /// # Panics
@@ -427,59 +483,60 @@ fn bench_mmap(c: &mut Criterion) {
 /// Panics if bench setup or measurement fails: `TempDir::new` cannot
 /// create a scratch directory, the SQPOLL ring builder rejects the
 /// request on a host that previously reported SQPOLL as usable, the
-/// registered-buffer registration syscall fails, or `run_read_fixed`
-/// (which forwards SQE submission and CQE errors) fails. Surfaced via
-/// `expect(..)` so the regression aborts the sample rather than
-/// producing a silently skewed number.
+/// registered-buffer registration syscall fails, or
+/// `run_read_fixed_sequential` (which forwards SQE submission and CQE
+/// errors) fails. Surfaced via `expect(..)` so the regression aborts
+/// the sample rather than producing a silently skewed number.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 fn bench_read_fixed_sqpoll(c: &mut Criterion) {
     if !sqpoll_enabled() {
         eprintln!(
-            "Skipping mmap_vs_read_fixed_basis::read_fixed_basis_with_sqpoll: set \
+            "Skipping mmap_vs_read_fixed_basis::read_fixed_sqpoll/sequential/*: set \
              {ENABLE_ENV}=1 and {SQPOLL_ENV}=1 on a Linux host where IORING_SETUP_SQPOLL \
              is accepted (5.13+ unprivileged, or CAP_SYS_NICE on 5.6-5.12)."
         );
         return;
     }
 
-    let mut group = c.benchmark_group("mmap_vs_read_fixed_basis");
+    let mut group = c.benchmark_group("mmap_vs_read_fixed_basis/read_fixed_sqpoll/sequential");
     group.sample_size(10);
-    group.throughput(Throughput::Elements(READS_PER_ITER as u64));
 
-    group.bench_function("read_fixed_basis_with_sqpoll", |b| {
-        let dir = TempDir::new().expect("tempdir");
-        let basis = dir.path().join("basis.bin");
-        build_basis(&basis);
-        b.iter_with_setup(
-            || {
-                let file = OpenOptions::new()
-                    .read(true)
-                    .open(&basis)
-                    .expect("basis open");
-                let mut ring = IoUring::<io_uring::squeue::Entry>::builder()
-                    .setup_sqpoll(SQPOLL_IDLE_MS)
-                    .build(SQ_ENTRIES)
-                    .expect("sqpoll ring");
-                let bufs = RegBufs::new(REG_BUF_COUNT, MAX_READ);
-                let iovecs = bufs.iovecs();
-                // SAFETY: iovecs reference page-aligned heap buffers
-                // owned by `bufs` for the lifetime of the ring; the
-                // ring is dropped before bufs by virtue of LIFO drop
-                // order in the captured tuple.
-                unsafe {
-                    ring.submitter()
-                        .register_buffers(&iovecs)
-                        .expect("register_buffers");
-                }
-                let plan = build_plan(0xA5A5_5A5Au64);
-                (file, ring, bufs, plan)
-            },
-            |(file, mut ring, bufs, plan)| {
-                criterion::black_box(run_read_fixed(&mut ring, &file, &bufs, &plan));
-            },
-        );
-        drop(dir);
-    });
+    for &(size, label) in selected_sizes().iter() {
+        group.throughput(Throughput::Bytes(size));
+        group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
+            let dir = TempDir::new().expect("tempdir");
+            let basis = dir.path().join("basis.bin");
+            build_basis(&basis, size);
+            b.iter_with_setup(
+                || {
+                    let file = OpenOptions::new()
+                        .read(true)
+                        .open(&basis)
+                        .expect("basis open");
+                    let mut ring = IoUring::<io_uring::squeue::Entry>::builder()
+                        .setup_sqpoll(SQPOLL_IDLE_MS)
+                        .build(SQ_ENTRIES)
+                        .expect("sqpoll ring");
+                    let bufs = RegBufs::new(REG_BUF_COUNT, CHUNK_BYTES);
+                    let iovecs = bufs.iovecs();
+                    // SAFETY: iovecs reference page-aligned heap
+                    // buffers owned by `bufs` for the lifetime of the
+                    // ring; the ring is dropped before bufs by virtue
+                    // of LIFO drop order in the captured tuple.
+                    unsafe {
+                        ring.submitter()
+                            .register_buffers(&iovecs)
+                            .expect("register_buffers");
+                    }
+                    (file, ring, bufs)
+                },
+                |(file, mut ring, bufs)| {
+                    criterion::black_box(run_read_fixed_sequential(&mut ring, &file, &bufs, size));
+                },
+            );
+            drop(dir);
+        });
+    }
 
     group.finish();
 }
@@ -495,7 +552,5 @@ criterion_main!(mmap_vs_read_fixed_basis);
 
 #[cfg(not(all(target_os = "linux", feature = "io_uring")))]
 fn main() {
-    eprintln!(
-        "mmap_vs_read_fixed_basis: skipped (Linux-only bench; requires the `io_uring` feature)"
-    );
+    eprintln!("mmap_vs_read_fixed_basis: skipped (not Linux or io_uring feature disabled)");
 }
