@@ -1752,7 +1752,7 @@ mod tests {
     fn compression_none_writes_uncompressed_tag() {
         // Default policy: every spill record must start with SPILL_TAG_RAW
         // (0x00) so a default-build reader can decode the payload as-is.
-        let scratch = tempfile::tempdir().expect("create scratch root");
+        let scratch = ::tempfile::tempdir().expect("create scratch root");
         let mut buf: SpillableReorderBuffer<u64> =
             SpillableReorderBuffer::with_spill_dir(32, 16, scratch.path().join("spill"))
                 .expect("setup spill directory")
@@ -1778,7 +1778,7 @@ mod tests {
         // With the spill-compression feature on, every record must start
         // with SPILL_TAG_ZSTD (0x01) and the round-trip must still recover
         // the original values.
-        let scratch = tempfile::tempdir().expect("create scratch root");
+        let scratch = ::tempfile::tempdir().expect("create scratch root");
         let mut buf: SpillableReorderBuffer<u64> =
             SpillableReorderBuffer::with_spill_dir(32, 16, scratch.path().join("spill"))
                 .expect("setup spill directory")
@@ -1807,7 +1807,7 @@ mod tests {
         // `#[cfg]` gate on SpillCompression::Zstd is the compile-time
         // "fail fast at construction" guarantee), so we inject the tag
         // directly into the spill file.
-        let scratch = tempfile::tempdir().expect("create scratch root");
+        let scratch = ::tempfile::tempdir().expect("create scratch root");
         let spill_dir = scratch.path().join("spill");
         let mut buf: SpillableReorderBuffer<u64> =
             SpillableReorderBuffer::with_spill_dir(32, 16, &spill_dir)
