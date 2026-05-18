@@ -112,6 +112,12 @@ spill-compression = []
 # single-slot path; only beneficial above ~32 worker threads per pool.
 thread-slab-pool = []
 
+# Opt-in passthrough for the sender/reader io_uring slurp prototype
+# (IUD-6 #2366). Activates `fast_io/iouring-data-reads` and the single
+# basis-file dispatch in `concurrent_delta::strategy`. Default off so
+# production builds remain byte-identical to today.
+iouring-data-reads = ["fast_io/iouring-data-reads"]
+
 # ============================================================================
 # Runtime Features
 # ============================================================================
