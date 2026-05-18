@@ -83,6 +83,14 @@ syscall_batch = []
 # docs/design/splice-vmsplice-zero-copy.md.
 vmsplice = []
 
+# EXPERIMENTAL: SMR-3c - per-file adaptive basis-read dispatch with throughput
+# feedback. Tracks rolling EWMA throughput of the mmap and io_uring backends
+# per process and picks whichever has won lately. Falls back to the SMR-3b
+# size-threshold heuristic when no samples are recorded yet. Default off
+# pending hardware validation; promote only after the SMR-1 bench harness
+# demonstrates a consistent win over the static threshold.
+adaptive-basis-dispatch = []
+
 [target.'cfg(windows)'.dependencies]
 # CopyFileExW for Windows-optimized file copy with no-buffering support;
 # Win32_Networking_WinSock added for WSARecv/WSASend in iocp::socket (#1928);

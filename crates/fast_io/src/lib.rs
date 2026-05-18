@@ -86,6 +86,15 @@ pub mod temp_file_strategy;
 pub mod traits;
 pub mod zero_detect;
 
+/// EXPERIMENTAL: per-file adaptive basis-read backend dispatch (SMR-3c,
+/// Option 3 from `docs/design/mmap-vs-sqpoll-conflict-resolution.md`).
+///
+/// Gated by the `adaptive-basis-dispatch` Cargo feature, which is **not**
+/// enabled by default. When the feature is off this module is not
+/// compiled and the live dispatch path is byte-identical to today.
+#[cfg(feature = "adaptive-basis-dispatch")]
+pub mod adaptive_dispatch;
+
 pub mod copy_file_ex;
 pub mod copy_file_range;
 pub mod o_tmpfile;

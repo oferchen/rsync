@@ -282,3 +282,42 @@ once step 1 lands.
   `config.rs:343-370`. The disable remains the load-bearing guard for
   any future caller that combines SQPOLL with a file-backed mmap
   outside the basis-read path.
+
+## Addendum: Option 3 prototype behind a feature flag (SMR-3c, #2290)
+
+Option 3 (per-file dispatch on observed throughput) is now available
+behind the `adaptive-basis-dispatch` Cargo feature on the `fast_io`
+crate. The feature is **not** in the default set; default builds remain
+byte-identical to today.
+
+When compiled in, `fast_io::adaptive_dispatch` exposes:
+
+- `ThroughputTracker` - maintains an exponentially-weighted moving
+  average (`alpha = 0.2`) of bytes-per-second per backend
+  (`BasisReadBackend::Mmap` vs `BasisReadBackend::IoUring`). EWMAs are
+  stored in plain `AtomicU64`s so reads from the dispatch path do not
+  serialise on a mutex; the only mutex is on the last-sample timestamp,
+  taken only on the slow record path.
+- `record_sample(backend, bytes, elapsed)` - callers wrap the chosen
+  backend's read call and fold the result into the process-wide
+  tracker.
+- `pick(size, mmap_available, iouring_available)` - returns whichever
+  backend has the higher EWMA when both have samples; otherwise falls
+  back to the Option 2 size-threshold rule (`size_threshold_pick`).
+  Setting `OC_RSYNC_ADAPTIVE_BASIS_DISPATCH=0` (or `off`, `false`,
+  `no`) in the environment disables the adaptive path at runtime
+  without rebuilding, reverting to the static threshold.
+
+The adaptive path is intended for experimentation on hardware before
+promotion. Measure with the SMR-1 bench harness
+(`crates/fast_io/benches/mmap_vs_read_fixed_basis.rs`) on a
+representative host. Compare adaptive-on vs adaptive-off on the same
+workload; promote to default only if the EWMA-driven choice
+demonstrably and consistently beats the static threshold across the
+per-chunk-size breakdown.
+
+This addendum does not change the recommendation in the body above
+(adopt Option 1 if the bench permits, else Option 2). Option 3 remains
+explicitly out of scope as the default until that recommendation has
+shipped and real-world telemetry shows the static heuristic leaves
+measurable throughput on the table.
