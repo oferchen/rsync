@@ -12,12 +12,13 @@
 //! `DeltaApplicator` exercises when streaming long runs of COPY tokens
 //! (`crates/transfer/src/delta_apply/applicator.rs`):
 //!
-//! - `mmap/sequential/4MiB`
-//! - `mmap/sequential/64MiB`
-//! - `mmap/sequential/1GiB`  (env-gated on `OC_RSYNC_BENCH_LARGE=1`)
-//! - `read_fixed_sqpoll/sequential/4MiB`
-//! - `read_fixed_sqpoll/sequential/64MiB`
-//! - `read_fixed_sqpoll/sequential/1GiB`  (env-gated on `OC_RSYNC_BENCH_LARGE=1`)
+//! mmap cells: `mmap/sequential/4MiB`, `mmap/sequential/64MiB`, and
+//! `mmap/sequential/1GiB` (env-gated on `OC_RSYNC_BENCH_LARGE=1`).
+//!
+//! io_uring cells: `read_fixed_sqpoll/sequential/4MiB`,
+//! `read_fixed_sqpoll/sequential/64MiB`, and
+//! `read_fixed_sqpoll/sequential/1GiB`
+//! (env-gated on `OC_RSYNC_BENCH_LARGE=1`).
 //!
 //! The `mmap` cells open the basis via `memmap2::MmapOptions` and walk
 //! the mapping in 1 MiB strides, touching every byte through slice
@@ -513,7 +514,7 @@ fn bench_read_fixed_sqpoll(c: &mut Criterion) {
                         .read(true)
                         .open(&basis)
                         .expect("basis open");
-                    let mut ring = IoUring::<io_uring::squeue::Entry>::builder()
+                    let ring = IoUring::<io_uring::squeue::Entry>::builder()
                         .setup_sqpoll(SQPOLL_IDLE_MS)
                         .build(SQ_ENTRIES)
                         .expect("sqpoll ring");
