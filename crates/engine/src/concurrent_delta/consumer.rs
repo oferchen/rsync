@@ -536,6 +536,13 @@ fn run_spillable_loop(
                         .send(DeltaResult::failed(ndx, format!("spill write failed: {e}")));
                     return;
                 }
+                Err(SpillError::UnsupportedCompression(tag)) => {
+                    let _ = result_tx.send(DeltaResult::failed(
+                        ndx,
+                        format!("spill record uses unsupported compression tag 0x{tag:02x}"),
+                    ));
+                    return;
+                }
             }
         }
         publish_spill_events(&reorder, spill_events, &mut prev_spill);
