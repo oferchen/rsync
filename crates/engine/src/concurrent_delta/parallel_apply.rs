@@ -41,9 +41,79 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
+use thiserror::Error;
 
 use super::reorder::ReorderBuffer;
 use super::types::FileNdx;
+
+/// Typed error variants for [`ParallelDeltaApplier::finish_file`] shutdown
+/// paths.
+///
+/// The audit at `docs/audits/arc-try-unwrap-classification.md` (ATU-3,
+/// tracked in #2380) flagged the previous opaque `io::Error::other(...)`
+/// message as user-visible but undiagnosable: it omitted the residual
+/// [`Arc::strong_count`], the offending `FileNdx`, and the failure mode
+/// (still-in-flight vs poisoned). Each variant below carries enough
+/// context for an operator to locate the leaking worker or the
+/// panicking holder.
+///
+/// [`Arc::strong_count`]: std::sync::Arc::strong_count
+#[derive(Debug, Error)]
+pub enum ParallelApplyError {
+    /// The per-file slot's [`Arc`] still has outstanding clones; a
+    /// worker has not yet released its reference. The applier cannot
+    /// extract the writer until every clone has been dropped.
+    #[error(
+        "ParallelDeltaApplier::{kind}: file slot still referenced for ndx={ndx} (strong_count={strong_count})"
+    )]
+    ApplierStillReferenced {
+        /// File index whose slot is still shared.
+        ndx: FileNdx,
+        /// Observed [`Arc::strong_count`] at the failure site.
+        ///
+        /// Always `>= 2` when this variant is constructed.
+        ///
+        /// [`Arc::strong_count`]: std::sync::Arc::strong_count
+        strong_count: usize,
+        /// Static tag identifying the call site (e.g. `"finish_file"`).
+        kind: &'static str,
+    },
+    /// The per-file slot's mutex was poisoned by a panicking holder.
+    /// The applier cannot reuse the writer; the caller must abort the
+    /// transfer for `ndx`.
+    #[error("ParallelDeltaApplier::{kind}: file slot mutex poisoned for ndx={ndx}")]
+    SlotPoisoned {
+        /// File index whose slot mutex was poisoned.
+        ndx: FileNdx,
+        /// Static tag identifying the call site (e.g. `"finish_file"`).
+        kind: &'static str,
+    },
+    /// The per-file reorder buffer still holds chunks awaiting a
+    /// missing sequence number when finish was requested. Indicates the
+    /// producer dropped a chunk or stopped submitting before the
+    /// stream completed.
+    #[error(
+        "ParallelDeltaApplier::{kind}: file {ndx} finished with chunks still buffered ({buffered})"
+    )]
+    UndrainedChunks {
+        /// File index whose reorder buffer was non-empty at finish.
+        ndx: FileNdx,
+        /// Number of chunks still buffered.
+        buffered: usize,
+        /// Static tag identifying the call site (e.g. `"finish_file"`).
+        kind: &'static str,
+    },
+}
+
+impl From<ParallelApplyError> for io::Error {
+    /// Maps a [`ParallelApplyError`] to an [`io::Error`] so existing
+    /// callers keep their `io::Result`-shaped API. The full typed
+    /// message - including `ndx`, `strong_count`, and the call-site tag -
+    /// is preserved as the `Display` payload.
+    fn from(value: ParallelApplyError) -> Self {
+        io::Error::other(value.to_string())
+    }
+}
 
 /// A single contiguous segment of a per-file delta apply.
 ///
@@ -373,13 +443,23 @@ impl ParallelDeltaApplier {
                 .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))?
         };
         let slot = Arc::try_unwrap(slot_arc)
-            .map_err(|_| io::Error::other("parallel applier file slot still in flight"))?
+            .map_err(|still_shared| ParallelApplyError::ApplierStillReferenced {
+                ndx,
+                strong_count: Arc::strong_count(&still_shared),
+                kind: "finish_file",
+            })?
             .into_inner()
-            .map_err(|_| io::Error::other("parallel applier file slot poisoned"))?;
+            .map_err(|_| ParallelApplyError::SlotPoisoned {
+                ndx,
+                kind: "finish_file",
+            })?;
         if !slot.drained() {
-            return Err(io::Error::other(format!(
-                "parallel applier file {ndx} finished with chunks still buffered"
-            )));
+            return Err(ParallelApplyError::UndrainedChunks {
+                ndx,
+                buffered: slot.reorder.buffered_count(),
+                kind: "finish_file",
+            }
+            .into());
         }
         Ok(slot.writer)
     }
@@ -641,5 +721,60 @@ mod tests {
             .apply_chunk_parallel(DeltaChunk::literal(0u32, 0, vec![9u8; 32]))
             .unwrap();
         let _writer = applier.finish_file(0u32).unwrap();
+    }
+
+    #[test]
+    fn finish_file_reports_typed_applier_still_referenced_with_strong_count() {
+        // Force a leaked Arc clone of the per-file slot by holding the
+        // result of `slot_for` across the `finish_file` call. The drain
+        // must surface the residual strong-count via the typed error
+        // (mapped to io::Error at the public boundary).
+        let applier = ParallelDeltaApplier::new(1);
+        let cursor: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        applier.register_file(0u32, Box::new(cursor)).unwrap();
+        let _leaked = applier.slot_for(FileNdx::new(0)).expect("slot registered");
+
+        let err = applier
+            .finish_file(0u32)
+            .expect_err("slot is still referenced by leaked clone");
+        let msg = err.to_string();
+        assert!(msg.contains("finish_file"), "msg was: {msg}");
+        assert!(msg.contains("ndx=0"), "msg was: {msg}");
+        assert!(msg.contains("strong_count="), "msg was: {msg}");
+
+        // Parse the strong_count out of the message and verify it is >= 2.
+        let count_str = msg
+            .split("strong_count=")
+            .nth(1)
+            .and_then(|tail| tail.split(|c: char| !c.is_ascii_digit()).next())
+            .expect("strong_count token present");
+        let count: usize = count_str.parse().expect("strong_count is a number");
+        assert!(count >= 2, "expected strong_count >= 2, got {count}");
+    }
+
+    #[test]
+    fn parallel_apply_error_display_carries_ndx_and_strong_count() {
+        let err = ParallelApplyError::ApplierStillReferenced {
+            ndx: FileNdx::new(7),
+            strong_count: 3,
+            kind: "finish_file",
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("finish_file"));
+        assert!(msg.contains("ndx=7"));
+        assert!(msg.contains("strong_count=3"));
+    }
+
+    #[test]
+    fn parallel_apply_error_converts_into_io_error_with_typed_message() {
+        let err: io::Error = ParallelApplyError::SlotPoisoned {
+            ndx: FileNdx::new(2),
+            kind: "finish_file",
+        }
+        .into();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        let msg = err.to_string();
+        assert!(msg.contains("poisoned"));
+        assert!(msg.contains("ndx=2"));
     }
 }
