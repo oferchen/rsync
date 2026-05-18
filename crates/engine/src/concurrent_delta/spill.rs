@@ -72,6 +72,9 @@ pub use stats::SpillStats;
 mod tempfile;
 use tempfile::{SpillBackend, open_backend};
 
+#[cfg(test)]
+mod tests_per_knob;
+
 /// Default memory threshold (in bytes) before spilling begins.
 ///
 /// Set to 64 MB, which accommodates roughly 64K items of 1 KB each.
