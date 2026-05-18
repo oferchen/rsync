@@ -30,9 +30,15 @@ embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep
 # Async SSH transport: opt-in tokio-process backing for `SshConnection`.
 # See `docs/design/async-ssh-transport.md` (#1593) for the staging plan.
 async-ssh = ["dep:tokio"]
-# SSH stderr socketpair connection primitive (SSE-3, #2372). Default off
-# until SSE-7 ships parity tests. See
-# `docs/design/socketpair-stderr-channel.md` for the staging plan.
+# Opt-in: exposes the standalone `socketpair_stderr` primitive
+# (SSE-3, #2372) intended for future event-loop integrations
+# (SSE-4 async drain, SSE-7 parity suite). Off by default. The
+# production `SshCommand::spawn` path is unchanged by this flag - it
+# already wires stderr through `aux_channel::configure_stderr_channel`
+# on every supported target, with `Stdio::piped()` as the cross-platform
+# fallback. `tests/ssh_stderr_default_path.rs` guards that public
+# contract (`wait_with_stderr` surfaces stderr) when the feature is off.
+# See `docs/design/socketpair-stderr-channel.md` for the staging plan.
 ssh-socketpair-stderr = []
 
 [dev-dependencies]
