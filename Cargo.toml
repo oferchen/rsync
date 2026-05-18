@@ -82,6 +82,12 @@ iocp = ["transfer/iocp", "fast_io/iocp"]
 # Trade-offs: Linux-only optimization
 copy_file_range = ["fast_io/copy_file_range"]
 
+# EXPERIMENTAL: SMR-3a Option 1 (#2288) - drop mmap for the basis-read path,
+# forcing io_uring (where available) or a buffered fallback. Default off; do
+# not enable until SMR-1 hardware numbers validate Option 1. See
+# `docs/design/mmap-vs-sqpoll-conflict-resolution.md` for the rationale.
+mmap-free-basis = ["engine/mmap-free-basis", "fast_io/mmap-free-basis"]
+
 # ============================================================================
 # OpenSSL Features
 # ============================================================================

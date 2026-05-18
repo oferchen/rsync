@@ -352,3 +352,24 @@ This addendum does not change the recommendation in the body above
 explicitly out of scope as the default until that recommendation has
 shipped and real-world telemetry shows the static heuristic leaves
 measurable throughput on the table.
+## Addendum: experimental `mmap-free-basis` flag (SMR-3a #2288)
+
+Option 1 (above) is available behind a Cargo feature flag for
+experimentation. It is **not** the default and must not be enabled in
+production builds until SMR-1 hardware numbers (`mmap_vs_read_fixed_basis`
+bench results on the target host) validate the trigger table above.
+
+- Workspace feature: `mmap-free-basis` on the root crate. Forwards to
+  `engine/mmap-free-basis` and `fast_io/mmap-free-basis`.
+- Dispatch site: `engine::concurrent_delta::strategy::open_basis_reader`.
+  Returns `BasisReader::Default` on default builds (byte-identical to the
+  pre-flag `BufReader<File>` sites) and `BasisReader::MmapFree` when the
+  flag is on. The `MmapFree` variant skips the mmap branch unconditionally,
+  forcing the buffered path (and, where available, io_uring
+  `IORING_OP_READ_FIXED` via the writer-side batcher).
+- Coexistence with Option 2 (SMR-3b): the flag is an opt-out, checked
+  before any size threshold. When on it overrides the threshold to
+  "always io_uring"; when off the threshold logic in SMR-3b governs
+  selection unchanged. Both can land in either order without conflict.
+- Provisional default: SMR-2 (PR #4417) recommends Option 2 as the
+  shipping default until benchmark data justifies a flip.

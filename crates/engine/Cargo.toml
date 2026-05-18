@@ -105,6 +105,13 @@ multi-producer = []
 # the reader can dispatch without ambiguity.
 spill-compression = ["dep:zstd"]
 
+# EXPERIMENTAL: SMR-3a Option 1 (#2288) - forward to `fast_io/mmap-free-basis`
+# so the basis-read dispatch in `concurrent_delta::strategy` skips the mmap
+# branch and forces io_uring (or a buffered fallback) for every basis read.
+# Default off; do not enable until SMR-1 hardware numbers validate Option 1.
+# See `docs/design/mmap-vs-sqpoll-conflict-resolution.md` for the rationale.
+mmap-free-basis = ["fast_io/mmap-free-basis"]
+
 # Per-thread buffer slab (#1271, #1370) - replaces the single-slot thread-local
 # cache in front of BufferPool with a depth-bounded LIFO slab per thread.
 # Benefits: Removes central-queue cursor traffic on every return for workers
@@ -119,13 +126,6 @@ thread-slab-pool = []
 # basis-file dispatch in `concurrent_delta::strategy`. Default off so
 # production builds remain byte-identical to today.
 iouring-data-reads = ["fast_io/iouring-data-reads"]
-
-# iouring-data-writes (IUD-5) - opt-in dispatch in local-copy that routes
-# large whole-file writes through `fast_io::write_file_with_io_uring`. Pass-
-# through to the same-named feature on `fast_io`; default off so production
-# builds are byte-identical. Linux-only at runtime; on every other platform
-# the dispatch branch falls through to the existing copy path.
-iouring-data-writes = ["fast_io/iouring-data-writes"]
 
 # ============================================================================
 # Runtime Features
