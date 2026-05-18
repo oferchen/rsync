@@ -1,0 +1,151 @@
+# Weekly Fuzz Coverage Smoke
+#
+# Smoke-runs every target in `fuzz/fuzz_targets/` for 60 seconds, then emits a
+# coverage report per target and uploads the artifacts. The intent is to catch
+# build-time regressions, harness compilation breakage, and immediate crashes
+# without burning the CI budget that the nightly Fuzz Coverage Report consumes.
+#
+# Trigger:
+#   - Weekly on Monday at 04:00 UTC (after the Monday US east-coast on-call
+#     handoff so failures are visible to the morning shift).
+#   - `workflow_dispatch` for ad-hoc runs.
+#
+# Budget:
+#   - 60 seconds of fuzzing per target plus toolchain and instrumented build
+#     overhead. Eight targets run sequentially inside a single job to keep
+#     the cargo build cache hot between targets.
+
+name: Fuzz Coverage Smoke
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: fuzz-coverage-smoke
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_DURATION: '60'
+
+jobs:
+  smoke:
+    name: fuzz coverage smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: nightly
+          components: llvm-tools-preview
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: fuzz-coverage-smoke
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          version: v1
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Enumerate fuzz targets
+        id: targets
+        run: |
+          set -euo pipefail
+          targets=$(ls fuzz/fuzz_targets/ | sed -n 's/\.rs$//p' | sort)
+          echo "targets<<EOF" >>"$GITHUB_OUTPUT"
+          echo "${targets}" >>"$GITHUB_OUTPUT"
+          echo "EOF" >>"$GITHUB_OUTPUT"
+          count=$(printf '%s\n' "${targets}" | wc -l | tr -d ' ')
+          echo "discovered ${count} fuzz target(s)"
+          printf '%s\n' "${targets}"
+
+      - name: Smoke run fuzz targets
+        run: |
+          set -uo pipefail
+          mkdir -p coverage
+          failures=0
+          while IFS= read -r target; do
+              [[ -z "${target}" ]] && continue
+              echo "::group::smoke ${target}"
+              if ! cargo +nightly fuzz run "${target}" \
+                  -- -max_total_time="${FUZZ_DURATION}" -runs=0; then
+                  echo "warning: smoke run failed for ${target}" >&2
+                  failures=$((failures + 1))
+              fi
+              echo "::endgroup::"
+          done <<<'${{ steps.targets.outputs.targets }}'
+          if [[ "${failures}" -gt 0 ]]; then
+              echo "::error::${failures} fuzz target smoke run(s) failed"
+              exit 1
+          fi
+
+      - name: Generate coverage per target
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p coverage
+          while IFS= read -r target; do
+              [[ -z "${target}" ]] && continue
+              echo "::group::coverage ${target}"
+              if ! cargo +nightly fuzz coverage "${target}"; then
+                  echo "warning: cargo fuzz coverage failed for ${target}" >&2
+                  echo "::endgroup::"
+                  continue
+              fi
+              profdata="fuzz/coverage/${target}/coverage.profdata"
+              if [[ ! -f "${profdata}" ]]; then
+                  echo "warning: no profdata for ${target}" >&2
+                  echo "::endgroup::"
+                  continue
+              fi
+              host_triple=$(rustc -vV | awk '/^host:/ { print $2 }')
+              binary="fuzz/target/${host_triple}/coverage/${host_triple}/release/${target}"
+              if [[ ! -x "${binary}" ]]; then
+                  binary="fuzz/target/${host_triple}/release/${target}"
+              fi
+              if [[ ! -x "${binary}" ]]; then
+                  echo "warning: instrumented binary missing for ${target}" >&2
+                  echo "::endgroup::"
+                  continue
+              fi
+              cargo +nightly cov -- export \
+                  --format=lcov \
+                  --instr-profile="${profdata}" \
+                  "${binary}" \
+                  >"coverage/${target}.lcov" || {
+                  echo "warning: cov export failed for ${target}" >&2
+                  : >"coverage/${target}.lcov"
+              }
+              echo "::endgroup::"
+          done <<<'${{ steps.targets.outputs.targets }}'
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-coverage-smoke-${{ github.run_id }}
+          retention-days: 14
+          path: coverage/
+          if-no-files-found: warn
