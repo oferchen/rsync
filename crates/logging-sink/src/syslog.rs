@@ -488,9 +488,10 @@ mod tests {
         assert_eq!(format!("{facility}"), "local3");
     }
 
+    /// Spot-check every variant maps to a [`syslog::Facility`] without
+    /// panicking; the wire mapping has no other observable side-effects.
     #[test]
     fn to_wire_covers_all_variants() {
-        // Spot-check every variant maps to a syslog::Facility without panicking.
         let facilities = [
             SyslogFacility::Kern,
             SyslogFacility::User,
@@ -604,18 +605,20 @@ mod tests {
         syslog_message(SyslogPriority::Info, "before\0after");
     }
 
+    /// Cold-path coverage: drop any previously opened logger so the
+    /// emit-without-open branch is exercised.
     #[test]
     fn syslog_message_without_open_is_noop() {
-        // Drop any previously opened logger so we hit the cold path.
         if let Ok(mut slot) = logger_slot().lock() {
             *slot = None;
         }
         syslog_message(SyslogPriority::Info, "no logger configured");
     }
 
+    /// Sanity check: each severity variant is constructible and the
+    /// `Copy`/`Clone` impls round-trip.
     #[test]
     fn priority_covers_all_severity_levels() {
-        // Sanity check: each variant is constructible and Copy/Clone works.
         let priorities = [
             SyslogPriority::Emergency,
             SyslogPriority::Alert,
