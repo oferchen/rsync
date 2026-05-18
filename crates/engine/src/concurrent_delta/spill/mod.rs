@@ -59,7 +59,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use super::reorder::ReorderBuffer;

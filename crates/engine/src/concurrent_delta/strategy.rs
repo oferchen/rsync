@@ -334,9 +334,9 @@ impl std::io::Seek for BasisReader {
 /// when the feature is off, the default `BufReader<File>` path is used so
 /// production builds are byte-identical to today.
 fn open_basis_reader(path: &Path, len: u64) -> std::io::Result<BasisReader> {
+    let _ = len; // consumed only by the io_uring slurp branch below
     #[cfg(feature = "mmap-free-basis")]
     {
-        let _ = len; // length is unused when the mmap-free path short-circuits
         let file = File::open(path)?;
         return Ok(BasisReader::MmapFree(BufReader::new(file)));
     }
@@ -353,10 +353,6 @@ fn open_basis_reader(path: &Path, len: u64) -> std::io::Result<BasisReader> {
                 }
             }
         }
-    }
-    #[cfg(not(all(target_os = "linux", feature = "iouring-data-reads")))]
-    {
-        let _ = len; // silence unused-variable lint on non-Linux / feature-off
     }
     let file = File::open(path)?;
     Ok(BasisReader::Buffered(BufReader::new(file)))
