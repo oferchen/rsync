@@ -204,6 +204,10 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Returns whether a bandwidth limiter is active.
+    #[cfg(any(
+        target_os = "macos",
+        all(target_os = "linux", feature = "iouring-data-writes")
+    ))]
     pub(in crate::local_copy) const fn has_bandwidth_limiter(&self) -> bool {
         self.limiter.is_some()
     }
