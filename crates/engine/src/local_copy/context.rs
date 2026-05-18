@@ -386,7 +386,11 @@ pub(crate) enum BackupStrategy {
 }
 
 include!("context_impl/state.rs");
-include!("context_impl/options.rs");
+include!("context_impl/options/metadata.rs");
+include!("context_impl/options/transfer.rs");
+include!("context_impl/options/dirs.rs");
+include!("context_impl/options/filter.rs");
+include!("context_impl/options/batch.rs");
 include!("context_impl/transfer.rs");
 include!("context_impl/delta_transfer.rs");
 include!("context_impl/reporting.rs");
