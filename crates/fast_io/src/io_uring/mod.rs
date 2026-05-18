@@ -88,6 +88,8 @@ mod batching;
 pub mod buffer_ring;
 pub mod cancel;
 mod config;
+#[cfg(feature = "iouring-data-reads")]
+mod data_reader;
 mod disk_batch;
 mod file_factory;
 mod file_reader;
@@ -122,6 +124,8 @@ pub use cancel::{
 pub use config::{
     IoUringConfig, IoUringKernelInfo, config_detail, is_io_uring_available, sqpoll_fell_back,
 };
+#[cfg(feature = "iouring-data-reads")]
+pub use data_reader::IoUringFileReader;
 pub use disk_batch::IoUringDiskBatch;
 pub use file_factory::{
     IoUringOrStdReader, IoUringOrStdWriter, IoUringReaderFactory, IoUringWriterFactory,
