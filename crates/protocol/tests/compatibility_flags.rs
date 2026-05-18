@@ -10,41 +10,6 @@ use protocol::{CompatibilityFlags, KnownCompatibilityFlag};
 use std::io::Cursor;
 
 #[test]
-#[ignore]
-fn print_all_flag_encodings() {
-    // Helper test to discover actual varint encodings
-    let flags = [
-        ("INC_RECURSE", CompatibilityFlags::INC_RECURSE),
-        ("SYMLINK_TIMES", CompatibilityFlags::SYMLINK_TIMES),
-        ("SYMLINK_ICONV", CompatibilityFlags::SYMLINK_ICONV),
-        ("SAFE_FILE_LIST", CompatibilityFlags::SAFE_FILE_LIST),
-        (
-            "AVOID_XATTR_OPTIMIZATION",
-            CompatibilityFlags::AVOID_XATTR_OPTIMIZATION,
-        ),
-        ("CHECKSUM_SEED_FIX", CompatibilityFlags::CHECKSUM_SEED_FIX),
-        (
-            "INPLACE_PARTIAL_DIR",
-            CompatibilityFlags::INPLACE_PARTIAL_DIR,
-        ),
-        ("VARINT_FLIST_FLAGS", CompatibilityFlags::VARINT_FLIST_FLAGS),
-        ("ID0_NAMES", CompatibilityFlags::ID0_NAMES),
-    ];
-
-    for (name, flag) in &flags {
-        let mut buf = Vec::new();
-        flag.encode_to_vec(&mut buf).unwrap();
-        eprintln!(
-            "{:30} (bit {:3} = 0x{:x}): {:?}",
-            name,
-            flag.bits(),
-            flag.bits(),
-            buf
-        );
-    }
-}
-
-#[test]
 fn test_inc_recurse_flag_encoding() {
     let flag = CompatibilityFlags::INC_RECURSE;
     assert_eq!(flag.bits(), 1 << 0, "CF_INC_RECURSE must be bit 0");

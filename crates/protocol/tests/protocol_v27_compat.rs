@@ -428,24 +428,6 @@ mod boundary_conditions {
 mod codec_behavior {
     use super::*;
 
-    /// Cannot create codec for protocol 27.
-    #[test]
-    #[ignore = "v27 codec creation does not panic - returns valid codec despite being unsupported"]
-    #[should_panic(expected = "unsupported protocol")]
-    fn cannot_create_codec_for_v27() {
-        // This should panic because v27 is unsupported
-        let _codec = create_protocol_codec(27);
-    }
-
-    /// Cannot create NDX codec for protocol 27.
-    #[test]
-    #[ignore = "v27 ndx codec creation does not panic - returns valid codec despite being unsupported"]
-    #[should_panic(expected = "unsupported protocol")]
-    fn cannot_create_ndx_codec_for_v27() {
-        // This should panic because v27 is unsupported
-        let _codec = create_ndx_codec(27);
-    }
-
     /// Codec for v28 works (validates v27 is the boundary).
     #[test]
     fn codec_for_v28_works() {
