@@ -25,11 +25,19 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+/// Process daemonization - fork, setsid, and stdio redirection.
 pub mod daemonize;
+/// Environment variable manipulation with RAII restoration.
 pub mod env;
+/// System group membership lookups.
 pub mod group;
+/// Windows account name to RID resolution.
 pub mod name_resolution;
+/// Process privilege operations - chroot and uid/gid dropping.
 pub mod privilege;
+/// Secrets file permission validation.
 pub mod secrets;
+/// Signal handler registration and shared atomic flags.
 pub mod signal;
+/// Windows Service Control Manager (SCM) integration.
 pub mod windows_service;

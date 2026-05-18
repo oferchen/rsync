@@ -26,15 +26,19 @@
 //! I/O since the completion port setup overhead exceeds the async benefit.
 
 mod completion_port;
+/// IOCP configuration, availability detection, and caching.
 pub mod config;
 mod disk_batch;
+/// Typed IOCP error variants for actionable failure handling.
 pub mod error;
 mod file_factory;
 pub(crate) mod file_reader;
 mod file_writer;
 mod overlapped;
 mod pump;
+/// IOCP-based async socket I/O via `WSARecv` / `WSASend`.
 pub mod socket;
+/// Windows `TransmitFile()` zero-copy file-to-socket primitive.
 #[cfg(feature = "transmitfile")]
 pub mod transmit_file;
 

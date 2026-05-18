@@ -19,19 +19,28 @@
 
 #![allow(dead_code)]
 
+/// Stub provided-buffer ring API mirroring the Linux backend.
 pub mod buffer_ring;
+/// Stub `IORING_OP_ASYNC_CANCEL` API mirroring the Linux backend.
 pub mod cancel;
 mod config;
 mod disk_batch;
 mod file_factory;
 mod file_reader;
 mod file_writer;
+/// Stub `LINKAT` API mirroring the Linux backend.
 pub mod linkat;
+/// Stub linked-SQE chain API mirroring the Linux backend.
 pub mod linked_chain;
+/// Stub registered-buffer API mirroring the Linux backend.
 pub mod registered_buffers;
+/// Stub `RENAMEAT2` API mirroring the Linux backend.
 pub mod renameat2;
+/// Stub `SEND_ZC` API mirroring the Linux backend.
 pub mod send_zc;
+/// Stub session ring-pool API mirroring the Linux backend.
 pub mod session_pool;
+/// Stub shared-ring API mirroring the Linux backend.
 pub mod shared_ring;
 #[cfg(unix)]
 mod socket_factory;
@@ -39,6 +48,7 @@ mod socket_factory;
 mod socket_reader;
 #[cfg(unix)]
 mod socket_writer;
+/// Stub `IORING_OP_STATX` API mirroring the Linux backend.
 pub mod statx;
 
 #[cfg(test)]
