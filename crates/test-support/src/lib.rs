@@ -1,3 +1,5 @@
+#![deny(rustdoc::broken_intra_doc_links)]
+
 //! Shared test utilities for the oc-rsync workspace.
 //!
 //! This crate provides helpers that multiple test suites need, avoiding
