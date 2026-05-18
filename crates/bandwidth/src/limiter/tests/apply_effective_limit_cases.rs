@@ -258,8 +258,6 @@ fn apply_effective_limit_ignores_unspecified_burst_when_creating_limiter() {
 
 #[test]
 fn apply_effective_limit_caps_limit_and_updates_burst_together() {
-    // Test the case where both limit_changed and burst_changed are true
-    // This ensures lines 119-122 are fully covered
     let initial_limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
     let initial_burst = NonZeroU64::new(4096).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(
@@ -280,7 +278,6 @@ fn apply_effective_limit_caps_limit_and_updates_burst_together() {
 
 #[test]
 fn apply_effective_limit_limit_changed_burst_unchanged() {
-    // Test where only limit changes, burst stays the same
     let initial_limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
     let initial_burst = NonZeroU64::new(4096).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(
@@ -301,7 +298,6 @@ fn apply_effective_limit_limit_changed_burst_unchanged() {
 
 #[test]
 fn apply_effective_limit_burst_changed_limit_unchanged() {
-    // Test where only burst changes, limit stays the same
     let limit = NonZeroU64::new(4 * 1024 * 1024).unwrap();
     let initial_burst = NonZeroU64::new(2048).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(limit, Some(initial_burst)));
@@ -319,8 +315,8 @@ fn apply_effective_limit_burst_changed_limit_unchanged() {
 
 #[test]
 fn apply_effective_limit_target_limit_calculation() {
-    // Test the min() calculation for target_limit (line 108)
-    // When new limit > existing limit, target_limit = existing
+    // When the new limit exceeds the existing one, the min() guard keeps
+    // target_limit at the existing value.
     let existing_limit = NonZeroU64::new(1024).unwrap();
     let mut limiter = Some(BandwidthLimiter::new(existing_limit));
 
@@ -335,7 +331,6 @@ fn apply_effective_limit_target_limit_calculation() {
 
 #[test]
 fn apply_effective_limit_preserves_current_burst_when_not_specified() {
-    // Test the target_burst = current_burst path (lines 112-113)
     let limit = NonZeroU64::new(4 * 1024 * 1024).unwrap();
     let existing_burst = NonZeroU64::new(4096).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(limit, Some(existing_burst)));
@@ -353,7 +348,6 @@ fn apply_effective_limit_preserves_current_burst_when_not_specified() {
 
 #[test]
 fn apply_effective_limit_target_burst_from_burst_param_when_specified() {
-    // Test the target_burst = burst path (lines 110-111)
     let limit = NonZeroU64::new(4 * 1024 * 1024).unwrap();
     let existing_burst = NonZeroU64::new(4096).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(limit, Some(existing_burst)));
@@ -373,7 +367,6 @@ fn apply_effective_limit_target_burst_from_burst_param_when_specified() {
 
 #[test]
 fn apply_effective_limit_unchanged_when_neither_limit_nor_burst_changes() {
-    // Test the case where limit_changed = false AND burst_changed = false
     let limit = NonZeroU64::new(4 * 1024 * 1024).unwrap();
     let burst = NonZeroU64::new(4096).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(limit, Some(burst)));
@@ -514,7 +507,8 @@ fn apply_effective_limit_keeps_current_burst_when_limit_changes_and_burst_not_sp
 
 #[test]
 fn apply_effective_limit_explicitly_disables_burst_with_limit_change() {
-    // Test that we can explicitly set burst to None while also changing limit
+    // Demonstrates that burst can be explicitly cleared (Some(None)) in the
+    // same call that changes the limit.
     let existing_limit = NonZeroU64::new(10 * 1024 * 1024).unwrap();
     let existing_burst = NonZeroU64::new(8192).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(
