@@ -63,6 +63,7 @@ mod windows_impl {
     use windows::core::{PCWSTR, PWSTR};
 
     use super::{SERVICE_DISPLAY_NAME, SERVICE_NAME, ServiceMainCallback, ServiceStatusHandle};
+    use crate::error::WindowsServiceError;
     use crate::signal::SignalFlags;
 
     /// Win32 error code indicating a service-specific exit code is present
@@ -117,12 +118,7 @@ mod windows_impl {
     pub fn run_service_dispatcher(callback: ServiceMainCallback) -> Result<(), io::Error> {
         SERVICE_CALLBACK
             .set(std::sync::Mutex::new(Some(callback)))
-            .map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    "service dispatcher already initialized",
-                )
-            })?;
+            .map_err(|_| io::Error::from(WindowsServiceError::DispatcherAlreadyInitialized))?;
 
         let service_name = to_wide_null(SERVICE_NAME);
 
@@ -142,12 +138,8 @@ mod windows_impl {
         // SERVICE_TABLE_ENTRYW. The callback function signature matches the
         // LPSERVICE_MAIN_FUNCTIONW type. The service_name vector lives for the
         // duration of this call.
-        unsafe { StartServiceCtrlDispatcherW(service_table.as_ptr()) }.map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("StartServiceCtrlDispatcherW failed: {e}"),
-            )
-        })?;
+        unsafe { StartServiceCtrlDispatcherW(service_table.as_ptr()) }
+            .map_err(|e| io::Error::from(WindowsServiceError::StartDispatcherFailed(e)))?;
 
         Ok(())
     }
@@ -263,12 +255,8 @@ mod windows_impl {
 
         // SAFETY: handle is a valid SERVICE_STATUS_HANDLE obtained from
         // RegisterServiceCtrlHandlerW. status is a properly initialized struct.
-        unsafe { SetServiceStatus(handle, &status) }.map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("SetServiceStatus failed: {e}"),
-            )
-        })?;
+        unsafe { SetServiceStatus(handle, &status) }
+            .map_err(|e| io::Error::from(WindowsServiceError::SetServiceStatusFailed(e)))?;
 
         Ok(())
     }
@@ -284,12 +272,8 @@ mod windows_impl {
     /// insufficient privileges).
     #[allow(unsafe_code)]
     pub fn install_service() -> Result<(), io::Error> {
-        let exe_path = std::env::current_exe().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("failed to determine executable path: {e}"),
-            )
-        })?;
+        let exe_path = std::env::current_exe()
+            .map_err(|e| io::Error::from(WindowsServiceError::CurrentExeFailed(e)))?;
 
         let binary_path = format!("\"{}\" --daemon --windows-service", exe_path.display());
         let binary_path_wide = to_wide_null(&binary_path);
@@ -340,10 +324,7 @@ mod windows_impl {
                 unsafe {
                     let _ = CloseServiceHandle(scm);
                 }
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("failed to create service: {e}"),
-                ));
+                return Err(io::Error::from(WindowsServiceError::CreateServiceFailed(e)));
             }
         };
 
@@ -409,10 +390,10 @@ mod windows_impl {
         }
 
         delete_result.map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("failed to delete service '{SERVICE_NAME}': {e}"),
-            )
+            io::Error::from(WindowsServiceError::DeleteServiceFailed {
+                name: SERVICE_NAME,
+                source: e,
+            })
         })?;
 
         Ok(())

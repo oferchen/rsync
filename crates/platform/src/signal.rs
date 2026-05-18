@@ -95,13 +95,16 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
 /// Internally stores flag references in `OnceLock` statics so the
 /// `extern "system"` callback can reach them. This means the function
 /// can only succeed once per process - subsequent calls return
-/// `io::ErrorKind::Other` with "signal handlers already registered".
+/// [`crate::error::SignalRegistrationError::AlreadyRegistered`] (wrapped in
+/// `io::ErrorKind::Other`; downcast via `io::Error::get_ref()`).
 #[cfg(windows)]
 #[allow(unsafe_code)]
 pub fn register_signal_handlers() -> io::Result<SignalFlags> {
     use windows::Win32::System::Console::{
         CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, SetConsoleCtrlHandler,
     };
+
+    use crate::error::SignalRegistrationError;
 
     let flags = SignalFlags::new();
 
@@ -111,10 +114,10 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
 
     SHUTDOWN
         .set(Arc::clone(&flags.shutdown))
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "signal handlers already registered"))?;
+        .map_err(|_| io::Error::from(SignalRegistrationError::AlreadyRegistered))?;
     GRACEFUL
         .set(Arc::clone(&flags.graceful_exit))
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "signal handlers already registered"))?;
+        .map_err(|_| io::Error::from(SignalRegistrationError::AlreadyRegistered))?;
 
     // SAFETY: The handler function signature matches what SetConsoleCtrlHandler expects.
     // The OnceLock statics ensure the Arc references remain valid for the process lifetime.
@@ -142,12 +145,8 @@ pub fn register_signal_handlers() -> io::Result<SignalFlags> {
     // expected by `PHANDLER_ROUTINE`. The Windows console preserves the
     // handler pointer for the lifetime of the process, so no dangling pointer
     // can be invoked.
-    unsafe { SetConsoleCtrlHandler(Some(handler), true) }.map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("SetConsoleCtrlHandler failed: {e}"),
-        )
-    })?;
+    unsafe { SetConsoleCtrlHandler(Some(handler), true) }
+        .map_err(|e| io::Error::from(SignalRegistrationError::SetConsoleCtrlHandlerFailed(e)))?;
 
     Ok(flags)
 }
