@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crossbeam_queue::ArrayQueue;
 
-use fast_io::{PageAlignedBuffer, page_size, round_up_to_page};
+use fast_io::{PageAlignedBuffer, round_up_to_page};
 
 /// Default fixed capacity for the lock-free central queue.
 ///
@@ -264,6 +264,8 @@ impl Drop for PageAlignedBufferGuard {
 
 #[cfg(test)]
 mod tests {
+    use fast_io::page_size;
+
     use super::*;
 
     #[test]
