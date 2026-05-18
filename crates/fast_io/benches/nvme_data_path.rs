@@ -18,23 +18,23 @@
 //! the chosen path:
 //!
 //! - `stdlib_write`: today's `Writer::Buffered` fallback. `File::create`
-//!   + `BufWriter` with the production 256 KiB buffer
-//!   (`crates/transfer/src/disk_commit/writer.rs:71-122`), one 1 MiB
-//!   chunk per `write_all` call, `flush` + `sync_all` at end-of-file to
-//!   match the production end-of-file fsync. Represents the path taken
-//!   today on every non-Linux host and on Linux when `io_uring` is
-//!   disabled or the file is forced onto the buffered writer (sparse,
-//!   append, or below the 64 KiB threshold from section 4.4 of the
-//!   design doc).
+//!     + `BufWriter` with the production 256 KiB buffer
+//!     (`crates/transfer/src/disk_commit/writer.rs:71-122`), one 1 MiB
+//!     chunk per `write_all` call, `flush` + `sync_all` at end-of-file to
+//!     match the production end-of-file fsync. Represents the path taken
+//!     today on every non-Linux host and on Linux when `io_uring` is
+//!     disabled or the file is forced onto the buffered writer (sparse,
+//!     append, or below the 64 KiB threshold from section 4.4 of the
+//!     design doc).
 //! - `iouring_write_fixed`: the proposed production path for files
-//!   sized at least 1 MiB. `IORING_OP_WRITE_FIXED` against a `RegisteredBufferGroup`
-//!   of 4 x 1 MiB page-aligned registered slots, one slot per concurrent
-//!   in-flight SQE. Mirrors the `submit_write_fixed_batch` helper in
-//!   `crates/fast_io/src/io_uring/registered_buffers/submit.rs:159-243`
-//!   that the wired path will call once IUD-5 lands. An `IORING_OP_FSYNC`
-//!   SQE is submitted at end-of-file to match the production
-//!   `commit_file(do_fsync = true)` placement
-//!   (`crates/fast_io/src/io_uring/disk_batch.rs:236-263`).
+//!     sized at least 1 MiB. `IORING_OP_WRITE_FIXED` against a `RegisteredBufferGroup`
+//!     of 4 x 1 MiB page-aligned registered slots, one slot per concurrent
+//!     in-flight SQE. Mirrors the `submit_write_fixed_batch` helper in
+//!     `crates/fast_io/src/io_uring/registered_buffers/submit.rs:159-243`
+//!     that the wired path will call once IUD-5 lands. An `IORING_OP_FSYNC`
+//!     SQE is submitted at end-of-file to match the production
+//!     `commit_file(do_fsync = true)` placement
+//!     (`crates/fast_io/src/io_uring/disk_batch.rs:236-263`).
 //!
 //! Both cells write the same total bytes and run the same fsync
 //! cadence, so the wall-time and MiB/s delta is attributable strictly to
@@ -490,7 +490,7 @@ fn bench_iouring_write_fixed(c: &mut Criterion) {
             || {
                 let dir = make_scratch_dir();
                 let (paths, payload) = prepare_workload(&dir);
-                let mut ring = IoUring::new(SQ_ENTRIES).expect("ring");
+                let ring = IoUring::new(SQ_ENTRIES).expect("ring");
                 let bufs = RegBufs::new(REG_BUF_COUNT, CHUNK_BYTES);
                 let iovecs = bufs.iovecs();
                 // SAFETY: iovecs reference page-aligned heap buffers
