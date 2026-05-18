@@ -1,28 +1,27 @@
 # Per-file line count configuration for cargo xtask enforce-limits.
 #
 # Workspace defaults (POST-8a audit, see docs/audits/post-8-enforce-limits-ci.md):
-#   - `default_max_lines = 650`  - production-source ceiling.
-#   - `default_warn_lines = 400` - production-source warn threshold.
+#   - `default_max_lines = 650`        - production-source ceiling.
+#   - `default_warn_lines = 400`       - production-source warn threshold.
+#   - `default_test_max_lines = 3000`  - test-source ceiling: any file in a
+#                                        `tests/` directory or named
+#                                        `*tests.rs` gets this cap instead of
+#                                        the production cap. Splitting a
+#                                        large test suite is mechanical
+#                                        busywork that does not reduce
+#                                        cognitive load, so test files use a
+#                                        relaxed default rather than per-file
+#                                        plumbing.
+#   - `default_test_warn_lines = 2800` - test-source warn threshold.
 #
 # Overrides below cover the small set of files that intentionally exceed the
-# workspace defaults. Two categories:
-#
-#   1. Active source files within a few percent of the cap, where the override
-#      acts as a real ceiling above ongoing maintenance work.
-#   2. Top test offenders. Splitting a large test suite is mechanical busywork
-#      that does not reduce cognitive load; the per-file caps relax the default
-#      for the worst offenders so the informational `enforce-limits` CI report
-#      surfaces actionable production-source overages instead of drowning in
-#      test noise.
-#
-# TODO(post-8a): xtask currently lacks a `default_test_max_lines` setting that
-# would apply a relaxed cap to all `tests.rs` / `tests/*.rs` files without
-# per-file plumbing. Adding it requires touching
-# `xtask/src/commands/enforce_limits/config.rs`. Until that lands, new test
-# files that exceed 650 lines must either be split or added here.
+# applicable default - active source files within a few percent of the cap,
+# where the override acts as a real ceiling above ongoing maintenance work.
 
 default_max_lines = 650
 default_warn_lines = 400
+default_test_max_lines = 3000
+default_test_warn_lines = 2800
 
 # ---------------------------------------------------------------------------
 # Production source overrides (real ceilings).
@@ -41,104 +40,3 @@ warn_lines = 1150
 path = "crates/checksums/src/simd_batch/md5_simd/avx512.rs"
 max_lines = 1400
 warn_lines = 1300
-
-# ---------------------------------------------------------------------------
-# Top test-file offenders. Caps set generously above current line counts so
-# routine test additions do not require config edits. Drop the entry once the
-# underlying suite is split.
-# ---------------------------------------------------------------------------
-
-[[overrides]]
-path = "crates/cli/src/frontend/arguments/tests.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/engine/src/local_copy/executor/file/sparse/tests.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/transfer/src/generator/tests.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/protocol/src/negotiation/capabilities/tests.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/cli/src/frontend/tests/output_parity.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/engine/src/local_copy/tests/execute_directories.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/core/src/client/remote/invocation/tests.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/protocol/src/flist/read/tests.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/engine/src/local_copy/tests/execute_skip.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/batch/tests/batch_integration.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/engine/src/local_copy/tests/execute_delay_updates.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/rsync_io/src/ssh/tests.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/batch/src/tests.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/core/src/client/config/builder/tests.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/daemon/src/daemon/sections/config_parsing/tests.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/engine/src/local_copy/tests/execute_special_characters.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/engine/src/local_copy/tests/backups.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/engine/src/local_copy/tests/execute_special.rs"
-max_lines = 3000
-warn_lines = 2800
-
-[[overrides]]
-path = "crates/protocol/src/varint/tests.rs"
-max_lines = 3000
-warn_lines = 2800
