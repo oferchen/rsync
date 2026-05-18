@@ -77,6 +77,7 @@ impl BufferStorage {
     }
 
     /// Returns whether the backing storage is page-aligned.
+    #[cfg(test)]
     pub(crate) fn is_page_aligned(&self) -> bool {
         matches!(self, Self::PageAligned { .. })
     }
