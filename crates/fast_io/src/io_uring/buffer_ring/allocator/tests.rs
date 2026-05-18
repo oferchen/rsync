@@ -49,7 +49,14 @@ impl BgidStateGuard {
         let prev_warned = BGID_FALLBACK_WARNED.swap(false, Ordering::AcqRel);
         let prev_free_list = {
             let mut list = bgid_free_list().lock().expect("free-list poisoned");
-            std::mem::take(&mut *list)
+            // Swap in a fresh Vec with the same pre-sized capacity so tests
+            // that observe `bgid_free_list().capacity()` (e.g. the
+            // pre-sized-capacity invariant) keep seeing the steady-state
+            // shape between snapshots. `mem::take` alone would leave the
+            // global list at capacity 0.
+            let taken = std::mem::take(&mut *list);
+            *list = Vec::with_capacity(taken.capacity());
+            taken
         };
         Self {
             prev_counter,
