@@ -864,6 +864,29 @@ exits with an error.
     even when the kernel supports io_uring. Overrides a previous
     **--io-uring** on the same command line.
 
+The next two flags govern the receiver-side `SpillPolicy` that bounds the
+concurrent-delta `ReorderBuffer`'s memory footprint. Both are *planned* for
+STN-11 and will land in a future release; until then operators tune the same
+knobs via the `OC_RSYNC_SPILL_DIR` and `OC_RSYNC_SPILL_THRESHOLD_BYTES`
+environment variables (see *Receiver spill tunability* in the operator
+migration guide). When the flags ship, they take precedence over the env
+vars on the same invocation. The remaining `SpillPolicy` fields
+(reclaim mode, granularity, compression) stay env-only by design; see
+**docs/design/spill-policy-public-api.md** for the full surface.
+
+**--spill-dir**=*PATH* (planned, STN-11)
+:   Directory backing the receiver spill file. Created on first spill via
+    `create_dir_all`. When unset the runtime defers to
+    **std::env::temp_dir**(3) through a spooled tempfile that stays in
+    memory up to 1 MiB before rolling over. Maps to `SpillPolicy.dir`.
+
+**--spill-threshold-bytes**=*N*[**K**|**M**|**G**] (planned, STN-11)
+:   Memory budget for the receiver reorder buffer before items spill to
+    disk. Suffixes are case-insensitive base-1024 (`K`=KiB, `M`=MiB,
+    `G`=GiB). Omitting the flag (or passing an empty value) leaves spill
+    disabled and the consumer stays on the bare `ReorderBuffer` path; the
+    value `0` is rejected. Maps to `SpillPolicy.threshold_bytes`.
+
 ## Scheduling Options
 
 **--stop-after**=*MINS*
