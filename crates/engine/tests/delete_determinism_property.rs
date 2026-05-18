@@ -202,9 +202,7 @@ struct TestContext {
 
 impl TestContext {
     fn try_new() -> Option<Self> {
-        if env::var_os(GATE_ENV).is_none() {
-            return None;
-        }
+        env::var_os(GATE_ENV)?;
         let oc_rsync = locate_oc_rsync()?;
         let strace = locate_strace()?;
         Some(Self { oc_rsync, strace })
@@ -269,7 +267,7 @@ fn build_tree(seed: u64, file_count: usize, dir_count: usize) -> (TempDir, TempD
     let mut dirs: Vec<PathBuf> = Vec::with_capacity(dir_count + 1);
     dirs.push(PathBuf::new());
     for i in 0..dir_count {
-        let name = format!("dir_{:02}", i);
+        let name = format!("dir_{i:02}");
         let rel = PathBuf::from(name);
         fs::create_dir_all(src.path().join(&rel)).expect("mkdir src");
         fs::create_dir_all(dst.path().join(&rel)).expect("mkdir dst");
@@ -281,7 +279,7 @@ fn build_tree(seed: u64, file_count: usize, dir_count: usize) -> (TempDir, TempD
     for i in 0..file_count {
         let dir_idx = (rng.next_u64() as usize) % dirs.len();
         let parent = &dirs[dir_idx];
-        let name = format!("file_{:02}.dat", i);
+        let name = format!("file_{i:02}.dat");
         let rel = parent.join(&name);
         let payload = format!("seed={seed} file={i}\n").into_bytes();
 
@@ -296,7 +294,7 @@ fn build_tree(seed: u64, file_count: usize, dir_count: usize) -> (TempDir, TempD
     // Add a few destination-only files in each directory so every directory
     // contributes at least one unlink to the burst sequence under check.
     for (idx, parent) in dirs.iter().enumerate() {
-        let name = format!("only_dst_{:02}.dat", idx);
+        let name = format!("only_dst_{idx:02}.dat");
         let rel = parent.join(&name);
         let payload = format!("only_dst {idx}\n").into_bytes();
         fs::write(dst.path().join(&rel), &payload).expect("write dst-only");

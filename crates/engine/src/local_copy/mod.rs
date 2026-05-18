@@ -256,4 +256,5 @@ mod filter_program_internal_tests;
 pub(crate) mod test_support {
     #[allow(unused_imports)]
     pub(crate) use super::executor::take_fsync_call_count;
+    pub(crate) use ::test_support::create_tempdir;
 }

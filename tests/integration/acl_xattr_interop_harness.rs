@@ -33,7 +33,6 @@
 //! - `acls.c:send_acl()` / `acls.c:receive_acl()` - POSIX/NFSv4 ACL wire.
 //! - `xattrs.c:send_xattr()` / `xattrs.c:receive_xattr()` - xattr wire.
 
-#![cfg(unix)]
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
