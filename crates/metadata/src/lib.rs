@@ -170,8 +170,9 @@ pub use acl_stub::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, 
 
 #[cfg(all(feature = "acl", windows))]
 pub use acl_windows::{
-    apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, read_dacl_sddl,
-    read_sddl_with_sacl, sync_acls, write_dacl_sddl,
+    WINDOWS_SDDL_XATTR_NAME, apply_acls_from_cache, apply_sddl_from_xattrs, dacl_to_posix_mode,
+    default_perms_for_dir, find_sddl_in_xattrs, get_rsync_acl, posix_mode_to_dacl, read_dacl_sddl,
+    read_sddl_with_sacl, sddl_xattr_entry, sync_acls, write_dacl_sddl,
 };
 
 #[cfg(not(any(
