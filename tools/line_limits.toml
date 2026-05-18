@@ -33,6 +33,15 @@ path = "crates/engine/src/local_copy/buffer_pool/pool.rs"
 max_lines = 1200
 warn_lines = 1150
 
+# AVX-512 16-lane MD5 backend: 64 unrolled rounds inside one inline
+# `asm!` block. Splitting the asm forces ZMM spill/reload between
+# round groups (defeats the 16-wide parallel state held in
+# zmm0..zmm23). See docs/audits/spl-31-avx512-shape.md.
+[[overrides]]
+path = "crates/checksums/src/simd_batch/md5_simd/avx512.rs"
+max_lines = 1400
+warn_lines = 1300
+
 # ---------------------------------------------------------------------------
 # Top test-file offenders. Caps set generously above current line counts so
 # routine test additions do not require config edits. Drop the entry once the
