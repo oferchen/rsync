@@ -223,6 +223,37 @@ pub use io_uring::{
     writer_from_file, writer_from_file_with_depth,
 };
 
+#[cfg(all(target_os = "linux", feature = "iouring-data-reads"))]
+pub use io_uring::IoUringFileReader;
+
+/// Reads `path` in full via the IUD-6 io_uring slurp wrapper.
+///
+/// Opens the file with `IoUringFileReader::open` and pulls the entire
+/// contents through the registered-buffer `READ_FIXED` pipeline shared with
+/// the main `IoUringReader`. Intended for opt-in dispatch on basis-file
+/// reads above a callsite-defined size threshold; default builds neither
+/// compile this entry point nor call it.
+///
+/// # Errors
+///
+/// Returns the underlying io_uring error if ring construction, submission,
+/// or completion processing fails.
+#[cfg(all(target_os = "linux", feature = "iouring-data-reads"))]
+pub fn read_file_with_io_uring<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Vec<u8>> {
+    IoUringFileReader::open(path.as_ref())?.read_to_end()
+}
+
+/// Stub for non-Linux targets or when the `iouring-data-reads` feature is
+/// disabled. Always returns [`std::io::ErrorKind::Unsupported`] so callers
+/// fall back to their default reader.
+#[cfg(not(all(target_os = "linux", feature = "iouring-data-reads")))]
+pub fn read_file_with_io_uring<P: AsRef<std::path::Path>>(_path: P) -> std::io::Result<Vec<u8>> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "iouring-data-reads feature is not enabled on this build",
+    ))
+}
+
 #[cfg(all(target_os = "windows", feature = "iocp"))]
 pub use iocp::post_completion as iocp_post_completion;
 pub use iocp::{
