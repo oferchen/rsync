@@ -79,6 +79,7 @@
 
 use std::ffi::OsString;
 use std::io::{self, Write};
+/// CLI argument parsing for the rsync frontend.
 pub mod arguments;
 mod command_builder;
 mod execution;
@@ -108,16 +109,22 @@ use std::net::IpAddr;
 #[cfg(test)]
 use std::path::{Path, PathBuf};
 mod defaults;
+/// Upstream rsync `--dry-run` (`-n`) output simulation.
 pub mod dry_run;
 mod filter_rules;
 mod help;
+/// Info output flags controlling informational message display.
 pub mod info_output;
+/// Upstream rsync `--itemize-changes` (`-i`) output format.
 pub mod itemize;
 mod out_format;
 pub(crate) mod password;
+/// Progress and verbose output helpers extracted from the CLI front-end.
 pub mod progress;
+/// Progress formatting for upstream rsync's `--progress` output.
 pub mod progress_format;
 mod server;
+/// Statistics formatting for upstream rsync's `--stats` output.
 pub mod stats_format;
 
 #[cfg(test)]
