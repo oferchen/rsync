@@ -1,3 +1,5 @@
+use proptest::prelude::*;
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[test]
 fn sse2_accumulate_matches_scalar_reference() {
@@ -105,5 +107,65 @@ fn neon_accumulate_matches_scalar_reference() {
                 "NEON mismatch for size {size} with seeds {seed_s1:#x}/{seed_s2:#x}/{seed_len}",
             );
         }
+    }
+}
+
+// Property-based parity: random byte sequences from 1..=4096 bytes paired with
+// a non-trivial seed state, asserting SIMD output equals scalar output. Guards
+// the vector-register-resident loop against any drift from the scalar
+// reference, including stripe boundaries (16/32 bytes) and trailing remainders.
+proptest! {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[test]
+    fn sse2_random_inputs_match_scalar(
+        data in prop::collection::vec(any::<u8>(), 1..=4096),
+        seed_s1 in any::<u32>(),
+        seed_s2 in any::<u32>(),
+        seed_len in any::<usize>(),
+    ) {
+        if !std::arch::is_x86_feature_detected!("sse2") {
+            return Ok(());
+        }
+        use crate::rolling::checksum::accumulate_chunk_scalar_for_tests;
+        use crate::rolling::checksum::x86::accumulate_chunk_sse2_for_tests;
+
+        let scalar = accumulate_chunk_scalar_for_tests(seed_s1, seed_s2, seed_len, &data);
+        let simd = accumulate_chunk_sse2_for_tests(seed_s1, seed_s2, seed_len, &data);
+        prop_assert_eq!(scalar, simd);
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[test]
+    fn avx2_random_inputs_match_scalar(
+        data in prop::collection::vec(any::<u8>(), 1..=4096),
+        seed_s1 in any::<u32>(),
+        seed_s2 in any::<u32>(),
+        seed_len in any::<usize>(),
+    ) {
+        if !std::arch::is_x86_feature_detected!("avx2") {
+            return Ok(());
+        }
+        use crate::rolling::checksum::accumulate_chunk_scalar_for_tests;
+        use crate::rolling::checksum::x86::accumulate_chunk_avx2_for_tests;
+
+        let scalar = accumulate_chunk_scalar_for_tests(seed_s1, seed_s2, seed_len, &data);
+        let simd = accumulate_chunk_avx2_for_tests(seed_s1, seed_s2, seed_len, &data);
+        prop_assert_eq!(scalar, simd);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn neon_random_inputs_match_scalar(
+        data in prop::collection::vec(any::<u8>(), 1..=4096),
+        seed_s1 in any::<u32>(),
+        seed_s2 in any::<u32>(),
+        seed_len in any::<usize>(),
+    ) {
+        use crate::rolling::checksum::accumulate_chunk_scalar_for_tests;
+        use crate::rolling::checksum::neon::accumulate_chunk_neon_for_tests;
+
+        let scalar = accumulate_chunk_scalar_for_tests(seed_s1, seed_s2, seed_len, &data);
+        let simd = accumulate_chunk_neon_for_tests(seed_s1, seed_s2, seed_len, &data);
+        prop_assert_eq!(scalar, simd);
     }
 }

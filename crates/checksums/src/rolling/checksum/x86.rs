@@ -7,6 +7,8 @@
 //!
 //! - `checksum.c:get_checksum1()` - scalar rolling checksum this accelerates
 //! - `match.c:hash_search()` - consumer of rolling checksums during delta detection
+//! - `simd-checksum-x86_64.cpp:113-313` - upstream SSSE3/SSE2 vector-register loop
+//! - `simd-checksum-x86_64.cpp:338-432` - upstream AVX2 vector-register loop
 //!
 //! # Runtime Feature Detection
 //!
@@ -40,8 +42,10 @@
 //! # Performance
 //!
 //! AVX2 processes 32 bytes per iteration, SSE2 processes 16 bytes per iteration.
-//! Remaining bytes fall back to the scalar implementation to ensure correctness
-//! for all input sizes.
+//! Both keep the rolling `s1` and `s2` accumulators resident in vector registers
+//! across the full stripe (mirroring upstream `simd-checksum-x86_64.cpp:343-396`)
+//! and only extract once at the end of the loop. Remaining bytes fall back to
+//! the scalar implementation to ensure correctness for all input sizes.
 
 #![allow(unsafe_code)]
 #![allow(unsafe_op_in_unsafe_fn)]
@@ -49,19 +53,19 @@
 use super::accumulate_chunk_scalar_raw;
 #[cfg(target_arch = "x86")]
 use core::arch::x86::{
-    __m128i, __m256i, _mm_add_epi32, _mm_cmplt_epi8, _mm_loadu_si128, _mm_madd_epi16,
-    _mm_set_epi16, _mm_set1_epi16, _mm_setzero_si128, _mm_storeu_si128, _mm_unpackhi_epi8,
-    _mm_unpacklo_epi8, _mm256_add_epi32, _mm256_castsi256_si128, _mm256_cvtepi8_epi16,
-    _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_set_epi16,
-    _mm256_set1_epi16, _mm256_storeu_si256,
+    __m128i, __m256i, _mm_add_epi32, _mm_cmplt_epi8, _mm_cvtsi32_si128, _mm_cvtsi128_si32,
+    _mm_loadu_si128, _mm_madd_epi16, _mm_set_epi16, _mm_set1_epi16, _mm_setzero_si128,
+    _mm_shuffle_epi32, _mm_slli_epi32, _mm_unpackhi_epi8, _mm_unpacklo_epi8, _mm256_add_epi32,
+    _mm256_castsi256_si128, _mm256_cvtepi8_epi16, _mm256_extracti128_si256, _mm256_loadu_si256,
+    _mm256_madd_epi16, _mm256_set_epi16, _mm256_set1_epi16,
 };
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::{
-    __m128i, __m256i, _mm_add_epi32, _mm_cmplt_epi8, _mm_loadu_si128, _mm_madd_epi16,
-    _mm_set_epi16, _mm_set1_epi16, _mm_setzero_si128, _mm_storeu_si128, _mm_unpackhi_epi8,
-    _mm_unpacklo_epi8, _mm256_add_epi32, _mm256_castsi256_si128, _mm256_cvtepi8_epi16,
-    _mm256_extracti128_si256, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_set_epi16,
-    _mm256_set1_epi16, _mm256_storeu_si256,
+    __m128i, __m256i, _mm_add_epi32, _mm_cmplt_epi8, _mm_cvtsi32_si128, _mm_cvtsi128_si32,
+    _mm_loadu_si128, _mm_madd_epi16, _mm_set_epi16, _mm_set1_epi16, _mm_setzero_si128,
+    _mm_shuffle_epi32, _mm_slli_epi32, _mm_unpackhi_epi8, _mm_unpacklo_epi8, _mm256_add_epi32,
+    _mm256_castsi256_si128, _mm256_cvtepi8_epi16, _mm256_extracti128_si256, _mm256_loadu_si256,
+    _mm256_madd_epi16, _mm256_set_epi16, _mm256_set1_epi16,
 };
 
 use crate::cpu_features::{SimdFeature, feature_allowed};
@@ -69,6 +73,12 @@ use std::sync::OnceLock;
 
 const SSE2_BLOCK_LEN: usize = 16;
 const AVX2_BLOCK_LEN: usize = 32;
+// log2(SSE2_BLOCK_LEN); used by `_mm_slli_epi32(ss1, SSE2_BLOCK_SHIFT)` to
+// add `SSE2_BLOCK_LEN * s1` to s2 each iteration.
+const SSE2_BLOCK_SHIFT: i32 = 4;
+// log2(AVX2_BLOCK_LEN); used by `_mm_slli_epi32(ss1, AVX2_BLOCK_SHIFT)` to
+// add `AVX2_BLOCK_LEN * s1` to s2 each iteration.
+const AVX2_BLOCK_SHIFT: i32 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FeatureLevel {
@@ -134,11 +144,40 @@ pub(super) fn cpu_features_cached_for_tests() -> bool {
     FEATURES.get().is_some()
 }
 
+/// Horizontally reduces a 4-lane `__m128i` to a `__m128i` whose lane 0 holds
+/// the sum of all four input lanes (other lanes are unspecified).
+///
+/// Two `_mm_shuffle_epi32 + _mm_add_epi32` pairs only - no memory round-trip.
+/// Mirrors the upstream `simd-checksum-x86_64.cpp:204` extraction style
+/// (collapse via shuffle then read lane 0).
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn fold_lane0_sse2(v: __m128i) -> __m128i {
+    // pairs: [v0+v2, v1+v3, v2+v0, v3+v0]
+    let shuf = _mm_shuffle_epi32::<0b1110>(v);
+    let sum = _mm_add_epi32(v, shuf);
+    // lane0 = (v0+v2) + (v1+v3) = v0+v1+v2+v3
+    let shuf = _mm_shuffle_epi32::<0b0001>(sum);
+    _mm_add_epi32(sum, shuf)
+}
+
+/// Extracts the scalar value held in lane 0 of `v` as a `u32`.
+#[inline]
+#[target_feature(enable = "sse2")]
+unsafe fn extract_lane0(v: __m128i) -> u32 {
+    _mm_cvtsi128_si32(v) as u32
+}
+
 /// Accumulates rolling checksum using SSE2 SIMD instructions.
 ///
 /// Processes 16 bytes at a time using vectorized prefix sum calculation.
 /// Bytes are sign-extended to match upstream's `schar *buf` interpretation
 /// in `checksum.c:get_checksum1()`.
+///
+/// The `s1` and `s2` accumulators stay resident in `__m128i` lane 0 across
+/// the full stripe (upstream `simd-checksum-x86_64.cpp:223-311` pattern),
+/// folding per-iteration `block_sum` / `block_prefix` partial-sum vectors
+/// in-register. The final horizontal extraction happens once after the loop.
 #[target_feature(enable = "sse2")]
 unsafe fn accumulate_chunk_sse2(
     mut s1: u32,
@@ -155,23 +194,44 @@ unsafe fn accumulate_chunk_sse2(
     let high_weights = _mm_set_epi16(9, 10, 11, 12, 13, 14, 15, 16);
     let low_weights = _mm_set_epi16(1, 2, 3, 4, 5, 6, 7, 8);
 
-    while chunk.len() >= SSE2_BLOCK_LEN {
-        let block = _mm_loadu_si128(chunk.as_ptr() as *const __m128i);
-        // Sign-extend bytes to i16 in two halves: unpack against `cmplt(block,0)`
-        // which gives 0xFF where the byte is negative, replicating the sign bit
-        // into the high byte of each i16 lane.
-        let sign_mask = _mm_cmplt_epi8(block, zero);
-        let high_signed = _mm_unpacklo_epi8(block, sign_mask);
-        let low_signed = _mm_unpackhi_epi8(block, sign_mask);
+    if chunk.len() >= SSE2_BLOCK_LEN {
+        // Keep s1/s2 in vector lane 0 across the stripe. Per upstream
+        // `simd-checksum-x86_64.cpp:225-227 _mm_loadu_si128((__m128i_u*)x)`
+        // pattern, but using `_mm_cvtsi32_si128` to avoid the staging buffer.
+        let mut ss1 = _mm_cvtsi32_si128(s1 as i32);
+        let mut ss2 = _mm_cvtsi32_si128(s2 as i32);
 
-        let block_sum = sum_block_signed(high_signed, low_signed, ones);
-        let block_prefix = prefix_sum_signed(high_signed, low_signed, high_weights, low_weights);
+        while chunk.len() >= SSE2_BLOCK_LEN {
+            let block = _mm_loadu_si128(chunk.as_ptr() as *const __m128i);
+            // Sign-extend bytes to i16 in two halves: unpack against `cmplt(block,0)`
+            // which gives 0xFF where the byte is negative, replicating the sign bit
+            // into the high byte of each i16 lane.
+            let sign_mask = _mm_cmplt_epi8(block, zero);
+            let high_signed = _mm_unpacklo_epi8(block, sign_mask);
+            let low_signed = _mm_unpackhi_epi8(block, sign_mask);
 
-        s2 = s2.wrapping_add(block_prefix);
-        s2 = s2.wrapping_add(s1.wrapping_mul(SSE2_BLOCK_LEN as u32));
-        s1 = s1.wrapping_add(block_sum);
-        len = len.saturating_add(SSE2_BLOCK_LEN);
-        chunk = &chunk[SSE2_BLOCK_LEN..];
+            // s2 += SSE2_BLOCK_LEN * s1, in-vector. Uses ss1 *before* the
+            // byte-sum is folded in (matches scalar s2 += BLOCK_LEN * s1_old).
+            // Upstream: simd-checksum-x86_64.cpp:255
+            // `ss2 = _mm_add_epi32(ss2, _mm_slli_epi32(ss1, 5))`.
+            ss2 = _mm_add_epi32(ss2, _mm_slli_epi32::<SSE2_BLOCK_SHIFT>(ss1));
+
+            // Per-iteration partial sums collapsed to lane 0 and folded into
+            // ss1 / ss2. The fold is two `_mm_shuffle_epi32 + _mm_add_epi32`
+            // pairs, far cheaper than the previous store+scalar-fold.
+            let sum_pairs = sum_block_pairs_sse2(high_signed, low_signed, ones);
+            let prefix_pairs =
+                prefix_sum_pairs_sse2(high_signed, low_signed, high_weights, low_weights);
+
+            ss1 = _mm_add_epi32(ss1, fold_lane0_sse2(sum_pairs));
+            ss2 = _mm_add_epi32(ss2, fold_lane0_sse2(prefix_pairs));
+
+            len = len.saturating_add(SSE2_BLOCK_LEN);
+            chunk = &chunk[SSE2_BLOCK_LEN..];
+        }
+
+        s1 = extract_lane0(ss1);
+        s2 = extract_lane0(ss2);
     }
 
     if !chunk.is_empty() {
@@ -188,6 +248,11 @@ unsafe fn accumulate_chunk_sse2(
 ///
 /// Processes 32 bytes at a time. Bytes are sign-extended to match upstream's
 /// `schar *buf` interpretation in `checksum.c:get_checksum1()`.
+///
+/// The `s1` and `s2` accumulators stay resident in `__m128i` lane 0 across
+/// the full stripe (upstream `simd-checksum-x86_64.cpp:343-396` pattern),
+/// folding per-iteration `block_sum` / `block_prefix` partial-sum vectors
+/// in-register. The final horizontal extraction happens once after the loop.
 #[target_feature(enable = "avx2")]
 unsafe fn accumulate_chunk_avx2(
     mut s1: u32,
@@ -202,17 +267,36 @@ unsafe fn accumulate_chunk_avx2(
     let second_half_weights =
         _mm256_set_epi16(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16);
 
-    while chunk.len() >= AVX2_BLOCK_LEN {
-        let block = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
+    if chunk.len() >= AVX2_BLOCK_LEN {
+        // Keep s1/s2 in vector lane 0 across the stripe. Mirrors upstream
+        // `simd-checksum-x86_64.cpp:343-344 ss1 = _mm_cvtsi32_si128(*ps1)`.
+        let mut ss1 = _mm_cvtsi32_si128(s1 as i32);
+        let mut ss2 = _mm_cvtsi32_si128(s2 as i32);
 
-        let block_sum = sum_block_avx2(block, ones);
-        let block_prefix = prefix_sum_avx2(block, first_half_weights, second_half_weights);
+        while chunk.len() >= AVX2_BLOCK_LEN {
+            let block = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
 
-        s2 = s2.wrapping_add(block_prefix);
-        s2 = s2.wrapping_add(s1.wrapping_mul(AVX2_BLOCK_LEN as u32));
-        s1 = s1.wrapping_add(block_sum);
-        len = len.saturating_add(AVX2_BLOCK_LEN);
-        chunk = &chunk[AVX2_BLOCK_LEN..];
+            // s2 += AVX2_BLOCK_LEN * s1, in-vector. Uses ss1 *before* the
+            // byte-sum is folded in. Upstream:
+            // simd-checksum-x86_64.cpp:374 `ss2 = _mm_add_epi32(ss2, _mm_slli_epi32(ss1, 6))`
+            // (upstream stride is 64 -> shift 6; our stride is 32 -> shift 5).
+            ss2 = _mm_add_epi32(ss2, _mm_slli_epi32::<AVX2_BLOCK_SHIFT>(ss1));
+
+            // Per-iteration partial sums collapsed to lane 0 and folded into
+            // ss1 / ss2 with no scalar round-trip.
+            let sum_pairs = sum_block_pairs_avx2(block, ones);
+            let prefix_pairs =
+                prefix_sum_pairs_avx2(block, first_half_weights, second_half_weights);
+
+            ss1 = _mm_add_epi32(ss1, fold_lane0_sse2(sum_pairs));
+            ss2 = _mm_add_epi32(ss2, fold_lane0_sse2(prefix_pairs));
+
+            len = len.saturating_add(AVX2_BLOCK_LEN);
+            chunk = &chunk[AVX2_BLOCK_LEN..];
+        }
+
+        s1 = extract_lane0(ss1);
+        s2 = extract_lane0(ss2);
     }
 
     if chunk.len() >= SSE2_BLOCK_LEN {
@@ -230,9 +314,11 @@ unsafe fn accumulate_chunk_avx2(
     (s1, s2, len)
 }
 
-/// Computes the sum of 32 sign-extended bytes from a 256-bit block.
+/// Computes the per-pair partial sum of 32 sign-extended bytes, returning a
+/// 4-lane `__m128i` whose total across lanes is the byte sum.
+#[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn sum_block_avx2(block: __m256i, ones: __m256i) -> u32 {
+unsafe fn sum_block_pairs_avx2(block: __m256i, ones: __m256i) -> __m128i {
     let lower_bytes = _mm256_castsi256_si128(block);
     let upper_bytes = _mm256_extracti128_si256(block, 1);
 
@@ -246,19 +332,22 @@ unsafe fn sum_block_avx2(block: __m256i, ones: __m256i) -> u32 {
     let upper_pairs = _mm256_madd_epi16(upper_signed, ones);
     let combined = _mm256_add_epi32(lower_pairs, upper_pairs);
 
-    let mut buffer = [0i32; 8];
-    _mm256_storeu_si256(buffer.as_mut_ptr() as *mut __m256i, combined);
-    buffer
-        .iter()
-        .fold(0u32, |acc, &value| acc.wrapping_add(value as u32))
+    // Collapse the 256-bit pair-sum into a 128-bit vector; the caller's
+    // `fold_lane0_sse2` finishes the horizontal reduction.
+    let hi = _mm256_extracti128_si256(combined, 1);
+    let lo = _mm256_castsi256_si128(combined);
+    _mm_add_epi32(lo, hi)
 }
 
+/// Computes the per-pair weighted prefix sum of 32 sign-extended bytes,
+/// returning a 4-lane `__m128i` whose total across lanes is the weighted sum.
+#[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn prefix_sum_avx2(
+unsafe fn prefix_sum_pairs_avx2(
     block: __m256i,
     first_half_weights: __m256i,
     second_half_weights: __m256i,
-) -> u32 {
+) -> __m128i {
     let lower_bytes = _mm256_castsi256_si128(block);
     let upper_bytes = _mm256_extracti128_si256(block, 1);
 
@@ -269,52 +358,42 @@ unsafe fn prefix_sum_avx2(
 
     let lower_weighted = _mm256_madd_epi16(lower_extended, first_half_weights);
     let upper_weighted = _mm256_madd_epi16(upper_extended, second_half_weights);
-
     let combined = _mm256_add_epi32(lower_weighted, upper_weighted);
-    let mut buffer = [0i32; 8];
-    _mm256_storeu_si256(buffer.as_mut_ptr() as *mut __m256i, combined);
 
-    buffer
-        .iter()
-        .fold(0u32, |acc, &value| acc.wrapping_add(value as u32))
+    let hi = _mm256_extracti128_si256(combined, 1);
+    let lo = _mm256_castsi256_si128(combined);
+    _mm_add_epi32(lo, hi)
 }
 
-/// Computes the sum of 16 sign-extended bytes already widened to two i16
-/// vectors via the SSE2 sign-extension trick.
+/// Computes the per-pair partial sum of 16 sign-extended bytes (already
+/// widened to two i16 vectors), returning a 4-lane `__m128i` whose total
+/// across lanes is the byte sum.
 #[inline]
 #[target_feature(enable = "sse2")]
-unsafe fn sum_block_signed(high_signed: __m128i, low_signed: __m128i, ones: __m128i) -> u32 {
+unsafe fn sum_block_pairs_sse2(
+    high_signed: __m128i,
+    low_signed: __m128i,
+    ones: __m128i,
+) -> __m128i {
     let high_pairs = _mm_madd_epi16(high_signed, ones);
     let low_pairs = _mm_madd_epi16(low_signed, ones);
-    let combined = _mm_add_epi32(high_pairs, low_pairs);
-
-    let mut buffer = [0i32; 4];
-    _mm_storeu_si128(buffer.as_mut_ptr() as *mut __m128i, combined);
-    buffer
-        .iter()
-        .fold(0u32, |acc, &value| acc.wrapping_add(value as u32))
+    _mm_add_epi32(high_pairs, low_pairs)
 }
 
-/// Computes the weighted prefix sum of 16 sign-extended bytes already widened
-/// to two i16 vectors. Uses `_mm_madd_epi16` to multiply-and-pairwise-add into
-/// i32 lanes, avoiding any i16 truncation.
+/// Computes the per-pair weighted prefix sum of 16 sign-extended bytes already
+/// widened to two i16 vectors. Returns a 4-lane `__m128i` whose total across
+/// lanes is the weighted sum.
 #[inline]
 #[target_feature(enable = "sse2")]
-unsafe fn prefix_sum_signed(
+unsafe fn prefix_sum_pairs_sse2(
     high_signed: __m128i,
     low_signed: __m128i,
     high_weights: __m128i,
     low_weights: __m128i,
-) -> u32 {
+) -> __m128i {
     let weighted_high = _mm_madd_epi16(high_signed, high_weights);
     let weighted_low = _mm_madd_epi16(low_signed, low_weights);
-    let combined = _mm_add_epi32(weighted_high, weighted_low);
-
-    let mut buffer = [0i32; 4];
-    _mm_storeu_si128(buffer.as_mut_ptr() as *mut __m128i, combined);
-    buffer
-        .iter()
-        .fold(0u32, |acc, &value| acc.wrapping_add(value as u32))
+    _mm_add_epi32(weighted_high, weighted_low)
 }
 
 #[cfg(test)]
@@ -324,11 +403,6 @@ pub(crate) fn accumulate_chunk_sse2_for_tests(
     len: usize,
     chunk: &[u8],
 ) -> (u32, u32, usize) {
-    // SAFETY: SSE2 is part of the x86_64 baseline ABI, so the `target_feature
-    // = "sse2"` precondition on `accumulate_chunk_sse2` is always satisfied
-    // here. `chunk` is a valid `&[u8]` borrow; the SIMD implementation uses
-    // unaligned loads (`_mm_loadu_si128`) and bounds-checks each 16-byte
-    // block before consuming it, falling back to scalar for the remainder.
     unsafe { accumulate_chunk_sse2(s1, s2, len, chunk) }
 }
 
@@ -339,11 +413,5 @@ pub(crate) fn accumulate_chunk_avx2_for_tests(
     len: usize,
     chunk: &[u8],
 ) -> (u32, u32, usize) {
-    // SAFETY: This helper is only invoked from tests gated on
-    // `is_x86_feature_detected!("avx2")`, satisfying the `target_feature =
-    // "avx2"` precondition of `accumulate_chunk_avx2`. `chunk` is a valid
-    // `&[u8]` borrow; the SIMD implementation uses unaligned loads
-    // (`_mm256_loadu_si256`) and bounds-checks each 32-byte block before
-    // consuming it, falling back to scalar for any remainder.
     unsafe { accumulate_chunk_avx2(s1, s2, len, chunk) }
 }
