@@ -37,6 +37,7 @@ rustix = { workspace = true, features = ["fs", "process"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
 filetime = { workspace = true, optional = true }
+zstd = { version = "0.13", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-fs = { path = "../apple-fs" }
@@ -97,11 +98,12 @@ parallel-receive-delta = []
 # Trade-offs: Relaxes the single-producer compile-time invariant
 multi-producer = []
 
-# Spill payload compression (#2336) - reserves the SpillCompression::Zstd
-# variant on SpillPolicy. The codec wiring lands separately; this flag only
-# guards the public enum variant so default builds stay free of any new
-# dependency.
-spill-compression = []
+# Spill payload compression (#2336, #2341) - exposes the SpillCompression::Zstd
+# variant on SpillPolicy and wires the zstd codec into the spill write/read
+# path. Default builds stay free of the zstd dependency, and the on-disk spill
+# format gains a single leading tag byte (0x00 raw / 0x01 zstd) per record so
+# the reader can dispatch without ambiguity.
+spill-compression = ["dep:zstd"]
 
 # Per-thread buffer slab (#1271, #1370) - replaces the single-slot thread-local
 # cache in front of BufferPool with a depth-bounded LIFO slab per thread.
