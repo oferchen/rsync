@@ -83,7 +83,9 @@ jobs:
           version: v1
 
       - name: Install cargo-fuzz
-        run: cargo +nightly install cargo-fuzz --locked
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        with:
+          tool: cargo-fuzz
 
       - name: Cache upstream rsync
         id: cache-rsync
