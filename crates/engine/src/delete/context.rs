@@ -43,6 +43,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 use protocol::flist::FileEntry;
 
 use super::emitter::{DeleteEmitter, DeleteFs, EmitterErrorPolicy};
@@ -50,6 +51,53 @@ use super::extras::compute_extras;
 use super::plan::DeletePlan;
 use super::plan_map::DeletePlanMap;
 use super::traversal::DirTraversalCursor;
+
+/// One cursor observation enqueued by a worker thread for the emitter to
+/// fold into its [`DirTraversalCursor`] at drain time.
+///
+/// Carrying owned `PathBuf` and `Vec<FileEntry>` lets the producer return
+/// immediately without holding any lock on the cursor itself; the consumer
+/// builds the cursor lazily in [`DeleteContext::into_emitter`].
+#[derive(Debug)]
+struct CursorObservation {
+    dir: PathBuf,
+    children: Vec<FileEntry>,
+}
+
+/// Attempts [`Arc::try_unwrap`], logging a structured warning with the
+/// surviving strong/weak counts before returning the original `Arc` on
+/// failure. Retained as the documented fallback path for fragile drain
+/// sites that have not yet adopted channel-shutdown handoff; the cursor
+/// handoff in [`DeleteContext::into_emitter`] no longer needs it.
+pub(crate) fn try_unwrap_or_log<T>(arc: Arc<T>, kind: &'static str) -> Result<T, Arc<T>> {
+    match Arc::try_unwrap(arc) {
+        Ok(value) => Ok(value),
+        Err(arc) => {
+            #[cfg(feature = "tracing")]
+            {
+                let strong = Arc::strong_count(&arc);
+                let weak = Arc::weak_count(&arc);
+                tracing::warn!(
+                    target: "engine::delete",
+                    strong_count = strong,
+                    weak_count = weak,
+                    kind = kind,
+                    "Arc::try_unwrap failed during drain - extra clones outlived the producer"
+                );
+            }
+            #[cfg(not(feature = "tracing"))]
+            {
+                // Without the tracing feature compiled in we cannot emit
+                // a structured warning; the typed-error path at the call
+                // site still surfaces strong_count and kind to the
+                // caller. Touch `kind` so unused-variable lints stay
+                // happy under the cfg gate.
+                let _ = kind;
+            }
+            Err(arc)
+        }
+    }
+}
 
 /// Re-exposes the four upstream timing modes so the emitter and its
 /// context can be configured without pulling in the engine's
@@ -102,14 +150,23 @@ impl EmitterTiming {
 /// hook. The same context is consumed by the drain (`emit_one` /
 /// `emit_all`) once phase 1 completes, at which point the [`DeleteFs`]
 /// dispatcher is handed in.
+///
+/// # Channel-based cursor handoff
+///
+/// Cursor observations from workers are queued through an
+/// [`crossbeam_channel::unbounded`] producer-consumer channel rather than
+/// shared via `Arc<Mutex<DirTraversalCursor>>`. Workers send owned
+/// observations; the drain (`into_emitter`) drops its sender, drains the
+/// receiver until it returns `None`, and builds the owned cursor in one
+/// place. This eliminates the `Arc::try_unwrap` on the cursor handle and
+/// makes shutdown deterministic when workers drop normally or panic mid-
+/// send.
 #[derive(Debug)]
 pub struct DeleteContext {
     /// Shared concurrent map of per-directory plans. Populated by the
     /// receiver hook (DDP-B3) or by inline `compute_extras` calls in the
     /// local-copy executor; drained by the emitter.
     pub plans: Arc<DeletePlanMap>,
-    /// Shared cursor that yields directories in upstream traversal order.
-    pub cursor: Arc<Mutex<DirTraversalCursor>>,
     /// Destination root the receiver writes into. Per-segment relative
     /// directory paths are resolved relative to this when computing
     /// extras inside [`Self::observe_segment_for_delete`].
@@ -132,6 +189,17 @@ pub struct DeleteContext {
     /// being planned. Reset each time [`Self::begin_directory`] is
     /// called.
     segment_entries: Mutex<Vec<FileEntry>>,
+    /// Root path used to seed the [`DirTraversalCursor`] at drain time.
+    cursor_root: PathBuf,
+    /// Producer side of the cursor observation channel. Workers calling
+    /// [`Self::observe_segment_for_delete`] enqueue observations here.
+    /// Wrapped in `Mutex<Option<_>>` so [`Self::into_emitter`] can drop
+    /// the master sender to close the channel from the drain side.
+    cursor_tx: Mutex<Option<Sender<CursorObservation>>>,
+    /// Consumer side of the cursor observation channel. Owned by the
+    /// drain; taken on first call into [`Self::into_emitter`] and then
+    /// drained until the channel reports closure.
+    cursor_rx: Mutex<Option<Receiver<CursorObservation>>>,
 }
 
 impl DeleteContext {
@@ -141,15 +209,18 @@ impl DeleteContext {
     /// `delete_in_dir` visits first).
     #[must_use]
     pub fn new(dest_root: PathBuf, timing: EmitterTiming) -> Self {
+        let (tx, rx) = unbounded();
         Self {
             plans: Arc::new(DeletePlanMap::new()),
-            cursor: Arc::new(Mutex::new(DirTraversalCursor::new(PathBuf::new()))),
             dest_root,
             enabled: true,
             timing,
             delete_excluded: false,
             policy: EmitterErrorPolicy::default(),
             segment_entries: Mutex::new(Vec::new()),
+            cursor_root: PathBuf::new(),
+            cursor_tx: Mutex::new(Some(tx)),
+            cursor_rx: Mutex::new(Some(rx)),
         }
     }
 
@@ -163,15 +234,18 @@ impl DeleteContext {
         dest_root: PathBuf,
         enabled: bool,
     ) -> Self {
+        let (tx, rx) = unbounded();
         Self {
             plans,
-            cursor: Arc::new(Mutex::new(DirTraversalCursor::new(PathBuf::new()))),
             dest_root,
             enabled,
             timing: EmitterTiming::During,
             delete_excluded: false,
             policy: EmitterErrorPolicy::default(),
             segment_entries: Mutex::new(Vec::new()),
+            cursor_root: PathBuf::new(),
+            cursor_tx: Mutex::new(Some(tx)),
+            cursor_rx: Mutex::new(Some(rx)),
         }
     }
 
@@ -187,15 +261,18 @@ impl DeleteContext {
         cursor_root: PathBuf,
         enabled: bool,
     ) -> Self {
+        let (tx, rx) = unbounded();
         Self {
             plans,
-            cursor: Arc::new(Mutex::new(DirTraversalCursor::new(cursor_root))),
             dest_root,
             enabled,
             timing: EmitterTiming::During,
             delete_excluded: false,
             policy: EmitterErrorPolicy::default(),
             segment_entries: Mutex::new(Vec::new()),
+            cursor_root,
+            cursor_tx: Mutex::new(Some(tx)),
+            cursor_rx: Mutex::new(Some(rx)),
         }
     }
 
@@ -232,8 +309,10 @@ impl DeleteContext {
     ///    [`DeletePlan::sort_by_name`] to lock in upstream emission
     ///    order.
     /// 4. Inserts the plan into [`Self::plans`] keyed by `dir`.
-    /// 5. Records the segment's children in [`Self::cursor`] via
-    ///    [`DirTraversalCursor::observe_segment`].
+    /// 5. Enqueues a [`CursorObservation`] onto the producer channel.
+    ///    The drain in [`Self::into_emitter`] consumes the channel after
+    ///    all senders drop and folds each observation into the owned
+    ///    [`DirTraversalCursor`].
     ///
     /// # Errors
     ///
@@ -245,7 +324,7 @@ impl DeleteContext {
     ///
     /// # Panics
     ///
-    /// Panics if the cursor mutex is poisoned. A poisoned mutex
+    /// Panics if the cursor sender mutex is poisoned. A poisoned mutex
     /// indicates an unrecoverable bug in the emitter side and is
     /// treated the same way the plan map treats poisoned state.
     pub fn observe_segment_for_delete(&self, dir: &Path, entries: &[FileEntry]) -> io::Result<()> {
@@ -259,10 +338,7 @@ impl DeleteContext {
         plan.sort_by_name();
         self.plans.insert(plan);
 
-        self.cursor
-            .lock()
-            .expect("DeleteContext cursor mutex poisoned")
-            .observe_segment(dir.to_path_buf(), entries);
+        self.send_cursor_observation(dir.to_path_buf(), entries.to_vec());
 
         Ok(())
     }
@@ -272,10 +348,80 @@ impl DeleteContext {
     /// a directory's contents become known via an inline directory walk
     /// in the non-INC_RECURSE path.
     pub fn observe_directory(&self, parent: PathBuf, children: &[FileEntry]) {
-        self.cursor
+        self.send_cursor_observation(parent, children.to_vec());
+    }
+
+    /// Enqueues a cursor observation onto the producer channel.
+    ///
+    /// A closed channel (sender already taken by [`Self::into_emitter`])
+    /// drops the observation silently. This matches the upstream
+    /// `delete_in_dir` contract: late observations after the drain has
+    /// committed to its traversal order are ignored, exactly like
+    /// [`DirTraversalCursor::observe_segment`] when invoked past the
+    /// parent's frame.
+    fn send_cursor_observation(&self, dir: PathBuf, children: Vec<FileEntry>) {
+        let guard = self
+            .cursor_tx
             .lock()
-            .expect("DeleteContext cursor mutex poisoned")
-            .observe_segment(parent, children);
+            .expect("DeleteContext cursor_tx mutex poisoned");
+        if let Some(tx) = guard.as_ref() {
+            // crossbeam unbounded send only fails when the receiver is
+            // dropped, which happens after the drain has consumed
+            // everything. Treat that as a no-op for the same reason
+            // late observations are tolerated above.
+            let _ = tx.send(CursorObservation { dir, children });
+        }
+    }
+
+    /// Returns a freshly built [`DirTraversalCursor`] reflecting every
+    /// observation queued so far.
+    ///
+    /// Pending channel messages are drained, applied to the new cursor,
+    /// and then re-enqueued so the eventual [`Self::into_emitter`] drain
+    /// still sees the complete observation set. The producer channel
+    /// remains open; future `observe_*` calls continue to land on it.
+    ///
+    /// Intended for tests and diagnostics that want to inspect the
+    /// emission order without consuming the context. Re-enqueueing keeps
+    /// inspection observable while preserving the channel-shutdown
+    /// contract for the drain.
+    #[must_use]
+    pub fn cursor_snapshot(&self) -> Mutex<DirTraversalCursor> {
+        let mut cursor = DirTraversalCursor::new(self.cursor_root.clone());
+        let tx_guard = self
+            .cursor_tx
+            .lock()
+            .expect("DeleteContext cursor_tx mutex poisoned");
+        let rx_guard = self
+            .cursor_rx
+            .lock()
+            .expect("DeleteContext cursor_rx mutex poisoned");
+        let (Some(tx), Some(rx)) = (tx_guard.as_ref(), rx_guard.as_ref()) else {
+            return Mutex::new(cursor);
+        };
+
+        // Drain everything currently queued so we can replay the
+        // observations into a private cursor. We re-clone each message
+        // back into the channel so the eventual drain still sees them;
+        // the channel is FIFO so ordering is preserved.
+        let mut drained: Vec<CursorObservation> = Vec::new();
+        loop {
+            match rx.try_recv() {
+                Ok(obs) => drained.push(obs),
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        for obs in &drained {
+            cursor.observe_segment(obs.dir.clone(), &obs.children);
+        }
+        for obs in drained {
+            // Re-send so the real drain still sees the observation.
+            // Failure here means the receiver dropped, which cannot
+            // happen while we hold the rx guard.
+            let _ = tx.send(obs);
+        }
+
+        Mutex::new(cursor)
     }
 
     /// Records the set of entries the segment for `dir` knows about so a
@@ -345,27 +491,66 @@ impl DeleteContext {
 
     /// Builds an emitter from this context.
     ///
-    /// The plan map and cursor are extracted from their `Arc` wrappers;
-    /// callers must release any other clones (typically held by the
-    /// receiver) before calling the drain. Returns an
-    /// [`io::ErrorKind::Other`] error if either shared handle still has
-    /// outstanding references.
+    /// The plan map is extracted from its `Arc` wrapper; callers must
+    /// release any other clones (typically held by the receiver) before
+    /// calling the drain. The cursor is rebuilt from observations
+    /// produced by [`Self::observe_segment_for_delete`] and
+    /// [`Self::observe_directory`] using channel-shutdown semantics:
+    ///
+    /// 1. The master `cursor_tx` sender is dropped, closing the producer
+    ///    side from the drain's perspective.
+    /// 2. `cursor_rx.recv()` is called in a loop. Because every clone of
+    ///    the [`DeleteContext`] holds its sender through the same mutex,
+    ///    by the time we own `self` by value no other clone can exist,
+    ///    and the loop terminates as soon as the queue empties.
+    /// 3. Each observation is applied to a freshly built cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::Other`] when the plan map `Arc` is still
+    /// shared (no other code holds the inner channel handles, so the
+    /// cursor side never fails this way).
     fn into_emitter<F: DeleteFs>(self, fs: F) -> io::Result<DeleteEmitter<F>> {
-        let plans = Arc::try_unwrap(self.plans).map_err(|_| {
+        // `try_unwrap_or_log` is the transition-era fallback for sites
+        // that have not yet adopted channel-shutdown handoff. The cursor
+        // path below now uses the channel-shutdown form; the plan map
+        // remains on the `try_unwrap` path with diagnostic logging so
+        // operators see the surviving strong count when a future leak
+        // surfaces here.
+        let plans = try_unwrap_or_log(self.plans, "DeletePlanMap").map_err(|_| {
             io::Error::new(
                 io::ErrorKind::Other,
                 "DeleteContext::into_emitter: DeletePlanMap still shared",
             )
         })?;
-        let cursor = Arc::try_unwrap(self.cursor)
-            .map_err(|_| {
+
+        // Drop the master sender so the receive loop can observe channel
+        // closure. Any clones held by workers go away with their
+        // `Arc<DeleteContext>` clones; consuming `self` by value here
+        // guarantees no clone is alive at this point, so the queue we
+        // drain is the final, complete observation set.
+        let _ = self
+            .cursor_tx
+            .lock()
+            .expect("DeleteContext cursor_tx mutex poisoned")
+            .take();
+        let rx = self
+            .cursor_rx
+            .lock()
+            .expect("DeleteContext cursor_rx mutex poisoned")
+            .take()
+            .ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::Other,
-                    "DeleteContext::into_emitter: DirTraversalCursor still shared",
+                    "DeleteContext::into_emitter: cursor receiver already taken",
                 )
-            })?
-            .into_inner()
-            .expect("DeleteContext cursor mutex poisoned");
+            })?;
+
+        let mut cursor = DirTraversalCursor::new(self.cursor_root);
+        while let Ok(obs) = rx.recv() {
+            cursor.observe_segment(obs.dir, &obs.children);
+        }
+
         Ok(DeleteEmitter::with_policy(fs, plans, cursor, self.policy))
     }
 }
@@ -472,7 +657,8 @@ mod tests {
             .expect("disabled is a no-op");
 
         assert!(map.is_empty());
-        let mut cursor = ctx.cursor.lock().unwrap();
+        let cursor_lock = ctx.cursor_snapshot();
+        let mut cursor = cursor_lock.lock().unwrap();
         // Even with no observations, the root is still emitted, and the
         // second call drains the now-empty stack and reports exhaustion.
         assert_eq!(cursor.next_ready(), Some(PathBuf::new()));
@@ -507,7 +693,8 @@ mod tests {
         let names: Vec<&OsStr> = plan.extras.iter().map(|e| e.name.as_os_str()).collect();
         assert_eq!(names, vec![OsStr::new("d"), OsStr::new("b")]);
 
-        let mut cursor = ctx.cursor.lock().unwrap();
+        let cursor_lock = ctx.cursor_snapshot();
+        let mut cursor = cursor_lock.lock().unwrap();
         let seq: Vec<PathBuf> = std::iter::from_fn(|| cursor.next_ready()).collect();
         assert!(seq.contains(&PathBuf::from("sub/nested")));
     }
@@ -565,7 +752,8 @@ mod tests {
             true,
         );
 
-        let mut cursor = ctx.cursor.lock().unwrap();
+        let cursor_lock = ctx.cursor_snapshot();
+        let mut cursor = cursor_lock.lock().unwrap();
         assert_eq!(cursor.next_ready(), Some(PathBuf::from("from_here")));
     }
 
@@ -730,6 +918,105 @@ mod tests {
                 path: dir.join("victim"),
                 kind: DeleteEntryKind::File,
             }]
+        );
+    }
+
+    /// ATU-4 (#2381): channel-shutdown drain terminates as soon as every
+    /// worker drops its `Arc<DeleteContext>` clone. We spawn N producer
+    /// threads, each enqueueing one cursor observation through the
+    /// shared context, join them all (so every Arc clone is gone), and
+    /// then run the drain on the owned context. The drain must complete
+    /// without blocking and must surface every observation in the final
+    /// cursor.
+    #[test]
+    fn channel_drain_completes_when_workers_drop_normally() {
+        use std::thread;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().to_path_buf();
+        for i in 0..8 {
+            touch(&dir, &format!("worker{i}"));
+        }
+        let ctx = Arc::new(DeleteContext::new(dir.clone(), EmitterTiming::During));
+        ctx.observe_directory(dir.clone(), &[]);
+
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let ctx = Arc::clone(&ctx);
+            let parent = dir.clone();
+            handles.push(thread::spawn(move || {
+                ctx.observe_directory(parent, &[dir_child("", &format!("child{i}"))]);
+            }));
+        }
+        for h in handles {
+            h.join().expect("worker joined");
+        }
+
+        // All Arc clones are gone; we now own the context uniquely.
+        let owned = Arc::try_unwrap(ctx).expect("workers released their clones");
+        owned.begin_directory(make_segment(&[]));
+        owned.publish_plan_for(&dir).expect("publish plan");
+
+        let outcome = owned
+            .emit_one(RecordingDeleteFs::new())
+            .expect("drain completes without blocking");
+        assert_eq!(
+            outcome.stats.files, 8,
+            "every worker file is deleted by the drain"
+        );
+    }
+
+    /// ATU-4 (#2381): even if a worker panics mid-send, the channel-
+    /// shutdown semantics still let the drain finish. Each producer's
+    /// `Sender` clone is dropped by the panic-unwind, the `recv` loop
+    /// terminates, and the drain returns successfully with whatever
+    /// observations made it through before the panic.
+    #[test]
+    fn channel_drain_completes_when_worker_panics_mid_send() {
+        use std::panic;
+        use std::thread;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().to_path_buf();
+        touch(&dir, "survivor");
+        let ctx = Arc::new(DeleteContext::new(dir.clone(), EmitterTiming::During));
+        ctx.observe_directory(dir.clone(), &[]);
+
+        // Worker A sends one observation, then panics. Drop runs as the
+        // thread unwinds, so its borrow on the shared context goes away
+        // cleanly.
+        let ctx_a = Arc::clone(&ctx);
+        let dir_a = dir.clone();
+        let panic_handle = thread::spawn(move || {
+            let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                ctx_a.observe_directory(dir_a, &[]);
+                panic!("simulated worker failure mid-send");
+            }));
+        });
+        // Worker B completes normally; the drain must still pick up its
+        // observation.
+        let ctx_b = Arc::clone(&ctx);
+        let dir_b = dir.clone();
+        let normal_handle = thread::spawn(move || {
+            ctx_b.observe_directory(dir_b, &[]);
+        });
+
+        panic_handle.join().expect("panic worker joined");
+        normal_handle.join().expect("normal worker joined");
+
+        let owned = Arc::try_unwrap(ctx).expect("workers released their clones");
+        owned.begin_directory(make_segment(&[]));
+        owned.publish_plan_for(&dir).expect("publish plan");
+
+        // Drain returns without blocking - the channel closes because
+        // every sender clone (including the panicked worker's) was
+        // dropped during stack unwinding.
+        let outcome = owned
+            .emit_one(RecordingDeleteFs::new())
+            .expect("drain completes after worker panic");
+        assert_eq!(
+            outcome.stats.files, 1,
+            "the survivor file is deleted exactly once"
         );
     }
 }

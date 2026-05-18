@@ -32,7 +32,7 @@ use protocol::flist::{FileEntry, FileType, f_name_cmp};
 
 /// One frame on the DFS stack: a directory currently being iterated and
 /// the index of its next-to-emit child.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Frame {
     dir: PathBuf,
     next_child_ix: usize,
@@ -44,7 +44,7 @@ struct Frame {
 ///
 /// The cursor is single-threaded by construction. The emitter creates one
 /// for the transfer root and threads it through phase-2 dispatch.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DirTraversalCursor {
     /// Destination-relative root directory; emitted first.
     root: PathBuf,
