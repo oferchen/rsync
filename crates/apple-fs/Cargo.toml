@@ -8,14 +8,14 @@ version.workspace = true
 
 [dependencies]
 libc = { workspace = true }
-nix = { version = "0.31", default-features = false, features = ["fs"] }
+nix = { workspace = true, features = ["fs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 unicode-normalization = "0.1"
 # Safe wrapper for getxattr(2)/setxattr(2). Used to access the macOS-native
 # `com.apple.ResourceFork` and `com.apple.FinderInfo` extended attributes
 # without introducing unsafe FFI inside this crate (per workspace policy).
-xattr = "1.6"
+xattr = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

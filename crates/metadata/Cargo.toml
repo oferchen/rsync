@@ -23,7 +23,7 @@ libc = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-xattr = { version = "1.6", optional = true }
+xattr = { workspace = true, optional = true }
 
 # Cross-platform ACL support (Linux, macOS, FreeBSD)
 # Replaces custom FFI bindings for cleaner, safer implementation
@@ -38,7 +38,7 @@ apple-fs = { path = "../apple-fs" }
 # Win32_System_Threading is required for OpenProcessToken/GetCurrentProcess
 # used by the --copy-as privilege probe in copy_as.rs.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = [
+windows = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
