@@ -92,23 +92,20 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets --all-features --no-deps
 
   # ===========================================================================
-  # Enforce LoC Limits - Informational (non-blocking) check
+  # Enforce LoC Limits - Required check
   # ---------------------------------------------------------------------------
-  # Runs `cargo xtask enforce-limits` to surface files that exceed the per-file
-  # line limits in `tools/line_limits.toml` (workspace default 650). Marked
-  # `continue-on-error: true` while the over-limit files documented in
-  # `docs/audits/post-8-enforce-limits-ci.md` (~322 files snapshot, dominated
-  # by test modules) are being decomposed. The audit prunes stale overrides
-  # and relaxes caps for the top test-file offenders; remaining overages are
-  # production source pending tracked decomposition work. Promote to a
-  # required check once the over-limit count reaches zero.
+  # Runs `cargo xtask enforce-limits` to enforce the per-file line limits in
+  # `tools/line_limits.toml` (workspace default 650). Every file past the
+  # default or an explicit override fails CI. Bumping the cap on an existing
+  # entry, or adding a new override, requires an explicit edit to the toml -
+  # which keeps the ceiling honest as code grows. Decompose the file via the
+  # SPL submodule pattern instead of bumping when feasible.
   # ===========================================================================
   enforce-limits:
-    name: enforce-limits (informational)
+    name: enforce-limits
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     timeout-minutes: 10
-    continue-on-error: true
 
     steps:
       - name: Checkout
