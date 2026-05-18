@@ -83,3 +83,21 @@ design document to read, and the PR range that delivered the work.
     `docs/audits/windows-iocp-benchmark-plan.md`
   - TransmitFile primitive, page-aligned IOCP, and CQ auto-sizing all landed.
   - See PRs #4332, #4334, #4358, #4370 in the #43XX..#44XX range.
+
+- **PRC - PR conflict resolution** (PRC-1..PRC-14, 23 tasks, shipped)
+  - Audit: `docs/audits/prc-3a-dacl-posix-overlap.md`
+  - A mass-merge cascade triggered ~50 PRs to merge. The 13 long-running
+    parallel-feature PRs that conflicted heavily with the evolved master were
+    each rebased via per-PR conflict analysis.
+  - Net: 12 of 13 merged, 1 closed as superseded.
+  - See PRs #4345, #4357, #4363, #4369, #4377, #4397, #4398, #4400, #4421,
+    #4438, #4405, #4449, plus master-fixes #4452 and #4454.
+
+- **CSP - Checksum SIMD perf** (CSP-1..CSP-2, shipped)
+  - Audit: `docs/audits/csp-1-rolling-simd-checksum-sync-regression.md`
+  - User-reported 1.5-1.7x regression vs upstream in `--checksum` mode. Root
+    cause: per-iteration horizontal reduction in AVX2/SSE2/NEON loops;
+    upstream keeps `s1`/`s2` in vector registers across the full stripe.
+  - CSP-2 fix refactors all three arch paths to vector-register-resident
+    loops. Expected 1.4-1.8x speedup.
+  - See PR #4451.
