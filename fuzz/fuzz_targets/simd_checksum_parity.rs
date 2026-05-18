@@ -59,7 +59,8 @@ fn check_rolling(data: &[u8]) {
     let scalar_value = scalar.value();
 
     assert_eq!(
-        simd_value, scalar_value,
+        simd_value,
+        scalar_value,
         "rolling SIMD/scalar parity violation at len={}: simd={:08x} scalar={:08x}",
         data.len(),
         simd_value,
@@ -81,7 +82,8 @@ fn check_strong_batch(data: &[u8]) {
     let md5_reference = Md5::digest(data);
     for (lane, digest) in md5_batch.iter().enumerate() {
         assert_eq!(
-            *digest, md5_reference,
+            *digest,
+            md5_reference,
             "MD5 SIMD/scalar parity violation on lane {lane} (len={})",
             data.len(),
         );
@@ -91,7 +93,8 @@ fn check_strong_batch(data: &[u8]) {
     let md4_reference = Md4::digest(data);
     for (lane, digest) in md4_batch.iter().enumerate() {
         assert_eq!(
-            *digest, md4_reference,
+            *digest,
+            md4_reference,
             "MD4 SIMD/scalar parity violation on lane {lane} (len={})",
             data.len(),
         );

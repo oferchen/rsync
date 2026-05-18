@@ -331,7 +331,8 @@ fn run_one(input: Input) {
     };
 
     assert_eq!(
-        oc_verdict, upstream_verdict,
+        oc_verdict,
+        upstream_verdict,
         "filter divergence: path={rel_path:?} is_dir={is_dir} oc={oc_verdict} upstream={upstream_verdict}\nrules:\n{rules}",
         is_dir = input.is_dir,
         rules = merge_text,
