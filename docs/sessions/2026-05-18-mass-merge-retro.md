@@ -33,6 +33,5 @@
 - WPG-1 (#2300): Windows host needed for actual profiling runs
 
 ## Key artifacts
-- `AGENTS.md` (updated PR #4458) lists all 13 series with audit/design references
 - `CHANGELOG.md` (updated PRs #4415 #4445 #4459) tracks every PR landed
 - `docs/audits/*` contains the per-task audits
