@@ -361,7 +361,7 @@ impl ReceiverContext {
 /// - `checksum.c:sum_init()` - per-file MD4 seed reset
 #[allow(clippy::too_many_arguments)]
 fn apply_delta_tokens<R: Read>(
-    reader: &mut R,
+    reader: &mut crate::reader::ServerReader<R>,
     output: &mut std::io::BufWriter<std::fs::File>,
     sparse_state: &mut Option<SparseWriteState>,
     basis_map: &mut Option<MapFile>,
@@ -369,7 +369,7 @@ fn apply_delta_tokens<R: Read>(
     token_reader: &mut TokenReader,
     token_buffer: &mut TokenBuffer,
     checksum_verifier: &mut ChecksumVerifier,
-    checksum_seed: u32,
+    checksum_seed: i32,
     file_path: &std::path::Path,
     total_bytes: &mut u64,
 ) -> io::Result<()> {
@@ -498,7 +498,8 @@ fn write_chunk(
     data: &[u8],
 ) -> io::Result<()> {
     if let Some(sparse) = sparse_state.as_mut() {
-        sparse.write(output, data)
+        sparse.write(output, data)?;
+        Ok(())
     } else {
         output.write_all(data)
     }
