@@ -185,6 +185,14 @@ impl Default for HardlinkApplyTracker {
 #[derive(Default)]
 pub(crate) struct HardLinkTracker {
     entries: FxHashMap<HardLinkKey, PathBuf>,
+    /// Reference paths whose hardlink cohort has already had metadata applied
+    /// once. Used to make per-inode metadata writes (e.g. Windows DACLs) O(1)
+    /// per cohort instead of O(N) per follower.
+    ///
+    /// upstream: hlink.c::hard_link_check returns 1 for followers so
+    /// generator.c:1540 exits before set_file_attrs(); the inode keeps the
+    /// leader's metadata for free.
+    acl_cohort_leaders: rustc_hash::FxHashSet<PathBuf>,
 }
 
 #[cfg(unix)]
@@ -210,6 +218,18 @@ impl HardLinkTracker {
         }
     }
 
+    /// Returns `true` the first time `reference` is registered as the source
+    /// of a hardlink cohort (the leader); subsequent calls with the same
+    /// `reference` return `false` (followers).
+    ///
+    /// The leader is the destination whose creation should trigger a
+    /// per-inode metadata write (POSIX ACL on Unix, NTFS DACL on Windows).
+    /// Followers share the same underlying inode and inherit the leader's
+    /// metadata without an additional write.
+    pub(crate) fn register_acl_cohort_leader(&mut self, reference: &Path) -> bool {
+        self.acl_cohort_leaders.insert(reference.to_path_buf())
+    }
+
     fn key(metadata: &fs::Metadata) -> Option<HardLinkKey> {
         use std::os::unix::fs::MetadataExt;
 
@@ -226,12 +246,21 @@ impl HardLinkTracker {
 
 #[cfg(not(unix))]
 #[derive(Default)]
-pub(crate) struct HardLinkTracker;
+pub(crate) struct HardLinkTracker {
+    /// Reference paths whose hardlink cohort has already had metadata applied
+    /// once. On NTFS the DACL lives on the MFT record (inode); writing the
+    /// same DACL through each alias produces N identical inode-level writes.
+    ///
+    /// upstream: hlink.c::hard_link_check returns 1 for followers so
+    /// generator.c:1540 exits before set_file_attrs(); the inode keeps the
+    /// leader's DACL for free.
+    acl_cohort_leaders: rustc_hash::FxHashSet<PathBuf>,
+}
 
 #[cfg(not(unix))]
 impl HardLinkTracker {
-    pub(crate) const fn new() -> Self {
-        Self
+    pub(crate) fn new() -> Self {
+        Self::default()
     }
 
     pub(crate) fn existing_target(&self, _metadata: &fs::Metadata) -> Option<PathBuf> {
@@ -239,6 +268,19 @@ impl HardLinkTracker {
     }
 
     pub(crate) fn record(&mut self, _metadata: &fs::Metadata, _destination: &Path) {}
+
+    /// Returns `true` the first time `reference` is registered as the source
+    /// of a hardlink cohort (the leader); subsequent calls with the same
+    /// `reference` return `false` (followers).
+    ///
+    /// On Windows the leader's `SetNamedSecurityInfoW` call populates the
+    /// shared NTFS inode; every follower would re-write the same DACL bytes
+    /// to the same inode if not skipped. The wire receiver already skips
+    /// follower ACL writes (`create_hardlinks` itemizes only); this tracker
+    /// brings the local-copy `--copy-dest` Link branch into parity.
+    pub(crate) fn register_acl_cohort_leader(&mut self, reference: &Path) -> bool {
+        self.acl_cohort_leaders.insert(reference.to_path_buf())
+    }
 }
 
 #[cfg(test)]
@@ -277,6 +319,59 @@ mod tests {
 
         let mut tracker = HardLinkTracker::new();
         tracker.record(&metadata, Path::new("/dest/test.txt"));
+    }
+
+    #[test]
+    fn register_acl_cohort_leader_first_call_is_leader() {
+        let mut tracker = HardLinkTracker::new();
+        assert!(
+            tracker.register_acl_cohort_leader(Path::new("/ref/file.bin")),
+            "first call for a reference is the cohort leader"
+        );
+    }
+
+    #[test]
+    fn register_acl_cohort_leader_subsequent_calls_are_followers() {
+        let mut tracker = HardLinkTracker::new();
+        let reference = Path::new("/ref/file.bin");
+        assert!(tracker.register_acl_cohort_leader(reference));
+        for _ in 0..10 {
+            assert!(
+                !tracker.register_acl_cohort_leader(reference),
+                "subsequent calls for the same reference are followers"
+            );
+        }
+    }
+
+    #[test]
+    fn register_acl_cohort_leader_distinct_references_each_leader_once() {
+        let mut tracker = HardLinkTracker::new();
+        assert!(tracker.register_acl_cohort_leader(Path::new("/ref/a.bin")));
+        assert!(tracker.register_acl_cohort_leader(Path::new("/ref/b.bin")));
+        assert!(!tracker.register_acl_cohort_leader(Path::new("/ref/a.bin")));
+        assert!(!tracker.register_acl_cohort_leader(Path::new("/ref/b.bin")));
+    }
+
+    /// Simulates the `--copy-dest` Link branch behaviour: five destinations
+    /// linked to the same reference inode would, without the cohort gate,
+    /// invoke the DACL writer five times. The gate ensures count == 1.
+    ///
+    /// upstream: hlink.c::hard_link_check returns 1 for followers so the
+    /// generator never calls `set_file_attrs()` -> `set_acl()` on an alias.
+    #[test]
+    fn cohort_gate_yields_one_acl_call_per_cohort() {
+        let mut tracker = HardLinkTracker::new();
+        let reference = Path::new("/ref/leader.bin");
+        let mut dacl_writes = 0_usize;
+        for _follower in 0..5 {
+            if tracker.register_acl_cohort_leader(reference) {
+                dacl_writes += 1;
+            }
+        }
+        assert_eq!(
+            dacl_writes, 1,
+            "five-link cohort must produce exactly one DACL write"
+        );
     }
 
     #[cfg(unix)]

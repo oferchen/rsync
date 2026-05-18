@@ -337,8 +337,20 @@ pub(super) fn process_links(
                         true,
                         context.filter_program(),
                     )?;
+                    // The destination is hardlinked to `path`, so all
+                    // destinations sharing this reference share one inode.
+                    // ACLs live on the inode (NTFS DACL on Windows, POSIX
+                    // ACL on Unix), so the leader's write populates the
+                    // shared inode and followers inherit for free.
+                    //
+                    // upstream: hlink.c::hard_link_check returns 1 for
+                    // followers; generator.c:1540 exits before
+                    // set_file_attrs() so set_acl() is never invoked on a
+                    // follower alias.
                     #[cfg(all(any(unix, windows), feature = "acl"))]
-                    sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+                    if context.register_acl_cohort_leader(&path) {
+                        sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+                    }
                     // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1)
                     // when a hard link is created from a reference directory.
                     info_log!(Name, 1, "{} => {}", record_path.display(), path.display());
@@ -444,6 +456,51 @@ mod tests {
         assert!(
             name_messages().is_empty(),
             "uptodate emission must be gated at NAME level 2"
+        );
+    }
+
+    /// Windows-only regression test for POST-4 / WAS-6 (#2415, audit PR
+    /// #4399). The `--copy-dest` Link branch hardlinks every cohort follower
+    /// to the same reference inode. On NTFS the DACL lives on the MFT
+    /// record, so each `SetNamedSecurityInfoW` call writes to the shared
+    /// inode regardless of which alias was opened.
+    ///
+    /// Before the fix the loop invoked `sync_acls_if_requested` once per
+    /// follower (O(N) per N-link cohort). The cohort gate routes the write
+    /// through the first call only; followers inherit through the inode.
+    ///
+    /// upstream: hlink.c::hard_link_check returns 1 for followers so the
+    /// generator never calls `set_file_attrs()` -> `set_acl()` on a
+    /// follower alias.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn copy_dest_link_branch_dacl_writes_once_per_cohort() {
+        use std::path::Path;
+
+        use crate::local_copy::HardLinkTracker;
+
+        let mut tracker = HardLinkTracker::new();
+        let reference = Path::new(r"C:\ref\leader.bin");
+        let followers: [&Path; 5] = [
+            Path::new(r"C:\dst\f1.bin"),
+            Path::new(r"C:\dst\f2.bin"),
+            Path::new(r"C:\dst\f3.bin"),
+            Path::new(r"C:\dst\f4.bin"),
+            Path::new(r"C:\dst\f5.bin"),
+        ];
+
+        let mut dacl_writes = 0_usize;
+        for _follower in followers {
+            // Mirrors the production gate in `process_links` at the
+            // `ReferenceDecision::Link` branch.
+            if tracker.register_acl_cohort_leader(reference) {
+                dacl_writes += 1;
+            }
+        }
+
+        assert_eq!(
+            dacl_writes, 1,
+            "5-link cohort must trigger exactly one DACL write (was: {dacl_writes})"
         );
     }
 }
