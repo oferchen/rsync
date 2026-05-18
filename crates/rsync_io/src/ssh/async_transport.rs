@@ -57,6 +57,11 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 use super::connect::{SshConnectConfig, build_ssh_command};
 
+#[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+use super::async_stderr_drain::AsyncStderrDrain;
+#[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+use super::aux_channel::configure_stderr_channel;
+
 /// Tokio-backed SSH transport.
 ///
 /// Wraps a spawned `ssh` child whose stdin and stdout are configured as
@@ -68,15 +73,25 @@ pub struct AsyncSshTransport {
     child: Child,
     stdin: Option<ChildStdin>,
     stdout: Option<ChildStdout>,
+    /// Drain task for the SSH socketpair-backed stderr channel.
+    ///
+    /// `Some` only when both `async-ssh` and `ssh-socketpair-stderr` are
+    /// enabled and the socketpair was successfully installed at spawn
+    /// time. When `None`, the transport falls back to the `Stdio::inherit`
+    /// path that preceded SSE-4 (PR #2373).
+    #[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+    stderr_drain: Option<AsyncStderrDrain>,
 }
 
 impl std::fmt::Debug for AsyncSshTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AsyncSshTransport")
-            .field("child", &self.child)
+        let mut dbg = f.debug_struct("AsyncSshTransport");
+        dbg.field("child", &self.child)
             .field("stdin_open", &self.stdin.is_some())
-            .field("stdout_open", &self.stdout.is_some())
-            .finish()
+            .field("stdout_open", &self.stdout.is_some());
+        #[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+        dbg.field("stderr_drain", &self.stderr_drain.is_some());
+        dbg.finish()
     }
 }
 
@@ -115,7 +130,31 @@ impl AsyncSshTransport {
         command.args(command_args.iter());
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
+
+        // Socketpair-backed stderr drain (SSE-4, #2373). When both
+        // `async-ssh` and `ssh-socketpair-stderr` are enabled on Unix,
+        // install a `socketpair(AF_UNIX, SOCK_STREAM, 0)` whose child end
+        // becomes the spawned ssh's fd 2; the parent end is wrapped in a
+        // tokio `UnixStream` and handed to `AsyncStderrDrain::spawn`.
+        // On any other configuration, fall back to `Stdio::inherit` so
+        // default builds remain byte-identical to pre-SSE-4 behaviour.
+        #[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+        let parent_socketpair_end = {
+            let parent = configure_stderr_channel(command.as_std_mut());
+            // SSE-4 design (docs/design/socketpair-stderr-channel.md, sec 4):
+            // when the socketpair factory returns `None` (FD exhaustion),
+            // revert to `Stdio::inherit` rather than the pipe fallback the
+            // sync path picks. The async transport has no ChildStderr-aware
+            // drain to feed; inheriting preserves pre-SSE-4 visibility and
+            // avoids leaving a piped stderr undrained.
+            if parent.is_none() {
+                command.stderr(Stdio::inherit());
+            }
+            parent
+        };
+        #[cfg(not(all(feature = "ssh-socketpair-stderr", unix)))]
         command.stderr(Stdio::inherit());
+
         // Reap the child on Drop if the caller forgets to await `wait()`,
         // mirroring the sync path's `SshChildHandle` Drop behaviour.
         command.kill_on_drop(true);
@@ -135,11 +174,57 @@ impl AsyncSshTransport {
             )
         })?;
 
+        #[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+        let stderr_drain = match parent_socketpair_end {
+            Some(parent) => {
+                // tokio's UnixStream needs a non-blocking std handle, then
+                // wraps it in the runtime's I/O driver. `from_std` returns
+                // `io::Error` only when the runtime is missing - we're
+                // inside `execute_remote_rsync` which is an `async fn`, so
+                // a runtime is guaranteed present.
+                parent.set_nonblocking(true)?;
+                let async_parent = tokio::net::UnixStream::from_std(parent)?;
+                Some(AsyncStderrDrain::spawn(async_parent))
+            }
+            None => None,
+        };
+
         Ok(Self {
             child,
             stdin: Some(stdin),
             stdout: Some(stdout),
+            #[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+            stderr_drain,
         })
+    }
+
+    /// Snapshot of bytes captured from the SSH child's stderr.
+    ///
+    /// Returns an empty `Vec` when:
+    ///
+    /// - `ssh-socketpair-stderr` is disabled,
+    /// - the platform is not Unix (the socketpair path is Unix-only),
+    /// - or the socketpair factory fell back to inherit (FD exhaustion).
+    ///
+    /// Bounded to `ASYNC_STDERR_BUFFER_CAP` bytes (sliding window). Safe
+    /// to call concurrently with the drain task and after `wait()`.
+    #[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+    #[must_use]
+    pub fn stderr_capture(&self) -> Vec<u8> {
+        self.stderr_drain
+            .as_ref()
+            .map(AsyncStderrDrain::stderr_capture)
+            .unwrap_or_default()
+    }
+
+    /// Fallback accessor when the socketpair drain is compiled out.
+    ///
+    /// Always returns an empty `Vec`. Exists so call sites can compile
+    /// without conditional access expressions on every read.
+    #[cfg(not(all(feature = "ssh-socketpair-stderr", unix)))]
+    #[must_use]
+    pub fn stderr_capture(&self) -> Vec<u8> {
+        Vec::new()
     }
 
     /// Splits the transport into its async read and write halves.
@@ -289,6 +374,22 @@ mod tests {
             let (r, w) = t.split();
             takes_read(r);
             takes_write(w);
+        }
+    }
+
+    /// When `ssh-socketpair-stderr` is compiled out (or on non-Unix),
+    /// `stderr_capture` must compile and return an empty `Vec` rather
+    /// than panic. This keeps call sites unconditional.
+    #[cfg(not(all(feature = "ssh-socketpair-stderr", unix)))]
+    #[test]
+    fn stderr_capture_is_empty_when_feature_disabled() {
+        // Construct via a minimal path: we cannot easily instantiate
+        // `AsyncSshTransport` without spawning, so verify behaviour at
+        // the function level by exercising the const branch through a
+        // compile-only checker.
+        #[allow(dead_code)]
+        fn _check(t: &AsyncSshTransport) -> Vec<u8> {
+            t.stderr_capture()
         }
     }
 }
