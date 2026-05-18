@@ -71,6 +71,7 @@
 
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
+#![deny(rustdoc::broken_intra_doc_links)]
 
 mod config;
 pub mod error_format;

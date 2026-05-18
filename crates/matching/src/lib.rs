@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![deny(rustdoc::broken_intra_doc_links)]
 
 //! Block matching and delta generation for rsync transfers.
 //!
