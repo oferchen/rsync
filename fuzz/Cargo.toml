@@ -37,6 +37,10 @@ path = "../crates/batch"
 [dependencies.metadata]
 path = "../crates/metadata"
 
+[dependencies.bandwidth]
+path = "../crates/bandwidth"
+default-features = false
+
 [[bin]]
 name = "protocol_wire"
 path = "fuzz_targets/protocol_wire.rs"
@@ -173,6 +177,13 @@ bench = false
 [[bin]]
 name = "vstring"
 path = "fuzz_targets/vstring.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bwlimit"
+path = "fuzz_targets/bwlimit.rs"
 test = false
 doc = false
 bench = false
