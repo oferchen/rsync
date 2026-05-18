@@ -140,6 +140,7 @@ xattr = "1.6"
 libc = { workspace = true }
 criterion = { workspace = true }
 dashmap = { workspace = true }
+zstd = "0.13"
 
 [[bench]]
 name = "optimizations_benchmark"
@@ -221,3 +222,8 @@ harness = false
 name = "parallel_receive_delta_perf"
 harness = false
 required-features = ["parallel-receive-delta"]
+
+[[bench]]
+name = "spill_policy_perf"
+harness = false
+required-features = ["spill-compression"]
