@@ -17,6 +17,8 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
   fill the 64 KiB pipe buffer), when to enable it, and platform constraints.
   Added `docs/ssh-transport.md` and cross-linked from the Cargo features
   table in `README.md` (#2377).
+- Refresh spill layout and migration status (SPL-12) (#4394).
+- Cross-platform CI hazard preflight audit (#4427).
 
 ### Performance
 
