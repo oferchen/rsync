@@ -14,6 +14,7 @@
 #![allow(dead_code)]
 
 use std::io;
+#[cfg(not(unix))]
 use std::os::raw::c_int;
 use std::time::Duration;
 
