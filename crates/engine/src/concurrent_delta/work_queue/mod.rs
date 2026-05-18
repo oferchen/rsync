@@ -99,6 +99,7 @@ mod bounded;
 mod capacity;
 mod drain;
 mod iter;
+/// AIMD adaptive-concurrency limiter for the work queue.
 pub mod limiter;
 #[cfg(feature = "multi-producer")]
 mod multi_producer;

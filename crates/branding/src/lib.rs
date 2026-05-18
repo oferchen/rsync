@@ -6,8 +6,11 @@
 
 mod generated;
 
+/// Branding constants and helpers shared across the workspace.
 pub mod branding;
+/// Validation utilities for branding configuration.
 pub mod validation;
+/// Workspace metadata exported as compile-time constants.
 pub mod workspace;
 
 pub use generated::{BUILD_REVISION, BUILD_TOOLCHAIN};

@@ -29,6 +29,7 @@
 mod converter;
 mod error;
 mod pair;
+/// `--debug=ICONV` producer emissions for charset setup.
 pub mod trace;
 
 pub use converter::{EncodingConverter, FilenameConverter, converter_from_locale};

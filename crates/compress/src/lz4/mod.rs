@@ -38,6 +38,7 @@
 //! ```
 
 pub mod frame;
+/// Raw LZ4 block compression for rsync wire protocol compatibility.
 pub mod raw;
 
 /// Commonly used frame types re-exported for convenience.

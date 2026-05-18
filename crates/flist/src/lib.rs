@@ -91,6 +91,7 @@ mod lazy_entry;
 mod lazy_metadata;
 pub(crate) mod symlink_safety;
 
+/// Parallel file list processing utilities using rayon.
 #[cfg(feature = "parallel")]
 #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
 pub mod parallel;

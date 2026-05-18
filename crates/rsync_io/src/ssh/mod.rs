@@ -90,9 +90,11 @@ mod aux_channel;
 mod builder;
 mod connect;
 mod connection;
+/// Embedded SSH transport using the russh library.
 pub mod embedded;
 mod operand;
 mod parse;
+/// Cross-platform stderr aux-channel between the parent process and a spawned `ssh` child.
 #[cfg(feature = "ssh-socketpair-stderr")]
 pub mod socketpair_stderr;
 

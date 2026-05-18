@@ -17,10 +17,15 @@
 //! which provides [`crate::flist::FileListWriter`] and [`crate::flist::FileListReader`].
 
 pub mod compressed_token;
+/// Delta token encoding for file reconstruction.
 pub mod delta;
+/// Low-level file entry wire format encoding functions.
 pub mod file_entry;
+/// Low-level file entry wire format decoding functions.
 pub mod file_entry_decode;
+/// Signature block encoding for delta generation.
 pub mod signature;
+/// Vectored wire format I/O helpers for batched writes.
 pub mod vectored;
 
 pub use self::compressed_token::{
