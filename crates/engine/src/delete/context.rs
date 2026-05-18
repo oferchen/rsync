@@ -516,6 +516,7 @@ impl DeleteContext {
 ///
 /// Owns the [`DeleteFs`] so test callers using [`super::RecordingDeleteFs`]
 /// can inspect the recorded event sequence after the drain returns.
+#[derive(Debug)]
 pub struct DrainOutcome<F: DeleteFs> {
     /// The filesystem dispatcher the emitter consumed. Production code
     /// drops this; tests inspect `events()` on a `RecordingDeleteFs`.
