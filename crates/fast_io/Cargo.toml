@@ -49,6 +49,14 @@ default = ["io_uring", "iocp"]
 # Trade-offs: Linux-only, adds dependency on io-uring crate
 io_uring = ["dep:io-uring"]
 
+# Opt-in sender/reader-side io_uring slurp wrapper (IUD-6 #2366).
+# Activates `IoUringFileReader` + `read_file_with_io_uring`, the basis-file
+# fast path that submits `IORING_OP_READ_FIXED` against a `RegisteredBufferPool`
+# slot. Disabled by default so production reads stay byte-identical to the
+# stdlib path; consumers opt in through their own passthrough features
+# (e.g. `engine/iouring-data-reads`).
+iouring-data-reads = ["io_uring"]
+
 # Windows I/O Completion Ports for async file reads and writes
 # Requirements: Windows Vista+ (runtime detection and fallback)
 # Benefits: Overlapped async I/O with completion port batching

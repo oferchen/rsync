@@ -35,6 +35,12 @@ use signature::{
 
 use super::types::{DeltaResult, DeltaWork, DeltaWorkKind};
 
+/// Minimum basis-file size, in bytes, before the IUD-6 io_uring slurp
+/// dispatch fires. Below this threshold a single `BufReader` pass is faster
+/// than amortising io_uring ring construction and buffer registration.
+#[cfg(all(target_os = "linux", feature = "iouring-data-reads"))]
+const IOURING_BASIS_SLURP_THRESHOLD: u64 = 1024 * 1024;
+
 /// Strong checksum length used by self-contained delta computation in
 /// [`DeltaTransferStrategy`].
 ///
@@ -197,11 +203,10 @@ fn self_contained_delta(
     let layout = calculate_signature_layout(layout_params)
         .map_err(|error| format!("signature layout failed: {error}"))?;
 
-    let basis_file = File::open(basis)
+    let basis_reader = open_basis_reader(basis, basis_len)
         .map_err(|error| format!("basis open failed: {}: {error}", basis.display()))?;
-    let signature =
-        generate_file_signature(BufReader::new(basis_file), layout, SIGNATURE_ALGORITHM)
-            .map_err(|error| format!("signature generation failed: {error}"))?;
+    let signature = generate_file_signature(basis_reader, layout, SIGNATURE_ALGORITHM)
+        .map_err(|error| format!("signature generation failed: {error}"))?;
     let index = DeltaSignatureIndex::from_signature(&signature, SIGNATURE_ALGORITHM)
         .ok_or_else(|| "signature index build failed".to_string())?;
 
@@ -211,18 +216,13 @@ fn self_contained_delta(
         .generate(BufReader::new(source_file), &index)
         .map_err(|error| format!("delta generation failed: {error}"))?;
 
-    let basis_apply = File::open(basis)
+    let basis_apply_reader = open_basis_reader(basis, basis_len)
         .map_err(|error| format!("basis reopen failed: {}: {error}", basis.display()))?;
     let dest_file = File::create(dest)
         .map_err(|error| format!("destination create failed: {}: {error}", dest.display()))?;
     let mut dest_writer = BufWriter::new(dest_file);
-    apply_delta(
-        BufReader::new(basis_apply),
-        &mut dest_writer,
-        &index,
-        &script,
-    )
-    .map_err(|error| format!("delta application failed: {error}"))?;
+    apply_delta(basis_apply_reader, &mut dest_writer, &index, &script)
+        .map_err(|error| format!("delta application failed: {error}"))?;
     dest_writer
         .into_inner()
         .map_err(|err| err.into_error())
@@ -276,6 +276,67 @@ pub fn dispatch(work: &DeltaWork) -> DeltaResult {
     select_strategy(work)
         .process(work)
         .with_sequence(work.sequence())
+}
+
+/// Random-access basis reader used by `self_contained_delta`.
+///
+/// `apply_delta` requires `Read + Seek`; this enum lets the
+/// `iouring-data-reads` slurp path (`Cursor<Vec<u8>>`) and the default
+/// `BufReader<File>` path share a single concrete return type without a
+/// boxed-trait Seek workaround.
+enum BasisReader {
+    Buffered(std::io::BufReader<File>),
+    Slurped(std::io::Cursor<Vec<u8>>),
+}
+
+impl std::io::Read for BasisReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            BasisReader::Buffered(r) => r.read(buf),
+            BasisReader::Slurped(r) => r.read(buf),
+        }
+    }
+}
+
+impl std::io::Seek for BasisReader {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        match self {
+            BasisReader::Buffered(r) => r.seek(pos),
+            BasisReader::Slurped(r) => r.seek(pos),
+        }
+    }
+}
+
+/// Opens a basis file as a `BasisReader`.
+///
+/// When the `iouring-data-reads` feature is on, Linux is the target, and the
+/// basis is at least `IOURING_BASIS_SLURP_THRESHOLD` bytes, the file is
+/// pre-read through `fast_io::read_file_with_io_uring` (a `READ_FIXED` pass
+/// against a registered buffer pool) and returned as `BasisReader::Slurped`.
+/// Below the threshold, on non-Linux targets, or when the feature is off,
+/// the default `BufReader<File>` path is used so production builds are
+/// byte-identical to today.
+fn open_basis_reader(path: &Path, len: u64) -> std::io::Result<BasisReader> {
+    #[cfg(all(target_os = "linux", feature = "iouring-data-reads"))]
+    {
+        if len >= IOURING_BASIS_SLURP_THRESHOLD {
+            match fast_io::read_file_with_io_uring(path) {
+                Ok(bytes) => return Ok(BasisReader::Slurped(std::io::Cursor::new(bytes))),
+                Err(_) => {
+                    // Fall through to the default BufReader path on any
+                    // io_uring failure (kernel rejected the ring, seccomp,
+                    // out-of-memory under registration). Default path is
+                    // always production-ready.
+                }
+            }
+        }
+    }
+    #[cfg(not(all(target_os = "linux", feature = "iouring-data-reads")))]
+    {
+        let _ = len; // silence unused-variable lint on non-Linux / feature-off
+    }
+    let file = File::open(path)?;
+    Ok(BasisReader::Buffered(BufReader::new(file)))
 }
 
 #[cfg(test)]
