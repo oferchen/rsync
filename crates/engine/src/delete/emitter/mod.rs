@@ -74,6 +74,7 @@ use policy::{IOERR_GENERAL, IOERR_VANISHED_ONLY};
 /// [`EmitterErrorPolicy`]. All collaborators are taken by value so the
 /// emitter is the unique writer of every observable side effect
 /// (single-emitter invariant; section 2.3 of the design).
+#[derive(Debug)]
 pub struct DeleteEmitter<F: DeleteFs> {
     fs: F,
     stats: DeleteStats,

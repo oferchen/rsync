@@ -49,7 +49,7 @@ pub(super) fn dir_child(parent: &str, name: &str) -> FileEntry {
 /// Failure plan: for each (path, errno) pair, the next call against
 /// that path returns the matching error before falling back to the
 /// recording behaviour.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct ScriptedDeleteFs {
     inner: RecordingDeleteFs,
     rules: Mutex<Vec<(PathBuf, io::ErrorKind)>>,

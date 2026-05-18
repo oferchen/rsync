@@ -29,7 +29,7 @@ use crate::util::poison::lock_or_recover;
 /// across the emitter and any future helpers. The production impl is
 /// stateless; the test fake holds a `Mutex` because the recording is
 /// observable from the test thread after `emit_all` returns.
-pub trait DeleteFs {
+pub trait DeleteFs: std::fmt::Debug {
     /// Unlinks a regular file.
     fn unlink_file(&self, path: &Path) -> io::Result<()>;
 
