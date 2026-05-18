@@ -73,6 +73,7 @@ enum ReorderMode {
         capacity: usize,
         threshold: usize,
         dir: Option<PathBuf>,
+        granularity: super::spill::SpillGranularity,
     },
 }
 
@@ -220,6 +221,7 @@ impl DeltaConsumer {
                 capacity: reorder_capacity,
                 threshold: usize::try_from(threshold).unwrap_or(usize::MAX),
                 dir: cfg.spill_policy.dir,
+                granularity: cfg.spill_policy.granularity,
             },
             None => ReorderMode::Bare {
                 capacity: reorder_capacity,
@@ -284,7 +286,8 @@ impl DeltaConsumer {
                         capacity,
                         threshold,
                         dir,
-                    } => match build_spillable(capacity, threshold, dir) {
+                        granularity,
+                    } => match build_spillable(capacity, threshold, dir, granularity) {
                         Ok(buf) => {
                             run_spillable_loop(stream_rx, &result_tx, buf, &spill_events_thread);
                         }
@@ -388,11 +391,13 @@ fn build_spillable(
     capacity: usize,
     threshold: usize,
     dir: Option<PathBuf>,
+    granularity: super::spill::SpillGranularity,
 ) -> std::io::Result<SpillableReorderBuffer<DeltaResult>> {
-    match dir {
-        Some(d) => SpillableReorderBuffer::with_spill_dir(capacity, threshold, d),
-        None => Ok(SpillableReorderBuffer::new(capacity, threshold)),
-    }
+    let buf = match dir {
+        Some(d) => SpillableReorderBuffer::with_spill_dir(capacity, threshold, d)?,
+        None => SpillableReorderBuffer::new(capacity, threshold),
+    };
+    Ok(buf.with_granularity(granularity))
 }
 
 /// Reorder loop for the bare [`ReorderBuffer`] backend (passthrough or
