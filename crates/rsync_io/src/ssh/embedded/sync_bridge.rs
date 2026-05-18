@@ -118,7 +118,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let stream = self.stream.as_mut();
+        let mut stream = self.stream.as_mut();
         self.runtime.block_on(async move { stream.read(buf).await })
     }
 }
@@ -128,7 +128,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let stream = self.stream.as_mut();
+        let mut stream = self.stream.as_mut();
         self.runtime.block_on(async move {
             stream.write_all(buf).await?;
             Ok(buf.len())
@@ -136,7 +136,7 @@ where
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        let stream = self.stream.as_mut();
+        let mut stream = self.stream.as_mut();
         self.runtime.block_on(async move { stream.flush().await })
     }
 }
