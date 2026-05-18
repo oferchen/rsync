@@ -9,9 +9,15 @@
 //! # Design
 //!
 //! Items must implement [`SpillCodec`] so they can be encoded to and decoded
-//! from bytes. The codec uses a simple length-prefixed binary format -
-//! each record is `[u32 len][payload bytes]` - which is compact, fast to
-//! seek through, and platform-independent.
+//! from bytes. The on-disk format is `[u32 len][payload bytes]` per record;
+//! payload contents and per-record fan-out are controlled by
+//! [`SpillGranularity`]. The default ([`SpillGranularity::WholeBatch`])
+//! packs every candidate selected by a single spill event into one record
+//! so the 4-byte length header is amortised across many items.
+//! [`SpillGranularity::PerItem`] writes one record per item, matching the
+//! historical layout and keeping a single reload's decode cost bounded to
+//! a single payload. Both formats are compact, fast to seek through, and
+//! platform-independent.
 //!
 //! Spilled items are indexed by `(sequence_number -> file_offset)` in a
 //! `BTreeMap` so reload is O(log S) where S is the number of spilled items.
@@ -27,7 +33,11 @@
 //! the *highest-sequence* buffered items first - these are furthest from
 //! the delivery cursor (`next_expected`) and thus least likely to be needed
 //! soon. Items within a small "hot zone" around `next_expected` are kept
-//! in memory to avoid thrashing.
+//! in memory to avoid thrashing. Under
+//! [`SpillGranularity::WholeBatch`] every non-hot-zone candidate is
+//! evicted in one batched write; under [`SpillGranularity::PerItem`] the
+//! eviction stops as soon as the in-memory budget drops back below the
+//! threshold.
 //!
 //! # Error handling
 //!
@@ -227,8 +237,22 @@ pub struct SpillableReorderBuffer<T: SpillCodec> {
     memory_used: usize,
     /// Maximum in-memory bytes before spilling.
     threshold: usize,
-    /// Spilled items: sequence number -> byte offset in the spill file.
+    /// Spilled items: sequence number -> byte offset of the owning record.
+    ///
+    /// For [`SpillGranularity::PerItem`] every sequence has its own record
+    /// and offset. For [`SpillGranularity::WholeBatch`] multiple sequences
+    /// can map to the same record offset; the sibling list lives in
+    /// [`batch_members`](Self::batch_members).
     spill_index: BTreeMap<u64, u64>,
+    /// Reverse lookup for whole-batch records: record offset -> the
+    /// sequences originally packed into that record, in encode order.
+    ///
+    /// Only populated when the spill is written under
+    /// [`SpillGranularity::WholeBatch`]. Per-item records skip this map.
+    /// When an entry is removed from [`spill_index`](Self::spill_index) the
+    /// matching slot here is replaced with `None` so the on-disk decode
+    /// order survives partial evictions.
+    batch_members: BTreeMap<u64, Vec<Option<u64>>>,
     /// Temporary storage for spilled items. Created lazily on first spill.
     spill_file: Option<SpillBackend>,
     /// Caller-supplied spill directory for the directory-backed flavour.
@@ -236,6 +260,13 @@ pub struct SpillableReorderBuffer<T: SpillCodec> {
     spill_dir: Option<PathBuf>,
     /// Current write position in the spill file.
     spill_write_pos: u64,
+    /// Per-spill-event record format.
+    ///
+    /// [`SpillGranularity::WholeBatch`] (default) packs every candidate
+    /// chosen by a single [`spill_excess`](Self::spill_excess) call into one
+    /// length-prefixed record. [`SpillGranularity::PerItem`] keeps the
+    /// historical one-record-per-item layout.
+    granularity: SpillGranularity,
     /// Running count of spill-to-disk events (for diagnostics).
     spill_count: u64,
     /// Running count of reload-from-disk events (for diagnostics).
@@ -256,6 +287,7 @@ impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
             .field("spill_events", &self.spill_count)
             .field("reload_events", &self.reload_count)
             .field("dir_recreate_count", &self.dir_recreate_count)
+            .field("granularity", &self.granularity)
             .finish()
     }
 }
@@ -277,9 +309,11 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             memory_used: 0,
             threshold,
             spill_index: BTreeMap::new(),
+            batch_members: BTreeMap::new(),
             spill_file: None,
             spill_dir: None,
             spill_write_pos: 0,
+            granularity: SpillGranularity::default(),
             spill_count: 0,
             reload_count: 0,
             dir_recreate_count: 0,
@@ -312,13 +346,34 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             memory_used: 0,
             threshold,
             spill_index: BTreeMap::new(),
+            batch_members: BTreeMap::new(),
             spill_file: None,
             spill_dir: Some(dir),
             spill_write_pos: 0,
+            granularity: SpillGranularity::default(),
             spill_count: 0,
             reload_count: 0,
             dir_recreate_count: 0,
         })
+    }
+
+    /// Overrides the per-spill-event record granularity.
+    ///
+    /// [`SpillGranularity::WholeBatch`] (the default) packs every candidate
+    /// chosen by a single spill event into one length-prefixed record, which
+    /// amortises the 4-byte header across many items.
+    /// [`SpillGranularity::PerItem`] writes one record per item so a single
+    /// reload only has to decode one item's payload.
+    #[must_use]
+    pub fn with_granularity(mut self, granularity: SpillGranularity) -> Self {
+        self.granularity = granularity;
+        self
+    }
+
+    /// Returns the configured per-spill-event record granularity.
+    #[must_use]
+    pub fn granularity(&self) -> SpillGranularity {
+        self.granularity
     }
 
     /// Creates a spillable reorder buffer with the default 64 MB threshold.
@@ -353,7 +408,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         self.memory_used += item_size;
 
         // If this sequence was previously spilled, remove the stale entry.
-        self.spill_index.remove(&sequence);
+        self.evict_from_spill_state(sequence);
 
         // Spill excess items if over threshold.
         if self.memory_used > self.threshold {
@@ -377,13 +432,33 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         self.inner.force_insert(sequence, item);
         self.memory_used += item_size;
 
-        self.spill_index.remove(&sequence);
+        self.evict_from_spill_state(sequence);
 
         if self.memory_used > self.threshold {
             self.spill_excess()?;
         }
 
         Ok(())
+    }
+
+    /// Removes any spill-state entry for `sequence`, including its membership
+    /// in a whole-batch record so the disk copy is never resurrected over a
+    /// newer in-memory version. The on-disk slot is replaced with `None` so
+    /// the encode order survives partial evictions.
+    fn evict_from_spill_state(&mut self, sequence: u64) {
+        if let Some(offset) = self.spill_index.remove(&sequence) {
+            if let Some(members) = self.batch_members.get_mut(&offset) {
+                for slot in members.iter_mut() {
+                    if *slot == Some(sequence) {
+                        *slot = None;
+                        break;
+                    }
+                }
+                if members.iter().all(Option::is_none) {
+                    self.batch_members.remove(&offset);
+                }
+            }
+        }
     }
 
     /// Returns the next in-order item if available.
@@ -410,12 +485,45 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             return Ok(None);
         };
 
+        // Batched records get reloaded as a unit: decode every item in the
+        // record and re-insert the still-needed sequences into the ring so
+        // the caller sees the historical in-order delivery semantics. The
+        // siblings that come back in this batch live in memory again until
+        // a later delivery drops them; account for their bytes so the
+        // spill threshold tracker remains accurate. The matching debit
+        // happens incrementally as each sibling reaches the in-memory
+        // [`inner.next_in_order`](ReorderBuffer::next_in_order) branch above.
+        if let Some(members) = self.batch_members.remove(&offset) {
+            let items = self.reload_batch(offset, members.len())?;
+            debug_assert_eq!(items.len(), members.len());
+            for (slot, item) in members.iter().zip(items) {
+                if let Some(seq) = slot {
+                    self.spill_index.remove(seq);
+                    self.memory_used = self.memory_used.saturating_add(item.estimated_size());
+                    self.inner.force_insert(*seq, item);
+                }
+            }
+            self.reload_count += 1;
+
+            // Take the immediately deliverable item out of the ring through
+            // the same accounting path used by the in-memory fast path so
+            // the credit issued above is matched by an equal debit.
+            if let Some(item) = self.inner.next_in_order() {
+                self.memory_used = self.memory_used.saturating_sub(item.estimated_size());
+                return Ok(Some(item));
+            }
+            debug_assert!(false, "force_insert at next_expected must succeed");
+            return Ok(None);
+        }
+
         let item = self.reload_item(offset)?;
         self.spill_index.remove(&next);
         self.reload_count += 1;
-
         // Re-insert into the inner ring at next_expected (offset 0, always
-        // fits) so that next_in_order advances the delivery cursor.
+        // fits) so that next_in_order advances the delivery cursor. The
+        // single-item path keeps memory_used unchanged because the item
+        // was already debited at spill time and is delivered immediately
+        // below without ever being credited back.
         self.inner.force_insert(next, item);
         let result = self.inner.next_in_order();
         debug_assert!(
@@ -525,8 +633,17 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             candidates.push(seq);
         }
 
-        // Extract and spill candidates until under threshold.
-        for seq in candidates {
+        match self.granularity {
+            SpillGranularity::PerItem => self.spill_candidates_per_item(&candidates),
+            SpillGranularity::WholeBatch => self.spill_candidates_whole_batch(&candidates),
+        }
+    }
+
+    /// Per-item spill: each candidate becomes its own length-prefixed record.
+    ///
+    /// Matches the historical on-disk layout: `[u32 len][payload]` per item.
+    fn spill_candidates_per_item(&mut self, candidates: &[u64]) -> Result<(), SpillError> {
+        for &seq in candidates {
             if self.memory_used <= self.threshold {
                 break;
             }
@@ -547,6 +664,102 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             }
         }
         Ok(())
+    }
+
+    /// Whole-batch spill: combine every candidate selected for this spill
+    /// event into a single length-prefixed record so the per-item header
+    /// overhead is paid once.
+    ///
+    /// The disk layout is `[u32 total_payload_len][payload1][payload2]...`.
+    /// Every non-hot-zone candidate is evicted in one event so the next
+    /// write amortises the 4-byte header across many items - the spill
+    /// event leaves the hot zone in memory and nothing else, instead of
+    /// repeatedly re-entering [`spill_excess`](Self::spill_excess) one
+    /// item at a time.
+    fn spill_candidates_whole_batch(&mut self, candidates: &[u64]) -> Result<(), SpillError> {
+        // Collect every candidate eligible for eviction. Walk the selection
+        // in the same highest-first order as the per-item path so the
+        // closest-to-delivery items stay in memory.
+        let mut taken: Vec<(u64, T, usize)> = Vec::new();
+        for &seq in candidates {
+            if let Some(item) = self.inner.take(seq) {
+                let item_size = item.estimated_size();
+                taken.push((seq, item, item_size));
+            }
+        }
+
+        if taken.is_empty() {
+            return Ok(());
+        }
+
+        // Encode all payloads up front. A codec failure must not leave a
+        // partial record on disk, and re-insertion is straightforward while
+        // the items are still owned here.
+        let mut payload = Vec::new();
+        for (_, item, _) in &taken {
+            if let Err(e) = item.encode(&mut payload) {
+                self.restore_taken(taken);
+                return Err(SpillError::Io(e));
+            }
+        }
+        if payload.len() > u32::MAX as usize {
+            self.restore_taken(taken);
+            return Err(SpillError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "spill record exceeds u32::MAX bytes",
+            )));
+        }
+        let len = payload.len() as u32;
+        let mut record_offset = self.spill_write_pos;
+
+        let written = match self.write_record(&len.to_le_bytes(), &payload) {
+            Ok(w) => w,
+            Err(e) if e.kind() == io::ErrorKind::NotFound && self.spill_dir.is_some() => {
+                if !self.spill_index.is_empty() {
+                    self.restore_taken(taken);
+                    return Err(SpillError::Io(e));
+                }
+                if let Err(retry_err) = self.recreate_spill_dir() {
+                    self.restore_taken(taken);
+                    return Err(SpillError::Io(retry_err));
+                }
+                // recreate_spill_dir resets write_pos and clears the index,
+                // so re-anchor the record offset before the retry write.
+                record_offset = self.spill_write_pos;
+                match self.write_record(&len.to_le_bytes(), &payload) {
+                    Ok(w) => w,
+                    Err(retry_err) => {
+                        self.restore_taken(taken);
+                        return Err(SpillError::Io(retry_err));
+                    }
+                }
+            }
+            Err(e) => {
+                self.restore_taken(taken);
+                return Err(SpillError::Io(e));
+            }
+        };
+
+        // Record the placement of every item now that the write committed.
+        let slots: Vec<Option<u64>> = taken.iter().map(|(seq, _, _)| Some(*seq)).collect();
+        for (seq, _, item_size) in &taken {
+            self.spill_index.insert(*seq, record_offset);
+            self.memory_used = self.memory_used.saturating_sub(*item_size);
+        }
+        if slots.len() > 1 {
+            self.batch_members.insert(record_offset, slots);
+        }
+        self.spill_write_pos = record_offset.saturating_add(written);
+        self.spill_count += 1;
+        Ok(())
+    }
+
+    /// Restores items taken from the ring buffer back to memory after a
+    /// failed batch spill so the caller can retry or shut down cleanly.
+    fn restore_taken(&mut self, taken: Vec<(u64, T, usize)>) {
+        for (seq, item, _) in taken {
+            self.inner.force_insert(seq, item);
+        }
     }
 
     /// Serializes a single item to the spill file.
@@ -634,6 +847,35 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         T::decode(&mut payload.as_slice())
     }
 
+    /// Reloads a whole-batch record holding `count` packed items.
+    ///
+    /// The record header carries the total payload length; items are
+    /// self-delimiting via [`SpillCodec::decode`] and are returned in the
+    /// order they were encoded.
+    fn reload_batch(&mut self, offset: u64, count: usize) -> io::Result<Vec<T>> {
+        let backend = self
+            .spill_file
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "spill file not initialized"))?;
+        let file = backend.file();
+
+        file.seek(SeekFrom::Start(offset))?;
+
+        let mut len_buf = [0u8; 4];
+        file.read_exact(&mut len_buf)?;
+        let total_len = u32::from_le_bytes(len_buf) as usize;
+
+        let mut payload = vec![0u8; total_len];
+        file.read_exact(&mut payload)?;
+
+        let mut cursor = payload.as_slice();
+        let mut items = Vec::with_capacity(count);
+        for _ in 0..count {
+            items.push(T::decode(&mut cursor)?);
+        }
+        Ok(items)
+    }
+
     /// Re-creates the spill directory after a [`io::ErrorKind::NotFound`].
     ///
     /// Drops any stale file handle, attempts `create_dir_all` once, and
@@ -654,6 +896,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         fs::create_dir_all(&dir)?;
         self.spill_write_pos = 0;
         self.spill_index.clear();
+        self.batch_members.clear();
         self.dir_recreate_count += 1;
         Ok(())
     }
@@ -1213,5 +1456,142 @@ mod tests {
         let io_err = SpillError::from(io::Error::new(io::ErrorKind::StorageFull, "disk full"));
         assert!(format!("{io_err}").contains("disk full"));
         assert!(std::error::Error::source(&io_err).is_some());
+    }
+
+    // ---- SpillGranularity wiring tests (STN-5 #2339) ----
+
+    /// Total bytes that ended up on the spill backend, regardless of which
+    /// flavour (`SpooledTempFile` or `Directory`) was selected.
+    fn spill_file_size<T: SpillCodec>(buf: &mut SpillableReorderBuffer<T>) -> u64 {
+        let backend = buf
+            .spill_file
+            .as_mut()
+            .expect("spill backend must exist for size probe");
+        backend.file().seek(SeekFrom::End(0)).expect("seek end")
+    }
+
+    /// Populates `buf` with enough out-of-order items to force the
+    /// configured spill path to run several spill events. Items are
+    /// inserted in descending sequence order so the hot-zone filter does
+    /// not protect them. Each item is 8 bytes apiece (`u64`).
+    fn force_batch_spill(buf: &mut SpillableReorderBuffer<u64>, min_items: usize) {
+        let n = (min_items + HOT_ZONE as usize + 4) as u64;
+        for i in (0..n).rev() {
+            buf.insert(i, i).expect("insert under capacity");
+        }
+    }
+
+    #[test]
+    fn granularity_whole_batch_writes_single_chunk() {
+        // Default granularity packs every candidate selected by a single
+        // `spill_excess` call into one length-prefixed record. The on-disk
+        // size for that record is therefore `4 + sum(payloads)` with the
+        // 4-byte header paid exactly once.
+        let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(128, 16);
+        assert_eq!(buf.granularity(), SpillGranularity::WholeBatch);
+
+        force_batch_spill(&mut buf, 8);
+
+        // Walk the disk: each whole-batch record is `[u32 len][payload]`.
+        // The total file size therefore equals the per-record overhead
+        // (4 bytes) times the number of spill events plus the sum of the
+        // encoded payloads.
+        let stats = buf.spill_stats();
+        let spilled = stats.spilled_items as u64;
+        let on_disk = spill_file_size(&mut buf);
+        let payload_bytes = spilled * 8; // u64 SpillCodec writes 8 bytes per item
+        let header_bytes = stats.spill_events * 4;
+        assert!(spilled > 0, "test setup must trigger at least one spill");
+        assert_eq!(
+            on_disk,
+            payload_bytes + header_bytes,
+            "WholeBatch records must amortise the 4-byte header per spill event \
+             (spilled={spilled}, events={}, payload_bytes={payload_bytes}, header_bytes={header_bytes})",
+            stats.spill_events
+        );
+        // At least one event must actually be a multi-item batch, otherwise
+        // the optimisation is indistinguishable from per-item.
+        assert!(
+            spilled > stats.spill_events,
+            "expected at least one multi-item batch (spilled={spilled}, events={})",
+            stats.spill_events
+        );
+
+        // Sanity: items must still drain in order.
+        let items = drain_all(&mut buf);
+        assert!(!items.is_empty());
+        for (i, v) in items.iter().enumerate() {
+            assert_eq!(*v, i as u64, "WholeBatch reload must preserve order");
+        }
+    }
+
+    #[test]
+    fn granularity_per_item_writes_n_chunks() {
+        // Per-item granularity writes one `[u32 len][payload]` record per
+        // spilled item, so the disk footprint includes one 4-byte length
+        // prefix per item.
+        let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(128, 16)
+            .with_granularity(SpillGranularity::PerItem);
+        assert_eq!(buf.granularity(), SpillGranularity::PerItem);
+
+        force_batch_spill(&mut buf, 8);
+
+        let stats = buf.spill_stats();
+        let spilled = stats.spilled_items as u64;
+        let on_disk = spill_file_size(&mut buf);
+        let payload_bytes = spilled * 8;
+        let header_bytes = spilled * 4; // one length prefix per item
+        assert!(spilled > 0, "test setup must trigger at least one spill");
+        assert_eq!(
+            on_disk,
+            payload_bytes + header_bytes,
+            "PerItem records carry one 4-byte length prefix per item \
+             (spilled={spilled}, payload_bytes={payload_bytes}, header_bytes={header_bytes})"
+        );
+
+        // Drain order is the same contract as the WholeBatch path.
+        let items = drain_all(&mut buf);
+        assert!(!items.is_empty());
+        for (i, v) in items.iter().enumerate() {
+            assert_eq!(*v, i as u64, "PerItem reload must preserve order");
+        }
+    }
+
+    #[test]
+    fn granularity_per_item_round_trip_byte_identical() {
+        // Encoding and decoding under PerItem granularity round-trips every
+        // item back to its original value. This pins the contract that the
+        // chosen layout never corrupts payload bytes.
+        let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(64, 16)
+            .with_granularity(SpillGranularity::PerItem);
+
+        let inputs: Vec<u64> = (0..24).map(|i| (i as u64) * 7919).collect();
+        for (seq, value) in inputs.iter().enumerate().rev() {
+            buf.insert(seq as u64, *value).expect("insert");
+        }
+        assert!(buf.spill_stats().spill_events > 0);
+
+        let drained = drain_all(&mut buf);
+        assert_eq!(drained, inputs, "PerItem round-trip must be byte-identical");
+    }
+
+    #[test]
+    fn granularity_whole_batch_round_trip_byte_identical() {
+        // The default WholeBatch path must also round-trip every payload
+        // exactly, even when several items share one packed record.
+        let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(64, 16);
+        assert_eq!(buf.granularity(), SpillGranularity::WholeBatch);
+
+        let inputs: Vec<u64> = (0..24).map(|i| (i as u64).wrapping_mul(2654435761)).collect();
+        for (seq, value) in inputs.iter().enumerate().rev() {
+            buf.insert(seq as u64, *value).expect("insert");
+        }
+        assert!(buf.spill_stats().spill_events > 0);
+
+        let drained = drain_all(&mut buf);
+        assert_eq!(
+            drained, inputs,
+            "WholeBatch round-trip must be byte-identical"
+        );
     }
 }
