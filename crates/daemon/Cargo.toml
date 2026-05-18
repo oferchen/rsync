@@ -75,6 +75,11 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 xattr = { workspace = true }
 exacl = { workspace = true }
 
+# fast_io BgidAllocator backs the bgid_long_running_stress test. Linux-only:
+# the io_uring backend (and the bgid namespace it manages) only ships there.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+fast_io = { path = "../fast_io", default-features = false, features = ["io_uring"] }
+
 [[bench]]
 name = "daemon_benchmark"
 harness = false
