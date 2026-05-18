@@ -2,6 +2,31 @@
 
 Tracking issue: oc-rsync follow-up to #2158.
 
+## Status
+
+SMR (SQPOLL+mmap Resolution) is the umbrella workstream that takes this
+design from "bench scaffold landed" to "live dispatch picks the winning
+path on every host". The table below tracks each task with its issue,
+PR, and current state. SHIPPED means merged on `origin/master`; anything
+else is in flight or blocked.
+
+| SMR task | Issue | PR | Status |
+|---|---|---|---|
+| SMR-1 bench harness | #2286 | #4329 (initial scaffold), #4387 (six-cell reshape) | SHIPPED (scaffold via #4329); reshape #4387 IN PROGRESS |
+| SMR-2 decision framework | #2287 | (in flight) | IN PROGRESS |
+| SMR-3a Option 1 (drop mmap) | #2288 | - | BLOCKED on SMR-1 numbers |
+| SMR-3b Option 2 (threshold) | #2289 | - | BLOCKED on SMR-2 |
+| SMR-3c Option 3 (adaptive) | #2290 | - | BLOCKED on SMR-1 numbers |
+| SMR-4 regression test | #2291 | - | BLOCKED on SMR-3 |
+| SMR-5 this doc refresh | #2292 | (this) | IN PROGRESS |
+
+The bench scaffold referenced throughout this document
+(`crates/fast_io/benches/mmap_vs_read_fixed_basis.rs`) shipped with the
+original design-doc PR (#4329); the SMR-1 reshape into the six-cell
+sequential layout at 4 MiB / 64 MiB / 1 GiB tracks separately under
+PR #4387. The resolution path (Option 1, 2, or 3) remains gated on the
+hardware run owed by SMR-2 against the trigger table below.
+
 Companion documents already in tree:
 
 - `docs/design/basis-file-io-policy.md` (#1666) - selector rule that forbids
@@ -15,9 +40,11 @@ Companion documents already in tree:
 - `crates/fast_io/benches/iouring_sqpoll_vs_regular.rs` - existing SQPOLL
   bench scaffold (small-file write workload).
 
-This document does not change any wired dispatch. The implementation is
-deferred until the bench scaffold added in this PR
-(`crates/fast_io/benches/mmap_vs_read_fixed_basis.rs`) produces data.
+This document does not change any wired dispatch. The bench scaffold
+(`crates/fast_io/benches/mmap_vs_read_fixed_basis.rs`) shipped with
+PR #4329; the implementation choice (Option 1, 2, or 3 below) is
+deferred until that bench, as reshaped under PR #4387, produces
+per-cell numbers on a representative host.
 
 ## Current state: the defensive disable site
 
@@ -225,15 +252,19 @@ gate the decision:
 
 ## Implementation plan (option 1)
 
-Each step is a separate PR for ease of review. Steps 2-5 are unblocked
-once step 1 lands.
+Each step is a separate PR for ease of review. Step 1 has shipped via
+PR #4329, so steps 2-5 are unblocked on the design-doc/bench scaffold
+axis. Step 2 (the hardware run) gates steps 3-5.
 
-1. **Land this PR.** Adds the design doc and the bench scaffold. No
-   code change to live dispatch. CI runs the bench in skip mode (env
-   gates off) so the bench compiles on every PR but only executes when
-   an operator opts in.
+1. **Land the design doc and bench scaffold.** SHIPPED via PR #4329.
+   No code change to live dispatch. CI runs the bench in skip mode
+   (env gates off) so the bench compiles on every PR but only executes
+   when an operator opts in. The SMR-1 six-cell reshape (PR #4387) is
+   tracked separately and refines the bench layout to sequential 4
+   MiB / 64 MiB / 1 GiB cells per dispatch style.
 
-2. **Run the bench on a representative host.** Linux 6.x, NVMe, with
+2. **Run the bench on a representative host.** Owed by SMR-2.
+   Linux 6.x, NVMe, with
    `OC_RSYNC_BENCH_IOURING_RING=1` and
    `OC_RSYNC_BENCH_IOURING_SQPOLL=1` set. Record the per-chunk-size
    throughput table in a follow-up audit entry under
