@@ -16,7 +16,7 @@ branding = { path = "../crates/branding" }
 toml = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-cargo_metadata = "0.18"
+cargo_metadata = "0.23"
 flate2 = { workspace = true }
 tar = "0.4"
 walkdir = "2"
