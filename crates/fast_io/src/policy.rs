@@ -156,6 +156,140 @@ pub type IocpPolicy = BackendPolicy;
 /// platforms but skips `copy_file_range`/`sendfile`/`splice` direct calls).
 pub type ZeroCopyPolicy = BackendPolicy;
 
+/// Size threshold (bytes) above which basis-file reads use io_uring+SQPOLL
+/// instead of mmap.
+///
+/// Below this size, mmap setup cost outweighs the per-batch
+/// `io_uring_enter(2)` syscall savings. Above it, the syscall-amortisation
+/// win of SQPOLL+`READ_FIXED` dominates. The default value (64 KiB) comes
+/// from the SMR-2 decision matrix in
+/// `docs/design/mmap-vs-sqpoll-conflict-resolution.md` as the most
+/// conservative cut-over point that still preserves the mmap fast-path for
+/// the very small basis files where neither backend has a clear win.
+///
+/// Operators can override this at runtime via the
+/// `OC_RSYNC_MMAP_TO_SQPOLL_THRESHOLD_BYTES` environment variable; see
+/// [`mmap_to_sqpoll_threshold_bytes`].
+pub const MMAP_TO_SQPOLL_THRESHOLD: u64 = 64 * 1024;
+
+/// Environment variable that overrides [`MMAP_TO_SQPOLL_THRESHOLD`].
+///
+/// Parsed once per process with [`std::sync::OnceLock`]; later changes are
+/// ignored. The value must be a base-10 unsigned 64-bit integer in bytes.
+/// Malformed or empty values fall back to the compile-time default.
+pub const MMAP_TO_SQPOLL_THRESHOLD_ENV: &str = "OC_RSYNC_MMAP_TO_SQPOLL_THRESHOLD_BYTES";
+
+/// Backend selected for a single basis-file read by
+/// [`choose_basis_read_backend`].
+///
+/// Encodes the SMR-2 decision framework: mmap is preferred only when the
+/// basis file is small enough that the mmap setup cost outweighs the
+/// io_uring submission overhead; otherwise io_uring is preferred when
+/// available, and a portable `BufReader<File>` is the universal fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BasisReadBackend {
+    /// Memory-mapped read path. Selected when the basis file size is
+    /// strictly below the [`MMAP_TO_SQPOLL_THRESHOLD`] cut-over and the
+    /// mmap path is available on the host.
+    Mmap,
+    /// io_uring `READ_FIXED` path with SQPOLL. Selected when the basis
+    /// file is at or above the cut-over and the platform supports the
+    /// data-reads code path.
+    IoUring,
+    /// Portable `BufReader<File>` fallback. Selected when neither the
+    /// mmap nor the io_uring path is available (non-Unix host, missing
+    /// kernel feature, disabled cargo feature, etc.).
+    BufReader,
+}
+
+/// Returns the runtime threshold (bytes) for the mmap-to-io_uring cut-over.
+///
+/// First call parses [`MMAP_TO_SQPOLL_THRESHOLD_ENV`] and caches the result
+/// in a process-wide [`std::sync::OnceLock`]. Later calls return the cached
+/// value. Empty or malformed environment values fall back to
+/// [`MMAP_TO_SQPOLL_THRESHOLD`].
+///
+/// The override exists so operators can tune the cut-over per host after
+/// running the bench harness in `crates/fast_io/benches/`. The default is
+/// deliberately conservative; raising it pushes more workload onto mmap,
+/// lowering it pushes more onto io_uring.
+#[must_use]
+pub fn mmap_to_sqpoll_threshold_bytes() -> u64 {
+    use std::sync::OnceLock;
+
+    static CACHED: OnceLock<u64> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        resolve_mmap_to_sqpoll_threshold(std::env::var(MMAP_TO_SQPOLL_THRESHOLD_ENV).ok())
+    })
+}
+
+/// Pure resolver shared by [`mmap_to_sqpoll_threshold_bytes`] and unit
+/// tests. Extracted so the env-var parsing logic is testable without
+/// touching the process-wide `OnceLock` cache.
+#[must_use]
+fn resolve_mmap_to_sqpoll_threshold(raw: Option<String>) -> u64 {
+    raw.as_deref()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(MMAP_TO_SQPOLL_THRESHOLD)
+}
+
+/// Selects the backend for a single basis-file read using the SMR-2
+/// size-threshold heuristic, against an explicit threshold value.
+///
+/// Decision rules, evaluated in order:
+///
+/// 1. If `file_size_bytes` is strictly below `threshold_bytes` **and**
+///    `mmap_available` is true, return [`BasisReadBackend::Mmap`].
+/// 2. Otherwise, if `iouring_available` is true, return
+///    [`BasisReadBackend::IoUring`].
+/// 3. Otherwise, return [`BasisReadBackend::BufReader`].
+///
+/// Production callers should prefer [`choose_basis_read_backend`], which
+/// supplies `threshold_bytes` from [`mmap_to_sqpoll_threshold_bytes`].
+/// This explicit form exists for tests and for callers that have already
+/// resolved a per-transfer threshold override.
+#[must_use]
+pub fn choose_basis_read_backend_with_threshold(
+    file_size_bytes: u64,
+    mmap_available: bool,
+    iouring_available: bool,
+    threshold_bytes: u64,
+) -> BasisReadBackend {
+    if mmap_available && file_size_bytes < threshold_bytes {
+        return BasisReadBackend::Mmap;
+    }
+    if iouring_available {
+        return BasisReadBackend::IoUring;
+    }
+    BasisReadBackend::BufReader
+}
+
+/// Selects the backend for a single basis-file read using the SMR-2
+/// size-threshold heuristic.
+///
+/// Reads the runtime threshold from [`mmap_to_sqpoll_threshold_bytes`],
+/// which honours the `OC_RSYNC_MMAP_TO_SQPOLL_THRESHOLD_BYTES` env var.
+/// See [`choose_basis_read_backend_with_threshold`] for the decision
+/// rules.
+///
+/// Callers are responsible for passing the correct availability flags -
+/// typically the result of [`crate::io_uring::is_io_uring_available`]
+/// (or a feature-gated probe) for `iouring_available`, and an equivalent
+/// platform check for `mmap_available`.
+#[must_use]
+pub fn choose_basis_read_backend(
+    file_size_bytes: u64,
+    mmap_available: bool,
+    iouring_available: bool,
+) -> BasisReadBackend {
+    choose_basis_read_backend_with_threshold(
+        file_size_bytes,
+        mmap_available,
+        iouring_available,
+        mmap_to_sqpoll_threshold_bytes(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +349,128 @@ mod tests {
         assert_eq!(
             is_splice_enabled(ZeroCopyPolicy::Auto),
             is_splice_available()
+        );
+    }
+
+    /// The conservative SMR-2 default must stay at 64 KiB until the bench
+    /// harness produces hardware evidence that justifies moving it.
+    #[test]
+    fn mmap_to_sqpoll_threshold_default_is_64_kib() {
+        assert_eq!(MMAP_TO_SQPOLL_THRESHOLD, 64 * 1024);
+    }
+
+    /// Files strictly below the cut-over must route to mmap when the mmap
+    /// path is available, per the SMR-2 decision matrix.
+    #[test]
+    fn dispatch_uses_mmap_below_threshold() {
+        let one_kib = 1024_u64;
+        assert!(one_kib < MMAP_TO_SQPOLL_THRESHOLD);
+
+        // mmap available + io_uring available: mmap wins under the threshold.
+        assert_eq!(
+            choose_basis_read_backend(one_kib, true, true),
+            BasisReadBackend::Mmap,
+        );
+        // mmap available + io_uring absent: mmap still wins.
+        assert_eq!(
+            choose_basis_read_backend(one_kib, true, false),
+            BasisReadBackend::Mmap,
+        );
+    }
+
+    /// Files at or above the cut-over must route to io_uring when the
+    /// io_uring data-reads path is available on the host.
+    #[test]
+    fn dispatch_uses_iouring_above_threshold() {
+        let one_mib = 1024_u64 * 1024;
+        assert!(one_mib >= MMAP_TO_SQPOLL_THRESHOLD);
+
+        // mmap + io_uring both available: io_uring wins above the threshold.
+        assert_eq!(
+            choose_basis_read_backend(one_mib, true, true),
+            BasisReadBackend::IoUring,
+        );
+        // Exactly at the cut-over also routes to io_uring (strict-below mmap).
+        assert_eq!(
+            choose_basis_read_backend(MMAP_TO_SQPOLL_THRESHOLD, true, true),
+            BasisReadBackend::IoUring,
+        );
+    }
+
+    /// When neither mmap nor io_uring is available, the dispatch must
+    /// fall back to the portable `BufReader<File>` path.
+    #[test]
+    fn dispatch_falls_back_to_bufreader_when_no_backend_available() {
+        let one_mib = 1024_u64 * 1024;
+        assert_eq!(
+            choose_basis_read_backend(one_mib, false, false),
+            BasisReadBackend::BufReader,
+        );
+        assert_eq!(
+            choose_basis_read_backend(1024, false, false),
+            BasisReadBackend::BufReader,
+        );
+    }
+
+    /// The `OC_RSYNC_MMAP_TO_SQPOLL_THRESHOLD_BYTES` env var, when set,
+    /// must override the compile-time default both in the parsed
+    /// threshold and in the resulting dispatch decision.
+    ///
+    /// Tests the resolver and the explicit-threshold dispatch directly
+    /// instead of mutating the process environment, so it does not race
+    /// the `OnceLock` cache shared by every other test in the binary.
+    #[test]
+    fn env_var_override_changes_threshold() {
+        // Empty / absent env var falls back to the compile-time default.
+        assert_eq!(
+            resolve_mmap_to_sqpoll_threshold(None),
+            MMAP_TO_SQPOLL_THRESHOLD,
+        );
+        assert_eq!(
+            resolve_mmap_to_sqpoll_threshold(Some(String::new())),
+            MMAP_TO_SQPOLL_THRESHOLD,
+        );
+        // Whitespace-only and malformed inputs also fall back.
+        assert_eq!(
+            resolve_mmap_to_sqpoll_threshold(Some("   ".to_string())),
+            MMAP_TO_SQPOLL_THRESHOLD,
+        );
+        assert_eq!(
+            resolve_mmap_to_sqpoll_threshold(Some("not-a-number".to_string())),
+            MMAP_TO_SQPOLL_THRESHOLD,
+        );
+
+        // Valid overrides parse to the requested byte count (whitespace
+        // around the number is tolerated).
+        let override_bytes: u64 = 4096;
+        assert_ne!(override_bytes, MMAP_TO_SQPOLL_THRESHOLD);
+        assert_eq!(
+            resolve_mmap_to_sqpoll_threshold(Some(override_bytes.to_string())),
+            override_bytes,
+        );
+        assert_eq!(
+            resolve_mmap_to_sqpoll_threshold(Some(format!("  {override_bytes}  "))),
+            override_bytes,
+        );
+
+        // Dispatch decision honours the overridden threshold. A file
+        // sized between the override (4 KiB) and the default (64 KiB)
+        // routes to io_uring when the override is in effect.
+        let between = override_bytes + 1;
+        assert!(between < MMAP_TO_SQPOLL_THRESHOLD);
+        assert_eq!(
+            choose_basis_read_backend_with_threshold(between, true, true, override_bytes),
+            BasisReadBackend::IoUring,
+        );
+        // A file strictly below the override still routes to mmap.
+        assert_eq!(
+            choose_basis_read_backend_with_threshold(
+                override_bytes - 1,
+                true,
+                true,
+                override_bytes,
+            ),
+            BasisReadBackend::Mmap,
         );
     }
 }
