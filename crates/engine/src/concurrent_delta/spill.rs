@@ -55,7 +55,9 @@ use std::path::{Path, PathBuf};
 use super::reorder::{CapacityExceeded, ReorderBuffer};
 
 pub mod policy;
+pub mod stats;
 pub use policy::{ReclaimMode, SpillCompression, SpillGranularity, SpillPolicy};
+pub use stats::SpillStats;
 
 /// Default memory threshold (in bytes) before spilling begins.
 ///
@@ -256,23 +258,6 @@ impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
             .field("dir_recreate_count", &self.dir_recreate_count)
             .finish()
     }
-}
-
-/// Diagnostic counters for spill activity.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SpillStats {
-    /// Number of items currently spilled to disk.
-    pub spilled_items: usize,
-    /// Total spill-to-disk events since creation.
-    pub spill_events: u64,
-    /// Total reload-from-disk events since creation.
-    pub reload_events: u64,
-    /// Current estimated in-memory bytes.
-    pub memory_used: usize,
-    /// Configured spill threshold in bytes.
-    pub threshold: usize,
-    /// Number of times the spill directory was re-created after vanishing.
-    pub dir_recreate_events: u64,
 }
 
 impl<T: SpillCodec> SpillableReorderBuffer<T> {
