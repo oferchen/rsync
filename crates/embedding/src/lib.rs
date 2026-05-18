@@ -635,21 +635,18 @@ mod tests {
 
     #[test]
     fn exit_status_error_bounds_negative() {
-        // Negative values should be clamped to 0
         let error = ExitStatusError::new(CommandKind::Client, -5);
         assert_eq!(error.exit_status(), 0);
     }
 
     #[test]
     fn exit_status_error_bounds_large() {
-        // Values > 255 should be clamped to 255
         let error = ExitStatusError::new(CommandKind::Client, 300);
         assert_eq!(error.exit_status(), 255);
     }
 
     #[test]
     fn exit_status_error_bounds_max() {
-        // Value at 255 boundary
         let error = ExitStatusError::new(CommandKind::Client, 255);
         assert_eq!(error.exit_status(), 255);
     }
