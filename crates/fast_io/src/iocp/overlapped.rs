@@ -98,6 +98,14 @@ impl std::ops::Index<std::ops::Range<usize>> for BufferStorage {
     }
 }
 
+impl std::ops::Index<std::ops::RangeTo<usize>> for BufferStorage {
+    type Output = [u8];
+
+    fn index(&self, range: std::ops::RangeTo<usize>) -> &[u8] {
+        &self.as_slice()[range]
+    }
+}
+
 /// A pinned overlapped I/O operation with its associated buffer.
 ///
 /// The OVERLAPPED structure must remain at a stable memory address for the
