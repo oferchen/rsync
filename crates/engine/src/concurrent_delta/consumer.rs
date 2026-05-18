@@ -68,7 +68,9 @@ enum ReorderMode {
     /// Bare in-memory ring with the historical doubling fallback on overflow.
     Bare { capacity: usize },
     /// Bounded-memory ring with spill-to-tempfile when the byte threshold is
-    /// exceeded. `dir` is `None` for the default `SpooledTempFile` backend.
+    /// exceeded. `dir` is `None` to defer to [`std::env::temp_dir`] at spill
+    /// time, matching the [`SpillPolicy::dir`](super::spill::policy::SpillPolicy::dir)
+    /// snapshot taken at consumer spawn.
     Spillable {
         capacity: usize,
         threshold: usize,
@@ -284,20 +286,10 @@ impl DeltaConsumer {
                         capacity,
                         threshold,
                         dir,
-                    } => match build_spillable(capacity, threshold, dir) {
-                        Ok(buf) => {
-                            run_spillable_loop(stream_rx, &result_tx, buf, &spill_events_thread);
-                        }
-                        Err(e) => {
-                            // Construction failed (e.g., spill dir cannot be
-                            // created). Surface as a single failed result so
-                            // the receiver maps to exit code 11 and aborts.
-                            let _ = result_tx.send(DeltaResult::failed(
-                                0u32,
-                                format!("spill backend unavailable: {e}"),
-                            ));
-                        }
-                    },
+                    } => {
+                        let buf = build_spillable(capacity, threshold, dir);
+                        run_spillable_loop(stream_rx, &result_tx, buf, &spill_events_thread);
+                    }
                 }
 
                 // Wait for drain thread to finish (propagates panics).
@@ -384,14 +376,20 @@ impl DeltaConsumer {
 }
 
 /// Constructs a [`SpillableReorderBuffer`] backed by the configured backend.
+///
+/// The spill directory (when supplied) is honoured lazily on the first
+/// spill so that policy edits between consumer spawns take effect on the
+/// next batch without forcing eager directory creation here. Failures
+/// resolving the directory surface as a typed
+/// [`SpillError`](super::spill::SpillError) at spill time.
 fn build_spillable(
     capacity: usize,
     threshold: usize,
     dir: Option<PathBuf>,
-) -> std::io::Result<SpillableReorderBuffer<DeltaResult>> {
+) -> SpillableReorderBuffer<DeltaResult> {
     match dir {
         Some(d) => SpillableReorderBuffer::with_spill_dir(capacity, threshold, d),
-        None => Ok(SpillableReorderBuffer::new(capacity, threshold)),
+        None => SpillableReorderBuffer::new(capacity, threshold),
     }
 }
 
@@ -508,7 +506,7 @@ fn run_spillable_loop(
                         break;
                     }
                 }
-                Err(SpillError::Io(e)) => {
+                Err(e @ (SpillError::Io(_) | SpillError::DirCreate { .. })) => {
                     let _ = result_tx
                         .send(DeltaResult::failed(ndx, format!("spill write failed: {e}")));
                     return;

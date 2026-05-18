@@ -88,8 +88,10 @@ pub struct SpillPolicy {
     pub threshold_bytes: Option<u64>,
     /// Explicit on-disk scratch directory for spilled items.
     ///
-    /// `None` uses the default `SpooledTempFile` backend, which keeps spills
-    /// in memory up to 1 MB before rolling over to a system tempfile.
+    /// `None` defers to [`std::env::temp_dir`] at spill time. The chosen
+    /// directory is honoured on the first spill of every batch so updates
+    /// to this field take effect on the next consumer spawn without being
+    /// cached at policy construction time.
     pub dir: Option<PathBuf>,
     /// Behaviour after a spill event when pressure subsides.
     pub reclaim_mode: ReclaimMode,
