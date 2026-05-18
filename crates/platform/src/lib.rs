@@ -29,6 +29,8 @@
 pub mod daemonize;
 /// Environment variable manipulation with RAII restoration.
 pub mod env;
+/// Typed platform error variants used by daemon/cli/core for I/O failures.
+pub mod error;
 /// System group membership lookups.
 pub mod group;
 /// Windows account name to RID resolution.
