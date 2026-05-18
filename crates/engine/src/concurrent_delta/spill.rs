@@ -64,8 +64,12 @@ use std::path::{Path, PathBuf};
 
 use super::reorder::{CapacityExceeded, ReorderBuffer};
 
+pub mod env;
 pub mod policy;
 pub mod stats;
+pub use env::{
+    ENV_SPILL_COMPRESSION, ENV_SPILL_DIR, ENV_SPILL_THRESHOLD_BYTES, apply_env_overrides,
+};
 pub use policy::{ReclaimMode, SpillCompression, SpillGranularity, SpillPolicy};
 pub use stats::SpillStats;
 
