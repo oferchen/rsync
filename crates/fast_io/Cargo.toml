@@ -145,10 +145,13 @@ name = "iouring_sqpoll_vs_regular"
 harness = false
 required-features = ["io_uring"]
 
-# Linux-only bench: mmap vs IORING_OP_READ_FIXED + SQPOLL on a 1 GiB
-# basis-read workload. Gated by OC_RSYNC_BENCH_IOURING_RING=1 and
-# OC_RSYNC_BENCH_IOURING_SQPOLL=1 (the latter only for the read_fixed cell;
-# the mmap cell needs no gate). Resolves the design tension documented in
+# Linux-only bench: mmap vs IORING_OP_READ_FIXED + SQPOLL on sequential
+# basis-file reads at 4 MiB / 64 MiB / 1 GiB. Gated by
+# OC_RSYNC_BENCH_IOURING_RING=1 and OC_RSYNC_BENCH_IOURING_SQPOLL=1 (the
+# latter only for the read_fixed cells; the mmap cells need no gate),
+# plus OC_RSYNC_BENCH_LARGE=1 to enable the 1 GiB rows. SMR-1 harness
+# only; the hardware run that picks Option 1/2/3 from the design doc is
+# tracked separately as SMR-2. See
 # docs/design/mmap-vs-sqpoll-conflict-resolution.md (follow-up to #2158).
 [[bench]]
 name = "mmap_vs_read_fixed_basis"
