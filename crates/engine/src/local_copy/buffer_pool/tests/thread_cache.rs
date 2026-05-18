@@ -54,6 +54,13 @@ fn concurrent_burst_returns_respect_capacity() {
     }
 }
 
+// Sequential return / TLS-overflow assertions track the single-slot TLS
+// path: first return per thread fills the slot, the next routes to the
+// central queue. With the per-thread slab feature on, the slab absorbs
+// up to 8 returns per thread before central admission runs, so these
+// `available()` counts do not hold. Slab-backend coverage lives in
+// `tests/slab.rs`.
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn sequential_returns_respect_soft_capacity() {
     // Sequential returns on a single thread: first goes to TLS, rest go
@@ -83,6 +90,7 @@ fn tls_absorbs_first_return() {
     assert_eq!(buf.len(), COPY_BUFFER_SIZE);
 }
 
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn tls_overflow_routes_to_central_pool() {
     // Second return on same thread (TLS occupied) routes to central pool.
