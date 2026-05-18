@@ -66,8 +66,8 @@ re-exports cleanly. The same holds for `pub` struct fields of
 | `SpillCodec::encode`                          | `concurrent_delta/spill.rs:150`                | `concurrent_delta/spill.rs:150` (target: `spill/codec.rs`)                                | OK     |
 | `SpillCodec::decode`                          | `concurrent_delta/spill.rs:157`                | `concurrent_delta/spill.rs:157` (target: `spill/codec.rs`)                                | OK     |
 | `SpillCodec::estimated_size`                  | `concurrent_delta/spill.rs:163`                | `concurrent_delta/spill.rs:163` (target: `spill/codec.rs`)                                | OK     |
-| `SpillableReorderBuffer<T>` (struct)          | `concurrent_delta/spill.rs:221`                | `concurrent_delta/spill.rs:221` (target: `spill/buffer.rs`, re-exported in `spill/mod.rs`)| OK     |
-| `impl Debug for SpillableReorderBuffer<T>`    | `concurrent_delta/spill.rs:246`                | `concurrent_delta/spill.rs:246` (target: `spill/buffer.rs`)                               | OK     |
+| `SpillableReorderBuffer<T>` (struct)          | `concurrent_delta/spill.rs:221`                | `spill/buffer.rs` (re-exported in `spill/mod.rs`)                                         | OK     |
+| `impl Debug for SpillableReorderBuffer<T>`    | `concurrent_delta/spill.rs:246`                | `spill/buffer.rs`                                                                         | OK     |
 | `SpillStats` (struct)                         | `concurrent_delta/spill.rs:263`                | `concurrent_delta/spill.rs:263` (target: `spill/stats.rs`, re-exported in `spill/mod.rs`) | OK     |
 | `SpillStats::spilled_items` (field)           | `concurrent_delta/spill.rs:265`                | `concurrent_delta/spill.rs:265` (target: `spill/stats.rs`)                                | OK     |
 | `SpillStats::spill_events` (field)            | `concurrent_delta/spill.rs:267`                | `concurrent_delta/spill.rs:267` (target: `spill/stats.rs`)                                | OK     |
@@ -75,20 +75,20 @@ re-exports cleanly. The same holds for `pub` struct fields of
 | `SpillStats::memory_used` (field)             | `concurrent_delta/spill.rs:271`                | `concurrent_delta/spill.rs:271` (target: `spill/stats.rs`)                                | OK     |
 | `SpillStats::threshold` (field)               | `concurrent_delta/spill.rs:273`                | `concurrent_delta/spill.rs:273` (target: `spill/stats.rs`)                                | OK     |
 | `SpillStats::dir_recreate_events` (field)     | `concurrent_delta/spill.rs:275`                | `concurrent_delta/spill.rs:275` (target: `spill/stats.rs`)                                | OK     |
-| `SpillableReorderBuffer::new`                 | `concurrent_delta/spill.rs:289`                | `concurrent_delta/spill.rs:289` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::with_spill_dir`      | `concurrent_delta/spill.rs:318`                | `concurrent_delta/spill.rs:318` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::with_default_threshold` | `concurrent_delta/spill.rs:345`             | `concurrent_delta/spill.rs:345` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::insert`              | `concurrent_delta/spill.rs:365`                | `concurrent_delta/spill.rs:365` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::force_insert`        | `concurrent_delta/spill.rs:390`                | `concurrent_delta/spill.rs:390` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::next_in_order`       | `concurrent_delta/spill.rs:415`                | `concurrent_delta/spill.rs:415` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::drain_ready`         | `concurrent_delta/spill.rs:455`                | `concurrent_delta/spill.rs:455` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::next_expected`       | `concurrent_delta/spill.rs:465`                | `concurrent_delta/spill.rs:465` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::buffered_count`      | `concurrent_delta/spill.rs:471`                | `concurrent_delta/spill.rs:471` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::is_empty`            | `concurrent_delta/spill.rs:477`                | `concurrent_delta/spill.rs:477` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::capacity`            | `concurrent_delta/spill.rs:483`                | `concurrent_delta/spill.rs:483` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::spill_stats`         | `concurrent_delta/spill.rs:489`                | `concurrent_delta/spill.rs:489` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::threshold`           | `concurrent_delta/spill.rs:502`                | `concurrent_delta/spill.rs:502` (target: `spill/buffer.rs`)                               | OK     |
-| `SpillableReorderBuffer::spill_dir`           | `concurrent_delta/spill.rs:508`                | `concurrent_delta/spill.rs:508` (target: `spill/buffer.rs`)                               | OK     |
+| `SpillableReorderBuffer::new`                 | `concurrent_delta/spill.rs:289`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::with_spill_dir`      | `concurrent_delta/spill.rs:318`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::with_default_threshold` | `concurrent_delta/spill.rs:345`             | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::insert`              | `concurrent_delta/spill.rs:365`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::force_insert`        | `concurrent_delta/spill.rs:390`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::next_in_order`       | `concurrent_delta/spill.rs:415`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::drain_ready`         | `concurrent_delta/spill.rs:455`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::next_expected`       | `concurrent_delta/spill.rs:465`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::buffered_count`      | `concurrent_delta/spill.rs:471`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::is_empty`            | `concurrent_delta/spill.rs:477`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::capacity`            | `concurrent_delta/spill.rs:483`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::spill_stats`         | `concurrent_delta/spill.rs:489`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::threshold`           | `concurrent_delta/spill.rs:502`                | `spill/buffer.rs`                                                                         | OK     |
+| `SpillableReorderBuffer::spill_dir`           | `concurrent_delta/spill.rs:508`                | `spill/buffer.rs`                                                                         | OK     |
 
 42 symbols audited. 42 OK. 0 MISSING. 0 RENAMED.
 
