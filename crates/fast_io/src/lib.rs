@@ -241,7 +241,12 @@ pub use io_uring_depth::{
 pub use io_uring_ops::{
     hard_link, try_hard_link_via_io_uring, try_rename_via_io_uring, try_statx_batch_via_io_uring,
 };
-pub use policy::{BackendPolicy, CowPolicy, IoUringPolicy, IocpPolicy, ZeroCopyPolicy};
+pub use policy::{
+    BackendPolicy, BasisReadBackend, CowPolicy, IoUringPolicy, IocpPolicy,
+    MMAP_TO_SQPOLL_THRESHOLD, MMAP_TO_SQPOLL_THRESHOLD_ENV, ZeroCopyPolicy,
+    choose_basis_read_backend, choose_basis_read_backend_with_threshold,
+    mmap_to_sqpoll_threshold_bytes,
+};
 pub use status::{
     io_uring_availability_reason, io_uring_kernel_info, io_uring_status_detail, iocp_status_detail,
     platform_io_capabilities,
