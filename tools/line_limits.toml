@@ -292,3 +292,214 @@ path = "xtask/src/commands/package/build.rs"
 max_lines = 749
 warn_lines = 699
 
+
+# ---------------------------------------------------------------------------
+# Source files past the production ceiling pending SPL decomposition.
+# Each entry pins the file at its current line count so any new line forces
+# either an explicit ceiling bump or an SPL split before CI passes.
+# ---------------------------------------------------------------------------
+
+[[overrides]]
+path = "crates/cli/src/frontend/arguments/parser/mod.rs"
+max_lines = 990
+warn_lines = 940
+
+[[overrides]]
+path = "crates/cli/src/frontend/command_builder/sections/transfer_behavior_options.rs"
+max_lines = 877
+warn_lines = 827
+
+[[overrides]]
+path = "crates/cli/src/frontend/execution/drive/workflow/run.rs"
+max_lines = 886
+warn_lines = 836
+
+[[overrides]]
+path = "crates/compress/src/strategy/negotiator.rs"
+max_lines = 1034
+warn_lines = 984
+
+[[overrides]]
+path = "crates/core/src/client/error.rs"
+max_lines = 764
+warn_lines = 714
+
+[[overrides]]
+path = "crates/core/src/client/remote/ssh_transfer.rs"
+max_lines = 855
+warn_lines = 805
+
+[[overrides]]
+path = "crates/core/src/client/run/mod.rs"
+max_lines = 809
+warn_lines = 759
+
+[[overrides]]
+path = "crates/daemon/src/daemon/sections/config_parsing/global_directives.rs"
+max_lines = 751
+warn_lines = 701
+
+[[overrides]]
+path = "crates/daemon/src/daemon/sections/module_definition/setters.rs"
+max_lines = 806
+warn_lines = 756
+
+[[overrides]]
+path = "crates/daemon/src/daemon/sections/module_parsing.rs"
+max_lines = 798
+warn_lines = 748
+
+[[overrides]]
+path = "crates/daemon/src/daemon/sections/variable_expansion.rs"
+max_lines = 765
+warn_lines = 715
+
+[[overrides]]
+path = "crates/embedding/src/lib.rs"
+max_lines = 788
+warn_lines = 738
+
+[[overrides]]
+path = "crates/engine/src/concurrent_delta/parallel_apply.rs"
+max_lines = 780
+warn_lines = 730
+
+[[overrides]]
+path = "crates/engine/src/concurrent_delta/types.rs"
+max_lines = 896
+warn_lines = 846
+
+[[overrides]]
+path = "crates/engine/src/delete/context.rs"
+max_lines = 1020
+warn_lines = 970
+
+[[overrides]]
+path = "crates/engine/src/local_copy/context_impl/state.rs"
+max_lines = 763
+warn_lines = 713
+
+[[overrides]]
+path = "crates/engine/src/local_copy/executor/file/copy/transfer/execute.rs"
+max_lines = 1013
+warn_lines = 963
+
+[[overrides]]
+path = "crates/engine/src/local_copy/executor/file/guard.rs"
+max_lines = 852
+warn_lines = 802
+
+[[overrides]]
+path = "crates/fast_io/src/io_uring/config.rs"
+max_lines = 818
+warn_lines = 768
+
+[[overrides]]
+path = "crates/fast_io/src/io_uring/session_pool.rs"
+max_lines = 754
+warn_lines = 704
+
+[[overrides]]
+path = "crates/fast_io/src/io_uring/statx.rs"
+max_lines = 759
+warn_lines = 709
+
+[[overrides]]
+path = "crates/fast_io/src/iocp/pump.rs"
+max_lines = 787
+warn_lines = 737
+
+[[overrides]]
+path = "crates/fast_io/src/macos_io.rs"
+max_lines = 934
+warn_lines = 884
+
+[[overrides]]
+path = "crates/fast_io/src/platform_copy/dispatch.rs"
+max_lines = 840
+warn_lines = 790
+
+[[overrides]]
+path = "crates/fast_io/src/sendfile.rs"
+max_lines = 1037
+warn_lines = 987
+
+[[overrides]]
+path = "crates/filters/src/chain.rs"
+max_lines = 1024
+warn_lines = 974
+
+[[overrides]]
+path = "crates/metadata/src/acl_exacl.rs"
+max_lines = 1050
+warn_lines = 1000
+
+[[overrides]]
+path = "crates/metadata/src/xattr.rs"
+max_lines = 796
+warn_lines = 746
+
+[[overrides]]
+path = "crates/protocol/src/flist/read/mod.rs"
+max_lines = 762
+warn_lines = 712
+
+[[overrides]]
+path = "crates/protocol/src/flist/sort.rs"
+max_lines = 829
+warn_lines = 779
+
+[[overrides]]
+path = "crates/protocol/src/wire/compressed_token/lz4_codec.rs"
+max_lines = 947
+warn_lines = 897
+
+[[overrides]]
+path = "crates/protocol/src/wire/compressed_token/zstd_codec.rs"
+max_lines = 991
+warn_lines = 941
+
+[[overrides]]
+path = "crates/protocol/src/xattr/list.rs"
+max_lines = 942
+warn_lines = 892
+
+[[overrides]]
+path = "crates/rsync_io/src/ssh/builder.rs"
+max_lines = 811
+warn_lines = 761
+
+[[overrides]]
+path = "crates/rsync_io/src/ssh/embedded/auth.rs"
+max_lines = 879
+warn_lines = 829
+
+[[overrides]]
+path = "crates/rsync_io/src/ssh/embedded/config.rs"
+max_lines = 783
+warn_lines = 733
+
+[[overrides]]
+path = "crates/transfer/src/generator/mod.rs"
+max_lines = 1027
+warn_lines = 977
+
+[[overrides]]
+path = "crates/transfer/src/generator/transfer.rs"
+max_lines = 1020
+warn_lines = 970
+
+[[overrides]]
+path = "crates/transfer/src/receiver/mod.rs"
+max_lines = 760
+warn_lines = 710
+
+[[overrides]]
+path = "crates/transfer/src/receiver/transfer.rs"
+max_lines = 1058
+warn_lines = 1008
+
+[[overrides]]
+path = "xtask/src/cli.rs"
+max_lines = 851
+warn_lines = 801
