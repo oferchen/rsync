@@ -1,19 +1,27 @@
 //! Public policy types that configure the reorder buffer spill layer.
 //!
-//! [`SpillPolicy`] groups every knob that tunes the
-//! [`SpillableReorderBuffer`](super::SpillableReorderBuffer) into a single
-//! value: the byte threshold, the on-disk scratch directory, the post-spill
-//! reclaim behaviour, the spill granularity, and the optional payload
-//! compression. The default value disables spilling entirely, mirroring the
-//! historical bare [`ReorderBuffer`](super::super::reorder::ReorderBuffer)
-//! path so existing call sites keep their behaviour.
+//! This submodule owns the user-facing knobs that select *whether* and *how*
+//! the spill layer engages: [`SpillPolicy`] aggregates the byte threshold,
+//! the on-disk scratch directory, the post-spill reclaim behaviour, the
+//! spill granularity, and the optional payload compression into a single
+//! value. The parent [`super`] module owns the runtime machinery
+//! ([`SpillableReorderBuffer`](super::SpillableReorderBuffer) and its disk
+//! I/O paths); this submodule owns only the configuration surface those
+//! paths consume.
 //!
-//! The variants of [`ReclaimMode`], [`SpillGranularity`], and
-//! [`SpillCompression`] are deliberately additive: today only the defaults
-//! are wired through the consumer pipeline, and the alternatives reserve
-//! syntactic room for follow-up work without forcing another public API
-//! break. Tests below pin the defaults so downstream crates can rely on the
-//! contract.
+//! The default [`SpillPolicy`] disables spilling entirely, mirroring the
+//! historical bare [`ReorderBuffer`](super::super::reorder::ReorderBuffer)
+//! path so existing call sites keep their behaviour. The variants of
+//! [`ReclaimMode`], [`SpillGranularity`], and [`SpillCompression`] are
+//! deliberately additive: today only the defaults are wired through the
+//! consumer pipeline, and the alternatives reserve syntactic room for
+//! follow-up work without forcing another public API break. Tests below pin
+//! the defaults so downstream crates can rely on the contract.
+//!
+//! Extracted as the first split off the monolithic `spill.rs`; see the
+//! `spill.rs` decomposition plan (`docs/audits/spill-rs-decomposition-plan.md`,
+//! task SPL-1 #2323) for the broader submodule layout and the
+//! `SpillPolicy` introduction tracked by #2336.
 
 use std::path::{Path, PathBuf};
 
