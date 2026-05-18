@@ -156,6 +156,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "varint_decode"
+path = "fuzz_targets/varint_decode.rs"
+test = false
+doc = false
+bench = false
+
 # Standalone workspace - excluded from the root workspace so that
 # `cargo build` does not pull libfuzzer-sys into ordinary builds.
 [workspace]

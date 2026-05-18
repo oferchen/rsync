@@ -1011,7 +1011,6 @@ fn decode_payload<T: SpillCodec>(tag: u8, payload: Vec<u8>) -> Result<T, SpillEr
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1754,8 +1753,8 @@ mod tests {
         // Per-item granularity writes one `[u32 len][payload]` record per
         // spilled item, so the disk footprint includes one 4-byte length
         // prefix per item.
-        let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(128, 16)
-            .with_granularity(SpillGranularity::PerItem);
+        let mut buf: SpillableReorderBuffer<u64> =
+            SpillableReorderBuffer::new(128, 16).with_granularity(SpillGranularity::PerItem);
         assert_eq!(buf.granularity(), SpillGranularity::PerItem);
 
         force_batch_spill(&mut buf, 8);
@@ -1786,8 +1785,8 @@ mod tests {
         // Encoding and decoding under PerItem granularity round-trips every
         // item back to its original value. This pins the contract that the
         // chosen layout never corrupts payload bytes.
-        let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(64, 16)
-            .with_granularity(SpillGranularity::PerItem);
+        let mut buf: SpillableReorderBuffer<u64> =
+            SpillableReorderBuffer::new(64, 16).with_granularity(SpillGranularity::PerItem);
 
         let inputs: Vec<u64> = (0..24).map(|i| (i as u64) * 7919).collect();
         for (seq, value) in inputs.iter().enumerate().rev() {
@@ -1806,7 +1805,9 @@ mod tests {
         let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(64, 16);
         assert_eq!(buf.granularity(), SpillGranularity::WholeBatch);
 
-        let inputs: Vec<u64> = (0..24).map(|i| (i as u64).wrapping_mul(2654435761)).collect();
+        let inputs: Vec<u64> = (0..24)
+            .map(|i| (i as u64).wrapping_mul(2654435761))
+            .collect();
         for (seq, value) in inputs.iter().enumerate().rev() {
             buf.insert(seq as u64, *value).expect("insert");
         }
