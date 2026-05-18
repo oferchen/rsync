@@ -172,3 +172,15 @@ harness = false
 [[bench]]
 name = "platform_copy_gap"
 harness = false
+
+# Linux-only bench: NVMe-heavy data-path stdlib write vs io_uring
+# WRITE_FIXED on a 10 x 1 GiB workload. Quantifies the headroom the
+# iouring-data-writes cutover (docs/design/iouring-receive-data-path.md)
+# would close on a real NVMe mount. Gated by
+# OC_RSYNC_BENCH_NVME_DATA_PATH=1; optionally OC_RSYNC_BENCH_NVME_PATH
+# pins the scratch dir to a real NVMe mount instead of the default
+# TempDir location. See the file's module doc for the run recipe and
+# what the numbers inform on #2364.
+[[bench]]
+name = "nvme_data_path"
+harness = false
