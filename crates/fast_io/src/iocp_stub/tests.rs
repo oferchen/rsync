@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::IocpPolicy;
-use crate::traits::{FileReader, FileWriter};
+use crate::traits::{FileReader, FileReaderFactory, FileWriter, FileWriterFactory};
 use std::io::Write;
 use tempfile::{NamedTempFile, tempdir};
 
