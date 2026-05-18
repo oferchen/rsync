@@ -9,7 +9,9 @@ use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// AppleDouble v2 (RFC 1740) container parser and encoder.
 pub mod apple_double;
+/// Safe accessors for the macOS native resource fork and Finder info.
 pub mod resource_fork;
 
 pub use resource_fork::{

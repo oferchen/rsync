@@ -94,6 +94,7 @@ mod error;
 mod module_list;
 mod outcome;
 mod progress;
+/// Remote transfer orchestration for SSH and daemon transports.
 pub mod remote;
 mod run;
 mod summary;

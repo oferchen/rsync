@@ -74,6 +74,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 mod config;
+/// Upstream-compatible error and warning formatting.
 pub mod error_format;
 mod levels;
 mod macros;

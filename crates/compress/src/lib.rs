@@ -72,13 +72,16 @@
 
 pub mod algorithm;
 mod common;
+/// LZ4 compression support in both standard frame and rsync raw-block formats.
 #[cfg(feature = "lz4")]
 pub mod lz4;
 /// Compression tuning based on file type detection.
 pub mod skip_compress;
 /// Strategy pattern for runtime compression algorithm selection.
 pub mod strategy;
+/// Raw deflate compression helpers for rsync wire protocol compatibility.
 pub mod zlib;
+/// Streaming Zstandard helpers shared across the workspace.
 #[cfg(feature = "zstd")]
 pub mod zstd;
 

@@ -66,15 +66,18 @@ use crate::{config::DaemonConfig, error::DaemonError, systemd};
 mod help;
 pub(crate) mod tracing_stream;
 
+/// Concurrent session tracking for the daemon accept loop.
 #[cfg(feature = "concurrent-sessions")]
 pub mod session_registry;
 
+/// Thread-safe connection pool with per-IP rate limiting.
 #[cfg(feature = "concurrent-sessions")]
 pub mod connection_pool;
 
 #[cfg(all(test, feature = "concurrent-sessions"))]
 mod concurrent_tests;
 
+/// Tokio-based async session handling for the rsync daemon.
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub mod async_session;

@@ -33,6 +33,7 @@
 mod constants;
 mod definition;
 mod entry;
+/// `--debug=ACL` producer emissions for POSIX ACL processing.
 pub mod trace;
 mod wire;
 

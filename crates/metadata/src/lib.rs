@@ -101,9 +101,11 @@ mod acl_noop;
 
 mod apply;
 mod chmod;
+/// Privilege switching for `--copy-as=USER[:GROUP]`.
 pub mod copy_as;
 mod error;
 
+/// UID/GID lookup and mapping utilities.
 pub mod id_lookup;
 
 #[cfg(unix)]
@@ -146,14 +148,17 @@ mod xattr_windows;
 #[cfg(not(all(feature = "xattr", any(unix, windows))))]
 mod xattr_stub;
 
+/// NFSv4 Access Control List support for rsync transfers.
 #[cfg(all(unix, feature = "xattr"))]
 pub mod nfsv4_acl;
 
+/// No-op NFSv4 ACL stubs for platforms without xattr support.
 #[cfg(not(all(unix, feature = "xattr")))]
 pub mod nfsv4_acl_stub;
 #[cfg(not(all(unix, feature = "xattr")))]
 pub use nfsv4_acl_stub as nfsv4_acl;
 
+/// Fake super-user mode for preserving privileged metadata without root.
 pub mod fake_super;
 
 #[cfg(all(

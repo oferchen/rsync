@@ -23,12 +23,17 @@
 #[cfg(feature = "async-ssh")]
 pub mod async_ssh_transport;
 pub(crate) mod batch_support;
+/// Daemon transfer orchestration for `rsync://` URLs.
 pub mod daemon_transfer;
+/// Embedded SSH transfer orchestration using the russh library.
 #[cfg(feature = "embedded-ssh")]
 pub mod embedded_ssh_transfer;
 pub(crate) mod flags;
+/// Remote rsync `--server` invocation argument builder.
 pub mod invocation;
+/// Remote-to-remote transfer via local proxy relay.
 pub mod remote_to_remote;
+/// SSH transfer orchestration for `ssh://` and `host:path` targets.
 pub mod ssh_transfer;
 #[cfg(feature = "async-ssh")]
 pub use async_ssh_transport::{

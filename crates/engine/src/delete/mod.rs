@@ -33,6 +33,7 @@
 
 mod cohort_index;
 mod context;
+/// Single-threaded emitter that drains delete plans in upstream traversal order.
 pub mod emitter;
 mod extras;
 mod plan;

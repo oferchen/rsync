@@ -64,8 +64,11 @@ use std::path::{Path, PathBuf};
 
 use super::reorder::{CapacityExceeded, ReorderBuffer};
 
+/// Environment-variable overrides for [`SpillPolicy`] fields at runtime.
 pub mod env;
+/// Public policy types that configure the reorder buffer spill layer.
 pub mod policy;
+/// Spill-layer counters and aggregate stats exposed to operators.
 pub mod stats;
 pub use env::{
     ENV_SPILL_COMPRESSION, ENV_SPILL_DIR, ENV_SPILL_THRESHOLD_BYTES, apply_env_overrides,

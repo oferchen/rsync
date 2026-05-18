@@ -51,6 +51,7 @@
 
 /// Buffer pool for I/O buffer reuse during large file transfers.
 pub mod buffer_pool;
+/// Copy-on-write file cloning with macOS `clonefile()` dual-path selection.
 pub mod clonefile;
 mod compressor;
 mod context;
@@ -89,6 +90,7 @@ pub mod pipelined_state;
 mod plan;
 pub(crate) mod prefetch;
 mod skip_compress;
+/// Windows `CopyFileExW` file copying with dual-path runtime selection.
 pub mod win_copy;
 
 pub use buffer_pool::{

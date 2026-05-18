@@ -66,12 +66,14 @@
 //!   reported to the user.
 
 mod binary;
+/// In-process channel adapters bridging `tokio::sync::mpsc` to `AsyncRead` / `AsyncWrite`.
 #[cfg(feature = "async-ssh")]
 pub mod channel_adapter;
 mod daemon;
 mod handshake_util;
 mod negotiation;
 mod session;
+/// SSH transport implementations and helpers.
 pub mod ssh;
 
 pub use binary::{

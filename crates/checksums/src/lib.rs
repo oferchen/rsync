@@ -359,9 +359,12 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod cpu_features;
+/// CRC32C hardware-accelerated checksum for fast file change detection.
 pub mod crc32c;
 mod rolling;
+/// Runtime SIMD-vs-scalar checksum parity self-test entry point.
 pub mod simd_self_test;
+/// Strong checksum implementations (MD4, MD5, XXH64, XXH3/64, XXH3/128).
 pub mod strong;
 
 #[cfg(test)]

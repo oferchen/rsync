@@ -62,6 +62,7 @@ mod openssl_support;
 mod sha1;
 mod sha256;
 mod sha512;
+/// Strategy pattern for runtime checksum algorithm selection.
 pub mod strategy;
 mod xxhash;
 
