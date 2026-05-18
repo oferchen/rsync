@@ -6,7 +6,7 @@ use std::io::SeekFrom;
 use super::super::super::super::reorder::ReorderBuffer;
 #[cfg(not(feature = "spill-compression"))]
 use super::super::super::SpillError;
-use super::super::super::{SpillCodec, SpillCompression, SpillableReorderBuffer};
+use super::super::super::{SpillCodec, SpillCompression, SpillGranularity, SpillableReorderBuffer};
 use super::super::{SPILL_TAG_RAW, SPILL_TAG_ZSTD};
 use super::drain_all;
 
@@ -31,10 +31,16 @@ fn compression_none_writes_uncompressed_tag() {
     // Default policy: every spill record must start with SPILL_TAG_RAW
     // (0x00) so a default-build reader can decode the payload as-is.
     let scratch = ::tempfile::tempdir().expect("create scratch root");
+    // PerItem granularity writes a `[tag][u32 len][payload]` header per
+    // record, which is what this tag round-trip test inspects. The
+    // default WholeBatch granularity omits the per-record tag (the
+    // batch header is just `[u32 len][packed payloads]`), so the tag
+    // assertion below is only meaningful in PerItem mode.
     let mut buf: SpillableReorderBuffer<u64> =
         SpillableReorderBuffer::with_spill_dir(32, 16, scratch.path().join("spill"))
             .expect("setup spill directory")
-            .with_compression(SpillCompression::None);
+            .with_compression(SpillCompression::None)
+            .with_granularity(SpillGranularity::PerItem);
 
     for i in (0..6).rev() {
         buf.insert(i, i * 13).unwrap();
@@ -60,7 +66,8 @@ fn compression_zstd_writes_compressed_tag() {
     let mut buf: SpillableReorderBuffer<u64> =
         SpillableReorderBuffer::with_spill_dir(32, 16, scratch.path().join("spill"))
             .expect("setup spill directory")
-            .with_compression(SpillCompression::Zstd { level: 1 });
+            .with_compression(SpillCompression::Zstd { level: 1 })
+            .with_granularity(SpillGranularity::PerItem);
 
     for i in (0..6).rev() {
         buf.insert(i, i * 17).unwrap();
@@ -87,8 +94,13 @@ fn compression_zstd_tag_without_feature_returns_unsupported() {
     // directly into the spill file.
     let scratch = ::tempfile::tempdir().expect("create scratch root");
     let spill_dir = scratch.path().join("spill");
+    // PerItem granularity, same reasoning as the round-trip tests
+    // above: only PerItem records carry the per-record tag this test
+    // rewrites to assert the reader rejects an unknown compression tag.
     let mut buf: SpillableReorderBuffer<u64> =
-        SpillableReorderBuffer::with_spill_dir(32, 16, &spill_dir).expect("setup spill directory");
+        SpillableReorderBuffer::with_spill_dir(32, 16, &spill_dir)
+            .expect("setup spill directory")
+            .with_granularity(SpillGranularity::PerItem);
 
     // Force an open spill file by triggering one normal spill first.
     for i in (0..4).rev() {
