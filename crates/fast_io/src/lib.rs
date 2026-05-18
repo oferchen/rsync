@@ -79,11 +79,17 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(missing_docs)]
 
+/// Cached sorting using the Schwartzian transform.
 pub mod cached_sort;
+/// Kernel version parsing and io_uring probe logging.
 pub mod kernel_version;
+/// Parallel file I/O operations using rayon.
 pub mod parallel;
+/// Cross-platform temporary file strategy abstraction.
 pub mod temp_file_strategy;
+/// Core traits for file I/O abstraction.
 pub mod traits;
+/// SIMD-accelerated zero-byte detection for sparse file writing.
 pub mod zero_detect;
 
 /// EXPERIMENTAL: per-file adaptive basis-read backend dispatch (SMR-3c,
@@ -95,21 +101,34 @@ pub mod zero_detect;
 #[cfg(feature = "adaptive-basis-dispatch")]
 pub mod adaptive_dispatch;
 
+/// Windows `CopyFileExW` file copy with automatic fallback.
 pub mod copy_file_ex;
+/// High-performance file copying with tiered fallback.
 pub mod copy_file_range;
+/// Anonymous temporary file creation via `O_TMPFILE` and finalization via `linkat`.
 pub mod o_tmpfile;
+/// Platform-abstracted file copy trait with automatic optimization selection.
 pub mod platform_copy;
+/// ReFS filesystem detection for Windows reflink support.
 pub mod refs_detect;
+/// Zero-copy file-to-socket transfer using `sendfile` with automatic fallback.
 pub mod sendfile;
+/// Safe wrappers around platform `setsockopt` for integer-valued options.
 pub mod socket_options;
+/// Zero-copy socket-to-disk transfer using `splice`/`vmsplice` syscalls.
 pub mod splice;
+/// Batched metadata syscall operations with dual-path runtime selection.
 pub mod syscall_batch;
+/// Zero-copy file writer that pushes literal chunks via `vmsplice` + `splice`.
 pub mod vmsplice_writer;
 
+/// macOS-optimized file writer using `F_NOCACHE` and `writev`.
 pub mod macos_io;
 
+/// Memory-mapped file reader for efficient large file access.
 #[cfg(unix)]
 pub mod mmap_reader;
+/// Memory-mapped file reader stub for non-Unix platforms.
 #[cfg(not(unix))]
 #[path = "mmap_reader_stub.rs"]
 pub mod mmap_reader;
