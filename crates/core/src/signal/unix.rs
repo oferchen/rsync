@@ -197,6 +197,8 @@ extern "C" fn handle_sigpipe(_signum: libc::c_int) {
 /// # }
 /// ```
 pub fn install_signal_handlers() -> io::Result<SignalHandler> {
+    // SAFETY: Zero-initialises libc::sigaction structs (valid POD layout) before passing them
+    // to libc::sigaction; handler functions are async-signal-safe and only set atomic flags.
     unsafe {
         let mut sa_int: libc::sigaction = std::mem::zeroed();
         sa_int.sa_sigaction = handle_sigint as *const () as libc::sighandler_t;
