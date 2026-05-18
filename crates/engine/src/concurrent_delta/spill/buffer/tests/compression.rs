@@ -1,8 +1,6 @@
 //! [`SpillCompression`] tag round-trip tests.
 
 use std::io::SeekFrom;
-#[cfg(not(feature = "spill-compression"))]
-use std::io::Write;
 
 #[cfg(not(feature = "spill-compression"))]
 use super::super::super::super::reorder::ReorderBuffer;
