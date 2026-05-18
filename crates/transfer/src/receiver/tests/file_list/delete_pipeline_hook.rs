@@ -108,7 +108,11 @@ fn delete_pipeline_hook_publishes_one_plan_per_segment() {
     assert_eq!(sub2_names, vec![std::ffi::OsStr::new("extra")]);
 
     // Cursor should have learned about nested1 + nested2 as child dirs.
-    let mut cursor = delete_ctx.cursor.lock().unwrap();
+    // `cursor_snapshot` drains the producer channel, applies the
+    // observations to a private cursor, and re-enqueues them so the
+    // eventual drain still sees the full set.
+    let cursor_lock = delete_ctx.cursor_snapshot();
+    let mut cursor = cursor_lock.lock().unwrap();
     let seq: Vec<PathBuf> = std::iter::from_fn(|| cursor.next_ready()).collect();
     assert!(seq.contains(&PathBuf::from("sub1/nested1")));
     assert!(seq.contains(&PathBuf::from("sub2/nested2")));
