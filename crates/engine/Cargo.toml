@@ -127,6 +127,12 @@ thread-slab-pool = []
 # production builds remain byte-identical to today.
 iouring-data-reads = ["fast_io/iouring-data-reads"]
 
+# Opt-in passthrough for the receiver io_uring write path. Activates
+# `fast_io/iouring-data-writes` so engine cfg-gated code can dispatch
+# large file writes through io_uring. Default off so production builds
+# remain byte-identical to today.
+iouring-data-writes = ["fast_io/iouring-data-writes"]
+
 # ============================================================================
 # Runtime Features
 # ============================================================================
