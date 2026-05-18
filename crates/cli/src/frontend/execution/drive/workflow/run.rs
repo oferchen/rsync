@@ -222,6 +222,8 @@ where
         jump_host,
         rayon_threads,
         tokio_threads,
+        spill_dir,
+        spill_threshold_bytes,
     } = parsed;
 
     if let Some(level) = simd_override
@@ -822,6 +824,8 @@ where
             .collect(),
         files_from: resolve_files_from_source(&files_from),
         from0,
+        spill_dir,
+        spill_threshold_bytes,
     };
 
     let builder = config::build_base_config(config_inputs);

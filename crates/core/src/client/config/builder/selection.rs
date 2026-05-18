@@ -74,4 +74,31 @@ impl ClientConfigBuilder {
         self.from0 = value;
         self
     }
+
+    /// Sets the CLI override for the reorder-buffer spill directory.
+    ///
+    /// Corresponds to `--spill-dir`. When `Some`, the value is later applied
+    /// via `engine::SpillPolicy::apply_cli_overrides` **after** the env-var
+    /// loader, cementing the precedence rule **CLI > env > defaults**.
+    /// Passing `None` leaves the env-var (or default) directory in place.
+    #[must_use]
+    #[doc(alias = "--spill-dir")]
+    pub fn spill_dir(mut self, value: Option<PathBuf>) -> Self {
+        self.spill_dir = value;
+        self
+    }
+
+    /// Sets the CLI override for the reorder-buffer spill byte threshold.
+    ///
+    /// Corresponds to `--spill-threshold-bytes`. When `Some`, the value is
+    /// later applied via `engine::SpillPolicy::apply_cli_overrides`
+    /// **after** the env-var loader, cementing the precedence rule
+    /// **CLI > env > defaults**. Passing `None` leaves the env-var (or
+    /// default) threshold in place.
+    #[must_use]
+    #[doc(alias = "--spill-threshold-bytes")]
+    pub const fn spill_threshold_bytes(mut self, value: Option<u64>) -> Self {
+        self.spill_threshold_bytes = value;
+        self
+    }
 }
