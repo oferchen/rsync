@@ -125,7 +125,7 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Records that forward progress was made, resetting the timeout clock.
-    pub(super) fn register_progress(&mut self) {
+    pub(in crate::local_copy) fn register_progress(&mut self) {
         self.last_progress = Instant::now();
     }
 
@@ -189,8 +189,7 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Returns whether a bandwidth limiter is active.
-    #[cfg(target_os = "macos")]
-    pub(super) const fn has_bandwidth_limiter(&self) -> bool {
+    pub(in crate::local_copy) const fn has_bandwidth_limiter(&self) -> bool {
         self.limiter.is_some()
     }
 

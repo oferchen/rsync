@@ -108,11 +108,14 @@ adaptive-basis-dispatch = []
 # for the full design.
 iouring-send-zc = ["io_uring"]
 
-# iouring-data-writes: opt-in dispatch that routes large file writes through
-# the production io_uring writer wrapper (`fast_io::write_file_with_io_uring`).
-# Wired by IUD-5; declared here so the `nvme_data_path_production` bench
-# (IUD-9 #2369) can list it under `required-features`. Linux-only at runtime;
-# on every other platform the entry point returns `io::ErrorKind::Unsupported`.
+# iouring-data-writes: opt-in dispatch that routes large local-copy file writes
+# through the io_uring registered-buffer write path (`IoUringFileWriter` +
+# `RegisteredBufferPool`). Default off; consumers must explicitly enable both
+# `io_uring` and `iouring-data-writes` to engage the path. Linux-only at
+# runtime via the existing `is_io_uring_available()` probe; on every other
+# platform the entry point returns `io::ErrorKind::Unsupported`. Wired by
+# IUD-5; also referenced by the `nvme_data_path_production` bench (IUD-9
+# #2369). See docs/design/iouring-receive-data-path.md.
 iouring-data-writes = ["io_uring"]
 
 [target.'cfg(windows)'.dependencies]
