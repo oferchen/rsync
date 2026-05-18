@@ -97,6 +97,5 @@ forcing call sites to know which decorators are stacked.
 
 ## 9. Cross-References
 
-- Crate-level summary: `AGENTS.md`, `CLAUDE.md` "Design Patterns" section.
 - Architecture overview: `docs/architecture/`.
 - Upstream parity: `target/interop/upstream-src/rsync-3.4.1/`.

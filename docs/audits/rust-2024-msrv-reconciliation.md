@@ -202,8 +202,9 @@ the next edition):
 1. Identify the rustc release that introduced the required feature.
 2. Update `rust-toolchain.toml` channel to that release (or newer).
 3. Update `Cargo.toml:172` `rust-version` to match.
-4. Run `cargo build --workspace --all-features` and the local clippy/fmt
-   gates listed in `AGENTS.md`.
+4. Run `cargo build --workspace --all-features` and the workspace
+   clippy/fmt gates (`cargo fmt --all -- --check` and `cargo clippy
+   --workspace --all-targets --all-features --no-deps -- -D warnings`).
 5. Push and let CI exercise stable, beta, nightly, Linux musl, macOS,
    Windows.
 6. Add a `CHANGELOG.md` entry under `### Other Changes`.
@@ -220,5 +221,3 @@ the next edition):
 - The Rust Edition Guide ("Rust 2024" chapter) - definitive list of idiom
   changes and `cargo fix --edition` behaviour.
 - Cargo reference, "rust-version" field - resolver-2 enforcement semantics.
-- `AGENTS.md` release-process section - current bump procedure for
-  version and MSRV strings.
