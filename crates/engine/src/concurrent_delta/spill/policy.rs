@@ -135,6 +135,18 @@ pub struct SpillPolicy {
     /// Post-read reclaim policy. Default [`SpillReclaim::KeepInMemory`]
     /// preserves the historical behaviour.
     pub reclaim: SpillReclaim,
+    /// Process RSS (in bytes) above which the spill layer engages
+    /// regardless of [`threshold_bytes`](Self::threshold_bytes).
+    ///
+    /// `None` disables RSS-aware spilling and matches the historical
+    /// byte-budget-only behaviour. When `Some`, the reorder buffer queries
+    /// process RSS before consulting the byte budget and forces a spill
+    /// when the threshold is crossed. RSS reads are cached for roughly
+    /// 100 ms to keep the syscall overhead off the hot path.
+    ///
+    /// Platforms without a supported RSS source (currently Windows) treat
+    /// this knob as a no-op: the byte budget retains full control.
+    pub memory_pressure_bytes: Option<u64>,
 }
 
 impl SpillPolicy {
@@ -191,6 +203,15 @@ impl SpillPolicy {
         self
     }
 
+    /// Sets the RSS threshold (in bytes) that forces a spill regardless of
+    /// the byte budget. See
+    /// [`memory_pressure_bytes`](Self::memory_pressure_bytes) for details.
+    #[must_use]
+    pub fn with_memory_pressure(mut self, bytes: u64) -> Self {
+        self.memory_pressure_bytes = Some(bytes);
+        self
+    }
+
     /// Returns `true` when the spill layer is configured to engage.
     #[must_use]
     pub const fn is_enabled(&self) -> bool {
@@ -242,6 +263,15 @@ mod tests {
         assert_eq!(policy.granularity, SpillGranularity::WholeBatch);
         assert_eq!(policy.compression, SpillCompression::None);
         assert_eq!(policy.reclaim, SpillReclaim::KeepInMemory);
+        assert!(policy.memory_pressure_bytes.is_none());
+    }
+
+    #[test]
+    fn with_memory_pressure_sets_rss_threshold() {
+        let policy = SpillPolicy::default().with_memory_pressure(512 * 1024 * 1024);
+        assert_eq!(policy.memory_pressure_bytes, Some(512 * 1024 * 1024));
+        // The byte-budget knob remains independent.
+        assert!(policy.threshold_bytes.is_none());
     }
 
     #[test]

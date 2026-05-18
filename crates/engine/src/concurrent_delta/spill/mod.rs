@@ -72,6 +72,8 @@ pub use error::SpillError;
 pub mod env;
 /// Public policy types that configure the reorder buffer spill layer.
 pub mod policy;
+/// RSS sampling helpers that back the `memory_pressure_bytes` policy knob.
+pub mod rss;
 /// Spill-layer counters and aggregate stats exposed to operators.
 pub mod stats;
 pub use env::{
@@ -220,6 +222,10 @@ pub struct SpillableReorderBuffer<T: SpillCodec> {
     /// drain freely" path; [`SpillReclaim::RespillAfterRead`] enables the
     /// post-reload `spill_excess` pass.
     reclaim: SpillReclaim,
+    /// Optional process-RSS threshold (in bytes) that forces a spill when
+    /// crossed. `None` preserves the historical byte-budget-only behaviour.
+    /// Wired from [`SpillPolicy::memory_pressure_bytes`](policy::SpillPolicy::memory_pressure_bytes).
+    memory_pressure_bytes: Option<u64>,
 }
 
 impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
@@ -267,6 +273,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             dir_recreate_count: 0,
             compression: SpillCompression::None,
             reclaim: SpillReclaim::default(),
+            memory_pressure_bytes: None,
         }
     }
 
@@ -306,6 +313,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             dir_recreate_count: 0,
             compression: SpillCompression::None,
             reclaim: SpillReclaim::default(),
+            memory_pressure_bytes: None,
         })
     }
 
@@ -375,6 +383,26 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         self
     }
 
+    /// Sets the process-RSS threshold (in bytes) above which an insert
+    /// forces a spill regardless of the byte budget.
+    ///
+    /// `None` (the default) preserves the historical behaviour where only
+    /// `memory_used > threshold` triggers a spill. Pass `Some(bytes)` to
+    /// engage the RSS-aware trigger; see
+    /// [`SpillPolicy::memory_pressure_bytes`](policy::SpillPolicy::memory_pressure_bytes)
+    /// for the platform support matrix.
+    #[must_use]
+    pub fn with_memory_pressure_bytes(mut self, bytes: Option<u64>) -> Self {
+        self.memory_pressure_bytes = bytes;
+        self
+    }
+
+    /// Returns the configured RSS-pressure threshold in bytes, if any.
+    #[must_use]
+    pub fn memory_pressure_bytes(&self) -> Option<u64> {
+        self.memory_pressure_bytes
+    }
+
     /// Inserts an item with the given sequence number.
     ///
     /// The item is first checked against the spill index - if this sequence
@@ -399,8 +427,10 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         // If this sequence was previously spilled, remove the stale entry.
         self.evict_from_spill_state(sequence);
 
-        // Spill excess items if over threshold.
-        if self.memory_used > self.threshold {
+        // RSS-aware trigger runs first so process-wide memory pressure can
+        // force a spill before the byte budget is exhausted. The byte budget
+        // is consulted independently afterwards.
+        if self.should_force_spill_for_rss() || self.memory_used > self.threshold {
             self.spill_excess()?;
         }
 
@@ -423,7 +453,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
 
         self.evict_from_spill_state(sequence);
 
-        if self.memory_used > self.threshold {
+        if self.should_force_spill_for_rss() || self.memory_used > self.threshold {
             self.spill_excess()?;
         }
 
@@ -621,6 +651,11 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// Items close to `next_expected` are preserved in memory when possible
     /// (the "hot zone"). If the hot zone alone exceeds the threshold, the
     /// hot zone shrinks to ensure at least one item can be spilled.
+    ///
+    /// When the RSS-pressure trigger
+    /// ([`memory_pressure_bytes`](Self::memory_pressure_bytes)) caused this
+    /// call, at least one item is spilled regardless of the byte budget so
+    /// pressure is actively relieved instead of merely surveyed.
     fn spill_excess(&mut self) -> Result<(), SpillError> {
         let next = self.inner.next_expected();
         let count = self.inner.buffered_count();
@@ -646,8 +681,14 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             candidates.push(seq);
         }
 
+        // When RSS pressure forced this call we must spill at least one item,
+        // even if the byte budget would otherwise allow the data to stay
+        // resident. The whole-batch path always spills every candidate so the
+        // demand is met automatically; the per-item path needs the explicit
+        // flag.
+        let rss_forced = self.should_force_spill_for_rss();
         match self.granularity {
-            SpillGranularity::PerItem => self.spill_candidates_per_item(&candidates),
+            SpillGranularity::PerItem => self.spill_candidates_per_item(&candidates, rss_forced),
             SpillGranularity::WholeBatch => self.spill_candidates_whole_batch(&candidates),
         }
     }
@@ -655,9 +696,19 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// Per-item spill: each candidate becomes its own length-prefixed record.
     ///
     /// Matches the historical on-disk layout: `[u32 len][payload]` per item.
-    fn spill_candidates_per_item(&mut self, candidates: &[u64]) -> Result<(), SpillError> {
+    /// When `rss_forced` is `true` the loop spills at least one candidate even
+    /// if the byte budget is satisfied, so an RSS-pressure trigger actively
+    /// relieves pressure instead of merely surveying it.
+    fn spill_candidates_per_item(
+        &mut self,
+        candidates: &[u64],
+        rss_forced: bool,
+    ) -> Result<(), SpillError> {
+        let mut spilled_any = false;
         for &seq in candidates {
-            if self.memory_used <= self.threshold {
+            let byte_budget_ok = self.memory_used <= self.threshold;
+            let rss_demand_met = !rss_forced || spilled_any;
+            if byte_budget_ok && rss_demand_met {
                 break;
             }
             if let Some(item) = self.inner.take(seq) {
@@ -666,6 +717,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
                     Ok(()) => {
                         self.memory_used = self.memory_used.saturating_sub(item_size);
                         self.spill_count += 1;
+                        spilled_any = true;
                     }
                     Err(e) => {
                         // Re-insert the item on spill failure so the caller
@@ -772,6 +824,22 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     fn restore_taken(&mut self, taken: Vec<(u64, T, usize)>) {
         for (seq, item, _) in taken {
             self.inner.force_insert(seq, item);
+        }
+    }
+
+    /// Returns `true` when the optional RSS-pressure threshold is set and
+    /// the cached process RSS reading has crossed it. Probe errors and the
+    /// `None` configuration are treated as "no pressure" so the historical
+    /// byte-budget path stays in charge.
+    fn should_force_spill_for_rss(&self) -> bool {
+        let Some(limit) = self.memory_pressure_bytes else {
+            return false;
+        };
+        match rss::cached_rss_bytes() {
+            Ok(rss) => rss > limit,
+            // Probe failure (including the Windows `Unsupported` stub) keeps
+            // the caller on the byte-budget path - the knob silently degrades.
+            Err(_) => false,
         }
     }
 
@@ -1920,5 +1988,101 @@ mod tests {
             drained, inputs,
             "WholeBatch round-trip must be byte-identical"
         );
+    }
+
+    // ---- RSS-aware spill trigger (SpillPolicy::memory_pressure_bytes) ----
+
+    #[test]
+    fn memory_pressure_default_none_does_not_trigger() {
+        // No RSS knob configured: a buffer with a high byte budget must not
+        // spill on inserts that stay well under that budget. This pins the
+        // default behaviour and guards against accidental regressions where
+        // the RSS path triggers even with the knob disabled.
+        let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(64, 1024);
+        assert_eq!(buf.memory_pressure_bytes(), None);
+
+        for i in 0..10 {
+            buf.insert(i, i * 3).unwrap();
+        }
+
+        let stats = buf.spill_stats();
+        assert_eq!(
+            stats.spill_events, 0,
+            "no spill must occur when both byte budget and RSS knob are slack"
+        );
+        let items = drain_all(&mut buf);
+        assert_eq!(items.len(), 10);
+    }
+
+    #[test]
+    fn memory_pressure_threshold_forces_spill_when_exceeded() {
+        // RSS threshold of 1 byte is guaranteed to be exceeded on every
+        // platform whose probe returns a non-zero reading. The byte budget
+        // is deliberately set to a value that the inserts never cross, so
+        // any spill activity must come from the RSS path. Platforms whose
+        // RSS probe returns zero or `Unsupported` skip the assertion - they
+        // exercise the "no effect" contract instead.
+        rss::invalidate_cache();
+        let rss_probe = rss::current_rss_bytes();
+
+        let mut buf: SpillableReorderBuffer<u64> =
+            SpillableReorderBuffer::new(64, 1_000_000).with_memory_pressure_bytes(Some(1));
+
+        for i in (0..6).rev() {
+            buf.insert(i, i * 7).unwrap();
+        }
+
+        let stats = buf.spill_stats();
+        if matches!(rss_probe, Ok(bytes) if bytes > 0) {
+            assert!(
+                stats.spill_events > 0,
+                "RSS pressure must force a spill: stats={stats:?}, rss_probe={rss_probe:?}"
+            );
+        } else {
+            // macOS stub (Ok(0)) and Windows Unsupported both keep the
+            // byte-budget path in charge; with a 1 MB budget no spill is
+            // expected.
+            assert_eq!(
+                stats.spill_events, 0,
+                "RSS knob must be a no-op when the probe returns {rss_probe:?}"
+            );
+        }
+
+        // Regardless of platform, every item must still drain correctly.
+        let items = drain_all(&mut buf);
+        let expected: Vec<u64> = (0..6).map(|i| i * 7).collect();
+        assert_eq!(items, expected);
+    }
+
+    #[test]
+    fn memory_pressure_unsupported_platform_falls_back() {
+        // On platforms where the RSS probe is unavailable (Windows) or
+        // stubbed at zero (macOS), enabling the RSS knob must not change
+        // anything: the byte budget continues to govern the spill decision.
+        // This test runs everywhere; on Linux it asserts the natural
+        // outcome (no spill because the budget is huge), and on other
+        // platforms it asserts the contract that the knob has no effect.
+        rss::invalidate_cache();
+        let rss_probe = rss::current_rss_bytes();
+
+        let mut buf: SpillableReorderBuffer<u64> =
+            SpillableReorderBuffer::new(32, 8 * 1024).with_memory_pressure_bytes(Some(u64::MAX));
+
+        for i in 0..8 {
+            buf.insert(i, i).unwrap();
+        }
+
+        // With a u64::MAX RSS threshold, even Linux must not force a spill:
+        // the cached RSS reading is overwhelmingly below the cap. And on
+        // platforms whose probe returns zero or errors, the knob is inert
+        // by construction.
+        let stats = buf.spill_stats();
+        assert_eq!(
+            stats.spill_events, 0,
+            "u64::MAX RSS cap must never trigger; probe={rss_probe:?}, stats={stats:?}"
+        );
+
+        let items = drain_all(&mut buf);
+        assert_eq!(items, (0u64..8).collect::<Vec<_>>());
     }
 }

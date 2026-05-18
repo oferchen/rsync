@@ -33,7 +33,7 @@ tracing = { workspace = true, optional = true }
 globset = { workspace = true }
 jwalk = { workspace = true }
 rustc-hash = { workspace = true }
-rustix = { workspace = true, features = ["fs", "process"] }
+rustix = { workspace = true, features = ["fs", "param", "process"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
 filetime = { workspace = true, optional = true }
