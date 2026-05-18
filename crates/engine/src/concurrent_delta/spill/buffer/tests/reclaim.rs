@@ -47,7 +47,16 @@ fn reclaim_default_keeps_in_memory_after_read() {
     // Default reclaim policy: after reload-from-disk delivery, the buffer
     // does not run an extra spill_excess pass. memory_used and the spill
     // event counter remain unchanged across the reload.
-    let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(32, 16);
+    //
+    // PerItem granularity is required because the assertion compares
+    // memory_used point-for-point: a WholeBatch reload would credit every
+    // sibling that comes back into memory alongside the delivered item,
+    // legitimately inflating memory_used by (batch_size - 1) * item_size.
+    // The KeepInMemory contract under exam here ("no extra spill pass")
+    // holds for both granularities; the per-byte invariant only holds when
+    // every spilled record carries exactly one item.
+    let mut buf: SpillableReorderBuffer<u64> =
+        SpillableReorderBuffer::new(32, 16).with_granularity(policy::SpillGranularity::PerItem);
     assert_eq!(buf.reclaim(), policy::SpillReclaim::KeepInMemory);
 
     seed_post_reload_state(&mut buf);

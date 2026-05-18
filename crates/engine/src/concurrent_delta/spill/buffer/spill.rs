@@ -173,14 +173,18 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         };
 
         // Record the placement of every item now that the write committed.
+        // batch_members must include single-item records: the reader
+        // dispatches on its presence to pick reload_batch (4-byte header) over
+        // reload_item (5-byte tag+len header). Skipping the insert when
+        // slots.len() == 1 used to send the reader through reload_item, which
+        // misreads the missing tag byte and surfaces an UnexpectedEof on
+        // every default-granularity workload that spills one item at a time.
         let slots: Vec<Option<u64>> = taken.iter().map(|(seq, _, _)| Some(*seq)).collect();
         for (seq, _, item_size) in &taken {
             self.spill_index.insert(*seq, record_offset);
             self.memory_used = self.memory_used.saturating_sub(*item_size);
         }
-        if slots.len() > 1 {
-            self.batch_members.insert(record_offset, slots);
-        }
+        self.batch_members.insert(record_offset, slots);
         self.spill_write_pos = record_offset.saturating_add(written);
         self.spill_count += 1;
         Ok(())
