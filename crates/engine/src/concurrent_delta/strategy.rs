@@ -283,10 +283,15 @@ pub fn dispatch(work: &DeltaWork) -> DeltaResult {
 /// `apply_delta` requires `Read + Seek`; this enum lets the
 /// `iouring-data-reads` slurp path (`Cursor<Vec<u8>>`) and the default
 /// `BufReader<File>` path share a single concrete return type without a
-/// boxed-trait Seek workaround.
+/// boxed-trait Seek workaround. The `MmapFree` variant (gated on the
+/// experimental `mmap-free-basis` feature) wraps the same `BufReader<File>`
+/// as the default path; the distinct variant lets tests assert that the mmap
+/// branch was skipped without inspecting global state.
 enum BasisReader {
     Buffered(std::io::BufReader<File>),
     Slurped(std::io::Cursor<Vec<u8>>),
+    #[cfg(feature = "mmap-free-basis")]
+    MmapFree(std::io::BufReader<File>),
 }
 
 impl std::io::Read for BasisReader {
@@ -294,6 +299,8 @@ impl std::io::Read for BasisReader {
         match self {
             BasisReader::Buffered(r) => r.read(buf),
             BasisReader::Slurped(r) => r.read(buf),
+            #[cfg(feature = "mmap-free-basis")]
+            BasisReader::MmapFree(r) => r.read(buf),
         }
     }
 }
@@ -303,20 +310,36 @@ impl std::io::Seek for BasisReader {
         match self {
             BasisReader::Buffered(r) => r.seek(pos),
             BasisReader::Slurped(r) => r.seek(pos),
+            #[cfg(feature = "mmap-free-basis")]
+            BasisReader::MmapFree(r) => r.seek(pos),
         }
     }
 }
 
 /// Opens a basis file as a `BasisReader`.
 ///
-/// When the `iouring-data-reads` feature is on, Linux is the target, and the
-/// basis is at least `IOURING_BASIS_SLURP_THRESHOLD` bytes, the file is
-/// pre-read through `fast_io::read_file_with_io_uring` (a `READ_FIXED` pass
-/// against a registered buffer pool) and returned as `BasisReader::Slurped`.
-/// Below the threshold, on non-Linux targets, or when the feature is off,
-/// the default `BufReader<File>` path is used so production builds are
-/// byte-identical to today.
+/// When the `mmap-free-basis` feature is on, the experimental SMR-3a path
+/// short-circuits any other dispatch and returns `BasisReader::MmapFree`, a
+/// plain `BufReader<File>` that bypasses both the mmap branch (in callers
+/// that have one) and the io_uring slurp branch below. This matches the
+/// design intent of the SMR-3a flag as an opt-out: when on it overrides any
+/// size-threshold or mmap selection so callers can prove the mmap path was
+/// skipped.
+///
+/// When the flag is off and the `iouring-data-reads` feature is on, Linux is
+/// the target, and the basis is at least `IOURING_BASIS_SLURP_THRESHOLD`
+/// bytes, the file is pre-read through `fast_io::read_file_with_io_uring`
+/// (a `READ_FIXED` pass against a registered buffer pool) and returned as
+/// `BasisReader::Slurped`. Below the threshold, on non-Linux targets, or
+/// when the feature is off, the default `BufReader<File>` path is used so
+/// production builds are byte-identical to today.
 fn open_basis_reader(path: &Path, len: u64) -> std::io::Result<BasisReader> {
+    #[cfg(feature = "mmap-free-basis")]
+    {
+        let _ = len; // length is unused when the mmap-free path short-circuits
+        let file = File::open(path)?;
+        return Ok(BasisReader::MmapFree(BufReader::new(file)));
+    }
     #[cfg(all(target_os = "linux", feature = "iouring-data-reads"))]
     {
         if len >= IOURING_BASIS_SLURP_THRESHOLD {
@@ -592,5 +615,51 @@ mod tests {
             }
             other => panic!("expected Failed status, got {other:?}"),
         }
+    }
+
+    /// Default builds keep the existing dispatch: small basis files take the
+    /// `Buffered` path, preserving byte-identical behaviour with the
+    /// pre-SMR-3a code path.
+    #[cfg(not(feature = "mmap-free-basis"))]
+    #[test]
+    fn default_basis_dispatch_returns_buffered_variant() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let basis_path = temp.path().join("basis.bin");
+        fs::write(&basis_path, vec![0u8; 1024]).expect("write basis");
+
+        let reader = open_basis_reader(&basis_path, 1024).expect("open basis");
+        assert!(
+            matches!(reader, BasisReader::Buffered(_)),
+            "default dispatch must return BasisReader::Buffered for sub-threshold sizes"
+        );
+    }
+
+    /// SMR-3a Option 1: with the `mmap-free-basis` feature on, even a 1 KiB
+    /// basis file must go through the buffered path instead of mmap or the
+    /// io_uring slurp branch. This pins the override semantics so a parallel
+    /// size-threshold selector (SMR-3b) cannot reintroduce mmap while this
+    /// flag is set.
+    #[cfg(feature = "mmap-free-basis")]
+    #[test]
+    fn mmap_free_basis_skips_mmap_below_threshold() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let basis_path = temp.path().join("tiny.bin");
+
+        // 1 KiB sits well below any plausible mmap threshold (the
+        // companion `fast_io::mmap_reader::MMAP_THRESHOLD` is 64 KiB).
+        // The feature must still force the non-mmap path.
+        fs::write(&basis_path, vec![0u8; 1024]).expect("write basis");
+
+        let mut reader = open_basis_reader(&basis_path, 1024).expect("open basis");
+        assert!(
+            matches!(reader, BasisReader::MmapFree(_)),
+            "mmap-free-basis must skip mmap even for sub-threshold files"
+        );
+
+        // The reader must still surface the file's bytes through its
+        // `Read` impl so the rest of the pipeline composes unchanged.
+        let mut sink = Vec::new();
+        std::io::Read::read_to_end(&mut reader, &mut sink).expect("read basis");
+        assert_eq!(sink.len(), 1024);
     }
 }
