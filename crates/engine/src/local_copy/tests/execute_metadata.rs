@@ -307,39 +307,6 @@ fn execute_preserves_mode_0000_with_permissions() {
 #[cfg(unix)]
 #[test]
 #[ignore = "mode 0000 files cannot be read by owner on most systems"]
-fn execute_can_read_mode_0000_source_as_owner() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let temp = tempdir().expect("tempdir");
-    let source = temp.path().join("source.txt");
-    let destination = temp.path().join("dest.txt");
-
-    let content = b"readable by owner";
-    fs::write(&source, content).expect("write source");
-
-    // Set mode 0000 - as the owner, we can still read it
-    fs::set_permissions(&source, PermissionsExt::from_mode(0o000)).expect("set mode 0000");
-
-    // Verify source has mode 0000
-    let source_metadata = fs::metadata(&source).expect("source metadata");
-    assert_eq!(source_metadata.permissions().mode() & 0o777, 0o000);
-
-    let operands = vec![
-        source.into_os_string(),
-        destination.clone().into_os_string(),
-    ];
-    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-
-    // Should succeed because we're the owner
-    let summary = plan.execute().expect("copy succeeds");
-
-    assert_eq!(summary.files_copied(), 1);
-    assert_eq!(fs::read(&destination).expect("read dest"), content);
-}
-
-#[cfg(unix)]
-#[test]
-#[ignore = "mode 0000 files cannot be read by owner on most systems"]
 fn execute_preserves_mode_0000_on_destination_file() {
     use std::os::unix::fs::PermissionsExt;
 
