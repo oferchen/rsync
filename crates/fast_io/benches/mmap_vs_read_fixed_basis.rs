@@ -464,7 +464,7 @@ fn bench_mmap(c: &mut Criterion) {
                         .expect("basis open")
                 },
                 |file| {
-                    criterion::black_box(run_mmap_sequential(&file, size));
+                    std::hint::black_box(run_mmap_sequential(&file, size));
                 },
             );
             drop(dir);
@@ -531,7 +531,7 @@ fn bench_read_fixed_sqpoll(c: &mut Criterion) {
                     (file, ring, bufs)
                 },
                 |(file, mut ring, bufs)| {
-                    criterion::black_box(run_read_fixed_sequential(&mut ring, &file, &bufs, size));
+                    std::hint::black_box(run_read_fixed_sequential(&mut ring, &file, &bufs, size));
                 },
             );
             drop(dir);
