@@ -27,6 +27,12 @@ path = "../crates/compress"
 default-features = false
 features = ["zstd", "zlib-ng"]
 
+[dependencies.batch]
+path = "../crates/batch"
+
+[dependencies.metadata]
+path = "../crates/metadata"
+
 [[bin]]
 name = "protocol_wire"
 path = "fuzz_targets/protocol_wire.rs"
@@ -79,6 +85,34 @@ bench = false
 [[bin]]
 name = "decompressor_zlib"
 path = "fuzz_targets/decompressor_zlib.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filter_list_wire"
+path = "fuzz_targets/filter_list_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ndx_codec"
+path = "fuzz_targets/ndx_codec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "batch_reader"
+path = "fuzz_targets/batch_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "acl_xattr_wire"
+path = "fuzz_targets/acl_xattr_wire.rs"
 test = false
 doc = false
 bench = false
