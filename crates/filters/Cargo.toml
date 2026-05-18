@@ -14,7 +14,7 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-globset = "0.4"
+globset = { workspace = true }
 logging = { path = "../logging" }
 thiserror = { workspace = true }
 tracing = { workspace = true, optional = true }

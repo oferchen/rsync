@@ -61,7 +61,7 @@ tracing-subscriber = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 uzers = "0.12"
-xattr = "1.6"
+xattr = { workspace = true }
 daemon = { path = "../daemon" }
 
 [target.'cfg(not(windows))'.dependencies]
@@ -71,7 +71,7 @@ checksums = { path = "../checksums" }
 checksums = { path = "../checksums", default-features = false }
 
 [dev-dependencies]
-assert_cmd = "2.0"
+assert_cmd = { workspace = true }
 predicates = "3.1"
 filetime = { workspace = true }
 tempfile = { workspace = true }
