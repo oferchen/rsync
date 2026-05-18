@@ -43,6 +43,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "rt", "macros", "net"
 criterion = { workspace = true }
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [[bench]]
 name = "ssh_cipher"
