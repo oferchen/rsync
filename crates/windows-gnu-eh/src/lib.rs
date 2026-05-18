@@ -97,6 +97,7 @@ mod windows_gnu {
         loop {
             match state {
                 UNRESOLVED => {
+                    // SAFETY: `symbol` is a static NUL-terminated byte literal (see SYM_REGISTER/SYM_DEREGISTER); resolve_symbol's contract is satisfied.
                     let resolved = unsafe { resolve_symbol(symbol) } as usize;
                     let new_state = if resolved == 0 { MISSING } else { resolved };
                     match cache.compare_exchange(
@@ -129,6 +130,7 @@ mod windows_gnu {
         debug_assert!(!symbol.is_empty() && symbol[symbol.len() - 1] == 0);
 
         for &lib in &LIBCANDIDATES {
+            // SAFETY: `lib` and `symbol` are static NUL-terminated byte literals satisfying load_from_library's precondition.
             let ptr = unsafe { load_from_library(lib, symbol) };
             if !ptr.is_null() {
                 return ptr;
@@ -143,10 +145,12 @@ mod windows_gnu {
         debug_assert!(!library.is_empty() && library[library.len() - 1] == 0);
 
         let module = {
+            // SAFETY: `library` is a static NUL-terminated byte literal; Win32 GetModuleHandleA accepts a borrowed handle and does not retain the pointer.
             let handle = unsafe { GetModuleHandleA(library.as_ptr() as *const c_char) };
             if !handle.is_null() {
                 handle
             } else {
+                // SAFETY: `library` is a static NUL-terminated byte literal; LoadLibraryA returns a refcounted module handle owned by the process.
                 unsafe { LoadLibraryA(library.as_ptr() as *const c_char) }
             }
         };
@@ -155,31 +159,38 @@ mod windows_gnu {
             return ptr::null_mut();
         }
 
+        // SAFETY: `module` is a valid handle returned by GetModuleHandleA/LoadLibraryA; `symbol` is a static NUL-terminated byte literal.
         unsafe { GetProcAddress(module, symbol.as_ptr() as *const c_char) }
     }
 
     #[inline(always)]
     unsafe fn resolve_register() -> Option<RegisterFrameInfo> {
+        // SAFETY: SYM_REGISTER is a static NUL-terminated byte literal satisfying ensure_function's precondition.
         let ptr = match unsafe { ensure_function(&REGISTER_FRAME_INFO, SYM_REGISTER) } {
             Some(ptr) => ptr,
             None => return None,
         };
+        // SAFETY: GetProcAddress returned a pointer to `__register_frame_info`, whose ABI matches RegisterFrameInfo.
         Some(unsafe { transmute::<*mut (), RegisterFrameInfo>(ptr) })
     }
 
     #[inline(always)]
     unsafe fn resolve_deregister() -> Option<DeregisterFrameInfo> {
+        // SAFETY: SYM_DEREGISTER is a static NUL-terminated byte literal satisfying ensure_function's precondition.
         let ptr = match unsafe { ensure_function(&DEREGISTER_FRAME_INFO, SYM_DEREGISTER) } {
             Some(ptr) => ptr,
             None => return None,
         };
+        // SAFETY: GetProcAddress returned a pointer to `__deregister_frame_info`, whose ABI matches DeregisterFrameInfo.
         Some(unsafe { transmute::<*mut (), DeregisterFrameInfo>(ptr) })
     }
 
     /// Forwards `rsbegin`'s registration hook to libunwind.
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ___register_frame_info(eh_frame: *const u8, object: *mut c_void) {
+        // SAFETY: resolve_register has no preconditions beyond those satisfied by static symbol constants.
         if let Some(register) = unsafe { resolve_register() } {
+            // SAFETY: eh_frame/object validity is the caller's contract per rsbegin.o's invocation; we forward unchanged to libgcc/libunwind.
             unsafe {
                 register(eh_frame, object);
             }
@@ -189,7 +200,9 @@ mod windows_gnu {
     /// Forwards `rsbegin`'s deregistration hook to libunwind.
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ___deregister_frame_info(eh_frame: *const u8) {
+        // SAFETY: resolve_deregister has no preconditions beyond those satisfied by static symbol constants.
         if let Some(deregister) = unsafe { resolve_deregister() } {
+            // SAFETY: eh_frame validity is the caller's contract per rsbegin.o's invocation; we forward unchanged to libgcc/libunwind.
             unsafe {
                 deregister(eh_frame);
             }

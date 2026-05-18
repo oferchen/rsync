@@ -125,6 +125,7 @@ impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = env::var_os(key);
         #[allow(unsafe_code)]
+        // SAFETY: Test-only EnvGuard serializes env access; no other threads read this key concurrently.
         unsafe {
             env::set_var(key, value);
         }
@@ -134,6 +135,7 @@ impl EnvGuard {
     fn set_os(key: &'static str, value: &OsStr) -> Self {
         let previous = env::var_os(key);
         #[allow(unsafe_code)]
+        // SAFETY: Test-only EnvGuard serializes env access; no other threads read this key concurrently.
         unsafe {
             env::set_var(key, value);
         }
@@ -143,6 +145,7 @@ impl EnvGuard {
     fn remove(key: &'static str) -> Self {
         let previous = env::var_os(key);
         #[allow(unsafe_code)]
+        // SAFETY: Test-only EnvGuard serializes env access; no other threads read this key concurrently.
         unsafe {
             env::remove_var(key);
         }
@@ -154,11 +157,13 @@ impl Drop for EnvGuard {
     fn drop(&mut self) {
         if let Some(value) = self.previous.take() {
             #[allow(unsafe_code)]
+            // SAFETY: Test-only EnvGuard restores prior value during Drop; no concurrent env access in test scope.
             unsafe {
                 env::set_var(self.key, value);
             }
         } else {
             #[allow(unsafe_code)]
+            // SAFETY: Test-only EnvGuard removes key during Drop; no concurrent env access in test scope.
             unsafe {
                 env::remove_var(self.key);
             }
