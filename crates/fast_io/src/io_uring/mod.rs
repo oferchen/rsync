@@ -85,7 +85,9 @@
 //!   `docs/audits/iouring-pbuf-ring.md` for the full call-site survey.
 
 mod batching;
+/// io_uring provided buffer ring (PBUF_RING) for zero-copy reads.
 pub mod buffer_ring;
+/// io_uring `IORING_OP_ASYNC_CANCEL` primitive for in-flight SQE cancellation.
 pub mod cancel;
 mod config;
 #[cfg(feature = "iouring-data-reads")]
@@ -94,16 +96,24 @@ mod disk_batch;
 mod file_factory;
 mod file_reader;
 mod file_writer;
+/// io_uring `LINKAT` opcode wrapper and kernel availability probe.
 pub mod linkat;
+/// Linked SQE chains for the read -> checksum -> write pipeline.
 pub mod linked_chain;
+/// Page-aligned buffer registration for io_uring `READ_FIXED`/`WRITE_FIXED`.
 pub mod registered_buffers;
+/// `IORING_OP_RENAMEAT` (RENAMEAT2) submission helpers and kernel probe.
 pub mod renameat2;
+/// `IORING_OP_SEND_ZC` zero-copy socket-send primitive (Linux 6.0+).
 pub mod send_zc;
+/// Pool of long-lived io_uring instances shared across consumers in a session.
 pub mod session_pool;
+/// Single io_uring ring shared by a reader fd and a writer fd in one session.
 pub mod shared_ring;
 mod socket_factory;
 mod socket_reader;
 mod socket_writer;
+/// io_uring `IORING_OP_STATX` opcode wrapper and batch submission.
 pub mod statx;
 
 #[cfg(test)]
