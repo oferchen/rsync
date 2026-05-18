@@ -1,6 +1,6 @@
 # spill.rs Decomposition Plan (SPL-1, #2323)
 
-`crates/engine/src/concurrent_delta/spill.rs` is 1229 lines (44.3 KB),
+`crates/engine/src/concurrent_delta/spill.rs` is 1232 lines (44.4 KB),
 substantially over the 650 LoC cap enforced by `tools/enforce_limits.sh`.
 This document maps the file's existing structure to the six-way submodule
 split targeted by tasks SPL-2 through SPL-8.
@@ -9,6 +9,44 @@ The goal is a pure decomposition: no behaviour change, no API change.
 Public re-exports stay at `crates/engine/src/concurrent_delta/spill/mod.rs`
 so downstream callers (`consumer.rs`, `parallel_apply.rs`,
 `strategy.rs`) keep working unchanged.
+
+## Current layout
+
+The directory `crates/engine/src/concurrent_delta/spill/` now contains
+the following submodules. The remaining unsplit content still lives in
+the sibling `spill.rs` and is the residue that the open SPL-N PRs will
+trim further. The SPL-9 mod-level re-export audit in
+[`spl-9-mod-reexports.md`](spl-9-mod-reexports.md) is the contract that
+every extraction must satisfy.
+
+| Submodule        | Responsibility                                                                                                        |
+|------------------|-----------------------------------------------------------------------------------------------------------------------|
+| `spill/policy.rs`| `SpillPolicy` + `ReclaimMode`, `SpillCompression`, `SpillGranularity` enums plus their defaults and validation tests. |
+
+Pending submodules (per migration status below): `error.rs`, `codec.rs`,
+`stats.rs`, `tempfile.rs`, `buffer.rs`, plus the `tests/` split.
+
+## Migration status
+
+Each SPL task lands an independent PR. The table below tracks where the
+work sits today. PR numbers in the "PR" column link the merged or open
+PR; the spill module itself stays compilable and CI-green at every step.
+
+| Task  | Issue  | Submodule                | PR     | Status                       |
+|-------|--------|--------------------------|--------|------------------------------|
+| SPL-1 | #2323  | decomposition plan (doc) | #4337  | Merged                       |
+| SPL-2 | #2324  | `spill/error.rs`         | #4345  | In flight (PR open)          |
+| SPL-3 | #2325  | `spill/codec.rs`         | #4369  | In flight (PR open)          |
+| SPL-4 | n/a    | `spill/tempfile.rs`      | -      | Pending (not yet opened)     |
+| SPL-5 | n/a    | `spill/policy.rs`        | #4360  | Merged (delivered as part of `SpillPolicy` wiring) |
+| SPL-6 | #2328  | `spill/stats.rs`         | #4386  | In flight (PR open)          |
+| SPL-7 | n/a    | `spill/buffer.rs`        | -      | Pending (depends on SPL-2..6)|
+| SPL-8 | n/a    | `spill/tests/*`          | -      | Pending (follows SPL-7)      |
+| SPL-9 | #2331  | mod re-export audit (doc)| #4390  | Merged                       |
+
+SPL-5 landed earlier than the SPL-2/3/6 extractions because the
+`SpillPolicy` public surface (#2336, PR #4360) demanded its own
+submodule. The other extractions follow the order in the next section.
 
 ## Submodule Map
 
@@ -27,7 +65,10 @@ Line ranges include leading rustdoc on each item.
 ## Recommended Split Order
 
 Pull leaves first to minimise churn in `buffer.rs`, which is the busiest
-consumer of every other submodule.
+consumer of every other submodule. Note that SPL-5 (`policy.rs`) already
+shipped out-of-order via PR #4360 because the `SpillPolicy` public API
+work in #2336 required its own submodule; the remaining order below is
+unchanged.
 
 1. **SPL-2 `error.rs`** - zero internal callers in this file, only the
    public `SpillError` surface. Smallest and safest extraction. Validates
@@ -46,13 +87,16 @@ consumer of every other submodule.
    `impl SpillableReorderBuffer` block, refactor them to take an explicit
    `&mut SpillState { backend, dir, write_pos, spill_index,
    dir_recreate_count }` borrow.
-5. **SPL-5 `policy.rs`** - extracts `spill_excess` plus the two
-   thresholds. Depends on SPL-4 because it calls `spill_item` and
-   manipulates `spill_count`/`memory_used`. Either move
-   `spill_excess` as a free function over the same `SpillState`-style
-   borrow, or keep it as an `impl SpillableReorderBuffer` method that
-   delegates to free helpers in `policy::`. Free-function form is
-   preferred because it leaves `buffer.rs` doing only orchestration.
+5. **SPL-5 `policy.rs`** (shipped via PR #4360) - extracts `spill_excess`
+   plus the two thresholds. The shipped form delivered the public
+   `SpillPolicy` surface and bundled the threshold constants into the
+   policy submodule; the underlying `spill_excess` and hot-zone logic
+   still live in `spill.rs` and will move under SPL-7 alongside the
+   buffer. Either move `spill_excess` as a free function over the same
+   `SpillState`-style borrow, or keep it as an `impl SpillableReorderBuffer`
+   method that delegates to free helpers in `policy::`. Free-function
+   form is preferred because it leaves `buffer.rs` doing only
+   orchestration.
 6. **SPL-7 `buffer.rs`** - last. By the time this runs, `buffer.rs`
    imports `error::SpillError`, `codec::SpillCodec`, `stats::SpillStats`,
    and calls into `tempfile::*` and `policy::*`. The public type and
