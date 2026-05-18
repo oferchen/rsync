@@ -191,6 +191,7 @@ impl VersionInfoReport {
         self.write_named_list(writer, "Checksum list", &self.checksum_algorithms)?;
         self.write_named_list(writer, "Compress list", &self.compress_algorithms)?;
         self.write_named_list(writer, "Daemon auth list", &self.daemon_auth_algorithms)?;
+        self.write_named_list(writer, "Build features", &compiled_build_features())?;
         writer.write_char('\n')?;
 
         self.write_gpl_footer(writer)
@@ -398,6 +399,52 @@ pub(crate) fn default_daemon_auth_algorithms() -> Vec<Cow<'static, str>> {
         .iter()
         .map(|digest| Cow::Borrowed(digest.name()))
         .collect()
+}
+
+/// Returns the list of Cargo features the binary was compiled with.
+///
+/// Each entry is the canonical Cargo feature name as declared in the
+/// workspace `Cargo.toml`. Both core-level features (compression, ACL,
+/// xattr, iconv, async, embedded SSH) and bin-level features that
+/// forward into core (`zlib-ng`, `mmap-free-basis`) are detectable
+/// here; bin-only features that do not propagate into `core` (such as
+/// `parallel`, `io_uring`, `iocp`, `copy_file_range`, `openssl`,
+/// `openssl-vendored`, `sd-notify`, `mimalloc`) are surfaced via the
+/// existing `Capabilities` / `Optimizations` sections and the
+/// `Platform I/O` line above this one.
+#[must_use]
+pub(crate) fn compiled_build_features() -> Vec<Cow<'static, str>> {
+    let mut features: Vec<Cow<'static, str>> = Vec::new();
+
+    if cfg!(feature = "zstd") {
+        features.push(Cow::Borrowed("zstd"));
+    }
+    if cfg!(feature = "lz4") {
+        features.push(Cow::Borrowed("lz4"));
+    }
+    if cfg!(feature = "zlib-ng") {
+        features.push(Cow::Borrowed("zlib-ng"));
+    }
+    if cfg!(feature = "acl") {
+        features.push(Cow::Borrowed("acl"));
+    }
+    if cfg!(feature = "xattr") {
+        features.push(Cow::Borrowed("xattr"));
+    }
+    if cfg!(feature = "iconv") {
+        features.push(Cow::Borrowed("iconv"));
+    }
+    if cfg!(feature = "async") {
+        features.push(Cow::Borrowed("async"));
+    }
+    if cfg!(feature = "embedded-ssh") {
+        features.push(Cow::Borrowed("embedded-ssh"));
+    }
+    if cfg!(feature = "mmap-free-basis") {
+        features.push(Cow::Borrowed("mmap-free-basis"));
+    }
+
+    features
 }
 
 #[derive(Clone, Debug)]
