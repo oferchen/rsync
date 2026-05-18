@@ -9,6 +9,15 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ## [Unreleased]
 
+### Documentation
+
+- **SSH transport**: documented the opt-in `rsync_io/ssh-socketpair-stderr`
+  Cargo feature - what it does (socketpair-backed SSH stderr instead of an
+  anonymous pipe), why it exists (avoid deadlock when chatty remote children
+  fill the 64 KiB pipe buffer), when to enable it, and platform constraints.
+  Added `docs/ssh-transport.md` and cross-linked from the Cargo features
+  table in `README.md` (#2377).
+
 ### Performance
 
 - **Delta matching**: incorporated four zsync-inspired internal optimizations
