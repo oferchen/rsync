@@ -8,6 +8,8 @@ use toml::Value;
 pub(super) struct LineLimitsConfig {
     pub(super) default_max_lines: Option<usize>,
     pub(super) default_warn_lines: Option<usize>,
+    pub(super) default_test_max_lines: Option<usize>,
+    pub(super) default_test_warn_lines: Option<usize>,
     overrides: HashMap<PathBuf, FileLineLimit>,
 }
 
@@ -75,11 +77,38 @@ pub(super) fn parse_line_limits_config(
         )?);
     }
 
+    if let Some(default_test_max) = value.get("default_test_max_lines") {
+        config.default_test_max_lines = Some(parse_positive_usize_value(
+            default_test_max,
+            "default_test_max_lines",
+            origin,
+        )?);
+    }
+
+    if let Some(default_test_warn) = value.get("default_test_warn_lines") {
+        config.default_test_warn_lines = Some(parse_positive_usize_value(
+            default_test_warn,
+            "default_test_warn_lines",
+            origin,
+        )?);
+    }
+
     if let (Some(warn), Some(max)) = (config.default_warn_lines, config.default_max_lines)
         && warn > max
     {
         return Err(validation_error(format!(
             "default warn_lines ({warn}) cannot exceed default max_lines ({max}) in {}",
+            origin.display()
+        )));
+    }
+
+    if let (Some(warn), Some(max)) = (
+        config.default_test_warn_lines,
+        config.default_test_max_lines,
+    ) && warn > max
+    {
+        return Err(validation_error(format!(
+            "default_test_warn_lines ({warn}) cannot exceed default_test_max_lines ({max}) in {}",
             origin.display()
         )));
     }

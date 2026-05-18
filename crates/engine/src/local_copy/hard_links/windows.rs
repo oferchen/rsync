@@ -16,6 +16,7 @@ pub(crate) struct HardLinkTracker {
     /// upstream: hlink.c::hard_link_check returns 1 for followers so
     /// generator.c:1540 exits before set_file_attrs(); the inode keeps the
     /// leader's DACL for free.
+    #[cfg(any(test, feature = "acl"))]
     acl_cohort_leaders: rustc_hash::FxHashSet<PathBuf>,
 }
 
@@ -39,6 +40,7 @@ impl HardLinkTracker {
     /// to the same inode if not skipped. The wire receiver already skips
     /// follower ACL writes (`create_hardlinks` itemizes only); this tracker
     /// brings the local-copy `--copy-dest` Link branch into parity.
+    #[cfg(any(test, feature = "acl"))]
     pub(crate) fn register_acl_cohort_leader(&mut self, reference: &Path) -> bool {
         self.acl_cohort_leaders.insert(reference.to_path_buf())
     }

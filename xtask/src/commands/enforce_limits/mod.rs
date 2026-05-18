@@ -2,7 +2,7 @@ use crate::cli::EnforceLimitsArgs;
 use crate::error::TaskResult;
 use crate::util::{count_file_lines, read_limit_env_var, validation_error};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 mod config;
 
@@ -89,6 +89,21 @@ pub fn execute(workspace: &Path, options: EnforceLimitsOptions) -> TaskResult<()
                 })?
                 .to_path_buf();
 
+            // Apply the test-file defaults before per-file overrides so a
+            // path-specific override can still tighten or relax the cap.
+            // A "test file" is one that lives in a `tests/` directory or has
+            // a filename matching `*tests.rs`; that mirrors `cargo test`'s
+            // integration-test layout and the `#[cfg(test)] mod tests;`
+            // convention used in unit test files.
+            if is_test_source(&relative) {
+                if let Some(max_override) = config.default_test_max_lines {
+                    file_max = max_override;
+                }
+                if let Some(warn_override) = config.default_test_warn_lines {
+                    file_warn = warn_override;
+                }
+            }
+
             if let Some(override_limits) = config.override_for(&relative) {
                 if let Some(max_override) = override_limits.max_lines {
                     file_max = max_override;
@@ -142,6 +157,27 @@ pub fn execute(workspace: &Path, options: EnforceLimitsOptions) -> TaskResult<()
     }
 
     Ok(())
+}
+
+/// Classifies a workspace-relative Rust source path as a test source.
+///
+/// A path is treated as a test source when any of the following are true:
+/// - It lives under a `tests/` directory (cargo's integration-test layout,
+///   or a sibling test module folder co-located with the unit under test).
+/// - Its filename ends with `tests.rs` (the common `mod tests;` /
+///   `#[cfg(test)] mod tests;` filename convention).
+/// - Its filename is `tests.rs`.
+fn is_test_source(relative: &Path) -> bool {
+    if relative
+        .components()
+        .any(|c| matches!(c, Component::Normal(name) if name == "tests"))
+    {
+        return true;
+    }
+    if let Some(name) = relative.file_name().and_then(|n| n.to_str()) {
+        return name == "tests.rs" || name.ends_with("_tests.rs") || name.ends_with("tests.rs");
+    }
+    false
 }
 
 fn collect_rust_sources(root: &Path) -> TaskResult<Vec<PathBuf>> {
@@ -376,5 +412,97 @@ warn_lines = 1
             other => panic!("expected validation error, got {other:?}"),
         };
         assert!(message.contains("maximum line count"));
+    }
+
+    #[test]
+    fn is_test_source_classifies_test_paths() {
+        assert!(is_test_source(Path::new("crates/foo/tests/it.rs")));
+        assert!(is_test_source(Path::new("crates/foo/src/bar/tests/x.rs")));
+        assert!(is_test_source(Path::new("crates/foo/src/tests.rs")));
+        assert!(is_test_source(Path::new(
+            "crates/foo/src/comprehensive_tests.rs"
+        )));
+        assert!(is_test_source(Path::new("crates/foo/src/permission_tests.rs")));
+    }
+
+    #[test]
+    fn is_test_source_rejects_non_test_paths() {
+        assert!(!is_test_source(Path::new("crates/foo/src/lib.rs")));
+        assert!(!is_test_source(Path::new("crates/foo/src/bar/mod.rs")));
+        assert!(!is_test_source(Path::new("crates/foo/src/contestants.rs")));
+    }
+
+    #[test]
+    fn execute_applies_default_test_max_lines() {
+        let workspace = tempdir().expect("create workspace");
+        let src_dir = workspace.path().join("crates/sample/src");
+        let test_dir = workspace.path().join("crates/sample/tests");
+        fs::create_dir_all(&src_dir).expect("create src");
+        fs::create_dir_all(&test_dir).expect("create tests");
+        write_lines(&src_dir.join("lib.rs"), 100);
+        write_lines(&test_dir.join("big_integration.rs"), 800);
+
+        let config_path = workspace.path().join("tools/line_limits.toml");
+        fs::create_dir_all(config_path.parent().unwrap()).expect("create config dir");
+        fs::write(
+            &config_path,
+            r#"
+default_max_lines = 200
+default_warn_lines = 100
+default_test_max_lines = 1000
+default_test_warn_lines = 700
+"#,
+        )
+        .expect("write config");
+
+        let _env = cleared_limits_env();
+        let result = execute(
+            workspace.path(),
+            EnforceLimitsOptions {
+                max_lines: None,
+                warn_lines: None,
+                config_path: Some(config_path),
+            },
+        );
+        assert!(
+            result.is_ok(),
+            "test file should clear default_test_max_lines: {result:?}"
+        );
+    }
+
+    #[test]
+    fn execute_errors_when_test_file_exceeds_test_max() {
+        let workspace = tempdir().expect("create workspace");
+        let test_dir = workspace.path().join("crates/sample/tests");
+        fs::create_dir_all(&test_dir).expect("create tests");
+        write_lines(&test_dir.join("over.rs"), 1500);
+
+        let config_path = workspace.path().join("tools/line_limits.toml");
+        fs::create_dir_all(config_path.parent().unwrap()).expect("create config dir");
+        fs::write(
+            &config_path,
+            r#"
+default_max_lines = 200
+default_warn_lines = 100
+default_test_max_lines = 1000
+default_test_warn_lines = 700
+"#,
+        )
+        .expect("write config");
+
+        let _env = cleared_limits_env();
+        let error = execute(
+            workspace.path(),
+            EnforceLimitsOptions {
+                max_lines: None,
+                warn_lines: None,
+                config_path: Some(config_path),
+            },
+        )
+        .unwrap_err();
+        match error {
+            TaskError::Validation(message) => assert!(message.contains("maximum line count")),
+            other => panic!("expected validation error, got {other:?}"),
+        }
     }
 }

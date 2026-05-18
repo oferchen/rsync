@@ -9,8 +9,10 @@ use std::time::Duration;
 
 use logging::{debug_log, info_log};
 
+use std::sync::Arc;
+
 use crate::delete::{
-    DeleteContext, DeleteEntry, DeleteEntryKind, DeleteFs, DeletePlan, EmitterTiming, RealDeleteFs,
+    DeleteContext, DeleteEntry, DeleteEntryKind, DeleteFs, DeletePlan, DeletePlanMap, RealDeleteFs,
 };
 use crate::local_copy::{CopyContext, LocalCopyAction, LocalCopyError, LocalCopyRecord};
 
@@ -99,11 +101,23 @@ fn delete_extraneous_entries_via_emitter<S: AsRef<OsStr>, F: DeleteFs>(
     // Phase 2: build a single-directory DeleteContext, observe the
     // segment so the cursor yields the directory, publish the plan
     // directly into the context's map, and drain via emit_one.
-    let ctx = DeleteContext::new(destination.to_path_buf(), EmitterTiming::During);
+    //
+    // The cursor root must equal the plan's directory key so
+    // `cursor.next_ready()` yields a path that `plans.take()` resolves
+    // to the published plan. `DeleteContext::new` would leave the
+    // cursor at the empty relative path; use `with_cursor_root` to seat
+    // it on the absolute destination the plan is keyed on.
+    let plans_map = Arc::new(DeletePlanMap::new());
+    plans_map.insert(plan.clone());
+    let ctx = DeleteContext::with_cursor_root(
+        plans_map,
+        destination.to_path_buf(),
+        destination.to_path_buf(),
+        true,
+    );
     // TODO: wire DDP-B3 - replace `observe_directory` with the segment
     // observation hook so the receiver pipeline drives the cursor.
     ctx.observe_directory(destination.to_path_buf(), &[]);
-    ctx.plans.insert(plan.clone());
 
     // Run side-effects (records, summary, backup) BEFORE dispatch so the
     // dry-run path is observably identical to a live unlink. Then

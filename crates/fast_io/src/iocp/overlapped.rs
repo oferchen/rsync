@@ -77,6 +77,7 @@ impl BufferStorage {
     }
 
     /// Returns whether the backing storage is page-aligned.
+    #[cfg(test)]
     pub(crate) fn is_page_aligned(&self) -> bool {
         matches!(self, Self::PageAligned { .. })
     }
@@ -94,6 +95,14 @@ impl std::ops::Index<std::ops::Range<usize>> for BufferStorage {
     type Output = [u8];
 
     fn index(&self, range: std::ops::Range<usize>) -> &[u8] {
+        &self.as_slice()[range]
+    }
+}
+
+impl std::ops::Index<std::ops::RangeTo<usize>> for BufferStorage {
+    type Output = [u8];
+
+    fn index(&self, range: std::ops::RangeTo<usize>) -> &[u8] {
         &self.as_slice()[range]
     }
 }

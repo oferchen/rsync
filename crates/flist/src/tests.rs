@@ -24,7 +24,17 @@ fn collect_relative_paths(walker: FileListWalker) -> Vec<PathBuf> {
 
 #[test]
 fn walk_errors_when_root_missing() {
-    let builder = FileListBuilder::new("/nonexistent/path/for/walker");
+    // Use a platform-absolute "nonexistent" path so the FileListBuilder
+    // does not absolutize it through the cwd, which would change the
+    // error path the assertions below compare against. On Unix the
+    // leading "/" is already absolute; on Windows we need a drive
+    // letter, otherwise absolutize() prefixes the cwd drive.
+    #[cfg(unix)]
+    let missing = "/nonexistent/path/for/walker";
+    #[cfg(windows)]
+    let missing = r"C:\nonexistent\path\for\walker";
+
+    let builder = FileListBuilder::new(missing);
     let error = match builder.build() {
         Ok(_) => panic!("missing root should fail"),
         Err(error) => error,
@@ -33,11 +43,8 @@ fn walk_errors_when_root_missing() {
         error.kind(),
         FileListErrorKind::RootMetadata { .. }
     ));
-    assert_eq!(error.path(), Path::new("/nonexistent/path/for/walker"));
-    assert_eq!(
-        error.kind().path(),
-        Path::new("/nonexistent/path/for/walker")
-    );
+    assert_eq!(error.path(), Path::new(missing));
+    assert_eq!(error.kind().path(), Path::new(missing));
 }
 
 #[test]

@@ -194,6 +194,7 @@ impl<'a> CopyContext<'a> {
     /// upstream: hlink.c::hard_link_check returns 1 for followers so
     /// generator.c:1540 exits before `set_file_attrs()` and therefore never
     /// calls `set_acl()` on a follower alias.
+    #[cfg(all(any(unix, windows), feature = "acl"))]
     pub(super) fn register_acl_cohort_leader(&mut self, reference: &Path) -> bool {
         self.hard_links.register_acl_cohort_leader(reference)
     }

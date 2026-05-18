@@ -275,6 +275,7 @@ fn absolutize(path: PathBuf) -> Result<PathBuf, FileListError> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn absolutize_returns_absolute_path_unchanged() {
         let path = PathBuf::from("/some/absolute/path");
@@ -283,9 +284,19 @@ mod tests {
         assert_eq!(result.unwrap(), path);
     }
 
+    #[cfg(unix)]
     #[test]
     fn absolutize_returns_absolute_path_unchanged_root() {
         let path = PathBuf::from("/");
+        let result = absolutize(path.clone());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn absolutize_returns_absolute_path_unchanged_windows() {
+        let path = PathBuf::from(r"C:\some\absolute\path");
         let result = absolutize(path.clone());
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), path);
