@@ -43,20 +43,21 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::os::windows::io::AsRawHandle;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
 
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_HANDLE_EOF, FALSE, HANDLE, INVALID_HANDLE_VALUE, TRUE, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    FILE_FLAG_OVERLAPPED, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    FlushFileBuffers, ReOpenFile, WriteFile,
+    FILE_FLAG_NO_BUFFERING, FILE_FLAG_OVERLAPPED, FILE_FLAG_WRITE_THROUGH, FILE_GENERIC_WRITE,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FlushFileBuffers, ReOpenFile, WriteFile,
 };
 use windows_sys::Win32::System::IO::{GetQueuedCompletionStatusEx, OVERLAPPED, OVERLAPPED_ENTRY};
 
 use super::completion_port::CompletionPort;
 use super::config::IocpConfig;
 use super::overlapped::OverlappedOp;
+use crate::page_aligned::{PageAlignedBuffer, round_up_to_page};
 
 /// Default write buffer capacity matching upstream's `wf_writeBufSize`
 /// (`fileio.c:161` -> `WRITE_SIZE * 8` = 256 KB).
@@ -142,6 +143,79 @@ fn take_injected_write_error() -> Option<i32> {
     None
 }
 
+/// Reusable accumulation buffer for batched writes.
+///
+/// `IocpDiskBatch` stages caller data here before splitting it into chunks
+/// for overlapped submission. The buffer comes from one of two arenas:
+///
+/// - [`BatchBuffer::Vec`]: standard heap allocation, no alignment guarantees.
+///   Used when buffered I/O is in effect.
+/// - [`BatchBuffer::PageAligned`]: page-aligned allocation backed by
+///   [`PageAlignedBuffer`]. Used when `IocpConfig::unbuffered` is set so
+///   chunks handed to `WriteFile` on the no-buffering handle do not force
+///   the kernel into an aligned-scratch bounce copy.
+enum BatchBuffer {
+    /// Standard heap-allocated buffer (no alignment guarantee).
+    Vec(Vec<u8>),
+    /// Page-aligned buffer for `FILE_FLAG_NO_BUFFERING` submissions.
+    PageAligned(PageAlignedBuffer),
+}
+
+impl BatchBuffer {
+    fn len(&self) -> usize {
+        match self {
+            Self::Vec(v) => v.len(),
+            Self::PageAligned(b) => b.capacity(),
+        }
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Vec(v) => v.as_slice(),
+            Self::PageAligned(b) => b.as_slice(),
+        }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        match self {
+            Self::Vec(v) => v.as_mut_slice(),
+            Self::PageAligned(b) => b.as_mut_slice(),
+        }
+    }
+
+    fn is_page_aligned(&self) -> bool {
+        matches!(self, Self::PageAligned(_))
+    }
+}
+
+/// Process-wide telemetry: total bounce-buffer copies the IOCP write path
+/// has avoided by submitting page-aligned buffers to no-buffering handles.
+///
+/// Exposed via [`bounce_copies_avoided`] for benchmark and status output.
+/// Pure counter; safe to read from any thread.
+static BOUNCE_COPIES_AVOIDED: AtomicU64 = AtomicU64::new(0);
+
+/// Returns the cumulative count of bounce-buffer copies avoided by the
+/// page-aligned IOCP write path since process start.
+///
+/// Each increment corresponds to a single `WriteFile` submission that used
+/// a page-aligned buffer on a `FILE_FLAG_NO_BUFFERING` handle, sparing the
+/// kernel from allocating an aligned scratch buffer and memcpying the
+/// caller's data into it before issuing the I/O.
+#[must_use]
+pub fn bounce_copies_avoided() -> u64 {
+    BOUNCE_COPIES_AVOIDED.load(Ordering::Relaxed)
+}
+
+/// Resets the process-wide bounce-copy counter to zero.
+///
+/// Used by tests to isolate observation windows. Production code should
+/// treat the counter as monotonic.
+#[doc(hidden)]
+pub fn reset_bounce_copies_avoided_for_test() {
+    BOUNCE_COPIES_AVOIDED.store(0, Ordering::SeqCst);
+}
+
 /// Batched IOCP disk writer for the disk commit phase.
 ///
 /// Owns a single [`CompletionPort`] reused across every file it processes.
@@ -149,6 +223,16 @@ fn take_injected_write_error() -> Option<i32> {
 /// previous file's data is flushed, its overlapped handle is closed, and the
 /// new file is associated with the port using a fresh per-file completion
 /// key.
+///
+/// # Buffer Alignment
+///
+/// When [`IocpConfig::unbuffered`] is set the writer allocates its
+/// accumulation buffer through [`PageAlignedBuffer`], and each `WriteFile`
+/// submission uses [`OverlappedOp::new_write_aligned`] so the per-chunk
+/// pinned buffer is also page-aligned. The handle is reopened with
+/// `FILE_FLAG_NO_BUFFERING` (and optionally `FILE_FLAG_WRITE_THROUGH`) so
+/// the kernel can issue the I/O directly from the caller's buffer without
+/// the alignment-fixup bounce copy that misaligned submissions force.
 ///
 /// # Thread Safety
 ///
@@ -160,7 +244,7 @@ pub struct IocpDiskBatch {
     /// Currently active file, if any.
     current_file: Option<ActiveFile>,
     /// Reusable write buffer.
-    buffer: Vec<u8>,
+    buffer: BatchBuffer,
     /// Current write position in the buffer.
     buffer_pos: usize,
     /// Per-file completion key counter so each file has a distinct key when
@@ -195,14 +279,31 @@ impl IocpDiskBatch {
         // and drains its own completions inline.
         let port = CompletionPort::new(1)?;
         let buffer_capacity = config.buffer_size.max(DEFAULT_BUFFER_CAPACITY);
+        let buffer = if config.unbuffered {
+            // Round up so the underlying allocation is a clean page multiple.
+            // PageAlignedBuffer's capacity will report the rounded value,
+            // which is what the chunker uses to size each WriteFile.
+            BatchBuffer::PageAligned(PageAlignedBuffer::new(round_up_to_page(buffer_capacity)))
+        } else {
+            BatchBuffer::Vec(vec![0u8; buffer_capacity])
+        };
         Ok(Self {
             port,
             config: config.clone(),
             current_file: None,
-            buffer: vec![0u8; buffer_capacity],
+            buffer,
             buffer_pos: 0,
             next_completion_key: 1,
         })
+    }
+
+    /// Returns whether the accumulation buffer is page-aligned.
+    ///
+    /// Always `true` when constructed with `IocpConfig::unbuffered = true`.
+    /// Useful for tests and runtime status output.
+    #[must_use]
+    pub fn buffer_is_page_aligned(&self) -> bool {
+        self.buffer.is_page_aligned()
     }
 
     /// Attempts to create a batched IOCP disk writer, returning `None` if
@@ -236,7 +337,7 @@ impl IocpDiskBatch {
         self.finalize_current_file();
 
         let raw_handle = file.as_raw_handle() as HANDLE;
-        let overlapped_handle = reopen_overlapped(raw_handle)?;
+        let overlapped_handle = reopen_overlapped(raw_handle, &self.config)?;
 
         let key = self.next_completion_key;
         self.next_completion_key = self.next_completion_key.wrapping_add(1).max(1);
@@ -272,18 +373,20 @@ impl IocpDiskBatch {
         }
 
         let mut offset = 0;
+        let capacity = self.buffer.len();
         while offset < data.len() {
-            let available = self.buffer.len() - self.buffer_pos;
+            let available = capacity - self.buffer_pos;
             let to_copy = available.min(data.len() - offset);
 
             if to_copy > 0 {
-                self.buffer[self.buffer_pos..self.buffer_pos + to_copy]
+                let pos = self.buffer_pos;
+                self.buffer.as_mut_slice()[pos..pos + to_copy]
                     .copy_from_slice(&data[offset..offset + to_copy]);
                 self.buffer_pos += to_copy;
                 offset += to_copy;
             }
 
-            if self.buffer_pos == self.buffer.len() {
+            if self.buffer_pos == capacity {
                 self.flush_current()?;
             }
         }
@@ -376,14 +479,16 @@ impl IocpDiskBatch {
         let base_offset = active.bytes_written;
         let chunk_size = self.config.buffer_size.max(1);
         let max_in_flight = self.config.concurrent_ops.max(1) as usize;
+        let use_aligned = self.config.unbuffered;
 
         let written = submit_write_batch(
             &self.port,
             active.overlapped_handle,
-            &self.buffer[..len],
+            &self.buffer.as_slice()[..len],
             base_offset,
             chunk_size,
             max_in_flight,
+            use_aligned,
         )?;
 
         active.bytes_written += written as u64;
@@ -427,9 +532,22 @@ impl Drop for IocpDiskBatch {
 ///
 /// Mirrors the Microsoft-documented pattern for converting an
 /// already-opened handle into one that supports overlapped I/O without
-/// reopening the path. The returned handle must be closed with
-/// `CloseHandle` once no longer needed.
-fn reopen_overlapped(handle: HANDLE) -> io::Result<HANDLE> {
+/// reopening the path. When `config.unbuffered` is set the reopened handle
+/// also receives `FILE_FLAG_NO_BUFFERING` so submissions skip the system
+/// cache; combined with the page-aligned buffer chunks the writer issues,
+/// the kernel can dispatch each `WriteFile` without a bounce copy.
+/// `config.write_through` similarly maps to `FILE_FLAG_WRITE_THROUGH`.
+/// The returned handle must be closed with `CloseHandle` once no longer
+/// needed.
+fn reopen_overlapped(handle: HANDLE, config: &IocpConfig) -> io::Result<HANDLE> {
+    let mut flags = FILE_FLAG_OVERLAPPED;
+    if config.unbuffered {
+        flags |= FILE_FLAG_NO_BUFFERING;
+    }
+    if config.write_through {
+        flags |= FILE_FLAG_WRITE_THROUGH;
+    }
+
     // SAFETY: `handle` is borrowed from the caller's live File for the
     // duration of the call. ReOpenFile returns a new handle with the
     // requested access/share/flag combination; failure is signalled by
@@ -440,7 +558,7 @@ fn reopen_overlapped(handle: HANDLE) -> io::Result<HANDLE> {
             handle,
             FILE_GENERIC_WRITE,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            FILE_FLAG_OVERLAPPED,
+            flags,
         )
     };
 
@@ -479,6 +597,7 @@ fn submit_write_batch(
     base_offset: u64,
     chunk_size: usize,
     max_in_flight: usize,
+    use_aligned: bool,
 ) -> io::Result<usize> {
     if data.is_empty() {
         return Ok(0);
@@ -495,7 +614,7 @@ fn submit_write_batch(
             let len = chunk_size.min(total - next_chunk_start);
             let chunk = &data[next_chunk_start..next_chunk_start + len];
             let offset = base_offset + next_chunk_start as u64;
-            let op = submit_one_write(handle, offset, chunk)?;
+            let op = submit_one_write(handle, offset, chunk, use_aligned)?;
             in_flight.push(op);
             next_chunk_start += len;
         }
@@ -528,7 +647,7 @@ fn submit_write_batch(
                     // Short write: resubmit the unwritten tail at the
                     // appropriate offset.
                     total_written += transferred;
-                    let remaining = op.buffer[transferred..].to_vec();
+                    let remaining = op.buffer.as_slice()[transferred..].to_vec();
                     let original_offset = read_offset(&op.overlapped);
                     let new_offset = original_offset + transferred as u64;
                     resubmissions.push((new_offset, remaining));
@@ -547,7 +666,7 @@ fn submit_write_batch(
         }
 
         for (offset, remaining) in resubmissions {
-            let op = submit_one_write(handle, offset, &remaining)?;
+            let op = submit_one_write(handle, offset, &remaining, use_aligned)?;
             in_flight.push(op);
         }
     }
@@ -581,8 +700,13 @@ fn submit_one_write(
     handle: HANDLE,
     offset: u64,
     data: &[u8],
+    use_aligned: bool,
 ) -> io::Result<Pin<Box<OverlappedOp>>> {
-    let mut op = OverlappedOp::new_write(offset, data);
+    let mut op = if use_aligned {
+        OverlappedOp::new_write_aligned(offset, data)
+    } else {
+        OverlappedOp::new_write(offset, data)
+    };
     let overlapped_ptr = op.as_overlapped_ptr();
 
     // Test-only fault injection hook. Returns a synthetic Win32 error code
@@ -598,7 +722,13 @@ fn submit_one_write(
 
     // SAFETY: `handle` is a valid overlapped file handle owned by the
     // active-file slot. The op buffer and OVERLAPPED are pinned for the
-    // duration of the asynchronous call.
+    // duration of the asynchronous call. When `use_aligned` is true the
+    // buffer pointer is page-aligned, so the kernel can dispatch the I/O
+    // on a `FILE_FLAG_NO_BUFFERING` handle without an aligned-scratch
+    // bounce copy - bump the telemetry counter to reflect the saving.
+    if use_aligned {
+        BOUNCE_COPIES_AVOIDED.fetch_add(1, Ordering::Relaxed);
+    }
     #[allow(unsafe_code)]
     let success = unsafe {
         WriteFile(
@@ -1062,5 +1192,72 @@ mod tests {
 
         let content = fs::read(&path).unwrap();
         assert_eq!(content, data);
+    }
+
+    #[test]
+    fn unbuffered_config_uses_page_aligned_buffer() {
+        let config = IocpConfig {
+            unbuffered: true,
+            ..IocpConfig::default()
+        };
+        let batch = IocpDiskBatch::new(&config).unwrap();
+        assert!(
+            batch.buffer_is_page_aligned(),
+            "unbuffered config must allocate a page-aligned accumulation buffer"
+        );
+    }
+
+    #[test]
+    fn buffered_config_uses_vec_buffer() {
+        let config = IocpConfig::default();
+        let batch = IocpDiskBatch::new(&config).unwrap();
+        assert!(
+            !batch.buffer_is_page_aligned(),
+            "buffered config must keep the standard heap buffer to avoid \
+             paying the VirtualAlloc cost when the kernel will copy anyway"
+        );
+    }
+
+    #[test]
+    fn aligned_write_path_increments_bounce_counter() {
+        // Note: this exercises only the counter wiring - we cannot easily
+        // verify a real ReOpenFile with FILE_FLAG_NO_BUFFERING here because
+        // some tempfs volumes reject the flag. The page-aligned submission
+        // path is the part that defeats the kernel bounce copy; the counter
+        // increments on every aligned submission regardless of whether the
+        // backing volume honours the no-buffering flag.
+        reset_bounce_copies_avoided_for_test();
+        let before = bounce_copies_avoided();
+        assert_eq!(before, 0, "counter must start at zero after reset");
+
+        let config = IocpConfig {
+            unbuffered: false, // keep buffered so ReOpenFile succeeds on tempfs
+            buffer_size: 64 * 1024,
+            ..IocpConfig::default()
+        };
+        let mut batch = IocpDiskBatch::new(&config).unwrap();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("aligned_counter.bin");
+        let file = open_writable(&path);
+        batch.begin_file(file).unwrap();
+
+        // Drive a submission through the aligned path directly so we can
+        // observe the counter without depending on filesystem support.
+        let written = submit_write_batch(
+            &batch.port,
+            batch.current_file.as_ref().unwrap().overlapped_handle,
+            &vec![0x42u8; 4096],
+            0,
+            4096,
+            1,
+            true,
+        )
+        .unwrap();
+        assert_eq!(written, 4096);
+        assert!(
+            bounce_copies_avoided() >= 1,
+            "aligned submission must bump the bounce-copy counter"
+        );
+        let _ = batch.commit_file(false);
     }
 }

@@ -231,7 +231,26 @@ impl IocpDiskBatch {
     pub fn bytes_written_with_pending(&self) -> u64 {
         0
     }
+
+    /// Returns whether the internal buffer is page-aligned (always `false`
+    /// on this platform because no batch is ever constructed).
+    #[must_use]
+    pub fn buffer_is_page_aligned(&self) -> bool {
+        false
+    }
 }
+
+/// Returns the cumulative count of bounce-buffer copies avoided by the
+/// page-aligned IOCP write path. Always `0` on this platform because IOCP
+/// is Windows-only.
+#[must_use]
+pub fn bounce_copies_avoided() -> u64 {
+    0
+}
+
+/// Resets the process-wide bounce-copy counter (no-op on this platform).
+#[doc(hidden)]
+pub fn reset_bounce_copies_avoided_for_test() {}
 
 impl Write for IocpDiskBatch {
     fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {

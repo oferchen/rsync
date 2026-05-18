@@ -93,8 +93,8 @@ pub mod win_copy;
 
 pub use buffer_pool::{
     BorrowedBufferGuard, BufferAllocator, BufferGuard, BufferPool, BufferPoolStats,
-    DefaultAllocator, GlobalBufferPoolConfig, ThroughputTracker, global_buffer_pool,
-    init_global_buffer_pool,
+    DefaultAllocator, GlobalBufferPoolConfig, PageAlignedBufferGuard, PageAlignedBufferPool,
+    ThroughputTracker, global_buffer_pool, init_global_buffer_pool,
 };
 pub use deferred_sync::{DeferredSync, SyncStrategy};
 

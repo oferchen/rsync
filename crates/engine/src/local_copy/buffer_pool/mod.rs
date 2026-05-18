@@ -97,6 +97,7 @@ mod byte_budget;
 mod global;
 mod guard;
 mod memory_cap;
+mod page_aligned;
 mod pool;
 mod pressure;
 mod thread_local_cache;
@@ -109,6 +110,7 @@ pub use allocator::{BufferAllocator, DefaultAllocator};
 pub use buffer_controller::{AdaptiveBufferController, ControllerConfig};
 pub use global::{GlobalBufferPoolConfig, global_buffer_pool, init_global_buffer_pool};
 pub use guard::{BorrowedBufferGuard, BufferGuard};
+pub use page_aligned::{PageAlignedBufferGuard, PageAlignedBufferPool};
 pub use pool::{BufferPool, BufferPoolStats};
 pub use throughput::ThroughputTracker;
 

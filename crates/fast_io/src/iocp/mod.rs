@@ -47,9 +47,12 @@ pub use config::{
     concurrent_ops_for_cpus, default_concurrent_ops, iocp_availability_reason, is_iocp_available,
     skip_event_optimization_available,
 };
-pub use disk_batch::IocpDiskBatch;
+pub use disk_batch::{IocpDiskBatch, bounce_copies_avoided};
 #[doc(hidden)]
-pub use disk_batch::{clear_injected_write_error_for_test, inject_next_write_error_for_test};
+pub use disk_batch::{
+    clear_injected_write_error_for_test, inject_next_write_error_for_test,
+    reset_bounce_copies_avoided_for_test,
+};
 pub use error::IocpError;
 pub use file_factory::{
     IocpOrStdReader, IocpOrStdWriter, IocpReaderFactory, IocpWriterFactory, reader_from_path,
