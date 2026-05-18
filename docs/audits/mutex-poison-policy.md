@@ -370,3 +370,16 @@ single file: 7 FATAL batch-writer sites that today share a single
 strict invariant name, a `tracing::error!` on the poisoned-mutex panic
 path, and a single recipe that the rest of the engine can copy. This is
 the recommended starting point for MPE-10.
+
+## Followup notes
+
+- **MPE-7 / `crates/engine/src/delete/traversal.rs` (#2356)**: verified
+  no-op. The file defines [`DirTraversalCursor`], a single-threaded DFS
+  helper documented as "single-threaded by construction" (only the
+  emitter thread holds an instance). It contains zero `Mutex`/`RwLock`
+  fields, zero `.lock()` calls, and zero `.expect()`/`.unwrap()` call
+  sites in either the production code or the unit tests. The shared
+  `Mutex<DirTraversalCursor>` mentioned in Table 1 lives in
+  `delete/context.rs:263,276,475,510,568` and is tracked under MPE-5,
+  not here. No source change is required for MPE-7's `traversal.rs`
+  scope; this audit row is the sole deliverable.
