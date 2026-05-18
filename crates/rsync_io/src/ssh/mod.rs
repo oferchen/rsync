@@ -84,6 +84,8 @@
 //! (#1687). The stderr channel is socketpair-backed on Unix; see
 //! `aux_channel.rs` for that path.
 
+#[cfg(all(feature = "async-ssh", feature = "ssh-socketpair-stderr"))]
+mod async_stderr_drain;
 #[cfg(feature = "async-ssh")]
 mod async_transport;
 mod aux_channel;
@@ -98,6 +100,8 @@ mod parse;
 #[cfg(feature = "ssh-socketpair-stderr")]
 pub mod socketpair_stderr;
 
+#[cfg(all(feature = "async-ssh", feature = "ssh-socketpair-stderr"))]
+pub use async_stderr_drain::{ASYNC_STDERR_BUFFER_CAP, AsyncStderrDrain, RingBuffer};
 #[cfg(feature = "async-ssh")]
 pub use async_transport::AsyncSshTransport;
 pub use builder::SshCommand;
