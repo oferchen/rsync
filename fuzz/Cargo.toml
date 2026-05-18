@@ -175,6 +175,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "vstring"
+path = "fuzz_targets/vstring.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "bwlimit"
 path = "fuzz_targets/bwlimit.rs"
 test = false
