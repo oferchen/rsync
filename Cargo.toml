@@ -205,12 +205,12 @@ rayon = "1.10"
 # Crossbeam concurrency primitives - bounded channels with lower overhead than std
 crossbeam-channel = "0.5"
 # Concurrent hash map - for shared state across daemon sessions
-dashmap = "6.1"
+dashmap = "6.2"
 # Pure-Rust SSH client - embedded SSH transport alternative to system ssh binary.
 # 0.60+ retires GHSA-f5v4-2wr6-hqmg / RUSTSEC-2023-0071 (Marvin Attack on rsa
 # 0.9.x) by upgrading to rsa 0.10 with the constant-time rewrite. The keys
 # helpers (formerly russh-keys) are now re-exported under russh::keys.
-russh = "0.60.1"
+russh = "0.60.3"
 # URL parsing for ssh:// URIs
 url = "2"
 # Secure password input from terminal
@@ -250,7 +250,7 @@ base64 = "0.22"
 # Modern syscall wrappers - used by core, engine, metadata, fast_io
 rustix = "1.1"
 # CLI integration testing - dev-dep across cli and root bin
-assert_cmd = "2.0"
+assert_cmd = "2.2"
 # Glob pattern matcher - shared by engine and filters
 globset = "0.4"
 # Pure-Rust LZ4 codec - shared by compress and protocol (optional, per-crate features)
