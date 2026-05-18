@@ -37,8 +37,6 @@
 //! "one ring per thread" composition rule documented in
 //! `docs/design/io-uring-rayon-composition.md`.
 
-#![cfg(target_os = "macos")]
-
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::time::Duration;
