@@ -422,7 +422,9 @@ warn_lines = 1
         assert!(is_test_source(Path::new(
             "crates/foo/src/comprehensive_tests.rs"
         )));
-        assert!(is_test_source(Path::new("crates/foo/src/permission_tests.rs")));
+        assert!(is_test_source(Path::new(
+            "crates/foo/src/permission_tests.rs"
+        )));
     }
 
     #[test]
