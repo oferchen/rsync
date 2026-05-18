@@ -183,11 +183,12 @@ mod tests {
         assert_eq!(brand_for_program_os_str(os_str), Some(Brand::Upstream));
     }
 
+    /// Env overrides can flip the result either way, so the assertion only
+    /// checks that detection produces *some* valid brand without panicking.
     #[test]
     fn detect_brand_from_program_arg() {
         let program = OsString::from(oc_client());
         let brand = detect_brand(Some(program.as_os_str()));
-        // May return Oc or be overridden by env, but should not panic.
         assert!(brand == Brand::Oc || brand == Brand::Upstream);
     }
 
