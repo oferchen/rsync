@@ -22,6 +22,8 @@ use std::time::Duration;
 /// the public types still compile.
 #[cfg(unix)]
 pub type RawFd = std::os::unix::io::RawFd;
+/// Mirror of `RawFd` for non-unix targets, aliased to `c_int` so the
+/// public stub surface compiles cross-platform.
 #[cfg(not(unix))]
 pub type RawFd = c_int;
 
