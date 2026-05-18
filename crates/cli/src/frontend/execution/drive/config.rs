@@ -156,6 +156,19 @@ pub(crate) struct ConfigInputs {
     pub(crate) daemon_params: Vec<String>,
     pub(crate) files_from: FilesFromSource,
     pub(crate) from0: bool,
+    /// CLI override for the reorder-buffer spill directory.
+    ///
+    /// `Some` replaces both the env-var value and the `SpillPolicy::dir`
+    /// default. Precedence is **CLI > env > defaults**, applied via
+    /// `engine::SpillPolicy::apply_cli_overrides`.
+    pub(crate) spill_dir: Option<PathBuf>,
+    /// CLI override for the reorder-buffer spill byte threshold.
+    ///
+    /// `Some` replaces both the env-var value and the
+    /// `SpillPolicy::threshold_bytes` default. Precedence is
+    /// **CLI > env > defaults**, applied via
+    /// `engine::SpillPolicy::apply_cli_overrides`.
+    pub(crate) spill_threshold_bytes: Option<u64>,
 }
 
 /// Builds the base [`ClientConfigBuilder`] from the provided inputs.
@@ -355,6 +368,10 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         || !matches!(inputs.name_level, NameOutputLevel::Disabled);
 
     builder = builder.files_from(inputs.files_from).from0(inputs.from0);
+
+    builder = builder
+        .spill_dir(inputs.spill_dir)
+        .spill_threshold_bytes(inputs.spill_threshold_bytes);
 
     builder
         .force_event_collection(force_event_collection)

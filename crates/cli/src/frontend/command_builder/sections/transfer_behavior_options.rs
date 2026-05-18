@@ -398,6 +398,37 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
+                Arg::new("spill-dir")
+                    .long("spill-dir")
+                    .value_name("PATH")
+                    .help_heading("Advanced (spill)")
+                    .help(
+                        "Override the reorder-buffer spill directory. Takes \
+                         precedence over OC_RSYNC_SPILL_DIR and SpillPolicy \
+                         defaults. Precedence: CLI > env > defaults.",
+                    )
+                    .num_args(1)
+                    .action(ArgAction::Set)
+                    .allow_hyphen_values(true)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("spill-threshold-bytes")
+                    .long("spill-threshold-bytes")
+                    .value_name("BYTES")
+                    .help_heading("Advanced (spill)")
+                    .help(
+                        "Override the reorder-buffer spill byte threshold. \
+                         Accepts a positive integer with an optional \
+                         K/M/G/T/P/E suffix (base 1024). Takes precedence \
+                         over OC_RSYNC_SPILL_THRESHOLD_BYTES and SpillPolicy \
+                         defaults. Precedence: CLI > env > defaults.",
+                    )
+                    .num_args(1)
+                    .action(ArgAction::Set)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
                 Arg::new("backup")
                     .long("backup")
                     .short('b')

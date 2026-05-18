@@ -164,6 +164,30 @@ impl ClientConfig {
     pub const fn from0(&self) -> bool {
         self.from0
     }
+
+    /// Returns the CLI override for the reorder-buffer spill directory.
+    ///
+    /// Corresponds to `--spill-dir`. Applied via
+    /// `engine::SpillPolicy::apply_cli_overrides` **after** the env-var
+    /// loader, cementing the precedence rule **CLI > env > defaults**.
+    /// `None` leaves the env-var (or default) directory in place.
+    #[must_use]
+    #[doc(alias = "--spill-dir")]
+    pub fn spill_dir(&self) -> Option<&std::path::Path> {
+        self.spill_dir.as_deref()
+    }
+
+    /// Returns the CLI override for the reorder-buffer spill byte threshold.
+    ///
+    /// Corresponds to `--spill-threshold-bytes`. Applied via
+    /// `engine::SpillPolicy::apply_cli_overrides` **after** the env-var
+    /// loader, cementing the precedence rule **CLI > env > defaults**.
+    /// `None` leaves the env-var (or default) threshold in place.
+    #[must_use]
+    #[doc(alias = "--spill-threshold-bytes")]
+    pub const fn spill_threshold_bytes(&self) -> Option<u64> {
+        self.spill_threshold_bytes
+    }
 }
 
 #[cfg(test)]
@@ -293,5 +317,32 @@ mod tests {
     fn from0_default_is_false() {
         let config = default_config();
         assert!(!config.from0());
+    }
+
+    #[test]
+    fn spill_dir_default_is_none() {
+        let config = default_config();
+        assert!(config.spill_dir().is_none());
+    }
+
+    #[test]
+    fn spill_threshold_bytes_default_is_none() {
+        let config = default_config();
+        assert!(config.spill_threshold_bytes().is_none());
+    }
+
+    #[test]
+    fn spill_dir_builder_setter_round_trips() {
+        let dir = std::path::PathBuf::from("/var/spool/oc-rsync");
+        let config = ClientConfig::builder().spill_dir(Some(dir.clone())).build();
+        assert_eq!(config.spill_dir(), Some(dir.as_path()));
+    }
+
+    #[test]
+    fn spill_threshold_bytes_builder_setter_round_trips() {
+        let config = ClientConfig::builder()
+            .spill_threshold_bytes(Some(128 * 1024 * 1024))
+            .build();
+        assert_eq!(config.spill_threshold_bytes(), Some(128 * 1024 * 1024));
     }
 }
