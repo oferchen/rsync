@@ -446,14 +446,12 @@ fn test_multiple_writes() {
     let mut output = Vec::new();
 
     // First write
-    let sent1 =
-        send_file_to_writer(source1.as_file(), &mut output, content1.len() as u64).unwrap();
+    let sent1 = send_file_to_writer(source1.as_file(), &mut output, content1.len() as u64).unwrap();
     assert_eq!(sent1, content1.len() as u64);
     assert_eq!(&output[..sent1 as usize], content1);
 
     // Second write appends to output
-    let sent2 =
-        send_file_to_writer(source2.as_file(), &mut output, content2.len() as u64).unwrap();
+    let sent2 = send_file_to_writer(source2.as_file(), &mut output, content2.len() as u64).unwrap();
     assert_eq!(sent2, content2.len() as u64);
     assert_eq!(output, b"First writeSecond");
 }
