@@ -69,11 +69,14 @@ enum ReorderMode {
     Bare { capacity: usize },
     /// Bounded-memory ring with spill-to-tempfile when the byte threshold is
     /// exceeded. `dir` is `None` for the default `SpooledTempFile` backend.
+    /// `memory_pressure_bytes` is `Some` when the RSS-aware spill trigger is
+    /// engaged (see [`SpillPolicy::memory_pressure_bytes`](super::spill::SpillPolicy::memory_pressure_bytes)).
     Spillable {
         capacity: usize,
         threshold: usize,
         dir: Option<PathBuf>,
         granularity: super::spill::SpillGranularity,
+        memory_pressure_bytes: Option<u64>,
     },
 }
 
@@ -226,6 +229,7 @@ impl DeltaConsumer {
                 threshold: usize::try_from(threshold).unwrap_or(usize::MAX),
                 dir: cfg.spill_policy.dir,
                 granularity: cfg.spill_policy.granularity,
+                memory_pressure_bytes: cfg.spill_policy.memory_pressure_bytes,
             },
             None => ReorderMode::Bare {
                 capacity: reorder_capacity,
@@ -291,7 +295,14 @@ impl DeltaConsumer {
                         threshold,
                         dir,
                         granularity,
-                    } => match build_spillable(capacity, threshold, dir, granularity) {
+                        memory_pressure_bytes,
+                    } => match build_spillable(
+                        capacity,
+                        threshold,
+                        dir,
+                        granularity,
+                        memory_pressure_bytes,
+                    ) {
                         Ok(buf) => {
                             run_spillable_loop(stream_rx, &result_tx, buf, &spill_events_thread);
                         }
@@ -396,12 +407,15 @@ fn build_spillable(
     threshold: usize,
     dir: Option<PathBuf>,
     granularity: super::spill::SpillGranularity,
+    memory_pressure_bytes: Option<u64>,
 ) -> std::io::Result<SpillableReorderBuffer<DeltaResult>> {
     let buf = match dir {
         Some(d) => SpillableReorderBuffer::with_spill_dir(capacity, threshold, d)?,
         None => SpillableReorderBuffer::new(capacity, threshold),
     };
-    Ok(buf.with_granularity(granularity))
+    Ok(buf
+        .with_granularity(granularity)
+        .with_memory_pressure_bytes(memory_pressure_bytes))
 }
 
 /// Reorder loop for the bare [`ReorderBuffer`] backend (passthrough or
