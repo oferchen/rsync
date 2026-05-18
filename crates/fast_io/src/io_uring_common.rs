@@ -366,6 +366,11 @@ pub enum BufferRingError {
     },
 
     /// The buffer group ID namespace (u16, 65 536 values) is exhausted.
+    ///
+    /// Produced when [`BgidAllocError::Exhausted`] propagates through
+    /// [`From<BgidAllocError> for BufferRingError`]. Retained as a
+    /// `BufferRingError` variant so the existing
+    /// `BufferRing::new_with_allocator` signature stays compatible.
     #[error("io_uring buffer group ID namespace exhausted (limit: 65535)")]
     BgidExhausted,
 
@@ -383,12 +388,71 @@ impl From<BufferRingError> for io::Error {
             | BufferRingError::Unsupported => io::Error::new(io::ErrorKind::Unsupported, e),
             BufferRingError::InvalidRingSize(_)
             | BufferRingError::InvalidBufferSize
-            | BufferRingError::BufferIdOutOfRange { .. }
-            | BufferRingError::BgidExhausted => io::Error::new(io::ErrorKind::InvalidInput, e),
+            | BufferRingError::BufferIdOutOfRange { .. } => {
+                io::Error::new(io::ErrorKind::InvalidInput, e)
+            }
+            BufferRingError::BgidExhausted => io::Error::new(io::ErrorKind::OutOfMemory, e),
             BufferRingError::MmapFailed(_)
             | BufferRingError::RegisterFailed(_)
             | BufferRingError::AllocationFailed(_) => io::Error::other(e),
         }
+    }
+}
+
+/// Typed error returned by [`BgidAllocator::allocate`] when no buffer
+/// group ID is available.
+///
+/// The io_uring buffer-group ID namespace is fixed at 65 536 values (the
+/// kernel stores `bgid` as `u16` inside `struct io_uring_buf_reg`). A
+/// long-running process that continuously registers new provided-buffer
+/// rings without recycling the bgids it issued will eventually hit this
+/// ceiling. Reporting the failure as a typed value (rather than panicking
+/// or returning a bare [`io::Error`]) lets callers downgrade gracefully:
+/// log a warning, skip the buffer-ring registration, and continue serving
+/// with plain `recv`/`read` on that connection.
+///
+/// The variant carries the live counters at the time of the failure so
+/// operators can correlate the warning with the upstream pressure source.
+///
+/// [`BgidAllocator::allocate`]: crate::io_uring::buffer_ring::BgidAllocator::allocate
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum BgidAllocError {
+    /// All 65 536 BGIDs have been issued and none are available for reuse.
+    ///
+    /// - `fresh_used` is the monotonic counter value at the time of the
+    ///   failure (capped at `u16::MAX + 1`).
+    /// - `free_list_len` is the length of the deallocator free-list at the
+    ///   time of the failure (always zero when `fresh_used` is at the cap,
+    ///   reported for symmetry with the success path).
+    #[error(
+        "io_uring buffer group ID namespace exhausted \
+         (fresh_used={fresh_used}, free_list_len={free_list_len}, limit=65536)"
+    )]
+    Exhausted {
+        /// Number of bgids issued by the monotonic counter so far.
+        fresh_used: u32,
+        /// Number of bgids sitting on the free-list at failure time.
+        free_list_len: usize,
+    },
+}
+
+impl From<BgidAllocError> for io::Error {
+    /// Maps [`BgidAllocError::Exhausted`] to
+    /// [`io::ErrorKind::OutOfMemory`].
+    ///
+    /// `OutOfMemory` is the closest standard kind for "a finite resource
+    /// namespace has been used up". `Other` would be lossy and `InvalidInput`
+    /// would mislead callers into blaming their arguments.
+    fn from(e: BgidAllocError) -> Self {
+        io::Error::new(io::ErrorKind::OutOfMemory, e)
+    }
+}
+
+impl From<BgidAllocError> for BufferRingError {
+    /// Allows allocator failures to flow through call sites that return
+    /// [`BufferRingError`] via the `?` operator.
+    fn from(_: BgidAllocError) -> Self {
+        BufferRingError::BgidExhausted
     }
 }
 

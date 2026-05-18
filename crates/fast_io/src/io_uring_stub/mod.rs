@@ -55,15 +55,16 @@ pub mod statx;
 mod tests;
 
 pub use crate::io_uring_common::{
-    ASYNC_CANCEL_FD_MIN_KERNEL, ASYNC_CANCEL_MIN_KERNEL, BufferRingConfig, BufferRingError,
-    IORING_OP_ASYNC_CANCEL, IORING_OP_LINKAT, IORING_OP_RENAMEAT, IORING_OP_STATX, IoUringConfig,
-    IoUringKernelInfo, LINKAT_MIN_KERNEL, OpTag, RENAME_EXCHANGE, RENAME_NOREPLACE,
+    ASYNC_CANCEL_FD_MIN_KERNEL, ASYNC_CANCEL_MIN_KERNEL, BgidAllocError, BufferRingConfig,
+    BufferRingError, IORING_OP_ASYNC_CANCEL, IORING_OP_LINKAT, IORING_OP_RENAMEAT, IORING_OP_STATX,
+    IoUringConfig, IoUringKernelInfo, LINKAT_MIN_KERNEL, OpTag, RENAME_EXCHANGE, RENAME_NOREPLACE,
     RENAME_WHITEOUT, RegisteredBufferStats, RegisteredBufferStatus, STATX_MIN_KERNEL,
     SharedCompletion, SharedRingConfig, buffer_id_from_cqe_flags,
 };
 
 pub use buffer_ring::{
-    BgidAllocator, BufferRing, bgid_inflight, bgid_peak_used, pbuf_ring_supported,
+    BgidAllocator, BufferRing, bgid_exhausted_count, bgid_inflight, bgid_peak_used,
+    pbuf_ring_supported,
 };
 pub use cancel::{CancelOutcome, cancel_all_by_fd, cancel_by_user_data};
 pub use config::{StubIoUringBackend, config_detail, is_io_uring_available, sqpoll_fell_back};

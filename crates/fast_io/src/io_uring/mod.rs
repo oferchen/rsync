@@ -124,8 +124,9 @@ use std::io::{self, Write};
 use std::os::unix::io::AsRawFd;
 
 pub use buffer_ring::{
-    BgidAllocator, BufferRing, BufferRingConfig, BufferRingError, bgid_inflight, bgid_peak_used,
-    buffer_id_from_cqe_flags, pbuf_ring_supported,
+    BgidAllocError, BgidAllocator, BufferRing, BufferRingConfig, BufferRingError,
+    bgid_exhausted_count, bgid_inflight, bgid_peak_used, buffer_id_from_cqe_flags,
+    pbuf_ring_supported,
 };
 pub use cancel::{
     ASYNC_CANCEL_FD_MIN_KERNEL, ASYNC_CANCEL_MIN_KERNEL, CancelOutcome, IORING_OP_ASYNC_CANCEL,

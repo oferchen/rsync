@@ -5,7 +5,9 @@
 //! [`BgidAllocator`] handles that only exist as compile-time placeholders
 //! here.
 
-pub use crate::io_uring_common::{BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags};
+pub use crate::io_uring_common::{
+    BgidAllocError, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags,
+};
 
 /// Stub provided buffer ring.
 ///
@@ -99,9 +101,15 @@ pub fn pbuf_ring_supported() -> bool {
 pub struct BgidAllocator;
 
 impl BgidAllocator {
-    /// Always returns [`BufferRingError::BgidExhausted`] on this platform.
-    pub fn allocate() -> Result<u16, BufferRingError> {
-        Err(BufferRingError::BgidExhausted)
+    /// Always returns [`BgidAllocError::Exhausted`] on this platform.
+    ///
+    /// Mirrors the Linux signature so cross-platform callers handle
+    /// exhaustion through a single typed path.
+    pub fn allocate() -> Result<u16, BgidAllocError> {
+        Err(BgidAllocError::Exhausted {
+            fresh_used: 0,
+            free_list_len: 0,
+        })
     }
 
     /// No-op on this platform.
@@ -129,5 +137,15 @@ pub fn bgid_peak_used() -> u16 {
 /// exporters compile without `cfg`-gating.
 #[must_use]
 pub fn bgid_inflight() -> u16 {
+    0
+}
+
+/// Returns 0 on non-Linux platforms; the stub never produces a fresh
+/// bgid so the exhaustion counter never advances.
+///
+/// Mirrors the Linux accessor so cross-platform callers and metrics
+/// exporters compile without `cfg`-gating.
+#[must_use]
+pub fn bgid_exhausted_count() -> u64 {
     0
 }

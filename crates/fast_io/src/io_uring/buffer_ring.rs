@@ -59,7 +59,7 @@
 
 use std::io;
 use std::ptr;
-use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -79,7 +79,9 @@ const IORING_OFF_PBUF_RING: u64 = 0x80000000;
 /// Minimum kernel version for PBUF_RING support.
 const MIN_PBUF_RING_KERNEL: (u32, u32) = (5, 19);
 
-pub use crate::io_uring_common::{BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags};
+pub use crate::io_uring_common::{
+    BgidAllocError, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags,
+};
 #[cfg(test)]
 use crate::io_uring_common::{IORING_CQE_BUFFER_SHIFT, IORING_CQE_F_BUFFER};
 
@@ -147,6 +149,24 @@ static NEXT_BGID: AtomicU32 = AtomicU32::new(0);
 /// returns ids to the free-list but the peak stays.
 static PEAK_USED: AtomicU16 = AtomicU16::new(0);
 
+/// Process-wide counter of [`BgidAllocator::allocate`] calls that
+/// returned [`BgidAllocError::Exhausted`].
+///
+/// Read with [`bgid_exhausted_count`]. Each exhausted return increments
+/// the counter by one. Monotonic and cumulative for the process lifetime;
+/// callers that want a rate compute the delta between two snapshots.
+static BGID_EXHAUSTED_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Process-wide one-shot flag for the "BGID space exhausted, falling
+/// back" warning emitted by [`BufferRing::new_with_allocator`].
+///
+/// `false` means the warning has not yet fired in this process. Set to
+/// `true` on the first exhaustion path so the hot allocation loop does
+/// not repeatedly spam the log; operators get a single deterministic
+/// marker and can correlate it with the cumulative counter from
+/// [`bgid_exhausted_count`].
+static BGID_FALLBACK_WARNED: AtomicBool = AtomicBool::new(false);
+
 /// Initial capacity reserved for the bgid free-list.
 ///
 /// Sized to cover the typical steady-state churn of a long-running daemon
@@ -189,6 +209,33 @@ fn bgid_free_list() -> &'static Mutex<Vec<u16>> {
 fn bgid_warn_last() -> &'static Mutex<Option<Instant>> {
     static LAST: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
     LAST.get_or_init(|| Mutex::new(None))
+}
+
+/// Emits the "BGID space exhausted, falling back" `tracing::warn!` at
+/// most once per process lifetime.
+///
+/// Called from [`BufferRing::new_with_allocator`] whenever
+/// [`BgidAllocator::allocate`] returns [`BgidAllocError::Exhausted`].
+/// The atomic compare-exchange guarantees the message fires exactly once
+/// even when many threads hit exhaustion simultaneously, so the hot
+/// allocation loop in a long-running daemon does not flood the log.
+fn warn_bgid_fallback_once(err: BgidAllocError) {
+    if BGID_FALLBACK_WARNED
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        let BgidAllocError::Exhausted {
+            fresh_used,
+            free_list_len,
+        } = err;
+        tracing::warn!(
+            target: "fast_io::buffer_ring",
+            fresh_used,
+            free_list_len,
+            exhausted_count = BGID_EXHAUSTED_COUNT.load(Ordering::Relaxed),
+            "BGID space exhausted, falling back to non-registered receive path"
+        );
+    }
 }
 
 /// Emits a throttled `tracing::warn!` when bgid occupancy crosses 50 %.
@@ -252,16 +299,21 @@ impl BgidAllocator {
     /// `u32` counter starting at 0. When the counter would exceed
     /// `u16::MAX` (65 535) - meaning all 65 536 possible bgids have been
     /// issued and none have been returned - returns
-    /// [`BufferRingError::BgidExhausted`].
+    /// [`BgidAllocError::Exhausted`] without panicking and bumps
+    /// [`bgid_exhausted_count`].
     ///
     /// # Errors
     ///
-    /// Returns [`BufferRingError::BgidExhausted`] when both the free-list
-    /// is empty and the monotonic counter is at the namespace limit.
-    /// Callers must drop existing [`BufferRing`] instances that own their
-    /// bgid (so [`deallocate`](Self::deallocate) runs in the destructor)
-    /// to make ids available again.
-    pub fn allocate() -> Result<u16, BufferRingError> {
+    /// Returns [`BgidAllocError::Exhausted`] when both the free-list is
+    /// empty and the monotonic counter is at the namespace limit. The
+    /// error carries the live `fresh_used` and `free_list_len` snapshot
+    /// for operator diagnostics. Callers must drop existing
+    /// [`BufferRing`] instances that own their bgid (so
+    /// [`deallocate`](Self::deallocate) runs in the destructor) to make
+    /// ids available again; otherwise the recommended downgrade is to
+    /// skip the buffer-ring registration and continue serving with plain
+    /// `recv`/`read` on that connection.
+    pub fn allocate() -> Result<u16, BgidAllocError> {
         // Reuse a freed id when one is available. The lock is held only for
         // the pop, so contention with concurrent deallocate calls is
         // negligible in practice (one buffer ring per long-running task).
@@ -287,7 +339,15 @@ impl BgidAllocator {
             // would resume issuing valid u16 IDs that collide with active
             // rings.
             NEXT_BGID.fetch_sub(1, Ordering::Relaxed);
-            Err(BufferRingError::BgidExhausted)
+            BGID_EXHAUSTED_COUNT.fetch_add(1, Ordering::Relaxed);
+            let free_list_len = bgid_free_list()
+                .lock()
+                .expect("bgid free-list poisoned")
+                .len();
+            Err(BgidAllocError::Exhausted {
+                fresh_used: BGID_NAMESPACE_SIZE,
+                free_list_len,
+            })
         }
     }
 
@@ -387,6 +447,19 @@ pub fn bgid_peak_used() -> u16 {
 #[must_use]
 pub fn bgid_inflight() -> u16 {
     current_in_flight()
+}
+
+/// Returns the cumulative number of [`BgidAllocator::allocate`] calls
+/// that returned [`BgidAllocError::Exhausted`] for this process.
+///
+/// Monotonic and never resets while the process is alive. A non-zero
+/// value indicates the caller-side fallback path (skip buffer-ring
+/// registration, use plain `recv`/`read`) has been exercised at least
+/// once; pair with [`bgid_peak_used`] / [`bgid_inflight`] to size the
+/// namespace correctly for the workload.
+#[must_use]
+pub fn bgid_exhausted_count() -> u64 {
+    BGID_EXHAUSTED_COUNT.load(Ordering::Relaxed)
 }
 
 /// Process-wide cache for the PBUF_RING support probe.
@@ -679,16 +752,25 @@ impl BufferRing {
     ///
     /// # Errors
     ///
-    /// Returns [`BufferRingError::BgidExhausted`] when the allocator has
-    /// no ids available. Otherwise returns any error
-    /// [`new`](Self::new) would return; in that case the allocated bgid
-    /// is returned to the free-list before propagating the failure so it
-    /// is not leaked.
+    /// Returns [`BufferRingError::BgidExhausted`] (converted from
+    /// [`BgidAllocError::Exhausted`]) when the allocator has no ids
+    /// available; on that path a single throttled `tracing::warn!` is
+    /// emitted per process so callers can fall back to plain `recv` /
+    /// `read` without the buffer-ring optimization. Otherwise returns any
+    /// error [`new`](Self::new) would return; in that case the allocated
+    /// bgid is returned to the free-list before propagating the failure
+    /// so it is not leaked.
     pub fn new_with_allocator(
         ring: &RawIoUring,
         mut config: BufferRingConfig,
     ) -> Result<Self, BufferRingError> {
-        let bgid = BgidAllocator::allocate()?;
+        let bgid = match BgidAllocator::allocate() {
+            Ok(id) => id,
+            Err(e) => {
+                warn_bgid_fallback_once(e);
+                return Err(e.into());
+            }
+        };
         config.bgid = bgid;
         match Self::new(ring, config) {
             Ok(mut br) => {
@@ -1208,12 +1290,15 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Snapshots, then clears, `NEXT_BGID` and the free-list. The returned
-    /// guard restores both on drop so tests leave global state untouched.
+    /// Snapshots, then clears, all process-wide allocator state. The
+    /// returned guard restores everything on drop so tests leave global
+    /// state untouched.
     struct BgidStateGuard {
         prev_counter: u32,
         prev_free_list: Vec<u16>,
         prev_peak: u16,
+        prev_exhausted: u64,
+        prev_warned: bool,
         _serializer: std::sync::MutexGuard<'static, ()>,
     }
 
@@ -1222,6 +1307,8 @@ mod tests {
             let serializer = bgid_test_lock();
             let prev_counter = NEXT_BGID.swap(0, Ordering::Relaxed);
             let prev_peak = PEAK_USED.swap(0, Ordering::Relaxed);
+            let prev_exhausted = BGID_EXHAUSTED_COUNT.swap(0, Ordering::Relaxed);
+            let prev_warned = BGID_FALLBACK_WARNED.swap(false, Ordering::AcqRel);
             let prev_free_list = {
                 let mut list = bgid_free_list().lock().expect("free-list poisoned");
                 std::mem::take(&mut *list)
@@ -1230,6 +1317,8 @@ mod tests {
                 prev_counter,
                 prev_free_list,
                 prev_peak,
+                prev_exhausted,
+                prev_warned,
                 _serializer: serializer,
             }
         }
@@ -1239,6 +1328,8 @@ mod tests {
         fn drop(&mut self) {
             NEXT_BGID.store(self.prev_counter, Ordering::Relaxed);
             PEAK_USED.store(self.prev_peak, Ordering::Relaxed);
+            BGID_EXHAUSTED_COUNT.store(self.prev_exhausted, Ordering::Relaxed);
+            BGID_FALLBACK_WARNED.store(self.prev_warned, Ordering::Release);
             let mut list = bgid_free_list().lock().expect("free-list poisoned");
             *list = std::mem::take(&mut self.prev_free_list);
         }
@@ -1252,19 +1343,78 @@ mod tests {
         NEXT_BGID.store(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
         let result = BgidAllocator::allocate();
         assert!(
-            matches!(result, Err(BufferRingError::BgidExhausted)),
-            "expected BgidExhausted when counter == BGID_NAMESPACE_SIZE, got {result:?}"
+            matches!(result, Err(BgidAllocError::Exhausted { .. })),
+            "expected Exhausted when counter == BGID_NAMESPACE_SIZE, got {result:?}"
         );
     }
 
     #[test]
-    fn bgid_exhausted_converts_to_invalid_input_io_error() {
-        let err: io::Error = BufferRingError::BgidExhausted.into();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    fn bgid_exhausted_converts_to_out_of_memory_io_error() {
+        let err: io::Error = BgidAllocError::Exhausted {
+            fresh_used: BGID_NAMESPACE_SIZE,
+            free_list_len: 0,
+        }
+        .into();
+        assert_eq!(err.kind(), io::ErrorKind::OutOfMemory);
         let msg = format!("{err}");
         assert!(
-            msg.contains("65535"),
+            msg.contains("65536"),
             "error message must cite the namespace limit: {msg}"
+        );
+    }
+
+    #[test]
+    fn bgid_exhausted_buffer_ring_error_maps_to_out_of_memory() {
+        // The legacy BufferRingError::BgidExhausted (still emitted via the
+        // From<BgidAllocError> for BufferRingError path) must also surface
+        // as ErrorKind::OutOfMemory so callers that converge on io::Error
+        // see a single semantic.
+        let err: io::Error = BufferRingError::BgidExhausted.into();
+        assert_eq!(err.kind(), io::ErrorKind::OutOfMemory);
+    }
+
+    #[test]
+    fn bgid_alloc_error_converts_to_buffer_ring_error() {
+        let alloc_err = BgidAllocError::Exhausted {
+            fresh_used: BGID_NAMESPACE_SIZE,
+            free_list_len: 7,
+        };
+        let ring_err: BufferRingError = alloc_err.into();
+        assert!(matches!(ring_err, BufferRingError::BgidExhausted));
+    }
+
+    #[test]
+    fn allocate_until_exhausted_returns_typed_error() {
+        let _guard = BgidStateGuard::snapshot();
+        // Drive the allocator one step past the u16 namespace by setting
+        // the counter to its cap, then assert the next call surfaces the
+        // typed error instead of panicking or wrapping.
+        NEXT_BGID.store(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
+        match BgidAllocator::allocate() {
+            Err(BgidAllocError::Exhausted {
+                fresh_used,
+                free_list_len,
+            }) => {
+                assert_eq!(fresh_used, BGID_NAMESPACE_SIZE);
+                assert_eq!(free_list_len, 0);
+            }
+            other => panic!("expected BgidAllocError::Exhausted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exhausted_count_increments() {
+        let _guard = BgidStateGuard::snapshot();
+        let before = bgid_exhausted_count();
+        NEXT_BGID.store(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
+        assert!(BgidAllocator::allocate().is_err());
+        assert!(BgidAllocator::allocate().is_err());
+        assert!(BgidAllocator::allocate().is_err());
+        let after = bgid_exhausted_count();
+        assert_eq!(
+            after - before,
+            3,
+            "BGID_EXHAUSTED_COUNT must tick once per Exhausted return"
         );
     }
 
@@ -1302,7 +1452,7 @@ mod tests {
         assert!(
             matches!(
                 BgidAllocator::allocate(),
-                Err(BufferRingError::BgidExhausted)
+                Err(BgidAllocError::Exhausted { .. })
             ),
             "sanity: counter must be exhausted before the free-list seed"
         );
@@ -1314,7 +1464,7 @@ mod tests {
         // With the free-list drained again the allocator reports exhaustion.
         assert!(matches!(
             BgidAllocator::allocate(),
-            Err(BufferRingError::BgidExhausted)
+            Err(BgidAllocError::Exhausted { .. })
         ));
     }
 
@@ -1420,6 +1570,60 @@ mod tests {
         assert_eq!(
             BGID_OCCUPANCY_WARN_THRESHOLD,
             (BGID_NAMESPACE_SIZE / 2) as u16
+        );
+    }
+
+    #[test]
+    fn warn_bgid_fallback_once_sets_flag_exactly_once() {
+        let _guard = BgidStateGuard::snapshot();
+        assert!(!BGID_FALLBACK_WARNED.load(Ordering::Acquire));
+        let err = BgidAllocError::Exhausted {
+            fresh_used: BGID_NAMESPACE_SIZE,
+            free_list_len: 0,
+        };
+        warn_bgid_fallback_once(err);
+        assert!(
+            BGID_FALLBACK_WARNED.load(Ordering::Acquire),
+            "first call must set the warned flag"
+        );
+        // Subsequent calls must be a no-op against the flag.
+        warn_bgid_fallback_once(err);
+        warn_bgid_fallback_once(err);
+        assert!(BGID_FALLBACK_WARNED.load(Ordering::Acquire));
+    }
+
+    /// Models the caller-side fallback contract documented on
+    /// [`BufferRing::new_with_allocator`]: on exhaustion the allocator
+    /// returns a typed error, the cumulative counter ticks, and the
+    /// caller is expected to skip the registration step and proceed with
+    /// the plain receive path. The test verifies the observable signals
+    /// without driving the kernel, so it runs on any host.
+    #[test]
+    fn caller_side_fallback_observable_signals() {
+        let _guard = BgidStateGuard::snapshot();
+        NEXT_BGID.store(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
+
+        let before = bgid_exhausted_count();
+        let err = BgidAllocator::allocate().expect_err("allocator must report exhaustion");
+        // Caller maps the typed error to io::Error and decides on the
+        // fallback - the conversion is total and lossless.
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::OutOfMemory);
+
+        let after = bgid_exhausted_count();
+        assert_eq!(
+            after - before,
+            1,
+            "exhaustion counter must observably tick for the caller"
+        );
+
+        // Returning one id makes the next allocation succeed: the
+        // fallback is reversible once any active ring is dropped.
+        BgidAllocator::deallocate(7);
+        assert_eq!(
+            BgidAllocator::allocate().expect("reuse must succeed"),
+            7,
+            "free-list reuse restores allocation without resetting state"
         );
     }
 }
