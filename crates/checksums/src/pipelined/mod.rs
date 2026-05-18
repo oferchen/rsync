@@ -49,6 +49,7 @@
 
 mod checksums;
 mod config;
+/// Double-buffered reader that overlaps I/O with computation.
 pub mod reader;
 
 pub use checksums::{BlockChecksums, PipelinedChecksumIterator, compute_checksums_pipelined};

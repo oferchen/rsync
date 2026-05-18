@@ -19,6 +19,7 @@ mod md5_scalar;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod md5_simd;
 
+/// MD4 hashing implementations with optional SIMD batch acceleration.
 pub mod md4;
 
 pub use md5_dispatcher::Backend;

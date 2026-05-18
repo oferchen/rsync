@@ -9,6 +9,7 @@
 //! - [`TransferDeadline`] - Monotonic deadline for `--stop-at` / `--stop-after` enforcement
 
 pub mod checksum;
+/// Deadline enforcement for `--stop-at` / `--stop-after` / `--time-limit`.
 pub mod deadline;
 
 pub use checksum::ChecksumFactory;

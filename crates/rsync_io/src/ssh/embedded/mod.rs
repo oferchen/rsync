@@ -20,6 +20,7 @@ mod handler;
 mod resolve;
 #[cfg(feature = "embedded-ssh")]
 mod ssh_config;
+/// Sync/async bridge primitives for embedded SSH streams.
 #[cfg(feature = "embedded-ssh")]
 pub mod sync_bridge;
 #[cfg(feature = "embedded-ssh")]

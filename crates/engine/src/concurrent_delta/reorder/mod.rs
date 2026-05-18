@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 
 use super::adaptive::{AdaptiveCapacityPolicy, AdaptiveState, ReorderStats};
 
+/// Bucketed histograms for reorder-buffer diagnostics.
 pub mod histogram;
 
 pub use histogram::HistogramStats;
