@@ -49,6 +49,27 @@ no wire-protocol changes, no on-disk artefacts visible to a peer,
 tcpdump-replay against upstream rsync must remain byte-identical with
 or without the spill layer engaged.
 
+## Current spill module layout
+
+The decomposition tracked by SPL-1 (`docs/audits/spill-rs-decomposition-plan.md`)
+is in flight. The current layout is:
+
+| Path                                                  | Responsibility                                                      |
+|-------------------------------------------------------|---------------------------------------------------------------------|
+| `crates/engine/src/concurrent_delta/spill.rs`         | Buffer, codec trait, error type, stats, tempfile backend (residue). |
+| `crates/engine/src/concurrent_delta/spill/policy.rs`  | `SpillPolicy` + `ReclaimMode`, `SpillCompression`, `SpillGranularity`. |
+
+The remaining submodules (`error.rs`, `codec.rs`, `stats.rs`,
+`tempfile.rs`, `buffer.rs`, `tests/`) are tracked by SPL-2 through
+SPL-8; see the migration status table in
+[`docs/audits/spill-rs-decomposition-plan.md`](../audits/spill-rs-decomposition-plan.md#migration-status)
+for PR-by-PR status. The line-number citations in the rest of this
+document still resolve against `spill.rs` until the remaining
+extractions land; the SPL-9 audit
+([`docs/audits/spl-9-mod-reexports.md`](../audits/spl-9-mod-reexports.md))
+pins the public symbol contract that every extraction PR must
+satisfy.
+
 ## Source citations
 
 All paths repository-relative.

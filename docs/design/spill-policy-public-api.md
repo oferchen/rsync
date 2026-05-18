@@ -19,8 +19,13 @@ exactly one release.
 
 ## 1. Public Rust API
 
-New module: `crates/engine/src/concurrent_delta/spill_policy.rs`. Re-exported
-from `crates/engine/src/concurrent_delta/mod.rs`.
+Shipped module (PR #4360): `crates/engine/src/concurrent_delta/spill/policy.rs`.
+Re-exported from `crates/engine/src/concurrent_delta/spill.rs` and the
+parent `crates/engine/src/concurrent_delta/mod.rs`. The decomposition
+context (which submodules currently exist under
+`crates/engine/src/concurrent_delta/spill/`) lives in
+[`docs/audits/spill-rs-decomposition-plan.md`](../audits/spill-rs-decomposition-plan.md#current-layout);
+this submodule satisfies the SPL-5 row of that migration table.
 
 ```rust
 use std::path::PathBuf;
