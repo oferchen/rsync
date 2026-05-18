@@ -142,6 +142,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "legacy_greeting"
+path = "fuzz_targets/legacy_greeting.rs"
+test = false
+doc = false
+bench = false
+
 # Standalone workspace - excluded from the root workspace so that
 # `cargo build` does not pull libfuzzer-sys into ordinary builds.
 [workspace]
