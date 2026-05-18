@@ -115,8 +115,10 @@ fn delete_extraneous_entries_via_emitter<S: AsRef<OsStr>, F: DeleteFs>(
         destination.to_path_buf(),
         true,
     );
-    // TODO: wire DDP-B3 - replace `observe_directory` with the segment
-    // observation hook so the receiver pipeline drives the cursor.
+    // `observe_directory` is called with an empty child list because the
+    // single-directory cleanup path has no parent segment to enumerate;
+    // the receiver pipeline drives the segment-observation hook in the
+    // multi-segment delete flow.
     ctx.observe_directory(destination.to_path_buf(), &[]);
 
     // Run side-effects (records, summary, backup) BEFORE dispatch so the
