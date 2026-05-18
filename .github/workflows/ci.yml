@@ -96,9 +96,12 @@ jobs:
   # ---------------------------------------------------------------------------
   # Runs `cargo xtask enforce-limits` to surface files that exceed the per-file
   # line limits in `tools/line_limits.toml` (workspace default 650). Marked
-  # `continue-on-error: true` while the 19 over-limit files documented in
-  # `docs/audits/module-loc-audit-session.md` are being decomposed. Promote to
-  # a required check once the over-limit count reaches zero.
+  # `continue-on-error: true` while the over-limit files documented in
+  # `docs/audits/post-8-enforce-limits-ci.md` (~322 files snapshot, dominated
+  # by test modules) are being decomposed. The audit prunes stale overrides
+  # and relaxes caps for the top test-file offenders; remaining overages are
+  # production source pending tracked decomposition work. Promote to a
+  # required check once the over-limit count reaches zero.
   # ===========================================================================
   enforce-limits:
     name: enforce-limits (informational)
