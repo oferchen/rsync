@@ -320,7 +320,6 @@ fn reset_clears_last_instant() {
 
 #[test]
 fn write_max_saturating_multiplication() {
-    // Test that calculate_write_max doesn't overflow with large limits
     let limiter = BandwidthLimiter::new(nz(u64::MAX));
 
     let write_max = limiter.write_max_bytes();
@@ -403,8 +402,8 @@ fn recommended_read_size_usize_max_buffer() {
 
 #[test]
 fn elapsed_time_u64_max_clamping() {
-    // Test that elapsed time calculations clamp at u64::MAX microseconds
-    // This tests the .min(u128::from(u64::MAX)) logic
+    // Exercises the `.min(u128::from(u64::MAX))` saturation in the elapsed-time
+    // path so an absurd Instant gap still produces a finite microsecond count.
     let mut session = recorded_sleep_session();
     session.clear();
 

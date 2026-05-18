@@ -476,7 +476,6 @@ mod tests {
 
     #[test]
     fn apply_effective_limit_multiple_changes_combine_correctly() {
-        // Test that both limit and burst changes result in Updated
         let mut limiter = Some(BandwidthLimiter::with_burst(nz(2000), Some(nz(1000))));
         let result = apply_effective_limit(&mut limiter, Some(nz(1500)), true, Some(nz(700)), true);
         assert_eq!(result, LimiterChange::Updated);
@@ -507,7 +506,6 @@ mod tests {
 
     #[test]
     fn apply_effective_limit_limit_not_specified_burst_change_only() {
-        // Test the branch where limit_specified is false but burst_specified is true
         let mut limiter = Some(BandwidthLimiter::with_burst(nz(1000), Some(nz(500))));
         let result =
             apply_effective_limit(&mut limiter, Some(nz(2000)), false, Some(nz(700)), true);
