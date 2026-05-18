@@ -74,9 +74,6 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Build (${{ matrix.row.name }})
-        run: cargo build --locked ${{ matrix.row.args }}
-
       - name: Test (${{ matrix.row.name }})
         run: cargo nextest run --locked --profile ci ${{ matrix.row.args }}
 
@@ -163,9 +160,6 @@ jobs:
         uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
         with:
           tool: cargo-nextest
-
-      - name: Build (${{ matrix.name }})
-        run: cargo build --locked ${{ matrix.args }}
 
       - name: Test (${{ matrix.name }})
         run: cargo nextest run --locked --profile ci ${{ matrix.args }}

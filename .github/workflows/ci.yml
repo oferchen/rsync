@@ -185,9 +185,6 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Build
-        run: cargo build --locked --workspace --all-features
-
       - name: Run tests
         run: cargo nextest run --locked --workspace --all-features
 
@@ -258,9 +255,6 @@ jobs:
         uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
         with:
           tool: cargo-nextest
-
-      - name: Build
-        run: cargo build --locked --workspace --all-features
 
       - name: Test
         run: |
@@ -458,9 +452,6 @@ jobs:
       # macOS GitHub runners can resolve to rustup-init directly and fail with
       # `error: unexpected argument 'build' found` when rust-toolchain.toml
       # pins a toolchain that was not pre-installed.
-      - name: Build
-        run: rustup run ${{ matrix.toolchain }} cargo build --locked --workspace --all-features
-
       - name: Test
         run: |
           # Run macOS-specific crates only (core, engine, cli have platform code).
