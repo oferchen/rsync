@@ -170,12 +170,17 @@ pub struct DeleteContext {
 
 impl DeleteContext {
     /// Builds a new context rooted at `dest_root` with the given timing
-    /// mode. The traversal cursor is rooted at the empty relative path
-    /// (matching the destination root itself, which upstream
-    /// `delete_in_dir` visits first).
+    /// mode. The traversal cursor is seated at `dest_root` so the first
+    /// directory the emitter pulls matches the key under which callers
+    /// publish their plan via [`Self::publish_plan_for`] or by inserting
+    /// directly into [`Self::plans`]. Use [`Self::with_shared_plan_map`]
+    /// for the receiver-driven pipeline where plans are keyed by
+    /// destination-relative paths and the cursor must start at the
+    /// relative root.
     #[must_use]
     pub fn new(dest_root: PathBuf, timing: EmitterTiming) -> Self {
         let (tx, rx) = unbounded();
+        let cursor_root = dest_root.clone();
         Self {
             plans: Arc::new(DeletePlanMap::new()),
             dest_root,
@@ -184,7 +189,7 @@ impl DeleteContext {
             delete_excluded: false,
             policy: EmitterErrorPolicy::default(),
             segment_entries: Mutex::new(Vec::new()),
-            cursor_root: PathBuf::new(),
+            cursor_root,
             cursor_tx: Mutex::new(Some(tx)),
             cursor_rx: Mutex::new(Some(rx)),
         }
