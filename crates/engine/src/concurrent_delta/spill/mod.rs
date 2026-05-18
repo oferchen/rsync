@@ -64,8 +64,10 @@ use std::path::{Path, PathBuf};
 
 use super::reorder::ReorderBuffer;
 
+mod codec;
 mod error;
 
+pub use codec::SpillCodec;
 pub use error::SpillError;
 
 /// Environment-variable overrides for [`SpillPolicy`] fields at runtime.
@@ -113,35 +115,6 @@ const SPILL_TAG_RAW: u8 = 0x00;
 /// when this tag is observed in a build without the `spill-compression`
 /// feature, instead of attempting to decode garbage.
 const SPILL_TAG_ZSTD: u8 = 0x01;
-
-/// Codec for serializing and deserializing items to the spill file.
-///
-/// Implementations must produce a deterministic byte representation and
-/// report an accurate `encoded_size` for memory accounting. The encoded
-/// format is opaque to the spill layer - only `encode` and `decode` must
-/// agree on the wire format.
-pub trait SpillCodec: Sized {
-    /// Writes the item to `writer` in a format that [`decode`](Self::decode) can read back.
-    ///
-    /// # Errors
-    ///
-    /// Returns an I/O error if writing fails.
-    fn encode(&self, writer: &mut dyn Write) -> io::Result<()>;
-
-    /// Reads an item from `reader` that was previously written by [`encode`](Self::encode).
-    ///
-    /// # Errors
-    ///
-    /// Returns an I/O error if reading fails or the data is corrupt.
-    fn decode(reader: &mut dyn Read) -> io::Result<Self>;
-
-    /// Returns the approximate in-memory size of this item in bytes.
-    ///
-    /// Used for memory accounting to decide when to spill. Does not need
-    /// to be exact - a conservative overestimate is fine.
-    fn estimated_size(&self) -> usize;
-}
-
 /// Reorder buffer with transparent spill-to-tempfile for bounded memory.
 ///
 /// Wraps a [`ReorderBuffer<T>`] and adds disk-backed overflow when the
