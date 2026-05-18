@@ -24,6 +24,7 @@ url = { workspace = true, optional = true }
 rpassword = { workspace = true, optional = true }
 is-terminal = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 
 [features]
 embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep:tokio"]
@@ -31,15 +32,16 @@ embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep
 # See `docs/design/async-ssh-transport.md` (#1593) for the staging plan.
 async-ssh = ["dep:tokio"]
 # Opt-in: exposes the standalone `socketpair_stderr` primitive
-# (SSE-3, #2372) intended for future event-loop integrations
-# (SSE-4 async drain, SSE-7 parity suite). Off by default. The
-# production `SshCommand::spawn` path is unchanged by this flag - it
-# already wires stderr through `aux_channel::configure_stderr_channel`
-# on every supported target, with `Stdio::piped()` as the cross-platform
+# (SSE-3, #2372) and, when paired with `async-ssh`, the SSE-4 async
+# drain task (#2373) that funnels stderr into a bounded ring buffer
+# via `tracing::warn!`. Off by default. The production
+# `SshCommand::spawn` path is unchanged by this flag - it already
+# wires stderr through `aux_channel::configure_stderr_channel` on
+# every supported target, with `Stdio::piped()` as the cross-platform
 # fallback. `tests/ssh_stderr_default_path.rs` guards that public
 # contract (`wait_with_stderr` surfaces stderr) when the feature is off.
 # See `docs/design/socketpair-stderr-channel.md` for the staging plan.
-ssh-socketpair-stderr = []
+ssh-socketpair-stderr = ["dep:tracing"]
 
 [dev-dependencies]
 proptest = { workspace = true }
