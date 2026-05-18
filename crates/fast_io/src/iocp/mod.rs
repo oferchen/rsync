@@ -17,7 +17,7 @@
 //! IOCP is unavailable or for files too small to benefit from async I/O.
 //!
 //! On non-Windows platforms or when the `iocp` feature is disabled, the
-//! stub module (`iocp_stub.rs`) provides the same public API with
+//! stub module (`iocp_stub/`) provides the same public API with
 //! `is_iocp_available()` always returning `false`.
 //!
 //! # Minimum file size
