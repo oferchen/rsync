@@ -38,7 +38,11 @@ use super::types::{DeltaResult, DeltaWork, DeltaWorkKind};
 /// Minimum basis-file size, in bytes, before the IUD-6 io_uring slurp
 /// dispatch fires. Below this threshold a single `BufReader` pass is faster
 /// than amortising io_uring ring construction and buffer registration.
-#[cfg(all(target_os = "linux", feature = "iouring-data-reads"))]
+#[cfg(all(
+    target_os = "linux",
+    feature = "iouring-data-reads",
+    not(feature = "mmap-free-basis")
+))]
 const IOURING_BASIS_SLURP_THRESHOLD: u64 = 1024 * 1024;
 
 /// Strong checksum length used by self-contained delta computation in
@@ -288,7 +292,13 @@ pub fn dispatch(work: &DeltaWork) -> DeltaResult {
 /// as the default path; the distinct variant lets tests assert that the mmap
 /// branch was skipped without inspecting global state.
 enum BasisReader {
+    #[cfg(not(feature = "mmap-free-basis"))]
     Buffered(std::io::BufReader<File>),
+    #[cfg(all(
+        target_os = "linux",
+        feature = "iouring-data-reads",
+        not(feature = "mmap-free-basis")
+    ))]
     Slurped(std::io::Cursor<Vec<u8>>),
     #[cfg(feature = "mmap-free-basis")]
     MmapFree(std::io::BufReader<File>),
@@ -297,7 +307,13 @@ enum BasisReader {
 impl std::io::Read for BasisReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
+            #[cfg(not(feature = "mmap-free-basis"))]
             BasisReader::Buffered(r) => r.read(buf),
+            #[cfg(all(
+                target_os = "linux",
+                feature = "iouring-data-reads",
+                not(feature = "mmap-free-basis")
+            ))]
             BasisReader::Slurped(r) => r.read(buf),
             #[cfg(feature = "mmap-free-basis")]
             BasisReader::MmapFree(r) => r.read(buf),
@@ -308,7 +324,13 @@ impl std::io::Read for BasisReader {
 impl std::io::Seek for BasisReader {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         match self {
+            #[cfg(not(feature = "mmap-free-basis"))]
             BasisReader::Buffered(r) => r.seek(pos),
+            #[cfg(all(
+                target_os = "linux",
+                feature = "iouring-data-reads",
+                not(feature = "mmap-free-basis")
+            ))]
             BasisReader::Slurped(r) => r.seek(pos),
             #[cfg(feature = "mmap-free-basis")]
             BasisReader::MmapFree(r) => r.seek(pos),
@@ -333,25 +355,25 @@ impl std::io::Seek for BasisReader {
 /// `BasisReader::Slurped`. Below the threshold, on non-Linux targets, or
 /// when the feature is off, the default `BufReader<File>` path is used so
 /// production builds are byte-identical to today.
+#[cfg(feature = "mmap-free-basis")]
+fn open_basis_reader(path: &Path, _len: u64) -> std::io::Result<BasisReader> {
+    let file = File::open(path)?;
+    Ok(BasisReader::MmapFree(BufReader::new(file)))
+}
+
+#[cfg(not(feature = "mmap-free-basis"))]
 fn open_basis_reader(path: &Path, len: u64) -> std::io::Result<BasisReader> {
     let _ = len; // consumed only by the io_uring slurp branch below
-    #[cfg(feature = "mmap-free-basis")]
-    {
-        let file = File::open(path)?;
-        return Ok(BasisReader::MmapFree(BufReader::new(file)));
-    }
     #[cfg(all(target_os = "linux", feature = "iouring-data-reads"))]
     {
         if len >= IOURING_BASIS_SLURP_THRESHOLD {
-            match fast_io::read_file_with_io_uring(path) {
-                Ok(bytes) => return Ok(BasisReader::Slurped(std::io::Cursor::new(bytes))),
-                Err(_) => {
-                    // Fall through to the default BufReader path on any
-                    // io_uring failure (kernel rejected the ring, seccomp,
-                    // out-of-memory under registration). Default path is
-                    // always production-ready.
-                }
+            if let Ok(bytes) = fast_io::read_file_with_io_uring(path) {
+                return Ok(BasisReader::Slurped(std::io::Cursor::new(bytes)));
             }
+            // Fall through to the default BufReader path on any
+            // io_uring failure (kernel rejected the ring, seccomp,
+            // out-of-memory under registration). Default path is
+            // always production-ready.
         }
     }
     let file = File::open(path)?;

@@ -43,7 +43,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use protocol::flist::FileEntry;
 
 use super::emitter::{DeleteEmitter, DeleteFs, EmitterErrorPolicy};
@@ -371,11 +371,8 @@ impl DeleteContext {
         // back into the channel so the eventual drain still sees them;
         // the channel is FIFO so ordering is preserved.
         let mut drained: Vec<CursorObservation> = Vec::new();
-        loop {
-            match rx.try_recv() {
-                Ok(obs) => drained.push(obs),
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-            }
+        while let Ok(obs) = rx.try_recv() {
+            drained.push(obs);
         }
         for obs in &drained {
             cursor.observe_segment(obs.dir.clone(), &obs.children);

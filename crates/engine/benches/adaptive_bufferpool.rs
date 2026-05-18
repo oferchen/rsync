@@ -177,9 +177,12 @@ fn run_adaptive(pool: &Arc<BufferPool>, steps: &[Step]) {
     }
 }
 
+/// Builds a deterministic workload trace consumed by every pool variant.
+type WorkloadBuilder = fn() -> Vec<Step>;
+
 /// Registers all workload x pool-variant cells into the Criterion group.
 fn bench_adaptive_bufferpool(c: &mut Criterion) {
-    let workloads: &[(&str, fn() -> Vec<Step>)] = &[
+    let workloads: &[(&str, WorkloadBuilder)] = &[
         ("steady_uniform", workload_steady_uniform),
         ("bursty_small", workload_bursty_small),
         ("growing", workload_growing),
