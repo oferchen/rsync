@@ -3,11 +3,11 @@
 //! This submodule owns the user-facing knobs that select *whether* and *how*
 //! the spill layer engages: [`SpillPolicy`] aggregates the byte threshold,
 //! the on-disk scratch directory, the post-spill reclaim behaviour, the
-//! spill granularity, and the optional payload compression into a single
-//! value. The parent [`super`] module owns the runtime machinery
-//! ([`SpillableReorderBuffer`](super::SpillableReorderBuffer) and its disk
-//! I/O paths); this submodule owns only the configuration surface those
-//! paths consume.
+//! spill granularity, the optional payload compression, and the post-read
+//! reclaim choice into a single value. The parent [`super`] module owns the
+//! runtime machinery ([`SpillableReorderBuffer`](super::SpillableReorderBuffer)
+//! and its disk I/O paths); this submodule owns only the configuration
+//! surface those paths consume.
 //!
 //! The default [`SpillPolicy`] disables spilling entirely, mirroring the
 //! historical bare [`ReorderBuffer`](super::super::reorder::ReorderBuffer)
@@ -15,8 +15,11 @@
 //! [`ReclaimMode`], [`SpillGranularity`], and [`SpillCompression`] are
 //! deliberately additive: today only the defaults are wired through the
 //! consumer pipeline, and the alternatives reserve syntactic room for
-//! follow-up work without forcing another public API break. Tests below pin
-//! the defaults so downstream crates can rely on the contract.
+//! follow-up work without forcing another public API break. The
+//! [`SpillReclaim`] knob is wired through [`SpillableReorderBuffer`] and
+//! controls whether the buffer re-spills in-memory residue after each
+//! reload-from-disk delivery. Tests below pin the defaults so downstream
+//! crates can rely on the contract.
 //!
 //! Extracted as the first split off the monolithic `spill.rs`; see the
 //! `spill.rs` decomposition plan (`docs/audits/spill-rs-decomposition-plan.md`,
@@ -56,6 +59,30 @@ pub enum SpillGranularity {
     WholeBatch,
     /// Spill individual items as the budget is exceeded.
     PerItem,
+}
+
+/// Post-read reclaim behaviour for the spill layer.
+///
+/// Controls what [`SpillableReorderBuffer`](super::SpillableReorderBuffer)
+/// does immediately after reloading a spilled item from disk and delivering
+/// it to the consumer.
+///
+/// The default - [`SpillReclaim::KeepInMemory`] - matches the historical
+/// behaviour: any items that were force-inserted alongside the reload stay
+/// resident in memory. The alternative - [`SpillReclaim::RespillAfterRead`]
+/// - triggers an extra `spill_excess` pass after every successful reload so
+/// the in-memory footprint stays bounded under sustained reload traffic.
+/// Use it when many large batches stream through and RSS would otherwise
+/// drift upward over the lifetime of a long-running transfer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum SpillReclaim {
+    /// Reloaded items and any co-resident in-memory items remain resident
+    /// after delivery; the buffer never proactively re-spills.
+    #[default]
+    KeepInMemory,
+    /// After each reload-from-disk delivery, the buffer re-spills excess
+    /// in-memory items so RSS stays bounded by the configured threshold.
+    RespillAfterRead,
 }
 
 /// Optional compression applied to spilled payloads.
@@ -105,6 +132,9 @@ pub struct SpillPolicy {
     pub granularity: SpillGranularity,
     /// Optional payload compression for spilled bytes.
     pub compression: SpillCompression,
+    /// Post-read reclaim policy. Default [`SpillReclaim::KeepInMemory`]
+    /// preserves the historical behaviour.
+    pub reclaim: SpillReclaim,
 }
 
 impl SpillPolicy {
@@ -151,6 +181,13 @@ impl SpillPolicy {
     #[must_use]
     pub fn with_compression(mut self, compression: SpillCompression) -> Self {
         self.compression = compression;
+        self
+    }
+
+    /// Overrides the post-read reclaim policy.
+    #[must_use]
+    pub fn with_reclaim(mut self, reclaim: SpillReclaim) -> Self {
+        self.reclaim = reclaim;
         self
     }
 
@@ -204,6 +241,7 @@ mod tests {
         assert_eq!(policy.reclaim_mode, ReclaimMode::KeepInMemory);
         assert_eq!(policy.granularity, SpillGranularity::WholeBatch);
         assert_eq!(policy.compression, SpillCompression::None);
+        assert_eq!(policy.reclaim, SpillReclaim::KeepInMemory);
     }
 
     #[test]
@@ -216,6 +254,13 @@ mod tests {
         assert_eq!(ReclaimMode::default(), ReclaimMode::KeepInMemory);
         assert_eq!(SpillGranularity::default(), SpillGranularity::WholeBatch);
         assert_eq!(SpillCompression::default(), SpillCompression::None);
+        assert_eq!(SpillReclaim::default(), SpillReclaim::KeepInMemory);
+    }
+
+    #[test]
+    fn with_reclaim_overrides_default() {
+        let policy = SpillPolicy::with_threshold(2048).with_reclaim(SpillReclaim::RespillAfterRead);
+        assert_eq!(policy.reclaim, SpillReclaim::RespillAfterRead);
     }
 
     #[test]

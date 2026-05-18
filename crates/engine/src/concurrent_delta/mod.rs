@@ -195,7 +195,9 @@ pub use consumer::{DeltaConsumer, DeltaConsumerStats};
 #[cfg(feature = "parallel-receive-delta")]
 pub use parallel_apply::{DeltaChunk, ParallelDeltaApplier};
 pub use reorder::{HistogramStats, Metrics as ReorderMetrics, ReorderBuffer};
-pub use spill::policy::{ReclaimMode, SpillCompression, SpillGranularity, SpillPolicy};
+pub use spill::policy::{
+    ReclaimMode, SpillCompression, SpillGranularity, SpillPolicy, SpillReclaim,
+};
 pub use spill::{SpillCodec, SpillError, SpillStats, SpillableReorderBuffer};
 pub use strategy::{DeltaStrategy, DeltaTransferStrategy, WholeFileStrategy};
 pub use types::{DeltaResult, DeltaResultStatus, DeltaWork, DeltaWorkKind, FileNdx};
