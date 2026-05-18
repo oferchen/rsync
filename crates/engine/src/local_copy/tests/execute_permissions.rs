@@ -501,28 +501,6 @@ fn mode_0000_checksum_comparison() {
 #[cfg(unix)]
 #[test]
 #[ignore = "mode 0000 files cannot be read by owner on most systems"]
-fn mode_0000_file_is_readable_by_owner() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let temp = tempdir().expect("tempdir");
-    let test_file = temp.path().join("test.txt");
-    let content = b"owner can read despite mode 0000";
-
-    fs::write(&test_file, content).expect("write file");
-    fs::set_permissions(&test_file, PermissionsExt::from_mode(0o000)).expect("set mode 0000");
-
-    // Verify mode is 0000
-    let metadata = fs::metadata(&test_file).expect("metadata");
-    assert_eq!(metadata.permissions().mode() & 0o777, 0o000);
-
-    // As the owner, we should still be able to read the file
-    let read_content = fs::read(&test_file).expect("owner can read mode 0000 file");
-    assert_eq!(read_content, content);
-}
-
-#[cfg(unix)]
-#[test]
-#[ignore = "mode 0000 files cannot be read by owner on most systems"]
 fn mode_0000_preserve_in_existing_file_update() {
     use filetime::{FileTime, set_file_times};
     use std::os::unix::fs::PermissionsExt;
