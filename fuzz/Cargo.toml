@@ -170,6 +170,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "vstring"
+path = "fuzz_targets/vstring.rs"
+test = false
+doc = false
+bench = false
+
 # Standalone workspace - excluded from the root workspace so that
 # `cargo build` does not pull libfuzzer-sys into ordinary builds.
 [workspace]
