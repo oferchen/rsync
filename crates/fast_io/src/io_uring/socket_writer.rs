@@ -14,10 +14,18 @@ use super::send_zc;
 ///
 /// SEND_ZC pins the user pages via `get_user_pages_fast` and waits for the
 /// notification CQE before reusing the slot; for sub-page sends the
-/// page-pin overhead dominates and SEND_ZC loses to plain SEND. 16 KiB is
-/// the threshold from `docs/design/iouring-send-zc.md` section 5
-/// (workload B regression guard).
+/// page-pin overhead dominates and SEND_ZC loses to plain SEND.
+///
+/// The default 16 KiB threshold comes from `docs/design/iouring-send-zc.md`
+/// section 5 (workload B regression guard). With the `iouring-send-zc`
+/// cargo feature enabled the threshold drops to
+/// [`send_zc::SEND_ZC_DISPATCH_MIN_BYTES`] (4 KiB) so the opt-in transport
+/// dispatch matches the user-facing contract documented on
+/// [`crate::ZeroCopySender`].
+#[cfg(not(feature = "iouring-send-zc"))]
 const SEND_ZC_MIN_BYTES: usize = 16 * 1024;
+#[cfg(feature = "iouring-send-zc")]
+const SEND_ZC_MIN_BYTES: usize = send_zc::SEND_ZC_DISPATCH_MIN_BYTES;
 
 /// io_uring-based socket writer using `IORING_OP_SEND` (and optionally
 /// `IORING_OP_SEND_ZC`).

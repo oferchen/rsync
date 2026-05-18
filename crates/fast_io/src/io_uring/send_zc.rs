@@ -18,12 +18,33 @@
 //! asynchronously.
 //!
 //! See `docs/design/iouring-send-zc.md` for the full design.
+//!
+//! # `ZeroCopySender`
+//!
+//! [`ZeroCopySender`] is the higher-level wrapper exposed when the
+//! `iouring-send-zc` cargo feature is enabled. It wraps an existing socket
+//! fd, an `Arc<Mutex<IoUring>>` ring, and an optional
+//! [`RegisteredBufferGroup`] so payload pages can be DMA'd directly from
+//! pinned kernel-registered memory without an extra userspace copy.
+//!
+//! See the [`ZeroCopySender::send_zc`] rustdoc for the buffer-lifetime
+//! contract (the kernel does not release its page reference until the
+//! notification CQE arrives; the wrapper blocks for that CQE before
+//! returning so callers may reuse or drop the slice immediately).
 
 use std::io;
 use std::os::unix::io::RawFd;
 use std::sync::atomic::{AtomicI8, Ordering};
 
 use io_uring::{IoUring as RawIoUring, opcode, types};
+
+#[cfg(feature = "iouring-send-zc")]
+use std::sync::{Arc, Mutex};
+
+#[cfg(feature = "iouring-send-zc")]
+use super::config::IoUringConfig;
+#[cfg(feature = "iouring-send-zc")]
+use super::registered_buffers::RegisteredBufferGroup;
 
 /// CQE flag set on the transfer CQE; signals a notification CQE will follow.
 const IORING_CQE_F_MORE: u32 = 1 << 1;
@@ -200,6 +221,245 @@ fn classify_cqe(
     *transfer_result = Some(result);
     if flags & IORING_CQE_F_MORE == 0 {
         *saw_notification = true;
+    }
+}
+
+/// Minimum payload size that the high-level [`ZeroCopySender`] dispatch
+/// considers worth routing through `IORING_OP_SEND_ZC`.
+///
+/// Sub-page sends are dominated by the page-pin overhead of
+/// `get_user_pages_fast` and lose to plain `IORING_OP_SEND` (and even to
+/// `send(2)`). 4 KiB matches the page size on every supported architecture
+/// and is the threshold the transport dispatch uses when the
+/// `iouring-send-zc` feature is enabled.
+#[cfg(feature = "iouring-send-zc")]
+pub const SEND_ZC_DISPATCH_MIN_BYTES: usize = 4 * 1024;
+
+/// Default registered-buffer slot size for [`ZeroCopySender`].
+///
+/// Sized to match the upstream-rsync 256 KiB literal-token chunk so a
+/// single SEND_ZC submission can carry one literal token end-to-end. Larger
+/// payloads fall back to the unregistered SEND_ZC path which still skips
+/// the userland copy but does not benefit from the pinned-page registration.
+#[cfg(feature = "iouring-send-zc")]
+const ZERO_COPY_SLOT_BYTES: usize = 256 * 1024;
+
+/// Default number of registered slots in [`ZeroCopySender`]'s buffer pool.
+///
+/// Eight slots match the engine's `BufferPool` default and the
+/// [`IoUringConfig::registered_buffer_count`] default; a single SEND_ZC
+/// submission needs one slot for the duration of the call so the pool
+/// only needs enough headroom for the brief window between the transfer
+/// CQE and the notification CQE.
+#[cfg(feature = "iouring-send-zc")]
+const ZERO_COPY_SLOT_COUNT: usize = 8;
+
+/// High-level zero-copy socket sender backed by an `Arc<Mutex<IoUring>>`.
+///
+/// Wraps an existing socket file descriptor and submits
+/// `IORING_OP_SEND_ZC` against a [`RegisteredBufferGroup`] so the kernel
+/// can DMA payload pages directly without a userspace copy. When
+/// registration fails (kernel limit, seccomp) or the payload exceeds the
+/// per-slot size, the sender falls back to the unregistered SEND_ZC path
+/// which still drains both CQEs and is still zero-copy at the socket layer
+/// but does not benefit from pinned-page registration.
+///
+/// # Buffer-lifetime contract
+///
+/// `IORING_OP_SEND_ZC` posts the notification CQE only after the kernel
+/// has released its reference to the user pages. **The buffer passed to a
+/// submission must therefore outlive the kernel hold.** This wrapper
+/// upholds that contract by blocking on both CQEs (transfer +
+/// notification) before [`send_zc`](Self::send_zc) returns; callers may
+/// reuse or drop the slice immediately on return.
+///
+/// The wrapper is `!Sync` by construction (the `Arc<Mutex<IoUring>>`
+/// serialises submissions). Multiple senders may share the same ring via
+/// `Arc::clone`; concurrent callers will be serialised on the mutex.
+///
+/// Only available when the `iouring-send-zc` cargo feature is enabled
+/// (Linux + `io_uring` only).
+#[cfg(feature = "iouring-send-zc")]
+pub struct ZeroCopySender {
+    ring: Arc<Mutex<RawIoUring>>,
+    fd: RawFd,
+    /// Pinned registered-buffer pool. `None` when registration was rejected
+    /// by the kernel; the unregistered SEND_ZC path is still usable.
+    buffers: Option<RegisteredBufferGroup>,
+    /// Per-slot byte capacity. Cached so [`send_zc`](Self::send_zc) can
+    /// decide whether the user's payload fits in a single registered slot.
+    slot_bytes: usize,
+}
+
+#[cfg(feature = "iouring-send-zc")]
+impl ZeroCopySender {
+    /// Wraps an existing socket `fd` with a freshly-built io_uring ring and a
+    /// registered-buffer pool sized for upstream-rsync's 256 KiB literal
+    /// chunk.
+    ///
+    /// The caller retains ownership of the file descriptor; this wrapper
+    /// neither closes it on drop nor duplicates it. Callers MUST keep `fd`
+    /// open for the lifetime of the sender.
+    ///
+    /// # Errors
+    ///
+    /// - [`io::ErrorKind::Unsupported`] when `IORING_OP_SEND_ZC` is not
+    ///   advertised by the running kernel.
+    /// - The underlying io_uring error when ring construction fails.
+    pub fn new(fd: RawFd) -> io::Result<Self> {
+        if !is_supported() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "IORING_OP_SEND_ZC is not supported on this kernel",
+            ));
+        }
+        let ring = IoUringConfig::default().build_ring()?;
+        let buffers =
+            RegisteredBufferGroup::try_new(&ring, ZERO_COPY_SLOT_BYTES, ZERO_COPY_SLOT_COUNT);
+        let slot_bytes = buffers
+            .as_ref()
+            .map(RegisteredBufferGroup::buffer_size)
+            .unwrap_or(ZERO_COPY_SLOT_BYTES);
+        Ok(Self {
+            ring: Arc::new(Mutex::new(ring)),
+            fd,
+            buffers,
+            slot_bytes,
+        })
+    }
+
+    /// Wraps an existing socket `fd` against a caller-supplied
+    /// `Arc<Mutex<IoUring>>` so multiple senders can share a single ring
+    /// (e.g., a session-wide [`SessionRingPool`](super::session_pool::SessionRingPool)
+    /// slot). The shared ring's submission queue is serialised on the
+    /// mutex; concurrent senders will block briefly.
+    ///
+    /// Registration of the per-sender buffer pool against the shared ring
+    /// is best-effort; failure leaves the sender on the unregistered
+    /// SEND_ZC path (still zero-copy at the socket layer).
+    ///
+    /// # Errors
+    ///
+    /// [`io::ErrorKind::Unsupported`] when `IORING_OP_SEND_ZC` is not
+    /// advertised by the running kernel.
+    pub fn from_shared_ring(fd: RawFd, ring: Arc<Mutex<RawIoUring>>) -> io::Result<Self> {
+        if !is_supported() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "IORING_OP_SEND_ZC is not supported on this kernel",
+            ));
+        }
+        let buffers = {
+            let guard = ring
+                .lock()
+                .map_err(|_| io::Error::other("ZeroCopySender ring mutex poisoned"))?;
+            RegisteredBufferGroup::try_new(&guard, ZERO_COPY_SLOT_BYTES, ZERO_COPY_SLOT_COUNT)
+        };
+        let slot_bytes = buffers
+            .as_ref()
+            .map(RegisteredBufferGroup::buffer_size)
+            .unwrap_or(ZERO_COPY_SLOT_BYTES);
+        Ok(Self {
+            ring,
+            fd,
+            buffers,
+            slot_bytes,
+        })
+    }
+
+    /// Submits `buf` via `IORING_OP_SEND_ZC` and waits for both the
+    /// transfer and notification CQEs before returning.
+    ///
+    /// Returns the byte count reported by the transfer CQE (may be less
+    /// than `buf.len()` if the kernel reports a short send; callers loop
+    /// over the remaining slice exactly as with `send(2)`).
+    ///
+    /// # Buffer-lifetime contract
+    ///
+    /// The zero-copy contract is that `buf` (or, when a registered slot
+    /// is used, the per-slot pinned page) must outlive the kernel page
+    /// hold. This method enforces the contract by blocking on the
+    /// notification CQE before returning, so `buf` is free to be reused
+    /// or dropped immediately on return. Callers MUST NOT rely on async
+    /// buffer release - that would require a separate API surface that
+    /// returns ownership of the buffer along with a completion handle.
+    ///
+    /// # Errors
+    ///
+    /// - [`io::ErrorKind::InvalidInput`] when `buf` is empty.
+    /// - [`io::ErrorKind::Unsupported`] when the running kernel does not
+    ///   advertise `IORING_OP_SEND_ZC` (defensive double-check; the
+    ///   constructor already returns `Unsupported` in that case).
+    /// - Any OS error reported by the transfer CQE.
+    pub fn send_zc(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SEND_ZC requires a non-empty buffer",
+            ));
+        }
+
+        // Fast path: payload fits in a registered slot. Copy the bytes
+        // into the pinned slot once, then SEND_ZC against the registered
+        // memory so the kernel can DMA without another userland touch.
+        if let Some(pool) = self.buffers.as_ref() {
+            if buf.len() <= self.slot_bytes {
+                if let Some(mut slot) = pool.checkout() {
+                    // SAFETY: the slot is exclusively ours for the lifetime
+                    // of `slot` and `buf.len() <= self.slot_bytes` keeps
+                    // the copy inside the slot's registered region. No
+                    // concurrent kernel use of this slot is in flight - the
+                    // previous send has already drained both CQEs
+                    // (try_send_zc is synchronous) before we returned to
+                    // the caller.
+                    unsafe {
+                        let dst = slot.as_mut_slice(buf.len());
+                        dst.copy_from_slice(buf);
+                    }
+                    let mut ring = self
+                        .ring
+                        .lock()
+                        .map_err(|_| io::Error::other("ZeroCopySender ring mutex poisoned"))?;
+                    // SAFETY: `slot` is borrowed for the full lifetime of
+                    // this call. `try_send_zc` drains both the transfer
+                    // and notification CQEs before returning, so the
+                    // kernel has released its reference to the registered
+                    // pages by the time we drop the slot back to the pool.
+                    return try_send_zc(&mut ring, self.fd, unsafe { slot.as_slice(buf.len()) }, 0);
+                }
+            }
+        }
+
+        // Fallback: oversized payload, or registration was rejected.
+        // The unregistered SEND_ZC path still skips the userland copy at
+        // the socket layer; only the per-page pinning benefit is lost.
+        let mut ring = self
+            .ring
+            .lock()
+            .map_err(|_| io::Error::other("ZeroCopySender ring mutex poisoned"))?;
+        try_send_zc(&mut ring, self.fd, buf, 0)
+    }
+
+    /// Returns `true` when the registered-buffer pool is live (kernel
+    /// accepted `IORING_REGISTER_BUFFERS`). Exposed for diagnostics and
+    /// tests; production callers should not branch on this.
+    #[must_use]
+    pub fn registered_buffers_active(&self) -> bool {
+        self.buffers.is_some()
+    }
+
+    /// Returns the per-slot capacity of the registered buffer pool, or
+    /// the configured default when registration was rejected.
+    #[must_use]
+    pub fn slot_bytes(&self) -> usize {
+        self.slot_bytes
+    }
+
+    /// Returns the wrapped raw socket file descriptor. The wrapper does
+    /// not close the fd on drop; callers retain ownership.
+    #[must_use]
+    pub fn raw_fd(&self) -> RawFd {
+        self.fd
     }
 }
 
