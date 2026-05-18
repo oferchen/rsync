@@ -48,7 +48,7 @@
 //! has no upstream equivalent.
 
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -58,6 +58,9 @@ pub mod policy;
 pub mod stats;
 pub use policy::{ReclaimMode, SpillCompression, SpillGranularity, SpillPolicy};
 pub use stats::SpillStats;
+
+mod tempfile;
+use tempfile::{SpillBackend, open_backend};
 
 /// Default memory threshold (in bytes) before spilling begins.
 ///
@@ -164,35 +167,6 @@ pub trait SpillCodec: Sized {
     /// to be exact - a conservative overestimate is fine.
     fn estimated_size(&self) -> usize;
 }
-
-/// Backing storage for spilled bytes.
-///
-/// Two flavours are supported:
-///
-/// - `Spooled` - the default. Wraps `tempfile::SpooledTempFile`, which keeps
-///   small spills in memory and rolls over to disk past a threshold. The OS
-///   deletes the file when the buffer is dropped.
-/// - `Directory` - opens a single anonymous tempfile inside a caller-provided
-///   directory. If the directory vanishes mid-transfer (operator cleanup,
-///   container restart) the buffer performs one `create_dir_all` retry
-///   before surfacing the error.
-enum SpillBackend {
-    Spooled(tempfile::SpooledTempFile),
-    Directory(File),
-}
-
-impl SpillBackend {
-    fn file(&mut self) -> &mut dyn ReadWriteSeek {
-        match self {
-            SpillBackend::Spooled(f) => f,
-            SpillBackend::Directory(f) => f,
-        }
-    }
-}
-
-/// Trait object alias to keep the [`SpillBackend::file`] accessor honest.
-trait ReadWriteSeek: Read + Write + Seek {}
-impl<T: Read + Write + Seek + ?Sized> ReadWriteSeek for T {}
 
 /// Reorder buffer with transparent spill-to-tempfile for bounded memory.
 ///
@@ -659,21 +633,6 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     }
 }
 
-/// Opens the appropriate backend for a spill file.
-fn open_backend(dir: Option<&Path>) -> io::Result<SpillBackend> {
-    match dir {
-        Some(dir) => Ok(SpillBackend::Directory(tempfile::tempfile_in(dir)?)),
-        None => {
-            // SpooledTempFile keeps small spills in memory (up to 1 MB) and
-            // rolls over to disk for larger volumes, avoiding disk I/O for
-            // transient pressure spikes.
-            Ok(SpillBackend::Spooled(tempfile::SpooledTempFile::new(
-                1024 * 1024,
-            )))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1100,7 +1059,7 @@ mod tests {
         // Vanish-before-first-spill is the recoverable case: no data has
         // been written yet, so re-creating the directory and retrying
         // is safe.
-        let scratch = tempfile::tempdir().expect("create scratch root");
+        let scratch = ::tempfile::tempdir().expect("create scratch root");
         let spill_dir = scratch.path().join("spill");
         let mut buf: SpillableReorderBuffer<u64> =
             SpillableReorderBuffer::with_spill_dir(16, 8, &spill_dir)
@@ -1131,7 +1090,7 @@ mod tests {
         // Vanish after prior spills is unrecoverable: those items live
         // only on the now-missing disk. We surface the I/O error rather
         // than silently lose them.
-        let scratch = tempfile::tempdir().expect("create scratch root");
+        let scratch = ::tempfile::tempdir().expect("create scratch root");
         let spill_dir = scratch.path().join("spill");
         let mut buf: SpillableReorderBuffer<u64> =
             SpillableReorderBuffer::with_spill_dir(16, 8, &spill_dir)
@@ -1171,7 +1130,7 @@ mod tests {
     fn dir_recreate_failure_surfaces_io_error() {
         // Point the spill dir at a path whose parent is a regular file:
         // create_dir_all is guaranteed to fail with NotADirectory or similar.
-        let scratch = tempfile::tempdir().expect("create scratch root");
+        let scratch = ::tempfile::tempdir().expect("create scratch root");
         let blocker = scratch.path().join("blocker");
         fs::write(&blocker, b"not a directory").expect("write blocker file");
         let invalid_dir = blocker.join("spill");
@@ -1190,7 +1149,7 @@ mod tests {
     fn directory_backed_spill_round_trip() {
         // Sanity: the directory backend yields the same byte-for-byte
         // results as the default spooled backend.
-        let scratch = tempfile::tempdir().expect("create scratch root");
+        let scratch = ::tempfile::tempdir().expect("create scratch root");
         let mut buf: SpillableReorderBuffer<u64> =
             SpillableReorderBuffer::with_spill_dir(64, 24, scratch.path().join("spill"))
                 .expect("setup spill directory");
