@@ -115,18 +115,17 @@ impl AsyncRead for ChannelReader {
 /// current task and returns [`Poll::Pending`] until capacity is available. A
 /// closed channel surfaces as [`io::ErrorKind::BrokenPipe`]. `poll_shutdown`
 /// drops the internal sender, signalling EOF to the reader half.
+/// Boxed reservation future used by [`ChannelWriter`] to preserve the
+/// channel's wait-queue registration across `poll_write` invocations.
+type ReservationFuture = Pin<
+    Box<dyn Future<Output = Result<mpsc::OwnedPermit<Vec<u8>>, mpsc::error::SendError<()>>> + Send>,
+>;
+
 pub struct ChannelWriter {
     tx: Option<mpsc::Sender<Vec<u8>>>,
     // Pending reservation future preserved across polls so the channel's
     // wait-queue registration is not dropped between `poll_write` calls.
-    reserving: Option<
-        Pin<
-            Box<
-                dyn Future<Output = Result<mpsc::OwnedPermit<Vec<u8>>, mpsc::error::SendError<()>>>
-                    + Send,
-            >,
-        >,
-    >,
+    reserving: Option<ReservationFuture>,
 }
 
 impl ChannelWriter {

@@ -253,7 +253,7 @@ where
                     buf.extend(&line);
                 }
                 let text = String::from_utf8_lossy(&line);
-                let trimmed = text.trim_end_matches(|c| c == '\n' || c == '\r');
+                let trimmed = text.trim_end_matches(['\n', '\r']);
                 if !trimmed.is_empty() {
                     tracing::warn!(target: "ssh::stderr", "{}", trimmed);
                 }
@@ -341,7 +341,7 @@ mod tests {
             // drain loop's read_until returns a single Ok with the full
             // 1 KiB plus newline.
             let mut payload = Vec::with_capacity(1024);
-            payload.extend(std::iter::repeat(b'a').take(1023));
+            payload.extend(std::iter::repeat_n(b'a', 1023));
             payload.push(b'\n');
 
             child.write_all(&payload).await.expect("write payload");
