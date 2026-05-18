@@ -151,6 +151,8 @@ pub use linked_chain::{CqeResult, LinkedChain, read_then_write};
 pub use registered_buffers::{
     RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats, RegisteredBufferStatus,
 };
+#[cfg(feature = "iouring-send-zc")]
+pub use send_zc::{SEND_ZC_DISPATCH_MIN_BYTES, ZeroCopySender};
 pub use send_zc::{is_supported as send_zc_supported, try_send_zc};
 
 /// Internal re-exports of the underlying `io-uring` crate types used by

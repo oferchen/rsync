@@ -87,6 +87,8 @@ pub use renameat2::{
     renameat2_supported,
 };
 pub use send_zc::is_supported as send_zc_supported;
+#[cfg(feature = "iouring-send-zc")]
+pub use send_zc::{SEND_ZC_DISPATCH_MIN_BYTES, ZeroCopySender};
 pub use session_pool::{
     RingLease, SessionPoolConfig, SessionRingPool, ThreadLocalRingLease, ThreadLocalRingPool,
 };
