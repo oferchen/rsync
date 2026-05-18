@@ -39,8 +39,8 @@ env:
   UPSTREAM_RSYNC_VERSION: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.2' }}
 
 jobs:
-  validate-exit-codes:
-    name: Exit Code Validation
+  build:
+    name: Build oc-rsync and upstream rsync
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -55,7 +55,7 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: exit-codes
+          key: build
 
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
@@ -79,12 +79,59 @@ jobs:
         run: bash tools/ci/run_interop.sh build-only
 
       - name: Build oc-rsync
-        run: cargo build --release
+        run: cargo build --release --bin oc-rsync
+
+      - name: Stage shared interop artifact
+        run: |
+          mkdir -p interop-artifact/bin interop-artifact/upstream
+          cp target/release/oc-rsync interop-artifact/bin/
+          cp -R target/interop/upstream-install/. interop-artifact/upstream/
+
+      - name: Upload interop artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: interop-binaries
+          path: interop-artifact
+          retention-days: 1
+          if-no-files-found: error
+
+  validate-exit-codes:
+    name: Exit Code Validation
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: exit-codes
+          save-if: 'false'
+
+      - name: Download interop artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: interop-binaries
+          path: interop-artifact
+
+      - name: Restore shared binaries
+        run: |
+          mkdir -p target/release target/interop/upstream-install
+          cp interop-artifact/bin/oc-rsync target/release/oc-rsync
+          chmod +x target/release/oc-rsync
+          cp -R interop-artifact/upstream/. target/interop/upstream-install/
+          find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Validate exit codes
         id: validate-exit-codes
-        run: |
-          cargo xtask interop exit-codes --verbose
+        run: cargo xtask interop exit-codes --verbose
         continue-on-error: true
 
       - name: Upload validation report
@@ -102,8 +149,9 @@ jobs:
 
   validate-messages:
     name: Message Format Validation
+    needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -117,35 +165,25 @@ jobs:
         with:
           shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: messages
+          save-if: 'false'
 
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+      - name: Download interop artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
-          version: ${{ env.CACHE_VERSION }}
+          name: interop-binaries
+          path: interop-artifact
 
-      - name: Cache upstream rsync
-        id: cache-rsync
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            target/interop/upstream-src
-            target/interop/upstream-install
-          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
-          restore-keys: |
-            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
-
-      - name: Build upstream rsync binaries
-        if: steps.cache-rsync.outputs.cache-hit != 'true'
-        run: bash tools/ci/run_interop.sh build-only
-
-      - name: Build oc-rsync
-        run: cargo build --release
+      - name: Restore shared binaries
+        run: |
+          mkdir -p target/release target/interop/upstream-install
+          cp interop-artifact/bin/oc-rsync target/release/oc-rsync
+          chmod +x target/release/oc-rsync
+          cp -R interop-artifact/upstream/. target/interop/upstream-install/
+          find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Validate messages
         id: validate-messages
-        run: |
-          cargo xtask interop messages --verbose
+        run: cargo xtask interop messages --verbose
         continue-on-error: true
 
       - name: Upload validation report
@@ -163,8 +201,9 @@ jobs:
 
   validate-behavior:
     name: Behavior Comparison
+    needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -178,35 +217,25 @@ jobs:
         with:
           shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: behavior
+          save-if: 'false'
 
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+      - name: Download interop artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
-          version: ${{ env.CACHE_VERSION }}
+          name: interop-binaries
+          path: interop-artifact
 
-      - name: Cache upstream rsync
-        id: cache-rsync
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            target/interop/upstream-src
-            target/interop/upstream-install
-          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
-          restore-keys: |
-            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
-
-      - name: Build upstream rsync binaries
-        if: steps.cache-rsync.outputs.cache-hit != 'true'
-        run: bash tools/ci/run_interop.sh build-only
-
-      - name: Build oc-rsync
-        run: cargo build --release
+      - name: Restore shared binaries
+        run: |
+          mkdir -p target/release target/interop/upstream-install
+          cp interop-artifact/bin/oc-rsync target/release/oc-rsync
+          chmod +x target/release/oc-rsync
+          cp -R interop-artifact/upstream/. target/interop/upstream-install/
+          find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run behavior comparison
         id: validate-behavior
-        run: |
-          cargo xtask interop behavior --verbose
+        run: cargo xtask interop behavior --verbose
         continue-on-error: true
 
       - name: Create summary
@@ -226,45 +255,27 @@ jobs:
 
   validate-batch:
     name: Batch Mode Interop
+    needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - name: Download interop artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: batch
+          name: interop-binaries
+          path: interop-artifact
 
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
-        with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
-          version: ${{ env.CACHE_VERSION }}
-
-      - name: Cache upstream rsync
-        id: cache-rsync
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            target/interop/upstream-src
-            target/interop/upstream-install
-          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
-          restore-keys: |
-            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
-
-      - name: Build upstream rsync binaries
-        if: steps.cache-rsync.outputs.cache-hit != 'true'
-        run: bash tools/ci/run_interop.sh build-only
-
-      - name: Build oc-rsync
-        run: cargo build --release
+      - name: Restore shared binaries
+        run: |
+          mkdir -p target/release target/interop/upstream-install
+          cp interop-artifact/bin/oc-rsync target/release/oc-rsync
+          chmod +x target/release/oc-rsync
+          cp -R interop-artifact/upstream/. target/interop/upstream-install/
+          find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run batch interop tests
         run: bash tests/batch_interop_test.sh
@@ -282,45 +293,27 @@ jobs:
 
   validate-filters:
     name: Filter Rules Interop
+    needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - name: Download interop artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: filters
+          name: interop-binaries
+          path: interop-artifact
 
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
-        with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
-          version: ${{ env.CACHE_VERSION }}
-
-      - name: Cache upstream rsync
-        id: cache-rsync-filters
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            target/interop/upstream-src
-            target/interop/upstream-install
-          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
-          restore-keys: |
-            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
-
-      - name: Build upstream rsync binaries
-        if: steps.cache-rsync-filters.outputs.cache-hit != 'true'
-        run: bash tools/ci/run_interop.sh build-only
-
-      - name: Build oc-rsync
-        run: cargo build --release
+      - name: Restore shared binaries
+        run: |
+          mkdir -p target/release target/interop/upstream-install
+          cp interop-artifact/bin/oc-rsync target/release/oc-rsync
+          chmod +x target/release/oc-rsync
+          cp -R interop-artifact/upstream/. target/interop/upstream-install/
+          find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run filter interop tests
         run: bash tests/filter_interop_test.sh
@@ -340,45 +333,27 @@ jobs:
 
   validate-compress:
     name: Compression Codec Interop
+    needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - name: Download interop artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: compress
+          name: interop-binaries
+          path: interop-artifact
 
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
-        with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
-          version: ${{ env.CACHE_VERSION }}
-
-      - name: Cache upstream rsync
-        id: cache-rsync-compress
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            target/interop/upstream-src
-            target/interop/upstream-install
-          key: upstream-rsync-compress-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
-          restore-keys: |
-            upstream-rsync-compress-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
-
-      - name: Build upstream rsync binaries
-        if: steps.cache-rsync-compress.outputs.cache-hit != 'true'
-        run: bash tools/ci/run_interop.sh build-only
-
-      - name: Build oc-rsync
-        run: cargo build --release
+      - name: Restore shared binaries
+        run: |
+          mkdir -p target/release target/interop/upstream-install
+          cp interop-artifact/bin/oc-rsync target/release/oc-rsync
+          chmod +x target/release/oc-rsync
+          cp -R interop-artifact/upstream/. target/interop/upstream-install/
+          find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run compress interop tests
         run: bash tests/compress_interop_test.sh
@@ -398,45 +373,27 @@ jobs:
 
   validate-inc-recurse:
     name: INC_RECURSE Interop
+    needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - name: Download interop artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
-          key: inc-recurse
+          name: interop-binaries
+          path: interop-artifact
 
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
-        with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
-          version: ${{ env.CACHE_VERSION }}
-
-      - name: Cache upstream rsync
-        id: cache-rsync-inc-recurse
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            target/interop/upstream-src
-            target/interop/upstream-install
-          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
-          restore-keys: |
-            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
-
-      - name: Build upstream rsync binaries
-        if: steps.cache-rsync-inc-recurse.outputs.cache-hit != 'true'
-        run: bash tools/ci/run_interop.sh build-only
-
-      - name: Build oc-rsync
-        run: cargo build --release
+      - name: Restore shared binaries
+        run: |
+          mkdir -p target/release target/interop/upstream-install
+          cp interop-artifact/bin/oc-rsync target/release/oc-rsync
+          chmod +x target/release/oc-rsync
+          cp -R interop-artifact/upstream/. target/interop/upstream-install/
+          find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run INC_RECURSE interop tests
         run: bash tests/inc_recurse_interop_test.sh
@@ -457,8 +414,9 @@ jobs:
 
   regenerate-goldens:
     name: Regenerate Golden Files (Manual)
+    needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     # Only run on workflow_dispatch
     if: github.event_name == 'workflow_dispatch'
 
@@ -474,27 +432,21 @@ jobs:
         with:
           shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: regenerate
+          save-if: 'false'
 
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+      - name: Download interop artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
-          version: ${{ env.CACHE_VERSION }}
+          name: interop-binaries
+          path: interop-artifact
 
-      - name: Cache upstream rsync
-        id: cache-rsync
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: |
-            target/interop/upstream-src
-            target/interop/upstream-install
-          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
-          restore-keys: |
-            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
-
-      - name: Build upstream rsync binaries
-        if: steps.cache-rsync.outputs.cache-hit != 'true'
-        run: bash tools/ci/run_interop.sh build-only
+      - name: Restore shared binaries
+        run: |
+          mkdir -p target/release target/interop/upstream-install
+          cp interop-artifact/bin/oc-rsync target/release/oc-rsync
+          chmod +x target/release/oc-rsync
+          cp -R interop-artifact/upstream/. target/interop/upstream-install/
+          find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Regenerate exit code goldens
         run: cargo xtask interop exit-codes --regenerate --verbose
