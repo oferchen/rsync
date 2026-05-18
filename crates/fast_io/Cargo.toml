@@ -108,6 +108,13 @@ adaptive-basis-dispatch = []
 # for the full design.
 iouring-send-zc = ["io_uring"]
 
+# iouring-data-writes: opt-in dispatch that routes large file writes through
+# the production io_uring writer wrapper (`fast_io::write_file_with_io_uring`).
+# Wired by IUD-5; declared here so the `nvme_data_path_production` bench
+# (IUD-9 #2369) can list it under `required-features`. Linux-only at runtime;
+# on every other platform the entry point returns `io::ErrorKind::Unsupported`.
+iouring-data-writes = ["io_uring"]
+
 [target.'cfg(windows)'.dependencies]
 # CopyFileExW for Windows-optimized file copy with no-buffering support;
 # Win32_Networking_WinSock added for WSARecv/WSASend in iocp::socket (#1928);
@@ -212,3 +219,15 @@ harness = false
 [[bench]]
 name = "nvme_data_path"
 harness = false
+
+# Linux-only bench: production io_uring data-path wrappers
+# (`fast_io::write_file_with_io_uring`, `fast_io::read_file_with_io_uring`)
+# vs stdlib baselines on the IUD-4 workload (10 x 1 GiB). Gated by the
+# OC_RSYNC_BENCH_NVME_DATA_PATH=1 env var because each iteration moves 10 GiB
+# of data. Companion to the prototype-path `nvme_data_path` bench so the
+# after-change number can be checked against the IUD-4 projection. See the
+# file's module doc for the run recipe and what the numbers inform on #2369.
+[[bench]]
+name = "nvme_data_path_production"
+harness = false
+required-features = ["iouring-data-writes", "iouring-data-reads"]
