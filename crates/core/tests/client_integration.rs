@@ -24,6 +24,7 @@ fn set_birthtime(path: &Path, secs: i64) {
 
     let c_path = CString::new(path.as_os_str().as_bytes()).expect("valid path");
 
+    // SAFETY: libc::attrlist is a POD struct with no Drop; zero-init is valid before field assignment.
     let mut attrlist: libc::attrlist = unsafe { std::mem::zeroed() };
     attrlist.bitmapcount = libc::ATTR_BIT_MAP_COUNT;
     attrlist.commonattr = libc::ATTR_CMN_CRTIME;
@@ -35,6 +36,7 @@ fn set_birthtime(path: &Path, secs: i64) {
         },
     };
 
+    // SAFETY: Test-only FFI; c_path/attrlist/buf are valid, correctly sized, and live for the call.
     let ret = unsafe {
         libc::setattrlist(
             c_path.as_ptr(),
