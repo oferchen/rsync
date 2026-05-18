@@ -1435,6 +1435,9 @@ mod tests {
         match err {
             SpillError::Io(ref e) => assert_eq!(e.kind(), io::ErrorKind::StorageFull),
             SpillError::Capacity(_) => panic!("expected I/O error, got capacity"),
+            SpillError::UnsupportedCompression(_) => {
+                panic!("expected I/O error, got unsupported compression")
+            }
         }
         assert!(err.is_out_of_space(), "is_out_of_space should be true");
     }
