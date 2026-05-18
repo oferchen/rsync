@@ -45,12 +45,21 @@ fn buffer_ring_new_with_allocator_returns_error_on_stub() {
 
 #[test]
 fn bgid_allocator_reports_exhausted_on_stub() {
-    let err: io::Error = BgidAllocator::allocate().unwrap_err().into();
-    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    let err = BgidAllocator::allocate().unwrap_err();
+    assert!(matches!(err, BgidAllocError::Exhausted { .. }));
+    let io_err: io::Error = err.into();
+    assert_eq!(io_err.kind(), io::ErrorKind::OutOfMemory);
     assert_eq!(BgidAllocator::remaining(), 0);
     BgidAllocator::deallocate(0);
     BgidAllocator::deallocate(u16::MAX);
     assert_eq!(BgidAllocator::remaining(), 0);
+}
+
+#[test]
+fn bgid_exhausted_count_is_zero_on_stub() {
+    // The stub never advances a fresh-bgid counter, so the exposed
+    // exhaustion counter must always read zero.
+    assert_eq!(bgid_exhausted_count(), 0);
 }
 
 #[test]
