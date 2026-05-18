@@ -878,8 +878,8 @@ mod tests {
         unsafe { libc::close(send_fd) };
 
         let received = reader_thread.join().expect("reader thread should succeed");
-        assert_eq!(received.len(), expected_content.len());
-        assert_eq!(received, expected_content);
+        assert_eq!(received.len(), content.len());
+        assert_eq!(received, content);
     }
 
     #[cfg(target_os = "macos")]
