@@ -705,3 +705,100 @@ fn no_adaptive_concurrency_then_yes_last_wins() {
     .expect("parse");
     assert!(parsed.adaptive_concurrency);
 }
+
+#[test]
+fn spill_dir_flag_default_is_none() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(parsed.spill_dir.is_none());
+}
+
+#[test]
+fn spill_threshold_bytes_flag_default_is_none() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(parsed.spill_threshold_bytes.is_none());
+}
+
+#[test]
+fn spill_dir_flag_parses_into_pathbuf() {
+    let parsed =
+        parse_test_args(["--spill-dir", "/tmp/oc-rsync-spill", "src/", "dst/"]).expect("parse");
+    assert_eq!(
+        parsed.spill_dir.as_deref(),
+        Some(std::path::Path::new("/tmp/oc-rsync-spill"))
+    );
+}
+
+#[test]
+fn spill_threshold_bytes_flag_parses_plain_integer() {
+    let parsed =
+        parse_test_args(["--spill-threshold-bytes", "1048576", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.spill_threshold_bytes, Some(1_048_576));
+}
+
+#[test]
+fn spill_threshold_bytes_flag_parses_kilo_suffix() {
+    let parsed =
+        parse_test_args(["--spill-threshold-bytes", "64K", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.spill_threshold_bytes, Some(64 * 1024));
+}
+
+#[test]
+fn spill_threshold_bytes_flag_parses_mega_suffix_case_insensitive() {
+    let parsed = parse_test_args(["--spill-threshold-bytes", "8m", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.spill_threshold_bytes, Some(8 * 1024 * 1024));
+}
+
+#[test]
+fn spill_threshold_bytes_flag_parses_giga_suffix() {
+    let parsed = parse_test_args(["--spill-threshold-bytes", "2G", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.spill_threshold_bytes, Some(2 * 1024 * 1024 * 1024));
+}
+
+#[test]
+fn spill_threshold_bytes_rejects_zero() {
+    let err = parse_test_args(["--spill-threshold-bytes", "0", "src/", "dst/"])
+        .expect_err("zero should be rejected");
+    assert!(err.to_string().contains("--spill-threshold-bytes"));
+    assert!(err.to_string().contains("greater than zero"));
+}
+
+#[test]
+fn spill_threshold_bytes_rejects_unknown_suffix() {
+    let err = parse_test_args(["--spill-threshold-bytes", "10Q", "src/", "dst/"])
+        .expect_err("unknown suffix should be rejected");
+    assert!(err.to_string().contains("--spill-threshold-bytes"));
+    assert!(err.to_string().contains("K/M/G/T/P/E suffix"));
+}
+
+#[test]
+fn spill_threshold_bytes_rejects_non_numeric() {
+    let err = parse_test_args(["--spill-threshold-bytes", "abc", "src/", "dst/"])
+        .expect_err("non-numeric should be rejected");
+    assert!(err.to_string().contains("--spill-threshold-bytes"));
+}
+
+#[test]
+fn spill_threshold_bytes_rejects_empty_value() {
+    let err = parse_test_args(["--spill-threshold-bytes", "", "src/", "dst/"])
+        .expect_err("empty should be rejected");
+    assert!(err.to_string().contains("--spill-threshold-bytes"));
+    assert!(err.to_string().contains("must not be empty"));
+}
+
+#[test]
+fn spill_dir_and_threshold_can_be_combined() {
+    let parsed = parse_test_args([
+        "--spill-dir",
+        "/var/spool/oc-rsync",
+        "--spill-threshold-bytes",
+        "128M",
+        "src/",
+        "dst/",
+    ])
+    .expect("parse");
+    assert_eq!(
+        parsed.spill_dir.as_deref(),
+        Some(std::path::Path::new("/var/spool/oc-rsync"))
+    );
+    assert_eq!(parsed.spill_threshold_bytes, Some(128 * 1024 * 1024));
+}
