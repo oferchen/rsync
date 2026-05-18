@@ -7,9 +7,9 @@ use std::io::{self, SeekFrom};
 
 use super::super::tempfile::open_backend;
 use super::super::{SpillCodec, SpillCompression, SpillError, SpillGranularity, rss};
-use super::{HOT_ZONE, SPILL_TAG_RAW, SpillableReorderBuffer};
 #[cfg(feature = "spill-compression")]
 use super::SPILL_TAG_ZSTD;
+use super::{HOT_ZONE, SPILL_TAG_RAW, SpillableReorderBuffer};
 
 impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// Spills the highest-sequence items to disk until memory usage drops
