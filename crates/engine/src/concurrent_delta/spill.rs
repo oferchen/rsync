@@ -92,6 +92,21 @@ pub const DEFAULT_SPILL_THRESHOLD: usize = 64 * 1024 * 1024;
 /// delivered.
 const HOT_ZONE: u64 = 16;
 
+/// On-disk tag byte marking a raw (uncompressed) payload record.
+///
+/// Every spill record on disk is prefixed by a single tag byte before the
+/// length and payload so the reader can dispatch without ambiguity. `0x00`
+/// means "decode the following payload as-is".
+const SPILL_TAG_RAW: u8 = 0x00;
+
+/// On-disk tag byte marking a zstd-compressed payload record.
+///
+/// `0x01` means "decompress the following payload with zstd, then decode the
+/// inflated bytes". The reader returns [`SpillError::UnsupportedCompression`]
+/// when this tag is observed in a build without the `spill-compression`
+/// feature, instead of attempting to decode garbage.
+const SPILL_TAG_ZSTD: u8 = 0x01;
+
 /// Errors surfaced by the spill layer.
 ///
 /// Producers should treat any [`SpillError::Io`] as fatal for the affected
@@ -100,6 +115,11 @@ const HOT_ZONE: u64 = 16;
 /// trusted. The receiver maps these to exit code 11 ([`FileIo`]) so the
 /// transfer aborts with the same semantics as upstream rsync's I/O failures.
 ///
+/// [`UnsupportedCompression`](Self::UnsupportedCompression) is surfaced when a
+/// spill file written by a `spill-compression` build is read by a default
+/// build that has no codec available - the on-disk tag byte advertises the
+/// algorithm so we fail loudly rather than decode garbage.
+///
 /// [`FileIo`]: https://github.com/RsyncProject/rsync/blob/master/errcode.h
 #[derive(Debug)]
 pub enum SpillError {
@@ -107,6 +127,9 @@ pub enum SpillError {
     Capacity(CapacityExceeded),
     /// Disk I/O failed while reading or writing spilled items.
     Io(io::Error),
+    /// On-disk record advertises a compression algorithm this build cannot
+    /// decode. Holds the unknown tag byte for diagnostics.
+    UnsupportedCompression(u8),
 }
 
 impl SpillError {
@@ -115,7 +138,7 @@ impl SpillError {
     pub fn io_error(&self) -> Option<&io::Error> {
         match self {
             SpillError::Io(e) => Some(e),
-            SpillError::Capacity(_) => None,
+            SpillError::Capacity(_) | SpillError::UnsupportedCompression(_) => None,
         }
     }
 
@@ -132,6 +155,10 @@ impl std::fmt::Display for SpillError {
         match self {
             SpillError::Capacity(_) => write!(f, "reorder buffer capacity exceeded"),
             SpillError::Io(e) => write!(f, "reorder spill I/O failed: {e}"),
+            SpillError::UnsupportedCompression(tag) => write!(
+                f,
+                "reorder spill record uses compression tag 0x{tag:02x} not supported by this build"
+            ),
         }
     }
 }
@@ -139,7 +166,7 @@ impl std::fmt::Display for SpillError {
 impl std::error::Error for SpillError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            SpillError::Capacity(_) => None,
+            SpillError::Capacity(_) | SpillError::UnsupportedCompression(_) => None,
             SpillError::Io(e) => Some(e),
         }
     }
@@ -255,6 +282,10 @@ pub struct SpillableReorderBuffer<T: SpillCodec> {
     /// Running count of `create_dir_all` retries after the spill directory
     /// disappeared mid-transfer.
     dir_recreate_count: u64,
+    /// Codec applied to each spill record's payload. `SpillCompression::None`
+    /// (the default) keeps the historical raw-byte format. `Zstd` is only
+    /// constructable behind the `spill-compression` Cargo feature.
+    compression: SpillCompression,
 }
 
 impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
@@ -269,6 +300,7 @@ impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
             .field("reload_events", &self.reload_count)
             .field("dir_recreate_count", &self.dir_recreate_count)
             .field("granularity", &self.granularity)
+            .field("compression", &self.compression)
             .finish()
     }
 }
@@ -298,6 +330,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             spill_count: 0,
             reload_count: 0,
             dir_recreate_count: 0,
+            compression: SpillCompression::None,
         }
     }
 
@@ -335,6 +368,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             spill_count: 0,
             reload_count: 0,
             dir_recreate_count: 0,
+            compression: SpillCompression::None,
         })
     }
 
@@ -365,6 +399,25 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     #[must_use]
     pub fn with_default_threshold(capacity: usize) -> Self {
         Self::new(capacity, DEFAULT_SPILL_THRESHOLD)
+    }
+
+    /// Sets the per-record compression codec applied to spilled payloads.
+    ///
+    /// [`SpillCompression::None`] (the default) writes raw encoded bytes,
+    /// matching the historical on-disk format. [`SpillCompression::Zstd`] is
+    /// only constructable behind the `spill-compression` Cargo feature, so a
+    /// default build cannot reach the Zstd branch at compile time - that
+    /// `#[cfg]` gate is the "fail fast at construction" guarantee.
+    #[must_use]
+    pub fn with_compression(mut self, compression: SpillCompression) -> Self {
+        self.compression = compression;
+        self
+    }
+
+    /// Returns the codec currently applied to spilled payloads.
+    #[must_use]
+    pub fn compression(&self) -> SpillCompression {
+        self.compression
     }
 
     /// Inserts an item with the given sequence number.
@@ -451,8 +504,10 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// # Errors
     ///
     /// Returns [`SpillError::Io`] if reloading a spilled item from disk
-    /// fails (missing spill file, short read, decoder error). `Ok(None)`
-    /// is returned when no item is ready for delivery.
+    /// fails (missing spill file, short read, decoder error). Returns
+    /// [`SpillError::UnsupportedCompression`] when the on-disk record
+    /// advertises a codec this build cannot decode. `Ok(None)` is returned
+    /// when no item is ready for delivery.
     pub fn next_in_order(&mut self) -> Result<Option<T>, SpillError> {
         // Try in-memory first.
         if let Some(item) = self.inner.next_in_order() {
@@ -522,9 +577,11 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     ///
     /// # Errors
     ///
-    /// Returns [`SpillError::Io`] if reloading a spilled item fails. Any
-    /// items already drained before the failure are discarded along with
-    /// the error; callers that need them should drain incrementally via
+    /// Returns [`SpillError::Io`] if reloading a spilled item fails. Returns
+    /// [`SpillError::UnsupportedCompression`] when the on-disk record
+    /// advertises a codec this build cannot decode. Any items already
+    /// drained before the failure are discarded along with the error;
+    /// callers that need them should drain incrementally via
     /// [`next_in_order`](Self::next_in_order).
     pub fn drain_ready(&mut self) -> Result<Vec<T>, SpillError> {
         let mut items = Vec::new();
@@ -749,11 +806,18 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// invokes [`recreate_spill_dir`](Self::recreate_spill_dir) and retries
     /// once. All other errors (ENOSPC, partial writes via the
     /// [`Write::write_all`] contract, encoder failures) bubble up unchanged.
+    ///
+    /// The on-disk record layout is `[u8 tag][u32 LE len][payload]` where
+    /// `tag` selects the payload codec ([`SPILL_TAG_RAW`] or
+    /// [`SPILL_TAG_ZSTD`]) and `len` is the on-disk byte length of the
+    /// (possibly compressed) payload.
     fn spill_item(&mut self, sequence: u64, item: &T) -> io::Result<()> {
         // Encode payload up front so a codec error never leaves a partial
         // record in the spill file.
-        let mut payload = Vec::new();
-        item.encode(&mut payload)?;
+        let mut encoded = Vec::new();
+        item.encode(&mut encoded)?;
+
+        let (tag, payload) = self.compress_payload(encoded)?;
         if payload.len() > u32::MAX as usize {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -761,8 +825,9 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             ));
         }
         let len = payload.len() as u32;
+        let header = build_header(tag, len);
 
-        match self.write_record(&len.to_le_bytes(), &payload) {
+        match self.write_record(&header, &payload) {
             Ok(written) => {
                 self.spill_index.insert(sequence, self.spill_write_pos);
                 self.spill_write_pos += written;
@@ -779,7 +844,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
                     return Err(e);
                 }
                 self.recreate_spill_dir()?;
-                let written = self.write_record(&len.to_le_bytes(), &payload)?;
+                let written = self.write_record(&header, &payload)?;
                 self.spill_index.insert(sequence, self.spill_write_pos);
                 self.spill_write_pos += written;
                 Ok(())
@@ -788,7 +853,24 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         }
     }
 
-    /// Writes a length-prefixed record to the spill file, opening it lazily.
+    /// Applies the configured compression codec to the freshly encoded payload.
+    ///
+    /// Returns `(tag, bytes_to_write)`. [`SpillCompression::None`] is a
+    /// pass-through that emits [`SPILL_TAG_RAW`]; [`SpillCompression::Zstd`]
+    /// emits [`SPILL_TAG_ZSTD`] and the zstd-encoded bytes.
+    fn compress_payload(&self, encoded: Vec<u8>) -> io::Result<(u8, Vec<u8>)> {
+        match self.compression {
+            SpillCompression::None => Ok((SPILL_TAG_RAW, encoded)),
+            #[cfg(feature = "spill-compression")]
+            SpillCompression::Zstd { level } => {
+                let compressed = zstd::stream::encode_all(encoded.as_slice(), level)?;
+                Ok((SPILL_TAG_ZSTD, compressed))
+            }
+        }
+    }
+
+    /// Writes a tag-prefixed length-prefixed record to the spill file, opening
+    /// it lazily.
     ///
     /// Returns the number of bytes written (always `header.len() + payload.len()`
     /// on success). All `write_all` calls obey the standard library contract
@@ -807,7 +889,12 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     }
 
     /// Reloads a single item from the spill file at the given offset.
-    fn reload_item(&mut self, offset: u64) -> io::Result<T> {
+    ///
+    /// Reads the leading tag byte and dispatches: [`SPILL_TAG_RAW`] decodes
+    /// the payload as-is; [`SPILL_TAG_ZSTD`] decompresses with zstd before
+    /// decoding (only when the `spill-compression` feature is enabled).
+    /// Any other tag surfaces [`SpillError::UnsupportedCompression`].
+    fn reload_item(&mut self, offset: u64) -> Result<T, SpillError> {
         let backend = self
             .spill_file
             .as_mut()
@@ -815,6 +902,11 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         let file = backend.file();
 
         file.seek(SeekFrom::Start(offset))?;
+
+        // Read compression tag.
+        let mut tag_buf = [0u8; 1];
+        file.read_exact(&mut tag_buf)?;
+        let tag = tag_buf[0];
 
         // Read length prefix.
         let mut len_buf = [0u8; 4];
@@ -825,7 +917,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         let mut payload = vec![0u8; len];
         file.read_exact(&mut payload)?;
 
-        T::decode(&mut payload.as_slice())
+        decode_payload::<T>(tag, payload)
     }
 
     /// Reloads a whole-batch record holding `count` packed items.
@@ -882,6 +974,40 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         Ok(())
     }
 }
+
+/// Builds the on-disk record header: one tag byte followed by the little-endian
+/// payload length.
+///
+/// Returning a fixed-size array (instead of a `Vec`) keeps the hot path
+/// allocation-free.
+fn build_header(tag: u8, len: u32) -> [u8; 5] {
+    let mut header = [0u8; 5];
+    header[0] = tag;
+    header[1..5].copy_from_slice(&len.to_le_bytes());
+    header
+}
+
+/// Decodes a payload according to the leading tag byte.
+///
+/// `SPILL_TAG_RAW` decodes the bytes as-is. `SPILL_TAG_ZSTD` first decompresses
+/// with zstd, but only when the `spill-compression` feature is enabled - a
+/// default build hits the catch-all arm and surfaces
+/// [`SpillError::UnsupportedCompression`] so the caller fails loudly rather
+/// than feeding garbage to the codec.
+fn decode_payload<T: SpillCodec>(tag: u8, payload: Vec<u8>) -> Result<T, SpillError> {
+    match tag {
+        SPILL_TAG_RAW => Ok(T::decode(&mut payload.as_slice())?),
+        #[cfg(feature = "spill-compression")]
+        SPILL_TAG_ZSTD => {
+            let inflated = zstd::stream::decode_all(payload.as_slice())?;
+            Ok(T::decode(&mut inflated.as_slice())?)
+        }
+        #[cfg(not(feature = "spill-compression"))]
+        SPILL_TAG_ZSTD => Err(SpillError::UnsupportedCompression(SPILL_TAG_ZSTD)),
+        unknown => Err(SpillError::UnsupportedCompression(unknown)),
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -1422,6 +1548,135 @@ mod tests {
         let io_err = SpillError::from(io::Error::new(io::ErrorKind::StorageFull, "disk full"));
         assert!(format!("{io_err}").contains("disk full"));
         assert!(std::error::Error::source(&io_err).is_some());
+
+        let unsupported = SpillError::UnsupportedCompression(0x01);
+        let rendered = format!("{unsupported}");
+        assert!(
+            rendered.contains("0x01"),
+            "display should mention the unknown tag: {rendered}"
+        );
+        assert!(std::error::Error::source(&unsupported).is_none());
+        assert!(unsupported.io_error().is_none());
+        assert!(!unsupported.is_out_of_space());
+    }
+
+    /// Reads the first record header (tag + length) from a spill file at
+    /// offset zero. Used by the compression tests to inspect the leading
+    /// tag byte without re-implementing the wire format.
+    fn read_first_header<T: SpillCodec>(buf: &mut SpillableReorderBuffer<T>) -> (u8, u32) {
+        let backend = buf
+            .spill_file
+            .as_mut()
+            .expect("spill file should be initialized");
+        let file = backend.file();
+        file.seek(SeekFrom::Start(0)).expect("seek to start");
+        let mut header = [0u8; 5];
+        file.read_exact(&mut header).expect("read header");
+        let len = u32::from_le_bytes(header[1..5].try_into().unwrap());
+        (header[0], len)
+    }
+
+    #[test]
+    fn compression_none_writes_uncompressed_tag() {
+        // Default policy: every spill record must start with SPILL_TAG_RAW
+        // (0x00) so a default-build reader can decode the payload as-is.
+        let scratch = tempfile::tempdir().expect("create scratch root");
+        let mut buf: SpillableReorderBuffer<u64> =
+            SpillableReorderBuffer::with_spill_dir(32, 16, scratch.path().join("spill"))
+                .expect("setup spill directory")
+                .with_compression(SpillCompression::None);
+
+        for i in (0..6).rev() {
+            buf.insert(i, i * 13).unwrap();
+        }
+        assert!(buf.spill_stats().spill_events > 0, "expected spilling");
+
+        let (tag, len) = read_first_header(&mut buf);
+        assert_eq!(tag, SPILL_TAG_RAW, "first record must carry the raw tag");
+        assert_eq!(len, 8, "u64 payload is 8 bytes uncompressed");
+
+        let items = drain_all(&mut buf);
+        let expected: Vec<u64> = (0..6).map(|i| i * 13).collect();
+        assert_eq!(items, expected, "round-trip must preserve values");
+    }
+
+    #[cfg(feature = "spill-compression")]
+    #[test]
+    fn compression_zstd_writes_compressed_tag() {
+        // With the spill-compression feature on, every record must start
+        // with SPILL_TAG_ZSTD (0x01) and the round-trip must still recover
+        // the original values.
+        let scratch = tempfile::tempdir().expect("create scratch root");
+        let mut buf: SpillableReorderBuffer<u64> =
+            SpillableReorderBuffer::with_spill_dir(32, 16, scratch.path().join("spill"))
+                .expect("setup spill directory")
+                .with_compression(SpillCompression::Zstd { level: 1 });
+
+        for i in (0..6).rev() {
+            buf.insert(i, i * 17).unwrap();
+        }
+        assert!(buf.spill_stats().spill_events > 0, "expected spilling");
+
+        let (tag, _len) = read_first_header(&mut buf);
+        assert_eq!(tag, SPILL_TAG_ZSTD, "first record must carry the zstd tag");
+
+        let items = drain_all(&mut buf);
+        let expected: Vec<u64> = (0..6).map(|i| i * 17).collect();
+        assert_eq!(items, expected, "zstd round-trip must preserve values");
+    }
+
+    #[cfg(not(feature = "spill-compression"))]
+    #[test]
+    fn compression_zstd_tag_without_feature_returns_unsupported() {
+        // A default build reading a spill file that advertises the zstd tag
+        // (e.g. produced by a spill-compression build sharing a scratch dir)
+        // must surface UnsupportedCompression instead of feeding garbage to
+        // the codec. The Zstd variant is itself unconstructable here (the
+        // `#[cfg]` gate on SpillCompression::Zstd is the compile-time
+        // "fail fast at construction" guarantee), so we inject the tag
+        // directly into the spill file.
+        let scratch = tempfile::tempdir().expect("create scratch root");
+        let spill_dir = scratch.path().join("spill");
+        let mut buf: SpillableReorderBuffer<u64> =
+            SpillableReorderBuffer::with_spill_dir(32, 16, &spill_dir)
+                .expect("setup spill directory");
+
+        // Force an open spill file by triggering one normal spill first.
+        for i in (0..4).rev() {
+            buf.insert(i, i).unwrap();
+        }
+        assert!(buf.spill_stats().spill_events > 0, "expected spilling");
+
+        // Overwrite the first record's tag with the zstd marker. The length
+        // field after it still reflects the original raw payload, but the
+        // reader must reject the record on the tag alone.
+        {
+            let backend = buf
+                .spill_file
+                .as_mut()
+                .expect("spill file should be initialized");
+            let file = backend.file();
+            file.seek(SeekFrom::Start(0)).expect("seek to start");
+            file.write_all(&[SPILL_TAG_ZSTD]).expect("write tag");
+            file.flush().expect("flush tag write");
+        }
+
+        // Reset the buffer's delivery cursor so we observe the rewritten
+        // record on the next drain attempt.
+        buf.inner = ReorderBuffer::new(buf.inner.capacity());
+
+        // Tell the spillable buffer that sequence 0 still lives on disk at
+        // offset 0 so next_in_order will read it back through the new tag.
+        buf.spill_index.clear();
+        buf.spill_index.insert(0, 0);
+
+        let err = buf
+            .next_in_order()
+            .expect_err("reading a zstd tag without the feature must fail");
+        match err {
+            SpillError::UnsupportedCompression(tag) => assert_eq!(tag, SPILL_TAG_ZSTD),
+            other => panic!("expected UnsupportedCompression, got {other:?}"),
+        }
     }
 
     // ---- SpillGranularity wiring tests (STN-5 #2339) ----
