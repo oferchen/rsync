@@ -159,7 +159,7 @@ pub mod io_uring;
 #[cfg(all(target_os = "windows", feature = "iocp"))]
 pub mod iocp;
 #[cfg(not(all(target_os = "windows", feature = "iocp")))]
-#[path = "iocp_stub.rs"]
+#[path = "iocp_stub/mod.rs"]
 pub mod iocp;
 
 /// macOS `kqueue`-based event loop primitive.
