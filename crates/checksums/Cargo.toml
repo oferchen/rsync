@@ -50,12 +50,12 @@ logging = { path = "../logging" }
 # fallbacks; the pure-Rust backend already auto-detects SHA-NI (x86_64) and
 # crypto extensions (aarch64) via `cpufeatures` regardless of this feature.
 [target.'cfg(unix)'.dependencies]
-md-5 = { version = "0.10", default-features = false, features = ["std", "asm"] }
+md-5 = { workspace = true, features = ["std", "asm"] }
 sha1 = { version = "0.10", default-features = false, features = ["std", "asm"] }
 sha2 = { version = "0.10", default-features = false, features = ["std", "asm"] }
 
 [target.'cfg(not(unix))'.dependencies]
-md-5 = { version = "0.10", default-features = false, features = ["std"] }
+md-5 = { workspace = true, features = ["std"] }
 sha1 = { version = "0.10", default-features = false, features = ["std"] }
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 

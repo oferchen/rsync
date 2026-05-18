@@ -120,7 +120,7 @@ fast_io = { path = "crates/fast_io", default-features = false }
 mimalloc = { workspace = true }
 
 [dev-dependencies]
-assert_cmd = "2.0"
+assert_cmd = { workspace = true }
 core = { path = "crates/core" }
 filetime = { workspace = true }
 libc = { workspace = true }
@@ -243,6 +243,24 @@ clap = { version = "4.5", features = ["std"] }
 base64 = "0.22"
 # Modern syscall wrappers - used by core, engine, metadata, fast_io
 rustix = "1.1"
+# CLI integration testing - dev-dep across cli and root bin
+assert_cmd = "2.0"
+# Glob pattern matcher - shared by engine and filters
+globset = "0.4"
+# Pure-Rust LZ4 codec - shared by compress and protocol (optional, per-crate features)
+lz4_flex = { version = "0.13", default-features = false }
+# MD5 hash - shared by checksums (asm on unix) and protocol (per-crate features)
+md-5 = { version = "0.10", default-features = false }
+# Unix syscall wrappers - shared by apple-fs, core, platform (per-crate features)
+nix = { version = "0.31", default-features = false }
+# Windows API bindings (high-level) - shared by daemon, metadata, platform (per-crate features)
+windows = "0.62"
+# Windows API bindings (low-level) - shared by engine and fast_io (per-crate features)
+windows-sys = "0.61"
+# Extended attribute helpers - shared by apple-fs, cli, daemon (dev), engine (dev), metadata (optional)
+xattr = "1.6"
+# Zstandard codec - shared by compress and protocol (optional)
+zstd = "0.13"
 
 [workspace.metadata.docs.rs]
 all-features = true

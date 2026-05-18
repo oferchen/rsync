@@ -30,6 +30,6 @@ zlib-rs = ["flate2/zlib-rs"]
 [dependencies]
 # Default: miniz_oxide (pure Rust fallback). zlib-ng/zlib-rs override via features.
 flate2 = { workspace = true }
-zstd = { version = "0.13", optional = true }
-lz4_flex = { version = "0.13", optional = true, default-features = false, features = ["frame", "safe-encode", "safe-decode"] }
+zstd = { workspace = true, optional = true }
+lz4_flex = { workspace = true, optional = true, features = ["frame", "safe-encode", "safe-decode"] }
 thiserror = { workspace = true }
