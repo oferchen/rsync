@@ -70,6 +70,14 @@ impl DeletePlanMap {
     /// Returns the previously published plan for the same directory, if
     /// any. A non-`None` return indicates the publish-once invariant has
     /// been violated and the caller should treat it as a bug.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned. A poisoned map signals
+    /// that a peer thread crashed mid-publish, leaving the publish-once
+    /// invariant in an undefined state; continuing would risk emitting
+    /// duplicate or out-of-order deletes, so the only safe response is
+    /// to abort.
     pub fn insert(&self, plan: DeletePlan) -> Option<DeletePlan> {
         let key = plan.directory.clone();
         self.inner
@@ -83,6 +91,13 @@ impl DeletePlanMap {
     /// The emitter calls this exactly once per directory after the
     /// [`super::DirTraversalCursor`] yields the directory and the plan
     /// has been published. Returns `None` if the slot is empty.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned. The take side of the
+    /// publish-once protocol cannot recover from a producer crash; the
+    /// unread half of the map is undefined and continuing would risk
+    /// silent under-deletion.
     pub fn take(&self, dir: &Path) -> Option<DeletePlan> {
         self.inner
             .lock()
@@ -91,6 +106,11 @@ impl DeletePlanMap {
     }
 
     /// Reports whether the map has no published plans right now.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned. See [`Self::insert`]
+    /// for why this map treats poisoning as fatal.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.inner
@@ -100,6 +120,11 @@ impl DeletePlanMap {
     }
 
     /// Returns the number of plans currently published in the map.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned. See [`Self::insert`]
+    /// for why this map treats poisoning as fatal.
     #[must_use]
     pub fn len(&self) -> usize {
         self.inner
@@ -113,6 +138,11 @@ impl DeletePlanMap {
     /// Useful for tests and for the emitter to distinguish "not yet
     /// produced" from "already consumed". For draining, prefer
     /// [`Self::take`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned. See [`Self::insert`]
+    /// for why this map treats poisoning as fatal.
     #[must_use]
     pub fn contains(&self, dir: &Path) -> bool {
         self.inner
