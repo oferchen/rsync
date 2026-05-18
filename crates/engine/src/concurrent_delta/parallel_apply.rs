@@ -734,9 +734,9 @@ mod tests {
         applier.register_file(0u32, Box::new(cursor)).unwrap();
         let _leaked = applier.slot_for(FileNdx::new(0)).expect("slot registered");
 
-        let err = applier
-            .finish_file(0u32)
-            .expect_err("slot is still referenced by leaked clone");
+        let Err(err) = applier.finish_file(0u32) else {
+            panic!("slot is still referenced by leaked clone");
+        };
         let msg = err.to_string();
         assert!(msg.contains("finish_file"), "msg was: {msg}");
         assert!(msg.contains("ndx=0"), "msg was: {msg}");
