@@ -3,10 +3,100 @@
 //! Each overlapped operation requires a stable OVERLAPPED pointer that remains
 //! valid until the operation completes. This module provides `OverlappedOp`
 //! which pins the OVERLAPPED in memory and owns the associated I/O buffer.
+//!
+//! The buffer can be backed by either a standard `Vec<u8>` (the default for
+//! buffered I/O) or a [`PageAlignedBuffer`](crate::page_aligned::PageAlignedBuffer)
+//! used by the no-buffering write path. Page-aligned storage avoids the
+//! per-write bounce copy the kernel performs when the application buffer is
+//! not sector-aligned on a `FILE_FLAG_NO_BUFFERING` handle.
 
 use std::pin::Pin;
 
 use windows_sys::Win32::System::IO::OVERLAPPED;
+
+use crate::page_aligned::PageAlignedBuffer;
+
+/// Backing storage for an [`OverlappedOp`] buffer.
+///
+/// The two variants share the same `&[u8]` view but allocate from different
+/// arenas. The `Vec` variant uses the default heap allocator and is suitable
+/// for buffered I/O. The `PageAligned` variant is backed by
+/// [`PageAlignedBuffer`] (Windows `VirtualAlloc`) so the kernel can hand the
+/// pointer straight to a `FILE_FLAG_NO_BUFFERING` overlapped write without
+/// the alignment-fixup bounce copy.
+pub(crate) enum BufferStorage {
+    /// Standard heap-allocated buffer (no alignment guarantee).
+    Vec(Vec<u8>),
+    /// Page-aligned buffer holding `valid` initialised bytes.
+    ///
+    /// The underlying [`PageAlignedBuffer`] capacity is rounded up to a page
+    /// multiple, so `valid` may be less than the capacity. The slice views
+    /// expose only the first `valid` bytes to keep length semantics aligned
+    /// with the `Vec` variant.
+    PageAligned {
+        /// The aligned allocation.
+        buffer: PageAlignedBuffer,
+        /// Number of initialised bytes the consumer asked for. The buffer
+        /// capacity may be larger because page rounding inflates the
+        /// allocation; only the first `valid` bytes contain caller data.
+        valid: usize,
+    },
+}
+
+impl BufferStorage {
+    /// Returns the number of valid bytes (matches the legacy `Vec::len`).
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Vec(v) => v.len(),
+            Self::PageAligned { valid, .. } => *valid,
+        }
+    }
+
+    /// Returns the valid bytes as an immutable slice.
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Vec(v) => v.as_slice(),
+            Self::PageAligned { buffer, valid } => &buffer.as_slice()[..*valid],
+        }
+    }
+
+    /// Returns a mutable raw pointer to the first byte of the buffer.
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        match self {
+            Self::Vec(v) => v.as_mut_ptr(),
+            Self::PageAligned { buffer, .. } => buffer.as_mut_ptr(),
+        }
+    }
+
+    /// Returns an immutable raw pointer to the first byte of the buffer.
+    pub(crate) fn as_ptr(&self) -> *const u8 {
+        match self {
+            Self::Vec(v) => v.as_ptr(),
+            Self::PageAligned { buffer, .. } => buffer.as_ptr(),
+        }
+    }
+
+    /// Returns whether the backing storage is page-aligned.
+    pub(crate) fn is_page_aligned(&self) -> bool {
+        matches!(self, Self::PageAligned { .. })
+    }
+}
+
+impl std::ops::Index<std::ops::RangeFrom<usize>> for BufferStorage {
+    type Output = [u8];
+
+    fn index(&self, range: std::ops::RangeFrom<usize>) -> &[u8] {
+        &self.as_slice()[range]
+    }
+}
+
+impl std::ops::Index<std::ops::Range<usize>> for BufferStorage {
+    type Output = [u8];
+
+    fn index(&self, range: std::ops::Range<usize>) -> &[u8] {
+        &self.as_slice()[range]
+    }
+}
 
 /// A pinned overlapped I/O operation with its associated buffer.
 ///
@@ -18,7 +108,7 @@ pub(crate) struct OverlappedOp {
     pub(crate) overlapped: OVERLAPPED,
     /// The I/O buffer. For reads, data is written here by the OS.
     /// For writes, this contains the data to be written.
-    pub(crate) buffer: Vec<u8>,
+    pub(crate) buffer: BufferStorage,
     /// Number of valid bytes in the buffer (for writes).
     #[allow(dead_code)] // REASON: field set in constructor, read only in tests
     pub(crate) valid_bytes: usize,
@@ -29,7 +119,7 @@ impl OverlappedOp {
     pub(crate) fn new_read(offset: u64, buffer_size: usize) -> Pin<Box<Self>> {
         let mut op = Box::pin(Self {
             overlapped: zeroed_overlapped(),
-            buffer: vec![0u8; buffer_size],
+            buffer: BufferStorage::Vec(vec![0u8; buffer_size]),
             valid_bytes: 0,
         });
         set_offset(&mut op, offset);
@@ -40,7 +130,31 @@ impl OverlappedOp {
     pub(crate) fn new_write(offset: u64, data: &[u8]) -> Pin<Box<Self>> {
         let mut op = Box::pin(Self {
             overlapped: zeroed_overlapped(),
-            buffer: data.to_vec(),
+            buffer: BufferStorage::Vec(data.to_vec()),
+            valid_bytes: data.len(),
+        });
+        set_offset(&mut op, offset);
+        op
+    }
+
+    /// Creates a write op backed by a page-aligned buffer.
+    ///
+    /// `data` is copied into a freshly allocated [`PageAlignedBuffer`] whose
+    /// pointer is guaranteed to be page-aligned. Use this constructor when
+    /// the operation will be submitted to a handle opened with
+    /// `FILE_FLAG_NO_BUFFERING` so the kernel can issue the I/O without a
+    /// bounce-buffer copy.
+    pub(crate) fn new_write_aligned(offset: u64, data: &[u8]) -> Pin<Box<Self>> {
+        let mut buffer = PageAlignedBuffer::new(data.len().max(1));
+        // Copy caller data into the leading bytes; the trailing pad (if any
+        // from page rounding) stays zeroed by VirtualAlloc / alloc_zeroed.
+        buffer.as_mut_slice()[..data.len()].copy_from_slice(data);
+        let mut op = Box::pin(Self {
+            overlapped: zeroed_overlapped(),
+            buffer: BufferStorage::PageAligned {
+                buffer,
+                valid: data.len(),
+            },
             valid_bytes: data.len(),
         });
         set_offset(&mut op, offset);
@@ -66,8 +180,9 @@ impl OverlappedOp {
     /// Returns a mutable pointer to the buffer for ReadFile.
     pub(crate) fn buffer_ptr(self: &mut Pin<Box<Self>>) -> *mut u8 {
         // SAFETY: We need a pointer to the buffer for the OS to write into.
-        // The Pin guarantees the OverlappedOp won't move, and Vec's buffer
-        // is heap-allocated so it's stable independently.
+        // The Pin guarantees the OverlappedOp won't move, and both backing
+        // storages keep heap-allocated memory whose address is stable for
+        // the operation's lifetime.
         #[allow(unsafe_code)]
         unsafe {
             self.as_mut().get_unchecked_mut().buffer.as_mut_ptr()
@@ -109,12 +224,13 @@ fn set_offset(op: &mut Pin<Box<OverlappedOp>>, offset: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::page_aligned::page_size;
 
     #[test]
     fn new_read_creates_zeroed_buffer() {
         let op = OverlappedOp::new_read(0, 4096);
         assert_eq!(op.buffer.len(), 4096);
-        assert!(op.buffer.iter().all(|&b| b == 0));
+        assert!(op.buffer.as_slice().iter().all(|&b| b == 0));
         assert_eq!(op.valid_bytes, 0);
     }
 
@@ -122,8 +238,23 @@ mod tests {
     fn new_write_copies_data() {
         let data = b"hello world";
         let op = OverlappedOp::new_write(0, data);
-        assert_eq!(op.buffer, data);
+        assert_eq!(op.buffer.as_slice(), data);
         assert_eq!(op.valid_bytes, data.len());
+    }
+
+    #[test]
+    fn new_write_aligned_uses_page_aligned_buffer() {
+        let data = b"page aligned write payload";
+        let op = OverlappedOp::new_write_aligned(0, data);
+        assert!(op.buffer.is_page_aligned());
+        assert_eq!(op.buffer.as_slice(), data);
+        assert_eq!(op.valid_bytes, data.len());
+        let addr = op.buffer.as_ptr() as usize;
+        assert_eq!(
+            addr % page_size(),
+            0,
+            "aligned buffer pointer {addr:#x} must be page-aligned"
+        );
     }
 
     #[test]

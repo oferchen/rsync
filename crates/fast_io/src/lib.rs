@@ -83,6 +83,8 @@
 pub mod cached_sort;
 /// Kernel version parsing and io_uring probe logging.
 pub mod kernel_version;
+/// Page-aligned buffer pool for IOCP no-buffering mode.
+pub mod page_aligned;
 /// Parallel file I/O operations using rayon.
 pub mod parallel;
 /// Cross-platform temporary file strategy abstraction.
@@ -185,6 +187,7 @@ mod policy;
 mod status;
 
 pub use cached_sort::{CachedSortKey, cached_sort_by};
+pub use page_aligned::{PageAlignedBuffer, page_size, round_up_to_page};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use platform_copy::{
     CopyMethod, CopyResult, DefaultPlatformCopy, NoCowPlatformCopy, NoZeroCopyPlatformCopy,
@@ -278,8 +281,8 @@ pub use iocp::post_completion as iocp_post_completion;
 pub use iocp::{
     CompletionHandler, CompletionPump, IocpConfig, IocpDiskBatch, IocpError, IocpOrStdReader,
     IocpOrStdWriter, IocpPumpConfig, IocpReader, IocpReaderFactory, IocpWriter, IocpWriterFactory,
-    iocp_availability_reason, is_iocp_available, oneshot_handler,
-    skip_event_optimization_available,
+    bounce_copies_avoided as iocp_bounce_copies_avoided, iocp_availability_reason,
+    is_iocp_available, oneshot_handler, skip_event_optimization_available,
 };
 #[cfg(all(target_os = "windows", feature = "transmitfile"))]
 pub use iocp::{TRANSMIT_FILE_MAX_BYTES, try_transmit_file};
