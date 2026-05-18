@@ -231,7 +231,6 @@ mod tests {
         let messages = vec![Message::info("a"), Message::info("b")];
         sink.write_all(&messages).unwrap();
         let output = sink.writer();
-        // Count newlines
         let newline_count = output.iter().filter(|&&b| b == b'\n').count();
         assert_eq!(newline_count, 2);
     }
