@@ -27,7 +27,7 @@
 //!   append, or below the 64 KiB threshold from section 4.4 of the
 //!   design doc).
 //! - `iouring_write_fixed`: the proposed production path for files
-//!   >= 1 MiB. `IORING_OP_WRITE_FIXED` against a `RegisteredBufferGroup`
+//!   sized at least 1 MiB. `IORING_OP_WRITE_FIXED` against a `RegisteredBufferGroup`
 //!   of 4 x 1 MiB page-aligned registered slots, one slot per concurrent
 //!   in-flight SQE. Mirrors the `submit_write_fixed_batch` helper in
 //!   `crates/fast_io/src/io_uring/registered_buffers/submit.rs:159-243`
@@ -97,7 +97,7 @@
 //!
 //! Outcome -> action on task #2364 (NVMe data-path gap):
 //!
-//! - `iouring_write_fixed` clears `stdlib_write` by >= 20% on the NVMe
+//! - `iouring_write_fixed` clears `stdlib_write` by at least 20% on the NVMe
 //!   workload: promote `iouring-data-writes` rollout (IUD-8) and flip
 //!   `OC_RSYNC_IOURING_DATA_WRITES` default to `auto`.
 //! - Within +/- 10%: keep the feature flag opt-in. The two memcpy hops
@@ -387,8 +387,7 @@ fn write_fixed_file(ring: &mut IoUring, bufs: &RegBufs, path: &PathBuf, payload:
             assert!(result >= 0, "write_fixed CQE error: {}", -result);
             assert_eq!(
                 result as usize, chunk_size,
-                "write_fixed short write: {} < {}",
-                result, chunk_size
+                "write_fixed short write: {result} < {chunk_size}"
             );
             completed += 1;
         }
@@ -458,7 +457,7 @@ fn bench_stdlib_write(c: &mut Criterion) {
 }
 
 /// Runs the `iouring_write_fixed` cell: the proposed production path
-/// for files >= 1 MiB once `iouring-data-writes` is wired. Skips
+/// for files sized at least 1 MiB once `iouring-data-writes` is wired. Skips
 /// cleanly when the host kernel rejects the bench gate.
 ///
 /// # Panics
