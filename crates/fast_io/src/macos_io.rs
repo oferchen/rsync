@@ -333,7 +333,7 @@ pub fn writev_buffers(file: &std::fs::File, buffers: &[&[u8]]) -> io::Result<usi
                 continue;
             }
             use std::io::Write;
-            let mut file_ref = &*file;
+            let mut file_ref = file;
             file_ref.write_all(&buf[remaining..])?;
             total_written += buf[remaining..].len();
             remaining = 0;
