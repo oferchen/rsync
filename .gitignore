@@ -232,6 +232,7 @@ prompt.md
 optimize.md
 investigation.md
 CLAUDE.md
+AGENTS.md
 .claude/
 DAEMON_INVESTIGATION_SUMMARY.md
 DAEMON_PROTOCOL_FLOW.md

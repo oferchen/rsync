@@ -74,5 +74,3 @@ Edition-level changes that are visible in this codebase:
 5. Update `README.md` to advertise "Edition 2024, MSRV 1.85, build toolchain 1.88.0",
    and update the release-notes template (`.github/RELEASE_TEMPLATE.md`) with the
    same triplet so each release is self-describing.
-6. Document the policy in `AGENTS.md` so future contributors do not accidentally
-   reach for a feature that lifts MSRV without an explicit bump PR.

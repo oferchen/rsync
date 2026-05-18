@@ -596,7 +596,7 @@ Each phase is independently reviewable. Phase 0 is this PR.
 - **Integration churn.** The `SizingTarget` trait is six methods,
   lives in `engine`, and is `#[non_exhaustive]`. The daemon already
   depends on `engine` indirectly via `core`; the direct dep is
-  consistent with the crate graph in `AGENTS.md`.
+  consistent with the workspace crate graph.
 
 ## 14. Tracking
 
