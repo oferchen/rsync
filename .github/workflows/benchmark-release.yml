@@ -23,16 +23,16 @@ env:
 
 jobs:
   criterion:
-    name: Criterion Benchmark Suite
+    name: Criterion (${{ matrix.crate }})
     runs-on: ubuntu-24.04
-    # Budget: ~30min waiting for release-cross to publish the release,
-    # ~10-15min cold-cache workspace compile, ~60-90min benchmark execution
-    # across all 7 crates (checksums, core, engine, fast_io, match, protocol,
-    # transfer). Empirical: full suite at default criterion sample sizes hits
-    # ~110min on ubuntu-24.04 runners. Bumped from 90 -> 180 after run
-    # 25287815060 was wall-cancelled mid-run.
-    timeout-minutes: 180
-
+    # Each matrix cell builds the workspace once on a cold cache (~10-15 min)
+    # and runs one crate's benches. The 7 cells fan out in parallel,
+    # replacing the previous serial 60-90 min `cargo bench --workspace` run.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [checksums, core, engine, fast_io, matching, protocol, transfer]
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -43,12 +43,44 @@ jobs:
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
-          shared-key: criterion-benchmark
+          shared-key: criterion-benchmark-${{ matrix.crate }}
 
       - name: Run criterion benchmarks
         run: |
           set -euo pipefail
-          cargo bench --workspace 2>&1 | tee criterion_output.txt
+          cargo bench -p ${{ matrix.crate }} --all-features 2>&1 \
+            | tee criterion_output_${{ matrix.crate }}.txt
+
+      - name: Upload criterion output
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: criterion-results-${{ matrix.crate }}
+          retention-days: 90
+          path: |
+            criterion_output_${{ matrix.crate }}.txt
+            target/criterion/
+
+  publish:
+    name: Publish criterion summary
+    needs: criterion
+    if: always() && needs.criterion.result != 'cancelled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Download all criterion artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: criterion-results-*
+          path: criterion-artifacts
+
+      - name: Merge criterion outputs
+        run: |
+          set -euo pipefail
+          : > criterion_output.txt
+          for f in criterion-artifacts/*/criterion_output_*.txt; do
+            [ -f "$f" ] || continue
+            { echo "### $(basename "$f" .txt | sed 's/^criterion_output_//')"; cat "$f"; echo; } >> criterion_output.txt
+          done
 
       - name: Generate step summary
         run: |
@@ -68,28 +100,18 @@ jobs:
             echo "| core | transfer_benchmark | End-to-end transfer pipeline |"
             echo "| engine | optimizations_benchmark, parallel_checksum, delta_transfer_benchmark | Delta engine, parallel checksumming |"
             echo "| fast_io | io_optimizations | I/O strategies (mmap, buffered, sparse) |"
-            echo "| match | delta_matching_benchmark, profiling_analysis | Block matching, rolling hash |"
+            echo "| matching | delta_matching_benchmark, profiling_analysis | Block matching, rolling hash |"
             echo "| protocol | delta_wire_benchmark, flist_benchmark, file_entry_memory | Wire encoding, file list serialization |"
             echo "| transfer | map_file_benchmark, token_buffer_benchmark | Memory-mapped file access, token buffering |"
             echo ""
             echo "### Raw Output (excerpt)"
             echo ""
             echo '```'
-            # Extract lines with benchmark timing results
             grep -E '(^Benchmarking|^[a-zA-Z_/]+\s+time:)' criterion_output.txt | tail -100 || true
             echo '```'
             echo ""
             echo "Full results available in the uploaded artifact."
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload criterion output
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: criterion-results
-          retention-days: 90
-          path: |
-            criterion_output.txt
-            target/criterion/
 
       - name: Resolve release tag
         id: release_tag
