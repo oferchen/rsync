@@ -193,6 +193,11 @@ where
     let rayon_threads = parse_thread_count(&mut matches, "rayon-threads")?;
     let tokio_threads = parse_thread_count(&mut matches, "tokio-threads")?;
 
+    let spill_dir = matches
+        .remove_one::<OsString>("spill-dir")
+        .map(PathBuf::from);
+    let spill_threshold_bytes = parse_spill_threshold_bytes(&mut matches)?;
+
     let modify_window = match matches.remove_one::<OsString>("modify-window") {
         Some(value) => {
             let s = value.to_string_lossy();
@@ -871,6 +876,8 @@ where
         adaptive_concurrency,
         rayon_threads,
         tokio_threads,
+        spill_dir,
+        spill_threshold_bytes,
     })
 }
 
@@ -912,4 +919,72 @@ fn parse_thread_count(
             ),
         )),
     }
+}
+
+/// Parses the `--spill-threshold-bytes` value into a positive byte count.
+///
+/// Accepts a positive integer with an optional case-insensitive K/M/G/T/P/E
+/// suffix interpreted as a power of 1024 (matching the
+/// `OC_RSYNC_SPILL_THRESHOLD_BYTES` env-var grammar). `0` is rejected -
+/// callers that want to disable spilling should omit the flag.
+/// Returns `Ok(None)` when the flag was not supplied.
+fn parse_spill_threshold_bytes(matches: &mut clap::ArgMatches) -> Result<Option<u64>, clap::Error> {
+    let Some(value) = matches.remove_one::<OsString>("spill-threshold-bytes") else {
+        return Ok(None);
+    };
+    let raw = value.to_string_lossy();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            "invalid --spill-threshold-bytes value: must not be empty\n".to_string(),
+        ));
+    }
+    let bytes = parse_spill_size(trimmed).ok_or_else(|| {
+        clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            format!(
+                "invalid --spill-threshold-bytes value '{raw}': must be a positive \
+                 integer with an optional K/M/G/T/P/E suffix (base 1024)\n"
+            ),
+        )
+    })?;
+    if bytes == 0 {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            format!("invalid --spill-threshold-bytes value '{raw}': must be greater than zero\n"),
+        ));
+    }
+    Ok(Some(bytes))
+}
+
+/// Parses a positive integer with an optional K/M/G/T/P/E suffix (base 1024).
+///
+/// Returns `None` when the input does not match the expected grammar or when
+/// the multiplication overflows `u64`.
+fn parse_spill_size(input: &str) -> Option<u64> {
+    if input.is_empty() {
+        return None;
+    }
+    let last = input.as_bytes().last().copied()?;
+    let (digits, suffix) = if last.is_ascii_alphabetic() {
+        (&input[..input.len() - 1], Some(last.to_ascii_uppercase()))
+    } else {
+        (input, None)
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let base: u64 = digits.parse().ok()?;
+    let multiplier: u64 = match suffix {
+        None => 1,
+        Some(b'K') => 1024,
+        Some(b'M') => 1024u64.pow(2),
+        Some(b'G') => 1024u64.pow(3),
+        Some(b'T') => 1024u64.pow(4),
+        Some(b'P') => 1024u64.pow(5),
+        Some(b'E') => 1024u64.pow(6),
+        _ => return None,
+    };
+    base.checked_mul(multiplier)
 }
