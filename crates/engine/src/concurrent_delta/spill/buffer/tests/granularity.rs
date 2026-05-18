@@ -73,9 +73,10 @@ fn granularity_whole_batch_writes_single_chunk() {
 
 #[test]
 fn granularity_per_item_writes_n_chunks() {
-    // Per-item granularity writes one `[u32 len][payload]` record per
-    // spilled item, so the disk footprint includes one 4-byte length
-    // prefix per item.
+    // Per-item granularity writes one `[u8 tag][u32 len][payload]`
+    // record per spilled item, so the disk footprint includes one
+    // 5-byte header (1-byte compression tag + 4-byte length prefix)
+    // per item.
     let mut buf: SpillableReorderBuffer<u64> =
         SpillableReorderBuffer::new(128, 16).with_granularity(SpillGranularity::PerItem);
     assert_eq!(buf.granularity(), SpillGranularity::PerItem);
@@ -86,12 +87,12 @@ fn granularity_per_item_writes_n_chunks() {
     let spilled = stats.spilled_items as u64;
     let on_disk = spill_file_size(&mut buf);
     let payload_bytes = spilled * 8;
-    let header_bytes = spilled * 4; // one length prefix per item
+    let header_bytes = spilled * 5; // one tag byte + one length prefix per item
     assert!(spilled > 0, "test setup must trigger at least one spill");
     assert_eq!(
         on_disk,
         payload_bytes + header_bytes,
-        "PerItem records carry one 4-byte length prefix per item \
+        "PerItem records carry one 5-byte header (tag + length) per item \
          (spilled={spilled}, payload_bytes={payload_bytes}, header_bytes={header_bytes})"
     );
 

@@ -13,7 +13,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
 /// Default timeout for spawned test processes (60 seconds).
@@ -32,6 +32,13 @@ const DEFAULT_SPAWN_TIMEOUT: Duration = Duration::from_secs(60);
 /// Returns `io::Error` if the process cannot be spawned, if the timeout is exceeded
 /// (in which case the process is killed before returning), or if collecting output fails.
 pub fn spawn_with_timeout(mut command: Command, timeout: Duration) -> io::Result<Output> {
+    // Pipe child stdio so wait_with_output can return captured stdout/stderr.
+    // Without explicit piping the child inherits the parent's stdio, leaking
+    // output past the test runner and leaving Output::stdout/stderr empty.
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = command.spawn()?;
     let start = std::time::Instant::now();
 

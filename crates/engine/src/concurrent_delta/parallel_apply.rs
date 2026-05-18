@@ -593,7 +593,7 @@ mod tests {
 
         let mut chunks = Vec::new();
         for i in 0..24u64 {
-            let payload: Vec<u8> = (0..16).map(|b| ((i as u8).wrapping_add(b))).collect();
+            let payload: Vec<u8> = (0..16).map(|b| (i as u8).wrapping_add(b)).collect();
             chunks.push(DeltaChunk::literal(0u32, i, payload.clone()));
             chunks.push(DeltaChunk::matched(1u32, i, payload));
         }
