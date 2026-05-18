@@ -299,10 +299,11 @@ mod tests {
             assert_eq!(profile.daemon_secrets_path_str(), "/etc/secrets");
         }
 
+        /// Path accessors must not panic; absoluteness is platform-dependent
+        /// so we only exercise the getter without asserting the verdict.
         #[test]
         fn path_accessors() {
             let profile = oc_profile();
-            // Call to ensure it doesn't panic - may not be absolute on all platforms
             let _ = profile.daemon_config_dir().is_absolute();
             assert!(profile.daemon_config_path().to_str().is_some());
             assert!(profile.daemon_secrets_path().to_str().is_some());
@@ -360,41 +361,43 @@ mod tests {
         use super::*;
         use crate::branding::Brand;
 
+        /// Values come from workspace metadata that the test cannot assert
+        /// literal values against; the check is that the getters return
+        /// non-empty strings.
         #[test]
         fn upstream_profile_values() {
             let profile = upstream_profile();
-            // Values come from workspace metadata, just verify they're non-empty
             assert!(!profile.client_program_name().is_empty());
             assert!(!profile.daemon_program_name().is_empty());
         }
 
+        /// See [`upstream_profile_values`] for why the assertion is
+        /// non-empty rather than literal.
         #[test]
         fn oc_profile_values() {
             let profile = oc_profile();
-            // Values come from workspace metadata, just verify they're non-empty
             assert!(!profile.client_program_name().is_empty());
             assert!(!profile.daemon_program_name().is_empty());
         }
 
+        /// See [`upstream_profile_values`] for the non-empty-only rationale.
         #[test]
         fn upstream_program_names() {
-            // Values come from workspace metadata, just verify they're non-empty
             assert!(!upstream_client_program_name().is_empty());
             assert!(!upstream_daemon_program_name().is_empty());
             assert!(!client_program_name().is_empty());
             assert!(!daemon_program_name().is_empty());
         }
 
+        /// See [`upstream_profile_values`] for the non-empty-only rationale.
         #[test]
         fn oc_program_names() {
-            // Values come from workspace metadata, just verify they're non-empty
             assert!(!oc_client_program_name().is_empty());
             assert!(!oc_daemon_program_name().is_empty());
         }
 
         #[test]
         fn os_str_accessors() {
-            // Verify OsStr accessors match their str counterparts
             assert_eq!(
                 client_program_name_os_str(),
                 OsStr::new(client_program_name())

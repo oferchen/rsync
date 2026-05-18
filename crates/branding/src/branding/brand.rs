@@ -433,11 +433,13 @@ mod tests {
             assert!(!Brand::Upstream.daemon_program_name().is_empty());
         }
 
+        /// `exists()` may legitimately return either value in the test
+        /// environment; we only exercise the call to guard against a panic
+        /// in the path-construction path.
         #[test]
         fn config_paths() {
             assert!(!Brand::Oc.daemon_config_path_str().is_empty());
             assert!(!Brand::Upstream.daemon_config_path_str().is_empty());
-            // Call to test it doesn't panic - path may not exist in test environment
             let _ = Brand::Oc.daemon_config_path().exists();
         }
 
