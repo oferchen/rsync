@@ -11,7 +11,10 @@
 //! `io::ErrorKind::Unsupported`.
 
 use std::io;
+#[cfg(unix)]
 use std::os::unix::io::RawFd;
+#[cfg(not(unix))]
+type RawFd = std::os::raw::c_int;
 
 /// Always returns `false` on this platform.
 #[must_use]

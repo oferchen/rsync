@@ -15,6 +15,7 @@ pub(crate) struct HardLinkTracker {
     /// upstream: hlink.c::hard_link_check returns 1 for followers so
     /// generator.c:1540 exits before set_file_attrs(); the inode keeps the
     /// leader's metadata for free.
+    #[cfg(any(test, feature = "acl"))]
     acl_cohort_leaders: rustc_hash::FxHashSet<PathBuf>,
 }
 
@@ -47,6 +48,7 @@ impl HardLinkTracker {
     /// per-inode metadata write (POSIX ACL on Unix, NTFS DACL on Windows).
     /// Followers share the same underlying inode and inherit the leader's
     /// metadata without an additional write.
+    #[cfg(any(test, feature = "acl"))]
     pub(crate) fn register_acl_cohort_leader(&mut self, reference: &Path) -> bool {
         self.acl_cohort_leaders.insert(reference.to_path_buf())
     }
