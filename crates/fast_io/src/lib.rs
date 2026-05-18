@@ -293,6 +293,16 @@ pub use io_uring::{
     socket_reader_from_fd, socket_writer_from_fd,
 };
 
+/// Opt-in `IORING_OP_SEND_ZC` transport-send dispatch (Linux + `io_uring`).
+///
+/// Exposed only when the `iouring-send-zc` cargo feature is enabled. The
+/// stub on non-Linux returns [`std::io::ErrorKind::Unsupported`] from every
+/// method so cross-platform callers compile but never route real traffic
+/// through the zero-copy path. See the module docs on `io_uring::send_zc`
+/// for the buffer-lifetime contract.
+#[cfg(feature = "iouring-send-zc")]
+pub use io_uring::{SEND_ZC_DISPATCH_MIN_BYTES, ZeroCopySender};
+
 pub use io_uring_common::IoBackend;
 pub use io_uring_depth::{
     IO_URING_DEPTH_MAX, IO_URING_DEPTH_MIN, IoUringDepthError, validate_io_uring_depth,

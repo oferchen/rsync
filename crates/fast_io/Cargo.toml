@@ -99,6 +99,15 @@ vmsplice = []
 # demonstrates a consistent win over the static threshold.
 adaptive-basis-dispatch = []
 
+# iouring-send-zc: Linux-only opt-in dispatch for IORING_OP_SEND_ZC on the
+# socket-send path. Requires the `io_uring` feature. When enabled, the
+# transport send path routes payloads >= 4 KiB through `ZeroCopySender`,
+# which submits the zero-copy send opcode against a registered buffer pool
+# so the kernel can DMA pages directly without a userspace copy. Default off
+# pending kernel/workload benchmarks. See docs/design/iouring-send-zc.md
+# for the full design.
+iouring-send-zc = ["io_uring"]
+
 [target.'cfg(windows)'.dependencies]
 # CopyFileExW for Windows-optimized file copy with no-buffering support;
 # Win32_Networking_WinSock added for WSARecv/WSASend in iocp::socket (#1928);
