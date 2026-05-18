@@ -84,6 +84,8 @@ mod iconv_tests;
 mod info_debug_tests;
 #[path = "invalid.rs"]
 mod invalid_tests;
+#[path = "itemize_format_upstream.rs"]
+mod itemize_format_upstream_tests;
 #[path = "list_only.rs"]
 mod list_only_tests;
 #[path = "load.rs"]
@@ -276,8 +278,6 @@ mod remote_tests;
 mod rsync_tests;
 #[path = "run.rs"]
 mod run_tests;
-#[path = "itemize_format_upstream.rs"]
-mod itemize_format_upstream_tests;
 #[path = "short.rs"]
 mod short_tests;
 #[path = "size.rs"]
