@@ -376,3 +376,35 @@ pub fn write_file<P: AsRef<std::path::Path>>(path: P, data: &[u8]) -> io::Result
     writer.flush()?;
     Ok(())
 }
+
+/// Writes `data` to `path` through the io_uring registered-buffer write path.
+///
+/// Thin wrapper over the existing [`IoUringWriter`] + [`RegisteredBufferGroup`]
+/// machinery: opens the destination via `IoUringWriter::create`, calls
+/// `write_all` (which engages `IORING_OP_WRITE_FIXED` whenever the kernel
+/// accepted buffer registration), then `flush` + `sync` to make the bytes
+/// durable. No new submission helper is introduced; everything routes through
+/// the same paths used by the live receiver disk thread.
+///
+/// Gated by `feature = "iouring-data-writes"` and `target_os = "linux"`. The
+/// stub on every other configuration returns `io::ErrorKind::Unsupported` so
+/// callers can dispatch via a single `cfg`-free call site and fall back when
+/// the kernel path is not compiled in.
+///
+/// # Errors
+///
+/// Returns the underlying [`io::Error`] from ring construction, file creation,
+/// SQE submission, or fsync. When io_uring is unavailable at runtime (kernel
+/// pre-5.6, seccomp-blocked, or `io_uring_setup` rejection), the error is
+/// surfaced as-is; the caller is expected to handle the fallback rather than
+/// silently degrading to standard I/O.
+#[cfg(all(target_os = "linux", feature = "iouring-data-writes"))]
+pub fn write_file_with_io_uring(path: &std::path::Path, data: &[u8]) -> io::Result<()> {
+    use crate::traits::FileWriter;
+
+    let config = IoUringConfig::default();
+    let mut writer = IoUringWriter::create(path, &config)?;
+    writer.write_all(data)?;
+    writer.flush()?;
+    writer.sync()
+}
