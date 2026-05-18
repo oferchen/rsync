@@ -26,6 +26,11 @@ fn test_buffer_reuse() {
     assert_eq!(buffer.len(), COPY_BUFFER_SIZE);
 }
 
+// `available()` returns the central-queue depth only. With the per-thread
+// slab feature on, both returns land in the slab (cap = 8 slots) and the
+// central queue stays empty, so this assertion does not hold. Slab-backend
+// coverage lives in `tests/slab.rs`.
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn test_pool_capacity_limit() {
     let pool = BufferPool::new(2);

@@ -236,6 +236,13 @@ fn adaptive_buffers_returned_under_concurrent_pressure() {
     }
 }
 
+// The reuse, single-capacity, and overflow tests below all rely on the
+// single-slot TLS semantic (first return per thread fills TLS, the next
+// reaches the central queue). With the per-thread slab feature on, the
+// slab absorbs up to 8 returns per thread before the central queue sees
+// anything, so the `pool.available()` counts the tests assert do not
+// match. Slab-equivalent coverage lives in `tests/slab.rs`.
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn repeated_acquire_release_cycle_reuses_same_buffers() {
     // Verify the pool actually recycles buffers by checking that the
@@ -289,6 +296,7 @@ fn zero_capacity_pool_never_retains_buffers() {
     assert_eq!(pool.available(), 0);
 }
 
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn single_capacity_pool_reuses_one_buffer() {
     // A pool with capacity 1. With TLS, effective single-thread capacity
@@ -336,6 +344,7 @@ fn with_allocator_uses_custom_allocator() {
     assert_eq!(pool.allocator().alloc_count(), 1);
 }
 
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn custom_allocator_deallocate_called_on_overflow() {
     // Pool with capacity 1. With TLS, need 3 returns to trigger overflow:

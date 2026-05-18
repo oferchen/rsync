@@ -35,6 +35,14 @@ fn byte_budget_allows_returns_below_cap() {
     assert_eq!(pool.total_byte_overflows(), 0);
 }
 
+// The byte-budget admission tests below trace returns through the
+// single-slot TLS path: the first return per thread fills the TLS slot,
+// subsequent returns hit the central byte budget. With the per-thread slab
+// feature on, the slab swallows up to 8 returns per thread (1 MiB cap)
+// before routing to the central queue, so the byte budget never gets the
+// chance to reject. The slab is its own retention layer with its own caps
+// and is covered by `tests/slab.rs`.
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn byte_budget_falls_through_to_direct_alloc_at_cap() {
     // Budget tight enough that only one buffer (1024 bytes) fits in the
@@ -70,6 +78,7 @@ fn byte_budget_falls_through_to_direct_alloc_at_cap() {
     assert_eq!(g.len(), 1024);
 }
 
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn byte_budget_overflow_counter_accumulates() {
     let pool = Arc::new(BufferPool::with_buffer_size(8, 1024).with_byte_budget(1024));
@@ -101,6 +110,7 @@ fn byte_budget_overflow_counter_accumulates() {
     );
 }
 
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn byte_budget_capacity_recycles_after_acquire() {
     let pool = Arc::new(BufferPool::with_buffer_size(8, 1024).with_byte_budget(1024));
@@ -144,6 +154,7 @@ fn byte_budget_capacity_recycles_after_acquire() {
     assert!(pool.total_byte_overflows() <= overflows_before + 1);
 }
 
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn byte_budget_with_count_cap_is_min_of_both() {
     // Count cap is 1 buffer, byte budget admits 4 buffers worth: count cap
@@ -169,6 +180,7 @@ fn byte_budget_with_count_cap_is_min_of_both() {
     assert_eq!(pool.retained_bytes(), 1024);
 }
 
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn byte_budget_stats_field_exposed() {
     let pool = Arc::new(BufferPool::with_buffer_size(8, 1024).with_byte_budget(1024));
