@@ -8,14 +8,18 @@
 #[cfg(target_arch = "x86_64")]
 pub mod sse2;
 
+/// AVX2 8-lane parallel MD4 implementation.
 #[cfg(target_arch = "x86_64")]
 pub mod avx2;
 
+/// AVX-512 16-lane parallel MD4 implementation.
 #[cfg(target_arch = "x86_64")]
 pub mod avx512;
 
+/// ARM NEON 4-lane parallel MD4 implementation.
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
 
+/// WebAssembly SIMD 4-lane parallel MD4 implementation.
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;

@@ -6,6 +6,7 @@ mod backup_trace;
 mod comparison;
 mod copy;
 mod guard;
+/// Partial file management for interrupted transfers.
 pub mod partial;
 mod paths;
 mod preallocate;

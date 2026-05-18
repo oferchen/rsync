@@ -31,6 +31,7 @@
 
 pub mod scalar;
 
+/// SIMD backend implementations for MD4 (x86_64 SSE2/AVX2/AVX-512, aarch64 NEON, wasm32).
 #[cfg(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
