@@ -306,6 +306,38 @@ pub use io_uring::{
 #[cfg(feature = "iouring-send-zc")]
 pub use io_uring::{SEND_ZC_DISPATCH_MIN_BYTES, ZeroCopySender};
 
+/// Writes `data` to `path` via the io_uring registered-buffer write path.
+///
+/// When compiled with both `target_os = "linux"` and the
+/// `iouring-data-writes` feature, this dispatches to the live
+/// [`io_uring::write_file_with_io_uring`] helper which reuses
+/// [`io_uring::IoUringWriter`] and the registered-buffer pool. On every other
+/// configuration, the function returns `io::ErrorKind::Unsupported` so
+/// callers can fall back to their existing copy path.
+///
+/// # Errors
+///
+/// Returns `io::ErrorKind::Unsupported` when the platform or feature gate
+/// disables the io_uring data-write path. On Linux with the feature on,
+/// propagates ring-construction, submission, and fsync errors from the
+/// underlying writer.
+#[cfg(all(target_os = "linux", feature = "iouring-data-writes"))]
+pub fn write_file_with_io_uring(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    io_uring::write_file_with_io_uring(path, data)
+}
+
+/// Stub for non-Linux targets or when `iouring-data-writes` is disabled.
+///
+/// Always returns `io::ErrorKind::Unsupported`. Callers should treat this
+/// outcome as the signal to use their standard write path.
+#[cfg(not(all(target_os = "linux", feature = "iouring-data-writes")))]
+pub fn write_file_with_io_uring(_path: &std::path::Path, _data: &[u8]) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "iouring-data-writes feature is not enabled for this build",
+    ))
+}
+
 pub use io_uring_common::IoBackend;
 pub use io_uring_depth::{
     IO_URING_DEPTH_MAX, IO_URING_DEPTH_MIN, IoUringDepthError, validate_io_uring_depth,

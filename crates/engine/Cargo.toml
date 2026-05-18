@@ -120,6 +120,13 @@ thread-slab-pool = []
 # production builds remain byte-identical to today.
 iouring-data-reads = ["fast_io/iouring-data-reads"]
 
+# iouring-data-writes (IUD-5) - opt-in dispatch in local-copy that routes
+# large whole-file writes through `fast_io::write_file_with_io_uring`. Pass-
+# through to the same-named feature on `fast_io`; default off so production
+# builds are byte-identical. Linux-only at runtime; on every other platform
+# the dispatch branch falls through to the existing copy path.
+iouring-data-writes = ["fast_io/iouring-data-writes"]
+
 # ============================================================================
 # Runtime Features
 # ============================================================================
