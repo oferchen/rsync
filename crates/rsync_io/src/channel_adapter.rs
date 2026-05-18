@@ -108,6 +108,13 @@ impl AsyncRead for ChannelReader {
     }
 }
 
+/// Pinned, boxed future yielding an owned channel permit. Factored out to
+/// satisfy `clippy::type_complexity` for the `ChannelWriter::reserving`
+/// slot - identical shape, just named.
+type ReservePermitFuture = Pin<
+    Box<dyn Future<Output = Result<mpsc::OwnedPermit<Vec<u8>>, mpsc::error::SendError<()>>> + Send>,
+>;
+
 /// Asynchronous writer that forwards each write as a single message on an
 /// `mpsc::Sender<Vec<u8>>`.
 ///
@@ -119,14 +126,7 @@ pub struct ChannelWriter {
     tx: Option<mpsc::Sender<Vec<u8>>>,
     // Pending reservation future preserved across polls so the channel's
     // wait-queue registration is not dropped between `poll_write` calls.
-    reserving: Option<
-        Pin<
-            Box<
-                dyn Future<Output = Result<mpsc::OwnedPermit<Vec<u8>>, mpsc::error::SendError<()>>>
-                    + Send,
-            >,
-        >,
-    >,
+    reserving: Option<ReservePermitFuture>,
 }
 
 impl ChannelWriter {
