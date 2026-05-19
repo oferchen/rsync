@@ -87,6 +87,12 @@ pub(super) fn close_overlapped_handle(handle: HANDLE) {
 /// `GetQueuedCompletionStatusEx` to reap completed entries in batches.
 /// Short writes inside a chunk are resubmitted at the appropriate offset
 /// until the chunk is fully written.
+///
+/// `bytes_written_out` is updated with the count of bytes that reached the
+/// kernel before the function returns. On error the count reflects every
+/// completion drained successfully prior to the failure so the caller can
+/// advance its file-offset bookkeeping past the durable prefix instead of
+/// retrying writes that already landed.
 pub(super) fn submit_write_batch(
     port: &CompletionPort,
     handle: HANDLE,
@@ -95,23 +101,31 @@ pub(super) fn submit_write_batch(
     chunk_size: usize,
     max_in_flight: usize,
     use_aligned: bool,
-) -> io::Result<usize> {
+    bytes_written_out: &mut usize,
+) -> io::Result<()> {
+    *bytes_written_out = 0;
     if data.is_empty() {
-        return Ok(0);
+        return Ok(());
     }
 
     let total = data.len();
     let mut next_chunk_start = 0usize;
-    let mut total_written = 0usize;
     let mut in_flight: Vec<Pin<Box<OverlappedOp>>> = Vec::with_capacity(max_in_flight);
 
     while next_chunk_start < total || !in_flight.is_empty() {
-        // Fill the in-flight queue up to the configured limit.
+        // Fill the in-flight queue up to the configured limit. A submission
+        // failure here (synchronous `WriteFile` error or fault-injected
+        // ERROR_DISK_FULL) must not discard already-drained progress, so we
+        // bail out via the explicit Err path that leaves the caller's
+        // running counter intact.
         while in_flight.len() < max_in_flight && next_chunk_start < total {
             let len = chunk_size.min(total - next_chunk_start);
             let chunk = &data[next_chunk_start..next_chunk_start + len];
             let offset = base_offset + next_chunk_start as u64;
-            let op = submit_one_write(handle, offset, chunk, use_aligned)?;
+            let op = match submit_one_write(handle, offset, chunk, use_aligned) {
+                Ok(op) => op,
+                Err(e) => return Err(e),
+            };
             in_flight.push(op);
             next_chunk_start += len;
         }
@@ -135,7 +149,7 @@ pub(super) fn submit_write_batch(
             {
                 let chunk_len = op.buffer.len();
                 if transferred == chunk_len {
-                    total_written += transferred;
+                    *bytes_written_out += transferred;
                     false
                 } else if transferred == 0 {
                     zero_byte_completion = true;
@@ -143,7 +157,7 @@ pub(super) fn submit_write_batch(
                 } else {
                     // Short write: resubmit the unwritten tail at the
                     // appropriate offset.
-                    total_written += transferred;
+                    *bytes_written_out += transferred;
                     let remaining = op.buffer.as_slice()[transferred..].to_vec();
                     let original_offset = read_offset(&op.overlapped);
                     let new_offset = original_offset + transferred as u64;
@@ -168,7 +182,7 @@ pub(super) fn submit_write_batch(
         }
     }
 
-    Ok(total_written)
+    Ok(())
 }
 
 /// Returns the address of the OVERLAPPED structure pinned inside the boxed op.
