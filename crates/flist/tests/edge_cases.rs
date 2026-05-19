@@ -319,9 +319,18 @@ fn nonexistent_path_error() {
 }
 
 /// Verifies error path is preserved in error.
+///
+/// The builder absolutizes relative roots against the current directory, so
+/// the input path must already be absolute for the round-trip equality check
+/// to hold. Windows treats `/foo` as drive-relative rather than absolute, so a
+/// platform-appropriate prefix is required on each target.
 #[test]
 fn error_path_preservation() {
+    #[cfg(unix)]
     let path = "/unique/test/path/12345";
+    #[cfg(windows)]
+    let path = r"C:\unique\test\path\12345";
+
     let result = FileListBuilder::new(path).build();
 
     match result {
