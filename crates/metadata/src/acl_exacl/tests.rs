@@ -3,10 +3,10 @@ use super::default_perms::default_perms_for_dir;
 use super::error::is_unsupported_error;
 use super::perms::rsync_perms_to_exacl;
 use super::reconstruct::rsync_acl_to_entries;
-use super::reset::reset_acl_from_mode;
-use super::sync::sync_acls;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use super::reset::clear_default_acl;
+use super::reset::reset_acl_from_mode;
+use super::sync::sync_acls;
 
 use exacl::{AclEntryKind, Perm};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
