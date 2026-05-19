@@ -11,7 +11,8 @@ use std::io::{self, Read, Write};
 
 use logging::debug_log;
 use protocol::codec::{
-    MonotonicNdxWriter, NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, create_ndx_codec,
+    MonotonicNdxWriter, NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec,
+    create_ndx_codec,
 };
 use protocol::stats::DeleteStats;
 

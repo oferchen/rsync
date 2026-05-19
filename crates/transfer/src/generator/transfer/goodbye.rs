@@ -10,7 +10,7 @@
 use std::io::{self, Read, Write};
 
 use logging::debug_log;
-use protocol::codec::{MonotonicNdxWriter, NDX_DEL_STATS, NDX_DONE};
+use protocol::codec::{MonotonicNdxWriter, NDX_DEL_STATS, NDX_DONE, NdxCodec};
 use protocol::stats::DeleteStats;
 
 use super::super::{GeneratorContext, is_early_close_error};
