@@ -20,6 +20,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Cursor, Write};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use tempfile::TempDir;
 
 use crate::config::ServerConfig;
