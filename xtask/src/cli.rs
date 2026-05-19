@@ -40,9 +40,6 @@ pub enum Command {
     /// Generate and package rustdoc for distribution.
     DocPackage(DocPackageArgs),
 
-    /// Enforce source line and comment hygiene limits.
-    EnforceLimits(EnforceLimitsArgs),
-
     /// Validate interoperability with upstream rsync.
     Interop(InteropArgs),
 
@@ -193,22 +190,6 @@ impl Default for DocPackageArgs {
     }
 }
 
-/// Arguments for the `enforce-limits` command.
-#[derive(Parser, Debug, Default)]
-pub struct EnforceLimitsArgs {
-    /// Fail when a Rust source exceeds N lines.
-    #[arg(long, value_name = "N")]
-    pub max_lines: Option<usize>,
-
-    /// Warn when a Rust source exceeds N lines.
-    #[arg(long, value_name = "N")]
-    pub warn_lines: Option<usize>,
-
-    /// Override the line limit configuration path.
-    #[arg(long, value_name = "PATH")]
-    pub config: Option<PathBuf>,
-}
-
 /// Arguments for the `interop` command.
 #[derive(Parser, Debug)]
 pub struct InteropArgs {
@@ -331,10 +312,6 @@ pub struct ReleaseArgs {
     #[arg(long)]
     pub skip_docs: bool,
 
-    /// Skip enforce-limits line-count checks.
-    #[arg(long)]
-    pub skip_hygiene: bool,
-
     /// Skip placeholder detection scans.
     #[arg(long)]
     pub skip_placeholder_scan: bool,
@@ -374,8 +351,8 @@ pub struct TestArgs {
 
 use crate::task::Task;
 use crate::task::tasks::{
-    DocPackageTask, DocsTask, EnforceLimitsTask, NoBinariesTask, NoPlaceholdersTask, PackageTask,
-    PreflightTask, ReleaseTask, SbomTask, TestTask,
+    DocPackageTask, DocsTask, NoBinariesTask, NoPlaceholdersTask, PackageTask, PreflightTask,
+    ReleaseTask, SbomTask, TestTask,
 };
 
 /// Extension trait for converting commands to task trees.
@@ -391,7 +368,6 @@ impl CommandExt for Command {
             Command::Branding(args) => args.as_task(),
             Command::Docs(args) => args.as_task(),
             Command::DocPackage(args) => args.as_task(),
-            Command::EnforceLimits(_) => Box::new(EnforceLimitsTask),
             Command::Interop(args) => args.as_task(),
             Command::ManPage => Box::new(ManPageTask),
             Command::NoBinaries => Box::new(NoBinariesTask),
@@ -455,7 +431,6 @@ impl CommandExt for ReleaseArgs {
     fn as_task(&self) -> Box<dyn Task> {
         Box::new(ReleaseTask {
             skip_docs: self.skip_docs,
-            skip_hygiene: self.skip_hygiene,
             skip_placeholder_scan: self.skip_placeholder_scan,
             skip_binary_scan: self.skip_binary_scan,
             skip_packages: self.skip_packages,
@@ -673,40 +648,14 @@ mod tests {
 
     #[test]
     fn parse_release_skip_flags() {
-        let cli = Cli::parse_from([
-            "cargo-xtask",
-            "release",
-            "--skip-docs",
-            "--skip-hygiene",
-            "--skip-upload",
-        ]);
+        let cli = Cli::parse_from(["cargo-xtask", "release", "--skip-docs", "--skip-upload"]);
         match cli.command {
             Command::Release(args) => {
                 assert!(args.skip_docs);
-                assert!(args.skip_hygiene);
                 assert!(args.skip_upload);
                 assert!(!args.skip_packages);
             }
             _ => panic!("expected release command"),
-        }
-    }
-
-    #[test]
-    fn parse_enforce_limits_options() {
-        let cli = Cli::parse_from([
-            "cargo-xtask",
-            "enforce-limits",
-            "--max-lines",
-            "700",
-            "--warn-lines",
-            "500",
-        ]);
-        match cli.command {
-            Command::EnforceLimits(args) => {
-                assert_eq!(args.max_lines, Some(700));
-                assert_eq!(args.warn_lines, Some(500));
-            }
-            _ => panic!("expected enforce-limits command"),
         }
     }
 
