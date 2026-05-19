@@ -63,13 +63,9 @@ mod error;
 
 pub use error::SpillError;
 
-/// Environment-variable overrides for [`SpillPolicy`] fields at runtime.
 pub mod env;
-/// Public policy types that configure the reorder buffer spill layer.
 pub mod policy;
-/// RSS sampling helpers that back the `memory_pressure_bytes` policy knob.
 pub mod rss;
-/// Spill-layer counters and aggregate stats exposed to operators.
 pub mod stats;
 pub use env::{
     ENV_SPILL_COMPRESSION, ENV_SPILL_DIR, ENV_SPILL_THRESHOLD_BYTES, apply_env_overrides,

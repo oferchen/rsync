@@ -10,15 +10,15 @@
 //!
 //! - **Linux**: parses `/proc/self/statm`, multiplying the second field
 //!   (resident pages) by the page size obtained from `sysconf(_SC_PAGESIZE)`
-//!   via [`page_size()`]. No `unsafe` is required because the file is plain
-//!   text and the page size is read through the safe `rustix` shim already
-//!   used elsewhere in the workspace - failing that, the well-known 4096
-//!   fallback applies.
+//!   via `rustix::param::page_size`. No `unsafe` is required because the
+//!   file is plain text and the page size is read through the safe `rustix`
+//!   shim already used elsewhere in the workspace - failing that, the
+//!   well-known 4096 fallback applies.
 //! - **macOS**: stubbed at `Ok(0)` so the knob is a no-op until a follow-up
 //!   wires `mach_task_basic_info`. The byte-budget path continues to work
 //!   exactly as it does today. See `#2340` follow-up scope.
 //! - **Other Unix / Windows**: returns
-//!   [`io::ErrorKind::Unsupported`](std::io::ErrorKind::Unsupported); the
+//!   [`std::io::ErrorKind::Unsupported`]; the
 //!   buffer treats the error as "RSS unavailable" and falls back to the
 //!   byte-budget knob.
 //!

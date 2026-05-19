@@ -162,8 +162,8 @@ impl DeltaWork {
     ///
     /// Unlike [`DeltaWork::delta`], this constructor stores both the basis and
     /// the source paths, enabling
-    /// [`DeltaTransferStrategy::process`](super::strategy::DeltaTransferStrategy::process)
-    /// to run the full [`DeltaGenerator`](matching::DeltaGenerator) pipeline:
+    /// [`DeltaTransferStrategy`](super::strategy::DeltaTransferStrategy) to
+    /// run the full [`DeltaGenerator`](matching::DeltaGenerator) pipeline:
     /// signature generation from the basis, rolling+strong checksum block
     /// matching against the source, literal/COPY token emission, and applied
     /// script written to the destination. Returned stats reflect the actual

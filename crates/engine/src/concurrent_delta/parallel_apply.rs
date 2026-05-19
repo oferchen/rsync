@@ -123,7 +123,7 @@ impl From<ParallelApplyError> for io::Error {
 /// per-file sequence number assigned at submission time.
 ///
 /// Chunks are CPU-light at this stage; the heavy step is the strong-checksum
-/// rollup that [`ParallelDeltaApplier::verify_chunk`] runs on a rayon
+/// rollup that `ParallelDeltaApplier::verify_chunk` runs on a rayon
 /// worker.
 #[derive(Debug, Clone)]
 pub struct DeltaChunk {

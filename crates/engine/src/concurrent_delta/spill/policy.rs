@@ -16,7 +16,8 @@
 //! deliberately additive: today only the defaults are wired through the
 //! consumer pipeline, and the alternatives reserve syntactic room for
 //! follow-up work without forcing another public API break. The
-//! [`SpillReclaim`] knob is wired through [`SpillableReorderBuffer`] and
+//! [`SpillReclaim`] knob is wired through
+//! [`SpillableReorderBuffer`](super::SpillableReorderBuffer) and
 //! controls whether the buffer re-spills in-memory residue after each
 //! reload-from-disk delivery. Tests below pin the defaults so downstream
 //! crates can rely on the contract.
