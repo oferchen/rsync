@@ -110,7 +110,7 @@ pub(super) fn spawn_inner(rx: WorkQueueReceiver, mode: ReorderMode) -> DeltaCons
         .spawn(move || {
             match backend {
                 ReorderBackend::Bare(buf) => {
-                    run_bare_loop(stream_rx, &result_tx, buf, &metrics_thread);
+                    run_bare_loop(stream_rx, &result_tx, *buf, &metrics_thread);
                 }
                 ReorderBackend::Spillable(buf) => {
                     run_spillable_loop(stream_rx, &result_tx, *buf, &spill_events_thread);
@@ -143,13 +143,16 @@ pub(super) fn spawn_inner(rx: WorkQueueReceiver, mode: ReorderMode) -> DeltaCons
 /// the inner `force_insert` counter without a cross-thread bootstrap hop.
 enum ReorderBackend {
     /// In-memory ring (including the passthrough flavour).
-    Bare(ReorderBuffer<DeltaResult>),
-    /// Bounded-memory ring backed by a spill tempfile.
     ///
     /// Boxed so the enum's size is dominated by its smallest viable
-    /// representation instead of the much larger spillable buffer; this
-    /// keeps `clippy::large_enum_variant` quiet without a waiver and
-    /// avoids stack-spilling a wide enum on every match arm.
+    /// representation instead of the much larger ring buffer; this keeps
+    /// `clippy::large_enum_variant` quiet without a waiver and avoids
+    /// stack-spilling a wide enum on every match arm.
+    Bare(Box<ReorderBuffer<DeltaResult>>),
+    /// Bounded-memory ring backed by a spill tempfile.
+    ///
+    /// Boxed for the same reason as [`Self::Bare`] above; the spillable
+    /// buffer is the largest variant in the enum.
     Spillable(Box<SpillableReorderBuffer<DeltaResult>>),
     /// Spillable construction failed; deferred until the thread can publish
     /// the error as a [`DeltaResult::failed`].
@@ -159,8 +162,8 @@ enum ReorderBackend {
 impl ReorderBackend {
     fn build(mode: ReorderMode) -> Self {
         match mode {
-            ReorderMode::Bypass => Self::Bare(ReorderBuffer::passthrough()),
-            ReorderMode::Bare { capacity } => Self::Bare(ReorderBuffer::new(capacity)),
+            ReorderMode::Bypass => Self::Bare(Box::new(ReorderBuffer::passthrough())),
+            ReorderMode::Bare { capacity } => Self::Bare(Box::new(ReorderBuffer::new(capacity))),
             ReorderMode::Spillable {
                 capacity,
                 threshold,
