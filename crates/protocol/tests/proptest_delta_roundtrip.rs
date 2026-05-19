@@ -22,10 +22,14 @@ fn arb_literal() -> impl Strategy<Value = DeltaOp> {
 
 /// Strategy for generating arbitrary Copy operations.
 ///
-/// Block index and length are constrained to non-negative i32 range because the
-/// internal format encodes them via varint (i32).
+/// Block index and length are constrained to non-negative i32 range because
+/// the internal format encodes them via varint (i32). The token wire format
+/// encodes a match as `-(block_index + 1)`, so a `block_index` of `i32::MAX`
+/// would compute `-(i32::MAX + 1)` and trip the debug overflow check; cap
+/// the strategy one short of `i32::MAX` to match the contract enforced by
+/// `token_block_match_roundtrip` below.
 fn arb_copy() -> impl Strategy<Value = DeltaOp> {
-    (0u32..=i32::MAX as u32, 1u32..=i32::MAX as u32).prop_map(|(block_index, length)| {
+    (0u32..=i32::MAX as u32 - 1, 1u32..=i32::MAX as u32).prop_map(|(block_index, length)| {
         DeltaOp::Copy {
             block_index,
             length,

@@ -72,6 +72,15 @@ pub fn write_token_literal<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<
 /// Reference: `token.c:simple_send_token()` line 316
 #[inline]
 pub fn write_token_block_match<W: Write>(writer: &mut W, block_index: u32) -> io::Result<()> {
+    // The wire token is `-(block_index + 1)` as i32 LE, so the largest legal
+    // block index is `i32::MAX - 1` (which encodes to i32::MIN + 1). The
+    // value `i32::MAX` would compute `-(i32::MAX + 1) = -i32::MIN` and trip
+    // the debug overflow check. Catch the contract violation here instead of
+    // silently producing a wrapped negative token on release builds.
+    debug_assert!(
+        block_index < i32::MAX as u32,
+        "block_index {block_index} exceeds the i32 wire-format range"
+    );
     let token = -((block_index as i32) + 1);
     write_int(writer, token)
 }
