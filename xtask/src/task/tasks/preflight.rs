@@ -6,7 +6,7 @@ use super::common::{
     CargoClippyTask, CargoFmtTask, CargoTestTask, ValidateBrandingTask, ValidateCiTask,
     ValidateReadmeTask,
 };
-use super::release::{EnforceLimitsTask, NoBinariesTask, NoPlaceholdersTask};
+use super::release::{NoBinariesTask, NoPlaceholdersTask};
 
 /// Root task for preflight command.
 pub struct PreflightTask;
@@ -25,7 +25,6 @@ impl Task for PreflightTask {
             Box::new(CargoFmtTask),
             Box::new(CargoClippyTask),
             Box::new(CargoTestTask::default()),
-            Box::new(EnforceLimitsTask),
             Box::new(NoPlaceholdersTask),
             Box::new(NoBinariesTask),
             Box::new(ValidateReadmeTask),

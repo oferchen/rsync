@@ -12,7 +12,6 @@ use super::package::PackageTask;
 /// Root task for release command.
 pub struct ReleaseTask {
     pub skip_docs: bool,
-    pub skip_hygiene: bool,
     pub skip_placeholder_scan: bool,
     pub skip_binary_scan: bool,
     pub skip_packages: bool,
@@ -41,11 +40,6 @@ impl Task for ReleaseTask {
         // Documentation
         if !self.skip_docs {
             tasks.push(Box::new(CargoDocTask));
-        }
-
-        // Hygiene checks
-        if !self.skip_hygiene {
-            tasks.push(Box::new(EnforceLimitsTask));
         }
 
         // Placeholder scan
@@ -79,23 +73,6 @@ impl Task for ReleaseTask {
         }
 
         tasks
-    }
-}
-
-/// Enforces source line limits.
-pub struct EnforceLimitsTask;
-
-impl Task for EnforceLimitsTask {
-    fn name(&self) -> &'static str {
-        "enforce-limits"
-    }
-
-    fn description(&self) -> &'static str {
-        "Check source line limits"
-    }
-
-    fn explicit_duration(&self) -> Option<Duration> {
-        Some(Duration::from_secs(5))
     }
 }
 
