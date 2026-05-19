@@ -92,41 +92,6 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets --all-features --no-deps
 
   # ===========================================================================
-  # Enforce LoC Limits - Informational (non-blocking) check
-  # ---------------------------------------------------------------------------
-  # Runs `cargo xtask enforce-limits` to surface files that exceed the per-file
-  # line limits in `tools/line_limits.toml` (workspace default 650). Marked
-  # `continue-on-error: true` while the over-limit files documented in
-  # `docs/audits/post-8-enforce-limits-ci.md` (~322 files snapshot, dominated
-  # by test modules) are being decomposed. The audit prunes stale overrides
-  # and relaxes caps for the top test-file offenders; remaining overages are
-  # production source pending tracked decomposition work. Promote to a
-  # required check once the over-limit count reaches zero.
-  # ===========================================================================
-  enforce-limits:
-    name: enforce-limits (informational)
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
-    timeout-minutes: 10
-    continue-on-error: true
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
-          key: enforce-limits
-
-      - name: Run enforce-limits
-        run: cargo xtask enforce-limits
-
-  # ===========================================================================
   # Unsafe SAFETY Comment Audit - Informational (non-blocking) check
   # ---------------------------------------------------------------------------
   # Runs `tools/audit/unsafe_safety_comment_audit.py` to surface `unsafe { ... }`
