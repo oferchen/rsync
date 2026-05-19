@@ -648,12 +648,7 @@ mod tests {
 
     #[test]
     fn parse_release_skip_flags() {
-        let cli = Cli::parse_from([
-            "cargo-xtask",
-            "release",
-            "--skip-docs",
-            "--skip-upload",
-        ]);
+        let cli = Cli::parse_from(["cargo-xtask", "release", "--skip-docs", "--skip-upload"]);
         match cli.command {
             Command::Release(args) => {
                 assert!(args.skip_docs);
