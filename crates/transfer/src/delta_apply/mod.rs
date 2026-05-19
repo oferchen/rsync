@@ -6,9 +6,9 @@
 //!
 //! # Submodules
 //!
-//! - [`applicator`] - Core delta application logic (`DeltaApplicator`, config, result types)
-//! - [`checksum`] - Checksum verification with enum dispatch for algorithm selection
-//! - [`sparse`] - Sparse file write state tracking for hole optimization
+//! - `applicator` - Core delta application logic (`DeltaApplicator`, config, result types)
+//! - `checksum` - Checksum verification with enum dispatch for algorithm selection
+//! - `sparse` - Sparse file write state tracking for hole optimization
 //!
 //! # DEBUG_DELTASUM Tracing Levels
 //!

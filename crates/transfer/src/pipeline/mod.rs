@@ -60,21 +60,15 @@
 //! This is configured via [`PipelineConfig::ack_batch_size`].
 
 pub mod async_signature;
-/// Pipeline dispatch types (`FileList`, `FileJob`) for the async transfer architecture.
 pub mod job;
-/// Channel messages for the decoupled network-to-disk receiver architecture.
 pub mod messages;
 mod pending;
-/// `PipelinedReceiver` mediator between network and disk threads.
 pub mod receiver;
-/// Lock-free single-producer / single-consumer channel for the network-to-disk path.
 pub mod spsc;
 mod state;
 
-/// Async file job producer for the tokio-based transfer pipeline.
 #[cfg(feature = "async")]
 pub mod async_dispatch;
-/// Async pipeline orchestrator for tokio-based file transfers.
 #[cfg(feature = "async")]
 pub mod async_pipeline;
 

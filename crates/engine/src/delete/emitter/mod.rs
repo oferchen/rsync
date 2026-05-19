@@ -15,17 +15,17 @@
 //! - DDP-C3 (#2261) - [`EmitterErrorPolicy`] mirroring upstream's
 //!   continue-vs-abort behaviour: non-fatal errors set the `io_error`
 //!   flag (upstream `IOERR_GENERAL`) and the drain keeps going; fatal
-//!   classifications abort and surface an [`io::Error`] mapped to
+//!   classifications abort and surface an [`std::io::Error`] mapped to
 //!   `RERR_PARTIAL` (23) / `RERR_VANISHED` (24).
 //! - DDP-C4 (#2262) - unit tests for synthetic plan sequences.
 //!
 //! # Submodules
 //!
-//! - [`fs`] - [`DeleteFs`] trait plus the production [`RealDeleteFs`]
+//! - `fs` - [`DeleteFs`] trait plus the production [`RealDeleteFs`]
 //!   and the [`RecordingDeleteFs`] test fake.
-//! - [`policy`] - [`EmitterErrorPolicy`] and the exit-code constants
+//! - `policy` - [`EmitterErrorPolicy`] and the exit-code constants
 //!   [`EMITTER_PARTIAL_EXIT_CODE`] / [`EMITTER_VANISHED_EXIT_CODE`].
-//! - [`cohort`] - [`CohortDeleteRecord`] surfaced to callers that wire
+//! - `cohort` - [`CohortDeleteRecord`] surfaced to callers that wire
 //!   a hardlink cohort snapshot.
 //!
 //! # Upstream reference
@@ -237,7 +237,7 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// # Errors
     ///
     /// Surfaces an [`io::Error`] only on a fatal classification (see
-    /// [`Self::is_fatal_error`]) or when
+    /// `Self::is_fatal_error`) or when
     /// [`EmitterErrorPolicy::continue_on_error`] is `false` and a
     /// non-fatal failure occurs. Non-fatal failures under the default
     /// policy set [`Self::io_error`] and the drain continues, matching

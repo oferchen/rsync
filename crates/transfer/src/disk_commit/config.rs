@@ -66,7 +66,7 @@ pub struct DiskCommitConfig {
     ///
     /// Controls how many `FileMessage` items can be buffered between the
     /// network thread and the disk thread. Clamped to
-    /// [`MIN_CHANNEL_CAPACITY`]..=[`MAX_CHANNEL_CAPACITY`] at runtime.
+    /// `MIN_CHANNEL_CAPACITY..=MAX_CHANNEL_CAPACITY` at runtime.
     ///
     /// Defaults to [`DEFAULT_CHANNEL_CAPACITY`] (128).
     pub channel_capacity: usize,
@@ -117,8 +117,8 @@ impl Default for DiskCommitConfig {
 impl DiskCommitConfig {
     /// Returns the effective channel capacity, clamped to valid bounds.
     ///
-    /// Values below [`MIN_CHANNEL_CAPACITY`] are raised to the minimum;
-    /// values above [`MAX_CHANNEL_CAPACITY`] are lowered to the maximum.
+    /// Values below `MIN_CHANNEL_CAPACITY` are raised to the minimum;
+    /// values above `MAX_CHANNEL_CAPACITY` are lowered to the maximum.
     #[must_use]
     pub fn effective_channel_capacity(&self) -> usize {
         self.channel_capacity

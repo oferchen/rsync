@@ -42,7 +42,7 @@ pub trait CompatFlagsExchanger {
 
     /// Builds compatibility flags from the client's `-e` capability string.
     ///
-    /// Uses the table-driven mapping in [`super::capability::CAPABILITY_MAPPINGS`]
+    /// Uses the table-driven mapping in `super::capability::CAPABILITY_MAPPINGS`
     /// to convert capability characters into `CompatibilityFlags`.
     ///
     /// # Upstream reference

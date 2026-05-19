@@ -69,7 +69,7 @@ pub(crate) fn flush_with_count<W: Write>(writer: &mut W) -> io::Result<()> {
 /// Snapshot of the global generator flush counter.
 ///
 /// Returns the cumulative number of `writer.flush()` calls recorded by
-/// [`flush_with_count`]. Used by the generator finalize path to emit an
+/// `flush_with_count`. Used by the generator finalize path to emit an
 /// end-of-transfer diagnostic line and by unit tests that assert the counter
 /// monotonically grows.
 #[must_use]

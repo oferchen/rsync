@@ -13,7 +13,7 @@ use super::server::ServerWriter;
 
 /// Trait for writers that can send `MSG_INFO` multiplexed messages.
 ///
-/// Writers that support multiplexed output (like [`ServerWriter`] and
+/// Writers that support multiplexed output (like `ServerWriter` and
 /// [`CountingWriter`]) implement this trait to forward `MSG_INFO` payloads
 /// through the multiplex layer; writers that do not support it use the
 /// default no-op.

@@ -128,21 +128,13 @@
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub mod async_io;
 
-/// Concurrent delta computation pipeline for parallel file processing.
 pub mod concurrent_delta;
-/// Parallel-deterministic delete pipeline data structures and emitter.
 pub mod delete;
-/// Block-matching helpers for the delta-transfer pipeline.
 pub mod delta;
-/// Common error types for the engine crate.
 pub mod error;
-/// Hardlink detection and resolution matching upstream `hlink.c`.
 pub mod hardlink;
-/// Deterministic local filesystem copy planner and executor.
 pub mod local_copy;
-/// Internal utilities shared across engine submodules.
 pub mod util;
-/// Directory traversal abstractions for rsync file list generation.
 pub mod walk;
 
 #[doc(hidden)]

@@ -128,7 +128,7 @@ const fn iconv_capability_compiled_in() -> bool {
     cfg!(feature = "iconv")
 }
 
-/// Builds the `-e.xxx` capability string from [`CAPABILITY_MAPPINGS`].
+/// Builds the `-e.xxx` capability string from the `CAPABILITY_MAPPINGS` table.
 ///
 /// This is the single source of truth for which capability characters we
 /// advertise. Both SSH (`invocation.rs`) and daemon (`daemon_transfer.rs`)

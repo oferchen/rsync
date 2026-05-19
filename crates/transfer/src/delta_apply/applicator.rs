@@ -30,7 +30,7 @@ type BasisMapStrategy = BufferedMap;
 /// Kind of writer paired with the [`DeltaApplicator`].
 ///
 /// Drives the basis-file mapping policy: when the writer is io_uring-backed,
-/// the basis file must be opened via [`BufferedMap`] (a sliding-window
+/// the basis file must be opened via [`crate::map_file::BufferedMap`] (a sliding-window
 /// `pread(2)` reader) rather than `mmap(2)`. Submitting an `mmap`-backed
 /// pointer to an `io_uring` SQE has two failure modes:
 ///
@@ -57,7 +57,7 @@ pub enum BasisWriterKind {
     Standard,
     /// io_uring-backed writer (e.g. `IoUringWriter` or `IoUringDiskBatch`).
     ///
-    /// Forces the basis file onto [`BufferedMap`] regardless of size to keep
+    /// Forces the basis file onto [`crate::map_file::BufferedMap`] regardless of size to keep
     /// `mmap`-backed pointers out of any io_uring submission queue entry.
     IoUring,
 }

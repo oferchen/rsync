@@ -13,11 +13,11 @@
 //!
 //! # Submodules
 //!
-//! - [`capability`] - Capability string building and parsing (`-e.xxx`)
-//! - [`compat`] - Compatibility flags exchange
-//! - [`negotiator`] - Trait abstractions and default implementation
-//! - [`restrictions`] - Protocol version feature restrictions (compat.c:641-709)
-//! - [`types`] - Configuration and result types
+//! - `capability` - Capability string building and parsing (`-e.xxx`)
+//! - `compat` - Compatibility flags exchange
+//! - `negotiator` - Trait abstractions and default implementation
+//! - `restrictions` - Protocol version feature restrictions (compat.c:641-709)
+//! - `types` - Configuration and result types
 
 mod capability;
 mod compat;
