@@ -102,22 +102,21 @@ pub(super) fn try_clone(
 ) -> Result<bool, LocalCopyError> {
     let file_size = metadata.len();
 
-    let cloned =
-        match context
-            .options()
-            .platform_copy()
-            .copy_file(source, destination, file_size)
-        {
-            Ok(result) if result.is_zero_copy() => true,
-            Ok(_) => {
-                let _ = std::fs::remove_file(destination);
-                false
-            }
-            Err(_) => {
-                let _ = std::fs::remove_file(destination);
-                false
-            }
-        };
+    let cloned = match context
+        .options()
+        .platform_copy()
+        .copy_file(source, destination, file_size)
+    {
+        Ok(result) if result.is_zero_copy() => true,
+        Ok(_) => {
+            let _ = std::fs::remove_file(destination);
+            false
+        }
+        Err(_) => {
+            let _ = std::fs::remove_file(destination);
+            false
+        }
+    };
     if !cloned {
         // clonefile failed (cross-device, non-APFS, etc.) - caller falls
         // through to normal copy path.
