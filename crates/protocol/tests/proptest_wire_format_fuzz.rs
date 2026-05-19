@@ -754,8 +754,13 @@ mod delta_arbitrary_input {
         }
 
         /// Token block match roundtrip.
+        ///
+        /// The wire token is `-(block_index + 1)` as i32, so the maximum legal
+        /// block index is `i32::MAX - 1`. A `block_index` of `i32::MAX` would
+        /// compute `-(i32::MAX + 1)` and trip the debug overflow check in
+        /// `write_token_block_match`.
         #[test]
-        fn token_block_match_roundtrip(block_index in 0u32..=0x7FFF_FFFFu32) {
+        fn token_block_match_roundtrip(block_index in 0u32..=0x7FFF_FFFEu32) {
             let mut buf = Vec::new();
             write_token_block_match(&mut buf, block_index).unwrap();
 

@@ -30,12 +30,16 @@ fn arb_literal(max_len: usize) -> impl Strategy<Value = DeltaOp> {
     prop::collection::vec(any::<u8>(), 1..=max_len).prop_map(DeltaOp::Literal)
 }
 
-/// Generates an arbitrary `DeltaOp::Copy` with block_index in varint-safe range.
+/// Generates an arbitrary `DeltaOp::Copy` with block_index in token-safe range.
 ///
-/// The internal format encodes block_index as a varint (i32), so we cap at
-/// `i32::MAX` to stay in the representable range.
+/// `mixed_token_stream_roundtrip` runs this through `write_token_stream`, which
+/// encodes a block match as `-(block_index + 1)` (see
+/// `wire::delta::token::write_token_block_match`). A `block_index` of
+/// `i32::MAX` would compute `-(i32::MAX + 1)` and trip the debug overflow
+/// check, so cap at `i32::MAX - 1`. `length` is the internal-format varint
+/// payload and may use the full non-negative i32 range.
 fn arb_copy() -> impl Strategy<Value = DeltaOp> {
-    (0u32..=0x7FFF_FFFFu32, 1u32..=0x7FFF_FFFFu32).prop_map(|(block_index, length)| DeltaOp::Copy {
+    (0u32..=0x7FFF_FFFEu32, 1u32..=0x7FFF_FFFFu32).prop_map(|(block_index, length)| DeltaOp::Copy {
         block_index,
         length,
     })
