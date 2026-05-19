@@ -1,7 +1,8 @@
 use super::*;
 use crate::branding::Brand;
 use crate::version::report::{
-    default_checksum_algorithms, default_compress_algorithms, default_daemon_auth_algorithms,
+    compiled_build_features, default_checksum_algorithms, default_compress_algorithms,
+    default_daemon_auth_algorithms,
 };
 use fast_io::platform_io_capabilities;
 use libc::{ino_t, off_t};
@@ -75,6 +76,19 @@ fn version_info_report_renders_default_report() {
     assert!(actual.contains(&format!(
         "Daemon auth list:\n    {daemon_auth_algorithms}\n"
     )));
+
+    let build_features_list = compiled_build_features();
+    if build_features_list.is_empty() {
+        assert!(actual.contains("Build features:\n    none\n"));
+    } else {
+        let build_features = build_features_list
+            .iter()
+            .map(|feat| feat.as_ref())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(actual.contains(&format!("Build features:\n    {build_features}\n")));
+    }
+
     let platform_caps = platform_io_capabilities();
     if !platform_caps.is_empty() {
         assert!(actual.contains("Platform I/O:"));
