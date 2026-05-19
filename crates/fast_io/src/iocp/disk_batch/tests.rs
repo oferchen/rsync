@@ -406,7 +406,8 @@ fn aligned_write_path_increments_bounce_counter() {
 
     // Drive a submission through the aligned path directly so we can
     // observe the counter without depending on filesystem support.
-    let written = super::writer::submit_write_batch(
+    let mut written = 0usize;
+    super::writer::submit_write_batch(
         &batch.port,
         batch.current_file.as_ref().unwrap().overlapped_handle,
         &vec![0x42u8; 4096],
@@ -414,6 +415,7 @@ fn aligned_write_path_increments_bounce_counter() {
         4096,
         1,
         true,
+        &mut written,
     )
     .unwrap();
     assert_eq!(written, 4096);

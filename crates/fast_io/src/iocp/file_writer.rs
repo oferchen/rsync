@@ -10,9 +10,11 @@ use std::path::Path;
 use windows_sys::Win32::Foundation::{HANDLE, TRUE};
 use windows_sys::Win32::Storage::FileSystem::{
     CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED, FILE_GENERIC_WRITE,
-    FILE_SHARE_READ, FlushFileBuffers, OPEN_EXISTING, SetEndOfFile, SetFilePointerEx, WriteFile,
+    FILE_SHARE_READ, FlushFileBuffers, OPEN_EXISTING, SetEndOfFile,
+    SetFileCompletionNotificationModes, SetFilePointerEx, WriteFile,
 };
 use windows_sys::Win32::System::IO::GetQueuedCompletionStatus;
+use windows_sys::Win32::System::WindowsProgramming::FILE_SKIP_COMPLETION_PORT_ON_SUCCESS;
 
 use super::completion_port::CompletionPort;
 use super::config::IocpConfig;
@@ -96,6 +98,23 @@ impl IocpWriter {
 
         let port = CompletionPort::new(1)?;
         port.associate(handle, 0)?;
+
+        // Suppress completion-port packets for synchronous successes. Without
+        // this, every `WriteFile` that completes inline still queues a
+        // completion that the next overlapped submission would dequeue out
+        // of order, freeing the previous op's pinned buffer while the kernel
+        // is still draining bytes from it. The skip flag is supported on
+        // Vista+; failures here are non-fatal because the writer also handles
+        // sync completions explicitly below, so we ignore the return value
+        // rather than block downlevel kernels.
+        //
+        // SAFETY: `handle` is a freshly opened overlapped file handle owned
+        // by this writer; the call only mutates the kernel's notification
+        // flag for that handle and does not retain the pointer.
+        #[allow(unsafe_code)]
+        unsafe {
+            SetFileCompletionNotificationModes(handle, FILE_SKIP_COMPLETION_PORT_ON_SUCCESS as u8);
+        }
 
         Ok(Self {
             handle,
