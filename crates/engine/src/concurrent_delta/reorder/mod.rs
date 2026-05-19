@@ -13,8 +13,8 @@
 //! many subsequent items.
 //!
 //! Optionally, a caller can compose an
-//! [`AdaptiveCapacityPolicy`](super::adaptive::AdaptiveCapacityPolicy) into
-//! the buffer via [`ReorderBuffer::with_adaptive_policy`]. The buffer then
+//! [`AdaptiveCapacityPolicy`] into the buffer via
+//! [`ReorderBuffer::with_adaptive_policy`]. The buffer then
 //! grows under sustained pressure and shrinks back toward the policy's
 //! minimum once the gap closes, all while preserving the same public API.
 //!
@@ -32,7 +32,6 @@ use std::time::{Duration, Instant};
 
 use super::adaptive::{AdaptiveCapacityPolicy, AdaptiveState, ReorderStats};
 
-/// Bucketed histograms for reorder-buffer diagnostics.
 pub mod histogram;
 
 pub use histogram::HistogramStats;
@@ -267,7 +266,7 @@ impl<T> ReorderBuffer<T> {
     }
 
     /// Creates a reorder buffer governed by an
-    /// [`AdaptiveCapacityPolicy`](super::adaptive::AdaptiveCapacityPolicy).
+    /// [`AdaptiveCapacityPolicy`].
     ///
     /// The buffer starts at `policy.min` slots and resizes between `min` and
     /// `max` based on observed pressure. See [`AdaptiveCapacityPolicy`] for

@@ -1,6 +1,7 @@
 //! Bounded work queue for the concurrent delta pipeline.
 //!
-//! Prevents OOM by limiting the number of in-flight [`DeltaWork`] items.
+//! Prevents OOM by limiting the number of in-flight
+//! [`DeltaWork`](super::DeltaWork) items.
 //! The producer side blocks when the queue is full, applying backpressure
 //! to the generator/receiver that feeds work items. The consumer side
 //! drains items in parallel via [`WorkQueueReceiver::drain_parallel`],
@@ -11,8 +12,9 @@
 //! # SPMC (Single-Producer, Multiple-Consumer) Design
 //!
 //! This module assumes a Single-Producer Multiple-Consumer pattern. A single
-//! producer thread (the generator or receiver) feeds [`DeltaWork`] items into
-//! the queue, and multiple rayon worker threads consume them in parallel.
+//! producer thread (the generator or receiver) feeds
+//! [`DeltaWork`](super::DeltaWork) items into the queue, and multiple rayon
+//! worker threads consume them in parallel.
 //!
 //! This is SPMC rather than MPMC because the rsync wire protocol is inherently
 //! single-threaded on the receiving side - one multiplexed stream delivers file
@@ -99,7 +101,6 @@ mod bounded;
 mod capacity;
 mod drain;
 mod iter;
-/// AIMD adaptive-concurrency limiter for the work queue.
 pub mod limiter;
 #[cfg(feature = "multi-producer")]
 mod multi_producer;
