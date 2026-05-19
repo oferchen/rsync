@@ -16,13 +16,12 @@ use protocol::codec::{
 use protocol::stats::DeleteStats;
 
 use super::super::delta::{
-    compute_file_checksum, create_token_encoder, script_to_wire_delta,
-    stream_whole_file_transfer, write_delta_with_compression,
+    compute_file_checksum, create_token_encoder, script_to_wire_delta, stream_whole_file_transfer,
+    write_delta_with_compression,
 };
 use super::super::item_flags::ItemFlags;
 use super::super::{
-    GeneratorContext, SegmentScheduler, TransferLoopResult, flush_with_count,
-    is_early_close_error,
+    GeneratorContext, SegmentScheduler, TransferLoopResult, flush_with_count, is_early_close_error,
 };
 use crate::delta_config::DeltaGeneratorConfig;
 use crate::receiver::SumHead;
