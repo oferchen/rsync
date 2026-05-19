@@ -1,6 +1,6 @@
 use crate::error::{TaskError, TaskResult};
 use std::fs;
-use std::io::{self, BufRead, Read};
+use std::io::{self, Read};
 use std::path::Path;
 
 /// Heuristically determines whether the path references a binary file.
@@ -46,25 +46,6 @@ pub fn is_probably_binary(path: &Path) -> TaskResult<bool> {
     Ok(false)
 }
 
-/// Counts the number of lines in the provided UTF-8 text file.
-pub fn count_file_lines(path: &Path) -> TaskResult<usize> {
-    let file = fs::File::open(path)?;
-    let mut reader = io::BufReader::new(file);
-    let mut buffer = String::new();
-    let mut count = 0usize;
-
-    loop {
-        buffer.clear();
-        let read = reader.read_line(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        count += 1;
-    }
-
-    Ok(count)
-}
-
 /// Reads a file to string with contextual error message including the file path.
 pub fn read_file_with_context(path: &Path) -> TaskResult<String> {
     fs::read_to_string(path).map_err(|error| {
@@ -87,7 +68,7 @@ pub fn resolve_workspace_path(workspace: &Path, path: impl AsRef<Path>) -> std::
 
 #[cfg(test)]
 mod tests {
-    use super::{count_file_lines, is_probably_binary};
+    use super::is_probably_binary;
     use std::fs;
     use std::io::Write;
     use tempfile::tempdir;
@@ -105,13 +86,5 @@ mod tests {
             .expect("write binary");
         drop(file);
         assert!(is_probably_binary(&binary_path).expect("check succeeds"));
-    }
-
-    #[test]
-    fn count_file_lines_handles_various_lengths() {
-        let dir = tempdir().expect("create temp dir");
-        let file_path = dir.path().join("source.rs");
-        fs::write(&file_path, "line one\nline two\nline three").expect("write file");
-        assert_eq!(count_file_lines(&file_path).expect("count succeeds"), 3);
     }
 }
