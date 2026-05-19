@@ -698,3 +698,250 @@ fn stats_zero_when_spill_disabled() {
     producer.join().unwrap();
     assert_eq!(consumer.stats().spill_events, 0);
 }
+
+// ---- force_insert coverage: drops, duplicates, payload integrity, ----
+// ---- monotonicity, and bare-loop-vs-spillable path isolation.       ----
+//
+// MEMORY.md flagged the bare-loop `force_insert` as a "smell" because the
+// fallback breaks the capacity bound without a test that proves the
+// downstream invariants survive it. The metrics-counter regression tests
+// above already prove the counter moves; the tests below prove that the
+// data stream itself does not silently drop, duplicate, or corrupt items
+// when the fallback fires, and that the lock-free `stats` counter behaves
+// monotonically across a sustained backpressure window.
+
+/// Drives a much larger backpressure workload (200 items, ring of 4) and
+/// asserts (a) every submitted sequence is delivered exactly once and
+/// (b) every NDX value survives the force_insert path unchanged. A drop
+/// would shrink the delivered set; a duplicate would inflate it. Either
+/// would surface here as a concrete bug rather than the "no test, no
+/// metric" smell logged in MEMORY.md.
+#[test]
+fn force_insert_no_drops_no_duplicates_under_sustained_backpressure() {
+    use std::collections::BTreeSet;
+
+    const COUNT: u32 = 200;
+    const RING: usize = 4;
+
+    let (tx, rx) = work_queue::bounded_with_capacity(COUNT as usize);
+    let producer = std::thread::spawn(move || {
+        // Submit every sequence > 0 first so the ring saturates while
+        // `next_expected = 0` is still missing; then release seq 0 last.
+        // Use NDX = sequence + 1000 so a silent NDX swap would be loud.
+        for seq in 1..COUNT {
+            let work = DeltaWork::whole_file(seq + 1000, PathBuf::from("/dst"), 64)
+                .with_sequence(u64::from(seq));
+            tx.send(work).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        tx.send(DeltaWork::whole_file(1000u32, PathBuf::from("/dst"), 64).with_sequence(0))
+            .unwrap();
+    });
+
+    let consumer = DeltaConsumer::spawn(rx, RING);
+    let results: Vec<DeltaResult> = consumer.iter().collect();
+    producer.join().unwrap();
+
+    // (1) No drops, no duplicates: exact count of deliveries.
+    assert_eq!(
+        results.len(),
+        COUNT as usize,
+        "force_insert must not drop or duplicate items; got {} expected {}",
+        results.len(),
+        COUNT,
+    );
+
+    // (2) Each sequence 0..COUNT appears exactly once.
+    let mut seen: BTreeSet<u64> = BTreeSet::new();
+    for r in &results {
+        assert!(
+            seen.insert(r.sequence()),
+            "duplicate sequence {} after force_insert fallback",
+            r.sequence(),
+        );
+    }
+    for seq in 0..u64::from(COUNT) {
+        assert!(
+            seen.contains(&seq),
+            "missing sequence {seq} after force_insert fallback",
+        );
+    }
+
+    // (3) NDX-to-sequence correspondence is preserved: ndx == seq + 1000.
+    // This catches a swap or partial overwrite inside the ring slot.
+    for r in &results {
+        assert_eq!(
+            u64::from(r.ndx().get()),
+            r.sequence() + 1000,
+            "NDX/sequence pairing corrupted: ndx={} seq={}",
+            r.ndx().get(),
+            r.sequence(),
+        );
+    }
+
+    // (4) The fallback genuinely fired and we are on the bare-loop path
+    // (no spill backend wired), so this isolates the smell.
+    let stats = consumer.stats();
+    assert_eq!(stats.spill_events, 0, "bare loop must not spill");
+    assert!(
+        stats.force_inserts > 0,
+        "expected force_inserts > 0 with ring={RING} vs {COUNT} items, got {stats:?}",
+    );
+    consumer.join().unwrap();
+}
+
+/// Drives a delta-shaped workload through the force_insert fallback and
+/// asserts every payload field round-trips unchanged. The original smell
+/// is "ordering broken under extreme backpressure"; a silent overwrite of
+/// the wrong slot during ring growth would also corrupt the literal/
+/// matched/bytes_written triple. Submitting distinct payload values per
+/// sequence makes that corruption observable.
+#[test]
+fn force_insert_preserves_payload_fields() {
+    const COUNT: u32 = 24;
+    let (tx, rx) = work_queue::bounded_with_capacity(COUNT as usize);
+
+    let producer = std::thread::spawn(move || {
+        // Encode `seq` into every field so any cross-slot bleed shows up.
+        for seq in 1..COUNT {
+            let target = u64::from(seq) * 64;
+            let work = DeltaWork::whole_file(seq, PathBuf::from("/dst"), target)
+                .with_sequence(u64::from(seq));
+            tx.send(work).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        tx.send(DeltaWork::whole_file(0u32, PathBuf::from("/dst"), 0).with_sequence(0))
+            .unwrap();
+    });
+
+    let consumer = DeltaConsumer::spawn(rx, 2);
+    let results: Vec<DeltaResult> = consumer.iter().collect();
+    producer.join().unwrap();
+
+    assert_eq!(results.len(), COUNT as usize);
+    for (i, r) in results.iter().enumerate() {
+        let seq = i as u64;
+        assert_eq!(r.sequence(), seq, "sequence at position {i}");
+        assert_eq!(u64::from(r.ndx().get()), seq, "ndx at seq {seq}");
+        let expected = seq * 64;
+        assert_eq!(r.bytes_written(), expected, "bytes_written at seq {seq}");
+        assert_eq!(r.literal_bytes(), expected, "literal_bytes at seq {seq}");
+        assert_eq!(r.matched_bytes(), 0, "matched_bytes at seq {seq}");
+        assert!(r.is_success(), "status at seq {seq}");
+    }
+
+    let stats = consumer.stats();
+    assert!(
+        stats.force_inserts > 0,
+        "fallback must fire with ring=2 vs {COUNT} items, got {stats:?}",
+    );
+    consumer.join().unwrap();
+}
+
+/// Polls [`DeltaConsumer::stats`] while pulling results one at a time and
+/// asserts the cumulative `force_inserts` counter never decreases across
+/// the run. Monotonicity is the contract operators depend on when they
+/// graph the counter; a saturating-add bug, a reset on reload, or a race
+/// on the spill path's atomic could silently violate it.
+#[test]
+fn force_insert_counter_is_monotonic_during_drain() {
+    const COUNT: u32 = 64;
+    let (tx, rx) = work_queue::bounded_with_capacity(COUNT as usize);
+
+    let producer = std::thread::spawn(move || {
+        for seq in 1..COUNT {
+            let work =
+                DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64).with_sequence(u64::from(seq));
+            tx.send(work).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        tx.send(DeltaWork::whole_file(0u32, PathBuf::from("/dst"), 64).with_sequence(0))
+            .unwrap();
+    });
+
+    let consumer = DeltaConsumer::spawn(rx, 2);
+
+    let mut prev = consumer.stats().force_inserts;
+    let mut peak = prev;
+    let mut received = 0u32;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while received < COUNT {
+        match consumer.try_recv() {
+            Some(_) => {
+                received += 1;
+                let cur = consumer.stats().force_inserts;
+                assert!(
+                    cur >= prev,
+                    "force_inserts went backwards: {prev} -> {cur} at received={received}",
+                );
+                prev = cur;
+                if cur > peak {
+                    peak = cur;
+                }
+            }
+            None => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timeout draining (received={received}, prev={prev})",
+                );
+                std::thread::yield_now();
+            }
+        }
+    }
+    producer.join().unwrap();
+
+    // Final stats must agree with the peak we observed and with the
+    // Mutex-guarded metrics snapshot. A regression that reset the
+    // counter on shutdown would trip the first assert; a spill/bare
+    // counter desync would trip the second.
+    let final_stats = consumer.stats();
+    let final_metrics = consumer.metrics();
+    assert!(
+        final_stats.force_inserts >= peak,
+        "final force_inserts {} below observed peak {peak}",
+        final_stats.force_inserts,
+    );
+    assert_eq!(
+        final_stats.force_inserts, final_metrics.force_insert_count,
+        "stats counter must agree with metrics snapshot at end of run",
+    );
+    consumer.join().unwrap();
+}
+
+/// Pins the bare-loop path: spawning without a spill config exercises
+/// `run_bare_loop` in `consumer/loops.rs`, distinct from
+/// `run_spillable_loop`. A future refactor that accidentally routes the
+/// bare path through the spillable backend (or vice versa) would surface
+/// here as a non-zero `spill_events` count when no threshold was set.
+#[test]
+fn force_insert_isolated_to_bare_loop_path() {
+    const COUNT: u32 = 32;
+    let (tx, rx) = work_queue::bounded_with_capacity(COUNT as usize);
+
+    let producer = std::thread::spawn(move || {
+        for seq in 1..COUNT {
+            let work =
+                DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64).with_sequence(u64::from(seq));
+            tx.send(work).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        tx.send(DeltaWork::whole_file(0u32, PathBuf::from("/dst"), 64).with_sequence(0))
+            .unwrap();
+    });
+
+    let consumer = DeltaConsumer::spawn(rx, 2);
+    let results: Vec<DeltaResult> = consumer.iter().collect();
+    producer.join().unwrap();
+
+    assert_eq!(results.len(), COUNT as usize);
+    let stats = consumer.stats();
+    assert!(
+        stats.force_inserts > 0,
+        "expected bare-loop fallback to fire, got {stats:?}",
+    );
+    assert_eq!(
+        stats.spill_events, 0,
+        "bare-loop path must not engage spill machinery, got {stats:?}",
+    );
+    consumer.join().unwrap();
+}
