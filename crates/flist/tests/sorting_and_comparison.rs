@@ -93,11 +93,12 @@ fn directories_and_files_sorted_together() {
 /// Standard lexicographic sorting is case-sensitive: uppercase letters
 /// come before lowercase in ASCII.
 ///
-/// This test is skipped on macOS because the default filesystem (APFS/HFS+)
-/// is case-insensitive, meaning files like "abc", "ABC", "Abc" are treated
-/// as the same file.
+/// This test is skipped on macOS (default APFS/HFS+) and Windows (default
+/// NTFS) because both filesystems are case-insensitive, so files like "abc",
+/// "ABC", "Abc" collapse to a single inode and the four-file fixture cannot
+/// be created.
 #[test]
-#[cfg_attr(target_os = "macos", ignore)]
+#[cfg_attr(any(target_os = "macos", windows), ignore)]
 fn case_sensitive_sorting() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("case_sort");
@@ -761,9 +762,10 @@ fn mixed_alphanumeric_special_sorting() {
 /// Verifies case-sensitive sorting with extensive examples.
 ///
 /// This test expands on the basic case sensitivity test to verify
-/// correct sorting across the full alphabet.
+/// correct sorting across the full alphabet. Skipped on macOS (APFS/HFS+)
+/// and Windows (NTFS) because both default filesystems are case-insensitive.
 #[test]
-#[cfg_attr(target_os = "macos", ignore)]
+#[cfg_attr(any(target_os = "macos", windows), ignore)]
 fn extended_case_sensitive_sorting() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("case_extended");
@@ -801,9 +803,10 @@ fn extended_case_sensitive_sorting() {
 /// Verifies sorting behavior with mixed case and numbers.
 ///
 /// Tests that case-sensitive sorting works correctly when filenames
-/// contain both letters and digits.
+/// contain both letters and digits. Skipped on macOS (APFS/HFS+) and
+/// Windows (NTFS) because both default filesystems are case-insensitive.
 #[test]
-#[cfg_attr(target_os = "macos", ignore)]
+#[cfg_attr(any(target_os = "macos", windows), ignore)]
 fn case_sensitive_with_numbers() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("case_num");
