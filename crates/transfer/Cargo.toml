@@ -106,6 +106,12 @@ vmsplice = ["fast_io/vmsplice"]
 # `docs/design/parallel-receive-delta-application.md`.
 parallel-receive-delta = ["engine/parallel-receive-delta"]
 
+# Per-thread slab pool for buffer returns - forwards to the engine crate.
+# Forwarded so `--all-features` enables it transitively on engine *and* exposes
+# it as a transfer-side cfg gate; cross-crate tests that observe central-pool
+# counters can opt themselves out when the slab is in play.
+thread-slab-pool = ["engine/thread-slab-pool"]
+
 # ============================================================================
 # Protocol Features
 # ============================================================================
