@@ -34,24 +34,35 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
     )
     .expect("write config");
 
-    // We'll connect twice and collect challenges
+    // Use a single daemon with `--max-sessions 2` instead of spawning two
+    // sequential `--once` daemons. Two back-to-back daemon start/teardown
+    // cycles on the same test thread race the listener shutdown on Windows,
+    // and the second connection observes WSAECONNRESET (10054) before the
+    // worker writes the greeting. The single-daemon pattern is what
+    // `run_daemon_honours_max_sessions` already uses successfully on Windows.
+    let (port, held_listener) = allocate_test_port();
+
+    let config = DaemonConfig::builder()
+        .disable_default_paths()
+        .arguments([
+            OsString::from("--port"),
+            OsString::from(port.to_string()),
+            OsString::from("--max-sessions"),
+            OsString::from("2"),
+            OsString::from("--config"),
+            config_path.as_os_str().to_os_string(),
+        ])
+        .build();
+
+    // The daemon needs to bind itself to handle two sequential connections;
+    // release the test's holding listener so the daemon's bind to the same
+    // port succeeds (the held listener was only needed to reserve the port).
+    drop(held_listener);
+    let handle = thread::spawn(move || run_daemon(config));
+
     let mut challenges = Vec::new();
-
     for _ in 0..2 {
-        let (port, held_listener) = allocate_test_port();
-
-        let config = DaemonConfig::builder()
-            .disable_default_paths()
-            .arguments([
-                OsString::from("--port"),
-                OsString::from(port.to_string()),
-                OsString::from("--once"),
-                OsString::from("--config"),
-                config_path.as_os_str().to_os_string(),
-            ])
-            .build();
-
-        let (mut stream, handle) = start_daemon(config, port, held_listener);
+        let mut stream = connect_with_retries(port);
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
 
         // Read greeting
@@ -78,13 +89,14 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
             .to_string();
         challenges.push(challenge);
 
-        // Close connection
+        // Close the per-session connection so the daemon's worker finishes
+        // and the accept loop is free to service the next iteration.
         drop(reader);
         drop(stream);
-
-        // join() blocks until daemon thread finishes processing the connection
-        let _result = handle.join();
     }
+
+    // The daemon exits after serving both sessions (max-sessions = 2).
+    let _result = handle.join().expect("daemon thread");
 
     // Challenges should be different
     assert_eq!(challenges.len(), 2);
