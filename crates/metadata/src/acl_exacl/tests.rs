@@ -1,0 +1,362 @@
+use super::apply::apply_acls_from_cache;
+use super::default_perms::default_perms_for_dir;
+use super::error::is_unsupported_error;
+use super::perms::rsync_perms_to_exacl;
+use super::reconstruct::rsync_acl_to_entries;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use super::reset::clear_default_acl;
+use super::reset::reset_acl_from_mode;
+use super::sync::sync_acls;
+
+use exacl::{AclEntryKind, Perm};
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use exacl::{AclOption, setfacl};
+use protocol::acl::{AclCache, RsyncAcl};
+use std::fs::File;
+use tempfile::tempdir;
+
+#[test]
+fn sync_acls_skips_when_not_following_symlinks() {
+    let dir = tempdir().expect("tempdir");
+    let source = dir.path().join("src");
+    let destination = dir.path().join("dst");
+    File::create(&source).expect("create src");
+    File::create(&destination).expect("create dst");
+
+    // Should return Ok without doing anything
+    let result = sync_acls(&source, &destination, false);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn sync_acls_copies_between_regular_files() {
+    let dir = tempdir().expect("tempdir");
+    let source = dir.path().join("src");
+    let destination = dir.path().join("dst");
+    File::create(&source).expect("create src");
+    File::create(&destination).expect("create dst");
+
+    // Should succeed for files on same filesystem
+    let result = sync_acls(&source, &destination, true);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn sync_acls_works_with_directories() {
+    let dir = tempdir().expect("tempdir");
+    let source = dir.path().join("src_dir");
+    let destination = dir.path().join("dst_dir");
+    std::fs::create_dir(&source).expect("create src_dir");
+    std::fs::create_dir(&destination).expect("create dst_dir");
+
+    let result = sync_acls(&source, &destination, true);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn reset_acl_from_mode_works() {
+    let dir = tempdir().expect("tempdir");
+    let file = dir.path().join("test");
+    File::create(&file).expect("create file");
+
+    let result = reset_acl_from_mode(&file);
+    assert!(result.is_ok());
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[test]
+fn clear_default_acl_works_on_directory() {
+    let dir = tempdir().expect("tempdir");
+    let subdir = dir.path().join("subdir");
+    std::fs::create_dir(&subdir).expect("create subdir");
+
+    let result = clear_default_acl(&subdir);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn is_unsupported_error_detects_common_messages() {
+    // Test various error message patterns
+    let patterns = [
+        "operation not supported",
+        "No such file or directory",
+        "Invalid argument",
+        "No data available",
+    ];
+
+    for pattern in patterns {
+        let err = std::io::Error::other(pattern);
+        assert!(
+            is_unsupported_error(&err),
+            "should detect '{pattern}' as unsupported"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn is_unsupported_error_detects_os_error_codes() {
+    // Test raw OS error codes
+    let codes = [libc::ENOTSUP, libc::ENOENT, libc::EINVAL, libc::EPERM];
+
+    for code in codes {
+        let err = std::io::Error::from_raw_os_error(code);
+        assert!(
+            is_unsupported_error(&err),
+            "should detect OS error code {code} as unsupported"
+        );
+    }
+}
+
+#[test]
+fn rsync_perms_to_exacl_all_bits() {
+    assert_eq!(rsync_perms_to_exacl(0x00), Perm::empty());
+    assert_eq!(rsync_perms_to_exacl(0x01), Perm::EXECUTE);
+    assert_eq!(rsync_perms_to_exacl(0x02), Perm::WRITE);
+    assert_eq!(rsync_perms_to_exacl(0x04), Perm::READ);
+    assert_eq!(
+        rsync_perms_to_exacl(0x07),
+        Perm::READ | Perm::WRITE | Perm::EXECUTE
+    );
+    assert_eq!(rsync_perms_to_exacl(0x05), Perm::READ | Perm::EXECUTE);
+}
+
+#[test]
+fn rsync_acl_to_entries_empty_acl() {
+    let acl = RsyncAcl::new();
+    let entries = rsync_acl_to_entries(&acl);
+    assert!(entries.is_empty());
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[test]
+fn rsync_acl_to_entries_base_entries() {
+    let acl = RsyncAcl::from_mode(0o754);
+    let entries = rsync_acl_to_entries(&acl);
+
+    // user_obj(rwx) + group_obj(r-x) + other_obj(r--)
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0].kind, AclEntryKind::User);
+    assert_eq!(entries[0].name, "");
+    assert_eq!(entries[0].perms, Perm::READ | Perm::WRITE | Perm::EXECUTE);
+    assert_eq!(entries[1].kind, AclEntryKind::Group);
+    assert_eq!(entries[1].name, "");
+    assert_eq!(entries[1].perms, Perm::READ | Perm::EXECUTE);
+    assert_eq!(entries[2].kind, AclEntryKind::Other);
+    assert_eq!(entries[2].name, "");
+    assert_eq!(entries[2].perms, Perm::READ);
+}
+
+#[test]
+fn rsync_acl_to_entries_named_user_and_group() {
+    use protocol::acl::IdAccess;
+
+    let mut acl = RsyncAcl::from_mode(0o755);
+    acl.names.push(IdAccess::user(1000, 0x07));
+    acl.names.push(IdAccess::group(100, 0x05));
+
+    let entries = rsync_acl_to_entries(&acl);
+
+    // Find named entries (skip base entries on Linux/FreeBSD)
+    let named: Vec<_> = entries.iter().filter(|e| !e.name.is_empty()).collect();
+    assert_eq!(named.len(), 2);
+    assert_eq!(named[0].kind, AclEntryKind::User);
+    assert_eq!(named[0].name, "1000");
+    assert_eq!(named[0].perms, Perm::READ | Perm::WRITE | Perm::EXECUTE);
+    assert_eq!(named[1].kind, AclEntryKind::Group);
+    assert_eq!(named[1].name, "100");
+    assert_eq!(named[1].perms, Perm::READ | Perm::EXECUTE);
+}
+
+#[test]
+fn apply_acls_from_cache_skips_symlinks() {
+    let dir = tempdir().expect("tempdir");
+    let file = dir.path().join("test");
+    File::create(&file).expect("create file");
+
+    let cache = AclCache::new();
+    let result = apply_acls_from_cache(&file, &cache, 0, None, false, None);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn apply_acls_from_cache_applies_basic_acl() {
+    let dir = tempdir().expect("tempdir");
+    let file = dir.path().join("test");
+    File::create(&file).expect("create file");
+
+    let mut cache = AclCache::new();
+    let acl = RsyncAcl::from_mode(0o644);
+    let ndx = cache.store_access(acl);
+
+    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn apply_acls_from_cache_empty_acl_resets() {
+    let dir = tempdir().expect("tempdir");
+    let file = dir.path().join("test");
+    File::create(&file).expect("create file");
+
+    let mut cache = AclCache::new();
+    let acl = RsyncAcl::new();
+    let ndx = cache.store_access(acl);
+
+    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+    assert!(result.is_ok());
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[test]
+fn apply_acls_from_cache_directory_with_default() {
+    let dir = tempdir().expect("tempdir");
+    let subdir = dir.path().join("subdir");
+    std::fs::create_dir(&subdir).expect("create subdir");
+
+    let mut cache = AclCache::new();
+    let access = RsyncAcl::from_mode(0o755);
+    let default = RsyncAcl::from_mode(0o755);
+    let access_ndx = cache.store_access(access);
+    let default_ndx = cache.store_default(default);
+
+    let result = apply_acls_from_cache(
+        &subdir,
+        &cache,
+        access_ndx,
+        Some(default_ndx),
+        true,
+        Some(0o755),
+    );
+    assert!(result.is_ok());
+}
+
+#[test]
+fn apply_acls_from_cache_missing_index_is_noop() {
+    let dir = tempdir().expect("tempdir");
+    let file = dir.path().join("test");
+    File::create(&file).expect("create file");
+
+    let cache = AclCache::new();
+    // Index 99 does not exist - should be a no-op, not an error
+    let result = apply_acls_from_cache(&file, &cache, 99, None, true, Some(0o644));
+    assert!(result.is_ok());
+}
+
+#[test]
+fn default_perms_for_dir_no_acl_returns_umask_default() {
+    // No default ACL: upstream returns ACCESSPERMS & ~orig_umask without
+    // emitting `DEBUG_GTE(ACL, 1)`.
+    let dir = tempdir().expect("tempdir");
+    let target = dir.path().join("no_default_acl");
+    std::fs::create_dir(&target).expect("create dir");
+
+    assert_eq!(default_perms_for_dir(&target, 0o022), 0o755);
+    assert_eq!(default_perms_for_dir(&target, 0o077), 0o700);
+    assert_eq!(default_perms_for_dir(&target, 0), 0o777);
+}
+
+#[test]
+fn default_perms_for_dir_missing_dir_returns_umask_default() {
+    // getfacl error path: upstream falls back to umask-derived default
+    // and never emits. Verify the same here.
+    let dir = tempdir().expect("tempdir");
+    let missing = dir.path().join("nonexistent");
+
+    assert_eq!(default_perms_for_dir(&missing, 0o022), 0o755);
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[test]
+fn default_perms_for_dir_emits_when_default_acl_present() {
+    // upstream: acls.c:1131-1134 - DEBUG_GTE(ACL, 1) fires when the
+    // directory's default ACL unpacked into a user_obj entry.
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    let dir = tempdir().expect("tempdir");
+    let target = dir.path().join("with_default_acl");
+    std::fs::create_dir(&target).expect("create dir");
+
+    // Install a default ACL: user::rwx, group::r-x, other::r-x.
+    let default_entries = vec![
+        exacl::AclEntry::allow_user("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+        exacl::AclEntry::allow_group("", Perm::READ | Perm::EXECUTE, None),
+        exacl::AclEntry::allow_other(Perm::READ | Perm::EXECUTE, None),
+    ];
+    if setfacl(&[&target], &default_entries, Some(AclOption::DEFAULT_ACL)).is_err() {
+        // Filesystem doesn't support default ACLs (e.g., tmpfs without acl mount).
+        // Skip the emission assertion; this is the same fallback upstream takes.
+        return;
+    }
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.acl = 1;
+    init(cfg);
+    let _ = drain_events();
+
+    let perms = default_perms_for_dir(&target, 0o022);
+    assert_eq!(perms, 0o755);
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug {
+                flag: DebugFlag::Acl,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+    let expected = format!(
+        "got ACL-based default perms 755 for directory {}",
+        target.display()
+    );
+    assert!(
+        messages.iter().any(|m| m == &expected),
+        "expected emission {expected:?}, got {messages:?}"
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[test]
+fn default_perms_for_dir_no_emission_when_disabled() {
+    // upstream: DEBUG_GTE(ACL, 1) is gated; level 0 suppresses the line
+    // even when the default ACL unpacks successfully.
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    let dir = tempdir().expect("tempdir");
+    let target = dir.path().join("with_default_acl_silent");
+    std::fs::create_dir(&target).expect("create dir");
+
+    let default_entries = vec![
+        exacl::AclEntry::allow_user("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+        exacl::AclEntry::allow_group("", Perm::READ, None),
+        exacl::AclEntry::allow_other(Perm::empty(), None),
+    ];
+    if setfacl(&[&target], &default_entries, Some(AclOption::DEFAULT_ACL)).is_err() {
+        return;
+    }
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.acl = 0;
+    init(cfg);
+    let _ = drain_events();
+
+    let _ = default_perms_for_dir(&target, 0o022);
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug {
+                flag: DebugFlag::Acl,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        messages.is_empty(),
+        "ACL debug must be suppressed at level 0, got {messages:?}"
+    );
+}
