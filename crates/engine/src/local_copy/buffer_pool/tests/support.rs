@@ -22,6 +22,7 @@ impl TrackingAllocator {
         self.alloc_count.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    #[cfg_attr(feature = "thread-slab-pool", allow(dead_code))]
     pub(super) fn dealloc_count(&self) -> usize {
         self.dealloc_count
             .load(std::sync::atomic::Ordering::Relaxed)

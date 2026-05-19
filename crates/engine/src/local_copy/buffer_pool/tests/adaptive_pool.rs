@@ -56,6 +56,14 @@ fn adaptive_pool_grows_under_pressure() {
     drop(held);
 }
 
+// The shrink-on-idle integration test below pre-fills the central pool by
+// relying on the single-slot TLS path (one buffer absorbed by TLS, 63
+// routed to the central queue). With the per-thread slab feature on, the
+// slab swallows up to 8 returns per thread before routing to the central
+// queue, which changes the central-queue occupancy and the hit/miss ratio
+// the assertion is calibrated against. Slab-backend equivalents live in
+// `tests/slab.rs`.
+#[cfg(not(feature = "thread-slab-pool"))]
 #[test]
 fn adaptive_pool_shrinks_when_idle() {
     // Integration test for adaptive pool shrinking through the public API.
