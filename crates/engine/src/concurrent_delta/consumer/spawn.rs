@@ -113,7 +113,7 @@ pub(super) fn spawn_inner(rx: WorkQueueReceiver, mode: ReorderMode) -> DeltaCons
                     run_bare_loop(stream_rx, &result_tx, buf, &metrics_thread);
                 }
                 ReorderBackend::Spillable(buf) => {
-                    run_spillable_loop(stream_rx, &result_tx, buf, &spill_events_thread);
+                    run_spillable_loop(stream_rx, &result_tx, *buf, &spill_events_thread);
                 }
                 ReorderBackend::Failed(err) => {
                     let _ = result_tx.send(DeltaResult::failed(
@@ -145,7 +145,12 @@ enum ReorderBackend {
     /// In-memory ring (including the passthrough flavour).
     Bare(ReorderBuffer<DeltaResult>),
     /// Bounded-memory ring backed by a spill tempfile.
-    Spillable(SpillableReorderBuffer<DeltaResult>),
+    ///
+    /// Boxed so the enum's size is dominated by its smallest viable
+    /// representation instead of the much larger spillable buffer; this
+    /// keeps `clippy::large_enum_variant` quiet without a waiver and
+    /// avoids stack-spilling a wide enum on every match arm.
+    Spillable(Box<SpillableReorderBuffer<DeltaResult>>),
     /// Spillable construction failed; deferred until the thread can publish
     /// the error as a [`DeltaResult::failed`].
     Failed(std::io::Error),
@@ -165,7 +170,7 @@ impl ReorderBackend {
             } => {
                 match build_spillable(capacity, threshold, dir, granularity, memory_pressure_bytes)
                 {
-                    Ok(buf) => Self::Spillable(buf),
+                    Ok(buf) => Self::Spillable(Box::new(buf)),
                     Err(e) => Self::Failed(e),
                 }
             }
