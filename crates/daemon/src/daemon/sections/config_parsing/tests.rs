@@ -11,6 +11,23 @@ mod config_parsing_tests {
         file
     }
 
+    /// Wraps a Unix-style absolute path so it remains absolute on Windows.
+    ///
+    /// Windows treats paths like `/etc/foo` as relative because they lack a
+    /// drive letter, which breaks tests that assert directives roundtrip as
+    /// absolute. Prefixing with a drive on Windows preserves the intent
+    /// without changing behaviour on Unix.
+    fn abs(rest: &str) -> String {
+        #[cfg(unix)]
+        {
+            rest.to_owned()
+        }
+        #[cfg(windows)]
+        {
+            format!("C:{rest}")
+        }
+    }
+
 
     #[test]
     fn resolve_config_relative_path_absolute() {
@@ -1150,10 +1167,12 @@ mod config_parsing_tests {
 
     #[test]
     fn global_bwlimit_stored_in_result() {
-        let file = write_config(
+        let config = format!(
             "bwlimit = 1000\n\
-             [mod]\npath = /tmp\n",
+             [mod]\npath = {}\n",
+            abs("/tmp"),
         );
+        let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
 
         assert!(result.global_bandwidth_limit.is_some());
@@ -1318,9 +1337,11 @@ mod config_parsing_tests {
         let module_path = dir.path().join("data");
         fs::create_dir(&module_path).expect("create dir");
 
+        let excludes = abs("/etc/rsync/excludes.txt");
         let config = format!(
-            "[mod]\npath = {}\nexclude from = /etc/rsync/excludes.txt\n",
-            module_path.display()
+            "[mod]\npath = {}\nexclude from = {}\n",
+            module_path.display(),
+            excludes,
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
@@ -1328,7 +1349,7 @@ mod config_parsing_tests {
         assert_eq!(result.modules.len(), 1);
         assert_eq!(
             result.modules[0].exclude_from,
-            Some(PathBuf::from("/etc/rsync/excludes.txt"))
+            Some(PathBuf::from(excludes))
         );
     }
 
@@ -1338,9 +1359,11 @@ mod config_parsing_tests {
         let module_path = dir.path().join("data");
         fs::create_dir(&module_path).expect("create dir");
 
+        let includes = abs("/etc/rsync/includes.txt");
         let config = format!(
-            "[mod]\npath = {}\ninclude from = /etc/rsync/includes.txt\n",
-            module_path.display()
+            "[mod]\npath = {}\ninclude from = {}\n",
+            module_path.display(),
+            includes,
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
@@ -1348,7 +1371,7 @@ mod config_parsing_tests {
         assert_eq!(result.modules.len(), 1);
         assert_eq!(
             result.modules[0].include_from,
-            Some(PathBuf::from("/etc/rsync/includes.txt"))
+            Some(PathBuf::from(includes))
         );
     }
 
@@ -1398,9 +1421,13 @@ mod config_parsing_tests {
         let module_path = dir.path().join("data");
         fs::create_dir(&module_path).expect("create dir");
 
+        let excludes = abs("/etc/excludes.txt");
+        let includes = abs("/etc/includes.txt");
         let config = format!(
-            "[mod]\npath = {}\nexclude from = /etc/excludes.txt\ninclude from = /etc/includes.txt\n",
-            module_path.display()
+            "[mod]\npath = {}\nexclude from = {}\ninclude from = {}\n",
+            module_path.display(),
+            excludes,
+            includes,
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
@@ -1408,11 +1435,11 @@ mod config_parsing_tests {
         assert_eq!(result.modules.len(), 1);
         assert_eq!(
             result.modules[0].exclude_from,
-            Some(PathBuf::from("/etc/excludes.txt"))
+            Some(PathBuf::from(excludes))
         );
         assert_eq!(
             result.modules[0].include_from,
-            Some(PathBuf::from("/etc/includes.txt"))
+            Some(PathBuf::from(includes))
         );
     }
 
@@ -1484,11 +1511,13 @@ mod config_parsing_tests {
         fs::create_dir(&path1).expect("create dir 1");
         fs::create_dir(&path2).expect("create dir 2");
 
+        let excludes = abs("/etc/mod1_excludes.txt");
         let config = format!(
-            "[mod1]\npath = {}\nexclude from = /etc/mod1_excludes.txt\n\
+            "[mod1]\npath = {}\nexclude from = {}\n\
              [mod2]\npath = {}\n",
             path1.display(),
-            path2.display()
+            excludes,
+            path2.display(),
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
@@ -1496,7 +1525,7 @@ mod config_parsing_tests {
         assert_eq!(result.modules.len(), 2);
         assert_eq!(
             result.modules[0].exclude_from,
-            Some(PathBuf::from("/etc/mod1_excludes.txt"))
+            Some(PathBuf::from(excludes))
         );
         assert!(result.modules[1].exclude_from.is_none());
     }
@@ -1504,7 +1533,10 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_syslog_facility_global_directive() {
-        let file = write_config("syslog facility = local5\n[mod]\npath = /tmp\n");
+        let file = write_config(&format!(
+            "syslog facility = local5\n[mod]\npath = {}\n",
+            abs("/tmp")
+        ));
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (facility, _origin) = result.syslog_facility.expect("should have syslog facility");
         assert_eq!(facility, "local5");
@@ -1512,7 +1544,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_syslog_facility_default_when_absent() {
-        let file = write_config("[mod]\npath = /tmp\n");
+        let file = write_config(&format!("[mod]\npath = {}\n", abs("/tmp")));
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.syslog_facility.is_none());
     }
@@ -1526,9 +1558,10 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_syslog_facility_duplicate_same_value_accepted() {
-        let file = write_config(
-            "syslog facility = daemon\nsyslog facility = daemon\n[mod]\npath = /tmp\n",
-        );
+        let file = write_config(&format!(
+            "syslog facility = daemon\nsyslog facility = daemon\n[mod]\npath = {}\n",
+            abs("/tmp")
+        ));
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (facility, _) = result.syslog_facility.expect("should have facility");
         assert_eq!(facility, "daemon");
@@ -1562,7 +1595,10 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_syslog_tag_global_directive() {
-        let file = write_config("syslog tag = mybackup\n[mod]\npath = /tmp\n");
+        let file = write_config(&format!(
+            "syslog tag = mybackup\n[mod]\npath = {}\n",
+            abs("/tmp")
+        ));
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (tag, _origin) = result.syslog_tag.expect("should have syslog tag");
         assert_eq!(tag, "mybackup");
@@ -1570,7 +1606,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_syslog_tag_default_when_absent() {
-        let file = write_config("[mod]\npath = /tmp\n");
+        let file = write_config(&format!("[mod]\npath = {}\n", abs("/tmp")));
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.syslog_tag.is_none());
     }
@@ -1584,8 +1620,10 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_syslog_tag_duplicate_same_value_accepted() {
-        let file =
-            write_config("syslog tag = rsyncd\nsyslog tag = rsyncd\n[mod]\npath = /tmp\n");
+        let file = write_config(&format!(
+            "syslog tag = rsyncd\nsyslog tag = rsyncd\n[mod]\npath = {}\n",
+            abs("/tmp")
+        ));
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (tag, _) = result.syslog_tag.expect("should have tag");
         assert_eq!(tag, "rsyncd");
@@ -1614,9 +1652,10 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_both_syslog_directives_global() {
-        let file = write_config(
-            "syslog facility = local3\nsyslog tag = backup-daemon\n[mod]\npath = /tmp\n",
-        );
+        let file = write_config(&format!(
+            "syslog facility = local3\nsyslog tag = backup-daemon\n[mod]\npath = {}\n",
+            abs("/tmp")
+        ));
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (facility, _) = result.syslog_facility.expect("should have facility");
         let (tag, _) = result.syslog_tag.expect("should have tag");
@@ -1728,7 +1767,7 @@ mod config_parsing_tests {
 
     #[test]
     fn parse_socket_options_not_set_when_absent() {
-        let file = write_config("[mod]\npath = /tmp\n");
+        let file = write_config(&format!("[mod]\npath = {}\n", abs("/tmp")));
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.socket_options.is_none());
     }
@@ -2027,15 +2066,16 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
+        let log_file_path = abs("/var/log/rsync-mod.log");
         let config = format!(
-            "[mod]\npath = {}\nlog file = /var/log/rsync-mod.log\n",
+            "[mod]\npath = {}\nlog file = {log_file_path}\n",
             path.display()
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).unwrap();
         assert_eq!(
             result.modules[0].log_file,
-            Some(PathBuf::from("/var/log/rsync-mod.log"))
+            Some(PathBuf::from(&log_file_path))
         );
     }
 
