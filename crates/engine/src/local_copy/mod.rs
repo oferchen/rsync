@@ -49,9 +49,7 @@
 //! assert_eq!(summary.files_copied(), 1);
 //! ```
 
-/// Buffer pool for I/O buffer reuse during large file transfers.
 pub mod buffer_pool;
-/// Copy-on-write file cloning with macOS `clonefile()` dual-path selection.
 pub mod clonefile;
 mod compressor;
 mod context;
@@ -66,11 +64,6 @@ mod debug_recv;
 #[cfg(test)]
 mod debug_send;
 mod deferred_sync;
-/// Deletion logic for rsync `--delete` variants.
-///
-/// Provides helpers for `--delete-before`, `--delete-during`, `--delete-after`,
-/// and `--delete-delay` timing modes including `DeletionContext`,
-/// `should_delete_entry`, and `build_keep_set`.
 pub mod deletion;
 mod dir_merge;
 mod error;
@@ -81,16 +74,10 @@ mod metadata_sync;
 mod operands;
 mod options;
 mod overrides;
-/// State machine for 4-priority streaming file list processing pipeline.
-///
-/// Provides the [`PipelineController`](pipelined_state::PipelineController) for
-/// coordinating concurrent file list reception, pipeline filling, entry processing,
-/// and response handling with a priority-driven main loop.
 pub mod pipelined_state;
 mod plan;
 pub(crate) mod prefetch;
 mod skip_compress;
-/// Windows `CopyFileExW` file copying with dual-path runtime selection.
 pub mod win_copy;
 
 pub use buffer_pool::{

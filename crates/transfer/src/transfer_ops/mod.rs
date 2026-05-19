@@ -15,9 +15,9 @@
 //!
 //! # Submodules
 //!
-//! - [`request`] - Sends file transfer requests (NDX + iflags + signature) to the sender.
-//! - [`response`] - Synchronous response processing with direct disk I/O.
-//! - [`streaming`] - Streaming response processing via SPSC channel to a disk commit thread.
+//! - `request` - Sends file transfer requests (NDX + iflags + signature) to the sender.
+//! - `response` - Synchronous response processing with direct disk I/O.
+//! - `streaming` - Streaming response processing via SPSC channel to a disk commit thread.
 //!
 //! # Protocol Flow
 //!

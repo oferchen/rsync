@@ -215,7 +215,7 @@ impl ThroughputTracker {
 
     /// Computes a recommended buffer size based on current throughput.
     ///
-    /// Targets [`TARGET_BUFFER_DURATION_SECS`] worth of data per buffer,
+    /// Targets `TARGET_BUFFER_DURATION_SECS` worth of data per buffer,
     /// clamped between [`MIN_BUFFER_SIZE`] and `max_size`. The result is
     /// rounded up to the next power of two for optimal I/O alignment.
     ///
@@ -246,7 +246,7 @@ impl ThroughputTracker {
 }
 
 impl Default for ThroughputTracker {
-    /// Creates a tracker with the default smoothing factor ([`DEFAULT_ALPHA`]).
+    /// Creates a tracker with the default smoothing factor (`DEFAULT_ALPHA`).
     fn default() -> Self {
         Self::new()
     }

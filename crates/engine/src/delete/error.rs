@@ -55,7 +55,7 @@ pub enum DeleteError {
         strong_count: usize,
     },
     /// The cursor observation receiver was already consumed by a prior
-    /// [`super::DeleteContext::into_emitter`] call. Reachable only if a
+    /// `DeleteContext::into_emitter` call. Reachable only if a
     /// caller drained the same context twice (the public `emit_*` API
     /// consumes `self`, so production code cannot hit this).
     #[error("DeleteContext::into_emitter: cursor receiver already taken")]

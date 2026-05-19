@@ -1,8 +1,8 @@
 //! Lock-free SPSC (single-producer, single-consumer) channel.
 //!
-//! Built on [`crossbeam_queue::ArrayQueue`] with [`AtomicBool`] disconnection
-//! flags and [`std::hint::spin_loop`] for waiting.  Zero syscalls - pure
-//! userspace synchronization with no futex, no `thread::park`, no condvar.
+//! Built on [`crossbeam_queue::ArrayQueue`] with [`std::sync::atomic::AtomicBool`]
+//! disconnection flags and [`std::hint::spin_loop`] for waiting.  Zero syscalls -
+//! pure userspace synchronization with no futex, no `thread::park`, no condvar.
 //!
 //! Designed for the network → disk thread pipeline where exactly one producer
 //! (network ingest) and one consumer (disk commit) exchange `FileMessage`

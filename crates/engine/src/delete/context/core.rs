@@ -205,8 +205,8 @@ impl DeleteContext {
     ///    [`DeletePlan::sort_by_name`] to lock in upstream emission
     ///    order.
     /// 4. Inserts the plan into [`Self::plans`] keyed by `dir`.
-    /// 5. Enqueues a [`CursorObservation`] onto the producer channel.
-    ///    The drain in [`Self::into_emitter`] consumes the channel after
+    /// 5. Enqueues a `CursorObservation` onto the producer channel.
+    ///    The drain in `Self::into_emitter` consumes the channel after
     ///    all senders drop and folds each observation into the owned
     ///    [`DirTraversalCursor`].
     ///
@@ -273,7 +273,7 @@ impl DeleteContext {
     /// observation queued so far.
     ///
     /// Pending channel messages are drained, applied to the new cursor,
-    /// and then re-enqueued so the eventual [`Self::into_emitter`] drain
+    /// and then re-enqueued so the eventual `Self::into_emitter` drain
     /// still sees the complete observation set. The producer channel
     /// remains open; future `observe_*` calls continue to land on it.
     ///

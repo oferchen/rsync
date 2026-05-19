@@ -63,7 +63,7 @@ fn queue_capacity(max_buffers: usize) -> usize {
 ///
 /// The pool has a soft maximum capacity (`max_buffers`). The underlying
 /// [`ArrayQueue`] is sized at construction to hold at least
-/// [`DEFAULT_QUEUE_CAPACITY`] buffers (or `max_buffers` if larger). The
+/// `DEFAULT_QUEUE_CAPACITY` buffers (or `max_buffers` if larger). The
 /// soft capacity is enforced on return via an atomic
 /// `compare_exchange_weak` admission counter that allows at most
 /// `soft_capacity` concurrent successful admissions, so the central queue
@@ -96,7 +96,7 @@ fn queue_capacity(max_buffers: usize) -> usize {
 ///    central queue, then allocate fresh.
 /// 2. **Use** - caller reads/writes through the RAII guard's `Deref`/`DerefMut`.
 /// 3. **Return** - guard's `Drop` impl passes the buffer back via
-///    [`return_buffer`](Self::return_buffer), which tries the thread-local
+///    `return_buffer`, which tries the thread-local
 ///    slot first, then the central queue.
 #[derive(Debug)]
 pub struct BufferPool<A: BufferAllocator = DefaultAllocator> {
