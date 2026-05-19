@@ -2066,15 +2066,16 @@ mod config_parsing_tests {
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
 
+        let log_file_path = abs("/var/log/rsync-mod.log");
         let config = format!(
-            "[mod]\npath = {}\nlog file = /var/log/rsync-mod.log\n",
+            "[mod]\npath = {}\nlog file = {log_file_path}\n",
             path.display()
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).unwrap();
         assert_eq!(
             result.modules[0].log_file,
-            Some(PathBuf::from("/var/log/rsync-mod.log"))
+            Some(PathBuf::from(&log_file_path))
         );
     }
 
