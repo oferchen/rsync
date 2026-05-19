@@ -145,7 +145,7 @@ impl GeneratorContext {
     ///   (upstream: generator.c:2377 - `INFO_GTE(STATS, 2) && (delete_mode || force_delete)`)
     /// - **Late** (`late_delete`): `do_stats`
     ///   (upstream: generator.c:2422 - `INFO_GTE(STATS, 2)`)
-    pub(super) fn should_send_del_stats(&self) -> bool {
+    pub(in crate::generator) fn should_send_del_stats(&self) -> bool {
         if !self.config.do_stats {
             return false;
         }
