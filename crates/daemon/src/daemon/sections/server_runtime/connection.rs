@@ -370,6 +370,16 @@ fn run_dual_stack_loop(
             {
                 match listener.accept() {
                     Ok((stream, peer_addr)) => {
+                        // BSD-derived kernels (macOS, FreeBSD) propagate the
+                        // listener's O_NONBLOCK flag to the accepted socket,
+                        // which would cause the legacy handshake reader to
+                        // fail with EAGAIN before the client writes its
+                        // greeting. Reset to blocking so the worker thread
+                        // sees the upstream-compatible synchronous I/O model.
+                        if let Err(error) = stream.set_nonblocking(false) {
+                            let _ = tx.send(Err((local_addr, error)));
+                            break;
+                        }
                         if tx.send(Ok((stream, peer_addr))).is_err() {
                             break;
                         }
