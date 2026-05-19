@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use super::super::super::reorder::ReorderBuffer;
 use super::super::{
@@ -192,6 +194,18 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.inner.capacity()
+    }
+
+    /// Returns a shared handle to the inner [`ReorderBuffer`]'s cumulative
+    /// `force_insert` counter.
+    ///
+    /// Forwarded directly from
+    /// [`ReorderBuffer::force_insert_counter`](super::super::super::reorder::ReorderBuffer::force_insert_counter)
+    /// so callers can poll ordering-fallback activity through the spillable
+    /// facade. Reads should use [`std::sync::atomic::Ordering::Relaxed`].
+    #[must_use]
+    pub fn force_insert_counter(&self) -> Arc<AtomicU64> {
+        self.inner.force_insert_counter()
     }
 
     /// Returns diagnostic counters for spill activity.

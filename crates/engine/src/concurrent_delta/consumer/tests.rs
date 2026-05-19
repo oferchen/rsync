@@ -442,6 +442,84 @@ fn metrics_force_insert_counter_increments_under_backpressure() {
     consumer.join().unwrap();
 }
 
+/// Regression: the saturated-buffer fallback (`force_insert`) must
+/// publish the same cumulative count through the lock-free
+/// [`DeltaConsumer::stats`] accessor as it does through the
+/// `Mutex`-guarded metrics snapshot, and the consumer must still drain
+/// in sequence order so downstream commit logic sees the contracted
+/// ordering even when the ordering buffer broke its capacity bound.
+///
+/// The shape of this test (capacity 2, 16 items, seq 0 sent last) is the
+/// canonical reproducer for the ordering-fallback path called out in
+/// the `concurrent_delta` design notes - it is the only path that
+/// exercises both the deadlock-breaker branch in `run_bare_loop` and
+/// the ring growth inside `ReorderBuffer::force_insert`.
+#[test]
+fn stats_force_inserts_matches_metrics_and_preserves_order() {
+    let count = 16u32;
+    let (tx, rx) = work_queue::bounded_with_capacity(count as usize);
+    let producer = std::thread::spawn(move || {
+        for i in 1..count {
+            let work =
+                DeltaWork::whole_file(i, PathBuf::from("/dst"), 64).with_sequence(u64::from(i));
+            tx.send(work).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        tx.send(DeltaWork::whole_file(0, PathBuf::from("/dst"), 64).with_sequence(0))
+            .unwrap();
+    });
+
+    let consumer = DeltaConsumer::spawn(rx, 2);
+    let results: Vec<DeltaResult> = consumer.iter().collect();
+    producer.join().unwrap();
+
+    assert_eq!(results.len(), count as usize);
+    for (i, r) in results.iter().enumerate() {
+        assert_eq!(
+            r.sequence(),
+            i as u64,
+            "force_insert fallback must still drain in sequence order; \
+             out of order at position {i}: got seq {}",
+            r.sequence(),
+        );
+    }
+
+    let stats = consumer.stats();
+    let metrics = consumer.metrics();
+    assert!(
+        stats.force_inserts > 0,
+        "expected force_inserts > 0 under backpressure, got stats={stats:?}",
+    );
+    assert_eq!(
+        stats.force_inserts, metrics.force_insert_count,
+        "lock-free stats counter must agree with the metrics snapshot \
+         (stats={stats:?}, metrics={metrics:?})",
+    );
+    consumer.join().unwrap();
+}
+
+/// Cross-check: when no backpressure occurs the lock-free counter stays
+/// at zero, proving the increment is gated on the fallback path and not
+/// on every insert.
+#[test]
+fn stats_force_inserts_zero_without_backpressure() {
+    let count = 32u32;
+    let (tx, rx) = work_queue::bounded_with_capacity(count as usize);
+    let producer = std::thread::spawn(move || send_items(&tx, count));
+
+    let consumer = DeltaConsumer::spawn(rx, count as usize);
+    let results: Vec<DeltaResult> = consumer.iter().collect();
+    producer.join().unwrap();
+
+    assert_eq!(results.len(), count as usize);
+    assert_eq!(
+        consumer.stats().force_inserts,
+        0,
+        "ample reorder capacity must never trigger the fallback",
+    );
+    consumer.join().unwrap();
+}
+
 /// Verifies the drain-batch histogram accumulates buckets when the
 /// consumer delivers a contiguous run in a single drain iteration.
 #[test]
