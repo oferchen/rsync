@@ -11,15 +11,18 @@ name: Interop Tests (Windows)
 #
 # Scenarios covered (see `tools/ci/run_interop_smoke.sh`):
 #   - baseline upstream -> upstream local copy
-#   - oc-rsync sender + upstream receiver (push)
-#   - upstream sender + oc-rsync receiver (pull)
+#   - oc-rsync sender + upstream receiver (push, via upstream daemon)
+#   - upstream sender + oc-rsync receiver (pull, via upstream daemon)
 #   - quick-check no-op re-run
-#   - delta update in both directions
+#   - delta update: oc-rsync client -> upstream daemon
 #
 # Intentionally NOT covered on Windows:
 #   - xattr / ACL / hardlinks / symlinks parity (NTFS semantics differ
 #     and are exercised by the dedicated `windows-acl-xattr` job).
-#   - daemon mode (no privileged-port loopback in the harness).
+#   - oc-rsync daemon mode: the binary explicitly refuses --daemon on
+#     Windows (see crates/cli/src/frontend/server/daemon.rs). Scenarios
+#     that would spawn `oc-rsync --daemon` are logged as SKIP and the
+#     job continues. Daemon parity is exercised on Linux/macOS instead.
 #   - SSH loopback (no sshd on `windows-latest` by default).
 #   - --list-only format parity (Cygwin rsync renders paths with
 #     forward slashes after stripping the drive prefix; oc-rsync uses

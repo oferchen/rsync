@@ -16,8 +16,13 @@
 # never speaks the wire protocol. To get oc-rsync and upstream rsync
 # talking to each other across the wire, we spawn each as a daemon on
 # a high TCP port and run the other as the client against
-# `rsync://localhost:PORT/module/`. This works identically on Linux,
-# macOS, and Windows (MSYS2) without needing SSH, sudo, or systemd.
+# `rsync://localhost:PORT/module/`. This works identically on Linux
+# and macOS without needing SSH, sudo, or systemd.
+#
+# Windows (MSYS2) covers the upstream-daemon side only: the oc-rsync
+# daemon is intentionally unsupported on Windows (see
+# crates/cli/src/frontend/server/daemon.rs), so scenarios that require
+# `oc-rsync --daemon` are skipped with a clear log line on that host.
 #
 # Inputs
 # ------
@@ -207,19 +212,30 @@ tree_diff "${src}" "${dst_oc_pull}" \
   || fail "oc-rsync client / upstream daemon diverged (pull)"
 pass "oc-rsync client <- upstream daemon (pull)"
 
-# --- Scenario 4: upstream client pushes into oc-rsync daemon ------------
-oc_port="$(start_daemon "${OC_RSYNC}" oc oc_pid)"
-oc_url="rsync://127.0.0.1:${oc_port}/data"
-"${UPSTREAM_RSYNC}" -a "${src}/" "${oc_url}/"
-tree_diff "${src}" "${workdir}/data-oc" \
-  || fail "upstream client / oc-rsync daemon diverged (push)"
-pass "upstream client -> oc-rsync daemon (push)"
+# Scenarios that require running oc-rsync as a daemon are skipped on
+# Windows: the oc-rsync daemon is intentionally unsupported there (see
+# crates/cli/src/frontend/server/daemon.rs - the binary exits with
+# "daemon mode is not supported on this platform"). The upstream-daemon
+# side of the wire is still exercised by scenarios 2, 3, and the
+# scenario-7 delta push above.
+if [[ "${host_os}" == "windows" ]]; then
+  echo "SKIP: upstream client -> oc-rsync daemon (oc-rsync daemon unsupported on Windows)"
+  echo "SKIP: upstream client <- oc-rsync daemon (oc-rsync daemon unsupported on Windows)"
+else
+  # --- Scenario 4: upstream client pushes into oc-rsync daemon ----------
+  oc_port="$(start_daemon "${OC_RSYNC}" oc oc_pid)"
+  oc_url="rsync://127.0.0.1:${oc_port}/data"
+  "${UPSTREAM_RSYNC}" -a "${src}/" "${oc_url}/"
+  tree_diff "${src}" "${workdir}/data-oc" \
+    || fail "upstream client / oc-rsync daemon diverged (push)"
+  pass "upstream client -> oc-rsync daemon (push)"
 
-# --- Scenario 5: upstream client pulls from oc-rsync daemon -------------
-"${UPSTREAM_RSYNC}" -a "${oc_url}/" "${dst_oc_push}/"
-tree_diff "${src}" "${dst_oc_push}" \
-  || fail "upstream client / oc-rsync daemon diverged (pull)"
-pass "upstream client <- oc-rsync daemon (pull)"
+  # --- Scenario 5: upstream client pulls from oc-rsync daemon -----------
+  "${UPSTREAM_RSYNC}" -a "${oc_url}/" "${dst_oc_push}/"
+  tree_diff "${src}" "${dst_oc_push}" \
+    || fail "upstream client / oc-rsync daemon diverged (pull)"
+  pass "upstream client <- oc-rsync daemon (pull)"
+fi
 
 # --- Scenario 6: idempotent re-run (quick-check, no transfer) ----------
 # Re-running the push should be a no-op. We look at --stats output for
@@ -244,9 +260,13 @@ tree_diff "${modified}" "${workdir}/data-up" \
   || fail "delta update push (oc-rsync -> upstream) diverged"
 pass "delta update: oc-rsync client -> upstream daemon"
 
-"${UPSTREAM_RSYNC}" -a "${modified}/" "${oc_url}/"
-tree_diff "${modified}" "${workdir}/data-oc" \
-  || fail "delta update push (upstream -> oc-rsync) diverged"
-pass "delta update: upstream client -> oc-rsync daemon"
+if [[ "${host_os}" == "windows" ]]; then
+  echo "SKIP: delta update upstream -> oc-rsync daemon (oc-rsync daemon unsupported on Windows)"
+else
+  "${UPSTREAM_RSYNC}" -a "${modified}/" "${oc_url}/"
+  tree_diff "${modified}" "${workdir}/data-oc" \
+    || fail "delta update push (upstream -> oc-rsync) diverged"
+  pass "delta update: upstream client -> oc-rsync daemon"
+fi
 
 echo "All interop smoke scenarios passed on ${host_os}."
