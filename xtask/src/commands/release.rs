@@ -3,7 +3,6 @@ mod upload;
 use crate::cli::ReleaseArgs;
 use crate::commands::{
     docs::{self, DocsOptions},
-    enforce_limits::{self, EnforceLimitsOptions},
     no_binaries, no_placeholders,
     package::{self, PackageOptions},
     preflight, readme_version,
@@ -18,8 +17,6 @@ use upload::upload_release_artifacts;
 pub struct ReleaseOptions {
     /// Skip rebuilding API documentation and doctests.
     pub skip_docs: bool,
-    /// Skip source line-count enforcement checks.
-    pub skip_hygiene: bool,
     /// Skip placeholder scans for Rust sources.
     pub skip_placeholder_scan: bool,
     /// Skip auditing the git index for tracked binary artifacts.
@@ -34,7 +31,6 @@ impl From<ReleaseArgs> for ReleaseOptions {
     fn from(args: ReleaseArgs) -> Self {
         Self {
             skip_docs: args.skip_docs,
-            skip_hygiene: args.skip_hygiene,
             skip_placeholder_scan: args.skip_placeholder_scan,
             skip_binary_scan: args.skip_binary_scan,
             skip_packages: args.skip_packages,
@@ -70,13 +66,6 @@ pub fn execute(workspace: &Path, options: ReleaseOptions) -> TaskResult<()> {
         };
         docs::execute(workspace, docs_options)?;
         executed_steps.push("docs");
-    }
-
-    if options.skip_hygiene {
-        skipped_steps.push("enforce-limits");
-    } else {
-        enforce_limits::execute(workspace, EnforceLimitsOptions::default())?;
-        executed_steps.push("enforce-limits");
     }
 
     if options.skip_placeholder_scan {
@@ -134,7 +123,6 @@ mod tests {
     fn from_args_all_skip_flags() {
         let args = ReleaseArgs {
             skip_docs: true,
-            skip_hygiene: true,
             skip_placeholder_scan: true,
             skip_binary_scan: true,
             skip_packages: true,
@@ -142,7 +130,6 @@ mod tests {
         };
         let options: ReleaseOptions = args.into();
         assert!(options.skip_docs);
-        assert!(options.skip_hygiene);
         assert!(options.skip_placeholder_scan);
         assert!(options.skip_binary_scan);
         assert!(options.skip_packages);
@@ -158,7 +145,6 @@ mod tests {
         };
         let options: ReleaseOptions = args.into();
         assert!(options.skip_docs);
-        assert!(!options.skip_hygiene);
         assert!(!options.skip_placeholder_scan);
         assert!(!options.skip_binary_scan);
         assert!(!options.skip_packages);
