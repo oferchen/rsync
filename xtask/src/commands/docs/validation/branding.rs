@@ -72,19 +72,6 @@ pub(super) fn validate_branding_documents(
                 (branding.daemon_bin.as_str(), "daemon binary name"),
             ],
         ),
-        DocumentCheck::new(
-            workspace.join("AGENTS.md"),
-            [
-                (
-                    branding.rust_version.as_str(),
-                    "Rust-branded version string",
-                ),
-                (branding.client_bin.as_str(), "client binary name"),
-                (branding.daemon_bin.as_str(), "daemon binary name"),
-                (daemon_config.as_str(), "daemon configuration path"),
-                (branding.source.as_str(), "source repository URL"),
-            ],
-        ),
     ];
 
     for check in &checks {
@@ -219,7 +206,6 @@ mod tests {
         fs::write(workspace.join("docs").join("gaps.md"), "placeholder").expect("write gaps");
         fs::write(workspace.join("docs").join("resume_note.md"), "placeholder")
             .expect("write resume note");
-        fs::write(workspace.join("AGENTS.md"), "placeholder").expect("write agents");
 
         let branding = load_workspace_branding(&workspace).expect("load branding");
         let mut failures = Vec::new();
@@ -253,7 +239,6 @@ mod tests {
                 .iter()
                 .any(|message| message.contains("resume_note.md"))
         );
-        assert!(failures.iter().any(|message| message.contains("AGENTS.md")));
 
         fs::remove_dir_all(&workspace).expect("cleanup workspace");
     }
