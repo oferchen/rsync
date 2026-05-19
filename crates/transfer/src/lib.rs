@@ -101,76 +101,42 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-/// Compressed reader wrapping multiplexed streams.
 mod compressed_reader;
-/// Compressed writer wrapping multiplexed streams.
 mod compressed_writer;
-/// Server configuration derived from the compact `--server` flag string.
 pub mod config;
-/// Delta application mirroring upstream `receiver.c:receive_data()`.
 pub mod delta_apply;
-/// Delta generator configuration parameters.
 pub mod delta_config;
-/// Delta transfer algorithm documentation and implementation guide.
 pub mod delta_transfer;
-/// Error categorization and retry utilities for delta transfer operations.
 pub mod error;
-/// Compact server flag string parser (`-logDtpre.iLsfxC`).
 pub mod flags;
-/// Server-side Generator role implementation.
 pub mod generator;
-/// Server-side protocol handshake utilities.
 pub mod handshake;
-/// Reader abstraction supporting plain and multiplex modes.
 mod reader;
-/// Server-side Receiver role implementation.
 pub mod receiver;
-/// Enumerations describing the role executed by the server process.
 pub mod role;
-/// Role trailer formatting (`[sender=VERSION]`) for diagnostic output.
 pub(crate) mod role_trailer;
-/// Path sanitization mirroring upstream `util1.c:sanitize_path()`.
 pub mod sanitize_path;
-/// Server-side protocol setup utilities.
 pub mod setup;
-/// Shared abstractions used by generator and receiver roles.
 pub mod shared;
-/// Symlink target safety analysis mirroring upstream `util1.c:unsafe_symlink()`.
 pub mod symlink_safety;
-/// Startup cleanup for stale temporary files left by interrupted transfers.
 pub mod temp_cleanup;
-/// RAII guard for temporary file cleanup.
 pub mod temp_guard;
-/// Writer abstraction supporting plain and multiplex modes.
 mod writer;
 
-/// Bounded-concurrency parallel I/O using rayon for work-stealing parallelism.
 mod parallel_io;
 
-/// Pluggable delta dispatch pipeline for the receiver.
 pub mod delta_pipeline;
 
-/// Batched acknowledgments for reduced network overhead.
 pub mod ack_batcher;
-/// Adaptive buffer sizing based on file size.
 pub mod adaptive_buffer;
-/// Buffer size constants mirroring upstream rsync.
 pub mod constants;
-/// Disk commit thread for decoupled network/disk I/O.
 pub mod disk_commit;
-/// Memory-mapped file abstraction for basis file access.
 pub mod map_file;
-/// Request pipelining for reduced latency in file transfers.
 pub mod pipeline;
-/// Progress reporting for server-side transfer operations.
 pub mod progress;
-/// Bounded sliding-window reorder buffer with backpressure.
 pub mod reorder_buffer;
-/// Reusable buffer for delta token data.
 pub mod token_buffer;
-/// Strategy-based reader for plain and compressed delta token formats.
 pub mod token_reader;
-/// Transfer operation helpers for pipelined requests.
 pub mod transfer_ops;
 
 pub use self::adaptive_buffer::{

@@ -67,7 +67,7 @@ impl LocalCopyOptions {
     ///
     /// When enabled and no explicit `--partial-dir` has been configured, the
     /// staging directory is finalised to `.~tmp~` via
-    /// [`Self::apply_delay_updates_partial_dir_default`] to match upstream
+    /// `Self::apply_delay_updates_partial_dir_default` to match upstream
     /// rsync behaviour.
     #[must_use]
     #[doc(alias = "--delay-updates")]
