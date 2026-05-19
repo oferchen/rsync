@@ -318,6 +318,13 @@ impl IocpDiskBatch {
 
     /// Flushes the internal buffer to the current file via batched overlapped
     /// writes.
+    ///
+    /// On a mid-flush failure (synchronous `WriteFile` error, drained
+    /// completion that reports an NTSTATUS failure, or test-injected
+    /// `ERROR_DISK_FULL`), any chunks that did reach the kernel before the
+    /// fault are credited to `active.bytes_written` and the in-memory buffer
+    /// is cleared so the `Drop` retry does not resubmit data that already
+    /// landed. The error is then propagated to the caller unchanged.
     fn flush_current(&mut self) -> io::Result<()> {
         if self.buffer_pos == 0 {
             return Ok(());
@@ -336,7 +343,8 @@ impl IocpDiskBatch {
         let max_in_flight = self.config.concurrent_ops.max(1) as usize;
         let use_aligned = self.config.unbuffered;
 
-        let written = submit_write_batch(
+        let mut written = 0usize;
+        let result = submit_write_batch(
             &self.port,
             active.overlapped_handle,
             &self.buffer.as_slice()[..len],
@@ -344,11 +352,15 @@ impl IocpDiskBatch {
             chunk_size,
             max_in_flight,
             use_aligned,
-        )?;
+            &mut written,
+        );
 
+        // Always credit the partial progress before deciding the fate of the
+        // pending buffer: a mid-flush failure must not double-write chunks
+        // the kernel already accepted.
         active.bytes_written += written as u64;
         self.buffer_pos = 0;
-        Ok(())
+        result
     }
 
     /// Drops the current file without returning it. Used when rotating in a

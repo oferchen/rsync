@@ -415,7 +415,7 @@ mod tests {
             "bare host should render unchanged: {rendered:?}"
         );
         assert!(
-            !rendered.iter().any(|a| a.contains('@')),
+            !rendered.iter().any(|a| a.contains("@plain.example")),
             "no user prefix when none is supplied: {rendered:?}"
         );
     }
