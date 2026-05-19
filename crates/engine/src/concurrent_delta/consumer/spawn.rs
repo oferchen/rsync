@@ -94,55 +94,33 @@ pub(super) fn spawn_inner(rx: WorkQueueReceiver, mode: ReorderMode) -> DeltaCons
     let metrics = Arc::new(Mutex::new(ReorderMetrics::default()));
     let metrics_thread = Arc::clone(&metrics);
 
+    // Materialise the reorder backend up-front so its force_insert
+    // counter is observable from the parent thread before delivery starts.
+    // The spillable variant may fail to allocate its tempdir; that error
+    // is surfaced as a failed DeltaResult inside the thread so the receiver
+    // maps it to upstream exit code 11.
+    let backend = ReorderBackend::build(mode);
+    let force_inserts = backend.force_insert_counter();
+
     // Thread 2: receives streamed results, reorders (or passes through),
     // and forwards to the consumer channel.
     let spill_events_thread = Arc::clone(&spill_events);
     let handle = thread::Builder::new()
         .name("delta-reorder".to_string())
         .spawn(move || {
-            match mode {
-                ReorderMode::Bypass => {
-                    run_bare_loop(
-                        stream_rx,
-                        &result_tx,
-                        ReorderBuffer::passthrough(),
-                        &metrics_thread,
-                    );
+            match backend {
+                ReorderBackend::Bare(buf) => {
+                    run_bare_loop(stream_rx, &result_tx, *buf, &metrics_thread);
                 }
-                ReorderMode::Bare { capacity } => {
-                    run_bare_loop(
-                        stream_rx,
-                        &result_tx,
-                        ReorderBuffer::new(capacity),
-                        &metrics_thread,
-                    );
+                ReorderBackend::Spillable(buf) => {
+                    run_spillable_loop(stream_rx, &result_tx, *buf, &spill_events_thread);
                 }
-                ReorderMode::Spillable {
-                    capacity,
-                    threshold,
-                    dir,
-                    granularity,
-                    memory_pressure_bytes,
-                } => match build_spillable(
-                    capacity,
-                    threshold,
-                    dir,
-                    granularity,
-                    memory_pressure_bytes,
-                ) {
-                    Ok(buf) => {
-                        run_spillable_loop(stream_rx, &result_tx, buf, &spill_events_thread);
-                    }
-                    Err(e) => {
-                        // Construction failed (e.g., spill dir cannot be
-                        // created). Surface as a single failed result so
-                        // the receiver maps to exit code 11 and aborts.
-                        let _ = result_tx.send(DeltaResult::failed(
-                            0u32,
-                            format!("spill backend unavailable: {e}"),
-                        ));
-                    }
-                },
+                ReorderBackend::Failed(err) => {
+                    let _ = result_tx.send(DeltaResult::failed(
+                        0u32,
+                        format!("spill backend unavailable: {err}"),
+                    ));
+                }
             }
 
             // Wait for drain thread to finish (propagates panics).
@@ -155,6 +133,61 @@ pub(super) fn spawn_inner(rx: WorkQueueReceiver, mode: ReorderMode) -> DeltaCons
         handle: Some(handle),
         metrics,
         spill_events,
+        force_inserts,
+    }
+}
+
+/// Materialised reorder backend ready to be moved into the consumer thread.
+///
+/// Constructing the backend before the spawn lets the parent thread expose
+/// the inner `force_insert` counter without a cross-thread bootstrap hop.
+enum ReorderBackend {
+    /// In-memory ring (including the passthrough flavour).
+    ///
+    /// Boxed so the enum's size is dominated by its smallest viable
+    /// representation instead of the much larger ring buffer; this keeps
+    /// `clippy::large_enum_variant` quiet without a waiver and avoids
+    /// stack-spilling a wide enum on every match arm.
+    Bare(Box<ReorderBuffer<DeltaResult>>),
+    /// Bounded-memory ring backed by a spill tempfile.
+    ///
+    /// Boxed for the same reason as [`Self::Bare`] above; the spillable
+    /// buffer is the largest variant in the enum.
+    Spillable(Box<SpillableReorderBuffer<DeltaResult>>),
+    /// Spillable construction failed; deferred until the thread can publish
+    /// the error as a [`DeltaResult::failed`].
+    Failed(std::io::Error),
+}
+
+impl ReorderBackend {
+    fn build(mode: ReorderMode) -> Self {
+        match mode {
+            ReorderMode::Bypass => Self::Bare(Box::new(ReorderBuffer::passthrough())),
+            ReorderMode::Bare { capacity } => Self::Bare(Box::new(ReorderBuffer::new(capacity))),
+            ReorderMode::Spillable {
+                capacity,
+                threshold,
+                dir,
+                granularity,
+                memory_pressure_bytes,
+            } => {
+                match build_spillable(capacity, threshold, dir, granularity, memory_pressure_bytes)
+                {
+                    Ok(buf) => Self::Spillable(Box::new(buf)),
+                    Err(e) => Self::Failed(e),
+                }
+            }
+        }
+    }
+
+    fn force_insert_counter(&self) -> Arc<AtomicU64> {
+        match self {
+            // Failed construction never enters the force_insert path, but
+            // a fresh counter keeps the consumer API uniform.
+            Self::Failed(_) => Arc::new(AtomicU64::new(0)),
+            Self::Bare(b) => b.force_insert_counter(),
+            Self::Spillable(b) => b.force_insert_counter(),
+        }
     }
 }
 
