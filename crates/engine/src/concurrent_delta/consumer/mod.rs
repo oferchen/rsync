@@ -80,6 +80,16 @@ pub struct DeltaConsumerStats {
     ///
     /// Always zero when the consumer was spawned without a spill threshold.
     pub spill_events: u64,
+    /// Cumulative count of ordering-fallback inserts performed by the
+    /// underlying [`ReorderBuffer`](super::reorder::ReorderBuffer) when the
+    /// ring saturated while `next_expected` was still missing.
+    ///
+    /// Non-zero values flag periods where the consumer broke its capacity
+    /// bound to keep the pipeline alive. Operators should treat sustained
+    /// growth here as a signal to raise the reorder capacity or enable the
+    /// spill backend. This is an OC-rsync diagnostic extension - upstream
+    /// rsync has no equivalent because its delta loop is sequential.
+    pub force_inserts: u64,
 }
 
 /// Ordered consumer that drains a [`WorkQueueReceiver`] in parallel and
@@ -136,6 +146,11 @@ pub struct DeltaConsumer {
     /// Shared counter incremented by the reorder thread on each spill-to-disk
     /// event. Exposed via [`DeltaConsumer::stats`].
     pub(super) spill_events: Arc<AtomicU64>,
+    /// Shared handle aliasing the underlying [`ReorderBuffer`](super::reorder::ReorderBuffer)
+    /// `force_insert` counter. The reorder buffer updates this atomic
+    /// directly, so [`DeltaConsumer::stats`] reflects the latest value
+    /// without locking the metrics `Mutex`.
+    pub(super) force_inserts: Arc<AtomicU64>,
 }
 
 impl DeltaConsumer {
@@ -214,13 +229,15 @@ impl DeltaConsumer {
 
     /// Returns a snapshot of consumer-side diagnostic counters.
     ///
-    /// Currently exposes the cumulative spill-to-disk event count from the
-    /// background reorder thread. Safe to call from any thread while the
-    /// consumer is running; the counters are updated lock-free.
+    /// Exposes the cumulative spill-to-disk event count and the cumulative
+    /// `force_insert` count from the background reorder thread. Safe to
+    /// call from any thread while the consumer is running; the counters
+    /// are updated lock-free.
     #[must_use]
     pub fn stats(&self) -> DeltaConsumerStats {
         DeltaConsumerStats {
             spill_events: self.spill_events.load(Ordering::Relaxed),
+            force_inserts: self.force_inserts.load(Ordering::Relaxed),
         }
     }
 

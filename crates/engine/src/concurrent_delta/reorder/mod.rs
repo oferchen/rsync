@@ -26,6 +26,8 @@
 //! sees files in file-list order.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use super::adaptive::{AdaptiveCapacityPolicy, AdaptiveState, ReorderStats};
@@ -158,7 +160,14 @@ pub struct ReorderBuffer<T> {
     /// is currently stalled (count > 0 and the `next_expected` slot is empty).
     stall_started_at: Option<Instant>,
     /// Cumulative count of [`force_insert`](Self::force_insert) invocations.
-    force_insert_count: u64,
+    ///
+    /// Stored behind an `Arc<AtomicU64>` so external observers (the
+    /// consumer thread and any operator-facing diagnostics handle) can
+    /// poll the counter without taking the metrics `Mutex`. Updates use
+    /// `Relaxed` ordering because the value is purely diagnostic - no
+    /// happens-before relationship with the delivered payloads is
+    /// required.
+    force_insert_count: Arc<AtomicU64>,
     /// Distribution of drain-batch sizes recorded via
     /// [`record_drain_batch`](Self::record_drain_batch).
     drain_batch_size: HistogramStats,
@@ -205,7 +214,7 @@ impl<T> ReorderBuffer<T> {
             max_depth: 0,
             stall_duration: Duration::ZERO,
             stall_started_at: None,
-            force_insert_count: 0,
+            force_insert_count: Arc::new(AtomicU64::new(0)),
             drain_batch_size: HistogramStats::new_pow2(),
             drain_pause: HistogramStats::new_microseconds(),
         }
@@ -251,7 +260,7 @@ impl<T> ReorderBuffer<T> {
             max_depth: 0,
             stall_duration: Duration::ZERO,
             stall_started_at: None,
-            force_insert_count: 0,
+            force_insert_count: Arc::new(AtomicU64::new(0)),
             drain_batch_size: HistogramStats::new_pow2(),
             drain_pause: HistogramStats::new_microseconds(),
         }
@@ -519,7 +528,7 @@ impl<T> ReorderBuffer<T> {
             stall_duration: self.stall_duration.saturating_add(in_flight),
             current_depth: self.count,
             max_depth: self.max_depth,
-            force_insert_count: self.force_insert_count,
+            force_insert_count: self.force_insert_count.load(Ordering::Relaxed),
             drain_batch_size_histogram: self.drain_batch_size,
             drain_pause_histogram: self.drain_pause,
         }
@@ -544,6 +553,21 @@ impl<T> ReorderBuffer<T> {
     /// operators can read off the typical pause magnitude at a glance.
     pub fn record_drain_pause(&mut self, pause: Duration) {
         self.drain_pause.record_duration(pause);
+    }
+
+    /// Returns a shared handle to the cumulative `force_insert` counter.
+    ///
+    /// The returned `Arc<AtomicU64>` aliases the buffer's internal counter,
+    /// so the latest value is visible to every caller holding a clone. The
+    /// counter increments by exactly one each time
+    /// [`force_insert`](Self::force_insert) is invoked - including when the
+    /// buffer is in bypass mode and when the sequence is behind the delivery
+    /// cursor (still observed so operators see stale-result diagnostics).
+    /// Reads should use [`Ordering::Relaxed`] - the value is purely
+    /// diagnostic.
+    #[must_use]
+    pub fn force_insert_counter(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.force_insert_count)
     }
 
     /// Returns adaptive capacity counters (grow/shrink event totals plus the
@@ -572,7 +596,7 @@ impl<T> ReorderBuffer<T> {
     /// ring capacity, this inserts directly. For sequences beyond capacity,
     /// the ring is grown to accommodate the item.
     pub fn force_insert(&mut self, sequence: u64, item: T) {
-        self.force_insert_count = self.force_insert_count.saturating_add(1);
+        self.force_insert_count.fetch_add(1, Ordering::Relaxed);
         if self.bypass {
             self.bypass_queue.push_back(item);
             self.count += 1;
