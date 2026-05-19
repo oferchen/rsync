@@ -75,9 +75,10 @@ pub trait DeltaStrategy: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns a [`DeltaResult`] with [`DeltaResultStatus::Failed`] or
-    /// [`DeltaResultStatus::NeedsRedo`] when the operation cannot complete
-    /// successfully.
+    /// Returns a [`DeltaResult`] with
+    /// [`DeltaResultStatus::Failed`](super::types::DeltaResultStatus::Failed) or
+    /// [`DeltaResultStatus::NeedsRedo`](super::types::DeltaResultStatus::NeedsRedo)
+    /// when the operation cannot complete successfully.
     fn process(&self, work: &DeltaWork) -> DeltaResult;
 
     /// Returns the transfer kind this strategy handles.

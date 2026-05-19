@@ -170,23 +170,16 @@
 //! - `transfer::pipeline` for the pipelined receiver architecture
 
 pub mod adaptive;
-/// Runtime configuration for the concurrent delta pipeline.
 pub mod config;
-/// Ordered consumer that drains the work queue into the reorder buffer.
 pub mod consumer;
 #[cfg(test)]
 mod multi_producer_audit;
-/// Parallel receive-side delta apply scaffold gated behind `parallel-receive-delta`.
 #[cfg(feature = "parallel-receive-delta")]
 pub mod parallel_apply;
-/// Sequence-based reorder buffer for the concurrent delta pipeline.
 pub mod reorder;
-/// Bounded-memory spill-to-tempfile layer for the reorder buffer.
 pub mod spill;
-/// Strategy pattern dispatching whole-file versus delta-transfer work.
 pub mod strategy;
 mod types;
-/// Bounded work queue with backpressure for the concurrent delta pipeline.
 pub mod work_queue;
 
 pub use adaptive::{AdaptiveCapacityPolicy, ReorderStats};

@@ -128,7 +128,6 @@
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub mod async_io;
 
-/// Concurrent delta computation pipeline for parallel file processing.
 pub mod concurrent_delta;
 /// Parallel-deterministic delete pipeline data structures and emitter.
 pub mod delete;
