@@ -188,12 +188,11 @@ single broken crate cannot stall the workspace flip:
    migrate independently when `cargo-fuzz` upstream supports the new edition;
    they are excluded from the workspace and do not gate the flip.
 
-For each step the verification gate is the workspace-wide command set in
-`AGENTS.md` / `CLAUDE.md`: `cargo fmt --all -- --check`, `cargo clippy
---workspace --all-targets --all-features --no-deps -- -D warnings`, and the
-nextest matrix in CI. Per-crate migrations also need `cargo build
---all-features` to surface `unsafe(...)` and raw-identifier failures that
-clippy alone would miss.
+For each step the verification gate is the workspace-wide command set:
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
+--all-features --no-deps -- -D warnings`, and the nextest matrix in CI.
+Per-crate migrations also need `cargo build --all-features` to surface
+`unsafe(...)` and raw-identifier failures that clippy alone would miss.
 
 ## MSRV implications
 
