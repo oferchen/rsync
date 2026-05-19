@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use engine::{BufferGuard, BufferPool, BufferPoolStats, DefaultAllocator, global_buffer_pool};
+#[cfg(not(feature = "thread-slab-pool"))]
+use engine::BufferGuard;
+use engine::{BufferPool, BufferPoolStats, DefaultAllocator, global_buffer_pool};
 
 // Asserts about `pool.available()` only hold when buffers actually overflow to
 // the central queue. The `thread-slab-pool` feature (enabled by --all-features
