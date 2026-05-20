@@ -115,7 +115,6 @@ fn test_recv_fd_to_file_exact_threshold() {
 
 #[test]
 fn test_copy_fd_to_fd_fallback() {
-    // Test the fallback path directly.
     let content = b"Testing copy_fd_to_fd fallback path directly";
     let mut dest = NamedTempFile::new().unwrap();
 

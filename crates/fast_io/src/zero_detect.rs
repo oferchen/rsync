@@ -397,7 +397,6 @@ mod tests {
 
     #[test]
     fn zero_parity_all_implementations_explicit() {
-        // Test all compiled implementations directly for parity
         let mut buf = vec![0u8; 256];
         for pos in (0..256).step_by(7) {
             buf.fill(0);
@@ -490,7 +489,6 @@ mod tests {
 
     #[test]
     fn zero_large_buffer_performance_sanity() {
-        // Ensure large buffers work correctly (regression guard)
         let size = 1024 * 1024; // 1 MiB
         let buf = vec![0u8; size];
         assert_eq!(find_first_nonzero(&buf), size);

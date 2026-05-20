@@ -26,8 +26,6 @@
 
 use std::io;
 
-// --- Kernel UAPI opcode and flag constants ----------------------------------
-
 /// Numeric value of `IORING_OP_LINKAT`.
 ///
 /// Kernel UAPI constant from `include/uapi/linux/io_uring.h`, stable since
@@ -84,8 +82,6 @@ pub(crate) const IORING_CQE_F_BUFFER: u32 = 1 << 0;
 
 /// Bit position of the buffer ID inside the CQE flags word.
 pub(crate) const IORING_CQE_BUFFER_SHIFT: u32 = 16;
-
-// --- Configuration data structs --------------------------------------------
 
 /// Plain-data configuration for an io_uring instance.
 ///
@@ -219,8 +215,6 @@ pub struct IoUringKernelInfo {
     pub reason: String,
 }
 
-// --- Shared-ring tagging helpers -------------------------------------------
-
 /// SQE `user_data` tag identifying the source channel of a completion.
 ///
 /// Stored in the high 8 bits of `user_data`. Encoding/decoding is pure
@@ -317,8 +311,6 @@ pub fn buffer_id_from_cqe_flags(flags: u32) -> Option<u16> {
         None
     }
 }
-
-// --- Buffer ring configuration and errors ----------------------------------
 
 /// Errors specific to buffer ring operations.
 #[derive(Debug, thiserror::Error)]
@@ -477,8 +469,6 @@ impl Default for BufferRingConfig {
     }
 }
 
-// --- Registered-buffer telemetry types -------------------------------------
-
 /// Snapshot of registered-buffer telemetry counters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegisteredBufferStats {
@@ -536,8 +526,6 @@ impl RegisteredBufferStatus {
         matches!(self, Self::RegistrationFailed { .. })
     }
 }
-
-// --- Backend trait ---------------------------------------------------------
 
 /// Cross-platform contract for an io_uring-style I/O backend.
 ///

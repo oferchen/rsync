@@ -407,7 +407,6 @@ fn test_send_file_to_fd_macos_non_socket_falls_back() {
 
 #[test]
 fn test_copy_via_readwrite_direct() {
-    // Test the read/write fallback path directly
     let content = b"Testing fallback path directly with specific data";
     let source = create_temp_file(content).unwrap();
     let mut output = Vec::new();
@@ -423,7 +422,6 @@ fn test_copy_via_readwrite_direct() {
 #[cfg(target_os = "linux")]
 #[test]
 fn test_threshold_boundary() {
-    // Test at exact threshold boundary
     let size = SENDFILE_THRESHOLD as usize;
     let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
     let source = create_temp_file(&content).unwrap();
@@ -438,14 +436,12 @@ fn test_threshold_boundary() {
 
 #[test]
 fn test_multiple_writes() {
-    // Test that multiple independent writes work correctly
     let content1 = b"First write";
     let content2 = b"Second";
     let source1 = create_temp_file(content1).unwrap();
     let source2 = create_temp_file(content2).unwrap();
     let mut output = Vec::new();
 
-    // First write
     let sent1 = send_file_to_writer(source1.as_file(), &mut output, content1.len() as u64).unwrap();
     assert_eq!(sent1, content1.len() as u64);
     assert_eq!(&output[..sent1 as usize], content1);
