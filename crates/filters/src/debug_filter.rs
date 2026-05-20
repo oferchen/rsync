@@ -377,11 +377,11 @@ mod tests {
     #[test]
     fn test_record_evaluation_mixed() {
         let mut tracer = FilterTracer::new();
-        tracer.record_evaluation(true); // include
-        tracer.record_evaluation(false); // exclude
-        tracer.record_evaluation(true); // include
-        tracer.record_evaluation(false); // exclude
-        tracer.record_evaluation(true); // include
+        tracer.record_evaluation(true);
+        tracer.record_evaluation(false);
+        tracer.record_evaluation(true);
+        tracer.record_evaluation(false);
+        tracer.record_evaluation(true);
 
         assert_eq!(tracer.total_evaluated(), 5);
         assert_eq!(tracer.total_included(), 3);
@@ -472,7 +472,6 @@ mod tests {
 
     #[test]
     fn test_trace_functions_do_not_panic() {
-        // All trace functions should be callable without panicking
         trace_filter_rule_added("*.tmp", false, false);
         trace_filter_rule_added("/var/log/", false, true);
         trace_filter_rule_added("important/", true, true);
@@ -497,7 +496,6 @@ mod tests {
         tracer.record_evaluation(true);
         tracer.record_evaluation(false);
 
-        // Should not panic
         tracer.summary();
     }
 
@@ -521,12 +519,10 @@ mod tests {
     fn test_multiple_operations() {
         let mut tracer = FilterTracer::new();
 
-        // First batch
         tracer.record_rule_added();
         tracer.record_evaluation(true);
         tracer.record_evaluation(false);
 
-        // Reset and second batch
         tracer.reset();
         tracer.record_rule_added();
         tracer.record_rule_added();
@@ -541,9 +537,8 @@ mod tests {
     #[cfg(feature = "tracing")]
     #[test]
     fn test_tracing_feature_enabled() {
-        // When tracing feature is enabled, verify the functions compile and run
-        // without panicking. We can't easily verify event emission without
-        // tracing-subscriber, but this at least confirms the code compiles.
+        // We cannot verify event emission without a `tracing-subscriber`, but
+        // this confirms the feature-gated code path compiles and runs.
         let mut tracer = FilterTracer::new();
 
         trace_filter_rule_added("*.log", false, false);
