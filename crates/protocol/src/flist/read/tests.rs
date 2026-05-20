@@ -1847,12 +1847,14 @@ mod acl_integration {
         let mut acl_cache = AclCache::new();
         send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
 
-        // Wire format uses names without the "user." namespace prefix
+        // Wire format carries the full Linux xattr name verbatim, including
+        // the "user." namespace prefix. upstream: xattrs.c:rsync_xattr_lookup
+        // forwards the llistxattr(2) name unchanged.
         write_varint(&mut data, 0).unwrap();
         write_varint(&mut data, 1).unwrap();
+        write_varint(&mut data, 10).unwrap();
         write_varint(&mut data, 5).unwrap();
-        write_varint(&mut data, 5).unwrap();
-        data.extend_from_slice(b"test\0");
+        data.extend_from_slice(b"user.test\0");
         data.extend_from_slice(b"hello");
 
         let mut cursor = Cursor::new(&data[..]);
