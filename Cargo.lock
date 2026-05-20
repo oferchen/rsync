@@ -2179,6 +2179,7 @@ dependencies = [
  "logging",
  "proptest",
  "protocol",
+ "rand 0.10.1",
  "rustc-hash",
  "signature 0.6.2",
  "tempfile",

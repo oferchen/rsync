@@ -43,6 +43,7 @@ bench-internal = []
 criterion = { workspace = true }
 proptest = { workspace = true }
 protocol = { path = "../protocol" }
+rand = { workspace = true }
 tempfile = { workspace = true }
 
 [[bench]]
@@ -75,4 +76,8 @@ required-features = ["bench-internal"]
 
 [[bench]]
 name = "zsync_medium_dataset"
+harness = false
+
+[[bench]]
+name = "zsync_optimizations"
 harness = false
