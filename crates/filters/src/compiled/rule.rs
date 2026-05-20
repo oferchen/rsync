@@ -148,7 +148,6 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("build"), false));
-        // Anchored patterns should not match nested paths
         assert!(!compiled.matches(Path::new("src/build"), false));
     }
 
@@ -166,9 +165,7 @@ mod tests {
             no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
-        // Directory-only patterns should match directories
         assert!(compiled.matches(Path::new("node_modules"), true));
-        // Directory-only patterns should not match files
         assert!(!compiled.matches(Path::new("node_modules"), false));
     }
 
@@ -186,9 +183,7 @@ mod tests {
             no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
-        // Should match the directory itself
         assert!(compiled.matches(Path::new("build"), true));
-        // Should match descendants via descendant matchers
         assert!(compiled.matches(Path::new("build/output.o"), false));
         assert!(compiled.matches(Path::new("build/subdir/file.txt"), false));
     }
@@ -266,7 +261,6 @@ mod tests {
 
     #[test]
     fn compiled_rule_negate_inverts_match() {
-        // Non-negated rule: matches files with *.txt extension
         let rule = FilterRule {
             action: FilterAction::Exclude,
             pattern: "*.txt".to_owned(),
@@ -282,7 +276,6 @@ mod tests {
         assert!(compiled.matches(Path::new("file.txt"), false));
         assert!(!compiled.matches(Path::new("file.log"), false));
 
-        // Negated rule: matches files that do NOT have *.txt extension
         let rule_negated = FilterRule {
             action: FilterAction::Exclude,
             pattern: "*.txt".to_owned(),
@@ -295,15 +288,12 @@ mod tests {
             no_inherit: false,
         };
         let compiled_negated = CompiledRule::new(rule_negated).unwrap();
-        // Pattern matches file.txt, but negate inverts: returns false
         assert!(!compiled_negated.matches(Path::new("file.txt"), false));
-        // Pattern doesn't match file.log, negate inverts: returns true
         assert!(compiled_negated.matches(Path::new("file.log"), false));
     }
 
     #[test]
     fn compiled_rule_negate_with_directory_only() {
-        // Negated directory-only rule
         let rule = FilterRule {
             action: FilterAction::Exclude,
             pattern: "cache/".to_owned(),
@@ -317,20 +307,15 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
-        // Directory "cache" matches the pattern, negate inverts: false
         assert!(!compiled.matches(Path::new("cache"), true));
-
-        // Directory "build" doesn't match, negate inverts: true
         assert!(compiled.matches(Path::new("build"), true));
-
-        // File "cache" (not dir) - directory_only means it shouldn't match anyway
-        // Pattern doesn't match a file named cache, negate inverts: true
+        // directory_only means a file named "cache" never matches the pattern,
+        // so the negated rule returns true for it.
         assert!(compiled.matches(Path::new("cache"), false));
     }
 
     #[test]
     fn compiled_rule_negate_with_anchored() {
-        // Negated anchored pattern
         let rule = FilterRule {
             action: FilterAction::Exclude,
             pattern: "/important".to_owned(),
@@ -344,13 +329,9 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
-        // "important" at root matches, negate inverts: false
         assert!(!compiled.matches(Path::new("important"), false));
-
-        // "other" doesn't match, negate inverts: true
         assert!(compiled.matches(Path::new("other"), false));
-
-        // "dir/important" doesn't match anchored pattern, negate inverts: true
+        // Anchored pattern does not match a nested path, so negation gives true.
         assert!(compiled.matches(Path::new("dir/important"), false));
     }
 
@@ -373,11 +354,11 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
-        // Directories should match
         assert!(compiled.matches(Path::new("subdir"), true));
         assert!(compiled.matches(Path::new("deep/nested"), true));
 
-        // Files should NOT match - even inside directories
+        // Files inside matched directories still need their own rules to match;
+        // an include of `*/` alone does not pull file descendants in.
         assert!(!compiled.matches(Path::new("file.txt"), false));
         assert!(!compiled.matches(Path::new("subdir/debug.log"), false));
         assert!(!compiled.matches(Path::new("subdir/report.csv"), false));

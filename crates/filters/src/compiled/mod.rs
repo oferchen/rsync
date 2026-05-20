@@ -163,8 +163,6 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.directory_only);
-        // Include dirs should NOT match descendants - files inside must
-        // match their own include/exclude rules independently.
         assert!(
             compiled.descendant_matchers.is_empty(),
             "include directory-only rules must not have descendant matchers"

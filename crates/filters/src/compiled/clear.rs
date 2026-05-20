@@ -118,7 +118,6 @@ mod tests {
         };
         let mut rules = vec![CompiledRule::new(rule).unwrap()];
         apply_clear_rule(&mut rules, true, false);
-        // Rule should be removed since sender is now cleared and receiver was already false
         assert!(rules.is_empty());
     }
 }

@@ -51,6 +51,7 @@ pub fn default_patterns() -> impl Iterator<Item = &'static str> {
 }
 
 /// Returns the number of default AppleDouble exclusion patterns.
+#[must_use]
 pub fn pattern_count() -> usize {
     default_patterns().count()
 }
