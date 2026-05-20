@@ -189,7 +189,6 @@ impl SignatureAlgorithm {
                         proper_order: _,
                     },
             } => {
-                // Unseeded MD5: use SIMD batch path
                 let digests = md5_digest_batch(blocks);
                 digests
                     .into_iter()
@@ -197,10 +196,9 @@ impl SignatureAlgorithm {
                     .collect()
             }
             _ => {
-                // Seeded MD4, seeded MD5, SHA1, XXH64, XXH3, XXH3_128:
-                // per-element fallback. Seeded MD4 cannot use the SIMD batch
-                // path because the per-block input includes a 4-byte LE seed
-                // suffix appended after the data (upstream: checksum.c:377-380).
+                // Seeded MD4 cannot use the SIMD batch path because the per-block
+                // input includes a 4-byte LE seed suffix appended after the data.
+                // upstream: checksum.c:377-380.
                 blocks
                     .iter()
                     .map(|data| self.compute_truncated(data, len))
@@ -331,7 +329,6 @@ mod tests {
     fn compute_truncated_longer_than_full() {
         let algo = SignatureAlgorithm::Xxh64 { seed: 42 };
         let data = b"test data";
-        // Requesting more than digest length returns full digest
         let truncated = algo.compute_truncated(data, 16);
         assert_eq!(truncated.len(), 8);
     }
@@ -403,17 +400,14 @@ mod tests {
         reference_buf.extend_from_slice(&seed.to_le_bytes());
         let reference = SignatureAlgorithm::Md4.compute_truncated(&reference_buf, 16);
 
-        // Contiguous path
         let seeded = SignatureAlgorithm::Md4Seeded { seed }.compute_truncated(data, 16);
         assert_eq!(seeded.as_slice(), reference.as_slice());
 
-        // Split-slice path must agree with the contiguous result.
         let (head, tail) = data.split_at(11);
         let seeded_split =
             SignatureAlgorithm::Md4Seeded { seed }.compute_truncated_slices(head, tail, 16);
         assert_eq!(seeded_split.as_slice(), reference.as_slice());
 
-        // Batch path must agree with per-element path.
         let blocks: Vec<&[u8]> = vec![data, b"second block"];
         let batch = SignatureAlgorithm::Md4Seeded { seed }.compute_truncated_batch(&blocks, 16);
         let per_elem: Vec<DigestBuf> = blocks

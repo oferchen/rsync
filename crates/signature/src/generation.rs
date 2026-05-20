@@ -285,7 +285,7 @@ mod tests {
             .expect("signature generation succeeds");
 
         assert_eq!(signature.blocks().len(), 1);
-        // SHA1 produces 20 bytes, truncated to 16 by layout
+        // SHA-1 emits 20 bytes; the layout truncates the digest to 16.
         assert_eq!(signature.blocks()[0].strong().len(), 16);
     }
 
@@ -371,7 +371,6 @@ mod tests {
                 "block count mismatch for {num_blocks} blocks"
             );
 
-            // Verify each block's rolling checksum against direct computation
             for (i, block) in signature.blocks().iter().enumerate() {
                 let start = i * block_size as usize;
                 let end = start + block_size as usize;
@@ -394,7 +393,7 @@ mod tests {
     #[test]
     fn batch_with_remainder_all_algorithms() {
         let block_size = 64u32;
-        // 20 full blocks + 37 byte remainder = 1317 bytes total, 21 blocks
+        // 20 full blocks + 37-byte remainder = 1317 bytes total (21 blocks).
         let data_len = (20 * block_size + 37) as usize;
         let mut data = vec![0u8; data_len];
         for (i, byte) in data.iter_mut().enumerate() {
@@ -429,7 +428,6 @@ mod tests {
                 "last block len for {algo:?}"
             );
 
-            // Verify strong checksum of last block matches per-element computation
             let last_start = 20 * block_size as usize;
             let expected_strong = algo.compute_truncated(
                 &data[last_start..],

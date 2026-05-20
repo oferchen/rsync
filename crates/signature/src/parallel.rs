@@ -436,9 +436,9 @@ mod tests {
     #[test]
     #[allow(clippy::assertions_on_constants)]
     fn parallel_threshold_constant_is_reasonable() {
-        // Threshold should be at least a few blocks worth
+        // Lower bound: at least a few blocks. Upper bound: still small enough
+        // that realistic transfers exercise the parallel path.
         assert!(PARALLEL_THRESHOLD_BYTES >= 64 * 1024);
-        // But not so large that we never use parallel mode
         assert!(PARALLEL_THRESHOLD_BYTES <= 1024 * 1024);
     }
 }

@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn small_file_uses_default_block_size() {
-        // Files <= 700² (490,000 bytes) use DEFAULT_BLOCK_SIZE
+        // Files at or below 700² (490,000 bytes) use DEFAULT_BLOCK_SIZE.
         assert_eq!(calculate_block_length(1, 31, None), DEFAULT_BLOCK_SIZE);
         assert_eq!(calculate_block_length(699, 31, None), DEFAULT_BLOCK_SIZE);
         assert_eq!(calculate_block_length(700, 31, None), DEFAULT_BLOCK_SIZE);
@@ -361,38 +361,32 @@ mod tests {
 
     #[test]
     fn medium_files_use_sqrt_scaling() {
-        // File size: 1 MB
+        // 1 MB: sqrt ~ 1024.
         let block_len = calculate_block_length(1024 * 1024, 31, None);
         assert!(block_len > DEFAULT_BLOCK_SIZE);
         assert!(block_len <= MAX_BLOCK_SIZE_V30);
-        // Should be approximately sqrt(1MB) = ~1024
         assert_eq!(block_len, 1024);
 
-        // File size: 10 MB
+        // 10 MB: sqrt ~ 3232.
         let block_len = calculate_block_length(10 * 1024 * 1024, 31, None);
         assert!(block_len > 1024);
         assert!(block_len <= MAX_BLOCK_SIZE_V30);
-        // Should be approximately sqrt(10MB) = ~3232
         assert_eq!(block_len, 3232);
 
-        // File size: 100 MB
+        // 100 MB: sqrt ~ 10240.
         let block_len = calculate_block_length(100 * 1024 * 1024, 31, None);
         assert!(block_len > 3232);
         assert!(block_len <= MAX_BLOCK_SIZE_V30);
-        // Should be approximately sqrt(100MB) = ~10240
         assert_eq!(block_len, 10_240);
     }
 
     #[test]
     fn large_files_capped_at_max_block_size() {
-        // Very large file, protocol 31
         let block_len = calculate_block_length(1u64 << 40, 31, None);
         assert_eq!(block_len, MAX_BLOCK_SIZE_V30);
 
-        // Very large file, protocol 29
         let block_len = calculate_block_length(1u64 << 40, 29, None);
         assert!(block_len <= MAX_BLOCK_SIZE_OLD);
-        // For protocol < 30, max is much larger
         assert!(block_len > MAX_BLOCK_SIZE_V30);
     }
 
@@ -400,14 +394,12 @@ mod tests {
     fn protocol_version_affects_maximum() {
         let file_size = 1u64 << 35; // 32 GB
 
-        // Protocol 30+ caps at 128KB
         let block_len_v30 = calculate_block_length(file_size, 30, None);
         assert_eq!(block_len_v30, MAX_BLOCK_SIZE_V30);
 
         let block_len_v31 = calculate_block_length(file_size, 31, None);
         assert_eq!(block_len_v31, MAX_BLOCK_SIZE_V30);
 
-        // Protocol < 30 allows larger blocks
         let block_len_v29 = calculate_block_length(file_size, 29, None);
         assert!(block_len_v29 > MAX_BLOCK_SIZE_V30);
         assert!(block_len_v29 <= MAX_BLOCK_SIZE_OLD);
@@ -415,18 +407,15 @@ mod tests {
 
     #[test]
     fn user_block_size_override() {
-        // User can override for any file size
         assert_eq!(calculate_block_length(1024, 31, Some(512)), 512);
         assert_eq!(calculate_block_length(1024 * 1024, 31, Some(2048)), 2048);
 
-        // But still capped at protocol maximum
         let oversized = MAX_BLOCK_SIZE_V30 * 2;
         assert_eq!(
             calculate_block_length(1024, 31, Some(oversized)),
             MAX_BLOCK_SIZE_V30
         );
 
-        // Different for old protocol
         let oversized_old = MAX_BLOCK_SIZE_OLD * 2;
         assert_eq!(
             calculate_block_length(1024, 29, Some(oversized_old)),
@@ -436,7 +425,6 @@ mod tests {
 
     #[test]
     fn block_length_is_multiple_of_8() {
-        // The sqrt algorithm rounds to multiples of 8
         for size in [
             500_000u64,
             1_000_000,
@@ -454,15 +442,15 @@ mod tests {
 
     #[test]
     fn very_large_file_edge_cases() {
-        // File size near u64::MAX (sqrt capped at max)
+        // u64::MAX: sqrt clamps to protocol maximum.
         let block_len = calculate_block_length(u64::MAX, 31, None);
         assert_eq!(block_len, MAX_BLOCK_SIZE_V30);
 
-        // 4 GB file: sqrt(4 * 2^30) = sqrt(2^32) = 2^16 = 65536
+        // 4 GB: sqrt(2^32) = 65536.
         let block_len = calculate_block_length(4u64 << 30, 31, None);
         assert_eq!(block_len, 65536);
 
-        // 1 TB file: sqrt(2^40) = 2^20 = 1048576, capped at MAX_BLOCK_SIZE_V30
+        // 1 TB: sqrt(2^40) = 2^20 = 1_048_576, clamped to MAX_BLOCK_SIZE_V30.
         let block_len = calculate_block_length(1u64 << 40, 31, None);
         assert_eq!(block_len, MAX_BLOCK_SIZE_V30);
     }
@@ -495,12 +483,12 @@ mod tests {
 
     #[test]
     fn checksum_length_protocol_versions() {
-        // Protocol < 27 always returns requested length
+        // Protocol < 27 always returns the requested length verbatim.
         assert_eq!(calculate_checksum_length(1024, 700, 26, 8), 8);
         assert_eq!(calculate_checksum_length(1024 * 1024, 700, 26, 2), 2);
         assert_eq!(calculate_checksum_length(1024 * 1024, 700, 26, 16), 16);
 
-        // Protocol >= 27 applies heuristic
+        // Protocol >= 27 applies the bias heuristic.
         let len = calculate_checksum_length(1024 * 1024, 1024, 27, 2);
         assert!((2..=MAX_SUM_LENGTH).contains(&len));
 
@@ -510,7 +498,6 @@ mod tests {
 
     #[test]
     fn checksum_length_max_requested() {
-        // Requesting max length always returns max
         assert_eq!(
             calculate_checksum_length(1024, 700, 31, MAX_SUM_LENGTH),
             MAX_SUM_LENGTH
@@ -523,7 +510,6 @@ mod tests {
 
     #[test]
     fn checksum_length_scales_with_file_size() {
-        // Larger files generally need longer checksums
         let small = calculate_checksum_length(1024, 700, 31, 2);
         let medium = calculate_checksum_length(1024 * 1024, 700, 31, 2);
         let large = calculate_checksum_length(100 * 1024 * 1024, 700, 31, 2);
@@ -536,7 +522,6 @@ mod tests {
 
     #[test]
     fn checksum_length_bounded_by_requested() {
-        // Result should never be less than requested
         for requested in 2..=MAX_SUM_LENGTH {
             let len = calculate_checksum_length(1024 * 1024, 1024, 31, requested);
             assert!(len >= requested);
@@ -546,7 +531,6 @@ mod tests {
 
     #[test]
     fn roundtrip_block_coverage() {
-        // Verify that block_count * block_length covers the file
         let test_sizes = [
             0u64,
             1,
@@ -567,10 +551,9 @@ mod tests {
             if file_size == 0 {
                 assert_eq!(count, 0);
             } else {
-                // Verify coverage
                 let covered = count * u64::from(block_len);
                 assert!(covered >= file_size);
-                // The last block should not be more than block_len away
+                // Last block overshoot must be strictly less than one full block.
                 assert!(covered - file_size < u64::from(block_len));
             }
         }
@@ -587,20 +570,18 @@ mod tests {
 
     #[test]
     fn sum_length_phase1_uses_dynamic_checksum() {
-        // Phase 1 passes SHORT_SUM_LENGTH; the heuristic computes a dynamic
-        // value that may differ from the input for larger files.
+        // Phase 1 passes SHORT_SUM_LENGTH; the heuristic widens the result for
+        // larger files, so a 100 MB file should exceed the minimum of 2.
         let len = calculate_checksum_length(100 * 1024 * 1024, 10_240, 31, SHORT_SUM_LENGTH);
         assert!(len >= SHORT_SUM_LENGTH);
         assert!(len <= MAX_SUM_LENGTH);
-        // For a 100 MB file the heuristic should produce a value above the
-        // minimum SHORT_SUM_LENGTH of 2.
         assert!(len > SHORT_SUM_LENGTH);
     }
 
     #[test]
     fn sum_length_phase2_redo_returns_max_immediately() {
-        // Phase 2 redo passes MAX_SUM_LENGTH; the function short-circuits
-        // and always returns 16 regardless of file or block size.
+        // Phase 2 redo passes MAX_SUM_LENGTH; the function short-circuits and
+        // returns 16 regardless of file or block size.
         for &(file_size, block_len) in &[
             (1024u64, 700u32),
             (1_048_576, 1024),
@@ -617,8 +598,8 @@ mod tests {
 
     #[test]
     fn sum_length_short_vs_max_differ_for_small_files() {
-        // For small files, phase 1 (SHORT_SUM_LENGTH) should produce a shorter
-        // checksum than phase 2 (MAX_SUM_LENGTH), demonstrating the toggle.
+        // For small files the phase toggle is observable: phase 1 emits the
+        // shorter checksum while phase 2 emits the maximum.
         let file_size = 1024u64;
         let block_len = 700u32;
         let phase1 = calculate_checksum_length(file_size, block_len, 31, SHORT_SUM_LENGTH);
@@ -631,19 +612,12 @@ mod tests {
 
     #[test]
     fn specific_upstream_compatibility_values() {
-        // These values should match upstream rsync 3.4.1 exactly
-        // Based on generator.c:sum_sizes_sqroot()
-
-        // 1 MB file with protocol 31
+        // Golden values lifted from upstream rsync 3.4.1
+        // (generator.c:sum_sizes_sqroot) for protocol 31.
         assert_eq!(calculate_block_length(1_048_576, 31, None), 1024);
-
-        // 10 MB file with protocol 31
         assert_eq!(calculate_block_length(10_485_760, 31, None), 3232);
-
-        // 100 MB file with protocol 31
         assert_eq!(calculate_block_length(104_857_600, 31, None), 10_240);
-
-        // 1 GB file: sqrt(2^30) = 2^15 = 32768
+        // 1 GB: sqrt(2^30) = 32768.
         assert_eq!(calculate_block_length(1_073_741_824, 31, None), 32768);
     }
 }

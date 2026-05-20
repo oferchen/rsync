@@ -190,7 +190,7 @@ pub struct AsyncSignatureGenerator {
     next_request_id: u64,
 }
 
-// Manual Debug impl because JoinHandle doesn't implement Debug
+// JoinHandle does not implement Debug, so derive() cannot be used here.
 impl std::fmt::Debug for AsyncSignatureGenerator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AsyncSignatureGenerator")
@@ -423,7 +423,6 @@ mod tests {
 
         generator.request_signature(request).unwrap();
 
-        // Wait for result
         let result = generator.wait_for_result().unwrap();
         assert_eq!(result.request_id, 1);
         assert!(result.signature.is_some());
@@ -439,7 +438,6 @@ mod tests {
         let config = AsyncSignatureConfig::default().with_threads(2);
         let mut generator = AsyncSignatureGenerator::new(config);
 
-        // Queue multiple requests
         for (i, file) in files.iter().enumerate() {
             let request = SignatureRequest {
                 request_id: i as u64,
@@ -452,14 +450,13 @@ mod tests {
             generator.request_signature(request).unwrap();
         }
 
-        // Collect results (may arrive in any order with multiple threads)
+        // Results may arrive out of order across threads; sort to verify all five arrived.
         let mut results = Vec::new();
         for _ in 0..5 {
             let result = generator.wait_for_result().unwrap();
             results.push(result);
         }
 
-        // Sort by request_id to check all arrived
         results.sort_by_key(|r| r.request_id);
 
         assert_eq!(results.len(), 5);
@@ -487,7 +484,6 @@ mod tests {
 
         generator.request_signature(request).unwrap();
 
-        // Should get an error result
         let result = generator.wait_for_result().unwrap();
         assert_eq!(result.request_id, 1);
         assert!(result.signature.is_none());
@@ -501,7 +497,6 @@ mod tests {
         let config = AsyncSignatureConfig::default().with_threads(1);
         let generator = AsyncSignatureGenerator::new(config);
 
-        // No requests queued - should return None immediately
         assert!(generator.try_get_result().is_none());
 
         generator.shutdown().unwrap();
