@@ -74,6 +74,8 @@ jobs:
             target: decompressor_zstd
           - workspace: fuzz
             target: decompressor_zlib
+          - workspace: fuzz
+            target: acl_xattr_wire
           - workspace: crates/protocol/fuzz
             target: fuzz_varint
           - workspace: crates/protocol/fuzz
