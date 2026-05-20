@@ -70,6 +70,7 @@
 //! - [`skip_compress`] for compression tuning based on file type detection.
 //! - `engine` for the transfer pipeline that integrates these helpers.
 
+/// Shared compression algorithm enumeration and default level constants.
 pub mod algorithm;
 mod common;
 /// LZ4 compression support in both standard frame and rsync raw-block formats.

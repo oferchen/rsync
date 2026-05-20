@@ -42,7 +42,7 @@ impl CompressionStrategy for NoCompressionStrategy {
 
 /// Zlib/DEFLATE compression strategy.
 ///
-/// Used by rsync protocol versions < 36 as the default compression algorithm.
+/// Default for protocol < 30 and the negotiation fallback for all versions.
 #[derive(Clone, Copy, Debug)]
 pub struct ZlibStrategy {
     level: CompressionLevel,
@@ -93,8 +93,7 @@ impl CompressionStrategy for ZlibStrategy {
 
 /// Zstandard compression strategy.
 ///
-/// Used by rsync protocol versions >= 36 as the default compression algorithm.
-/// Only available when the `zstd` feature is enabled.
+/// Preferred default for protocol >= 30 when the `zstd` feature is enabled.
 #[cfg(feature = "zstd")]
 #[derive(Clone, Copy, Debug)]
 pub struct ZstdStrategy {
