@@ -193,21 +193,18 @@ mod tests {
         let (_dir, path) = create_test_file();
         let mut meta = LazyMetadata::new(path, false);
 
-        // First call - get the length
         let len1 = {
             let result = meta.get();
             assert!(result.is_ok());
             result.unwrap().len()
         };
 
-        // Second call should return cached value with same length
         let len2 = {
             let result = meta.get();
             assert!(result.is_ok());
             result.unwrap().len()
         };
 
-        // Both should have the same metadata (same length)
         assert_eq!(len1, len2);
     }
 
@@ -234,12 +231,10 @@ mod tests {
             let link_path = dir.path().join("link.txt");
             std::os::unix::fs::symlink(&file_path, &link_path).unwrap();
 
-            // With follow_symlinks = false, should get symlink metadata
             let mut meta_no_follow = LazyMetadata::new(link_path.clone(), false);
             let result = meta_no_follow.get().unwrap();
             assert!(result.file_type().is_symlink());
 
-            // With follow_symlinks = true, should get target metadata
             let mut meta_follow = LazyMetadata::new(link_path, true);
             let result = meta_follow.get().unwrap();
             assert!(result.file_type().is_file());

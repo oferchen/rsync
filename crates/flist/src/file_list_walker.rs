@@ -126,7 +126,6 @@ impl FileListWalker {
                     return Ok(None);
                 }
             } else {
-                // Cannot read symlink target - skip it as unsafe.
                 debug_log!(Flist, 1, "skipping unreadable symlink: {:?}", relative_path);
                 return Ok(None);
             }
@@ -431,7 +430,6 @@ mod tests {
         let entries: Vec<_> = walker.collect();
         assert!(!entries.is_empty());
 
-        // Should have at least the root directory and one file
         let mut found_file = false;
         for result in entries {
             let entry = result.expect("entry");
@@ -449,7 +447,6 @@ mod tests {
             .expect("create walker");
 
         let entries: Vec<_> = walker.collect();
-        // Should have just the root directory
         assert_eq!(entries.len(), 1);
         let entry = entries[0].as_ref().expect("entry");
         assert!(entry.is_root);
@@ -486,7 +483,6 @@ mod tests {
 
         let state = DirectoryState::new(dir, PathBuf::new(), 0).expect("new state");
 
-        // Verify entries are sorted ascending
         for i in 0..state.entries.len() - 1 {
             assert!(
                 state.entries[i] < state.entries[i + 1],
