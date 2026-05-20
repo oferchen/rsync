@@ -422,8 +422,6 @@ fn handle_binary_session_internal(
 mod session_runtime_tests {
     use super::*;
 
-    // Tests for SessionStyle
-
     #[test]
     fn session_style_eq_legacy() {
         assert_eq!(SessionStyle::Legacy, SessionStyle::Legacy);
@@ -452,8 +450,6 @@ mod session_runtime_tests {
         let debug = format!("{style:?}");
         assert!(debug.contains("Legacy"));
     }
-
-    // Tests for SessionParams
 
     #[test]
     fn session_params_fields() {
@@ -495,8 +491,6 @@ mod session_runtime_tests {
         assert!(params.reverse_lookup);
     }
 
-    // Tests for LegacySessionParams
-
     #[test]
     fn legacy_session_params_fields() {
         let modules: Vec<ModuleRuntime> = vec![];
@@ -530,8 +524,6 @@ mod session_runtime_tests {
         assert_eq!(params.peer_host.as_deref(), Some("example.com"));
         assert!(params.reverse_lookup);
     }
-
-    // Tests for read_early_input
 
     #[test]
     fn read_early_input_parses_valid_command() {

@@ -383,7 +383,6 @@ mod tests {
         assert_eq!(registry.count(), 3);
         assert_eq!(registry.active_count(), 1);
 
-        // id1 should be the only active session
         let active = registry.active_sessions();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].id, id1);
@@ -458,7 +457,6 @@ mod tests {
         let registry = Arc::new(SessionRegistry::new());
         let mut handles = vec![];
 
-        // Spawn multiple threads that register/unregister sessions
         for i in 0..10 {
             let registry = Arc::clone(&registry);
             let handle = thread::spawn(move || {
@@ -478,7 +476,6 @@ mod tests {
             handle.join().unwrap();
         }
 
-        // All sessions should be unregistered
         assert_eq!(registry.count(), 0);
     }
 }

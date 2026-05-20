@@ -37,17 +37,14 @@ fn concurrent_register_unregister_stress() {
                 let port = (thread_id * 1000 + i) as u16;
                 let addr = test_addr((thread_id % 256) as u8, port);
 
-                // Register in both
                 let session_id = registry.register(addr, None);
                 let conn_id = pool.register(addr);
 
-                // Update state
                 registry.set_state(&session_id, SessionState::Transferring);
                 registry.set_module(&session_id, format!("module_{thread_id}"));
                 pool.set_module(&conn_id, format!("module_{thread_id}"));
                 pool.add_bytes(&conn_id, 100, 50);
 
-                // Mark complete and unregister
                 registry.set_state(&session_id, SessionState::Completed);
                 registry.unregister(&session_id);
                 pool.unregister(&conn_id);
@@ -60,7 +57,6 @@ fn concurrent_register_unregister_stress() {
         handle.join().expect("thread should not panic");
     }
 
-    // All entries should be cleaned up
     assert_eq!(registry.count(), 0);
     assert_eq!(pool.count(), 0);
 }
@@ -161,7 +157,7 @@ fn concurrent_reads_and_writes() {
         handle.join().expect("thread should not panic");
     }
 
-    // Verify data is still consistent
+    // Read/write threads must not have corrupted the entries.
     assert_eq!(registry.count(), 100);
     assert_eq!(pool.count(), 100);
 }
@@ -226,11 +222,9 @@ fn concurrent_module_queries() {
         handle.join().expect("thread should not panic");
     }
 
-    // Verify final counts
     assert_eq!(registry.count(), 600);
     assert_eq!(pool.count(), 600);
 
-    // Each module should have 200 entries
     for module_id in 0..3 {
         let module = format!("module_{module_id}");
         assert_eq!(registry.module_session_count(&module), 200);
@@ -267,12 +261,10 @@ fn concurrent_ip_rate_limiting() {
         handle.join().expect("thread should not panic");
     }
 
-    // All 1000 connections should be from the same IP
     assert_eq!(pool.connections_from_ip(&shared_ip), 1000);
     assert_eq!(pool.count(), 1000);
     assert_eq!(pool.unique_ip_count(), 1);
 
-    // Check IP stats
     let stats = pool.get_ip_stats(&shared_ip).expect("stats should exist");
     assert_eq!(stats.active_connections, 1000);
     assert_eq!(stats.total_connections, 1000);
@@ -358,11 +350,11 @@ fn concurrent_pruning() {
         handle.join().expect("thread should not panic");
     }
 
-    // Only active entries should remain (half were marked inactive)
+    // Half the registered entries were marked inactive up-front; pruning should
+    // leave the active half intact.
     assert_eq!(registry.count(), 100);
     assert_eq!(pool.count(), 100);
 
-    // All remaining should be active
     assert_eq!(registry.active_count(), 100);
     assert_eq!(pool.active_count(), 100);
 }
@@ -444,7 +436,6 @@ fn concurrent_aggregate_stats() {
             barrier.wait();
             for _ in 0..500 {
                 let stats = pool.aggregate_stats();
-                // Stats should be internally consistent
                 assert!(stats.active_connections <= stats.total_connections);
 
                 let _ = registry.active_count();
@@ -457,7 +448,6 @@ fn concurrent_aggregate_stats() {
         handle.join().expect("thread should not panic");
     }
 
-    // Final verification
     let stats = pool.aggregate_stats();
     assert_eq!(stats.total_connections, 400); // 4 threads * 100 connections
     assert_eq!(stats.active_connections, 400);
@@ -494,10 +484,10 @@ fn concurrent_same_address_registration() {
         handle.join().expect("thread should not panic");
     }
 
-    // All registrations should succeed (each gets unique ID)
+    // Each concurrent register() call must produce a unique ID even when the
+    // peer address collides.
     assert_eq!(pool.count(), 1000);
     assert_eq!(registered_count.load(Ordering::Relaxed), 1000);
 
-    // All from same IP
     assert_eq!(pool.connections_from_ip(&addr.ip()), 1000);
 }
