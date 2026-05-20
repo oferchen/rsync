@@ -4,7 +4,7 @@
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.4.2 (and back-compat with 3.4.1, protocol 32), works as a drop-in replacement.
+`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.4.3 (and back-compat with 3.4.2 / 3.4.1, protocol 32), works as a drop-in replacement.
 
 Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict.
 
@@ -12,9 +12,9 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.6.2 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.2 (and 3.4.1, protocols 28-32).
+**Release:** 0.6.2 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.3 (and 3.4.2 / 3.4.1, protocols 28-32).
 
-All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
+All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 3.0.9, 3.1.3, 3.4.1, 3.4.2, and 3.4.3, plus upstream rsync's own `testsuite/*.test` corpus driven against `oc-rsync` as `$RSYNC` (canonical "does oc-rsync look like rsync from upstream's perspective" check; non-blocking with a known-failures roster).
 
 | Component | Status |
 |-----------|--------|
