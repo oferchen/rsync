@@ -120,7 +120,6 @@ fn parse_digits(bytes: &[u8]) -> Result<u128, BandwidthParseError> {
 mod tests {
     use super::*;
 
-    // Tests for pow_u128
     #[test]
     fn pow_u128_zero_exponent() {
         assert_eq!(pow_u128(10, 0).unwrap(), 1);
@@ -165,7 +164,6 @@ mod tests {
         assert_eq!(pow_u128(0, 1).unwrap(), 0);
     }
 
-    // Tests for parse_decimal_with_exponent
     #[test]
     fn parse_decimal_with_exponent_integer_only() {
         let (int, frac, denom, exp) = parse_decimal_with_exponent("12345").unwrap();
@@ -234,7 +232,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // Tests for parse_decimal_mantissa
     #[test]
     fn parse_decimal_mantissa_integer() {
         let (int, frac, denom) = parse_decimal_mantissa("123").unwrap();
@@ -291,7 +288,6 @@ mod tests {
         assert_eq!(denom, 1);
     }
 
-    // Tests for parse_digits
     #[test]
     fn parse_digits_valid() {
         assert_eq!(parse_digits(b"12345").unwrap(), 12345);
@@ -457,8 +453,6 @@ mod tests {
 
     #[test]
     fn parse_decimal_mantissa_non_digit_in_fraction_rejected() {
-        // "1.2a3" should fail because 'a' is in the fractional part
-        // This tests line 73-74 in numeric.rs
         let result = parse_decimal_mantissa("1.2a3");
         assert!(result.is_err());
     }
