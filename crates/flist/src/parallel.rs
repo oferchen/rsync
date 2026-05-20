@@ -462,7 +462,6 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let root = dir.path();
 
-        // Create some files and directories
         File::create(root.join("file1.txt")).unwrap();
         File::create(root.join("file2.txt")).unwrap();
         fs::create_dir(root.join("subdir")).unwrap();
@@ -511,7 +510,6 @@ mod tests {
         let result = collect_paths_then_metadata_parallel(temp.path().to_path_buf(), false);
         let entries = result.unwrap();
 
-        // Should find all entries
         assert_eq!(entries.len(), 5);
     }
 
@@ -521,7 +519,6 @@ mod tests {
 
         let entries = collect_lazy_parallel(temp.path().to_path_buf(), false).unwrap();
 
-        // Should find all entries
         assert_eq!(entries.len(), 5);
 
         // Metadata should not be resolved yet
@@ -537,10 +534,8 @@ mod tests {
         let lazy_entries = collect_lazy_parallel(temp.path().to_path_buf(), false).unwrap();
         let resolved = resolve_metadata_parallel(lazy_entries).unwrap();
 
-        // Should resolve all entries
         assert_eq!(resolved.len(), 5);
 
-        // Verify metadata is present
         for entry in &resolved {
             let _ = entry.metadata();
         }
@@ -561,11 +556,9 @@ mod tests {
         // Should have 3 .txt files
         assert_eq!(filtered.len(), 3);
 
-        // Resolve only the filtered entries
         let resolved = resolve_metadata_parallel(filtered).unwrap();
         assert_eq!(resolved.len(), 3);
 
-        // All should be files
         for entry in &resolved {
             assert!(entry.metadata().is_file());
         }
@@ -581,7 +574,6 @@ mod tests {
         // Should find all entries: root, 3 files, 1 subdir, 1 nested file
         assert_eq!(entries.len(), 5);
 
-        // All should have metadata
         for entry in &entries {
             let _ = entry.metadata();
         }
@@ -593,12 +585,10 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let root = temp.path();
 
-        // Create 100 files
         for i in 0..100 {
             File::create(root.join(format!("file{i}.txt"))).unwrap();
         }
 
-        // Create 10 subdirs with 10 files each
         for i in 0..10 {
             let subdir = root.join(format!("dir{i}"));
             fs::create_dir(&subdir).unwrap();

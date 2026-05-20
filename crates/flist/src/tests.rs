@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 fn collect_relative_paths(walker: FileListWalker) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for entry in walker {
-        // Handle both successful entries and errors gracefully
         match entry {
             Ok(entry) => {
                 if entry.is_root() {
@@ -14,7 +13,6 @@ fn collect_relative_paths(walker: FileListWalker) -> Vec<PathBuf> {
                 paths.push(entry.relative_path().to_path_buf());
             }
             Err(_) => {
-                // Stop on error but return what we collected so far
                 break;
             }
         }
@@ -252,7 +250,6 @@ fn walk_detects_direct_symlink_loop() {
 
     let paths = collect_relative_paths(walker);
 
-    // The symlink should be yielded but not followed (loop detected)
     assert_eq!(paths, vec![PathBuf::from("link")]);
 }
 
@@ -293,7 +290,6 @@ fn walk_detects_indirect_symlink_loop() {
 
     let paths = collect_relative_paths(walker);
 
-    // All three directories should be yielded
     assert!(paths.contains(&PathBuf::from("a")));
     assert!(paths.contains(&PathBuf::from("b")));
     assert!(paths.contains(&PathBuf::from("c")));
@@ -384,16 +380,13 @@ fn walk_continues_after_detecting_loop() {
 
     let paths = collect_relative_paths(walker);
 
-    // Verify loop entries are present but not infinitely followed
     assert!(paths.contains(&PathBuf::from("loop_dir")));
     assert!(paths.contains(&PathBuf::from("loop_dir/self_link")));
 
-    // Verify normal entries are still processed after loop detection
     assert!(paths.contains(&PathBuf::from("normal_file.txt")));
     assert!(paths.contains(&PathBuf::from("normal_dir")));
     assert!(paths.contains(&PathBuf::from("normal_dir/nested.txt")));
 
-    // Check we got all expected entries and no duplicates from infinite loop
     assert_eq!(paths.len(), 5, "Expected 5 entries, got: {paths:?}");
 }
 
@@ -435,7 +428,6 @@ fn walk_loop_detection_with_multiple_paths_to_same_dir() {
     assert!(paths.contains(&PathBuf::from("link2")));
     assert!(paths.contains(&PathBuf::from("target")));
 
-    // Count how many times file.txt appears
     let file_count = paths
         .iter()
         .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some("file.txt"))
@@ -471,7 +463,6 @@ fn walk_symlink_loop_not_followed_when_disabled() {
 
     let paths = collect_relative_paths(walker);
 
-    // Should get both the symlink and the file, no loop issues
     assert_eq!(paths.len(), 2);
     assert!(paths.contains(&PathBuf::from("self")));
     assert!(paths.contains(&PathBuf::from("file.txt")));
@@ -508,11 +499,9 @@ fn walk_empty_directory() {
 
     let mut walker = FileListBuilder::new(&root).build().expect("build walker");
 
-    // Should yield root
     let root_entry = walker.next().expect("root entry").expect("root ok");
     assert!(root_entry.is_root());
 
-    // Should yield nothing else
     assert!(walker.next().is_none());
 }
 
@@ -529,7 +518,6 @@ fn walk_include_root_false_skips_root_entry() {
         .expect("build walker");
     let paths = collect_relative_paths(walker);
 
-    // Should only contain file, not root
     assert_eq!(paths, vec![PathBuf::from("file.txt")]);
 }
 
@@ -572,7 +560,6 @@ fn walk_terminates_after_exhaustion() {
 
     let mut walker = FileListBuilder::new(&root).build().expect("build walker");
 
-    // Exhaust the walker
     let _ = walker.next();
     let _ = walker.next();
 
@@ -832,7 +819,6 @@ fn copy_links_multiple_symlinks_all_resolved() {
     fs::write(&file_a, b"short").expect("write a");
     fs::write(&file_b, b"longer content").expect("write b");
 
-    // Create symlinks pointing to the files
     symlink(&file_a, root.join("link_a")).expect("symlink a");
     symlink(&file_b, root.join("link_b")).expect("symlink b");
 
