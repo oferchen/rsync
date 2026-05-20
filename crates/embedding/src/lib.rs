@@ -434,8 +434,6 @@ mod tests {
         ];
         let _error = run_server(args).expect_err("server requires protocol data on stdin");
 
-        // Capture-mode embedding: should report non-zero exit and route
-        // all diagnostics to stderr, leaving stdout empty.
         let error = run_server(args).expect_err("server mode reports usage");
         // Server may return various error codes depending on where it fails
         // (1 for usage errors, 12 for protocol errors, etc.)
@@ -450,11 +448,9 @@ mod tests {
             output.stderr().iter().any(|b| *b != 0),
             "stderr should contain non-empty diagnostics"
         );
-        // Stream-based embedding: same semantics as above.
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let status = run_server_with(args, &mut stdout, &mut stderr).unwrap_err();
-        // Server may return various error codes depending on where it fails
         assert_ne!(
             status.exit_status(),
             0,
