@@ -27,6 +27,7 @@
 
 mod delete_pipeline_hook;
 mod filter_chain;
+#[cfg(feature = "iconv")]
 mod iconv_wire_order;
 mod id_lists;
 mod incremental_directories;
