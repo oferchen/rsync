@@ -250,7 +250,6 @@ mod tests {
         assert!(writer.write_header(flags).is_ok());
         assert!(writer.flush().is_ok());
 
-        // Verify file exists and has content
         assert!(batch_path.exists());
         let metadata = fs::metadata(&batch_path).unwrap();
         assert!(metadata.len() > 0);
@@ -269,7 +268,6 @@ mod tests {
 
         let mut writer = BatchWriter::new(config).unwrap();
 
-        // write_data before write_header must fail
         assert!(writer.write_data(b"test").is_err());
 
         let flags = BatchFlags::default();

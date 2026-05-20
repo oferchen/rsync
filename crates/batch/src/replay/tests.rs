@@ -13,7 +13,7 @@ use super::delta::{apply_delta_ops, choose_block_length, write_literals_to_file}
 
 #[test]
 fn choose_block_length_small_file() {
-    // Files smaller than 700^2 = 490_000 bytes get MIN_BLOCK
+    // Files smaller than 700^2 = 490_000 bytes get MIN_BLOCK (700).
     assert_eq!(choose_block_length(0), 700);
     assert_eq!(choose_block_length(1000), 700);
     assert_eq!(choose_block_length(489_999), 700);
@@ -21,13 +21,12 @@ fn choose_block_length_small_file() {
 
 #[test]
 fn choose_block_length_medium_file() {
-    // sqrt(1_000_000) = 1000
     assert_eq!(choose_block_length(1_000_000), 1000);
 }
 
 #[test]
 fn choose_block_length_large_file() {
-    // Files larger than (128*1024)^2 get MAX_BLOCK
+    // Files larger than (128*1024)^2 get MAX_BLOCK.
     let max_block = 128 * 1024;
     let threshold = (max_block as u64) * (max_block as u64);
     assert_eq!(choose_block_length(threshold + 1), max_block);
@@ -54,7 +53,6 @@ fn apply_delta_ops_copy_from_basis() {
     let basis_path = temp.path().join("basis.txt");
     let dest_path = temp.path().join("output.txt");
 
-    // Basis file has exactly one block of 10 bytes at block 0
     fs::write(&basis_path, b"0123456789").unwrap();
 
     let ops = vec![protocol::wire::DeltaOp::Copy {
@@ -73,7 +71,6 @@ fn apply_delta_ops_mixed() {
     let basis_path = temp.path().join("basis.txt");
     let dest_path = temp.path().join("output.txt");
 
-    // Basis has "ABCDE" at block 0 (block_length=5)
     fs::write(&basis_path, b"ABCDE").unwrap();
 
     let ops = vec![
@@ -117,18 +114,19 @@ fn apply_delta_last_block_uses_remainder() {
     fs::write(&basis_path, b"AAAAAAAAAA12345").unwrap();
     let dest_path = temp.path().join("output.dat");
 
-    // Delta: copy block 1 (the last block, 5 bytes remainder), then literal.
+    // Copy block 1 (last block, 5-byte remainder) + literal.
     let ops = vec![
         protocol::wire::DeltaOp::Copy {
             block_index: 1,
-            length: 0, // Token format: length=0 means derive from block_length/remainder
+            // Token format: length=0 means derive from block_length/remainder.
+            length: 0,
         },
         protocol::wire::DeltaOp::Literal(b"END".to_vec()),
     ];
     apply_delta_ops(&basis_path, &dest_path, ops, 10, 2, 5).unwrap();
 
     let result = fs::read(&dest_path).unwrap();
-    // Should copy 5 bytes from block 1 ("12345"), not 10 bytes (which would overread).
+    // Must copy 5 bytes from block 1 ("12345"), not 10 bytes (would overread).
     assert_eq!(result, b"12345END");
 }
 
@@ -186,19 +184,18 @@ fn compressed_decoder_created_for_zstd() {
     );
 }
 
+/// When the detected codec is zlib, dictionary sync (`see_token`)
+/// must be active. Matches upstream CPRES_ZLIB behavior.
 #[test]
 fn cpres_zlib_true_for_zlib_codec() {
-    // When the detected codec is zlib, dictionary sync (see_token)
-    // must be active. This matches upstream CPRES_ZLIB behavior.
     let codec = CompressionCodec::Zlib;
     assert!(Some(codec) == Some(CompressionCodec::Zlib));
 }
 
+/// Zstd's `see_token()` is a noop, so the dictionary-sync path does not apply.
 #[cfg(feature = "zstd")]
 #[test]
 fn cpres_zlib_false_for_zstd_codec() {
-    // When the detected codec is zstd, dictionary sync is unnecessary
-    // because zstd's see_token() is a noop.
     let codec = CompressionCodec::Zstd;
     assert!(Some(codec) != Some(CompressionCodec::Zlib));
 }

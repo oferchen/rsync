@@ -53,7 +53,6 @@ fn test_batch_flags_protocol_29() {
     let restored = BatchFlags::from_bitmap(bitmap, 29);
     assert_eq!(flags, restored);
 
-    // Protocol 28 should not include these flags
     let bitmap_28 = flags.to_bitmap(28);
     let restored_28 = BatchFlags::from_bitmap(bitmap_28, 28);
     assert!(!restored_28.xfer_dirs);
@@ -429,13 +428,11 @@ fn test_batch_header_upstream_byte_layout_protocol_31() {
     let mut buf = Vec::new();
     header.write_to(&mut buf).unwrap();
 
-    // stream_flags bitmap = 0b0000_0011 = 3 as i32 LE
+    // stream_flags bitmap = recurse | preserve_uid = 0b11.
     assert_eq!(&buf[0..4], &3_i32.to_le_bytes());
-    // protocol_version = 31 as i32 LE
     assert_eq!(&buf[4..8], &31_i32.to_le_bytes());
-    // compat_flags = 0x3F as varint (single byte for values < 0x80)
+    // compat_flags = 0x3F as varint (single byte for values < 0x80).
     assert_eq!(buf[8], 0x3F);
-    // checksum_seed = 0x12345678 as i32 LE
     assert_eq!(&buf[9..13], &0x1234_5678_i32.to_le_bytes());
     assert_eq!(buf.len(), 13);
 }
@@ -448,12 +445,9 @@ fn test_batch_header_upstream_byte_layout_protocol_28() {
     let mut buf = Vec::new();
     header.write_to(&mut buf).unwrap();
 
-    // stream_flags bitmap = 0 as i32 LE
     assert_eq!(&buf[0..4], &0_i32.to_le_bytes());
-    // protocol_version = 28 as i32 LE
     assert_eq!(&buf[4..8], &28_i32.to_le_bytes());
-    // No compat_flags for protocol < 30
-    // checksum_seed = 42 as i32 LE
+    // No compat_flags for protocol < 30; checksum_seed follows directly.
     assert_eq!(&buf[8..12], &42_i32.to_le_bytes());
     assert_eq!(buf.len(), 12);
 }
@@ -461,16 +455,12 @@ fn test_batch_header_upstream_byte_layout_protocol_28() {
 /// Verify read_from correctly parses a hand-crafted upstream-format header.
 #[test]
 fn test_batch_header_read_upstream_bytes() {
-    // Build raw bytes matching upstream rsync format:
-    // stream_flags = 0x45 (bits 0,2,6 = recurse + preserve_gid + always_checksum)
-    // protocol_version = 32
-    // compat_flags = 0x0A (varint, single byte)
-    // checksum_seed = 0xAABBCCDD
+    // stream_flags = 0x45 (recurse | preserve_gid | always_checksum)
     let mut raw = Vec::new();
-    raw.extend_from_slice(&0x45_i32.to_le_bytes()); // stream_flags
-    raw.extend_from_slice(&32_i32.to_le_bytes()); // protocol_version
-    raw.push(0x0A); // compat_flags varint
-    raw.extend_from_slice(&0xAABB_CCDD_u32.to_le_bytes()); // checksum_seed
+    raw.extend_from_slice(&0x45_i32.to_le_bytes());
+    raw.extend_from_slice(&32_i32.to_le_bytes());
+    raw.push(0x0A);
+    raw.extend_from_slice(&0xAABB_CCDD_u32.to_le_bytes());
 
     let mut cursor = Cursor::new(raw);
     let header = BatchHeader::read_from(&mut cursor).unwrap();
@@ -495,26 +485,23 @@ fn test_batch_header_upstream_byte_layout_protocol_29() {
     let mut header = BatchHeader::new(29, 0xDEAD);
     header.stream_flags = BatchFlags {
         recurse: true,
-        xfer_dirs: true,      // bit 7 - included for protocol 29
-        do_compression: true, // bit 8 - included for protocol 29
-        preserve_acls: true,  // bit 10 - should be masked out for protocol 29
+        xfer_dirs: true,      // bit 7: included for protocol 29
+        do_compression: true, // bit 8: included for protocol 29
+        preserve_acls: true,  // bit 10: masked out for protocol 29
         ..Default::default()
     };
 
     let mut buf = Vec::new();
     header.write_to(&mut buf).unwrap();
 
-    // stream_flags: bits 0,7,8 set = 0x0000_0181 (acls bit 10 masked by to_bitmap)
+    // bits 0,7,8 set = 0x0000_0181 (acls bit 10 masked by to_bitmap).
     let expected_bitmap = 0x0000_0181_i32;
     assert_eq!(&buf[0..4], &expected_bitmap.to_le_bytes());
-    // protocol_version = 29
     assert_eq!(&buf[4..8], &29_i32.to_le_bytes());
-    // No compat_flags for protocol < 30
-    // checksum_seed = 0xDEAD
+    // No compat_flags for protocol < 30.
     assert_eq!(&buf[8..12], &0xDEAD_i32.to_le_bytes());
     assert_eq!(buf.len(), 12);
 
-    // Verify roundtrip
     let mut cursor = Cursor::new(buf);
     let restored = BatchHeader::read_from(&mut cursor).unwrap();
     assert_eq!(restored.protocol_version, 29);
@@ -553,7 +540,6 @@ fn test_batch_header_all_flags_byte_layout() {
     let mut buf = Vec::new();
     header.write_to(&mut buf).unwrap();
 
-    // All 15 bits set: 0x7FFF
     let expected_bitmap = 0x7FFF_i32;
     assert_eq!(&buf[0..4], &expected_bitmap.to_le_bytes());
 }
@@ -566,21 +552,16 @@ fn test_batch_header_all_flags_byte_layout() {
 #[test]
 fn test_batch_header_multi_byte_compat_flags() {
     let mut header = BatchHeader::new(31, 42);
-    // 0xFF requires 2 varint bytes (high bit set in first byte)
+    // 0xFF requires 2 varint bytes (high bit set in first byte).
     header.compat_flags = Some(0xFF);
     header.stream_flags = BatchFlags::default();
 
     let mut buf = Vec::new();
     header.write_to(&mut buf).unwrap();
 
-    // stream_flags = 0 (4 bytes)
-    // protocol = 31 (4 bytes)
-    // compat_flags = 0xFF as varint (2 bytes for rsync varint encoding)
-    // checksum_seed = 42 (4 bytes)
-    // Total: 4 + 4 + 2 + 4 = 14 bytes
+    // stream_flags(4) + protocol(4) + compat_flags varint(2) + checksum_seed(4) = 14
     assert_eq!(buf.len(), 14);
 
-    // Verify roundtrip
     let mut cursor = Cursor::new(buf);
     let restored = BatchHeader::read_from(&mut cursor).unwrap();
     assert_eq!(restored.compat_flags, Some(0xFF));
@@ -616,7 +597,6 @@ fn test_batch_header_typical_rsync_341_config() {
     assert_eq!(header.checksum_seed, restored.checksum_seed);
     assert_eq!(header.stream_flags, restored.stream_flags);
 
-    // Verify exact byte output
     let mut rewritten = Vec::new();
     restored.write_to(&mut rewritten).unwrap();
     assert_eq!(

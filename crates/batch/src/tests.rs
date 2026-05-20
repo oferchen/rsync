@@ -15,7 +15,6 @@ mod integration {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("roundtrip.batch");
 
-        // Write a batch file
         let write_config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -38,7 +37,6 @@ mod integration {
         writer.write_data(b"delta operations here").unwrap();
         writer.finalize().unwrap();
 
-        // Read the batch file back
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -48,10 +46,8 @@ mod integration {
         let mut reader = BatchReader::new(read_config).unwrap();
         let read_flags = reader.read_header().unwrap();
 
-        // Verify flags match
         assert_eq!(flags, read_flags);
 
-        // Verify data can be read back
         let mut buf = vec![0u8; 100];
         let n = reader.read_data(&mut buf).unwrap();
         assert!(n > 0);
@@ -79,7 +75,6 @@ mod integration {
         writer.write_header(flags).unwrap();
         writer.finalize().unwrap();
 
-        // Read back
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -92,7 +87,6 @@ mod integration {
         assert!(read_flags.recurse);
         assert!(read_flags.preserve_hard_links);
 
-        // Verify compat_flags is None for protocol 28
         assert!(reader.header().unwrap().compat_flags.is_none());
     }
 
@@ -111,7 +105,6 @@ mod integration {
         writer.write_header(BatchFlags::default()).unwrap();
         writer.finalize().unwrap();
 
-        // Read back empty batch
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -123,7 +116,7 @@ mod integration {
 
         let mut buf = [0u8; 10];
         let n = reader.read_data(&mut buf).unwrap();
-        assert_eq!(n, 0); // EOF
+        assert_eq!(n, 0);
     }
 
     #[test]
@@ -140,12 +133,10 @@ mod integration {
         let mut writer = BatchWriter::new(config).unwrap();
         writer.write_header(BatchFlags::default()).unwrap();
 
-        // Write 1MB of data
         let large_data = vec![0xAB; 1024 * 1024];
         writer.write_data(&large_data).unwrap();
         writer.finalize().unwrap();
 
-        // Read back
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -236,7 +227,6 @@ mod integration {
 
         writer.write_header(flags).unwrap();
 
-        // Write file entries with varying metadata
         let entries = vec![
             crate::format::FileEntry {
                 path: "src/main.rs".to_owned(),
@@ -280,19 +270,15 @@ mod integration {
         let mut reader = BatchReader::new(read_config).unwrap();
         let read_flags = reader.read_header().unwrap();
 
-        // Verify header fields
         let header = reader.header().unwrap();
         assert_eq!(header.protocol_version, protocol_version);
         assert_eq!(header.checksum_seed, checksum_seed);
         assert_eq!(header.compat_flags, Some(compat_flags_val));
 
-        // Verify the reader adopted the protocol version from the header
         assert_eq!(reader.config().protocol_version, protocol_version);
 
-        // Verify stream flags match exactly
         assert_eq!(read_flags, flags);
 
-        // Verify file entries round-trip correctly
         for expected in &entries {
             let actual = reader
                 .read_file_entry()
@@ -330,7 +316,6 @@ mod integration {
             );
         }
 
-        // No more entries
         let trailing = reader.read_file_entry().unwrap();
         assert!(trailing.is_none(), "expected no more file entries");
     }
@@ -375,7 +360,6 @@ mod integration {
         writer.write_stats(&stats).unwrap();
         writer.finalize().unwrap();
 
-        // -- Read phase --
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -393,7 +377,6 @@ mod integration {
             "protocol 28 has no compat flags"
         );
 
-        // Protocol-29+ bits should be masked out
         assert!(read_flags.recurse);
         assert!(read_flags.preserve_hard_links);
         assert!(read_flags.always_checksum);
@@ -406,7 +389,6 @@ mod integration {
             "preserve_acls should be masked for protocol 28"
         );
 
-        // Read stats back
         let read_stats = reader.read_stats().unwrap();
         assert_eq!(read_stats.total_read, stats.total_read);
         assert_eq!(read_stats.total_written, stats.total_written);
@@ -420,7 +402,6 @@ mod integration {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("corrupt.batch");
 
-        // Write a truncated batch file
         fs::write(&batch_path, b"CORRUPT").unwrap();
 
         let config = BatchConfig::new(
@@ -431,7 +412,7 @@ mod integration {
 
         let mut reader = BatchReader::new(config).unwrap();
         let result = reader.read_header();
-        assert!(result.is_err()); // Should fail on corrupt data
+        assert!(result.is_err());
     }
 
     /// Verifies that a batch file containing protocol-format flist entries
@@ -465,7 +446,6 @@ mod integration {
         };
         writer.write_header(flags).unwrap();
 
-        // Encode file entries using the protocol wire format
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let mut flist_writer = FileListWriter::new(protocol)
             .with_preserve_uid(true)
@@ -494,12 +474,10 @@ mod integration {
             writer.write_data(&buf).unwrap();
         }
 
-        // Write end-of-list marker
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
 
-        // Write empty uid and gid ID lists (required by upstream protocol).
         // upstream: uidlist.c:recv_id_list() reads until id=0 terminator.
         // An empty list is a single varint30 zero (one 0x00 byte for proto >= 30).
         use protocol::idlist::IdList;
@@ -542,22 +520,14 @@ mod integration {
     fn test_known_batch_header_format() {
         use std::io::Cursor;
 
-        // Build a batch header in the exact upstream wire format
         let mut data = Vec::new();
 
-        // Stream flags: recurse(bit 0) + preserve_uid(bit 1) = 0x03
+        // stream_flags = recurse(bit 0) + preserve_uid(bit 1) = 0x03
         data.extend_from_slice(&3i32.to_le_bytes());
-
-        // Protocol version: 31
         data.extend_from_slice(&31i32.to_le_bytes());
-
-        // Compat flags (varint): 0 (no special compat flags)
         protocol::write_varint(&mut data, 0).unwrap();
-
-        // Checksum seed: 42
         data.extend_from_slice(&42i32.to_le_bytes());
 
-        // Parse via Cursor
         let mut cursor = Cursor::new(&data);
         let header = crate::format::BatchHeader::read_from(&mut cursor).unwrap();
 
@@ -568,7 +538,6 @@ mod integration {
         assert!(header.stream_flags.preserve_uid);
         assert!(!header.stream_flags.preserve_gid);
 
-        // Verify write_to produces the same bytes
         let mut written = Vec::new();
         header.write_to(&mut written).unwrap();
         assert_eq!(written, data);
@@ -619,7 +588,6 @@ mod integration {
 
         writer.finalize().unwrap();
 
-        // Read back - preserve_specials should be set from preserve_devices
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -674,7 +642,7 @@ mod integration {
             .with_preserve_uid(true)
             .with_always_checksum(csum_len);
 
-        // Three files with checksums - exercises cross-entry compression state
+        // Exercise cross-entry compression state with three checksummed files.
         let entries = vec![
             {
                 let mut e = FileEntry::new_file("a.txt".into(), 100, 0o644);
@@ -709,7 +677,7 @@ mod integration {
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
 
-        // Write empty uid ID list (preserve_uid is set).
+        // Empty uid ID list (preserve_uid is set).
         // upstream: uidlist.c:recv_id_list() reads until id=0 terminator.
         use protocol::idlist::IdList;
         let mut id_buf = Vec::new();
@@ -720,7 +688,6 @@ mod integration {
 
         writer.finalize().unwrap();
 
-        // Read phase
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -815,7 +782,6 @@ mod integration {
         };
         writer.write_header(flags).unwrap();
 
-        // Write one directory entry + one regular file entry in flist format
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let mut flist_writer = FileListWriter::new(protocol);
 
@@ -838,7 +804,6 @@ mod integration {
         flist_writer.write_entry(&mut buf2, &file_entry).unwrap();
         writer.write_data(&buf2).unwrap();
 
-        // Flist end marker
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
@@ -851,8 +816,6 @@ mod integration {
 
             let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
             let mut ndx_buf = Vec::new();
-
-            // NDX for file entry (index 1 - the file, after the directory at 0)
             ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
             writer.write_data(&ndx_buf).unwrap();
 
@@ -946,8 +909,6 @@ mod integration {
         writer.write_data(data1).unwrap();
         writer.write_data(data2).unwrap();
         writer.finalize().unwrap();
-
-        // Read back and verify the compression flag is preserved
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -1026,22 +987,16 @@ mod integration {
 
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let mut flist_writer = FileListWriter::new(protocol);
-
-        // Directory entry
         let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
         dir_entry.set_mtime(1_700_000_000, 0);
         let mut buf = Vec::new();
         flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // File entry with output size
         let mut file_entry = FileEntry::new_file("data.bin".into(), output_size as u64, 0o644);
         file_entry.set_mtime(1_700_000_001, 0);
         buf.clear();
         flist_writer.write_entry(&mut buf, &file_entry).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // End of flist
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
@@ -1053,8 +1008,6 @@ mod integration {
 
             let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
             let mut ndx_buf = Vec::new();
-
-            // NDX for file entry (index 1)
             ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
             writer.write_data(&ndx_buf).unwrap();
 
@@ -1101,8 +1054,6 @@ mod integration {
 
             encoder.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-
-            // File checksum (16 zero bytes)
             writer.write_data(&[0u8; 16]).unwrap();
 
             // NDX_DONE for phase 1 -> phase 2
@@ -1117,8 +1068,6 @@ mod integration {
         }
 
         writer.finalize().unwrap();
-
-        // Replay the compressed delta batch
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -1174,23 +1123,17 @@ mod integration {
 
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let mut flist_writer = FileListWriter::new(protocol);
-
-        // Directory entry
         let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
         dir_entry.set_mtime(1_700_000_000, 0);
         let mut buf = Vec::new();
         flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // File entry
         let file_data = b"compressed batch replay test";
         let mut file_entry = FileEntry::new_file("test.txt".into(), file_data.len() as u64, 0o644);
         file_entry.set_mtime(1_700_000_001, 0);
         buf.clear();
         flist_writer.write_entry(&mut buf, &file_entry).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // End of flist
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
@@ -1203,8 +1146,6 @@ mod integration {
 
             let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
             let mut ndx_buf = Vec::new();
-
-            // NDX for file entry (index 1 - the file, after the directory at 0)
             ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
             writer.write_data(&ndx_buf).unwrap();
 
@@ -1224,8 +1165,6 @@ mod integration {
             encoder.send_literal(&mut token_buf, file_data).unwrap();
             encoder.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-
-            // File checksum (16 zero bytes, matching s2length=16)
             writer.write_data(&[0u8; 16]).unwrap();
 
             // NDX_DONE for phase 1 -> phase 2 transition
@@ -1240,8 +1179,6 @@ mod integration {
         }
 
         writer.finalize().unwrap();
-
-        // Replay the batch file to destination
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -1297,15 +1234,11 @@ mod integration {
 
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let mut flist_writer = FileListWriter::new(protocol);
-
-        // Directory entry
         let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
         dir_entry.set_mtime(1_700_000_000, 0);
         let mut buf = Vec::new();
         flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // File entry
         let file_data = b"zstd compressed batch replay test data for auto-detection";
         let mut file_entry =
             FileEntry::new_file("zstd_test.txt".into(), file_data.len() as u64, 0o644);
@@ -1313,8 +1246,6 @@ mod integration {
         buf.clear();
         flist_writer.write_entry(&mut buf, &file_entry).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // End of flist
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
@@ -1325,8 +1256,6 @@ mod integration {
 
             let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
             let mut ndx_buf = Vec::new();
-
-            // NDX for file entry (index 1)
             ndx_codec.write_ndx(&mut ndx_buf, 1).unwrap();
             writer.write_data(&ndx_buf).unwrap();
 
@@ -1345,8 +1274,6 @@ mod integration {
             encoder.send_literal(&mut token_buf, file_data).unwrap();
             encoder.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-
-            // File checksum (16 zero bytes)
             writer.write_data(&[0u8; 16]).unwrap();
 
             // NDX_DONE for phase 1 -> phase 2
@@ -1361,8 +1288,6 @@ mod integration {
         }
 
         writer.finalize().unwrap();
-
-        // Replay the zstd-compressed batch file
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -1421,22 +1346,16 @@ mod integration {
 
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let mut flist_writer = FileListWriter::new(protocol);
-
-        // Directory entry
         let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
         dir_entry.set_mtime(1_700_000_000, 0);
         let mut buf = Vec::new();
         flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // File entry with output size
         let mut file_entry = FileEntry::new_file("data.bin".into(), output_size as u64, 0o644);
         file_entry.set_mtime(1_700_000_001, 0);
         buf.clear();
         flist_writer.write_entry(&mut buf, &file_entry).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // End of flist
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
@@ -1483,8 +1402,6 @@ mod integration {
 
             encoder.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-
-            // File checksum
             writer.write_data(&[0u8; 16]).unwrap();
 
             // NDX_DONE phase 1 -> phase 2
@@ -1499,8 +1416,6 @@ mod integration {
         }
 
         writer.finalize().unwrap();
-
-        // Replay the zstd-compressed delta batch
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -1564,29 +1479,21 @@ mod integration {
 
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let mut flist_writer = FileListWriter::new(protocol);
-
-        // Directory entry
         let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
         dir_entry.set_mtime(1_700_000_000, 0);
         let mut buf = Vec::new();
         flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // File 1 entry
         let mut entry1 = FileEntry::new_file("file1.txt".into(), file1_data.len() as u64, 0o644);
         entry1.set_mtime(1_700_000_001, 0);
         buf.clear();
         flist_writer.write_entry(&mut buf, &entry1).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // File 2 entry
         let mut entry2 = FileEntry::new_file("file2.txt".into(), file2_data.len() as u64, 0o644);
         entry2.set_mtime(1_700_000_002, 0);
         buf.clear();
         flist_writer.write_entry(&mut buf, &entry2).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // End of flist
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
@@ -1645,8 +1552,6 @@ mod integration {
         }
 
         writer.finalize().unwrap();
-
-        // Replay
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -1723,29 +1628,21 @@ mod integration {
 
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let mut flist_writer = FileListWriter::new(protocol);
-
-        // Directory
         let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
         dir_entry.set_mtime(1_700_000_000, 0);
         let mut buf = Vec::new();
         flist_writer.write_entry(&mut buf, &dir_entry).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // File 1
         let mut f1 = FileEntry::new_file("alpha.dat".into(), output1_size as u64, 0o644);
         f1.set_mtime(1_700_000_001, 0);
         buf.clear();
         flist_writer.write_entry(&mut buf, &f1).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // File 2
         let mut f2 = FileEntry::new_file("beta.dat".into(), output2_size as u64, 0o644);
         f2.set_mtime(1_700_000_002, 0);
         buf.clear();
         flist_writer.write_entry(&mut buf, &f2).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // End flist
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
@@ -1830,8 +1727,6 @@ mod integration {
         }
 
         writer.finalize().unwrap();
-
-        // Replay
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -1909,8 +1804,6 @@ mod integration {
 
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let mut flist_writer = FileListWriter::new(protocol);
-
-        // Directory
         let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
         dir_entry.set_mtime(1_700_000_000, 0);
         let mut buf = Vec::new();
@@ -1930,8 +1823,6 @@ mod integration {
         buf.clear();
         flist_writer.write_entry(&mut buf, &f_new).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // End flist
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
@@ -2004,8 +1895,6 @@ mod integration {
         }
 
         writer.finalize().unwrap();
-
-        // Replay
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -2081,8 +1970,6 @@ mod integration {
 
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let mut flist_writer = FileListWriter::new(protocol);
-
-        // Directory entry
         let mut dir_entry = FileEntry::new_directory(".".into(), 0o755);
         dir_entry.set_mtime(1_700_000_000, 0);
         let mut buf = Vec::new();
@@ -2096,8 +1983,6 @@ mod integration {
         buf.clear();
         flist_writer.write_entry(&mut buf, &file_entry).unwrap();
         writer.write_data(&buf).unwrap();
-
-        // End of flist
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
@@ -2129,8 +2014,6 @@ mod integration {
             encoder.send_literal(&mut token_buf, file_data).unwrap();
             encoder.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
-
-            // File checksum (16 zero bytes)
             writer.write_data(&[0u8; 16]).unwrap();
 
             // NDX_DONE phase 1 -> phase 2

@@ -181,9 +181,8 @@ fn shell_quote(s: &str) -> String {
     result
 }
 
-/// Find the destination path from the argument list.
+/// Find the destination path from the argument list (last non-option argument).
 fn find_destination(args: &[String]) -> Option<&str> {
-    // The destination is typically the last non-option argument
     args.iter()
         .rev()
         .find(|arg| !arg.starts_with('-') && !arg.is_empty())
@@ -261,7 +260,7 @@ mod tests {
         let script_path = config.script_file_path();
         assert!(Path::new(&script_path).exists());
 
-        // Read and verify script content -- upstream has no shebang
+        // upstream batch shell scripts have no shebang.
         let content = fs::read_to_string(&script_path).unwrap();
         assert!(
             !content.starts_with("#!/bin/sh"),
@@ -375,7 +374,6 @@ mod tests {
             content.contains("--read-batch=mybatch"),
             "Bare --write-batch should be converted to --read-batch=<name>: {content}"
         );
-        // The batch name should not appear as a passthrough argument
         let occurrences = content.matches("mybatch").count();
         assert_eq!(
             occurrences, 1,
@@ -455,7 +453,6 @@ mod tests {
 
         let script_path = config.script_file_path();
         let content = fs::read_to_string(&script_path).unwrap();
-        // Original filter args should be stripped
         assert!(
             !content.contains("*.tmp"),
             "Excluded patterns should be stripped: {content}"
