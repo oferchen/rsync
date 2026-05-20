@@ -160,7 +160,6 @@ mod tests {
 
         let written = write_vectored_all(&mut writer, &buffer_refs).expect("large write succeeds");
 
-        // Verify all data was written
         let mut expected = Vec::new();
         for d in &data {
             expected.extend_from_slice(d);
@@ -337,7 +336,6 @@ mod tests {
         let written =
             write_vectored_all(&mut writer, &buffer_refs).expect("large IOV write succeeds");
 
-        // Verify all data was written
         let mut expected = Vec::new();
         for d in &data {
             expected.extend_from_slice(d);

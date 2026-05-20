@@ -794,7 +794,6 @@ mod tests {
             block_sizes.iter().sum::<usize>(),
         );
 
-        // Verify roundtrip
         let mut decoder = ZstdTokenDecoder::new().unwrap();
         let mut read_cursor = Cursor::new(&encoded);
         let mut result = Vec::new();
@@ -870,7 +869,6 @@ mod tests {
             "block match without literals should not produce DEFLATED_DATA"
         );
 
-        // Verify roundtrip
         let mut decoder = ZstdTokenDecoder::new().unwrap();
         let mut cursor = Cursor::new(&encoded);
         let mut blocks = Vec::new();

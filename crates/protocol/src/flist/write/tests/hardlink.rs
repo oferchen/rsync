@@ -411,7 +411,6 @@ fn hardlink_round_trip_with_interspersed_directories() {
     writer.write_entry(&mut buf, &follower).unwrap();
     writer.write_end(&mut buf, None).unwrap();
 
-    // Read back
     let mut cursor = Cursor::new(&buf[..]);
     let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
 

@@ -619,7 +619,6 @@ mod tests {
             block_sizes.iter().sum::<usize>(),
         );
 
-        // Verify roundtrip
         let mut decoder = Lz4TokenDecoder::new();
         let mut read_cursor = Cursor::new(&encoded);
         let mut result = Vec::new();
@@ -688,7 +687,6 @@ mod tests {
             "block match without literals should not produce DEFLATED_DATA"
         );
 
-        // Verify roundtrip
         let mut decoder = Lz4TokenDecoder::new();
         let mut cursor = Cursor::new(&encoded);
         let mut blocks = Vec::new();
@@ -928,7 +926,6 @@ mod tests {
 
         encoder.finish(&mut encoded).unwrap();
 
-        // Verify roundtrip
         let expected: Vec<u8> = vec![b'X'; 65536 * 4];
         let mut decoder = Lz4TokenDecoder::new();
         let mut cursor = Cursor::new(&encoded);
