@@ -38,16 +38,16 @@ oc-rsync leverages Rust's memory safety to eliminate entire vulnerability classe
 
 ### Unsafe Code Policy
 
-Crates that enforce `#![deny(unsafe_code)]` with no allow-listed exceptions:
-- `daemon`, `cli`, `core`, `transfer`, `batch`, `filters`, `signature`, `matching`, `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`, `compress`, `apple-fs`, `flist`, `embedding`, `test-support` - business logic, parsers, orchestration, and high-level I/O wrappers
+Crates that enforce `#![deny(unsafe_code)]` with no allow-listed exceptions in production code:
+- `daemon`, `cli`, `core`, `transfer`, `batch`, `filters`, `signature`, `matching`, `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`, `compress`, `apple-fs`, `flist`, `embedding`, `test-support` - business logic, parsers, orchestration, and high-level I/O wrappers. `embedding` carries one `#[cfg(test)]`-only `#[allow(unsafe_code)]` on a `tests::EnvGuard` helper that wraps `std::env::set_var` under a process-wide mutex.
 
 Crates with `#![deny(unsafe_code)]` and targeted `#[allow(unsafe_code)]` for documented FFI/SIMD boundaries:
 - `metadata` - Ownership and privilege FFI (UID/GID lookup via `getpwuid_r`/`getgrnam_r`, `setuid`/`setgid`, `setattrlist`)
 - `protocol` - One isolated `#[allow]` in `multiplex::helpers` for performance-critical frame parsing
 - `engine` - Denies unsafe outside tests (`#![cfg_attr(not(test), deny(unsafe_code))]`) with targeted `#[allow(unsafe_code)]` on platform FFI (prefetch, buffer pool, `CopyFileExW`)
-- `platform` - Daemonization, signal handlers, environment isolation, and chroot syscalls
+- `platform` - Daemonization, name resolution (`getpwnam_r`/`getgrnam_r`), privilege transitions (`setuid`/`setgid`/`initgroups`), and chroot syscalls. Signal-handler installation has been hoisted out into `fast_io::signal::install_signal_handler`; the handlers themselves are defined in `core::signal` under a plain `#![deny(unsafe_code)]`.
 - `checksums` - SIMD intrinsics for MD4/MD5 and rolling checksums (AVX2, AVX-512, SSE2, SSSE3, SSE4.1, NEON, WASM), with scalar fallbacks and parity tests
-- `fast_io` - Platform I/O syscalls (sendfile, io_uring, mmap, `copy_file_range`, IOCP, `WSARecv`/`WSASend`, `setsockopt`), with standard I/O fallbacks
+- `fast_io` - Platform I/O syscalls (sendfile, io_uring, mmap, `copy_file_range`, IOCP, `WSARecv`/`WSASend`, `setsockopt`) and the `signal::install_signal_handler` FFI wrapper, with standard I/O / no-op fallbacks
 - `windows-gnu-eh` - Windows GNU exception handling shims (properly documented)
 
 **Long-term direction.** Unsafe code is being consolidated into `fast_io` as the single crate permitted to wrap platform FFI directly; new unsafe code goes there and is exposed via safe public APIs. New `#[allow(unsafe_code)]` annotations in any other crate require explicit review.
