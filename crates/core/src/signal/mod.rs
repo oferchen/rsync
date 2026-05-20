@@ -1,10 +1,9 @@
 //! Signal handling for graceful shutdown and cleanup.
 //!
-//! # Safety
-//!
-//! This module uses unsafe code to install Unix signal handlers via libc.
-//! All signal handlers are async-signal-safe and only set atomic flags.
-#![allow(unsafe_code)]
+//! This module installs signal handlers via the safe
+//! [`fast_io::signal::install_signal_handler`] wrapper, so no unsafe code
+//! lives in `core`. The handlers themselves are async-signal-safe and only
+//! mutate atomic flags.
 //!
 //! This module provides Unix signal handling that matches upstream rsync's behavior
 //! for SIGINT, SIGTERM, SIGHUP, and SIGPIPE. It supports:
