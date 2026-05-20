@@ -51,7 +51,9 @@ pub struct MessagesOptions {
     /// Enable verbose output.
     pub verbose: bool,
     /// Implementation to test: "upstream" (default) or "oc-rsync".
-    /// TODO: Currently only upstream is supported for message validation
+    ///
+    /// Currently only the upstream implementation is wired up for message
+    /// validation; this field is accepted for forward compatibility.
     #[allow(dead_code)]
     pub implementation: Option<String>,
     /// Show stdout/stderr output from rsync commands.

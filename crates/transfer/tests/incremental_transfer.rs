@@ -160,11 +160,3 @@ fn incremental_transfer_failed_directory_skips_children() {
         "wire data should contain multiple entries"
     );
 }
-
-/// Placeholder for upstream rsync interop test.
-#[test]
-#[ignore = "requires upstream rsync binary"]
-fn incremental_transfer_upstream_interop() {
-    // TODO: Test against upstream rsync sender
-    // Verify protocol compatibility
-}
