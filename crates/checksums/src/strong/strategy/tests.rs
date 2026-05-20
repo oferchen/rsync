@@ -268,7 +268,6 @@ fn selector_for_protocol_version_31() {
     assert_eq!(strategy.algorithm_name(), "md5");
 }
 
-// --- Protocol version boundary tests ---
 // upstream: checksum.c - protocol < 30 uses MD4, >= 30 uses MD5.
 
 #[test]
@@ -545,9 +544,8 @@ fn empty_input_produces_valid_digest() {
     }
 }
 
-// --- Exhaustive protocol version boundary tests ---
 // upstream: checksum.c - protocol < 30 uses MD4, >= 30 uses MD5.
-// These tests verify the boundary holds across the entire u8 range.
+// Verifies the boundary holds across the entire u8 range.
 
 #[test]
 fn protocol_version_boundary_exhaustive_algorithm_kind() {

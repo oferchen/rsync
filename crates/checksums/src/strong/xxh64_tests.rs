@@ -509,7 +509,6 @@ mod tests {
 
     #[test]
     fn verify_64bit_output_bit_distribution() {
-        // Check that bits are reasonably distributed
         let mut bit_counts = [0u32; 64];
 
         for i in 0..10000 {
@@ -537,7 +536,6 @@ mod tests {
 
     #[test]
     fn verify_64bit_output_range() {
-        // Verify the hash can produce values across the full 64-bit range
         let mut min_hash = u64::MAX;
         let mut max_hash = 0u64;
 
@@ -560,13 +558,11 @@ mod tests {
 
     #[test]
     fn verify_64bit_little_endian_encoding() {
-        // Verify the output is consistently little-endian
         let digest = Xxh64::digest(0, b"test");
         let from_le = u64::from_le_bytes(digest);
         let from_be = u64::from_be_bytes(digest);
 
-        // These should be different (unless the hash happens to be palindromic)
-        // For most inputs, they will differ
+        // Unless the hash happens to be palindromic, LE and BE interpretations differ.
         assert_ne!(
             from_le, from_be,
             "Little-endian and big-endian interpretations should differ"
