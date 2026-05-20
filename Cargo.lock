@@ -4084,6 +4084,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "xattr",
 ]
 
 [[package]]

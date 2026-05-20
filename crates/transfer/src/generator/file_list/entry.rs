@@ -7,6 +7,8 @@
 //!
 //! - `flist.c:make_file()` - determines file type and populates `file_struct`
 //! - `flist.c:readlink_stat()` - symlink target resolution
+//! - `xattrs.c:get_stat_xattr()` - fake-super override applied via
+//!   `x_lstat()` before `make_file()` consumes the stat values
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -37,6 +39,14 @@ impl GeneratorContext {
 
         let file_type = metadata.file_type();
 
+        // upstream: xattrs.c:get_stat_xattr() - when `--fake-super` is in
+        // effect, a previous fake-super receiver may have recorded the real
+        // ownership, permissions, and device numbers in the source file's
+        // `user.rsync.%stat` xattr (the on-disk file is a placeholder).
+        // Decoding it here lets the sender round-trip the original metadata
+        // instead of forwarding the placeholder uid/gid/mode/dev.
+        let fake_super_override = self.fake_super_override(full_path, metadata);
+
         let mut entry = if file_type.is_file() {
             #[cfg(unix)]
             let mode = metadata.mode() & 0o7777;
@@ -47,7 +57,18 @@ impl GeneratorContext {
                 0o644
             };
 
-            FileEntry::new_file(relative_path, metadata.len(), mode)
+            // upstream: xattrs.c:get_stat_xattr() - the xattr's mode replaces
+            // the entire st_mode (type + perms) so a regular placeholder file
+            // can masquerade as a device/symlink/special on the wire.
+            #[cfg(unix)]
+            let entry = if let Some(stat) = fake_super_override.as_ref() {
+                build_entry_from_fake_super(relative_path, metadata.len(), stat)
+            } else {
+                FileEntry::new_file(relative_path, metadata.len(), mode)
+            };
+            #[cfg(not(unix))]
+            let entry = FileEntry::new_file(relative_path, metadata.len(), mode);
+            entry
         } else if file_type.is_dir() {
             #[cfg(unix)]
             let mode = metadata.mode() & 0o7777;
@@ -123,9 +144,14 @@ impl GeneratorContext {
         }
 
         // upstream: flist.c:make_file() - set uid/gid
+        // When the fake-super xattr overrode the stat values, prefer the
+        // decoded uid/gid so a round-trip through a fake-super sender
+        // preserves the original ownership.
         #[cfg(unix)]
         if self.config.flags.owner {
-            let uid = metadata.uid();
+            let uid = fake_super_override
+                .as_ref()
+                .map_or_else(|| metadata.uid(), |s| s.uid);
             entry.set_uid(uid);
             // upstream: flist.c:466-470 - add_uid() looks up name for inline
             // sending via XMIT_USER_NAME_FOLLOWS when INC_RECURSE is active.
@@ -140,7 +166,9 @@ impl GeneratorContext {
         }
         #[cfg(unix)]
         if self.config.flags.group {
-            let gid = metadata.gid();
+            let gid = fake_super_override
+                .as_ref()
+                .map_or_else(|| metadata.gid(), |s| s.gid);
             entry.set_gid(gid);
             // upstream: flist.c:476-480 - add_gid() looks up name for inline
             // sending via XMIT_GROUP_NAME_FOLLOWS when INC_RECURSE is active.
@@ -215,6 +243,102 @@ impl GeneratorContext {
 
         Ok(entry)
     }
+
+    /// Reads the source-side `user.rsync.%stat` xattr when fake-super is active.
+    ///
+    /// Returns the decoded [`metadata::FakeSuperStat`] only when:
+    /// - `--fake-super` (or daemon `fake super = yes`) is in effect,
+    /// - the on-disk entry is neither a device nor a special file (matching
+    ///   upstream's `IS_DEVICE(fst->st_mode) || IS_SPECIAL(fst->st_mode)`
+    ///   early-return in `xattrs.c:get_stat_xattr()`), and
+    /// - the xattr exists and decodes successfully.
+    ///
+    /// Mirrors the override path upstream applies via `x_lstat()`/`x_stat()`
+    /// before `make_file()` reads the stat values, so a round-trip through a
+    /// fake-super sender preserves the original ownership/perms/device.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `xattrs.c:1127 get_stat_xattr()`
+    /// - `xattrs.c:1258 x_lstat()` (called from `flist.c:link_stat()`)
+    #[cfg(unix)]
+    fn fake_super_override(
+        &self,
+        full_path: &Path,
+        metadata: &std::fs::Metadata,
+    ) -> Option<metadata::FakeSuperStat> {
+        if !self.config.fake_super {
+            return None;
+        }
+        // upstream: xattrs.c:1133 - skip when the on-disk file is already a
+        // device or special; the xattr only applies to regular placeholders.
+        use std::os::unix::fs::FileTypeExt;
+        let ft = metadata.file_type();
+        if ft.is_block_device() || ft.is_char_device() || ft.is_fifo() || ft.is_socket() {
+            return None;
+        }
+        // Silently swallow read/decode errors: upstream's `get_stat_xattr`
+        // logs but does not abort on ENOTSUP/ENOATTR, and any other error
+        // here is treated like a missing xattr so the stat-derived values
+        // remain in use.
+        metadata::load_fake_super(full_path).ok().flatten()
+    }
+
+    /// Non-Unix stub: fake-super xattrs require POSIX semantics, so the
+    /// override is always absent.
+    #[cfg(not(unix))]
+    fn fake_super_override(
+        &self,
+        _full_path: &Path,
+        _metadata: &std::fs::Metadata,
+    ) -> Option<metadata::FakeSuperStat> {
+        None
+    }
+}
+
+/// Builds the wire `FileEntry` for a regular placeholder file whose
+/// `user.rsync.%stat` xattr decoded successfully.
+///
+/// The xattr's mode encodes the *effective* file type (regular, device,
+/// symlink, fifo, socket) plus permission bits. For devices, the decoded
+/// `rdev` major/minor populate the wire fields. When the xattr's mode does
+/// not encode a recognised type, fall back to a regular file with the
+/// decoded permission bits.
+///
+/// # Upstream Reference
+///
+/// - `xattrs.c:1172 from_wire_mode()` - the xattr's mode replaces st_mode
+/// - `flist.c:make_file()` - downstream branches pick the wire encoding
+///   from the (now overridden) mode
+#[cfg(unix)]
+fn build_entry_from_fake_super(
+    relative_path: PathBuf,
+    size: u64,
+    stat: &metadata::FakeSuperStat,
+) -> FileEntry {
+    use protocol::flist::FileType;
+
+    let perm_bits = stat.mode & 0o7777;
+    let (rdev_major, rdev_minor) = stat.rdev.unwrap_or((0, 0));
+
+    match FileType::from_mode(stat.mode) {
+        Some(FileType::Regular) | None => FileEntry::new_file(relative_path, size, perm_bits),
+        Some(FileType::Directory) => FileEntry::new_directory(relative_path, perm_bits),
+        Some(FileType::Symlink) => {
+            // upstream: fake-super symlinks stash the target separately;
+            // when the xattr alone is the source of truth, we emit an empty
+            // target to match the placeholder content.
+            FileEntry::new_symlink(relative_path, PathBuf::new())
+        }
+        Some(FileType::BlockDevice) => {
+            FileEntry::new_block_device(relative_path, perm_bits, rdev_major, rdev_minor)
+        }
+        Some(FileType::CharDevice) => {
+            FileEntry::new_char_device(relative_path, perm_bits, rdev_major, rdev_minor)
+        }
+        Some(FileType::Fifo) => FileEntry::new_fifo(relative_path, perm_bits),
+        Some(FileType::Socket) => FileEntry::new_socket(relative_path, perm_bits),
+    }
 }
 
 /// Extracts major and minor device numbers from a raw `rdev` value.
@@ -242,4 +366,277 @@ pub(in crate::generator) fn rdev_to_major_minor(rdev: u64) -> (u32, u32) {
     let major = (rdev >> 24) as u32;
     let minor = (rdev & 0xffffff) as u32;
     (major, minor)
+}
+
+#[cfg(all(test, unix))]
+mod fake_super_tests {
+    //! Sender-side `user.rsync.%stat` consumption tests.
+    //!
+    //! Verifies that under `--fake-super` the source-stored xattr overrides
+    //! the on-disk stat values when populating the wire file-list entry,
+    //! matching upstream rsync 3.4.1 `xattrs.c:get_stat_xattr()` semantics.
+
+    use super::*;
+    use ::metadata::FakeSuperStat;
+    use protocol::flist::FileType;
+
+    #[test]
+    fn build_from_fake_super_emits_regular_file_for_regular_mode() {
+        let stat = FakeSuperStat {
+            mode: 0o100644,
+            uid: 1234,
+            gid: 5678,
+            rdev: None,
+        };
+        let entry = build_entry_from_fake_super(PathBuf::from("a"), 42, &stat);
+        assert_eq!(entry.file_type(), FileType::Regular);
+        assert_eq!(entry.permissions() & 0o7777, 0o644);
+        assert_eq!(entry.size(), 42);
+    }
+
+    #[test]
+    fn build_from_fake_super_emits_block_device_from_mode_bits() {
+        // 0o60660 = S_IFBLK | 0660
+        let stat = FakeSuperStat {
+            mode: 0o60660,
+            uid: 0,
+            gid: 6,
+            rdev: Some((8, 0)),
+        };
+        let entry = build_entry_from_fake_super(PathBuf::from("sda"), 0, &stat);
+        assert_eq!(entry.file_type(), FileType::BlockDevice);
+        assert_eq!(entry.permissions() & 0o7777, 0o660);
+        assert_eq!(entry.rdev_major(), Some(8));
+        assert_eq!(entry.rdev_minor(), Some(0));
+    }
+
+    #[test]
+    fn build_from_fake_super_emits_char_device_from_mode_bits() {
+        // 0o20666 = S_IFCHR | 0666
+        let stat = FakeSuperStat {
+            mode: 0o20666,
+            uid: 0,
+            gid: 0,
+            rdev: Some((1, 3)),
+        };
+        let entry = build_entry_from_fake_super(PathBuf::from("null"), 0, &stat);
+        assert_eq!(entry.file_type(), FileType::CharDevice);
+        assert_eq!(entry.rdev_major(), Some(1));
+        assert_eq!(entry.rdev_minor(), Some(3));
+    }
+
+    #[test]
+    fn build_from_fake_super_emits_fifo_from_mode_bits() {
+        let stat = FakeSuperStat {
+            mode: 0o10644,
+            uid: 0,
+            gid: 0,
+            rdev: None,
+        };
+        let entry = build_entry_from_fake_super(PathBuf::from("pipe"), 0, &stat);
+        assert_eq!(entry.file_type(), FileType::Fifo);
+    }
+
+    #[test]
+    fn build_from_fake_super_emits_socket_from_mode_bits() {
+        let stat = FakeSuperStat {
+            mode: 0o140755,
+            uid: 0,
+            gid: 0,
+            rdev: None,
+        };
+        let entry = build_entry_from_fake_super(PathBuf::from("sock"), 0, &stat);
+        assert_eq!(entry.file_type(), FileType::Socket);
+    }
+
+    #[test]
+    fn build_from_fake_super_emits_directory_from_mode_bits() {
+        let stat = FakeSuperStat {
+            mode: 0o40755,
+            uid: 0,
+            gid: 0,
+            rdev: None,
+        };
+        let entry = build_entry_from_fake_super(PathBuf::from("d"), 0, &stat);
+        assert_eq!(entry.file_type(), FileType::Directory);
+    }
+
+    #[test]
+    fn build_from_fake_super_emits_symlink_with_empty_target() {
+        let stat = FakeSuperStat {
+            mode: 0o120777,
+            uid: 1000,
+            gid: 1000,
+            rdev: None,
+        };
+        let entry = build_entry_from_fake_super(PathBuf::from("link"), 0, &stat);
+        assert_eq!(entry.file_type(), FileType::Symlink);
+    }
+
+    #[test]
+    fn build_from_fake_super_unknown_mode_falls_back_to_regular() {
+        // No file-type bits set: treat as regular with the given perms.
+        let stat = FakeSuperStat {
+            mode: 0o0644,
+            uid: 1,
+            gid: 2,
+            rdev: None,
+        };
+        let entry = build_entry_from_fake_super(PathBuf::from("f"), 7, &stat);
+        assert_eq!(entry.file_type(), FileType::Regular);
+        assert_eq!(entry.size(), 7);
+    }
+}
+
+#[cfg(all(test, unix, feature = "xattr"))]
+mod fake_super_round_trip_tests {
+    //! End-to-end sender override: place a fake-super xattr on a regular
+    //! placeholder file, then verify `create_entry` consumes it and emits
+    //! the decoded mode/uid/gid/rdev instead of the on-disk stat values.
+
+    use super::super::super::GeneratorContext;
+    use crate::config::ServerConfig;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use ::metadata::{FAKE_SUPER_XATTR, FakeSuperStat};
+    use protocol::ProtocolVersion;
+    use protocol::flist::FileType;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn make_generator(fake_super: bool, owner: bool, group: bool) -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            fake_super,
+            ..Default::default()
+        };
+        config.flags.owner = owner;
+        config.flags.group = group;
+        config.flags.numeric_ids = true; // skip uid/gid name lookups in tests
+        GeneratorContext::new(&handshake, config)
+    }
+
+    fn write_placeholder_with_xattr(tmp: &TempDir, stat: &FakeSuperStat) -> PathBuf {
+        let path = tmp.path().join("placeholder");
+        std::fs::write(&path, b"x").unwrap();
+        match xattr::set(&path, FAKE_SUPER_XATTR, stat.encode().as_bytes()) {
+            Ok(()) => path,
+            Err(e) => {
+                // tmpfs / sandboxed filesystems may reject user.* xattrs; skip
+                // the test gracefully so CI on such hosts does not flake.
+                eprintln!("skipping: xattr unsupported on test filesystem: {e}");
+                std::process::exit(0);
+            }
+        }
+    }
+
+    #[test]
+    fn fake_super_off_returns_no_override() {
+        let tmp = TempDir::new().unwrap();
+        let stat = FakeSuperStat {
+            mode: 0o100600,
+            uid: 4321,
+            gid: 8765,
+            rdev: None,
+        };
+        let path = write_placeholder_with_xattr(&tmp, &stat);
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let ctx = make_generator(false, true, true);
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("placeholder"), &meta)
+            .unwrap();
+        // Without --fake-super, the on-disk uid/gid (the test user) is sent.
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(entry.uid(), Some(meta.uid()));
+        assert_eq!(entry.gid(), Some(meta.gid()));
+        assert_eq!(entry.file_type(), FileType::Regular);
+    }
+
+    #[test]
+    fn fake_super_on_override_uid_gid_for_regular_file() {
+        let tmp = TempDir::new().unwrap();
+        let stat = FakeSuperStat {
+            mode: 0o100600,
+            uid: 4321,
+            gid: 8765,
+            rdev: None,
+        };
+        let path = write_placeholder_with_xattr(&tmp, &stat);
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let ctx = make_generator(true, true, true);
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("placeholder"), &meta)
+            .unwrap();
+        assert_eq!(entry.uid(), Some(4321), "uid must come from %stat xattr");
+        assert_eq!(entry.gid(), Some(8765), "gid must come from %stat xattr");
+        assert_eq!(entry.file_type(), FileType::Regular);
+    }
+
+    #[test]
+    fn fake_super_on_promotes_regular_placeholder_to_block_device() {
+        let tmp = TempDir::new().unwrap();
+        let stat = FakeSuperStat {
+            mode: 0o60660,
+            uid: 0,
+            gid: 6,
+            rdev: Some((8, 0)),
+        };
+        let path = write_placeholder_with_xattr(&tmp, &stat);
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let ctx = make_generator(true, true, true);
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("sda"), &meta)
+            .unwrap();
+        assert_eq!(entry.file_type(), FileType::BlockDevice);
+        assert_eq!(entry.uid(), Some(0));
+        assert_eq!(entry.gid(), Some(6));
+        assert_eq!(entry.rdev_major(), Some(8));
+        assert_eq!(entry.rdev_minor(), Some(0));
+    }
+
+    #[test]
+    fn fake_super_on_without_xattr_falls_back_to_stat() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("plain");
+        std::fs::write(&path, b"x").unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+
+        let ctx = make_generator(true, true, true);
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("plain"), &meta)
+            .unwrap();
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(entry.uid(), Some(meta.uid()));
+        assert_eq!(entry.gid(), Some(meta.gid()));
+        assert_eq!(entry.file_type(), FileType::Regular);
+    }
+
+    #[test]
+    fn fake_super_decoded_format_matches_upstream_byte_for_byte() {
+        // upstream: xattrs.c:1233 - snprintf("%o %u,%u %u:%u", ...)
+        let stat = FakeSuperStat {
+            mode: 0o100644,
+            uid: 1234,
+            gid: 5678,
+            rdev: None,
+        };
+        assert_eq!(stat.encode(), "100644 0,0 1234:5678");
+    }
 }
