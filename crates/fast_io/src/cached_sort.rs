@@ -274,7 +274,6 @@ mod tests {
 
     #[test]
     fn file_entry_sort_key_from_bytes() {
-        // Test that from_bytes produces the same result as new()
         let from_str = FileEntrySortKey::new("test/path.txt", false);
         let from_bytes = FileEntrySortKey::from_bytes(b"test/path.txt", false);
         assert_eq!(from_str, from_bytes);
@@ -289,7 +288,6 @@ mod tests {
 
     #[test]
     fn file_entry_sort_key_from_bytes_comparison() {
-        // Test that byte comparison works correctly
         let a = FileEntrySortKey::from_bytes(b"aaa", false);
         let b = FileEntrySortKey::from_bytes(b"bbb", false);
         assert_eq!(a.cmp(&b), Ordering::Less);
