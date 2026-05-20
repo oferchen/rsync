@@ -143,6 +143,60 @@ pub fn send_xattr_values<W: Write>(writer: &mut W, list: &XattrList) -> io::Resu
     Ok(())
 }
 
+/// Writes the sender-side response to the generator's xattr abbreviation request.
+///
+/// Mirrors upstream `xattrs.c:send_xattr_request()` when called by the
+/// sender (`fname != NULL`, `f_out >= 0`). For every entry the generator
+/// flagged via `XSTATE_TODO`, emits the delta-encoded 1-based `num`, the full
+/// value length, and the value bytes. A trailing `0` varint terminates the
+/// stream, matching upstream's `write_byte(f_out, 0)`.
+///
+/// The list passed in must have entries with `state().needs_send()` true for
+/// the items the generator requested. After writing, those entries' states are
+/// reset to [`XattrState::Done`](crate::xattr::XattrState::Done) to match
+/// upstream's `rxa->datum[0] = XSTATE_DONE`.
+///
+/// # Wire Format
+///
+/// ```text
+/// For each entry where state.needs_send() is true:
+///   rel_num : varint  // num - prior_req (1-based, delta-encoded)
+///   length  : varint
+///   value   : bytes[length]
+/// terminator: varint  // 0 signals end of stream
+/// ```
+///
+/// # Upstream Reference
+///
+/// - `xattrs.c:623-675` - `send_xattr_request()` sender path (`fname != NULL`)
+/// - `sender.c:192-196` - called from `write_ndx_and_attrs()` on the sender
+///   when echoing iflags that include `ITEM_REPORT_XATTR`.
+pub fn send_sender_xattr_response<W: Write>(
+    writer: &mut W,
+    list: &mut XattrList,
+) -> io::Result<()> {
+    use crate::xattr::XattrState;
+
+    let mut prior_req = 0i32;
+    for entry in list.entries_mut() {
+        if !entry.state().needs_send() {
+            continue;
+        }
+        let num = entry.num() as i32;
+        // upstream: write_varint(f_out, rxa->num - prior_req)
+        write_varint(writer, num - prior_req)?;
+        prior_req = num;
+        // upstream: write_varint(f_out, len); write_bigbuf(f_out, ptr, len)
+        write_varint(writer, entry.datum_len() as i32)?;
+        writer.write_all(entry.datum())?;
+        // upstream: rxa->datum[0] = XSTATE_DONE after emission
+        entry.set_state(XattrState::Done);
+    }
+    // upstream: write_byte(f_out, 0) - terminate the stream
+    write_varint(writer, 0)?;
+    Ok(())
+}
+
 /// Computes the seeded MD5 checksum for an xattr value.
 ///
 /// Includes the `checksum_seed` in the hash to match upstream rsync's

@@ -7,8 +7,11 @@ use super::encode::compute_xattr_checksum;
 use super::types::RecvXattrResult;
 use super::{
     XattrDefinition, checksum_matches, read_xattr_definitions, recv_xattr, recv_xattr_request,
-    recv_xattr_values, send_xattr, send_xattr_request, send_xattr_values,
+    recv_xattr_values, send_sender_xattr_response, send_xattr, send_xattr_request,
+    send_xattr_values,
 };
+use crate::varint::read_varint;
+use crate::xattr::XattrState;
 
 /// Writes a literal xattr definition block (count + entries) in wire format.
 ///
@@ -788,6 +791,78 @@ fn checksum_matches_empty_value() {
     let empty_value = b"";
     let checksum = compute_xattr_checksum(empty_value, 0);
     assert!(checksum_matches(&checksum, empty_value, 0));
+}
+
+/// Verifies the sender-side response writes a single 0 terminator when no
+/// entries are marked TODO. This is the byte stream upstream's
+/// `send_xattr_request(fname, file, f_out)` emits when the generator set
+/// `ITEM_REPORT_XATTR` only because of a count mismatch and no entries
+/// require their full value to be transferred. Dropping this terminator
+/// desyncs the wire stream under `-X --fake-super`.
+#[test]
+fn sender_response_emits_terminator_when_no_todo() {
+    let mut list = XattrList::new();
+    list.push(XattrEntry::new(b"user.small".to_vec(), b"value".to_vec()));
+    list.entries_mut()[0].set_num(1);
+
+    let mut buf = Vec::new();
+    send_sender_xattr_response(&mut buf, &mut list).unwrap();
+
+    assert_eq!(buf, vec![0u8]);
+}
+
+/// Verifies the sender-side response emits delta-encoded num + length + value
+/// for each XSTATE_TODO entry, then a 0 terminator. Matches upstream
+/// `xattrs.c:send_xattr_request()` sender path (`fname != NULL`,
+/// `f_out >= 0`).
+#[test]
+fn sender_response_round_trip_with_todo_entries() {
+    let value_a = vec![0xAAu8; 80];
+    let value_b = vec![0xBBu8; 120];
+
+    let mut sender_list = XattrList::new();
+    let mut entry_a = XattrEntry::new(b"user.large_a".to_vec(), value_a.clone());
+    entry_a.set_num(1);
+    entry_a.mark_todo();
+    sender_list.push(entry_a);
+
+    let mut middle = XattrEntry::new(b"user.middle".to_vec(), vec![0u8; 10]);
+    middle.set_num(2);
+    sender_list.push(middle);
+
+    let mut entry_b = XattrEntry::new(b"user.large_b".to_vec(), value_b.clone());
+    entry_b.set_num(3);
+    entry_b.mark_todo();
+    sender_list.push(entry_b);
+
+    let mut buf = Vec::new();
+    send_sender_xattr_response(&mut buf, &mut sender_list).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let rel1 = read_varint(&mut cursor).unwrap();
+    let len1 = read_varint(&mut cursor).unwrap();
+    let mut value1 = vec![0u8; len1 as usize];
+    use std::io::Read;
+    cursor.read_exact(&mut value1).unwrap();
+
+    let rel2 = read_varint(&mut cursor).unwrap();
+    let len2 = read_varint(&mut cursor).unwrap();
+    let mut value2 = vec![0u8; len2 as usize];
+    cursor.read_exact(&mut value2).unwrap();
+
+    let terminator = read_varint(&mut cursor).unwrap();
+
+    assert_eq!(rel1, 1);
+    assert_eq!(len1, 80);
+    assert_eq!(value1, value_a);
+    assert_eq!(rel2, 2);
+    assert_eq!(len2, 120);
+    assert_eq!(value2, value_b);
+    assert_eq!(terminator, 0);
+
+    assert_eq!(sender_list.entries()[0].state(), XattrState::Done);
+    assert_eq!(sender_list.entries()[1].state(), XattrState::Done);
+    assert_eq!(sender_list.entries()[2].state(), XattrState::Done);
 }
 
 #[test]

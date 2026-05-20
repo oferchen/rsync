@@ -86,9 +86,91 @@ impl GeneratorContext {
         Ok(())
     }
 
-    /// Writes NDX, iflags, and sum_head for one file.
+    /// Reads the generator's xattr abbreviation request when `ITEM_REPORT_XATTR`
+    /// is set in iflags and xattrs are preserved.
     ///
-    /// upstream: sender.c:180-187 write_ndx_and_attrs()
+    /// The generator emits a varint stream of delta-encoded 1-based entry
+    /// numbers terminated by `0`, even when no entries are flagged for
+    /// transfer. Consuming this stream is mandatory whenever the gating
+    /// condition holds, otherwise the subsequent `sum_head` read picks up the
+    /// terminator byte and the wire stream desynchronises - the failure
+    /// observed under `-X --fake-super` where small-value xattr counts differ
+    /// between the sender and receiver sides.
+    ///
+    /// Returns the per-file `XattrList` with `XSTATE_TODO` entries marked for
+    /// the indices the generator requested, ready to be passed to
+    /// [`Self::write_ndx_and_attrs`] or
+    /// [`Self::write_ndx_iflags_and_xattr_response`]. Returns `None` when no
+    /// xattr request is expected on the wire.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:280-284` - `recv_xattr_request()` called when
+    ///   `preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers
+    ///    && !(want_xattr_optim && BITS_SET(iflags, ITEM_XNAME_FOLLOWS|ITEM_LOCAL_CHANGE))`
+    /// - `xattrs.c:681-758` - `recv_xattr_request()` sender path marks entries
+    ///   `XSTATE_TODO` for items the generator wants the full value of.
+    pub(super) fn read_generator_xattr_request_if_any<R: Read>(
+        &self,
+        reader: &mut R,
+        ndx: usize,
+        iflags: &ItemFlags,
+    ) -> io::Result<Option<protocol::xattr::XattrList>> {
+        if !self.config.flags.xattrs {
+            return Ok(None);
+        }
+        if iflags.raw() & ItemFlags::ITEM_REPORT_XATTR == 0 {
+            return Ok(None);
+        }
+        // upstream: sender.c:281 also gates on the want_xattr_optim hardlink
+        // optimisation. We mirror want_xattr_optim via the negotiated
+        // CF_AVOID_XATTR_OPTIM capability flag - when the flag is NOT set,
+        // upstream's want_xattr_optim is active and the optimisation skips
+        // xattr exchange for local-change hardlinks.
+        let want_xattr_optim = self
+            .compat_flags
+            .is_none_or(|f| !f.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION));
+        if want_xattr_optim
+            && (iflags.raw() & ItemFlags::ITEM_XNAME_FOLLOWS != 0)
+            && (iflags.raw() & ItemFlags::ITEM_LOCAL_CHANGE != 0)
+        {
+            return Ok(None);
+        }
+
+        // Build the per-file xattr list by cloning the sender-side file
+        // entry's cached xattrs so the TODO marks do not poison the cached
+        // flist xattrs. When the file entry has no xattrs the list is
+        // empty; the generator's request must still be drained because it
+        // emits at least the 0 terminator under this gate.
+        let mut list = if ndx < self.file_list.len() {
+            self.file_list[ndx]
+                .xattr_list()
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            protocol::xattr::XattrList::new()
+        };
+
+        // upstream: xattrs.c:681 recv_xattr_request() marks XSTATE_TODO on
+        // matching entries and consumes the stream up to the 0 terminator.
+        let _indices = protocol::xattr::recv_xattr_request(reader, &mut list)?;
+        Ok(Some(list))
+    }
+
+    /// Writes NDX, iflags, optional xattr response, and sum_head for one file.
+    ///
+    /// Combines upstream's `write_ndx_and_attrs()` (NDX + iflags + optional
+    /// xattr_request body) with the immediately following `write_sum_head()`
+    /// call. When `xattr_response` is `Some` and the file has entries the
+    /// generator requested, the full xattr values are written between iflags
+    /// and sum_head, matching the byte order of upstream sender.c:411-412.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:180-196` - `write_ndx_and_attrs()` body (calls
+    ///   `send_xattr_request(fname, file, f_out)` when ITEM_REPORT_XATTR set)
+    /// - `sender.c:411-412` - `write_ndx_and_attrs()` followed by
+    ///   `write_sum_head(f_xfer, s)`
     pub(super) fn write_ndx_and_attrs<W: Write>(
         &self,
         writer: &mut W,
@@ -96,12 +178,51 @@ impl GeneratorContext {
         ndx: i32,
         iflags: &ItemFlags,
         sum_head: &SumHead,
+        xattr_response: Option<&mut protocol::xattr::XattrList>,
+    ) -> io::Result<()> {
+        self.write_ndx_iflags_and_xattr_response(writer, ndx_codec, ndx, iflags, xattr_response)?;
+        sum_head.write(writer)?;
+        Ok(())
+    }
+
+    /// Writes NDX, iflags, and optional xattr response without a sum_head.
+    ///
+    /// Used for non-transfer items (no `ITEM_TRANSFER` in iflags) and the
+    /// `--dry-run` echo path, where upstream calls `write_ndx_and_attrs()`
+    /// without a following `write_sum_head()`. When `xattr_response` is
+    /// `Some` with entries flagged via [`XattrState::Todo`], the full values
+    /// are written immediately after iflags via
+    /// [`send_sender_xattr_response`](protocol::xattr::send_sender_xattr_response).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:286-292` - non-transfer echo of NDX + iflags + xattr_request
+    /// - `xattrs.c:623-675` - `send_xattr_request()` sender path
+    ///
+    /// [`XattrState::Todo`]: protocol::xattr::XattrState::Todo
+    pub(super) fn write_ndx_iflags_and_xattr_response<W: Write>(
+        &self,
+        writer: &mut W,
+        ndx_codec: &mut impl NdxCodec,
+        ndx: i32,
+        iflags: &ItemFlags,
+        xattr_response: Option<&mut protocol::xattr::XattrList>,
     ) -> io::Result<()> {
         ndx_codec.write_ndx(writer, ndx)?;
         if self.protocol.supports_iflags() {
             writer.write_all(&iflags.significant_wire_bits().to_le_bytes())?;
         }
-        sum_head.write(writer)?;
+        // upstream: sender.c:192-196 - send_xattr_request(fname, file, f_out)
+        // is invoked from inside write_ndx_and_attrs() when ITEM_REPORT_XATTR
+        // is set in iflags. Skipping this body causes the receiver to read the
+        // following bytes as a stale xattr request, desyncing the goodbye phase.
+        let preserve_xattrs = self.config.flags.xattrs;
+        if preserve_xattrs
+            && (iflags.raw() & ItemFlags::ITEM_REPORT_XATTR != 0)
+            && let Some(list) = xattr_response
+        {
+            protocol::xattr::send_sender_xattr_response(writer, list)?;
+        }
         Ok(())
     }
 

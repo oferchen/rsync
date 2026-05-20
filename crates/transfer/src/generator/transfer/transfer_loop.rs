@@ -236,6 +236,20 @@ impl GeneratorContext {
                 self.timing.total_bytes_read += 4 + xname_data.len() as u64;
             }
 
+            // upstream: sender.c:280-284 - drain the generator's xattr request
+            // when preserve_xattrs && ITEM_REPORT_XATTR is set. The generator
+            // always emits at least a 0 terminator (varint) under this gate, so
+            // skipping it desyncs the subsequent sum_head read and aborts the
+            // transfer with errors like "block length must be non-zero" or
+            // "Invalid remainder length" - the failure mode reported under
+            // `-X --fake-super` where xattr counts differ between sides.
+            //
+            // Returns the per-file xattr list with XSTATE_TODO entries set on
+            // the indices the generator requested, ready for write_ndx_and_attrs
+            // to echo the full values back via send_sender_xattr_response.
+            let mut pending_xattr_response =
+                self.read_generator_xattr_request_if_any(&mut *reader, ndx, &iflags)?;
+
             // upstream: sender.c:277-278
             // rprintf(FINFO, "send_files(%d, %s%s%s)\n", ndx, path,slash,fname)
             // F_PATHNAME is unset for the in-band file list we build, so the
@@ -247,21 +261,38 @@ impl GeneratorContext {
             }
 
             if !iflags.needs_transfer() {
-                // upstream: sender.c:287 - maybe_log_item() for non-transfer items
+                // upstream: sender.c:286-292 - non-transfer items still echo
+                // NDX + iflags + (optional xattr response) via write_ndx_and_attrs
+                // so the receiver can pair the response with its outstanding
+                // request and apply xattr-only updates. Without this echo the
+                // wire stream stalls when ITEM_REPORT_XATTR is the only delta.
                 self.maybe_emit_itemize(writer, &iflags, ndx, itemize)?;
+                let ndx_i32 = self.flat_to_wire_ndx(ndx);
+                self.write_ndx_iflags_and_xattr_response(
+                    &mut *writer,
+                    &mut ndx_write_codec,
+                    ndx_i32,
+                    &iflags,
+                    pending_xattr_response.as_mut(),
+                )?;
                 continue;
             }
 
-            // upstream: sender.c:394-399 - dry_run (!do_xfers) logs the item and
-            // echoes write_ndx_and_attrs() without calling receive_sums().
+            // upstream: sender.c:341-344 - dry_run (!do_xfers) logs the item and
+            // echoes write_ndx_and_attrs() without calling receive_sums(). The
+            // echo still carries the xattr response when ITEM_REPORT_XATTR is
+            // set so the receiver can pair its outstanding request.
             if self.config.flags.dry_run {
                 self.validate_file_index(ndx)?;
                 let file_entry = &self.file_list[ndx];
                 let ndx_i32 = self.flat_to_wire_ndx(ndx);
-                ndx_write_codec.write_ndx(&mut *writer, ndx_i32)?;
-                if self.protocol.supports_iflags() {
-                    writer.write_all(&iflags.significant_wire_bits().to_le_bytes())?;
-                }
+                self.write_ndx_iflags_and_xattr_response(
+                    &mut *writer,
+                    &mut ndx_write_codec,
+                    ndx_i32,
+                    &iflags,
+                    pending_xattr_response.as_mut(),
+                )?;
                 // upstream: sender.c:395 - log_item(FCLIENT, file, iflags, NULL)
                 if let Some(cb) = itemize {
                     let name = file_entry.path().to_string_lossy();
@@ -328,6 +359,7 @@ impl GeneratorContext {
                     ndx_i32,
                     &iflags,
                     &sum_head,
+                    pending_xattr_response.as_mut(),
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
@@ -378,6 +410,7 @@ impl GeneratorContext {
                     ndx_i32,
                     &iflags,
                     &sum_head,
+                    pending_xattr_response.as_mut(),
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
