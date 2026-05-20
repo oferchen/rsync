@@ -469,7 +469,7 @@ mod tests {
         let mut buffer = vec![1, 2, 3];
         let appended = slices.extend_vec(&mut buffer).unwrap();
         assert_eq!(appended, 0);
-        assert_eq!(buffer, vec![1, 2, 3]); // unchanged
+        assert_eq!(buffer, vec![1, 2, 3]);
     }
 
     #[test]
