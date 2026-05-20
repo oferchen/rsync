@@ -27,35 +27,28 @@
 
 use crate::constants::CHUNK_SIZE;
 
-/// Threshold for small files (64 KB).
-/// Files smaller than this use minimal buffers.
+/// Files smaller than this (64 KB) use minimal buffers.
 pub const SMALL_FILE_THRESHOLD: u64 = 64 * 1024;
 
-/// Threshold for medium files (1 MB).
-/// Files smaller than this but >= SMALL_FILE_THRESHOLD use medium buffers.
+/// Files smaller than this (1 MB) but >= [`SMALL_FILE_THRESHOLD`] use medium buffers.
 pub const MEDIUM_FILE_THRESHOLD: u64 = 1024 * 1024;
 
-/// Threshold for huge files (10 MB).
-/// Files larger than this use maximum buffers to reduce syscall overhead
+/// Files larger than this (10 MB) use maximum buffers to reduce syscall overhead
 /// on the read/write fallback path (when `copy_file_range` is unavailable).
 pub const HUGE_FILE_THRESHOLD: u64 = 10 * 1024 * 1024;
 
 /// Buffer size for small files (4 KB).
-/// Minimizes memory usage for tiny files where throughput isn't critical.
 pub const SMALL_BUFFER_SIZE: usize = 4 * 1024;
 
 /// Buffer size for medium files (64 KB).
-/// Balances memory usage with reasonable throughput.
 pub const MEDIUM_BUFFER_SIZE: usize = 64 * 1024;
 
-/// Buffer size for large files (256 KB).
-/// Good throughput for files in the 1-10 MB range.
+/// Buffer size for large files (256 KB), targeted at the 1-10 MB range.
 pub const LARGE_BUFFER_SIZE: usize = 256 * 1024;
 
-/// Buffer size for huge files (1 MB).
-/// Maximizes throughput for multi-megabyte and gigabyte files by reducing
-/// syscall count on the read/write fallback path. For a 1 GB file this
-/// means 1024 read+write pairs instead of 4096 with a 256 KB buffer.
+/// Buffer size for huge files (1 MB). Reduces syscall count on the
+/// read/write fallback path: a 1 GB file uses 1024 read+write pairs
+/// instead of 4096 with a 256 KB buffer.
 pub const HUGE_BUFFER_SIZE: usize = 1024 * 1024;
 
 /// Returns the optimal buffer size for a file of the given size.
@@ -266,7 +259,6 @@ mod tests {
 
     #[test]
     fn buffer_size_thresholds() {
-        // Small files (< 64KB)
         assert_eq!(adaptive_buffer_size(0), SMALL_BUFFER_SIZE);
         assert_eq!(adaptive_buffer_size(1), SMALL_BUFFER_SIZE);
         assert_eq!(adaptive_buffer_size(1024), SMALL_BUFFER_SIZE);
@@ -275,7 +267,6 @@ mod tests {
             SMALL_BUFFER_SIZE
         );
 
-        // Medium files (64KB - 1MB)
         assert_eq!(
             adaptive_buffer_size(SMALL_FILE_THRESHOLD),
             MEDIUM_BUFFER_SIZE
@@ -287,7 +278,6 @@ mod tests {
             MEDIUM_BUFFER_SIZE
         );
 
-        // Large files (1MB - 10MB)
         assert_eq!(
             adaptive_buffer_size(MEDIUM_FILE_THRESHOLD),
             LARGE_BUFFER_SIZE
@@ -298,7 +288,6 @@ mod tests {
             LARGE_BUFFER_SIZE
         );
 
-        // Huge files (> 10MB)
         assert_eq!(adaptive_buffer_size(HUGE_FILE_THRESHOLD), HUGE_BUFFER_SIZE);
         assert_eq!(adaptive_buffer_size(100 * 1024 * 1024), HUGE_BUFFER_SIZE);
         assert_eq!(adaptive_buffer_size(1024 * 1024 * 1024), HUGE_BUFFER_SIZE);
@@ -366,17 +355,14 @@ mod tests {
     fn adaptive_token_buffer_resize_and_reuse() {
         let mut buffer = AdaptiveTokenBuffer::for_file_size(1024);
 
-        // First resize
         buffer.resize_for(100);
         assert_eq!(buffer.len(), 100);
 
-        // Smaller resize (no realloc)
         let cap = buffer.capacity();
         buffer.resize_for(50);
         assert_eq!(buffer.len(), 50);
         assert_eq!(buffer.capacity(), cap);
 
-        // Larger resize (may realloc)
         buffer.resize_for(1000);
         assert_eq!(buffer.len(), 1000);
         assert!(buffer.capacity() >= 1000);
@@ -402,7 +388,6 @@ mod tests {
 
     #[test]
     fn boundary_conditions_at_thresholds() {
-        // Exact boundary at 64KB threshold
         assert_eq!(
             adaptive_buffer_size(SMALL_FILE_THRESHOLD),
             MEDIUM_BUFFER_SIZE,
@@ -414,7 +399,6 @@ mod tests {
             "one byte below 64KB should use small buffer"
         );
 
-        // Exact boundary at 1MB threshold
         assert_eq!(
             adaptive_buffer_size(MEDIUM_FILE_THRESHOLD),
             LARGE_BUFFER_SIZE,
@@ -426,7 +410,6 @@ mod tests {
             "one byte below 1MB should use medium buffer"
         );
 
-        // Exact boundary at 10MB threshold
         assert_eq!(
             adaptive_buffer_size(HUGE_FILE_THRESHOLD),
             HUGE_BUFFER_SIZE,
@@ -441,12 +424,10 @@ mod tests {
 
     #[test]
     fn zero_sized_files() {
-        // Zero-sized files should still get a reasonable buffer
         assert_eq!(adaptive_buffer_size(0), SMALL_BUFFER_SIZE);
         assert_eq!(adaptive_writer_capacity(0), SMALL_BUFFER_SIZE);
         assert_eq!(adaptive_token_capacity(0), SMALL_BUFFER_SIZE);
 
-        // AdaptiveTokenBuffer should handle zero-sized files
         let buffer = AdaptiveTokenBuffer::for_file_size(0);
         assert!(buffer.is_empty());
         assert_eq!(buffer.len(), 0);
@@ -480,7 +461,6 @@ mod tests {
     fn adaptive_token_buffer_multiple_resizes() {
         let mut buffer = AdaptiveTokenBuffer::new();
 
-        // Growth sequence
         buffer.resize_for(10);
         assert_eq!(buffer.len(), 10);
 
@@ -490,7 +470,7 @@ mod tests {
         buffer.resize_for(1000);
         assert_eq!(buffer.len(), 1000);
 
-        // Capacity should never decrease
+        // Capacity never decreases on shrinking resize.
         let cap = buffer.capacity();
         buffer.resize_for(50);
         assert_eq!(buffer.len(), 50);
@@ -499,14 +479,12 @@ mod tests {
 
     #[test]
     fn token_capacity_at_boundaries() {
-        // At small threshold boundary
         assert_eq!(
             adaptive_token_capacity(SMALL_FILE_THRESHOLD - 1),
             SMALL_BUFFER_SIZE
         );
         assert_eq!(adaptive_token_capacity(SMALL_FILE_THRESHOLD), CHUNK_SIZE);
 
-        // At medium threshold boundary
         assert_eq!(
             adaptive_token_capacity(MEDIUM_FILE_THRESHOLD - 1),
             CHUNK_SIZE
@@ -519,7 +497,6 @@ mod tests {
 
     #[test]
     fn buffer_size_constants_are_sensible() {
-        // Verify buffer sizes are reasonable and in ascending order
         assert_eq!(SMALL_BUFFER_SIZE, 4 * 1024);
         assert_eq!(MEDIUM_BUFFER_SIZE, 64 * 1024);
         assert_eq!(LARGE_BUFFER_SIZE, 256 * 1024);
@@ -528,13 +505,12 @@ mod tests {
 
     #[test]
     fn very_large_file_sizes() {
-        // Test with extremely large file sizes
         let huge_file = 10u64 * 1024 * 1024 * 1024; // 10 GB
         assert_eq!(adaptive_buffer_size(huge_file), HUGE_BUFFER_SIZE);
         assert_eq!(adaptive_writer_capacity(huge_file), HUGE_BUFFER_SIZE);
         assert_eq!(adaptive_token_capacity(huge_file), MEDIUM_BUFFER_SIZE);
 
-        // Even for huge files, token capacity is capped at medium
+        // Token capacity stays capped at medium even at the extreme.
         let massive_file = u64::MAX;
         assert_eq!(adaptive_token_capacity(massive_file), MEDIUM_BUFFER_SIZE);
     }
@@ -542,7 +518,6 @@ mod tests {
     #[test]
     fn adaptive_token_buffer_no_allocation_on_new() {
         let buffer = AdaptiveTokenBuffer::new();
-        // New buffers should not allocate
         assert_eq!(buffer.capacity(), 0);
     }
 
@@ -550,7 +525,6 @@ mod tests {
     fn adaptive_token_buffer_resize_idempotent() {
         let mut buffer = AdaptiveTokenBuffer::for_file_size(1024);
 
-        // Resize to same size multiple times
         buffer.resize_for(100);
         let cap1 = buffer.capacity();
 
@@ -567,7 +541,6 @@ mod tests {
 
     #[test]
     fn writer_capacity_exact_values() {
-        // Verify exact values for common file sizes
         assert_eq!(adaptive_writer_capacity(1024), 4 * 1024);
         assert_eq!(adaptive_writer_capacity(64 * 1024), 64 * 1024);
         assert_eq!(adaptive_writer_capacity(1024 * 1024), 256 * 1024);
@@ -578,17 +551,14 @@ mod tests {
     fn adaptive_token_buffer_capacity_growth() {
         let mut buffer = AdaptiveTokenBuffer::with_capacity(10);
 
-        // Resize within initial capacity
         buffer.resize_for(5);
         assert_eq!(buffer.len(), 5);
         assert!(buffer.capacity() >= 10);
 
-        // Resize beyond initial capacity
         buffer.resize_for(100);
         assert_eq!(buffer.len(), 100);
         assert!(buffer.capacity() >= 100);
 
-        // Resize way beyond
         buffer.resize_for(10_000);
         assert_eq!(buffer.len(), 10_000);
         assert!(buffer.capacity() >= 10_000);

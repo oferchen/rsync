@@ -228,17 +228,14 @@ mod tests {
     fn reuse_pattern() {
         let mut buffer = TokenBuffer::with_default_capacity();
 
-        // Simulate processing multiple tokens
         for size in [100, 50, 200, 75, 150] {
             buffer.resize_for(size);
-            // Fill with test pattern
             for (i, b) in buffer.as_mut_slice().iter_mut().enumerate() {
                 *b = (i % 256) as u8;
             }
             assert_eq!(buffer.len(), size);
         }
 
-        // Capacity should have grown to at least max size
         assert!(buffer.capacity() >= 200);
     }
 
