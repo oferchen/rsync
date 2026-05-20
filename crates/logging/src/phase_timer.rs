@@ -67,7 +67,6 @@ mod tests {
         {
             let _t = PhaseTimer::new("drop-test");
         }
-        // If we get here, drop didn't panic
     }
 
     #[test]
