@@ -42,6 +42,17 @@ pub struct IncrementalFileListReceiver<R> {
     pub(in crate::receiver) entries_read: usize,
     /// Whether to use unstable sort (qsort) instead of stable merge sort.
     pub(in crate::receiver) use_qsort: bool,
+    /// When true, [`Self::collect_sorted`] skips the in-place reorder so the
+    /// NDX-addressed array stays in sender scan order. Mirrors upstream's
+    /// `need_unsorted_flist = 1` behaviour when `--iconv` is active and
+    /// would transcode filenames between local and remote charsets.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2051-2056` - `need_unsorted_flist = 1` when `iconv_opt`
+    /// - `flist.c:2496-2498` - "both sides keep an unsorted file-list array
+    ///   because the names will differ on the sending and receiving sides"
+    pub(in crate::receiver) iconv_reorder_suppressed: bool,
 }
 
 impl<R: Read> IncrementalFileListReceiver<R> {
@@ -189,9 +200,14 @@ impl<R: Read> IncrementalFileListReceiver<R> {
 
         entries.extend(self.incremental.drain_ready());
 
-        // upstream: flist.c:2736 - sort to match sender's order for NDX indexing
+        // upstream: flist.c:2736 - sort to match sender's order for NDX indexing.
         // IncrementalFileListReceiver is only used for INC_RECURSE (protocol >= 30).
-        sort_file_list(&mut entries, self.use_qsort, false);
+        // When iconv would reorder the NDX-addressed array away from sender
+        // scan order, skip the in-place sort - upstream's `need_unsorted_flist`
+        // path keeps `flist->files[]` in scan order under the same condition.
+        if !self.iconv_reorder_suppressed {
+            sort_file_list(&mut entries, self.use_qsort, false);
+        }
         let mut prior_hlinks = HashMap::new();
         match_hard_links(&mut entries, &mut prior_hlinks);
 
