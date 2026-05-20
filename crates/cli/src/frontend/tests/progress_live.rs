@@ -467,7 +467,6 @@ fn e2e_progress_observer_receives_events_for_single_file() {
         "observer should receive at least one progress event"
     );
 
-    // Verify the final update
     let final_updates: Vec<&RecordedUpdate> =
         observer.updates.iter().filter(|u| u.is_final).collect();
     assert!(
@@ -618,7 +617,6 @@ fn live_progress_output_matches_upstream_format_pattern() {
     let normalized = output.replace('\r', "\n");
     let lines: Vec<&str> = normalized.lines().collect();
 
-    // Find the xfr# line
     let xfr_line = lines
         .iter()
         .find(|l| l.contains("xfr#"))

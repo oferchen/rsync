@@ -26,11 +26,9 @@ fn archive_preserves_file_permissions() {
     let source = tmp.path().join("source-perms.txt");
     let destination = tmp.path().join("dest-perms.txt");
 
-    // Create source file with specific permissions
     std::fs::write(&source, b"permission test").expect("write source");
     std::fs::set_permissions(&source, PermissionsExt::from_mode(0o754)).expect("set perms");
 
-    // Set fixed times to avoid timing issues
     let mtime = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_times(&source, mtime, mtime).expect("set times");
 
@@ -70,10 +68,8 @@ fn archive_preserves_modification_times() {
     let source = tmp.path().join("source-times.txt");
     let destination = tmp.path().join("dest-times.txt");
 
-    // Create source file
     std::fs::write(&source, b"timestamp test").expect("write source");
 
-    // Set a specific modification time
     let mtime = FileTime::from_unix_time(1_600_000_000, 0);
     set_file_times(&source, mtime, mtime).expect("set times");
 

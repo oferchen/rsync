@@ -241,7 +241,6 @@ mod tests {
             OutFormatPlaceholder::FileName,
             PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::None),
         );
-        // Verify it can be accessed
         let _ = token.kind;
         let _ = token.format;
     }
@@ -331,7 +330,6 @@ mod tests {
 
     #[test]
     fn max_placeholder_width_constant() {
-        // Verify the constant is accessible and reasonable
         assert!(MAX_PLACEHOLDER_WIDTH > 0);
         assert!(MAX_PLACEHOLDER_WIDTH >= 4096);
     }
