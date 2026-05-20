@@ -40,6 +40,9 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
+use checksums::strong::strategy::{
+    ChecksumAlgorithmKind, ChecksumStrategy, ChecksumStrategySelector,
+};
 use rayon::prelude::*;
 use thiserror::Error;
 
@@ -255,6 +258,15 @@ pub struct ParallelDeltaApplier {
     per_file_reorder_capacity: usize,
     /// Maximum number of chunks the applier dispatches to rayon in parallel.
     concurrency: usize,
+    /// Negotiated strong-checksum strategy used by [`Self::verify_chunk`].
+    ///
+    /// Held behind an [`Arc`] so rayon workers can clone the handle cheaply
+    /// without re-boxing the trait object. The trait itself is `Send + Sync`
+    /// (see `checksums::strong::strategy::ChecksumStrategy`), preserving the
+    /// struct-level Send/Sync requirements documented above. BR-3i.b
+    /// (#2498) plumbs the field; BR-3i.c (#2499) replaces the
+    /// length-only verify stub with `strategy.compute(&chunk.data)`.
+    strategy: Arc<dyn ChecksumStrategy>,
 }
 
 impl std::fmt::Debug for ParallelDeltaApplier {
@@ -264,6 +276,7 @@ impl std::fmt::Debug for ParallelDeltaApplier {
             .field("file_count", &file_count)
             .field("per_file_reorder_capacity", &self.per_file_reorder_capacity)
             .field("concurrency", &self.concurrency)
+            .field("strategy", &self.strategy.algorithm_kind())
             .finish()
     }
 }
@@ -277,13 +290,44 @@ impl ParallelDeltaApplier {
     /// Builds a new applier with the supplied concurrency limit.
     ///
     /// `concurrency == 0` is treated as "use the ambient rayon pool".
+    ///
+    /// The strong-checksum strategy defaults to MD5 (seed `0`), matching the
+    /// protocol >= 30 fallback that
+    /// `crates/transfer/src/shared/checksum.rs::ChecksumFactory::from_negotiation`
+    /// resolves when no `NegotiationResult` is present. Callers that own a
+    /// negotiated algorithm should use [`Self::with_strategy`] instead.
     #[must_use]
     pub fn new(concurrency: usize) -> Self {
+        let strategy: Arc<dyn ChecksumStrategy> = Arc::from(
+            ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md5, 0),
+        );
+        Self::with_strategy(concurrency, strategy)
+    }
+
+    /// Builds a new applier with an explicit strong-checksum strategy.
+    ///
+    /// Used by the receiver pipeline to thread the negotiated algorithm into
+    /// the per-chunk verify step. The trait object is held behind an
+    /// [`Arc`] so each rayon worker can clone the handle without re-boxing.
+    ///
+    /// `concurrency == 0` is treated as "use the ambient rayon pool".
+    #[must_use]
+    pub fn with_strategy(concurrency: usize, strategy: Arc<dyn ChecksumStrategy>) -> Self {
         Self {
             files: Mutex::new(HashMap::new()),
             per_file_reorder_capacity: Self::DEFAULT_PER_FILE_REORDER_CAPACITY,
             concurrency,
+            strategy,
         }
+    }
+
+    /// Returns the configured strong-checksum strategy.
+    ///
+    /// Exposed so callers (and the BR-3i.c follow-up) can read back the
+    /// negotiated algorithm kind for logging and parity assertions.
+    #[must_use]
+    pub fn strategy(&self) -> &Arc<dyn ChecksumStrategy> {
+        &self.strategy
     }
 
     /// Builder-style override for the per-file reorder buffer capacity.
@@ -479,6 +523,11 @@ impl ParallelDeltaApplier {
     /// of `chunk.data.len()` so the scaffold has a measurable verify cost
     /// to amortise across cores; replaced with the real strong checksum
     /// when the phase 2 wiring lands (see design doc 6.3).
+    ///
+    /// BR-3i.b (#2498) only plumbs the negotiated strategy into the struct;
+    /// the dispatch to `self.strategy.compute(&chunk.data)` lands as a
+    /// one-function-body change in BR-3i.c (#2499). The stub behaviour is
+    /// preserved here so the wiring step is byte-identical for every caller.
     fn verify_chunk(chunk: DeltaChunk) -> VerifiedChunk {
         // The actual strong checksum is supplied by the receiver pipeline;
         // here we only need to model the parallelisable cost so the
@@ -776,5 +825,54 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("poisoned"));
         assert!(msg.contains("ndx=2"));
+    }
+
+    #[test]
+    fn new_defaults_strategy_to_md5() {
+        // BR-3i.b: `new(concurrency)` must default to the protocol >= 30
+        // fallback (MD5) so existing test/bench callers keep working without
+        // observing a behaviour change.
+        let applier = ParallelDeltaApplier::new(1);
+        assert_eq!(
+            applier.strategy().algorithm_kind(),
+            ChecksumAlgorithmKind::Md5
+        );
+        assert_eq!(applier.strategy().digest_len(), 16);
+    }
+
+    #[test]
+    fn with_strategy_threads_negotiated_algorithm() {
+        // BR-3i.b: `with_strategy(concurrency, strategy)` is the constructor
+        // the receiver pipeline will use once the negotiated algorithm is
+        // wired in. Verify it stores and exposes the supplied trait object.
+        let strategy: Arc<dyn ChecksumStrategy> = Arc::from(
+            ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Xxh3, 0),
+        );
+        let applier = ParallelDeltaApplier::with_strategy(4, Arc::clone(&strategy));
+        assert_eq!(
+            applier.strategy().algorithm_kind(),
+            ChecksumAlgorithmKind::Xxh3
+        );
+        // The applier shares the strategy by Arc, so cheap clones reach
+        // rayon workers without re-boxing.
+        assert!(Arc::ptr_eq(applier.strategy(), &strategy));
+    }
+
+    #[test]
+    fn with_strategy_does_not_change_verify_chunk_behaviour() {
+        // BR-3i.b is plumbing-only. The verify stub still returns
+        // `digest_len = chunk.data.len()` regardless of the configured
+        // strategy until BR-3i.c lands the dispatch.
+        let strategy: Arc<dyn ChecksumStrategy> = Arc::from(
+            ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Xxh3, 0),
+        );
+        let applier = ParallelDeltaApplier::with_strategy(1, strategy);
+        let (sink, buf) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+        applier
+            .apply_chunk_parallel(DeltaChunk::literal(0u32, 0, vec![0xAB; 64]))
+            .unwrap();
+        let _writer = applier.finish_file(0u32).unwrap();
+        assert_eq!(buf.lock().unwrap().len(), 64);
     }
 }
