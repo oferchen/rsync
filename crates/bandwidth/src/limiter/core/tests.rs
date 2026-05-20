@@ -9,7 +9,6 @@ fn nz(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).expect("non-zero value required")
 }
 
-// Tests for calculate_write_max
 #[test]
 fn calculate_write_max_small_limit_uses_minimum() {
     let result = calculate_write_max(nz(100), None);
@@ -40,7 +39,6 @@ fn calculate_write_max_with_small_burst_uses_minimum() {
     assert_eq!(result, MIN_WRITE_MAX);
 }
 
-// Tests for BandwidthLimiter::new
 #[test]
 fn bandwidth_limiter_new_stores_limit() {
     let limiter = BandwidthLimiter::new(nz(10000));
@@ -59,7 +57,6 @@ fn bandwidth_limiter_new_initializes_counters() {
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
 }
 
-// Tests for BandwidthLimiter::with_burst
 #[test]
 fn bandwidth_limiter_with_burst_stores_both() {
     let limiter = BandwidthLimiter::with_burst(nz(10000), Some(nz(5000)));
@@ -75,7 +72,6 @@ fn bandwidth_limiter_with_burst_none_is_same_as_new() {
     assert_eq!(limiter1.burst_bytes(), limiter2.burst_bytes());
 }
 
-// Tests for update_limit
 #[test]
 fn update_limit_changes_limit() {
     let mut limiter = BandwidthLimiter::new(nz(10000));
@@ -98,7 +94,6 @@ fn update_limit_preserves_burst() {
     assert_eq!(limiter.burst_bytes().unwrap().get(), 5000);
 }
 
-// Tests for update_configuration
 #[test]
 fn update_configuration_changes_both() {
     let mut limiter = BandwidthLimiter::new(nz(10000));
@@ -122,7 +117,6 @@ fn update_configuration_resets_counters() {
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
 }
 
-// Tests for reset
 #[test]
 fn reset_clears_debt() {
     let mut limiter = BandwidthLimiter::new(nz(10000));
@@ -140,7 +134,6 @@ fn reset_preserves_configuration() {
     assert_eq!(limiter.burst_bytes().unwrap().get(), 5000);
 }
 
-// Tests for accessor methods
 #[test]
 fn limit_bytes_returns_configured_limit() {
     let limiter = BandwidthLimiter::new(nz(12345));
@@ -183,7 +176,6 @@ fn recommended_read_size_handles_empty_buffer() {
     assert_eq!(limiter.recommended_read_size(0), 0);
 }
 
-// Tests for register
 #[test]
 fn register_zero_bytes_is_noop() {
     let mut limiter = BandwidthLimiter::new(nz(10000));
@@ -212,7 +204,6 @@ fn register_with_burst_clamps_debt() {
     assert!(limiter.accumulated_debt_for_testing() <= 1000);
 }
 
-// Tests for Clone and Debug traits
 #[test]
 fn bandwidth_limiter_clone_creates_independent_copy() {
     let mut limiter = BandwidthLimiter::new(nz(10000));

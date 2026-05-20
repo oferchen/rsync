@@ -385,30 +385,23 @@ proptest! {
 
 #[test]
 fn parse_bandwidth_handles_adjustment_when_product_less_than_denominator() {
-    // Test the case where product < denominator with -1 adjustment
-    // This triggers the bytes = 0 path on line 221
-    // 0.0001K = 0.1024 bytes, rounds to 0, with -1 adjustment -> 0 bytes -> unlimited (None)
-    // Values below 512 that round to 0 become unlimited
+    // 0.0001K = 0.1024 bytes; with `-1` adjustment the value rounds to zero,
+    // which the parser reports as unlimited (None) rather than TooSmall.
     let result = parse_bandwidth_argument("0.0001K-1");
-    // This becomes unlimited (None) because the value rounds to 0
     assert_eq!(result.expect("should parse"), None);
 }
 
 #[test]
 fn parse_bandwidth_handles_very_small_value_with_minus_one_adjustment() {
-    // Another test case for product < denominator with -1 adjust
-    // When the value is so small that product < denominator, bytes becomes 0
-    // 0.00001M = 0.01048576 bytes -> too small (below 512 minimum)
-    // The -1 adjustment happens before the minimum check, so this is TooSmall
+    // 0.00001M ~ 0.01 bytes falls below the 512-byte minimum even before the
+    // `-1` adjustment, so the parser reports TooSmall rather than Invalid.
     let error = parse_bandwidth_argument("0.00001M-1").unwrap_err();
     assert_eq!(error, BandwidthParseError::TooSmall);
 }
 
 #[test]
 fn parse_bandwidth_exponent_sign_at_end_rejected() {
-    // Test exponent_sign_allowed still true at end of number
-    // This tests line 113-114: if exponent_sign_allowed { return Err }
-    // Input like "1e+" where + is the sign but no digits follow
+    // Input like "1e+" where + is the sign but no digits follow.
     let error = parse_bandwidth_argument("1e+").unwrap_err();
     assert_eq!(error, BandwidthParseError::Invalid);
 
@@ -418,8 +411,7 @@ fn parse_bandwidth_exponent_sign_at_end_rejected() {
 
 #[test]
 fn parse_bandwidth_empty_first_byte_fallthrough() {
-    // Test the default case in first byte match (line 55-57)
-    // When first character is a digit, we fall through to the _ => {} case
+    // When the first character is a digit the sign-prefix branch is skipped.
     let result = parse_bandwidth_argument("1K").expect("parse succeeds");
     assert_eq!(result, NonZeroU64::new(1024));
 }
