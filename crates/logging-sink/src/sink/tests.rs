@@ -65,7 +65,6 @@ fn scratch_accessors_expose_reusable_buffer() {
 
     assert_eq!(shared_ptr, mutable_ptr as *const MessageScratch);
 
-    // Reset the scratch buffer and ensure rendering still succeeds.
     *sink.scratch_mut() = MessageScratch::new();
     sink.write(Message::info("ready"))
         .expect("write succeeds after manual scratch reset");
