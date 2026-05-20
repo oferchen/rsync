@@ -5,20 +5,28 @@
 //! - **Linux**: Supports multiple namespaces (`user.`, `system.`, `security.`, `trusted.`)
 //! - **macOS/BSD**: Only supports `user.` namespace (others are system-internal)
 //!
-//! To enable cross-platform rsync transfers, xattr names are translated on the wire:
-//!
 //! # Wire Format
 //!
-//! On the wire, xattr names follow these conventions:
+//! Upstream rsync transmits xattr names **byte-for-byte** as they appear in
+//! the platform's `listxattr(2)` output (on Linux that includes the
+//! `user.` namespace prefix). The receiver consults `am_root` to decide
+//! whether unprefixed wire names should be folded into the disguised
+//! `user.rsync.*` hierarchy or dropped. Non-Linux peers use the `rsync.`
+//! prefix as the disguise namespace.
 //!
-//! - `user.*` namespaced attrs are sent without the `user.` prefix
-//! - Non-user namespaced attrs (when sender is root) are disguised under `rsync.`
-//! - The `rsync.%` prefix is reserved for rsync's internal attributes (stat, ACLs)
+//! Reserved internal attributes (`user.rsync.%suffix` on Linux,
+//! `rsync.%suffix` elsewhere) are never sent on the wire by the sender:
+//! they belong to rsync's own metadata channel.
 //!
 //! # Upstream Reference
 //!
-//! - `xattrs.c` lines 509-528: `send_xattr_name()` logic
-//! - `xattrs.c` lines 821-850: `receive_xattr()` name handling
+//! - `xattrs.c` lines 254-258: `rsync_xal_get()` non-root namespace filter
+//! - `xattrs.c` lines 494-542: `send_xattr()` writes names verbatim except
+//!   in fake-super (`am_root < 0`), where the `user.rsync.` prefix is
+//!   stripped from disguised entries
+//! - `xattrs.c` lines 820-847: `receive_xattr()` name handling - Linux
+//!   keeps `user.*` verbatim and disguises everything else under
+//!   `user.rsync.`; non-Linux strips `user.` and disguises the rest
 
 #[cfg(target_os = "linux")]
 use super::USER_PREFIX;
@@ -26,22 +34,24 @@ use super::{RSYNC_PREFIX, SYSTEM_PREFIX};
 
 /// Translates an xattr name from local format to wire format.
 ///
-/// # Linux Behavior
+/// On every platform the local name is emitted verbatim once it has
+/// passed the rsync-internal filter. This matches the upstream sender
+/// (`xattrs.c:send_xattr()`), which writes the bytes returned by
+/// `listxattr(2)` directly into the protocol stream. Upstream's only
+/// transformation is the fake-super (`am_root < 0`) prefix strip; we do
+/// not model that here because the sender currently runs with
+/// `am_root = false` (see `transfer/generator/file_list/entry.rs`).
 ///
-/// - `user.foo` -> `foo` (strip user prefix for wire)
-/// - `system.foo` -> `rsync.system.foo` (disguise under rsync when root sends)
-/// - `security.foo` -> `rsync.security.foo` (disguise under rsync when root sends)
-/// - `user.rsync.%stat` -> `rsync.%stat` (rsync internal attrs pass through)
-///
-/// # Non-Linux Behavior
-///
-/// - `foo` -> `foo` (no user prefix to strip)
-/// - Attrs are already in user-only namespace
+/// Namespace filtering for non-root senders is performed earlier in
+/// `metadata::xattr::list_attributes` via `is_xattr_permitted`; this
+/// function additionally drops `system.*` for non-root callers as a
+/// defensive belt-and-braces check so direct callers cannot leak a
+/// namespace they could never set.
 ///
 /// # Arguments
 ///
 /// * `name` - Local xattr name
-/// * `am_root` - Whether the sender has root privileges (can access non-user namespaces)
+/// * `am_root` - Whether the sender has root privileges (gates `system.*`)
 ///
 /// # Returns
 ///
@@ -49,158 +59,131 @@ use super::{RSYNC_PREFIX, SYSTEM_PREFIX};
 pub fn local_to_wire(name: &[u8], am_root: bool) -> Option<Vec<u8>> {
     let name_str = match std::str::from_utf8(name) {
         Ok(s) => s,
-        Err(_) => return Some(name.to_vec()), // Pass through non-UTF8 names
+        // Non-UTF8 names cannot be rsync-internal markers, so pass them
+        // through verbatim.
+        Err(_) => return Some(name.to_vec()),
     };
 
-    // Skip rsync internal attributes (rsync.% or user.rsync.%)
+    // upstream: xattrs.c:261-267 - rsync.%FOO internals are never sent.
     if is_rsync_internal(name_str) {
         return None;
     }
 
-    // Handle system namespace (root only)
-    if name_str.starts_with(SYSTEM_PREFIX) {
-        if !am_root {
-            // Non-root cannot access system namespace
-            return None;
-        }
-        // Disguise under rsync prefix for wire transfer
-        let mut wire_name = RSYNC_PREFIX.as_bytes().to_vec();
-        wire_name.extend_from_slice(name);
-        return Some(wire_name);
+    // upstream: xattrs.c:256 - non-root never exposes the system namespace.
+    if name_str.starts_with(SYSTEM_PREFIX) && !am_root {
+        return None;
     }
 
+    // upstream: xattrs.c:524-532 - on Linux the name is written verbatim;
+    // on non-Linux the user. prefix is added by send_xattr before the
+    // bytes hit the wire. Mirror that here so peers see identical bytes.
     #[cfg(target_os = "linux")]
     {
-        // Linux: strip user. prefix for wire format
-        if name_str.starts_with(USER_PREFIX) {
-            return Some(name[USER_PREFIX.len()..].to_vec());
-        }
-        // Handle other namespaces (security., trusted.) - root only
-        if !am_root {
-            // Non-root can only access user namespace
-            return None;
-        }
-        // Disguise under rsync prefix
-        let mut wire_name = RSYNC_PREFIX.as_bytes().to_vec();
-        wire_name.extend_from_slice(name);
-        Some(wire_name)
+        Some(name.to_vec())
     }
 
     #[cfg(not(target_os = "linux"))]
     {
-        // Non-Linux: xattrs are already in user-only namespace
-        // Send as-is (no user. prefix to strip on these systems)
-        Some(name.to_vec())
+        // upstream: xattrs.c:518-530 - non-Linux senders insert USER_PREFIX
+        // for names that are not already disguised under RSYNC_PREFIX.
+        if name_str.starts_with(RSYNC_PREFIX) {
+            Some(name.to_vec())
+        } else {
+            let mut wire_name = Vec::with_capacity(USER_PREFIX_NON_LINUX.len() + name.len());
+            wire_name.extend_from_slice(USER_PREFIX_NON_LINUX.as_bytes());
+            wire_name.extend_from_slice(name);
+            Some(wire_name)
+        }
     }
 }
 
+/// User namespace prefix added by the non-Linux sender path.
+///
+/// Non-Linux platforms (macOS, BSD) only expose a single namespace, so
+/// the wire convention adds `user.` to every name that is not already
+/// disguised under [`RSYNC_PREFIX`]. Mirrors upstream
+/// `xattrs.c:518-530`.
+#[cfg(not(target_os = "linux"))]
+const USER_PREFIX_NON_LINUX: &str = "user.";
+
 /// Translates an xattr name from wire format to local format.
+///
+/// Mirrors upstream `xattrs.c:receive_xattr()` (lines 820-847):
 ///
 /// # Linux Behavior
 ///
-/// - `foo` -> `user.foo` (add user prefix)
-/// - `rsync.system.foo` -> `system.foo` (restore original namespace when root)
-/// - `rsync.%stat` -> `user.rsync.%stat` (rsync internal attrs)
+/// - `user.foo` -> `user.foo` (already in user namespace; keep verbatim)
+/// - `user.rsync.%stat` -> `user.rsync.%stat` (rsync internal, keep verbatim)
+/// - `system.foo` (root) -> `system.foo` (root can write the original
+///   namespace verbatim)
+/// - `system.foo` (non-root) -> `user.rsync.system.foo` (disguised so the
+///   non-user namespace survives under the user hierarchy)
 ///
 /// # Non-Linux Behavior
 ///
-/// - `foo` -> `foo` (already in user namespace)
-/// - `rsync.bar` -> `user.rsync.bar` (disguised attrs go into user.rsync hierarchy)
+/// - `user.foo` -> `foo` (strip the user namespace prefix since the OS
+///   has a flat namespace)
+/// - `system.foo` (root) -> `rsync.system.foo` (disguised; root can still
+///   write the rsync hierarchy)
+/// - everything else (non-root) -> dropped (`None`) - the disguised slot
+///   only exists for root to satisfy upstream's interop expectations
 ///
 /// # Arguments
 ///
-/// * `wire_name` - Wire-format xattr name
-/// * `am_root` - Whether the receiver has root privileges (can write non-user namespaces)
+/// * `wire_name` - Wire-format xattr name (verbatim bytes from the wire)
+/// * `am_root` - Whether the receiver has root privileges
 ///
 /// # Returns
 ///
-/// The local-format name, or `None` if this xattr cannot be stored locally.
+/// The local-format name, or `None` if this xattr cannot be stored
+/// locally (matches upstream's `free(ptr); continue` skip).
 pub fn wire_to_local(wire_name: &[u8], am_root: bool) -> Option<Vec<u8>> {
-    let wire_str = match std::str::from_utf8(wire_name) {
-        Ok(s) => s,
-        Err(_) => {
-            // Non-UTF8: add user prefix and return
-            #[cfg(target_os = "linux")]
-            {
-                let mut local = USER_PREFIX.as_bytes().to_vec();
-                local.extend_from_slice(wire_name);
-                return Some(local);
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                return Some(wire_name.to_vec());
-            }
-        }
-    };
-
-    // Handle rsync-prefixed names (disguised namespaces)
-    if let Some(inner) = wire_str.strip_prefix(RSYNC_PREFIX) {
-        // Check for rsync internal attributes (rsync.%foo)
-        if inner.starts_with('%') {
-            // Keep as rsync internal attribute
-            #[cfg(target_os = "linux")]
-            {
-                // On Linux, these become user.rsync.%foo
-                let mut local = USER_PREFIX.as_bytes().to_vec();
-                local.extend_from_slice(wire_name);
-                return Some(local);
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                // On non-Linux, keep as rsync.%foo
-                return Some(wire_name.to_vec());
-            }
-        }
-
-        // Disguised namespace (e.g., rsync.system.foo -> system.foo)
-        if inner.starts_with("system.")
-            || inner.starts_with("security.")
-            || inner.starts_with("trusted.")
-        {
-            if am_root {
-                // Root can write to the original namespace
-                return Some(inner.as_bytes().to_vec());
-            } else {
-                // Non-root: keep disguised under user.rsync
-                #[cfg(target_os = "linux")]
-                {
-                    let mut local = USER_PREFIX.as_bytes().to_vec();
-                    local.extend_from_slice(wire_name);
-                    return Some(local);
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    return Some(wire_name.to_vec());
-                }
-            }
-        }
-
-        // Other rsync. prefixed attrs
-        #[cfg(target_os = "linux")]
-        {
-            let mut local = USER_PREFIX.as_bytes().to_vec();
-            local.extend_from_slice(wire_name);
-            return Some(local);
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            return Some(wire_name.to_vec());
-        }
-    }
-
-    // Regular attribute name (no special prefix)
     #[cfg(target_os = "linux")]
     {
-        // On Linux, add user. prefix
-        let mut local = USER_PREFIX.as_bytes().to_vec();
+        // upstream: xattrs.c:820-831 - keep user.* verbatim; non-user
+        // names are disguised under user.rsync. for non-root receivers.
+        // Root receivers store names verbatim into their original
+        // namespace (system., security., trusted., etc.).
+        if wire_name.starts_with(USER_PREFIX.as_bytes()) {
+            return Some(wire_name.to_vec());
+        }
+        if am_root {
+            return Some(wire_name.to_vec());
+        }
+        // Non-root receiver: disguise the non-user-namespace name under
+        // user.rsync.<wire_name>. Upstream additionally honours
+        // saw_xattr_filter to drop the entry entirely; we always keep it
+        // because the filter state is not plumbed through here yet.
+        let mut local = Vec::with_capacity(RSYNC_PREFIX.len() + wire_name.len());
+        local.extend_from_slice(RSYNC_PREFIX.as_bytes());
         local.extend_from_slice(wire_name);
         Some(local)
     }
 
     #[cfg(not(target_os = "linux"))]
     {
-        // On non-Linux, keep as-is
-        Some(wire_name.to_vec())
+        let wire_str = match std::str::from_utf8(wire_name) {
+            Ok(s) => s,
+            Err(_) => return Some(wire_name.to_vec()),
+        };
+
+        // upstream: xattrs.c:836-846 - strip the user. prefix that the
+        // sender added on the wire so the name slots back into the flat
+        // namespace this OS exposes.
+        if let Some(stripped) = wire_str.strip_prefix("user.") {
+            return Some(stripped.as_bytes().to_vec());
+        }
+
+        // upstream: xattrs.c:839-845 - non-root receivers drop entries
+        // they could not store. Root receivers disguise them under
+        // rsync.<wire_name>.
+        if !am_root {
+            return None;
+        }
+        let mut local = Vec::with_capacity(RSYNC_PREFIX.len() + wire_name.len());
+        local.extend_from_slice(RSYNC_PREFIX.as_bytes());
+        local.extend_from_slice(wire_name);
+        Some(local)
     }
 }
 
@@ -239,9 +222,22 @@ mod tests {
         use super::*;
 
         #[test]
-        fn local_to_wire_strips_user_prefix() {
+        fn local_to_wire_keeps_user_prefix_verbatim() {
+            // upstream: xattrs.c:524-532 - Linux sender writes the local
+            // name byte-for-byte. Stripping `user.` here would diverge
+            // from upstream and cause receivers to land the entry in the
+            // wrong namespace (BR-3h, issue #2494).
             let result = local_to_wire(b"user.foo", false);
-            assert_eq!(result, Some(b"foo".to_vec()));
+            assert_eq!(result, Some(b"user.foo".to_vec()));
+        }
+
+        #[test]
+        fn local_to_wire_keeps_rsync_disguise_verbatim() {
+            // Non-internal user.rsync.* names are passed verbatim. The
+            // fake-super (`am_root < 0`) strip is not modelled here
+            // because the live sender always runs with am_root == false.
+            let result = local_to_wire(b"user.rsync.system.foo", false);
+            assert_eq!(result, Some(b"user.rsync.system.foo".to_vec()));
         }
 
         #[test]
@@ -252,33 +248,63 @@ mod tests {
 
         #[test]
         fn local_to_wire_system_needs_root() {
-            let result = local_to_wire(b"system.foo", false);
-            assert_eq!(result, None);
-
-            let result = local_to_wire(b"system.foo", true);
-            assert!(result.is_some());
-            let wire = result.unwrap();
-            assert!(wire.starts_with(b"user.rsync.system."));
+            assert_eq!(local_to_wire(b"system.foo", false), None);
+            assert_eq!(
+                local_to_wire(b"system.foo", true),
+                Some(b"system.foo".to_vec()),
+            );
         }
 
         #[test]
-        fn wire_to_local_adds_user_prefix() {
-            let result = wire_to_local(b"foo", false);
+        fn local_to_wire_other_namespaces_pass_through_for_root() {
+            assert_eq!(
+                local_to_wire(b"security.selinux", true),
+                Some(b"security.selinux".to_vec()),
+            );
+            assert_eq!(
+                local_to_wire(b"trusted.foo", true),
+                Some(b"trusted.foo".to_vec()),
+            );
+        }
+
+        #[test]
+        fn wire_to_local_keeps_user_prefix_verbatim() {
+            // upstream: xattrs.c:820-823 - names already inside the user
+            // namespace are kept byte-for-byte. The previous behavior of
+            // prepending an additional `user.` produced `user.user.foo`
+            // (BR-3h, issue #2494).
+            let result = wire_to_local(b"user.foo", false);
             assert_eq!(result, Some(b"user.foo".to_vec()));
         }
 
         #[test]
-        fn wire_to_local_restores_system_for_root() {
-            let result = wire_to_local(b"user.rsync.system.foo", true);
-            assert_eq!(result, Some(b"system.foo".to_vec()));
+        fn wire_to_local_keeps_user_rsync_internal_verbatim() {
+            let result = wire_to_local(b"user.rsync.%stat", false);
+            assert_eq!(result, Some(b"user.rsync.%stat".to_vec()));
         }
 
         #[test]
-        fn wire_to_local_keeps_system_disguised_for_nonroot() {
-            let result = wire_to_local(b"user.rsync.system.foo", false);
-            assert!(result.is_some());
-            let local = result.unwrap();
-            assert!(local.starts_with(b"user."));
+        fn wire_to_local_disguises_non_user_for_non_root() {
+            // upstream: xattrs.c:827-829 - non-root receivers prepend
+            // RSYNC_PREFIX (`user.rsync.`) to non-user-namespace wire
+            // names so the entry survives in the user hierarchy.
+            let result = wire_to_local(b"system.foo", false);
+            assert_eq!(result, Some(b"user.rsync.system.foo".to_vec()));
+        }
+
+        #[test]
+        fn wire_to_local_keeps_non_user_verbatim_for_root() {
+            // upstream: xattrs.c:820-831 - root receivers store
+            // non-user-namespace names directly into their original
+            // namespace.
+            assert_eq!(
+                wire_to_local(b"system.foo", true),
+                Some(b"system.foo".to_vec()),
+            );
+            assert_eq!(
+                wire_to_local(b"security.selinux", true),
+                Some(b"security.selinux".to_vec()),
+            );
         }
     }
 
@@ -287,14 +313,26 @@ mod tests {
         use super::*;
 
         #[test]
-        fn local_to_wire_passes_through() {
+        fn local_to_wire_adds_user_prefix() {
+            // upstream: xattrs.c:518-530 - non-Linux senders insert
+            // USER_PREFIX so the wire bytes match what a Linux peer
+            // would produce.
             let result = local_to_wire(b"foo", false);
-            assert_eq!(result, Some(b"foo".to_vec()));
+            assert_eq!(result, Some(b"user.foo".to_vec()));
         }
 
         #[test]
-        fn wire_to_local_passes_through() {
-            let result = wire_to_local(b"foo", false);
+        fn local_to_wire_keeps_disguised_rsync_namespace() {
+            let result = local_to_wire(b"rsync.system.foo", true);
+            assert_eq!(result, Some(b"rsync.system.foo".to_vec()));
+        }
+
+        #[test]
+        fn wire_to_local_strips_user_prefix() {
+            // upstream: xattrs.c:836-838 - non-Linux receivers strip the
+            // user. prefix sent over the wire to obtain a flat-namespace
+            // local name.
+            let result = wire_to_local(b"user.foo", false);
             assert_eq!(result, Some(b"foo".to_vec()));
         }
     }

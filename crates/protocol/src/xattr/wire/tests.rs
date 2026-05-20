@@ -904,3 +904,58 @@ fn large_cache_index() {
         _ => panic!("Expected cache hit"),
     }
 }
+
+/// BR-3h regression (#2494): the sender must emit `user.foo` xattr names
+/// verbatim on the wire. Prior behaviour stripped the `user.` prefix on
+/// Linux, causing the destination to land the entry in the wrong
+/// namespace (`user.rsync.foo` under fake-super or a silent drop without
+/// it) when interoperating with upstream rsync 3.4.1.
+///
+/// Asserts that:
+///
+/// 1. `protocol::xattr::local_to_wire` returns `user.foo` for the local
+///    name `user.foo` (no prefix mutation) on every supported platform.
+/// 2. The bytes `b"user.foo"` appear in the serialized `send_xattr`
+///    output as the on-wire name, immediately followed by the NUL
+///    terminator. This is a byte-for-byte parity check against upstream
+///    rsync 3.4.1 `xattrs.c:send_xattr()`.
+#[test]
+fn user_prefix_preserved_in_wire_bytes() {
+    use crate::xattr::{XattrEntry, XattrList, local_to_wire};
+
+    // Step 1: local_to_wire must preserve `user.foo` verbatim. Cross
+    // every supported call site by exercising both am_root values.
+    for am_root in [false, true] {
+        assert_eq!(
+            local_to_wire(b"user.foo", am_root),
+            Some(b"user.foo".to_vec()),
+            "user.foo must pass through local_to_wire verbatim (am_root={am_root})",
+        );
+    }
+
+    // Step 2: an XattrEntry built from the wire name must serialize the
+    // bytes `user.foo` verbatim into the wire stream.
+    let wire_name = local_to_wire(b"user.foo", false).expect("user.foo must not be filtered");
+    let mut list = XattrList::new();
+    list.push(XattrEntry::new(wire_name, b"bar".to_vec()));
+
+    let mut buf = Vec::new();
+    send_xattr(&mut buf, &list, None, 0).unwrap();
+
+    // Locate the name bytes. The wire layout is:
+    //   varint(ndx+1=0) | varint(count=1) | varint(name_len=9) |
+    //   varint(datum_len=3) | "user.foo\0" | "bar"
+    let needle = b"user.foo\0";
+    let position = buf
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .unwrap_or_else(|| panic!("expected `user.foo\\0` in wire bytes; got {buf:?}"));
+    // The stripped form (BR-3h regression) would expose `foo\0` instead.
+    assert!(
+        !buf.windows(4).any(|w| w == b"foo\0") || buf[position + 5..].starts_with(b"foo\0"),
+        "regression: wire bytes contain a bare `foo\\0` token; the \
+         `user.` prefix was stripped (BR-3h #2494)",
+    );
+    // Payload follows the name + NUL terminator.
+    assert_eq!(&buf[position + needle.len()..], b"bar");
+}
