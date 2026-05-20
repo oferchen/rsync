@@ -10,6 +10,11 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
     let (port, held_listener) = allocate_test_port();
 
     let comment = "x".repeat(4096);
+    // Forward-slash-normalised env::temp_dir() so the daemon module-arg
+    // parser doesn't swallow the comma separator via backslash escapes on
+    // Windows (see PR #4560), and so the paths actually exist on Windows
+    // where /srv/docs and /var/log don't (see PR #4559).
+    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
@@ -18,9 +23,9 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
             OsString::from("--bwlimit"),
             OsString::from("1K"),
             OsString::from("--module"),
-            OsString::from(format!("docs=/srv/docs,{comment}")),
+            OsString::from(format!("docs={module_path},{comment}")),
             OsString::from("--module"),
-            OsString::from("logs=/var/log"),
+            OsString::from(format!("logs={module_path}")),
             OsString::from("--once"),
         ])
         .build();
