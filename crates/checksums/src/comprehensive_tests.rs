@@ -10,7 +10,6 @@ mod strong_checksum_tests {
     fn md4_default_equals_new() {
         let new = Md4::new();
         let default = Md4::default();
-        // Both should produce same digest for same input
         let mut h1 = new;
         let mut h2 = default;
         h1.update(b"test");
@@ -87,12 +86,10 @@ mod strong_checksum_tests {
         let mut h1 = Md4::new();
         h1.update(b"hello");
         let h2 = h1.clone();
-        // Both clones should produce same result
         let d1 = h1.finalize();
         let mut h3 = Md4::new();
         h3.update(b"hello");
         assert_eq!(d1, h3.finalize());
-        // h2 should also work
         let mut h4 = h2;
         h4.update(b"");
         let d2 = h4.finalize();
@@ -157,7 +154,6 @@ mod strong_checksum_tests {
         let digest = hasher.finalize();
         assert_eq!(digest.len(), 16);
 
-        // Compare with manual construction
         let mut manual = Md5::new();
         manual.update(&42i32.to_le_bytes());
         manual.update(b"part1part2");
@@ -173,7 +169,6 @@ mod strong_checksum_tests {
         let digest = hasher.finalize();
         assert_eq!(digest.len(), 16);
 
-        // Compare with manual construction
         let mut manual = Md5::new();
         manual.update(b"data1data2");
         manual.update(&99i32.to_le_bytes());
@@ -238,7 +233,6 @@ mod strong_checksum_tests {
         let mut h3 = Md5::new();
         h3.update(b"clone test");
         assert_eq!(d1, h3.finalize());
-        // h2 should also finalize correctly
         let d2 = h2.finalize();
         assert_eq!(d1, d2);
     }
@@ -547,7 +541,6 @@ mod strong_checksum_tests {
             hasher.update(chunk);
         }
         let streaming = hasher.finalize();
-        // Streaming uses xxhash-rust, so compare against that
         let expected = xxhash_rust::xxh3::xxh3_64_with_seed(data, seed).to_le_bytes();
         assert_eq!(streaming, expected);
     }
@@ -566,7 +559,6 @@ mod strong_checksum_tests {
         let mut h = hasher;
         h.update(b"trait test");
         let d = h.finalize();
-        // Compare against xxhash-rust reference
         let expected = xxhash_rust::xxh3::xxh3_64_with_seed(b"trait test", 777).to_le_bytes();
         assert_eq!(d, expected);
     }
@@ -638,7 +630,6 @@ mod strong_checksum_tests {
         hasher.update(&data);
         let streaming = hasher.finalize();
 
-        // Compare with reference
         let expected = xxhash_rust::xxh3::xxh3_64_with_seed(&data, seed).to_le_bytes();
         assert_eq!(streaming, expected);
     }
@@ -698,14 +689,13 @@ mod strong_checksum_tests {
 
     #[test]
     fn xxh3_simd_availability_returns_expected_value() {
-        // xxh3 crate is always compiled in, so this always returns true
+        // xxh3 crate is always compiled in.
         assert!(crate::xxh3_simd_available());
     }
 
     #[test]
     fn openssl_availability_returns_expected_value() {
         let available = crate::openssl_acceleration_available();
-        // Should match compile-time feature
         #[cfg(feature = "openssl")]
         assert!(available);
         #[cfg(not(feature = "openssl"))]
@@ -715,7 +705,6 @@ mod strong_checksum_tests {
     #[test]
     fn simd_availability_returns_bool() {
         let _available = crate::simd_acceleration_available();
-        // Just verify it runs without panic
     }
 
     fn compute_generic<D: StrongDigest>(data: &[u8]) -> D::Digest
@@ -811,11 +800,11 @@ mod rolling_checksum_tests {
 
     #[test]
     fn roll_with_max_values() {
+        // Value should remain stable when in/out bytes are equal.
         let mut checksum = RollingChecksum::new();
         checksum.update(&[0xFF, 0xFF, 0xFF, 0xFF]);
         let _before = checksum.value();
         checksum.roll(0xFF, 0xFF).unwrap();
-        // Value should remain stable when in/out are same
     }
 
     #[test]
@@ -1072,10 +1061,9 @@ mod pipelined_tests {
 
         let mut reader = DoubleBufferedReader::new(Cursor::new(data), config);
 
-        // Read all blocks
         while reader.next_block().unwrap().is_some() {}
 
-        // Additional calls should return None
+        // Additional calls after exhaustion return None.
         assert!(reader.next_block().unwrap().is_none());
         assert!(reader.next_block().unwrap().is_none());
     }
@@ -1118,7 +1106,6 @@ mod pipelined_tests {
         assert_eq!(checksums.len(), 1);
         assert_eq!(checksums[0].len, 32 * 1024);
 
-        // Verify correctness
         let expected_rolling = RollingDigest::from_bytes(&data);
         let expected_strong = Md5::digest(&data);
 
@@ -1161,7 +1148,6 @@ mod pipelined_tests {
         let iter: PipelinedChecksumIterator<Md5, _> =
             PipelinedChecksumIterator::new(Cursor::new(data), config);
 
-        // Just check it was created
         let _pipelined = iter.is_pipelined();
     }
 
@@ -1297,10 +1283,8 @@ mod parallel_tests {
     fn filter_blocks_by_checksum_with_predicate() {
         let blocks: Vec<Vec<u8>> = (0..30).map(|i| vec![(i * 17 % 256) as u8; 200]).collect();
 
-        // Filter for checksums with LSB set
         let matches = filter_blocks_by_checksum(&blocks, |c| c & 1 == 1);
 
-        // Verify each match actually has LSB set
         let checksums = compute_rolling_checksums_parallel(&blocks);
         for &idx in &matches {
             assert!(checksums[idx] & 1 == 1);
@@ -1311,7 +1295,6 @@ mod parallel_tests {
     fn filter_blocks_by_checksum_no_matches() {
         let blocks: Vec<Vec<u8>> = (0..10).map(|_| vec![0u8; 100]).collect();
 
-        // Impossible predicate
         let matches = filter_blocks_by_checksum(&blocks, |c| c == u32::MAX);
 
         assert!(matches.is_empty());
@@ -1321,7 +1304,6 @@ mod parallel_tests {
     fn filter_blocks_by_checksum_all_match() {
         let blocks: Vec<Vec<u8>> = (0..10).map(|i| vec![(i % 256) as u8; 50]).collect();
 
-        // Always true predicate
         let matches = filter_blocks_by_checksum(&blocks, |_| true);
 
         assert_eq!(matches.len(), 10);
