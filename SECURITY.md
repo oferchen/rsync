@@ -68,6 +68,26 @@ oc-rsync monitors upstream rsync CVEs to verify continued non-applicability. Rec
 | CVE-2024-12087 | Path traversal via --inc-recursive | Not vulnerable | Path sanitization |
 | CVE-2024-12088 | --safe-links bypass | Mitigated | Rust path handling |
 | CVE-2024-12747 | Symlink race condition | Mitigated | TOCTOU is OS-level |
+| CVE-2026-29518 | TOCTOU symlink race in daemon receiver (`use chroot = no`) | **APPLICABLE** | Rust's `std::fs` uses path-based syscalls without `RESOLVE_BENEATH` / `O_NOFOLLOW`; the same logical race exists. Fix tracked under SEC-1. |
+| CVE-2026-43617 | Reverse-DNS lookup after daemon chroot causes hostname ACL bypass | Not vulnerable | `module_peer_hostname` runs in `module_access::listing` / `request` phases (`crates/daemon/src/daemon/sections/module_access/listing.rs:52`, `request.rs:269`) which complete before `chroot/setuid` in `transfer.rs:346-360`. |
+| CVE-2026-43618 | Integer overflow in compressed-token decoder causes memory disclosure | Mitigated | `crates/compress/src/zstd.rs:218,224` and `crates/compress/src/zlib/decoder.rs:61,67` use `saturating_add` for byte counters; explicit regression test `counting_writer_saturating_add_prevents_overflow` (`zlib/tests.rs:186-189`). Rust bounds-checking would panic on any post-overflow OOB index, not leak memory. |
+| CVE-2026-43619 | Symlink races on chmod/lchown/utimes/rename/unlink/mkdir/symlink/mknod/link/rmdir/lstat | **APPLICABLE** | Same root cause as CVE-2026-29518. Every path-based syscall under `use_chroot = false` carries the TOCTOU window. Audit + fix tracked under SEC-1 (umbrella). |
+| CVE-2026-43620 | OOB read in `recv_files` via negative `parent_ndx` → client SIGSEGV | Mitigated | oc-rsync uses `Option<usize>` (`crates/protocol/src/flist/dir_tree.rs:76,82-84`) and bounds-checked indexing; a malformed parent index either panics with a clear message or returns `Err`, no SIGSEGV. |
+| CVE-2026-45232 | Off-by-one stack write in HTTP CONNECT proxy response handler | **NEEDS VERIFICATION** | oc-rsync honours `RSYNC_PROXY` (`crates/core/src/client/tests/module_list_proxy.rs:47`). The Rust read path uses `Vec`-backed buffers with bounds-checked writes, so the C off-by-one stack-write is structurally impossible; but the response-line parser still needs the explicit "buffer filled without `\n`" rejection added by upstream so that a malicious proxy can't cause indefinite buffering. Tracked under SEC-2. |
+
+### Upstream rsync 3.4.3 audits (2026-05-20)
+
+rsync 3.4.3 (released 2026-05-20) is a major security release closing six CVEs and a defense-in-depth batch. Per-CVE applicability is captured in the table above (CVE-2026-29518 / 43617 / 43618 / 43619 / 43620 / 45232). The defense-in-depth items were audited as follows:
+
+- **Bounded wire-supplied counts and lengths** in flist/io/acls/xattrs - oc-rsync already validates these at decode (`crates/protocol/src/flist/read/`, `xattr/cache.rs:123,141`, `acl/`). Re-audit confirmed no path accepts an unbounded length without a `MAX_*` ceiling.
+- **Length-underflow guard in cumulative `snprintf()` callers** - oc-rsync uses `format!()`/`write!()` which do not underflow; the equivalent risk is `usize` subtraction, audited cleanly.
+- **Parent block-index bounds check on receiver** - addressed by CVE-2026-43620 entry above.
+- **NULL check in `read_delay_line()`** - oc-rsync uses `Option<&str>` so the C null-dereference is impossible.
+- **Lower ceiling on `MAX_WIRE_DEL_STAT`** - audit confirmed our delete-stats reader (`crates/protocol/src/flist/delete_stats.rs` and surrounding) uses bounded `u32` varints capped well below the upstream lowered ceiling.
+- **Reject hyphen-prefixed remote-shell hostnames** - tracked under SEC-3 (`crates/rsync_io/src/ssh/operand.rs` + `parse.rs` already had hostname validation; verify it includes leading-hyphen rejection).
+- **NULL-check on `localtime_r()` in `timestring()`** - oc-rsync uses `chrono`/`time` for timestamp formatting; out-of-range timestamps return `Err` rather than dereferencing a null pointer.
+
+Open follow-ups: **SEC-1** (TOCTOU on path-based daemon syscalls under `use_chroot=false`), **SEC-2** (HTTP CONNECT proxy response-line bounded read), **SEC-3** (confirm hyphen-prefixed hostname rejection in SSH operand parse).
 
 ### Upstream rsync 3.4.2 audits
 
