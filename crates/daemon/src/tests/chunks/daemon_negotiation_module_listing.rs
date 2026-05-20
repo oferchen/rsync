@@ -13,14 +13,17 @@ fn daemon_negotiation_module_list_sends_capabilities_before_ok() {
 
     let (port, held_listener) = allocate_test_port();
 
-    let module_path = std::env::temp_dir();
+    // Normalise to forward slashes for symmetry with the comment-bearing test
+    // below; Windows accepts forward slashes, and this avoids any future
+    // Windows-only parser surprises around `\` as an escape character.
+    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--module"),
-            OsString::from(format!("test={}", module_path.display())),
+            OsString::from(format!("test={module_path}")),
             OsString::from("--once"),
         ])
         .build();
@@ -147,14 +150,19 @@ fn daemon_negotiation_module_list_includes_comments() {
 
     let (port, held_listener) = allocate_test_port();
 
-    let module_path = std::env::temp_dir();
+    // The --module value uses `\` as an escape character, so on Windows we
+    // normalise the temp-dir path to forward slashes (which Windows accepts
+    // natively) to keep the comma separator that delimits the comment from
+    // being swallowed by the escape state machine in
+    // `daemon::sections::module_parsing::split_module_path_comment_and_options`.
+    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--module"),
-            OsString::from(format!("mymod={},This is a comment", module_path.display())),
+            OsString::from(format!("mymod={module_path},This is a comment")),
             OsString::from("--once"),
         ])
         .build();
