@@ -128,7 +128,8 @@ pub fn parse_ssh_operand(operand: &OsStr) -> Result<RemoteOperand, RemoteOperand
     Ok(RemoteOperand {
         user: user.map(String::from),
         host: host.to_owned(),
-        port: None, // Port is extracted from -e option, not the operand
+        // Port is carried via the `-e ssh -p N` option, not the operand.
+        port: None,
         path: path.to_owned(),
     })
 }
@@ -137,20 +138,17 @@ pub fn parse_ssh_operand(operand: &OsStr) -> Result<RemoteOperand, RemoteOperand
 ///
 /// Returns (user, rest) where user is Some if found, and rest is the remainder.
 fn extract_user(text: &str) -> (Option<&str>, &str) {
-    // Find the last '@' before any '[' (to handle user@[::1]:path correctly)
+    // For `user@[::1]:path`, the `@` must come before the bracket so a `@`
+    // inside an IPv6 zone identifier is not mistaken for a user delimiter.
     if let Some(bracket_pos) = text.find('[') {
-        // If there's a bracket, only look for @ before it
         let before_bracket = &text[..bracket_pos];
         if let Some(at_pos) = before_bracket.rfind('@') {
             return (Some(&text[..at_pos]), &text[at_pos + 1..]);
         }
-    } else {
-        // No bracket, look for @ anywhere before the first ':'
-        if let Some(colon_pos) = text.find(':') {
-            let before_colon = &text[..colon_pos];
-            if let Some(at_pos) = before_colon.rfind('@') {
-                return (Some(&text[..at_pos]), &text[at_pos + 1..]);
-            }
+    } else if let Some(colon_pos) = text.find(':') {
+        let before_colon = &text[..colon_pos];
+        if let Some(at_pos) = before_colon.rfind('@') {
+            return (Some(&text[..at_pos]), &text[at_pos + 1..]);
         }
     }
 
@@ -162,9 +160,8 @@ fn extract_user(text: &str) -> (Option<&str>, &str) {
 /// Handles both bracketed IPv6 ([::1]:path) and regular (host:path) formats.
 fn extract_host_and_path(text: &str) -> Result<(&str, &str), RemoteOperandParseError> {
     if text.starts_with('[') {
-        // IPv6 literal: [host]:path
         if let Some(close_bracket) = text.find(']') {
-            let host = &text[1..close_bracket]; // Extract without brackets
+            let host = &text[1..close_bracket];
             let after_bracket = &text[close_bracket + 1..];
 
             if let Some(stripped) = after_bracket.strip_prefix(':') {
@@ -175,8 +172,6 @@ fn extract_host_and_path(text: &str) -> Result<(&str, &str), RemoteOperandParseE
         return Err(RemoteOperandParseError::InvalidFormat);
     }
 
-    // Regular format: host:path
-    // Find the first ':' that's not part of an IPv6 address
     if let Some(colon_pos) = text.find(':') {
         let host = &text[..colon_pos];
         let path = &text[colon_pos + 1..];

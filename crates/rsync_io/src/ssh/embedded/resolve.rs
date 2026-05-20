@@ -139,10 +139,8 @@ mod tests {
     fn prefer_v6_sorts_ipv6_first() {
         let result = filter_by_preference(mixed_addrs(), "host", IpPreference::PreferV6).unwrap();
         assert_eq!(result.len(), 4);
-        // First two should be IPv6
         assert!(result[0].is_ipv6());
         assert!(result[1].is_ipv6());
-        // Last two should be IPv4
         assert!(result[2].is_ipv4());
         assert!(result[3].is_ipv4());
     }

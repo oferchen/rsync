@@ -156,7 +156,6 @@ mod tests {
 
     #[test]
     fn copy_to_slice_error_missing_saturates_on_inconsistent_input() {
-        // provided > required (inconsistent, but should not panic)
         let err = CopyToSliceError::new(50, 100);
         assert_eq!(err.missing(), 0);
     }
@@ -223,7 +222,6 @@ mod tests {
 
     #[test]
     fn buffered_copy_too_small_missing_saturates() {
-        // provided > required should not panic
         let err = BufferedCopyTooSmall::new(50, 100);
         assert_eq!(err.missing(), 0);
     }

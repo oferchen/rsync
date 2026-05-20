@@ -302,7 +302,6 @@ mod tests {
         let server = parse_greeting("@RSYNCD: 31.5 md4 md5");
         let protocol = ProtocolVersion::from_supported(29).unwrap();
         let greeting = build_client_greeting(&server, protocol);
-        // Downgraded to 29.0, but digests still included
         assert_eq!(greeting, b"@RSYNCD: 29.0 md4 md5\n");
     }
 }
