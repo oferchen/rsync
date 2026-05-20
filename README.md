@@ -4,7 +4,7 @@
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.4.2 (and back-compat with 3.4.1, protocol 32), works as a drop-in replacement.
+`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.4.3 (and back-compat with 3.4.2 / 3.4.1, protocol 32), works as a drop-in replacement.
 
 Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict.
 
@@ -12,9 +12,9 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.6.2 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.2 (and 3.4.1, protocols 28-32).
+**Release:** 0.6.2 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.3 (and 3.4.2 / 3.4.1, protocols 28-32).
 
-All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 3.0.9, 3.1.3, and 3.4.1.
+All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 3.0.9, 3.1.3, 3.4.1, 3.4.2, and 3.4.3, plus upstream rsync's own `testsuite/*.test` corpus driven against `oc-rsync` as `$RSYNC` (canonical "does oc-rsync look like rsync from upstream's perspective" check; non-blocking with a known-failures roster).
 
 | Component | Status |
 |-----------|--------|
@@ -207,7 +207,7 @@ release binary on modern Linux/macOS/Windows hosts; everything marked
 | `lazy-metadata` | `engine` | yes | Defers `stat()` calls until metadata is needed. | stable |
 | `multi-producer` | `engine` | no | Relaxes the single-producer compile-time invariant on `WorkQueueSender`. | experimental |
 | `thread-slab-pool` | `engine` | no | Per-thread bounded LIFO slab in front of `BufferPool`; pays off above ~32 workers (#1271, #1370). | experimental |
-| `parallel-receive-delta` | `engine`, `transfer` | no | Rayon-dispatched per-file receive-side delta application via `ParallelDeltaApplier`. **Do not enable in production.** Two known gaps: (1) `ParallelDeltaApplier::verify_chunk` is a scaffold that returns `chunk.data.len()` instead of the real strong checksum (BR-3i); (2) the outer `Mutex<HashMap<FileNdx, _>>` serialises every per-chunk slot lookup under contention (BR-3j). See `docs/design/parallel-receive-delta-application.md`. | experimental |
+| `parallel-receive-delta` | `engine`, `transfer` | yes | Rayon-dispatched per-file receive-side delta application via `ParallelDeltaApplier`. **Default-on with two known gaps** that are GA-blocking but not correctness-breaking for the COPY/LITERAL stream itself: (1) `ParallelDeltaApplier::verify_chunk` is a scaffold returning `chunk.data.len()` instead of the real strong checksum (BR-3i.a-f), weakening the post-transfer checksum-verification sanity check; (2) the outer `Mutex<HashMap<FileNdx, _>>` serialises every per-chunk slot lookup under high concurrent-file fan-out (BR-3j.a-f), capping throughput well below the rayon-parallel ideal. Both gaps are tracked for closure before GA. See `docs/design/parallel-receive-delta-application.md`. | stable (with caveats) |
 | `vmsplice` | `fast_io`, `transfer` | no | Linux `vmsplice(2)` + `splice(2)` zero-copy writer for large page-aligned chunks. | experimental |
 | `async-ssh` | `core`, `rsync_io` | no | Wires `AsyncSshTransport` into the client remote path; opt-in at runtime via `OC_RSYNC_ASYNC_SSH=1` (#1593, #1796, #1805, #1806). | experimental |
 | `ssh-socketpair-stderr` | `rsync_io` | no | Constructs the SSH child's stderr over a `socketpair(AF_UNIX, SOCK_STREAM)` instead of an anonymous pipe, enabling epoll/kqueue-integrated async drain and a larger default buffer to absorb chatty remote shells (Linux recommended; Windows shim pending SSE-5). See [`docs/ssh-transport.md`](./docs/ssh-transport.md) and [`docs/design/socketpair-stderr-channel.md`](./docs/design/socketpair-stderr-channel.md) (#2371, #2372). | experimental |

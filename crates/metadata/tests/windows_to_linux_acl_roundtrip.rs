@@ -69,12 +69,16 @@ use tempfile::tempdir;
 /// the contract even before the constant is exported from `metadata`.
 const WINDOWS_SDDL_XATTR_NAME: &[u8] = b"user.win32.security_descriptor";
 
-/// Wire-format name for the reserved slot once `local_to_wire` has
-/// stripped the `user.` prefix on Linux. On macOS / BSD the wire form
-/// equals the local form.
-#[cfg(target_os = "linux")]
-const WINDOWS_SDDL_WIRE_NAME: &[u8] = b"win32.security_descriptor";
-#[cfg(all(unix, not(target_os = "linux")))]
+/// Wire-format name for the reserved slot. Upstream rsync 3.4.1
+/// transmits xattr names verbatim from `listxattr(2)`, so on Linux the
+/// wire form keeps the `user.` prefix. On macOS / BSD the wire form
+/// adds `user.` because non-Linux peers insert that prefix on the
+/// sender side (`xattrs.c:518-530`).
+///
+/// Only referenced from `#[cfg(unix)]` tests below, so gate the
+/// constant the same way to keep the Windows build's `-D dead_code`
+/// quiet.
+#[cfg(unix)]
 const WINDOWS_SDDL_WIRE_NAME: &[u8] = WINDOWS_SDDL_XATTR_NAME;
 
 /// Sample SDDL string with owner, group, and a DACL granting File All
@@ -100,12 +104,12 @@ fn standard_xattr_name(base: &str) -> Vec<u8> {
     }
 }
 
-/// Wire-format version of [`standard_xattr_name`]. `local_to_wire`
-/// strips the `user.` prefix on Linux and passes through on macOS / BSD,
-/// so the bare base name is the wire form on every supported platform.
+/// Wire-format version of [`standard_xattr_name`]. Upstream rsync sends
+/// xattr names byte-for-byte, so the wire form is `user.<base>` on
+/// every supported Unix platform.
 #[cfg(unix)]
 fn standard_wire_name(base: &str) -> Vec<u8> {
-    base.as_bytes().to_vec()
+    format!("user.{base}").into_bytes()
 }
 
 /// Probes whether the filesystem behind `path` supports the xattr
@@ -132,8 +136,9 @@ fn xattrs_supported(path: &Path) -> bool {
 
 /// Reads the destination's xattrs back through the public
 /// `read_xattrs_for_wire` API and returns them as `(name, value)`
-/// pairs. Names are in wire format (the `user.` prefix is stripped on
-/// Linux).
+/// pairs. Names are in wire format, which mirrors upstream rsync: the
+/// `user.` prefix is preserved verbatim on every supported Unix
+/// platform.
 #[cfg(unix)]
 fn read_back(path: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
     let list = read_xattrs_for_wire(path, false, true, 0).expect("read xattrs back");

@@ -1847,12 +1847,14 @@ mod acl_integration {
         let mut acl_cache = AclCache::new();
         send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
 
-        // Wire format uses names without the "user." namespace prefix
+        // Wire format carries the full Linux xattr name verbatim, including
+        // the "user." namespace prefix. upstream: xattrs.c:rsync_xattr_lookup
+        // forwards the llistxattr(2) name unchanged.
         write_varint(&mut data, 0).unwrap();
         write_varint(&mut data, 1).unwrap();
+        write_varint(&mut data, 10).unwrap();
         write_varint(&mut data, 5).unwrap();
-        write_varint(&mut data, 5).unwrap();
-        data.extend_from_slice(b"test\0");
+        data.extend_from_slice(b"user.test\0");
         data.extend_from_slice(b"hello");
 
         let mut cursor = Cursor::new(&data[..]);
@@ -1986,18 +1988,31 @@ mod xattr_integration {
     use super::*;
     use crate::varint::write_varint;
 
-    /// Returns the expected local name after wire-to-local translation.
-    fn expected_local_name(wire_name: &[u8]) -> Vec<u8> {
+    /// Returns the expected local name after wire-to-local translation
+    /// for a `user.<base>` wire name. Linux keeps the prefix verbatim;
+    /// non-Linux strips it because the OS exposes a single flat
+    /// namespace.
+    fn expected_local_for_user_wire(base: &[u8]) -> Vec<u8> {
+        let mut wire = b"user.".to_vec();
+        wire.extend_from_slice(base);
         #[cfg(target_os = "linux")]
         {
-            let mut local = b"user.".to_vec();
-            local.extend_from_slice(wire_name);
-            local
+            wire
         }
         #[cfg(not(target_os = "linux"))]
         {
-            wire_name.to_vec()
+            base.to_vec()
         }
+    }
+
+    /// Returns the wire-format name a Linux peer would emit for a
+    /// `user.<base>` xattr. Upstream rsync sends xattr names byte-for-
+    /// byte (`xattrs.c:524-532`), so the wire form keeps the `user.`
+    /// prefix.
+    fn user_wire_name(base: &[u8]) -> Vec<u8> {
+        let mut wire = b"user.".to_vec();
+        wire.extend_from_slice(base);
+        wire
     }
 
     /// Helper to append literal xattr data to a buffer in wire format.
@@ -2030,10 +2045,9 @@ mod xattr_integration {
         entry.set_mtime(1700000000, 0);
         writer.write_entry(&mut data, &entry).unwrap();
 
-        write_literal_xattr(
-            &mut data,
-            &[(b"mime_type", b"text/plain"), (b"tag", b"test")],
-        );
+        let mime = user_wire_name(b"mime_type");
+        let tag = user_wire_name(b"tag");
+        write_literal_xattr(&mut data, &[(&mime, b"text/plain"), (&tag, b"test")]);
 
         let mut cursor = Cursor::new(&data[..]);
         let mut reader = FileListReader::new(protocol).with_preserve_xattrs(true);
@@ -2047,10 +2061,13 @@ mod xattr_integration {
         assert_eq!(cached.len(), 2);
         assert_eq!(
             cached.entries()[0].name(),
-            expected_local_name(b"mime_type")
+            expected_local_for_user_wire(b"mime_type"),
         );
         assert_eq!(cached.entries()[0].datum(), b"text/plain");
-        assert_eq!(cached.entries()[1].name(), expected_local_name(b"tag"));
+        assert_eq!(
+            cached.entries()[1].name(),
+            expected_local_for_user_wire(b"tag"),
+        );
         assert_eq!(cached.entries()[1].datum(), b"test");
 
         assert_eq!(cursor.position() as usize, data.len());
@@ -2087,7 +2104,8 @@ mod xattr_integration {
         let mut entry = FileEntry::new_file("file1.txt".into(), 100, 0o100644);
         entry.set_mtime(1700000000, 0);
         writer.write_entry(&mut data, &entry).unwrap();
-        write_literal_xattr(&mut data, &[(b"attr", b"value")]);
+        let attr_wire = user_wire_name(b"attr");
+        write_literal_xattr(&mut data, &[(&attr_wire, b"value")]);
 
         let mut entry = FileEntry::new_file("file2.txt".into(), 200, 0o100644);
         entry.set_mtime(1700000000, 0);
@@ -2122,9 +2140,10 @@ mod xattr_integration {
         entry.set_mtime(1700000000, 0);
         writer.write_entry(&mut data, &entry).unwrap();
 
+        let selinux_wire = user_wire_name(b"selinux_context");
         write_literal_xattr(
             &mut data,
-            &[(b"selinux_context", b"system_u:object_r:default_t:s0")],
+            &[(&selinux_wire, b"system_u:object_r:default_t:s0")],
         );
 
         let mut cursor = Cursor::new(&data[..]);
@@ -2138,7 +2157,7 @@ mod xattr_integration {
         assert_eq!(cached.len(), 1);
         assert_eq!(
             cached.entries()[0].name(),
-            expected_local_name(b"selinux_context")
+            expected_local_for_user_wire(b"selinux_context"),
         );
 
         assert_eq!(cursor.position() as usize, data.len());
@@ -2158,7 +2177,8 @@ mod xattr_integration {
         entry.set_mtime(1700000000, 0);
         writer.write_entry(&mut data, &entry).unwrap();
 
-        write_literal_xattr(&mut data, &[(b"symattr", b"symval")]);
+        let sym_wire = user_wire_name(b"symattr");
+        write_literal_xattr(&mut data, &[(&sym_wire, b"symval")]);
 
         let mut cursor = Cursor::new(&data[..]);
         let mut reader = FileListReader::new(protocol)
@@ -2194,7 +2214,8 @@ mod xattr_integration {
         let mut acl_cache = AclCache::new();
         send_rsync_acl(&mut data, &acl, AclType::Access, &mut acl_cache, false).unwrap();
 
-        write_literal_xattr(&mut data, &[(b"key", b"val")]);
+        let key_wire = user_wire_name(b"key");
+        write_literal_xattr(&mut data, &[(&key_wire, b"val")]);
 
         let mut cursor = Cursor::new(&data[..]);
         let mut reader = FileListReader::new(protocol)
@@ -2213,7 +2234,7 @@ mod xattr_integration {
         assert_eq!(cached_xattr.len(), 1);
         assert_eq!(
             cached_xattr.entries()[0].name(),
-            expected_local_name(b"key")
+            expected_local_for_user_wire(b"key"),
         );
         assert_eq!(cached_xattr.entries()[0].datum(), b"val");
 

@@ -73,7 +73,7 @@ oc-rsync monitors upstream rsync CVEs to verify continued non-applicability. Rec
 | CVE-2026-43618 | Integer overflow in compressed-token decoder causes memory disclosure | Mitigated | `crates/compress/src/zstd.rs:218,224` and `crates/compress/src/zlib/decoder.rs:61,67` use `saturating_add` for byte counters; explicit regression test `counting_writer_saturating_add_prevents_overflow` (`zlib/tests.rs:186-189`). Rust bounds-checking would panic on any post-overflow OOB index, not leak memory. |
 | CVE-2026-43619 | Symlink races on chmod/lchown/utimes/rename/unlink/mkdir/symlink/mknod/link/rmdir/lstat | **APPLICABLE** | Same root cause as CVE-2026-29518. Every path-based syscall under `use_chroot = false` carries the TOCTOU window. Audit + fix tracked under SEC-1 (umbrella). |
 | CVE-2026-43620 | OOB read in `recv_files` via negative `parent_ndx` → client SIGSEGV | Mitigated | oc-rsync uses `Option<usize>` (`crates/protocol/src/flist/dir_tree.rs:76,82-84`) and bounds-checked indexing; a malformed parent index either panics with a clear message or returns `Err`, no SIGSEGV. |
-| CVE-2026-45232 | Off-by-one stack write in HTTP CONNECT proxy response handler | **NEEDS VERIFICATION** | oc-rsync honours `RSYNC_PROXY` (`crates/core/src/client/tests/module_list_proxy.rs:47`). The Rust read path uses `Vec`-backed buffers with bounds-checked writes, so the C off-by-one stack-write is structurally impossible; but the response-line parser still needs the explicit "buffer filled without `\n`" rejection added by upstream so that a malicious proxy can't cause indefinite buffering. Tracked under SEC-2. |
+| CVE-2026-45232 | Off-by-one stack write in HTTP CONNECT proxy response handler | Mitigated | `read_proxy_line()` at `crates/core/src/client/module_list/connect/proxy.rs:337-372` reads byte-by-byte into a heap `Vec<u8>` and explicitly caps the response line at 4096 bytes (stricter than upstream's 1024 ceiling). The C off-by-one stack-write is structurally impossible (bounds-checked `Vec::push`), and indefinite buffering is bounded by the explicit cap. Audit doc: SEC-2.a finding in PR #4609. Optional cosmetic alignment to upstream's 1024-byte ceiling tracked as SEC-2.b. |
 
 ### Upstream rsync 3.4.3 audits (2026-05-20)
 
@@ -87,7 +87,13 @@ rsync 3.4.3 (released 2026-05-20) is a major security release closing six CVEs a
 - **Reject hyphen-prefixed remote-shell hostnames** - tracked under SEC-3 (`crates/rsync_io/src/ssh/operand.rs` + `parse.rs` already had hostname validation; verify it includes leading-hyphen rejection).
 - **NULL-check on `localtime_r()` in `timestring()`** - oc-rsync uses `chrono`/`time` for timestamp formatting; out-of-range timestamps return `Err` rather than dereferencing a null pointer.
 
-Open follow-ups: **SEC-1** (TOCTOU on path-based daemon syscalls under `use_chroot=false`), **SEC-2** (HTTP CONNECT proxy response-line bounded read), **SEC-3** (confirm hyphen-prefixed hostname rejection in SSH operand parse).
+Open follow-ups:
+- **SEC-1** (TOCTOU on path-based daemon syscalls under `use_chroot=false`) - umbrella, decomposed into SEC-1.a..o; SEC-1.a path-syscall surface audit in flight. Beta-blocker for any deployment using `use chroot = no`.
+- **SEC-2.b** (cosmetic: align proxy-line cap from 4096 to upstream's 1024) - SEC-2.a confirmed the structural mitigation is already in place via the 4096-byte cap at `connect/proxy.rs:337-372`; SEC-2.b is purely an upstream-parity tightening, not a security gap.
+- **SEC-3** (confirm hyphen-prefixed hostname rejection in SSH operand parse) - SEC-3.a audit in flight.
+- **SEC-4** (regression test for malformed `parent_node_idx` per CVE-2026-43620 mitigation) - in flight.
+
+CI integration: as of 2026-05-21 the interop job (`.github/workflows/_interop.yml`) runs upstream rsync's own `testsuite/*.test` corpus against oc-rsync as `$RSYNC`, pinned to upstream 3.4.3 by default. The known-failures roster lives at `tools/ci/upstream_testsuite_known_failures.conf`.
 
 ### Upstream rsync 3.4.2 audits
 
