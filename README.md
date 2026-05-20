@@ -386,5 +386,8 @@ GNU GPL v3.0 or later. See [`LICENSE`](./LICENSE).
 ## Acknowledgements
 
 Inspired by [`rsync`](https://rsync.samba.org/) by Andrew Tridgell and the Samba team.
+
+Internal matching-engine optimisations adapted from [`zsync`](http://zsync.moria.org.uk/) by Colin Phipps (in-memory only; wire format stays pure rsync).
+
 Thanks to **Pieter** for his heroic patience in enduring months of my rsync commentary.
 Thanks to **Elad** for his endless patience hearing rsync protocol commentary as I'm introduced to it.
