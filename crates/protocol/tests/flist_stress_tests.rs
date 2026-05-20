@@ -508,16 +508,21 @@ fn stress_varied_types_10k() {
 /// Tests entries with maximum path lengths.
 #[test]
 fn stress_long_paths_10k() {
-    // Generate entries with near-maximum path lengths (4096 bytes is typical limit)
+    // Generate entries with near-maximum path lengths (4096 bytes is typical limit).
+    // Build directory components as an explicit `/`-delimited String to match the
+    // wire format's separator, otherwise PathBuf::join on Windows inserts `\`
+    // and the post-roundtrip name comparison would fail (the encoder normalises
+    // to `/`, the in-memory path used `\`).
     let entries: Vec<_> = (0..10_000)
         .map(|i| {
             let segment = format!("d{i:06}");
             let depth = 100; // ~800 bytes at 8 bytes/segment
-            let path: PathBuf = (0..depth)
-                .map(|_| segment.as_str())
-                .collect::<PathBuf>()
-                .join(format!("file_{i:06}.txt"));
-            FileEntry::new_file(path, i as u64, 0o644)
+            let mut path_str = std::iter::repeat_n(segment.as_str(), depth)
+                .collect::<Vec<_>>()
+                .join("/");
+            path_str.push('/');
+            path_str.push_str(&format!("file_{i:06}.txt"));
+            FileEntry::new_file(PathBuf::from(path_str), i as u64, 0o644)
         })
         .collect();
 
