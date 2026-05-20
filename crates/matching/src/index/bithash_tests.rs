@@ -128,3 +128,101 @@ proptest! {
         }
     }
 }
+
+/// Deterministic linear congruential generator for the rejection-rate test.
+///
+/// Avoids pulling `rand` into the dev dependencies while still spreading rsums
+/// uniformly enough to exercise the bithash density bound. Numbers are the
+/// constants from Numerical Recipes' `ran` generator.
+fn lcg_next(state: &mut u64) -> u32 {
+    *state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    (*state >> 16) as u32
+}
+
+#[test]
+fn bithash_rejects_at_least_seven_eighths_of_known_misses() {
+    // ZSO-1 acceptance test: with N inserted rsums and 8N bithash bits, the
+    // 1/8 saturation density means ~7/8 of uniform-random probes that were
+    // never inserted should reject at the bithash gate.
+    let n_blocks = 1000usize;
+    let mut bh = BitHash::with_block_count(n_blocks);
+
+    // Build the inserted set deterministically.
+    let mut inserted = std::collections::HashSet::with_capacity(n_blocks);
+    let mut rng = 0xC0FFEE_u64;
+    while inserted.len() < n_blocks {
+        let rsum = lcg_next(&mut rng);
+        if inserted.insert(rsum) {
+            bh.insert(rsum);
+        }
+    }
+
+    // Generate N known-miss probes drawn from a disjoint stream and count
+    // bithash-stage rejections.
+    let mut probe_rng = 0xDEAD_BEEF_CAFE_u64;
+    let mut probes = 0usize;
+    let mut rejects = 0usize;
+    while probes < n_blocks {
+        let rsum = lcg_next(&mut probe_rng);
+        if inserted.contains(&rsum) {
+            continue;
+        }
+        probes += 1;
+        if !bh.contains(rsum) {
+            rejects += 1;
+        }
+    }
+
+    let reject_rate = rejects as f64 / probes as f64;
+    assert!(
+        reject_rate >= 0.87,
+        "bithash rejected only {rejects}/{probes} = {reject_rate:.3} of known misses; \
+         expected at least 7/8 = 0.875 per zsync density bound",
+    );
+}
+
+#[test]
+fn bithash_state_does_not_leak_between_independent_indexes() {
+    // ZSO-1 acceptance test: two `DeltaSignatureIndex` values built from
+    // distinct basis bytes must hold independent bithash state. Per the
+    // ZSO-7 audit, the per-NDX construction discards prior state, so no
+    // INC_RECURSE segment can see another segment's matched blocks via the
+    // bithash gate.
+    let mut left_basis = vec![0u8; (TEST_BLOCK_LENGTH * 4) as usize];
+    for (i, byte) in left_basis.iter_mut().enumerate() {
+        *byte = (i as u8).wrapping_mul(31).wrapping_add(7);
+    }
+    let mut right_basis = vec![0u8; (TEST_BLOCK_LENGTH * 4) as usize];
+    for (i, byte) in right_basis.iter_mut().enumerate() {
+        *byte = (i as u8).wrapping_mul(53).wrapping_add(199);
+    }
+    assert_ne!(left_basis, right_basis);
+
+    let left = build_index(&left_basis).expect("left index");
+    let right = build_index(&right_basis).expect("right index");
+
+    // For every block indexed in `left`, the matching probe MUST succeed in
+    // `left`. The same probe MUST NOT find a match in `right` (the random
+    // bases are distinct), confirming the bithash is per-index and not a
+    // shared singleton.
+    let block_length = left.block_length();
+    let n_full = left_basis.len() / block_length;
+    let mut cross_matches = 0usize;
+    for i in 0..n_full {
+        let start = i * block_length;
+        let window = &left_basis[start..start + block_length];
+        let digest = left.block(i).rolling();
+        assert!(
+            left.find_match_bytes(digest, window).is_some(),
+            "left index dropped its own block {i}",
+        );
+        if right.find_match_bytes(digest, window).is_some() {
+            cross_matches += 1;
+        }
+    }
+    assert_eq!(
+        cross_matches, 0,
+        "right index spuriously matched {cross_matches} left blocks; \
+         bithash or lookup state leaked across indexes",
+    );
+}
