@@ -396,7 +396,6 @@ fn timeout_argument_week_boundary() {
 fn transfer_timeout_effective_with_various_defaults() {
     let timeout = TransferTimeout::Default;
 
-    // Test with different default values
     for default_secs in [1, 10, 30, 60, 300, 3600] {
         let default = Duration::from_secs(default_secs);
         assert_eq!(timeout.effective(default), Some(default));

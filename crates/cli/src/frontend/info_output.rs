@@ -417,7 +417,6 @@ mod tests {
     fn test_should_show_helpers() {
         let mut flags = InfoFlags::default();
 
-        // Initially all should be false
         assert!(!flags.should_show_name());
         assert!(!flags.should_show_progress());
         assert!(!flags.should_show_stats());
@@ -425,7 +424,6 @@ mod tests {
         assert!(!flags.should_show_skip());
         assert!(!flags.should_show_flist());
 
-        // Set individual flags
         flags.levels_mut().set(InfoFlag::Name, 1);
         assert!(flags.should_show_name());
 
@@ -546,7 +544,6 @@ mod tests {
 
     #[test]
     fn test_mixed_flags_and_all() {
-        // ALL followed by specific overrides
         let flags = parse_info_flags("ALL,name3").unwrap();
         assert_eq!(flags.levels().get(InfoFlag::Name), 3);
         assert_eq!(flags.levels().get(InfoFlag::Stats), 1);
@@ -564,7 +561,6 @@ mod tests {
     fn test_all_should_show_helpers() {
         let flags = InfoFlags::from_verbosity(2);
 
-        // Test all helper methods
         assert!(flags.should_show_backup());
         assert!(flags.should_show_copy());
         assert!(flags.should_show_del());
@@ -580,7 +576,6 @@ mod tests {
 
     #[test]
     fn test_verbosity_large_values() {
-        // Should clamp to u8 max
         let flags = InfoFlags::from_verbosity(1000);
         assert!(flags.should_show_name());
     }
