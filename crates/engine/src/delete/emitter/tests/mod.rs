@@ -41,11 +41,6 @@ pub(super) fn dir_child(parent: &str, name: &str) -> FileEntry {
     FileEntry::new_directory(path, 0o755)
 }
 
-// ------------------------------------------------------------------
-// Scripted DeleteFs that fails configured paths with configured
-// errors. Used by the error-policy and cohort tests.
-// ------------------------------------------------------------------
-
 /// Failure plan: for each (path, errno) pair, the next call against
 /// that path returns the matching error before falling back to the
 /// recording behaviour.

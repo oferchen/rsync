@@ -4,10 +4,6 @@
 //! pass (`delete.c:178-207`) and surfaces the exit codes the caller maps
 //! to upstream's `RERR_PARTIAL` / `RERR_VANISHED`.
 
-// ----------------------------------------------------------------------------
-// Upstream exit-code constants surfaced by this module.
-// ----------------------------------------------------------------------------
-
 /// Exit code for partial transfers caused by an I/O failure during the
 /// delete pass. Mirrors upstream `errcode.h::RERR_PARTIAL` and
 /// `core::exit_code::ExitCode::PartialTransfer`.
