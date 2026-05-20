@@ -517,8 +517,7 @@ fn stress_long_paths_10k() {
         .map(|i| {
             let segment = format!("d{i:06}");
             let depth = 100; // ~800 bytes at 8 bytes/segment
-            let mut path_str = std::iter::repeat(segment.as_str())
-                .take(depth)
+            let mut path_str = std::iter::repeat_n(segment.as_str(), depth)
                 .collect::<Vec<_>>()
                 .join("/");
             path_str.push('/');
