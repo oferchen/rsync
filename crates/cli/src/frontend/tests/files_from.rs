@@ -6,7 +6,6 @@ fn files_from_reads_list_from_specified_file() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("file.list");
 
-    // Create a file list with three entries
     std::fs::write(&list_path, "file1.txt\nfile2.txt\nfile3.txt\n").expect("write list");
 
     let entries =
@@ -180,7 +179,6 @@ fn files_from_reads_from_stdin_with_dash() {
     use std::io::Cursor;
     use std::io::Read;
 
-    // Test using the low-level reader function
     let input = b"file1.txt\nfile2.txt\nfile3.txt\n";
     let mut reader = BufReader::new(Cursor::new(input));
     let mut entries = Vec::new();

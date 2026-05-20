@@ -225,7 +225,6 @@ fn debug_del_flag_shows_deletion_debug_output() {
         output.contains("deleting") || output.contains("extra.txt"),
         "-rv --delete should show deletion activity: {output}"
     );
-    // Verify the file was actually deleted
     assert!(
         !dest_dir.join("extra.txt").exists(),
         "extra.txt should be deleted"

@@ -229,8 +229,10 @@ fn daemon_mode_arguments_for_alias(args: &[OsString], brand: Brand) -> Option<Ve
     server::daemon_mode_arguments(&synthetic)
 }
 
-/// The function returns the process exit code that should be used by the caller.
-/// On success, `0` is returned. All diagnostics are rendered using the central
+/// Runs the CLI front-end against the supplied arguments and writers.
+///
+/// Returns the process exit code that should be used by the caller. On success
+/// `0` is returned. All diagnostics are rendered using the central
 /// [`core::message`] utilities to preserve formatting and trailers.
 #[allow(clippy::module_name_repetitions)]
 pub fn run<I, S, Out, Err>(arguments: I, stdout: &mut Out, stderr: &mut Err) -> i32

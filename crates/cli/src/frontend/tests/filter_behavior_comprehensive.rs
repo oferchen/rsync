@@ -998,9 +998,6 @@ fn transfer_with_directory_only_exclude_pattern() {
     std::fs::create_dir_all(&dest_root).expect("create dest root");
     std::fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
     std::fs::write(subdir.join("inside.txt"), b"inside").expect("write inside");
-    // Create a file named "skipdir" (not a directory) to verify the pattern
-    // only excludes the directory, not a file with the same name
-    // Actually for simplicity, just verify the directory is excluded
 
     let (code, _, _) = run_with_args([
         OsString::from(RSYNC),

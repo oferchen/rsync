@@ -39,7 +39,6 @@ fn progress_line_contains_upstream_fields() {
     let normalized = rendered.replace('\r', "\n");
     let lines: Vec<&str> = normalized.lines().collect();
 
-    // Find the final progress line (the one with xfr#)
     let progress_line = lines
         .iter()
         .find(|l| l.contains("xfr#"))
@@ -483,7 +482,6 @@ fn format_decimal_bytes_billions() {
 
 #[test]
 fn format_decimal_bytes_u64_max() {
-    // Verify no panic on large values
     let result = format_decimal_bytes(u64::MAX);
     assert!(result.contains(','), "u64::MAX should contain separators");
     assert!(!result.is_empty());
@@ -628,7 +626,6 @@ fn progress_line_matches_upstream_pattern() {
     let rendered = String::from_utf8(stdout).expect("utf8");
     let normalized = rendered.replace('\r', "\n");
 
-    // Find the xfr line
     let xfr_line = normalized
         .lines()
         .find(|l| l.contains("xfr#"))

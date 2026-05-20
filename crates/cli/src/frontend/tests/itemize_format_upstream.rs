@@ -105,13 +105,11 @@ fn itemize_updated_file_shows_change_indicators() {
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
 
-    // Create existing destination file first
     let dest_file = dest_dir.join("updated.txt");
     std::fs::write(&dest_file, b"old content").expect("write dest");
     let old_time = FileTime::from_unix_time(1_700_000_000, 0);
     set_file_mtime(&dest_file, old_time).expect("set dest mtime");
 
-    // Create source with different content and newer time
     std::fs::write(&source, b"new content here").expect("write source");
     let new_time = FileTime::from_unix_time(1_700_001_000, 0);
     set_file_mtime(&source, new_time).expect("set source mtime");
@@ -163,7 +161,6 @@ fn itemize_unchanged_file_with_times_shows_no_output() {
     let content = b"identical content";
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
 
-    // Create both with same content and mtime
     std::fs::write(&source, content).expect("write source");
     set_file_mtime(&source, timestamp).expect("set source mtime");
 
@@ -294,7 +291,6 @@ fn itemize_with_delete_shows_star_deleting_format() {
     std::fs::create_dir_all(&src_dir).expect("create src dir");
     std::fs::create_dir_all(&dest_dir).expect("create dest dir");
 
-    // Create a file only in destination (to be deleted)
     std::fs::write(dest_dir.join("orphan.txt"), b"orphan").expect("write orphan");
 
     let mut src_operand = src_dir.into_os_string();
@@ -325,7 +321,6 @@ fn itemize_recursive_new_directory_shows_cd_plus_pattern() {
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir_all(&src_dir).expect("create src dir");
 
-    // Create a subdirectory with a file
     let sub_dir = src_dir.join("subdir");
     std::fs::create_dir(&sub_dir).expect("create subdir");
     std::fs::write(sub_dir.join("file.txt"), b"content").expect("write file");
@@ -366,7 +361,6 @@ fn itemize_new_symlink_shows_cl_plus_pattern() {
     let dest_dir = tmp.path().join("dest");
     std::fs::create_dir_all(&src_dir).expect("create src dir");
 
-    // Create a symlink in source
     let target = src_dir.join("target.txt");
     std::fs::write(&target, b"target").expect("write target");
     let link = src_dir.join("link.txt");
@@ -406,7 +400,6 @@ fn itemize_chmod_shows_permission_indicator() {
     let content = b"permission test";
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
 
-    // Create source and dest with same content and time but different perms
     std::fs::write(&source, content).expect("write source");
     set_file_mtime(&source, timestamp).expect("set source mtime");
 
