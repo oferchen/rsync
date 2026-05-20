@@ -21,9 +21,14 @@
 //!   and round-trip coverage.
 //! - [`delete_pipeline_hook`] - DDP-B3 hook that publishes one delete
 //!   plan per INC_RECURSE segment.
+//! - [`iconv_wire_order`] - regression coverage for the receiver-side
+//!   `--iconv` ordering invariant (file_list stays in sender wire-emit
+//!   order, never re-sorted on local-charset bytes).
 
 mod delete_pipeline_hook;
 mod filter_chain;
+#[cfg(feature = "iconv")]
+mod iconv_wire_order;
 mod id_lists;
 mod incremental_directories;
 mod incremental_receiver;

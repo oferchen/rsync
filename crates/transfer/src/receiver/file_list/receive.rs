@@ -87,8 +87,22 @@ impl ReceiverContext {
         }
 
         // upstream: flist.c:2736 - flist_sort_and_clean() after recv_id_list()
+        //
+        // When `--iconv` is in effect, upstream sets `need_unsorted_flist = 1`
+        // (options.c:2056) so the receiver's NDX-addressed `flist->files[]`
+        // array stays in sender scan order; only a separate `flist->sorted[]`
+        // pointer array is reordered. We do not maintain a parallel pointer
+        // array, so we mirror upstream by skipping the in-place reorder when
+        // an active (non-identity) iconv converter is configured. This keeps
+        // `self.file_list` in wire (NDX) order so subsequent generator
+        // requests resolve to the entry the sender meant.
+        // upstream: flist.c:2496-2498 - "both sides keep an unsorted
+        // file-list array because the names will differ on the sending and
+        // receiving sides".
         let pre29 = self.protocol.as_u8() < 29;
-        sort_file_list(&mut self.file_list, self.config.qsort, pre29);
+        if !self.iconv_reorder_suppressed() {
+            sort_file_list(&mut self.file_list, self.config.qsort, pre29);
+        }
         match_hard_links(&mut self.file_list, &mut self.prior_hlinks);
 
         // For protocol < 30, normalize (dev, ino) pairs into hardlink_idx and
@@ -196,7 +210,14 @@ impl ReceiverContext {
             // upstream: flist.c:2155,2736 - both sides call flist_sort_and_clean()
             // independently. Unstable sort (true) is safe - entries have unique paths.
             // INC_RECURSE requires protocol >= 30, so pre29 is always false here.
-            sort_file_list(&mut self.file_list[flat_start..], true, false);
+            //
+            // Iconv suppresses the in-place reorder for the same reason as the
+            // initial flist: upstream's `need_unsorted_flist` keeps the
+            // NDX-addressed array in scan order so the receiver can resolve
+            // generator requests against the bytes the sender emitted.
+            if !self.iconv_reorder_suppressed() {
+                sort_file_list(&mut self.file_list[flat_start..], true, false);
+            }
             match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);
 
             // Normalize pre-30 hardlinks in this segment.
@@ -338,6 +359,7 @@ impl ReceiverContext {
             finished_reading: false,
             entries_read: 0,
             use_qsort: self.config.qsort,
+            iconv_reorder_suppressed: self.iconv_reorder_suppressed(),
         }
     }
 }

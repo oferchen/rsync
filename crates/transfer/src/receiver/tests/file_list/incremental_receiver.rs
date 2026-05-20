@@ -52,6 +52,7 @@ fn try_read_one_returns_false_when_finished() {
         finished_reading: true, // Already finished
         entries_read: 0,
         use_qsort: false,
+        iconv_reorder_suppressed: false,
     };
 
     // Should return false since already finished

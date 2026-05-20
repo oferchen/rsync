@@ -509,6 +509,32 @@ impl ReceiverContext {
         reader
     }
 
+    /// Returns true when iconv is active and would transcode filenames,
+    /// indicating the receiver must keep its NDX-addressed file list in
+    /// sender wire-emit order rather than re-sorting on local-charset bytes.
+    ///
+    /// Mirrors upstream's `need_unsorted_flist = 1` flag, which `options.c`
+    /// sets whenever `iconv_opt` resolves to an actual conversion. An
+    /// identity converter (same local/remote encoding) leaves bytes
+    /// untouched, so the sort/lookup order cannot diverge and the reorder
+    /// stays enabled - matching upstream's check that nulls out `iconv_opt`
+    /// when it is `"-"` before setting `need_unsorted_flist = 1`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2051-2056` - `need_unsorted_flist = 1` when `iconv_opt`
+    /// - `flist.c:2496-2498` - "both sides keep an unsorted file-list array
+    ///   because the names will differ on the sending and receiving sides"
+    /// - `flist.c:2149-2153` - allocates a separate `flist->sorted[]`
+    ///   pointer array so `flist->files[]` stays in scan order
+    pub(in crate::receiver) fn iconv_reorder_suppressed(&self) -> bool {
+        self.config
+            .connection
+            .iconv
+            .as_ref()
+            .is_some_and(|converter| !converter.is_identity())
+    }
+
     /// Translates a remote UID to a local UID using the received mappings.
     ///
     /// Returns the mapped local UID if a mapping exists, otherwise returns the
