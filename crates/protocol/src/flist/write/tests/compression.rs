@@ -20,17 +20,15 @@ fn zero_flags_varint_uses_xmit_extended_flags() {
         .update(b"prefix/", 0o100644, 1700000000, 1000, 1000);
 
     let mut entry = FileEntry::new_file("prefix/file.txt".into(), 100, 0o644);
-    entry.set_mtime(1700000000, 0); // Same time
-    entry.set_uid(1000); // Same UID
-    entry.set_gid(1000); // Same GID
+    entry.set_mtime(1700000000, 0);
+    entry.set_uid(1000);
+    entry.set_gid(1000);
 
     let mut buf = Vec::new();
     writer.write_entry(&mut buf, &entry).unwrap();
 
-    // Decode the first varint to check the flags value
     let (flags_value, _) = decode_varint(&buf).unwrap();
 
-    // Should NOT be 0 (end marker), should be XMIT_EXTENDED_FLAGS (0x04)
     assert_ne!(flags_value, 0, "flags should not be zero (end marker)");
     assert!(
         (flags_value as u32) & (XMIT_EXTENDED_FLAGS as u32) != 0
