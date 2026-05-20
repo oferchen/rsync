@@ -254,22 +254,19 @@ fn sender_only_risk_does_not_clear_receiver_protection() {
     assert!(!set.allows_deletion(Path::new("keep/item.txt"), false));
 }
 
-// Tests for negated pattern matching (upstream rsync `!` modifier)
+/// Tests for negated pattern matching (upstream rsync `!` modifier).
 mod negate_tests {
     use super::*;
 
     #[test]
     fn negated_exclude_excludes_non_matching_files() {
-        // A negated exclude rule excludes files that do NOT match the pattern
-        // e.g., `- ! *.txt` excludes everything except .txt files
+        // `- ! *.txt` excludes everything except .txt files.
         let rules = [FilterRule::exclude("*.txt").with_negate(true)];
         let set = FilterSet::from_rules(rules).expect("compiled");
 
-        // Files that match *.txt should be allowed (negate inverts the match)
         assert!(set.allows(Path::new("file.txt"), false));
         assert!(set.allows(Path::new("dir/file.txt"), false));
 
-        // Files that don't match *.txt should be excluded
         assert!(!set.allows(Path::new("file.log"), false));
         assert!(!set.allows(Path::new("file.bak"), false));
         assert!(!set.allows(Path::new("dir/file.log"), false));
@@ -277,58 +274,49 @@ mod negate_tests {
 
     #[test]
     fn negated_include_includes_non_matching_files() {
-        // A negated include rule includes files that do NOT match the pattern
-        // e.g., `+ ! *.bak` includes everything except .bak files
-        // rsync uses first-match-wins: include must come before exclude
+        // `+ ! *.bak` includes everything except .bak; first-match-wins
+        // requires the include to precede the trailing exclude-all.
         let rules = [
             FilterRule::include("*.bak").with_negate(true),
             FilterRule::exclude("*"),
         ];
         let set = FilterSet::from_rules(rules).expect("compiled");
 
-        // Files that don't match *.bak should be included (negated include matches)
         assert!(set.allows(Path::new("file.txt"), false));
         assert!(set.allows(Path::new("file.log"), false));
 
-        // Files that match *.bak should be excluded (negated include doesn't match,
-        // falls through to exclude("*"))
+        // *.bak falls through to the exclude("*") rule.
         assert!(!set.allows(Path::new("file.bak"), false));
     }
 
     #[test]
     fn negated_pattern_with_directory() {
-        // Negated directory-only pattern
         let rules = [FilterRule::exclude("cache/").with_negate(true)];
         let set = FilterSet::from_rules(rules).expect("compiled");
 
-        // Directories named "cache" should be allowed (pattern matches, negated)
         assert!(set.allows(Path::new("cache"), true));
 
-        // Other directories should be excluded (pattern doesn't match, negated)
         assert!(!set.allows(Path::new("temp"), true));
         assert!(!set.allows(Path::new("build"), true));
     }
 
     #[test]
     fn negated_pattern_with_anchored() {
-        // Negated anchored pattern: excludes anything not at /important
         let rules = [FilterRule::exclude("/important").with_negate(true)];
         let set = FilterSet::from_rules(rules).expect("compiled");
 
-        // /important should be allowed (pattern matches, negated)
         assert!(set.allows(Path::new("important"), false));
 
-        // Other paths should be excluded (pattern doesn't match, negated)
         assert!(!set.allows(Path::new("other"), false));
-        assert!(!set.allows(Path::new("dir/important"), false)); // Not anchored match
+        // "dir/important" is not an anchored match, so negation excludes it.
+        assert!(!set.allows(Path::new("dir/important"), false));
     }
 
     #[test]
     fn negated_rules_combine_with_regular_rules() {
-        // Mix negated and regular rules
         let rules = [
-            FilterRule::exclude("*.tmp"),                   // Regular: exclude .tmp
-            FilterRule::exclude("*.txt").with_negate(true), // Negated: exclude non-.txt
+            FilterRule::exclude("*.tmp"),
+            FilterRule::exclude("*.txt").with_negate(true),
         ];
         let set = FilterSet::from_rules(rules).expect("compiled");
 
@@ -396,14 +384,12 @@ mod properties {
     proptest! {
         #[test]
         fn include_exclude_duality(pattern in valid_pattern()) {
-            // An include rule should make applies_to_sender and applies_to_receiver true
             let include = FilterRule::include(&pattern);
             prop_assert!(include.applies_to_sender());
             prop_assert!(include.applies_to_receiver());
             prop_assert_eq!(include.action(), FilterAction::Include);
             prop_assert_eq!(include.pattern(), &pattern);
 
-            // An exclude rule should also apply to both sides by default
             let exclude = FilterRule::exclude(&pattern);
             prop_assert!(exclude.applies_to_sender());
             prop_assert!(exclude.applies_to_receiver());
@@ -470,7 +456,6 @@ mod properties {
         ) {
             let rule = FilterRule::exclude(&pattern).with_perishable(perishable);
             prop_assert_eq!(rule.is_perishable(), perishable);
-            // Other properties should be unaffected
             prop_assert_eq!(rule.action(), FilterAction::Exclude);
         }
     }
@@ -544,7 +529,6 @@ mod evaluation_properties {
                 FilterRule::exclude("*"),
             ];
             let set = FilterSet::from_rules(rules).unwrap();
-            // The included file should be allowed
             prop_assert!(set.allows(Path::new(&file), false));
         }
 
@@ -602,7 +586,6 @@ mod evaluation_properties {
                 rules.push(FilterRule::exclude(&pattern));
             }
             let set = FilterSet::from_rules(rules).unwrap();
-            // First rule is include, so it wins regardless of how many excludes follow
             prop_assert!(set.allows(Path::new(&file), false));
         }
 
@@ -618,9 +601,7 @@ mod evaluation_properties {
             let pattern_a = format!("*.{ext_a}");
 
             let set = FilterSet::from_rules(vec![FilterRule::exclude(&pattern_a)]).unwrap();
-            // file_a matches the exclude pattern
             prop_assert!(!set.allows(Path::new(&file_a), false));
-            // file_b does not match, so it is allowed by default
             prop_assert!(set.allows(Path::new(&file_b), false));
         }
 
@@ -655,7 +636,6 @@ mod evaluation_properties {
                 FilterRule::clear(),
             ];
             let set = FilterSet::from_rules(rules).unwrap();
-            // After clear, no rules remain - path is allowed by default
             prop_assert!(set.allows(Path::new(&file), false));
         }
 
@@ -710,9 +690,7 @@ mod evaluation_properties {
             let rules = vec![FilterRule::exclude(&pattern).with_sides(true, false)];
             let set = FilterSet::from_rules(rules).unwrap();
             let path = Path::new(&file);
-            // Sender-side: blocked for transfer
             prop_assert!(!set.allows(path, false));
-            // Receiver-side: not blocked for deletion (rule doesn't apply)
             prop_assert!(set.allows_deletion(path, false));
         }
     }
