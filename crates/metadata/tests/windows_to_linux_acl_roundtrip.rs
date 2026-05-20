@@ -74,6 +74,11 @@ const WINDOWS_SDDL_XATTR_NAME: &[u8] = b"user.win32.security_descriptor";
 /// wire form keeps the `user.` prefix. On macOS / BSD the wire form
 /// adds `user.` because non-Linux peers insert that prefix on the
 /// sender side (`xattrs.c:518-530`).
+///
+/// Only referenced from `#[cfg(unix)]` tests below, so gate the
+/// constant the same way to keep the Windows build's `-D dead_code`
+/// quiet.
+#[cfg(unix)]
 const WINDOWS_SDDL_WIRE_NAME: &[u8] = WINDOWS_SDDL_XATTR_NAME;
 
 /// Sample SDDL string with owner, group, and a DACL granting File All
