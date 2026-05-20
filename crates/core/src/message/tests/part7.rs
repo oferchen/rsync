@@ -198,7 +198,6 @@ fn normalize_path_handles_windows_drive_with_current() {
 #[test]
 fn normalize_path_preserves_uppercase_drive_letter() {
     let normalized = normalize_path(Path::new(r"c:\users\test\file.txt"));
-    // Drive letters are normalized to uppercase
     assert_eq!(normalized, "C:/users/test/file.txt");
 }
 
@@ -358,10 +357,8 @@ fn canonicalize_or_fallback_returns_original_on_nonexistent() {
 
 #[test]
 fn canonicalize_or_fallback_handles_existing_path() {
-    // Use the manifest directory which we know exists
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let result = canonicalize_or_fallback(manifest_dir);
-    // The result should be an absolute path
     assert!(result.is_absolute());
 }
 
