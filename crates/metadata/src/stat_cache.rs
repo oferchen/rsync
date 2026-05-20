@@ -249,13 +249,11 @@ mod tests {
 
         let mut cache = MetadataCache::new();
 
-        // First fetch should be a miss
         let result1 = cache.get_or_fetch(&path);
         assert!(result1.is_ok());
         assert_eq!(cache.hits(), 0);
         assert_eq!(cache.misses(), 1);
 
-        // Second fetch should be a hit
         let result2 = cache.get_or_fetch(&path);
         assert!(result2.is_ok());
         assert_eq!(cache.hits(), 1);
@@ -272,12 +270,11 @@ mod tests {
 
         let mut cache = MetadataCache::new();
 
-        // Access patterns that should generate specific hit/miss ratios
-        cache.get_or_fetch(&path1).expect("fetch"); // miss
-        cache.get_or_fetch(&path1).expect("fetch"); // hit
-        cache.get_or_fetch(&path1).expect("fetch"); // hit
-        cache.get_or_fetch(&path2).expect("fetch"); // miss
-        cache.get_or_fetch(&path2).expect("fetch"); // hit
+        cache.get_or_fetch(&path1).expect("fetch");
+        cache.get_or_fetch(&path1).expect("fetch");
+        cache.get_or_fetch(&path1).expect("fetch");
+        cache.get_or_fetch(&path2).expect("fetch");
+        cache.get_or_fetch(&path2).expect("fetch");
 
         assert_eq!(cache.hits(), 3);
         assert_eq!(cache.misses(), 2);
@@ -291,14 +288,11 @@ mod tests {
 
         let mut cache = MetadataCache::new();
 
-        // Cache the entry
         cache.get_or_fetch(&path).expect("fetch");
         assert_eq!(cache.misses(), 1);
 
-        // Invalidate
         cache.invalidate(&path);
 
-        // Next fetch should be a miss again
         cache.get_or_fetch(&path).expect("fetch");
         assert_eq!(cache.misses(), 2);
     }
@@ -313,15 +307,12 @@ mod tests {
 
         let mut cache = MetadataCache::new();
 
-        // Cache both entries
         cache.get_or_fetch(&path1).expect("fetch");
         cache.get_or_fetch(&path2).expect("fetch");
         assert_eq!(cache.misses(), 2);
 
-        // Clear cache
         cache.clear();
 
-        // Both should be misses now
         cache.get_or_fetch(&path1).expect("fetch");
         cache.get_or_fetch(&path2).expect("fetch");
         assert_eq!(cache.misses(), 4);
@@ -340,14 +331,12 @@ mod tests {
 
         let mut cache = MetadataCache::new();
 
-        // Fetch all paths once
         for path in &paths {
             cache.get_or_fetch(path).expect("fetch");
         }
         assert_eq!(cache.misses(), 10);
         assert_eq!(cache.hits(), 0);
 
-        // Fetch all paths again - should all be hits
         for path in &paths {
             cache.get_or_fetch(path).expect("fetch");
         }
@@ -402,12 +391,10 @@ mod tests {
 
         let mut cache = MetadataCache::new();
 
-        // First call should miss
         cache.mode_matches(&path, 0o644).expect("mode_matches");
         assert_eq!(cache.misses(), 1);
         assert_eq!(cache.hits(), 0);
 
-        // Second call should hit
         cache.mode_matches(&path, 0o644).expect("mode_matches");
         assert_eq!(cache.misses(), 1);
         assert_eq!(cache.hits(), 1);
@@ -439,7 +426,7 @@ mod tests {
         fs::write(&path, b"content").expect("write");
 
         let mut cache = MetadataCache::new();
-        // Use impossible UIDs that won't match
+        // Use UIDs unlikely to belong to the test process.
         let matches = cache.ownership_matches(&path, 99999, 99999);
         assert!(matches.is_ok());
         assert!(!matches.unwrap());
@@ -459,14 +446,12 @@ mod tests {
 
         let mut cache = MetadataCache::new();
 
-        // First call should miss
         cache
             .ownership_matches(&path, uid, gid)
             .expect("ownership_matches");
         assert_eq!(cache.misses(), 1);
         assert_eq!(cache.hits(), 0);
 
-        // Second call should hit
         cache
             .ownership_matches(&path, uid, gid)
             .expect("ownership_matches");
@@ -518,11 +503,10 @@ mod tests {
     fn get_or_fetch_handles_error_paths() {
         let mut cache = MetadataCache::new();
 
-        // Nonexistent path should return error
         let result = cache.get_or_fetch(Path::new("/nonexistent/xyz/abc"));
         assert!(result.is_err());
 
-        // Should not be cached
+        // Errors must not populate the cache.
         assert_eq!(cache.misses(), 1);
         assert_eq!(cache.hits(), 0);
     }
@@ -570,9 +554,8 @@ mod tests {
         fs::write(&path, b"content").expect("write");
 
         let result = try_statx_optimized(&path);
-        // May not be supported on older kernels
+        // Kernels older than 4.11 return ENOSYS; either branch is acceptable.
         if result.is_ok() || result.as_ref().err().unwrap().raw_os_error() == Some(libc::ENOSYS) {
-            // Success or expected ENOSYS is fine
         } else {
             panic!("Unexpected error: {result:?}");
         }
@@ -593,9 +576,7 @@ mod tests {
             Ok(meta) => {
                 assert_eq!(meta.mode & 0o7777, 0o644);
             }
-            Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {
-                // statx not available, skip
-            }
+            Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
         }
     }
@@ -631,9 +612,7 @@ mod tests {
 
         let result = try_statx_optimized(&dir);
         match result {
-            Ok(_meta) => {
-                // statx succeeded for directory
-            }
+            Ok(_meta) => {}
             Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
         }
@@ -648,14 +627,11 @@ mod tests {
         fs::write(&target, b"content").expect("write");
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
 
-        // try_statx_optimized uses SYMLINK_NOFOLLOW, so should follow since
-        // it's called from fetch_metadata_optimized which uses fs::metadata
-        // as fallback (follows symlinks). The statx call itself uses NOFOLLOW.
+        // try_statx_optimized passes SYMLINK_NOFOLLOW, so this stats the link
+        // itself rather than the target.
         let result = try_statx_optimized(&link);
         match result {
-            Ok(_meta) => {
-                // statx succeeded for symlink
-            }
+            Ok(_meta) => {}
             Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {}
             Err(e) => panic!("Unexpected error: {e:?}"),
         }
@@ -664,14 +640,12 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn statx_enosys_fallback_to_regular_stat() {
-        // Verifies that fetch_metadata_optimized handles ENOSYS gracefully
-        // by falling back to regular stat
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("fallback_test.txt");
         fs::write(&path, b"content").expect("write");
 
-        // fetch_metadata_optimized should always succeed even if statx
-        // returns ENOSYS (it falls back to regular stat)
+        // The optimized fetch must always succeed: on kernels that lack statx
+        // (ENOSYS), the helper falls back to plain stat(2).
         let result = fetch_metadata_optimized(&path);
         assert!(result.is_ok());
     }
@@ -694,7 +668,6 @@ mod tests {
         assert!(result.is_ok());
 
         let meta = result.unwrap();
-        // Just verify we can access readonly attribute
         let _readonly = meta.readonly;
     }
 
@@ -703,7 +676,6 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let mut cache = MetadataCache::with_capacity(1000);
 
-        // Create and cache 1000 files
         for i in 0..1000 {
             let path = temp.path().join(format!("file{i}.txt"));
             fs::write(&path, format!("content{i}")).expect("write");
@@ -713,7 +685,6 @@ mod tests {
         assert_eq!(cache.misses(), 1000);
         assert_eq!(cache.hits(), 0);
 
-        // Access random entries - should all hit
         for i in (0..1000).step_by(17) {
             let path = temp.path().join(format!("file{i}.txt"));
             cache.get_or_fetch(&path).expect("fetch");
@@ -727,7 +698,6 @@ mod tests {
         let mut cache = MetadataCache::new();
         let path = PathBuf::from("/this/path/does/not/exist");
 
-        // Should not panic
         cache.invalidate(&path);
     }
 
@@ -741,7 +711,6 @@ mod tests {
         let result = cache.get_or_fetch(&path);
         assert!(result.is_ok());
 
-        // Unicode path
         let unicode_path = temp.path().join("файл.txt");
         fs::write(&unicode_path, b"content").expect("write");
         let result = cache.get_or_fetch(&unicode_path);

@@ -629,7 +629,6 @@ mod apply_mode {
         let file_type = get_file_type(&file_path);
         let modifiers = ChmodModifiers::parse("a+X").expect("parse");
 
-        // File without any execute bit should not get execute bit
         let result = modifiers.apply(0o644, file_type);
         assert_eq!(result & 0o111, 0o000);
     }
@@ -643,7 +642,6 @@ mod apply_mode {
         let file_type = get_file_type(&file_path);
         let modifiers = ChmodModifiers::parse("a+X").expect("parse");
 
-        // File with any execute bit should get all execute bits
         let result = modifiers.apply(0o744, file_type);
         assert_eq!(result & 0o111, 0o111);
     }
@@ -746,7 +744,6 @@ mod apply_mode {
         std::fs::write(&file_path, b"content").expect("write file");
 
         let file_type = get_file_type(&file_path);
-        // First 000, then u+rwx -> should be 700
         let modifiers = ChmodModifiers::parse("000,u+rwx").expect("parse");
 
         let result = modifiers.apply(0o777, file_type);
@@ -760,7 +757,6 @@ mod apply_mode {
         std::fs::write(&file_path, b"content").expect("write file");
 
         let file_type = get_file_type(&file_path);
-        // First 644, then 755 -> should be 755
         let modifiers = ChmodModifiers::parse("644,755").expect("parse");
 
         let result = modifiers.apply(0o000, file_type);
@@ -807,8 +803,6 @@ mod error_cases {
         assert!(result.is_err());
     }
 
-    // Note: assign without permissions (u=) is valid and clears permissions
-
     #[test]
     fn invalid_numeric_non_octal() {
         let result = ChmodModifiers::parse("abc");
@@ -823,46 +817,36 @@ mod upstream_compatibility {
 
     #[test]
     fn rsync_style_directory_only_execute() {
-        // rsync uses D+x to add execute only to directories
         let modifiers = ChmodModifiers::parse("D+x").expect("parse");
         assert!(!modifiers.is_empty());
     }
 
     #[test]
     fn rsync_style_file_protection() {
-        // rsync uses Fgo-w to remove group/other write from files only
         let modifiers = ChmodModifiers::parse("Fgo-w").expect("parse");
         assert!(!modifiers.is_empty());
     }
 
     #[test]
     fn rsync_style_combined_df() {
-        // Common rsync pattern: D755,F644
-        // Directories get 755, files get 644
         let modifiers = ChmodModifiers::parse("D755,F644").expect("parse");
         assert!(!modifiers.is_empty());
     }
 
     #[test]
     fn rsync_style_make_executable_if_readable() {
-        // Common rsync pattern: a+rX
-        // Add read to all, add execute only if already executable or is directory
         let modifiers = ChmodModifiers::parse("a+rX").expect("parse");
         assert!(!modifiers.is_empty());
     }
 
     #[test]
     fn rsync_style_secure_permissions() {
-        // Common security pattern: go=,u=rwX
-        // Clear group/other, set user to rw, add x if needed
         let modifiers = ChmodModifiers::parse("go=,u=rwX").expect("parse");
         assert!(!modifiers.is_empty());
     }
 
     #[test]
     fn rsync_style_web_directory() {
-        // Web directory pattern: D2775,F664
-        // Directories setgid with 775, files 664
         let modifiers = ChmodModifiers::parse("D2775,F664").expect("parse");
         assert!(!modifiers.is_empty());
     }
@@ -885,7 +869,6 @@ mod upstream_compatibility {
 
         let modifiers = ChmodModifiers::parse("Fgo-w").expect("parse");
 
-        // File: 0o666 -> 0o644 (remove g-w and o-w); directory unchanged.
         let file_result = modifiers.apply(0o666, file_type);
         assert_eq!(file_result & 0o777, 0o644);
 
@@ -936,11 +919,11 @@ mod upstream_compatibility {
 
         let modifiers = ChmodModifiers::parse("ugo=rwX").expect("parse");
 
-        // File without execute: should get rw- for all (no X applied)
+        // Capital X applies only when the source already has any exec bit
+        // (or is a directory), so the plain file gets rw- and the dir gets rwx.
         let file_result = modifiers.apply(0o000, file_type);
         assert_eq!(file_result & 0o777, 0o666);
 
-        // Directory: should get rwx for all (X applies)
         let dir_result = modifiers.apply(0o000, dir_type);
         assert_eq!(dir_result & 0o777, 0o777);
     }

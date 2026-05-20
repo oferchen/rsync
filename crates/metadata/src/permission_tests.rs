@@ -115,7 +115,6 @@ mod tests {
 
         apply_file_metadata(&dest, &metadata).expect("apply metadata");
 
-        // Verify we can read the mode even on a 000 file
         let mode = get_mode(&dest) & 0o777;
         assert_eq!(mode, 0o000);
     }
@@ -175,12 +174,8 @@ mod tests {
     fn all_basic_permission_combinations() {
         let temp = tempdir().expect("tempdir");
 
-        // Test a representative sample of permission combinations
         let test_modes = [
-            0o400, 0o200, 0o100, // Individual bits
-            0o640, 0o660, 0o664, // Common patterns
-            0o444, 0o555, 0o666, // All same
-            0o123, 0o321, 0o246, // Varied patterns
+            0o400, 0o200, 0o100, 0o640, 0o660, 0o664, 0o444, 0o555, 0o666, 0o123, 0o321, 0o246,
         ];
 
         for (i, &mode) in test_modes.iter().enumerate() {
@@ -213,13 +208,11 @@ mod tests {
         fs::write(&source, b"test").expect("write source");
         fs::write(&dest, b"test").expect("write dest");
 
-        // Set mode with setuid bit (04755)
         set_mode(&source, 0o4755);
         let metadata = fs::metadata(&source).expect("metadata");
 
         apply_file_metadata(&dest, &metadata).expect("apply metadata");
 
-        // Verify setuid bit is preserved
         assert_eq!(get_mode(&dest) & 0o7777, 0o4755);
         assert_eq!(get_mode(&dest) & 0o4000, 0o4000, "setuid bit not set");
     }
@@ -233,13 +226,11 @@ mod tests {
         fs::write(&source, b"test").expect("write source");
         fs::write(&dest, b"test").expect("write dest");
 
-        // Set mode with setgid bit (02755)
         set_mode(&source, 0o2755);
         let metadata = fs::metadata(&source).expect("metadata");
 
         apply_file_metadata(&dest, &metadata).expect("apply metadata");
 
-        // Verify setgid bit is preserved
         assert_eq!(get_mode(&dest) & 0o7777, 0o2755);
         assert_eq!(get_mode(&dest) & 0o2000, 0o2000, "setgid bit not set");
     }
@@ -253,13 +244,11 @@ mod tests {
         fs::create_dir(&source).expect("create source dir");
         fs::create_dir(&dest).expect("create dest dir");
 
-        // Set mode with sticky bit (01777)
         set_mode(&source, 0o1777);
         let metadata = fs::metadata(&source).expect("metadata");
 
         apply_directory_metadata(&dest, &metadata).expect("apply metadata");
 
-        // Verify sticky bit is preserved
         assert_eq!(get_mode(&dest) & 0o7777, 0o1777);
         assert_eq!(get_mode(&dest) & 0o1000, 0o1000, "sticky bit not set");
     }
@@ -273,13 +262,11 @@ mod tests {
         fs::write(&source, b"test").expect("write source");
         fs::write(&dest, b"test").expect("write dest");
 
-        // Set mode with both setuid and setgid (06755)
         set_mode(&source, 0o6755);
         let metadata = fs::metadata(&source).expect("metadata");
 
         apply_file_metadata(&dest, &metadata).expect("apply metadata");
 
-        // Verify both bits are preserved
         assert_eq!(get_mode(&dest) & 0o7777, 0o6755);
         assert_eq!(get_mode(&dest) & 0o4000, 0o4000, "setuid bit not set");
         assert_eq!(get_mode(&dest) & 0o2000, 0o2000, "setgid bit not set");
@@ -294,13 +281,11 @@ mod tests {
         fs::write(&source, b"test").expect("write source");
         fs::write(&dest, b"test").expect("write dest");
 
-        // Set mode with all special bits (07777)
         set_mode(&source, 0o7777);
         let metadata = fs::metadata(&source).expect("metadata");
 
         apply_file_metadata(&dest, &metadata).expect("apply metadata");
 
-        // Verify all special bits are preserved
         assert_eq!(get_mode(&dest) & 0o7777, 0o7777);
         assert_eq!(get_mode(&dest) & 0o4000, 0o4000, "setuid bit not set");
         assert_eq!(get_mode(&dest) & 0o2000, 0o2000, "setgid bit not set");
@@ -316,7 +301,6 @@ mod tests {
         fs::write(&source, b"test").expect("write source");
         fs::write(&dest, b"test").expect("write dest");
 
-        // Setuid with minimal permissions (04000)
         set_mode(&source, 0o4000);
         let metadata = fs::metadata(&source).expect("metadata");
 
@@ -334,7 +318,7 @@ mod tests {
         fs::create_dir(&source).expect("create source dir");
         fs::create_dir(&dest).expect("create dest dir");
 
-        // Setgid on directory (common for shared directories)
+        // Setgid on a directory makes new entries inherit the directory's group.
         set_mode(&source, 0o2775);
         let metadata = fs::metadata(&source).expect("metadata");
 
@@ -353,15 +337,12 @@ mod tests {
         fs::write(&source, b"test").expect("write source");
         fs::write(&dest, b"test").expect("write dest");
 
-        // Source has no special bits
         set_mode(&source, 0o644);
-        // Dest has all special bits
         set_mode(&dest, 0o7777);
 
         let metadata = fs::metadata(&source).expect("metadata");
         apply_file_metadata(&dest, &metadata).expect("apply metadata");
 
-        // Special bits should be cleared
         assert_eq!(get_mode(&dest) & 0o7777, 0o644);
         assert_eq!(get_mode(&dest) & 0o7000, 0o0000, "special bits not cleared");
     }
@@ -372,7 +353,6 @@ mod tests {
 
         let temp = tempdir().expect("tempdir");
 
-        // Test with different umask values
         let umasks = [0o022, 0o077, 0o002, 0o000, 0o027];
         let test_mode = 0o755;
 
@@ -398,7 +378,6 @@ mod tests {
             // holding the serial slot.
             unsafe { umask(old_umask) };
 
-            // Verify permissions are preserved exactly, regardless of umask
             assert_eq!(
                 get_mode(&dest) & 0o777,
                 test_mode,
@@ -419,7 +398,6 @@ mod tests {
         fs::write(&source, b"test").expect("write source");
         fs::write(&dest, b"test").expect("write dest");
 
-        // Set permissive mode on source
         set_mode(&source, 0o777);
         let metadata = fs::metadata(&source).expect("metadata");
 
@@ -432,7 +410,7 @@ mod tests {
         // holding the serial slot.
         unsafe { umask(old_umask) };
 
-        // Permissions should still be 0o777, not restricted by umask
+        // umask must not narrow permissions copied via chmod; the dest stays 0o777.
         assert_eq!(get_mode(&dest) & 0o777, 0o777);
     }
 
@@ -447,7 +425,6 @@ mod tests {
         fs::write(&source, b"test").expect("write source");
         fs::write(&dest, b"test").expect("write dest");
 
-        // Set restrictive mode on source
         set_mode(&source, 0o600);
         let metadata = fs::metadata(&source).expect("metadata");
 
@@ -460,7 +437,7 @@ mod tests {
         // holding the serial slot.
         unsafe { umask(old_umask) };
 
-        // Permissions should still be 0o600, not expanded by umask
+        // A permissive umask must not widen permissions copied via chmod.
         assert_eq!(get_mode(&dest) & 0o777, 0o600);
     }
 
@@ -487,7 +464,6 @@ mod tests {
         // holding the serial slot.
         unsafe { umask(old_umask) };
 
-        // Special bits should be preserved
         assert_eq!(get_mode(&dest) & 0o7777, 0o6755);
     }
 
@@ -502,19 +478,15 @@ mod tests {
         fs::write(&file2, b"test").expect("write file2");
         fs::write(&file3, b"test").expect("write file3");
 
-        // Set initial mode
         let original_mode = 0o642;
         set_mode(&file1, original_mode);
 
-        // First transfer
         let meta1 = fs::metadata(&file1).expect("metadata 1");
         apply_file_metadata(&file2, &meta1).expect("apply 1");
 
-        // Second transfer
         let meta2 = fs::metadata(&file2).expect("metadata 2");
         apply_file_metadata(&file3, &meta2).expect("apply 2");
 
-        // Verify mode is preserved through both transfers
         assert_eq!(get_mode(&file1) & 0o777, original_mode);
         assert_eq!(get_mode(&file2) & 0o777, original_mode);
         assert_eq!(get_mode(&file3) & 0o777, original_mode);
@@ -531,19 +503,15 @@ mod tests {
         fs::write(&file2, b"test").expect("write file2");
         fs::write(&file3, b"test").expect("write file3");
 
-        // Set mode with all special bits
         let original_mode = 0o7755;
         set_mode(&file1, original_mode);
 
-        // First transfer
         let meta1 = fs::metadata(&file1).expect("metadata 1");
         apply_file_metadata(&file2, &meta1).expect("apply 1");
 
-        // Second transfer
         let meta2 = fs::metadata(&file2).expect("metadata 2");
         apply_file_metadata(&file3, &meta2).expect("apply 2");
 
-        // Verify all bits preserved through both transfers
         assert_eq!(get_mode(&file1) & 0o7777, original_mode);
         assert_eq!(get_mode(&file2) & 0o7777, original_mode);
         assert_eq!(get_mode(&file3) & 0o7777, original_mode);
@@ -553,7 +521,6 @@ mod tests {
     fn round_trip_preserves_all_permission_bits() {
         let temp = tempdir().expect("tempdir");
 
-        // Test multiple permission patterns through round-trip
         let test_modes = [
             0o000, 0o644, 0o755, 0o777, 0o4755, 0o2755, 0o1777, 0o6755, 0o7777,
         ];
@@ -571,7 +538,6 @@ mod tests {
 
             set_mode(&file1, mode);
 
-            // Triple round-trip
             let m1 = fs::metadata(&file1).expect("m1");
             apply_file_metadata(&file2, &m1).expect("a1");
 
@@ -581,7 +547,6 @@ mod tests {
             let m3 = fs::metadata(&file3).expect("m3");
             apply_file_metadata(&file4, &m3).expect("a3");
 
-            // All should have the same mode
             assert_eq!(get_mode(&file1) & 0o7777, mode, "file1 mode mismatch");
             assert_eq!(get_mode(&file2) & 0o7777, mode, "file2 mode mismatch");
             assert_eq!(get_mode(&file3) & 0o7777, mode, "file3 mode mismatch");
@@ -650,7 +615,6 @@ mod tests {
         let metadata = fs::metadata(&source).expect("metadata");
         apply_file_metadata(&dest, &metadata).expect("apply metadata");
 
-        // Should still be correct
         assert_eq!(get_mode(&dest) & 0o777, mode);
     }
 
@@ -681,7 +645,6 @@ mod tests {
         fs::write(&source, b"test").expect("write source");
         fs::write(&dest, b"test").expect("write dest");
 
-        // Set all relevant permission bits
         set_mode(&source, 0o7777);
         let metadata = fs::metadata(&source).expect("metadata");
 
@@ -689,7 +652,6 @@ mod tests {
 
         let mode = get_mode(&dest);
 
-        // Check individual bit groups
         assert_eq!(mode & 0o400, 0o400, "user read");
         assert_eq!(mode & 0o200, 0o200, "user write");
         assert_eq!(mode & 0o100, 0o100, "user execute");
@@ -722,7 +684,6 @@ mod tests {
 
         apply_file_metadata_with_options(&dest, &metadata, &options).expect("apply metadata");
 
-        // Permissions should not change
         assert_eq!(get_mode(&dest) & 0o777, original_dest_mode);
     }
 
@@ -745,7 +706,6 @@ mod tests {
         apply_directory_metadata_with_options(&dest, &metadata, options)
             .expect("apply metadata");
 
-        // Permissions should not change
         assert_eq!(get_mode(&dest) & 0o777, original_dest_mode);
     }
 
@@ -775,7 +735,6 @@ mod tests {
         fs::write(&source, b"test").expect("write source");
         fs::write(&dest, b"test").expect("write dest");
 
-        // Only special bits, no rwx permissions
         set_mode(&source, 0o7000);
         let metadata = fs::metadata(&source).expect("metadata");
 
@@ -788,7 +747,6 @@ mod tests {
     fn odd_permission_combinations() {
         let temp = tempdir().expect("tempdir");
 
-        // Test unusual but valid permission combinations
         let odd_modes = [
             0o1234, // sticky + varied perms
             0o5432, // setuid + sticky + varied
