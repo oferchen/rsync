@@ -69,10 +69,24 @@ jobs:
           shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
           key: features-${{ matrix.row.name }}-${{ matrix.os }}
 
-      - name: Install cargo-nextest
+      - name: Install cargo-nextest (Unix)
+        if: runner.os != 'Windows'
         uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
         with:
           tool: cargo-nextest
+
+      - name: Install cargo-nextest (Windows direct download)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
 
       - name: Test (${{ matrix.row.name }})
         run: cargo nextest run --locked --profile ci ${{ matrix.row.args }}
@@ -156,10 +170,24 @@ jobs:
           shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
           key: features-${{ matrix.name }}-linux
 
-      - name: Install cargo-nextest
+      - name: Install cargo-nextest (Unix)
+        if: runner.os != 'Windows'
         uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
         with:
           tool: cargo-nextest
+
+      - name: Install cargo-nextest (Windows direct download)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
 
       - name: Test (${{ matrix.name }})
         run: cargo nextest run --locked --profile ci ${{ matrix.args }}
