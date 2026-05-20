@@ -10,8 +10,6 @@ use embedding::{ServerConfig, ServerRole, ServerStats, run_server_with_config};
 use std::io;
 
 fn main() {
-    // Parse server configuration from command-line arguments or construct programmatically
-    // This example uses typical server flag string for a receiver
     let config = match ServerConfig::from_flag_string_and_args(
         ServerRole::Receiver,
         "-logDtpre.iLsfxC".to_owned(),
@@ -29,8 +27,7 @@ fn main() {
     eprintln!("[example] Arguments: {:?}", config.args);
     eprintln!("[example] Waiting for client connection on stdin...");
 
-    // Run server with stdio
-    // In production, stdin/stdout would be connected to SSH or other transport
+    // In production, stdin/stdout would be connected to SSH or other transport.
     let mut stdin = io::stdin();
     let mut stdout = io::stdout();
 
