@@ -12,8 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::{NamedTempFile, tempdir};
 
-// Import daemon internal types and functions needed by tests
-// These are all included directly into the daemon module via include!()
+// Daemon internals exposed to tests via the include!() chunk modules.
 use crate::daemon::{
     AddressFamily,
     // From module_state.rs
@@ -64,20 +63,16 @@ use crate::daemon::{
     set_test_hostname_override,
 };
 
-// Import from core
 use core::{
     bandwidth::{BandwidthLimiter, LimiterChange},
     branding::{self, Brand},
     exit_code::ExitCode,
 };
 
-// Import from protocol
 use protocol::ProtocolVersion;
 
-// Import from checksums
 use checksums::strong::Md5;
 
-// Import from base64
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 

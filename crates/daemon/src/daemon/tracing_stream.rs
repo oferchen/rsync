@@ -186,18 +186,16 @@ mod tests {
 
         #[test]
         fn log_to_file_creates_or_appends() {
-            // This test verifies log_to_file doesn't panic
             log_to_file("test message from unit test");
 
-            // Verify the log file exists (may have been created by this or other tests)
+            // Whether the log file actually exists depends on filesystem
+            // permissions, so just exercise the path without asserting.
             let path = Path::new("/tmp/daemon_protocol_trace.log");
-            // We don't assert exists because the test might not have permissions
             let _ = path.exists();
         }
 
         #[test]
         fn log_to_file_handles_special_chars() {
-            // Should handle special characters without panic
             log_to_file("test with special chars: \t\n\r");
             log_to_file("unicode: 日本語");
             log_to_file("");

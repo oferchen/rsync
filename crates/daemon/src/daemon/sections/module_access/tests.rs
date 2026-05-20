@@ -282,8 +282,6 @@ mod module_access_tests {
         assert_eq!(format_bandwidth_rate(rate), "1025 bytes/s");
     }
 
-    // Tests for error file functions
-
     /// upstream: log.c:163 - log-open failures produce RERR_MESSAGEIO (13).
     #[test]
     fn log_file_error_creates_daemon_error_with_correct_code() {
@@ -336,8 +334,6 @@ mod module_access_tests {
         assert!(message.contains("/var/lock/rsyncd.lock"));
     }
 
-    // Tests for format_host
-
     #[test]
     fn format_host_returns_hostname_when_present() {
         use std::net::IpAddr;
@@ -361,8 +357,6 @@ mod module_access_tests {
         let fallback: IpAddr = "::1".parse().unwrap();
         assert_eq!(format_host(host, fallback), "::1");
     }
-
-    // Tests for determine_server_role
 
     #[test]
     fn determine_server_role_sender_when_sender_flag_present() {
@@ -389,7 +383,8 @@ mod module_access_tests {
         assert!(matches!(determine_server_role(&args), ServerRole::Receiver));
     }
 
-    // Tests for format_module_listing_line - upstream: clientserver.c:1254
+    // upstream: clientserver.c:1254 governs the format_module_listing_line
+    // wire layout exercised below.
 
     #[test]
     fn module_listing_format_short_name_padded_to_15() {
@@ -868,8 +863,6 @@ mod module_access_tests {
         apply_long_form_args(&args, &mut config);
         assert!(!config.write.delay_updates);
     }
-
-    // Tests for parse_daemon_dont_compress
 
     #[test]
     fn parse_daemon_dont_compress_glob_suffixes() {
@@ -1556,8 +1549,6 @@ mod module_access_tests {
         assert_eq!(config.effective_backup_suffix(), ".old");
     }
 
-    // --- split_filter_tokens tests ---
-
     #[test]
     fn split_filter_tokens_single_exclude() {
         let tokens = split_filter_tokens("- *.tmp");
@@ -1614,8 +1605,6 @@ mod module_access_tests {
         let tokens = split_filter_tokens("*.bak");
         assert_eq!(tokens, vec!["*.bak"]);
     }
-
-    // --- build_daemon_filter_rules with word-split filter lines ---
 
     #[test]
     fn build_daemon_filter_rules_filter_word_split_include_exclude() {

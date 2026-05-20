@@ -29,7 +29,6 @@ fn main() {
     println!("Configuration loaded successfully!");
     println!();
 
-    // Display global settings
     println!("Global Settings:");
     println!("  Port: {}", config.global().port());
     if let Some(addr) = config.global().address() {
@@ -46,7 +45,6 @@ fn main() {
     }
     println!();
 
-    // Display modules
     println!("Modules ({} total):", config.modules().len());
     for module in config.modules() {
         println!();
