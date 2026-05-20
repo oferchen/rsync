@@ -49,7 +49,7 @@ The primary platform is Linux. macOS is well-supported with parity for all metad
 | Symbolic links | ✓ | ✓ | ✗ | `create_symlinks` is `cfg(not(unix))` no-op; symlink entries are skipped on Windows. |
 | Devices/specials (`-D`) | ✓ | ✓ | ✗ | `create_fifo` and `create_device_node` are no-ops on non-Unix. |
 | Sparse files (`-S`) | ✓ | ✓ | ⚠ | Uses portable `seek` + `set_len`; depends on filesystem (NTFS supports sparse but is not explicitly marked via `FSCTL_SET_SPARSE`). |
-| Async I/O backend | ✓ io_uring | ⚠ standard I/O | ⚠ IOCP compiled, not wired | io_uring runtime-detected on Linux 5.6+; IOCP is implemented in `fast_io` but not yet consumed by the transfer pipeline (#1868). |
+| Async I/O backend | ✓ io_uring | ⚠ standard I/O | ⚠ IOCP (writes + sockets) | io_uring runtime-detected on Linux 5.6+. IOCP is wired into the disk-write pipeline (`transfer::disk_commit::Writer::Iocp`) and into the socket transports (daemon and SSH); file reads still use standard buffered I/O. |
 | Reflink / clone copy | ✓ FICLONE | ✓ clonefile | ⚠ ReFS reflink | Linux Btrfs/XFS/bcachefs via `FICLONE`; macOS via `clonefile`; Windows via `FSCTL_DUPLICATE_EXTENTS_TO_FILE` (ReFS only). |
 | Optimized file copy | ✓ `copy_file_range` | ✓ `fcopyfile` | ✓ `CopyFileExW` | All three are wired into the local-copy executor with standard-I/O fallback. |
 
@@ -136,7 +136,7 @@ oc-rsync is wire-compatible with upstream rsync 3.4.1, but a few architectural c
 - **Single-thread delta computation.** The delta sender is sequential per file. Rolling-hash fan-out across files is not yet parallelised; large-file workloads fully utilise one CPU per transfer rather than scaling delta CPU horizontally.
 - **SSH compression interaction.** When the SSH cipher already performs compression (e.g., `Compression yes` in `ssh_config`), running `oc-rsync -z` will compress payloads twice. There is currently no auto-detection / auto-disable path; operators should pick one layer.
 - **Daemon TLS.** Native TLS is not built into the daemon. Deploy `oc-rsync --daemon` behind `stunnel`, `ssh -L`, or a reverse proxy that terminates TLS. See [`docs/deployment/daemon-tls.md`](./docs/deployment/daemon-tls.md) for runnable terminator configs, hardened systemd units, and host-firewall rules; see [SECURITY.md](./SECURITY.md) for the broader hardening note.
-- **Windows IOCP scope.** IOCP is wired for socket I/O (daemon and SSH transports); file-system reads and writes still use standard buffered I/O on Windows. Tracking work to extend IOCP to the file pipeline is in flight (#1868).
+- **Windows IOCP scope.** IOCP is wired for socket I/O (daemon and SSH transports) and for the receive-side disk-write pipeline (`transfer::disk_commit` dispatches `Writer::Iocp` when the IOCP backend is selected on Windows). File reads still use standard buffered I/O; extending IOCP to the read path is tracked in WPG-1.
 - **`.rsync-filter` per-directory inheritance.** Inheritance semantics match upstream for the common cases tested in the interop suite, but exhaustive parity against upstream's filter-tree corner cases (deeply nested merges, anchored vs unanchored interactions) is still being validated.
 - **`--checksum-seed` / `--fuzzy`.** These flags are accepted and exercised in the common path; deeper conformance audits against upstream rsync 3.4.1 are tracked separately.
 
@@ -355,9 +355,9 @@ Key crates: **cli** (Clap v4), **core** (orchestration facade), **protocol** (wi
 All crates enforce `#![deny(unsafe_code)]`. Targeted `#[allow(unsafe_code)]` is permitted only in crates that wrap platform FFI or SIMD intrinsics:
 
 - **checksums** - SIMD intrinsics (AVX2, AVX-512, SSE2, SSSE3, SSE4.1, NEON, WASM) with scalar fallbacks
-- **fast_io** - io_uring, `copy_file_range`, sendfile, mmap, IOCP, `WSARecv`/`WSASend`, `setsockopt` with standard I/O fallbacks
+- **fast_io** - io_uring, `copy_file_range`, sendfile, mmap, IOCP, `WSARecv`/`WSASend`, `setsockopt`, and the `signal::install_signal_handler` FFI wrapper, with standard I/O / no-op fallbacks
 - **metadata** - UID/GID lookup, timestamps, ownership, xattrs, ACLs
-- **platform** - Signal handlers, chroot, daemonize, process management
+- **platform** - chroot, daemonize, name resolution, privilege transitions (signal-handler installation moved to `fast_io::signal`)
 - **engine** - Buffer pool atomics, deferred fsync, clonefile, `CopyFileExW`
 - **protocol** - One isolated allow in `multiplex::helpers` for frame parsing
 - **windows-gnu-eh** - Windows GNU exception handling shims
