@@ -110,7 +110,6 @@ mod tests {
         match pid {
             -1 => panic!("fork failed: {}", io::Error::last_os_error()),
             0 => {
-                // Child: attempt the redirect, then _exit.
                 let result = redirect_stdio_to_devnull();
                 // SAFETY: _exit is safe in the child process.
                 unsafe {
@@ -118,7 +117,6 @@ mod tests {
                 }
             }
             child_pid => {
-                // Parent: wait for the child and check its exit status.
                 let mut status: libc::c_int = 0;
                 // SAFETY: waitpid with a valid child PID is safe.
                 let waited = unsafe { libc::waitpid(child_pid, &mut status, 0) };
