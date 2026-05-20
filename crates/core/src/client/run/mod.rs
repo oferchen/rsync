@@ -460,26 +460,32 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
     /// [`FilenameConverter`](protocol::iconv::FilenameConverter) and
     /// attaches it to the local-copy options.
     ///
-    /// This is the local-copy mirror of the SSH/daemon path's
-    /// `apply_common_server_flags`
-    /// (`crates/core/src/client/remote/flags.rs:203-228`), which writes the
-    /// converter onto `transfer::config::ConnectionConfig::iconv`. The
-    /// local-copy executor lives in the engine crate and does not traverse
-    /// the SSH/daemon `ServerConfig` builder, so the bridge has to be
-    /// re-applied here.
+    /// Local-copy must encode source-side bytes (`LOCAL`) directly into
+    /// destination-side bytes (`REMOTE`) because no wire stage is
+    /// present. This is the composition of the sender and receiver
+    /// iconv contexts upstream rsync opens when both processes share an
+    /// address space: see [`IconvSetting::resolve_local_copy_converter`]
+    /// for the derivation against `rsync.c:118-140`. The SSH/daemon
+    /// invocation builder already forwards the user's `--iconv=` string
+    /// to the remote CLI verbatim, so the bare-`LOCAL` form keeps
+    /// behaving as today on the wire.
     ///
     /// When `IconvSetting::Unspecified` or `IconvSetting::Disabled`,
-    /// `resolve_converter` returns `None`, leaving the engine's
-    /// pass-through behaviour untouched. This mirrors upstream rsync's
-    /// behaviour when `--iconv` is absent or `--no-iconv` is supplied.
+    /// `resolve_local_copy_converter` returns `None`, leaving the
+    /// engine's pass-through behaviour untouched. This mirrors upstream
+    /// rsync's behaviour when `--iconv` is absent or `--no-iconv` is
+    /// supplied.
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c::iconv_for_local`
+    /// - `rsync.c:118-140` `setup_iconv()` - LOCAL/REMOTE split and
+    ///   `ic_send`/`ic_recv` `iconv_open` calls.
+    /// - `flist.c:1579-1603` `send_file_name()` sender filename transcode.
+    /// - `flist.c:738-754` `recv_file_entry()` receiver filename transcode.
     /// - `options.c::recv_iconv_settings`
     /// - `compat.c:716-718`
     fn apply_iconv(&self, options: LocalCopyOptions, config: &ClientConfig) -> LocalCopyOptions {
-        options.with_iconv(config.iconv().resolve_converter())
+        options.with_iconv(config.iconv().resolve_local_copy_converter())
     }
 
     const fn apply_recursion_and_delete(
@@ -743,11 +749,13 @@ mod iconv_wiring_tests {
     #[cfg(feature = "iconv")]
     #[test]
     fn local_copy_options_iconv_explicit_yields_converter() {
-        // upstream: rsync.c:130-140 - wire is always UTF-8. With local=UTF-8,
-        // resolve_converter hands back an identity converter; the `remote`
-        // half is forwarded to the peer CLI separately rather than consumed
-        // on this side. The contract here is that the engine receives
-        // *some* converter (not None) so its iconv-aware paths are wired in.
+        // upstream: rsync.c:118-140 - in local-copy mode the sender opens
+        // ic_send=iconv_open(UTF8, LOCAL) and the receiver opens
+        // ic_recv=iconv_open(REMOTE, UTF8). Composing both is equivalent
+        // to a single LOCAL -> REMOTE converter, which is what the engine
+        // applies to filenames on emit. The contract here is that the
+        // engine receives a non-identity converter when LOCAL != REMOTE
+        // so its iconv-aware path is wired in.
         let config = config_with_iconv(IconvSetting::Explicit {
             local: "UTF-8".to_owned(),
             remote: Some("ISO-8859-1".to_owned()),
@@ -756,7 +764,7 @@ mod iconv_wiring_tests {
         let converter = options
             .iconv()
             .expect("explicit iconv pair should produce a converter");
-        assert!(converter.is_identity());
+        assert!(!converter.is_identity());
         assert_eq!(converter.local_encoding_name(), "UTF-8");
     }
 

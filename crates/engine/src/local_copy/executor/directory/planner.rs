@@ -4,6 +4,9 @@
 //! based on file type, filter rules, and command-line options. Mirrors the
 //! decision logic in upstream `flist.c:make_file()` and `flist.c:flist_sort_and_clean()`.
 
+use std::borrow::Cow;
+use std::ffi::OsStr;
+#[cfg(test)]
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,7 +16,7 @@ use crate::local_copy::{
     follow_symlink_metadata,
 };
 
-use super::super::{non_empty_path, symlink_target_is_safe};
+use super::super::{non_empty_path, symlink_target_is_safe, transcode_filename_component};
 use super::support::{DirectoryEntry, is_device, is_fifo};
 
 /// Action to take for a directory entry during recursive copy.
@@ -61,8 +64,15 @@ impl<'a> PlannedEntry<'a> {
 pub(crate) struct DirectoryPlan<'a> {
     pub(crate) planned_entries: Vec<PlannedEntry<'a>>,
     /// Names of entries to keep when deleting extraneous files.
-    /// References the file_name fields of DirectoryEntry, avoiding allocation.
-    pub(crate) keep_names: Vec<&'a OsString>,
+    ///
+    /// When `--iconv` is not configured this borrows the
+    /// `DirectoryEntry::file_name` fields zero-copy. With `--iconv` the
+    /// destination filename is the iconv-converted form (LOCAL -> REMOTE),
+    /// so the keep-list must hold the converted bytes for the deletion
+    /// step to compare them against the actual on-disk destination
+    /// entries. The `Cow` keeps the no-iconv hot path allocation-free
+    /// while letting the iconv path own the transcoded `OsString`.
+    pub(crate) keep_names: Vec<Cow<'a, OsStr>>,
     pub(crate) deletion_enabled: bool,
     pub(crate) delete_timing: Option<DeleteTiming>,
 }
@@ -323,7 +333,14 @@ pub(crate) fn plan_directory_entries<'a>(
             };
 
             if preserve_name {
-                keep_names.push(file_name);
+                // upstream: flist.c:1579-1603 + flist.c:738-754 - the
+                // receiver hits the filesystem with the iconv-converted
+                // name; align the keep-list so deletion does not wipe
+                // freshly-written entries when --iconv is configured.
+                keep_names.push(transcode_filename_component(
+                    file_name.as_os_str(),
+                    context.options().iconv(),
+                ));
             }
         }
 
@@ -583,7 +600,14 @@ fn plan_directory_entries_with_prefetch<'a>(
             };
 
             if preserve_name {
-                keep_names.push(file_name);
+                // upstream: flist.c:1579-1603 + flist.c:738-754 - the
+                // receiver hits the filesystem with the iconv-converted
+                // name; align the keep-list so deletion does not wipe
+                // freshly-written entries when --iconv is configured.
+                keep_names.push(transcode_filename_component(
+                    file_name.as_os_str(),
+                    context.options().iconv(),
+                ));
             }
         }
 
@@ -683,7 +707,7 @@ mod tests {
         let names = [OsString::from("keep_me")];
         let plan = DirectoryPlan {
             planned_entries: Vec::new(),
-            keep_names: names.iter().collect(),
+            keep_names: names.iter().map(|n| Cow::Borrowed(n.as_os_str())).collect(),
             deletion_enabled: true,
             delete_timing: Some(DeleteTiming::Before),
         };
@@ -712,7 +736,7 @@ mod tests {
         ];
         let plan = DirectoryPlan {
             planned_entries: Vec::new(),
-            keep_names: names.iter().collect(),
+            keep_names: names.iter().map(|n| Cow::Borrowed(n.as_os_str())).collect(),
             deletion_enabled: true,
             delete_timing: Some(DeleteTiming::During),
         };

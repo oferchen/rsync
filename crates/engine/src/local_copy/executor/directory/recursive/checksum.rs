@@ -8,8 +8,10 @@ use std::path::Path;
 
 use crate::local_copy::CopyContext;
 
+use super::super::super::transcode_filename_component;
 use super::super::parallel_checksum::{ChecksumCache, FilePair};
 use super::super::planner::{DirectoryPlan, EntryAction};
+use protocol::iconv::FilenameConverter;
 
 /// Collects file pairs for parallel checksum prefetching.
 ///
@@ -26,9 +28,17 @@ use super::super::planner::{DirectoryPlan, EntryAction};
 /// # Returns
 ///
 /// A vector of file pairs suitable for parallel checksum computation.
+/// Collects source/destination file pairs from the directory plan whose
+/// matching size makes them candidates for a checksum-based quick check.
+///
+/// When `converter` is `Some`, the destination filename is transcoded
+/// from LOCAL to REMOTE so the lookup hits the same on-disk path the
+/// executor will later write to. With `None` this is a zero-overhead
+/// pass-through that mirrors the pre-iconv behaviour.
 pub(crate) fn collect_file_pairs_for_checksum(
     plan: &DirectoryPlan<'_>,
     destination: &Path,
+    converter: Option<&FilenameConverter>,
 ) -> Vec<FilePair> {
     let mut pairs = Vec::new();
 
@@ -38,7 +48,8 @@ pub(crate) fn collect_file_pairs_for_checksum(
         }
 
         let source_path = &planned.entry.path;
-        let target_path = destination.join(Path::new(&planned.entry.file_name));
+        let dest_name = transcode_filename_component(&planned.entry.file_name, converter);
+        let target_path = destination.join(Path::new(&*dest_name));
         let source_size = planned.metadata().len();
 
         // Check if destination exists and get its size
@@ -88,7 +99,7 @@ pub(crate) fn prefetch_directory_checksums(
         return ChecksumCache::new();
     }
 
-    let pairs = collect_file_pairs_for_checksum(plan, destination);
+    let pairs = collect_file_pairs_for_checksum(plan, destination, context.options().iconv());
 
     // Skip prefetching if no eligible pairs
     if pairs.is_empty() {
