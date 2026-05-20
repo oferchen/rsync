@@ -6,12 +6,12 @@
 //!
 //! # Architecture
 //!
-//! - [`run_service_dispatcher`] starts the SCM service dispatch table, blocking
+//! - `run_service_dispatcher` starts the SCM service dispatch table, blocking
 //!   until the service stops.
-//! - [`ServiceStatusHandle`] reports lifecycle transitions to the SCM.
-//! - [`install_service`] and [`uninstall_service`] manage service registration.
-//! - The control handler maps SCM events to [`signal::SignalFlags`] atomics,
-//!   reusing the same shutdown/reload mechanism as console mode.
+//! - `ServiceStatusHandle` reports lifecycle transitions to the SCM.
+//! - `install_service` and `uninstall_service` manage service registration.
+//! - The control handler maps SCM events to [`crate::signal::SignalFlags`]
+//!   atomics, reusing the same shutdown/reload mechanism as console mode.
 
 use std::io;
 
@@ -127,7 +127,6 @@ mod windows_impl {
                 lpServiceName: PWSTR(service_name.as_ptr() as *mut u16),
                 lpServiceProc: Some(service_main_entry),
             },
-            // Null terminator entry.
             SERVICE_TABLE_ENTRYW {
                 lpServiceName: PWSTR(std::ptr::null_mut()),
                 lpServiceProc: None,
