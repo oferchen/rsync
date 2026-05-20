@@ -37,15 +37,14 @@ pub struct CompressedWriter<W: Write> {
     flush_threshold: usize,
 }
 
-/// Compression encoder dispatch for supported algorithms.
+/// Compression encoder dispatch for supported algorithms. Each variant
+/// writes into a heap-backed `Vec<u8>` sink that is drained to the inner
+/// writer when it crosses [`CompressedWriter::flush_threshold`].
 #[allow(clippy::large_enum_variant)]
 enum EncoderVariant {
-    /// zlib encoder writing to a heap-backed sink.
     Zlib(CountingZlibEncoder<Vec<u8>>),
-    /// LZ4 encoder writing to a heap-backed sink.
     #[cfg(feature = "lz4")]
     Lz4(CountingLz4Encoder<Vec<u8>>),
-    /// Zstandard encoder writing to a heap-backed sink.
     #[cfg(feature = "zstd")]
     Zstd(CountingZstdEncoder<Vec<u8>>),
 }
