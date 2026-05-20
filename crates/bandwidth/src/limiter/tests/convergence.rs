@@ -43,9 +43,7 @@ fn observed_rate(total_bytes: u128, total_sleep: Duration) -> f64 {
     total_bytes as f64 / seconds
 }
 
-// ---------------------------------------------------------------------------
 // Steady-state convergence
-// ---------------------------------------------------------------------------
 
 #[test]
 fn steady_state_converges_to_target_rate_1kbps() {
@@ -136,9 +134,7 @@ fn steady_state_total_sleep_matches_expected_transfer_time() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Step response: change the target bandwidth suddenly
-// ---------------------------------------------------------------------------
 
 #[test]
 fn step_response_increase_converges_within_one_chunk() {
@@ -215,9 +211,7 @@ fn step_response_multiple_rate_changes_settle() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Burst handling: send a burst, verify throttle and recovery
-// ---------------------------------------------------------------------------
 
 #[test]
 fn burst_capped_limiter_recovers_to_target_rate() {
@@ -296,9 +290,7 @@ fn burst_repeated_large_writes_stay_clamped() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Multi-stream fairness: multiple independent limiters sharing a cap
-// ---------------------------------------------------------------------------
 
 #[test]
 fn multi_stream_independent_limiters_converge_individually() {
@@ -372,9 +364,7 @@ fn multi_stream_equal_shares_of_aggregate_cap() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Feedback accuracy: measured throughput matches actual throughput
-// ---------------------------------------------------------------------------
 
 #[test]
 fn feedback_accuracy_requested_sleep_matches_expected() {
@@ -427,9 +417,7 @@ fn feedback_accuracy_fractional_byte_rate() {
     assert_eq!(sleep.requested(), Duration::from_secs(1));
 }
 
-// ---------------------------------------------------------------------------
 // Underutilization: actual throughput below cap - no unnecessary throttling
-// ---------------------------------------------------------------------------
 
 #[test]
 fn underutilization_sub_threshold_writes_are_noop() {
@@ -506,9 +494,7 @@ fn underutilization_just_below_threshold_is_noop() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Zero-crossing: target bandwidth set to zero (pause) and back
-// ---------------------------------------------------------------------------
 
 #[test]
 fn zero_crossing_reset_simulates_pause_and_resume() {
@@ -585,9 +571,7 @@ fn zero_crossing_reset_preserves_configuration() {
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
 }
 
-// ---------------------------------------------------------------------------
 // Minimum granularity: very small bandwidth limits
-// ---------------------------------------------------------------------------
 
 #[test]
 fn minimum_granularity_1_byte_per_second() {
@@ -681,9 +665,7 @@ fn minimum_granularity_with_burst_cap() {
     assert!(limiter.accumulated_debt_for_testing() <= u128::from(burst));
 }
 
-// ---------------------------------------------------------------------------
 // Combined scenarios
-// ---------------------------------------------------------------------------
 
 #[test]
 fn realistic_file_transfer_with_rate_change_mid_transfer() {
@@ -809,9 +791,7 @@ fn debt_fully_cleared_after_simulated_sleep() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Very high bandwidth target: effectively unlimited throughput
-// ---------------------------------------------------------------------------
 
 #[test]
 fn high_bandwidth_target_u64_max_never_throttles() {
@@ -898,9 +878,7 @@ fn high_bandwidth_target_step_down_from_unlimited() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Idle recovery: feedback loop recovers after a prolonged idle period
-// ---------------------------------------------------------------------------
 
 #[test]
 fn idle_recovery_reset_then_resume_converges() {
@@ -986,9 +964,7 @@ fn idle_recovery_multiple_idle_resume_cycles() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Bounded convergence: verify convergence within specific iteration count
-// ---------------------------------------------------------------------------
 
 #[test]
 fn bounded_convergence_within_four_chunks() {
@@ -1047,9 +1023,7 @@ fn bounded_convergence_after_rate_change_within_two_chunks() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Stability: no oscillation when throughput matches target
-// ---------------------------------------------------------------------------
 
 #[test]
 fn stability_consecutive_sleeps_are_uniform() {
@@ -1143,9 +1117,7 @@ fn stability_variance_bounded_across_samples() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Bursty traffic: verify recovery without excessive back-pressure
-// ---------------------------------------------------------------------------
 
 #[test]
 fn bursty_traffic_large_burst_then_steady_state_converges() {
@@ -1231,9 +1203,7 @@ fn bursty_traffic_burst_cap_prevents_excessive_back_pressure() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Cross-rate convergence: verify convergence across wide range of rates
-// ---------------------------------------------------------------------------
 
 #[test]
 fn convergence_across_three_decades_of_rates() {
@@ -1259,9 +1229,7 @@ fn convergence_across_three_decades_of_rates() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Interleaved multi-stream fairness: round-robin across independent limiters
-// ---------------------------------------------------------------------------
 
 #[test]
 fn interleaved_streams_converge_independently() {
@@ -1357,9 +1325,7 @@ fn interleaved_streams_with_different_chunk_sizes() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Overshoot trajectory: verify initial burst settles toward target
-// ---------------------------------------------------------------------------
 
 #[test]
 fn overshoot_trajectory_settles_monotonically() {
@@ -1426,9 +1392,7 @@ fn overshoot_with_burst_cap_limits_initial_penalty() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Zero-byte registration: verify no corruption during zero-traffic gaps
-// ---------------------------------------------------------------------------
 
 #[test]
 fn zero_byte_registration_preserves_limiter_state() {
@@ -1501,9 +1465,7 @@ fn zero_byte_registration_with_burst_cap() {
     assert_eq!(limiter.accumulated_debt_for_testing(), debt_after_write);
 }
 
-// ---------------------------------------------------------------------------
 // Convergence after configuration with burst added/removed mid-stream
-// ---------------------------------------------------------------------------
 
 #[test]
 fn add_burst_mid_stream_clamps_existing_debt() {
@@ -1565,9 +1527,7 @@ fn remove_burst_mid_stream_allows_unbounded_debt() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Monotonic debt decay: verify debt decreases over successive registrations
-// ---------------------------------------------------------------------------
 
 #[test]
 fn debt_decreases_toward_zero_over_steady_state() {
@@ -1598,9 +1558,7 @@ fn debt_decreases_toward_zero_over_steady_state() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Rapid alternating rates: verify no accumulation of error
-// ---------------------------------------------------------------------------
 
 #[test]
 fn rapid_alternation_error_does_not_accumulate() {
