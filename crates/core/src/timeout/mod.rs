@@ -324,7 +324,6 @@ mod tests {
     fn connect_timeout_not_started_checks_ok() {
         let config = TimeoutConfig::new().with_connect_timeout(10);
         let tracker = TimeoutTracker::new(config);
-        // Without calling start_connect(), check should always succeed
         assert!(tracker.check_connect_timeout().is_ok());
     }
 

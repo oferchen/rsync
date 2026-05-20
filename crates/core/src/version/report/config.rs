@@ -399,7 +399,6 @@ impl Default for VersionInfoConfigBuilder {
 mod tests {
     use super::*;
 
-    // Tests for VersionInfoConfig::new
     #[test]
     fn new_creates_default_config() {
         let config = VersionInfoConfig::new();
@@ -429,7 +428,6 @@ mod tests {
         assert_eq!(config.secluded_args_mode, SecludedArgsMode::Optional);
     }
 
-    // Tests for Default trait
     #[test]
     fn default_equals_new() {
         let default_config = VersionInfoConfig::default();
@@ -437,7 +435,6 @@ mod tests {
         assert_eq!(default_config, new_config);
     }
 
-    // Tests for builder
     #[test]
     fn builder_creates_same_as_new() {
         let builder_config = VersionInfoConfig::builder().build();
@@ -452,7 +449,6 @@ mod tests {
         assert_eq!(default_builder, new_builder);
     }
 
-    // Tests for builder setters
     #[test]
     fn builder_supports_socketpairs() {
         let config = VersionInfoConfig::builder()
@@ -619,7 +615,6 @@ mod tests {
         assert_eq!(config.secluded_args_mode, SecludedArgsMode::Default);
     }
 
-    // Tests for to_builder
     #[test]
     fn to_builder_preserves_values() {
         let original = VersionInfoConfig::builder()
@@ -638,7 +633,6 @@ mod tests {
         assert!(modified.supports_crtimes);
     }
 
-    // Tests for from_config
     #[test]
     fn from_config_preserves_values() {
         let config = VersionInfoConfig::builder()
@@ -648,7 +642,6 @@ mod tests {
         assert_eq!(builder.build(), config);
     }
 
-    // Tests for builder chaining
     #[test]
     fn builder_chaining_works() {
         let config = VersionInfoConfig::builder()
@@ -663,7 +656,6 @@ mod tests {
         assert!(config.supports_asm_md5);
     }
 
-    // Tests for trait implementations
     #[test]
     fn config_is_clone() {
         let config = VersionInfoConfig::new();
@@ -700,11 +692,9 @@ mod tests {
         assert_eq!(builder, copied);
     }
 
-    // Tests for with_runtime_capabilities
     #[test]
     fn with_runtime_capabilities_returns_config() {
         let config = VersionInfoConfig::with_runtime_capabilities();
-        // Basic sanity checks - runtime values vary
         assert!(config.supports_ipv6);
         assert!(config.supports_atimes);
     }

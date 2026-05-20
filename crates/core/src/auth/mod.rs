@@ -339,8 +339,6 @@ mod tests {
         assert_eq!(digests_for_response(&"A".repeat(len)), MD_LEGACY);
     }
 
-    // Tests for constant_time_eq
-
     #[test]
     fn constant_time_eq_returns_true_for_equal_slices() {
         assert!(constant_time_eq(b"hello", b"hello"));
@@ -364,7 +362,6 @@ mod tests {
 
     #[test]
     fn constant_time_eq_handles_single_byte_difference() {
-        // Test that even a single bit difference is detected
         assert!(!constant_time_eq(b"\x00", b"\x01"));
         assert!(!constant_time_eq(b"\xff", b"\xfe"));
     }
@@ -375,7 +372,6 @@ mod tests {
         let challenge = "mychallenge";
         let correct = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Sha256);
 
-        // Tamper with the response
         let mut tampered = correct.clone();
         if let Some(c) = tampered.pop() {
             tampered.push(if c == 'A' { 'B' } else { 'A' });
@@ -400,7 +396,6 @@ mod tests {
     fn verify_rejects_wrong_length_response() {
         let secret = b"secret";
         let challenge = "challenge";
-        // Response length doesn't match any known digest
         assert!(!verify_daemon_auth_response(
             secret, challenge, "tooshort", None
         ));
@@ -419,7 +414,6 @@ mod tests {
         let md5_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md5);
         let md4_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md4);
 
-        // Protocol >= 30 should accept MD5 and reject MD4
         assert!(verify_daemon_auth_response(
             secret,
             challenge,
@@ -453,7 +447,6 @@ mod tests {
         let md5_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md5);
         let md4_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md4);
 
-        // Protocol < 30 should accept MD4 and reject MD5
         assert!(verify_daemon_auth_response(
             secret,
             challenge,
@@ -487,7 +480,6 @@ mod tests {
         let md5_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md5);
         let md4_response = compute_daemon_auth_response(secret, challenge, DaemonAuthDigest::Md4);
 
-        // Without protocol version, both should be accepted
         assert!(verify_daemon_auth_response(
             secret,
             challenge,

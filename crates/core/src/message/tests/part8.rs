@@ -365,7 +365,6 @@ fn message_segment_order_matches_upstream() {
         .with_source(message_source!());
     let rendered = msg.to_string();
 
-    // Find positions of each component
     let prefix_pos = rendered.find("rsync error: ").expect("prefix must exist");
     let text_pos = rendered
         .find("delta-transfer failure")
@@ -374,7 +373,6 @@ fn message_segment_order_matches_upstream() {
     let at_pos = rendered.find(" at ").expect("source separator must exist");
     let trailer_pos = rendered.find("[sender=").expect("trailer must exist");
 
-    // Verify ordering: prefix < text < code < source < trailer
     assert!(
         prefix_pos < text_pos,
         "Prefix must come before text"

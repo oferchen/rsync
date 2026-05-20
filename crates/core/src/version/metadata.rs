@@ -214,7 +214,6 @@ pub const fn version_metadata_for_program(program_name: &'static str) -> Version
 mod tests {
     use super::*;
 
-    // Tests for version_metadata factory function
     #[test]
     fn version_metadata_returns_valid_metadata() {
         let meta = version_metadata();
@@ -243,7 +242,6 @@ mod tests {
         assert!(!meta.source_url().is_empty());
     }
 
-    // Tests for daemon_version_metadata
     #[test]
     fn daemon_version_metadata_uses_daemon_program_name() {
         let meta = daemon_version_metadata();
@@ -258,21 +256,18 @@ mod tests {
         assert_eq!(client.protocol_version(), daemon.protocol_version());
     }
 
-    // Tests for oc_version_metadata
     #[test]
     fn oc_version_metadata_uses_oc_program_name() {
         let meta = oc_version_metadata();
         assert_eq!(meta.program_name(), OC_PROGRAM_NAME);
     }
 
-    // Tests for oc_daemon_version_metadata
     #[test]
     fn oc_daemon_version_metadata_uses_oc_daemon_program_name() {
         let meta = oc_daemon_version_metadata();
         assert_eq!(meta.program_name(), OC_DAEMON_PROGRAM_NAME);
     }
 
-    // Tests for version_metadata_for_program
     #[test]
     fn version_metadata_for_program_uses_custom_name() {
         let meta = version_metadata_for_program("custom-rsync");
@@ -286,21 +281,18 @@ mod tests {
         assert_eq!(meta.protocol_version(), ProtocolVersion::NEWEST);
     }
 
-    // Tests for version_metadata_for_client_brand
     #[test]
     fn version_metadata_for_client_brand_uses_brand_name() {
         let meta = version_metadata_for_client_brand(Brand::Upstream);
         assert_eq!(meta.program_name(), Brand::Upstream.client_program_name());
     }
 
-    // Tests for version_metadata_for_daemon_brand
     #[test]
     fn version_metadata_for_daemon_brand_uses_brand_name() {
         let meta = version_metadata_for_daemon_brand(Brand::Upstream);
         assert_eq!(meta.program_name(), Brand::Upstream.daemon_program_name());
     }
 
-    // Tests for accessor methods
     #[test]
     fn program_name_accessor_returns_correct_value() {
         let meta = version_metadata();
@@ -331,7 +323,7 @@ mod tests {
     #[test]
     fn subprotocol_version_is_accessible() {
         let meta = version_metadata();
-        let _ = meta.subprotocol_version(); // Just verify it's accessible
+        let _ = meta.subprotocol_version();
     }
 
     #[test]
@@ -341,7 +333,6 @@ mod tests {
         assert!(!meta.build_toolchain().is_empty());
     }
 
-    // Tests for write_standard_banner
     #[test]
     fn write_standard_banner_includes_program_name() {
         let meta = version_metadata();
@@ -409,7 +400,6 @@ mod tests {
         let meta = version_metadata();
         let mut output = String::new();
         meta.write_standard_banner(&mut output).unwrap();
-        // Should contain the arch and OS
         assert!(output.contains(std::env::consts::ARCH));
         assert!(output.contains(std::env::consts::OS));
     }
@@ -422,7 +412,6 @@ mod tests {
         assert!(output.ends_with('\n'));
     }
 
-    // Tests for standard_banner
     #[test]
     fn standard_banner_returns_non_empty_string() {
         let meta = version_metadata();
@@ -439,7 +428,6 @@ mod tests {
         assert_eq!(expected, actual);
     }
 
-    // Tests for Default implementation
     #[test]
     fn default_returns_same_as_version_metadata() {
         let default = VersionMetadata::default();
@@ -447,7 +435,6 @@ mod tests {
         assert_eq!(default, explicit);
     }
 
-    // Tests for trait implementations
     #[test]
     fn version_metadata_is_clone() {
         let meta = version_metadata();

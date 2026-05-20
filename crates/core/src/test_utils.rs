@@ -134,7 +134,6 @@ mod tests {
     #[test]
     fn assert_error_matches_io_error() {
         let err = io::Error::new(io::ErrorKind::NotFound, "not found");
-        // Using _ pattern to match any io::Error
         assert!(matches!(err.kind(), io::ErrorKind::NotFound));
     }
 

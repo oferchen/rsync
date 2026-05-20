@@ -78,7 +78,6 @@ pub const fn build_revision() -> &'static str {
 mod tests {
     use super::*;
 
-    // Tests for program name constants
     #[test]
     fn program_name_is_not_empty() {
         assert!(!PROGRAM_NAME.is_empty());
@@ -109,7 +108,6 @@ mod tests {
         assert!(!LEGACY_DAEMON_PROGRAM_NAME.is_empty());
     }
 
-    // Tests for copyright constants
     #[test]
     fn copyright_start_year_is_valid() {
         let year: u32 = COPYRIGHT_START_YEAR.parse().expect("valid year");
@@ -139,7 +137,6 @@ mod tests {
         assert!(COPYRIGHT_NOTICE.contains(LATEST_COPYRIGHT_YEAR));
     }
 
-    // Tests for source URL
     #[test]
     fn source_url_is_not_empty() {
         assert!(!SOURCE_URL.is_empty());
@@ -150,13 +147,11 @@ mod tests {
         assert!(SOURCE_URL.starts_with("http://") || SOURCE_URL.starts_with("https://"));
     }
 
-    // Tests for build toolchain
     #[test]
     fn build_toolchain_is_not_empty() {
         assert!(!BUILD_TOOLCHAIN.is_empty());
     }
 
-    // Tests for version constants
     #[test]
     fn upstream_base_version_is_not_empty() {
         assert!(!UPSTREAM_BASE_VERSION.is_empty());
@@ -174,7 +169,6 @@ mod tests {
 
     #[test]
     fn rust_version_is_valid_semver() {
-        // RUST_VERSION should be a valid semantic version (x.y.z)
         let parts: Vec<&str> = RUST_VERSION.split('.').collect();
         assert_eq!(parts.len(), 3, "RUST_VERSION should have three components");
         for part in parts {
@@ -187,7 +181,6 @@ mod tests {
 
     #[test]
     fn upstream_version_is_valid_semver() {
-        // UPSTREAM_BASE_VERSION should be a valid semantic version (x.y.z)
         let parts: Vec<&str> = UPSTREAM_BASE_VERSION.split('.').collect();
         assert_eq!(
             parts.len(),
@@ -202,7 +195,6 @@ mod tests {
         }
     }
 
-    // Tests for protocol version
     #[test]
     fn highest_protocol_version_in_valid_range() {
         assert!(HIGHEST_PROTOCOL_VERSION >= 28);
@@ -214,7 +206,6 @@ mod tests {
         assert_eq!(HIGHEST_PROTOCOL_VERSION, ProtocolVersion::NEWEST.as_u8());
     }
 
-    // Tests for build_revision function
     #[test]
     fn build_revision_returns_non_empty_string() {
         let revision = build_revision();
