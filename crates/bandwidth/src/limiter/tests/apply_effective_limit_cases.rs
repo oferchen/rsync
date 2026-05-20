@@ -382,7 +382,6 @@ fn apply_effective_limit_unchanged_when_neither_limit_nor_burst_changes() {
 
 #[test]
 fn apply_effective_limit_disabled_when_limit_is_none_and_limiter_exists() {
-    // Test line 129-131: when limit is None and limiter exists, return Disabled
     let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
 
     let change = apply_effective_limit(&mut limiter, None, true, None, false);
@@ -393,7 +392,6 @@ fn apply_effective_limit_disabled_when_limit_is_none_and_limiter_exists() {
 
 #[test]
 fn apply_effective_limit_unchanged_when_limit_is_none_and_no_limiter() {
-    // Test line 132-133: when limit is None and no limiter exists, return Unchanged
     let mut limiter: Option<BandwidthLimiter> = None;
 
     let change = apply_effective_limit(&mut limiter, None, true, None, false);
@@ -404,7 +402,6 @@ fn apply_effective_limit_unchanged_when_limit_is_none_and_no_limiter() {
 
 #[test]
 fn apply_effective_limit_burst_only_update_on_existing_limiter() {
-    // Test lines 137-144: burst-only update path
     let limit = NonZeroU64::new(4 * 1024 * 1024).unwrap();
     let initial_burst = NonZeroU64::new(2048).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(limit, Some(initial_burst)));
@@ -449,8 +446,8 @@ fn apply_effective_limit_burst_only_skipped_when_limiter_absent() {
 
 #[test]
 fn apply_effective_limit_preserves_burst_when_limit_changes_burst_not_specified() {
-    // Test line 113: when burst_specified is false, target_burst = current_burst
-    // And we change the limit (not just burst)
+    // When burst_specified is false, target_burst should be preserved from
+    // current_burst even when the limit changes.
     let initial_limit = NonZeroU64::new(8 * 1024 * 1024).unwrap();
     let initial_burst = NonZeroU64::new(4096).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(
@@ -471,8 +468,8 @@ fn apply_effective_limit_preserves_burst_when_limit_changes_burst_not_specified(
 
 #[test]
 fn apply_effective_limit_limit_none_no_existing_limiter_returns_unchanged() {
-    // Test lines 132-133: when limit is None (unlimited), limit_specified is true,
-    // and there's no existing limiter, return Unchanged
+    // When limit is None (unlimited), limit_specified is true, and no
+    // limiter exists, the result is Unchanged.
     let mut limiter: Option<BandwidthLimiter> = None;
 
     let change = apply_effective_limit(&mut limiter, None, true, None, false);
@@ -483,9 +480,9 @@ fn apply_effective_limit_limit_none_no_existing_limiter_returns_unchanged() {
 
 #[test]
 fn apply_effective_limit_keeps_current_burst_when_limit_changes_and_burst_not_specified() {
-    // Another test for line 113: target_burst = current_burst path
-    // Need: existing limiter with burst, new limit specified, burst not specified
-    // And the limit must actually change to trigger the update
+    // Existing limiter with burst, new limit specified, burst not specified;
+    // the limit must actually change to trigger the update so the preserved
+    // burst is visible in the resulting limiter.
     let existing_limit = NonZeroU64::new(10 * 1024 * 1024).unwrap();
     let existing_burst = NonZeroU64::new(8192).unwrap();
     let mut limiter = Some(BandwidthLimiter::with_burst(

@@ -552,24 +552,21 @@ fn parse_bandwidth_adjustment_overflow_at_max() {
 
 #[test]
 fn parse_bandwidth_rejects_exponent_marker_followed_by_non_digit_non_sign() {
-    // Test line 113-114: exponent_sign_allowed is still true when we hit a non-digit/non-sign
-    // "1eK" -> e is exponent marker, K is suffix, but no exponent digits
-    // This triggers the exponent_sign_allowed check
+    // "1eK" - the `e` is the exponent marker, `K` would be the suffix, but
+    // there are no exponent digits, so the parser must reject the input.
     let error = parse_bandwidth_argument("1eK").unwrap_err();
     assert_eq!(error, BandwidthParseError::Invalid);
 }
 
 #[test]
 fn parse_bandwidth_with_digit_first_character() {
-    // Test line 55-57: first character is a digit (falls through default case)
     let result = parse_bandwidth_argument("5K").expect("parse succeeds");
     assert_eq!(result, NonZeroU64::new(5120));
 }
 
 #[test]
 fn parse_bandwidth_with_decimal_first_character() {
-    // Another test for line 55-57: first character is a decimal point
-    // .5K = 512 bytes, but with 1024-byte alignment, rounds to 1024
+    // .5K = 512 bytes, but with 1024-byte alignment, rounds to 1024.
     let result = parse_bandwidth_argument(".5K").expect("parse succeeds");
     assert_eq!(result, NonZeroU64::new(1024));
 }

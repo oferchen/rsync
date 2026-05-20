@@ -64,8 +64,6 @@ fn drive_until(
     WindowSample { bytes, sleep }
 }
 
-// Test 1: steady-state convergence under 2x oversubscription
-
 /// Feeding the limiter at >= 2x the target rate must converge throughput to
 /// within +-5% of the configured rate across a 1s sliding window.
 #[test]
@@ -98,8 +96,6 @@ fn steady_state_oversubscribed_converges_to_target_within_one_second_window() {
         window.sleep,
     );
 }
-
-// Test 2: burst recovery within ~2s
 
 /// A single instantaneous burst at 4x the per-second target must be dampened
 /// and the limiter must return to the configured rate within ~2 seconds of
@@ -153,8 +149,6 @@ fn burst_recovers_to_target_within_two_seconds() {
     );
 }
 
-// Test 3: target change ramps without overshoot
-
 /// Increasing the target mid-test (0.5 MB/s -> 2 MB/s) must ramp to the new
 /// rate without overshoot. The limiter resets debt on `update_limit`, so the
 /// post-change window should converge to the new target without first
@@ -203,8 +197,6 @@ fn target_change_ramps_without_overshoot() {
         );
     }
 }
-
-// Test 4: tiny target (1 KB/s) convergence
 
 /// Convergence must hold for very small targets where each chunk represents
 /// hundreds of milliseconds of debt. At 1 KB/s, a 256 B chunk requests

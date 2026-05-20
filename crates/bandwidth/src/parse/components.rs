@@ -686,7 +686,8 @@ mod tests {
 
     #[test]
     fn constrained_by_clears_burst_when_client_was_unlimited_and_override_adds_rate() {
-        // Test line 217-219: when client was unlimited and override adds rate without burst
+        // When the client was unlimited and the override adds a rate
+        // without specifying burst, the burst is cleared.
         let c1 = BandwidthLimitComponents::unlimited();
         let c2 = BandwidthLimitComponents::new(Some(nz(4000)), None);
 

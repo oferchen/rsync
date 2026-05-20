@@ -240,9 +240,8 @@ fn parse_bandwidth_limit_rejects_missing_burst_value() {
 
 #[test]
 fn constrained_by_clears_burst_when_override_is_unlimited() {
-    // Test lines 218-224 in components.rs
     // When override is unlimited (limit_specified=true, rate=None),
-    // the result should be unlimited with burst cleared
+    // the result should be unlimited with burst cleared.
     let client = parse_bandwidth_limit("4M:48K").expect("client components");
 
     // Create an unlimited override with limit_specified = true
@@ -287,7 +286,8 @@ fn constrained_by_preserves_client_burst_when_override_has_no_burst() {
 
 #[test]
 fn constrained_by_clears_client_burst_when_override_has_rate_and_client_was_unlimited() {
-    // Lines 217-219: when override has rate but client was unlimited, clear burst
+    // When the override supplies a rate but the client was previously
+    // unlimited, the burst must be cleared because no prior limit existed.
     let client = BandwidthLimitComponents::unlimited();
     let rate = NonZeroU64::new(2 * 1024 * 1024).unwrap();
     let module = BandwidthLimitComponents::new(Some(rate), None);

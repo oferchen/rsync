@@ -1,4 +1,3 @@
-/// Comprehensive tests for rate limiting algorithms and token bucket behavior
 use super::{BandwidthLimiter, recorded_sleep_session};
 use std::num::NonZeroU64;
 use std::time::Duration;

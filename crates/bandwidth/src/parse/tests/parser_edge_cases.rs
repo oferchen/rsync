@@ -1,4 +1,3 @@
-/// Comprehensive edge case tests for bandwidth parsing
 use super::super::{BandwidthParseError, parse_bandwidth_argument, parse_bandwidth_limit};
 use std::num::NonZeroU64;
 

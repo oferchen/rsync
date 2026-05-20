@@ -67,8 +67,6 @@ fn measure_rate(limiter: &mut BandwidthLimiter, rate: u64, chunks: usize) -> f64
     observed_rate(bytes, sleep)
 }
 
-// Convergence to target under no errors
-
 #[test]
 fn aimd_no_error_stream_oscillates_near_target_after_warmup() {
     let mut session = recorded_sleep_session();
@@ -93,8 +91,6 @@ fn aimd_no_error_stream_oscillates_near_target_after_warmup() {
         );
     }
 }
-
-// Multiplicative decrease on simulated error
 
 #[test]
 fn aimd_simulated_error_halves_effective_rate() {
@@ -164,8 +160,6 @@ fn aimd_repeated_errors_drive_rate_down_geometrically() {
         );
     }
 }
-
-// Recovery: additive-increase brings rate back up after error stream stops
 
 #[test]
 fn aimd_additive_increase_recovers_rate_after_error_stream_ends() {
@@ -245,8 +239,6 @@ fn aimd_decrease_then_recover_returns_to_initial_target() {
     );
 }
 
-// Stability under intermittent errors
-
 #[test]
 fn aimd_intermittent_errors_do_not_cause_runaway_oscillation() {
     let mut session = recorded_sleep_session();
@@ -304,8 +296,6 @@ fn aimd_intermittent_errors_do_not_cause_runaway_oscillation() {
         ceiling - floor
     );
 }
-
-// Edge case: minimum rate floor
 
 #[test]
 fn aimd_repeated_errors_clamp_at_minimum_rate_floor() {

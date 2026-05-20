@@ -7,6 +7,12 @@
 use super::BandwidthParseError;
 use memchr::memchr2;
 
+/// Splits a mantissa-exponent string into `(integer, fraction, denominator, exponent)`.
+///
+/// The mantissa is parsed as a base-10 decimal with either `.` or `,` accepted as the
+/// fractional separator; the optional exponent suffix (`e`/`E`) follows standard
+/// scientific notation rules. Returns `BandwidthParseError::Invalid` for malformed
+/// input and `TooLarge` when an intermediate digit accumulator overflows `u128`.
 // upstream: options.c:parse_size_arg() - atof() for decimal mantissa
 pub(crate) fn parse_decimal_with_exponent(
     text: &str,

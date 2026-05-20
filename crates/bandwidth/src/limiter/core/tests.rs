@@ -220,7 +220,6 @@ fn bandwidth_limiter_debug() {
     assert!(debug.contains("10000"));
 }
 
-// Edge case tests
 #[test]
 fn bandwidth_limiter_very_small_limit() {
     let limiter = BandwidthLimiter::new(nz(1));
