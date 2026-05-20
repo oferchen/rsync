@@ -533,7 +533,6 @@ mod tests {
 
         let writer = MacosWriter::create(&path, 512).unwrap();
 
-        // Below threshold - nocache should not be enabled
         #[cfg(target_os = "macos")]
         assert!(!writer.is_nocache_enabled());
 
@@ -564,7 +563,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("boundary_below.bin");
 
-        // One byte below threshold
         let writer = MacosWriter::create(&path, F_NOCACHE_THRESHOLD - 1).unwrap();
 
         #[cfg(target_os = "macos")]
@@ -581,7 +579,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("boundary_exact.bin");
 
-        // Exactly at threshold
         let writer = MacosWriter::create(&path, F_NOCACHE_THRESHOLD).unwrap();
 
         #[cfg(target_os = "macos")]
@@ -842,7 +839,6 @@ mod tests {
 
         let content = std::fs::read(&path).unwrap();
         assert_eq!(content.len(), 8 * 64 * 1024);
-        // Verify each chunk
         for (i, actual_chunk) in content.chunks(64 * 1024).enumerate() {
             assert_eq!(actual_chunk, &chunk[..], "chunk {i} mismatch");
         }
@@ -874,7 +870,7 @@ mod tests {
         let mut writer = MacosWriter::create(&path, 0).unwrap();
         writer.write_all(b"data").unwrap();
         writer.flush().unwrap();
-        writer.flush().unwrap(); // Should be a no-op
+        writer.flush().unwrap();
         writer.flush().unwrap();
 
         let content = std::fs::read(&path).unwrap();
