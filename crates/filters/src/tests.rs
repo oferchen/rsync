@@ -25,8 +25,7 @@ fn exclude_rule_blocks_match() {
 
 #[test]
 fn include_before_exclude_reinstates_path() {
-    // rsync uses first-match-wins semantics, so includes must come BEFORE
-    // excludes to create exceptions
+    // First-match-wins: includes must come before excludes to create exceptions.
     let rules = [
         FilterRule::include("foo/bar.txt"),
         FilterRule::exclude("foo"),
@@ -103,7 +102,6 @@ fn glob_escape_sequences_supported() {
 
 #[test]
 fn ordering_respected() {
-    // rsync uses first-match-wins: include must come before exclude for exceptions
     let rules = [
         FilterRule::include("special.tmp"),
         FilterRule::exclude("*.tmp"),
@@ -129,7 +127,6 @@ fn allows_checks_respect_directory_flag() {
 
 #[test]
 fn include_rule_for_directory_restores_descendants() {
-    // rsync uses first-match-wins: include must come before exclude for exceptions
     let rules = [
         FilterRule::include("cache/preserved/**"),
         FilterRule::exclude("cache/"),
@@ -141,19 +138,17 @@ fn include_rule_for_directory_restores_descendants() {
 
 #[test]
 fn relative_path_conversion_handles_dot_components() {
-    // Pattern with internal slash is anchored to root
+    // Internal slash anchors the pattern to the transfer root. globset does
+    // not normalise `foo/../foo/bar`, so the anchored pattern misses it; use
+    // `**/foo/bar` to match at any depth.
     let set = FilterSet::from_rules([FilterRule::exclude("foo/bar")]).expect("compiled");
 
-    // This path foo/../foo/bar is not normalized by globset, so it doesn't match
-    // the anchored pattern foo/bar. To match at any depth, use **/foo/bar
     let mut path = PathBuf::from("foo");
     path.push("..");
     path.push("foo");
     path.push("bar");
-    // Pattern is anchored, so it only matches literal "foo/bar" not "foo/../foo/bar"
     assert!(set.allows(&path, false));
 
-    // But a normalized path at root should match
     assert!(!set.allows(Path::new("foo/bar"), false));
 }
 
@@ -184,7 +179,7 @@ fn protect_rule_applies_to_directory_descendants() {
 
 #[test]
 fn risk_rule_allows_deletion_before_protection() {
-    // rsync uses first-match-wins: risk must come before protect to override
+    // First-match-wins: risk must precede protect to override it.
     let rules = [
         FilterRule::risk("archive/"),
         FilterRule::protect("archive/"),
@@ -195,7 +190,6 @@ fn risk_rule_allows_deletion_before_protection() {
 
 #[test]
 fn risk_rule_applies_to_descendants() {
-    // rsync uses first-match-wins: risk must come before protect to override
     let rules = [FilterRule::risk("backup/"), FilterRule::protect("backup/")];
     let set = FilterSet::from_rules(rules).expect("compiled");
     assert!(set.allows_deletion(Path::new("backup/snap/info"), false));
@@ -338,18 +332,15 @@ mod negate_tests {
         ];
         let set = FilterSet::from_rules(rules).expect("compiled");
 
-        // .txt files excluded by negated rule (they match, so NOT excluded by negated)
-        // Actually wait - the negated rule excludes non-.txt files
-        // So .txt files should be allowed by the negated rule, but we need to check ordering
-        // First rule excludes .tmp, second (negated) excludes non-.txt
-        // For file.txt: first rule doesn't match, second rule matches .txt so doesn't exclude
+        // file.txt: first rule misses; the negated `*.txt` exclude matches and
+        // negates to "do not exclude", so the file is allowed.
         assert!(set.allows(Path::new("file.txt"), false));
 
-        // For file.tmp: first rule matches and excludes
+        // file.tmp: matched by the first plain exclude.
         assert!(!set.allows(Path::new("file.tmp"), false));
 
-        // For file.log: first rule doesn't match, second rule doesn't match *.txt
-        // so negated exclude applies
+        // file.log: first rule misses; the negated `*.txt` exclude misses too,
+        // and negation turns the miss into an exclusion.
         assert!(!set.allows(Path::new("file.log"), false));
     }
 
@@ -364,7 +355,6 @@ mod negate_tests {
 
     #[test]
     fn negate_flag_chaining() {
-        // Test that with_negate can be chained with other modifiers
         let rule = FilterRule::exclude("*.tmp")
             .with_perishable(true)
             .with_negate(true)
