@@ -113,8 +113,8 @@ target" column lists the existing target that exercises the function, or
 | Idlist (uid/gid name table) | `crates/protocol/src/idlist/mod.rs:232,256` (`read`, `read_with_kind`) | NONE | **P1 GAP** |
 | Transfer stats | `crates/protocol/src/stats/transfer.rs:219` (`TransferStats::read_from`) | `varint_roundtrip` (typed roundtrip + raw bytes) | covered (P1) |
 | Delete stats | `crates/protocol/src/stats/delete.rs:91` (`DeleteStats::read_from`) | `varint_roundtrip` (typed roundtrip + raw bytes) | covered (P1) |
-| ACL wire decoder | `crates/protocol/src/acl/definition/wire.rs:48` (`read_acl_definition`) | NONE | **P2 GAP** |
-| Xattr wire decoders | `crates/protocol/src/xattr/wire/decode.rs:52,118,171,208` (`read_xattr_definitions`, `recv_xattr`, `recv_xattr_request`, `recv_xattr_values`) | NONE | **P2 GAP** |
+| ACL wire decoder | `crates/protocol/src/acl/definition/wire.rs:48` (`read_acl_definition`) | `acl_xattr_wire` | covered (P2) |
+| Xattr wire decoders | `crates/protocol/src/xattr/wire/decode.rs:52,118,171,208` (`read_xattr_definitions`, `recv_xattr`, `recv_xattr_request`, `recv_xattr_values`) | `acl_xattr_wire` (all four entry points) | covered (P2) |
 | `--files-from` stream parser | `crates/protocol/src/files_from.rs:59,162` (`forward_files_from`, `read_files_from_stream`) | NONE | **P2 GAP** |
 | Iconv spec parser | `crates/core/src/client/config/iconv.rs:25` (`IconvSpec::parse` / `from_str`) | NONE | **P2 GAP** |
 | Daemon config (`rsyncd.conf`) parser | `crates/daemon/src/rsyncd_config/mod.rs:82` (`RsyncdConfig::parse`) | NONE | **P2 GAP** |
@@ -174,18 +174,19 @@ Gap-by-gap priority queue for FCV-3+:
     the underlying RustCrypto/zstd-rs implementation is panic-free, our
     wrappers compute output bounds and call `Vec::with_capacity` -
     a bad length prefix is a memory-blowup vector.
-11. **`acl_wire`** (P2). `read_acl_definition`.
-12. **`xattr_wire`** (P2). `read_xattr_definitions`, `recv_xattr`,
-    `recv_xattr_request`, `recv_xattr_values`.
-13. **`files_from`** (P2). `read_files_from_stream` + the forwarding
+11. **`acl_xattr_wire`** (P2, SHIPPED). Consolidated target that fans the
+    same input into `read_acl_definition`, `read_xattr_definitions`,
+    `recv_xattr`, `recv_xattr_request`, and `recv_xattr_values`. Wired
+    into the nightly `fuzz-coverage-report` workflow.
+12. **`files_from`** (P2). `read_files_from_stream` + the forwarding
     path.
-14. **`iconv_spec`** (P2). `IconvSpec::parse` accepts user-supplied
+13. **`iconv_spec`** (P2). `IconvSpec::parse` accepts user-supplied
     strings but is reachable from `--iconv=<spec>` on the command line.
-15. **`rsyncd_conf`** (P2). Config file parser; only reachable through
+14. **`rsyncd_conf`** (P2). Config file parser; only reachable through
     the trusted local filesystem, but it is human-edited and the
     grammar has macro / module-section interactions worth exploring.
-16. **`bwlimit_parse`** (P3). CLI string parser only.
-17. **`skip_compress_list`** (P3). CLI string parser only.
+15. **`bwlimit_parse`** (P3). CLI string parser only.
+16. **`skip_compress_list`** (P3). CLI string parser only.
 
 The `file_entry_roundtrip` target also has internal gaps within an
 already-covered subsystem: `mtime_nsec`, `rdev`, `hardlink_idx`, and
