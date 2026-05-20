@@ -484,16 +484,13 @@ mod tests {
 
     #[test]
     fn md5_seeded_proper_order_hashes_seed_before_data() {
-        // Proper order: hash seed bytes THEN data bytes
         let seed_value: i32 = 0x12345678;
         let data = b"test data";
 
-        // Hash with seed in proper order
         let mut with_seed = Md5::with_seed(Md5Seed::proper(seed_value));
         with_seed.update(data);
         let seeded_digest = with_seed.finalize();
 
-        // Manual construction: hash seed, then data
         let mut manual = Md5::new();
         manual.update(&seed_value.to_le_bytes());
         manual.update(data);
@@ -505,7 +502,6 @@ mod tests {
             "Proper order should hash seed before data"
         );
 
-        // Should NOT match unseeded hash
         let unseeded_digest = Md5::digest(data);
         assert_ne!(
             to_hex(&seeded_digest),
@@ -516,16 +512,13 @@ mod tests {
 
     #[test]
     fn md5_seeded_legacy_order_hashes_seed_after_data() {
-        // Legacy order: hash data bytes THEN seed bytes
         let seed_value: i32 = 0x12345678;
         let data = b"test data";
 
-        // Hash with seed in legacy order
         let mut with_seed = Md5::with_seed(Md5Seed::legacy(seed_value));
         with_seed.update(data);
         let seeded_digest = with_seed.finalize();
 
-        // Manual construction: hash data, then seed
         let mut manual = Md5::new();
         manual.update(data);
         manual.update(&seed_value.to_le_bytes());
@@ -540,7 +533,6 @@ mod tests {
 
     #[test]
     fn md5_seed_ordering_produces_different_hashes() {
-        // Verify that proper vs legacy ordering produce different results
         let seed_value: i32 = 0x1BCDEF01u32 as i32;
         let data = b"same data for both";
 
