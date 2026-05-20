@@ -334,6 +334,10 @@ impl ProxyCredentials {
     }
 }
 
+/// Maximum size of a single CONNECT response line, matching upstream rsync's
+/// 1024-byte stack buffer in `establish_proxy_connection()` (socket.c:53).
+const MAX_PROXY_LINE_BYTES: usize = 1024;
+
 fn read_proxy_line(
     stream: &mut TcpStream,
     buffer: &mut Vec<u8>,
@@ -357,10 +361,10 @@ fn read_proxy_line(
                     }
                     break;
                 }
-                if buffer.len() > 4096 {
-                    return Err(proxy_response_error(
-                        "proxy response line exceeded 4096 bytes",
-                    ));
+                if buffer.len() > MAX_PROXY_LINE_BYTES {
+                    return Err(proxy_response_error(format!(
+                        "proxy response line too long (exceeded {MAX_PROXY_LINE_BYTES} bytes)"
+                    )));
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
@@ -691,5 +695,50 @@ mod tests {
             .decode(config.credentials.unwrap().authorization_value())
             .unwrap();
         assert_eq!(decoded, b"user:pass:with:colons");
+    }
+
+    #[test]
+    fn read_proxy_line_rejects_lines_above_upstream_cap() {
+        use std::net::TcpListener;
+        use std::thread;
+
+        // Upstream `establish_proxy_connection()` uses a 1024-byte stack
+        // buffer; a 1025-byte newline-free response must be refused.
+        assert_eq!(MAX_PROXY_LINE_BYTES, 1024);
+        let payload = vec![b'A'; MAX_PROXY_LINE_BYTES + 1];
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let addr = listener.local_addr().expect("listener address");
+
+        let server_payload = payload.clone();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            stream
+                .write_all(&server_payload)
+                .expect("write oversized response");
+            stream.flush().expect("flush oversized response");
+        });
+
+        let mut stream = TcpStream::connect(addr).expect("connect to listener");
+        let mut buffer = Vec::with_capacity(MAX_PROXY_LINE_BYTES + 2);
+        let display = SocketAddrDisplay {
+            host: "proxy.test",
+            port: addr.port(),
+        };
+        let error = read_proxy_line(&mut stream, &mut buffer, display)
+            .expect_err("oversized proxy line must be rejected");
+
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        let rendered = error.message().to_string();
+        assert!(
+            rendered.contains("proxy response line too long"),
+            "unexpected error message: {rendered}"
+        );
+        assert!(
+            rendered.contains("1024"),
+            "error message should cite the 1024-byte cap: {rendered}"
+        );
+
+        handle.join().expect("server thread");
     }
 }
