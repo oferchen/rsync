@@ -344,7 +344,7 @@ mod tests {
             delete_timing: None,
         };
 
-        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir);
+        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
 
         assert_eq!(pairs.len(), 2);
         assert!(pairs.iter().any(|p| p.source.ends_with("file1.txt")));
@@ -376,7 +376,7 @@ mod tests {
             delete_timing: None,
         };
 
-        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir);
+        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
 
         assert!(pairs.is_empty());
     }
@@ -408,7 +408,7 @@ mod tests {
             delete_timing: None,
         };
 
-        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir);
+        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
 
         assert!(pairs.is_empty());
     }
@@ -440,7 +440,7 @@ mod tests {
             delete_timing: None,
         };
 
-        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir);
+        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir, None);
 
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs[0].source_size, 100);

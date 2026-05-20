@@ -5,7 +5,8 @@
 
 // upstream: generator.c:delete_in_dir() - post-transfer deletion
 
-use std::ffi::OsString;
+use std::borrow::Cow;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::Path;
 
@@ -19,7 +20,7 @@ pub(super) fn handle_post_transfer_deletions(
     relative: Option<&Path>,
     deletion_enabled: bool,
     delete_timing: Option<DeleteTiming>,
-    keep_names: &[&OsString],
+    keep_names: &[Cow<'_, OsStr>],
 ) -> Result<(), LocalCopyError> {
     if !deletion_enabled {
         return Ok(());
@@ -40,7 +41,8 @@ pub(super) fn handle_post_transfer_deletions(
         }
         DeleteTiming::Delay | DeleteTiming::After => {
             // Clone names for deferred processing (data must outlive the plan)
-            let keep_owned: Vec<OsString> = keep_names.iter().map(|&s| s.clone()).collect();
+            let keep_owned: Vec<OsString> =
+                keep_names.iter().map(|s| OsStr::to_os_string(s)).collect();
             let relative_owned = relative.map(Path::to_path_buf);
             context.defer_deletion(destination.to_path_buf(), relative_owned, keep_owned);
         }
