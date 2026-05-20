@@ -18,5 +18,5 @@ mod tests;
 pub use decode::{
     checksum_matches, read_xattr_definitions, recv_xattr, recv_xattr_request, recv_xattr_values,
 };
-pub use encode::{send_xattr, send_xattr_request, send_xattr_values};
+pub use encode::{send_sender_xattr_response, send_xattr, send_xattr_request, send_xattr_values};
 pub use types::{RecvXattrResult, XattrDefinition, XattrSet};
