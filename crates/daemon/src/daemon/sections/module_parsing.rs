@@ -260,6 +260,12 @@ fn parse_module_definition(
         apply_inline_module_options(options_text, &mut module)?;
     }
 
+    // Windows has no chroot(2), so suppress the absolute-path check there:
+    // upstream rsync's `use chroot` semantics simply don't apply on Windows,
+    // and rejecting Unix-style absolute paths (e.g. `/srv/docs`, which Windows
+    // `Path::is_absolute()` treats as non-absolute because they lack a drive
+    // letter) would block every cross-platform daemon config file.
+    #[cfg(unix)]
     if module.use_chroot && !module.path.is_absolute() {
         return Err(config_error(format!(
             "module path '{path_text}' must be absolute when 'use chroot' is enabled"
