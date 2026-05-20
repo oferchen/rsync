@@ -1,3 +1,7 @@
+// chroot(2) does not exist on Windows; the daemon's `use chroot` enforcement
+// is gated on `cfg(unix)` in module_parsing.rs and module_definition/finish.rs,
+// so the rejection this test exercises is a POSIX-only behaviour.
+#[cfg(unix)]
 #[test]
 fn runtime_options_rejects_relative_path_with_chroot_enabled() {
     let mut file = NamedTempFile::new().expect("config file");

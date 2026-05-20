@@ -26,6 +26,11 @@ impl ModuleDefinitionBuilder {
 
         let use_chroot = self.use_chroot.or(default_use_chroot).unwrap_or(true);
 
+        // Windows has no chroot(2), so the absolute-path enforcement gated on
+        // `use chroot` does not apply there. The check uses `Path::is_absolute()`
+        // which rejects Unix-style paths (e.g. `/srv/docs`) on Windows for lack
+        // of a drive letter. Mirrors the sibling fix in `module_parsing.rs`.
+        #[cfg(unix)]
         if use_chroot && !path.is_absolute() {
             return Err(config_parse_error(
                 config_path,

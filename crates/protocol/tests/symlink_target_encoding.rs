@@ -335,30 +335,53 @@ fn flist_roundtrip_target_with_spaces() {
 /// Tests symlink targets containing special shell characters.
 #[test]
 fn flist_roundtrip_target_with_shell_special_chars() {
-    let targets = [
-        "/path/with$dollar",
-        "/path/with!exclaim",
-        "/path/with#hash",
-        "/path/with&ampersand",
-        "/path/with(parens)",
-        "/path/with[brackets]",
-        "/path/with{braces}",
-        "/path/with|pipe",
-        "/path/with;semicolon",
-        "/path/with'quotes'",
-        "/path/with\"doublequotes\"",
-        "/path/with\\backslash",
-        "/path/with`backtick`",
-        "/path/with~tilde",
-    ];
+    // Windows `PathBuf::from("/path/with\\backslash")` normalises every `\`
+    // and `/` to the Windows separator, so the input string can't survive a
+    // round-trip through `PathBuf -> wire -> PathBuf -> String`. Skip the
+    // backslash-target case on Windows; the other shell metacharacters are
+    // byte-preserving and exercise the same encoder path identically.
+    let targets: &[&str] = if cfg!(windows) {
+        &[
+            "/path/with$dollar",
+            "/path/with!exclaim",
+            "/path/with#hash",
+            "/path/with&ampersand",
+            "/path/with(parens)",
+            "/path/with[brackets]",
+            "/path/with{braces}",
+            "/path/with|pipe",
+            "/path/with;semicolon",
+            "/path/with'quotes'",
+            "/path/with\"doublequotes\"",
+            "/path/with`backtick`",
+            "/path/with~tilde",
+        ]
+    } else {
+        &[
+            "/path/with$dollar",
+            "/path/with!exclaim",
+            "/path/with#hash",
+            "/path/with&ampersand",
+            "/path/with(parens)",
+            "/path/with[brackets]",
+            "/path/with{braces}",
+            "/path/with|pipe",
+            "/path/with;semicolon",
+            "/path/with'quotes'",
+            "/path/with\"doublequotes\"",
+            "/path/with\\backslash",
+            "/path/with`backtick`",
+            "/path/with~tilde",
+        ]
+    };
 
-    for target in &targets {
+    for target in targets {
         let decoded = roundtrip_symlink("link", PathBuf::from(target), ProtocolVersion::NEWEST);
         assert_eq!(
             decoded
                 .link_target()
                 .map(|p| p.to_string_lossy().into_owned()),
-            Some(target.to_string()),
+            Some((*target).to_string()),
             "failed for target: {target}",
         );
     }
