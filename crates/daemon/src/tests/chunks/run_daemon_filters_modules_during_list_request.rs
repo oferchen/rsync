@@ -6,10 +6,13 @@ fn run_daemon_filters_modules_during_list_request() {
 
     let (port, held_listener) = allocate_test_port();
 
+    // env::temp_dir() so the path exists on Windows; forward-slash normalised
+    // so the daemon module-arg parser doesn't swallow escapes (see PR #4560).
+    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
     let mut file = NamedTempFile::new().expect("config file");
     writeln!(
         file,
-        "[public]\npath = /srv/public\n\n[private]\npath = /srv/private\nhosts allow = 10.0.0.0/8\n",
+        "[public]\npath = {module_path}\n\n[private]\npath = {module_path}\nhosts allow = 10.0.0.0/8\n",
     )
     .expect("write config");
 

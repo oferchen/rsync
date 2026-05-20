@@ -6,15 +6,16 @@ fn run_daemon_lists_modules_on_request() {
 
     let (port, held_listener) = allocate_test_port();
 
+    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--module"),
-            OsString::from("docs=/srv/docs,Documentation"),
+            OsString::from(format!("docs={module_path},Documentation")),
             OsString::from("--module"),
-            OsString::from("logs=/var/log"),
+            OsString::from(format!("logs={module_path}")),
             OsString::from("--once"),
         ])
         .build();

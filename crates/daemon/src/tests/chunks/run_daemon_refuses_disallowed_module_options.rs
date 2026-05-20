@@ -6,10 +6,11 @@ fn run_daemon_refuses_disallowed_module_options() {
 
     let (port, held_listener) = allocate_test_port();
 
+    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
     let mut file = NamedTempFile::new().expect("config file");
     writeln!(
         file,
-        "[docs]\npath = /srv/docs\nrefuse options = compress\n",
+        "[docs]\npath = {module_path}\nrefuse options = compress\n",
     )
     .expect("write config");
 

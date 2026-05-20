@@ -6,10 +6,11 @@ fn run_daemon_omits_unlisted_modules_from_listing() {
 
     let (port, held_listener) = allocate_test_port();
 
+    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
     let mut file = NamedTempFile::new().expect("config file");
     writeln!(
         file,
-        "[visible]\npath = /srv/visible\n\n[hidden]\npath = /srv/hidden\nlist = no\n",
+        "[visible]\npath = {module_path}\n\n[hidden]\npath = {module_path}\nlist = no\n",
     )
     .expect("write config");
 
