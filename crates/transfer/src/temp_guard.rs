@@ -129,18 +129,14 @@ pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::Fil
 
         match fs::OpenOptions::new()
             .write(true)
-            .create_new(true) // O_EXCL - fail if exists
+            .create_new(true)
             .open(&concrete_path)
         {
             Ok(file) => {
                 return Ok((file, TempFileGuard::new(concrete_path)));
             }
-            Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                // Collision - try another random suffix
-                continue;
-            }
+            Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                // Parent directory missing - create it and retry.
                 // upstream: receiver.c:766 - mkdir_defmode(dn) before do_mkstemp()
                 if let Some(parent) = concrete_path.parent() {
                     fs::create_dir_all(parent)?;
@@ -175,7 +171,6 @@ fn fill_random_suffix(template: &str) -> String {
         .map(|&b| RAND_CHARS[(b as usize) % RAND_CHARS.len()] as char)
         .collect();
 
-    // Replace trailing XXXXXX with random suffix
     let prefix = &template[..template.len() - 6];
     format!("{prefix}{suffix}")
 }
@@ -217,10 +212,8 @@ impl TempFileGuard {
 impl Drop for TempFileGuard {
     fn drop(&mut self) {
         if !self.keep_on_drop {
-            // Best-effort cleanup - ignore errors since:
-            // 1. File might not exist (never created)
-            // 2. File might already be deleted (renamed away)
-            // 3. We're in a drop context (can't propagate errors)
+            // Best-effort: the file may never have been created, may already be renamed
+            // away, and we cannot propagate errors from drop anyway.
             let _ = std::fs::remove_file(&self.path);
         }
     }
@@ -231,8 +224,6 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
-
-    // === TempFileGuard tests ===
 
     #[test]
     fn temp_file_deleted_on_drop() {
@@ -315,14 +306,11 @@ mod tests {
         }
     }
 
-    // === get_tmpname tests ===
-
     #[test]
     fn tmpname_regular_file() {
         let dest = Path::new("/path/to/file.txt");
         let result = get_tmpname(dest, None).unwrap();
         let name = result.file_name().unwrap().to_string_lossy();
-        // Should be ".file.txt.XXXXXX"
         assert!(name.starts_with(".file.txt."), "got: {name}");
         assert!(name.ends_with("XXXXXX"), "got: {name}");
         assert_eq!(result.parent().unwrap(), Path::new("/path/to"));
@@ -333,7 +321,6 @@ mod tests {
         let dest = Path::new("/home/user/.bashrc");
         let result = get_tmpname(dest, None).unwrap();
         let name = result.file_name().unwrap().to_string_lossy();
-        // Should be ".bashrc.XXXXXX" (not "..bashrc.XXXXXX")
         assert!(name.starts_with(".bashrc."), "got: {name}");
         assert!(!name.starts_with(".."), "double dot: {name}");
         assert!(name.ends_with("XXXXXX"), "got: {name}");
@@ -344,7 +331,6 @@ mod tests {
         let dest = Path::new("/path/to/file.txt");
         let temp_dir = Path::new("/tmp/rsync");
         let result = get_tmpname(dest, Some(temp_dir)).unwrap();
-        // Should be in temp_dir without extra leading dot
         assert!(result.starts_with(temp_dir));
         let name = result.file_name().unwrap().to_string_lossy();
         assert!(name.starts_with("file.txt."), "got: {name}");
@@ -363,7 +349,6 @@ mod tests {
 
     #[test]
     fn tmpname_long_filename_truncated() {
-        // Create a filename that exceeds NAME_MAX with the suffix
         let long_name = "a".repeat(260);
         let dest = PathBuf::from(format!("/path/{long_name}"));
         let result = get_tmpname(&dest, None).unwrap();
@@ -379,15 +364,13 @@ mod tests {
 
     #[test]
     fn tmpname_utf8_truncation_safe() {
-        // Create a filename with multi-byte UTF-8 chars near the truncation boundary
-        // Each emoji is 4 bytes
-        let emojis = "\u{1F600}".repeat(65); // 260 bytes
+        // Each emoji is 4 bytes, so 65 of them puts the truncation boundary mid-codepoint.
+        let emojis = "\u{1F600}".repeat(65);
         let dest = PathBuf::from(format!("/path/{emojis}"));
         let result = get_tmpname(&dest, None).unwrap();
         let name = result.file_name().unwrap().to_string_lossy();
         assert!(name.len() <= NAME_MAX);
         assert!(name.ends_with("XXXXXX"));
-        // Verify it's valid UTF-8 (would panic on to_string_lossy if not)
         assert!(!name.contains('\u{FFFD}'), "broken UTF-8: {name}");
     }
 
@@ -399,15 +382,12 @@ mod tests {
         assert!(name.starts_with(".rsync."), "got: {name}");
     }
 
-    // === fill_random_suffix tests ===
-
     #[test]
     fn fill_random_suffix_replaces_xs() {
         let template = "/path/to/.file.txt.XXXXXX";
         let result = fill_random_suffix(template);
         assert!(!result.ends_with("XXXXXX"), "Xs not replaced: {result}");
         assert_eq!(result.len(), template.len());
-        // Verify prefix is preserved
         assert!(result.starts_with("/path/to/.file.txt."));
     }
 
@@ -415,7 +395,7 @@ mod tests {
     fn fill_random_suffix_produces_unique_names() {
         let template = "/tmp/.test.XXXXXX";
         let names: Vec<String> = (0..10).map(|_| fill_random_suffix(template)).collect();
-        // With 62^6 = ~56 billion possibilities, duplicates are near-impossible
+        // With 62^6 = ~56 billion possibilities, duplicates are near-impossible.
         let unique: std::collections::HashSet<_> = names.iter().collect();
         assert!(unique.len() > 1, "all names identical: {names:?}");
     }
@@ -435,8 +415,6 @@ mod tests {
         }
     }
 
-    // === open_tmpfile tests ===
-
     #[test]
     fn open_tmpfile_creates_file() {
         let dir = tempdir().expect("create temp dir");
@@ -453,7 +431,6 @@ mod tests {
         assert!(!name.ends_with("XXXXXX"), "template not filled: {name}");
         assert_eq!(temp_path.parent().unwrap(), dir.path());
 
-        // Guard cleanup
         guard.keep();
         fs::remove_file(&temp_path).ok();
     }
@@ -497,13 +474,10 @@ mod tests {
             let (_file, guard) = open_tmpfile(&dest, None).unwrap();
             temp_path = guard.path().to_path_buf();
             assert!(temp_path.exists());
-            // guard dropped here - file should be deleted
         }
 
         assert!(!temp_path.exists());
     }
-
-    // === truncate_utf8_safe tests ===
 
     #[test]
     fn truncate_short_string_unchanged() {
@@ -522,13 +496,12 @@ mod tests {
 
     #[test]
     fn truncate_no_split_multibyte() {
-        // 2-byte UTF-8 chars (é = 0xC3 0xA9)
-        let chars = "é".repeat(130); // 260 bytes
+        // é is 2 bytes (0xC3 0xA9); 130 of them is 260 bytes, exceeding NAME_MAX.
+        let chars = "é".repeat(130);
         let name = format!(".{chars}.XXXXXX");
         let result = truncate_utf8_safe(&name, 255);
         assert!(result.len() <= 255);
         assert!(result.ends_with(".XXXXXX"));
-        // Verify no replacement char
         assert!(!result.contains('\u{FFFD}'));
     }
 }

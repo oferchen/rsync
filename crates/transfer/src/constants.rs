@@ -80,10 +80,6 @@ pub const fn aligned_overshoot(offset: u64) -> usize {
     (offset & (ALIGN_BOUNDARY as u64 - 1)) as usize
 }
 
-// These functions use 128-bit integer comparison for fast zero detection,
-// processing 16 bytes at a time. On x86-64, u128 operations are optimized
-// to use SSE/AVX registers, providing SIMD-like performance.
-
 /// Counts the number of leading zero bytes in a slice.
 ///
 /// Uses 16-byte chunks with u128 comparison for fast detection,
@@ -99,7 +95,6 @@ pub fn leading_zero_count(bytes: &[u8]) -> usize {
     let mut iter = bytes.chunks_exact(16);
 
     for chunk in &mut iter {
-        // SAFETY: chunks_exact(16) guarantees exactly 16-byte slices
         let chunk: &[u8; 16] = chunk.try_into().expect("chunks_exact guarantees 16 bytes");
         if u128::from_ne_bytes(*chunk) == 0 {
             offset += 16;
@@ -127,18 +122,15 @@ pub fn trailing_zero_count(bytes: &[u8]) -> usize {
     let mut iter = bytes.rchunks_exact(16);
 
     for chunk in &mut iter {
-        // SAFETY: rchunks_exact(16) guarantees exactly 16-byte slices
         let chunk: &[u8; 16] = chunk.try_into().expect("rchunks_exact guarantees 16 bytes");
         if u128::from_ne_bytes(*chunk) == 0 {
             offset += 16;
         } else {
-            // Found non-zero in this chunk - scan for exact position
             let trailing = chunk.iter().rev().take_while(|&&b| b == 0).count();
             return offset + trailing;
         }
     }
 
-    // Handle remainder (< 16 bytes)
     offset
         + iter
             .remainder()
@@ -213,8 +205,6 @@ mod tests {
         assert_eq!(aligned_overshoot(2000), 976);
     }
 
-    // Zero detection tests
-
     #[test]
     fn leading_zero_count_empty() {
         assert_eq!(leading_zero_count(&[]), 0);
@@ -240,7 +230,6 @@ mod tests {
     fn leading_zero_count_mixed() {
         assert_eq!(leading_zero_count(&[0, 0, 1, 0]), 2);
         assert_eq!(leading_zero_count(&[0, 0, 0, 0, 0, 1]), 5);
-        // Test at 16-byte boundary
         let mut data = vec![0u8; 20];
         data[16] = 1;
         assert_eq!(leading_zero_count(&data), 16);
@@ -270,7 +259,6 @@ mod tests {
     fn trailing_zero_count_mixed() {
         assert_eq!(trailing_zero_count(&[1, 0, 0]), 2);
         assert_eq!(trailing_zero_count(&[1, 0, 0, 0, 0, 0]), 5);
-        // Test at 16-byte boundary
         let mut data = vec![0u8; 20];
         data[3] = 1;
         assert_eq!(trailing_zero_count(&data), 16);
