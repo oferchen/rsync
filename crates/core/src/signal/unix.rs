@@ -1,11 +1,15 @@
 //! Unix signal handling implementation.
 //!
-//! This module provides the actual signal handling implementation for Unix systems
-//! using raw libc signal handlers. Signal handlers must be async-signal-safe, so
-//! they only set atomic flags and do no allocation or locking.
+//! This module installs async-signal-safe handlers via
+//! [`fast_io::signal::install_signal_handler`]. The handlers themselves are
+//! defined here and only mutate atomic flags - no allocation, no locking.
+//! All `unsafe` FFI lives behind the `fast_io` boundary so this crate stays
+//! under `#![deny(unsafe_code)]`.
 
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use fast_io::signal::install_signal_handler;
 
 use crate::exit_code::ExitCode;
 
@@ -197,45 +201,10 @@ extern "C" fn handle_sigpipe(_signum: libc::c_int) {
 /// # }
 /// ```
 pub fn install_signal_handlers() -> io::Result<SignalHandler> {
-    // SAFETY: Zero-initialises libc::sigaction structs (valid POD layout) before passing them
-    // to libc::sigaction; handler functions are async-signal-safe and only set atomic flags.
-    unsafe {
-        let mut sa_int: libc::sigaction = std::mem::zeroed();
-        sa_int.sa_sigaction = handle_sigint as *const () as libc::sighandler_t;
-        sa_int.sa_flags = libc::SA_RESTART; // Restart interrupted syscalls
-        libc::sigemptyset(&mut sa_int.sa_mask as *mut libc::sigset_t);
-
-        if libc::sigaction(libc::SIGINT, &sa_int, std::ptr::null_mut()) != 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        let mut sa_term: libc::sigaction = std::mem::zeroed();
-        sa_term.sa_sigaction = handle_sigterm as *const () as libc::sighandler_t;
-        sa_term.sa_flags = libc::SA_RESTART;
-        libc::sigemptyset(&mut sa_term.sa_mask as *mut libc::sigset_t);
-
-        if libc::sigaction(libc::SIGTERM, &sa_term, std::ptr::null_mut()) != 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        let mut sa_hup: libc::sigaction = std::mem::zeroed();
-        sa_hup.sa_sigaction = handle_sighup as *const () as libc::sighandler_t;
-        sa_hup.sa_flags = libc::SA_RESTART;
-        libc::sigemptyset(&mut sa_hup.sa_mask as *mut libc::sigset_t);
-
-        if libc::sigaction(libc::SIGHUP, &sa_hup, std::ptr::null_mut()) != 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        let mut sa_pipe: libc::sigaction = std::mem::zeroed();
-        sa_pipe.sa_sigaction = handle_sigpipe as *const () as libc::sighandler_t;
-        sa_pipe.sa_flags = libc::SA_RESTART;
-        libc::sigemptyset(&mut sa_pipe.sa_mask as *mut libc::sigset_t);
-
-        if libc::sigaction(libc::SIGPIPE, &sa_pipe, std::ptr::null_mut()) != 0 {
-            return Err(io::Error::last_os_error());
-        }
-    }
+    install_signal_handler(libc::SIGINT, handle_sigint)?;
+    install_signal_handler(libc::SIGTERM, handle_sigterm)?;
+    install_signal_handler(libc::SIGHUP, handle_sighup)?;
+    install_signal_handler(libc::SIGPIPE, handle_sigpipe)?;
 
     Ok(SignalHandler { installed: true })
 }

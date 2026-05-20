@@ -115,6 +115,8 @@ pub mod platform_copy;
 pub mod refs_detect;
 /// Zero-copy file-to-socket transfer using `sendfile` with automatic fallback.
 pub mod sendfile;
+/// Safe wrappers around platform signal-handler installation.
+pub mod signal;
 /// Safe wrappers around platform `setsockopt` for integer-valued options.
 pub mod socket_options;
 /// Zero-copy socket-to-disk transfer using `splice`/`vmsplice` syscalls.
