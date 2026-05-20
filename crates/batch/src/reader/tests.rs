@@ -114,13 +114,12 @@ mod header_tests {
         let config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
-            28, // Different from the 30 used to write
+            28, // mismatched: batch was written with 30
         );
 
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
 
-        // Config should adopt the protocol version from the batch header
         assert_eq!(reader.config().protocol_version, 30);
         assert_eq!(reader.header().unwrap().protocol_version, 30);
     }
@@ -130,7 +129,6 @@ mod header_tests {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("compat.batch");
 
-        // Write a batch with non-zero compat flags
         let config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -142,7 +140,6 @@ mod header_tests {
         writer.write_header(BatchFlags::default()).unwrap();
         writer.finalize().unwrap();
 
-        // Read back with different config values
         let config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -151,7 +148,6 @@ mod header_tests {
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
 
-        // Config must adopt the compat flags from the batch header
         assert_eq!(reader.config().compat_flags, Some(0x3F));
         assert_eq!(reader.header().unwrap().compat_flags, Some(0x3F));
     }
@@ -161,7 +157,6 @@ mod header_tests {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("seed.batch");
 
-        // Write a batch with a specific checksum seed
         let config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -172,7 +167,6 @@ mod header_tests {
         writer.write_header(BatchFlags::default()).unwrap();
         writer.finalize().unwrap();
 
-        // Read back with default seed (0)
         let config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -181,7 +175,6 @@ mod header_tests {
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
 
-        // Config must adopt the checksum seed from the batch header
         assert_eq!(reader.config().checksum_seed, 0xDEAD);
         assert_eq!(reader.header().unwrap().checksum_seed, 0xDEAD);
     }
@@ -191,7 +184,7 @@ mod header_tests {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("old_proto.batch");
 
-        // Write with protocol 28 (no compat flags)
+        // Protocol < 30 has no compat flags.
         let config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -202,11 +195,10 @@ mod header_tests {
         writer.write_header(BatchFlags::default()).unwrap();
         writer.finalize().unwrap();
 
-        // Read back - compat_flags should be None for protocol < 30
         let config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
-            31, // config says 31 but batch says 28
+            31, // mismatched: batch was written with 28
         );
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
@@ -310,7 +302,6 @@ mod data_tests {
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
 
-        // Try to read more data than available
         let mut buf = [0u8; 1000];
         let result = reader.read_exact(&mut buf);
         assert!(result.is_err());
@@ -342,7 +333,6 @@ mod file_entry_tests {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("empty.batch");
 
-        // Create a batch with just header, no file entries
         let config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -352,7 +342,6 @@ mod file_entry_tests {
         writer.write_header(BatchFlags::default()).unwrap();
         writer.finalize().unwrap();
 
-        // Read it back
         let config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -361,7 +350,6 @@ mod file_entry_tests {
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
 
-        // Should return None on EOF
         let entry = reader.read_file_entry().unwrap();
         assert!(entry.is_none());
     }
@@ -450,7 +438,6 @@ mod flist_deserialization_tests {
         let batch_path = temp_dir.path().join("flist_basic.batch");
         let protocol_version = 31;
 
-        // Write phase
         let write_config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -506,7 +493,7 @@ mod flist_deserialization_tests {
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
 
-        // Write empty uid and gid ID lists (terminator-only).
+        // Empty uid and gid ID lists (terminator-only).
         // upstream: uidlist.c:send_id_lists() sends these after the flist
         // when preserve_uid/gid is set and !inc_recurse.
         let uid_list = protocol::idlist::IdList::new();
@@ -522,7 +509,6 @@ mod flist_deserialization_tests {
 
         writer.finalize().unwrap();
 
-        // Read phase
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -541,7 +527,6 @@ mod flist_deserialization_tests {
         assert_eq!(read_entries[2].name(), "subdir");
         assert!(read_entries[2].is_dir());
 
-        // io_error should be zero for a clean flist
         assert_eq!(reader.io_error(), 0);
     }
 
@@ -558,7 +543,6 @@ mod flist_deserialization_tests {
         let protocol_version = 31;
         let csum_len = 16; // MD5 digest length
 
-        // Write phase
         let write_config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -577,7 +561,7 @@ mod flist_deserialization_tests {
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let mut flist_writer = FileListWriter::new(protocol).with_always_checksum(csum_len);
 
-        // Two regular files - each will have a checksum after it on the wire
+        // Two regular files: each carries a trailing checksum on the wire.
         let entries = vec![
             {
                 let mut e = ProtocolFileEntry::new_file("file1.dat".into(), 500, 0o644);
@@ -604,7 +588,7 @@ mod flist_deserialization_tests {
         writer.write_data(&end_buf).unwrap();
         writer.finalize().unwrap();
 
-        // Read phase - the reader must correctly consume checksum bytes
+        // Reader must consume the trailing per-entry checksum bytes.
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -659,7 +643,6 @@ mod flist_deserialization_tests {
         let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
         let flist_writer = FileListWriter::new(protocol);
 
-        // Write only the end marker, no entries
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
@@ -689,7 +672,6 @@ mod token_delta_tests {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("token_delta.batch");
 
-        // Write a batch with token-format delta data for one file
         let config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -700,14 +682,13 @@ mod token_delta_tests {
         let mut writer = BatchWriter::new(config).unwrap();
         writer.write_header(BatchFlags::default()).unwrap();
 
-        // Write token-format delta data: one literal + end marker
+        // Token-format delta: one literal + end marker.
         let mut buf = Vec::new();
         protocol::wire::delta::write_token_literal(&mut buf, b"hello batch world").unwrap();
         protocol::wire::delta::write_token_end(&mut buf).unwrap();
         writer.write_data(&buf).unwrap();
         writer.finalize().unwrap();
 
-        // Read back
         let config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -742,13 +723,11 @@ mod token_delta_tests {
         let mut writer = BatchWriter::new(config).unwrap();
         writer.write_header(BatchFlags::default()).unwrap();
 
-        // File 1: literal "AAA" + end
         let mut buf = Vec::new();
         protocol::wire::delta::write_token_literal(&mut buf, b"AAA").unwrap();
         protocol::wire::delta::write_token_end(&mut buf).unwrap();
         writer.write_data(&buf).unwrap();
 
-        // File 2: literal "BBBBB" + block match 0 + end
         let mut buf2 = Vec::new();
         protocol::wire::delta::write_token_literal(&mut buf2, b"BBBBB").unwrap();
         protocol::wire::delta::write_token_block_match(&mut buf2, 0).unwrap();
@@ -757,7 +736,6 @@ mod token_delta_tests {
 
         writer.finalize().unwrap();
 
-        // Read back
         let config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -766,12 +744,10 @@ mod token_delta_tests {
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
 
-        // File 1
         let ops1 = reader.read_file_delta_tokens().unwrap();
         assert_eq!(ops1.len(), 1);
         assert_eq!(ops1[0], protocol::wire::DeltaOp::Literal(b"AAA".to_vec()));
 
-        // File 2
         let ops2 = reader.read_file_delta_tokens().unwrap();
         assert_eq!(ops2.len(), 2);
         assert_eq!(ops2[0], protocol::wire::DeltaOp::Literal(b"BBBBB".to_vec()));
@@ -817,14 +793,12 @@ mod inc_recurse_flist_tests {
     /// 5. NDX_FLIST_EOF
     fn build_inc_recurse_batch(path: &Path) {
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
-        // INC_RECURSE + VARINT_FLIST_FLAGS + SAFE_FILE_LIST
         let compat_flags = CompatibilityFlags::INC_RECURSE
             | CompatibilityFlags::VARINT_FLIST_FLAGS
             | CompatibilityFlags::SAFE_FILE_LIST;
 
         let mut file = std::fs::File::create(path).unwrap();
 
-        // --- Batch header ---
         let header = crate::format::BatchHeader {
             stream_flags: BatchFlags {
                 recurse: true,
@@ -836,18 +810,18 @@ mod inc_recurse_flist_tests {
         };
         header.write_to(&mut file).unwrap();
 
-        // --- Initial flist segment: "." directory ---
+        // Initial flist segment: "." directory.
         let mut flist_writer = FileListWriter::with_compat_flags(protocol, compat_flags);
         let dot_dir = FileEntry::new_directory(".".into(), 0o755);
         flist_writer.write_entry(&mut file, &dot_dir).unwrap();
         flist_writer.write_end(&mut file, None).unwrap();
 
-        // --- NDX for sub-list: directory index 0 ---
+        // NDX for sub-list: directory index 0.
         let mut ndx_codec = NdxCodecEnum::new(32);
-        let sub_list_ndx = NDX_FLIST_OFFSET; // dir at index 0
+        let sub_list_ndx = NDX_FLIST_OFFSET;
         ndx_codec.write_ndx(&mut file, sub_list_ndx).unwrap();
 
-        // --- Sub-flist segment: entries relative to "." ---
+        // Sub-flist segment: entries relative to ".".
         let mut sub_writer = FileListWriter::with_compat_flags(protocol, compat_flags);
         let entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
         let entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
@@ -855,7 +829,6 @@ mod inc_recurse_flist_tests {
         sub_writer.write_entry(&mut file, &entry2).unwrap();
         sub_writer.write_end(&mut file, None).unwrap();
 
-        // --- NDX_FLIST_EOF ---
         ndx_codec.write_ndx(&mut file, NDX_FLIST_EOF).unwrap();
 
         file.flush().unwrap();
@@ -880,7 +853,6 @@ mod inc_recurse_flist_tests {
         // segment. Sub-lists are read on-demand via read_incremental_flist_segment().
         let mut entries = reader.read_protocol_flist().unwrap();
 
-        // Initial segment has only the "." directory.
         assert_eq!(
             entries.len(),
             1,
@@ -889,18 +861,14 @@ mod inc_recurse_flist_tests {
         );
         assert_eq!(entries[0].name(), ".");
 
-        // NDX codec is available for reading sub-list NDX values.
         let mut ndx_codec = reader.take_ndx_codec().expect("NDX codec should be set");
 
-        // Read the sub-list NDX from the stream.
         let batch_reader = reader.inner_reader().unwrap();
         let ndx = ndx_codec.read_ndx(batch_reader).unwrap();
         assert_eq!(ndx, NDX_FLIST_OFFSET, "Expected NDX_FLIST_OFFSET");
 
-        // Read the sub-list segment.
         reader.read_incremental_flist_segment(&mut entries).unwrap();
 
-        // Now we have all 3 entries.
         assert_eq!(
             entries.len(),
             3,
@@ -908,7 +876,6 @@ mod inc_recurse_flist_tests {
             entries.len()
         );
 
-        // Sub-list entries have parent directory prepended.
         let name1 = entries[1].name();
         let name2 = entries[2].name();
         assert!(
@@ -920,7 +887,6 @@ mod inc_recurse_flist_tests {
             "Expected file2.txt in name, got: {name2}"
         );
 
-        // Read the NDX_FLIST_EOF to confirm stream is fully consumed.
         let batch_reader = reader.inner_reader().unwrap();
         let eof_ndx = ndx_codec.read_ndx(batch_reader).unwrap();
         assert_eq!(eof_ndx, NDX_FLIST_EOF, "Expected NDX_FLIST_EOF");
@@ -942,7 +908,6 @@ mod inc_recurse_flist_tests {
         reader.read_header().unwrap();
         let _entries = reader.read_protocol_flist().unwrap();
 
-        // The NDX codec should be available for the delta replay phase.
         let codec = reader.take_ndx_codec();
         assert!(
             codec.is_some(),
@@ -955,7 +920,6 @@ mod inc_recurse_flist_tests {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("no_inc_recurse.batch");
 
-        // Build a batch file WITHOUT INC_RECURSE
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         let compat_flags =
             CompatibilityFlags::VARINT_FLIST_FLAGS | CompatibilityFlags::SAFE_FILE_LIST;
@@ -973,7 +937,6 @@ mod inc_recurse_flist_tests {
         };
         header.write_to(&mut file).unwrap();
 
-        // Write a single flist with all entries (no INC_RECURSE)
         let mut flist_writer = FileListWriter::with_compat_flags(protocol, compat_flags);
         let dir_entry = FileEntry::new_directory(".".into(), 0o755);
         let file1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
@@ -995,7 +958,6 @@ mod inc_recurse_flist_tests {
         let entries = reader.read_protocol_flist().unwrap();
         assert_eq!(entries.len(), 2);
 
-        // No NDX codec should be stored for non-INC_RECURSE mode.
         let codec = reader.take_ndx_codec();
         assert!(
             codec.is_none(),
@@ -1025,7 +987,6 @@ mod compressed_delta_tests {
         };
         writer.write_header(flags).unwrap();
 
-        // Encode literal data with CompressedTokenEncoder (zlibx mode)
         let mut encoded = Vec::new();
         let mut encoder = CompressedTokenEncoder::default();
         encoder.set_zlibx(true);
@@ -1060,7 +1021,6 @@ mod compressed_delta_tests {
 
         let ops = reader.read_compressed_delta_tokens(&mut decoder).unwrap();
 
-        // Collect all literal data
         let mut reconstructed = Vec::new();
         for op in &ops {
             if let protocol::wire::DeltaOp::Literal(data) = op {
@@ -1093,7 +1053,6 @@ mod compressed_delta_tests {
         };
         writer.write_header(flags).unwrap();
 
-        // Encode: literal + block match + literal + end
         let mut encoded = Vec::new();
         let mut encoder = CompressedTokenEncoder::default();
         encoder.set_zlibx(true);
@@ -1105,7 +1064,6 @@ mod compressed_delta_tests {
         writer.write_data(&encoded).unwrap();
         writer.finalize().unwrap();
 
-        // Read back
         let config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -1146,7 +1104,7 @@ mod compressed_delta_tests {
             32,
         );
         let mut reader = BatchReader::new(config).unwrap();
-        // Don't read header
+        // No read_header() call.
         let mut decoder = CompressedTokenDecoder::new();
         let result = reader.read_compressed_delta_tokens(&mut decoder);
         assert!(result.is_err(), "should fail without header");

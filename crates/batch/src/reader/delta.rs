@@ -45,9 +45,9 @@ impl BatchReader {
                 })?;
 
                 match token {
-                    None => break, // End marker (token value 0)
+                    None => break, // end marker (token value 0)
                     Some(n) if n > 0 => {
-                        // Literal data: n bytes follow
+                        // Literal: n bytes follow.
                         let mut data = vec![0u8; n as usize];
                         reader.read_exact(&mut data).map_err(|e| {
                             BatchError::Io(io::Error::new(
@@ -58,11 +58,11 @@ impl BatchReader {
                         ops.push(protocol::wire::DeltaOp::Literal(data));
                     }
                     Some(n) => {
-                        // Block match: block_index = -(n+1)
+                        // Block match: block_index = -(n+1); length resolved at replay time.
                         let block_index = (-(n + 1)) as u32;
                         ops.push(protocol::wire::DeltaOp::Copy {
                             block_index,
-                            length: 0, // Length determined by block size at replay time
+                            length: 0,
                         });
                     }
                 }
