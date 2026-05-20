@@ -24,15 +24,19 @@ use protocol::flist::{
 /// Generates mock file entries with realistic path structures.
 ///
 /// Creates entries without touching the filesystem - all data is synthetic.
+/// Paths are built with explicit forward slashes so the in-memory form matches
+/// the rsync wire encoding on every platform (Windows path joins would
+/// otherwise introduce backslashes and break round-trip name comparisons).
 fn generate_mock_entries(count: usize) -> Vec<FileEntry> {
     (0..count)
         .map(|i| {
             // Create varied path depths (1-5 levels)
             let depth = (i % 5) + 1;
-            let path: PathBuf = (0..depth)
+            let dirs = (0..depth)
                 .map(|d| format!("dir_{:03}", (i + d) % 100))
-                .collect::<PathBuf>()
-                .join(format!("file_{i:06}.txt"));
+                .collect::<Vec<_>>()
+                .join("/");
+            let path = PathBuf::from(format!("{dirs}/file_{i:06}.txt"));
 
             let mut entry = FileEntry::new_file(path, (i * 1024) as u64, 0o644);
             entry.set_mtime(1700000000 + (i as i64), 0);
@@ -60,18 +64,19 @@ fn generate_mixed_tree(num_dirs: usize, files_per_dir: usize) -> Vec<FileEntry> 
     let mut entries = Vec::with_capacity(num_dirs * (2 + files_per_dir));
 
     for d in 0..num_dirs {
-        let dir_path = PathBuf::from(format!("project/src/module_{d:04}"));
-        entries.push(FileEntry::new_directory(dir_path.clone(), 0o755));
+        let dir_str = format!("project/src/module_{d:04}");
+        let dir_path = PathBuf::from(&dir_str);
+        entries.push(FileEntry::new_directory(dir_path, 0o755));
 
         for f in 0..files_per_dir {
-            let file_path = dir_path.join(format!("impl_{f:04}.rs"));
+            let file_path = PathBuf::from(format!("{dir_str}/impl_{f:04}.rs"));
             let mut entry = FileEntry::new_file(file_path, ((d * f + f) * 256) as u64, 0o644);
             entry.set_mtime(1700000000, 0);
             entries.push(entry);
         }
 
         // Add a symlink in each directory
-        let link_path = dir_path.join("latest");
+        let link_path = PathBuf::from(format!("{dir_str}/latest"));
         entries.push(FileEntry::new_symlink(
             link_path,
             PathBuf::from(format!("impl_{:04}.rs", files_per_dir.saturating_sub(1))),
