@@ -592,7 +592,6 @@ mod tests {
 
     #[test]
     fn flags_from_u32() {
-        // Test with all three bytes
         let value: u32 = 0x020103; // extended16=0x02, extended=0x01, primary=0x03
         let flags = FileFlags::from_u32(value);
         assert_eq!(flags.primary, 0x03);

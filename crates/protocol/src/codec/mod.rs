@@ -218,10 +218,8 @@ mod tests {
         let codecs = ProtocolCodecs::for_version(32);
         let mut buf = Vec::new();
 
-        // Write file size
         codecs.wire.write_file_size(&mut buf, 12345).unwrap();
 
-        // Read it back
         let mut cursor = Cursor::new(&buf);
         let value = codecs.wire.read_file_size(&mut cursor).unwrap();
         assert_eq!(value, 12345);
@@ -234,12 +232,11 @@ mod tests {
         let mut codecs = ProtocolCodecs::for_version(32);
         let mut buf = Vec::new();
 
-        // Write NDX values
         codecs.ndx.write_ndx(&mut buf, 0).unwrap();
         codecs.ndx.write_ndx(&mut buf, 1).unwrap();
         codecs.ndx.write_ndx(&mut buf, 5).unwrap();
 
-        // Read them back with fresh codec state
+        // Fresh codec state on the reader side: NDX deltas are stateful.
         let mut read_codecs = ProtocolCodecs::for_version(32);
         let mut cursor = Cursor::new(&buf);
         assert_eq!(read_codecs.ndx.read_ndx(&mut cursor).unwrap(), 0);
@@ -254,13 +251,11 @@ mod tests {
         let mut codecs = ProtocolCodecs::for_version(30);
         let mut buf = Vec::new();
 
-        // Mix wire and NDX operations
         codecs.wire.write_file_size(&mut buf, 1000).unwrap();
         codecs.ndx.write_ndx(&mut buf, 0).unwrap();
         codecs.wire.write_mtime(&mut buf, 1700000000).unwrap();
         codecs.ndx.write_ndx(&mut buf, 1).unwrap();
 
-        // Read them back
         let mut read_codecs = ProtocolCodecs::for_version(30);
         let mut cursor = Cursor::new(&buf);
 
