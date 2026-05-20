@@ -172,6 +172,63 @@ impl IconvSetting {
             }
         }
     }
+
+    /// Resolves the iconv setting into a [`FilenameConverter`] that maps
+    /// source-side bytes directly to destination-side bytes for a pure
+    /// local-copy (no wire involved).
+    ///
+    /// In upstream rsync's local-copy mode, both sender and receiver run
+    /// in the same address space but each opens its own iconv context.
+    /// The split at the comma is described in `rsync.c:118-122`:
+    ///
+    /// ```text
+    /// if ((cp = strchr(iconv_opt, ',')) != NULL) {
+    ///     if (am_server) iconv_opt = cp + 1; // receiver sees REMOTE
+    ///     else            *cp = '\0';        // sender sees LOCAL
+    /// }
+    /// ```
+    ///
+    /// The sender then opens `ic_send = iconv_open(UTF8, LOCAL)` and the
+    /// receiver opens `ic_recv = iconv_open(REMOTE, UTF8)`
+    /// (`rsync.c:130-140`). A filename therefore travels through both
+    /// converters: LOCAL -> UTF-8 wire -> REMOTE. Composing those is
+    /// equivalent to a single `FilenameConverter` whose local charset is
+    /// LOCAL and whose remote charset is REMOTE, used in
+    /// `local_to_remote` direction.
+    ///
+    /// For `IconvSetting::Explicit { local, remote: None }` upstream
+    /// treats the omitted half as locale (server side), which in our
+    /// codebase resolves to UTF-8. The result is identical to the
+    /// SSH/daemon `resolve_converter` output.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:118-122` - LOCAL/REMOTE split between client and server.
+    /// - `rsync.c:130-140` - `ic_send`/`ic_recv` `iconv_open` calls.
+    /// - `flist.c:1579-1603` - sender applies `ic_send` to filenames.
+    /// - `flist.c:738-754` - receiver applies `ic_recv` to filenames.
+    pub fn resolve_local_copy_converter(&self) -> Option<FilenameConverter> {
+        match self {
+            Self::Unspecified | Self::Disabled => None,
+            Self::LocaleDefault => Some(converter_from_locale()),
+            Self::Explicit { local, remote } => {
+                let remote_charset = remote.as_deref().unwrap_or("UTF-8");
+                match FilenameConverter::new(local, remote_charset) {
+                    Ok(converter) => Some(converter),
+                    Err(_error) => {
+                        #[cfg(feature = "tracing")]
+                        tracing::warn!(
+                            local = %local,
+                            remote = %remote_charset,
+                            error = %_error,
+                            "--iconv: unsupported charset pair; local-copy filenames will not be transcoded",
+                        );
+                        None
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Errors raised while parsing an iconv specification.
@@ -344,6 +401,78 @@ mod tests {
             remote: Some("UTF-8".to_owned()),
         };
         assert!(setting.resolve_converter().is_none());
+    }
+
+    #[test]
+    fn resolve_local_copy_converter_unspecified_is_none() {
+        assert!(
+            IconvSetting::Unspecified
+                .resolve_local_copy_converter()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_local_copy_converter_disabled_is_none() {
+        assert!(
+            IconvSetting::Disabled
+                .resolve_local_copy_converter()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_local_copy_converter_locale_default_is_identity() {
+        let converter = IconvSetting::LocaleDefault
+            .resolve_local_copy_converter()
+            .expect("locale-default produces a converter");
+        assert!(converter.is_identity());
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn resolve_local_copy_converter_explicit_pair_uses_both_sides() {
+        // upstream: rsync.c:118-140 - in local-copy mode the sender opens
+        // ic_send=iconv_open(UTF8, LOCAL) and the receiver opens
+        // ic_recv=iconv_open(REMOTE, UTF8). Composing both is equivalent
+        // to a single LOCAL->REMOTE converter.
+        let setting = IconvSetting::Explicit {
+            local: "UTF-8".to_owned(),
+            remote: Some("ISO-8859-1".to_owned()),
+        };
+        let converter = setting
+            .resolve_local_copy_converter()
+            .expect("explicit pair resolves");
+        assert!(!converter.is_identity());
+        assert_eq!(converter.local_encoding_name(), "UTF-8");
+        // encoding_rs aliases ISO-8859-1 to windows-1252 per the WHATWG
+        // Encoding spec; the rendered name is therefore "windows-1252".
+        assert_ne!(converter.remote_encoding_name(), "UTF-8");
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn resolve_local_copy_converter_explicit_single_pairs_with_utf8() {
+        // Upstream behaviour for a bare LOCAL: the server falls back to
+        // locale on its side, which oc-rsync renders as UTF-8.
+        let setting = IconvSetting::Explicit {
+            local: "ISO-8859-1".to_owned(),
+            remote: None,
+        };
+        let converter = setting
+            .resolve_local_copy_converter()
+            .expect("single charset resolves");
+        assert!(!converter.is_identity());
+        assert_eq!(converter.remote_encoding_name(), "UTF-8");
+    }
+
+    #[test]
+    fn resolve_local_copy_converter_malformed_falls_back_to_none() {
+        let setting = IconvSetting::Explicit {
+            local: "definitely-not-a-real-charset".to_owned(),
+            remote: Some("UTF-8".to_owned()),
+        };
+        assert!(setting.resolve_local_copy_converter().is_none());
     }
 
     mod debug_iconv_emissions {

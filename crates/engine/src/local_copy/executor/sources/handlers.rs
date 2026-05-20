@@ -14,7 +14,7 @@ use ::metadata::MetadataOptions;
 
 use super::super::{
     capture_batch_file_entry, copy_device, copy_directory_recursive, copy_fifo, copy_file,
-    copy_symlink, non_empty_path,
+    copy_symlink, non_empty_path, transcode_filename_component,
 };
 use super::destination::{compute_special_target_path, compute_target_path};
 use super::metadata::resolve_effective_metadata;
@@ -154,7 +154,11 @@ pub(super) fn handle_directory_copy(
     }
 
     let target = if destination_behaves_like_directory || multiple_sources {
-        destination_base.join(name)
+        // upstream: flist.c:1579-1603 + flist.c:738-754 - filename is
+        // transcoded LOCAL -> wire -> REMOTE; for local-copy this
+        // collapses to LOCAL -> REMOTE applied here before joining.
+        let converted = transcode_filename_component(name, context.options().iconv());
+        destination_base.join(Path::new(&*converted))
     } else {
         destination_path.to_path_buf()
     };
@@ -201,6 +205,7 @@ pub(super) fn handle_symlink_copy(
             name,
             destination_behaves_like_directory,
             prefer_root_destination,
+            context.options().iconv(),
         );
 
         copy_symlink(
@@ -244,6 +249,7 @@ pub(super) fn handle_fifo_copy(
         name,
         destination_behaves_like_directory,
         prefer_root_destination,
+        context.options().iconv(),
     );
 
     copy_fifo(
@@ -280,6 +286,7 @@ pub(super) fn handle_device_copy(
         name,
         destination_behaves_like_directory,
         prefer_root_destination,
+        context.options().iconv(),
     );
 
     if context.copy_devices_as_files_enabled() {
@@ -359,6 +366,7 @@ pub(super) fn handle_non_directory_source(
             proc_ctx.destination_behaves_like_directory,
             prefer_root_destination,
             false,
+            context.options().iconv(),
         );
         let _ = copy_file(
             context,
@@ -375,6 +383,7 @@ pub(super) fn handle_non_directory_source(
             proc_ctx.destination_behaves_like_directory,
             prefer_root_destination,
             true,
+            context.options().iconv(),
         );
         copy_directory_recursive(
             context,

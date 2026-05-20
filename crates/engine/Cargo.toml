@@ -70,6 +70,19 @@ xattr = ["metadata/xattr"]
 acl = ["metadata/acl"]
 
 # ============================================================================
+# Character Encoding Features
+# ============================================================================
+
+# Filename character set conversion (`--iconv=LOCAL,REMOTE`). Forwards to
+# `protocol/iconv` so the engine's local-copy executor can use real
+# `encoding_rs` conversions. Without this feature, the executor still
+# compiles but a non-UTF-8 `FilenameConverter` cannot be constructed, so
+# `--iconv` falls back to pass-through bytes (matching the engine-only
+# build profile used by some test suites). The default workspace build
+# turns this on via `core` -> `protocol/iconv`.
+iconv = ["protocol/iconv"]
+
+# ============================================================================
 # Performance Optimization Features
 # ============================================================================
 

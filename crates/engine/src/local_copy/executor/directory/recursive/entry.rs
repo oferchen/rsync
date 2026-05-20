@@ -12,6 +12,7 @@ use crate::local_copy::{
 };
 
 use super::super::super::non_empty_path;
+use super::super::super::transcode_filename_component;
 use super::super::planner::{EntryAction, PlannedEntry};
 use super::batch::capture_batch_file_entry;
 use super::copy_directory_recursive;
@@ -28,7 +29,12 @@ pub(super) fn process_planned_entry(
     root_device: Option<u64>,
 ) -> Result<bool, LocalCopyError> {
     let file_name = &planned.entry.file_name;
-    let target_path = destination.join(Path::new(file_name));
+    // upstream: flist.c:1579-1603 (sender) + flist.c:738-754 (receiver) -
+    // the receiver opens the file with the iconv-converted name. For
+    // local-copy the two contexts compose to LOCAL -> REMOTE; apply that
+    // transcoding here before joining onto the destination directory.
+    let dest_name = transcode_filename_component(file_name, context.options().iconv());
+    let target_path = destination.join(Path::new(&*dest_name));
     let entry_metadata = planned.metadata();
     let record_relative = non_empty_path(planned.relative.as_path());
 

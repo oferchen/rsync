@@ -4,9 +4,12 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use protocol::iconv::FilenameConverter;
+
 use crate::local_copy::{LocalCopyArgumentError, LocalCopyError, LocalCopyExecution};
 
 use super::super::follow_symlink_metadata;
+use super::super::transcode_filename_component;
 use super::types::DestinationState;
 
 /// Queries the filesystem to determine destination state.
@@ -71,6 +74,12 @@ pub(crate) fn ensure_destination_directory(
 }
 
 /// Computes the target path for a non-directory entry.
+///
+/// When an `--iconv` converter is supplied, the source filename component
+/// `name` is transcoded with [`transcode_filename_component`] before being
+/// appended to `destination_base`. This mirrors upstream rsync's
+/// `flist.c:1579-1603` (sender) + `flist.c:738-754` (receiver) composition
+/// in local-copy mode (`rsync.c:118-140`).
 pub(super) fn compute_target_path(
     destination_path: &Path,
     destination_base: &Path,
@@ -78,9 +87,11 @@ pub(super) fn compute_target_path(
     destination_behaves_like_directory: bool,
     prefer_root_destination: bool,
     is_directory: bool,
+    iconv: Option<&FilenameConverter>,
 ) -> PathBuf {
     if destination_behaves_like_directory && (!prefer_root_destination || is_directory) {
-        destination_base.join(name)
+        let converted = transcode_filename_component(name, iconv);
+        destination_base.join(Path::new(&*converted))
     } else {
         destination_path.to_path_buf()
     }
@@ -89,15 +100,19 @@ pub(super) fn compute_target_path(
 /// Computes the target path for special entries (symlinks, FIFOs, devices).
 ///
 /// These entries don't use the directory-specific logic that regular files use.
+/// The `iconv` parameter applies the same LOCAL -> REMOTE transcoding the
+/// per-directory path uses; see [`compute_target_path`].
 pub(super) fn compute_special_target_path(
     destination_path: &Path,
     destination_base: &Path,
     name: &std::ffi::OsStr,
     destination_behaves_like_directory: bool,
     prefer_root_destination: bool,
+    iconv: Option<&FilenameConverter>,
 ) -> PathBuf {
     if destination_behaves_like_directory && !prefer_root_destination {
-        destination_base.join(name)
+        let converted = transcode_filename_component(name, iconv);
+        destination_base.join(Path::new(&*converted))
     } else {
         destination_path.to_path_buf()
     }
