@@ -335,7 +335,6 @@ mod tests {
 
     #[test]
     fn categorize_unknown_error_as_fatal() {
-        // Test that unknown/other errors are categorized as fatal
         let err = io::Error::from(io::ErrorKind::Other);
         let path = Path::new("/tmp/test.txt");
 
@@ -385,7 +384,6 @@ mod tests {
 
     #[test]
     fn read_exact_retry_handles_partial_reads() {
-        // Simulate a reader that returns data in chunks
         struct ChunkyReader {
             data: &'static [u8],
             pos: usize,
@@ -408,7 +406,7 @@ mod tests {
         let mut reader = ChunkyReader {
             data: b"hello world",
             pos: 0,
-            chunk_size: 3, // Return only 3 bytes at a time
+            chunk_size: 3,
         };
         let mut buf = [0u8; 11];
 
@@ -420,7 +418,7 @@ mod tests {
     fn read_exact_retry_returns_eof_on_short_read() {
         let data = b"short";
         let mut cursor = std::io::Cursor::new(data);
-        let mut buf = [0u8; 10]; // Requesting more than available
+        let mut buf = [0u8; 10];
 
         let result = read_exact_retry(&mut cursor, &mut buf);
         assert!(result.is_err());

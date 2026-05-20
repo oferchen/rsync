@@ -154,14 +154,12 @@ impl ParsedServerFlags {
         #[allow(unused_mut)] // REASON: mutated when acl or xattr features are not enabled
         let mut cleared = Vec::new();
 
-        // ACL support requires the `acl` feature (Unix POSIX/NFSv4 ACLs or Windows DACLs).
         #[cfg(not(all(any(unix, windows), feature = "acl")))]
         if self.acls {
             self.acls = false;
             cleared.push("ACLs");
         }
 
-        // Extended attribute support requires the `xattr` feature on Unix.
         #[cfg(not(all(unix, feature = "xattr")))]
         if self.xattrs {
             self.xattrs = false;
@@ -197,7 +195,6 @@ impl ParsedServerFlags {
             }
         }
 
-        // Archive mode implies several flags
         if flags.archive {
             flags.recursive = true;
             flags.links = true;
@@ -254,7 +251,7 @@ impl ParsedServerFlags {
             // upstream: options.c:764 - fuzzy_basis++ for each 'y'
             b'y' => self.fuzzy_level = self.fuzzy_level.saturating_add(1),
             b'm' => self.prune_empty_dirs = true,
-            // Unknown flags are ignored to maintain forward compatibility
+            // Unknown flags are ignored for forward compatibility.
             _ => {}
         }
     }
@@ -269,7 +266,6 @@ impl InfoFlags {
             b'f' => self.flist = true,
             b'x' => self.checksum = true,
             b'C' => self.compress = true,
-            // Unknown info flags are ignored
             _ => {}
         }
     }
@@ -291,7 +287,6 @@ mod tests {
     fn parses_typical_rsync_flag_string() {
         let flags = ParsedServerFlags::parse("-logDtpre.iLsfxC").unwrap();
 
-        // Transfer flags
         assert!(flags.links);
         assert!(flags.owner);
         assert!(flags.group);
@@ -302,7 +297,6 @@ mod tests {
         assert!(flags.recursive);
         assert!(flags.rsh);
 
-        // Info flags
         assert!(flags.info_flags.itemize);
         assert!(flags.info_flags.log_format);
         assert!(flags.info_flags.stats);
@@ -317,7 +311,7 @@ mod tests {
 
         assert!(flags.archive);
         assert!(flags.verbose);
-        // Archive implies these
+        // Archive (-a) implies -rlptgoD.
         assert!(flags.recursive);
         assert!(flags.links);
         assert!(flags.perms);
@@ -351,7 +345,6 @@ mod tests {
 
     #[test]
     fn ignores_unknown_flags() {
-        // Unknown flags like 'Q' and 'Z' (uppercase) in transfer section
         let flags = ParsedServerFlags::parse("-rQZv").unwrap();
         assert!(flags.recursive);
         assert!(flags.verbose);
@@ -516,10 +509,6 @@ mod tests {
         assert!(flags.xattrs);
         let cleared = flags.clear_unsupported_features();
 
-        // On a platform without both features, both are cleared.
-        // On a platform with both, neither is cleared.
-        // On a platform with only one, only the missing one is cleared.
-        // The exact result depends on the build, but the function must not panic.
         for name in &cleared {
             assert!(
                 *name == "ACLs" || *name == "xattrs",
@@ -527,7 +516,6 @@ mod tests {
             );
         }
 
-        // After clearing, the flag matches whether the feature is available.
         #[cfg(all(any(unix, windows), feature = "acl"))]
         assert!(flags.acls, "ACLs should remain when feature is available");
         #[cfg(not(all(any(unix, windows), feature = "acl")))]

@@ -216,7 +216,7 @@ mod tests {
     fn test_map_blocking_preserves_order() {
         let items: Vec<u64> = (0..50).collect();
         let results = map_blocking(items, 4, |x| {
-            // Introduce variable delay to test ordering
+            // Variable per-item delay forces worker reordering if ordering is not preserved.
             if x % 2 == 0 {
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
@@ -269,7 +269,6 @@ mod tests {
         let t = ParallelThresholds::default().with_stat(0).with_signature(0);
         assert_eq!(t.stat, 0);
         assert_eq!(t.signature, 0);
-        // Always uses parallel path when threshold is 0
         let items: Vec<i32> = (0..5).collect();
         let results = map_blocking(items, t.stat, |x| x * 2);
         assert_eq!(results, vec![0, 2, 4, 6, 8]);

@@ -39,18 +39,15 @@ const SUFFIX_LEN: usize = 6;
 /// - The suffix after the last `.` must be exactly 6 alphanumeric characters
 /// - The basename portion (between first `.` and last `.`) must be non-empty
 fn is_temp_file_name(name: &str) -> bool {
-    // Must start with '.'
     if !name.starts_with('.') {
         return false;
     }
 
-    // Find the last '.' which separates basename from random suffix
     let last_dot = match name.rfind('.') {
         Some(pos) if pos > 0 => pos,
         _ => return false,
     };
 
-    // The suffix after the last dot must be exactly SUFFIX_LEN alphanumeric chars
     let suffix = &name[last_dot + 1..];
     if suffix.len() != SUFFIX_LEN {
         return false;
@@ -59,9 +56,7 @@ fn is_temp_file_name(name: &str) -> bool {
         return false;
     }
 
-    // The basename between leading dot and last dot must be non-empty.
-    // For ".file.txt.AbCdEf", the part between index 1 and last_dot is "file.txt".
-    // For ".bashrc.XyZ123", the part between index 1 and last_dot is "bashrc".
+    // For ".file.txt.AbCdEf" the basename is "file.txt"; for ".bashrc.XyZ123" it is "bashrc".
     let basename = &name[1..last_dot];
     if basename.is_empty() {
         return false;
@@ -106,7 +101,7 @@ pub fn cleanup_stale_temp_files(dest_dir: &Path, max_age: Option<Duration>) -> i
     for entry in entries {
         let entry = match entry {
             Ok(e) => e,
-            Err(_) => continue, // Skip unreadable entries
+            Err(_) => continue,
         };
 
         let file_name = entry.file_name();
@@ -115,27 +110,24 @@ pub fn cleanup_stale_temp_files(dest_dir: &Path, max_age: Option<Duration>) -> i
             continue;
         }
 
-        // Only remove regular files, not directories or symlinks.
-        // Use file_type() (lstat-equivalent) to avoid following symlinks.
+        // file_type() is lstat-equivalent so symlinks named like temp files are skipped.
         let file_type = match entry.file_type() {
             Ok(ft) => ft,
-            Err(_) => continue, // Skip if we cannot stat
+            Err(_) => continue,
         };
         if !file_type.is_file() {
             continue;
         }
 
-        // Check age via mtime - metadata() follows symlinks but we already
-        // filtered to regular files above so this is safe.
         let metadata = match entry.metadata() {
             Ok(m) => m,
             Err(_) => continue,
         };
         let mtime = match metadata.modified() {
             Ok(t) => t,
-            Err(_) => continue, // Platform does not support mtime - skip
+            Err(_) => continue,
         };
-        // Future-dated files (clock skew) treated as age zero - safe to keep.
+        // Treat future-dated files (clock skew) as age zero so they are kept.
         let age = now.duration_since(mtime).unwrap_or(Duration::ZERO);
         if age < threshold {
             continue;
@@ -147,10 +139,7 @@ pub fn cleanup_stale_temp_files(dest_dir: &Path, max_age: Option<Duration>) -> i
                 debug_log!(Exit, 2, "removed stale temp file: {}", path.display());
                 removed += 1;
             }
-            Err(_) => {
-                // Best-effort - skip files we cannot remove (permissions, etc.)
-                continue;
-            }
+            Err(_) => continue,
         }
     }
 
@@ -164,8 +153,6 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
-    // === is_temp_file_name tests ===
-
     #[test]
     fn matches_standard_temp_pattern() {
         assert!(is_temp_file_name(".file.txt.AbCdEf"));
@@ -176,7 +163,7 @@ mod tests {
 
     #[test]
     fn matches_dotfile_temp_pattern() {
-        // Dotfiles consume the leading dot: .bashrc -> .bashrc.XXXXXX
+        // Dotfiles consume the leading dot: .bashrc becomes .bashrc.XXXXXX.
         assert!(is_temp_file_name(".bashrc.AbCdEf"));
         assert!(is_temp_file_name(".gitignore.x1y2z3"));
     }
@@ -189,9 +176,9 @@ mod tests {
 
     #[test]
     fn rejects_wrong_suffix_length() {
-        assert!(!is_temp_file_name(".file.txt.ABCDE")); // 5 chars
-        assert!(!is_temp_file_name(".file.txt.ABCDEFG")); // 7 chars
-        assert!(!is_temp_file_name(".file.txt.")); // 0 chars
+        assert!(!is_temp_file_name(".file.txt.ABCDE"));
+        assert!(!is_temp_file_name(".file.txt.ABCDEFG"));
+        assert!(!is_temp_file_name(".file.txt."));
     }
 
     #[test]
@@ -204,7 +191,6 @@ mod tests {
 
     #[test]
     fn rejects_empty_basename() {
-        // "..ABCDEF" has empty basename between dots
         assert!(!is_temp_file_name("..ABCDEF"));
     }
 
@@ -223,11 +209,9 @@ mod tests {
 
     #[test]
     fn matches_multi_dot_basename() {
-        // ".file.tar.gz.AbCdEf" - basename is "file.tar.gz"
+        // For ".file.tar.gz.AbCdEf" the basename is "file.tar.gz".
         assert!(is_temp_file_name(".file.tar.gz.AbCdEf"));
     }
-
-    // === cleanup_stale_temp_files tests ===
 
     #[test]
     fn empty_directory_returns_zero() {
@@ -248,13 +232,11 @@ mod tests {
     fn removes_stale_temp_files() {
         let dir = tempdir().expect("create temp dir");
 
-        // Create temp files matching the pattern
         let temp1 = dir.path().join(".file.txt.AbCdEf");
         let temp2 = dir.path().join(".data.bin.x1y2z3");
         fs::write(&temp1, b"stale data 1").unwrap();
         fs::write(&temp2, b"stale data 2").unwrap();
 
-        // Use Duration::ZERO to consider all files stale
         let count = cleanup_stale_temp_files(dir.path(), Some(Duration::ZERO)).unwrap();
         assert_eq!(count, 2);
         assert!(!temp1.exists());
@@ -265,10 +247,9 @@ mod tests {
     fn preserves_non_matching_files() {
         let dir = tempdir().expect("create temp dir");
 
-        // Non-matching files
         let regular = dir.path().join("file.txt");
         let dotfile = dir.path().join(".bashrc");
-        let wrong_suffix = dir.path().join(".file.txt.ABCDE"); // 5 chars
+        let wrong_suffix = dir.path().join(".file.txt.ABCDE");
         fs::write(&regular, b"keep").unwrap();
         fs::write(&dotfile, b"keep").unwrap();
         fs::write(&wrong_suffix, b"keep").unwrap();
@@ -284,16 +265,13 @@ mod tests {
     fn respects_age_threshold() {
         let dir = tempdir().expect("create temp dir");
 
-        // Create a temp file - it will be brand new (age ~0)
         let temp = dir.path().join(".recent.AbCdEf");
         fs::write(&temp, b"fresh data").unwrap();
 
-        // Use a large threshold - file is too new to be removed
         let count = cleanup_stale_temp_files(dir.path(), Some(Duration::from_secs(3600))).unwrap();
         assert_eq!(count, 0);
         assert!(temp.exists());
 
-        // Now use Duration::ZERO - everything is stale
         let count = cleanup_stale_temp_files(dir.path(), Some(Duration::ZERO)).unwrap();
         assert_eq!(count, 1);
         assert!(!temp.exists());
@@ -303,7 +281,6 @@ mod tests {
     fn skips_directories_matching_pattern() {
         let dir = tempdir().expect("create temp dir");
 
-        // Create a directory that matches the naming pattern
         let temp_dir = dir.path().join(".subdir.AbCdEf");
         fs::create_dir(&temp_dir).unwrap();
 
@@ -316,11 +293,9 @@ mod tests {
     fn mixed_matching_and_non_matching() {
         let dir = tempdir().expect("create temp dir");
 
-        // Matching (stale)
         let stale = dir.path().join(".transfer.dat.Qw3rTy");
         fs::write(&stale, b"stale").unwrap();
 
-        // Non-matching
         let normal = dir.path().join("important.dat");
         fs::write(&normal, b"keep").unwrap();
 
@@ -339,20 +314,12 @@ mod tests {
         let subdir = dir.path().join("restricted");
         fs::create_dir(&subdir).unwrap();
 
-        // Create a temp file in a subdirectory, then remove read permission
-        // from the parent to simulate permission errors. We test the top-level
-        // directory scan resilience by creating an unreadable file.
         let temp = dir.path().join(".secret.AbCdEf");
         fs::write(&temp, b"data").unwrap();
 
-        // Make file read-only - removal should still work on most systems
-        // since we own the directory. Instead, test that unreadable dirs
-        // return an error gracefully.
         fs::set_permissions(&subdir, fs::Permissions::from_mode(0o000)).unwrap();
 
-        // Scanning the restricted subdir should fail gracefully
         let result = cleanup_stale_temp_files(&subdir, Some(Duration::ZERO));
-        // Restore permissions for cleanup
         fs::set_permissions(&subdir, fs::Permissions::from_mode(0o755)).unwrap();
 
         assert!(result.is_err());

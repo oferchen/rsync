@@ -62,12 +62,10 @@ impl FailedDirectories {
     /// assert_eq!(failed.failed_ancestor("a/c/file.txt"), None);
     /// ```
     pub fn failed_ancestor(&self, entry_path: &str) -> Option<&str> {
-        // Check if exact path is failed
         if self.paths.contains(entry_path) {
             return self.paths.get(entry_path).map(|s| s.as_str());
         }
 
-        // Check each parent path component by walking backwards
         let mut check_path = entry_path;
         while let Some(pos) = check_path.rfind('/') {
             check_path = &check_path[..pos];
@@ -267,11 +265,8 @@ mod tests {
         let mut failed = FailedDirectories::new();
         failed.mark_failed("abc");
 
-        // "abcd" contains "abc" but is not a child path
         assert!(failed.failed_ancestor("abcd").is_none());
         assert!(failed.failed_ancestor("abcd/file.txt").is_none());
-
-        // Only actual children should match
         assert!(failed.failed_ancestor("abc/file.txt").is_some());
     }
 
@@ -282,11 +277,9 @@ mod tests {
         failed.mark_failed("a/b");
         failed.mark_failed("a/b/c");
 
-        // Should return the closest (most specific) failed ancestor
+        // Walking up from the entry returns the closest failed ancestor first.
         let result = failed.failed_ancestor("a/b/c/d/file.txt");
         assert!(result.is_some());
-        // The implementation returns the first match found walking up,
-        // which is "a/b/c" in this case
         assert_eq!(result, Some("a/b/c"));
     }
 

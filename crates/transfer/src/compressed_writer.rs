@@ -29,23 +29,23 @@ use compress::zstd::CountingZstdEncoder;
 /// the compression algorithm, causing read-batch to force CPRES_ZLIB
 /// (compat.c:194-195) even when the original write used zstd.
 pub struct CompressedWriter<W: Write> {
-    /// The underlying writer (typically MultiplexWriter)
+    /// Underlying writer, typically a `MultiplexWriter`.
     inner: W,
-    /// Active compression encoder variant
+    /// Active compression encoder variant.
     encoder: EncoderVariant,
-    /// Flush threshold - flush when buffer exceeds this size
+    /// Drain the encoder's sink to `inner` when it exceeds this many bytes.
     flush_threshold: usize,
 }
 
 /// Compression encoder dispatch for supported algorithms.
 #[allow(clippy::large_enum_variant)]
 enum EncoderVariant {
-    /// zlib encoder writing to Vec<u8>
+    /// zlib encoder writing to a heap-backed sink.
     Zlib(CountingZlibEncoder<Vec<u8>>),
-    /// LZ4 encoder writing to Vec<u8>
+    /// LZ4 encoder writing to a heap-backed sink.
     #[cfg(feature = "lz4")]
     Lz4(CountingLz4Encoder<Vec<u8>>),
-    /// Zstandard encoder writing to Vec<u8>
+    /// Zstandard encoder writing to a heap-backed sink.
     #[cfg(feature = "zstd")]
     Zstd(CountingZstdEncoder<Vec<u8>>),
 }
@@ -178,7 +178,6 @@ impl<W: Write> CompressedWriter<W> {
     ///
     /// Returns an error if finishing the compression stream or flushing fails.
     pub fn finish(mut self) -> io::Result<W> {
-        // finish_into_inner writes the final trailer bytes to the sink.
         match self.encoder {
             EncoderVariant::Zlib(encoder) => {
                 let (sink, _bytes) = encoder.finish_into_inner()?;
@@ -251,7 +250,6 @@ impl<W: Write> Write for CompressedWriter<W> {
             self.drain_sink()?;
         }
 
-        // Report full write to match upstream behavior.
         Ok(buf.len())
     }
 
@@ -292,10 +290,8 @@ mod tests {
         writer.write_all(data).unwrap();
         writer.finish().unwrap();
 
-        // Verify compressed data exists
         assert!(!buf.is_empty());
 
-        // Decompress and verify
         let decompressed = decompress_to_vec(&buf).unwrap();
         assert_eq!(decompressed, data);
     }
@@ -319,7 +315,6 @@ mod tests {
         writer.write_all(data3).unwrap();
         writer.finish().unwrap();
 
-        // Decompress and verify all chunks
         let decompressed = decompress_to_vec(&buf).unwrap();
         let expected = b"first chunk second chunk third chunk";
         assert_eq!(decompressed, expected);
@@ -327,7 +322,6 @@ mod tests {
 
     #[test]
     fn compress_large_data_flushes_automatically() {
-        // Create data larger than flush threshold
         let data = vec![b'x'; 8192];
 
         let mut buf = Vec::new();
@@ -340,10 +334,8 @@ mod tests {
             writer.finish().unwrap();
         }
 
-        // Should have written compressed data
         assert!(!buf.is_empty());
 
-        // Decompress and verify
         let decompressed = decompress_to_vec(&buf).unwrap();
         assert_eq!(decompressed, data);
     }
@@ -364,10 +356,9 @@ mod tests {
             writer.finish().unwrap();
         }
 
-        // bytes_written should track compressed size (after finish)
-        // For zlib, compressed size should be reasonable
+        // Compressed size should fit within the input plus a small zlib overhead.
         assert!(!buf.is_empty());
-        assert!(buf.len() < data.len() + 20); // Allow for zlib overhead
+        assert!(buf.len() < data.len() + 20);
     }
 
     #[test]
@@ -380,7 +371,6 @@ mod tests {
         )
         .unwrap();
 
-        // Verify inner_mut returns a valid reference
         let _inner = writer.inner_mut();
         writer.finish().unwrap();
     }
@@ -407,20 +397,15 @@ mod tests {
             .unwrap();
 
             writer.write_all(token_data).unwrap();
-            // flush() should trigger Z_SYNC_FLUSH on the encoder, materializing
-            // all pending compressed data so it can be decompressed immediately.
+            // flush() triggers Z_SYNC_FLUSH so pending data is decompressible without more input.
             writer.flush().unwrap();
 
             writer.write_all(token2).unwrap();
             writer.finish().unwrap();
         }
 
-        // The compressed output after flush must be decompressible without
-        // needing more input. This is the key property of Z_SYNC_FLUSH.
         assert!(!buf.is_empty(), "flush must produce compressed output");
 
-        // Verify full stream decompresses correctly - Z_SYNC_FLUSH ensures
-        // the first token's data was flushed to the output before finish.
         // upstream: token.c:send_deflated_token lines 433-434.
         let full = decompress_to_vec(&buf).unwrap();
         let mut expected = Vec::new();
@@ -595,9 +580,8 @@ mod tests {
 
         #[test]
         fn with_workers_round_trip_and_smoke() {
-            // None matches upstream's `do_compression_threads = 0`. Some(_)
-            // either succeeds under `zstdmt` or returns Unsupported - never
-            // panic, never silently drop the setting.
+            // None matches upstream's do_compression_threads = 0. Some(_) either succeeds
+            // under zstdmt or returns Unsupported; never panic, never silently drop the setting.
             let data = b"zstd workers test";
             for workers in [None, std::num::NonZeroU8::new(4)] {
                 let mut buf = Vec::new();

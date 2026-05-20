@@ -52,7 +52,7 @@ pub use mmap::MmapStrategy;
 
 /// Threshold above which memory mapping is preferred over buffered I/O.
 /// Files larger than 1MB benefit from mmap's zero-copy access.
-pub const MMAP_THRESHOLD: u64 = 1024 * 1024; // 1 MB
+pub const MMAP_THRESHOLD: u64 = 1024 * 1024;
 
 /// Strategy trait for file mapping implementations.
 ///

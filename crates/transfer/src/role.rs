@@ -23,7 +23,6 @@ pub enum ServerRole {
 mod tests {
     use super::*;
 
-    // Tests for Receiver variant
     #[test]
     fn receiver_debug_format() {
         let role = ServerRole::Receiver;
@@ -45,7 +44,6 @@ mod tests {
         assert_eq!(role, copied);
     }
 
-    // Tests for Generator variant
     #[test]
     fn generator_debug_format() {
         let role = ServerRole::Generator;
@@ -67,7 +65,6 @@ mod tests {
         assert_eq!(role, copied);
     }
 
-    // Tests for equality
     #[test]
     fn receiver_equals_receiver() {
         assert_eq!(ServerRole::Receiver, ServerRole::Receiver);

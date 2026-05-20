@@ -200,7 +200,7 @@ fn read_response_header<R: Read>(
         ctx.config.want_xattr_optim,
     )?;
 
-    // Protocol requires in-order responses.
+    // upstream: sender.c emits responses in NDX order; out-of-order is a protocol violation.
     if echoed_ndx != expected_ndx {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -210,7 +210,7 @@ fn read_response_header<R: Read>(
         ));
     }
 
-    // Echoed sum_head provides the existing file length for append mode offset.
+    // The echoed sum_head carries the existing file length used for the append mode offset.
     let echoed_sum_head = SumHead::read(reader)?;
 
     let (file_path, basis_path, signature, target_size) = pending.into_parts();
