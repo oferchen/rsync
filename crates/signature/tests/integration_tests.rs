@@ -180,7 +180,7 @@ mod file_size_variations {
 
         assert_eq!(layout.block_length().get(), 700);
         assert_eq!(layout.block_count(), 1);
-        assert_eq!(layout.remainder(), 0); // Exact multiple means no partial block
+        assert_eq!(layout.remainder(), 0);
 
         let signature =
             generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Md4)
@@ -188,7 +188,6 @@ mod file_size_variations {
 
         assert_eq!(signature.blocks().len(), 1);
         assert_eq!(signature.total_bytes(), 700);
-        // The single block should be full-sized
         assert_eq!(signature.blocks()[0].len(), 700);
     }
 
@@ -211,12 +210,10 @@ mod file_size_variations {
         assert_eq!(signature.blocks().len(), 3);
         assert_eq!(signature.total_bytes(), 1500);
 
-        // Verify block indices are sequential
         for (i, block) in signature.blocks().iter().enumerate() {
             assert_eq!(block.index(), i as u64);
         }
 
-        // Verify block lengths
         assert_eq!(signature.blocks()[0].len(), 700);
         assert_eq!(signature.blocks()[1].len(), 700);
         assert_eq!(signature.blocks()[2].len(), 100);
@@ -241,7 +238,6 @@ mod file_size_variations {
         assert_eq!(signature.blocks().len(), 3);
         assert_eq!(signature.total_bytes(), 2100);
 
-        // All blocks should be full size
         for block in signature.blocks() {
             assert_eq!(block.len(), 700);
         }
@@ -255,7 +251,6 @@ mod file_size_variations {
         let params = layout_params(size as u64, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        // Block size should scale with file size (not the default 700)
         assert!(layout.block_length().get() > 700);
 
         let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
@@ -273,8 +268,7 @@ mod file_size_variations {
         let params = layout_params(size as u64, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        // Verify block size scales appropriately
-        // For 10MB, rsync uses sqrt-based heuristics
+        // 10MB exercises the sqrt-scaled block size path (upstream: generator.c:sum_sizes_sqroot).
         assert!(layout.block_length().get() >= 1024);
 
         let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
@@ -282,7 +276,6 @@ mod file_size_variations {
 
         assert_eq!(signature.total_bytes(), size as u64);
 
-        // Verify reasonable block count
         let expected_blocks = (size as u64).div_ceil(layout.block_length().get() as u64);
         assert_eq!(signature.blocks().len() as u64, expected_blocks);
     }
@@ -375,12 +368,10 @@ mod block_size_variations {
     fn protocol_version_affects_max_block_size() {
         let huge_file = 1u64 << 35; // 32 GB
 
-        // Modern protocol clamps to 131072
         let modern_params = layout_params_with_protocol(huge_file, 32, 16);
         let modern_layout = calculate_signature_layout(modern_params).expect("layout");
         assert_eq!(modern_layout.block_length().get(), 131072);
 
-        // Legacy protocol allows larger blocks
         let legacy_params = layout_params_with_protocol(huge_file, 29, 16);
         let legacy_layout = calculate_signature_layout(legacy_params).expect("layout");
         assert!(legacy_layout.block_length().get() >= 131072);
@@ -440,7 +431,6 @@ mod checksum_algorithms {
         let (sig_unseeded, _) = generate_signature_from_data(&data, unseeded);
         let (sig_seeded, _) = generate_signature_from_data(&data, seeded);
 
-        // Different seeds should produce different checksums
         assert_ne!(
             sig_unseeded.blocks()[0].strong(),
             sig_seeded.blocks()[0].strong()
@@ -604,7 +594,6 @@ mod round_trip {
             generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Md4)
                 .expect("signature");
 
-        // Verify each block's rolling checksum
         for (i, block) in signature.blocks().iter().enumerate() {
             let start = i * 500;
             let end = if i == signature.blocks().len() - 1 {
@@ -645,7 +634,6 @@ mod round_trip {
         let data = generate_test_data(2000);
         let (original, _) = generate_signature_from_data(&data, SignatureAlgorithm::Md4);
 
-        // Reconstruct from raw parts
         let reconstructed = FileSignature::from_raw_parts(
             original.layout(),
             original.blocks().to_vec(),
@@ -730,8 +718,7 @@ mod edge_cases {
     /// Block count overflow detection.
     #[test]
     fn block_count_overflow_error() {
-        // Create params that would result in too many blocks
-        // Using forced small block size with very large file
+        // Force a 700-byte block size on a file larger than i32::MAX blocks worth.
         let file_len = (i32::MAX as u64 + 1) * 700;
         let params = layout_params_with_block(file_len, 700, 16);
 
@@ -752,7 +739,6 @@ mod edge_cases {
         let params = layout_params(100, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        // Provide more data than expected
         let data = vec![0u8; 150];
         let result = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4);
 
@@ -767,7 +753,6 @@ mod edge_cases {
         let params = layout_params(1000, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        // Provide less data than expected
         let data = vec![0u8; 500];
         let result = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4);
 
@@ -784,7 +769,6 @@ mod edge_cases {
         let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
             .expect("signature");
 
-        // Strong checksum should be truncated to 2 bytes
         for block in signature.blocks() {
             assert_eq!(
                 block.strong().len(),
@@ -823,12 +807,10 @@ mod protocol_compatibility {
     fn strong_checksum_length_varies_by_protocol() {
         let file_len = 1_000_000u64;
 
-        // Modern protocol uses bias-based derivation
+        // Protocol 27+ applies the bias heuristic which may widen the requested length.
         let modern_params = layout_params_with_protocol(file_len, 32, 4);
         let modern_layout = calculate_signature_layout(modern_params).expect("layout");
 
-        // The strong sum length depends on file size and block length
-        // For modern protocols (27+), the bias heuristic may increase it
         assert!(modern_layout.strong_sum_length().get() >= 4);
     }
 
@@ -914,15 +896,13 @@ mod performance {
     /// one block at a time.
     #[test]
     fn memory_efficient_generation() {
-        // This test ensures the API doesn't require loading entire file
         let size = 1024 * 1024; // 1 MB
         let data = generate_test_data(size);
 
         let params = layout_params_with_block(size as u64, 4096, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        // The Cursor provides streaming access, and generate_file_signature
-        // should process block by block
+        // Cursor provides streaming access; generate_file_signature must process block by block.
         let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
             .expect("signature");
 
@@ -1180,8 +1160,8 @@ mod error_properties {
     /// SignatureError display formatting.
     #[test]
     fn signature_error_display() {
-        // We can't construct DigestLengthMismatch directly since the field
-        // uses NonZeroUsize, but we can test via the generation function
+        // DigestLengthMismatch carries a NonZeroUsize, so construct it via the public
+        // generation entry point rather than by hand.
         let params = layout_params(100, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
@@ -1205,10 +1185,10 @@ mod upstream_compatibility {
 
     /// Block sizes match upstream rsync's sum_sizes_sqroot heuristic.
     ///
-    /// Reference: generator.c:sum_sizes_sqroot()
+    /// upstream: generator.c:sum_sizes_sqroot()
     #[test]
     fn block_size_matches_upstream_heuristic() {
-        // Known test cases from upstream rsync behavior
+        // Golden block sizes taken from upstream rsync 3.4.1.
         let test_cases = [
             (32u64, 700u32),          // Small file: default block size
             (1000, 700),              // Still small: default
@@ -1230,23 +1210,20 @@ mod upstream_compatibility {
 
     /// Strong checksum length derivation follows upstream bias algorithm.
     ///
-    /// Reference: generator.c:sum_sizes_sqroot()
+    /// upstream: generator.c:sum_sizes_sqroot()
     #[test]
     fn strong_checksum_bias_heuristic() {
-        // For protocol 27+, strong checksum length is derived from
-        // file size and block length using a bias calculation
-
+        // Protocol 27+ derives strong checksum length from file and block size via bias.
         let params = layout_params_with_protocol(1_048_576, 32, 2); // 1MB, proto 32, min 2
         let layout = calculate_signature_layout(params).expect("layout");
 
-        // The derived strong sum length should be >= minimum and <= 16
         assert!(layout.strong_sum_length().get() >= 2);
         assert!(layout.strong_sum_length().get() <= 16);
     }
 
     /// Protocol version 30+ caps block size at 131072.
     ///
-    /// Reference: generator.c MAX_BLOCK_SIZE constant
+    /// upstream: generator.c MAX_BLOCK_SIZE constant
     #[test]
     fn protocol_30_max_block_size() {
         let huge_file = 1u64 << 40; // 1 TB
@@ -1259,7 +1236,7 @@ mod upstream_compatibility {
 
     /// Legacy protocols (< 30) allow larger blocks.
     ///
-    /// Reference: generator.c OLD_MAX_BLOCK_SIZE constant (2^29)
+    /// upstream: generator.c OLD_MAX_BLOCK_SIZE constant (2^29)
     #[test]
     fn legacy_protocol_max_block_size() {
         let huge_file = 1u64 << 34;
@@ -1267,7 +1244,6 @@ mod upstream_compatibility {
         let params = layout_params_with_protocol(huge_file, 29, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        // Legacy allows larger than 131072
         assert!(layout.block_length().get() >= 131072);
     }
 }

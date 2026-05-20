@@ -259,7 +259,6 @@ mod block_size_selection {
                 "file size {file_size} should have ~{expected_blocks} blocks"
             );
 
-            // Verify block count is much less than file size
             assert!(
                 layout.block_count() < file_size / 100,
                 "block count should be much less than file size in bytes"
@@ -347,7 +346,6 @@ mod block_size_limits {
         let params = layout_params_with_protocol(huge_file, 28, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        // Should be larger than modern protocol limit
         assert!(
             layout.block_length().get() > 131_072,
             "legacy protocol allows larger blocks"
@@ -368,17 +366,14 @@ mod block_size_limits {
     fn forced_block_size_overrides_heuristic() {
         let file_size = 10_000u64;
 
-        // Automatic selection would use 700
         let auto_params = layout_params(file_size, 16);
         let auto_layout = calculate_signature_layout(auto_params).expect("layout");
         assert_eq!(auto_layout.block_length().get(), 700);
 
-        // Force a larger block size
         let forced_params = layout_params_with_block(file_size, 2048, 16);
         let forced_layout = calculate_signature_layout(forced_params).expect("layout");
         assert_eq!(forced_layout.block_length().get(), 2048);
 
-        // Force a smaller block size
         let forced_params = layout_params_with_block(file_size, 128, 16);
         let forced_layout = calculate_signature_layout(forced_params).expect("layout");
         assert_eq!(forced_layout.block_length().get(), 128);
@@ -390,7 +385,6 @@ mod block_size_limits {
         let file_size = 1_000_000u64;
         let excessive_block_size = 1 << 20; // 1 MB
 
-        // Protocol 30+ should clamp to 131072
         let params = SignatureLayoutParams::new(
             file_size,
             NonZeroU32::new(excessive_block_size),
@@ -444,7 +438,6 @@ mod signature_accuracy {
             *byte = byte.wrapping_add(1);
         }
 
-        // Use small 100-byte blocks
         let params = layout_params_with_block(original.len() as u64, 100, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
@@ -462,7 +455,6 @@ mod signature_accuracy {
         )
         .expect("signature");
 
-        // Count differing blocks
         let mut diff_count = 0;
         for (orig, modif) in sig_original
             .blocks()
@@ -474,7 +466,7 @@ mod signature_accuracy {
             }
         }
 
-        // With 100-byte blocks, we expect only ~1 block to differ
+        // The 100-byte modification lands entirely inside one 100-byte block.
         assert_eq!(
             diff_count, 1,
             "small blocks should isolate changes to affected blocks"
@@ -495,7 +487,6 @@ mod signature_accuracy {
             *byte = byte.wrapping_add(1);
         }
 
-        // Use large 5000-byte blocks
         let params = layout_params_with_block(original.len() as u64, 5_000, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
@@ -513,7 +504,6 @@ mod signature_accuracy {
         )
         .expect("signature");
 
-        // Count differing blocks
         let mut diff_count = 0;
         for (orig, modif) in sig_original
             .blocks()
@@ -525,8 +515,7 @@ mod signature_accuracy {
             }
         }
 
-        // With 5000-byte blocks, we expect 1 large block to differ
-        // (the second block containing bytes 5000-9999)
+        // The mutation falls entirely in the second 5000-byte block (bytes 5000-9999).
         assert_eq!(diff_count, 1, "large blocks contain more data per block");
     }
 
@@ -538,12 +527,12 @@ mod signature_accuracy {
         let original = generate_test_data(10_000);
         let mut modified = original.clone();
 
-        // Modify 200 bytes spanning block boundary at 5000
+        // Modify 200 bytes spanning the 5000-byte boundary (4900..5100).
         for byte in modified.iter_mut().skip(4_900).take(200) {
             *byte = byte.wrapping_add(1);
         }
 
-        // Use 1000-byte blocks (boundary at 5000)
+        // 1000-byte blocks place a boundary at offset 5000.
         let params = layout_params_with_block(original.len() as u64, 1_000, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
@@ -561,7 +550,6 @@ mod signature_accuracy {
         )
         .expect("signature");
 
-        // Count differing blocks
         let mut diff_count = 0;
         for (orig, modif) in sig_original
             .blocks()
@@ -630,9 +618,6 @@ mod signature_accuracy {
                 expected_block_count,
                 "block size {block_size} should produce {expected_block_count} blocks"
             );
-
-            // Each block has overhead (index, rolling, strong checksum)
-            // Smaller blocks = more blocks = larger signature
         }
     }
 
@@ -690,14 +675,12 @@ mod round_trip {
 
             let layout = calculate_signature_layout(params).expect("layout");
 
-            // Verify layout produces correct file size
             assert_eq!(
                 layout.file_size(),
                 file_size,
                 "layout.file_size() should match input"
             );
 
-            // Verify block length
             if let Some(forced) = forced_block {
                 assert_eq!(
                     layout.block_length().get(),
@@ -706,13 +689,11 @@ mod round_trip {
                 );
             }
 
-            // Verify block count and remainder are consistent
             let expected_count = file_size.div_ceil(layout.block_length().get() as u64);
             assert_eq!(layout.block_count(), expected_count);
 
             let expected_remainder = (file_size % layout.block_length().get() as u64) as u32;
             if expected_remainder == 0 && file_size > 0 {
-                // When file size is exact multiple, remainder is 0
                 assert_eq!(layout.remainder(), 0);
             } else if file_size > 0 {
                 assert_eq!(layout.remainder(), expected_remainder);
@@ -779,7 +760,6 @@ mod round_trip {
         let params = layout_params_with_block(data.len() as u64, block_size, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        // Generate signature multiple times
         let sig1 =
             generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Md4)
                 .expect("signature");
@@ -791,7 +771,6 @@ mod round_trip {
         let sig3 = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
             .expect("signature");
 
-        // All should be identical
         assert_eq!(sig1.blocks().len(), sig2.blocks().len());
         assert_eq!(sig2.blocks().len(), sig3.blocks().len());
 
@@ -823,7 +802,6 @@ mod round_trip {
         let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
             .expect("signature");
 
-        // Verify we can reconstruct the layout from the signature
         let reconstructed_layout = signature.layout();
 
         assert_eq!(reconstructed_layout.block_length(), layout.block_length());
@@ -915,7 +893,6 @@ mod round_trip {
                     "non-last block {i} should have full block size"
                 );
             } else {
-                // Last block should have remainder size
                 assert_eq!(block.len(), layout.remainder() as usize);
             }
         }
