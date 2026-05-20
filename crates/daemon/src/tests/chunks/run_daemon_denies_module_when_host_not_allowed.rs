@@ -6,8 +6,18 @@ fn run_daemon_denies_module_when_host_not_allowed() {
 
     let (port, held_listener) = allocate_test_port();
 
+    // Use env::temp_dir() so the path exists on Windows (where /srv/docs
+    // doesn't); the daemon refuses to start a module whose path doesn't
+    // resolve and the test then panics with WSAECONNRESET on the greeting
+    // read. Forward-slash-normalised to avoid the daemon module-arg parser's
+    // backslash escape behaviour (see PR #4560 for the same root cause).
+    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
     let mut file = NamedTempFile::new().expect("config file");
-    writeln!(file, "[docs]\npath = /srv/docs\nhosts allow = 10.0.0.0/8\n",).expect("write config");
+    writeln!(
+        file,
+        "[docs]\npath = {module_path}\nhosts allow = 10.0.0.0/8\n",
+    )
+    .expect("write config");
 
     let config = DaemonConfig::builder()
         .disable_default_paths()
