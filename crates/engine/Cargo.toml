@@ -54,7 +54,7 @@ windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 libc = { workspace = true }
 
 [features]
-default = ["zstd", "lz4", "xattr", "lazy-metadata"]
+default = ["zstd", "lz4", "xattr", "lazy-metadata", "parallel-receive-delta"]
 
 # ============================================================================
 # Compression Features
