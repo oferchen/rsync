@@ -37,7 +37,6 @@
 /// - `*` matches any characters except `/`
 /// - Trailing `/` marks directory-only patterns
 pub const DEFAULT_CVSIGNORE: &str = concat!(
-    // Version control systems
     "RCS ",
     "SCCS ",
     "CVS ",
@@ -46,36 +45,30 @@ pub const DEFAULT_CVSIGNORE: &str = concat!(
     "cvslog.* ",
     "tags ",
     "TAGS ",
-    // Build state
     ".make.state ",
     ".nse_depinfo ",
-    // Editor backup files
     "*~ ",
     "#* ",
     ".#* ",
     ",* ",
     "_$* ",
     "*$ ",
-    // Backup/original files
     "*.old ",
     "*.bak ",
     "*.BAK ",
     "*.orig ",
     "*.rej ",
     ".del-* ",
-    // Object files and libraries
     "*.a ",
     "*.olb ",
     "*.o ",
     "*.obj ",
     "*.so ",
     "*.exe ",
-    // Miscellaneous
     "*.Z ",
     "*.elc ",
     "*.ln ",
     "core ",
-    // Modern VCS directories
     ".svn/ ",
     ".git/ ",
     ".hg/ ",
@@ -103,6 +96,7 @@ pub fn default_patterns() -> impl Iterator<Item = &'static str> {
 
 /// Returns the number of default CVS exclusion patterns in
 /// [`DEFAULT_CVSIGNORE`].
+#[must_use]
 pub fn pattern_count() -> usize {
     default_patterns().count()
 }
@@ -153,7 +147,6 @@ mod tests {
 
     #[test]
     fn default_patterns_count_matches_expected() {
-        // Based on upstream rsync's default list
         let count = pattern_count();
         assert!(count >= 30, "expected at least 30 patterns, got {count}");
         assert!(count <= 40, "expected at most 40 patterns, got {count}");
@@ -173,10 +166,8 @@ mod tests {
     #[test]
     fn default_patterns_directory_markers_preserved() {
         let patterns: Vec<&str> = default_patterns().collect();
-        // Directory patterns should end with /
         assert!(patterns.contains(&".git/"));
         assert!(patterns.contains(&".svn/"));
-        // Non-directory patterns should not end with /
         assert!(patterns.contains(&"*.o"));
         assert!(!patterns.contains(&"*.o/"));
     }

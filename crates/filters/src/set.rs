@@ -511,7 +511,7 @@ mod tests {
 
     #[test]
     fn filter_set_include_allows() {
-        // rsync uses first-match-wins: include must come before exclude for exceptions
+        // First-match-wins: include must precede exclude to create an exception.
         let rules = vec![
             FilterRule::include("*.txt".to_owned()),
             FilterRule::exclude("*".to_owned()),
@@ -526,8 +526,6 @@ mod tests {
             FilterSet::from_rules(vec![FilterRule::protect("/important".to_owned())]).unwrap();
         assert!(!set.allows_deletion(Path::new("important"), false));
     }
-
-    // CVS exclusion tests
 
     #[test]
     fn cvs_exclusion_rules_not_empty() {
@@ -587,11 +585,10 @@ mod tests {
 
     #[test]
     fn from_rules_with_cvs_explicit_rules_higher_priority() {
-        // Explicit include rule should take precedence over CVS exclusions
-        // rsync uses first-match-wins: explicit rules come first, so they have priority
+        // Explicit rules sit ahead of the CVS defaults, so first-match-wins
+        // allows them to override the built-in exclusions.
         let rules = vec![FilterRule::include("*.o")];
         let set = FilterSet::from_rules_with_cvs(rules, false).unwrap();
-        // With first-match-wins, explicit include matches before CVS exclude
         assert!(set.allows(Path::new("main.o"), false));
     }
 
@@ -599,12 +596,9 @@ mod tests {
     fn from_rules_with_cvs_explicit_exclude_still_works() {
         let rules = vec![FilterRule::exclude("*.txt")];
         let set = FilterSet::from_rules_with_cvs(rules, false).unwrap();
-        // Both explicit and CVS exclusions should work
         assert!(!set.allows(Path::new("notes.txt"), false));
         assert!(!set.allows(Path::new("main.o"), false));
     }
-
-    // AppleDouble exclusion tests
 
     #[test]
     fn apple_double_exclusion_rules_not_empty() {
@@ -644,18 +638,16 @@ mod tests {
         let set = FilterSet::from_rules_with_apple_double(vec![], false).unwrap();
         assert!(set.allows(Path::new("notes.txt"), false));
         assert!(set.allows(Path::new("subdir/inner.txt"), false));
-        // Files starting with a single dot but not ._ should pass
         assert!(set.allows(Path::new(".hidden"), false));
     }
 
     #[test]
     fn from_rules_with_apple_double_explicit_include_higher_priority() {
-        // Explicit include rule should take precedence over AppleDouble exclusions
-        // because first-match-wins favours rules supplied earlier.
+        // First-match-wins lets the explicit include override the AppleDouble
+        // exclusion appended at the tail of the rule list.
         let rules = vec![FilterRule::include("._keep")];
         let set = FilterSet::from_rules_with_apple_double(rules, false).unwrap();
         assert!(set.allows(Path::new("._keep"), false));
-        // Non-included sidecars are still excluded.
         assert!(!set.allows(Path::new("._other"), false));
     }
 }
