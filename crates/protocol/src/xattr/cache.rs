@@ -703,47 +703,50 @@ mod tests {
     }
 
     #[test]
-    fn receive_entries_sorted_by_name() {
-        // Names should be sorted after translation.
+    fn receive_entries_preserve_wire_order() {
+        // upstream: xattrs.c:863 - the receiver only re-sorts when name
+        // translation (iconv-style) changes the order. With names preserved
+        // verbatim from the wire, the sender-sorted order is preserved as-is.
         let mut cache = XattrCache::new();
         let mut buf = Vec::new();
-        let zebra = user_wire_name(b"zebra");
         let alpha = user_wire_name(b"alpha");
         let middle = user_wire_name(b"middle");
-        write_literal_xattr(&mut buf, &[(&zebra, b"z"), (&alpha, b"a"), (&middle, b"m")]);
+        let zebra = user_wire_name(b"zebra");
+        // Wire arrives already sorted (upstream sender invariant).
+        write_literal_xattr(&mut buf, &[(&alpha, b"a"), (&middle, b"m"), (&zebra, b"z")]);
 
         let mut cursor = Cursor::new(buf);
         cache.receive_xattr(&mut cursor, false, 1).unwrap();
 
         let list = cache.get(0).unwrap();
         assert_eq!(list.len(), 3);
-        // Entries should be sorted alphabetically by local name
         let names: Vec<&[u8]> = list.entries().iter().map(|e| e.name()).collect();
-        let mut sorted_names = names.clone();
-        sorted_names.sort();
-        assert_eq!(names, sorted_names);
+        assert_eq!(names, vec![&alpha[..], &middle[..], &zebra[..]]);
     }
 
     #[test]
-    fn receive_entries_sorted_after_skips() {
+    fn receive_entries_preserve_order_after_skips() {
         // upstream: xattrs.c qsort_cmp - 3.4.2 fix uses temp_xattr.count, not
         // the wire count. Verifies that entries skipped via `continue` (here,
         // the rsync.%stat internal attr at preserve_xattrs == 1) do not leave
-        // an unsorted tail in the cached XattrList.
+        // a leak or misalignment in the cached XattrList. Input is in the
+        // sender-sorted order (with the internal attr inlined between sorted
+        // user entries); receiver filters the internal entry without
+        // disturbing the surrounding user-entry order.
         let mut cache = XattrCache::new();
         let mut buf = Vec::new();
 
         let internal_name = format!("{RSYNC_PREFIX}%stat");
-        let zeta = user_wire_name(b"zeta");
         let alpha = user_wire_name(b"alpha");
         let middle = user_wire_name(b"middle");
+        let zeta = user_wire_name(b"zeta");
         write_literal_xattr(
             &mut buf,
             &[
-                (&zeta, b"z"),
-                (internal_name.as_bytes(), b"internal"),
                 (&alpha, b"a"),
+                (internal_name.as_bytes(), b"internal"),
                 (&middle, b"m"),
+                (&zeta, b"z"),
             ],
         );
 
@@ -751,12 +754,10 @@ mod tests {
         cache.receive_xattr(&mut cursor, false, 1).unwrap();
 
         let list = cache.get(0).unwrap();
-        // Internal entry filtered, remaining three sorted by local name.
+        // Internal entry filtered; remaining three keep wire-arrival order.
         assert_eq!(list.len(), 3);
         let names: Vec<&[u8]> = list.entries().iter().map(|e| e.name()).collect();
-        let mut sorted = names.clone();
-        sorted.sort();
-        assert_eq!(names, sorted);
+        assert_eq!(names, vec![&alpha[..], &middle[..], &zeta[..]]);
     }
 
     #[test]
