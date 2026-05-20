@@ -1,14 +1,11 @@
 //! Ordered consumer for the concurrent delta pipeline.
 //!
-//! [`DeltaConsumer`] bridges the parallel dispatch phase
-//! ([`WorkQueueReceiver`]) with the
-//! ordered consumption phase (receiver pipeline). It spawns a consumer
-//! thread that drains [`DeltaWork`](super::types::DeltaWork) items from the
-//! work queue via
-//! [`drain_parallel`](super::work_queue::WorkQueueReceiver::drain_parallel),
-//! feeds each [`DeltaResult`] into a
-//! [`ReorderBuffer`](super::reorder::ReorderBuffer), and exposes an iterator
-//! that yields results strictly in sequence order.
+//! [`DeltaConsumer`] bridges the parallel dispatch phase (`WorkQueue`) with
+//! the ordered consumption phase (receiver pipeline). It spawns a consumer
+//! thread that drains `DeltaWork` items from the work queue via
+//! `drain_parallel`, feeds each `DeltaResult` into a
+//! [`ReorderBuffer`](super::reorder::ReorderBuffer),
+//! and exposes an iterator that yields results strictly in sequence order.
 //!
 //! # Architecture
 //!
@@ -52,8 +49,8 @@
 //!
 //! | Submodule | Role |
 //! |-----------|------|
-//! | `spawn` | Private spawn machinery: `ReorderMode` selector and the shared `spawn_inner` plumbing |
-//! | `loops` | Background-thread reorder loops for the bare and spillable backends |
+//! | [`spawn`] | Private spawn machinery: `ReorderMode` selector and the shared `spawn_inner` plumbing |
+//! | [`loops`] | Background-thread reorder loops for the bare and spillable backends |
 //! | `tests` | Integration tests (only built under `#[cfg(test)]`) |
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -84,16 +81,6 @@ pub struct DeltaConsumerStats {
     ///
     /// Always zero when the consumer was spawned without a spill threshold.
     pub spill_events: u64,
-    /// Cumulative count of ordering-fallback inserts performed by the
-    /// underlying [`ReorderBuffer`](super::reorder::ReorderBuffer) when the
-    /// ring saturated while `next_expected` was still missing.
-    ///
-    /// Non-zero values flag periods where the consumer broke its capacity
-    /// bound to keep the pipeline alive. Operators should treat sustained
-    /// growth here as a signal to raise the reorder capacity or enable the
-    /// spill backend. This is an OC-rsync diagnostic extension - upstream
-    /// rsync has no equivalent because its delta loop is sequential.
-    pub force_inserts: u64,
 }
 
 /// Ordered consumer that drains a [`WorkQueueReceiver`] in parallel and
@@ -101,9 +88,8 @@ pub struct DeltaConsumerStats {
 ///
 /// Created via [`DeltaConsumer::spawn`], which launches a background thread
 /// that runs [`WorkQueueReceiver::drain_parallel`] to process work items
-/// concurrently, then feeds results through a
-/// [`ReorderBuffer`](super::reorder::ReorderBuffer) for in-order delivery
-/// over an internal channel.
+/// concurrently, then feeds results through a [`ReorderBuffer`] for in-order
+/// delivery over an internal channel.
 ///
 /// # Lifecycle
 ///
@@ -151,11 +137,6 @@ pub struct DeltaConsumer {
     /// Shared counter incremented by the reorder thread on each spill-to-disk
     /// event. Exposed via [`DeltaConsumer::stats`].
     pub(super) spill_events: Arc<AtomicU64>,
-    /// Shared handle aliasing the underlying [`ReorderBuffer`](super::reorder::ReorderBuffer)
-    /// `force_insert` counter. The reorder buffer updates this atomic
-    /// directly, so [`DeltaConsumer::stats`] reflects the latest value
-    /// without locking the metrics `Mutex`.
-    pub(super) force_inserts: Arc<AtomicU64>,
 }
 
 impl DeltaConsumer {
@@ -167,8 +148,8 @@ impl DeltaConsumer {
     ///   process work items via the rayon thread pool, streaming each result
     ///   through an internal channel as soon as its worker completes.
     /// - **delta-reorder**: Receives streamed results, inserts them into a
-    ///   [`ReorderBuffer`](super::reorder::ReorderBuffer), and forwards the
-    ///   contiguous in-order run to the consumer's output channel.
+    ///   [`ReorderBuffer`], and forwards the contiguous in-order run to the
+    ///   consumer's output channel.
     ///
     /// This architecture enables pipeline overlap: delta computation continues
     /// while previously completed results are reordered and written to disk.
@@ -196,11 +177,11 @@ impl DeltaConsumer {
     /// and deliver results in arrival order, bypassing reordering.
     ///
     /// Identical to [`spawn`](Self::spawn) except the internal
-    /// [`ReorderBuffer`](super::reorder::ReorderBuffer) operates in
-    /// passthrough mode. Items are forwarded to the consumer in the order
-    /// they complete rather than submission order. This eliminates reorder
-    /// overhead when strict file-list ordering is unnecessary - for example,
-    /// when `--delay-updates` is off and files are committed immediately.
+    /// [`ReorderBuffer`] operates in passthrough mode. Items are forwarded
+    /// to the consumer in the order they complete rather than submission
+    /// order. This eliminates reorder overhead when strict file-list
+    /// ordering is unnecessary - for example, when `--delay-updates` is
+    /// off and files are committed immediately.
     #[must_use]
     pub fn spawn_bypass(rx: WorkQueueReceiver) -> Self {
         spawn_inner(rx, ReorderMode::Bypass)
@@ -234,15 +215,13 @@ impl DeltaConsumer {
 
     /// Returns a snapshot of consumer-side diagnostic counters.
     ///
-    /// Exposes the cumulative spill-to-disk event count and the cumulative
-    /// `force_insert` count from the background reorder thread. Safe to
-    /// call from any thread while the consumer is running; the counters
-    /// are updated lock-free.
+    /// Currently exposes the cumulative spill-to-disk event count from the
+    /// background reorder thread. Safe to call from any thread while the
+    /// consumer is running; the counters are updated lock-free.
     #[must_use]
     pub fn stats(&self) -> DeltaConsumerStats {
         DeltaConsumerStats {
             spill_events: self.spill_events.load(Ordering::Relaxed),
-            force_inserts: self.force_inserts.load(Ordering::Relaxed),
         }
     }
 
