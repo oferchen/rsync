@@ -53,7 +53,6 @@ mod signature_layout {
                 "Block count should be positive for {size} byte file"
             );
 
-            // Verify file size can be reconstructed
             assert_eq!(
                 layout.file_size(),
                 size,
@@ -81,7 +80,6 @@ mod signature_layout {
             );
 
             let layout = layout.unwrap();
-            // Block count should be reasonable (not overflowed)
             assert!(
                 layout.block_count() < i32::MAX as u64,
                 "Block count should not overflow i32 for {size} byte file"
@@ -127,7 +125,6 @@ mod signature_layout {
 
         let layout = calculate_signature_layout(params).expect("Layout should succeed");
 
-        // With 64KB blocks, 1TB = approximately 16 million blocks
         let expected_blocks = size / 65536 + if size % 65536 > 0 { 1 } else { 0 };
         assert_eq!(layout.block_count(), expected_blocks);
         assert_eq!(layout.block_length().get(), 65536);
@@ -143,14 +140,12 @@ mod signature_layout {
         let near_max = I64_MAX - 1000;
         let params = SignatureLayoutParams::new(near_max, None, protocol, checksum_length);
 
-        // This should either succeed with valid block count or fail gracefully
+        // Acceptable outcomes: layout succeeds with a valid block count, or fails gracefully.
         let result = calculate_signature_layout(params);
         if let Ok(layout) = result {
-            // If it succeeds, block count should be valid
             assert!(layout.block_count() > 0);
             assert!(layout.block_count() <= i32::MAX as u64);
         }
-        // Otherwise, it's acceptable to reject very large files
     }
 }
 
@@ -179,7 +174,6 @@ mod block_size_heuristics {
             let layout = calculate_signature_layout(params).expect("Layout should succeed");
 
             if should_be_large {
-                // Block size should be at or near maximum
                 assert!(
                     layout.block_length().get() >= 32 * 1024,
                     "Block size {} should be >= 32KB for {} byte file",
@@ -188,7 +182,6 @@ mod block_size_heuristics {
                 );
             }
 
-            // Block size should never exceed maximum
             assert!(
                 layout.block_length().get() <= max_block_size,
                 "Block size {} exceeds max {} for {} byte file",
@@ -205,12 +198,11 @@ mod block_size_heuristics {
         let protocol = ProtocolVersion::NEWEST;
         let checksum_length = NonZeroU8::new(16).unwrap();
 
-        // With max block size 128KB, calculate max file size before block count overflows i32
+        // Max-block * i32::MAX is the upper bound before block_count overflow.
         let max_block_size = 128 * 1024u64;
         let max_blocks = i32::MAX as u64;
         let _max_file_before_overflow = max_blocks * max_block_size;
 
-        // Test a large but valid file size
         let large_valid = 100 * ONE_TB; // 100TB - well within limits
         let params = SignatureLayoutParams::new(large_valid, None, protocol, checksum_length);
 
@@ -231,8 +223,7 @@ mod block_size_heuristics {
     fn block_size_protocol_versions() {
         let checksum_length = NonZeroU8::new(16).unwrap();
 
-        // Protocol 30+ has max block size of 128KB
-        // Protocol < 30 has max block size of 512MB (1 << 29)
+        // Protocol 30+ caps at 128 KB (1 << 17); legacy caps at 512 MB (1 << 29).
         let protocols_and_max = [
             (ProtocolVersion::try_from(30u8).unwrap(), 1u32 << 17),
             (ProtocolVersion::try_from(31u8).unwrap(), 1u32 << 17),
@@ -262,19 +253,15 @@ mod memory_bounds {
         let protocol = ProtocolVersion::NEWEST;
         let checksum_length = NonZeroU8::new(16).unwrap();
 
-        // For a 1TB file with 128KB blocks, we'd have ~8 million blocks
-        // Each SignatureBlock is typically 4 bytes (rolling) + 16 bytes (strong) = 20 bytes
-        // Total: ~160MB for signatures - reasonable
-
+        // 1 TB with 128 KB blocks produces ~8M blocks * (4 rolling + 16 strong) = ~160 MB.
         let file_size = ONE_TB;
         let params = SignatureLayoutParams::new(file_size, None, protocol, checksum_length);
         let layout = calculate_signature_layout(params).expect("Layout should succeed");
 
         let block_count = layout.block_count();
-        let bytes_per_block = 4 + layout.strong_sum_length().get() as u64; // rolling + strong
+        let bytes_per_block = 4 + layout.strong_sum_length().get() as u64;
         let total_signature_bytes = block_count * bytes_per_block;
 
-        // Should be < 1GB for reasonable memory usage
         assert!(
             total_signature_bytes < 1024 * 1024 * 1024,
             "Signature memory {total_signature_bytes} bytes too high for {file_size} byte file"
@@ -318,7 +305,6 @@ mod file_size_reconstruction {
         let protocol = ProtocolVersion::NEWEST;
         let checksum_length = NonZeroU8::new(16).unwrap();
 
-        // Test various file sizes including edge cases
         let test_sizes = [
             1u64,             // Minimum
             1024,             // 1KB
@@ -349,7 +335,7 @@ mod file_size_reconstruction {
         let protocol = ProtocolVersion::NEWEST;
         let checksum_length = NonZeroU8::new(16).unwrap();
 
-        // Files that don't divide evenly into blocks
+        // Sizes chosen so file_size % block_size != 0.
         let test_sizes = [
             FOUR_GB + 1,
             FOUR_GB + 100,
@@ -361,13 +347,11 @@ mod file_size_reconstruction {
             let params = SignatureLayoutParams::new(size, None, protocol, checksum_length);
             let layout = calculate_signature_layout(params).expect("Layout should succeed");
 
-            // Should have a non-zero remainder
             assert!(
                 layout.remainder() > 0 || size % layout.block_length().get() as u64 == 0,
                 "Expected remainder for size {size}"
             );
 
-            // File size should still reconstruct correctly
             assert_eq!(layout.file_size(), size);
         }
     }
@@ -382,12 +366,10 @@ mod edge_cases {
         let protocol = ProtocolVersion::NEWEST;
         let checksum_length = NonZeroU8::new(16).unwrap();
 
-        // i64::MAX should work (it's the limit)
         let size = I64_MAX;
         let params = SignatureLayoutParams::new(size, None, protocol, checksum_length);
 
-        // This may or may not succeed depending on block count overflow
-        // but should not panic
+        // May succeed or fail depending on block count overflow, but must not panic.
         let _result = calculate_signature_layout(params);
     }
 
@@ -397,7 +379,6 @@ mod edge_cases {
         let protocol = ProtocolVersion::NEWEST;
         let checksum_length = NonZeroU8::new(16).unwrap();
 
-        // i64::MAX + 1 should fail
         let size = I64_MAX + 1;
         let params = SignatureLayoutParams::new(size, None, protocol, checksum_length);
 
@@ -425,7 +406,6 @@ mod edge_cases {
         let checksum_length = NonZeroU8::new(16).unwrap();
         let forced_block = NonZeroU32::new(1024 * 1024).unwrap(); // 1MB blocks
 
-        // 100 byte file with 1MB block size
         let size = 100u64;
         let params =
             SignatureLayoutParams::new(size, Some(forced_block), protocol, checksum_length);
