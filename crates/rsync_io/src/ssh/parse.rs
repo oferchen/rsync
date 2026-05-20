@@ -100,7 +100,6 @@ fn has_trailing_escape(text: &str) -> bool {
 
     for byte in text.bytes() {
         if escape_pending {
-            // The previous byte was an active backslash; consume this byte.
             escape_pending = false;
             last_was_active_backslash = false;
             continue;

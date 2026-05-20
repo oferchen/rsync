@@ -455,7 +455,6 @@ mod tests {
 
     #[test]
     fn local_protocol_was_capped_true_when_reduced() {
-        // Create handshake where server advertises 31 but we negotiate 29
         let greeting =
             LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).expect("valid greeting");
         let proto = ProtocolVersion::from_supported(29).unwrap();
