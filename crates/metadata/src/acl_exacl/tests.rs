@@ -23,7 +23,6 @@ fn sync_acls_skips_when_not_following_symlinks() {
     File::create(&source).expect("create src");
     File::create(&destination).expect("create dst");
 
-    // Should return Ok without doing anything
     let result = sync_acls(&source, &destination, false);
     assert!(result.is_ok());
 }
@@ -36,7 +35,6 @@ fn sync_acls_copies_between_regular_files() {
     File::create(&source).expect("create src");
     File::create(&destination).expect("create dst");
 
-    // Should succeed for files on same filesystem
     let result = sync_acls(&source, &destination, true);
     assert!(result.is_ok());
 }
@@ -76,7 +74,6 @@ fn clear_default_acl_works_on_directory() {
 
 #[test]
 fn is_unsupported_error_detects_common_messages() {
-    // Test various error message patterns
     let patterns = [
         "operation not supported",
         "No such file or directory",
@@ -96,7 +93,6 @@ fn is_unsupported_error_detects_common_messages() {
 #[cfg(unix)]
 #[test]
 fn is_unsupported_error_detects_os_error_codes() {
-    // Test raw OS error codes
     let codes = [libc::ENOTSUP, libc::ENOENT, libc::EINVAL, libc::EPERM];
 
     for code in codes {
@@ -238,7 +234,6 @@ fn apply_acls_from_cache_missing_index_is_noop() {
     File::create(&file).expect("create file");
 
     let cache = AclCache::new();
-    // Index 99 does not exist - should be a no-op, not an error
     let result = apply_acls_from_cache(&file, &cache, 99, None, true, Some(0o644));
     assert!(result.is_ok());
 }

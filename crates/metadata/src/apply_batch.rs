@@ -88,7 +88,7 @@ impl BatchMetadataContext {
         } else {
             match self.cache.get_or_fetch(destination) {
                 Ok(cached) => cached.uid,
-                Err(_) => return Ok(()), // If we can't stat, skip ownership
+                Err(_) => return Ok(()),
             }
         };
 
@@ -97,14 +97,14 @@ impl BatchMetadataContext {
         } else {
             match self.cache.get_or_fetch(destination) {
                 Ok(cached) => cached.gid,
-                Err(_) => return Ok(()), // If we can't stat, skip ownership
+                Err(_) => return Ok(()),
             }
         };
 
         let needs_chown = match self.cache.ownership_matches(destination, desired_uid, desired_gid)
         {
             Ok(matches) => !matches,
-            Err(_) => true, // If cache check fails, try chown anyway
+            Err(_) => true,
         };
 
         if needs_chown {
@@ -154,7 +154,7 @@ impl BatchMetadataContext {
 
         let needs_chmod = match self.cache.mode_matches(destination, desired_mode) {
             Ok(matches) => !matches,
-            Err(_) => true, // If cache check fails, try chmod anyway
+            Err(_) => true,
         };
 
         if needs_chmod {
@@ -191,7 +191,6 @@ impl BatchMetadataContext {
                 }
             }
             Err(_) => {
-                // If we can't stat, try setting anyway
                 let mut perms = metadata.permissions();
                 perms.set_readonly(desired_readonly);
                 fs::set_permissions(destination, perms).map_err(|error| {
@@ -288,12 +287,11 @@ mod tests {
         let mut ctx = BatchMetadataContext::new();
         let meta = fs::metadata(&path).expect("metadata");
 
-        // This will cause some cache activity
         let _ = ctx.apply_file_metadata(&path, &meta);
 
         ctx.clear_cache();
         let (hits, misses) = ctx.cache_stats();
-        // Stats are preserved, only cache entries are cleared
+        // Stats counters survive a clear; only cache entries are dropped.
         assert!(hits >= 0);
         assert!(misses >= 0);
     }
@@ -310,7 +308,6 @@ mod tests {
         fs::write(&source, b"source").expect("write source");
         fs::write(&dest, b"dest").expect("write dest");
 
-        // Set different permissions on source
         let perms = PermissionsExt::from_mode(0o755);
         fs::set_permissions(&source, perms).expect("chmod source");
 
@@ -320,24 +317,21 @@ mod tests {
         opts.set_permissions(true);
         let mut ctx = BatchMetadataContext::with_options(opts);
 
-        // Apply metadata
         ctx.apply_file_metadata(&dest, &source_meta)
             .expect("apply metadata");
 
-        // Verify permissions were applied
         let dest_meta = fs::metadata(&dest).expect("dest metadata");
         assert_eq!(
             dest_meta.permissions().mode() & 0o777,
             source_meta.permissions().mode() & 0o777
         );
 
-        // Apply again - should be cached and skip syscall
+        // Second call must hit the cache and skip the chmod syscall.
         let before_hits = ctx.cache_stats().0;
         ctx.apply_file_metadata(&dest, &source_meta)
             .expect("apply metadata again");
         let after_hits = ctx.cache_stats().0;
 
-        // Should have at least one cache hit
         assert!(after_hits > before_hits);
     }
 
@@ -348,12 +342,11 @@ mod tests {
 
         let temp = tempfile::tempdir().expect("tempdir");
 
-        // Create multiple files with different permissions
         let files: Vec<_> = (0..10)
             .map(|i| {
                 let path = temp.path().join(format!("file{}.txt", i));
                 fs::write(&path, format!("content{}", i)).expect("write");
-                let mode = 0o600 + (i * 7) % 0o177; // Varying permissions
+                let mode = 0o600 + (i * 7) % 0o177;
                 let perms = PermissionsExt::from_mode(mode);
                 fs::set_permissions(&path, perms).expect("chmod");
                 path
@@ -364,7 +357,6 @@ mod tests {
         opts.set_permissions(true);
         let mut ctx = BatchMetadataContext::with_options(opts);
 
-        // Apply metadata to all files twice
         for _ in 0..2 {
             for file in &files {
                 let meta = fs::metadata(file).expect("metadata");
@@ -373,7 +365,6 @@ mod tests {
         }
 
         let (hits, _misses) = ctx.cache_stats();
-        // Second pass should have cache hits
         assert!(hits >= 10, "Expected at least 10 hits, got {}", hits);
     }
 
@@ -389,7 +380,6 @@ mod tests {
         fs::write(&source, b"source").expect("write source");
         fs::write(&dest, b"dest").expect("write dest");
 
-        // Set different permissions
         let perms_source = PermissionsExt::from_mode(0o755);
         let perms_dest = PermissionsExt::from_mode(0o644);
         fs::set_permissions(&source, perms_source).expect("chmod source");
@@ -398,14 +388,13 @@ mod tests {
         let source_meta = fs::metadata(&source).expect("source metadata");
         let dest_meta_before = fs::metadata(&dest).expect("dest metadata before");
 
-        let opts = MetadataOptions::default(); // permissions disabled
+        // Default options leave permission preservation off.
+        let opts = MetadataOptions::default();
         let mut ctx = BatchMetadataContext::with_options(opts);
 
-        // Apply metadata (should skip permissions)
         ctx.apply_file_metadata(&dest, &source_meta)
             .expect("apply metadata");
 
-        // Verify permissions were NOT changed
         let dest_meta_after = fs::metadata(&dest).expect("dest metadata after");
         assert_eq!(
             dest_meta_before.mode() & 0o777,
@@ -433,11 +422,9 @@ mod tests {
         opts.set_times(true);
         let mut ctx = BatchMetadataContext::with_options(opts);
 
-        // Apply metadata
         ctx.apply_file_metadata(&dest, &source_meta)
             .expect("apply metadata");
 
-        // Verify timestamps were applied
         let dest_meta = fs::metadata(&dest).expect("dest metadata");
         let source_mtime = FileTime::from_last_modification_time(&source_meta);
         let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
@@ -462,14 +449,13 @@ mod tests {
         let source_meta = fs::metadata(&source).expect("source metadata");
         let dest_meta_before = fs::metadata(&dest).expect("dest metadata before");
 
-        let opts = MetadataOptions::default(); // times disabled
+        // Default options leave timestamp preservation off.
+        let opts = MetadataOptions::default();
         let mut ctx = BatchMetadataContext::with_options(opts);
 
-        // Apply metadata (should skip timestamps)
         ctx.apply_file_metadata(&dest, &source_meta)
             .expect("apply metadata");
 
-        // Verify timestamps were NOT changed
         let dest_meta_after = fs::metadata(&dest).expect("dest metadata after");
         let mtime_before = FileTime::from_last_modification_time(&dest_meta_before);
         let mtime_after = FileTime::from_last_modification_time(&dest_meta_after);
@@ -486,7 +472,6 @@ mod tests {
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
-        // Set initial permissions
         let perms1 = PermissionsExt::from_mode(0o644);
         fs::set_permissions(&path, perms1).expect("chmod");
 
@@ -499,15 +484,14 @@ mod tests {
 
         let (hits_before, misses_before) = ctx.cache_stats();
 
-        // Change permissions
         let perms2 = PermissionsExt::from_mode(0o755);
         fs::set_permissions(&path, perms2).expect("chmod");
 
         let meta2 = fs::metadata(&path).expect("metadata");
         ctx.apply_file_metadata(&path, &meta2).expect("apply");
 
-        // Cache should have been invalidated after the chmod
-        // Next operation should see the new permissions
+        // Cache invalidation after the chmod must surface the new mode -
+        // either via a fresh miss or a re-validated hit on the next apply.
         let (hits_after, misses_after) = ctx.cache_stats();
         assert!(misses_after > misses_before || hits_after > hits_before);
     }
@@ -525,21 +509,18 @@ mod tests {
         let uid = meta.uid();
         let gid = meta.gid();
 
-        // Apply metadata with ownership that already matches
         let mut opts = MetadataOptions::default();
         opts.set_owner(true);
         opts.set_group(true);
         let mut ctx = BatchMetadataContext::with_options(opts);
 
-        // First application
         ctx.apply_file_metadata(&path, &meta).expect("apply");
 
-        // Second application should use cache and skip chown
+        // Second apply must hit the cache and elide the chown syscall.
         let (_, misses_before) = ctx.cache_stats();
         ctx.apply_file_metadata(&path, &meta).expect("apply");
         let (hits_after, _) = ctx.cache_stats();
 
-        // Should have cache hits from the second application
         assert!(hits_after > 0);
     }
 
@@ -553,7 +534,6 @@ mod tests {
         fs::write(&source, b"source").expect("write source");
         fs::write(&dest, b"dest").expect("write dest");
 
-        // Make source readonly
         let mut perms = fs::metadata(&source).expect("metadata").permissions();
         perms.set_readonly(true);
         fs::set_permissions(&source, perms).expect("set readonly");
@@ -564,11 +544,9 @@ mod tests {
         opts.set_permissions(true);
         let mut ctx = BatchMetadataContext::with_options(opts);
 
-        // Apply metadata
         ctx.apply_file_metadata(&dest, &source_meta)
             .expect("apply metadata");
 
-        // Verify readonly was applied
         let dest_meta = fs::metadata(&dest).expect("dest metadata");
         assert!(dest_meta.permissions().readonly());
     }
@@ -586,7 +564,6 @@ mod tests {
         opts.set_permissions(true);
         let mut ctx = BatchMetadataContext::with_options(opts);
 
-        // Should return error for nonexistent path
         let result = ctx.apply_file_metadata(&dest, &source_meta);
         assert!(result.is_err());
     }
@@ -606,18 +583,17 @@ mod tests {
         let source_meta = fs::metadata(&source).expect("source metadata");
         let dest_meta_before = fs::metadata(&dest).expect("dest metadata");
 
-        // Only enable owner, not group
+        // Owner-only ownership preservation; group must stay untouched.
         let mut opts = MetadataOptions::default();
         opts.set_owner(true);
         opts.set_group(false);
         let mut ctx = BatchMetadataContext::with_options(opts);
 
-        // Apply metadata
         let _ = ctx.apply_file_metadata(&dest, &source_meta);
 
-        // GID should remain unchanged (we're not root, so this is best-effort)
+        // Without root the chown is best-effort; the test just exercises the
+        // partial-application path and asserts it does not panic.
         let dest_meta_after = fs::metadata(&dest).expect("dest metadata");
-        // UID might change or not depending on permissions, but test shouldn't fail
         let _ = dest_meta_after.uid();
         let _ = dest_meta_before.gid();
     }
@@ -627,7 +603,6 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let mut ctx = BatchMetadataContext::with_capacity(1000, MetadataOptions::default());
 
-        // Create and process 100 files
         for i in 0..100 {
             let path = temp.path().join(format!("file{}.txt", i));
             fs::write(&path, format!("content{}", i)).expect("write");
@@ -636,7 +611,6 @@ mod tests {
         }
 
         let (hits, misses) = ctx.cache_stats();
-        // Should have some cache activity
         assert!(hits + misses > 0);
     }
 
@@ -649,14 +623,11 @@ mod tests {
         let mut ctx = BatchMetadataContext::new();
         let meta = fs::metadata(&path).expect("metadata");
 
-        // Populate cache
         let _ = ctx.apply_file_metadata(&path, &meta);
         let (_, misses_before) = ctx.cache_stats();
 
-        // Clear cache
         ctx.clear_cache();
 
-        // Next operation should miss
         let _ = ctx.apply_file_metadata(&path, &meta);
         let (_, misses_after) = ctx.cache_stats();
 
@@ -675,17 +646,15 @@ mod tests {
         fs::write(&source, b"source").expect("write source");
         fs::write(&dest, b"dest").expect("write dest");
 
-        // Backdate source so it has a distinct mtime from dest
+        // Backdate source so quick-check (matching size+mtime) does not skip it.
         let past = FileTime::from_unix_time(1_600_000_000, 0);
         filetime::set_file_mtime(&source, past).expect("backdate source");
 
-        // Set permissions on source
         let perms = PermissionsExt::from_mode(0o755);
         fs::set_permissions(&source, perms).expect("chmod");
 
         let source_meta = fs::metadata(&source).expect("source metadata");
 
-        // Enable all metadata options
         let mut opts = MetadataOptions::default();
         opts.set_permissions(true);
         opts.set_times(true);
@@ -693,18 +662,15 @@ mod tests {
         opts.set_group(true);
         let mut ctx = BatchMetadataContext::with_options(opts);
 
-        // Apply all metadata
         ctx.apply_file_metadata(&dest, &source_meta)
             .expect("apply metadata");
 
-        // Verify permissions were applied
         let dest_meta = fs::metadata(&dest).expect("dest metadata");
         assert_eq!(
             dest_meta.permissions().mode() & 0o777,
             source_meta.permissions().mode() & 0o777
         );
 
-        // Verify timestamps were applied
         let source_mtime = FileTime::from_last_modification_time(&source_meta);
         let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
         assert_eq!(source_mtime, dest_mtime);

@@ -346,7 +346,6 @@ mod tests {
 
     #[test]
     fn parse_clause_symbolic_assign_empty_perms() {
-        // "=" with no perms is valid for assign operation
         let clause = parse_clause("u=").unwrap();
         match clause.kind {
             ClauseKind::Symbolic(sym) => {
@@ -399,7 +398,6 @@ mod tests {
 
     #[test]
     fn parse_numeric_clause_invalid_octal() {
-        // 8 and 9 are not valid octal digits
         assert!(parse_numeric_clause("789").is_err());
     }
 
@@ -475,7 +473,7 @@ mod tests {
         let spec = parse_perm_spec("RWX", Operation::Add).unwrap();
         assert!(spec.read);
         assert!(spec.write);
-        // Note: X is conditional exec, not regular exec
+        // Upstream maps capital X to "conditional exec", never plain exec.
         assert!(spec.exec_if_conditional);
     }
 
