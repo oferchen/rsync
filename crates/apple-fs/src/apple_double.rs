@@ -352,7 +352,6 @@ mod tests {
         container.set_entry(EntryId::ResourceFork, sample_resource_fork()); // id 2
 
         let encoded = container.encode().expect("encode");
-        // First descriptor's id field starts at HEADER_SIZE.
         let first_id = read_u32(&encoded[HEADER_SIZE..HEADER_SIZE + 4]);
         assert_eq!(first_id, EntryId::ResourceFork as u32);
         let second_id = read_u32(
@@ -411,7 +410,6 @@ mod tests {
         bytes[0..4].copy_from_slice(&APPLE_DOUBLE_MAGIC.to_be_bytes());
         bytes[4..8].copy_from_slice(&APPLE_DOUBLE_VERSION_2.to_be_bytes());
         bytes[24..26].copy_from_slice(&1u16.to_be_bytes());
-        // Descriptor: id=9, offset=HEADER_SIZE+ENTRY_DESCRIPTOR_SIZE, length=999.
         bytes[26..30].copy_from_slice(&9u32.to_be_bytes());
         bytes[30..34]
             .copy_from_slice(&((HEADER_SIZE + ENTRY_DESCRIPTOR_SIZE) as u32).to_be_bytes());
@@ -455,7 +453,6 @@ mod tests {
         let mut bytes = vec![0u8; HEADER_SIZE];
         bytes[0..4].copy_from_slice(&APPLE_SINGLE_MAGIC.to_be_bytes());
         bytes[4..8].copy_from_slice(&APPLE_DOUBLE_VERSION_2.to_be_bytes());
-        // zero entries
         let decoded = AppleDouble::decode(&bytes).expect("decode applesingle");
         assert!(decoded.entries.is_empty());
     }
