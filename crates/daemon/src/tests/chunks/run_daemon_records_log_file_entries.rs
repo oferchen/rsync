@@ -9,6 +9,7 @@ fn run_daemon_records_log_file_entries() {
     let temp = tempdir().expect("log dir");
     let log_path = temp.path().join("rsyncd.log");
 
+    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
@@ -17,7 +18,7 @@ fn run_daemon_records_log_file_entries() {
             OsString::from("--log-file"),
             log_path.as_os_str().to_os_string(),
             OsString::from("--module"),
-            OsString::from("docs=/srv/docs"),
+            OsString::from(format!("docs={module_path}")),
             OsString::from("--once"),
         ])
         .build();

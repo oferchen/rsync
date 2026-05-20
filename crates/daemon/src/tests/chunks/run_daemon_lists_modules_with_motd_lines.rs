@@ -14,6 +14,7 @@ fn run_daemon_lists_modules_with_motd_lines() {
     )
     .expect("write motd");
 
+    let module_path = std::env::temp_dir().display().to_string().replace('\\', "/");
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
@@ -24,7 +25,7 @@ fn run_daemon_lists_modules_with_motd_lines() {
             OsString::from("--motd-line"),
             OsString::from("Additional notice"),
             OsString::from("--module"),
-            OsString::from("docs=/srv/docs"),
+            OsString::from(format!("docs={module_path}")),
             OsString::from("--once"),
         ])
         .build();
