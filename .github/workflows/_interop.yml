@@ -10,7 +10,7 @@ on:
       upstream_rsync_version:
         description: 'Upstream rsync version for cache key'
         type: string
-        default: '3.4.2'
+        default: '3.4.3'
       rust_toolchain:
         description: 'Rust toolchain version'
         type: string
@@ -91,6 +91,36 @@ jobs:
 
       - name: Run interop tests
         run: bash tools/ci/run_interop.sh
+
+      # Drive upstream rsync's own `testsuite/*.test` corpus against
+      # oc-rsync as `$RSYNC`. The harness sources upstream's `rsync.fns`
+      # and reuses its helper tools (`tls`, `getgroups`, `support/lsh.sh`),
+      # so this is the canonical "does oc-rsync look like rsync from
+      # upstream's perspective" check. Expected failures are tracked in
+      # `tools/ci/upstream_testsuite_known_failures.conf` and reported as
+      # XFAIL. Non-blocking initially via `continue-on-error: true`;
+      # promote to required once the known-failure roster is stable.
+      - name: Run upstream rsync testsuite against oc-rsync
+        continue-on-error: true
+        env:
+          OC_RSYNC_BIN: target/release/oc-rsync
+          UPSTREAM_VERSION: ${{ inputs.upstream_rsync_version }}
+        run: |
+          set -euo pipefail
+          # Ensure release oc-rsync exists for the harness.
+          if [[ ! -x target/release/oc-rsync ]]; then
+            cargo build --release --bin oc-rsync
+          fi
+          bash tools/ci/run_upstream_testsuite.sh
+
+      - name: Upload upstream testsuite logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-testsuite-logs
+          path: target/interop/upstream-testsuite/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Run SSH interop tests
         run: |
