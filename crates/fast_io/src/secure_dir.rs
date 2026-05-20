@@ -8,10 +8,9 @@
 //! the path - not just at the leaf - and any `..` traversal outside the open
 //! point are rejected with `EXDEV` / `ELOOP`.
 //!
-//! Windows callers do not need a sandbox dirfd because the NTFS handle-based
-//! APIs sidestep path TOCTOU naturally (see the SEC-1.l audit). The Windows
-//! stub therefore returns [`io::ErrorKind::Unsupported`] so callers can
-//! fall through to the handle-based path.
+//! This module is Unix-only. Windows callers use NTFS handle-based APIs
+//! (see the SEC-1.l audit), which sidestep path TOCTOU naturally; they
+//! should `#[cfg(unix)]`-gate their use of this helper.
 //!
 //! # Why two code paths on Linux
 //!
@@ -40,9 +39,6 @@ use std::path::Path;
 /// back to `open(O_RDONLY | O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)`, which
 /// only rejects a symlink at the leaf.
 ///
-/// On Windows this returns `io::ErrorKind::Unsupported`; NTFS handle-based
-/// APIs sidestep path TOCTOU without needing a sandbox dirfd.
-///
 /// # Errors
 ///
 /// - `ELOOP` when the leaf is a symlink (plain `open` path) or any path
@@ -52,7 +48,6 @@ use std::path::Path;
 ///   escape the open point under `RESOLVE_BENEATH`.
 /// - `ENOENT` when the path does not exist.
 /// - `EACCES` / `EPERM` per the usual `open(2)` semantics.
-/// - `io::ErrorKind::Unsupported` on Windows.
 pub fn secure_open_dir(path: &Path) -> io::Result<OwnedFd> {
     imp::secure_open_dir(path)
 }
@@ -192,18 +187,6 @@ mod imp {
     }
 }
 
-#[cfg(windows)]
-mod imp {
-    use super::*;
-
-    pub(super) fn secure_open_dir(_path: &Path) -> io::Result<OwnedFd> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "secure_open_dir not implemented on Windows",
-        ))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,17 +197,8 @@ mod tests {
     fn opens_real_directory() {
         let dir = tempdir().expect("tempdir");
 
-        #[cfg(unix)]
-        {
-            let fd = secure_open_dir(dir.path()).expect("open dir");
-            assert!(fd.as_raw_fd() >= 0);
-        }
-
-        #[cfg(windows)]
-        {
-            let err = secure_open_dir(dir.path()).expect_err("unsupported on windows");
-            assert_eq!(err.kind(), io::ErrorKind::Unsupported);
-        }
+        let fd = secure_open_dir(dir.path()).expect("open dir");
+        assert!(fd.as_raw_fd() >= 0);
     }
 
     #[cfg(unix)]
@@ -319,13 +293,5 @@ mod tests {
         } else {
             io::Error::last_os_error().raw_os_error() != Some(libc::ENOSYS)
         }
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_returns_unsupported() {
-        let dir = tempdir().expect("tempdir");
-        let err = secure_open_dir(dir.path()).expect_err("windows stub must error");
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     }
 }
