@@ -328,7 +328,6 @@ mod tests {
 
     #[test]
     fn with_ack_batching_enables() {
-        // Start with disabled config and enable it
         let config = PipelineConfig::synchronous().with_ack_batching(true);
         assert!(config.ack_batching_enabled);
     }
