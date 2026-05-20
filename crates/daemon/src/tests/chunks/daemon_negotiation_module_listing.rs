@@ -13,13 +13,14 @@ fn daemon_negotiation_module_list_sends_capabilities_before_ok() {
 
     let (port, held_listener) = allocate_test_port();
 
+    let module_path = std::env::temp_dir();
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--module"),
-            OsString::from("test=/tmp"),
+            OsString::from(format!("test={}", module_path.display())),
             OsString::from("--once"),
         ])
         .build();
@@ -146,13 +147,14 @@ fn daemon_negotiation_module_list_includes_comments() {
 
     let (port, held_listener) = allocate_test_port();
 
+    let module_path = std::env::temp_dir();
     let config = DaemonConfig::builder()
         .disable_default_paths()
         .arguments([
             OsString::from("--port"),
             OsString::from(port.to_string()),
             OsString::from("--module"),
-            OsString::from("mymod=/tmp,This is a comment"),
+            OsString::from(format!("mymod={},This is a comment", module_path.display())),
             OsString::from("--once"),
         ])
         .build();
