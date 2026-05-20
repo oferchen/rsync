@@ -19,6 +19,8 @@ mod bithash_tests;
 #[cfg(test)]
 mod matched_blocks_tests;
 #[cfg(test)]
+mod seq_match_tests;
+#[cfg(test)]
 mod sparse_match_tests;
 #[cfg(test)]
 mod tests;
@@ -44,6 +46,14 @@ pub use trace::{
 /// table. This constant matches upstream's `TABLESIZE` in `match.c`.
 const TAG_TABLE_SIZE: usize = 1 << 16;
 
+/// Sentinel marking the absence of a stored successor in [`DeltaSignatureIndex::next_match`].
+///
+/// The link table stores `u32` block indices; `u32::MAX` is reserved to mean
+/// "no successor" without paying a `Vec<Option<u32>>` discriminant. Real basis
+/// block counts never reach `u32::MAX` because the wire-format block index is
+/// itself a `u32` and one slot is consumed by the sentinel.
+const NEXT_MATCH_NONE: u32 = u32::MAX;
+
 /// Index over a file signature that accelerates delta matching.
 ///
 /// Uses a flat open-addressing hash table ([`CompactLookup`]) keyed by packed
@@ -68,12 +78,76 @@ pub struct DeltaSignatureIndex {
     /// the bithash rejects ~7/8 of post-tag misses before the hash probe.
     /// Mirrors zsync's `librcksum/rsum.c:362-366` probe expression.
     bithash: BitHash,
+    /// Sequential-match lookahead: `next_match[k]` is the block index that
+    /// followed block `k` in source-file order during indexing, or
+    /// [`NEXT_MATCH_NONE`] when block `k` has no full-length successor.
+    ///
+    /// Lets the matcher skip the rolling-rsum table lookup when a confirmed
+    /// match at block `K` was already followed by a confirmed match at the
+    /// linked successor in the basis. Mirrors zsync's `next_match` slot from
+    /// `librcksum/rsum.c:262` while preserving wire-format bytes - the field
+    /// is in-memory only and is cleared by [`Self::rebuild`] so per-segment
+    /// INC_RECURSE indexes never inherit stale links.
+    next_match: Vec<u32>,
     /// Role used for `--debug=HASH` `[<role>]` prefixes on the create,
     /// grow, and destroy lifecycle emissions. Mirrors upstream
     /// `who_am_i()` (`hashtable.c:51,61,101`).
     role: HashtableRole,
     /// Slot count tracked across rebuilds for the matching destroy emission.
     last_traced_size: usize,
+    /// Test-only seq-match probe counters. Wrapped in `Arc<...>` so the
+    /// [`Clone`] derive shares the counter across handles, which is what
+    /// the per-segment isolation tests need to assert. Production builds
+    /// skip the field entirely so the hot path carries zero overhead.
+    #[cfg(any(test, feature = "bench-internal"))]
+    seq_match_counters: std::sync::Arc<SeqMatchCounters>,
+}
+
+/// Test-only seq-match probe counters.
+///
+/// Three atomic counters cover the lookahead state machine:
+///
+/// - `probes`: every call into a `try_next_match_*` entry point.
+/// - `hits`: probes whose strong-checksum verify confirmed the linked successor.
+/// - `misses`: probes that fell through to the full rolling-rsum lookup.
+///
+/// The split lets the per-segment isolation test assert that the counters
+/// reset cleanly across [`DeltaSignatureIndex::rebuild`].
+#[cfg(any(test, feature = "bench-internal"))]
+#[derive(Debug, Default)]
+pub struct SeqMatchCounters {
+    probes: std::sync::atomic::AtomicU64,
+    hits: std::sync::atomic::AtomicU64,
+    misses: std::sync::atomic::AtomicU64,
+}
+
+#[cfg(any(test, feature = "bench-internal"))]
+impl SeqMatchCounters {
+    /// Returns the total number of [`DeltaSignatureIndex::try_next_match_slices`]
+    /// (and contiguous-bytes equivalent) calls observed since the last reset.
+    #[must_use]
+    pub fn probes(&self) -> u64 {
+        self.probes.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Returns the number of probes that confirmed the linked successor.
+    #[must_use]
+    pub fn hits(&self) -> u64 {
+        self.hits.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Returns the number of probes that fell through to the full lookup.
+    #[must_use]
+    pub fn misses(&self) -> u64 {
+        self.misses.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Clears every counter back to zero.
+    pub fn reset(&self) {
+        self.probes.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.hits.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.misses.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl DeltaSignatureIndex {
@@ -114,6 +188,156 @@ impl DeltaSignatureIndex {
     #[must_use]
     pub fn block(&self, index: usize) -> &SignatureBlock {
         &self.blocks[index]
+    }
+
+    /// Returns the sequential-match successor recorded for `block_index`, if any.
+    ///
+    /// The successor is the basis block that immediately followed
+    /// `block_index` in source-file order during indexing. Source-sequential
+    /// targets typically match the successor at the very next window offset,
+    /// so callers can probe the successor directly via
+    /// [`Self::try_next_match_slices`] and skip the rolling-rsum table
+    /// lookup on the common path.
+    ///
+    /// Returns `None` for the trailing block, for any block index past the
+    /// end of the basis, and for non-full-length blocks that were not
+    /// linked during construction.
+    ///
+    /// upstream: zsync `librcksum/rsum.c:262` populates an equivalent
+    /// `next_match` slot after every confirmed match.
+    #[inline]
+    #[must_use]
+    pub fn next_match(&self, block_index: usize) -> Option<usize> {
+        let raw = *self.next_match.get(block_index)?;
+        if raw == NEXT_MATCH_NONE {
+            None
+        } else {
+            Some(raw as usize)
+        }
+    }
+
+    /// Probes the sequential-match successor of `last_match` against a
+    /// contiguous target window without consulting the tag table, bithash,
+    /// or compact lookup.
+    ///
+    /// Returns `Some(successor)` when the linked successor exists and its
+    /// strong checksum matches `window`. Returns `None` when there is no
+    /// recorded successor, the digest's `(sum1, sum2)` disagrees with the
+    /// stored block, or the strong checksum verify fails. Callers MUST fall
+    /// back to [`Self::find_match_bytes_filtered`] on a miss.
+    ///
+    /// The rolling-checksum prefilter is a cheap two-word compare against
+    /// the linked block's stored digest, so a miss here costs the same as
+    /// the existing `want_i` hint check in `match.c:144-190`.
+    #[inline]
+    pub fn try_next_match_bytes(
+        &self,
+        last_match: usize,
+        digest: RollingDigest,
+        window: &[u8],
+    ) -> Option<usize> {
+        let next = self.next_match(last_match)?;
+
+        #[cfg(any(test, feature = "bench-internal"))]
+        self.seq_match_counters
+            .probes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        if window.len() != self.block_length {
+            #[cfg(any(test, feature = "bench-internal"))]
+            self.seq_match_counters
+                .misses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return None;
+        }
+        let block = &self.blocks[next];
+        let block_digest = block.rolling();
+        if digest.sum1() != block_digest.sum1() || digest.sum2() != block_digest.sum2() {
+            #[cfg(any(test, feature = "bench-internal"))]
+            self.seq_match_counters
+                .misses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return None;
+        }
+        let strong = self.algorithm.compute_truncated(window, self.strong_length);
+        if strong.as_slice() == block.strong() {
+            #[cfg(any(test, feature = "bench-internal"))]
+            self.seq_match_counters
+                .hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Some(next)
+        } else {
+            #[cfg(any(test, feature = "bench-internal"))]
+            self.seq_match_counters
+                .misses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            None
+        }
+    }
+
+    /// Probes the sequential-match successor of `last_match` against a
+    /// non-contiguous target window represented as two slices.
+    ///
+    /// Mirrors [`Self::try_next_match_bytes`] for the ring-buffer split
+    /// form used by the generator.
+    #[inline]
+    pub fn try_next_match_slices(
+        &self,
+        last_match: usize,
+        digest: RollingDigest,
+        first: &[u8],
+        second: &[u8],
+    ) -> Option<usize> {
+        let next = self.next_match(last_match)?;
+
+        #[cfg(any(test, feature = "bench-internal"))]
+        self.seq_match_counters
+            .probes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        if first.len() + second.len() != self.block_length {
+            #[cfg(any(test, feature = "bench-internal"))]
+            self.seq_match_counters
+                .misses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return None;
+        }
+        let block = &self.blocks[next];
+        let block_digest = block.rolling();
+        if digest.sum1() != block_digest.sum1() || digest.sum2() != block_digest.sum2() {
+            #[cfg(any(test, feature = "bench-internal"))]
+            self.seq_match_counters
+                .misses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return None;
+        }
+        let strong = self
+            .algorithm
+            .compute_truncated_slices(first, second, self.strong_length);
+        if strong.as_slice() == block.strong() {
+            #[cfg(any(test, feature = "bench-internal"))]
+            self.seq_match_counters
+                .hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Some(next)
+        } else {
+            #[cfg(any(test, feature = "bench-internal"))]
+            self.seq_match_counters
+                .misses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            None
+        }
+    }
+
+    /// Returns a shared handle to the test-only seq-match probe counters.
+    ///
+    /// Behind the same `cfg(any(test, feature = "bench-internal"))` gate
+    /// that gates the counters themselves, so release builds never expose
+    /// the accessor.
+    #[cfg(any(test, feature = "bench-internal"))]
+    #[must_use]
+    pub fn seq_match_counters(&self) -> std::sync::Arc<SeqMatchCounters> {
+        std::sync::Arc::clone(&self.seq_match_counters)
     }
 
     /// Attempts to locate a matching block for a contiguous byte slice.

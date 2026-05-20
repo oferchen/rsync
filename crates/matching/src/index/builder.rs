@@ -8,10 +8,16 @@ use signature::{FileSignature, SignatureAlgorithm, SignatureBlock};
 
 use super::compact_lookup::CompactLookup;
 use super::trace::{HashtableRole, trace_created, trace_growing};
-use super::{BitHash, DeltaSignatureIndex, TAG_TABLE_SIZE};
+use super::{BitHash, DeltaSignatureIndex, NEXT_MATCH_NONE, TAG_TABLE_SIZE};
 
 /// Shared helper that indexes full-length blocks into the tag table, bithash,
-/// and compact lookup table.
+/// compact lookup table, and sequential-match successor links.
+///
+/// The successor link table is written in a single pass: while walking the
+/// block list in order we remember the index of the previous full-length
+/// block and patch its slot once a successor appears. Partial-length blocks
+/// break the chain (they are not indexed and never become successors), which
+/// preserves wire compatibility under trailing-partial-block layouts.
 ///
 /// Returns `true` if at least one full-length block was indexed.
 fn populate_index(
@@ -20,8 +26,10 @@ fn populate_index(
     tag_table: &mut [bool],
     bithash: &mut BitHash,
     lookup: &mut CompactLookup,
+    next_match: &mut [u32],
 ) -> bool {
     let mut has_full_blocks = false;
+    let mut prev_full: Option<usize> = None;
     for (index, block) in blocks.iter().enumerate() {
         if block.len() != block_length {
             continue;
@@ -31,6 +39,12 @@ fn populate_index(
         tag_table[digest.sum1() as usize] = true;
         bithash.insert(digest.value());
         lookup.insert(digest.sum1(), digest.sum2(), index as u32);
+        if let Some(prev) = prev_full {
+            // upstream: zsync `librcksum/rsum.c:262` records the
+            // immediately-following block as the next-match candidate.
+            next_match[prev] = index as u32;
+        }
+        prev_full = Some(index);
     }
     has_full_blocks
 }
@@ -74,6 +88,10 @@ impl DeltaSignatureIndex {
         let mut lookup = CompactLookup::with_capacity(requested);
         let mut tag_table = vec![false; TAG_TABLE_SIZE];
         let mut bithash = BitHash::with_block_count(requested);
+        // The seq-match link table holds one slot per signature block, sized
+        // to the raw signature length (including any trailing partial block)
+        // so `next_match[K]` is addressable for every K the lookup can yield.
+        let mut next_match = vec![NEXT_MATCH_NONE; requested];
 
         if !populate_index(
             &blocks,
@@ -81,6 +99,7 @@ impl DeltaSignatureIndex {
             &mut tag_table,
             &mut bithash,
             &mut lookup,
+            &mut next_match,
         ) {
             return None;
         }
@@ -94,8 +113,11 @@ impl DeltaSignatureIndex {
             lookup,
             tag_table,
             bithash,
+            next_match,
             role,
             last_traced_size: size,
+            #[cfg(any(test, feature = "bench-internal"))]
+            seq_match_counters: std::sync::Arc::new(super::SeqMatchCounters::default()),
         };
         // upstream: hashtable.c:45-53 - one HASH,1 emission per hashtable
         // creation, with optional `req:` prefix when the rounded-up size
@@ -125,6 +147,13 @@ impl DeltaSignatureIndex {
         self.lookup.clear();
         self.tag_table.iter_mut().for_each(|v| *v = false);
         self.bithash.clear();
+        // Per ZSO-7 isolation: every link from the prior segment must be
+        // cleared before re-population so a stale successor never leaks
+        // across the per-NDX `rebuild` boundary.
+        self.next_match.clear();
+        self.next_match.resize(self.blocks.len(), NEXT_MATCH_NONE);
+        #[cfg(any(test, feature = "bench-internal"))]
+        self.seq_match_counters.reset();
 
         let ok = populate_index(
             &self.blocks,
@@ -132,6 +161,7 @@ impl DeltaSignatureIndex {
             &mut self.tag_table,
             &mut self.bithash,
             &mut self.lookup,
+            &mut self.next_match,
         );
 
         if ok {
