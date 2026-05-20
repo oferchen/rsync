@@ -176,7 +176,7 @@ mod tests {
             let message = rsync_error!(10, "socket error").with_role(Role::Daemon);
             let error = DaemonError::new(10, message);
 
-            let _ = error.message(); // Just verify accessor works
+            let _ = error.message();
         }
 
         #[test]
@@ -212,7 +212,6 @@ mod tests {
             let message = rsync_error!(4, "error trait test").with_role(Role::Daemon);
             let error = DaemonError::new(4, message);
 
-            // Verify it implements std::error::Error
             let _: &dyn std::error::Error = &error;
         }
 
@@ -249,7 +248,6 @@ mod tests {
             let message = rsync_error!(999, "unknown code").with_role(Role::Daemon);
             let error = DaemonError::new(999, message);
 
-            // Unknown exit codes fall back to PartialTransfer
             assert_eq!(error.code(), ExitCode::PartialTransfer);
         }
 
@@ -259,7 +257,6 @@ mod tests {
             let message = rsync_error!(code.as_i32(), "syntax error").with_role(Role::Daemon);
             let error = DaemonError::with_code(code, message);
 
-            // Test the HasExitCode trait
             let trait_code: ExitCode = HasExitCode::exit_code(&error);
             assert_eq!(trait_code, code);
         }

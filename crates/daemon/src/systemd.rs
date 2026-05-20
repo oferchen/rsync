@@ -187,7 +187,6 @@ mod tests {
         let _guard = EnvGuard::remove("NOTIFY_SOCKET");
 
         let notifier = ServiceNotifier::new();
-        // Multiple stopping calls should not fail
         assert!(notifier.stopping().is_ok());
         assert!(notifier.stopping().is_ok());
     }
@@ -198,7 +197,6 @@ mod tests {
         let _guard = EnvGuard::remove("NOTIFY_SOCKET");
 
         let notifier = ServiceNotifier::new();
-        // Simulate typical daemon lifecycle
         assert!(notifier.ready(Some("Listening on port 873")).is_ok());
         assert!(notifier.status("Active connections: 0").is_ok());
         assert!(notifier.status("Active connections: 5").is_ok());
