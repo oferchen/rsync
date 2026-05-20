@@ -69,7 +69,13 @@ fn xattr_write_roundtrip_with_reader() {
 
     let mut entry = FileEntry::new_file("roundtrip.txt".into(), 42, 0o644);
     let mut xattr_list = XattrList::new();
-    xattr_list.push(XattrEntry::new("my_attr", b"my_value".to_vec()));
+    // Use the verbatim wire name `user.my_attr` so the round-trip lands a
+    // visible entry in the reader's cache on every platform: Linux keeps
+    // `user.*` verbatim, non-Linux strips the prefix to `my_attr`. Without
+    // the `user.` prefix the non-Linux receiver drops the entry as a
+    // non-storable disguised namespace (see xattr::prefix::wire_to_local
+    // and upstream xattrs.c:836-846).
+    xattr_list.push(XattrEntry::new("user.my_attr", b"my_value".to_vec()));
     entry.set_xattr_list(xattr_list);
 
     writer.write_entry(&mut buf, &entry).unwrap();
