@@ -140,12 +140,18 @@ mod imp {
                 return Ok(None);
             }
 
-            let how = libc::open_how {
-                flags: (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-                    as u64,
-                mode: 0,
-                resolve: libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS,
-            };
+            // `libc::open_how` is `#[non_exhaustive]`, so we zero-initialise
+            // it and assign the fields we care about. The kernel reads exactly
+            // `size_of::<open_how>()` bytes; any future fields default to 0,
+            // which is the documented "no constraint" value for `openat2(2)`.
+            // SAFETY: `open_how` is a plain repr(C) struct of integer fields;
+            // an all-zero bit pattern is a valid value.
+            #[allow(unsafe_code)]
+            let mut how: libc::open_how = unsafe { std::mem::zeroed() };
+            how.flags =
+                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64;
+            how.mode = 0;
+            how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS;
 
             // SAFETY: `c_path` is a valid NUL-terminated C string borrowed
             // for the duration of the call. `how` is a fully-initialised
@@ -280,11 +286,14 @@ mod tests {
     fn openat2_available() -> bool {
         use std::ffi::CString;
         let dot = CString::new(".").expect("CString");
-        let how = libc::open_how {
-            flags: (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
-            mode: 0,
-            resolve: 0,
-        };
+        // `libc::open_how` is `#[non_exhaustive]`; zero-initialise and assign.
+        // SAFETY: `open_how` is a plain repr(C) struct of integer fields;
+        // an all-zero bit pattern is a valid value.
+        #[allow(unsafe_code)]
+        let mut how: libc::open_how = unsafe { std::mem::zeroed() };
+        how.flags = (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
+        how.mode = 0;
+        how.resolve = 0;
         // SAFETY: `dot` is a NUL-terminated C string; `how` is a
         // fully-initialised `open_how`; we hand the kernel the matching
         // struct size. A non-negative return is an owned fd we
