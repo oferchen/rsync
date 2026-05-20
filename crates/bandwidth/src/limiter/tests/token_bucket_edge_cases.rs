@@ -1,6 +1,3 @@
-// Comprehensive token bucket algorithm edge case tests
-// Focus on boundary conditions, overflow protection, and timing simulation
-
 use super::*;
 use crate::limiter::MIN_WRITE_MAX;
 use std::num::NonZeroU64;

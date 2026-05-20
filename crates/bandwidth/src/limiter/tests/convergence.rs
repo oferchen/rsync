@@ -1,13 +1,14 @@
-/// Convergence tests for the per-stream token-bucket bandwidth limiter with
-/// throughput feedback loop (#2098).
-///
-/// These tests verify that the limiter converges to the configured rate under
-/// various load profiles: steady-state, step response, burst recovery,
-/// multi-stream fairness, underutilization, zero-crossing, minimum
-/// granularity, effectively-unlimited bandwidth, idle recovery, and
-/// stability under matched throughput. All assertions operate on the
-/// deterministic `requested` sleep durations recorded via the `test-support`
-/// infrastructure, eliminating wall-clock jitter.
+//! Convergence tests for the per-stream token-bucket bandwidth limiter with
+//! throughput feedback loop (#2098).
+//!
+//! These tests verify that the limiter converges to the configured rate under
+//! various load profiles: steady-state, step response, burst recovery,
+//! multi-stream fairness, underutilization, zero-crossing, minimum
+//! granularity, effectively-unlimited bandwidth, idle recovery, and
+//! stability under matched throughput. All assertions operate on the
+//! deterministic `requested` sleep durations recorded via the `test-support`
+//! infrastructure, eliminating wall-clock jitter.
+
 use super::{BandwidthLimiter, recorded_sleep_session};
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -42,8 +43,6 @@ fn observed_rate(total_bytes: u128, total_sleep: Duration) -> f64 {
     }
     total_bytes as f64 / seconds
 }
-
-// Steady-state convergence
 
 #[test]
 fn steady_state_converges_to_target_rate_1kbps() {
@@ -134,8 +133,6 @@ fn steady_state_total_sleep_matches_expected_transfer_time() {
     );
 }
 
-// Step response: change the target bandwidth suddenly
-
 #[test]
 fn step_response_increase_converges_within_one_chunk() {
     let mut session = recorded_sleep_session();
@@ -210,8 +207,6 @@ fn step_response_multiple_rate_changes_settle() {
         );
     }
 }
-
-// Burst handling: send a burst, verify throttle and recovery
 
 #[test]
 fn burst_capped_limiter_recovers_to_target_rate() {
@@ -290,8 +285,6 @@ fn burst_repeated_large_writes_stay_clamped() {
     }
 }
 
-// Multi-stream fairness: multiple independent limiters sharing a cap
-
 #[test]
 fn multi_stream_independent_limiters_converge_individually() {
     let mut session = recorded_sleep_session();
@@ -364,8 +357,6 @@ fn multi_stream_equal_shares_of_aggregate_cap() {
     }
 }
 
-// Feedback accuracy: measured throughput matches actual throughput
-
 #[test]
 fn feedback_accuracy_requested_sleep_matches_expected() {
     let mut session = recorded_sleep_session();
@@ -416,8 +407,6 @@ fn feedback_accuracy_fractional_byte_rate() {
     // 333 / 333 = 1.0 seconds
     assert_eq!(sleep.requested(), Duration::from_secs(1));
 }
-
-// Underutilization: actual throughput below cap - no unnecessary throttling
 
 #[test]
 fn underutilization_sub_threshold_writes_are_noop() {
@@ -494,8 +483,6 @@ fn underutilization_just_below_threshold_is_noop() {
     );
 }
 
-// Zero-crossing: target bandwidth set to zero (pause) and back
-
 #[test]
 fn zero_crossing_reset_simulates_pause_and_resume() {
     let mut session = recorded_sleep_session();
@@ -570,8 +557,6 @@ fn zero_crossing_reset_preserves_configuration() {
     assert_eq!(limiter.burst_bytes().unwrap().get(), burst);
     assert_eq!(limiter.accumulated_debt_for_testing(), 0);
 }
-
-// Minimum granularity: very small bandwidth limits
 
 #[test]
 fn minimum_granularity_1_byte_per_second() {
@@ -664,8 +649,6 @@ fn minimum_granularity_with_burst_cap() {
     assert_eq!(sleep.requested(), Duration::from_secs(10));
     assert!(limiter.accumulated_debt_for_testing() <= u128::from(burst));
 }
-
-// Combined scenarios
 
 #[test]
 fn realistic_file_transfer_with_rate_change_mid_transfer() {
@@ -791,8 +774,6 @@ fn debt_fully_cleared_after_simulated_sleep() {
     );
 }
 
-// Very high bandwidth target: effectively unlimited throughput
-
 #[test]
 fn high_bandwidth_target_u64_max_never_throttles() {
     let mut session = recorded_sleep_session();
@@ -878,8 +859,6 @@ fn high_bandwidth_target_step_down_from_unlimited() {
     );
 }
 
-// Idle recovery: feedback loop recovers after a prolonged idle period
-
 #[test]
 fn idle_recovery_reset_then_resume_converges() {
     let mut session = recorded_sleep_session();
@@ -964,8 +943,6 @@ fn idle_recovery_multiple_idle_resume_cycles() {
     }
 }
 
-// Bounded convergence: verify convergence within specific iteration count
-
 #[test]
 fn bounded_convergence_within_four_chunks() {
     let mut session = recorded_sleep_session();
@@ -1022,8 +999,6 @@ fn bounded_convergence_after_rate_change_within_two_chunks() {
         "first chunk after rate change: {obs:.2} deviates {deviation:.3}%"
     );
 }
-
-// Stability: no oscillation when throughput matches target
 
 #[test]
 fn stability_consecutive_sleeps_are_uniform() {
@@ -1117,8 +1092,6 @@ fn stability_variance_bounded_across_samples() {
     );
 }
 
-// Bursty traffic: verify recovery without excessive back-pressure
-
 #[test]
 fn bursty_traffic_large_burst_then_steady_state_converges() {
     let mut session = recorded_sleep_session();
@@ -1203,8 +1176,6 @@ fn bursty_traffic_burst_cap_prevents_excessive_back_pressure() {
     }
 }
 
-// Cross-rate convergence: verify convergence across wide range of rates
-
 #[test]
 fn convergence_across_three_decades_of_rates() {
     let rates = [100_u64, 1_000, 10_000, 100_000, 1_000_000, 10_000_000];
@@ -1228,8 +1199,6 @@ fn convergence_across_three_decades_of_rates() {
         );
     }
 }
-
-// Interleaved multi-stream fairness: round-robin across independent limiters
 
 #[test]
 fn interleaved_streams_converge_independently() {
@@ -1325,8 +1294,6 @@ fn interleaved_streams_with_different_chunk_sizes() {
     }
 }
 
-// Overshoot trajectory: verify initial burst settles toward target
-
 #[test]
 fn overshoot_trajectory_settles_monotonically() {
     let mut session = recorded_sleep_session();
@@ -1391,8 +1358,6 @@ fn overshoot_with_burst_cap_limits_initial_penalty() {
         "post-overshoot with burst cap: {obs:.2} deviates {deviation:.3}%"
     );
 }
-
-// Zero-byte registration: verify no corruption during zero-traffic gaps
 
 #[test]
 fn zero_byte_registration_preserves_limiter_state() {
@@ -1465,8 +1430,6 @@ fn zero_byte_registration_with_burst_cap() {
     assert_eq!(limiter.accumulated_debt_for_testing(), debt_after_write);
 }
 
-// Convergence after configuration with burst added/removed mid-stream
-
 #[test]
 fn add_burst_mid_stream_clamps_existing_debt() {
     let mut session = recorded_sleep_session();
@@ -1527,8 +1490,6 @@ fn remove_burst_mid_stream_allows_unbounded_debt() {
     );
 }
 
-// Monotonic debt decay: verify debt decreases over successive registrations
-
 #[test]
 fn debt_decreases_toward_zero_over_steady_state() {
     let mut session = recorded_sleep_session();
@@ -1557,8 +1518,6 @@ fn debt_decreases_toward_zero_over_steady_state() {
         "debt should decay: first-half max {first_half_max}, second-half max {second_half_max}"
     );
 }
-
-// Rapid alternating rates: verify no accumulation of error
 
 #[test]
 fn rapid_alternation_error_does_not_accumulate() {
