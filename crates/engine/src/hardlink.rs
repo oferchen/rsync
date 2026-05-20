@@ -193,14 +193,12 @@ impl HardlinkTracker {
     pub fn register(&mut self, key: HardlinkKey, file_index: i32) -> bool {
         match self.groups.get_mut(&key) {
             Some(group) => {
-                // Subsequent occurrence - add as link
                 group.add_link(file_index);
                 self.actions
                     .insert(file_index, HardlinkAction::LinkTo(group.source_index));
                 false
             }
             None => {
-                // First occurrence - create new group
                 let group = HardlinkGroup::new(key, file_index);
                 self.groups.insert(key, group);
                 self.actions.insert(file_index, HardlinkAction::Transfer);
@@ -369,15 +367,12 @@ mod tests {
         let mut tracker = HardlinkTracker::new();
         let key = HardlinkKey::new(0xFD00, 12345);
 
-        // First file - should be source
         assert!(tracker.register(key, 0));
         assert_eq!(tracker.resolve(0), HardlinkAction::Transfer);
 
-        // Second file - should link to first
         assert!(!tracker.register(key, 5));
         assert_eq!(tracker.resolve(5), HardlinkAction::LinkTo(0));
 
-        // Third file - should also link to first
         assert!(!tracker.register(key, 10));
         assert_eq!(tracker.resolve(10), HardlinkAction::LinkTo(0));
 
@@ -391,11 +386,9 @@ mod tests {
         let key1 = HardlinkKey::new(1, 100);
         let key2 = HardlinkKey::new(1, 200);
 
-        // Group 1
         tracker.register(key1, 0);
         tracker.register(key1, 1);
 
-        // Group 2
         tracker.register(key2, 2);
         tracker.register(key2, 3);
         tracker.register(key2, 4);
@@ -413,29 +406,26 @@ mod tests {
     fn tracker_cross_device_not_linked() {
         let mut tracker = HardlinkTracker::new();
 
-        // Same inode, different devices - should be separate
         let key1 = HardlinkKey::new(0, 12345);
         let key2 = HardlinkKey::new(1, 12345);
 
         tracker.register(key1, 0);
         tracker.register(key2, 1);
 
-        // Both should be sources, not linked
         assert_eq!(tracker.resolve(0), HardlinkAction::Transfer);
         assert_eq!(tracker.resolve(1), HardlinkAction::Transfer);
-        assert_eq!(tracker.group_count(), 0); // No groups with links
+        assert_eq!(tracker.group_count(), 0);
     }
 
     #[test]
     fn tracker_files_with_nlink_1() {
         let mut tracker = HardlinkTracker::new();
 
-        // Single file, no hardlinks
         let key = HardlinkKey::new(1, 100);
         tracker.register(key, 0);
 
         assert_eq!(tracker.resolve(0), HardlinkAction::Transfer);
-        assert_eq!(tracker.group_count(), 0); // No groups with links
+        assert_eq!(tracker.group_count(), 0);
     }
 
     #[test]
@@ -469,27 +459,23 @@ mod tests {
         let key2 = HardlinkKey::new(1, 200);
         let key3 = HardlinkKey::new(1, 300);
 
-        // Group 1: 2 files
         tracker.register(key1, 0);
         tracker.register(key1, 1);
 
-        // Group 2: 3 files
         tracker.register(key2, 2);
         tracker.register(key2, 3);
         tracker.register(key2, 4);
 
-        // Group 3: 1 file (should not be in iterator)
         tracker.register(key3, 5);
 
         let groups: Vec<_> = tracker.groups().collect();
         assert_eq!(groups.len(), 2);
 
-        // Verify group contents
         let mut total_files = 0;
         for group in groups {
             total_files += group.total_count();
         }
-        assert_eq!(total_files, 5); // 2 + 3
+        assert_eq!(total_files, 5);
     }
 
     #[test]
@@ -535,16 +521,13 @@ mod tests {
         let mut tracker = HardlinkTracker::new();
         let key = HardlinkKey::new(1, 12345);
 
-        // Create a group with 1000 hardlinks
         for i in 0..1000 {
             tracker.register(key, i);
         }
 
-        // First should be source
         assert_eq!(tracker.resolve(0), HardlinkAction::Transfer);
         assert!(tracker.is_hardlink_source(0));
 
-        // All others should link to first
         for i in 1..1000 {
             assert_eq!(tracker.resolve(i), HardlinkAction::LinkTo(0));
             assert_eq!(tracker.get_hardlink_target(i), Some(0));
@@ -565,7 +548,6 @@ mod tests {
             tracker.register(key, i as i32);
         }
 
-        // All should be separate (no links)
         for i in 0..cases.len() {
             assert_eq!(tracker.resolve(i as i32), HardlinkAction::Transfer);
         }
@@ -576,7 +558,6 @@ mod tests {
         let mut tracker = HardlinkTracker::new();
         let key = HardlinkKey::new(1, 100);
 
-        // Negative indices should work (incremental file list uses them)
         tracker.register(key, -1);
         tracker.register(key, -2);
 
