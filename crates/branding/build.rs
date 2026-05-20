@@ -235,10 +235,7 @@ impl WorkspaceMetadata {
     }
 
     fn validate_versions(&self, manifest_path: &Path) {
-        // Parse upstream_version to ensure it's valid x.y.z format
         parse_version(&self.upstream_version, manifest_path, "upstream_version");
-
-        // Parse rust_version to ensure it's valid x.y.z format
         parse_version(&self.rust_version, manifest_path, "rust_version");
     }
 
