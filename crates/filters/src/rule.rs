@@ -580,7 +580,6 @@ mod tests {
 
         #[test]
         fn negate_default_false() {
-            // All constructors should have negate=false by default
             assert!(!FilterRule::include("*").is_negated());
             assert!(!FilterRule::exclude("*").is_negated());
             assert!(!FilterRule::protect("*").is_negated());
@@ -596,7 +595,6 @@ mod tests {
         fn negate_included_in_equality() {
             let rule1 = FilterRule::exclude("*.txt");
             let rule2 = FilterRule::exclude("*.txt").with_negate(true);
-            // Rules should not be equal since negate differs
             assert_ne!(rule1, rule2);
         }
 

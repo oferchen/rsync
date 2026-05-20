@@ -94,15 +94,12 @@ fn filter_chain_push_scope_override() {
     let global = FilterSet::from_rules([FilterRule::exclude("*.log")]).unwrap();
     let mut chain = FilterChain::new(global);
 
-    // Push a per-directory scope that includes *.log
     let dir_rules = FilterSet::from_rules([FilterRule::include("*.log")]).unwrap();
     let guard = chain.push_scope(dir_rules);
 
-    // Per-directory include should override global exclude
-    // But has_matching_rule returns false for includes, so we fall through.
-    // This is correct: the per-directory scope only matters if it has
-    // a matching exclude. For includes, we need both include and exclude
-    // rules in the same scope.
+    // has_matching_rule returns false for includes, so we fall through to the
+    // global rules. Per-directory scopes only stop the lookup when they contain
+    // a matching exclude; pure-include scopes need a paired exclude rule.
     assert_eq!(guard.pushed_count(), 1);
 
     chain.leave_directory(guard);
@@ -114,16 +111,13 @@ fn filter_chain_push_scope_exclude_overrides_global_include() {
     let global = FilterSet::from_rules([FilterRule::include("*.txt")]).unwrap();
     let mut chain = FilterChain::new(global);
 
-    // Push a per-directory scope that excludes *.txt
     let dir_rules = FilterSet::from_rules([FilterRule::exclude("*.txt")]).unwrap();
     let guard = chain.push_scope(dir_rules);
 
-    // Per-directory exclude should override global include
     assert!(!chain.allows(Path::new("file.txt"), false));
 
     chain.leave_directory(guard);
 
-    // After leaving, global rules apply again
     assert!(chain.allows(Path::new("file.txt"), false));
 }
 
@@ -132,36 +126,29 @@ fn filter_chain_nested_scopes() {
     let global = FilterSet::from_rules([FilterRule::exclude("*.bak")]).unwrap();
     let mut chain = FilterChain::new(global);
 
-    // Enter outer directory - excludes *.log
     let outer = FilterSet::from_rules([FilterRule::exclude("*.log")]).unwrap();
     let guard_outer = chain.push_scope(outer);
     assert_eq!(chain.scope_depth(), 1);
 
-    // Enter inner directory - excludes *.tmp
     let inner = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).unwrap();
     let guard_inner = chain.push_scope(inner);
     assert_eq!(chain.scope_depth(), 2);
 
-    // All excludes should be active
     assert!(!chain.allows(Path::new("file.bak"), false));
     assert!(!chain.allows(Path::new("file.log"), false));
     assert!(!chain.allows(Path::new("file.tmp"), false));
     assert!(chain.allows(Path::new("file.txt"), false));
 
-    // Leave inner directory
     chain.leave_directory(guard_inner);
     assert_eq!(chain.scope_depth(), 1);
 
-    // Inner excludes should be gone, but outer and global remain
     assert!(!chain.allows(Path::new("file.bak"), false));
     assert!(!chain.allows(Path::new("file.log"), false));
     assert!(chain.allows(Path::new("file.tmp"), false));
 
-    // Leave outer directory
     chain.leave_directory(guard_outer);
     assert_eq!(chain.scope_depth(), 0);
 
-    // Only global excludes remain
     assert!(!chain.allows(Path::new("file.bak"), false));
     assert!(chain.allows(Path::new("file.log"), false));
     assert!(chain.allows(Path::new("file.tmp"), false));
@@ -190,7 +177,6 @@ fn filter_chain_enter_directory_reads_merge_file() {
 #[test]
 fn filter_chain_enter_directory_no_merge_file() {
     let dir = TempDir::new().unwrap();
-    // No .rsync-filter file exists
 
     let mut chain = FilterChain::empty();
     chain.add_merge_config(DirMergeConfig::new(".rsync-filter"));
@@ -198,7 +184,6 @@ fn filter_chain_enter_directory_no_merge_file() {
     let guard = chain.enter_directory(dir.path()).unwrap();
     assert_eq!(guard.pushed_count(), 0);
 
-    // Everything should be allowed (no rules)
     assert!(chain.allows(Path::new("file.tmp"), false));
 
     chain.leave_directory(guard);
@@ -247,9 +232,7 @@ fn filter_chain_enter_directory_exclude_self() {
     let guard = chain.enter_directory(dir.path()).unwrap();
     assert_eq!(guard.pushed_count(), 1);
 
-    // The merge file itself should be excluded
     assert!(!chain.allows(Path::new(".rsync-filter"), false));
-    // And the rule from the file should apply
     assert!(!chain.allows(Path::new("file.tmp"), false));
 
     chain.leave_directory(guard);
@@ -265,7 +248,6 @@ fn filter_chain_enter_directory_with_include_rules() {
 
     let guard = chain.enter_directory(dir.path()).unwrap();
 
-    // *.important should be included, everything else excluded
     assert!(chain.allows(Path::new("file.important"), false));
     assert!(!chain.allows(Path::new("file.txt"), false));
 
@@ -276,12 +258,10 @@ fn filter_chain_enter_directory_with_include_rules() {
 fn filter_chain_nested_directories_with_merge_files() {
     let dir = TempDir::new().unwrap();
 
-    // Create outer directory with merge file
     let outer = dir.path().join("outer");
     fs::create_dir(&outer).unwrap();
     fs::write(outer.join(".rsync-filter"), "- *.log\n").unwrap();
 
-    // Create inner directory with merge file
     let inner = outer.join("inner");
     fs::create_dir(&inner).unwrap();
     fs::write(inner.join(".rsync-filter"), "- *.tmp\n").unwrap();
@@ -289,22 +269,18 @@ fn filter_chain_nested_directories_with_merge_files() {
     let mut chain = FilterChain::empty();
     chain.add_merge_config(DirMergeConfig::new(".rsync-filter"));
 
-    // Enter outer directory
     let guard_outer = chain.enter_directory(&outer).unwrap();
     assert!(!chain.allows(Path::new("file.log"), false));
     assert!(chain.allows(Path::new("file.tmp"), false));
 
-    // Enter inner directory
     let guard_inner = chain.enter_directory(&inner).unwrap();
     assert!(!chain.allows(Path::new("file.log"), false));
     assert!(!chain.allows(Path::new("file.tmp"), false));
 
-    // Leave inner
     chain.leave_directory(guard_inner);
     assert!(!chain.allows(Path::new("file.log"), false));
     assert!(chain.allows(Path::new("file.tmp"), false));
 
-    // Leave outer
     chain.leave_directory(guard_outer);
     assert!(chain.allows(Path::new("file.log"), false));
     assert!(chain.allows(Path::new("file.tmp"), false));
@@ -333,7 +309,6 @@ fn filter_chain_multiple_merge_configs() {
 #[test]
 fn filter_chain_parse_error_in_merge_file() {
     let dir = TempDir::new().unwrap();
-    // Invalid filter syntax
     fs::write(dir.path().join(".rsync-filter"), "invalid_directive\n").unwrap();
 
     let mut chain = FilterChain::empty();
@@ -355,7 +330,7 @@ fn filter_chain_modifier_application() {
 
     let guard = chain.enter_directory(dir.path()).unwrap();
 
-    // Rules should be applied (perishable doesn't affect allows())
+    // perishable does not affect allows(); only delete-excluded processing.
     assert!(!chain.allows(Path::new("file.tmp"), false));
 
     chain.leave_directory(guard);
@@ -427,7 +402,6 @@ fn filter_chain_scope_push_pop_symmetry() {
 
     assert_eq!(chain.scope_depth(), 5);
 
-    // Pop all at once by using depth tracking
     chain.scopes.clear();
     chain.current_depth = 0;
     assert_eq!(chain.scope_depth(), 0);
@@ -436,7 +410,6 @@ fn filter_chain_scope_push_pop_symmetry() {
 #[test]
 fn filter_chain_default_allows_everything() {
     let chain = FilterChain::empty();
-    // With no rules at all, everything should be allowed
     assert!(chain.allows(Path::new("any/path/here.txt"), false));
     assert!(chain.allows(Path::new("directory"), true));
     assert!(chain.allows_deletion(Path::new("anything"), false));
@@ -447,7 +420,6 @@ fn filter_chain_global_rules_persist_across_scopes() {
     let global = FilterSet::from_rules([FilterRule::exclude("*.bak")]).unwrap();
     let mut chain = FilterChain::new(global);
 
-    // Enter and leave several directories
     for _ in 0..3 {
         let dir_rules = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).unwrap();
         let guard = chain.push_scope(dir_rules);
@@ -455,7 +427,6 @@ fn filter_chain_global_rules_persist_across_scopes() {
         chain.leave_directory(guard);
     }
 
-    // Global rules should still work
     assert!(!chain.allows(Path::new("file.bak"), false));
 }
 
