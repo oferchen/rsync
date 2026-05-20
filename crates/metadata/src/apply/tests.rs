@@ -1068,3 +1068,67 @@ fn fake_super_skips_rewrite_when_xattr_already_matches() {
         .expect("xattr present");
     assert_eq!(raw_before, raw_after, "xattr must remain byte-identical");
 }
+
+/// Confirms the local-copy path also writes `user.rsync.%stat` under
+/// `--fake-super`. This exercises `apply_file_metadata_with_options`, which
+/// takes an `fs::Metadata` directly rather than a wire-protocol `FileEntry`.
+// upstream: xattrs.c:set_stat_xattr() under am_root < 0
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_writes_stat_xattr_via_local_metadata() {
+    use crate::fake_super::{FAKE_SUPER_XATTR, FakeSuperStat};
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("fakesuper-localmeta.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let metadata = fs::metadata(&dest).expect("dest metadata");
+
+    let opts = MetadataOptions::new()
+        .fake_super(true)
+        .preserve_owner(true)
+        .preserve_group(true)
+        .preserve_permissions(true);
+
+    apply_file_metadata_with_options(&dest, &metadata, &opts)
+        .expect("apply with fake-super via fs::Metadata");
+
+    let raw = match xattr::get(&dest, FAKE_SUPER_XATTR) {
+        Ok(Some(value)) => value,
+        Ok(None) | Err(_) => return,
+    };
+    let decoded =
+        FakeSuperStat::decode(std::str::from_utf8(&raw).expect("xattr utf-8")).expect("decode");
+
+    assert_eq!(decoded.mode, metadata.mode());
+    assert_eq!(decoded.uid, metadata.uid());
+    assert_eq!(decoded.gid, metadata.gid());
+    assert_eq!(decoded.rdev, None, "regular file must not carry rdev");
+}
+
+/// Without `--fake-super`, the local-copy ownership path must not synthesise
+/// the `user.rsync.%stat` xattr.
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_off_does_not_write_stat_xattr_via_local_metadata() {
+    use crate::fake_super::FAKE_SUPER_XATTR;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("fakesuper-off.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let metadata = fs::metadata(&dest).expect("dest metadata");
+
+    let opts = MetadataOptions::new()
+        .preserve_owner(true)
+        .preserve_group(true)
+        .preserve_permissions(true);
+
+    apply_file_metadata_with_options(&dest, &metadata, &opts).expect("apply without fake-super");
+
+    let raw = xattr::get(&dest, FAKE_SUPER_XATTR).ok().flatten();
+    assert!(
+        raw.is_none(),
+        "user.rsync.%stat must not appear without --fake-super; got {raw:?}"
+    );
+}
