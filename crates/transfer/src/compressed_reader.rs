@@ -25,20 +25,16 @@ use compress::zstd::CountingZstdDecoder;
 /// before decompression. The batch header stores `do_compression: true`
 /// so replay decompresses the tokens.
 pub struct CompressedReader<R: Read> {
-    /// Active decompression decoder variant
-    /// The decoder owns the underlying reader
+    /// Active decompression decoder; owns the underlying reader.
     decoder: DecoderVariant<R>,
 }
 
 /// Compression decoder dispatch for supported algorithms.
 #[allow(clippy::large_enum_variant)]
 enum DecoderVariant<R: Read> {
-    /// zlib decoder
     Zlib(CountingZlibDecoder<R>),
-    /// LZ4 decoder
     #[cfg(feature = "lz4")]
     Lz4(CountingLz4Decoder<R>),
-    /// Zstandard decoder
     #[cfg(feature = "zstd")]
     Zstd(CountingZstdDecoder<R>),
 }

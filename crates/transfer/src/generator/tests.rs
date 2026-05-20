@@ -185,7 +185,6 @@ fn send_empty_file_list() {
     let count = ctx.send_file_list(&mut output).unwrap();
 
     assert_eq!(count, 0);
-    // Should just have the end marker
     assert_eq!(output, vec![0u8]);
 }
 
@@ -193,7 +192,6 @@ fn send_empty_file_list() {
 fn send_single_file_entry() {
     let (_handshake, mut ctx) = test_generator();
 
-    // Manually add an entry
     let entry = protocol::flist::FileEntry::new_file("test.txt".into(), 100, 0o644);
     ctx.file_list.push(entry);
 
@@ -201,9 +199,8 @@ fn send_single_file_entry() {
     let count = ctx.send_file_list(&mut output).unwrap();
 
     assert_eq!(count, 1);
-    // Should have entry data plus end marker
     assert!(!output.is_empty());
-    assert_eq!(*output.last().unwrap(), 0u8); // End marker
+    assert_eq!(*output.last().unwrap(), 0u8);
 }
 
 #[test]
@@ -447,7 +444,6 @@ fn build_and_send_round_trip() {
     gen_config.role = ServerRole::Generator;
     let mut generator = GeneratorContext::new(&handshake, gen_config);
 
-    // Add some entries manually (simulating a walk)
     let mut entry1 = protocol::flist::FileEntry::new_file("file1.txt".into(), 100, 0o644);
     entry1.set_mtime(1700000000, 0);
     let mut entry2 = protocol::flist::FileEntry::new_file("file2.txt".into(), 200, 0o644);
@@ -455,11 +451,9 @@ fn build_and_send_round_trip() {
     generator.file_list.push(entry1);
     generator.file_list.push(entry2);
 
-    // Send file list
     let mut wire_data = Vec::new();
     generator.send_file_list(&mut wire_data).unwrap();
 
-    // Receive file list
     let recv_config = test_config();
     let mut receiver = ReceiverContext::new(&handshake, recv_config);
     let mut cursor = Cursor::new(&wire_data[..]);
@@ -528,8 +522,8 @@ fn parse_received_filters_clear_rule() {
     ];
 
     let (filter_set, _) = ctx.parse_received_filters(&wire_rules).unwrap();
-    // Clear rule should have removed previous rules
-    assert!(!filter_set.is_empty()); // Only the include rule remains
+    // The clear rule wipes the prior excludes; only the include survives.
+    assert!(!filter_set.is_empty());
 }
 
 #[test]
@@ -622,11 +616,10 @@ fn filter_application_no_filters_includes_all() {
     let base_path = temp_dir.path();
 
     let (_handshake, mut ctx) = test_generator_for_path(base_path, false);
-    // No filters set (filter_chain is empty)
 
     let count = build_file_list_for(&mut ctx, base_path);
 
-    // Should have 4 entries: "." root dir + 3 files when no filters are present
+    // "." root dir + 3 files when no filters are present.
     assert_eq!(count, 4);
     assert_eq!(ctx.file_list().len(), 4);
 }

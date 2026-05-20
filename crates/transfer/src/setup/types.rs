@@ -101,12 +101,8 @@ pub struct ProtocolSetupConfig<'a> {
 }
 
 impl<'a> ProtocolSetupConfig<'a> {
-    /// Creates a new builder for `ProtocolSetupConfig` with required fields.
-    ///
-    /// # Arguments
-    ///
-    /// * `protocol` - The negotiated protocol version
-    /// * `is_server` - Whether we are the server (true) or client (false)
+    /// Creates a config with the required `protocol` + `is_server` fields and
+    /// default values for every optional field.
     ///
     /// # Examples
     ///
@@ -134,87 +130,49 @@ impl<'a> ProtocolSetupConfig<'a> {
         }
     }
 
-    /// Sets whether to skip compatibility flags exchange.
-    ///
-    /// When true, compatibility flags have already been exchanged (e.g., during
-    /// daemon handshake) and should not be exchanged again.
-    ///
-    /// Default: `false`
+    /// Sets [`Self::skip_compat_exchange`].
     #[must_use]
     pub const fn with_skip_compat_exchange(mut self, skip: bool) -> Self {
         self.skip_compat_exchange = skip;
         self
     }
 
-    /// Sets the client arguments for daemon mode.
-    ///
-    /// Used to parse client capabilities from the `-e` option.
-    /// None for SSH mode or when acting as client.
-    ///
-    /// Default: `None`
+    /// Sets [`Self::client_args`].
     #[must_use]
     pub const fn with_client_args(mut self, args: Option<&'a [String]>) -> Self {
         self.client_args = args;
         self
     }
 
-    /// Sets whether this is a daemon mode connection.
-    ///
-    /// Controls capability negotiation direction:
-    /// - `true`: Daemon mode - unidirectional (server sends lists, client reads silently)
-    /// - `false`: SSH mode - bidirectional exchange
-    ///
-    /// Default: `false`
+    /// Sets [`Self::is_daemon_mode`].
     #[must_use]
     pub const fn with_daemon_mode(mut self, is_daemon: bool) -> Self {
         self.is_daemon_mode = is_daemon;
         self
     }
 
-    /// Sets whether compression is active for this transfer.
-    ///
-    /// When true and `compress_choice` is None, compression vstrings are
-    /// exchanged during negotiation. When true and `compress_choice` is Some,
-    /// the specified algorithm is used directly without vstring exchange.
-    ///
-    /// Default: `false`
+    /// Sets [`Self::do_compression`].
     #[must_use]
     pub const fn with_compression(mut self, compress: bool) -> Self {
         self.do_compression = compress;
         self
     }
 
-    /// Sets the checksum seed for reproducible transfers.
-    ///
-    /// When `Some(seed)`, the server uses this fixed seed instead of generating
-    /// a random one. This makes transfers reproducible (useful for testing/debugging).
-    ///
-    /// When `None`, the server generates a seed from current time XOR PID
-    /// (matching upstream rsync's default behavior).
-    ///
-    /// Default: `None`
+    /// Sets [`Self::checksum_seed`].
     #[must_use]
     pub const fn with_checksum_seed(mut self, seed: Option<u32>) -> Self {
         self.checksum_seed = seed;
         self
     }
 
-    /// Sets the explicit compression algorithm override.
-    ///
-    /// When set, compression vstring negotiation is skipped and this algorithm
-    /// is used directly - matching upstream `compat.c:543` which only exchanges
-    /// compression vstrings when `do_compression && !compress_choice`.
-    ///
-    /// Default: `None`
+    /// Sets [`Self::compress_choice`].
     #[must_use]
     pub const fn with_compress_choice(mut self, choice: Option<CompressionAlgorithm>) -> Self {
         self.compress_choice = choice;
         self
     }
 
-    /// Sets whether incremental recursion is allowed.
-    ///
-    /// Default: `false`
+    /// Sets [`Self::allow_inc_recurse`].
     #[must_use]
     pub const fn with_inc_recurse(mut self, allow: bool) -> Self {
         self.allow_inc_recurse = allow;
