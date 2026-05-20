@@ -353,7 +353,6 @@ fn includes_ignore_errors_flag_when_set() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
-    // --ignore-errors should appear after --server
     assert!(
         args.iter().any(|a| a == "--ignore-errors"),
         "expected --ignore-errors in args: {args:?}"
@@ -366,7 +365,6 @@ fn omits_ignore_errors_flag_when_not_set() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
-    // --ignore-errors should not appear
     assert!(
         !args.iter().any(|a| a == "--ignore-errors"),
         "unexpected --ignore-errors in args: {args:?}"
@@ -379,7 +377,6 @@ fn includes_fsync_flag_when_set() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/path");
 
-    // --fsync should appear after --server
     assert!(
         args.iter().any(|a| a == "--fsync"),
         "expected --fsync in args: {args:?}"
@@ -392,7 +389,6 @@ fn omits_fsync_flag_when_not_set() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/path");
 
-    // --fsync should not appear
     assert!(
         !args.iter().any(|a| a == "--fsync"),
         "unexpected --fsync in args: {args:?}"
@@ -842,12 +838,10 @@ fn secluded_invocation_disabled_returns_normal_args() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let secluded = builder.build_secluded(&["/path"]);
 
-    // When secluded-args is not enabled, stdin_args should be empty
     assert!(
         secluded.stdin_args.is_empty(),
         "stdin_args should be empty when protect_args is off"
     );
-    // command_line_args should contain the full invocation
     assert!(
         secluded.command_line_args.iter().any(|a| a == "/path"),
         "command_line_args should contain the remote path"
@@ -860,7 +854,6 @@ fn secluded_invocation_enabled_produces_minimal_command_line() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let secluded = builder.build_secluded(&["/path/to/files"]);
 
-    // Command line should be minimal
     let cmd_strs: Vec<String> = secluded
         .command_line_args
         .iter()
@@ -872,13 +865,11 @@ fn secluded_invocation_enabled_produces_minimal_command_line() {
     assert!(cmd_strs.contains(&"-s".to_owned()));
     assert!(cmd_strs.contains(&".".to_owned()));
 
-    // Command line should NOT contain the remote path
     assert!(
         !cmd_strs.contains(&"/path/to/files".to_owned()),
         "command line should not contain remote path in secluded mode"
     );
 
-    // stdin_args should contain the full arguments
     assert!(
         !secluded.stdin_args.is_empty(),
         "stdin_args should not be empty when protect_args is on"
@@ -910,7 +901,6 @@ fn secluded_invocation_pull_includes_sender_flag() {
         "secluded invocation should include -s flag"
     );
 
-    // stdin_args should also include --sender
     assert!(
         secluded.stdin_args.iter().any(|a| a == "--sender"),
         "stdin_args should include --sender for pull"
@@ -927,7 +917,6 @@ fn secluded_invocation_stdin_args_contain_flag_string() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let secluded = builder.build_secluded(&["/data"]);
 
-    // stdin_args should contain the flag string
     let has_flags = secluded
         .stdin_args
         .iter()

@@ -266,7 +266,6 @@ mod tests {
 
     #[test]
     fn legacy_daemon_error_payload_returns_none_for_attached_text() {
-        // If @ERROR is followed by alphanumeric without separator, return None
         let result = legacy_daemon_error_payload("@ERRORsome text");
         assert!(result.is_none());
     }
@@ -294,7 +293,6 @@ mod tests {
     fn read_trimmed_line_trims_multiple_newlines() {
         let mut reader = Cursor::new(b"hello\r\n\r\n");
         let result = read_trimmed_line(&mut reader).expect("read");
-        // First read_line returns "hello\r\n"
         assert_eq!(result.as_deref(), Some("hello"));
     }
 
