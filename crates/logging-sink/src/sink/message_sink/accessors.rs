@@ -126,7 +126,6 @@ mod tests {
         let mut sink = make_sink();
         {
             let _guard = sink.scoped_line_mode(LineMode::WithoutNewline);
-            // Mode is changed within the guard scope
         }
         assert_eq!(sink.line_mode(), LineMode::WithNewline);
     }

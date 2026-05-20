@@ -6,9 +6,8 @@
 //!
 //! The fast-path dispatcher and metadata normalizer live here together so
 //! the eligibility checks, dispatch, and post-clone bookkeeping all evolve
-//! as a single concern.
-
-#![cfg(target_os = "macos")]
+//! as a single concern. The parent `mod.rs` already gates this module on
+//! `target_os = "macos"`, so no inner `#![cfg(...)]` is needed.
 
 use std::fs;
 use std::path::Path;
