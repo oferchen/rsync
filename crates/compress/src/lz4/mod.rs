@@ -37,6 +37,7 @@
 //! # }
 //! ```
 
+/// LZ4 frame format compression with magic bytes, checksums, and streaming.
 pub mod frame;
 /// Raw LZ4 block compression for rsync wire protocol compatibility.
 pub mod raw;
