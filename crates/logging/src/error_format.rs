@@ -26,18 +26,16 @@
 #[must_use]
 pub fn strip_repo_prefix<'a>(manifest_dir: &str, file_path: &'a str) -> &'a str {
     // Find the `crates/` boundary in the manifest dir to determine where the
-    // crate-relative portion starts. The manifest dir for a crate at
-    // `<repo>/crates/logging` ends with `crates/logging`, so we locate
-    // `crates/` and use the offset after it as the repo prefix length.
+    // crate-relative portion starts; the manifest dir for a crate at
+    // `<repo>/crates/logging` ends with `crates/logging`.
     if let Some(crates_pos) = find_crates_prefix(manifest_dir) {
         let repo_prefix = &manifest_dir[..crates_pos];
-        // file_path typically starts with the same repo prefix
         if let Some(stripped) = file_path.strip_prefix(repo_prefix) {
             return stripped;
         }
     }
 
-    // Fallback: try to find `crates/` directly in file_path
+    // Fallback when file_path does not share the manifest prefix (e.g. cross-crate).
     if let Some(pos) = find_crates_prefix(file_path) {
         return &file_path[pos..];
     }

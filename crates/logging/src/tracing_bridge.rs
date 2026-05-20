@@ -244,7 +244,6 @@ pub fn init_tracing(config: VerbosityConfig) {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    // Also initialize the thread-local verbosity config
     super::thread_local::init(config.clone());
 
     let layer = RsyncLayer::new(config);

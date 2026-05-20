@@ -188,7 +188,6 @@ mod tests {
             _ => panic!("expected debug event"),
         }
 
-        // Events should be drained
         assert_eq!(drain_events().len(), 0);
     }
 
@@ -287,7 +286,6 @@ mod tests {
     #[test]
     fn info_gte_default_config() {
         init(VerbosityConfig::default());
-        // Default should be 0 for all flags
         assert!(!info_gte(InfoFlag::Backup, 1));
         assert!(info_gte(InfoFlag::Backup, 0));
     }
@@ -295,7 +293,6 @@ mod tests {
     #[test]
     fn debug_gte_default_config() {
         init(VerbosityConfig::default());
-        // Default should be 0 for all flags
         assert!(!debug_gte(DebugFlag::Acl, 1));
         assert!(debug_gte(DebugFlag::Acl, 0));
     }
@@ -312,7 +309,6 @@ mod tests {
         let events = drain_events();
         assert_eq!(events.len(), 3);
 
-        // Events should be in order
         match &events[0] {
             DiagnosticEvent::Info { message, .. } => assert_eq!(message, "first"),
             _ => panic!("expected info"),
