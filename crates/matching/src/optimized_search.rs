@@ -187,7 +187,6 @@ mod tests {
     fn test_tag_table_empty() {
         let blocks = vec![];
         let tag_table = TagTable::new(&blocks);
-        // All tags should be false for empty input
         assert!(!tag_table.might_match(0x12345678));
         assert!(!tag_table.might_match(0x00000000));
         assert!(!tag_table.might_match(0xFFFFFFFF));
@@ -229,7 +228,6 @@ mod tests {
         }];
         let tag_table = TagTable::new(&blocks);
 
-        // Different low 16 bits should not match
         assert!(!tag_table.might_match(0x12341234));
         assert!(!tag_table.might_match(0xFFFFFFFF));
     }
@@ -463,7 +461,6 @@ mod tests {
 
     #[test]
     fn test_large_block_set() {
-        // Create 10000 blocks with unique checksums
         let mut blocks = Vec::new();
         for i in 0..10000 {
             blocks.push(BlockEntry {
