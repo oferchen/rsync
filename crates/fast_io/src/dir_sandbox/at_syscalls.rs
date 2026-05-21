@@ -78,7 +78,7 @@ impl AtMetadata {
     /// Raw `st_mode` from `struct stat`.
     #[must_use]
     pub fn mode(&self) -> u32 {
-        u32::from(self.stat.st_mode)
+        widen_mode(self.stat.st_mode)
     }
 
     /// Size of the file in bytes (or the length of the symlink target
@@ -114,6 +114,22 @@ fn widen_ino(value: libc::ino_t) -> u64 {
 /// supported Unix target.
 fn widen_size(value: libc::off_t) -> u64 {
     value as u64
+}
+
+/// Widen `st_mode` to `u32`. `mode_t` is `u16` on macOS and `u32` on
+/// Linux; the two `#[cfg]` arms keep the conversion explicit without
+/// triggering `clippy::useless_conversion` (Linux) or
+/// `clippy::unnecessary_cast` (either platform).
+#[cfg(target_os = "macos")]
+fn widen_mode(value: libc::mode_t) -> u32 {
+    u32::from(value)
+}
+
+/// Linux widening for `st_mode`: identity, since `mode_t` is already
+/// `u32` on every supported glibc/musl target.
+#[cfg(not(target_os = "macos"))]
+fn widen_mode(value: libc::mode_t) -> u32 {
+    value
 }
 
 /// Issue `fstatat(dirfd, name, &mut stat, AT_SYMLINK_NOFOLLOW)`.
