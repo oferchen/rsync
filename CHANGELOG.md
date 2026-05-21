@@ -9,8 +9,21 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ## [Unreleased]
 
+### Security
+
+- SEC-1 status promoted to MOSTLY FIXED reflecting `.f/.g/.h/.i/.j/.k/.l/.m/.n` ship state (#4691)
+- Partial-mitigation status for CVE-2026-29518 / CVE-2026-43619 via SEC-1 `*at` chain (SEC-1.o-partial) (#4672)
+- `renameat` sandbox helper for atomic in-sandbox renames (SEC-1.j) (#4693)
+- `fchmodat`/`fchownat`/`utimensat` sandbox helpers for metadata application (SEC-1.i) (#4690)
+- `mkdirat`/`symlinkat`/`linkat` sandbox helpers for create-path operations (SEC-1.h) (#4683)
+- Replace `remove_file`/`remove_dir` with `unlinkat` in `fast_io` + `transfer` (SEC-1.g) (#4671)
+- Replace `lstat`/`symlink_metadata` with `fstatat(AT_SYMLINK_NOFOLLOW)` (SEC-1.f) (#4668)
+
 ### Features
 
+- `flush_workers`/`drain_inflight` barrier API on `ParallelDeltaApplier` (FFB-2) (#4665)
+- Warn when `rsync --compress` meets SSH `-C` (double-compression detection, SSC-1) (#4667)
+- Warn on SSH stderr socketpair-to-pipe fallback (SSF-2) (#4663)
 - Adaptive per-file basis-read dispatch in `fast_io` (SMR-3c) (#4441)
 - mmap-to-io_uring size threshold dispatch in `fast_io` (SMR-3b) (#4435)
 - Wire `SpillGranularity::PerItem` in spill write path (STN-5) (#4428)
@@ -36,8 +49,13 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 - Import `FileReader` trait for `IoUringFileReader::open` (#4452)
 - Clippy compliance in `nvme_data_path` bench (#4454)
 
+### Changed
+
+- Enable parallel receive-delta by default via Path B heuristic (PIP-3 + PIP-5) (#4666)
+
 ### Refactoring
 
+- Rename `apply_chunk_parallel` to `apply_one_chunk` for clarity (RJN-2) (#4660)
 - Extract `spill/tempfile.rs` (SPL-3) (#4434)
 - Channel-based drain shutdown for delete emitter (ATU-4) (#4401)
 - MPE `traversal.rs` audit followup (#4380)
@@ -48,6 +66,9 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Tests
 
+- Comprehensive symlink-swap attack regression for SEC-1 sandbox (SEC-1.m) (#4675)
+- Legitimate symlink transfers must not regress under SEC-1 sandbox (SEC-1.n) (#4678)
+- Socketpair-to-pipe fallback warning fires exactly once (SSF-4) (#4684)
 - Re-enable stale ignored tests and remove obsolete entries (#4431)
 - Windows source to Linux destination ACL round-trip (WAS-7) (#4420)
 - Env-var driven E2E spill integration test (STN-14) (#4408)
@@ -72,6 +93,27 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
   table in `README.md` (#2377).
 - Refresh spill layout and migration status (SPL-12) (#4394).
 - Cross-platform CI hazard preflight audit (#4427).
+- BR-6 beta-readiness sign-off check-in (#4692)
+- Close WPG-1 as deferred to post-beta Windows hardware capture (#4688)
+- Close PIP-4: interop suite exercises parallel-receive-delta path via PIP-5 default flip (#4689)
+- Close FFB-3/FFB-4/PIP-2 as satisfied by FFB-1 design + PIP-3+5 wire-up (#4677)
+- Close RJN-4 as N/A after RJN-3 was rename-only (#4686)
+- Defer RJN-3 (fanout) and RJN-4 (bench) as N/A after RJN-2 rename (#4676)
+- Close ABW-3 as N/A pending per-file `Mutex` refactor (#4685)
+- Defer ABW-2/3/4 pending BR-3j.f bench evidence (ABW-1 audit closure) (#4673)
+- `apply_batch_parallel` verify-vs-write overlap audit (ABW-1) (#4670)
+- Pre-frame IUS-4 SEND_ZC opt-in vs default-on decision (#4687)
+- IORING_OP_SEND_ZC kernel compatibility matrix (IUS-2) (#4664)
+- `--zero-copy` SEND_ZC build-time dependency note (IUS-1) (#4661)
+- `flush_workers` barrier API design for `ParallelDeltaApplier` (FFB-1) (#4659)
+- Token loop vs `ParallelDeltaApplier` migration surface audit (PIP-1) (#4657)
+- `apply_chunk_parallel` call sites and per-chunk dispatch benefit audit (RJN-1) (#4656)
+- SSH stderr socketpair-to-pipe fallback site audit (SSF-1) (#4658)
+- Document `ssh-socketpair-stderr` feature and fallback warnings (SSF-3) (#4669)
+- README warning for SSH+rsync double-compression (SSC-2) (#4655)
+- Evaluate `ssh_config` parsers for SSC-3 double-compression detection (#4674)
+- Formalize SEC-1.h `mknodat` deferral and document re-open triggers (#4694)
+- Plan re-fold of SEC-1 `*at` helper modules post SEC-1.j ship (#4695)
 - Runnable Windows IOCP vs MSYS2 profiling methodology (WPG-1) (#4442)
 - SPL-8 still blocked until SPL-3/4 merge (#4439)
 - Workspace dependency consolidation opportunities (#4425)
@@ -108,6 +150,9 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Performance
 
+- Scaffold PIP-6 end-to-end parallel-vs-sequential bench harness (#4679)
+- Scaffold BR-3j.f DashMap cores-vs-throughput re-bench harness (#4682)
+- Scaffold IUS-3 SEND_ZC vs plain SEND bench harness (#4680)
 - Keep rolling `s1`/`s2` in SIMD registers across stripe (CSP-2 F1) (#4451)
 - **Delta matching**: incorporated four zsync-inspired internal optimizations
   to the receiver's block-match path. All four are pure refactors of the
