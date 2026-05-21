@@ -13,7 +13,7 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["zstd", "lz4", "xattr"]
+default = ["zstd", "lz4", "xattr", "parallel-receive-delta"]
 
 # ============================================================================
 # Compression Features
@@ -41,6 +41,11 @@ iconv = ["core/iconv"]
 # Parallel file operations - enables rayon-based parallelism for checksum mode
 # Also enables engine optimization features for maximum performance
 parallel = ["engine/lazy-metadata", "checksums/parallel"]
+
+# Parallel receive-side delta apply (#1368). Default on; the receiver
+# dispatches per-transfer via the Path B heuristic documented in
+# `docs/design/parallel-receive-delta-default-on.md`.
+parallel-receive-delta = ["core/parallel-receive-delta"]
 
 [dependencies]
 clap = { workspace = true }

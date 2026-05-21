@@ -40,6 +40,10 @@ impl ReceiverContext {
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 
+        // Path B dispatch: pick sequential vs parallel apply before the loop.
+        // upstream-independent: matches docs/design/parallel-receive-delta-default-on.md.
+        let receiver_strategy_chosen = self.dispatch_receiver_strategy(file_count);
+
         // upstream: generator.c:1317-1326 - make_path() for relative_paths
         self.ensure_relative_parents(&setup.dest_dir);
         let mut metadata_errors = self.create_directories(
@@ -62,6 +66,7 @@ impl ReceiverContext {
             entries_received: file_count as u64,
             io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
                 | self.flist_io_error,
+            receiver_strategy_chosen,
             ..Default::default()
         };
         let files_to_transfer = self.build_files_to_transfer(
