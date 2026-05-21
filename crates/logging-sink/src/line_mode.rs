@@ -35,10 +35,7 @@ impl LineMode {
 }
 
 impl From<bool> for LineMode {
-    /// Converts a boolean flag describing whether a trailing newline should be appended into a [`LineMode`].
-    ///
-    /// `true` maps to [`LineMode::WithNewline`]; `false` selects
-    /// [`LineMode::WithoutNewline`].
+    /// `true` maps to [`LineMode::WithNewline`]; `false` selects [`LineMode::WithoutNewline`].
     ///
     /// # Examples
     ///
@@ -58,8 +55,6 @@ impl From<bool> for LineMode {
 }
 
 impl From<LineMode> for bool {
-    /// Converts a [`LineMode`] back into a boolean flag describing whether a trailing newline is appended.
-    ///
     /// Delegates to [`LineMode::append_newline`].
     ///
     /// # Examples
