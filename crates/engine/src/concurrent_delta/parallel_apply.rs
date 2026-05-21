@@ -717,14 +717,35 @@ impl ParallelDeltaApplier {
             .files
             .remove(&ndx)
             .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))?;
-        // Post-barrier invariant: every clone observed at `flush_workers`
-        // return must have been dropped. If `try_unwrap` still fails, a
-        // caller raced a new `slot_for` against `finish_file` (a bug at
-        // the call site) or a `SlotHandle` outlived its drop guard
-        // (an internal bug in this module). Either way, the typed
-        // `ApplierStillReferenced` variant stays - it now denotes a real
-        // invariant violation worth filing an issue over rather than a
-        // transient race the caller might recover from.
+        // Post-barrier release-race window: `flush_workers` waits for
+        // `inflight==0` via the Condvar, which fires from
+        // `DecrementGuard::drop` *before* the guard's own
+        // `Arc<SlotBarrier>` clone has been released (the notify happens
+        // inside the drop body; the inner Arc only drops after the body
+        // returns). The window is typically nanoseconds but is reliably
+        // observable on Windows under load. Spin-then-yield until the
+        // worker's drop completes; the worker is past the notify and its
+        // drop fn is just about to return so the wait is bounded.
+        let mut spin = 0u32;
+        while Arc::strong_count(&slot_arc) > 1 {
+            spin = spin.saturating_add(1);
+            if spin >= 1_000 {
+                // Past the typical drop window - surface the typed error
+                // so a real bug (e.g. caller raced a new `slot_for`
+                // against `finish_file`) does not hide forever.
+                return Err(ParallelApplyError::ApplierStillReferenced {
+                    ndx,
+                    strong_count: Arc::strong_count(&slot_arc),
+                    kind: "finish_file",
+                }
+                .into());
+            }
+            if spin < 32 {
+                std::hint::spin_loop();
+            } else {
+                std::thread::yield_now();
+            }
+        }
         let barrier = Arc::try_unwrap(slot_arc).map_err(|still_shared| {
             ParallelApplyError::ApplierStillReferenced {
                 ndx,
