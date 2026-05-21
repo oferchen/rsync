@@ -22,6 +22,10 @@ tracing = { workspace = true }
 # Cached sorting with Schwartzian transform
 permutation = "0.4"
 
+# filetime is used universally: by syscall_batch's cfg(not(unix)) path and by
+# the unix-side utimensat_via_sandbox_or_fallback multi-component fallback (SEC-1.i)
+filetime = { workspace = true }
+
 [target.'cfg(unix)'.dependencies]
 # Memory-mapped I/O (unix-only; runtime fallback to buffered I/O)
 memmap2 = "0.9"
@@ -31,9 +35,6 @@ libc = { workspace = true }
 
 # rustix is used for statx syscall on Linux (always compiled, runtime detection)
 rustix = { workspace = true, features = ["fs"] }
-
-# filetime is used for the multi-component fallback path of utimensat_via_sandbox_or_fallback (SEC-1.i)
-filetime = { workspace = true }
 
 # Concurrent hash map for the DirSandbox secondary-operand side cache
 # (SEC-1.e); read-mostly lookups by canonical operand path.
