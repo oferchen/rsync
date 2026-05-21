@@ -477,7 +477,6 @@ mod tests {
 
         let entries = collect_entries(walker).unwrap();
 
-        // Should find: root, file1.txt, file2.txt, subdir, subdir/file3.txt
         assert_eq!(entries.len(), 5);
     }
 
@@ -499,7 +498,6 @@ mod tests {
 
         let file_indices = filter_entries_indices(&entries, |e| e.metadata().is_file());
 
-        // Should find: file1.txt, file2.txt, subdir/file3.txt
         assert_eq!(file_indices.len(), 3);
     }
 
@@ -521,7 +519,6 @@ mod tests {
 
         assert_eq!(entries.len(), 5);
 
-        // Metadata should not be resolved yet
         for entry in &entries {
             assert!(!entry.is_resolved());
         }
@@ -547,13 +544,12 @@ mod tests {
 
         let lazy_entries = collect_lazy_parallel(temp.path().to_path_buf(), false).unwrap();
 
-        // Filter to only files (by checking name, not metadata)
+        // Filter by name extension without touching metadata.
         let filtered: Vec<_> = lazy_entries
             .into_iter()
             .filter(|e| e.relative_path().extension().is_some())
             .collect();
 
-        // Should have 3 .txt files
         assert_eq!(filtered.len(), 3);
 
         let resolved = resolve_metadata_parallel(filtered).unwrap();
@@ -571,7 +567,6 @@ mod tests {
         let result = collect_with_batched_stats(temp.path().to_path_buf(), false);
         let entries = result.unwrap();
 
-        // Should find all entries: root, 3 files, 1 subdir, 1 nested file
         assert_eq!(entries.len(), 5);
 
         for entry in &entries {
@@ -581,7 +576,6 @@ mod tests {
 
     #[test]
     fn batched_stats_performance_test() {
-        // Create a larger tree to test batching performance
         let temp = TempDir::new().unwrap();
         let root = temp.path();
 
@@ -597,10 +591,10 @@ mod tests {
             }
         }
 
+        // Root + 100 files + 10 dirs + 100 nested files = 211.
         let result = collect_with_batched_stats(root.to_path_buf(), false);
         let entries = result.unwrap();
 
-        // Root + 100 files + 10 dirs + 100 nested files = 211
         assert_eq!(entries.len(), 211);
     }
 
@@ -618,7 +612,7 @@ mod tests {
     fn collect_paths_chunked_large_chunk() {
         let temp = create_test_tree();
 
-        // Chunk larger than total paths - single batch
+        // Chunk size exceeds total paths, forcing a single batch.
         let result = collect_paths_chunked_parallel(temp.path().to_path_buf(), false, 1000);
         let entries = result.unwrap();
 
