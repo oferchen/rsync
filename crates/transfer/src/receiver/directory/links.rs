@@ -33,6 +33,7 @@ impl ReceiverContext {
     pub(in crate::receiver) fn create_symlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
+        sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
     ) {
         if !self.config.flags.links || self.config.flags.dry_run {
@@ -82,7 +83,19 @@ impl ReceiverContext {
                     continue;
                 }
                 let _ = std::fs::remove_file(&link_path);
-            } else if link_path.symlink_metadata().is_ok() {
+            } else if fast_io::lstat_via_sandbox_or_fallback(
+                sandbox,
+                dest_dir,
+                relative_path,
+                &link_path,
+            )
+            .is_ok()
+            {
+                // SEC-1.f: when the sandbox is plumbed and the destination
+                // parent is the sandbox root, the obstacle stat goes through
+                // `fstatat(AT_SYMLINK_NOFOLLOW)` so a TOCTOU symlink swap on
+                // `link_path` cannot redirect the probe to a different
+                // inode. Falls back to `symlink_metadata` otherwise.
                 let _ = std::fs::remove_file(&link_path);
             }
 
@@ -146,6 +159,7 @@ impl ReceiverContext {
     pub(in crate::receiver) fn create_hardlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
     ) {
         if !self.config.flags.hard_links || self.config.flags.dry_run {
@@ -224,7 +238,24 @@ impl ReceiverContext {
                 let link_path = dest_dir.join(relative_path);
 
                 // Quick-check: if destination already hard-links to the leader, skip.
-                if let Ok(link_meta) = fs::symlink_metadata(&link_path) {
+                //
+                // SEC-1.f: the `link_path` stat goes through the sandbox
+                // dirfd via `fstatat(AT_SYMLINK_NOFOLLOW)` when the
+                // sandbox is plumbed and the relative path is a single
+                // component. The `leader_path` is owned by the receiver-
+                // managed `HardlinkApplyTracker` (it may live under a
+                // different parent than `dest_dir` for cross-segment
+                // hardlinks) and stays on the path-based stat for now.
+                #[cfg(unix)]
+                let link_meta_outcome = fast_io::lstat_via_sandbox_or_fallback(
+                    sandbox,
+                    dest_dir,
+                    relative_path,
+                    &link_path,
+                );
+                #[cfg(not(unix))]
+                let link_meta_outcome = fs::symlink_metadata(&link_path);
+                if let Ok(link_meta) = link_meta_outcome {
                     if let Ok(leader_meta) = fs::symlink_metadata(&leader_path) {
                         #[cfg(unix)]
                         {
@@ -244,7 +275,7 @@ impl ReceiverContext {
                         }
                         #[cfg(not(unix))]
                         {
-                            let _ = (link_meta, leader_meta);
+                            let _ = (&link_meta, leader_meta);
                         }
                     }
                     // Remove existing file so we can create the hard link.

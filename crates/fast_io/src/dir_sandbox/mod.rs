@@ -73,8 +73,12 @@ use dashmap::DashMap;
 use crate::linux_capabilities::openat2_supported;
 use crate::secure_dir::secure_open_dir;
 
+pub mod at_syscalls;
+
 #[cfg(test)]
 mod tests;
+
+pub use at_syscalls::{AtMetadata, LstatOutcome, fstatat_nofollow, lstat_via_sandbox_or_fallback};
 
 /// Parent-dirfd carrier threaded through the receiver pipeline.
 ///
@@ -271,6 +275,24 @@ impl DirSandbox {
     #[must_use]
     pub fn secondary_count(&self) -> usize {
         self.secondaries.len()
+    }
+
+    /// `fstatat(AT_SYMLINK_NOFOLLOW)` anchored on the current dirfd.
+    ///
+    /// SEC-1.f convenience accessor: resolves `leaf` relative to the
+    /// dirfd returned by [`current_dirfd`](Self::current_dirfd) and
+    /// returns the kernel's view of that entry without following a
+    /// terminal symlink. Callers that already hold a [`BorrowedFd`]
+    /// from a different anchor (for example
+    /// [`root_dirfd`](Self::root_dirfd) or
+    /// [`secondary`](Self::secondary)) should call
+    /// [`fstatat_nofollow`] directly to make the anchoring explicit.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the underlying [`fstatat_nofollow`] error verbatim.
+    pub fn lstat_at(&self, leaf: &OsStr) -> io::Result<AtMetadata> {
+        fstatat_nofollow(self.current_dirfd(), leaf)
     }
 }
 

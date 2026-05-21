@@ -56,7 +56,7 @@ impl ReceiverContext {
             checksum_algorithm,
             acl_cache,
             #[cfg(unix)]
-                sandbox: _sandbox,
+            sandbox,
         } = setup;
 
         let mut files_transferred = 0;
@@ -67,6 +67,9 @@ impl ReceiverContext {
         self.ensure_relative_parents(&dest_dir);
         let mut metadata_errors =
             self.create_directories(&dest_dir, &metadata_opts, acl_cache.as_deref())?;
+        #[cfg(unix)]
+        self.create_symlinks(&dest_dir, sandbox.as_deref(), writer);
+        #[cfg(not(unix))]
         self.create_symlinks(&dest_dir, writer);
 
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
@@ -324,6 +327,9 @@ impl ReceiverContext {
             files_transferred += 1;
         }
 
+        #[cfg(unix)]
+        self.create_hardlinks(&dest_dir, sandbox.as_deref(), writer);
+        #[cfg(not(unix))]
         self.create_hardlinks(&dest_dir, writer);
 
         self.finalize_transfer(reader, writer)?;
