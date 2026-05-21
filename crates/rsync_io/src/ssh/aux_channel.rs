@@ -84,6 +84,7 @@ pub(super) const STDERR_BUFFER_CAP: usize = 64 * 1024;
 /// `ssh-socketpair-stderr` feature pulls it in), so the sync-path
 /// warnings must stay on `io::Write` / `eprintln!` to compile on the
 /// default build matrix.
+#[cfg(unix)]
 fn warn_once(lock: &OnceLock<()>, out: &mut dyn Write, message: fmt::Arguments<'_>) -> bool {
     if lock.set(()).is_err() {
         return false;
@@ -94,11 +95,17 @@ fn warn_once(lock: &OnceLock<()>, out: &mut dyn Write, message: fmt::Arguments<'
 
 /// Marker substring emitted with every site-1 warning. Tests assert on
 /// this substring; production operators can grep for it.
+///
+/// Unix-only: the call sites that format this marker are gated on
+/// `#[cfg(unix)]` because the socketpair fallback condition only
+/// arises on Unix platforms.
+#[cfg(unix)]
 pub(super) const SOCKETPAIR_REJECTION_WARNING_MARKER: &str =
     "SSH stderr async drain unavailable on this platform";
 
 /// Marker substring emitted with every site-2 warning. See
 /// [`SOCKETPAIR_REJECTION_WARNING_MARKER`] for the rationale.
+#[cfg(unix)]
 pub(super) const HALF_FALLBACK_WARNING_MARKER: &str = "SSH stderr socketpair partially set up";
 
 /// Site 1 (SSF-2): the synchronous `configure_stderr_channel` Unix arm
@@ -121,6 +128,7 @@ static HALF_FALLBACK_WARNED: OnceLock<()> = OnceLock::new();
 /// Extracted as a helper so the production call site stays a one-liner
 /// and the tests can drive the OnceLock through a local instance to
 /// observe the one-shot discipline deterministically.
+#[cfg(unix)]
 fn emit_socketpair_rejection_warning(
     lock: &OnceLock<()>,
     out: &mut dyn Write,
