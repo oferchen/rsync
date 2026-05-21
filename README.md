@@ -150,6 +150,26 @@ oc-rsync -avz -e 'ssh -C' user@host:/src/ /dst/
 
 To get `SEND_ZC` dispatch, build with `cargo build --features iouring-send-zc` (requires Linux 5.16+). See [`docs/design/iouring-send-zc.md`](./docs/design/iouring-send-zc.md) for the full rationale and the path to flipping this default on.
 
+#### SSH stderr socketpair channel
+
+Default builds drain the SSH child's stderr through an anonymous pipe on a dedicated reader thread. The `ssh-socketpair-stderr` cargo feature swaps that pipe for a `socketpair(AF_UNIX, SOCK_STREAM)` and, on the async transport, hands the parent end to an epoll/kqueue-integrated tokio drain. The wake-up and shutdown paths become event-driven instead of timeout-bounded, and the larger socket buffer absorbs bursty remote shells without dropping lines.
+
+Operators benefit when SSH stderr is chatty (banners, MOTDs, `ssh -v`), the network is high-latency, or many parallel transfers are in flight. In those workloads the pipe-based drain delays or truncates diagnostic output and can leave drain threads parked past child exit. The socketpair path keeps stderr capture deterministic at session boundaries.
+
+Build with:
+
+```sh
+cargo build --features ssh-socketpair-stderr
+```
+
+Linux is the recommended target; the Windows shim is tracked separately (SSE-5). See [`docs/ssh-transport.md`](./docs/ssh-transport.md) and [`docs/design/socketpair-stderr-channel.md`](./docs/design/socketpair-stderr-channel.md).
+
+Three one-shot warnings may appear on stderr (sync path) or via `tracing` target `ssh::stderr` (async path) when the runtime cannot honour the feature. Each fires at most once per process; the substrings are the operator-grep contract:
+
+- `SSH stderr async drain unavailable on this platform` - the kernel rejected `socketpair(AF_UNIX, SOCK_STREAM, 0)` (typically `EMFILE`, `ENFILE`, `EPERM`, or `ENOSYS` under seccomp). The session falls back to `Stdio::piped()`. Raise the per-process fd limit or relax the sandbox if you want the socketpair drain back.
+- `SSH stderr socketpair partially set up` - the socketpair allocated but `dup(2)` on the parent half failed (usually `EMFILE`). The drain still reads from the socketpair, but `shutdown_read` becomes a no-op and the drain thread relies on a 50 ms timeout at child exit. Investigate fd pressure in the parent process.
+- `SSH stderr async drain falling back to Stdio::inherit()` - the async transport could not stand up the socketpair, so the SSH child's stderr is wired straight to the parent terminal. `stderr_capture()` returns empty for this session; consume diagnostics from the parent's own stderr instead.
+
 ### Known Limitations / Architectural Trade-offs
 
 oc-rsync is wire-compatible with upstream rsync 3.4.1, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
