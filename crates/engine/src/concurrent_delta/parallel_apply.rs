@@ -1192,20 +1192,30 @@ mod tests {
         }
 
         let hold_duration = std::time::Duration::from_millis(40);
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel::<()>();
         let mut handles = Vec::with_capacity(N as usize);
         for ndx in 0..N {
             let worker_applier = Arc::clone(&applier);
+            let acquired_tx = acquired_tx.clone();
             handles.push(std::thread::spawn(move || {
                 let handle = worker_applier
                     .slot_for(FileNdx::new(ndx))
                     .expect("slot registered");
+                acquired_tx.send(()).expect("handshake send");
                 std::thread::sleep(hold_duration);
                 drop(handle);
             }));
         }
+        drop(acquired_tx);
 
-        // Let every worker grab its handle before the drain call.
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        // Wait for every worker to grab its handle before the drain call.
+        // Replaces a sleep-based barrier that raced on macOS where workers
+        // had not yet entered slot_for when drain_inflight was invoked.
+        for _ in 0..N {
+            acquired_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("worker acquired handle");
+        }
 
         let start = std::time::Instant::now();
         applier.drain_inflight().expect("drain_inflight");
@@ -1226,19 +1236,29 @@ mod tests {
         // cause finish_file to return ApplierStillReferenced; instead
         // finish_file blocks until the worker drops the handle, then
         // succeeds.
+        //
+        // The handshake replaces the previous sleep-based "let the
+        // worker get going" coordination, which raced on macOS where
+        // the main thread reached finish_file before the worker had
+        // acquired the SlotHandle (inflight stayed 0, the barrier
+        // returned immediately, and the elapsed-time assertion fired).
         let applier = Arc::new(ParallelDeltaApplier::new(1));
         let (sink, _) = VecSink::new();
         applier.register_file(0u32, Box::new(sink)).unwrap();
 
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel::<()>();
         let worker_applier = Arc::clone(&applier);
         let worker = std::thread::spawn(move || {
             let handle = worker_applier
                 .slot_for(FileNdx::new(0))
                 .expect("slot registered");
+            acquired_tx.send(()).expect("handshake send");
             std::thread::sleep(std::time::Duration::from_millis(40));
             drop(handle);
         });
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        acquired_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("worker acquired handle");
 
         let start = std::time::Instant::now();
         let _writer = applier.finish_file(0u32).expect("finish_file");
