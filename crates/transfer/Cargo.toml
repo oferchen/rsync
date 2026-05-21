@@ -144,6 +144,11 @@ crossbeam-channel = { workspace = true }
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
 filetime = { workspace = true }
 
+[target.'cfg(unix)'.dev-dependencies]
+# Sender-side fake-super xattr consumer tests place `user.rsync.%stat`
+# directly on the source placeholder file.
+xattr = { workspace = true }
+
 [[bench]]
 name = "map_file_benchmark"
 harness = false
