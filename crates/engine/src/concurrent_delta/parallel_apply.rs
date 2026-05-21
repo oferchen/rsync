@@ -13,7 +13,7 @@
 //! [`ParallelDeltaApplier`] owns a configurable concurrency limit and a
 //! per-file map of [`Mutex`]-guarded destination writers. Callers hand it
 //! [`DeltaChunk`] values (one literal-or-block segment for one file) through
-//! [`apply_chunk_parallel`](ParallelDeltaApplier::apply_chunk_parallel). The
+//! [`apply_one_chunk`](ParallelDeltaApplier::apply_one_chunk). The
 //! checksum verify step runs on the rayon pool; the actual file-write happens
 //! under the per-file mutex so per-file byte order is preserved.
 //!
@@ -418,7 +418,7 @@ impl ParallelDeltaApplier {
     /// Registers a destination writer for `ndx`.
     ///
     /// Must be called before the first chunk for `ndx` reaches
-    /// [`apply_chunk_parallel`](Self::apply_chunk_parallel). Returns an
+    /// [`apply_one_chunk`](Self::apply_one_chunk). Returns an
     /// error if `ndx` already has a writer (the receiver opens each file
     /// exactly once).
     ///
@@ -458,6 +458,22 @@ impl ParallelDeltaApplier {
     /// the work without spinning up a new pool. The serial write step then
     /// runs under the per-file mutex so per-file byte order is preserved.
     ///
+    /// # Scheduling shape
+    ///
+    /// This entry point schedules a single chunk's verify on a rayon worker
+    /// via `rayon::join(verify, || ())`. The second closure is a no-op, so
+    /// the caller still blocks until that one verify returns. This is a
+    /// single-chunk scheduling primitive, **not** cross-chunk parallelism.
+    /// For multi-chunk parallel verify across the rayon pool use
+    /// [`apply_batch_parallel`](Self::apply_batch_parallel), which collects a
+    /// `Vec<DeltaChunk>` through `into_par_iter` and fans the verifies out
+    /// subject to [`Self::concurrency`].
+    ///
+    /// See `docs/audits/rjn-1-apply-chunk-parallel-call-sites-2026-05-21.md`
+    /// for the call-site catalogue and design rationale behind keeping this
+    /// per-chunk shape until the receiver pipeline wires a real fan-out
+    /// caller (tracked under RJN-3).
+    ///
     /// # Errors
     ///
     /// Returns an [`io::Error`] if the file is unknown, a slot mutex is
@@ -465,7 +481,7 @@ impl ParallelDeltaApplier {
     /// buffer overflows (a stalled file with unbounded out-of-order
     /// submissions), or the per-chunk strong-checksum verification fails
     /// when [`DeltaChunk::expected_strong`] was attached.
-    pub fn apply_chunk_parallel(&self, chunk: DeltaChunk) -> io::Result<()> {
+    pub fn apply_one_chunk(&self, chunk: DeltaChunk) -> io::Result<()> {
         // `slot_for` returns an `Arc` clone and drops the DashMap shard
         // guard before returning, so the rayon verify below never blocks
         // shard-mates on unrelated NDX values.
@@ -717,7 +733,7 @@ mod tests {
         let expected = sequential_apply(&chunks);
 
         for c in chunks {
-            applier.apply_chunk_parallel(c).unwrap();
+            applier.apply_one_chunk(c).unwrap();
         }
         assert_eq!(collect_file(&applier, FileNdx::new(0), buf), expected);
     }
@@ -738,7 +754,7 @@ mod tests {
         shuffled.rotate_left(7);
 
         for c in shuffled {
-            applier.apply_chunk_parallel(c).unwrap();
+            applier.apply_one_chunk(c).unwrap();
         }
         assert_eq!(collect_file(&applier, FileNdx::new(0), buf), expected);
     }
@@ -781,7 +797,7 @@ mod tests {
     fn missing_file_registration_errors() {
         let applier = ParallelDeltaApplier::new(1);
         let err = applier
-            .apply_chunk_parallel(DeltaChunk::literal(7u32, 0, vec![1, 2, 3]))
+            .apply_one_chunk(DeltaChunk::literal(7u32, 0, vec![1, 2, 3]))
             .unwrap_err();
         assert!(err.to_string().contains("unknown"));
     }
@@ -804,7 +820,7 @@ mod tests {
 
         // Submit out-of-order chunk; sequence 0 never arrives.
         applier
-            .apply_chunk_parallel(DeltaChunk::literal(0u32, 1, vec![0u8; 4]))
+            .apply_one_chunk(DeltaChunk::literal(0u32, 1, vec![0u8; 4]))
             .unwrap();
         match applier.finish_file(0u32) {
             Ok(_) => panic!("finish_file should fail with pending chunks"),
@@ -818,11 +834,11 @@ mod tests {
         let (sink, _) = VecSink::new();
         applier.register_file(0u32, Box::new(sink)).unwrap();
         applier
-            .apply_chunk_parallel(DeltaChunk::literal(0u32, 0, vec![1u8; 100]))
+            .apply_one_chunk(DeltaChunk::literal(0u32, 0, vec![1u8; 100]))
             .unwrap();
         assert_eq!(applier.bytes_written(0u32).unwrap(), 100);
         applier
-            .apply_chunk_parallel(DeltaChunk::literal(0u32, 1, vec![2u8; 50]))
+            .apply_one_chunk(DeltaChunk::literal(0u32, 1, vec![2u8; 50]))
             .unwrap();
         assert_eq!(applier.bytes_written(0u32).unwrap(), 150);
     }
@@ -864,7 +880,7 @@ mod tests {
             let (sink, buf) = VecSink::new();
             applier.register_file(0u32, Box::new(sink)).unwrap();
             for c in permuted {
-                applier.apply_chunk_parallel(c).unwrap();
+                applier.apply_one_chunk(c).unwrap();
             }
             let actual = collect_file(&applier, FileNdx::new(0), buf);
             prop_assert_eq!(actual, expected);
@@ -878,7 +894,7 @@ mod tests {
         let cursor: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         applier.register_file(0u32, Box::new(cursor)).unwrap();
         applier
-            .apply_chunk_parallel(DeltaChunk::literal(0u32, 0, vec![9u8; 32]))
+            .apply_one_chunk(DeltaChunk::literal(0u32, 0, vec![9u8; 32]))
             .unwrap();
         let _writer = applier.finish_file(0u32).unwrap();
     }
@@ -982,7 +998,7 @@ mod tests {
         let (sink, buf) = VecSink::new();
         applier.register_file(0u32, Box::new(sink)).unwrap();
         applier
-            .apply_chunk_parallel(DeltaChunk::literal(0u32, 0, vec![0xAB; 64]))
+            .apply_one_chunk(DeltaChunk::literal(0u32, 0, vec![0xAB; 64]))
             .unwrap();
         let _writer = applier.finish_file(0u32).unwrap();
         assert_eq!(buf.lock().unwrap().len(), 64);
@@ -1012,7 +1028,7 @@ mod tests {
         let (sink, buf) = VecSink::new();
         applier.register_file(0u32, Box::new(sink)).unwrap();
         let chunk = chunk_with_correct_digest(strategy.as_ref(), 0, 0, vec![0x42; 128]);
-        applier.apply_chunk_parallel(chunk).unwrap();
+        applier.apply_one_chunk(chunk).unwrap();
         let _writer = applier.finish_file(0u32).unwrap();
         assert_eq!(buf.lock().unwrap().len(), 128);
         assert!(buf.lock().unwrap().iter().all(|&b| b == 0x42));
@@ -1030,7 +1046,7 @@ mod tests {
         let (sink, buf) = VecSink::new();
         applier.register_file(0u32, Box::new(sink)).unwrap();
         let chunk = chunk_with_correct_digest(strategy.as_ref(), 0, 0, vec![0xAA; 200]);
-        applier.apply_chunk_parallel(chunk).unwrap();
+        applier.apply_one_chunk(chunk).unwrap();
         let _writer = applier.finish_file(0u32).unwrap();
         assert_eq!(buf.lock().unwrap().len(), 200);
     }
@@ -1047,7 +1063,7 @@ mod tests {
         // non-empty payload's real digest.
         let bogus = ChecksumDigest::new(&[0u8; 16]);
         let chunk = DeltaChunk::literal(0u32, 0, vec![0x99; 64]).with_expected_strong(bogus);
-        let err = applier.apply_chunk_parallel(chunk).unwrap_err();
+        let err = applier.apply_one_chunk(chunk).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("checksum mismatch"), "msg was: {msg}");
         assert!(msg.contains("ndx=0"), "msg was: {msg}");
