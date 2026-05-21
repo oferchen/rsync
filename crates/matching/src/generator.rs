@@ -156,9 +156,12 @@ impl DeltaGenerator {
         let mut matches = 0u64;
         let mut offset = 0u64;
 
-        // upstream: match.c - want_i tracks the expected next block index for
-        // adjacent-match hinting. After a match at block i, the next match
-        // is likely at block i+1. Checking this hint before the hash table
+        // upstream: match.c - `want_i` tracks the expected next block index
+        // for adjacent-match hinting. After a confirmed match at block `i`,
+        // the next match is most often at `index.next_match(i)`: zsync's
+        // librcksum/rsum.c:262 maintains the same lookahead slot. Seeding
+        // with `Some(0)` covers the start-of-file case where block 0 is the
+        // most likely first match. Probing the hint before the hash table
         // lookup skips the probe entirely when data is sequential.
         let mut want_i: Option<usize> = Some(0);
 
@@ -334,11 +337,12 @@ impl DeltaGenerator {
                     // this basis index again.
                     matched_blocks.mark_matched(match_idx);
 
-                    want_i = if match_idx + 1 < index.block_count() {
-                        Some(match_idx + 1)
-                    } else {
-                        None
-                    };
+                    let last_matched = match_idx;
+                    // upstream/zsync: `librcksum/rsum.c:262` advances the
+                    // lookahead slot to the indexed successor. The basis can
+                    // re-order or skip partial blocks, so consult the index
+                    // rather than assuming `match_idx + 1`.
+                    want_i = index.next_match(last_matched);
 
                     window.clear();
                     rolling.reset();
@@ -374,17 +378,18 @@ impl DeltaGenerator {
 
                     // upstream: match.c:144-190 - try want_i hint at the next
                     // block boundary before falling back to a hash probe.
+                    // The probe uses the index's recorded
+                    // [`DeltaSignatureIndex::next_match`] link so a stored
+                    // successor that diverges from `last_matched + 1` is
+                    // still followed.
                     let adj_digest = rolling.digest();
                     let (f, s) = window.as_slices();
                     let adj_match = {
                         let adj_filter = prune_matched.then_some(&matched_blocks);
-                        if let Some(hint) = want_i {
-                            if index.check_block_match_slices(hint, adj_digest, f, s) {
-                                Some(hint)
-                            } else {
-                                hash_hits += 1;
-                                index.find_match_slices_filtered(adj_digest, f, s, adj_filter)
-                            }
+                        if let Some(next_idx) =
+                            index.try_next_match_slices(last_matched, adj_digest, f, s)
+                        {
+                            Some(next_idx)
                         } else {
                             hash_hits += 1;
                             index.find_match_slices_filtered(adj_digest, f, s, adj_filter)
