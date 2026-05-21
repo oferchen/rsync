@@ -1,12 +1,12 @@
 //! Compact-lookup cache-behaviour benchmark (#2073).
 //!
-//! Profiles the cache behaviour of [`DeltaSignatureIndex`]'s flat
-//! open-addressed lookup table at index sizes that straddle the L1, L2,
-//! LLC, and main-memory tiers of modern CPUs. The current key/value layout
-//! stores `(rsum_key: u32, block_index: u32)` packed into a `u64` slot;
-//! issue #2072 proposes a denser `(rsum_low | bucket_idx)` layout. This
-//! bench produces the evidence that informs whether that change is worth
-//! the wire-compat-neutral implementation cost.
+//! Profiles the cache behaviour of [`DeltaSignatureIndex`]'s compact
+//! bucket lookup at index sizes that straddle the L1, L2, LLC, and
+//! main-memory tiers of modern CPUs. Under the ZSO-4 compact-key design
+//! the bucket array is keyed on `rsum >> 16` and capped at `2^16` slots,
+//! so the hot table stays at most 256 KiB regardless of basis size.
+//! The numbers this bench produces feed back into #2072 / #2073 by
+//! quantifying how much the cap actually buys at each cache tier.
 //!
 //! # Running
 //!
@@ -38,14 +38,15 @@
 //!
 //! # Methodology
 //!
-//! Four logical index sizes:
+//! Four logical index sizes. The bucket-array footprint plateaus at the
+//! `2^16` cap; the chain-entry footprint scales with `n_entries`:
 //!
-//! | label  | n_entries | lookup-table footprint | cache tier (typical x86_64) |
-//! |--------|-----------|------------------------|-----------------------------|
-//! | `l1`   | 1024      | ~32 KiB                | L1d-resident                |
-//! | `l2`   | 16 384    | ~512 KiB               | L2-resident                 |
-//! | `llc`  | 1 048 576 | ~32 MiB                | LLC-resident                |
-//! | `ram`  | 8 388 608 | ~256 MiB               | main memory                 |
+//! | label  | n_entries | bucket footprint | total footprint |
+//! |--------|-----------|------------------|-----------------|
+//! | `l1`   | 1024      | 16 KiB           | ~28 KiB         |
+//! | `l2`   | 16 384    | 256 KiB          | ~448 KiB        |
+//! | `llc`  | 1 048 576 | 256 KiB          | ~12 MiB         |
+//! | `ram`  | 8 388 608 | 256 KiB          | ~96 MiB         |
 //!
 //! For each size, two access patterns:
 //!
@@ -66,28 +67,31 @@
 //!
 //! # Interpreting results
 //!
-//! Pre-#2072 (current layout, 8-byte slots):
+//! Under the ZSO-4 compact-key layout the bucket array is bounded at
+//! 256 KiB (`2^16 * 8` bytes), so the *bucket fetch* itself stays inside
+//! L2 even for the `ram` size. The chain backing store grows with the
+//! entry count and is the working set that pushes through the cache
+//! hierarchy:
 //!
 //! - `l1` and `l2` sizes should be effectively cache-resident; sequential
 //!   and scattered throughput should be near-identical, with cache-miss
 //!   rates near zero.
 //! - `llc` and `ram` sizes should show a widening gap: scattered probes
 //!   stall on LLC misses while sequential probes still benefit from the
-//!   linear-probe stride of one cache line.
+//!   chain backing store's monotonic insertion order.
 //!
 //! Action thresholds for #2072:
 //!
 //! - **Favourable** (justify packing): scattered-probe cache-miss rate at
 //!   the `llc` or `ram` size is >= 2x the sequential rate, and total
 //!   probes-per-second on the scattered case is bottlenecked by memory
-//!   bandwidth. A packed `(rsum_low | bucket_idx)` layout that halves
-//!   slot width should approximately halve those miss rates and recover
-//!   most of the throughput gap.
+//!   bandwidth. Further chain-entry packing should approximately halve
+//!   those miss rates and recover most of the throughput gap.
 //! - **Unfavourable** (defer #2072): scattered and sequential cache-miss
 //!   rates stay within ~20% across all sizes, or the `ram` case is
 //!   bottlenecked by something other than memory traffic (strong-checksum
-//!   verify, allocator, etc). Repacking buys little if the cost is not
-//!   actually in the slot-fetch.
+//!   verify, allocator, etc). Further packing buys little if the cost is
+//!   not actually in the chain fetch.
 //!
 //! # See also
 //!
@@ -306,11 +310,12 @@ fn report_footprint() {
 
 /// Drives `PROBES_PER_ITER` lookup probes from the prebuilt key stream.
 ///
-/// Each probe runs the full Robin Hood walk via the bench-only
+/// Each probe walks the compact-key bucket chain via the bench-only
 /// [`DeltaSignatureIndex::lookup_probe`] accessor, which returns the
-/// number of yielded basis-block indices. `black_box` on the running
-/// total prevents the optimizer from hoisting the loop out of the
-/// timed section.
+/// number of yielded basis-block indices. The chain is addressed by the
+/// upper-half discriminator (`rsum >> 16`) per the ZSO-4 compact-key
+/// design; `black_box` on the running total prevents the optimizer from
+/// hoisting the loop out of the timed section.
 #[inline(never)]
 fn drive_probes(index: &DeltaSignatureIndex, keys: &[(u16, u16)]) -> usize {
     let mut total = 0usize;
