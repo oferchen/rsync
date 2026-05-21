@@ -92,7 +92,7 @@ pub enum ChunkBuilderError {
 /// One builder lives for the duration of a single file's delta apply. The
 /// caller bumps the sequence counter once per produced chunk, mirroring the
 /// per-file `chunk_sequence` invariant that
-/// [`ParallelDeltaApplier::apply_chunk_parallel`] documents.
+/// [`ParallelDeltaApplier::apply_one_chunk`] documents.
 ///
 /// # Per-file lifetime
 ///
@@ -408,7 +408,7 @@ mod tests {
             .expect("matched_chunk for in-bounds index");
 
         let err = applier
-            .apply_chunk_parallel(chunk)
+            .apply_one_chunk(chunk)
             .expect_err("verify must reject corrupted basis bytes");
         let msg = err.to_string();
         assert!(msg.contains("checksum mismatch"), "msg was: {msg}");

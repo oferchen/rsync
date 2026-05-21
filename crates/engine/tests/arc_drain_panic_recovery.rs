@@ -181,8 +181,8 @@ mod parallel_apply_drain {
         let worker = thread::spawn(move || {
             let result = panic::catch_unwind(AssertUnwindSafe(|| {
                 worker_applier
-                    .apply_chunk_parallel(DeltaChunk::literal(0u32, 0, vec![0u8; 16]))
-                    .expect("apply_chunk_parallel");
+                    .apply_one_chunk(DeltaChunk::literal(0u32, 0, vec![0u8; 16]))
+                    .expect("apply_one_chunk");
             }));
             // Bubble up the panic outcome so the join site can assert
             // it stayed contained. The drain assertion already ran on
@@ -192,7 +192,7 @@ mod parallel_apply_drain {
 
         // Wait for the worker to enter `BlockingWriter::write` - by
         // that point the slot's inner Arc has a live clone held inside
-        // `apply_chunk_parallel`, so `finish_file`'s `Arc::try_unwrap`
+        // `apply_one_chunk`, so `finish_file`'s `Arc::try_unwrap`
         // will fail with the typed variant.
         started_rx
             .recv_timeout(Duration::from_secs(10))

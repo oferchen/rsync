@@ -10,7 +10,7 @@
 //! What this test guards against:
 //!
 //! * Outer-map lock contention re-entering the design: every worker calls
-//!   `register_file` / `apply_chunk_parallel` concurrently on overlapping
+//!   `register_file` / `apply_one_chunk` concurrently on overlapping
 //!   NDX values; the DashMap shard scheme is the only thing keeping
 //!   register/lookup off a single central lock.
 //! * Per-file slot corruption: the inner `Mutex<FileSlot>` is still the
@@ -122,8 +122,8 @@ fn concurrent_files_under_dashmap_shards_match_expected_bytes() {
             expected_per_file[ndx_raw as usize].fetch_add(CHUNK_BYTES as u64, Ordering::Relaxed);
             let chunk = DeltaChunk::literal(ndx_raw, seq, vec![worker as u8; CHUNK_BYTES]);
             applier
-                .apply_chunk_parallel(chunk)
-                .expect("apply_chunk_parallel under concurrent dispatch");
+                .apply_one_chunk(chunk)
+                .expect("apply_one_chunk under concurrent dispatch");
         }
     });
     let elapsed = start.elapsed();
@@ -219,7 +219,7 @@ fn concurrent_register_and_dispatch_on_overlapping_files() {
             let ndx_raw = (rng.next_u64() % SMALL_NUM as u64) as u32;
             let seq = per_file_seq[ndx_raw as usize].fetch_add(1, Ordering::SeqCst);
             let chunk = DeltaChunk::literal(ndx_raw, seq, vec![worker as u8; CHUNK_BYTES]);
-            match applier.apply_chunk_parallel(chunk) {
+            match applier.apply_one_chunk(chunk) {
                 Ok(()) => {
                     expected.fetch_add(CHUNK_BYTES as u64, Ordering::Relaxed);
                 }
