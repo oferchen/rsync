@@ -79,7 +79,9 @@ pub mod at_syscalls;
 mod tests;
 
 pub use at_syscalls::{
-    AtMetadata, LstatOutcome, UnlinkFlags, fstatat_nofollow, lstat_via_sandbox_or_fallback,
+    AtMetadata, LstatOutcome, UnlinkFlags, fstatat_nofollow, linkat,
+    linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, mkdirat,
+    mkdirat_via_sandbox_or_fallback, symlinkat, symlinkat_via_sandbox_or_fallback,
     unlink_via_sandbox_or_fallback, unlinkat,
 };
 

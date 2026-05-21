@@ -63,6 +63,8 @@ impl ReceiverContext {
                     &setup.metadata_opts,
                     &mut failed_dirs,
                     setup.acl_cache.as_deref(),
+                    #[cfg(unix)]
+                    setup.sandbox.as_deref(),
                 )?;
                 match result {
                     Some(true) => {
