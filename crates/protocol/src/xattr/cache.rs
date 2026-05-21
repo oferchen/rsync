@@ -720,8 +720,15 @@ mod tests {
 
         let list = cache.get(0).unwrap();
         assert_eq!(list.len(), 3);
-        let names: Vec<&[u8]> = list.entries().iter().map(|e| e.name()).collect();
-        assert_eq!(names, vec![&alpha[..], &middle[..], &zebra[..]]);
+        let names: Vec<Vec<u8>> = list.entries().iter().map(|e| e.name().to_vec()).collect();
+        assert_eq!(
+            names,
+            vec![
+                expected_local_for_user_wire(b"alpha"),
+                expected_local_for_user_wire(b"middle"),
+                expected_local_for_user_wire(b"zebra"),
+            ],
+        );
     }
 
     #[test]
@@ -756,8 +763,15 @@ mod tests {
         let list = cache.get(0).unwrap();
         // Internal entry filtered; remaining three keep wire-arrival order.
         assert_eq!(list.len(), 3);
-        let names: Vec<&[u8]> = list.entries().iter().map(|e| e.name()).collect();
-        assert_eq!(names, vec![&alpha[..], &middle[..], &zeta[..]]);
+        let names: Vec<Vec<u8>> = list.entries().iter().map(|e| e.name().to_vec()).collect();
+        assert_eq!(
+            names,
+            vec![
+                expected_local_for_user_wire(b"alpha"),
+                expected_local_for_user_wire(b"middle"),
+                expected_local_for_user_wire(b"zeta"),
+            ],
+        );
     }
 
     #[test]

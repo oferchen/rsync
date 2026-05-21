@@ -1919,11 +1919,15 @@ mod acl_integration {
         )
         .unwrap();
 
+        // Wire format carries the full Linux xattr name verbatim, including
+        // the "user." namespace prefix. upstream: xattrs.c:rsync_xattr_lookup
+        // forwards the llistxattr(2) name unchanged. Non-Linux receivers
+        // strip the prefix to recover the flat-namespace local name.
         write_varint(&mut data, 0).unwrap();
         write_varint(&mut data, 1).unwrap();
-        write_varint(&mut data, 6).unwrap();
+        write_varint(&mut data, 11).unwrap();
         write_varint(&mut data, 3).unwrap();
-        data.extend_from_slice(b"label\0");
+        data.extend_from_slice(b"user.label\0");
         data.extend_from_slice(b"foo");
 
         let mut cursor = Cursor::new(&data[..]);
@@ -1941,6 +1945,11 @@ mod acl_integration {
         assert_eq!(cached_def.other_obj, 0x00);
 
         let cached_xattr = reader.xattr_cache().get(0).unwrap();
+        assert_eq!(cached_xattr.len(), 1);
+        #[cfg(target_os = "linux")]
+        assert_eq!(cached_xattr.entries()[0].name(), b"user.label");
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(cached_xattr.entries()[0].name(), b"label");
         assert_eq!(cached_xattr.entries()[0].datum(), b"foo");
 
         assert_eq!(cursor.position() as usize, data.len());
@@ -2279,12 +2288,13 @@ mod xattr_integration {
         let mut entry = FileEntry::new_file("a.txt".into(), 100, 0o100644);
         entry.set_mtime(1700000000, 0);
         writer.write_entry(&mut data, &entry).unwrap();
-        write_literal_xattr(&mut data, &[(b"color", b"red")]);
+        let color_wire = user_wire_name(b"color");
+        write_literal_xattr(&mut data, &[(&color_wire, b"red")]);
 
         let mut entry = FileEntry::new_file("b.txt".into(), 200, 0o100644);
         entry.set_mtime(1700000000, 0);
         writer.write_entry(&mut data, &entry).unwrap();
-        write_literal_xattr(&mut data, &[(b"color", b"blue")]);
+        write_literal_xattr(&mut data, &[(&color_wire, b"blue")]);
 
         let mut entry = FileEntry::new_file("c.txt".into(), 300, 0o100644);
         entry.set_mtime(1700000000, 0);
