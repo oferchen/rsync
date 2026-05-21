@@ -21,8 +21,14 @@
 //! the seam that lets us migrate the socketpair variant onto a poll() loop
 //! without touching call sites in `connection.rs`.
 
+#[cfg(unix)]
+use std::fmt;
+#[cfg(unix)]
+use std::io::Write;
 use std::io::{self, BufRead, BufReader, Read};
 use std::process::{ChildStderr, Command, ExitStatus, Stdio};
+#[cfg(unix)]
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -68,6 +74,92 @@ use logging::debug_log;
 /// memory usage bounded. 64 KB matches the typical OS pipe buffer size and is
 /// sufficient to capture the tail of any error output from the remote process.
 pub(super) const STDERR_BUFFER_CAP: usize = 64 * 1024;
+
+/// Fires `message` to `out` the first time `lock` is set. Subsequent calls
+/// against the same lock are no-ops and return `false`.
+///
+/// Used to keep SSF-2 fallback warnings to one line per session per site
+/// even when rsync re-establishes SSH multiple times in the same process
+/// (push+pull, resumes, multi-host loops). The lock-set-vs-write order is
+/// deliberate: a contested set loses early so concurrent callers do not
+/// double-emit. `OnceLock::set` returns `Err` on the losing side, which
+/// short-circuits the write.
+///
+/// `tracing` is not a default dependency of this crate (the
+/// `ssh-socketpair-stderr` feature pulls it in), so the sync-path
+/// warnings must stay on `io::Write` / `eprintln!` to compile on the
+/// default build matrix.
+#[cfg(unix)]
+fn warn_once(lock: &OnceLock<()>, out: &mut dyn Write, message: fmt::Arguments<'_>) -> bool {
+    if lock.set(()).is_err() {
+        return false;
+    }
+    let _ = writeln!(out, "{message}");
+    true
+}
+
+/// Marker substring emitted with every site-1 warning. Tests assert on
+/// this substring; production operators can grep for it.
+///
+/// Unix-only: the call sites that format this marker are gated on
+/// `#[cfg(unix)]` because the socketpair fallback condition only
+/// arises on Unix platforms.
+#[cfg(unix)]
+pub(super) const SOCKETPAIR_REJECTION_WARNING_MARKER: &str =
+    "SSH stderr async drain unavailable on this platform";
+
+/// Marker substring emitted with every site-2 warning. See
+/// [`SOCKETPAIR_REJECTION_WARNING_MARKER`] for the rationale.
+#[cfg(unix)]
+pub(super) const HALF_FALLBACK_WARNING_MARKER: &str = "SSH stderr socketpair partially set up";
+
+/// Site 1 (SSF-2): the synchronous `configure_stderr_channel` Unix arm
+/// could not allocate a `socketpair(2)` and is degrading to
+/// `Stdio::piped()`. Emits the operator-facing warning at most once per
+/// process via [`SOCKETPAIR_REJECTION_WARNED`].
+#[cfg(unix)]
+static SOCKETPAIR_REJECTION_WARNED: OnceLock<()> = OnceLock::new();
+
+/// Site 2 (SSF-2): `SocketpairStderrChannel::spawn` could not
+/// `try_clone` the parent socketpair end. The channel still drains but
+/// `shutdown_read` becomes a no-op. Fires at most once per process via
+/// [`HALF_FALLBACK_WARNED`].
+#[cfg(unix)]
+static HALF_FALLBACK_WARNED: OnceLock<()> = OnceLock::new();
+
+/// Emits the site-1 warning to `out`. Returns `true` when the warning was
+/// emitted (first call) and `false` thereafter.
+///
+/// Extracted as a helper so the production call site stays a one-liner
+/// and the tests can drive the OnceLock through a local instance to
+/// observe the one-shot discipline deterministically.
+#[cfg(unix)]
+fn emit_socketpair_rejection_warning(
+    lock: &OnceLock<()>,
+    out: &mut dyn Write,
+    error: &io::Error,
+) -> bool {
+    warn_once(
+        lock,
+        out,
+        format_args!(
+            "warning: {SOCKETPAIR_REJECTION_WARNING_MARKER}; falling back to pipe-based stderr ({error}). Diagnostics may be delayed or truncated on chatty stderr streams."
+        ),
+    )
+}
+
+/// Emits the site-2 warning to `out`. See
+/// [`emit_socketpair_rejection_warning`] for the helper rationale.
+#[cfg(unix)]
+fn emit_half_fallback_warning(lock: &OnceLock<()>, out: &mut dyn Write, error: &io::Error) -> bool {
+    warn_once(
+        lock,
+        out,
+        format_args!(
+            "warning: {HALF_FALLBACK_WARNING_MARKER}; shutdown_read became a no-op ({error}). This may delay process shutdown on session close."
+        ),
+    )
+}
 
 /// Abstraction over the auxiliary channel that drains SSH subprocess stderr.
 ///
@@ -220,7 +312,17 @@ impl SocketpairStderrChannel {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let thread_buffer = Arc::clone(&buffer);
 
-        let parent_clone = parent_end.try_clone().ok();
+        // SSF-2 site 2: `try_clone` failure leaves `shutdown_read` as a
+        // no-op (see `shutdown_read` below). Capture the error so the
+        // half-fallback path is surfaced once per process instead of
+        // being silently dropped by `.ok()`.
+        let parent_clone = match parent_end.try_clone() {
+            Ok(clone) => Some(clone),
+            Err(error) => {
+                emit_half_fallback_warning(&HALF_FALLBACK_WARNED, &mut io::stderr().lock(), &error);
+                None
+            }
+        };
 
         let handle = thread::Builder::new()
             .name("ssh-stderr-drain-socketpair".into())
@@ -352,6 +454,14 @@ pub(super) fn configure_stderr_channel(command: &mut Command) -> Option<UnixStre
                 Connect,
                 2,
                 "ssh stderr: socketpair unavailable ({error}); falling back to pipe"
+            );
+            // SSF-2 site 1: surface the runtime degradation once per
+            // process so operators notice that the async-drain path is
+            // disabled for this session.
+            emit_socketpair_rejection_warning(
+                &SOCKETPAIR_REJECTION_WARNED,
+                &mut io::stderr().lock(),
+                &error,
             );
             None
         }
@@ -712,5 +822,115 @@ mod tests {
         let _ = child.wait();
         // The pipe is captured by the child object; the stub above just
         // proves no panic and that the call returns None.
+    }
+
+    // SSF-2 site 1 + site 2 emission tests. Each test owns a local
+    // `OnceLock<()>` so the production statics remain untouched and
+    // tests stay independent of execution order.
+
+    #[cfg(unix)]
+    #[test]
+    fn warns_once_on_sync_socketpair_rejection() {
+        let local_lock: OnceLock<()> = OnceLock::new();
+        let synthetic_error = io::Error::from_raw_os_error(libc_emfile_equivalent());
+
+        let mut sink = Vec::new();
+        let first = emit_socketpair_rejection_warning(&local_lock, &mut sink, &synthetic_error);
+        assert!(first, "first invocation must emit the warning");
+        let captured = String::from_utf8(sink).expect("emitted bytes are utf8");
+        assert!(
+            captured.contains(SOCKETPAIR_REJECTION_WARNING_MARKER),
+            "emitted warning must contain the documented marker; got {captured:?}"
+        );
+        assert!(
+            captured.contains("falling back to pipe-based stderr"),
+            "emitted warning must explain the fallback behaviour; got {captured:?}"
+        );
+
+        let mut sink_second = Vec::new();
+        let second =
+            emit_socketpair_rejection_warning(&local_lock, &mut sink_second, &synthetic_error);
+        assert!(
+            !second,
+            "second invocation must be suppressed by the OnceLock"
+        );
+        assert!(
+            sink_second.is_empty(),
+            "second invocation must not write to the output sink; got {sink_second:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn warns_once_on_half_fallback() {
+        let local_lock: OnceLock<()> = OnceLock::new();
+        let synthetic_error = io::Error::from_raw_os_error(libc_emfile_equivalent());
+
+        let mut sink = Vec::new();
+        let first = emit_half_fallback_warning(&local_lock, &mut sink, &synthetic_error);
+        assert!(first, "first invocation must emit the warning");
+        let captured = String::from_utf8(sink).expect("emitted bytes are utf8");
+        assert!(
+            captured.contains(HALF_FALLBACK_WARNING_MARKER),
+            "emitted warning must contain the documented marker; got {captured:?}"
+        );
+        assert!(
+            captured.contains("shutdown_read became a no-op"),
+            "emitted warning must explain the no-op consequence; got {captured:?}"
+        );
+
+        let mut sink_second = Vec::new();
+        let second = emit_half_fallback_warning(&local_lock, &mut sink_second, &synthetic_error);
+        assert!(
+            !second,
+            "second invocation must be suppressed by the OnceLock"
+        );
+        assert!(
+            sink_second.is_empty(),
+            "second invocation must not write to the output sink; got {sink_second:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn warn_once_helper_is_thread_safe() {
+        // Concurrent first-callers must agree on exactly one emission.
+        let local_lock: OnceLock<()> = OnceLock::new();
+        let lock_ref = &local_lock;
+
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..8 {
+                handles.push(scope.spawn(move || {
+                    let mut sink = Vec::new();
+                    let emitted = warn_once(lock_ref, &mut sink, format_args!("contention"));
+                    (emitted, sink)
+                }));
+            }
+            let results: Vec<(bool, Vec<u8>)> = handles
+                .into_iter()
+                .map(|h| h.join().expect("join"))
+                .collect();
+            let emitted_count = results.iter().filter(|(emit, _)| *emit).count();
+            let non_empty_sinks = results.iter().filter(|(_, s)| !s.is_empty()).count();
+            assert_eq!(emitted_count, 1, "exactly one thread must report emission");
+            assert_eq!(
+                non_empty_sinks, 1,
+                "exactly one sink must have received bytes"
+            );
+        });
+    }
+
+    /// Returns an `errno` value that mirrors EMFILE on the host. We avoid a
+    /// hard dependency on `libc` here because the production module does
+    /// not need it - the synthetic error is only used to construct an
+    /// `io::Error` whose `Display` impl exercises the warning format.
+    #[cfg(unix)]
+    fn libc_emfile_equivalent() -> i32 {
+        // EMFILE is 24 on Linux/macOS/BSDs; on the off-chance a future
+        // target diverges, any positive errno still produces a usable
+        // `io::Error` for the test (it just exercises a different
+        // `Display` string).
+        24
     }
 }
