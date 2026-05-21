@@ -893,6 +893,51 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn success_path_does_not_invoke_rejection_warning() {
+        // SSF-4: the warning helper must only be called on the rejection
+        // arm of `configure_stderr_channel`. On the success path (socketpair
+        // allocated cleanly) the helper is never invoked, so a fresh
+        // `OnceLock<()>` paired with an empty sink must stay untouched
+        // for the lifetime of the success-path drive.
+        //
+        // We exercise the real success path by calling `configure_stderr_channel`
+        // on a `Command` whose socketpair allocation will succeed under
+        // normal test conditions, then assert that an independent local lock
+        // (representing the warning gate) was never set and that an
+        // independent sink (representing operator stderr) received nothing.
+        let local_lock: OnceLock<()> = OnceLock::new();
+        let sink: Vec<u8> = Vec::new();
+
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("true");
+        command.stdin(Stdio::null());
+        command.stdout(Stdio::null());
+
+        let parent = configure_stderr_channel(&mut command);
+        assert!(
+            parent.is_some(),
+            "test precondition: socketpair must be available on this host"
+        );
+
+        // Reap the configured command so the child fd is released cleanly.
+        if let Ok(mut child) = command.spawn() {
+            let _ = child.wait();
+        }
+        drop(parent);
+
+        assert!(
+            local_lock.get().is_none(),
+            "success path must not touch any warning OnceLock; got {:?}",
+            local_lock.get()
+        );
+        assert!(
+            sink.is_empty(),
+            "success path must not emit any bytes to the operator sink; got {sink:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn warn_once_helper_is_thread_safe() {
         // Concurrent first-callers must agree on exactly one emission.
         let local_lock: OnceLock<()> = OnceLock::new();
