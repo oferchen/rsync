@@ -68,10 +68,10 @@ oc-rsync monitors upstream rsync CVEs to verify continued non-applicability. Rec
 | CVE-2024-12087 | Path traversal via --inc-recursive | Not vulnerable | Path sanitization |
 | CVE-2024-12088 | --safe-links bypass | Mitigated | Rust path handling |
 | CVE-2024-12747 | Symlink race condition | Mitigated | TOCTOU is OS-level |
-| CVE-2026-29518 | TOCTOU symlink race in daemon receiver (`use chroot = no`) | **Mitigations in progress** | Rust's `std::fs` uses path-based syscalls without `RESOLVE_BENEATH` / `O_NOFOLLOW`; the same logical race exists. Partial mitigations have shipped (see SEC-1 progress note below); umbrella tracking issue #2516. |
+| CVE-2026-29518 | TOCTOU symlink race in daemon receiver (`use chroot = no`) | **Mostly fixed** | Path-based syscalls have been migrated to `*at` variants routed through `DirSandbox` with `openat2(RESOLVE_BENEATH \| RESOLVE_NO_SYMLINKS)` runtime detection. SEC-1.a..h, .k..n have shipped; SEC-1.i/.j remain in flight (see SEC-1 progress note below). Umbrella tracking issue #2516. |
 | CVE-2026-43617 | Reverse-DNS lookup after daemon chroot causes hostname ACL bypass | Not vulnerable | `module_peer_hostname` runs in `module_access::listing` / `request` phases (`crates/daemon/src/daemon/sections/module_access/listing.rs:52`, `request.rs:269`) which complete before `chroot/setuid` in `transfer.rs:346-360`. |
 | CVE-2026-43618 | Integer overflow in compressed-token decoder causes memory disclosure | Mitigated | `crates/compress/src/zstd.rs:218,224` and `crates/compress/src/zlib/decoder.rs:61,67` use `saturating_add` for byte counters; explicit regression test `counting_writer_saturating_add_prevents_overflow` (`zlib/tests.rs:186-189`). Rust bounds-checking would panic on any post-overflow OOB index, not leak memory. |
-| CVE-2026-43619 | Symlink races on chmod/lchown/utimes/rename/unlink/mkdir/symlink/mknod/link/rmdir/lstat | **Mitigations in progress** | Same root cause as CVE-2026-29518. Every path-based syscall under `use_chroot = false` carries the TOCTOU window. Partial mitigations have shipped (see SEC-1 progress note below); umbrella tracking issue #2516. |
+| CVE-2026-43619 | Symlink races on chmod/lchown/utimes/rename/unlink/mkdir/symlink/mknod/link/rmdir/lstat | **Mostly fixed** | Same root cause as CVE-2026-29518. The `lstat` / `unlink` / `rmdir` / `mkdir` / `symlink` / `link` surfaces have been migrated to `fstatat` / `unlinkat` / `mkdirat` / `symlinkat` / `linkat` routed through `DirSandbox`; `chmod` / `lchown` / `utimes` (SEC-1.i) and `rename` (SEC-1.j) remain in flight (see SEC-1 progress note below). Umbrella tracking issue #2516. |
 | CVE-2026-43620 | OOB read in `recv_files` via negative `parent_ndx` → client SIGSEGV | Not vulnerable | oc-rsync consumes the parent reference as `Option<usize>` and indexes into a bounds-checked `Vec` (`crates/protocol/src/flist/dir_tree.rs`). The validating entry point `DirectoryTree::try_add_directory` returns `DirTreeError::OutOfBoundsParent` on a malformed wire index; the unchecked `add_directory` aborts via Rust's bounds-check panic. Regression coverage: `try_add_directory_rejects_out_of_range_parent_idx`, `try_add_directory_rejects_boundary_off_by_one`, `add_directory_panics_safely_on_oob_parent_idx` in `crates/protocol/src/flist/dir_tree.rs`. SEC-4 closed. |
 | CVE-2026-45232 | Off-by-one stack write in HTTP CONNECT proxy response handler | Mitigated | `read_proxy_line()` in `crates/core/src/client/module_list/connect/proxy.rs` reads byte-by-byte into a heap `Vec<u8>` and explicitly caps the response line at `MAX_PROXY_LINE_BYTES = 1024` bytes, matching upstream's `establish_proxy_connection()` ceiling (socket.c:53). The C off-by-one stack-write is structurally impossible (bounds-checked `Vec::push`), and indefinite buffering is bounded by the explicit cap. Audit: SEC-2.a (PR #4609); upstream-parity alignment SEC-2.b. |
 
@@ -88,7 +88,7 @@ rsync 3.4.3 (released 2026-05-20) is a major security release closing six CVEs a
 - **NULL-check on `localtime_r()` in `timestring()`** - oc-rsync uses `chrono`/`time` for timestamp formatting; out-of-range timestamps return `Err` rather than dereferencing a null pointer.
 
 Open follow-ups:
-- **SEC-1** (TOCTOU on path-based daemon syscalls under `use_chroot=false`) - umbrella issue #2516, decomposed into SEC-1.a..o. Partial mitigations have shipped (see SEC-1 progress note below). Beta-blocker for any deployment using `use chroot = no` until SEC-1.h/i/j land and SEC-1.m/n regression tests pass.
+- **SEC-1** (TOCTOU on path-based daemon syscalls under `use_chroot=false`) - umbrella issue #2516, decomposed into SEC-1.a..o. Most mitigations have shipped (see SEC-1 progress note below); SEC-1.i and SEC-1.j remain in flight. Beta-blocker status lifts once SEC-1.i / SEC-1.j land and all receiver call sites are wired through `DirSandbox`.
 - **SEC-2.b** (cosmetic: align proxy-line cap from 4096 to upstream's 1024) - SEC-2.a confirmed the structural mitigation is already in place via the 4096-byte cap at `connect/proxy.rs:337-372`; SEC-2.b is purely an upstream-parity tightening, not a security gap.
 - **SEC-3** (confirm hyphen-prefixed hostname rejection in SSH operand parse) - SEC-3.a audit in flight.
 - **SEC-4** (regression test for malformed `parent_node_idx` per CVE-2026-43620 mitigation) - closed. `DirectoryTree::try_add_directory` validates the wire-supplied parent index and returns `DirTreeError::OutOfBoundsParent`; three regression tests in `crates/protocol/src/flist/dir_tree.rs` pin down both the graceful-reject path and the worst-case controlled-panic path (no SIGSEGV).
@@ -96,19 +96,22 @@ Open follow-ups:
 #### SEC-1 progress (CVE-2026-29518 / CVE-2026-43619)
 
 Shipped:
-- **SEC-1.f** (PR #4668): receiver `lstat` path resolves via `fstatat(AT_SYMLINK_NOFOLLOW)` routed through `DirSandbox`, eliminating the symlink-race window on metadata probes for sandbox-plumbed call sites.
-- **SEC-1.g** (PR #4671, in CI): receiver `remove` path uses `unlinkat` routed through `DirSandbox` for sandbox-plumbed call sites, eliminating the symlink-race window on unlink.
+- **SEC-1.a/b/c/d/e**: `DirSandbox` carrier with in-tree dirfd cache, `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` runtime detection, and receiver pipeline wiring (PRs #4643, #4650 and prior).
+- **SEC-1.f** (PR #4668): receiver `lstat` / `symlink_metadata` path resolves via `fstatat(AT_SYMLINK_NOFOLLOW)` routed through `DirSandbox`.
+- **SEC-1.g** (PR #4671): receiver `remove_file` / `remove_dir` path uses `unlinkat` routed through `DirSandbox`.
+- **SEC-1.h** (PR #4683): receiver `mkdir` / `symlink` / `hard_link` creation paths use `mkdirat` / `symlinkat` / `linkat` routed through `DirSandbox`.
+- **SEC-1.k**: macOS verified - the `*at` syscall family is available and behaves consistently with the Linux migration.
+- **SEC-1.l**: Windows audited - NTFS handle-based APIs naturally sidestep the TOCTOU window, so Windows is not affected by either CVE.
+- **SEC-1.m** (PR #4675): comprehensive symlink-swap attack regression coverage against the daemon receiver.
+- **SEC-1.n** (PR #4678): interop regression coverage confirming legitimate symlinks still transfer correctly under the new `*at` paths.
 
-Still pending:
-- **SEC-1.h** - replace path-based `mkdir` / `symlink` / `mknod` / `hard_link` with their `*at` siblings (`mkdirat`, `symlinkat`, `mknodat`, `linkat`).
-- **SEC-1.i** - replace path-based `chmod` / `lchown` / `utimes` with `fchmodat` / `fchownat` / `utimensat`.
-- **SEC-1.j** - replace path-based `rename` with `renameat`.
-- Engine-side migrations need `CopyContext` extension to carry a dirfd (followup).
-- `--delete` consumer needs per-worker dirfds (followup).
-- **SEC-1.m** - regression test for the symlink-swap attack against the daemon receiver.
-- **SEC-1.n** - interop regression test confirming legitimate symlinks still transfer correctly under the new `*at` paths.
+Remaining work:
+- **SEC-1.i** - replace path-based `chmod` / `lchown` / `utimes` with `fchmodat` / `fchownat` / `utimensat`. In flight.
+- **SEC-1.j** - replace path-based `rename` with `renameat`. In flight.
+- **mknodat for device / FIFO nodes** - deferred; not on the daemon-reachable surface.
+- **Receiver wiring for SEC-1.i helpers** - deferred to a follow-up; the carrier-first staging lands `*at` primitives ahead of full call-site migration.
 
-Per **SEC-1.l** audit conclusion: Windows uses NTFS handle-based APIs, so the TOCTOU window is naturally sidestepped and Windows is not affected by either CVE.
+Target full-Fixed status: when SEC-1.i and SEC-1.j ship and all receiver call sites are wired through `DirSandbox`.
 
 CI integration: as of 2026-05-21 the interop job (`.github/workflows/_interop.yml`) runs upstream rsync's own `testsuite/*.test` corpus against oc-rsync as `$RSYNC`, pinned to upstream 3.4.3 by default. The known-failures roster lives at `tools/ci/upstream_testsuite_known_failures.conf`.
 
