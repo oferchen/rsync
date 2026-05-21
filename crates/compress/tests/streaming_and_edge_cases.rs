@@ -18,13 +18,9 @@ use compress::zlib::{
 fn encoder_flush_behavior() {
     let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
 
-    // Write data
     encoder.write_all(b"hello").unwrap();
-
-    // Flush should succeed
     encoder.flush().unwrap();
 
-    // Should be able to write more after flush
     encoder.write_all(b" world").unwrap();
     encoder.flush().unwrap();
 
@@ -53,20 +49,17 @@ fn encoder_multiple_finish_attempts() {
     let mut encoder = CountingZlibEncoder::new(CompressionLevel::Default);
     encoder.write(b"data").unwrap();
 
-    // First finish should succeed
     let bytes1 = encoder.finish().unwrap();
     assert!(bytes1 > 0);
 }
 
 #[test]
 fn encoder_zero_writes_before_finish() {
-    // Encoder that receives no writes should still produce valid output
     let encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
     let (compressed, bytes) = encoder.finish_into_inner().unwrap();
 
     assert!(bytes > 0, "Empty stream should still have framing bytes");
 
-    // Should decompress to empty
     let decompressed = decompress_to_vec(&compressed).unwrap();
     assert!(decompressed.is_empty());
 }
@@ -75,7 +68,6 @@ fn encoder_zero_writes_before_finish() {
 fn encoder_very_small_writes() {
     let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
 
-    // Write data one byte at a time
     let data = b"tiny incremental writes";
     for &byte in data {
         encoder.write(&[byte]).unwrap();
@@ -90,7 +82,6 @@ fn encoder_very_small_writes() {
 fn encoder_very_large_single_write() {
     let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
 
-    // Write 10MB in a single call
     let data = vec![b'x'; 10 * 1024 * 1024];
     encoder.write_all(&data).unwrap();
 
@@ -145,7 +136,6 @@ fn encoder_bytes_written_increases_monotonically() {
 fn encoder_write_fmt_formatted_output() {
     let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
 
-    // Test write_fmt implementation
     write!(&mut encoder, "Number: {}, String: test", 42).unwrap();
     writeln!(&mut encoder).unwrap();
     write!(&mut encoder, "Float: {:.2}", std::f64::consts::PI).unwrap();
@@ -170,10 +160,8 @@ fn encoder_vectored_write_partial_consumption() {
         IoSlice::new(data3),
     ];
 
-    // Write vectored (may consume less than all buffers)
+    // write_vectored may consume only a prefix; finish the leftover by hand.
     let written = encoder.write_vectored(&bufs).unwrap();
-
-    // Write remaining data
     let total = data1.len() + data2.len() + data3.len();
     let all_data = [data1.as_slice(), data2.as_slice(), data3.as_slice()].concat();
 
@@ -194,7 +182,6 @@ fn decoder_small_buffer_reads() {
     let mut decoder = CountingZlibDecoder::new(Cursor::new(compressed));
     let mut output = Vec::new();
 
-    // Read with very small buffer
     let mut buf = [0u8; 3];
     loop {
         match decoder.read(&mut buf) {
@@ -232,7 +219,7 @@ fn decoder_exact_size_buffer_reads() {
 
 #[test]
 fn decoder_read_to_end_on_large_data() {
-    let data = vec![b'y'; 1024 * 1024]; // 1MB
+    let data = vec![b'y'; 1024 * 1024];
     let compressed = compress_to_vec(&data, CompressionLevel::Fast).unwrap();
 
     let mut decoder = CountingZlibDecoder::new(Cursor::new(compressed));
@@ -264,7 +251,6 @@ fn decoder_vectored_read_with_mixed_buffer_sizes() {
     assert!(read > 0);
     assert_eq!(decoder.bytes_read(), read as u64);
 
-    // Collect the read data
     let mut collected = Vec::new();
     let mut remaining = read;
 
@@ -288,7 +274,6 @@ fn decoder_get_ref_returns_underlying_reader() {
 
     let decoder = CountingZlibDecoder::new(cursor);
 
-    // get_ref should return reference to the cursor
     assert_eq!(decoder.get_ref().position(), 0);
     assert_eq!(decoder.get_ref().get_ref(), &compressed);
 }
@@ -301,12 +286,9 @@ fn decoder_get_mut_allows_modification() {
 
     let mut decoder = CountingZlibDecoder::new(cursor);
 
-    // Use get_mut to modify underlying reader
+    // Reading after the seek may fail (mid-stream); only the accessor is asserted.
     decoder.get_mut().set_position(2);
     assert_eq!(decoder.get_ref().position(), 2);
-
-    // Note: Reading after seeking may fail since we're in the middle of compressed data
-    // This just tests that get_mut works, not that seeking in compressed data is sensible
 }
 
 #[test]
@@ -317,19 +299,17 @@ fn decoder_into_inner_consumes_decoder() {
 
     let mut decoder = CountingZlibDecoder::new(cursor);
 
-    // Read some data
     let mut buf = vec![0u8; 5];
     let _ = decoder.read(&mut buf);
 
-    // Extract the inner reader
     let inner = decoder.into_inner();
     assert_eq!(inner.get_ref(), &compressed);
 }
 
 #[test]
 fn decoder_bytes_read_saturates_at_max() {
-    // This test would require decompressing u64::MAX bytes which is impractical
-    // Instead, we test the saturating_add logic by checking normal operation
+    // Validates the saturating_add accumulator under normal volumes; the
+    // u64::MAX saturation path is exercised in unit tests.
     let data = b"saturation test";
     let compressed = compress_to_vec(data, CompressionLevel::Default).unwrap();
 
@@ -337,7 +317,6 @@ fn decoder_bytes_read_saturates_at_max() {
     let mut output = Vec::new();
     decoder.read_to_end(&mut output).unwrap();
 
-    // Bytes read should equal the data length (not saturated)
     assert_eq!(decoder.bytes_read(), data.len() as u64);
 }
 
@@ -346,16 +325,10 @@ fn decompress_random_garbage() {
     let garbage = vec![0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x56, 0x78, 0x90];
     let result = decompress_to_vec(&garbage);
 
-    // Random garbage will either fail or produce unexpected output
-    // We just verify it doesn't panic and handles the error gracefully
-    match result {
-        Ok(output) => {
-            // If it succeeds, the output should be different from input
-            assert_ne!(output, garbage);
-        }
-        Err(_) => {
-            // Expected case - decompression fails
-        }
+    // Garbage may decode to a non-empty buffer; the only invariant is that
+    // the output cannot byte-match the input, and the call must not panic.
+    if let Ok(output) = result {
+        assert_ne!(output, garbage);
     }
 }
 
@@ -367,7 +340,6 @@ fn decompress_truncated_at_various_positions() {
     let mut failures = 0;
     let mut different_data = 0;
 
-    // Try truncating at various positions
     for cut_point in [
         1,
         2,
@@ -392,7 +364,6 @@ fn decompress_truncated_at_various_positions() {
         }
     }
 
-    // At least some truncations should fail or produce different data
     assert!(
         failures + different_data > 0,
         "At least some truncations should fail or produce different data"
@@ -404,7 +375,6 @@ fn decompress_bit_flips_at_various_positions() {
     let data = b"test data for bit flip testing".repeat(10);
     let compressed = compress_to_vec(&data, CompressionLevel::Default).unwrap();
 
-    // Try flipping bits at various positions
     for flip_pos in [
         0,
         1,
@@ -417,18 +387,14 @@ fn decompress_bit_flips_at_various_positions() {
         }
 
         let mut corrupted = compressed.clone();
-        corrupted[flip_pos] ^= 0x01; // Flip one bit
+        corrupted[flip_pos] ^= 0x01;
 
         let result = decompress_to_vec(&corrupted);
 
-        // Bit flip should generally cause failure or produce wrong data
-        // (some positions might be in padding and not affect output)
+        // A bit flip in deflate padding bits can leave output unchanged; only
+        // sample-and-tolerate is asserted here, not strict corruption detection.
         if let Ok(decompressed) = result {
-            // If decompression succeeded, data should be different (corrupted)
-            // or we got lucky with padding
             if decompressed.len() == data.len() {
-                // Allow for the small possibility that flipping a padding bit doesn't affect output
-                // Bit flip either affects output or we're in padding
                 let _ = (decompressed == data, flip_pos);
             }
         }
@@ -440,13 +406,11 @@ fn decompress_with_extra_trailing_data() {
     let data = b"test data";
     let mut compressed = compress_to_vec(data, CompressionLevel::Default).unwrap();
 
-    // Add extra data at the end
     compressed.extend_from_slice(b"EXTRA GARBAGE DATA");
 
-    // Decompression should still work (extra data is ignored)
+    // flate2 may either ignore trailing bytes or reject them; both are valid.
     let result = decompress_to_vec(&compressed);
 
-    // This might succeed (extra data ignored) or fail depending on implementation
     if let Ok(decompressed) = result {
         assert_eq!(decompressed, data);
     }
@@ -457,7 +421,6 @@ fn decompress_with_prepended_garbage() {
     let data = b"test data";
     let compressed = compress_to_vec(data, CompressionLevel::Default).unwrap();
 
-    // Prepend garbage
     let mut corrupted = vec![0xFF, 0xFE, 0xFD, 0xFC];
     corrupted.extend_from_slice(&compressed);
 
@@ -473,7 +436,6 @@ fn decompress_all_zeros() {
     let zeros = vec![0u8; 100];
     let result = decompress_to_vec(&zeros);
 
-    // All zeros is not valid compressed data
     assert!(result.is_err(), "All zeros should fail decompression");
 }
 
@@ -482,32 +444,25 @@ fn decompress_all_ones() {
     let ones = vec![0xFF; 100];
     let result = decompress_to_vec(&ones);
 
-    // All ones is not valid compressed data
     assert!(result.is_err(), "All ones should fail decompression");
 }
 
 #[test]
 fn decoder_error_recovery() {
-    // Try to read from corrupted stream - use data that definitely causes error
-    // Use a proper deflate header but corrupt the data section
-    let mut garbage = vec![0x78, 0x9C]; // Valid zlib header
-    garbage.extend_from_slice(&[0xFF; 100]); // Corrupt data
+    // Valid 0x78 0x9C zlib header followed by junk - guarantees the inflate
+    // path engages before erroring.
+    let mut garbage = vec![0x78, 0x9C];
+    garbage.extend_from_slice(&[0xFF; 100]);
 
     let mut decoder = CountingZlibDecoder::new(Cursor::new(garbage));
 
     let mut buf = vec![0u8; 1000];
     let result = decoder.read(&mut buf);
 
-    // Should get an error or very short read
+    // Partial reads before error are acceptable; only a full-buffer success is not.
     match result {
-        Err(_) => {
-            // Expected case - error reading corrupted data
-        }
-        Ok(n) => {
-            // Some decoders might return partial data before error
-            // This is also acceptable behavior
-            assert!(n < 1000, "Should not read full buffer from corrupt data");
-        }
+        Err(_) => {}
+        Ok(n) => assert!(n < 1000, "Should not read full buffer from corrupt data"),
     }
 }
 
@@ -517,7 +472,6 @@ fn compress_empty_input_all_levels() {
         let level = CompressionLevel::from_numeric(level_num).unwrap();
         let compressed = compress_to_vec(&[], level).unwrap();
 
-        // Should produce valid (though possibly larger) output
         assert!(!compressed.is_empty() || level_num == 0);
 
         let decompressed = decompress_to_vec(&compressed).unwrap();
@@ -527,7 +481,6 @@ fn compress_empty_input_all_levels() {
 
 #[test]
 fn compress_single_byte_values() {
-    // Test all possible single byte values
     for byte_val in [0x00, 0x01, 0x7F, 0x80, 0xFF] {
         let data = vec![byte_val];
         let compressed = compress_to_vec(&data, CompressionLevel::Default).unwrap();
@@ -538,9 +491,8 @@ fn compress_single_byte_values() {
 
 #[test]
 fn compress_power_of_two_sizes() {
-    // Test data sizes that are powers of 2
     for power in [1, 2, 4, 8, 10, 12, 16, 20] {
-        let size = 1 << power; // 2^power
+        let size = 1 << power;
         let data = vec![b'x'; size];
 
         let compressed = compress_to_vec(&data, CompressionLevel::Default).unwrap();
@@ -557,7 +509,6 @@ fn compress_power_of_two_sizes() {
 
 #[test]
 fn compress_sizes_around_common_boundaries() {
-    // Test sizes around common buffer boundaries
     let boundaries = [
         255, 256, 257, // Around 256
         1023, 1024, 1025, // Around 1KB
@@ -579,13 +530,11 @@ fn compress_sizes_around_common_boundaries() {
 
 #[test]
 fn compress_highly_repetitive_data() {
-    // Single repeated byte should compress extremely well
     let size = 1_000_000;
     let data = vec![b'A'; size];
 
     let compressed = compress_to_vec(&data, CompressionLevel::Best).unwrap();
 
-    // Should achieve very high compression ratio
     assert!(
         compressed.len() < size / 100,
         "Expected 100:1 compression, got {}:1",
@@ -598,7 +547,6 @@ fn compress_highly_repetitive_data() {
 
 #[test]
 fn compress_all_different_bytes() {
-    // Each byte appears exactly once
     let data: Vec<u8> = (0..=255).collect();
 
     let compressed = compress_to_vec(&data, CompressionLevel::Default).unwrap();
@@ -662,18 +610,17 @@ fn counting_sink_flush_always_succeeds() {
     let mut sink = CountingSink;
     sink.write_all(b"data").unwrap();
     assert!(sink.flush().is_ok());
-    assert!(sink.flush().is_ok()); // Multiple flushes ok
+    assert!(sink.flush().is_ok());
 }
 
 #[test]
 fn counting_sink_with_encoder() {
-    // Verify CountingSink works as default encoder sink
+    // CountingSink is the default sink: bytes are counted but discarded.
     let mut encoder = CountingZlibEncoder::new(CompressionLevel::Default);
     encoder.write(b"test data").unwrap();
     let bytes = encoder.finish().unwrap();
 
     assert!(bytes > 0);
-    // Data was written to CountingSink (discarded), but bytes were counted
 }
 
 #[cfg(feature = "lz4")]
@@ -797,8 +744,7 @@ fn encoder_get_ref_during_compression() {
     let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
     encoder.write(b"test").unwrap();
 
-    // get_ref returns the underlying sink (Vec in this case)
-    // The Vec might have data if flushes occurred
+    // get_ref aliases the underlying sink; contents depend on internal buffering.
     let _vec_ref = encoder.get_ref();
 }
 
@@ -806,15 +752,12 @@ fn encoder_get_ref_during_compression() {
 fn encoder_get_mut_modification() {
     let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
 
-    // Modify the underlying Vec directly
     encoder.get_mut().extend_from_slice(b"prefix:");
 
-    // Now compress data
     encoder.write(b"data").unwrap();
 
     let (result, _) = encoder.finish_into_inner().unwrap();
 
-    // Result should have our prefix plus compressed data
     assert!(result.starts_with(b"prefix:"));
 }
 
@@ -828,14 +771,13 @@ fn encoder_bytes_written_before_any_writes() {
 fn encoder_write_trait_write_method() {
     let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
 
-    // Use Write::write directly (may not write all bytes)
+    // Write::write returns the actual bytes consumed; finish the leftover by hand.
     let data = b"test data for partial write";
     let written = Write::write(&mut encoder, data).unwrap();
 
     assert!(written > 0);
     assert!(written <= data.len());
 
-    // Write any remaining
     if written < data.len() {
         encoder.write_all(&data[written..]).unwrap();
     }
