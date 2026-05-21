@@ -45,9 +45,8 @@ impl BatchReader {
                 })?;
 
                 match token {
-                    None => break, // end marker (token value 0)
+                    None => break,
                     Some(n) if n > 0 => {
-                        // Literal: n bytes follow.
                         let mut data = vec![0u8; n as usize];
                         reader.read_exact(&mut data).map_err(|e| {
                             BatchError::Io(io::Error::new(

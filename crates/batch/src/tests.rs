@@ -196,7 +196,6 @@ mod integration {
         let checksum_seed = 0xCAFE_BABEu32 as i32;
         let compat_flags_val = 0x07;
 
-        // -- Write phase --
         let write_config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -260,12 +259,9 @@ mod integration {
 
         writer.finalize().unwrap();
 
-        // -- Read phase --
-        let read_config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            0, // intentionally different - reader should adopt from header
-        );
+        // Reader's requested protocol is intentionally bogus; the header value wins.
+        let read_config =
+            BatchConfig::new(BatchMode::Read, batch_path.to_string_lossy().to_string(), 0);
 
         let mut reader = BatchReader::new(read_config).unwrap();
         let read_flags = reader.read_header().unwrap();
@@ -328,7 +324,6 @@ mod integration {
         let protocol_version = 28;
         let checksum_seed = 42;
 
-        // -- Write phase --
         let write_config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -338,11 +333,12 @@ mod integration {
 
         let mut writer = BatchWriter::new(write_config).unwrap();
 
+        // xfer_dirs/preserve_acls require protocol 29+/30+ and must be masked
+        // out when written at protocol 28.
         let flags = BatchFlags {
             recurse: true,
             preserve_hard_links: true,
             always_checksum: true,
-            // Protocol-29+ and protocol-30+ fields should be masked out
             xfer_dirs: true,
             preserve_acls: true,
             ..Default::default()
@@ -428,7 +424,6 @@ mod integration {
         let protocol_version = 31;
         let checksum_seed = 12345;
 
-        // -- Write phase --
         let write_config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -490,7 +485,6 @@ mod integration {
 
         writer.finalize().unwrap();
 
-        // -- Read phase --
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -767,7 +761,6 @@ mod integration {
 
         let protocol_version = 31;
 
-        // -- Write phase: build a batch file with flist + token deltas --
         let write_config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -852,7 +845,6 @@ mod integration {
 
         writer.finalize().unwrap();
 
-        // -- Replay phase --
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -861,7 +853,8 @@ mod integration {
 
         let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
 
-        assert_eq!(result.file_count, 2); // 1 dir + 1 file
+        // 1 directory + 1 regular file.
+        assert_eq!(result.file_count, 2);
         assert!(result.recurse);
         assert!(dest_dir.join("subdir").is_dir());
         assert!(dest_dir.join("subdir/hello.txt").exists());
@@ -903,7 +896,8 @@ mod integration {
         };
         writer.write_header(flags).unwrap();
 
-        // Write raw protocol data - this must be stored uncompressed
+        // do_compression=true is a recorded flag only; batch body bytes must
+        // still be stored verbatim, never compressed (PR #3051).
         let data1 = b"file list data with compression flag set";
         let data2 = b"delta operations - must be readable without decompression";
         writer.write_data(data1).unwrap();
@@ -925,7 +919,6 @@ mod integration {
         assert_eq!(read_flags.preserve_uid, flags.preserve_uid);
         assert_eq!(read_flags.preserve_gid, flags.preserve_gid);
 
-        // Verify data reads back verbatim (uncompressed)
         let mut buf = vec![0u8; 200];
         let n = reader.read_data(&mut buf).unwrap();
         assert!(n > 0, "must read data from batch file");
@@ -1026,29 +1019,21 @@ mod integration {
             writer.write_data(&s2length.to_le_bytes()).unwrap();
             writer.write_data(&remainder.to_le_bytes()).unwrap();
 
-            // Encode compressed delta: copy block 0 (700 bytes), then literal
-            // patch, then copy remaining blocks. This requires CPRES_ZLIB
-            // dictionary sync because the encoder/decoder share state through
-            // the basis block data fed via see_token().
+            // Multiple CPRES_ZLIB block matches require see_token() to feed
+            // basis bytes into the inflate dictionary; without it, the decoder
+            // fails with "invalid distance too far back" (token.c:608).
             let mut token_buf = Vec::new();
             let mut encoder = CompressedTokenEncoder::default();
-            encoder.set_zlibx(false); // CPRES_ZLIB mode
+            encoder.set_zlibx(false);
 
-            // Block 0: copy from basis (bytes 0..700)
             encoder.send_block_match(&mut token_buf, 0).unwrap();
             encoder.see_token(&basis_data[0..700]).unwrap();
 
-            // Delta layout: copy block 0, copy block 1, literal patch,
-            // copy block 2. Multiple block matches exercise dictionary sync.
-
-            // Block 1: copy from basis (bytes 700..1400)
             encoder.send_block_match(&mut token_buf, 1).unwrap();
             encoder.see_token(&basis_data[700..1400]).unwrap();
 
-            // Literal: the patched data (17 bytes)
             encoder.send_literal(&mut token_buf, patch).unwrap();
 
-            // Block 2: copy from basis (bytes 1400..2000, remainder=600)
             encoder.send_block_match(&mut token_buf, 2).unwrap();
             encoder.see_token(&basis_data[1400..2000]).unwrap();
 
@@ -1076,16 +1061,13 @@ mod integration {
 
         let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
 
-        assert_eq!(result.file_count, 2); // 1 dir + 1 file
+        // 1 directory + 1 regular file.
+        assert_eq!(result.file_count, 2);
         assert!(dest_dir.join("data.bin").exists());
 
         let content = fs::read(dest_dir.join("data.bin")).unwrap();
-        // The output should be: block0(700) + block1(700) + patch(17) + block2(600)
-        // = 2017 bytes total.
         assert_eq!(content.len(), 700 + 700 + patch.len() + 600);
-        // Verify the literal patch is present in the output
         assert_eq!(&content[1400..1400 + patch.len()], patch);
-        // Verify block copies are correct
         assert_eq!(&content[0..700], &basis_data[0..700]);
         assert_eq!(&content[700..1400], &basis_data[700..1400]);
         assert_eq!(&content[1400 + patch.len()..], &basis_data[1400..2000]);

@@ -120,11 +120,9 @@ mod batch_file_operations {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("overwrite.batch");
 
-        // Create initial file with some content
         fs::write(&batch_path, b"initial content that should be overwritten").unwrap();
         let initial_size = fs::metadata(&batch_path).unwrap().len();
 
-        // Overwrite with batch writer
         let config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -155,7 +153,6 @@ mod batch_file_operations {
         let mut writer = BatchWriter::new(config).unwrap();
         writer.write_header(BatchFlags::default()).unwrap();
 
-        // Write multiple chunks
         for i in 0..100 {
             let data = format!("chunk_{i:04}");
             writer.write_data(data.as_bytes()).unwrap();
@@ -163,7 +160,6 @@ mod batch_file_operations {
 
         writer.finalize().unwrap();
 
-        // Verify file contains all data
         let content = fs::read(&batch_path).unwrap();
         assert!(
             content.len() > 100 * 10,
@@ -186,10 +182,8 @@ mod batch_file_operations {
         writer.write_header(BatchFlags::default()).unwrap();
         writer.write_data(b"data before flush").unwrap();
 
-        // Flush without finalizing
         writer.flush().unwrap();
 
-        // File should have content after flush
         let size_after_flush = fs::metadata(&batch_path).unwrap().len();
         assert!(size_after_flush > 0, "File should have content after flush");
     }
@@ -210,7 +204,6 @@ mod batch_file_operations {
         writer.write_data(b"test data").unwrap();
         writer.finalize().unwrap();
 
-        // File should be readable immediately after finalize
         let content = fs::read(&batch_path).unwrap();
         assert!(
             !content.is_empty(),
@@ -230,7 +223,6 @@ mod round_trip_tests {
         let batch_path = temp_dir.path().join("roundtrip30.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        // Write
         let write_config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30)
             .with_checksum_seed(12345)
             .with_compat_flags(0x42);
@@ -256,7 +248,6 @@ mod round_trip_tests {
         writer.write_header(write_flags).unwrap();
         writer.finalize().unwrap();
 
-        // Read
         let read_config = BatchConfig::new(BatchMode::Read, path_str, 30);
         let mut reader = BatchReader::new(read_config).unwrap();
         let read_flags = reader.read_header().unwrap();
@@ -350,7 +341,6 @@ mod round_trip_tests {
         assert!(read_flags.preserve_uid);
         assert!(read_flags.preserve_gid);
 
-        // Protocol 28 should not have compat_flags
         assert!(reader.header().unwrap().compat_flags.is_none());
     }
 
@@ -360,7 +350,6 @@ mod round_trip_tests {
         let batch_path = temp_dir.path().join("binary_roundtrip.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        // Create binary data with all byte values
         let mut binary_data = Vec::with_capacity(256);
         for i in 0u8..=255 {
             binary_data.push(i);
@@ -503,15 +492,12 @@ mod error_handling {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("corrupt_flags.batch");
 
-        // Write a valid-looking header with extreme flag values
+        // Stream flags bitmap with every defined bit (and many undefined ones) set.
         let mut data = Vec::new();
-        // Stream flags with many bits set (some invalid)
         data.extend_from_slice(&0x7FFF_FFFFi32.to_le_bytes());
-        // Protocol version 30
         data.extend_from_slice(&30i32.to_le_bytes());
-        // Compat flags (minimal varint: 0)
+        // compat_flags varint = 0
         data.push(0);
-        // Checksum seed
         data.extend_from_slice(&12345i32.to_le_bytes());
 
         fs::write(&batch_path, &data).unwrap();
@@ -523,10 +509,9 @@ mod error_handling {
         );
 
         let mut reader = BatchReader::new(config).unwrap();
-        // This should succeed - unknown flag bits are ignored
+        // Unknown flag bits must be ignored, not rejected.
         let flags = reader.read_header().unwrap();
 
-        // All known flags should be set
         assert!(flags.recurse);
         assert!(flags.preserve_uid);
     }
@@ -536,7 +521,6 @@ mod error_handling {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("version_mismatch.batch");
 
-        // Write a batch with protocol 30
         let write_config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
@@ -546,9 +530,8 @@ mod error_handling {
         writer.write_header(BatchFlags::default()).unwrap();
         writer.finalize().unwrap();
 
-        // Read with protocol 31 - upstream rsync adopts whatever version
-        // the batch was written with, so this should succeed.
-        // upstream: batch.c - the reader uses the batch header's version.
+        // Reader's requested protocol (31) must yield to whatever the batch was
+        // written with. upstream: batch.c reads the version from the header.
         let read_config = BatchConfig::new(
             BatchMode::Read,
             batch_path.to_string_lossy().to_string(),
@@ -649,7 +632,6 @@ mod error_handling {
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
 
-        // Try to read more data than available
         let mut buf = [0u8; 1000];
         let result = reader.read_exact(&mut buf);
 
@@ -664,7 +646,6 @@ mod error_handling {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("empty.batch");
 
-        // Create empty file
         File::create(&batch_path).unwrap();
 
         let config = BatchConfig::new(
@@ -688,7 +669,6 @@ mod error_handling {
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30);
         let mut writer = BatchWriter::new(config).unwrap();
         writer.write_header(BatchFlags::default()).unwrap();
-        // No data written
         writer.finalize().unwrap();
 
         let config = BatchConfig::new(BatchMode::Read, path_str, 30);
@@ -750,13 +730,11 @@ mod edge_cases {
         let batch_path = temp_dir.path().join("empty.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        // Write batch with only header
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30);
         let mut writer = BatchWriter::new(config).unwrap();
         writer.write_header(BatchFlags::default()).unwrap();
         writer.finalize().unwrap();
 
-        // Read it back
         let config = BatchConfig::new(BatchMode::Read, path_str, 30);
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
@@ -772,7 +750,7 @@ mod edge_cases {
         let batch_path = temp_dir.path().join("large_1mb.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        let data_size = 1024 * 1024; // 1 MB
+        let data_size = 1024 * 1024;
         let large_data: Vec<u8> = (0..data_size).map(|i| (i % 256) as u8).collect();
 
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30);
@@ -805,7 +783,7 @@ mod edge_cases {
         let batch_path = temp_dir.path().join("large_10mb.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        let data_size = 10 * 1024 * 1024; // 10 MB
+        let data_size = 10 * 1024 * 1024;
         let large_data: Vec<u8> = (0..data_size).map(|i| (i % 256) as u8).collect();
 
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30);
@@ -865,7 +843,6 @@ mod edge_cases {
     fn protocol_version_boundary_values() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Test all supported protocol versions
         let protocols = [28, 29, 30, 31, 32];
 
         for &protocol in &protocols {
@@ -929,7 +906,6 @@ mod edge_cases {
         let mut writer = BatchWriter::new(config).unwrap();
         writer.write_header(BatchFlags::default()).unwrap();
 
-        // Write 10000 single-byte chunks
         let write_count = 10000;
         for i in 0..write_count {
             writer.write_data(&[(i % 256) as u8]).unwrap();
@@ -1012,12 +988,7 @@ mod file_entry_tests {
         let batch_path = temp_dir.path().join("entry_basic.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        let entry = FileEntry::new(
-            "test/file.txt".to_owned(),
-            0o100644, // Regular file with rw-r--r--
-            1024,
-            1609459200, // 2021-01-01 00:00:00 UTC
-        );
+        let entry = FileEntry::new("test/file.txt".to_owned(), 0o100644, 1024, 1609459200);
 
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30);
         let mut writer = BatchWriter::new(config).unwrap();
@@ -1134,12 +1105,7 @@ mod file_entry_tests {
         let batch_path = temp_dir.path().join("entry_large.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        let entry = FileEntry::new(
-            "huge_file.bin".to_owned(),
-            0o100644,
-            u64::MAX, // Maximum file size
-            1609459200,
-        );
+        let entry = FileEntry::new("huge_file.bin".to_owned(), 0o100644, u64::MAX, 1609459200);
 
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30);
         let mut writer = BatchWriter::new(config).unwrap();
@@ -1219,7 +1185,6 @@ mod file_entry_tests {
         let batch_path = temp_dir.path().join("entry_long_path.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        // Create a path with 200 components
         let long_path = (0..200)
             .map(|i| format!("dir{i}"))
             .collect::<Vec<_>>()
@@ -1325,7 +1290,6 @@ mod file_entry_tests {
         let batch_path = temp_dir.path().join("entry_eof.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        // Write batch with just header
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30);
         let mut writer = BatchWriter::new(config).unwrap();
         writer.write_header(BatchFlags::default()).unwrap();
@@ -1335,7 +1299,6 @@ mod file_entry_tests {
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
 
-        // Should return None at EOF
         let result = reader.read_file_entry().unwrap();
         assert!(result.is_none(), "EOF should return None");
     }
@@ -1352,14 +1315,15 @@ mod batch_flags_tests {
         let batch_path = temp_dir.path().join("flags_p28.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        // Set flags that exist only in newer protocols
+        // xfer_dirs/do_compression require protocol 29+; iconv/preserve_acls
+        // require protocol 30+. Writing them at protocol 28 must mask them out.
         let flags = BatchFlags {
             recurse: true,
             preserve_uid: true,
-            xfer_dirs: true,      // Protocol 29+
-            do_compression: true, // Protocol 29+
-            iconv: true,          // Protocol 30+
-            preserve_acls: true,  // Protocol 30+
+            xfer_dirs: true,
+            do_compression: true,
+            iconv: true,
+            preserve_acls: true,
             ..Default::default()
         };
 
@@ -1372,12 +1336,8 @@ mod batch_flags_tests {
         let mut reader = BatchReader::new(config).unwrap();
         let read_flags = reader.read_header().unwrap();
 
-        // Base flags should be preserved
         assert!(read_flags.recurse);
         assert!(read_flags.preserve_uid);
-
-        // Protocol 29+ flags should be serialized but may be read back
-        // based on how from_bitmap handles them (it reads all bits)
     }
 
     #[test]
@@ -1443,30 +1403,29 @@ mod batch_flags_tests {
         assert_eq!(all_flags, read_flags);
     }
 
+    /// Verify bitmap positions match upstream rsync's `batch.c flag_ptr[]` array.
     #[test]
     fn flags_bitmap_values_match_upstream() {
-        // Verify bitmap positions match upstream rsync's batch.c flag_ptr array
         let flags = BatchFlags {
-            recurse: true,             // bit 0
-            preserve_uid: true,        // bit 1
-            preserve_gid: true,        // bit 2
-            preserve_links: true,      // bit 3
-            preserve_devices: true,    // bit 4
-            preserve_hard_links: true, // bit 5
-            always_checksum: true,     // bit 6
-            xfer_dirs: true,           // bit 7 (protocol 29+)
-            do_compression: true,      // bit 8 (protocol 29+)
-            iconv: true,               // bit 9 (protocol 30+)
-            preserve_acls: true,       // bit 10 (protocol 30+)
-            preserve_xattrs: true,     // bit 11 (protocol 30+)
-            inplace: true,             // bit 12 (protocol 30+)
-            append: true,              // bit 13 (protocol 30+)
-            append_verify: true,       // bit 14 (protocol 30+)
+            recurse: true,
+            preserve_uid: true,
+            preserve_gid: true,
+            preserve_links: true,
+            preserve_devices: true,
+            preserve_hard_links: true,
+            always_checksum: true,
+            xfer_dirs: true,
+            do_compression: true,
+            iconv: true,
+            preserve_acls: true,
+            preserve_xattrs: true,
+            inplace: true,
+            append: true,
+            append_verify: true,
         };
 
         let bitmap = flags.to_bitmap(30);
 
-        // Verify each bit position
         assert_ne!(bitmap & (1 << 0), 0, "bit 0: recurse");
         assert_ne!(bitmap & (1 << 1), 0, "bit 1: preserve_uid");
         assert_ne!(bitmap & (1 << 2), 0, "bit 2: preserve_gid");
@@ -1488,7 +1447,6 @@ mod batch_flags_tests {
     fn flags_individual_bits_round_trip() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Test each flag individually
         #[allow(clippy::type_complexity)]
         let flag_setters: Vec<(&str, Box<dyn Fn(&mut BatchFlags)>)> = vec![
             ("recurse", Box::new(|f: &mut BatchFlags| f.recurse = true)),
@@ -1731,7 +1689,6 @@ mod script_generation {
         assert!(Path::new(&script_path).exists());
 
         let content = fs::read_to_string(&script_path).unwrap();
-        // Path with spaces should be quoted
         assert!(
             content.contains("'") || content.contains("\""),
             "Paths with spaces should be quoted"
@@ -1786,13 +1743,13 @@ mod batch_config_tests {
         assert_eq!(config.compat_flags, Some(0x42));
     }
 
+    /// Protocol 28 does not support compat flags; `with_compat_flags` only
+    /// applies at protocol >= 30.
     #[test]
     fn config_with_compat_flags_protocol_28_ignored() {
-        // Protocol 28 doesn't support compat flags
         let config =
             BatchConfig::new(BatchMode::Write, "test".to_owned(), 28).with_compat_flags(0x42);
 
-        // with_compat_flags only sets if protocol >= 30
         assert!(config.compat_flags.is_none());
     }
 
@@ -1844,7 +1801,6 @@ mod integration_scenarios {
         let batch_path = temp_dir.path().join("full_transfer.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        // Simulate a complete transfer batch
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 31)
             .with_checksum_seed(42424242)
             .with_compat_flags(0x0F);
@@ -1862,7 +1818,6 @@ mod integration_scenarios {
         };
         writer.write_header(flags).unwrap();
 
-        // Write file entries
         let entries = vec![
             ("src/main.rs", 0o100644, 1024),
             ("src/lib.rs", 0o100644, 2048),
@@ -1877,12 +1832,10 @@ mod integration_scenarios {
             writer.write_file_entry(&entry).unwrap();
         }
 
-        // Write simulated delta data
         writer.write_data(b"DELTA_HEADER_MARKER").unwrap();
         for (path, _, size) in &entries {
             let delta_marker = format!("DELTA:{path}:{size}:");
             writer.write_data(delta_marker.as_bytes()).unwrap();
-            // Simulated file content
             let content = vec![0xAB; *size as usize];
             writer.write_data(&content).unwrap();
         }
@@ -1890,7 +1843,6 @@ mod integration_scenarios {
 
         writer.finalize().unwrap();
 
-        // Read and verify
         let config = BatchConfig::new(BatchMode::Read, path_str, 31);
         let mut reader = BatchReader::new(config).unwrap();
 
@@ -1901,7 +1853,6 @@ mod integration_scenarios {
         assert_eq!(header.checksum_seed, 42424242);
         assert_eq!(header.compat_flags, Some(0x0F));
 
-        // Read file entries
         for (expected_path, expected_mode, expected_size) in &entries {
             let entry = reader.read_file_entry().unwrap().unwrap();
             assert_eq!(entry.path, *expected_path);
@@ -1918,7 +1869,6 @@ mod integration_scenarios {
         let batch_path = temp_dir.path().join("incremental.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        // Simulate incremental backup with checksums
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30);
 
         let mut writer = BatchWriter::new(config).unwrap();
@@ -1930,7 +1880,6 @@ mod integration_scenarios {
         };
         writer.write_header(flags).unwrap();
 
-        // Only changed files in incremental backup
         let changed_files = vec![
             ("modified.txt", 512, vec![0x01; 512]),
             ("new_file.txt", 256, vec![0x02; 256]),
@@ -1944,7 +1893,6 @@ mod integration_scenarios {
 
         writer.finalize().unwrap();
 
-        // Verify incremental batch
         let config = BatchConfig::new(BatchMode::Read, path_str, 30);
         let mut reader = BatchReader::new(config).unwrap();
 
@@ -1959,7 +1907,6 @@ mod integration_scenarios {
         let batch_path = temp_dir.path().join("empty_dir.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        // Batch for syncing empty directories
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30);
 
         let mut writer = BatchWriter::new(config).unwrap();
@@ -1971,7 +1918,6 @@ mod integration_scenarios {
         };
         writer.write_header(flags).unwrap();
 
-        // Directory entries with zero size
         let dirs = vec![
             ("empty_dir1", 0o040755),
             ("empty_dir2", 0o040700),
@@ -1985,7 +1931,6 @@ mod integration_scenarios {
 
         writer.finalize().unwrap();
 
-        // Verify
         let config = BatchConfig::new(BatchMode::Read, path_str, 30);
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
@@ -2046,19 +1991,19 @@ mod protocol_flist_round_trip {
             writer.write_data(&buf).unwrap();
         }
 
-        // Write the end-of-list marker - this is critical for read_protocol_flist
+        // The end-of-list marker is required for read_protocol_flist to stop.
         let mut end_buf = Vec::with_capacity(4);
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
 
-        // Write empty uid and gid ID lists (preserve_uid/gid are set).
+        // Empty uid and gid ID lists follow the flist when preserve_uid/gid is set.
         // upstream: uidlist.c:recv_id_list() reads until id=0 terminator.
         let mut id_buf = Vec::new();
         protocol::idlist::IdList::new()
             .write(&mut id_buf, false, protocol_version as u8)
             .unwrap();
-        writer.write_data(&id_buf).unwrap(); // uid list
-        writer.write_data(&id_buf).unwrap(); // gid list
+        writer.write_data(&id_buf).unwrap();
+        writer.write_data(&id_buf).unwrap();
 
         writer.finalize().unwrap();
         path_str
@@ -2172,17 +2117,16 @@ mod protocol_flist_round_trip {
         flist_writer.write_entry(&mut buf, &entry).unwrap();
         writer.write_data(&buf).unwrap();
 
-        // End-of-list marker
         let mut end_buf = Vec::new();
         flist_writer.write_end(&mut end_buf, None).unwrap();
         writer.write_data(&end_buf).unwrap();
 
-        // Trailing delta data (simulated)
         writer.write_data(b"delta payload here").unwrap();
 
         writer.finalize().unwrap();
 
-        // Read back - flist should stop at the end marker, not consume delta data
+        // The flist reader must stop at the end marker and leave the trailing
+        // delta payload intact for subsequent reads.
         let config = BatchConfig::new(BatchMode::Read, path_str, 32);
         let mut reader = BatchReader::new(config).unwrap();
         reader.read_header().unwrap();
@@ -2191,7 +2135,6 @@ mod protocol_flist_round_trip {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name(), "test.txt");
 
-        // Remaining data should still be readable
         let mut trailing = vec![0u8; 18];
         let n = reader.read_data(&mut trailing).unwrap();
         assert_eq!(&trailing[..n], b"delta payload here");
