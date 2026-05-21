@@ -572,7 +572,10 @@ mod tests {
         let dirfd = secure_open_dir(&root).expect("open root");
 
         unlinkat(dirfd.as_fd(), OsStr::new("empty"), UnlinkFlags::Dir).expect("unlinkat dir");
-        assert!(!path.exists(), "empty directory must be gone after unlinkat");
+        assert!(
+            !path.exists(),
+            "empty directory must be gone after unlinkat"
+        );
     }
 
     #[test]
@@ -612,7 +615,10 @@ mod tests {
             code == Some(libc::ENOTEMPTY) || code == Some(libc::EEXIST),
             "expected ENOTEMPTY or EEXIST for rmdir of non-empty directory, got {code:?}"
         );
-        assert!(dir.exists(), "non-empty directory must survive a failed rmdir");
+        assert!(
+            dir.exists(),
+            "non-empty directory must survive a failed rmdir"
+        );
     }
 
     #[test]
@@ -664,7 +670,10 @@ mod tests {
         let leaf = Path::new("file");
         unlink_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &path, UnlinkFlags::File)
             .expect("unlink");
-        assert!(!path.exists(), "single-component file must be removed via sandbox dirfd");
+        assert!(
+            !path.exists(),
+            "single-component file must be removed via sandbox dirfd"
+        );
     }
 
     #[test]
@@ -677,7 +686,10 @@ mod tests {
         let leaf = Path::new("empty");
         unlink_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &path, UnlinkFlags::Dir)
             .expect("rmdir");
-        assert!(!path.exists(), "single-component dir must be removed via sandbox dirfd");
+        assert!(
+            !path.exists(),
+            "single-component dir must be removed via sandbox dirfd"
+        );
     }
 
     #[test]
@@ -691,7 +703,10 @@ mod tests {
         let rel = Path::new("sub/file");
         unlink_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &path, UnlinkFlags::File)
             .expect("unlink fallback");
-        assert!(!path.exists(), "multi-component path must fall back to std::fs::remove_file");
+        assert!(
+            !path.exists(),
+            "multi-component path must fall back to std::fs::remove_file"
+        );
     }
 
     #[test]
@@ -703,7 +718,10 @@ mod tests {
         let leaf = Path::new("file");
         unlink_via_sandbox_or_fallback(None, &root, leaf, &path, UnlinkFlags::File)
             .expect("unlink fallback");
-        assert!(!path.exists(), "absent-sandbox path must fall back to std::fs::remove_file");
+        assert!(
+            !path.exists(),
+            "absent-sandbox path must fall back to std::fs::remove_file"
+        );
     }
 
     #[test]
@@ -718,6 +736,9 @@ mod tests {
         let rel = Path::new("sub/inner");
         unlink_via_sandbox_or_fallback(None, &root, rel, &path, UnlinkFlags::Dir)
             .expect("rmdir fallback");
-        assert!(!path.exists(), "Dir flag must dispatch std::fs::remove_dir on fallback");
+        assert!(
+            !path.exists(),
+            "Dir flag must dispatch std::fs::remove_dir on fallback"
+        );
     }
 }
