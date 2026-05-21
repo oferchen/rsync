@@ -390,7 +390,6 @@ mod tests {
     fn new_clamps_prefix_len_to_buffer_len() {
         let data = vec![1, 2, 3];
         let buf = NegotiationBuffer::new(100, 0, data);
-        // prefix_len should be clamped to buffer length (3)
         assert_eq!(buf.sniffed_prefix_len(), 3);
     }
 
@@ -398,7 +397,6 @@ mod tests {
     fn new_clamps_pos_to_buffer_len() {
         let data = vec![1, 2, 3];
         let buf = NegotiationBuffer::new(0, 100, data);
-        // pos should be clamped to buffer length (3)
         assert_eq!(buf.buffered_consumed(), 3);
     }
 

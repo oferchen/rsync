@@ -292,13 +292,12 @@ mod tests {
 
     #[test]
     fn effective_username_none_no_env() {
-        // Temporarily clear the env var to test the fallback error.
         let config = SshConfig {
             username: None,
             ..SshConfig::default()
         };
-        // We cannot safely unset USER in a multi-threaded test, so just verify
-        // the function returns something reasonable when the var is set.
+        // Cannot safely unset USER in a multi-threaded test - just smoke-check
+        // that the function returns without panicking when the var is set.
         let _ = effective_username(&config);
     }
 
@@ -354,7 +353,6 @@ mod tests {
 
     #[test]
     fn auth_methods_ordering() {
-        // Verify the tried-methods list is built correctly.
         let tried = ["agent", "publickey", "password"];
         assert_eq!(tried.join(", "), "agent, publickey, password");
     }
