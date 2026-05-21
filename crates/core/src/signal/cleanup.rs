@@ -288,7 +288,6 @@ mod tests {
         let path = PathBuf::from("/tmp/nonexistent_test.tmp");
         manager.register_temp_file(path);
 
-        // Should not panic
         manager.cleanup_temp_files();
         assert_eq!(manager.temp_file_count(), 0);
     }
@@ -319,7 +318,6 @@ mod tests {
         manager.cleanup();
 
         let final_order = order.lock().unwrap();
-        // Callbacks run in LIFO order (reverse of registration)
         assert_eq!(*final_order, vec![3, 2, 1]);
     }
 
@@ -363,8 +361,7 @@ mod tests {
 
         manager.cleanup_temp_files();
 
-        // File should still exist because it was unregistered
-        assert!(path.exists());
+        assert!(path.exists(), "unregistered file must survive cleanup");
     }
 
     #[test]
@@ -379,8 +376,7 @@ mod tests {
         manager.register_temp_file(path.clone());
         manager.register_temp_file(path);
 
-        // HashSet should deduplicate
-        assert_eq!(manager.temp_file_count(), 1);
+        assert_eq!(manager.temp_file_count(), 1, "HashSet deduplicates");
     }
 
     #[test]
@@ -392,7 +388,6 @@ mod tests {
         manager1.reset_for_testing();
         manager1.register_temp_file(PathBuf::from("/tmp/test_global.tmp"));
 
-        // Both references should see the same state
         assert_eq!(manager2.temp_file_count(), 1);
     }
 }

@@ -120,10 +120,9 @@ fn normalize_path_handles_root_with_parent_dir() {
 
 #[test]
 fn normalize_path_handles_trailing_slash_in_relative() {
-    // PathBuf normalizes away trailing slashes on most platforms
+    // PathBuf strips trailing separators on most platforms.
     let path = PathBuf::from("foo/bar/");
     let normalized = normalize_path(&path);
-    // After PathBuf parsing, trailing slash is typically removed
     assert_eq!(normalized, "foo/bar");
 }
 
@@ -137,15 +136,12 @@ fn normalize_path_handles_trailing_slash_in_absolute() {
 #[test]
 fn normalize_path_handles_empty_components() {
     let normalized = normalize_path(Path::new("foo//bar"));
-    // Path parsing collapses empty components
     assert_eq!(normalized, "foo/bar");
 }
 
 #[cfg(unix)]
 #[test]
 fn normalize_path_handles_symlink_like_paths() {
-    // This test doesn't actually create symlinks, just verifies
-    // that paths that might be symlinks are normalized correctly
     let normalized = normalize_path(Path::new("/usr/local/../bin/tool"));
     assert_eq!(normalized, "/usr/bin/tool");
 }
@@ -153,8 +149,8 @@ fn normalize_path_handles_symlink_like_paths() {
 #[cfg(unix)]
 #[test]
 fn normalize_path_preserves_path_without_following_symlinks() {
-    // normalize_path does NOT follow symlinks, it just normalizes the string
-    // If /link points to /target, normalize_path("/link/file") returns "/link/file"
+    // normalize_path is a string operation: it never resolves symlinks, so
+    // `/link/file` survives the call unchanged even when `/link -> /target`.
     let normalized = normalize_path(Path::new("/link/file"));
     assert_eq!(normalized, "/link/file");
 }

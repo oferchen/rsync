@@ -479,7 +479,6 @@ fn error_message_is_parseable_by_regex() {
     let rendered = msg.to_string();
 
     // Pattern: rsync error: <text> (code <N>) at <basename>(<line>) [<role>=<version>]
-    // Verify components are present and in order
     assert!(rendered.starts_with("rsync error: "));
     assert!(rendered.contains("(code 23)"));
     assert!(rendered.contains(" at "));
