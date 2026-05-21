@@ -168,7 +168,6 @@ fn io_uring_status_detail_impl() -> String {
 pub fn platform_io_capabilities() -> Vec<&'static str> {
     let mut caps = Vec::new();
 
-    // Linux compile-time capabilities
     #[cfg(target_os = "linux")]
     {
         caps.push("copy_file_range");
@@ -186,7 +185,6 @@ pub fn platform_io_capabilities() -> Vec<&'static str> {
         }
     }
 
-    // macOS compile-time capabilities
     #[cfg(target_os = "macos")]
     {
         caps.push("clonefile");
@@ -195,7 +193,6 @@ pub fn platform_io_capabilities() -> Vec<&'static str> {
         caps.push("writev");
     }
 
-    // Windows compile-time capabilities
     #[cfg(target_os = "windows")]
     {
         caps.push("CopyFileEx");

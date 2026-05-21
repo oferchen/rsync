@@ -83,7 +83,6 @@ fn test_splice_socketpair_to_file() {
     let spliced = spliced.unwrap();
     assert_eq!(spliced, content.len());
 
-    // Verify file contents.
     dest.seek(SeekFrom::Start(0)).unwrap();
     let mut file_content = Vec::new();
     dest.read_to_end(&mut file_content).unwrap();
