@@ -63,7 +63,7 @@ default-features = false
 features = ["xattr"]
 
 [features]
-default = ["zstd", "lz4", "xattr", "iconv"]
+default = ["zstd", "lz4", "xattr", "iconv", "parallel-receive-delta"]
 
 # ============================================================================
 # Compression Features
@@ -91,6 +91,11 @@ embedded-ssh = ["dep:tokio", "rsync_io/embedded-ssh"]
 
 # Async runtime support - enables tokio-based async I/O for core operations
 async = ["dep:tokio", "engine/async", "transfer/async"]
+
+# Parallel receive-side delta apply (#1368). Forwards through transfer to
+# engine; the receiver dispatches per-transfer via the Path B heuristic
+# documented in `docs/design/parallel-receive-delta-default-on.md`.
+parallel-receive-delta = ["transfer/parallel-receive-delta", "engine/parallel-receive-delta"]
 
 # Async SSH transport: wires `rsync_io::ssh::AsyncSshTransport` into the client
 # remote transfer path. Opt-in at runtime via the `OC_RSYNC_ASYNC_SSH=1` env

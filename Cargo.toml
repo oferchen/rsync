@@ -28,6 +28,7 @@ default = [
     "xattr",
     "iconv",
     "parallel",
+    "parallel-receive-delta",
     "copy_file_range",
     "io_uring",
     "iocp",
@@ -63,6 +64,16 @@ iconv = ["cli/iconv", "core/iconv"]
 # Benefits: 2-8x faster on multi-core systems for batch operations
 # Trade-offs: Minimal overhead on single-core systems
 parallel = ["cli/parallel", "checksums/parallel"]
+
+# Parallel receive-side delta apply (#1368). Forwards through cli to core,
+# transfer, and engine. The receiver dispatches per-transfer via the Path B
+# heuristic in `docs/design/parallel-receive-delta-default-on.md`.
+parallel-receive-delta = [
+    "cli/parallel-receive-delta",
+    "core/parallel-receive-delta",
+    "transfer/parallel-receive-delta",
+    "engine/parallel-receive-delta",
+]
 
 # io_uring support for Linux 5.6+ - batched async I/O syscalls
 # Requirements: Linux kernel 5.6+ (runtime fallback on older kernels)
