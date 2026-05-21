@@ -225,10 +225,11 @@ pub use traits::{FileReader, FileWriter};
 
 #[cfg(unix)]
 pub use dir_sandbox::{
-    AtMetadata, DirSandbox, LstatOutcome, UnlinkFlags, fstatat_nofollow, linkat,
+    AtMetadata, DirSandbox, LstatOutcome, UnlinkFlags, fchmodat, fchmodat_via_sandbox_or_fallback,
+    fchownat, fchownat_via_sandbox_or_fallback, fstatat_nofollow, linkat,
     linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, mkdirat,
     mkdirat_via_sandbox_or_fallback, symlinkat, symlinkat_via_sandbox_or_fallback,
-    unlink_via_sandbox_or_fallback, unlinkat,
+    unlink_via_sandbox_or_fallback, unlinkat, utimensat, utimensat_via_sandbox_or_fallback,
 };
 pub use kernel_version::{
     IO_URING_MIN_KERNEL, KernelVersion, log_io_uring_probe_result, parse_kernel_version,
