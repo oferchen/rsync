@@ -16,24 +16,30 @@ umbrella design covers those. It narrows one open question:
 ## 1. Current state
 
 `crates/engine/src/concurrent_delta/parallel_apply.rs` ships
-[`ParallelDeltaApplier`] gated behind the
-`parallel-receive-delta` cargo feature on both `engine` and `transfer`.
-Production receivers do not flip the gate:
+[`ParallelDeltaApplier`] gated behind the `parallel-receive-delta`
+cargo feature. Path B (runtime auto-detect) is now wired by default
+and the feature is in the default set on `engine`, `transfer`, `core`,
+`cli`, and the workspace binary.
 
-- `crates/engine/Cargo.toml` declares `parallel-receive-delta = []`
-  without including it in `default`.
+- `crates/engine/Cargo.toml` declares
+  `parallel-receive-delta = []` and includes it in `default`.
 - `crates/transfer/Cargo.toml` declares
-  `parallel-receive-delta = ["engine/parallel-receive-delta"]`.
+  `parallel-receive-delta = ["engine/parallel-receive-delta"]` and
+  includes it in `default`. Same forwarding lives on `core` and
+  `cli`, plus the workspace binary in the root `Cargo.toml`.
 - `crates/transfer/src/receiver/mod.rs` exposes
-  `ReceiverContext::enable_parallel_receive_delta`, conditionally
-  compiled under `#[cfg(feature = "parallel-receive-delta")]`. No
-  production call site invokes it.
+  `ReceiverContext::enable_parallel_receive_delta` (feature-gated) and
+  the always-compiled helpers `select_receiver_strategy`,
+  `total_source_bytes`, and `dispatch_receiver_strategy`. The driving
+  loops (`run_sync`, `run_pipelined`, `run_pipelined_incremental`)
+  invoke the dispatcher immediately after `setup_transfer` returns.
 
 The sequential apply loop in `crates/transfer/src/receiver/transfer.rs`
-remains the only shipped path. The parallel scaffold has parity tests
-(PRs #4300 and #4319) and per-file ordering proofs but no benchmark
-evidence at the receiver-shape scale that the umbrella design's section
-6.3 calls out as the bench gate.
+remains the fallback path the dispatcher picks for small / dispatch-
+bound transfers, and the only path still wired when the feature is
+disabled. Parity tests (PRs #4300 and #4319) keep the wire-format
+contract; the bench evidence in section 4 is the remaining
+follow-up (PIP-6).
 
 ## 2. The gap
 
@@ -96,6 +102,14 @@ be reproduced.
 The default flip from sequential to parallel is gated on all five of
 the following holding simultaneously on the same nightly bench run.
 Any single failure reverts the flip to opt-in.
+
+> **Note (2026-05-21):** the maintainer directed the flip with the
+> message "enable", explicitly accepting the open soak and bench gates
+> (criteria 1, 3, 4, 5). Criterion 2 (zero wire-format divergence)
+> remains the load-bearing safety net; PRs #4300 and #4319 keep the
+> parity proptests green in CI. The other criteria become follow-up
+> validation tasks (PIP-4 interop suite, PIP-6 bench backfill) rather
+> than blocking gates.
 
 1. **`small_files` wall-clock wins by >= 10%** at 4+ rayon workers.
    This is the dispatch-bound cell; if parallel cannot beat sequential
@@ -230,6 +244,15 @@ bench picks Path A instead, steps 1 and 2 collapse into a single
    `crates/transfer/src/receiver/mod.rs`). Surface the decision through
    `--debug=GENR` and a `receiver_strategy_chosen` counter on
    `ReceiverStats`. Commit prefix `perf(transfer):`.
+   **SHIPPED (combined with step 5) via perf(transfer): enable parallel
+   receive-delta by default via Path B heuristic.** Thresholds live as
+   `PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD` / `PARALLEL_RECEIVE_BYTES_THRESHOLD`
+   in `crates/transfer/src/receiver/mod.rs`. Dispatch happens in
+   `ReceiverContext::dispatch_receiver_strategy` and is invoked at the
+   top of `run_sync`, `run_pipelined`, and `run_pipelined_incremental`.
+   The decision is stamped on `TransferStats::receiver_strategy_chosen`
+   (`ReceiverStrategy::Sequential | Parallel`) and logged via
+   `debug_log!(Genr, 1, "receiver_strategy=...")` for `--debug=GENR`.
 5. **Soak and flip default-features.** Run the feature opt-in as a
    non-gating CI baseline for one release cycle. If no `fix:`-prefixed
    PR lands against `crates/engine/src/concurrent_delta/parallel_apply.rs`
@@ -237,6 +260,13 @@ bench picks Path A instead, steps 1 and 2 collapse into a single
    `parallel-receive-delta` into `default-features` on `engine` and
    `transfer`. Commit prefix `perf(transfer):` and reference both
    #1368 and this doc in the PR body.
+   **SHIPPED (combined with step 4) via perf(transfer): enable parallel
+   receive-delta by default via Path B heuristic.** Added to the
+   `default = [...]` set on `engine`, `transfer`, `core`, `cli`, and the
+   workspace binary so the production binary picks up the dispatch
+   without any opt-in flag. The soak gate was waived by maintainer
+   direction (see section 5 note); revert path is to drop
+   `parallel-receive-delta` from each `default = [...]` list.
 
 The five steps are strictly serial. Any step that fails its gate
 stops the promotion; the feature gate remains in place for the next

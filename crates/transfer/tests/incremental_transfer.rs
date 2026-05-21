@@ -34,6 +34,7 @@ fn transfer_stats_incremental_fields_exist() {
         literal_data: 0,
         matched_data: 0,
         redo_count: 0,
+        receiver_strategy_chosen: Default::default(),
     };
 
     assert_eq!(stats.files_listed, 10);

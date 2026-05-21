@@ -45,6 +45,10 @@ impl ReceiverContext {
         let (mut reader, file_count, setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 
+        // Path B dispatch: pick sequential vs parallel apply before the loop.
+        // upstream-independent: matches docs/design/parallel-receive-delta-default-on.md.
+        let receiver_strategy_chosen = self.dispatch_receiver_strategy(file_count);
+
         let PipelineSetup {
             dest_dir,
             metadata_opts,
@@ -345,6 +349,7 @@ impl ReceiverContext {
             literal_data: 0,
             matched_data: 0,
             redo_count: 0,
+            receiver_strategy_chosen,
         })
     }
 }
