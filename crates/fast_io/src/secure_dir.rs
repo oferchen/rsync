@@ -196,8 +196,14 @@ mod tests {
     #[test]
     fn opens_real_directory() {
         let dir = tempdir().expect("tempdir");
+        // `tempdir()` may return a path that contains symlink components
+        // (macOS `/tmp` -> `/private/tmp`, some CI runners stage `/tmp`
+        // through a symlink). `RESOLVE_NO_SYMLINKS` would refuse such a
+        // path; canonicalise first so the test exercises the success path,
+        // not the deliberate rejection.
+        let canon = std::fs::canonicalize(dir.path()).expect("canonicalize tempdir");
 
-        let fd = secure_open_dir(dir.path()).expect("open dir");
+        let fd = secure_open_dir(&canon).expect("open dir");
         assert!(fd.as_raw_fd() >= 0);
     }
 
@@ -213,16 +219,20 @@ mod tests {
         symlink(&target, &link).expect("create symlink");
 
         let err = secure_open_dir(&link).expect_err("symlink leaf must be rejected");
-        // Linux + `openat2` (`RESOLVE_NO_SYMLINKS`) returns `ELOOP`.
-        // Linux + plain `open(O_NOFOLLOW | O_DIRECTORY)` also returns `ELOOP`
-        // because `O_NOFOLLOW` is evaluated first. macOS / BSD evaluate
-        // `O_DIRECTORY` first, so they return `ENOTDIR` for the same input.
-        // Either errno proves the symlink was refused, which is what the
-        // SEC-1 sandbox needs from the leaf check.
+        // Accepted errnos:
+        // - `ELOOP`: plain `open(O_NOFOLLOW | O_DIRECTORY)` (Linux without
+        //   openat2, or kernels older than 5.6).
+        // - `ENOTDIR`: macOS / BSD evaluate `O_DIRECTORY` before
+        //   `O_NOFOLLOW`, so the symlink-to-directory case yields ENOTDIR.
+        // - `EXDEV`: Linux 5.6+ `openat2` with `RESOLVE_BENEATH` plus
+        //   `RESOLVE_NO_SYMLINKS` reports the symlink-to-an-absolute-target
+        //   as a cross-resolution-scope violation rather than ELOOP.
+        // Any of the three proves the symlink was refused, which is what
+        // the SEC-1 sandbox needs from the leaf check.
         let code = err.raw_os_error();
         assert!(
-            code == Some(libc::ELOOP) || code == Some(libc::ENOTDIR),
-            "expected ELOOP or ENOTDIR for symlink leaf, got: {err}"
+            code == Some(libc::ELOOP) || code == Some(libc::ENOTDIR) || code == Some(libc::EXDEV),
+            "expected ELOOP, ENOTDIR, or EXDEV for symlink leaf, got: {err}"
         );
     }
 
