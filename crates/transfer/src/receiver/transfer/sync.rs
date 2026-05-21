@@ -51,6 +51,8 @@ impl ReceiverContext {
             checksum_length,
             checksum_algorithm,
             acl_cache,
+            #[cfg(unix)]
+                sandbox: _sandbox,
         } = setup;
 
         let mut files_transferred = 0;

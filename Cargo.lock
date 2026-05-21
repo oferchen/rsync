@@ -1333,6 +1333,7 @@ name = "fast_io"
 version = "0.6.2"
 dependencies = [
  "criterion",
+ "dashmap",
  "filetime",
  "io-uring",
  "libc",

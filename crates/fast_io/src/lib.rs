@@ -81,6 +81,17 @@
 
 /// Cached sorting using the Schwartzian transform.
 pub mod cached_sort;
+/// Parent-dirfd carrier (`DirSandbox`) for the SEC-1 sandbox.
+///
+/// Threads an in-tree dirfd stack plus a `DashMap<PathBuf, Arc<OwnedFd>>`
+/// side cache through the receiver pipeline so SEC-1.f-j can convert
+/// path-based syscalls to `*at` siblings without re-walking the path
+/// through the kernel.
+///
+/// Unix-only: Windows callers use NTFS handle-based APIs which sidestep
+/// path TOCTOU naturally (see the SEC-1.l audit).
+#[cfg(unix)]
+pub mod dir_sandbox;
 /// Kernel version parsing and io_uring probe logging.
 pub mod kernel_version;
 /// Cached runtime probes for Linux-specific kernel capabilities used by the
@@ -212,6 +223,8 @@ pub use platform_copy::{
 };
 pub use traits::{FileReader, FileWriter};
 
+#[cfg(unix)]
+pub use dir_sandbox::DirSandbox;
 pub use kernel_version::{
     IO_URING_MIN_KERNEL, KernelVersion, log_io_uring_probe_result, parse_kernel_version,
 };

@@ -697,6 +697,23 @@ struct PipelineSetup {
     /// thread via `Arc` so cached ACLs can be applied after file metadata.
     /// `None` when `--acls` is not active.
     acl_cache: Option<Arc<AclCache>>,
+    /// Parent-dirfd carrier rooted at the destination tree.
+    ///
+    /// Opened once via [`fast_io::secure_open_dir`] when `setup_transfer`
+    /// resolves the destination path. Threaded through the receiver
+    /// pipeline so the SEC-1.f-j cutover sites can replace path-based
+    /// syscalls with their `*at` siblings without re-walking the path
+    /// through the kernel. This PR (SEC-1.e) wires the carrier through
+    /// to [`ReceiverContext`] but does not migrate any syscalls; the
+    /// existing path-based code paths continue to be the active code.
+    ///
+    /// `None` on Unix when the destination root cannot be opened (for
+    /// example because it does not yet exist - the receiver will create
+    /// it later and the carrier stays absent for the duration of the
+    /// transfer). `None` on Windows where the carrier is not used
+    /// (handle-based NTFS APIs, see SEC-1.l audit).
+    #[cfg(unix)]
+    sandbox: Option<Arc<fast_io::DirSandbox>>,
 }
 
 /// Applies ACLs from the receiver's ACL cache to a destination file.

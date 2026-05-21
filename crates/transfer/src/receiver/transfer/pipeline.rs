@@ -296,6 +296,8 @@ impl ReceiverContext {
 
                 let response_ctx = ResponseContext {
                     config: &request_config,
+                    #[cfg(unix)]
+                    sandbox: setup.sandbox.as_deref(),
                 };
 
                 let xattr_list = self.resolve_xattr_list(file_entry);
