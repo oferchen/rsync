@@ -22,8 +22,8 @@ mod tests {
         }
         out
     }
-    // Test vectors from RFC 1320 "The MD4 Message-Digest Algorithm"
-    // https://www.rfc-editor.org/rfc/rfc1320
+
+    // RFC 1320 test vectors: https://www.rfc-editor.org/rfc/rfc1320
 
     #[test]
     fn md4_rfc1320_empty() {
@@ -111,7 +111,6 @@ mod tests {
     fn md4_empty_input_one_shot() {
         let digest = Md4::digest(b"");
         assert_eq!(digest.len(), 16, "MD4 digest should be 16 bytes");
-        // Verify against known value
         assert_eq!(to_hex(&digest), "31d6cfe0d16ae931b73c59d7e0c089c0");
     }
 
@@ -137,7 +136,6 @@ mod tests {
     fn md4_single_byte_zero() {
         let digest = Md4::digest(&[0x00]);
         assert_eq!(digest.len(), 16);
-        // Verify determinism
         assert_eq!(Md4::digest(&[0x00]), digest);
     }
 
@@ -145,13 +143,11 @@ mod tests {
     fn md4_single_byte_max() {
         let digest = Md4::digest(&[0xFF]);
         assert_eq!(digest.len(), 16);
-        // Should differ from 0x00
         assert_ne!(Md4::digest(&[0xFF]), Md4::digest(&[0x00]));
     }
 
     #[test]
     fn md4_single_byte_a() {
-        // Single 'a' character (0x61)
         let digest = Md4::digest(&[0x61]);
         assert_eq!(to_hex(&digest), "bde52cb31de33e46245e05fbdbd6fb24");
     }
@@ -164,13 +160,11 @@ mod tests {
             let digest = Md4::digest(&[byte]);
             digests.insert(digest);
         }
-        // All 256 single-byte inputs should produce unique digests
         assert_eq!(digests.len(), 256);
     }
 
     #[test]
     fn md4_small_sizes() {
-        // Test sizes from 1 to 128 bytes
         for size in 1..=128 {
             let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
             let digest = Md4::digest(&data);
@@ -180,13 +174,9 @@ mod tests {
 
     #[test]
     fn md4_block_boundary_sizes() {
-        // MD4 processes 64-byte blocks internally
-        // Test sizes around block boundaries
+        // MD4 processes 64-byte blocks internally; exercise around each boundary.
         for &size in &[
-            63, 64, 65, // First block boundary
-            127, 128, 129, // Second block boundary
-            191, 192, 193, // Third block boundary
-            255, 256, 257, // Fourth block boundary
+            63, 64, 65, 127, 128, 129, 191, 192, 193, 255, 256, 257,
         ] {
             let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
             let digest = Md4::digest(&data);
@@ -231,7 +221,6 @@ mod tests {
         let data = vec![0x34_u8; 1024 * 1024];
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16);
-        // Verify determinism
         assert_eq!(digest, Md4::digest(&data));
     }
 
@@ -240,7 +229,6 @@ mod tests {
         let data = vec![0x56_u8; 1024 * 1024];
         let oneshot = Md4::digest(&data);
 
-        // Compute incrementally with 64KB chunks
         let mut hasher = Md4::new();
         for chunk in data.chunks(64 * 1024) {
             hasher.update(chunk);
@@ -269,7 +257,6 @@ mod tests {
         let data: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
         let expected = Md4::digest(&data);
 
-        // Test with various chunk sizes
         for chunk_size in [1, 2, 3, 5, 7, 13, 17, 31, 64, 100, 256, 500] {
             let mut hasher = Md4::new();
             for chunk in data.chunks(chunk_size) {
@@ -344,25 +331,17 @@ mod tests {
         let mut hasher = Md4::new();
         hasher.update(b"first part");
 
-        // Clone the hasher mid-stream
         let cloned = hasher.clone();
 
-        // Continue with original
         hasher.update(b" second part");
         let original_result = hasher.finalize();
 
-        // Continue with clone differently
         let mut cloned2 = cloned.clone();
         cloned2.update(b" different");
         let cloned_result = cloned2.finalize();
 
-        // Results should differ
         assert_ne!(original_result, cloned_result);
-
-        // Verify original is correct
         assert_eq!(original_result, Md4::digest(b"first part second part"));
-
-        // Verify clone is correct
         assert_eq!(cloned_result, Md4::digest(b"first part different"));
     }
 
@@ -398,7 +377,6 @@ mod tests {
 
     #[test]
     fn md4_matches_reference_impl_binary_data() {
-        // Test with binary data (all byte values)
         let data: Vec<u8> = (0..=255).collect();
         let our_digest = Md4::digest(&data);
         let ref_digest: [u8; 16] = md4::Md4::digest(&data).into();
@@ -407,7 +385,6 @@ mod tests {
 
     #[test]
     fn md4_matches_reference_impl_large_data() {
-        // 64KB of patterned data
         let data: Vec<u8> = (0..65536).map(|i| (i % 256) as u8).collect();
         let our_digest = Md4::digest(&data);
         let ref_digest: [u8; 16] = md4::Md4::digest(&data).into();
@@ -418,14 +395,12 @@ mod tests {
     fn md4_matches_reference_impl_streaming() {
         let data = b"streaming comparison test with multiple updates";
 
-        // Our implementation
         let mut our_hasher = Md4::new();
         our_hasher.update(&data[..10]);
         our_hasher.update(&data[10..30]);
         our_hasher.update(&data[30..]);
         let our_digest = our_hasher.finalize();
 
-        // Reference implementation
         let mut ref_hasher = md4::Md4::new();
         ref_hasher.update(&data[..10]);
         ref_hasher.update(&data[10..30]);
@@ -464,7 +439,7 @@ mod tests {
 
     #[test]
     fn md4_strong_digest_trait_with_seed() {
-        // MD4 seed type is (), so with_seed should behave like new
+        // MD4's Seed type is `()`, so `with_seed` is equivalent to `new`.
         let hasher: Md4 = StrongDigest::with_seed(());
         let mut h = hasher;
         h.update(b"test");
@@ -503,7 +478,6 @@ mod tests {
         let hasher = Md4::new();
         let debug_str = format!("{:?}", hasher);
         assert!(debug_str.contains("Md4"));
-        // Should indicate backend type
         assert!(debug_str.contains("backend"));
     }
 
@@ -554,12 +528,11 @@ mod tests {
 
     #[test]
     fn md4_exactly_55_bytes() {
-        // 55 bytes is the maximum that fits in one block with padding
+        // 55 bytes is the maximum that fits in a single padded MD4 block.
         let data = vec![0xAA_u8; 55];
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16);
 
-        // Verify streaming matches
         let mut hasher = Md4::new();
         hasher.update(&data);
         assert_eq!(hasher.finalize(), digest);
@@ -567,7 +540,7 @@ mod tests {
 
     #[test]
     fn md4_exactly_56_bytes() {
-        // 56 bytes requires two blocks due to padding
+        // 56 bytes pushes padding into a second MD4 block.
         let data = vec![0xBB_u8; 56];
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16);
@@ -575,7 +548,6 @@ mod tests {
 
     #[test]
     fn md4_exactly_64_bytes() {
-        // Exactly one full block
         let data = vec![0xCC_u8; 64];
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16);
@@ -583,7 +555,6 @@ mod tests {
 
     #[test]
     fn md4_repeated_same_input() {
-        // Verify determinism
         let data = b"determinism test";
         let digest1 = Md4::digest(data);
         let digest2 = Md4::digest(data);
@@ -605,7 +576,6 @@ mod tests {
 
         let digests: Vec<[u8; 16]> = inputs.iter().map(|i| Md4::digest(*i)).collect();
 
-        // All digests should be unique
         for i in 0..digests.len() {
             for j in (i + 1)..digests.len() {
                 assert_ne!(
@@ -622,8 +592,6 @@ mod tests {
         let data = b"before\x00after";
         let digest = Md4::digest(data);
         assert_eq!(digest.len(), 16);
-
-        // Should differ from version without null
         assert_ne!(digest, Md4::digest(b"beforeafter"));
     }
 

@@ -276,13 +276,11 @@ fn protocol_version_boundary_produces_different_digests() {
     let d29 = v29.compute(data);
     let d30 = v30.compute(data);
 
-    // MD4 and MD5 produce different digests for the same input
     assert_ne!(
         d29, d30,
         "v29 (MD4) and v30 (MD5) should produce different digests"
     );
 
-    // Both produce 16-byte digests
     assert_eq!(d29.len(), 16);
     assert_eq!(d30.len(), 16);
 }
@@ -305,7 +303,6 @@ fn protocol_version_255_uses_md5() {
 
 #[test]
 fn algorithm_kind_from_name_canonical_names() {
-    // Test all canonical names that upstream rsync uses
     let expected = [
         ("md4", ChecksumAlgorithmKind::Md4),
         ("md5", ChecksumAlgorithmKind::Md5),
@@ -327,7 +324,6 @@ fn algorithm_kind_from_name_canonical_names() {
 
 #[test]
 fn algorithm_kind_from_name_aliases() {
-    // Test common aliases
     let aliases = [
         ("sha-1", ChecksumAlgorithmKind::Sha1),
         ("sha-256", ChecksumAlgorithmKind::Sha256),
@@ -385,7 +381,6 @@ fn algorithm_kind_from_name_rejects_invalid() {
 
 #[test]
 fn algorithm_kind_name_roundtrip_all() {
-    // Every algorithm's name() should roundtrip through from_name()
     for kind in ChecksumAlgorithmKind::all() {
         let name = kind.name();
         let parsed = ChecksumAlgorithmKind::from_name(name);
@@ -418,12 +413,10 @@ fn md5_seed_proper_order_is_prefix() {
     let seed_value: i32 = 0x42;
     let data = b"test data";
 
-    // Proper order: seed bytes hashed before data
     let mut proper = Md5::with_seed(Md5Seed::proper(seed_value));
     proper.update(data);
     let proper_digest = proper.finalize();
 
-    // Manual construction: new MD5, hash seed bytes, then data
     let mut manual = Md5::new();
     manual.update(&seed_value.to_le_bytes());
     manual.update(data);
@@ -445,7 +438,6 @@ fn md5_seed_legacy_order_is_suffix() {
     legacy.update(data);
     let legacy_digest = legacy.finalize();
 
-    // Manual construction: new MD5, hash data, then seed bytes
     let mut manual = Md5::new();
     manual.update(data);
     manual.update(&seed_value.to_le_bytes());

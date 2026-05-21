@@ -73,8 +73,8 @@ fn explicit_md4_selection() {
     assert_eq!(strategy.algorithm_kind(), ChecksumAlgorithmKind::Md4);
     assert_eq!(strategy.digest_len(), 16);
 }
-// These tests verify that our MD4 implementation matches the official
-// RFC 1320 specification, ensuring compatibility with upstream rsync.
+
+// RFC 1320 vectors pinned to guarantee upstream rsync compatibility.
 
 #[test]
 fn rfc1320_empty_string() {
@@ -86,7 +86,7 @@ fn rfc1320_empty_string() {
         "RFC 1320: MD4 of empty string"
     );
 
-    // Verify via strategy pattern
+    // The strategy pattern must produce the same bytes as direct `Md4::digest`.
     let strategy = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md4, 0);
     let strategy_digest = strategy.compute(b"");
     assert_eq!(strategy_digest.as_bytes(), &digest);
@@ -290,11 +290,8 @@ fn protocol_version_boundary_at_30() {
     let d29 = v29.compute(test_data);
     let d30 = v30.compute(test_data);
 
-    // Both should produce 16-byte digests (MD4 and MD5)
     assert_eq!(d29.len(), 16);
     assert_eq!(d30.len(), 16);
-
-    // But the digests should be different (MD4 vs MD5)
     assert_ne!(d29, d30, "MD4 and MD5 should produce different digests");
 }
 
@@ -321,11 +318,12 @@ fn all_protocols_30_and_above_use_md5() {
         );
     }
 }
-// These tests simulate how rsync uses MD4 for block checksums in protocol < 30
+
+// Block-checksum scenarios below mirror how rsync uses MD4 in protocol < 30.
 
 #[test]
 fn simulate_block_checksum_small_file() {
-    // Simulate checksumming a small file in blocks (e.g., 700-byte blocks)
+    // Three 700-byte blocks from a 2100-byte file.
     let file_data: Vec<u8> = (0..2100).map(|i| (i % 256) as u8).collect();
     let block_size = 700;
 
@@ -338,10 +336,8 @@ fn simulate_block_checksum_small_file() {
         block_checksums.push(digest);
     }
 
-    // Should have 3 blocks
     assert_eq!(block_checksums.len(), 3);
 
-    // All checksums should be unique (different blocks)
     assert_ne!(block_checksums[0], block_checksums[1]);
     assert_ne!(block_checksums[1], block_checksums[2]);
     assert_ne!(block_checksums[0], block_checksums[2]);
@@ -349,7 +345,6 @@ fn simulate_block_checksum_small_file() {
 
 #[test]
 fn simulate_block_checksum_large_file() {
-    // Simulate checksumming a larger file
     let file_data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
     let block_size = 4096;
 
@@ -364,10 +359,8 @@ fn simulate_block_checksum_large_file() {
         block_checksums.push(digest);
     }
 
-    // Verify we got the expected number of blocks
     assert_eq!(block_checksums.len(), block_count);
 
-    // Verify determinism: recompute and compare
     for (i, block) in file_data.chunks(block_size).enumerate() {
         let recomputed = strategy.compute(block);
         assert_eq!(
@@ -379,13 +372,12 @@ fn simulate_block_checksum_large_file() {
 
 #[test]
 fn simulate_incremental_block_generation() {
-    // Simulate generating block checksums incrementally (streaming)
+    // Reading a block in small chunks must produce the same digest as one-shot.
     let block_data = b"This is a block of data that would be checksummed by rsync";
 
     let oneshot = Md4::digest(block_data);
 
     let mut hasher = Md4::new();
-    // Simulate reading the block in smaller chunks
     for chunk in block_data.chunks(10) {
         hasher.update(chunk);
     }
@@ -404,28 +396,28 @@ fn md4_digest_length_constant() {
 
 #[test]
 fn md4_empty_input() {
+    // MD4("") = 31d6cfe0d16ae931b73c59d7e0c089c0
     let digest = Md4::digest(b"");
     assert_eq!(digest.len(), 16);
-    // Known empty string digest
     assert_eq!(to_hex(&digest), "31d6cfe0d16ae931b73c59d7e0c089c0");
 }
 
 #[test]
 fn md4_single_byte() {
-    let digest = Md4::digest(&[0x61]); // 'a'
+    // 0x61 = 'a' from RFC 1320.
+    let digest = Md4::digest(&[0x61]);
     assert_eq!(digest.len(), 16);
     assert_eq!(to_hex(&digest), "bde52cb31de33e46245e05fbdbd6fb24");
 }
 
 #[test]
 fn md4_block_boundary_sizes() {
-    // MD4 processes data in 64-byte blocks
+    // MD4 processes 64-byte blocks; sweep both sides of each boundary.
     for size in [63, 64, 65, 127, 128, 129] {
         let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16, "Size {size}: digest should be 16 bytes");
 
-        // Verify streaming matches
         let mut hasher = Md4::new();
         hasher.update(&data);
         assert_eq!(hasher.finalize(), digest);
@@ -434,11 +426,10 @@ fn md4_block_boundary_sizes() {
 
 #[test]
 fn md4_large_input() {
-    let data = vec![0x42_u8; 1024 * 1024]; // 1 MB
+    let data = vec![0x42_u8; 1024 * 1024];
     let digest = Md4::digest(&data);
     assert_eq!(digest.len(), 16);
 
-    // Verify determinism
     assert_eq!(Md4::digest(&data), digest);
 }
 
@@ -451,11 +442,9 @@ fn md4_differs_from_md5() {
     let md4_digest = Md4::digest(data);
     let md5_digest = Md5::digest(data);
 
-    // Both are 16 bytes
     assert_eq!(md4_digest.len(), 16);
     assert_eq!(md5_digest.len(), 16);
 
-    // But the digests should be different
     assert_ne!(
         md4_digest.as_ref(),
         md5_digest.as_ref(),

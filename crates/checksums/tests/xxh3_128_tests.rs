@@ -41,15 +41,12 @@ mod known_test_vectors {
         let digest = Xxh3_128::digest(0, b"");
         let hash = digest_to_u128(digest);
 
-        // Verify deterministic - same input always produces same output
         let digest2 = Xxh3_128::digest(0, b"");
         assert_eq!(digest, digest2, "XXH3-128 should be deterministic");
 
-        // Verify against reference implementation
         let expected = xxhash_rust::xxh3::xxh3_128_with_seed(b"", 0).to_le_bytes();
         assert_eq!(digest, expected, "Should match reference implementation");
 
-        // Hash should be non-zero (xxhash produces non-zero hash for empty with seed 0)
         assert_ne!(
             hash, 0,
             "Hash of empty string with seed 0 should be non-zero"
@@ -77,7 +74,6 @@ mod known_test_vectors {
         let expected = xxhash_rust::xxh3::xxh3_128_with_seed(input, 0).to_le_bytes();
         assert_eq!(digest, expected);
 
-        // Verify streaming matches one-shot
         let mut hasher = Xxh3_128::new(0);
         hasher.update(input);
         let streaming = hasher.finalize();
@@ -128,7 +124,6 @@ mod known_test_vectors {
         let digest = Xxh3_128::digest(0, &zeros);
         let hash = digest_to_u128(digest);
 
-        // Even all zeros should produce a non-zero hash
         assert_ne!(hash, 0, "Hash of zeros should be non-zero");
 
         let expected = xxhash_rust::xxh3::xxh3_128_with_seed(&zeros, 0).to_le_bytes();
@@ -140,7 +135,6 @@ mod known_test_vectors {
         let ones = [0xFFu8; 64];
         let digest = Xxh3_128::digest(0, &ones);
 
-        // Should differ from all zeros
         let zeros = [0u8; 64];
         let zeros_digest = Xxh3_128::digest(0, &zeros);
         assert_ne!(
@@ -192,7 +186,6 @@ mod empty_input {
     #[test]
     fn empty_streaming_produces_same_digest() {
         let hasher = Xxh3_128::new(0);
-        // No update calls
         let digest = hasher.finalize();
         let expected = xxhash_rust::xxh3::xxh3_128_with_seed(b"", 0).to_le_bytes();
         assert_eq!(digest, expected);
@@ -231,7 +224,6 @@ mod empty_input {
         let digest_42 = Xxh3_128::digest(42, b"");
         let digest_max = Xxh3_128::digest(u64::MAX, b"");
 
-        // Even for empty input, different seeds should produce different results
         assert_ne!(digest_0, digest_1, "Seed 0 vs 1");
         assert_ne!(digest_0, digest_42, "Seed 0 vs 42");
         assert_ne!(digest_0, digest_max, "Seed 0 vs max");
@@ -264,8 +256,6 @@ mod various_input_sizes {
     fn generate_data(size: usize) -> Vec<u8> {
         (0..size).map(|i| (i % 256) as u8).collect()
     }
-
-    // --- Single byte tests ---
 
     #[test]
     fn size_1_byte_zero() {
@@ -306,8 +296,6 @@ mod various_input_sizes {
         }
     }
 
-    // --- Small sizes ---
-
     #[test]
     fn size_2_bytes() {
         let data = generate_data(2);
@@ -340,7 +328,7 @@ mod various_input_sizes {
         assert_eq!(digest, expected);
     }
 
-    // --- XXH3 internal block boundary (usually around 128 or 256 bytes) ---
+    // XXH3 transitions between fast paths around the 128- and 256-byte marks.
 
     #[test]
     fn size_31_bytes() {
@@ -406,8 +394,6 @@ mod various_input_sizes {
         assert_eq!(digest, expected);
     }
 
-    // --- Medium sizes ---
-
     #[test]
     fn size_512_bytes() {
         let data = generate_data(512);
@@ -456,8 +442,6 @@ mod various_input_sizes {
         assert_eq!(digest, expected);
     }
 
-    // --- Large sizes ---
-
     #[test]
     fn size_256kb() {
         let data = generate_data(256 * 1024);
@@ -482,8 +466,7 @@ mod various_input_sizes {
         assert_eq!(digest, expected);
     }
 
-    // --- Prime number sizes (catch alignment edge cases) ---
-
+    /// Prime sizes exercise alignment edges that powers-of-two miss.
     #[test]
     fn prime_sizes() {
         let primes = [
@@ -498,8 +481,6 @@ mod various_input_sizes {
             assert_eq!(digest, expected, "Prime size {size} mismatch");
         }
     }
-
-    // --- Streaming matches one-shot for all sizes ---
 
     #[test]
     fn streaming_matches_oneshot_various_sizes() {
@@ -640,7 +621,6 @@ mod streaming_vs_oneshot {
             "Different continuations should produce different hashes"
         );
 
-        // Verify cloned hasher produces correct result
         let expected_b = Xxh3_128::digest(42, b"partial data B");
         assert_eq!(digest2, expected_b);
 
@@ -653,7 +633,6 @@ mod streaming_vs_oneshot {
         let data = b"abcdefghijklmnopqrstuvwxyz";
         let full_digest = Xxh3_128::digest(0, data);
 
-        // Clone after each byte and verify final result
         for i in 0..data.len() {
             let mut hasher = Xxh3_128::new(0);
             hasher.update(&data[..i]);
@@ -674,7 +653,6 @@ mod streaming_vs_oneshot {
         let data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
         let oneshot = Xxh3_128::digest(0, &data);
 
-        // Stream in irregular chunk sizes
         let mut hasher = Xxh3_128::new(0);
         let chunk_sizes = [17, 31, 64, 100, 256, 500, 1000, 2048, 5000];
         let mut offset = 0;
@@ -696,7 +674,7 @@ mod streaming_vs_oneshot {
 
     #[test]
     fn streaming_1mb_in_various_chunk_sizes() {
-        let size = 1024 * 1024; // 1MB
+        let size = 1024 * 1024;
         let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let oneshot = Xxh3_128::digest(0, &data);
 
@@ -730,7 +708,7 @@ mod streaming_vs_oneshot {
 
     #[test]
     fn streaming_split_at_all_positions() {
-        let data = b"0123456789abcdef"; // 16 bytes
+        let data = b"0123456789abcdef";
         let expected = Xxh3_128::digest(0, data);
 
         for split_pos in 0..=data.len() {
@@ -750,7 +728,6 @@ mod streaming_vs_oneshot {
         let data = b"The quick brown fox";
         let expected = Xxh3_128::digest(0, data);
 
-        // Split into 5 parts
         let mut hasher = Xxh3_128::new(0);
         hasher.update(b"The ");
         hasher.update(b"qui");
@@ -762,7 +739,6 @@ mod streaming_vs_oneshot {
 
     #[test]
     fn size_1mb_chunked() {
-        // Hash 1MB in 4KB chunks
         let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 256) as u8).collect();
         let mut hasher = Xxh3_128::new(0);
         for chunk in data.chunks(4096) {
@@ -863,7 +839,6 @@ mod seed_variations {
             .map(|&seed| Xxh3_128::digest(seed, data))
             .collect();
 
-        // All digests should be unique
         for i in 0..digests.len() {
             for j in (i + 1)..digests.len() {
                 assert_ne!(
@@ -894,7 +869,6 @@ mod seed_variations {
         let seed = 12345u64;
         let data = b"trait interface test";
 
-        // Using StrongDigest trait
         let hasher: Xxh3_128 = StrongDigest::with_seed(seed);
         let mut h = hasher;
         h.update(data);
@@ -948,9 +922,9 @@ mod edge_cases {
     #[test]
     fn similar_inputs_different_outputs() {
         let d1 = Xxh3_128::digest(0, b"test");
-        let d2 = Xxh3_128::digest(0, b"Test"); // Different case
-        let d3 = Xxh3_128::digest(0, b"test "); // Trailing space
-        let d4 = Xxh3_128::digest(0, b" test"); // Leading space
+        let d2 = Xxh3_128::digest(0, b"Test");
+        let d3 = Xxh3_128::digest(0, b"test ");
+        let d4 = Xxh3_128::digest(0, b" test");
 
         assert_ne!(d1, d2);
         assert_ne!(d1, d3);
@@ -986,18 +960,15 @@ mod edge_cases {
         let d1 = Xxh3_128::digest(0, data_with_null);
         let d2 = Xxh3_128::digest(0, data_without_null);
 
-        // Null byte should affect the hash
         assert_ne!(d1, d2);
     }
 
     #[test]
     fn all_byte_values() {
-        // Test with data containing all possible byte values
         let data: Vec<u8> = (0..=255).collect();
         let digest = Xxh3_128::digest(0, &data);
         assert_eq!(digest.len(), 16);
 
-        // Verify streaming matches
         let mut hasher = Xxh3_128::new(0);
         hasher.update(&data);
         assert_eq!(hasher.finalize(), digest);
@@ -1005,7 +976,6 @@ mod edge_cases {
 
     #[test]
     fn repeated_patterns() {
-        // Test with repeated patterns of various sizes
         let patterns: &[&[u8]] = &[&[0xAA; 1000], &[0x00; 1000], &[0xFF; 1000], &[0x55; 1000]];
 
         let mut digests = Vec::new();
@@ -1015,7 +985,6 @@ mod edge_cases {
             digests.push(digest);
         }
 
-        // All patterns should produce unique digests
         for i in 0..digests.len() {
             for j in (i + 1)..digests.len() {
                 assert_ne!(digests[i], digests[j], "Patterns {i} and {j} should differ");
