@@ -331,7 +331,6 @@ fn out_format_renders_multiple_files_in_order() {
         "one line per event, lines={lines:?}"
     );
 
-    // Each line should contain a filename and size
     for line in &lines {
         assert!(
             line.contains(".txt"),
@@ -377,32 +376,26 @@ fn out_format_complex_upstream_format_renders_all_fields() {
         .expect("render complex format");
 
     let rendered = String::from_utf8(output).expect("utf8");
-    // Should contain the itemize string for a new file
     assert!(
         rendered.contains(">f+++++++++"),
         "should contain itemize: {rendered:?}"
     );
-    // Should contain the operation
     assert!(
         rendered.contains("copied"),
         "should contain operation: {rendered:?}"
     );
-    // Should contain the filename
     assert!(
         rendered.contains("complex.dat"),
         "should contain filename: {rendered:?}"
     );
-    // Should contain the file length
     assert!(
         rendered.contains(&format!("{}", contents.len())),
         "should contain length: {rendered:?}"
     );
-    // Should contain "bytes"
     assert!(
         rendered.contains("bytes"),
         "should contain 'bytes': {rendered:?}"
     );
-    // Should contain pid
     assert!(
         rendered.contains("pid="),
         "should contain 'pid=': {rendered:?}"

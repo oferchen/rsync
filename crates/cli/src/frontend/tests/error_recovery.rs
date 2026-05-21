@@ -1,14 +1,13 @@
-/// Tests for error recovery when source files vanish during transfer.
-///
-/// Upstream rsync returns exit code 24 (RERR_VANISHED) when files disappear
-/// between file list generation and the actual transfer. These tests verify
-/// that remaining files are still transferred correctly despite the vanished
-/// file, and that the appropriate exit code is produced.
-///
-/// References:
-/// - upstream: errcode.h - RERR_VANISHED = 24
-/// - upstream: flist.c:1286-1294 - vanished file handling during file list build
-/// - upstream: main.c:1338-1345 - io_error to exit code mapping
+//! Tests for error recovery when source files vanish during transfer.
+//!
+//! Upstream rsync returns exit code 24 (RERR_VANISHED) when files disappear
+//! between file list generation and the actual transfer.
+//!
+//! References:
+//! - upstream: errcode.h - RERR_VANISHED = 24
+//! - upstream: flist.c:1286-1294 - vanished file handling during file list build
+//! - upstream: main.c:1338-1345 - io_error to exit code mapping
+
 use super::common::*;
 use super::*;
 
@@ -26,7 +25,6 @@ fn vanished_source_file_yields_exit_24_and_remaining_files_transfer() {
     std::fs::create_dir(&src_dir).expect("create src dir");
     std::fs::create_dir(&dst_dir).expect("create dst dir");
 
-    // Create three source files with distinct content and sizes
     let file_a = src_dir.join("alpha.txt");
     let file_b = src_dir.join("bravo.txt");
     let file_c = src_dir.join("charlie.txt");
@@ -34,7 +32,6 @@ fn vanished_source_file_yields_exit_24_and_remaining_files_transfer() {
     std::fs::write(&file_b, b"bravo content").expect("write bravo");
     std::fs::write(&file_c, b"charlie content").expect("write charlie");
 
-    // First transfer: sync all files to destination
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-r"),
@@ -65,12 +62,10 @@ fn vanished_source_file_yields_exit_24_and_remaining_files_transfer() {
         "charlie should exist after initial sync"
     );
 
-    // Delete one source file to simulate a vanished file
     std::fs::remove_file(&file_b).expect("remove bravo.txt");
 
-    // Second transfer: pass explicit file paths including the now-deleted file.
-    // The deleted path triggers the "file has vanished" code path in walk_path(),
-    // which sets IOERR_VANISHED, producing exit code 24.
+    // upstream: walk_path() sets IOERR_VANISHED for stat-ENOENT during the
+    // explicit-arg pass, surfacing as exit code 24.
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         file_a.clone().into_os_string(),
@@ -81,19 +76,16 @@ fn vanished_source_file_yields_exit_24_and_remaining_files_transfer() {
 
     let stderr_text = String::from_utf8_lossy(&stderr);
 
-    // Exit code 24 = RERR_VANISHED: some files vanished before transfer
     assert_eq!(
         code, 24,
         "expected exit code 24 (vanished), got {code}: {stderr_text}"
     );
 
-    // The vanished file warning should appear in stderr
     assert!(
         stderr_text.contains("vanished"),
         "stderr should mention vanished file: {stderr_text}"
     );
 
-    // Remaining files should still be at the destination with correct content
     assert_eq!(
         std::fs::read(dst_dir.join("alpha.txt")).expect("read alpha"),
         b"alpha content",
@@ -169,9 +161,8 @@ fn single_vanished_source_yields_exit_24() {
 
     let stderr_text = String::from_utf8_lossy(&stderr);
 
-    // A missing source file should produce exit code 24 or a file-selection error.
-    // Upstream rsync produces "file has vanished" + exit 24 when the source path
-    // fails stat with ENOENT during file list building.
+    // upstream: a stat-ENOENT during file-list build yields "file has vanished"
+    // and exit 24; some build paths surface it as 23 (partial).
     assert!(
         code == 24 || code == 23,
         "expected exit code 24 (vanished) or 23 (partial), got {code}: {stderr_text}"
