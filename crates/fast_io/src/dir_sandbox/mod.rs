@@ -74,6 +74,8 @@ use crate::linux_capabilities::openat2_supported;
 use crate::secure_dir::secure_open_dir;
 
 pub mod at_syscalls;
+#[cfg(unix)]
+pub mod at_syscalls_metadata;
 
 #[cfg(test)]
 mod tests;
@@ -83,6 +85,11 @@ pub use at_syscalls::{
     linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, mkdirat,
     mkdirat_via_sandbox_or_fallback, symlinkat, symlinkat_via_sandbox_or_fallback,
     unlink_via_sandbox_or_fallback, unlinkat,
+};
+#[cfg(unix)]
+pub use at_syscalls_metadata::{
+    fchmodat, fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback,
+    utimensat, utimensat_via_sandbox_or_fallback,
 };
 
 /// Parent-dirfd carrier threaded through the receiver pipeline.
