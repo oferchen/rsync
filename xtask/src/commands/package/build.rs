@@ -46,7 +46,6 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
             "install the cargo-deb subcommand (cargo install cargo-deb)",
         )?;
 
-        // Rename output file to include variant suffix if specified
         if let Some(variant) = &options.deb_variant {
             rename_deb_with_variant_suffix(workspace, &branding, &options.profile, variant)?;
         }
@@ -608,7 +607,6 @@ fn rename_deb_with_variant_suffix(
             )) && filename.ends_with(".deb")
                 && !filename.contains(&format!("_{variant}.deb"))
             {
-                // Insert variant before .deb extension
                 let new_filename = filename.replace(".deb", &format!("_{variant}.deb"));
                 let new_path = deb_dir.join(&new_filename);
                 fs::rename(&path, &new_path).map_err(|error| {

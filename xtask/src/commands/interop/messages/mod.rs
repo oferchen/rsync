@@ -38,9 +38,8 @@ fn regenerate_goldens(workspace: &Path, options: MessagesOptions) -> TaskResult<
     use super::shared::upstream;
 
     eprintln!("[interop] Message validation: Regenerate mode");
-    eprintln!("[interop] Note: Message scenarios use the same scenarios as exit code testing");
+    eprintln!("[interop] Note: Message scenarios reuse the exit code scenario set");
 
-    // Reuse exit code scenarios to capture their messages.
     let scenarios_path = workspace.join("tests/interop/exit_codes/scenarios.toml");
     if !scenarios_path.exists() {
         return Err(crate::error::TaskError::Metadata(format!(

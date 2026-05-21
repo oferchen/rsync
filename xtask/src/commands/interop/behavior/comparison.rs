@@ -143,7 +143,6 @@ pub fn compare_results(
 ) -> Vec<Difference> {
     let mut differences = Vec::new();
 
-    // Compare exit codes
     if scenario.compare_exit_code() && oc_rsync.exit_code != upstream.exit_code {
         differences.push(Difference::ExitCode {
             oc_rsync: oc_rsync.exit_code,
@@ -151,7 +150,6 @@ pub fn compare_results(
         });
     }
 
-    // Compare files
     if scenario.compare_files() {
         differences.extend(compare_file_states(
             &oc_rsync.files,
@@ -174,7 +172,6 @@ fn compare_file_states(
     let oc_paths = oc_rsync.paths();
     let up_paths = upstream.paths();
 
-    // Files in oc-rsync but not upstream
     for path in oc_paths.difference(&up_paths) {
         differences.push(Difference::FileMissing {
             path: path.clone(),
@@ -183,7 +180,6 @@ fn compare_file_states(
         });
     }
 
-    // Files in upstream but not oc-rsync
     for path in up_paths.difference(&oc_paths) {
         differences.push(Difference::FileMissing {
             path: path.clone(),
@@ -192,7 +188,6 @@ fn compare_file_states(
         });
     }
 
-    // Compare common files
     for path in oc_paths.intersection(&up_paths) {
         let oc_entry = oc_rsync.get(path).unwrap();
         let up_entry = upstream.get(path).unwrap();
@@ -200,7 +195,6 @@ fn compare_file_states(
         differences.extend(compare_entries(path, oc_entry, up_entry, scenario));
     }
 
-    // Compare hardlink structure if requested
     if scenario.compare_hardlinks() {
         differences.extend(compare_hardlinks(oc_rsync, upstream));
     }
@@ -217,18 +211,16 @@ fn compare_entries(
 ) -> Vec<Difference> {
     let mut differences = Vec::new();
 
-    // Compare file types
     if oc_entry.file_type != up_entry.file_type {
         differences.push(Difference::FileTypeDiffers {
             path: path.to_path_buf(),
             oc_rsync: format!("{:?}", oc_entry.file_type),
             upstream: format!("{:?}", up_entry.file_type),
         });
-        // If types differ, don't compare further
+        // Skip further checks; subsequent comparisons assume matching types.
         return differences;
     }
 
-    // Compare content for regular files
     if oc_entry.file_type == FileType::Regular && oc_entry.content != up_entry.content {
         differences.push(Difference::ContentDiffers {
             path: path.to_path_buf(),
@@ -237,7 +229,6 @@ fn compare_entries(
         });
     }
 
-    // Compare symlink targets
     if scenario.compare_symlinks()
         && oc_entry.file_type == FileType::Symlink
         && oc_entry.symlink_target != up_entry.symlink_target
@@ -249,9 +240,8 @@ fn compare_entries(
         });
     }
 
-    // Compare permissions
     if scenario.compare_permissions() {
-        // Only compare permission bits, not file type bits
+        // Mask off file type bits; we only care about permission bits here.
         let oc_perms = oc_entry.mode & 0o7777;
         let up_perms = up_entry.mode & 0o7777;
         if oc_perms != up_perms {
@@ -273,7 +263,7 @@ fn compare_hardlinks(oc_rsync: &FileState, upstream: &FileState) -> Vec<Differen
     let oc_groups = oc_rsync.hardlink_groups();
     let up_groups = upstream.hardlink_groups();
 
-    // Normalize groups to sets of paths for comparison
+    // Normalise groups into sorted vectors so set comparison is order-insensitive.
     let oc_sets: std::collections::HashSet<_> = oc_groups
         .values()
         .map(|v| {
@@ -292,14 +282,12 @@ fn compare_hardlinks(oc_rsync: &FileState, upstream: &FileState) -> Vec<Differen
         })
         .collect();
 
-    // Check for hardlink groups in oc-rsync but not upstream
     for group in oc_sets.difference(&up_sets) {
         differences.push(Difference::HardlinksDiffer {
             description: format!("Hardlink group {:?} exists only in oc-rsync result", group),
         });
     }
 
-    // Check for hardlink groups in upstream but not oc-rsync
     for group in up_sets.difference(&oc_sets) {
         differences.push(Difference::HardlinksDiffer {
             description: format!("Hardlink group {:?} exists only in upstream result", group),

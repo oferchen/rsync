@@ -1,8 +1,4 @@
 //! CLI argument parsing using clap.
-//!
-//! This module provides the command-line interface definition for xtask using
-//! clap's derive macros. It replaces the previous manual argument parsing with
-//! a declarative, type-safe approach.
 
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;

@@ -206,7 +206,6 @@ impl MessageScenario {
             ))
         })?;
 
-        // Display output if requested
         if options.show_output {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);

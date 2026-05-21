@@ -10,9 +10,9 @@ use std::process::{Command, Output};
 
 /// Command-object wrapper for invoking `cargo` in a given workspace.
 ///
-/// This encapsulates the common setup for cargo invocations (workspace, args,
-/// env overrides, display string, install hint) so higher-level helpers can
-/// focus on interpreting the result instead of wiring up `Command` every time.
+/// Encapsulates the common setup (workspace, args, env overrides, display
+/// string, install hint) so higher-level helpers can focus on interpreting the
+/// result instead of wiring up `Command` every time.
 struct CargoCommand<'a> {
     workspace: &'a Path,
     args: Vec<OsString>,
@@ -63,8 +63,8 @@ impl<'a> CargoCommand<'a> {
 
 /// Shared mapper for failed cargo invocations.
 ///
-/// This centralizes the "no such subcommand" translation into `ToolMissing` and
-/// otherwise returns a `CommandFailed` error.
+/// Translates "no such subcommand" stderr into `ToolMissing`; otherwise
+/// returns `CommandFailed`.
 fn map_cargo_failure(
     display: &str,
     install_hint: &str,
@@ -198,7 +198,7 @@ pub fn run_cargo_tool_with_env(
         return Ok(());
     }
 
-    // Surface stdout/stderr for diagnostics (especially useful in CI on Windows).
+    // Surface stdout/stderr for diagnostics, especially in CI on Windows.
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -223,7 +223,6 @@ pub fn probe_cargo_tool(
     display: &str,
     install_hint: &str,
 ) -> TaskResult<()> {
-    // Reuse the same Command Object for probing; only the failure mapping differs.
     let args_os: Vec<OsString> = args.iter().map(|arg| OsString::from(*arg)).collect();
 
     let output = CargoCommand::new(workspace, display, install_hint)
@@ -234,7 +233,7 @@ pub fn probe_cargo_tool(
         return Ok(());
     }
 
-    // For probes, keep the slightly different label used in existing tests.
+    // Probe failures use a distinct program label so tests can disambiguate.
     let program_label = Some(format!("{display} (probe)"));
     Err(map_cargo_failure(
         display,
@@ -327,10 +326,7 @@ mod tests {
             .output()
         {
             Ok(output) => output,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // Skip test if rustup is not available
-                return;
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
             Err(e) => panic!("query installed rustup targets: {e}"),
         };
         assert!(output.status.success(), "rustup reported an error");
@@ -356,7 +352,6 @@ mod tests {
     #[test]
     fn ensure_rust_target_installed_respects_forced_missing_env() {
         if !rustup_available() {
-            // Skip test if rustup is not available
             return;
         }
         let mut guard = EnvGuard::new();
@@ -371,7 +366,6 @@ mod tests {
     #[test]
     fn ensure_rust_target_installed_respects_missing_add_command() {
         if !rustup_available() {
-            // Skip test if rustup is not available
             return;
         }
         let mut guard = EnvGuard::new();
