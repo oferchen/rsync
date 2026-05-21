@@ -37,7 +37,7 @@
 //! `DeltaConsumer` pattern already covers that case).
 
 use std::io::{self, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use checksums::strong::strategy::{
     ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector,
@@ -277,6 +277,137 @@ impl FileSlot {
     }
 }
 
+/// Per-slot barrier primitive backing FFB-1 / FFB-2.
+///
+/// Colocates the file's [`Mutex<FileSlot>`] with an in-flight worker
+/// counter and a [`Condvar`] so `flush_workers(ndx)` can block the caller
+/// until every outstanding [`SlotHandle`] for `ndx` has been dropped. The
+/// counter sits behind its own [`Mutex`] so the barrier wait never
+/// contends with the per-file write critical section: workers take the
+/// slot mutex to write, and the counter mutex only to bump or decrement.
+///
+/// Holding the per-slot [`Arc`] is the unit of "in-flight"; the counter
+/// tracks how many of those `Arc` clones are currently outstanding so the
+/// `Condvar` can fire deterministically the moment the last clone drops.
+struct SlotBarrier {
+    slot: Mutex<FileSlot>,
+    inflight: Mutex<usize>,
+    notify: Condvar,
+}
+
+impl SlotBarrier {
+    fn new(slot: FileSlot) -> Self {
+        Self {
+            slot: Mutex::new(slot),
+            inflight: Mutex::new(0),
+            notify: Condvar::new(),
+        }
+    }
+
+    /// Locks the per-file slot mutex, mapping a poisoned mutex to the
+    /// typed [`ParallelApplyError::SlotPoisoned`] error.
+    fn lock_slot(&self, ndx: FileNdx, kind: &'static str) -> io::Result<MutexGuard<'_, FileSlot>> {
+        self.slot
+            .lock()
+            .map_err(|_| ParallelApplyError::SlotPoisoned { ndx, kind }.into())
+    }
+
+    /// Bumps the in-flight counter for this slot. Called by [`SlotHandle::new`]
+    /// once the caller has obtained an [`Arc<SlotBarrier>`] clone from
+    /// [`ParallelDeltaApplier::slot_for`].
+    fn increment_inflight(&self) {
+        let mut guard = self
+            .inflight
+            .lock()
+            .expect("inflight mutex poisoned on increment");
+        *guard = guard.checked_add(1).expect("inflight counter overflow");
+    }
+
+    /// Drops the in-flight counter back by one and wakes any waiter parked
+    /// on the [`Condvar`]. Invoked from [`DecrementGuard::drop`] so the
+    /// bookkeeping stays exception-safe across early returns and panics.
+    fn decrement_inflight(&self) {
+        let mut guard = self
+            .inflight
+            .lock()
+            .expect("inflight mutex poisoned on decrement");
+        // Saturating subtract: a poisoned-then-rebuilt path that observes
+        // zero must not panic the worker on its way out. The counter is
+        // an internal bookkeeping primitive, not a security invariant.
+        *guard = guard.saturating_sub(1);
+        // Wake every waiter; `flush_workers` re-checks the predicate under
+        // the mutex so spurious wakeups are harmless.
+        self.notify.notify_all();
+    }
+
+    /// Blocks the calling thread until the in-flight counter reaches zero.
+    /// Spurious wakeups are filtered by the loop predicate.
+    fn wait_until_idle(&self, ndx: FileNdx, kind: &'static str) -> io::Result<()> {
+        let guard = self
+            .inflight
+            .lock()
+            .map_err(|_| ParallelApplyError::SlotPoisoned { ndx, kind })?;
+        let _final = self
+            .notify
+            .wait_while(guard, |inflight| *inflight > 0)
+            .map_err(|_| ParallelApplyError::SlotPoisoned { ndx, kind })?;
+        Ok(())
+    }
+}
+
+/// RAII guard returned alongside a [`SlotHandle`] that decrements the
+/// per-slot in-flight counter when dropped. Keeping the decrement in a
+/// dedicated drop type makes the bookkeeping exception-safe: if the worker
+/// panics mid-write or returns early via `?`, the counter still drops
+/// back to its pre-handoff value and `flush_workers` unblocks.
+struct DecrementGuard {
+    barrier: Arc<SlotBarrier>,
+}
+
+impl Drop for DecrementGuard {
+    fn drop(&mut self) {
+        self.barrier.decrement_inflight();
+    }
+}
+
+/// Handle returned from [`ParallelDeltaApplier::slot_for`].
+///
+/// Wraps an [`Arc<SlotBarrier>`] so callers can lock the per-file slot
+/// mutex via [`SlotHandle::lock_slot`]. The companion [`DecrementGuard`]
+/// keeps the slot's in-flight counter accurate for the entire lifetime of
+/// the handle, including early returns and panics: the counter increments
+/// when [`SlotHandle::new`] runs and decrements when the handle drops.
+///
+/// The handle deliberately does not expose the bare [`Arc`] - callers go
+/// through [`SlotHandle::lock_slot`] so the FFB-1 invariant ("every clone
+/// outstanding is reflected in the inflight counter") cannot be bypassed.
+struct SlotHandle {
+    barrier: Arc<SlotBarrier>,
+    _decrement: DecrementGuard,
+}
+
+impl SlotHandle {
+    /// Bumps the slot's in-flight counter and returns the handle. The
+    /// counter is decremented when the returned handle is dropped.
+    fn new(barrier: Arc<SlotBarrier>) -> Self {
+        barrier.increment_inflight();
+        let decrement = DecrementGuard {
+            barrier: Arc::clone(&barrier),
+        };
+        Self {
+            barrier,
+            _decrement: decrement,
+        }
+    }
+
+    /// Locks the per-file [`FileSlot`] for the duration of the returned
+    /// guard. The in-flight counter remains held by `self`; the lock
+    /// covers only the per-file write critical section.
+    fn lock_slot(&self, ndx: FileNdx, kind: &'static str) -> io::Result<MutexGuard<'_, FileSlot>> {
+        self.barrier.lock_slot(ndx, kind)
+    }
+}
+
 /// CPU-bound verification result handed back from the rayon worker so the
 /// owning thread can run the serial per-file write under the per-file mutex.
 #[derive(Debug)]
@@ -305,13 +436,14 @@ struct VerifiedChunk {
 pub struct ParallelDeltaApplier {
     /// Per-file slots keyed by NDX. The outer map is a [`DashMap`] so the
     /// register/lookup path shards under a fixed number of internal locks
-    /// instead of serialising every operation behind one [`Mutex`]. The
-    /// per-file slot keeps its own inner [`Mutex`] so writes for a single
-    /// file remain serial without ever blocking another file. The BR-3j.a
-    /// audit (see `docs/audits/br-3j-a-dashmap-vs-sharded-2026-05-20.md`)
-    /// selected DashMap as the right fit for the access pattern: short
-    /// guard windows, no iteration in the hot path, and write rates that
-    /// scale with file count rather than chunk count.
+    /// instead of serialising every operation behind one [`Mutex`]. Each
+    /// slot value is an [`Arc<SlotBarrier>`] that wraps the per-file
+    /// [`Mutex<FileSlot>`] alongside the in-flight counter and [`Condvar`]
+    /// that back FFB-2's `flush_workers` barrier. The BR-3j.a audit (see
+    /// `docs/audits/br-3j-a-dashmap-vs-sharded-2026-05-20.md`) selected
+    /// DashMap as the right fit for the access pattern: short guard
+    /// windows, no iteration in the hot path, and write rates that scale
+    /// with file count rather than chunk count.
     ///
     /// # Locking discipline
     ///
@@ -319,8 +451,10 @@ pub struct ParallelDeltaApplier {
     /// `get`/`entry` before doing any work longer than an [`Arc::clone`]
     /// or a small struct write. Holding a shard guard across a wait,
     /// `rayon::join`, or a per-file mutex lock would re-introduce the
-    /// outer-map contention the migration was designed to eliminate.
-    files: DashMap<FileNdx, Arc<Mutex<FileSlot>>>,
+    /// outer-map contention the migration was designed to eliminate. In
+    /// particular, the barrier wait in `flush_workers` blocks on the
+    /// slot's own [`Condvar`] and never re-acquires a shard guard.
+    files: DashMap<FileNdx, Arc<SlotBarrier>>,
     /// Reorder-buffer capacity per file. Bounded so a stalled file does not
     /// pin unbounded memory.
     per_file_reorder_capacity: usize,
@@ -436,7 +570,7 @@ impl ParallelDeltaApplier {
         // only holds long enough to check vacancy and move the prebuilt
         // Arc into the map. Single shard write lock; no contention on
         // unrelated NDX values.
-        let slot = Arc::new(Mutex::new(FileSlot::new(
+        let slot = Arc::new(SlotBarrier::new(FileSlot::new(
             writer,
             self.per_file_reorder_capacity,
         )));
@@ -482,10 +616,13 @@ impl ParallelDeltaApplier {
     /// submissions), or the per-chunk strong-checksum verification fails
     /// when [`DeltaChunk::expected_strong`] was attached.
     pub fn apply_one_chunk(&self, chunk: DeltaChunk) -> io::Result<()> {
-        // `slot_for` returns an `Arc` clone and drops the DashMap shard
-        // guard before returning, so the rayon verify below never blocks
-        // shard-mates on unrelated NDX values.
-        let slot = self.slot_for(chunk.ndx)?;
+        // `slot_for` returns a [`SlotHandle`] (RAII guard around an
+        // `Arc<SlotBarrier>` clone) and drops the DashMap shard guard
+        // before returning, so the rayon verify below never blocks
+        // shard-mates on unrelated NDX values. The handle's drop fires
+        // `flush_workers`-visible decrement once this call returns.
+        let ndx = chunk.ndx;
+        let handle = self.slot_for(ndx)?;
         // `rayon::join` schedules the verify on a worker thread when the
         // caller is inside the rayon pool; outside the pool it falls back
         // to the calling thread, which keeps single-threaded callers cheap.
@@ -493,9 +630,7 @@ impl ParallelDeltaApplier {
         let (verified, _) = rayon::join(|| Self::verify_chunk(strategy.as_ref(), chunk), || ());
         let verified = verified?;
 
-        let mut slot = slot
-            .lock()
-            .map_err(|_| io::Error::other("parallel applier file slot poisoned"))?;
+        let mut slot = handle.lock_slot(ndx, "apply_one_chunk")?;
         let _ = verified.digest; // reserved for future stats wiring
         slot.ingest(verified.chunk)
     }
@@ -532,10 +667,9 @@ impl ParallelDeltaApplier {
         let verified = verified?;
 
         for v in verified {
-            let slot = self.slot_for(v.chunk.ndx)?;
-            let mut slot = slot
-                .lock()
-                .map_err(|_| io::Error::other("parallel applier file slot poisoned"))?;
+            let ndx = v.chunk.ndx;
+            let handle = self.slot_for(ndx)?;
+            let mut slot = handle.lock_slot(ndx, "apply_batch_parallel")?;
             slot.ingest(v.chunk)?;
         }
         Ok(())
@@ -549,10 +683,8 @@ impl ParallelDeltaApplier {
     /// mutex is poisoned.
     pub fn bytes_written(&self, ndx: impl Into<FileNdx>) -> io::Result<u64> {
         let ndx = ndx.into();
-        let slot = self.slot_for(ndx)?;
-        let slot = slot
-            .lock()
-            .map_err(|_| io::Error::other("parallel applier file slot poisoned"))?;
+        let handle = self.slot_for(ndx)?;
+        let slot = handle.lock_slot(ndx, "bytes_written")?;
         Ok(slot.bytes_written())
     }
 
@@ -570,6 +702,14 @@ impl ParallelDeltaApplier {
     /// per-file reorder buffer still holds undelivered chunks.
     pub fn finish_file(&self, ndx: impl Into<FileNdx>) -> io::Result<Box<dyn Write + Send>> {
         let ndx = ndx.into();
+        // FFB-1 Option D: bake the barrier into `finish_file` so callers
+        // never have to sequence `flush_workers` + `finish_file`
+        // themselves. The barrier waits for every outstanding
+        // `SlotHandle` clone (the unit of "in-flight" worker) to drop
+        // before we attempt the `Arc::try_unwrap` below. The lookup is
+        // a no-op if the slot is already absent, but here we know it
+        // exists or we will surface "unknown" on the subsequent remove.
+        self.flush_workers(ndx)?;
         // `DashMap::remove` returns the owned `(K, V)` and drops the shard
         // guard immediately; the `Arc::try_unwrap` work below happens
         // outside the shard lock.
@@ -577,12 +717,44 @@ impl ParallelDeltaApplier {
             .files
             .remove(&ndx)
             .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))?;
-        let slot = Arc::try_unwrap(slot_arc)
-            .map_err(|still_shared| ParallelApplyError::ApplierStillReferenced {
+        // Post-barrier release-race window: `flush_workers` waits for
+        // `inflight==0` via the Condvar, which fires from
+        // `DecrementGuard::drop` *before* the guard's own
+        // `Arc<SlotBarrier>` clone has been released (the notify happens
+        // inside the drop body; the inner Arc only drops after the body
+        // returns). The window is typically nanoseconds but is reliably
+        // observable on Windows under load. Spin-then-yield until the
+        // worker's drop completes; the worker is past the notify and its
+        // drop fn is just about to return so the wait is bounded.
+        let mut spin = 0u32;
+        while Arc::strong_count(&slot_arc) > 1 {
+            spin = spin.saturating_add(1);
+            if spin >= 1_000 {
+                // Past the typical drop window - surface the typed error
+                // so a real bug (e.g. caller raced a new `slot_for`
+                // against `finish_file`) does not hide forever.
+                return Err(ParallelApplyError::ApplierStillReferenced {
+                    ndx,
+                    strong_count: Arc::strong_count(&slot_arc),
+                    kind: "finish_file",
+                }
+                .into());
+            }
+            if spin < 32 {
+                std::hint::spin_loop();
+            } else {
+                std::thread::yield_now();
+            }
+        }
+        let barrier = Arc::try_unwrap(slot_arc).map_err(|still_shared| {
+            ParallelApplyError::ApplierStillReferenced {
                 ndx,
                 strong_count: Arc::strong_count(&still_shared),
                 kind: "finish_file",
-            })?
+            }
+        })?;
+        let slot = barrier
+            .slot
             .into_inner()
             .map_err(|_| ParallelApplyError::SlotPoisoned {
                 ndx,
@@ -599,15 +771,80 @@ impl ParallelDeltaApplier {
         Ok(slot.writer)
     }
 
-    fn slot_for(&self, ndx: FileNdx) -> io::Result<Arc<Mutex<FileSlot>>> {
+    /// Blocks the calling thread until every outstanding [`SlotHandle`]
+    /// for `ndx` has been dropped.
+    ///
+    /// Each call to [`Self::apply_one_chunk`] or
+    /// [`Self::apply_batch_parallel`] obtains a [`SlotHandle`] from
+    /// [`Self::slot_for`] that bumps the slot's in-flight counter for the
+    /// duration of the call (decrement on drop). `flush_workers` parks on
+    /// the slot's [`Condvar`] until that counter is observed to be zero.
+    /// Spurious wakeups are filtered by the wait-while predicate.
+    ///
+    /// Returns [`Ok`] immediately if `ndx` is not registered (or has
+    /// already been finalised through [`Self::finish_file`]); the absence
+    /// of a slot is the same observable outcome as a fully-drained slot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] only if the slot's in-flight mutex was
+    /// poisoned by a panicking worker. In that case the typed
+    /// [`ParallelApplyError::SlotPoisoned`] variant carries the offending
+    /// `ndx` and the `"flush_workers"` call-site tag.
+    pub fn flush_workers(&self, ndx: impl Into<FileNdx>) -> io::Result<()> {
+        let ndx = ndx.into();
+        // Look up the slot, clone the `Arc<SlotBarrier>`, drop the shard
+        // guard before waiting. This keeps the DashMap shard available to
+        // other NDX values while the caller blocks on the slot's own
+        // condvar, preserving the BR-3j.c shard-discipline contract.
+        let barrier = match self.files.get(&ndx) {
+            Some(guard) => Arc::clone(guard.value()),
+            None => return Ok(()),
+        };
+        barrier.wait_until_idle(ndx, "flush_workers")
+    }
+
+    /// Blocks until every registered slot in the applier has zero in-flight
+    /// workers.
+    ///
+    /// Implemented as a thin loop over [`Self::flush_workers`] (FFB-1
+    /// Option B). Used by panic/abort/shutdown paths that need to retire
+    /// every slot in one shot; normal per-file completion goes through
+    /// [`Self::finish_file`]'s baked-in barrier instead.
+    ///
+    /// Snapshots the current set of registered file indices before
+    /// iterating so no shard guard is held across a wait. Files
+    /// registered after the snapshot are intentionally skipped: the
+    /// caller asked to drain the workers that exist now, not to chase
+    /// new submissions arriving after the call.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`io::Error`] surfaced by [`Self::flush_workers`]
+    /// (poisoned inflight mutex on a slot).
+    pub fn drain_inflight(&self) -> io::Result<()> {
+        // Snapshot the keys without holding any shard guard during the
+        // subsequent waits.
+        let keys: Vec<FileNdx> = self.files.iter().map(|entry| *entry.key()).collect();
+        for ndx in keys {
+            self.flush_workers(ndx)?;
+        }
+        Ok(())
+    }
+
+    fn slot_for(&self, ndx: FileNdx) -> io::Result<SlotHandle> {
         // Clone the per-file `Arc` while the shard read guard is alive,
         // then drop the guard at the end of this expression. Callers
         // never see the DashMap guard, so they cannot accidentally hold
-        // it across the per-file mutex lock or a rayon dispatch.
-        self.files
+        // it across the per-file mutex lock or a rayon dispatch. The
+        // returned [`SlotHandle`] bumps the slot's in-flight counter for
+        // the duration of its lifetime so `flush_workers` can wait on it.
+        let barrier = self
+            .files
             .get(&ndx)
             .map(|guard| Arc::clone(guard.value()))
-            .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))
+            .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))?;
+        Ok(SlotHandle::new(barrier))
     }
 
     /// Pure CPU step that the rayon worker runs.
@@ -900,32 +1137,225 @@ mod tests {
     }
 
     #[test]
-    fn finish_file_reports_typed_applier_still_referenced_with_strong_count() {
-        // Force a leaked Arc clone of the per-file slot by holding the
-        // result of `slot_for` across the `finish_file` call. The drain
-        // must surface the residual strong-count via the typed error
-        // (mapped to io::Error at the public boundary).
+    fn flush_workers_returns_immediately_when_no_inflight() {
+        // FFB-2: with no apply calls outstanding, `flush_workers` must
+        // observe zero in-flight handles and return without blocking.
         let applier = ParallelDeltaApplier::new(1);
-        let cursor: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        applier.register_file(0u32, Box::new(cursor)).unwrap();
-        let _leaked = applier.slot_for(FileNdx::new(0)).expect("slot registered");
+        let (sink, _) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+        let start = std::time::Instant::now();
+        applier.flush_workers(0u32).expect("flush_workers");
+        // Generous bound so loaded CI hosts do not flake; the call must
+        // be effectively instant because the inflight counter starts at
+        // zero and no worker is registered.
+        assert!(
+            start.elapsed() < std::time::Duration::from_millis(50),
+            "flush_workers should not block when nothing is in flight"
+        );
+    }
 
-        let Err(err) = applier.finish_file(0u32) else {
-            panic!("slot is still referenced by leaked clone");
-        };
-        let msg = err.to_string();
-        assert!(msg.contains("finish_file"), "msg was: {msg}");
-        assert!(msg.contains("ndx=0"), "msg was: {msg}");
-        assert!(msg.contains("strong_count="), "msg was: {msg}");
+    #[test]
+    fn flush_workers_returns_ok_for_unknown_ndx() {
+        // FFB-2: absent slot is the same observable outcome as
+        // fully-drained slot; the API contract is "wait until idle", and
+        // a slot that does not exist is idle by definition.
+        let applier = ParallelDeltaApplier::new(1);
+        applier.flush_workers(99u32).expect("no-op flush_workers");
+    }
 
-        // Parse the strong_count out of the message and verify it is >= 2.
-        let count_str = msg
-            .split("strong_count=")
-            .nth(1)
-            .and_then(|tail| tail.split(|c: char| !c.is_ascii_digit()).next())
-            .expect("strong_count token present");
-        let count: usize = count_str.parse().expect("strong_count is a number");
-        assert!(count >= 2, "expected strong_count >= 2, got {count}");
+    #[test]
+    fn flush_workers_blocks_until_worker_drops_arc() {
+        // FFB-2: a worker thread holds a SlotHandle clone for ~50ms;
+        // flush_workers must not return until the handle drops. Uses
+        // raw `slot_for` to exercise the barrier directly without going
+        // through `apply_one_chunk` (which internally bounds the
+        // handle lifetime to the call itself).
+        let applier = Arc::new(ParallelDeltaApplier::new(1));
+        let (sink, _) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel::<()>();
+        let worker_applier = Arc::clone(&applier);
+        let hold_duration = std::time::Duration::from_millis(50);
+        let worker = std::thread::spawn(move || {
+            let handle = worker_applier
+                .slot_for(FileNdx::new(0))
+                .expect("slot registered");
+            acquired_tx.send(()).expect("handshake send");
+            std::thread::sleep(hold_duration);
+            drop(handle);
+        });
+
+        // Wait for the worker to acquire its handle deterministically.
+        // The sleep-based barrier raced on macOS nightly when the OS
+        // didn't schedule the worker before the main thread started the
+        // timer, causing flush_workers to return immediately (inflight=0)
+        // and the elapsed-time assertion to fire.
+        acquired_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("worker acquired handle");
+
+        let start = std::time::Instant::now();
+        applier.flush_workers(0u32).expect("flush_workers");
+        let elapsed = start.elapsed();
+        worker.join().expect("worker thread");
+        assert!(
+            elapsed >= std::time::Duration::from_millis(40),
+            "flush_workers returned too early: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn drain_inflight_drains_all_files() {
+        // FFB-2: register N files, hand a SlotHandle clone out to a
+        // worker per file, call drain_inflight, assert it blocks until
+        // every worker drops its handle.
+        const N: u32 = 6;
+        let applier = Arc::new(ParallelDeltaApplier::new(2));
+        for ndx in 0..N {
+            let (sink, _) = VecSink::new();
+            applier.register_file(ndx, Box::new(sink)).unwrap();
+        }
+
+        let hold_duration = std::time::Duration::from_millis(40);
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel::<()>();
+        let mut handles = Vec::with_capacity(N as usize);
+        for ndx in 0..N {
+            let worker_applier = Arc::clone(&applier);
+            let acquired_tx = acquired_tx.clone();
+            handles.push(std::thread::spawn(move || {
+                let handle = worker_applier
+                    .slot_for(FileNdx::new(ndx))
+                    .expect("slot registered");
+                acquired_tx.send(()).expect("handshake send");
+                std::thread::sleep(hold_duration);
+                drop(handle);
+            }));
+        }
+        drop(acquired_tx);
+
+        // Wait for every worker to grab its handle before the drain call.
+        // Replaces a sleep-based barrier that raced on macOS where workers
+        // had not yet entered slot_for when drain_inflight was invoked.
+        for _ in 0..N {
+            acquired_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("worker acquired handle");
+        }
+
+        let start = std::time::Instant::now();
+        applier.drain_inflight().expect("drain_inflight");
+        let elapsed = start.elapsed();
+        for h in handles {
+            h.join().expect("worker thread");
+        }
+        assert!(
+            elapsed >= std::time::Duration::from_millis(30),
+            "drain_inflight returned before workers dropped: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn finish_file_calls_flush_workers_internally() {
+        // FFB-2 Option D: finish_file bakes the barrier in. A worker
+        // that holds a SlotHandle clone for a bounded duration must not
+        // cause finish_file to return ApplierStillReferenced; instead
+        // finish_file blocks until the worker drops the handle, then
+        // succeeds.
+        //
+        // The handshake replaces the previous sleep-based "let the
+        // worker get going" coordination, which raced on macOS where
+        // the main thread reached finish_file before the worker had
+        // acquired the SlotHandle (inflight stayed 0, the barrier
+        // returned immediately, and the elapsed-time assertion fired).
+        let applier = Arc::new(ParallelDeltaApplier::new(1));
+        let (sink, _) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel::<()>();
+        let worker_applier = Arc::clone(&applier);
+        let worker = std::thread::spawn(move || {
+            let handle = worker_applier
+                .slot_for(FileNdx::new(0))
+                .expect("slot registered");
+            acquired_tx.send(()).expect("handshake send");
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            drop(handle);
+        });
+        acquired_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("worker acquired handle");
+
+        let start = std::time::Instant::now();
+        let _writer = applier.finish_file(0u32).expect("finish_file");
+        let elapsed = start.elapsed();
+        worker.join().expect("worker thread");
+        assert!(
+            elapsed >= std::time::Duration::from_millis(30),
+            "finish_file returned before worker dropped: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn flush_workers_survives_spurious_wakeup() {
+        // Condvars are permitted to wake spuriously; the wait_while
+        // predicate in `SlotBarrier::wait_until_idle` must re-check
+        // under the mutex and continue waiting. We exercise the
+        // predicate by notifying the slot's condvar manually while the
+        // inflight counter is still > 0, then verifying flush_workers
+        // only returns once the counter actually reaches zero. The
+        // AtomicBool gate proves the flusher did not exit until the
+        // handle drop fired the real (non-spurious) decrement.
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let applier = Arc::new(ParallelDeltaApplier::new(1));
+        let (sink, _) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+
+        // Grab a handle to bump inflight to 1, then arrange for spurious
+        // notifications to land while flush_workers is waiting.
+        let handle = applier.slot_for(FileNdx::new(0)).expect("slot registered");
+
+        // Snapshot the inner Arc so a sibling thread can notify the
+        // slot's condvar without going through the apply path.
+        let barrier = applier
+            .files
+            .get(&FileNdx::new(0))
+            .map(|guard| Arc::clone(guard.value()))
+            .expect("slot present");
+
+        let notifier_barrier = Arc::clone(&barrier);
+        let notifier = std::thread::spawn(move || {
+            for _ in 0..5 {
+                std::thread::sleep(std::time::Duration::from_millis(8));
+                notifier_barrier.notify.notify_all();
+            }
+        });
+
+        // Tracks whether the flusher returned before we released the
+        // handle. If the wait predicate was wrong and a spurious wakeup
+        // shipped through `wait_while`, the flusher would join before
+        // `released` flipped to true.
+        let released = Arc::new(AtomicBool::new(false));
+        let released_for_flusher = Arc::clone(&released);
+        let flush_applier = Arc::clone(&applier);
+        let flusher = std::thread::spawn(move || {
+            flush_applier.flush_workers(0u32).expect("flush_workers");
+            assert!(
+                released_for_flusher.load(Ordering::SeqCst),
+                "flush_workers returned before the slot handle was released - \
+                 spurious wakeup escaped the wait_while predicate"
+            );
+        });
+
+        // Let the notifier fire several spurious wakeups, then release
+        // the handle so the predicate finally evaluates to false.
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        released.store(true, Ordering::SeqCst);
+        drop(handle);
+
+        notifier.join().expect("notifier thread");
+        flusher.join().expect("flusher thread");
     }
 
     #[test]
