@@ -815,6 +815,12 @@ impl DeltaSignatureIndex {
     ///
     /// Reports the hot table only; chain-entry storage is excluded so the
     /// figure tracks the cache-resident slot array a probe touches first.
+    /// Test- and bench-only: measurement helper used by the cache-footprint
+    /// bench harness. Gated behind `test` and `bench-internal` so the binary
+    /// build (which excludes both) does not flag the call chain as dead
+    /// code (`CompactLookup::bucket_bytes` is `pub(super)` and rustc cannot
+    /// trace pub-to-restricted-pub usage through a public forwarder).
+    #[cfg(any(test, feature = "bench-internal"))]
     #[must_use]
     pub fn lookup_bytes(&self) -> usize {
         self.lookup.bucket_bytes()

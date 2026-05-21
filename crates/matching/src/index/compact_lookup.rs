@@ -214,11 +214,12 @@ impl CompactLookup {
     /// Returns the byte footprint of the bucket array allocation.
     ///
     /// The chain backing store is excluded so the figure tracks the
-    /// cache-resident hot table only. Exposed at crate-public visibility
-    /// so [`DeltaSignatureIndex::lookup_bytes`] forwards a measurement
-    /// helper that is reachable through the public API; `pub(super)`
-    /// gave dead-code false positives in the binary-only build path
-    /// because rustc cannot trace pub-to-restricted-pub call chains.
+    /// cache-resident hot table only. Gated behind `test` and
+    /// `bench-internal` because the only consumer is
+    /// [`crate::index::DeltaSignatureIndex::lookup_bytes`] which is also
+    /// test/bench-only; including this in the binary build trips dead-code
+    /// lint since rustc cannot trace pub-to-restricted-pub call chains.
+    #[cfg(any(test, feature = "bench-internal"))]
     pub fn bucket_bytes(&self) -> usize {
         self.buckets.len() * core::mem::size_of::<BucketSlot>()
     }
