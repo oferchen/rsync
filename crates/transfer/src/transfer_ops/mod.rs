@@ -175,6 +175,16 @@ impl RequestConfig<'_> {
 pub struct ResponseContext<'a> {
     /// Protocol and checksum configuration shared with the request phase.
     pub config: &'a RequestConfig<'a>,
+    /// SEC-1.e parent-dirfd carrier rooted at the destination tree.
+    ///
+    /// Threaded through to the per-entry response processing so the
+    /// SEC-1.f-j cutover sites can resolve relative names against a
+    /// sandboxed dirfd via `*at` syscalls instead of re-walking paths
+    /// through the kernel. `None` when the receiver could not open the
+    /// destination root (e.g. it does not exist yet). This PR (SEC-1.e)
+    /// only wires the carrier; no syscalls are migrated yet.
+    #[cfg(unix)]
+    pub sandbox: Option<&'a fast_io::DirSandbox>,
 }
 
 /// Reads and validates the echoed NDX and sum_head from the sender response.

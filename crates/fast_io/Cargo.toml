@@ -32,6 +32,10 @@ libc = { workspace = true }
 # rustix is used for statx syscall on Linux (always compiled, runtime detection)
 rustix = { workspace = true, features = ["fs"] }
 
+# Concurrent hash map for the DirSandbox secondary-operand side cache
+# (SEC-1.e); read-mostly lookups by canonical operand path.
+dashmap = { workspace = true }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Optional: io_uring support (Linux 5.6+)
 io-uring = { version = "0.7", optional = true }
