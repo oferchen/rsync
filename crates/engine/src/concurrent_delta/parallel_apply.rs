@@ -41,7 +41,7 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
 use checksums::strong::strategy::{
-    ChecksumAlgorithmKind, ChecksumStrategy, ChecksumStrategySelector,
+    ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector,
 };
 use rayon::prelude::*;
 use thiserror::Error;
@@ -106,6 +106,25 @@ pub enum ParallelApplyError {
         /// Static tag identifying the call site (e.g. `"finish_file"`).
         kind: &'static str,
     },
+    /// The strong checksum computed from `chunk.data` did not match the
+    /// expected digest the producer attached to the chunk. The receiver
+    /// must abort the chunk's file (or fall back to phase-2 redo) rather
+    /// than commit corrupted bytes.
+    #[error(
+        "ParallelDeltaApplier::verify_chunk: checksum mismatch for ndx={ndx} sequence={chunk_sequence} algorithm={algorithm} expected={expected} actual={actual}"
+    )]
+    ChecksumMismatch {
+        /// File index whose chunk failed verification.
+        ndx: FileNdx,
+        /// Per-file sequence number of the failing chunk.
+        chunk_sequence: u64,
+        /// Algorithm used for the digest comparison.
+        algorithm: ChecksumAlgorithmKind,
+        /// Expected digest as a hex string (from the chunk metadata).
+        expected: String,
+        /// Actual digest computed from `chunk.data`, as a hex string.
+        actual: String,
+    },
 }
 
 impl From<ParallelApplyError> for io::Error {
@@ -126,8 +145,8 @@ impl From<ParallelApplyError> for io::Error {
 /// per-file sequence number assigned at submission time.
 ///
 /// Chunks are CPU-light at this stage; the heavy step is the strong-checksum
-/// rollup that `ParallelDeltaApplier::verify_chunk` runs on a rayon
-/// worker.
+/// rollup that [`ParallelDeltaApplier::verify_chunk`] runs on a rayon worker
+/// using the negotiated [`ChecksumStrategy`].
 #[derive(Debug, Clone)]
 pub struct DeltaChunk {
     /// File this chunk belongs to.
@@ -144,10 +163,26 @@ pub struct DeltaChunk {
     /// so future stats reporting can split literal vs matched bytes without
     /// touching the public chunk shape.
     pub is_literal: bool,
+    /// Optional expected strong-checksum digest for `data`.
+    ///
+    /// When `Some`, [`ParallelDeltaApplier::verify_chunk`] computes the
+    /// digest of `data` using the negotiated strategy and compares it
+    /// byte-for-byte against this value. A mismatch produces a typed
+    /// [`ParallelApplyError::ChecksumMismatch`] so the receiver can fall
+    /// back to a phase-2 redo or abort the transfer; the corrupt bytes
+    /// never reach the destination writer.
+    ///
+    /// When `None`, the applier skips comparison but still computes the
+    /// digest for parity with the verified path (keeping CPU cost stable
+    /// across both shapes and exercising the strategy code path). Producers
+    /// that have not yet wired the per-chunk expected digest into the
+    /// receiver pipeline can leave this as `None` and the applier remains
+    /// backward-compatible.
+    pub expected_strong: Option<ChecksumDigest>,
 }
 
 impl DeltaChunk {
-    /// Builds a literal-data chunk.
+    /// Builds a literal-data chunk with no expected digest attached.
     #[must_use]
     pub fn literal(ndx: impl Into<FileNdx>, chunk_sequence: u64, data: Vec<u8>) -> Self {
         Self {
@@ -155,10 +190,11 @@ impl DeltaChunk {
             chunk_sequence,
             data,
             is_literal: true,
+            expected_strong: None,
         }
     }
 
-    /// Builds a basis-match chunk.
+    /// Builds a basis-match chunk with no expected digest attached.
     #[must_use]
     pub fn matched(ndx: impl Into<FileNdx>, chunk_sequence: u64, data: Vec<u8>) -> Self {
         Self {
@@ -166,7 +202,22 @@ impl DeltaChunk {
             chunk_sequence,
             data,
             is_literal: false,
+            expected_strong: None,
         }
+    }
+
+    /// Builder-style setter that attaches an expected strong-checksum
+    /// digest to this chunk.
+    ///
+    /// The receiver pipeline uses this to opt each chunk into real
+    /// per-chunk verification by [`ParallelDeltaApplier::verify_chunk`].
+    /// Callers that have not negotiated per-chunk checksums (or are
+    /// driving the applier from a bench/test that does not need the
+    /// extra comparison) can leave the field unset.
+    #[must_use]
+    pub fn with_expected_strong(mut self, expected: ChecksumDigest) -> Self {
+        self.expected_strong = Some(expected);
+        self
     }
 }
 
@@ -230,11 +281,13 @@ impl FileSlot {
 #[derive(Debug)]
 struct VerifiedChunk {
     chunk: DeltaChunk,
-    /// Strong-checksum rollup of `chunk.data`. Kept opaque (length-only) so
-    /// the scaffold does not commit to a particular strong-checksum
-    /// algorithm; the receiver supplies its own checksum verifier once the
-    /// wiring lands in phase 2 of the rollout plan.
-    digest_len: usize,
+    /// Strong-checksum digest computed for `chunk.data` using the
+    /// negotiated strategy. Equal to the chunk's `expected_strong` value
+    /// (when one was attached) by construction: a mismatch is reported as
+    /// a [`ParallelApplyError::ChecksumMismatch`] before this type is
+    /// constructed, so a `VerifiedChunk` is only ever produced for data
+    /// that has cleared verification.
+    digest: ChecksumDigest,
 }
 
 /// Parallel receive-side delta applier.
@@ -394,20 +447,23 @@ impl ParallelDeltaApplier {
     /// # Errors
     ///
     /// Returns an [`io::Error`] if the file is unknown, a slot mutex is
-    /// poisoned, the destination writer fails, or the per-file reorder
+    /// poisoned, the destination writer fails, the per-file reorder
     /// buffer overflows (a stalled file with unbounded out-of-order
-    /// submissions).
+    /// submissions), or the per-chunk strong-checksum verification fails
+    /// when [`DeltaChunk::expected_strong`] was attached.
     pub fn apply_chunk_parallel(&self, chunk: DeltaChunk) -> io::Result<()> {
         let slot = self.slot_for(chunk.ndx)?;
         // `rayon::join` schedules the verify on a worker thread when the
         // caller is inside the rayon pool; outside the pool it falls back
         // to the calling thread, which keeps single-threaded callers cheap.
-        let (verified, _) = rayon::join(|| Self::verify_chunk(chunk), || ());
+        let strategy = Arc::clone(&self.strategy);
+        let (verified, _) = rayon::join(|| Self::verify_chunk(strategy.as_ref(), chunk), || ());
+        let verified = verified?;
 
         let mut slot = slot
             .lock()
             .map_err(|_| io::Error::other("parallel applier file slot poisoned"))?;
-        let _ = verified.digest_len; // reserved for future stats wiring
+        let _ = verified.digest; // reserved for future stats wiring
         slot.ingest(verified.chunk)
     }
 
@@ -420,7 +476,9 @@ impl ParallelDeltaApplier {
     ///
     /// # Errors
     ///
-    /// Returns the first [`io::Error`] encountered while applying the batch.
+    /// Returns the first [`io::Error`] encountered while applying the
+    /// batch, including any per-chunk strong-checksum mismatch surfaced by
+    /// [`Self::verify_chunk`].
     pub fn apply_batch_parallel(&self, chunks: Vec<DeltaChunk>) -> io::Result<()> {
         if chunks.is_empty() {
             return Ok(());
@@ -432,11 +490,13 @@ impl ParallelDeltaApplier {
             self.concurrency.min(total)
         };
         let min_len = total.div_ceil(cap.max(1)).max(1);
-        let verified: Vec<VerifiedChunk> = chunks
+        let strategy = Arc::clone(&self.strategy);
+        let verified: Result<Vec<VerifiedChunk>, ParallelApplyError> = chunks
             .into_par_iter()
             .with_min_len(min_len)
-            .map(Self::verify_chunk)
+            .map(|chunk| Self::verify_chunk(strategy.as_ref(), chunk))
             .collect();
+        let verified = verified?;
 
         for v in verified {
             let slot = self.slot_for(v.chunk.ndx)?;
@@ -519,22 +579,57 @@ impl ParallelDeltaApplier {
             .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))
     }
 
-    /// Pure CPU step that the rayon worker runs. Currently a strong-rollup
-    /// of `chunk.data.len()` so the scaffold has a measurable verify cost
-    /// to amortise across cores; replaced with the real strong checksum
-    /// when the phase 2 wiring lands (see design doc 6.3).
+    /// Pure CPU step that the rayon worker runs.
     ///
-    /// BR-3i.b (#2498) only plumbs the negotiated strategy into the struct;
-    /// the dispatch to `self.strategy.compute(&chunk.data)` lands as a
-    /// one-function-body change in BR-3i.c (#2499). The stub behaviour is
-    /// preserved here so the wiring step is byte-identical for every caller.
-    fn verify_chunk(chunk: DeltaChunk) -> VerifiedChunk {
-        // The actual strong checksum is supplied by the receiver pipeline;
-        // here we only need to model the parallelisable cost so the
-        // scaffold's per-file ordering can be validated end-to-end.
-        let digest_len = chunk.data.len();
-        VerifiedChunk { chunk, digest_len }
+    /// Computes the strong checksum of `chunk.data` using the negotiated
+    /// `strategy` (see [`Self::with_strategy`]). When the chunk carries a
+    /// [`DeltaChunk::expected_strong`] digest, the computed value is
+    /// compared byte-for-byte against the expected one; a mismatch
+    /// produces a [`ParallelApplyError::ChecksumMismatch`] so the
+    /// receiver can abort the file or fall back to a phase-2 redo
+    /// without committing the corrupt bytes to the destination writer.
+    ///
+    /// When `expected_strong` is `None` the comparison is skipped, but
+    /// the digest is still computed so the parallel verify step has a
+    /// stable CPU cost regardless of whether the producer attached an
+    /// expectation. This preserves the cross-core amortisation the
+    /// design doc relies on while keeping the verified-vs-unverified
+    /// shapes interchangeable for backward-compatible callers.
+    ///
+    /// Implements BR-3i.c (#2499); the strategy plumbing landed in
+    /// BR-3i.b (#2498).
+    fn verify_chunk(
+        strategy: &dyn ChecksumStrategy,
+        chunk: DeltaChunk,
+    ) -> Result<VerifiedChunk, ParallelApplyError> {
+        let digest = strategy.compute(&chunk.data);
+        if let Some(expected) = chunk.expected_strong.as_ref() {
+            // `ChecksumDigest` carries both bytes and len; rely on its
+            // `PartialEq` impl which compares the active byte ranges and
+            // ignores the unused tail of the fixed-capacity buffer.
+            if expected != &digest {
+                return Err(ParallelApplyError::ChecksumMismatch {
+                    ndx: chunk.ndx,
+                    chunk_sequence: chunk.chunk_sequence,
+                    algorithm: strategy.algorithm_kind(),
+                    expected: hex_lower(expected.as_bytes()),
+                    actual: hex_lower(digest.as_bytes()),
+                });
+            }
+        }
+        Ok(VerifiedChunk { chunk, digest })
     }
+}
+
+/// Lowercase-hex formatter used in [`ParallelApplyError::ChecksumMismatch`]
+/// messages. Avoids pulling in a hex crate for a single, error-path use.
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(char::from_digit((b >> 4) as u32, 16).expect("hi nibble"));
+        out.push(char::from_digit((b & 0x0f) as u32, 16).expect("lo nibble"));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -859,10 +954,11 @@ mod tests {
     }
 
     #[test]
-    fn with_strategy_does_not_change_verify_chunk_behaviour() {
-        // BR-3i.b is plumbing-only. The verify stub still returns
-        // `digest_len = chunk.data.len()` regardless of the configured
-        // strategy until BR-3i.c lands the dispatch.
+    fn unverified_chunk_preserves_writer_byte_stream() {
+        // BR-3i.c: when a chunk carries no `expected_strong`, the applier
+        // still computes a digest (so the parallel verify path has stable
+        // CPU cost) but skips comparison, leaving the writer byte stream
+        // unchanged. Backward-compatible callers must keep working.
         let strategy: Arc<dyn ChecksumStrategy> = Arc::from(
             ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Xxh3, 0),
         );
@@ -874,5 +970,148 @@ mod tests {
             .unwrap();
         let _writer = applier.finish_file(0u32).unwrap();
         assert_eq!(buf.lock().unwrap().len(), 64);
+    }
+
+    /// Helper: builds a chunk whose `expected_strong` matches the digest
+    /// the supplied strategy will compute over `data`. Used by the BR-3i.c
+    /// happy-path tests so the fixture stays in lockstep with the
+    /// negotiated algorithm.
+    fn chunk_with_correct_digest(
+        strategy: &dyn ChecksumStrategy,
+        ndx: u32,
+        sequence: u64,
+        data: Vec<u8>,
+    ) -> DeltaChunk {
+        let digest = strategy.compute(&data);
+        DeltaChunk::literal(ndx, sequence, data).with_expected_strong(digest)
+    }
+
+    #[test]
+    fn verify_chunk_accepts_matching_digest_md5() {
+        // BR-3i.c happy path: MD5 (protocol >= 30 fallback) chunk with the
+        // correct expected digest applies cleanly and writes the original
+        // bytes to the sink.
+        let applier = ParallelDeltaApplier::new(1);
+        let strategy = Arc::clone(applier.strategy());
+        let (sink, buf) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+        let chunk = chunk_with_correct_digest(strategy.as_ref(), 0, 0, vec![0x42; 128]);
+        applier.apply_chunk_parallel(chunk).unwrap();
+        let _writer = applier.finish_file(0u32).unwrap();
+        assert_eq!(buf.lock().unwrap().len(), 128);
+        assert!(buf.lock().unwrap().iter().all(|&b| b == 0x42));
+    }
+
+    #[test]
+    fn verify_chunk_accepts_matching_digest_xxh3() {
+        // BR-3i.c happy path under the XXH3 negotiated algorithm: confirms
+        // the dispatch routes through the configured strategy, not a
+        // hard-coded MD5 path.
+        let strategy: Arc<dyn ChecksumStrategy> = Arc::from(
+            ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Xxh3, 0),
+        );
+        let applier = ParallelDeltaApplier::with_strategy(2, Arc::clone(&strategy));
+        let (sink, buf) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+        let chunk = chunk_with_correct_digest(strategy.as_ref(), 0, 0, vec![0xAA; 200]);
+        applier.apply_chunk_parallel(chunk).unwrap();
+        let _writer = applier.finish_file(0u32).unwrap();
+        assert_eq!(buf.lock().unwrap().len(), 200);
+    }
+
+    #[test]
+    fn verify_chunk_rejects_mismatched_digest_and_does_not_write() {
+        // BR-3i.c error path: a chunk with a deliberately wrong expected
+        // digest must fail verification, surface the typed
+        // `ChecksumMismatch`, and never reach the destination writer.
+        let applier = ParallelDeltaApplier::new(1);
+        let (sink, buf) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+        // Bogus expected digest: all-zero MD5 (16 bytes) will not match any
+        // non-empty payload's real digest.
+        let bogus = ChecksumDigest::new(&[0u8; 16]);
+        let chunk = DeltaChunk::literal(0u32, 0, vec![0x99; 64]).with_expected_strong(bogus);
+        let err = applier.apply_chunk_parallel(chunk).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("checksum mismatch"), "msg was: {msg}");
+        assert!(msg.contains("ndx=0"), "msg was: {msg}");
+        assert!(msg.contains("sequence=0"), "msg was: {msg}");
+        assert!(msg.contains("algorithm=md5"), "msg was: {msg}");
+        // The writer must remain untouched: the verify failure happens
+        // before the per-file mutex is taken.
+        assert!(buf.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn verify_batch_rejects_mismatched_digest() {
+        // BR-3i.c error path under the batch entry point. The rayon
+        // parallel `collect` short-circuits on the first error, surfacing
+        // the typed `ChecksumMismatch` instead of any successful write.
+        let applier = ParallelDeltaApplier::new(4);
+        let strategy = Arc::clone(applier.strategy());
+        let (sink, _) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+
+        let good_a = chunk_with_correct_digest(strategy.as_ref(), 0, 0, vec![1u8; 32]);
+        let bad = DeltaChunk::literal(0u32, 1, vec![2u8; 32])
+            .with_expected_strong(ChecksumDigest::new(&[0u8; 16]));
+        let good_b = chunk_with_correct_digest(strategy.as_ref(), 0, 2, vec![3u8; 32]);
+
+        let err = applier
+            .apply_batch_parallel(vec![good_a, bad, good_b])
+            .unwrap_err();
+        assert!(err.to_string().contains("checksum mismatch"));
+    }
+
+    #[test]
+    fn parallel_apply_with_real_digests_matches_sequential_byte_for_byte() {
+        // BR-3i.e regression test: parallel apply with real per-chunk
+        // strong-checksum verification produces the same destination byte
+        // stream as the sequential reference path. Guards against future
+        // regressions where the verify path mutates `chunk.data` or
+        // reorders writes when the strategy short-circuits.
+        let strategy: Arc<dyn ChecksumStrategy> = Arc::from(
+            ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md5, 0),
+        );
+        let applier = ParallelDeltaApplier::with_strategy(4, Arc::clone(&strategy));
+        let (sink, buf) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+
+        let chunks: Vec<DeltaChunk> = (0..32u64)
+            .map(|i| {
+                let payload: Vec<u8> = (0..64u8).map(|b| b.wrapping_add(i as u8)).collect();
+                chunk_with_correct_digest(strategy.as_ref(), 0, i, payload)
+            })
+            .collect();
+        let expected = sequential_apply(&chunks);
+
+        // Deterministic non-trivial permutation: rotate by 5 so workers
+        // see chunks out of submission order; the reorder buffer must
+        // still emit them in `chunk_sequence` order.
+        let mut shuffled = chunks;
+        shuffled.rotate_left(5);
+        applier.apply_batch_parallel(shuffled).unwrap();
+        let _writer = applier.finish_file(0u32).unwrap();
+        assert_eq!(buf.lock().unwrap().clone(), expected);
+    }
+
+    #[test]
+    fn checksum_mismatch_error_converts_into_io_error_with_typed_message() {
+        let err: io::Error = ParallelApplyError::ChecksumMismatch {
+            ndx: FileNdx::new(9),
+            chunk_sequence: 42,
+            algorithm: ChecksumAlgorithmKind::Md5,
+            expected: "deadbeef".to_string(),
+            actual: "cafef00d".to_string(),
+        }
+        .into();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        let msg = err.to_string();
+        assert!(msg.contains("checksum mismatch"));
+        assert!(msg.contains("ndx=9"));
+        assert!(msg.contains("sequence=42"));
+        assert!(msg.contains("algorithm=md5"));
+        assert!(msg.contains("expected=deadbeef"));
+        assert!(msg.contains("actual=cafef00d"));
     }
 }
