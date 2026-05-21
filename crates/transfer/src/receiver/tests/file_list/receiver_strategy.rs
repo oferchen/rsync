@@ -60,11 +60,7 @@ fn dispatch_many_small_files_picks_parallel() {
 fn dispatch_large_bytes_picks_parallel() {
     // Single 128 MiB file - trips the 64 MiB total_size cutoff even with
     // a small file_count.
-    let entries = vec![FileEntry::new_file(
-        "big".into(),
-        128 * 1024 * 1024,
-        0o644,
-    )];
+    let entries = vec![FileEntry::new_file("big".into(), 128 * 1024 * 1024, 0o644)];
     let mut ctx = make_ctx_with_files(entries);
     let strategy = ctx.dispatch_receiver_strategy(1);
     assert_eq!(strategy, ReceiverStrategy::Parallel);

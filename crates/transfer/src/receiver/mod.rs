@@ -419,10 +419,7 @@ impl ReceiverContext {
     /// `crates/engine/benches/per_op_thresholds.rs`. See
     /// `docs/design/parallel-receive-delta-default-on.md` section 6.2.
     #[must_use]
-    pub const fn select_receiver_strategy(
-        file_count: usize,
-        total_size: u64,
-    ) -> ReceiverStrategy {
+    pub const fn select_receiver_strategy(file_count: usize, total_size: u64) -> ReceiverStrategy {
         if file_count > PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD
             || total_size > PARALLEL_RECEIVE_BYTES_THRESHOLD
         {
