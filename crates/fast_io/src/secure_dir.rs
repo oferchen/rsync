@@ -146,7 +146,16 @@ mod imp {
             how.flags =
                 (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64;
             how.mode = 0;
-            how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS;
+            // `RESOLVE_BENEATH` is NOT used here. This helper is the bootstrap
+            // open that produces the parent dirfd anchor; subsequent `*at`
+            // syscalls use that fd plus relative paths, and *those* sites are
+            // where `RESOLVE_BENEATH` belongs (the dirfd's directory becomes
+            // the resolution scope). Adding `RESOLVE_BENEATH` here with
+            // `AT_FDCWD` would force the caller's path to live beneath the
+            // process cwd, which is almost never true for daemon roots,
+            // tempdirs in CI runners, etc - the kernel returns `EXDEV` for
+            // every cross-subtree absolute path.
+            how.resolve = libc::RESOLVE_NO_SYMLINKS;
 
             // SAFETY: `c_path` is a valid NUL-terminated C string borrowed
             // for the duration of the call. `how` is a fully-initialised
@@ -198,9 +207,9 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         // `tempdir()` may return a path that contains symlink components
         // (macOS `/tmp` -> `/private/tmp`, some CI runners stage `/tmp`
-        // through a symlink). `RESOLVE_NO_SYMLINKS` would refuse such a
-        // path; canonicalise first so the test exercises the success path,
-        // not the deliberate rejection.
+        // through a symlink). `RESOLVE_NO_SYMLINKS` refuses such paths,
+        // so canonicalise first - the test exercises the success path,
+        // not the deliberate symlink-rejection path.
         let canon = std::fs::canonicalize(dir.path()).expect("canonicalize tempdir");
 
         let fd = secure_open_dir(&canon).expect("open dir");
@@ -220,88 +229,27 @@ mod tests {
 
         let err = secure_open_dir(&link).expect_err("symlink leaf must be rejected");
         // Accepted errnos:
-        // - `ELOOP`: plain `open(O_NOFOLLOW | O_DIRECTORY)` (Linux without
-        //   openat2, or kernels older than 5.6).
+        // - `ELOOP`: Linux + `openat2` (`RESOLVE_NO_SYMLINKS`) and Linux +
+        //   plain `open(O_NOFOLLOW | O_DIRECTORY)` both refuse symlinks at
+        //   the leaf with this code.
         // - `ENOTDIR`: macOS / BSD evaluate `O_DIRECTORY` before
         //   `O_NOFOLLOW`, so the symlink-to-directory case yields ENOTDIR.
-        // - `EXDEV`: Linux 5.6+ `openat2` with `RESOLVE_BENEATH` plus
-        //   `RESOLVE_NO_SYMLINKS` reports the symlink-to-an-absolute-target
-        //   as a cross-resolution-scope violation rather than ELOOP.
-        // Any of the three proves the symlink was refused, which is what
-        // the SEC-1 sandbox needs from the leaf check.
+        // Either proves the symlink was refused, which is what the SEC-1
+        // sandbox needs from the leaf check.
         let code = err.raw_os_error();
         assert!(
-            code == Some(libc::ELOOP) || code == Some(libc::ENOTDIR) || code == Some(libc::EXDEV),
-            "expected ELOOP, ENOTDIR, or EXDEV for symlink leaf, got: {err}"
+            code == Some(libc::ELOOP) || code == Some(libc::ENOTDIR),
+            "expected ELOOP or ENOTDIR for symlink leaf, got: {err}"
         );
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn openat2_rejects_dotdot_traversal_when_available() {
-        let dir = tempdir().expect("tempdir");
-        let child = dir.path().join("child");
-        std::fs::create_dir(&child).expect("create child");
-
-        // Probe whether the running kernel supports `openat2`. If not,
-        // skip - the plain `open(O_NOFOLLOW)` path cannot police mid-path
-        // `..` components, and that gap is acceptable on pre-5.6 kernels.
-        if !openat2_available() {
-            eprintln!("skipping: openat2 unavailable on this kernel");
-            return;
-        }
-
-        // `child/../child` would resolve fine under plain `open`, but
-        // `RESOLVE_BENEATH` rejects any `..` that traverses above the open
-        // point, which `AT_FDCWD` anchors at the current working directory.
-        // Use an absolute path with a `..` in the middle so the kernel
-        // sees the traversal.
-        let escaping = child.join("..").join("child");
-        let err = secure_open_dir(&escaping)
-            .expect_err("openat2 must reject .. traversal under RESOLVE_BENEATH");
-        let code = err.raw_os_error();
-        assert!(
-            code == Some(libc::EXDEV) || code == Some(libc::ELOOP),
-            "expected EXDEV or ELOOP, got: {err}"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    fn openat2_available() -> bool {
-        use std::ffi::CString;
-        let dot = CString::new(".").expect("CString");
-        // `libc::open_how` is `#[non_exhaustive]`; zero-initialise and assign.
-        // SAFETY: `open_how` is a plain repr(C) struct of integer fields;
-        // an all-zero bit pattern is a valid value.
-        #[allow(unsafe_code)]
-        let mut how: libc::open_how = unsafe { std::mem::zeroed() };
-        how.flags = (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
-        how.mode = 0;
-        how.resolve = 0;
-        // SAFETY: `dot` is a NUL-terminated C string; `how` is a
-        // fully-initialised `open_how`; we hand the kernel the matching
-        // struct size. A non-negative return is an owned fd we
-        // immediately close via `libc::close`.
-        #[allow(unsafe_code)]
-        let raw = unsafe {
-            libc::syscall(
-                libc::SYS_openat2,
-                libc::AT_FDCWD,
-                dot.as_ptr(),
-                &how as *const libc::open_how,
-                std::mem::size_of::<libc::open_how>(),
-            )
-        };
-        if raw >= 0 {
-            // SAFETY: `raw` is a non-negative fd just returned by
-            // `openat2(2)`; we are its sole owner and close it here.
-            #[allow(unsafe_code)]
-            unsafe {
-                libc::close(raw as libc::c_int);
-            }
-            true
-        } else {
-            io::Error::last_os_error().raw_os_error() != Some(libc::ENOSYS)
-        }
-    }
+    // NOTE: a `..`-traversal rejection test belongs in SEC-1.e where a real
+    // parent dirfd anchors `RESOLVE_BENEATH`. The bootstrap helper
+    // [`secure_open_dir`] runs against `AT_FDCWD` and intentionally omits
+    // `RESOLVE_BENEATH`, because pairing `AT_FDCWD` with an absolute path and
+    // `RESOLVE_BENEATH` makes the kernel refuse any path that doesn't live
+    // beneath the process cwd (returning `EXDEV`) - which would fail every
+    // realistic daemon-root / tempdir scenario. Once the dirfd-anchored
+    // `*at` call sites in SEC-1.f..j land, add the `..`-traversal regression
+    // test there with the dirfd as the resolution scope.
 }
