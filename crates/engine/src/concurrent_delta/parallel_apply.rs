@@ -36,13 +36,14 @@
 //! [`super::ReorderBuffer`] caller's responsibility (the existing
 //! `DeltaConsumer` pattern already covers that case).
 
-use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
 use checksums::strong::strategy::{
     ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector,
 };
+use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use rayon::prelude::*;
 use thiserror::Error;
 
@@ -302,10 +303,24 @@ struct VerifiedChunk {
 /// through [`rayon::ThreadPoolBuilder`]'s ambient pool. Callers can size
 /// this from [`rayon::current_num_threads`] or from a CLI override.
 pub struct ParallelDeltaApplier {
-    /// Per-file slots keyed by NDX. The outer [`Mutex`] guards map mutation
-    /// (file insert/remove); per-file slots have their own inner [`Mutex`]
-    /// to keep the write side serial without serialising every file.
-    files: Mutex<HashMap<FileNdx, Arc<Mutex<FileSlot>>>>,
+    /// Per-file slots keyed by NDX. The outer map is a [`DashMap`] so the
+    /// register/lookup path shards under a fixed number of internal locks
+    /// instead of serialising every operation behind one [`Mutex`]. The
+    /// per-file slot keeps its own inner [`Mutex`] so writes for a single
+    /// file remain serial without ever blocking another file. The BR-3j.a
+    /// audit (see `docs/audits/br-3j-a-dashmap-vs-sharded-2026-05-20.md`)
+    /// selected DashMap as the right fit for the access pattern: short
+    /// guard windows, no iteration in the hot path, and write rates that
+    /// scale with file count rather than chunk count.
+    ///
+    /// # Locking discipline
+    ///
+    /// All callers below must drop the DashMap shard guard returned by
+    /// `get`/`entry` before doing any work longer than an [`Arc::clone`]
+    /// or a small struct write. Holding a shard guard across a wait,
+    /// `rayon::join`, or a per-file mutex lock would re-introduce the
+    /// outer-map contention the migration was designed to eliminate.
+    files: DashMap<FileNdx, Arc<Mutex<FileSlot>>>,
     /// Reorder-buffer capacity per file. Bounded so a stalled file does not
     /// pin unbounded memory.
     per_file_reorder_capacity: usize,
@@ -324,9 +339,8 @@ pub struct ParallelDeltaApplier {
 
 impl std::fmt::Debug for ParallelDeltaApplier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let file_count = self.files.lock().map(|m| m.len()).unwrap_or(0);
         f.debug_struct("ParallelDeltaApplier")
-            .field("file_count", &file_count)
+            .field("file_count", &self.files.len())
             .field("per_file_reorder_capacity", &self.per_file_reorder_capacity)
             .field("concurrency", &self.concurrency)
             .field("strategy", &self.strategy.algorithm_kind())
@@ -367,7 +381,7 @@ impl ParallelDeltaApplier {
     #[must_use]
     pub fn with_strategy(concurrency: usize, strategy: Arc<dyn ChecksumStrategy>) -> Self {
         Self {
-            files: Mutex::new(HashMap::new()),
+            files: DashMap::new(),
             per_file_reorder_capacity: Self::DEFAULT_PER_FILE_REORDER_CAPACITY,
             concurrency,
             strategy,
@@ -410,31 +424,31 @@ impl ParallelDeltaApplier {
     ///
     /// # Errors
     ///
-    /// Returns an [`io::Error`] if `ndx` is already registered or the
-    /// per-file map mutex is poisoned.
+    /// Returns an [`io::Error`] if `ndx` is already registered.
     pub fn register_file(
         &self,
         ndx: impl Into<FileNdx>,
         writer: Box<dyn Write + Send>,
     ) -> io::Result<()> {
         let ndx = ndx.into();
-        let mut files = self
-            .files
-            .lock()
-            .map_err(|_| io::Error::other("parallel applier file map poisoned"))?;
-        if files.contains_key(&ndx) {
-            return Err(io::Error::other(format!(
+        // Pre-build the slot OUTSIDE the shard guard so the reorder-buffer
+        // allocation never widens the lock window. Then the entry guard
+        // only holds long enough to check vacancy and move the prebuilt
+        // Arc into the map. Single shard write lock; no contention on
+        // unrelated NDX values.
+        let slot = Arc::new(Mutex::new(FileSlot::new(
+            writer,
+            self.per_file_reorder_capacity,
+        )));
+        match self.files.entry(ndx) {
+            Entry::Occupied(_) => Err(io::Error::other(format!(
                 "parallel applier file {ndx} already registered"
-            )));
-        }
-        files.insert(
-            ndx,
-            Arc::new(Mutex::new(FileSlot::new(
-                writer,
-                self.per_file_reorder_capacity,
             ))),
-        );
-        Ok(())
+            Entry::Vacant(vacant) => {
+                vacant.insert(slot);
+                Ok(())
+            }
+        }
     }
 
     /// Applies one chunk, dispatching the CPU-bound verify step to rayon.
@@ -452,6 +466,9 @@ impl ParallelDeltaApplier {
     /// submissions), or the per-chunk strong-checksum verification fails
     /// when [`DeltaChunk::expected_strong`] was attached.
     pub fn apply_chunk_parallel(&self, chunk: DeltaChunk) -> io::Result<()> {
+        // `slot_for` returns an `Arc` clone and drops the DashMap shard
+        // guard before returning, so the rayon verify below never blocks
+        // shard-mates on unrelated NDX values.
         let slot = self.slot_for(chunk.ndx)?;
         // `rayon::join` schedules the verify on a worker thread when the
         // caller is inside the rayon pool; outside the pool it falls back
@@ -537,15 +554,13 @@ impl ParallelDeltaApplier {
     /// per-file reorder buffer still holds undelivered chunks.
     pub fn finish_file(&self, ndx: impl Into<FileNdx>) -> io::Result<Box<dyn Write + Send>> {
         let ndx = ndx.into();
-        let slot_arc = {
-            let mut files = self
-                .files
-                .lock()
-                .map_err(|_| io::Error::other("parallel applier file map poisoned"))?;
-            files
-                .remove(&ndx)
-                .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))?
-        };
+        // `DashMap::remove` returns the owned `(K, V)` and drops the shard
+        // guard immediately; the `Arc::try_unwrap` work below happens
+        // outside the shard lock.
+        let (_, slot_arc) = self
+            .files
+            .remove(&ndx)
+            .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))?;
         let slot = Arc::try_unwrap(slot_arc)
             .map_err(|still_shared| ParallelApplyError::ApplierStillReferenced {
                 ndx,
@@ -569,13 +584,13 @@ impl ParallelDeltaApplier {
     }
 
     fn slot_for(&self, ndx: FileNdx) -> io::Result<Arc<Mutex<FileSlot>>> {
-        let files = self
-            .files
-            .lock()
-            .map_err(|_| io::Error::other("parallel applier file map poisoned"))?;
-        files
+        // Clone the per-file `Arc` while the shard read guard is alive,
+        // then drop the guard at the end of this expression. Callers
+        // never see the DashMap guard, so they cannot accidentally hold
+        // it across the per-file mutex lock or a rayon dispatch.
+        self.files
             .get(&ndx)
-            .map(Arc::clone)
+            .map(|guard| Arc::clone(guard.value()))
             .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))
     }
 
@@ -636,6 +651,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use std::collections::HashMap;
     use std::io::Cursor;
 
     /// In-memory sink that records every byte written so tests can compare
