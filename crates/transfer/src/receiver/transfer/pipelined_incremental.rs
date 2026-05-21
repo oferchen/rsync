@@ -86,6 +86,9 @@ impl ReceiverContext {
             }
         }
 
+        #[cfg(unix)]
+        self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer);
+        #[cfg(not(unix))]
         self.create_symlinks(&setup.dest_dir, writer);
 
         let files_to_transfer = self.build_files_to_transfer(
@@ -169,6 +172,9 @@ impl ReceiverContext {
             }
         }
 
+        #[cfg(unix)]
+        self.create_hardlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer);
+        #[cfg(not(unix))]
         self.create_hardlinks(&setup.dest_dir, writer);
 
         stats.files_transferred = files_transferred;
