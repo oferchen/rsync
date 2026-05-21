@@ -363,7 +363,7 @@ fn p_short_option_enables_progress_output() {
     assert!(stderr.is_empty());
 
     let rendered = String::from_utf8(stdout).expect("utf8");
-    // -P should imply --progress, so xfr# should be present
+    // upstream: -P implies --progress (xfr# line) and --partial (file retained).
     assert!(
         rendered.contains("xfr#1"),
         "-P should enable progress output with xfr# line: {rendered:?}"
@@ -372,7 +372,6 @@ fn p_short_option_enables_progress_output() {
         rendered.contains("to-chk=0/1"),
         "-P should show to-chk counter: {rendered:?}"
     );
-    // Also should keep partial files (test the --partial side)
     assert_eq!(
         std::fs::read(&destination).expect("read destination"),
         b"p_flag_data"

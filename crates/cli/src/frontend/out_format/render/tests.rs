@@ -1343,7 +1343,6 @@ fn render_percent_f_no_trailing_slash_for_directory() {
         LocalCopyChangeSet::new(),
     );
     let rendered = render_format("%f", &event);
-    // %f uses render_path(event, false) so should not add trailing slash
     assert!(
         !rendered.trim().ends_with('/'),
         "%%f should not add trailing slash: {rendered:?}"
@@ -1358,7 +1357,7 @@ fn render_percent_l_shows_file_length() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // test_metadata sets length to 0
+    // test_metadata seeds length=0.
     assert_eq!(render_format("%l", &event), "0\n");
 }
 
@@ -1370,7 +1369,7 @@ fn render_percent_b_shows_bytes_transferred() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // for_test always sets bytes_transferred to 0
+    // ClientEvent::for_test seeds bytes_transferred=0.
     assert_eq!(render_format("%b", &event), "0\n");
 }
 
@@ -1472,7 +1471,7 @@ fn render_percent_b_upper_shows_dashes_for_test_metadata() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // test_metadata has mode = None => "---------"
+    // test_metadata seeds mode=None, which renders as "---------".
     assert_eq!(render_format("%B", &event), "---------\n");
 }
 
@@ -1484,9 +1483,7 @@ fn render_percent_l_upper_shows_nothing_for_regular_file() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // SymlinkTarget returns None for non-symlinks, so nothing is rendered
-    // But since it returns None, the placeholder is omitted entirely
-    // and the output is just the newline
+    // SymlinkTarget yields None for non-symlinks, so %L renders empty.
     assert_eq!(render_format("%L", &event), "\n");
 }
 
@@ -1498,7 +1495,6 @@ fn render_itemize_and_filename_combined_no_space() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // %i%n with no space means the two are concatenated directly
     assert_eq!(render_format("%i%n", &event), ">f+++++++++test.txt\n");
 }
 
@@ -1510,7 +1506,7 @@ fn render_itemize_and_filename_with_space() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // %i %n with a space between them matches upstream -i output
+    // upstream: "-i" output renders %i followed by space then %n.
     assert_eq!(render_format("%i %n", &event), ">f+++++++++ test.txt\n");
 }
 
@@ -1713,15 +1709,13 @@ fn render_output_does_not_double_newline_when_format_ends_with_newline() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // The render function checks if the buffer already ends with '\n'
-    // and doesn't add another one.
+    // render must not append a second '\n' when the buffer already ends with one.
     let format = parse_out_format(std::ffi::OsStr::new("%n")).unwrap();
     let mut output = Vec::new();
     format
         .render(&event, &OutFormatContext::default(), &mut output)
         .unwrap();
     let rendered = String::from_utf8(output).unwrap();
-    // The output should end with exactly one newline
     assert!(rendered.ends_with('\n'));
     assert!(!rendered.ends_with("\n\n"));
 }
@@ -1736,10 +1730,9 @@ fn render_width_right_aligned_filename() {
     );
     let rendered = render_format("%20n", &event);
     let trimmed = rendered.trim_end_matches('\n');
-    // "test.txt" is 8 chars, padded to 20 right-aligned
     assert_eq!(trimmed.len(), 20);
     assert!(trimmed.ends_with("test.txt"));
-    assert!(trimmed.starts_with("            ")); // 12 spaces
+    assert!(trimmed.starts_with("            ")); // 12 spaces (20 - len("test.txt"))
 }
 
 #[test]
@@ -1754,7 +1747,7 @@ fn render_width_left_aligned_filename() {
     let trimmed = rendered.trim_end_matches('\n');
     assert_eq!(trimmed.len(), 20);
     assert!(trimmed.starts_with("test.txt"));
-    assert!(trimmed.ends_with("            ")); // 12 trailing spaces
+    assert!(trimmed.ends_with("            ")); // 12 trailing spaces (20 - len("test.txt"))
 }
 
 #[test]

@@ -6,8 +6,6 @@ use super::loader::{push_file_list_entry, read_file_list_from_reader};
 use super::parser::{operand_is_remote, resolve_files_from_source, transfer_requires_remote};
 use super::resolver::resolve_file_list_entries;
 
-// operand_is_remote tests
-
 #[test]
 fn operand_is_remote_rsync_url() {
     assert!(operand_is_remote(OsStr::new("rsync://example.com/module")));
@@ -49,7 +47,7 @@ fn operand_is_remote_local_paths() {
 
 #[test]
 fn operand_is_remote_local_path_with_slash_before_colon() {
-    // Paths with a slash before the colon are local
+    // A slash before the colon disambiguates local paths from host:path syntax.
     assert!(!operand_is_remote(OsStr::new("/path/with:colon")));
     assert!(!operand_is_remote(OsStr::new("some/path:with:colons")));
 }
@@ -64,8 +62,6 @@ fn operand_is_remote_no_colon() {
     assert!(!operand_is_remote(OsStr::new("simple-filename")));
     assert!(!operand_is_remote(OsStr::new("path/to/file")));
 }
-
-// read_file_list_from_reader tests
 
 #[test]
 fn read_file_list_newline_terminated() {
@@ -149,7 +145,7 @@ fn read_file_list_zero_terminated_no_trailing_null() {
 
 #[test]
 fn read_file_list_zero_terminated_allows_hash_and_semicolon() {
-    // With zero termination, # and ; are not treated as comments
+    // upstream: --from0 disables comment handling, so `#` / `;` are literal.
     let input = b"#not-a-comment\0;also-not-a-comment\0";
     let mut reader = Cursor::new(input);
     let mut entries = Vec::new();
@@ -183,8 +179,6 @@ fn read_file_list_empty_lines_skipped() {
     assert_eq!(entries.len(), 2);
 }
 
-// resolve_file_list_entries tests
-
 #[test]
 fn resolve_file_list_entries_empty_entries() {
     let mut entries: Vec<OsString> = Vec::new();
@@ -202,7 +196,7 @@ fn resolve_file_list_entries_single_operand_no_change() {
 
     resolve_file_list_entries(&mut entries, &operands, false, false);
 
-    // Single operand means no base path to prepend
+    // With one operand there is no source base to prepend.
     assert_eq!(entries[0], "file.txt");
 }
 
@@ -213,7 +207,7 @@ fn resolve_file_list_entries_relative_enabled() {
 
     resolve_file_list_entries(&mut entries, &operands, true, false);
 
-    // With relative paths enabled, no resolution happens
+    // upstream: --relative defers path resolution to the receiver.
     assert_eq!(entries[0], "file.txt");
 }
 
@@ -224,7 +218,7 @@ fn resolve_file_list_entries_prepends_base() {
 
     resolve_file_list_entries(&mut entries, &operands, false, false);
 
-    // Path::push uses platform-specific separators
+    // Path::join uses the platform separator (verified via Path, not literal).
     let expected = Path::new("/base/path").join("subdir/file.txt");
     assert_eq!(entries[0], expected.as_os_str());
 }
@@ -236,7 +230,6 @@ fn resolve_file_list_entries_absolute_path_unchanged() {
 
     resolve_file_list_entries(&mut entries, &operands, false, false);
 
-    // Absolute paths are not modified
     assert_eq!(entries[0], "/absolute/path.txt");
 }
 
@@ -247,7 +240,6 @@ fn resolve_file_list_entries_remote_base_no_change() {
 
     resolve_file_list_entries(&mut entries, &operands, false, false);
 
-    // Remote base path means no resolution
     assert_eq!(entries[0], "file.txt");
 }
 
@@ -258,7 +250,6 @@ fn resolve_file_list_entries_remote_entry_no_change() {
 
     resolve_file_list_entries(&mut entries, &operands, false, false);
 
-    // Remote entries are not modified
     assert_eq!(entries[0], "host:remote/file.txt");
 }
 
@@ -273,7 +264,7 @@ fn resolve_file_list_entries_multiple_sources_no_change() {
 
     resolve_file_list_entries(&mut entries, &operands, false, false);
 
-    // Multiple source operands means no single base, so no resolution
+    // Multiple sources have no single base to resolve against.
     assert_eq!(entries[0], "file.txt");
 }
 
@@ -285,12 +276,9 @@ fn resolve_file_list_entries_empty_entry_unchanged() {
     resolve_file_list_entries(&mut entries, &operands, false, false);
 
     assert_eq!(entries[0], "");
-    // Path::push uses platform-specific separators
     let expected = Path::new("/base").join("file.txt");
     assert_eq!(entries[1], expected.as_os_str());
 }
-
-// resolve_file_list_entries (files_from_active) tests
 
 #[test]
 fn resolve_file_list_entries_files_from_inserts_dot_marker() {
@@ -316,7 +304,8 @@ fn resolve_file_list_entries_files_from_nested_path_with_marker() {
 
 #[test]
 fn resolve_file_list_entries_files_from_with_relative_still_inserts_marker() {
-    // --files-from always resolves with marker, even when --relative is on
+    // upstream: --files-from always inserts the "/./" marker, including when
+    // --relative is active.
     let mut entries = vec![OsString::from("file.txt")];
     let operands = vec![OsString::from("/base"), OsString::from("/dest")];
 
@@ -358,8 +347,6 @@ fn resolve_file_list_entries_files_from_remote_base_no_change() {
     assert_eq!(entries[0], "file.txt");
 }
 
-// transfer_requires_remote tests
-
 #[test]
 fn transfer_requires_remote_all_local() {
     let remainder = vec![OsString::from("/local/path"), OsString::from("/dest")];
@@ -391,8 +378,6 @@ fn transfer_requires_remote_both_empty() {
 
     assert!(!transfer_requires_remote(&remainder, &file_list));
 }
-
-// push_file_list_entry tests
 
 #[test]
 fn push_file_list_entry_empty_bytes() {
@@ -439,8 +424,6 @@ fn push_file_list_entry_with_path() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0], "path/to/file.txt");
 }
-
-// resolve_files_from_source tests
 
 #[test]
 fn resolve_files_from_empty_returns_none() {

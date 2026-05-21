@@ -427,7 +427,6 @@ fn out_format_respects_width_specifier() {
 
     let rendered = String::from_utf8(output).expect("utf8");
     let trimmed = rendered.trim_end();
-    // Should be padded to 20 characters (right-aligned by default)
     assert_eq!(trimmed.len(), 20);
     assert!(trimmed.ends_with("width.txt"));
 }
@@ -467,10 +466,8 @@ fn out_format_respects_left_alignment() {
         .expect("render left-aligned format");
 
     let rendered = String::from_utf8(output).expect("utf8");
-    // Should be left-aligned with trailing spaces to reach width 20
     assert!(rendered.starts_with("left.txt"));
-    // The rendered output should be exactly 20 characters (8 for "left.txt" + 12 spaces)
-    // trim_end_matches('\n') to remove only the newline, not the padding spaces
+    // Trim only the trailing '\n' (not the padding spaces) before counting.
     let without_newline = rendered.trim_end_matches('\n');
     assert_eq!(
         without_newline.len(),

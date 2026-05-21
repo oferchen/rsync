@@ -27,7 +27,6 @@ fn timeout_argument_one_second() {
 
 #[test]
 fn timeout_argument_typical_values() {
-    // Common timeout values used in practice
     for value in [10, 30, 60, 120, 300, 600, 3600] {
         let timeout =
             parse_timeout_argument(OsStr::new(&value.to_string())).expect("parse timeout");
@@ -37,21 +36,18 @@ fn timeout_argument_typical_values() {
 
 #[test]
 fn timeout_argument_large_value() {
-    // 24 hours in seconds
-    let timeout = parse_timeout_argument(OsStr::new("86400")).expect("parse timeout");
+    let timeout = parse_timeout_argument(OsStr::new("86400")).expect("parse timeout"); // 24h
     assert_eq!(timeout.as_seconds(), NonZeroU64::new(86400));
 }
 
 #[test]
 fn timeout_argument_very_large_value() {
-    // Maximum practical timeout (about 136 years)
-    let timeout = parse_timeout_argument(OsStr::new("4294967295")).expect("parse timeout");
+    let timeout = parse_timeout_argument(OsStr::new("4294967295")).expect("parse timeout"); // u32::MAX
     assert_eq!(timeout.as_seconds(), NonZeroU64::new(4294967295));
 }
 
 #[test]
 fn timeout_argument_u64_max() {
-    // Maximum u64 value
     let max_u64 = u64::MAX.to_string();
     let timeout = parse_timeout_argument(OsStr::new(&max_u64)).expect("parse timeout");
     assert_eq!(timeout.as_seconds(), NonZeroU64::new(u64::MAX));
@@ -143,7 +139,7 @@ fn timeout_argument_negative_large_reports_error() {
 
 #[test]
 fn timeout_argument_overflow_reports_error() {
-    // Value larger than u64::MAX
+    // u64::MAX + 1
     let error = parse_timeout_argument(OsStr::new("18446744073709551616")).unwrap_err();
     assert!(
         error.to_string().contains("exceeds the supported range"),
@@ -267,7 +263,6 @@ fn cli_timeout_large_value() {
 fn cli_no_timeout_overrides_timeout() {
     let parsed =
         parse_args(["rsync", "--timeout=30", "--no-timeout", "src/", "dst/"]).expect("parse");
-    // --no-timeout should clear the timeout setting
     assert_eq!(parsed.timeout, None);
 }
 
@@ -275,7 +270,7 @@ fn cli_no_timeout_overrides_timeout() {
 fn cli_timeout_after_no_timeout() {
     let parsed =
         parse_args(["rsync", "--no-timeout", "--timeout=60", "src/", "dst/"]).expect("parse");
-    // Later --timeout should override --no-timeout
+    // Last-write-wins: --timeout after --no-timeout reinstates the value.
     assert_eq!(parsed.timeout, Some(OsString::from("60")));
 }
 
@@ -359,36 +354,31 @@ fn cli_contimeout_without_timeout() {
 
 #[test]
 fn timeout_argument_boundary_one() {
-    // Smallest positive timeout
     let timeout = parse_timeout_argument(OsStr::new("1")).expect("parse timeout");
     assert_eq!(timeout.as_seconds(), NonZeroU64::new(1));
 }
 
 #[test]
 fn timeout_argument_minute_boundary() {
-    // 1 minute
-    let timeout = parse_timeout_argument(OsStr::new("60")).expect("parse timeout");
+    let timeout = parse_timeout_argument(OsStr::new("60")).expect("parse timeout"); // 1m
     assert_eq!(timeout.as_seconds(), NonZeroU64::new(60));
 }
 
 #[test]
 fn timeout_argument_hour_boundary() {
-    // 1 hour
-    let timeout = parse_timeout_argument(OsStr::new("3600")).expect("parse timeout");
+    let timeout = parse_timeout_argument(OsStr::new("3600")).expect("parse timeout"); // 1h
     assert_eq!(timeout.as_seconds(), NonZeroU64::new(3600));
 }
 
 #[test]
 fn timeout_argument_day_boundary() {
-    // 1 day
-    let timeout = parse_timeout_argument(OsStr::new("86400")).expect("parse timeout");
+    let timeout = parse_timeout_argument(OsStr::new("86400")).expect("parse timeout"); // 1d
     assert_eq!(timeout.as_seconds(), NonZeroU64::new(86400));
 }
 
 #[test]
 fn timeout_argument_week_boundary() {
-    // 1 week
-    let timeout = parse_timeout_argument(OsStr::new("604800")).expect("parse timeout");
+    let timeout = parse_timeout_argument(OsStr::new("604800")).expect("parse timeout"); // 1w
     assert_eq!(timeout.as_seconds(), NonZeroU64::new(604800));
 }
 
@@ -406,7 +396,7 @@ fn transfer_timeout_effective_with_various_defaults() {
 fn transfer_timeout_seconds_converts_to_duration_correctly() {
     for secs in [1, 30, 60, 3600, 86400] {
         let timeout = TransferTimeout::Seconds(NonZeroU64::new(secs).unwrap());
-        let default = Duration::from_secs(999); // Should be ignored
+        let default = Duration::from_secs(999); // ignored when Seconds wins
         assert_eq!(timeout.effective(default), Some(Duration::from_secs(secs)));
     }
 }
@@ -415,7 +405,6 @@ fn transfer_timeout_seconds_converts_to_duration_correctly() {
 fn transfer_timeout_disabled_ignores_default() {
     let timeout = TransferTimeout::Disabled;
 
-    // No matter what default is provided, disabled always returns None
     for default_secs in [1, 30, 60, 3600] {
         let default = Duration::from_secs(default_secs);
         assert_eq!(timeout.effective(default), None);

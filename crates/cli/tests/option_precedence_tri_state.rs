@@ -85,17 +85,10 @@ fn test_times_last_wins_negative() {
     );
 }
 
-// ============================================================================
-// Device/Special File Preservation Precedence
-// Note: --devices/--no-devices and --specials/--no-specials are configured
-// as mutually exclusive in Clap, not as overridable tri-state flags
-// ============================================================================
-
-// ============================================================================
-// Link Preservation Precedence
-// Note: --hard-links/--no-hard-links and --links/--no-links are configured
-// as mutually exclusive in Clap, not as overridable tri-state flags
-// ============================================================================
+// Device/Link preservation precedence: --devices/--no-devices,
+// --specials/--no-specials, --hard-links/--no-hard-links, and
+// --links/--no-links are Clap-mutually-exclusive rather than overridable
+// tri-state flags, so there are no last-wins precedence tests here.
 
 #[test]
 fn test_acls_last_wins_positive() {
@@ -137,11 +130,9 @@ fn test_xattrs_last_wins_negative() {
     );
 }
 
-// ============================================================================
-// Sparse/Checksum/Whole-file Precedence
-// Note: --sparse/--no-sparse is configured as mutually exclusive in Clap,
-// not as overridable tri-state flags
-// ============================================================================
+// Sparse/Checksum/Whole-file precedence. --sparse/--no-sparse is
+// Clap-mutually-exclusive (not a tri-state); only checksum and whole-file
+// support last-wins precedence below.
 
 #[test]
 fn test_checksum_last_wins_positive() {

@@ -267,7 +267,6 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
     // Upstream rsync format: <type+perms 10 chars> <15-char size> <YYYY/MM/DD HH:MM:SS> <name>
     // The fields are separated by single spaces.
     for line in rendered.lines() {
-        // Permission field: 10 characters starting with one of -dlpcbs?
         let perm_field = &line[..10];
         assert!(
             perm_field.len() == 10,
@@ -279,14 +278,12 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
             "type char should be one of -dlpcbs?, got {type_char:?} in {line:?}"
         );
 
-        // After permissions, a single space
         assert_eq!(
             line.as_bytes()[10],
             b' ',
             "space after permissions in {line:?}"
         );
 
-        // Size field: 15 characters, right-aligned, may contain commas for thousands
         let size_field = &line[11..26];
         assert_eq!(
             size_field.len(),
@@ -298,7 +295,6 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
             !size_trimmed.is_empty(),
             "size field should not be empty: {line:?}"
         );
-        // The size field should contain digits and optionally commas (or ? for unknown)
         assert!(
             size_trimmed == "?"
                 || size_trimmed
@@ -307,17 +303,14 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
             "size field should be numeric with commas: {size_trimmed:?} in {line:?}"
         );
 
-        // After size, a single space
         assert_eq!(line.as_bytes()[26], b' ', "space after size in {line:?}");
 
-        // Timestamp field: exactly 19 characters in YYYY/MM/DD HH:MM:SS format
         let timestamp_field = &line[27..46];
         assert_eq!(
             timestamp_field.len(),
             19,
             "timestamp field should be 19 chars: {line:?}"
         );
-        // Verify the format pattern
         assert_eq!(
             timestamp_field.as_bytes()[4],
             b'/',
@@ -344,7 +337,6 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
             "minute/second separator should be : in {line:?}"
         );
 
-        // After timestamp, a single space then the filename
         assert_eq!(
             line.as_bytes()[46],
             b' ',
@@ -401,19 +393,16 @@ fn list_only_symlink_shows_arrow_target_in_exact_format() {
         .find(|line| line.contains("mylink"))
         .expect("symlink entry present");
 
-    // Symlink line should start with 'l' (symlink type)
     assert!(
         link_line.starts_with('l'),
         "symlink line should start with 'l': {link_line:?}"
     );
 
-    // Symlink line should end with "mylink -> target.txt"
     assert!(
         link_line.ends_with("mylink -> target.txt"),
         "symlink line should end with 'mylink -> target.txt': {link_line:?}"
     );
 
-    // Verify the ` -> ` arrow pattern (space-arrow-space) is present
     assert!(
         link_line.contains(" -> "),
         "symlink line should contain ' -> ' arrow: {link_line:?}"
@@ -514,13 +503,11 @@ fn list_only_directory_permissions_start_with_d() {
         .find(|line| line.contains("testdir"))
         .expect("directory entry present");
 
-    // Directory permission starts with 'd'
     assert!(
         dir_line.starts_with("drwxr-xr-x"),
         "directory should have drwxr-xr-x permissions: {dir_line:?}"
     );
 
-    // Verify the timestamp portion
     let system_time = SystemTime::UNIX_EPOCH
         + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"));
     let expected_timestamp = format_list_timestamp(Some(system_time));
@@ -545,7 +532,6 @@ fn list_only_size_field_right_aligned_in_15_chars() {
     fs::create_dir(&source_dir).expect("create src dir");
     fs::create_dir(&dest_dir).expect("create dest dir");
 
-    // Create files of varying sizes
     let small = source_dir.join("small.txt");
     fs::write(&small, b"x").expect("write small");
     fs::set_permissions(&small, fs::Permissions::from_mode(0o644)).expect("set perms small");
@@ -579,7 +565,6 @@ fn list_only_size_field_right_aligned_in_15_chars() {
     let rendered = String::from_utf8(stdout).expect("utf8 stdout");
 
     for line in rendered.lines() {
-        // Size field is at columns 11..26 (0-indexed), exactly 15 characters
         let size_field = &line[11..26];
         assert_eq!(
             size_field.len(),
@@ -587,7 +572,7 @@ fn list_only_size_field_right_aligned_in_15_chars() {
             "size field should always be 15 chars: {line:?}"
         );
 
-        // Right-aligned means leading spaces, trailing digits/commas
+        // Right-alignment leaves leading spaces and trailing digits/commas.
         let trimmed = size_field.trim_start();
         if trimmed != "?" {
             assert!(
@@ -640,7 +625,6 @@ fn list_only_recursive_shows_nested_paths() {
 
     let rendered = String::from_utf8(stdout).expect("utf8 stdout");
 
-    // All levels should appear in the output
     assert!(
         rendered.lines().any(|l| l.ends_with("top.txt")),
         "top-level file should appear in listing"
@@ -662,7 +646,6 @@ fn list_only_recursive_shows_nested_paths() {
         "deeply nested file should appear in listing"
     );
 
-    // No files should actually be transferred
     assert!(!dest_dir.join("top.txt").exists());
     assert!(!dest_dir.join("level1").exists());
 }
@@ -683,7 +666,6 @@ fn list_only_large_file_size_has_thousands_separators() {
     fs::create_dir(&dest_dir).expect("create dest dir");
 
     let file_path = source_dir.join("big.bin");
-    // 1,234,567 bytes
     fs::write(&file_path, vec![0u8; 1_234_567]).expect("write large file");
     fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).expect("set permissions");
 
@@ -715,7 +697,6 @@ fn list_only_large_file_size_has_thousands_separators() {
         "large file should have formatted size with separators: {file_line:?}"
     );
 
-    // Verify the thousands separator
     assert!(
         expected_size.contains("1,234,567"),
         "size should contain thousands separators: {expected_size:?}"
@@ -764,12 +745,10 @@ fn list_only_with_verbose_still_shows_listing_format() {
         .find(|line| line.ends_with("verbose_test.txt"))
         .expect("file entry present");
 
-    // Should still be in list format (starts with permission string, not a bare filename)
     assert!(
         file_line.starts_with('-'),
         "list-only with verbose should still use listing format: {file_line:?}"
     );
-    // Permission field should be 10 chars
     assert_eq!(
         &file_line[..10],
         "-rw-r--r--",
@@ -915,14 +894,12 @@ fn list_only_human_readable_size_format() {
         .find(|line| line.ends_with("hr.bin"))
         .expect("file entry present");
 
-    // The size field in human-readable mode should contain unit suffixes
     let expected_hr_size = format_list_size(2_500_000, HumanReadableMode::Enabled);
     assert!(
         file_line.contains(&expected_hr_size),
         "human-readable size should be in listing: expected {expected_hr_size:?}, line: {file_line:?}"
     );
 
-    // The line should still start with permissions
     assert!(
         file_line.starts_with("-rw-r--r--"),
         "human-readable mode should still show permissions: {file_line:?}"
@@ -947,7 +924,6 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
 
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
 
-    // Create files with different sizes to test alignment
     let files = [
         ("tiny.txt", 1_u64),
         ("small.txt", 100),
@@ -992,36 +968,30 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
             line.len() >= 47,
             "each line should be at least 47 chars: {line:?}"
         );
-        // Permission field
         assert!(
             line[..10].chars().all(|c| "drwxlpcbs-?SsTt".contains(c)),
             "permission field should contain valid permission chars: {line:?}"
         );
-        // Space separator after permissions
         assert_eq!(
             line.as_bytes()[10],
             b' ',
             "separator after perms in {line:?}"
         );
-        // Size field is 15 chars
         assert_eq!(
             &line[11..26].len(),
             &15,
             "size field should be 15 chars: {line:?}"
         );
-        // Space separator after size
         assert_eq!(
             line.as_bytes()[26],
             b' ',
             "separator after size in {line:?}"
         );
-        // Timestamp is 19 chars
         assert_eq!(
             &line[27..46].len(),
             &19,
             "timestamp should be 19 chars: {line:?}"
         );
-        // Space before name
         assert_eq!(
             line.as_bytes()[46],
             b' ',
@@ -1064,7 +1034,6 @@ fn list_only_implies_dry_run_no_files_transferred() {
     assert!(rendered.contains("b.txt"), "b.txt should be listed");
     assert!(rendered.contains("c.txt"), "c.txt should be listed");
 
-    // Destination should remain empty
     let dest_entries: Vec<_> = fs::read_dir(&dest_dir).expect("read dest").collect();
     assert_eq!(
         dest_entries.len(),
@@ -1157,13 +1126,11 @@ fn list_only_with_stats_appends_summary() {
 
     let rendered = String::from_utf8(stdout).expect("utf8 stdout");
 
-    // The listing should appear
     assert!(
         rendered.contains("statsfile.txt"),
         "file listing should be present"
     );
 
-    // Stats summary should follow
     assert!(
         rendered.contains("Number of files:"),
         "stats summary should contain 'Number of files:'"
@@ -1217,10 +1184,8 @@ fn list_only_timestamp_matches_yyyy_mm_dd_hh_mm_ss_format() {
         .find(|line| line.ends_with("ts.txt"))
         .expect("timestamp test file entry present");
 
-    // Extract the timestamp portion (columns 27-45)
     let timestamp_field = &file_line[27..46];
 
-    // Verify the format structure
     assert!(
         timestamp_field[0..4].chars().all(|c| c.is_ascii_digit()),
         "year should be 4 digits: {timestamp_field:?}"
@@ -1251,7 +1216,6 @@ fn list_only_timestamp_matches_yyyy_mm_dd_hh_mm_ss_format() {
         "seconds should be 2 digits: {timestamp_field:?}"
     );
 
-    // Cross-check with our format function
     let system_time = SystemTime::UNIX_EPOCH
         + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"));
     let expected = format_list_timestamp(Some(system_time));
@@ -1293,13 +1257,11 @@ fn list_only_verbose_appends_totals() {
 
     let rendered = String::from_utf8(stdout).expect("utf8 stdout");
 
-    // Should contain the listing
     assert!(
         rendered.contains("vt.txt"),
         "file listing should be present"
     );
 
-    // Verbose adds totals
     assert!(
         rendered.contains("sent") && rendered.contains("bytes"),
         "verbose mode should include totals line with 'sent ... bytes': {rendered}"
@@ -1324,7 +1286,6 @@ fn list_only_mixed_file_types_in_single_listing() {
     fs::create_dir(&source_dir).expect("create src dir");
     fs::create_dir(&dest_dir).expect("create dest dir");
 
-    // Regular file
     fs::write(source_dir.join("regular.txt"), b"regular").expect("write regular");
     fs::set_permissions(
         source_dir.join("regular.txt"),
@@ -1332,10 +1293,8 @@ fn list_only_mixed_file_types_in_single_listing() {
     )
     .expect("set regular perms");
 
-    // Directory
     fs::create_dir(source_dir.join("mydir")).expect("create dir");
 
-    // Symlink
     symlink("regular.txt", source_dir.join("mylink")).expect("create symlink");
 
     let mut source_arg = source_dir.into_os_string();
@@ -1355,7 +1314,6 @@ fn list_only_mixed_file_types_in_single_listing() {
 
     let rendered = String::from_utf8(stdout).expect("utf8 stdout");
 
-    // Find each type
     let regular_line = rendered
         .lines()
         .find(|l| l.ends_with("regular.txt") && !l.contains("->"))
@@ -1369,7 +1327,6 @@ fn list_only_mixed_file_types_in_single_listing() {
         .find(|l| l.contains("mylink"))
         .expect("symlink line present");
 
-    // Verify type characters
     assert!(
         regular_line.starts_with('-'),
         "regular file should start with '-': {regular_line:?}"

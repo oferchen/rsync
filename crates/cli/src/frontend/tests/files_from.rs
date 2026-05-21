@@ -56,7 +56,6 @@ fn files_from_parses_one_filename_per_line() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("multiline.list");
 
-    // Multiple filenames with various line endings
     std::fs::write(&list_path, "alpha.txt\nbeta.txt\ngamma.txt").expect("write list");
 
     let entries =
@@ -73,7 +72,6 @@ fn files_from_handles_crlf_line_endings() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("crlf.list");
 
-    // Windows-style CRLF line endings
     std::fs::write(&list_path, "file1.txt\r\nfile2.txt\r\nfile3.txt\r\n").expect("write list");
 
     let entries =
@@ -90,7 +88,6 @@ fn files_from_handles_mixed_line_endings() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("mixed.list");
 
-    // Mix of LF and CRLF
     std::fs::write(&list_path, "file1.txt\nfile2.txt\r\nfile3.txt\n").expect("write list");
 
     let entries =
@@ -317,7 +314,6 @@ fn files_from_handles_unicode_filenames() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("unicode.list");
 
-    // Various Unicode characters including CJK, emoji representations, accented chars
     std::fs::write(
         &list_path,
         "file_cafe.txt\nfile_resume.txt\nfile_chinese.txt\nfile_japanese.txt\n",
@@ -360,7 +356,6 @@ fn files_from_handles_special_characters_in_filenames() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("special.list");
 
-    // Various special characters that might appear in filenames
     std::fs::write(
         &list_path,
         "file[1].txt\nfile(2).txt\nfile{3}.txt\nfile'4'.txt\nfile\"5\".txt\n",
@@ -620,7 +615,6 @@ fn files_from_integration_copies_listed_files() {
     std::fs::write(source_dir.join("file2.txt"), b"content2").expect("write file2");
     std::fs::write(source_dir.join("file3.txt"), b"content3").expect("write file3");
 
-    // Create file list (only file1 and file3)
     let list_path = tmp.path().join("files.list");
     std::fs::write(&list_path, "file1.txt\nfile3.txt\n").expect("write list");
 
@@ -638,7 +632,6 @@ fn files_from_integration_copies_listed_files() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    // Verify only listed files were copied
     assert!(dest_dir.join("file1.txt").exists());
     assert!(!dest_dir.join("file2.txt").exists());
     assert!(dest_dir.join("file3.txt").exists());
@@ -671,9 +664,8 @@ fn files_from_integration_handles_nested_directories() {
     assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
     assert!(stdout.is_empty());
 
-    // Both files should be copied. --files-from implies --relative (upstream
-    // options.c:2187-2188), so paths are preserved: subdir/nested.txt stays
-    // at dest/subdir/nested.txt.
+    // upstream: options.c:2187-2188 - --files-from implies --relative, so
+    // subdir/nested.txt stays at dest/subdir/nested.txt.
     assert!(dest_dir.join("top.txt").exists());
     assert!(dest_dir.join("subdir").join("nested.txt").exists());
 }
@@ -698,7 +690,6 @@ fn files_from_integration_with_empty_list_succeeds() {
         dest_dir.clone().into_os_string(),
     ]);
 
-    // Should succeed with empty list (nothing to copy)
     assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
     assert!(!dest_dir.join("file.txt").exists());
 }
@@ -723,7 +714,6 @@ fn files_from_integration_with_comments_only_list_succeeds() {
         dest_dir.clone().into_os_string(),
     ]);
 
-    // Should succeed (no files to copy due to all comments)
     assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
     assert!(!dest_dir.join("file.txt").exists());
 }
@@ -893,7 +883,6 @@ fn files_from_handles_actual_unicode_characters() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("unicode_real.list");
 
-    // Real Unicode characters: Chinese, Japanese, emoji-like symbols, accented
     std::fs::write(
         &list_path,
         "文件.txt\nファイル.txt\ncafe\u{0301}.txt\nnaive\u{0308}.txt\nfile_\u{2764}.txt\n",
@@ -916,7 +905,6 @@ fn files_from_handles_rtl_and_bidi_characters() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("bidi.list");
 
-    // Right-to-left text (Arabic, Hebrew)
     std::fs::write(
         &list_path,
         "\u{05E9}\u{05DC}\u{05D5}\u{05DD}.txt\n\u{0645}\u{0644}\u{0641}.txt\n",
@@ -936,7 +924,6 @@ fn files_from_handles_combining_characters() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("combining.list");
 
-    // Combining diacritical marks
     std::fs::write(
         &list_path,
         "e\u{0301}.txt\na\u{0308}o\u{0308}u\u{0308}.txt\nn\u{0303}.txt\n",
@@ -957,7 +944,6 @@ fn files_from_handles_zero_width_characters() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("zerowidth.list");
 
-    // Zero-width joiner and non-joiner
     std::fs::write(&list_path, "file\u{200D}name.txt\ntest\u{200C}file.txt\n")
         .expect("write zero-width list");
 
@@ -974,7 +960,6 @@ fn files_from_handles_glob_metacharacters() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("glob.list");
 
-    // Glob metacharacters that might be interpreted by shells
     std::fs::write(
         &list_path,
         "file*.txt\nfile?.txt\nfile[abc].txt\nfile{a,b}.txt\n",
@@ -996,7 +981,6 @@ fn files_from_handles_shell_special_characters() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("shell.list");
 
-    // Shell special characters
     std::fs::write(
         &list_path,
         "file$var.txt\nfile`cmd`.txt\nfile|pipe.txt\nfile&bg.txt\nfile>redir.txt\nfile<input.txt\n",
@@ -1020,7 +1004,7 @@ fn files_from_handles_backslash_in_filenames() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("backslash.list");
 
-    // Backslashes (note: on Unix these are literal filename characters)
+    // On Unix, backslash is a literal filename character, not an escape.
     std::fs::write(
         &list_path,
         "file\\name.txt\npath\\\\double.txt\ntrailing\\.txt\n",
@@ -1041,7 +1025,6 @@ fn files_from_handles_equals_and_colon_in_filenames() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("punctuation.list");
 
-    // Characters that might be confused with argument separators
     std::fs::write(
         &list_path,
         "file=value.txt\nkey:value.txt\npath/with:colon.txt\n--not-a-flag.txt\n",
@@ -1063,7 +1046,6 @@ fn files_from_handles_tab_characters() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("tabs.list");
 
-    // Tab characters in filenames
     std::fs::write(
         &list_path,
         "file\twith\ttabs.txt\n\ttab_prefix.txt\ntab_suffix\t.txt\n",
@@ -1084,7 +1066,6 @@ fn files_from_handles_form_feed_and_vertical_tab() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("control.list");
 
-    // Form feed and vertical tab
     std::fs::write(&list_path, "file\x0Cwith\x0Bcontrol.txt\n").expect("write control list");
 
     let entries =
@@ -1239,7 +1220,6 @@ fn files_from_handles_hidden_files() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("hidden.list");
 
-    // Unix hidden files (starting with dot)
     std::fs::write(
         &list_path,
         ".hidden\n.config/file.txt\n..weird\n...triple\n",
@@ -1319,7 +1299,8 @@ fn files_from_handles_inline_hash_after_text() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("inline_hash.list");
 
-    // Hash/semicolon after text is preserved
+    // Hash/semicolon mid-line is preserved; only line-leading hash/semicolon
+    // delimits a comment.
     std::fs::write(
         &list_path,
         "file # not a comment.txt\npath;still_valid.txt\n",
@@ -1339,7 +1320,6 @@ fn files_from_handles_empty_comment_lines() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("empty_comment.list");
 
-    // Comment character alone on a line
     std::fs::write(&list_path, "#\n;\nfile.txt\n").expect("write empty comment list");
 
     let entries =
@@ -1354,7 +1334,6 @@ fn files_from_handles_large_number_of_entries() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("large.list");
 
-    // Create a file with 10000 entries
     let content: String = (0..10000).map(|i| format!("file{i}.txt\n")).collect();
     std::fs::write(&list_path, content).expect("write large list");
 
@@ -1371,7 +1350,6 @@ fn files_from_handles_large_file_with_comments() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("large_with_comments.list");
 
-    // Alternate between files and comments
     let content: String = (0..5000)
         .map(|i| format!("# Comment {i}\nfile{i}.txt\n"))
         .collect();
@@ -1419,7 +1397,6 @@ more_files.txt
     let entries =
         load_file_list_operands(&[list_path.into_os_string()], false).expect("load entries");
 
-    // Count actual file entries (non-comment, non-blank)
     assert_eq!(entries.len(), 16);
     assert_eq!(entries[0], "simple.txt");
     assert_eq!(entries[1], "path/to/file.txt");
@@ -1481,7 +1458,7 @@ fn files_from_handles_duplicate_entries_across_files() {
     let entries = load_file_list_operands(&[list1.into_os_string(), list2.into_os_string()], false)
         .expect("load entries");
 
-    // Duplicates are preserved (not deduplicated at this level)
+    // Duplicates are preserved; dedup happens downstream.
     assert_eq!(entries.len(), 4);
     assert_eq!(entries[0], "file.txt");
     assert_eq!(entries[1], "unique1.txt");
@@ -1528,7 +1505,6 @@ fn files_from_integration_with_from0_copies_listed_files() {
     std::fs::write(source_dir.join("file2.txt"), b"content2").expect("write file2");
     std::fs::write(source_dir.join("file3.txt"), b"content3").expect("write file3");
 
-    // Create null-terminated file list
     let list_path = tmp.path().join("files.list");
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"file1.txt");
@@ -1552,7 +1528,6 @@ fn files_from_integration_with_from0_copies_listed_files() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    // Verify only listed files were copied
     assert!(dest_dir.join("file1.txt").exists());
     assert!(!dest_dir.join("file2.txt").exists());
     assert!(dest_dir.join("file3.txt").exists());
@@ -1591,7 +1566,6 @@ fn files_from_integration_with_recursive_copies_nested_files() {
     assert!(dest_dir.join("top.txt").exists());
     assert!(dest_dir.join("a/mid.txt").exists());
     assert!(dest_dir.join("a/b/c/deepest.txt").exists());
-    // This file was not in the list
     assert!(!dest_dir.join("a/b/deep.txt").exists());
 }
 
@@ -1601,7 +1575,6 @@ fn files_from_integration_with_unicode_filenames() {
     let source_dir = tmp.path().join("source");
     std::fs::create_dir(&source_dir).expect("create source");
 
-    // Create files with Unicode names
     std::fs::write(source_dir.join("文件.txt"), b"chinese").expect("write chinese");
     std::fs::write(source_dir.join("ファイル.txt"), b"japanese").expect("write japanese");
     std::fs::write(source_dir.join("cafe\u{0301}.txt"), b"accent").expect("write accent");
@@ -1680,12 +1653,9 @@ fn resolve_file_list_entries_handles_mixed_absolute_and_relative() {
 
     resolve_file_list_entries(&mut entries, &operands, false, false);
 
-    // Relative paths are resolved against base
     let expected_0 = Path::new("/base/dir").join("relative.txt");
     assert_eq!(entries[0], expected_0.as_os_str());
-    // Absolute paths unchanged
     assert_eq!(entries[1], "/absolute/path.txt");
-    // Another relative
     let expected_2 = Path::new("/base/dir").join("another/relative.txt");
     assert_eq!(entries[2], expected_2.as_os_str());
 }
@@ -1702,7 +1672,7 @@ fn resolve_file_list_entries_with_dot_relative_paths() {
 
     resolve_file_list_entries(&mut entries, &operands, false, false);
 
-    // These are still relative, so they get the base prepended
+    // `./` and `../` prefixes are still relative, so the base prepends.
     let expected_0 = Path::new("/base").join("./file.txt");
     assert_eq!(entries[0], expected_0.as_os_str());
     let expected_1 = Path::new("/base").join("../parent/file.txt");

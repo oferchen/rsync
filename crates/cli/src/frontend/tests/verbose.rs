@@ -21,7 +21,6 @@ fn level_0_no_file_listing() {
 
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
-    // Level 0: no output at all.
     assert!(
         stdout.is_empty(),
         "level 0 should produce no stdout, got: {:?}",
@@ -314,12 +313,10 @@ fn level_2_shows_descriptor_prefix() {
         String::from_utf8_lossy(&stderr)
     );
     let rendered = String::from_utf8(stdout).expect("utf8");
-    // At verbosity >= 2, the output includes a "descriptor: filename (N bytes, ...)" format.
     assert!(
         rendered.contains("descriptor.txt"),
         "level 2 should list the file name, got: {rendered:?}"
     );
-    // The descriptor line should show byte counts.
     assert!(
         rendered.contains("bytes"),
         "level 2 should show byte information, got: {rendered:?}"
@@ -375,9 +372,8 @@ fn level_3_at_least_as_verbose_as_level_2() {
     ]);
 
     assert_eq!(code, 0);
-    // At verbosity 3, debug_log! messages may appear on stderr, so we only
-    // verify that stderr contains no error-level output (no "rsync error:"
-    // or "rsync: error" prefixes).
+    // -vvv routes debug_log! output to stderr, so only error-level lines
+    // ("rsync error:" / "rsync: error") indicate a real failure here.
     let stderr_str = String::from_utf8_lossy(&stderr);
     assert!(
         !stderr_str.contains("rsync error:") && !stderr_str.contains("rsync: error"),
@@ -489,12 +485,10 @@ fn verbose_with_stats_shows_statistics() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("utf8");
-    // File listing from -v.
     assert!(
         rendered.contains("vstats.txt"),
         "verbose --stats should list the file name, got: {rendered:?}"
     );
-    // Stats block.
     assert!(
         rendered.contains("Number of files:"),
         "verbose --stats should contain Number of files, got: {rendered:?}"
@@ -534,7 +528,6 @@ fn stats_without_verbose_shows_statistics() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("utf8");
-    // Stats block should be present even at level 0.
     assert!(
         rendered.contains("Number of files:"),
         "--stats should always show statistics block, got: {rendered:?}"
@@ -557,7 +550,6 @@ fn verbose_with_delete_shows_deletion_messages() {
     fs::create_dir_all(&source_dir).expect("mkdir source");
     fs::create_dir_all(&dest_dir).expect("mkdir dest");
 
-    // Source has one file; dest has two (orphan should be deleted).
     fs::write(source_dir.join("keep.txt"), b"keep").expect("write keep");
     fs::write(dest_dir.join("keep.txt"), b"old keep").expect("write dest keep");
     fs::write(dest_dir.join("orphan.txt"), b"orphan").expect("write orphan");
@@ -575,12 +567,11 @@ fn verbose_with_delete_shows_deletion_messages() {
 
     assert_eq!(code, 0);
     let rendered = String::from_utf8(stdout).expect("utf8");
-    // Upstream rsync -v --delete shows "deleting <file>" lines.
+    // upstream: -v --delete prints "deleting <file>" lines.
     assert!(
         rendered.contains("orphan.txt"),
         "verbose --delete should mention the deleted file, got: {rendered:?}"
     );
-    // The orphan should actually be deleted.
     assert!(
         !dest_dir.join("orphan.txt").exists(),
         "orphan.txt should have been deleted"
@@ -617,13 +608,11 @@ fn delete_without_verbose_no_deletion_messages() {
 
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
-    // At level 0, there should be no output referencing the deletion.
     assert!(
         stdout.is_empty(),
         "delete without verbose should produce no stdout, got: {:?}",
         String::from_utf8_lossy(&stdout)
     );
-    // But the file should still be gone.
     assert!(
         !dest_dir.join("stale.txt").exists(),
         "stale.txt should have been deleted"
@@ -639,7 +628,6 @@ fn long_verbose_flag_equivalent_to_short() {
     let source = tmp.path().join("equiv.txt");
     std::fs::write(&source, b"equivalence test").expect("write source");
 
-    // Run with -v.
     let dest_short = tmp.path().join("short.out");
     let (code_short, stdout_short, stderr_short) = run_with_args([
         OsString::from(RSYNC),
@@ -648,7 +636,6 @@ fn long_verbose_flag_equivalent_to_short() {
         dest_short.into_os_string(),
     ]);
 
-    // Run with --verbose.
     let dest_long = tmp.path().join("long.out");
     let (code_long, stdout_long, stderr_long) = run_with_args([
         OsString::from(RSYNC),
@@ -665,7 +652,6 @@ fn long_verbose_flag_equivalent_to_short() {
     let rendered_short = String::from_utf8(stdout_short).expect("utf8");
     let rendered_long = String::from_utf8(stdout_long).expect("utf8");
 
-    // Both should contain the file name.
     assert!(
         rendered_short.contains("equiv.txt"),
         "-v should show equiv.txt"
@@ -675,7 +661,6 @@ fn long_verbose_flag_equivalent_to_short() {
         "--verbose should show equiv.txt"
     );
 
-    // Both should contain the totals.
     assert!(rendered_short.contains("sent"));
     assert!(rendered_long.contains("sent"));
     assert!(rendered_short.contains("total size is"));
@@ -840,7 +825,6 @@ fn higher_verbosity_produces_more_output() {
     let source = tmp.path().join("progressive.txt");
     std::fs::write(&source, b"progressive verbosity test content here").expect("write source");
 
-    // Level 0.
     let dest0 = tmp.path().join("dest0.txt");
     let (code, stdout0, _) = run_with_args([
         OsString::from(RSYNC),
@@ -849,7 +833,6 @@ fn higher_verbosity_produces_more_output() {
     ]);
     assert_eq!(code, 0);
 
-    // Level 1.
     let dest1 = tmp.path().join("dest1.txt");
     let (code, stdout1, _) = run_with_args([
         OsString::from(RSYNC),
@@ -859,7 +842,6 @@ fn higher_verbosity_produces_more_output() {
     ]);
     assert_eq!(code, 0);
 
-    // Level 2.
     let dest2 = tmp.path().join("dest2.txt");
     let (code, stdout2, _) = run_with_args([
         OsString::from(RSYNC),
@@ -869,14 +851,12 @@ fn higher_verbosity_produces_more_output() {
     ]);
     assert_eq!(code, 0);
 
-    // Level 0 should have strictly less output than level 1.
     assert!(
         stdout0.len() < stdout1.len(),
         "level 0 ({} bytes) should produce less output than level 1 ({} bytes)",
         stdout0.len(),
         stdout1.len()
     );
-    // Level 1 should have strictly less output than level 2.
     assert!(
         stdout1.len() < stdout2.len(),
         "level 1 ({} bytes) should produce less output than level 2 ({} bytes)",
@@ -961,7 +941,6 @@ fn verbose_dry_run_with_delete_lists_deletions_without_removing() {
         rendered.contains("orphan.txt"),
         "verbose dry-run --delete should mention orphan.txt, got: {rendered:?}"
     );
-    // Dry-run: files must remain.
     assert!(
         dest_dir.join("orphan.txt").exists(),
         "dry-run should not actually delete files"
@@ -998,17 +977,14 @@ fn verbose_dry_run_with_stats_shows_statistics() {
         String::from_utf8_lossy(&stderr)
     );
     let rendered = String::from_utf8(stdout).expect("utf8");
-    // File listing from -v.
     assert!(
         rendered.contains("drystats.txt"),
         "dry-run -v --stats should list the file name, got: {rendered:?}"
     );
-    // Stats block.
     assert!(
         rendered.contains("Number of files:"),
         "dry-run -v --stats should show stats, got: {rendered:?}"
     );
-    // Destination must not be created.
     assert!(
         !destination.exists(),
         "dry-run should not create destination"

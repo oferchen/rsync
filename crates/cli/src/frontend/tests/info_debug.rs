@@ -143,17 +143,14 @@ fn info_stats_levels() {
 
 #[test]
 fn info_negation_forms() {
-    // Test 'no' prefix
     let flags = vec![OsString::from("nodel")];
     let settings = parse_info_flags(&flags).expect("flags parse");
     assert_eq!(settings.del, Some(0));
 
-    // Test '-' prefix
     let flags = vec![OsString::from("-skip")];
     let settings = parse_info_flags(&flags).expect("flags parse");
     assert_eq!(settings.skip, Some(0));
 
-    // Test '0' suffix
     let flags = vec![OsString::from("copy0")];
     let settings = parse_info_flags(&flags).expect("flags parse");
     assert_eq!(settings.copy, Some(0));
@@ -215,17 +212,14 @@ fn debug_io_levels() {
 
 #[test]
 fn debug_negation_forms() {
-    // Test 'no' prefix
     let flags = vec![OsString::from("nodel")];
     let settings = parse_debug_flags(&flags).expect("flags parse");
     assert_eq!(settings.del, Some(0));
 
-    // Test '-' prefix
     let flags = vec![OsString::from("-filter")];
     let settings = parse_debug_flags(&flags).expect("flags parse");
     assert_eq!(settings.filter, Some(0));
 
-    // Test '0' suffix
     let flags = vec![OsString::from("recv0")];
     let settings = parse_debug_flags(&flags).expect("flags parse");
     assert_eq!(settings.recv, Some(0));
