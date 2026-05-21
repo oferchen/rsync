@@ -593,13 +593,11 @@ mod tests {
 
     #[test]
     fn offset_datetime_converts_future() {
-        // Create a datetime in 2030
         let date = Date::from_calendar_date(2030, Month::June, 15).unwrap();
         let time = Time::from_hms(12, 30, 0).unwrap();
         let datetime = PrimitiveDateTime::new(date, time).assume_utc();
         let result = offset_datetime_to_system_time(datetime);
         assert!(result.is_ok());
-        // Verify it's after now
         assert!(result.unwrap() > SystemTime::now());
     }
 

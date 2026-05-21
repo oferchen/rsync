@@ -1,18 +1,16 @@
-/// Integration tests for error recovery scenarios during local transfers.
-///
-/// These tests verify that oc-rsync continues transferring remaining files
-/// when individual files or directories encounter errors, matching upstream
-/// rsync's resilient behaviour. Each test sets up a scenario where some
-/// entries are inaccessible or problematic and asserts that:
-///   - Accessible files are still transferred correctly.
-///   - The process exits with an appropriate non-zero code.
-///   - Errors appear in stderr when expected.
-///
-/// References:
-/// - upstream: main.c - io_error to exit code mapping
-/// - upstream: flist.c - permission errors during file list build
-/// - upstream: generator.c:recv_generator() - error handling per entry
-/// - upstream: rsync.h - IOERR_GENERAL, RERR_PARTIAL (23), RERR_VANISHED (24)
+//! Integration tests for error recovery scenarios during local transfers.
+//!
+//! Each test sets up a scenario where some entries are inaccessible or
+//! problematic and asserts that accessible files still transfer, the process
+//! exits with an appropriate non-zero code, and errors appear in stderr when
+//! expected.
+//!
+//! References:
+//! - upstream: main.c - io_error to exit code mapping
+//! - upstream: flist.c - permission errors during file list build
+//! - upstream: generator.c:recv_generator() - error handling per entry
+//! - upstream: rsync.h - IOERR_GENERAL, RERR_PARTIAL (23), RERR_VANISHED (24)
+
 use super::common::*;
 use super::*;
 

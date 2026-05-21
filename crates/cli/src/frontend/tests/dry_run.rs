@@ -80,7 +80,7 @@ fn dry_run_with_verbose_lists_files_on_stdout() {
         String::from_utf8_lossy(&stderr)
     );
 
-    // With -v, rsync lists the files that would be transferred on stdout.
+    // upstream: -v lists the files that would be transferred on stdout.
     let output = String::from_utf8_lossy(&stdout);
     assert!(
         output.contains("file1.txt"),
@@ -91,7 +91,6 @@ fn dry_run_with_verbose_lists_files_on_stdout() {
         "verbose dry-run output should list file2.txt, got: {output:?}"
     );
 
-    // No files should actually be created.
     assert!(!dest_dir.exists(), "destination should not be created");
 }
 
@@ -169,7 +168,6 @@ fn dry_run_with_delete_does_not_remove_files() {
     fs::create_dir_all(&source_dir).expect("create source");
     fs::create_dir_all(&dest_dir).expect("create dest");
 
-    // Source has one file, dest has two.
     fs::write(source_dir.join("keep.txt"), b"keep").expect("write keep");
     fs::write(dest_dir.join("keep.txt"), b"old keep").expect("write dest keep");
     fs::write(dest_dir.join("extra.txt"), b"extra").expect("write extra");
@@ -191,7 +189,6 @@ fn dry_run_with_delete_does_not_remove_files() {
         "stderr: {:?}",
         String::from_utf8_lossy(&stderr)
     );
-    // extra.txt must still exist -- dry-run does not actually delete.
     assert!(
         dest_dir.join("extra.txt").exists(),
         "dry-run --delete must not actually remove files"
@@ -200,7 +197,6 @@ fn dry_run_with_delete_does_not_remove_files() {
         fs::read(dest_dir.join("extra.txt")).expect("read extra"),
         b"extra"
     );
-    // Destination keep.txt must be unmodified.
     assert_eq!(
         fs::read(dest_dir.join("keep.txt")).expect("read keep"),
         b"old keep"
@@ -236,12 +232,11 @@ fn dry_run_verbose_with_delete_lists_deletions() {
 
     assert_eq!(code, 0);
     let output = String::from_utf8_lossy(&stdout);
-    // Upstream rsync -nv --delete shows "deleting <file>" lines.
+    // upstream: -nv --delete prints "deleting <file>" lines.
     assert!(
         output.contains("orphan.txt"),
         "verbose dry-run --delete should mention the file to be deleted, got: {output:?}"
     );
-    // Files must remain.
     assert!(dest_dir.join("orphan.txt").exists());
 }
 
@@ -376,10 +371,9 @@ fn dry_run_combined_with_stats_produces_summary() {
         String::from_utf8_lossy(&stderr)
     );
 
-    // With --stats, rsync produces a summary block on stdout.
     let output = String::from_utf8_lossy(&stdout);
-    // The output should contain statistics keywords that upstream rsync
-    // prints, like "Number of files" or "Total file size".
+    // upstream: --stats emits a summary block ("Number of files",
+    // "Total file size", ...) even under -n.
     assert!(
         !output.is_empty(),
         "dry-run --stats should produce statistics output"

@@ -1,8 +1,6 @@
 use super::common::*;
 use super::*;
 
-// Test 1: Sizes are formatted with K, M, G suffixes
-
 #[test]
 fn human_readable_formats_kilobytes() {
     use tempfile::tempdir;
@@ -121,8 +119,6 @@ fn human_readable_formats_various_sizes() {
     }
 }
 
-// Test 2: Multiple -h flags increase precision (combined mode)
-
 #[test]
 fn multiple_h_flags_enable_combined_mode() {
     let parsed = parse_args([
@@ -199,11 +195,8 @@ fn combined_mode_shows_both_human_and_decimal() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
-    // Should show both human-readable and exact decimal
     assert!(rendered.contains("1.54K (1,536)"));
 }
-
-// Test 3: Output matches upstream rsync format
 
 #[test]
 fn human_readable_output_format_matches_upstream() {
@@ -226,10 +219,9 @@ fn human_readable_output_format_matches_upstream() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
 
-    // Upstream rsync uses format like "5.12K" with 2 decimal places
+    // upstream: stats use 2 decimal places (e.g. "5.12K").
     assert!(rendered.contains("5.12K"));
 
-    // Check for "Total file size:" line
     let has_total_file_size = rendered
         .lines()
         .any(|line| line.starts_with("Total file size:") && line.contains("5.12K"));
@@ -245,7 +237,6 @@ fn human_readable_uses_two_decimal_places() {
 
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("decimal.bin");
-    // 1234 bytes should format as 1.23K
     std::fs::write(&source, vec![0u8; 1_234]).expect("write source");
 
     let dest = tmp.path().join("decimal.out");
@@ -286,14 +277,11 @@ fn human_readable_formats_bytes_without_suffix() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
-    // Bytes under 1000 should display without suffix
     assert!(
         rendered.contains("Total file size: 512 bytes"),
         "expected plain bytes, got: {rendered}"
     );
 }
-
-// Test 4: Works with --stats and progress
 
 #[test]
 fn human_readable_works_with_stats() {
@@ -316,12 +304,10 @@ fn human_readable_works_with_stats() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
 
-    // Verify stats section is present with human-readable sizes
     assert!(rendered.contains("Number of files:"));
     assert!(rendered.contains("Total file size:"));
     assert!(rendered.contains("Total bytes sent:"));
 
-    // Verify human-readable formatting is used
     assert!(rendered.contains("2.05K"));
 }
 
@@ -346,14 +332,12 @@ fn human_readable_works_with_progress() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("progress output utf8");
 
-    // Progress output should contain human-readable size
     let normalized = rendered.replace('\r', "\n");
     assert!(
         normalized.contains("3.07K"),
         "expected human-readable size in progress, got: {rendered}"
     );
 
-    // Verify progress metadata is present
     assert!(normalized.contains("progress.bin"));
     assert!(normalized.contains("(xfr#1"));
 }
@@ -380,13 +364,11 @@ fn human_readable_works_with_stats_and_progress() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("output utf8");
 
-    // Verify both progress and stats output present
     assert!(rendered.contains("both.bin"));
     assert!(rendered.contains("(xfr#1"));
     assert!(rendered.contains("Number of files:"));
     assert!(rendered.contains("Total file size:"));
 
-    // Verify human-readable formatting in both
     assert!(
         rendered.contains("4.10K"),
         "expected human-readable size, got: {rendered}"
@@ -414,7 +396,6 @@ fn human_readable_combined_works_with_stats() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
 
-    // Verify combined format in stats output
     assert!(
         rendered.contains("8.19K (8,192)"),
         "expected combined format in stats, got: {rendered}"
@@ -443,15 +424,12 @@ fn human_readable_combined_works_with_progress() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("progress output utf8");
 
-    // Verify combined format in progress output
     let normalized = rendered.replace('\r', "\n");
     assert!(
         normalized.contains("6.14K (6,144)"),
         "expected combined format in progress, got: {rendered}"
     );
 }
-
-// Additional edge cases
 
 #[test]
 fn human_readable_handles_zero_bytes() {
@@ -501,7 +479,6 @@ fn human_readable_with_verbose_output() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("output utf8");
 
-    // Verify verbose listing and human-readable stats
     assert!(rendered.contains("verbose.bin"));
     assert!(rendered.contains("10.24K"));
     assert!(rendered.contains("\n\nsent"));
@@ -528,12 +505,10 @@ fn human_readable_disabled_shows_exact_values() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
 
-    // With human-readable disabled, should show comma-separated decimal
     assert!(
         rendered.contains("1,536"),
         "expected comma-separated decimal, got: {rendered}"
     );
-    // Should NOT contain K suffix
     assert!(
         !rendered.contains("1.54K"),
         "should not have K suffix when disabled, got: {rendered}"
@@ -561,7 +536,6 @@ fn human_readable_format_consistency_across_stats() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
 
-    // All size references should use consistent human-readable format
     let count_k = rendered.matches("20.48K").count();
     assert!(
         count_k >= 2,
