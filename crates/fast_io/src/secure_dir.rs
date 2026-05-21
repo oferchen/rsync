@@ -15,10 +15,12 @@
 //! # Why two code paths on Linux
 //!
 //! `openat2(2)` landed in Linux 5.6 (March 2020). On older kernels the syscall
-//! returns `ENOSYS`; we cache the first such result in a [`OnceLock`] and use
-//! plain `open(O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)` thereafter. The plain
-//! `open` path still rejects a symlink at the leaf - it just cannot reject
-//! `..` traversal mid-path, which is the marginal extra confinement
+//! returns `ENOSYS`; the
+//! [`openat2_supported`](crate::linux_capabilities::openat2_supported) probe
+//! caches that result and we use plain
+//! `open(O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)` thereafter. The plain `open`
+//! path still rejects a symlink at the leaf - it just cannot reject `..`
+//! traversal mid-path, which is the marginal extra confinement
 //! `RESOLVE_BENEATH` gives us.
 //!
 //! # Single unsafe block
@@ -110,28 +112,21 @@ mod imp {
     #[cfg(target_os = "linux")]
     pub(super) mod linux {
         use super::*;
-        use std::sync::OnceLock;
+        use crate::linux_capabilities::openat2_supported;
 
-        /// Cached `openat2` availability probe.
-        ///
-        /// `None` until the first call; `Some(true)` once we have observed a
-        /// successful `openat2` invocation; `Some(false)` once `ENOSYS` has
-        /// come back. Subsequent calls skip the syscall when this is
-        /// `Some(false)`.
-        static OPENAT2_AVAILABLE: OnceLock<bool> = OnceLock::new();
-
-        /// Attempts an `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`.
+        /// Attempts an `openat2` with `RESOLVE_NO_SYMLINKS`.
         ///
         /// Returns:
         /// - `Ok(Some(fd))` when the call succeeded - this is the strict
         ///   confinement path.
-        /// - `Ok(None)` when the kernel does not support `openat2` (cached
-        ///   for the remainder of the process lifetime), signalling the
-        ///   caller to fall back to plain `open(O_NOFOLLOW)`.
+        /// - `Ok(None)` when the kernel does not support `openat2`,
+        ///   signalling the caller to fall back to plain `open(O_NOFOLLOW)`.
+        ///   The probe is cached by [`openat2_supported`] for the remainder
+        ///   of the process lifetime.
         /// - `Err(_)` for any other failure, including the strict-resolution
         ///   refusals (`ELOOP`, `EXDEV`) that we want callers to see.
         pub(super) fn try_openat2(c_path: &CString) -> io::Result<Option<OwnedFd>> {
-            if let Some(false) = OPENAT2_AVAILABLE.get().copied() {
+            if !openat2_supported() {
                 return Ok(None);
             }
 
@@ -177,7 +172,6 @@ mod imp {
             };
 
             if raw >= 0 {
-                let _ = OPENAT2_AVAILABLE.set(true);
                 // SAFETY: `raw` is a non-negative fd just returned by
                 // `openat2(2)` with `O_CLOEXEC`. We have not duplicated or
                 // leaked it.
@@ -188,7 +182,6 @@ mod imp {
 
             let err = io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::ENOSYS) {
-                let _ = OPENAT2_AVAILABLE.set(false);
                 return Ok(None);
             }
             Err(err)
