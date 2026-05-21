@@ -4,9 +4,12 @@
 //! delta generation. It indexes signature blocks by their rolling checksum
 //! components `(sum1, sum2)` for efficient matching.
 //!
-//! Uses a flat open-addressing hash table ([`CompactLookup`]) with Robin Hood
-//! probing for cache-friendly O(1) lookups. Each entry is 8 bytes (packed key
-//! + block index), fitting 8 entries per 64-byte cache line.
+//! The compact bucket index ([`CompactLookup`]) addresses buckets using only
+//! the upper half of the rolling sum (`rsum >> 16`, equal to `sum2`); the
+//! lower half (`sum1`) is stored as an in-bucket discriminator. This is the
+//! ZSO-4 translation of zsync's `librcksum/hash.c:45` `rsum_a_mask` trick:
+//! shrinking the bucket array to at most `2^16` slots keeps the hottest
+//! lookup table cache-line resident across rolling-hash advances.
 
 mod bithash;
 mod builder;
@@ -16,6 +19,8 @@ mod trace;
 
 #[cfg(test)]
 mod bithash_tests;
+#[cfg(test)]
+mod compact_key_tests;
 #[cfg(test)]
 mod matched_blocks_tests;
 #[cfg(test)]
@@ -59,18 +64,23 @@ const NEXT_MATCH_NONE: u32 = u32::MAX;
 
 /// Index over a file signature that accelerates delta matching.
 ///
-/// Uses a flat open-addressing hash table ([`CompactLookup`]) keyed by packed
-/// `(sum1, sum2)` for O(1) block lookup with excellent cache locality. A tag
-/// table indexed by `sum1` provides fast-path rejection before the hash probe,
-/// mirroring upstream rsync's `tag_table` in `match.c`. The block length is
-/// stored separately since all indexed blocks have the same canonical length.
+/// Uses a chained bucket table ([`CompactLookup`]) addressed by the upper
+/// half of the rolling sum (`sum2`) for O(1) block lookup with excellent
+/// cache locality. The lower half (`sum1`) lives inside each chain entry as
+/// an in-bucket discriminator, mirroring zsync's `librcksum`
+/// `rsum_a_mask` trick (ZSO-4). A tag table indexed by `sum1` still provides
+/// upstream-rsync-style fast-path rejection before the bucket walk, and the
+/// bithash prefilter (ZSO-1) rejects the bulk of post-tag misses before the
+/// chain probe.
 #[derive(Debug)]
 pub struct DeltaSignatureIndex {
     block_length: usize,
     strong_length: usize,
     algorithm: SignatureAlgorithm,
     blocks: Vec<SignatureBlock>,
-    /// Flat open-addressing lookup keyed by packed (sum1, sum2).
+    /// Compact bucket lookup keyed on the upper half of the rolling sum
+    /// (`rsum >> 16`); the lower 16 bits live inside each chain entry as
+    /// the in-bucket discriminator. See the ZSO-4 module-level docs.
     lookup: CompactLookup,
     /// Tag table for O(1) rejection using sum1 (low 16 bits of rolling checksum).
     /// upstream: match.c - `tag_table[s1]` check before hash probe.
@@ -213,6 +223,19 @@ impl SeqMatchCounters {
 }
 
 impl DeltaSignatureIndex {
+    /// Returns the bucket address the compact lookup would use for `rsum`.
+    ///
+    /// The compact key is `rsum >> 16` (equal to
+    /// [`checksums::RollingDigest::sum2`]); the lower 16 bits become the
+    /// in-chain discriminator. Exposed so callers and tests can reason
+    /// about bucket collisions without reaching into the private bucket
+    /// table.
+    #[inline]
+    #[must_use]
+    pub const fn bucket_for(rsum: u32) -> u16 {
+        CompactLookup::bucket_for(rsum)
+    }
+
     /// Returns the role used for `--debug=HASH` `[<role>]` prefixes.
     #[must_use]
     pub const fn role(&self) -> HashtableRole {
@@ -744,7 +767,7 @@ impl DeltaSignatureIndex {
 /// Behind the internal `bench-internal` feature flag so the surface never
 /// reaches release builds. See `docs/design/zsync-bithash.md` section 7
 /// for the rejection-rate methodology these accessors support.
-#[cfg(feature = "bench-internal")]
+#[cfg(any(test, feature = "bench-internal"))]
 impl DeltaSignatureIndex {
     /// Returns the fraction of bithash bits currently set, in `[0.0, 1.0]`.
     ///
@@ -778,25 +801,25 @@ impl DeltaSignatureIndex {
         self.tag_table[sum1 as usize]
     }
 
-    /// Slot count of the underlying compact lookup table.
+    /// Bucket-slot count of the underlying compact lookup table.
     ///
-    /// The lookup table is a flat `Vec<u64>` open-addressing hash whose
-    /// footprint dominates the cache behaviour of a hot lookup loop.
-    /// Bench harnesses use this to bin index sizes against the local CPU
-    /// cache hierarchy (L1 / L2 / LLC / main memory).
+    /// Equal to the bucket count, capped at `2^16` per the ZSO-4 compact-key
+    /// design. Bench harnesses use this to bin index sizes against the local
+    /// CPU cache hierarchy (L1 / L2 / LLC / main memory).
     #[must_use]
     pub fn lookup_capacity(&self) -> usize {
         self.lookup.capacity()
     }
 
-    /// Byte size of the underlying compact lookup table allocation.
+    /// Byte size of the bucket-array allocation backing the compact lookup.
     ///
-    /// Equal to `lookup_capacity() * 8` for the current 8-byte slot layout.
-    /// Reported separately so harnesses keep working if the slot width
-    /// changes (#2072 packed-key candidate).
+    /// Reports the hot table only; chain-entry storage is excluded so the
+    /// figure tracks the cache-resident slot array a probe touches first.
+    /// Test- and bench-only: the enclosing `impl` block is gated behind
+    /// `cfg(any(test, feature = "bench-internal"))`.
     #[must_use]
     pub fn lookup_bytes(&self) -> usize {
-        self.lookup.capacity() * core::mem::size_of::<u64>()
+        self.lookup.bucket_bytes()
     }
 
     /// Drives the compact lookup probe directly, skipping the tag-table
