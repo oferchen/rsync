@@ -913,8 +913,12 @@ fn large_cache_index() {
 ///
 /// Asserts that:
 ///
-/// 1. `protocol::xattr::local_to_wire` returns `user.foo` for the local
-///    name `user.foo` (no prefix mutation) on every supported platform.
+/// 1. `protocol::xattr::local_to_wire` produces the upstream-faithful wire
+///    name on the host platform. On Linux the local name `user.foo` is
+///    written byte-for-byte; on non-Linux the local flat-namespace name
+///    `foo` is wrapped with the `user.` prefix the sender prepends before
+///    handing bytes to `send_xattr`. Either way the resulting wire bytes
+///    must equal `user.foo`.
 /// 2. The bytes `b"user.foo"` appear in the serialized `send_xattr`
 ///    output as the on-wire name, immediately followed by the NUL
 ///    terminator. This is a byte-for-byte parity check against upstream
@@ -923,19 +927,26 @@ fn large_cache_index() {
 fn user_prefix_preserved_in_wire_bytes() {
     use crate::xattr::{XattrEntry, XattrList, local_to_wire};
 
-    // Step 1: local_to_wire must preserve `user.foo` verbatim. Cross
-    // every supported call site by exercising both am_root values.
+    // Step 1: local_to_wire must yield the upstream wire name `user.foo`
+    // on every supported platform, regardless of `am_root`. Linux feeds
+    // it the verbatim `user.foo` name; non-Linux feeds the flat-namespace
+    // `foo` so the sender's prefix wrapper produces the same wire bytes.
+    #[cfg(target_os = "linux")]
+    let local_name: &[u8] = b"user.foo";
+    #[cfg(not(target_os = "linux"))]
+    let local_name: &[u8] = b"foo";
+
     for am_root in [false, true] {
         assert_eq!(
-            local_to_wire(b"user.foo", am_root),
+            local_to_wire(local_name, am_root),
             Some(b"user.foo".to_vec()),
-            "user.foo must pass through local_to_wire verbatim (am_root={am_root})",
+            "local_to_wire must emit `user.foo` on the wire (am_root={am_root})",
         );
     }
 
     // Step 2: an XattrEntry built from the wire name must serialize the
     // bytes `user.foo` verbatim into the wire stream.
-    let wire_name = local_to_wire(b"user.foo", false).expect("user.foo must not be filtered");
+    let wire_name = local_to_wire(local_name, false).expect("name must not be filtered");
     let mut list = XattrList::new();
     list.push(XattrEntry::new(wire_name, b"bar".to_vec()));
 
