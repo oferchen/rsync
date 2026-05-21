@@ -175,6 +175,14 @@ impl DeltaGenerator {
         let prune_matched = self.prune_matched;
         #[cfg(not(any(test, feature = "bench-internal")))]
         let prune_matched = true;
+        // ZSO-3: the shared consumed-bitset on `index` survives across
+        // generator sessions when callers reuse the same index. Reset
+        // it now so each `generate()` call starts with a fresh prune
+        // state. Concurrent generators sharing the same index continue
+        // to coordinate through `mark_consumed` after this reset.
+        if prune_matched {
+            index.reset_consumed();
+        }
 
         let mut buffer = vec![0u8; self.buffer_len.max(block_len)];
         let mut buffer_pos = 0usize;
@@ -336,6 +344,15 @@ impl DeltaGenerator {
                     // later probe at a different source offset will not pick
                     // this basis index again.
                     matched_blocks.mark_matched(match_idx);
+                    // ZSO-3 hash-chain prune on the shared index. Mirrors
+                    // the per-session `matched_blocks.mark_matched` above
+                    // but uses interior mutability so the same effect
+                    // applies when the index is shared read-only across
+                    // concurrent generators
+                    // (`crates/engine/src/concurrent_delta/`).
+                    if prune_matched {
+                        index.mark_consumed(match_idx as u32);
+                    }
 
                     let last_matched = match_idx;
                     // upstream/zsync: `librcksum/rsum.c:262` advances the
