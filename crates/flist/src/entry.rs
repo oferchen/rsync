@@ -151,7 +151,6 @@ mod tests {
         std::fs::write(&child, "content").unwrap();
 
         let mut walker = FileListBuilder::new(temp.path()).build().unwrap();
-        // Skip root
         let _ = walker.next();
         if let Some(Ok(entry)) = walker.next() {
             assert!(!entry.is_root());
@@ -166,7 +165,6 @@ mod tests {
         std::fs::write(&child, "content").unwrap();
 
         let mut walker = FileListBuilder::new(temp.path()).build().unwrap();
-        // Skip root
         let _ = walker.next();
         if let Some(Ok(entry)) = walker.next() {
             assert_eq!(entry.depth(), 1);

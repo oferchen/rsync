@@ -258,13 +258,7 @@ mod tests {
     #[test]
     fn test_file_name_none_for_root() {
         let (_dir, path) = create_test_file();
-        let entry = LazyFileListEntry::new(
-            path,
-            PathBuf::new(),
-            0,
-            true, // is_root
-            false,
-        );
+        let entry = LazyFileListEntry::new(path, PathBuf::new(), 0, true, false);
         assert!(entry.file_name().is_none());
     }
 

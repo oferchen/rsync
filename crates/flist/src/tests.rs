@@ -563,7 +563,6 @@ fn walk_terminates_after_exhaustion() {
     let _ = walker.next();
     let _ = walker.next();
 
-    // Should consistently return None
     assert!(walker.next().is_none());
     assert!(walker.next().is_none());
     assert!(walker.next().is_none());
@@ -575,7 +574,6 @@ fn walk_multiple_files_sorted() {
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
-    // Create files in non-alphabetical order
     fs::write(root.join("zebra.txt"), b"z").expect("write zebra");
     fs::write(root.join("apple.txt"), b"a").expect("write apple");
     fs::write(root.join("mango.txt"), b"m").expect("write mango");
@@ -583,7 +581,6 @@ fn walk_multiple_files_sorted() {
     let walker = FileListBuilder::new(&root).build().expect("build walker");
     let paths = collect_relative_paths(walker);
 
-    // Should be sorted alphabetically
     assert_eq!(
         paths,
         vec![
@@ -600,7 +597,6 @@ fn walk_nested_directories_sorted() {
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
 
-    // Create directories with files in non-alphabetical order
     let dir_b = root.join("b_dir");
     let dir_a = root.join("a_dir");
     fs::create_dir(&dir_b).expect("create b_dir");
@@ -611,7 +607,6 @@ fn walk_nested_directories_sorted() {
     let walker = FileListBuilder::new(&root).build().expect("build walker");
     let paths = collect_relative_paths(walker);
 
-    // Directories should be visited in sorted order
     assert_eq!(
         paths,
         vec![
