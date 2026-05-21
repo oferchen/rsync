@@ -80,11 +80,9 @@ fn algorithm_kind_from_name_rejects_invalid() {
 
 #[test]
 fn algorithm_kind_availability() {
-    // Always available
     assert!(CompressionAlgorithmKind::None.is_available());
     assert!(CompressionAlgorithmKind::Zlib.is_available());
 
-    // Feature-dependent
     #[cfg(feature = "zstd")]
     assert!(CompressionAlgorithmKind::Zstd.is_available());
     #[cfg(feature = "lz4")]
@@ -98,7 +96,6 @@ fn algorithm_kind_all_returns_available_algorithms() {
     assert!(all.contains(&CompressionAlgorithmKind::None));
     assert!(all.contains(&CompressionAlgorithmKind::Zlib));
 
-    // Verify all returned algorithms are actually available
     for algo in &all {
         assert!(algo.is_available());
     }
@@ -118,8 +115,7 @@ fn algorithm_kind_default_levels() {
 
 #[test]
 fn algorithm_kind_for_protocol_version_follows_rsync_defaults() {
-    // Protocol < 30 has no vstring negotiation; upstream default is Zlib
-    // (compat.c:556-563).
+    // upstream: compat.c:556-563 - no vstring negotiation before protocol 30; zlib.
     for version in 27..30 {
         assert_eq!(
             CompressionAlgorithmKind::for_protocol_version(version),
@@ -128,8 +124,7 @@ fn algorithm_kind_for_protocol_version_follows_rsync_defaults() {
         );
     }
 
-    // Protocol 30+ defaults to Zstd when SUPPORT_ZSTD is defined
-    // (upstream: compat.c:101-102 valid_compressions_items[]).
+    // upstream: compat.c:101-102 valid_compressions_items[] - zstd first when SUPPORT_ZSTD.
     #[cfg(feature = "zstd")]
     {
         for version in 30..40 {
@@ -194,7 +189,7 @@ fn zlib_strategy_compress_and_decompress() {
 
     let comp_bytes = strategy.compress(MEDIUM_DATA, &mut compressed).unwrap();
     assert!(comp_bytes > 0);
-    assert!(comp_bytes < MEDIUM_DATA.len()); // Should compress
+    assert!(comp_bytes < MEDIUM_DATA.len());
 
     let decomp_bytes = strategy.decompress(&compressed, &mut decompressed).unwrap();
     assert_eq!(decomp_bytes, MEDIUM_DATA.len());
@@ -220,16 +215,13 @@ fn zlib_strategy_different_compression_levels() {
     default.compress(data, &mut default_out).unwrap();
     best.compress(data, &mut best_out).unwrap();
 
-    // None should produce larger output than compressed variants
+    // None still emits stored-block framing, so it cannot be smaller than
+    // any compressed variant; relative ratios between Fast/Default/Best can
+    // invert on small payloads.
     assert!(none_out.len() >= fast_out.len());
     assert!(none_out.len() >= default_out.len());
     assert!(none_out.len() >= best_out.len());
 
-    // For small data, compression levels might produce similar or slightly different sizes
-    // due to overhead. Just verify all produce valid compressed output that decompresses correctly.
-    // Note: Higher compression doesn't always mean smaller output for small data.
-
-    // All should decompress correctly
     for (strategy, compressed) in [
         (&none, &none_out),
         (&fast, &fast_out),
@@ -278,8 +270,8 @@ fn zlib_strategy_incompressible_data() {
     strategy.decompress(&compressed, &mut decompressed).unwrap();
 
     assert_eq!(&decompressed, INCOMPRESSIBLE_DATA);
-    // Incompressible data might expand due to compression overhead
-    assert!(compressed.len() >= INCOMPRESSIBLE_DATA.len() - 5); // Allow some tolerance
+    // deflate framing typically adds a few bytes to incompressible payloads.
+    assert!(compressed.len() >= INCOMPRESSIBLE_DATA.len() - 5);
 }
 
 #[cfg(feature = "zstd")]
@@ -314,10 +306,8 @@ fn zstd_strategy_different_levels() {
     default.compress(data, &mut default_out).unwrap();
     best.compress(data, &mut best_out).unwrap();
 
-    // For small data, different compression levels might produce similar sizes
-    // Just verify all produce valid compressed output that decompresses correctly.
-
-    // All should decompress correctly
+    // Output sizes can invert on small inputs - assert only that every level
+    // produces output that round-trips correctly.
     for (strategy, compressed) in [
         (&fast, &fast_out),
         (&default, &default_out),
@@ -372,16 +362,14 @@ fn lz4_strategy_empty_input() {
 
 #[test]
 fn selector_for_protocol_version_creates_correct_strategy() {
-    // Pre-30 always returns Zlib (upstream: compat.c:556-563 - no vstring
-    // negotiation, fallback codec is "zlib").
+    // upstream: compat.c:556-563 - pre-30 has no vstring negotiation; fallback is zlib.
     let strategy = CompressionStrategySelector::for_protocol_version(28);
     assert_eq!(strategy.algorithm_name(), "zlib");
 
     let strategy = CompressionStrategySelector::for_protocol_version(29);
     assert_eq!(strategy.algorithm_name(), "zlib");
 
-    // Protocol 30+ defaults to Zstd when the feature is compiled in
-    // (upstream: compat.c:101-102 valid_compressions_items[]).
+    // upstream: compat.c:101-102 valid_compressions_items[] - zstd first when SUPPORT_ZSTD.
     let strategy = CompressionStrategySelector::for_protocol_version(30);
     #[cfg(feature = "zstd")]
     assert_eq!(strategy.algorithm_name(), "zstd");
@@ -397,7 +385,6 @@ fn selector_for_protocol_version_creates_correct_strategy() {
 
 #[test]
 fn selector_for_algorithm_creates_correct_strategy() {
-    // None
     let strategy = CompressionStrategySelector::for_algorithm(
         CompressionAlgorithmKind::None,
         CompressionLevel::None,
@@ -405,7 +392,6 @@ fn selector_for_algorithm_creates_correct_strategy() {
     .unwrap();
     assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::None);
 
-    // Zlib
     let strategy = CompressionStrategySelector::for_algorithm(
         CompressionAlgorithmKind::Zlib,
         CompressionLevel::Best,
@@ -413,7 +399,6 @@ fn selector_for_algorithm_creates_correct_strategy() {
     .unwrap();
     assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::Zlib);
 
-    // Zstd
     #[cfg(feature = "zstd")]
     {
         let strategy = CompressionStrategySelector::for_algorithm(
@@ -424,7 +409,6 @@ fn selector_for_algorithm_creates_correct_strategy() {
         assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::Zstd);
     }
 
-    // Lz4
     #[cfg(feature = "lz4")]
     {
         let strategy = CompressionStrategySelector::for_algorithm(
@@ -474,7 +458,6 @@ fn selector_negotiate_finds_first_common_algorithm() {
     let strategy =
         CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
 
-    // Should select Zlib (first common algorithm in local preference order)
     assert_eq!(strategy.algorithm_name(), "zlib");
 }
 
@@ -492,7 +475,6 @@ fn selector_negotiate_respects_local_preference_order() {
     let strategy =
         CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
 
-    // Should select Zlib (first in local list that remote supports)
     assert_eq!(strategy.algorithm_name(), "zlib");
 }
 
@@ -504,7 +486,6 @@ fn selector_negotiate_no_common_algorithm_returns_none() {
     let strategy =
         CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
 
-    // Should fall back to no compression
     assert_eq!(strategy.algorithm_name(), "none");
 }
 
@@ -516,24 +497,20 @@ fn selector_negotiate_empty_lists() {
     let strategy =
         CompressionStrategySelector::negotiate(&local, &remote, CompressionLevel::Default);
 
-    // Should fall back to no compression
     assert_eq!(strategy.algorithm_name(), "none");
 }
 
 #[test]
 fn selector_concrete_factories_work() {
-    // None
     let strategy = CompressionStrategySelector::none();
     assert_eq!(strategy.algorithm_name(), "none");
 
-    // Zlib
     let strategy = CompressionStrategySelector::zlib_default();
     assert_eq!(strategy.algorithm_name(), "zlib");
 
     let strategy = CompressionStrategySelector::zlib(CompressionLevel::Best);
     assert_eq!(strategy.algorithm_name(), "zlib");
 
-    // Zstd
     #[cfg(feature = "zstd")]
     {
         let strategy = CompressionStrategySelector::zstd_default();
@@ -543,7 +520,6 @@ fn selector_concrete_factories_work() {
         assert_eq!(strategy.algorithm_name(), "zstd");
     }
 
-    // Lz4
     #[cfg(feature = "lz4")]
     {
         let strategy = CompressionStrategySelector::lz4_default();
@@ -685,7 +661,6 @@ fn strategies_are_send_and_sync() {
 
 #[test]
 fn protocol_version_roundtrip_simulation() {
-    // Simulate different protocol versions
     for version in 27..40 {
         let strategy = CompressionStrategySelector::for_protocol_version(version);
         let mut compressed = Vec::new();
@@ -703,9 +678,6 @@ fn protocol_version_roundtrip_simulation() {
 
 #[test]
 fn negotiation_simulation() {
-    // Simulate client-server negotiation scenarios
-
-    // Scenario 1: Both support all algorithms
     let client_algos = CompressionAlgorithmKind::all();
     let server_algos = CompressionAlgorithmKind::all();
     let strategy = CompressionStrategySelector::negotiate(
@@ -715,7 +687,6 @@ fn negotiation_simulation() {
     );
     assert!(strategy.algorithm_kind().is_available());
 
-    // Scenario 2: Server only supports Zlib
     let server_algos = vec![CompressionAlgorithmKind::Zlib];
     let strategy = CompressionStrategySelector::negotiate(
         &client_algos,
@@ -724,7 +695,6 @@ fn negotiation_simulation() {
     );
     assert_eq!(strategy.algorithm_kind(), CompressionAlgorithmKind::Zlib);
 
-    // Scenario 3: Client prefers Zstd
     #[cfg(feature = "zstd")]
     {
         let client_algos = vec![
@@ -743,7 +713,6 @@ fn negotiation_simulation() {
 
 #[test]
 fn large_data_roundtrip() {
-    // Generate larger test data
     let large_data: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
 
     let strategies: Vec<Box<dyn CompressionStrategy>> = vec![

@@ -40,7 +40,7 @@ mod test_data {
         let mut data = Vec::with_capacity(size);
         let mut counter: u32 = 0;
         while data.len() < size {
-            // Simulate record structure: length (4 bytes) + type (1 byte) + data
+            // Record layout: 4-byte LE length, 1-byte type, type-dependent payload.
             let record_type = (counter % 5) as u8;
             let record_len = 16 + (counter % 32) as usize;
             data.extend_from_slice(&(record_len as u32).to_le_bytes());
@@ -60,7 +60,6 @@ mod test_data {
         let mut state = seed;
         let mut data = Vec::with_capacity(size);
         for _ in 0..size {
-            // Linear congruential generator
             state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
             data.push((state >> 56) as u8);
         }
@@ -72,7 +71,7 @@ mod test_data {
         let mut data = Vec::with_capacity(size);
         let mut i = 0;
         while data.len() < size {
-            // Pattern: some data followed by zeros
+            // Interleave a short data burst with a long zero run.
             let data_len = 10 + (i % 20);
             let zero_len = 50 + (i % 100);
             for j in 0..data_len.min(size - data.len()) {
@@ -124,17 +123,14 @@ impl CompressionResult {
 fn test_compression_level(data: &[u8], level: u32) -> CompressionResult {
     let compression_level = CompressionLevel::from_numeric(level).expect("valid level");
 
-    // Measure compression time
     let compress_start = Instant::now();
     let compressed = compress_to_vec(data, compression_level).expect("compression succeeds");
     let compression_time = compress_start.elapsed();
 
-    // Measure decompression time
     let decompress_start = Instant::now();
     let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
     let decompression_time = decompress_start.elapsed();
 
-    // Verify round-trip integrity
     let round_trip_verified = decompressed == data;
 
     CompressionResult {
@@ -165,7 +161,6 @@ fn all_levels_produce_valid_compressed_output() {
             "level {level} did not compress data"
         );
 
-        // Verify decompression works
         let decompressed = decompress_to_vec(&compressed)
             .unwrap_or_else(|e| panic!("level {level} decompression failed: {e}"));
 
@@ -229,7 +224,6 @@ fn all_levels_work_with_streaming_decoder() {
 
 #[test]
 fn higher_levels_achieve_better_or_equal_compression_on_compressible_data() {
-    // Use highly compressible data where level differences are most apparent
     let data = test_data::repetitive_text(100_000);
 
     let mut results: Vec<CompressionResult> = Vec::new();
@@ -237,7 +231,6 @@ fn higher_levels_achieve_better_or_equal_compression_on_compressible_data() {
         results.push(test_compression_level(&data, level));
     }
 
-    // Verify all round trips succeeded
     for result in &results {
         assert!(
             result.round_trip_verified,
@@ -246,8 +239,8 @@ fn higher_levels_achieve_better_or_equal_compression_on_compressible_data() {
         );
     }
 
-    // Compression should generally improve with level
-    // Note: We allow for occasional local non-monotonicity due to algorithm internals
+    // Endpoint assertion only: deflate internals permit local non-monotonicity
+    // between adjacent levels even when the 1-vs-9 inequality always holds.
     let level_1_size = results[0].compressed_size;
     let level_9_size = results[8].compressed_size;
 
@@ -277,15 +270,14 @@ fn compression_ratio_varies_by_data_type() {
     ];
 
     for (name, data) in &test_cases {
-        let result = test_compression_level(data, 6); // Use default-like level
+        // Level 6 mirrors upstream's Z_DEFAULT_COMPRESSION.
+        let result = test_compression_level(data, 6);
         assert!(
             result.round_trip_verified,
             "{name}: round-trip integrity failed"
         );
 
-        // Random data should compress poorly
         if *name == "random_data" {
-            // Random data typically has ratio close to 1.0 or slightly worse
             assert!(
                 result.compression_ratio() < 1.5,
                 "{name}: random data unexpectedly compressible (ratio: {:.2})",
@@ -293,7 +285,6 @@ fn compression_ratio_varies_by_data_type() {
             );
         }
 
-        // Highly repetitive data should compress very well
         if *name == "repetitive_text" || *name == "sparse_data" {
             assert!(
                 result.compression_ratio() > 2.0,

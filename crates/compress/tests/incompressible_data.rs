@@ -161,7 +161,6 @@ mod random_data_handling {
                 expansion_ratio
             );
 
-            // Verify round-trip integrity
             let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
             assert_eq!(decompressed, data, "{level:?}: round-trip integrity failed");
         }
@@ -183,7 +182,6 @@ mod random_data_handling {
                 "Size {size}: encrypted-like data expanded too much (ratio: {ratio:.3})"
             );
 
-            // Verify correctness
             let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
             assert_eq!(decompressed, data, "Size {size}: round-trip failed");
         }
@@ -214,7 +212,8 @@ mod random_data_handling {
 
     #[test]
     fn large_random_data_blocks() {
-        // Test with larger blocks that might trigger different compression paths
+        // 1 MB exercises deflate's multi-window code path; smaller blocks
+        // never trigger a window-flush boundary.
         let data = test_data::random_data(1_000_000, 0xBEEFCAFE);
         let compressed =
             compress_to_vec(&data, CompressionLevel::Fast).expect("compression succeeds");
@@ -226,7 +225,6 @@ mod random_data_handling {
             "Large random data expanded too much (ratio: {ratio:.3})"
         );
 
-        // Verify round-trip
         let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
         assert_eq!(decompressed, data, "Large random data round-trip failed");
     }
@@ -253,7 +251,6 @@ mod random_data_handling {
             "Streaming random data ratio {ratio:.3} exceeds threshold"
         );
 
-        // Verify round-trip
         let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
         assert_eq!(decompressed, data, "Streaming round-trip failed");
     }
@@ -275,7 +272,6 @@ mod precompressed_files {
             (ratio - 1.0) * 100.0
         );
 
-        // Verify round-trip
         let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
         assert_eq!(decompressed, jpeg, "JPEG round-trip failed");
     }
@@ -293,7 +289,6 @@ mod precompressed_files {
             (ratio - 1.0) * 100.0
         );
 
-        // Verify round-trip
         let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
         assert_eq!(decompressed, png, "PNG round-trip failed");
     }
@@ -311,7 +306,6 @@ mod precompressed_files {
             (ratio - 1.0) * 100.0
         );
 
-        // Verify round-trip
         let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
         assert_eq!(decompressed, gzip, "Gzip round-trip failed");
     }
@@ -329,7 +323,6 @@ mod precompressed_files {
             (ratio - 1.0) * 100.0
         );
 
-        // Verify round-trip
         let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
         assert_eq!(decompressed, zip, "ZIP round-trip failed");
     }
@@ -347,7 +340,6 @@ mod precompressed_files {
             (ratio - 1.0) * 100.0
         );
 
-        // Verify round-trip
         let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
         assert_eq!(decompressed, pdf, "PDF round-trip failed");
     }
@@ -369,7 +361,6 @@ mod precompressed_files {
             "Double compression ratio {ratio:.3} exceeds threshold"
         );
 
-        // Verify we can decompress back through both layers
         let first_decompression =
             decompress_to_vec(&second_compression).expect("first decompression");
         assert_eq!(first_decompression, first_compression);
@@ -419,7 +410,6 @@ mod precompressed_files {
             "Mixed entropy data should achieve some compression (ratio: {ratio:.3})"
         );
 
-        // Verify round-trip
         let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
         assert_eq!(decompressed, data, "Mixed entropy round-trip failed");
     }
@@ -1023,7 +1013,7 @@ mod edge_cases {
 
     #[test]
     fn incompressible_at_boundary_sizes() {
-        // Test at common buffer boundaries
+        // Sweep sizes either side of 4K/8K/16K/32K/64K deflate window edges.
         let sizes = [4095, 4096, 4097, 8191, 8192, 8193, 16384, 32768, 65536];
 
         for size in sizes {
@@ -1063,8 +1053,8 @@ mod edge_cases {
 
     #[test]
     fn worst_case_expansion_bounded() {
-        // Worst case: data that triggers maximum expansion
-        // This is rare in practice but should still be bounded
+        // High-entropy 100 KB payload approximates the worst case for
+        // deflate; expansion must remain bounded.
         let worst_case = test_data::random_data(100_000, 0xAAAAAAAA);
 
         let compressed = compress_to_vec(&worst_case, CompressionLevel::Best)
