@@ -51,6 +51,8 @@
 use std::ffi::OsString;
 use std::io;
 use std::process::{ExitStatus, Stdio};
+#[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+use std::sync::OnceLock;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -61,6 +63,48 @@ use super::connect::{SshConnectConfig, build_ssh_command};
 use super::async_stderr_drain::AsyncStderrDrain;
 #[cfg(all(feature = "ssh-socketpair-stderr", unix))]
 use super::aux_channel::configure_stderr_channel;
+
+/// Marker substring emitted with the SSF-2 async-fallback warning. Tests
+/// assert on this substring; operators can grep their logs for it.
+#[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+pub(super) const ASYNC_FALLBACK_WARNING_MARKER: &str =
+    "SSH stderr async drain falling back to Stdio::inherit()";
+
+/// SSF-2 site 3: surface the async transport's degradation when
+/// `configure_stderr_channel` returns `None`. The async path further
+/// falls through to `Stdio::inherit()` (unlike the sync path's
+/// `Stdio::piped()`), so `stderr_capture()` will return an empty slice
+/// for the rest of the session. Fires at most once per process via
+/// [`ASYNC_FALLBACK_WARNED`]; the OnceLock is local to this site so
+/// repeat SSH spawns within the same process do not spam observers.
+#[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+static ASYNC_FALLBACK_WARNED: OnceLock<()> = OnceLock::new();
+
+/// Emits the SSF-2 site-3 warning the first time `lock` is set in this
+/// process. Returns `true` when the warning was emitted (first call) and
+/// `false` thereafter so tests can assert one-shot discipline without
+/// having to install a tracing subscriber.
+///
+/// Production code calls this via [`warn_async_fallback`]; tests inject
+/// a local `OnceLock<()>` to exercise the discipline in isolation.
+#[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+fn emit_async_fallback_warning(lock: &OnceLock<()>) -> bool {
+    if lock.set(()).is_err() {
+        return false;
+    }
+    tracing::warn!(
+        target = "ssh::stderr",
+        "warning: {ASYNC_FALLBACK_WARNING_MARKER}. The remote stderr will surface on the parent terminal but stderr_capture() will return empty (operators get no in-band capture)."
+    );
+    true
+}
+
+/// Production wrapper around [`emit_async_fallback_warning`] that targets
+/// the module-level [`ASYNC_FALLBACK_WARNED`] OnceLock.
+#[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+fn warn_async_fallback() {
+    let _ = emit_async_fallback_warning(&ASYNC_FALLBACK_WARNED);
+}
 
 /// Tokio-backed SSH transport.
 ///
@@ -149,6 +193,13 @@ impl AsyncSshTransport {
             // avoids leaving a piped stderr undrained.
             if parent.is_none() {
                 command.stderr(Stdio::inherit());
+                // SSF-2 site 3: aux_channel already surfaced the root
+                // socketpair failure (site 1). This warning specifically
+                // calls out the async-only consequence that
+                // stderr_capture() will return empty for this session
+                // because the async path inherits stderr rather than
+                // piping it.
+                warn_async_fallback();
             }
             parent
         };
@@ -391,5 +442,90 @@ mod tests {
         fn _check(t: &AsyncSshTransport) -> Vec<u8> {
             t.stderr_capture()
         }
+    }
+
+    /// SSF-2 site 3: the async transport's `Stdio::inherit()` fallback
+    /// must warn exactly once per process. The test installs a scoped
+    /// `tracing` subscriber that captures `target = "ssh::stderr"` events
+    /// so we can assert both the message substring and the one-shot
+    /// discipline without coordinating against the process-wide
+    /// `ASYNC_FALLBACK_WARNED` static (which other tests in the same
+    /// binary might already have tripped).
+    #[cfg(all(feature = "ssh-socketpair-stderr", unix))]
+    #[test]
+    fn warns_once_on_async_fallback() {
+        use std::sync::{Arc, Mutex};
+        use tracing::Level;
+        use tracing::subscriber::with_default;
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::Layer;
+        use tracing_subscriber::Registry;
+
+        // Custom layer that captures every `event!` payload as a string.
+        struct CaptureLayer {
+            sink: Arc<Mutex<Vec<String>>>,
+        }
+        struct StringVisitor<'a>(&'a mut String);
+        impl<'a> tracing::field::Visit for StringVisitor<'a> {
+            fn record_debug(&mut self, _: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                use std::fmt::Write as _;
+                let _ = write!(self.0, "{value:?}");
+            }
+            fn record_str(&mut self, _: &tracing::field::Field, value: &str) {
+                self.0.push_str(value);
+            }
+        }
+        impl<S> Layer<S> for CaptureLayer
+        where
+            S: tracing::Subscriber,
+        {
+            fn on_event(
+                &self,
+                event: &tracing::Event<'_>,
+                _ctx: tracing_subscriber::layer::Context<'_, S>,
+            ) {
+                let metadata = event.metadata();
+                if metadata.target() != "ssh::stderr" || *metadata.level() != Level::WARN {
+                    return;
+                }
+                let mut buf = String::new();
+                event.record(&mut StringVisitor(&mut buf));
+                if let Ok(mut sink) = self.sink.lock() {
+                    sink.push(buf);
+                }
+            }
+        }
+
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let layer = CaptureLayer {
+            sink: Arc::clone(&sink),
+        };
+        let subscriber = Registry::default().with(layer);
+
+        with_default(subscriber, || {
+            // Use a local OnceLock so the test does not depend on whether
+            // the production static was already set by a prior test.
+            let local_lock: OnceLock<()> = OnceLock::new();
+            let first = emit_async_fallback_warning(&local_lock);
+            let second = emit_async_fallback_warning(&local_lock);
+            assert!(first, "first invocation must emit");
+            assert!(!second, "second invocation must be suppressed");
+        });
+
+        let events = sink.lock().expect("sink lock").clone();
+        assert_eq!(
+            events.len(),
+            1,
+            "exactly one warn event must reach the subscriber; got {events:?}"
+        );
+        let only = &events[0];
+        assert!(
+            only.contains(ASYNC_FALLBACK_WARNING_MARKER),
+            "warn payload must contain the documented marker; got {only:?}"
+        );
+        assert!(
+            only.contains("stderr_capture() will return empty"),
+            "warn payload must explain the capture consequence; got {only:?}"
+        );
     }
 }
