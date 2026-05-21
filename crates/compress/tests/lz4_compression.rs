@@ -183,7 +183,6 @@ mod frame_round_trips {
 
     #[test]
     fn frame_round_trip_large_data() {
-        // Test 1MB of data
         let data = test_data::english_text(1_000_000);
         let compressed = frame_compress(&data, CompressionLevel::Default).unwrap();
         assert!(compressed.len() < data.len(), "large text should compress");
@@ -273,19 +272,17 @@ mod frame_compression_levels {
 
     #[test]
     fn frame_compression_ratio_by_level() {
-        // Use highly compressible data to see differences between levels
+        // Highly compressible payload makes level differences observable.
         let data = test_data::repetitive_text(100_000);
 
         let fast = frame_compress(&data, CompressionLevel::Fast).unwrap();
         let default = frame_compress(&data, CompressionLevel::Default).unwrap();
         let best = frame_compress(&data, CompressionLevel::Best).unwrap();
 
-        // All should compress well
         assert!(fast.len() < data.len());
         assert!(default.len() < data.len());
         assert!(best.len() < data.len());
 
-        // Verify all decompress correctly
         assert_eq!(frame_decompress(&fast).unwrap(), data);
         assert_eq!(frame_decompress(&default).unwrap(), data);
         assert_eq!(frame_decompress(&best).unwrap(), data);
@@ -297,7 +294,7 @@ mod frame_error_handling {
 
     #[test]
     fn frame_decompress_invalid_magic() {
-        // LZ4 frame magic is 0x184D2204
+        // LZ4 frame magic is 0x184D2204; all-zero bytes cannot match.
         let invalid = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
         let result = frame_decompress(&invalid);
         assert!(result.is_err(), "invalid magic should fail");
@@ -317,7 +314,7 @@ mod frame_error_handling {
         let data = b"test data for corruption";
         let mut compressed = frame_compress(data, CompressionLevel::Default).unwrap();
 
-        // Corrupt a byte in the middle
+        // Byte 8 lands inside the compressed payload (after magic + descriptor).
         if compressed.len() > 10 {
             compressed[8] ^= 0xFF;
         }
@@ -328,10 +325,9 @@ mod frame_error_handling {
 
     #[test]
     fn frame_decompress_empty_input() {
-        // LZ4 frame format gracefully handles empty input by returning empty output
+        // Empty input is treated as either an empty frame or a hard error by
+        // different LZ4 backends; both are accepted here.
         let result = frame_decompress(&[]);
-        // The result depends on the LZ4 implementation - it may return empty vec or error
-        // Both are valid behaviors for empty input
         if let Ok(data) = result {
             assert!(data.is_empty(), "empty input should produce empty or error");
         }
@@ -339,13 +335,10 @@ mod frame_error_handling {
 
     #[test]
     fn frame_decompress_incomplete_header() {
-        // LZ4 frame header is at least 7 bytes
-        let incomplete = [0x04, 0x22, 0x4D, 0x18]; // Valid magic but truncated
+        // Valid LZ4 magic (0x184D2204) but truncated descriptor; must not panic.
+        let incomplete = [0x04, 0x22, 0x4D, 0x18];
         let result = frame_decompress(&incomplete);
-        // May return empty or error depending on how the decoder handles incomplete frames
-        // The key is it doesn't panic or crash
         if let Ok(ref data) = result {
-            // If it succeeds, it should return empty data for incomplete input
             assert!(data.is_empty() || result.is_err());
         }
     }
@@ -355,11 +348,10 @@ mod frame_error_handling {
         let data = b"sufficient data for a complete frame with checksum";
         let compressed = frame_compress(data, CompressionLevel::Default).unwrap();
 
-        // Truncate the checksum (last 4 bytes)
+        // Drop the final byte of the trailing content checksum.
         if compressed.len() > 5 {
             let truncated = &compressed[..compressed.len() - 1];
             let result = frame_decompress(truncated);
-            // Should either error or produce wrong data
             if let Ok(decoded) = result {
                 assert_ne!(decoded, data, "truncated checksum should not match");
             }
@@ -440,8 +432,7 @@ mod frame_streaming {
 
         encoder.write(b"second chunk").unwrap();
         let after_second = encoder.bytes_written();
-        // Note: LZ4 may buffer data before writing, so bytes_written might not
-        // increase immediately for small writes
+        // LZ4 buffers writes internally; bytes_written only commits at block flush.
         assert!(after_second >= after_first, "bytes should not decrease");
 
         let (_, final_bytes) = encoder.finish_into_inner().unwrap();

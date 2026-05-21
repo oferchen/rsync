@@ -478,10 +478,9 @@ mod tests {
         assert_eq!(results.len(), 1);
         match &results[0] {
             MetadataResult::SetTimes(Ok(())) => {
-                // Verify the time was set
                 let metadata = fs::metadata(&path).unwrap();
                 let mtime = metadata.modified().unwrap();
-                // Allow small delta due to filesystem time granularity
+                // Filesystem time granularity can introduce a small delta.
                 let delta = if mtime > new_mtime {
                     mtime.duration_since(new_mtime).unwrap()
                 } else {
@@ -508,7 +507,6 @@ mod tests {
         assert_eq!(results.len(), 1);
         match &results[0] {
             MetadataResult::SetPermissions(Ok(())) => {
-                // Verify permissions were set
                 use std::os::unix::fs::PermissionsExt;
                 let metadata = fs::metadata(&path).unwrap();
                 assert_eq!(metadata.permissions().mode() & 0o777, 0o644);
@@ -521,14 +519,13 @@ mod tests {
     fn test_threshold_routing() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Create BATCH_THRESHOLD files
         let mut paths = Vec::new();
         for i in 0..BATCH_THRESHOLD {
             let path = create_test_file(&temp_dir, &format!("file{i}.txt"), b"test").unwrap();
             paths.push(path);
         }
 
-        // Below threshold - should use individual path
+        // Below threshold routes through the individual path.
         let ops_below: Vec<_> = paths
             .iter()
             .take(BATCH_THRESHOLD - 1)
@@ -537,7 +534,7 @@ mod tests {
         let results_below = execute_metadata_ops(&ops_below);
         assert_eq!(results_below.len(), BATCH_THRESHOLD - 1);
 
-        // At threshold - should use batched path
+        // At the threshold routes through the batched path.
         let ops_at: Vec<_> = paths
             .iter()
             .take(BATCH_THRESHOLD)
@@ -546,7 +543,6 @@ mod tests {
         let results_at = execute_metadata_ops(&ops_at);
         assert_eq!(results_at.len(), BATCH_THRESHOLD);
 
-        // Verify all results are successful
         for result in results_below.iter().chain(results_at.iter()) {
             match result {
                 MetadataResult::Stat(Ok(_)) => {}
@@ -562,16 +558,15 @@ mod tests {
         let path2 = create_test_file(&temp_dir, "file2.txt", b"bb").unwrap();
         let path3 = create_test_file(&temp_dir, "file3.txt", b"ccc").unwrap();
 
-        // Mix different operation types
         let ops = vec![
-            MetadataOp::Lstat(path1.clone()), // index 0
-            MetadataOp::Stat(path2.clone()),  // index 1
-            MetadataOp::Lstat(path3.clone()), // index 2
+            MetadataOp::Lstat(path1.clone()),
+            MetadataOp::Stat(path2.clone()),
+            MetadataOp::Lstat(path3.clone()),
         ];
         let results = execute_metadata_ops_batched(&ops);
 
         assert_eq!(results.len(), 3);
-        // Results should be in original order despite grouping
+        // Results stay in input order even after internal grouping.
         match &results[0] {
             MetadataResult::Stat(Ok(metadata)) => assert_eq!(metadata.len(), 1),
             _ => panic!("Expected Stat at index 0"),
@@ -612,7 +607,6 @@ mod tests {
 
         assert_eq!(results.len(), 4);
 
-        // Verify each result type
         match &results[0] {
             MetadataResult::Stat(Ok(_)) => {}
             _ => panic!("Expected Stat at index 0"),
@@ -647,7 +641,6 @@ mod tests {
 
         assert_eq!(results.len(), 3);
 
-        // First should succeed
         match &results[0] {
             MetadataResult::Stat(Ok(metadata)) => {
                 assert_eq!(metadata.len(), 5);
@@ -655,13 +648,12 @@ mod tests {
             _ => panic!("Expected successful Stat at index 0"),
         }
 
-        // Second should fail
         match &results[1] {
             MetadataResult::Stat(Err(_)) => {}
             _ => panic!("Expected failed Stat at index 1"),
         }
 
-        // Third should succeed despite middle failure
+        // A failure in the middle of a batch must not poison later entries.
         match &results[2] {
             MetadataResult::Stat(Ok(metadata)) => {
                 assert_eq!(metadata.len(), 5);
@@ -703,7 +695,6 @@ mod tests {
 
         assert_eq!(results_individual.len(), results_batched.len());
 
-        // Compare results
         for (i, (ind, bat)) in results_individual
             .iter()
             .zip(results_batched.iter())
@@ -714,9 +705,7 @@ mod tests {
                     assert_eq!(m1.len(), m2.len(), "Mismatch at index {i}");
                     assert_eq!(m1.is_dir(), m2.is_dir(), "Mismatch at index {i}");
                 }
-                (MetadataResult::Stat(Err(_)), MetadataResult::Stat(Err(_))) => {
-                    // Both failed - this is expected for nonexistent file
-                }
+                (MetadataResult::Stat(Err(_)), MetadataResult::Stat(Err(_))) => {}
                 _ => panic!("Result type mismatch at index {i}: {ind:?} vs {bat:?}"),
             }
         }

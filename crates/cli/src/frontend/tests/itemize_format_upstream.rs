@@ -126,25 +126,18 @@ fn itemize_updated_file_shows_change_indicators() {
     let output = String::from_utf8(stdout).expect("utf8");
     let line = output.trim_end_matches('\n');
 
-    // Should start with '>f' (received file)
     assert!(line.starts_with(">f"), "should start with '>f': {line:?}");
 
-    // Extract the 11-character format string
     let format_str = &line[..11];
 
-    // Position 0: '>' for received/transferred
     assert_eq!(&format_str[0..1], ">");
-    // Position 1: 'f' for regular file
     assert_eq!(&format_str[1..2], "f");
-    // Position 2: 'c' for checksum (content changed)
     assert_eq!(
         &format_str[2..3],
         "c",
         "checksum should be 'c': {format_str:?}"
     );
-    // Position 3: 's' for size changed
     assert_eq!(&format_str[3..4], "s", "size should be 's': {format_str:?}");
-    // Position 4: 't' for time changed (preserved)
     assert_eq!(&format_str[4..5], "t", "time should be 't': {format_str:?}");
 }
 
@@ -177,8 +170,7 @@ fn itemize_unchanged_file_with_times_shows_no_output() {
     ]);
 
     assert_eq!(code, 0);
-    // When file is unchanged, no itemize output should be produced
-    // (rsync only shows items that have changes unless -ii is used)
+    // upstream: -i suppresses unchanged items; only -ii lists them with '.f'.
     let output = String::from_utf8(stdout).expect("utf8");
     assert!(
         output.is_empty() || output.starts_with(".f"),
@@ -213,7 +205,6 @@ fn itemize_multiple_new_files_each_show_new_format() {
     let output = String::from_utf8(stdout).expect("utf8");
     let lines: Vec<&str> = output.lines().collect();
 
-    // Should have output for both files
     assert_eq!(lines.len(), 2, "should have 2 lines of output: {output:?}");
 
     for line in &lines {
@@ -248,7 +239,6 @@ fn itemize_combined_with_dry_run_shows_what_would_transfer() {
         "dry run should still show itemized format"
     );
 
-    // File should not actually be created
     assert!(
         !dest_dir.join("dryrun.txt").exists(),
         "dry run should not create file"
@@ -274,7 +264,8 @@ fn itemize_combined_with_verbose_shows_itemized_format() {
 
     assert_eq!(code, 0);
     let output = String::from_utf8(stdout).expect("utf8");
-    // With -iv, itemize format takes precedence over verbose filename-only
+    // upstream: -iv keeps the itemize format and suppresses bare-filename
+    // verbose output.
     assert!(
         output.contains(">f+++++++++"),
         "verbose+itemize should show itemized format: {output:?}"
@@ -338,12 +329,10 @@ fn itemize_recursive_new_directory_shows_cd_plus_pattern() {
     assert_eq!(code, 0);
     let output = String::from_utf8(stdout).expect("utf8");
 
-    // Should contain a directory creation line
     assert!(
         output.contains("cd+++++++++"),
         "new directory should show 'cd+++++++++': {output:?}"
     );
-    // Should contain a file creation line
     assert!(
         output.contains(">f+++++++++"),
         "new file should show '>f+++++++++': {output:?}"
@@ -379,7 +368,6 @@ fn itemize_new_symlink_shows_cl_plus_pattern() {
     assert_eq!(code, 0);
     let output = String::from_utf8(stdout).expect("utf8");
 
-    // Should contain a symlink creation line
     assert!(
         output.contains("cL+++++++++"),
         "new symlink should show 'cL+++++++++': {output:?}"
@@ -420,7 +408,6 @@ fn itemize_chmod_shows_permission_indicator() {
     let output = String::from_utf8(stdout).expect("utf8");
     if !output.is_empty() {
         let line = output.lines().next().expect("first line");
-        // Should show 'p' in the permissions position (position 5)
         assert!(
             line.len() >= 11,
             "format should be at least 11 chars: {line:?}"

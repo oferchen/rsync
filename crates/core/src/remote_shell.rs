@@ -429,14 +429,14 @@ mod tests {
 
     #[test]
     fn test_command_with_escaped_quotes() {
-        // In single quotes, backslashes are literal (not escape chars)
+        // Inside single quotes, backslash is literal, so `Host\\` stays as `Host\\`
+        // and the trailing `'s'` group resolves to a literal `s`. The end-quote-
+        // escape-start-quote idiom (`'text'\''more'`) is the only way to embed an
+        // actual single quote in a single-quoted argument.
         let shell = RemoteShell::new("ssh -o 'Host\\'s'");
         assert_eq!(shell.program(), "ssh");
-        // This will actually be "Host\s" because backslash is literal in single quotes
         assert_eq!(shell.args(), &["-o", "Host\\s"]);
 
-        // To get an actual single quote, need to end the quote, add escaped quote, start new quote
-        // The pattern is: 'text'\''more' which becomes text'more
         let shell = RemoteShell::new("ssh -o 'Host'\\''s'");
         assert_eq!(shell.program(), "ssh");
         assert_eq!(shell.args(), &["-o", "Host's"]);

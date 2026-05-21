@@ -132,7 +132,7 @@ fn includes_recursive_flag_when_enabled() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
-    // Sender (push): rsync --server -flags . /path - flags at index 2
+    // Push layout: rsync --server -flags . /path
     let flags = args[2].to_string_lossy();
     assert!(flags.contains('r'), "expected 'r' in flags: {flags}");
 }
@@ -149,7 +149,6 @@ fn includes_multiple_preservation_flags() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
-    // Sender (push): rsync --server -flags . /path - flags at index 2
     let flags = args[2].to_string_lossy();
     assert!(flags.contains('t'), "expected 't' in flags: {flags}");
     assert!(flags.contains('p'), "expected 'p' in flags: {flags}");
@@ -163,7 +162,6 @@ fn includes_compress_flag() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
-    // Sender (push): rsync --server -flags . /path - flags at index 2
     let flags = args[2].to_string_lossy();
     assert!(flags.contains('z'), "expected 'z' in flags: {flags}");
 }
@@ -2056,15 +2054,13 @@ fn all_flags_enabled_produces_valid_invocation() {
 
     let args = build_sender_args(&config);
 
-    // Verify structural integrity: program name, --server, flags, capability, dot, path
+    // Structural layout: program name, --server, flags, capability, dot, path
     assert_eq!(args[0], "/custom/rsync");
     assert_eq!(args[1], "--server");
 
-    // Verify --ignore-errors and --fsync are present
     assert!(args.contains(&"--ignore-errors".to_owned()));
     assert!(args.contains(&"--fsync".to_owned()));
 
-    // Verify flag string contains all expected single-char flags
     let flags = find_flag_string(&args);
     for (ch, name) in [
         ('l', "links"),
@@ -2099,15 +2095,12 @@ fn all_flags_enabled_produces_valid_invocation() {
         );
     }
 
-    // Verify 'x' count
     let x_count = flags.chars().filter(|c| *c == 'x').count();
     assert_eq!(x_count, 2, "expected 2 'x' flags for one_file_system=2");
 
-    // Verify 'v' count
     let v_count = flags.chars().filter(|c| *c == 'v').count();
     assert_eq!(v_count, 2, "expected 2 'v' flags for verbosity=2");
 
-    // Verify all long-form args
     let expected_long_args = [
         "--delete-before",
         "--delete-excluded",
@@ -2148,7 +2141,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         );
     }
 
-    // Verify args with values using prefix matching
     // upstream: options.c:2802 - explicit zlib is sent as --old-compress
     assert!(
         args.iter().any(|a| a == "--old-compress"),
@@ -2173,7 +2165,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         );
     }
 
-    // Verify capability string and structural elements
     assert!(args.contains(&build_capability_string(true)));
     assert!(args.contains(&".".to_owned()));
     assert!(args.contains(&"/path".to_owned()));

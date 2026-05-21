@@ -23,7 +23,6 @@ mod default_skip_list {
         let decider = CompressionDecider::with_default_skip_list();
         let extensions = decider.skip_extensions();
 
-        // Common image formats
         let images = [
             "jpg", "jpeg", "jpe", "png", "gif", "webp", "heic", "heif", "avif",
         ];
@@ -34,7 +33,6 @@ mod default_skip_list {
             );
         }
 
-        // Less common but supported image formats
         let more_images = ["tif", "tiff", "bmp", "ico", "svg", "svgz", "psd"];
         for ext in more_images {
             assert!(
@@ -43,7 +41,6 @@ mod default_skip_list {
             );
         }
 
-        // RAW image formats
         let raw_formats = ["raw", "arw", "cr2", "nef", "orf", "sr2"];
         for ext in raw_formats {
             assert!(
@@ -92,7 +89,6 @@ mod default_skip_list {
         let decider = CompressionDecider::with_default_skip_list();
         let extensions = decider.skip_extensions();
 
-        // Basic archive formats
         let archives = [
             "zip", "gz", "gzip", "bz2", "bzip2", "xz", "lzma", "7z", "rar",
         ];
@@ -103,7 +99,6 @@ mod default_skip_list {
             );
         }
 
-        // Modern compression formats
         let modern = ["zst", "zstd", "lz4", "lzo"];
         for ext in modern {
             assert!(
@@ -112,7 +107,6 @@ mod default_skip_list {
             );
         }
 
-        // Legacy formats
         let legacy = ["z", "cab", "arj", "lzh"];
         for ext in legacy {
             assert!(
@@ -121,7 +115,6 @@ mod default_skip_list {
             );
         }
 
-        // Compound archive extensions
         let compound = ["tar.gz", "tar.bz2", "tar.xz", "tgz", "tbz", "tbz2", "txz"];
         for ext in compound {
             assert!(
@@ -153,7 +146,6 @@ mod default_skip_list {
         let decider = CompressionDecider::with_default_skip_list();
         let extensions = decider.skip_extensions();
 
-        // PDF and ebooks
         let docs = ["pdf", "epub", "mobi", "azw", "azw3"];
         for ext in docs {
             assert!(
@@ -162,7 +154,7 @@ mod default_skip_list {
             );
         }
 
-        // Office formats (pre-compressed)
+        // Office formats wrap their content in deflate/zip - skip recompression.
         let office = ["docx", "xlsx", "pptx", "odt", "ods", "odp"];
         for ext in office {
             assert!(
@@ -208,29 +200,23 @@ mod pattern_matching {
         let decider = CompressionDecider::with_default_skip_list();
 
         let skip_files = [
-            // Images
             "photo.jpg",
             "image.png",
             "animation.gif",
             "picture.webp",
-            // Videos
             "movie.mp4",
             "clip.mkv",
             "video.avi",
-            // Audio
             "song.mp3",
             "track.flac",
             "audio.ogg",
-            // Archives
             "archive.zip",
             "data.gz",
             "backup.tar.gz",
             "files.7z",
-            // Documents
             "document.pdf",
             "book.epub",
             "report.docx",
-            // Packages
             "package.deb",
             "application.rpm",
             "library.jar",
@@ -390,14 +376,11 @@ mod custom_patterns {
     fn add_custom_skip_extension() {
         let mut decider = CompressionDecider::new();
 
-        // Initially empty
         assert!(decider.skip_extensions().is_empty());
 
-        // Add custom extension
         decider.add_skip_extension("xyz");
         assert!(decider.skip_extensions().contains("xyz"));
 
-        // Verify it's used in matching
         assert_eq!(
             decider.should_compress(Path::new("file.xyz"), None),
             CompressionDecision::Skip
@@ -412,7 +395,6 @@ mod custom_patterns {
         assert!(decider.skip_extensions().contains("abc"));
         assert!(!decider.skip_extensions().contains(".abc"));
 
-        // Should work without the dot internally
         assert_eq!(
             decider.should_compress(Path::new("file.abc"), None),
             CompressionDecision::Skip
@@ -427,7 +409,6 @@ mod custom_patterns {
         assert!(decider.skip_extensions().contains("xyz"));
         assert!(!decider.skip_extensions().contains("XYZ"));
 
-        // Should match case-insensitively
         assert_eq!(
             decider.should_compress(Path::new("FILE.XYZ"), None),
             CompressionDecision::Skip
@@ -442,15 +423,12 @@ mod custom_patterns {
     fn remove_skip_extension() {
         let mut decider = CompressionDecider::with_default_skip_list();
 
-        // Verify jpg is in the default list
         assert!(decider.skip_extensions().contains("jpg"));
 
-        // Remove it
         let removed = decider.remove_skip_extension("jpg");
         assert!(removed, "Should return true when extension was present");
         assert!(!decider.skip_extensions().contains("jpg"));
 
-        // Now jpg files should require auto-detection
         assert_eq!(
             decider.should_compress(Path::new("photo.jpg"), None),
             CompressionDecision::AutoDetect
@@ -472,14 +450,11 @@ mod custom_patterns {
     fn clear_all_extensions() {
         let mut decider = CompressionDecider::with_default_skip_list();
 
-        // Verify we have extensions
         assert!(!decider.skip_extensions().is_empty());
 
-        // Clear them
         decider.clear_skip_extensions();
         assert!(decider.skip_extensions().is_empty());
 
-        // Previously skipped files now require auto-detection
         assert_eq!(
             decider.should_compress(Path::new("photo.jpg"), None),
             CompressionDecision::AutoDetect
@@ -527,13 +502,11 @@ mod custom_patterns {
         let mut decider = CompressionDecider::with_default_skip_list();
         let initial_count = decider.skip_extensions().len();
 
-        // Add custom extensions
         decider.add_skip_extension("custom1");
         decider.add_skip_extension("custom2");
 
         assert_eq!(decider.skip_extensions().len(), initial_count + 2);
 
-        // Both default and custom should work
         assert_eq!(
             decider.should_compress(Path::new("photo.jpg"), None),
             CompressionDecision::Skip
@@ -583,7 +556,6 @@ mod list_parsing {
     fn parse_list_with_leading_dots() {
         let decider = CompressionDecider::from_skip_compress_list(".txt/.log/.csv");
 
-        // Leading dots should be stripped
         assert!(decider.skip_extensions().contains("txt"));
         assert!(decider.skip_extensions().contains("log"));
         assert!(decider.skip_extensions().contains("csv"));
@@ -594,7 +566,6 @@ mod list_parsing {
     fn parse_list_with_case_variations() {
         let decider = CompressionDecider::from_skip_compress_list("TXT/Log/CSV");
 
-        // All should be normalized to lowercase
         assert!(decider.skip_extensions().contains("txt"));
         assert!(decider.skip_extensions().contains("log"));
         assert!(decider.skip_extensions().contains("csv"));

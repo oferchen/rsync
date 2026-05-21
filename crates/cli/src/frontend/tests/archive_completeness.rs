@@ -43,13 +43,11 @@ fn archive_preserves_file_permissions() {
     assert!(stdout.is_empty(), "no stdout expected");
     assert!(stderr.is_empty(), "no stderr expected: {:?}", String::from_utf8_lossy(&stderr));
 
-    // Verify content
     assert_eq!(
         std::fs::read(&destination).expect("read destination"),
         b"permission test"
     );
 
-    // Verify permissions preserved
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
     assert_eq!(
         metadata.permissions().mode() & 0o777,
@@ -84,13 +82,11 @@ fn archive_preserves_modification_times() {
     assert!(stdout.is_empty(), "no stdout expected");
     assert!(stderr.is_empty(), "no stderr expected");
 
-    // Verify content
     assert_eq!(
         std::fs::read(&destination).expect("read destination"),
         b"timestamp test"
     );
 
-    // Verify modification time preserved
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&metadata);
     assert_eq!(
@@ -109,13 +105,12 @@ fn archive_copies_directories_recursively() {
     let source_dir = tmp.path().join("source_dir");
     let dest_dir = tmp.path().join("dest_dir");
 
-    // Create nested directory structure
     std::fs::create_dir(&source_dir).expect("create source dir");
     std::fs::create_dir(source_dir.join("subdir")).expect("create subdir");
     std::fs::write(source_dir.join("file1.txt"), b"file1").expect("write file1");
     std::fs::write(source_dir.join("subdir/file2.txt"), b"file2").expect("write file2");
 
-    // Add trailing slash to source to copy contents into dest
+    // Trailing slash on the source operand copies contents into dest.
     let mut source_path = source_dir.clone().into_os_string();
     source_path.push("/");
 
@@ -130,12 +125,10 @@ fn archive_copies_directories_recursively() {
     assert!(stdout.is_empty(), "no stdout expected");
     assert!(stderr.is_empty(), "no stderr expected: {:?}", String::from_utf8_lossy(&stderr));
 
-    // Verify directory structure was copied recursively
     assert!(dest_dir.join("file1.txt").exists(), "file1.txt should exist");
     assert!(dest_dir.join("subdir").is_dir(), "subdir should exist as directory");
     assert!(dest_dir.join("subdir/file2.txt").exists(), "subdir/file2.txt should exist");
 
-    // Verify file contents
     assert_eq!(
         std::fs::read(dest_dir.join("file1.txt")).expect("read file1"),
         b"file1"
@@ -158,17 +151,14 @@ fn archive_preserves_symlinks() {
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
 
-    // Create source directory structure
     fs::create_dir(&source_dir).expect("create source dir");
     fs::create_dir(&dest_dir).expect("create dest dir");
 
-    // Create a target file and a symlink to it
     let target = source_dir.join("target.txt");
     let link = source_dir.join("link.txt");
     fs::write(&target, b"target content").expect("write target");
     symlink("target.txt", &link).expect("create symlink");
 
-    // Transfer with archive mode
     let mut source_path = source_dir.clone().into_os_string();
     source_path.push("/");
 
@@ -183,7 +173,6 @@ fn archive_preserves_symlinks() {
     assert!(stdout.is_empty(), "no stdout expected");
     assert!(stderr.is_empty(), "no stderr expected: {:?}", String::from_utf8_lossy(&stderr));
 
-    // Verify symlink was preserved
     let dest_link = dest_dir.join("link.txt");
     let dest_target = dest_dir.join("target.txt");
 
@@ -193,7 +182,6 @@ fn archive_preserves_symlinks() {
         "link.txt should be a symlink"
     );
 
-    // Verify symlink points to correct target
     let link_target = fs::read_link(&dest_link).expect("read link target");
     assert_eq!(
         link_target.to_string_lossy(),
@@ -213,7 +201,6 @@ fn archive_preserves_permissions_and_times() {
     let source = tmp.path().join("source-combined.txt");
     let destination = tmp.path().join("dest-combined.txt");
 
-    // Create source file with specific permissions and time
     std::fs::write(&source, b"combined test").expect("write source");
     std::fs::set_permissions(&source, PermissionsExt::from_mode(0o640)).expect("set perms");
     let mtime = FileTime::from_unix_time(1_500_000_000, 0);
@@ -229,7 +216,6 @@ fn archive_preserves_permissions_and_times() {
     assert_eq!(code, 0, "rsync should succeed");
     assert!(stderr.is_empty(), "no stderr expected: {:?}", String::from_utf8_lossy(&stderr));
 
-    // Verify both permissions and times preserved
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
     assert_eq!(
         metadata.permissions().mode() & 0o777,
@@ -252,7 +238,6 @@ fn archive_no_perms_skips_permission_preservation() {
     let source = tmp.path().join("source-no-perms.txt");
     let destination = tmp.path().join("dest-no-perms.txt");
 
-    // Create source file with restrictive permissions
     std::fs::write(&source, b"no-perms test").expect("write source");
     std::fs::set_permissions(&source, PermissionsExt::from_mode(0o600)).expect("set perms");
     let mtime = FileTime::from_unix_time(1_700_000_000, 0);
@@ -269,18 +254,15 @@ fn archive_no_perms_skips_permission_preservation() {
     assert_eq!(code, 0, "rsync should succeed");
     assert!(stderr.is_empty(), "no stderr expected: {:?}", String::from_utf8_lossy(&stderr));
 
-    // Verify content was transferred
     assert_eq!(
         std::fs::read(&destination).expect("read destination"),
         b"no-perms test"
     );
 
-    // Permissions should NOT be 0o600 since --no-perms was specified
-    // (the actual mode depends on umask, but it won't be exactly 0o600)
+    // Mode varies with umask, but --no-perms must not copy 0o600 verbatim;
+    // assert the file is at least readable.
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
     let mode = metadata.permissions().mode() & 0o777;
-    // Note: We can't predict the exact mode due to umask, but if perms were preserved it would be 0o600
-    // This test verifies the file was created successfully without perms being copied
     assert!(mode != 0 || mode == 0o600, "file should be readable (mode: 0o{:o})", mode);
 }
 
@@ -295,9 +277,8 @@ fn archive_no_times_skips_time_preservation() {
     let source = tmp.path().join("source-no-times.txt");
     let destination = tmp.path().join("dest-no-times.txt");
 
-    // Create source file with old modification time
     std::fs::write(&source, b"no-times test").expect("write source");
-    let old_mtime = FileTime::from_unix_time(1_400_000_000, 0); // Year 2014
+    let old_mtime = FileTime::from_unix_time(1_400_000_000, 0); // 2014-05-13 UTC
     set_file_times(&source, old_mtime, old_mtime).expect("set times");
 
     let before_transfer = SystemTime::now();
@@ -313,7 +294,6 @@ fn archive_no_times_skips_time_preservation() {
     assert_eq!(code, 0, "rsync should succeed");
     assert!(stderr.is_empty(), "no stderr expected: {:?}", String::from_utf8_lossy(&stderr));
 
-    // Verify the modification time is recent (not the old 2014 time)
     let metadata = std::fs::metadata(&destination).expect("dest metadata");
     let dest_mtime = metadata.modified().expect("modified time");
 
@@ -333,7 +313,6 @@ fn archive_preserves_directory_permissions() {
     let source_dir = tmp.path().join("source_perms_dir");
     let dest_dir = tmp.path().join("dest_perms_dir");
 
-    // Create source directory with specific permissions
     std::fs::create_dir(&source_dir).expect("create source dir");
     std::fs::write(source_dir.join("file.txt"), b"content").expect("write file");
     std::fs::set_permissions(&source_dir, PermissionsExt::from_mode(0o750)).expect("set dir perms");
@@ -348,7 +327,6 @@ fn archive_preserves_directory_permissions() {
     assert_eq!(code, 0, "rsync should succeed");
     assert!(stderr.is_empty(), "no stderr expected: {:?}", String::from_utf8_lossy(&stderr));
 
-    // Verify directory permissions were preserved
     let dest_source = dest_dir.join("source_perms_dir");
     let metadata = std::fs::metadata(&dest_source).expect("dest dir metadata");
     assert_eq!(
@@ -379,11 +357,9 @@ fn archive_handles_fifo_special_files() {
     std::fs::create_dir(&source_dir).expect("create source dir");
     std::fs::create_dir(&dest_dir).expect("create dest dir");
 
-    // Create a FIFO
     let fifo_path = source_dir.join("test.fifo");
     mkfifo_for_tests(&fifo_path, 0o644).expect("create fifo");
 
-    // Also add a regular file
     std::fs::write(source_dir.join("regular.txt"), b"regular").expect("write regular");
 
     let mut source_path = source_dir.clone().into_os_string();
@@ -396,11 +372,10 @@ fn archive_handles_fifo_special_files() {
         dest_dir.clone().into_os_string(),
     ]);
 
-    // Transfer should succeed (even if FIFO handling depends on privileges)
-    // At minimum, the regular file should be transferred
+    // FIFO handling may depend on privileges; at minimum the regular file
+    // must transfer.
     assert_eq!(code, 0, "rsync should succeed");
 
-    // Verify regular file was transferred
     assert!(dest_dir.join("regular.txt").exists(), "regular file should exist");
     assert_eq!(
         std::fs::read(dest_dir.join("regular.txt")).expect("read regular"),

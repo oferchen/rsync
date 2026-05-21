@@ -1380,11 +1380,11 @@ mod pipelined_error_tests {
         let reader = FailingReader::new(data, 600);
         let config = PipelineConfig::default()
             .with_block_size(256)
-            .with_enabled(false); // Force sync mode
+            .with_enabled(false);
 
         let mut buffered = DoubleBufferedReader::new(reader, config);
 
-        // First two blocks should succeed (256 bytes each = 512 bytes)
+        // FailingReader allows the first two 256-byte blocks (512 bytes) through.
         let block1 = buffered.next_block();
         assert!(block1.is_ok());
         assert!(block1.unwrap().is_some());
@@ -1393,7 +1393,7 @@ mod pipelined_error_tests {
         assert!(block2.is_ok());
         assert!(block2.unwrap().is_some());
 
-        // Third block should fail (would need to read past 600 bytes)
+        // Reading the third block crosses the 600-byte failure threshold.
         let block3 = buffered.next_block();
         assert!(block3.is_err());
     }
@@ -1413,7 +1413,8 @@ mod pipelined_error_tests {
 
     #[test]
     fn double_buffered_reader_handles_early_read_error() {
-        // Error before first block is fully read
+        // The reader fails before the first block is fully populated; the pipeline
+        // must downgrade to sync mode or surface the error rather than hang.
         let data = vec![0xEF; 100];
         let reader = FailingReader::new(data, 50);
         let config = PipelineConfig::default()
@@ -1421,10 +1422,7 @@ mod pipelined_error_tests {
             .with_min_file_size(0)
             .with_enabled(true);
 
-        // Should fall back to sync mode on error
         let mut buffered = DoubleBufferedReader::with_size_hint(reader, config, Some(100));
-
-        // Should be in sync mode due to error
         assert!(!buffered.is_pipelined() || buffered.next_block().is_err());
     }
 }

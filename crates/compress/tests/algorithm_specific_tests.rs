@@ -171,7 +171,6 @@ mod lz4_frame_tests {
         let data = vec![b'X'; 500_000];
         let compressed = compress_to_vec(&data, CompressionLevel::Best).unwrap();
 
-        // Should achieve good compression
         assert!(compressed.len() < data.len() / 10);
 
         let decompressed = decompress_to_vec(&compressed).unwrap();
@@ -183,13 +182,12 @@ mod lz4_frame_tests {
         let data = b"corruption detection test";
         let mut compressed = compress_to_vec(data, CompressionLevel::Default).unwrap();
 
-        // Corrupt a byte in the middle
         if compressed.len() > 10 {
             let mid = compressed.len() / 2;
             compressed[mid] ^= 0xFF;
         }
 
-        // Should fail to decompress or produce wrong data
+        // Corrupted frame must either fail or yield different bytes - never silently equal.
         let result = decompress_to_vec(&compressed);
         if let Ok(decompressed) = result {
             assert_ne!(decompressed, data, "Corrupted data should not match");
@@ -280,7 +278,6 @@ mod lz4_raw_tests {
         let data = vec![0u8; 10000];
         let compressed = compress_block_to_vec(&data).unwrap();
 
-        // Should compress very well
         assert!(compressed.len() < data.len() / 50);
 
         let decompressed = decompress_block_to_vec(&compressed, data.len()).unwrap();
@@ -298,7 +295,7 @@ mod lz4_raw_tests {
     #[test]
     fn raw_empty_block() {
         let compressed = compress_block_to_vec(&[]).unwrap();
-        // Empty block produces header (2 bytes) + minimal compressed data (1 byte)
+        // LZ4 emits a 2-byte rsync header plus a 1-byte empty-block marker.
         assert_eq!(compressed.len(), HEADER_SIZE + 1);
 
         let decompressed = decompress_block_to_vec(&compressed, 0).unwrap();
@@ -511,7 +508,6 @@ mod zstd_tests {
         let data = vec![b'Z'; 500_000];
         let compressed = compress_to_vec(&data, CompressionLevel::Best).unwrap();
 
-        // Should achieve excellent compression
         assert!(compressed.len() < data.len() / 100);
 
         let decompressed = decompress_to_vec(&compressed).unwrap();
@@ -523,16 +519,15 @@ mod zstd_tests {
         let data = b"corruption test data that is long enough to ensure proper compression";
         let mut compressed = compress_to_vec(data, CompressionLevel::Default).unwrap();
 
-        // Corrupt a byte in the compressed data (avoid header)
+        // Skip the magic bytes; corrupt inside the compressed payload.
         if compressed.len() > 10 {
             let mid = compressed.len() / 2;
             compressed[mid] ^= 0xFF;
         }
 
-        let result = decompress_to_vec(&compressed);
-        // Note: zstd may or may not detect corruption depending on where it occurs
-        // This test verifies the API works but doesn't guarantee failure
-        let _ = result;
+        // zstd's frame checksum is optional; this exercises the API without
+        // asserting a specific failure mode.
+        let _ = decompress_to_vec(&compressed);
     }
 
     #[test]
@@ -603,13 +598,11 @@ fn all_algorithms_roundtrip_correctly() {
 
     let test_data = b"Cross-algorithm roundtrip test data".repeat(50);
 
-    // Zlib
     let zlib_compressed =
         zlib::compress_to_vec(&test_data, zlib::CompressionLevel::Default).unwrap();
     let zlib_decompressed = zlib::decompress_to_vec(&zlib_compressed).unwrap();
     assert_eq!(zlib_decompressed, test_data);
 
-    // LZ4
     #[cfg(feature = "lz4")]
     {
         use compress::lz4;
@@ -619,7 +612,6 @@ fn all_algorithms_roundtrip_correctly() {
         assert_eq!(lz4_decompressed, test_data);
     }
 
-    // Zstd
     #[cfg(feature = "zstd")]
     {
         use compress::zstd;

@@ -31,10 +31,9 @@ fn to_hex(digest: &[u8; 8]) -> String {
     }
     out
 }
-// These test vectors are derived from the official xxHash specification
-// and verified against the reference C implementation.
-// Reference: https://github.com/Cyan4973/xxHash
-// Reference: https://pypi.org/project/xxhash/
+
+// Vectors below come from the official xxHash specification and the reference
+// C implementation: https://github.com/Cyan4973/xxHash, https://pypi.org/project/xxhash/.
 
 mod known_test_vectors {
     use super::*;
@@ -55,7 +54,6 @@ mod known_test_vectors {
     #[test]
     fn empty_string_seed_0_bytes() {
         let digest = Xxh64::digest(0, b"");
-        // The expected value 0xef46db3751d8e999 in little-endian bytes
         let expected = expected_le_bytes(0xef46db3751d8e999);
         assert_eq!(
             digest, expected,
@@ -69,11 +67,9 @@ mod known_test_vectors {
         let input = b"The quick brown fox jumps over the lazy dog";
         let digest = Xxh64::digest(0, input);
 
-        // Verify deterministic - same input always produces same output
         let digest2 = Xxh64::digest(0, input);
         assert_eq!(digest, digest2, "XXH64 should be deterministic");
 
-        // Verify streaming matches one-shot
         let mut hasher = Xxh64::new(0);
         hasher.update(input);
         let streaming = hasher.finalize();
@@ -86,10 +82,8 @@ mod known_test_vectors {
         let digest = Xxh64::digest(0, b"a");
         let hash = digest_to_u64(digest);
 
-        // Hash should be non-zero for non-empty input
         assert_ne!(hash, 0, "Hash of 'a' should be non-zero");
 
-        // Verify consistency with xxhash-rust reference
         let expected = xxhash_rust::xxh64::xxh64(b"a", 0).to_le_bytes();
         assert_eq!(digest, expected, "Should match xxhash-rust reference");
     }
@@ -151,7 +145,6 @@ mod known_test_vectors {
         let zeros = [0u8; 64];
         let digest = Xxh64::digest(0, &zeros);
         let hash = digest_to_u64(digest);
-        // Even all zeros should produce a non-zero hash
         assert_ne!(hash, 0, "Hash of zeros should be non-zero");
 
         let expected = xxhash_rust::xxh64::xxh64(&zeros, 0).to_le_bytes();
@@ -164,7 +157,6 @@ mod known_test_vectors {
         let ones = [0xFFu8; 64];
         let digest = Xxh64::digest(0, &ones);
 
-        // Should differ from all zeros
         let zeros = [0u8; 64];
         let zeros_digest = Xxh64::digest(0, &zeros);
         assert_ne!(
@@ -189,10 +181,9 @@ mod known_test_vectors {
     /// xxhash.xxh64_hexdigest('xxhash', seed=20141025) returns 'b559b98d844e0635'
     #[test]
     fn xxhash_string_with_documented_seed() {
+        // Expected 0xb559b98d844e0635 from the pypi xxhash documentation.
         let digest = Xxh64::digest(20141025, b"xxhash");
         let hash = digest_to_u64(digest);
-        // The documented result is 0xb559b98d844e0635 (from pypi xxhash docs)
-        // which equals 13067679811253438005 as integer
         assert_eq!(
             hash, 0xb559b98d844e0635,
             "XXH64('xxhash', seed=20141025) should be 0xb559b98d844e0635, got 0x{hash:016x}"
@@ -227,7 +218,6 @@ mod empty_input {
     #[test]
     fn empty_streaming_produces_same_digest() {
         let hasher = Xxh64::new(0);
-        // No update calls
         let digest = hasher.finalize();
         assert_eq!(digest_to_u64(digest), 0xef46db3751d8e999);
     }
@@ -264,7 +254,6 @@ mod empty_input {
         let digest_42 = Xxh64::digest(42, b"");
         let digest_max = Xxh64::digest(u64::MAX, b"");
 
-        // Even for empty input, different seeds should produce different results
         assert_ne!(digest_0, digest_1, "Seed 0 vs 1");
         assert_ne!(digest_0, digest_42, "Seed 0 vs 42");
         assert_ne!(digest_0, digest_max, "Seed 0 vs max");
@@ -290,8 +279,6 @@ mod various_input_sizes {
     fn generate_data(size: usize) -> Vec<u8> {
         (0..size).map(|i| (i % 256) as u8).collect()
     }
-
-    // --- Single byte tests ---
 
     #[test]
     fn size_1_byte_zero() {
@@ -331,8 +318,6 @@ mod various_input_sizes {
             assert_eq!(digest, expected, "Byte {byte:02x} mismatch");
         }
     }
-
-    // --- Small sizes around block boundaries ---
 
     #[test]
     fn size_2_bytes() {
@@ -390,7 +375,7 @@ mod various_input_sizes {
         assert_eq!(digest, expected);
     }
 
-    // --- XXH64 internal block boundary (32 bytes) ---
+    // XXH64 processes data in 32-byte blocks; sweep both sides of the boundary.
 
     #[test]
     fn size_31_bytes() {
@@ -439,8 +424,6 @@ mod various_input_sizes {
         let expected = xxhash_rust::xxh64::xxh64(&data, 0).to_le_bytes();
         assert_eq!(digest, expected);
     }
-
-    // --- Medium sizes ---
 
     #[test]
     fn size_127_bytes() {
@@ -530,8 +513,6 @@ mod various_input_sizes {
         assert_eq!(digest, expected);
     }
 
-    // --- Large sizes ---
-
     #[test]
     fn size_128kb() {
         let data = generate_data(128 * 1024);
@@ -564,8 +545,7 @@ mod various_input_sizes {
         assert_eq!(digest, expected);
     }
 
-    // --- Prime number sizes (catch alignment edge cases) ---
-
+    /// Prime sizes exercise alignment edges that powers-of-two miss.
     #[test]
     fn prime_sizes() {
         let primes = [
@@ -581,8 +561,6 @@ mod various_input_sizes {
         }
     }
 
-    // --- Powers of two minus one (boundary edge cases) ---
-
     #[test]
     fn power_of_two_minus_one_sizes() {
         let sizes = [
@@ -596,8 +574,6 @@ mod various_input_sizes {
             assert_eq!(digest, expected, "Size {size} (2^n - 1) mismatch");
         }
     }
-
-    // --- Streaming matches one-shot for all sizes ---
 
     #[test]
     fn streaming_matches_oneshot_various_sizes() {
@@ -721,7 +697,6 @@ mod seed_variations {
             .map(|&seed| Xxh64::digest(seed, data))
             .collect();
 
-        // All digests should be unique
         for i in 0..digests.len() {
             for j in (i + 1)..digests.len() {
                 assert_ne!(
@@ -752,7 +727,6 @@ mod seed_variations {
         let seed = 12345u64;
         let data = b"trait interface test";
 
-        // Using StrongDigest trait
         let hasher: Xxh64 = StrongDigest::with_seed(seed);
         let mut h = hasher;
         h.update(data);
@@ -885,7 +859,6 @@ mod streaming_incremental {
             "Different continuations should produce different hashes"
         );
 
-        // Verify cloned hasher produces correct result
         let expected_b = Xxh64::digest(42, b"partial data B");
         assert_eq!(digest2, expected_b);
 
@@ -898,7 +871,6 @@ mod streaming_incremental {
         let data = b"abcdefghijklmnopqrstuvwxyz";
         let full_digest = Xxh64::digest(0, data);
 
-        // Clone after each byte and verify final result
         for i in 0..data.len() {
             let mut hasher = Xxh64::new(0);
             hasher.update(&data[..i]);
@@ -919,7 +891,6 @@ mod streaming_incremental {
         let data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
         let oneshot = Xxh64::digest(0, &data);
 
-        // Stream in irregular chunk sizes
         let mut hasher = Xxh64::new(0);
         let chunk_sizes = [17, 31, 64, 100, 256, 500, 1000, 2048, 5000];
         let mut offset = 0;
@@ -941,7 +912,7 @@ mod streaming_incremental {
 
     #[test]
     fn streaming_1mb_in_various_chunk_sizes() {
-        let size = 1024 * 1024; // 1MB
+        let size = 1024 * 1024;
         let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
         let oneshot = Xxh64::digest(0, &data);
 
@@ -1069,18 +1040,17 @@ mod verification {
 
     #[test]
     fn verify_little_endian_encoding() {
-        // The implementation returns little-endian bytes
+        // The implementation returns little-endian bytes; LE and BE readings
+        // must therefore disagree for any non-palindromic digest.
         let digest = Xxh64::digest(0, b"test");
         let from_le = u64::from_le_bytes(digest);
         let from_be = u64::from_be_bytes(digest);
 
-        // These should be different (unless palindromic, which is unlikely)
         assert_ne!(
             from_le, from_be,
             "Little-endian and big-endian interpretations should differ"
         );
 
-        // Verify against xxhash-rust reference
         let expected_hash = xxhash_rust::xxh64::xxh64(b"test", 0);
         assert_eq!(
             from_le, expected_hash,
@@ -1090,10 +1060,11 @@ mod verification {
 
     #[test]
     fn verify_avalanche_effect() {
-        // Changing a single bit should produce a very different hash
+        // Good 64-bit avalanche flips ~32 bits on a single-bit input change;
+        // require at least 20.
         let data1 = vec![0u8; 100];
         let mut data2 = data1.clone();
-        data2[50] = 1; // Change single bit
+        data2[50] = 1;
 
         let digest1 = Xxh64::digest(0, &data1);
         let digest2 = Xxh64::digest(0, &data2);
@@ -1101,7 +1072,6 @@ mod verification {
         let hash1 = u64::from_le_bytes(digest1);
         let hash2 = u64::from_le_bytes(digest2);
 
-        // Count differing bits (should be roughly half due to avalanche effect)
         let diff = (hash1 ^ hash2).count_ones();
         assert!(
             diff >= 20,
@@ -1111,7 +1081,7 @@ mod verification {
 
     #[test]
     fn verify_all_bits_can_be_set() {
-        // Hash many different inputs to verify all bit positions can be set
+        // OR-accumulate across many inputs; every bit must eventually flip on.
         let mut or_accumulator = 0u64;
 
         for i in 0..10000 {
@@ -1121,7 +1091,6 @@ mod verification {
             or_accumulator |= hash;
         }
 
-        // After many hashes, we should see all bits set at least once
         assert_eq!(
             or_accumulator.count_ones(),
             64,
@@ -1131,7 +1100,7 @@ mod verification {
 
     #[test]
     fn verify_bit_distribution() {
-        // Check that bits are reasonably distributed
+        // Each bit should be set roughly 50% of the time over 10k inputs.
         let mut bit_counts = [0u32; 64];
 
         for i in 0..10000 {
@@ -1146,7 +1115,6 @@ mod verification {
             }
         }
 
-        // Each bit should be set roughly 50% of the time (5000 +/- some tolerance)
         for (bit, &count) in bit_counts.iter().enumerate() {
             assert!(
                 count > 4000 && count < 6000,
@@ -1157,7 +1125,7 @@ mod verification {
 
     #[test]
     fn verify_hash_range() {
-        // Verify the hash can produce values across the full 64-bit range
+        // The hash should span a large fraction of the 64-bit space over 10k inputs.
         let mut min_hash = u64::MAX;
         let mut max_hash = 0u64;
 
@@ -1169,7 +1137,6 @@ mod verification {
             max_hash = max_hash.max(hash);
         }
 
-        // The range should span a significant portion of the 64-bit space
         let range = max_hash - min_hash;
         assert!(
             range > u64::MAX / 2,
@@ -1248,8 +1215,7 @@ mod compatibility {
 
     #[test]
     fn regression_known_hash_values() {
-        // Store some known hash values to catch regressions
-        // These are computed against xxhash-rust reference
+        // Hashes pinned against the xxhash-rust reference to catch regressions.
         let test_cases = [
             (0u64, b"".as_slice(), 0xef46db3751d8e999u64),
             (20141025u64, b"xxhash".as_slice(), 0xb559b98d844e0635u64),
@@ -1272,7 +1238,6 @@ mod compatibility {
 
     #[test]
     fn regression_consistency_across_runs() {
-        // Verify results remain consistent
         let test_cases = [
             (0u64, b"".as_slice()),
             (0u64, b"a".as_slice()),
@@ -1282,13 +1247,11 @@ mod compatibility {
             (u64::MAX, b"test".as_slice()),
         ];
 
-        // Compute hashes
         let hashes: Vec<_> = test_cases
             .iter()
             .map(|(seed, data)| Xxh64::digest(*seed, data))
             .collect();
 
-        // Verify they match on subsequent runs
         for (i, (seed, data)) in test_cases.iter().enumerate() {
             let digest = Xxh64::digest(*seed, data);
             assert_eq!(
@@ -1307,7 +1270,7 @@ mod edge_cases {
 
     #[test]
     fn boundary_at_internal_block_size_32() {
-        // XXH64 processes data in 32-byte chunks internally
+        // XXH64 consumes 32-byte chunks internally; sweep both sides of the boundary.
         for size in 30..=34 {
             let data = vec![0xAB; size];
             let digest = Xxh64::digest(0, &data);
@@ -1340,7 +1303,6 @@ mod edge_cases {
         let digest = Xxh64::digest(0, &repeated);
         assert_eq!(digest.len(), 8);
 
-        // Different repeat counts should produce different hashes
         let repeated2: Vec<u8> = pattern.iter().cycle().take(10001).cloned().collect();
         let digest2 = Xxh64::digest(0, &repeated2);
         assert_ne!(digest, digest2);
@@ -1353,7 +1315,6 @@ mod edge_cases {
             let digest = Xxh64::digest(0, &data);
             assert_eq!(digest.len(), 8);
 
-            // Different byte values should produce different hashes
             let other_byte = byte.wrapping_add(1);
             let other_data = vec![other_byte; 1000];
             let other_digest = Xxh64::digest(0, &other_data);
@@ -1386,7 +1347,6 @@ mod edge_cases {
         let expected = xxhash_rust::xxh64::xxh64(&reverse, 0).to_le_bytes();
         assert_eq!(digest, expected);
 
-        // Should differ from forward sequence
         let forward: Vec<u8> = (0..=255).collect();
         let forward_digest = Xxh64::digest(0, &forward);
         assert_ne!(digest, forward_digest);
