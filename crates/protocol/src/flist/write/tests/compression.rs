@@ -48,15 +48,12 @@ fn xmit_same_uid_compression_round_trip() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_uid(true);
 
-    // First entry sets the UID
     let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
     entry1.set_uid(1000);
 
-    // Second entry has same UID - XMIT_SAME_UID flag should be set
     let mut entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
     entry2.set_uid(1000);
 
-    // Third entry has different UID
     let mut entry3 = FileEntry::new_file("file3.txt".into(), 300, 0o644);
     entry3.set_uid(2000);
 
@@ -67,7 +64,6 @@ fn xmit_same_uid_compression_round_trip() {
     writer.write_entry(&mut buf, &entry3).unwrap();
     writer.write_end(&mut buf, None).unwrap();
 
-    // Second entry should be smaller (UID compressed)
     assert!(
         second_len < first_len,
         "second entry should use XMIT_SAME_UID compression"
@@ -81,8 +77,8 @@ fn xmit_same_uid_compression_round_trip() {
     let read3 = reader.read_entry(&mut cursor).unwrap().unwrap();
 
     assert_eq!(read1.uid(), Some(1000));
-    assert_eq!(read2.uid(), Some(1000)); // Inherited from compression state
-    assert_eq!(read3.uid(), Some(2000)); // Explicit value
+    assert_eq!(read2.uid(), Some(1000));
+    assert_eq!(read3.uid(), Some(2000));
 }
 
 #[test]
@@ -94,15 +90,12 @@ fn xmit_same_gid_compression_round_trip() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_gid(true);
 
-    // First entry sets the GID
     let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
     entry1.set_gid(1000);
 
-    // Second entry has same GID - XMIT_SAME_GID flag should be set
     let mut entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
     entry2.set_gid(1000);
 
-    // Third entry has different GID
     let mut entry3 = FileEntry::new_file("file3.txt".into(), 300, 0o644);
     entry3.set_gid(2000);
 
@@ -113,7 +106,6 @@ fn xmit_same_gid_compression_round_trip() {
     writer.write_entry(&mut buf, &entry3).unwrap();
     writer.write_end(&mut buf, None).unwrap();
 
-    // Second entry should be smaller (GID compressed)
     assert!(
         second_len < first_len,
         "second entry should use XMIT_SAME_GID compression"
@@ -127,8 +119,8 @@ fn xmit_same_gid_compression_round_trip() {
     let read3 = reader.read_entry(&mut cursor).unwrap().unwrap();
 
     assert_eq!(read1.gid(), Some(1000));
-    assert_eq!(read2.gid(), Some(1000)); // Inherited from compression state
-    assert_eq!(read3.gid(), Some(2000)); // Explicit value
+    assert_eq!(read2.gid(), Some(1000));
+    assert_eq!(read3.gid(), Some(2000));
 }
 
 #[test]
@@ -140,13 +132,9 @@ fn xmit_same_mode_compression_round_trip() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol);
 
-    // First entry sets the mode (mode includes file type, so use same type)
+    // Mode encodes the file type, so all three entries must share file type.
     let entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
-
-    // Second entry has same mode - XMIT_SAME_MODE flag should be set
     let entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
-
-    // Third entry has different mode
     let entry3 = FileEntry::new_file("file3.txt".into(), 300, 0o755);
 
     writer.write_entry(&mut buf, &entry1).unwrap();
@@ -156,7 +144,6 @@ fn xmit_same_mode_compression_round_trip() {
     writer.write_entry(&mut buf, &entry3).unwrap();
     writer.write_end(&mut buf, None).unwrap();
 
-    // Second entry should be smaller (mode compressed)
     assert!(
         second_len < first_len,
         "second entry should use XMIT_SAME_MODE compression"
@@ -170,8 +157,8 @@ fn xmit_same_mode_compression_round_trip() {
     let read3 = reader.read_entry(&mut cursor).unwrap().unwrap();
 
     assert_eq!(read1.permissions(), 0o644);
-    assert_eq!(read2.permissions(), 0o644); // Same mode
-    assert_eq!(read3.permissions(), 0o755); // Different mode
+    assert_eq!(read2.permissions(), 0o644);
+    assert_eq!(read3.permissions(), 0o755);
 }
 
 #[test]
@@ -183,15 +170,12 @@ fn xmit_same_time_compression_round_trip() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol);
 
-    // First entry sets the mtime
     let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
     entry1.set_mtime(1700000000, 0);
 
-    // Second entry has same mtime - XMIT_SAME_TIME flag should be set
     let mut entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
     entry2.set_mtime(1700000000, 0);
 
-    // Third entry has different mtime
     let mut entry3 = FileEntry::new_file("file3.txt".into(), 300, 0o644);
     entry3.set_mtime(1700000001, 0);
 
@@ -202,7 +186,6 @@ fn xmit_same_time_compression_round_trip() {
     writer.write_entry(&mut buf, &entry3).unwrap();
     writer.write_end(&mut buf, None).unwrap();
 
-    // Second entry should be smaller (mtime compressed)
     assert!(
         second_len < first_len,
         "second entry should use XMIT_SAME_TIME compression"
@@ -216,8 +199,8 @@ fn xmit_same_time_compression_round_trip() {
     let read3 = reader.read_entry(&mut cursor).unwrap().unwrap();
 
     assert_eq!(read1.mtime(), 1700000000);
-    assert_eq!(read2.mtime(), 1700000000); // Same time
-    assert_eq!(read3.mtime(), 1700000001); // Different time
+    assert_eq!(read2.mtime(), 1700000000);
+    assert_eq!(read3.mtime(), 1700000001);
 }
 
 #[test]
@@ -229,8 +212,8 @@ fn name_prefix_compression_max_255_bytes() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol);
 
-    // Create two entries with a prefix longer than 255 bytes
-    // The compression should cap at 255 since same_len is stored as u8
+    // same_len is a u8, so prefix compression caps at 255 bytes even when the
+    // shared prefix is longer.
     let long_prefix = "x".repeat(300);
     let path1 = format!("{long_prefix}/file1.txt");
     let path2 = format!("{long_prefix}/file2.txt");

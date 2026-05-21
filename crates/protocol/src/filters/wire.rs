@@ -599,12 +599,12 @@ mod tests {
 
     #[test]
     fn protocol_downgrade_rejects_unrepresentable_rules() {
-        // Create rule with v30 features (s/r/p modifiers)
+        // v28 prefixes cannot encode v30 s/r/p modifiers, so write_filter_list
+        // must reject the rule rather than silently dropping the flags.
         let rule = FilterRuleWireFormat::exclude("test".to_owned())
             .with_sides(true, false)
             .with_perishable(true);
 
-        // v28 uses old prefixes which cannot encode modifiers - write fails
         let protocol_v28 = ProtocolVersion::from_supported(28).unwrap();
         let mut buf = Vec::new();
         let result = write_filter_list(&mut buf, &[rule], protocol_v28);

@@ -2,7 +2,6 @@ use super::*;
 
 #[test]
 fn protocol_28_is_oldest_supported() {
-    // Protocol 28 is the oldest supported version
     let protocol = ProtocolVersion::try_from(28u8).unwrap();
     assert!(
         protocol.supports_extended_flags(),
@@ -15,7 +14,6 @@ fn protocol_boundary_28_round_trip() {
     use super::super::super::read::FileListReader;
     use std::io::Cursor;
 
-    // Protocol 28 - oldest supported, has extended flags
     let protocol28 = ProtocolVersion::try_from(28u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol28)
@@ -30,7 +28,6 @@ fn protocol_boundary_28_round_trip() {
     writer.write_entry(&mut buf, &entry).unwrap();
     writer.write_end(&mut buf, None).unwrap();
 
-    // Verify protocol 28 round-trip
     let mut cursor = Cursor::new(&buf[..]);
     let mut reader = FileListReader::new(protocol28)
         .with_preserve_uid(true)
@@ -47,7 +44,6 @@ fn protocol_boundary_29_30_user_names() {
     use super::super::super::read::FileListReader;
     use std::io::Cursor;
 
-    // Protocol 30 adds user/group name support
     let protocol30 = ProtocolVersion::try_from(30u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol30)
@@ -80,13 +76,13 @@ fn protocol_boundary_30_31_nanoseconds() {
     use super::super::super::read::FileListReader;
     use std::io::Cursor;
 
-    // Protocol 31 adds nanosecond mtime support
+    // Protocol 31 adds XMIT_MOD_NSEC for nanosecond mtime support.
     let protocol31 = ProtocolVersion::try_from(31u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol31);
 
     let mut entry = FileEntry::new_file("test.txt".into(), 1024, 0o644);
-    entry.set_mtime(1700000000, 123456789); // With nanoseconds
+    entry.set_mtime(1700000000, 123456789);
 
     writer.write_entry(&mut buf, &entry).unwrap();
     writer.write_end(&mut buf, None).unwrap();
@@ -106,7 +102,7 @@ fn very_long_path_name_round_trip() {
 
     let protocol = test_protocol();
 
-    // Create a path longer than 255 characters (requires XMIT_LONG_NAME)
+    // A path longer than 255 bytes forces XMIT_LONG_NAME.
     let long_component = "a".repeat(100);
     let long_path = format!(
         "{long_component}/{long_component}/{long_component}/{long_component}/{long_component}"
@@ -135,7 +131,6 @@ fn very_long_path_name_with_compression() {
 
     let protocol = test_protocol();
 
-    // Create two entries with long shared prefix
     let prefix = "a".repeat(200);
     let path1 = format!("{prefix}/file1.txt");
     let path2 = format!("{prefix}/file2.txt");
@@ -151,7 +146,6 @@ fn very_long_path_name_with_compression() {
     writer.write_entry(&mut buf, &entry2).unwrap();
     let len_after_second = buf.len();
 
-    // Second entry should be smaller due to prefix compression
     let second_entry_len = len_after_second - len_after_first;
     assert!(
         second_entry_len < len_after_first,
@@ -177,14 +171,14 @@ fn extreme_mtime_values() {
 
     let protocol = test_protocol();
 
-    // Test extreme mtime values (only non-negative, as negative
-    // timestamps are encoded as unsigned in the wire format)
+    // Only non-negative mtimes are tested: negative timestamps are encoded as
+    // unsigned on the wire.
     let test_cases = [
-        0i64,                 // Unix epoch
-        1,                    // Just after epoch
-        i32::MAX as i64,      // Max 32-bit timestamp (2038-01-19)
-        i32::MAX as i64 + 1,  // Beyond 32-bit (2038-01-19)
-        1_000_000_000_000i64, // Far future (year ~33658)
+        0i64,
+        1,
+        i32::MAX as i64,     // Last 32-bit Unix second (2038-01-19).
+        i32::MAX as i64 + 1, // First post-2038 value, exercises 64-bit path.
+        1_000_000_000_000i64,
     ];
 
     for &mtime in &test_cases {
@@ -217,7 +211,7 @@ fn large_file_size_3gb_round_trip() {
     use super::super::super::read::FileListReader;
     use std::io::Cursor;
 
-    const SIZE_3GB: u64 = 3 * 1024 * 1024 * 1024; // 3 * 1024^3 = 3,221,225,472 bytes
+    const SIZE_3GB: u64 = 3 * 1024 * 1024 * 1024;
 
     let protocol = test_protocol();
     let mut buf = Vec::new();
@@ -249,7 +243,7 @@ fn large_file_size_5gb_round_trip() {
     use super::super::super::read::FileListReader;
     use std::io::Cursor;
 
-    const SIZE_5GB: u64 = 5 * 1024 * 1024 * 1024; // 5 * 1024^3 = 5,368,709,120 bytes
+    const SIZE_5GB: u64 = 5 * 1024 * 1024 * 1024;
 
     let protocol = test_protocol();
     let mut buf = Vec::new();
@@ -280,25 +274,16 @@ fn large_file_sizes_boundary_values_round_trip() {
     use super::super::super::read::FileListReader;
     use std::io::Cursor;
 
-    // Key boundary values for large file support
+    // Boundary values spanning the 2^31 and 2^32 thresholds in varlong encoding.
     let test_sizes: &[(u64, &str)] = &[
-        // Just below 2^31 (max signed 32-bit positive)
         ((1u64 << 31) - 1, "just_below_2gb"),
-        // Exactly 2^31 (2GB boundary)
         (1u64 << 31, "exactly_2gb"),
-        // Just above 2^31
         ((1u64 << 31) + 1, "just_above_2gb"),
-        // Just below 2^32 (max unsigned 32-bit)
         ((1u64 << 32) - 1, "just_below_4gb"),
-        // Exactly 2^32 (4GB boundary)
         (1u64 << 32, "exactly_4gb"),
-        // Just above 2^32
         ((1u64 << 32) + 1, "just_above_4gb"),
-        // 3GB (3 * 1024^3)
         (3 * 1024 * 1024 * 1024, "3gb"),
-        // 5GB (5 * 1024^3)
         (5 * 1024 * 1024 * 1024, "5gb"),
-        // 1TB
         (1024 * 1024 * 1024 * 1024, "1tb"),
     ];
 
@@ -338,7 +323,7 @@ fn large_file_size_legacy_protocol_round_trip() {
     const SIZE_3GB: u64 = 3 * 1024 * 1024 * 1024;
     const SIZE_5GB: u64 = 5 * 1024 * 1024 * 1024;
 
-    // Protocol 29 uses longint encoding
+    // Protocol 29 uses the legacy longint size encoding.
     let protocol = ProtocolVersion::try_from(29u8).unwrap();
 
     for size in [SIZE_3GB, SIZE_5GB] {

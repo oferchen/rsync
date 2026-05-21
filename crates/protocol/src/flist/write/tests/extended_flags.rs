@@ -80,7 +80,6 @@ fn extended_flags_all_basic_flags_combinations() {
     {
         let mut buf = Vec::new();
         let mut writer = FileListWriter::new(protocol);
-        // Create directory entry with XMIT_TOP_DIR flag set
         let flags = FileFlags::new(XMIT_TOP_DIR, 0);
         let dir = FileEntry::from_raw("topdir".into(), 0, 0o040755, 0, 0, flags);
         writer.write_entry(&mut buf, &dir).unwrap();
@@ -121,7 +120,7 @@ fn extended_flags_hardlink_flag_combinations() {
         let mut buf = Vec::new();
         let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
         let mut entry = FileEntry::new_file("leader.txt".into(), 100, 0o644);
-        entry.set_hardlink_idx(u32::MAX); // Leader marker
+        entry.set_hardlink_idx(u32::MAX);
         writer.write_entry(&mut buf, &entry).unwrap();
         writer.write_end(&mut buf, None).unwrap();
 
@@ -140,7 +139,7 @@ fn extended_flags_hardlink_flag_combinations() {
         let mut buf = Vec::new();
         let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
         let mut entry = FileEntry::new_file("follower.txt".into(), 100, 0o644);
-        entry.set_hardlink_idx(42); // Points to leader index
+        entry.set_hardlink_idx(42);
         writer.write_entry(&mut buf, &entry).unwrap();
         writer.write_end(&mut buf, None).unwrap();
 
@@ -190,11 +189,9 @@ fn extended_flags_time_related_flags() {
         let mut buf = Vec::new();
         let mut writer = FileListWriter::new(protocol).with_preserve_atimes(true);
 
-        // First entry sets atime
         let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
         entry1.set_atime(1700000000);
 
-        // Second entry has same atime - should use XMIT_SAME_ATIME
         let mut entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
         entry2.set_atime(1700000000);
 
@@ -204,7 +201,6 @@ fn extended_flags_time_related_flags() {
         let second_len = buf.len() - first_len;
         writer.write_end(&mut buf, None).unwrap();
 
-        // Second entry should be smaller (atime compressed)
         assert!(
             second_len < first_len,
             "XMIT_SAME_ATIME should compress: {second_len} < {first_len}"
@@ -277,7 +273,6 @@ fn extended_flags_owner_name_flags() {
             .with_preserve_gid(true);
 
         let read = reader.read_entry(&mut cursor).unwrap().unwrap();
-        // Protocol 29 should NOT have user/group names
         assert_eq!(
             read.user_name(),
             None,
@@ -371,7 +366,6 @@ fn extended_flags_device_flags_protocol_28_29() {
             let second_len = buf.len() - first_len;
             writer.write_end(&mut buf, None).unwrap();
 
-            // Second entry should be smaller due to XMIT_SAME_RDEV_MAJOR
             assert!(
                 second_len < first_len,
                 "proto {proto_ver} XMIT_SAME_RDEV_MAJOR should compress: {second_len} < {first_len}"
@@ -392,35 +386,31 @@ fn extended_flags_device_flags_protocol_28_29() {
 
 #[test]
 fn extended_flags_zero_xflags_non_directory_uses_top_dir() {
-    // When xflags == 0 for a non-directory in protocol 28-29,
-    // XMIT_TOP_DIR is used to avoid collision with end marker.
-    // This is tested implicitly in write_flags() for protocol < 30.
+    // When xflags == 0 for a non-directory in protocol 28-29, write_flags()
+    // substitutes XMIT_TOP_DIR so the leading byte cannot collide with the
+    // end-of-list marker (which is also 0).
     let protocol = ProtocolVersion::try_from(29u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol);
 
-    // Set up compression state so mode and time match
+    // Prime the compression state so mode and time match the next entry.
     writer.state.update(b"test", 0o100644, 1700000000, 0, 0);
 
     let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
-    entry.set_mtime(1700000000, 0); // Same time as prev
+    entry.set_mtime(1700000000, 0);
 
     writer.write_entry(&mut buf, &entry).unwrap();
 
-    // First byte should NOT be zero (would be end marker)
     assert_ne!(buf[0], 0, "flags should not be zero for file entry");
 }
 
 #[test]
 fn extended_flags_protocol_version_boundaries() {
-    // Verify flag encoding at protocol version boundaries
     use super::super::super::read::FileListReader;
     use std::io::Cursor;
 
-    // Protocol 27 should NOT have extended flags support
-    // (but our minimum is 28, so this tests the boundary)
-
-    // Protocol 28: First version with extended flags
+    // Protocol 27 lacks extended flags; protocol 28 is the minimum supported
+    // here and the first version with extended flag encoding.
     {
         let protocol = ProtocolVersion::try_from(28u8).unwrap();
         assert!(

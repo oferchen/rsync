@@ -98,12 +98,10 @@ fn write_user_name_omitted_when_same_uid() {
         .with_preserve_uid(true)
         .with_preserve_gid(true);
 
-    // First entry sets the UID
     let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
     entry1.set_uid(1000);
     entry1.set_user_name("testuser".to_string());
 
-    // Second entry has same UID - should use XMIT_SAME_UID (no name written)
     let mut entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
     entry2.set_uid(1000);
     entry2.set_user_name("testuser".to_string());
@@ -114,7 +112,6 @@ fn write_user_name_omitted_when_same_uid() {
     let second_len = buf.len() - first_len;
     writer.write_end(&mut buf, None).unwrap();
 
-    // Second entry should be smaller (no user name written)
     assert!(
         second_len < first_len,
         "second entry should not include user name"
@@ -129,7 +126,8 @@ fn write_user_name_omitted_when_same_uid() {
     let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
 
     assert_eq!(read1.user_name(), Some("testuser"));
-    // Second entry doesn't get user_name since XMIT_SAME_UID was set
+    // Second entry inherits the user name from XMIT_SAME_UID compression and is
+    // not retransmitted, so the reader exposes it as None.
     assert_eq!(read2.user_name(), None);
 }
 
@@ -160,7 +158,6 @@ fn write_names_omitted_for_protocol_29() {
         .with_preserve_gid(true);
 
     let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
-    // Names should NOT be present for protocol 29
     assert_eq!(read_entry.user_name(), None);
     assert_eq!(read_entry.group_name(), None);
 }

@@ -21,7 +21,7 @@ fn xattr_write_empty_list_succeeds() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(test_protocol()).with_preserve_xattrs(true);
 
-    // Entry without xattr_list - should send empty literal set
+    // Entry without an xattr_list still emits an empty literal set on the wire.
     let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
     writer.write_entry(&mut buf, &entry).unwrap();
     assert!(!buf.is_empty());
@@ -40,20 +40,18 @@ fn xattr_cache_deduplicates_identical_sets() {
         list
     };
 
-    // First entry: literal data (no cache hit)
+    // First entry emits literal xattr data; second entry should hit the cache
+    // and encode just a varint index, producing strictly fewer wire bytes.
     let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
     entry1.set_xattr_list(make_list());
     writer.write_entry(&mut buf, &entry1).unwrap();
     let first_len = buf.len();
 
-    // Second entry: same xattr set, should get cache hit (smaller on wire)
     let mut entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
     entry2.set_xattr_list(make_list());
     writer.write_entry(&mut buf, &entry2).unwrap();
     let second_len = buf.len() - first_len;
 
-    // Cache hit sends only a varint index, so the second entry's xattr
-    // portion should be smaller than the first (which included literal data)
     assert!(
         second_len < first_len,
         "cache hit should be smaller: {second_len} vs {first_len}",
@@ -81,19 +79,16 @@ fn xattr_write_roundtrip_with_reader() {
     writer.write_entry(&mut buf, &entry).unwrap();
     writer.write_end(&mut buf, None).unwrap();
 
-    // Read back and verify xattr data was stored in cache
     let mut cursor = std::io::Cursor::new(&buf);
     let mut reader =
         super::super::super::read::FileListReader::new(test_protocol()).with_preserve_xattrs(true);
     let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
 
     assert_eq!(read_entry.name(), "roundtrip.txt");
-    // The entry should have an xattr_ndx assigned by the reader
     assert!(
         read_entry.xattr_ndx().is_some(),
         "xattr_ndx should be set after reading"
     );
-    // The reader's xattr cache should have the entry
     let xattr_cache = reader.xattr_cache();
     let cached = xattr_cache.get(read_entry.xattr_ndx().unwrap() as usize);
     assert!(cached.is_some(), "xattr cache should have entry");
