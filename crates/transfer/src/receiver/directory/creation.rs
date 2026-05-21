@@ -37,6 +37,7 @@ impl ReceiverContext {
         dest_dir: &Path,
         metadata_opts: &MetadataOptions,
         acl_cache: Option<&AclCache>,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> io::Result<Vec<(PathBuf, String)>> {
         // upstream: receiver.c:693 - dry_run skips all filesystem modifications
         if self.config.flags.dry_run {
@@ -46,7 +47,7 @@ impl ReceiverContext {
         // upstream: generator.c:1261-1262 - check_filter(&daemon_filter_list, ...)
         // skips daemon-excluded directories before creation.
         let daemon_filters = self.daemon_filter_set();
-        let dir_entries: Vec<(usize, PathBuf)> = self
+        let dir_entries: Vec<(usize, PathBuf, PathBuf)> = self
             .file_list
             .iter()
             .enumerate()
@@ -61,13 +62,13 @@ impl ReceiverContext {
                 true
             })
             .map(|(idx, entry)| {
-                let relative_path = entry.path();
+                let relative_path = entry.path().to_path_buf();
                 let dir_path = if relative_path.as_os_str() == "." {
                     dest_dir.to_path_buf()
                 } else {
-                    dest_dir.join(relative_path)
+                    dest_dir.join(&relative_path)
                 };
-                (idx, dir_path)
+                (idx, relative_path, dir_path)
             })
             .collect();
 
@@ -89,7 +90,10 @@ impl ReceiverContext {
         ))]
         let mut probed_parents: std::collections::HashSet<PathBuf> =
             std::collections::HashSet::new();
-        for (_, dir_path) in &dir_entries {
+        for (_, relative_path, dir_path) in &dir_entries {
+            // `relative_path` is only read on Unix (mkdirat fast path).
+            #[cfg(not(unix))]
+            let _ = relative_path;
             if !dir_path.exists() {
                 #[cfg(all(
                     feature = "acl",
@@ -105,7 +109,36 @@ impl ReceiverContext {
                         }
                     }
                 }
-                if let Err(e) = fs::create_dir_all(dir_path) {
+                // SEC-1.h: when the sandbox is plumbed and the new dir
+                // is a single-component leaf under the sandbox root,
+                // route through `mkdirat(dirfd, leaf, 0o777)` so a
+                // mid-syscall symlink swap on the leaf cannot redirect
+                // the create to an attacker-chosen parent. Multi-
+                // component paths fall back to `fs::create_dir_all`,
+                // which preserves the parent-walk for `--relative`
+                // shapes that `ensure_relative_parents` did not pre-
+                // create. The mode argument matches the upstream
+                // `mkdir(2)` umask-handling: pass `0o777` and let the
+                // active umask trim the bits.
+                #[cfg(unix)]
+                let create_result = fast_io::mkdirat_via_sandbox_or_fallback(
+                    sandbox,
+                    dest_dir,
+                    relative_path,
+                    dir_path,
+                    0o777,
+                )
+                .or_else(|err| {
+                    if err.kind() == io::ErrorKind::NotFound {
+                        // Multi-component path needs the parent walk.
+                        fs::create_dir_all(dir_path)
+                    } else {
+                        Err(err)
+                    }
+                });
+                #[cfg(not(unix))]
+                let create_result = fs::create_dir_all(dir_path);
+                if let Err(e) = create_result {
                     if e.kind() == io::ErrorKind::PermissionDenied {
                         // upstream: receiver.c - permission denied on mkdir is non-fatal,
                         // sets io_error and continues with remaining files.
@@ -130,8 +163,8 @@ impl ReceiverContext {
         let metadata_opts_clone = metadata_opts.clone();
         let entry_snapshots: Vec<(PathBuf, FileEntry, Option<XattrList>)> = dir_entries
             .into_iter()
-            .filter(|(_, dir_path)| !failed_dir_paths.contains(dir_path))
-            .map(|(idx, dir_path)| {
+            .filter(|(_, _, dir_path)| !failed_dir_paths.contains(dir_path))
+            .map(|(idx, _, dir_path)| {
                 let entry = &self.file_list[idx];
                 let xattr_list = self.resolve_xattr_list(entry);
                 (dir_path, entry.clone(), xattr_list)
@@ -284,6 +317,7 @@ impl ReceiverContext {
         metadata_opts: &MetadataOptions,
         failed_dirs: &mut FailedDirectories,
         acl_cache: Option<&AclCache>,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> io::Result<Option<bool>> {
         let relative_path = entry.path();
         let dir_path = if relative_path.as_os_str() == "." {
@@ -307,10 +341,35 @@ impl ReceiverContext {
             return Ok(None);
         }
 
-        // Try to create the directory
+        // Try to create the directory.
+        //
+        // SEC-1.h: when the sandbox is plumbed and the new dir is a
+        // single-component leaf under the sandbox root, route through
+        // `mkdirat(dirfd, leaf, 0o777)` so a mid-syscall symlink swap
+        // on the leaf cannot redirect the create to an attacker-chosen
+        // parent. Multi-component paths fall back to
+        // `fs::create_dir_all`, which preserves the parent-walk for
+        // `--relative` shapes.
         let is_new = !dir_path.exists();
         if is_new {
-            if let Err(e) = fs::create_dir_all(&dir_path) {
+            #[cfg(unix)]
+            let create_result = fast_io::mkdirat_via_sandbox_or_fallback(
+                sandbox,
+                dest_dir,
+                relative_path,
+                &dir_path,
+                0o777,
+            )
+            .or_else(|err| {
+                if err.kind() == io::ErrorKind::NotFound {
+                    fs::create_dir_all(&dir_path)
+                } else {
+                    Err(err)
+                }
+            });
+            #[cfg(not(unix))]
+            let create_result = fs::create_dir_all(&dir_path);
+            if let Err(e) = create_result {
                 if self.config.flags.verbose && self.config.connection.client_mode {
                     info_log!(
                         Misc,
