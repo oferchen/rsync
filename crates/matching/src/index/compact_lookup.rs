@@ -1,160 +1,230 @@
-//! Cache-friendly flat hash table replacing `FxHashMap<(u16, u16), Vec<usize>>`.
+//! Compact bucket index keyed on the upper half of the rolling checksum.
 //!
-//! Implements open-addressing with linear probing and Robin Hood displacement.
-//! Each entry is 8 bytes (4-byte packed rsum key + 4-byte block index), fitting
-//! 8 entries per 64-byte cache line. This replaces the pointer-chasing
-//! `FxHashMap` + heap-allocated `Vec<usize>` with a single contiguous allocation.
+//! Translates zsync's `librcksum/hash.c` `rsum_a_mask` trick into oc-rsync's
+//! delta matcher. The bucket address is derived from the upper 16 bits of the
+//! rolling sum (`rsum >> 16`, equal to [`checksums::RollingDigest::sum2`])
+//! while the lower 16 bits ([`checksums::RollingDigest::sum1`]) become the
+//! in-bucket discriminator. Shrinking the bucket array from a `(sum1, sum2)`
+//! keyspace down to a `sum2`-only space keeps the hottest table cache-line
+//! resident even when the basis runs to tens of thousands of blocks.
 //!
-//! zsync's `librcksum/hash.c` uses a similar flat layout; this module adapts
-//! the technique for oc-rsync's `DeltaSignatureIndex`.
+//! The structure is intentionally chain-based rather than open-addressed:
+//!
+//! - The bucket array is sized at most `2^16` slots, so its working set is
+//!   bounded by 256 KiB regardless of basis size. Adjacent rolling-hash
+//!   probes touch the same cache line with high probability.
+//! - Chain nodes live in a packed `Vec<ChainEntry>`; entries for a single
+//!   bucket are *not* required to be contiguous in memory, but the bucket
+//!   array stays tight.
+//! - Per-bucket walks check the lower-half discriminator first, mirroring
+//!   zsync's `e.r.a != (r.a & rsum_a_mask)` filter in `librcksum/rsum.c:205`.
+//!
+//! Wire format is unchanged: full `(sum1, sum2)` digests stay in
+//! [`signature::SignatureBlock`]. The compact key is an in-memory probe
+//! optimisation only and is rebuilt per segment by
+//! [`super::DeltaSignatureIndex::rebuild`].
 
-/// Sentinel value indicating an empty slot.
-const EMPTY_KEY: u32 = u32::MAX;
-
-/// Packs `(sum1, sum2)` into a single `u32` key.
+/// Maximum bucket count exponent (`2^16 = 65 536`).
 ///
-/// Uses `(sum2 << 16) | sum1` which matches `RollingDigest::value()` layout.
-/// Reserves `u32::MAX` as the empty sentinel - the probability of a real rsum
-/// hitting `0xFFFF_FFFF` is negligible (1 in 4 billion), and the tag_table +
-/// bithash filters would catch it first.
-#[inline]
-fn pack_key(sum1: u16, sum2: u16) -> u32 {
-    (sum2 as u32) << 16 | sum1 as u32
+/// Bounds the bucket array footprint at `2^16 * 4 = 256 KiB` and matches
+/// the natural `sum2` keyspace - never grow the table beyond this because
+/// the compact key carries no further entropy.
+const MAX_LOG2_BUCKETS: u32 = 16;
+
+/// Minimum bucket count exponent (`2^4 = 16`).
+///
+/// Keeps the mask stable for tiny basis files. The chain handles collisions
+/// regardless, so the floor is purely about preserving the `(pos - home)`
+/// arithmetic shape.
+const MIN_LOG2_BUCKETS: u32 = 4;
+
+/// Sentinel marking the end of a bucket chain.
+///
+/// Real entry counts are bounded by `u32::MAX - 1` because the wire-format
+/// block index is itself a `u32` and one slot is reserved for the sentinel.
+const CHAIN_END: u32 = u32::MAX;
+
+/// Conservative upper bound on chain-entry pre-allocation.
+///
+/// Caps the initial `Vec::with_capacity` request so callers passing absurd
+/// `n_entries` (e.g., `usize::MAX` in fuzz inputs) cannot trigger a
+/// capacity-overflow panic. The chain still grows on demand, so the cap
+/// only affects the up-front reservation, not the maximum supported
+/// basis size.
+const MAX_RESERVE_ENTRIES: usize = 1 << 24;
+
+/// Chain entry packing the lower-half discriminator next to the block index
+/// and the link to the next entry in the same bucket.
+///
+/// Layout fits in 12 bytes (10 bytes payload + 2 bytes padding) so a single
+/// chain step still loads from at most one cache line.
+#[derive(Clone, Copy, Debug)]
+struct ChainEntry {
+    /// Lower-half discriminator ([`checksums::RollingDigest::sum1`]). Filters
+    /// out same-bucket entries before the caller pays for the strong-checksum
+    /// verify.
+    sum1: u16,
+    /// Basis block index this entry refers to.
+    block_index: u32,
+    /// Link to the next entry in the same bucket chain, or [`CHAIN_END`].
+    next: u32,
 }
 
-/// Flat open-addressing hash table with Robin Hood linear probing.
+/// Per-bucket head/tail pointers into the chain backing store.
 ///
-/// Stores `(key: u32, block_index: u32)` entries in a contiguous `Vec<u64>`.
-/// The high 32 bits of each `u64` hold the packed rsum key; the low 32 bits
-/// hold the block index. Empty slots use [`EMPTY_KEY`] in the high bits.
+/// Tracking the tail explicitly lets [`CompactLookup::insert`] append in
+/// O(1) so the iteration order matches insertion order. The `MatchedBlocks`
+/// duplicate-block contract relies on first-fit-in-bucket semantics, so
+/// the natural insertion order must survive the rewrite.
+#[derive(Clone, Copy, Debug)]
+struct BucketSlot {
+    head: u32,
+    tail: u32,
+}
+
+impl BucketSlot {
+    const EMPTY: Self = Self {
+        head: CHAIN_END,
+        tail: CHAIN_END,
+    };
+}
+
+/// Compact bucket index keyed on the upper 16 bits of the rolling sum.
 ///
-/// Load factor is kept below 75% to maintain probe-chain locality. All
-/// operations are O(1) amortized with excellent cache behavior: the linear
-/// probe window typically stays within 1-2 cache lines.
+/// See the module docs for the ZSO-4 design contract and the duplicate-block
+/// correctness rationale shared with [`super::MatchedBlocks`].
 #[derive(Clone, Debug)]
 pub(super) struct CompactLookup {
-    slots: Vec<u64>,
-    mask: u32,
-    len: u32,
+    buckets: Vec<BucketSlot>,
+    entries: Vec<ChainEntry>,
+    mask: u16,
 }
 
 impl CompactLookup {
-    /// Builds a table sized for the expected number of entries.
+    /// Derives the bucket address from the packed rolling sum.
     ///
-    /// Capacity is the next power of two >= `4 * n_entries` (25% target load),
-    /// with a minimum of 16 slots.
+    /// `rsum >> 16` is the upper half of the wire-format checksum and matches
+    /// [`checksums::RollingDigest::sum2`], mirroring zsync's
+    /// `r.a & rsum_a_mask` formulation while staying entirely in-memory.
+    #[inline]
+    #[must_use]
+    pub(super) const fn bucket_for(rsum: u32) -> u16 {
+        (rsum >> 16) as u16
+    }
+
+    /// Builds a bucket table sized for the expected number of entries.
+    ///
+    /// Bucket count is the smallest power of two `>= 2 * n_entries`, clamped
+    /// to `[2^MIN_LOG2_BUCKETS, 2^MAX_LOG2_BUCKETS]`. The chain backing store
+    /// is reserved at a conservative upper bound (`MAX_RESERVE_ENTRIES`) so
+    /// adversarial inputs cannot trigger an oversized allocation up-front;
+    /// real basis sizes never approach the cap before paging concerns kick
+    /// in elsewhere.
     pub(super) fn with_capacity(n_entries: usize) -> Self {
-        let min_cap = (n_entries as u64)
-            .saturating_mul(4)
-            .next_power_of_two()
-            .max(16) as usize;
-        let cap = min_cap.min(1 << 30);
-        let mask = (cap - 1) as u32;
+        let log2_buckets = log2_buckets_for(n_entries);
+        let n_buckets = 1usize << log2_buckets;
+        let mask = (n_buckets - 1) as u16;
+        let reserve = n_entries.min(MAX_RESERVE_ENTRIES);
         Self {
-            slots: vec![Self::empty_slot(); cap],
+            buckets: vec![BucketSlot::EMPTY; n_buckets],
+            entries: Vec::with_capacity(reserve),
             mask,
-            len: 0,
         }
     }
 
     /// Inserts a `(sum1, sum2) -> block_index` mapping.
     ///
-    /// Uses Robin Hood insertion: if a new entry's probe distance exceeds the
-    /// incumbent's, swap them and continue inserting the displaced entry. This
-    /// bounds the variance of probe-chain lengths, keeping worst-case lookups
-    /// short.
+    /// Entries are appended to the tail of the bucket chain so the iteration
+    /// order matches insertion order. Preserving insertion order keeps the
+    /// `MatchedBlocks` first-fit-in-bucket semantics intact: the matcher
+    /// picks the earliest unmarked basis index when several blocks share a
+    /// bucket and discriminator.
     pub(super) fn insert(&mut self, sum1: u16, sum2: u16, block_index: u32) {
-        let key = pack_key(sum1, sum2);
-        debug_assert_ne!(key, EMPTY_KEY, "rsum 0xFFFFFFFF collides with sentinel");
+        debug_assert_ne!(
+            block_index, CHAIN_END,
+            "block_index u32::MAX collides with chain sentinel",
+        );
+        let bucket = self.bucket_index(sum2);
+        let entry_idx = self.entries.len() as u32;
+        self.entries.push(ChainEntry {
+            sum1,
+            block_index,
+            next: CHAIN_END,
+        });
 
-        let mut pos = (key & self.mask) as usize;
-        let mut inserting_key = key;
-        let mut inserting_val = block_index;
-        let mut inserting_dist: u32 = 0;
-
-        loop {
-            let slot = self.slots[pos];
-            let slot_key = (slot >> 32) as u32;
-
-            if slot_key == EMPTY_KEY {
-                self.slots[pos] = Self::pack_slot(inserting_key, inserting_val);
-                self.len += 1;
-                return;
-            }
-
-            let slot_dist = self.probe_distance(slot_key, pos);
-            if inserting_dist > slot_dist {
-                let slot_val = slot as u32;
-                self.slots[pos] = Self::pack_slot(inserting_key, inserting_val);
-                inserting_key = slot_key;
-                inserting_val = slot_val;
-                inserting_dist = slot_dist;
-            }
-
-            pos = ((pos + 1) as u32 & self.mask) as usize;
-            inserting_dist += 1;
+        let slot = self.buckets[bucket];
+        if slot.head == CHAIN_END {
+            self.buckets[bucket] = BucketSlot {
+                head: entry_idx,
+                tail: entry_idx,
+            };
+        } else {
+            self.entries[slot.tail as usize].next = entry_idx;
+            self.buckets[bucket].tail = entry_idx;
         }
     }
 
     /// Returns an iterator over all block indices matching `(sum1, sum2)`.
     ///
-    /// The iterator walks the probe chain from the key's home position,
-    /// yielding every entry with a matching key. It terminates when it
-    /// encounters an empty slot or an entry whose probe distance is less than
-    /// the current scan distance (Robin Hood invariant: no matching entry can
-    /// exist beyond this point).
+    /// Walks the `sum2`-derived bucket chain in insertion order and yields
+    /// entries whose lower-half discriminator equals `sum1`. The
+    /// strong-checksum verify still gates the final caller-visible match -
+    /// this iterator only filters out chain entries that cannot possibly
+    /// match.
     #[inline]
     pub(super) fn find_all(&self, sum1: u16, sum2: u16) -> CompactLookupIter<'_> {
-        let key = pack_key(sum1, sum2);
-        let start = (key & self.mask) as usize;
+        let bucket = self.bucket_index(sum2);
         CompactLookupIter {
             table: self,
-            key,
-            pos: start,
-            dist: 0,
+            sum1,
+            next: self.buckets[bucket].head,
         }
     }
 
-    /// Resets all slots to empty, preserving the backing allocation.
+    /// Masks `sum2` into the bucket-array address space.
+    ///
+    /// Equivalent to `sum2 & self.mask`, but kept as a single helper so the
+    /// insert and lookup paths cannot drift apart.
+    #[inline]
+    fn bucket_index(&self, sum2: u16) -> usize {
+        (sum2 & self.mask) as usize
+    }
+
+    /// Resets all bucket heads and chain entries, preserving the backing
+    /// allocations for the next per-segment rebuild.
     pub(super) fn clear(&mut self) {
-        self.slots.fill(Self::empty_slot());
-        self.len = 0;
+        self.buckets.fill(BucketSlot::EMPTY);
+        self.entries.clear();
     }
 
     /// Returns the number of stored entries.
     #[allow(dead_code)]
     pub(super) fn len(&self) -> u32 {
-        self.len
+        self.entries.len() as u32
     }
 
-    /// Returns the total number of slots (always a power of two).
+    /// Returns the number of bucket slots (always a power of two, `<= 2^16`).
+    ///
+    /// Reported as the bench harnesses' "lookup capacity" - the metric they
+    /// pair against the local CPU cache hierarchy.
     pub(super) fn capacity(&self) -> usize {
         (self.mask as usize) + 1
     }
 
-    #[inline]
-    fn empty_slot() -> u64 {
-        (EMPTY_KEY as u64) << 32
-    }
-
-    #[inline]
-    fn pack_slot(key: u32, value: u32) -> u64 {
-        ((key as u64) << 32) | value as u64
-    }
-
-    #[inline]
-    fn probe_distance(&self, key: u32, pos: usize) -> u32 {
-        let home = (key & self.mask) as usize;
-        ((pos as u32).wrapping_sub(home as u32)) & self.mask
+    /// Returns the byte footprint of the bucket array allocation.
+    ///
+    /// The chain backing store is excluded so the figure tracks the
+    /// cache-resident hot table only.
+    pub(super) fn bucket_bytes(&self) -> usize {
+        self.buckets.len() * core::mem::size_of::<BucketSlot>()
     }
 }
 
-/// Iterator over block indices matching a specific rsum key.
+/// Iterator yielding chain entries that match a given discriminator.
 pub(super) struct CompactLookupIter<'a> {
     table: &'a CompactLookup,
-    key: u32,
-    pos: usize,
-    dist: u32,
+    sum1: u16,
+    next: u32,
 }
 
 impl Iterator for CompactLookupIter<'_> {
@@ -163,26 +233,32 @@ impl Iterator for CompactLookupIter<'_> {
     #[inline]
     fn next(&mut self) -> Option<usize> {
         loop {
-            let slot = self.table.slots[self.pos];
-            let slot_key = (slot >> 32) as u32;
-
-            if slot_key == EMPTY_KEY {
+            if self.next == CHAIN_END {
                 return None;
             }
-
-            let slot_dist = self.table.probe_distance(slot_key, self.pos);
-            if slot_dist < self.dist {
-                return None;
-            }
-
-            self.pos = ((self.pos + 1) as u32 & self.table.mask) as usize;
-            self.dist += 1;
-
-            if slot_key == self.key {
-                return Some(slot as u32 as usize);
+            let entry = self.table.entries[self.next as usize];
+            self.next = entry.next;
+            if entry.sum1 == self.sum1 {
+                return Some(entry.block_index as usize);
             }
         }
     }
+}
+
+/// Returns the bucket-count exponent for the requested entry count.
+///
+/// Picks the smallest `k` with `2^k >= 2 * n_entries`, then clamps into
+/// `[MIN_LOG2_BUCKETS, MAX_LOG2_BUCKETS]`. The `2x` factor keeps the
+/// per-bucket chain length bounded at roughly half a slot per entry on
+/// average for uniformly distributed `sum2` values.
+fn log2_buckets_for(n_entries: usize) -> u32 {
+    let target = (n_entries as u64).saturating_mul(2);
+    let raw = if target <= 1 {
+        MIN_LOG2_BUCKETS
+    } else {
+        u64::BITS - (target - 1).leading_zeros()
+    };
+    raw.clamp(MIN_LOG2_BUCKETS, MAX_LOG2_BUCKETS)
 }
 
 #[cfg(test)]
@@ -258,21 +334,37 @@ mod tests {
     }
 
     #[test]
-    fn probe_distance_wraps_correctly() {
-        let table = CompactLookup::with_capacity(4);
-        assert_eq!(table.mask, 15);
-        assert_eq!(table.probe_distance(0, 0), 0);
-        assert_eq!(table.probe_distance(0, 3), 3);
-        assert_eq!(table.probe_distance(14, 1), 3);
+    fn bucket_address_uses_upper_half() {
+        let rsum: u32 = 0x1234_5678;
+        assert_eq!(CompactLookup::bucket_for(rsum), 0x1234);
+        assert_eq!(rsum >> 16, u32::from(CompactLookup::bucket_for(rsum)));
     }
 
     #[test]
-    fn pack_key_matches_rolling_digest_value() {
-        let sum1: u16 = 0x1234;
-        let sum2: u16 = 0x5678;
-        let packed = pack_key(sum1, sum2);
-        assert_eq!(packed, 0x5678_1234);
-        assert_eq!(packed & 0xFFFF, sum1 as u32);
-        assert_eq!(packed >> 16, sum2 as u32);
+    fn bucket_count_is_capped_at_two_to_sixteen() {
+        let table = CompactLookup::with_capacity(usize::MAX);
+        assert_eq!(table.capacity(), 1 << MAX_LOG2_BUCKETS);
+        assert_eq!(table.mask, u16::MAX);
+    }
+
+    #[test]
+    fn bucket_count_is_floored_for_tiny_inputs() {
+        let table = CompactLookup::with_capacity(0);
+        assert_eq!(table.capacity(), 1 << MIN_LOG2_BUCKETS);
+    }
+
+    #[test]
+    fn lower_half_discriminator_filters_same_bucket() {
+        // Two synthetic rsums sharing the upper-half bucket address but
+        // disagreeing on the lower-half discriminator. The chain walk must
+        // expose each entry under its own `(sum1, sum2)` key without leaking
+        // the sibling.
+        let mut table = CompactLookup::with_capacity(16);
+        table.insert(0xAAAA, 0x1234, 7);
+        table.insert(0xBBBB, 0x1234, 9);
+        let results_a: Vec<usize> = table.find_all(0xAAAA, 0x1234).collect();
+        let results_b: Vec<usize> = table.find_all(0xBBBB, 0x1234).collect();
+        assert_eq!(results_a, vec![7]);
+        assert_eq!(results_b, vec![9]);
     }
 }
