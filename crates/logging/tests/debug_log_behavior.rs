@@ -14,7 +14,7 @@ fn debug_log_emits_when_level_sufficient() {
     let mut config = VerbosityConfig::default();
     config.debug.recv = 2;
     init(config);
-    drain_events(); // Clear any existing events
+    drain_events();
 
     debug_log!(Recv, 1, "test message");
 
@@ -81,7 +81,6 @@ fn debug_log_flags_are_independent() {
     debug_log!(Send, 1, "send message");
 
     let events = drain_events();
-    // Only recv should emit
     assert_eq!(events.len(), 1);
     match &events[0] {
         DiagnosticEvent::Debug { flag, message, .. } => {
@@ -302,7 +301,6 @@ fn debug_log_reinit_changes_behavior() {
     debug_log!(Recv, 1, "should emit");
     assert_eq!(drain_events().len(), 1);
 
-    // Reinitialize with different config
     let config2 = VerbosityConfig::default();
     init(config2);
 
