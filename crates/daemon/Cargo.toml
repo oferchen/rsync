@@ -55,9 +55,19 @@ tracing = { workspace = true, optional = true }
 checksums = { path = "../checksums" }
 libc = { workspace = true }
 
-# sd-notify is Linux-only (systemd notification)
+# fast_io carries the Landlock LSM defense-in-depth helper (SEC-1.p). On
+# non-Linux targets the stub module compiles with the same public surface
+# and every call short-circuits to `Unavailable`, so the wire-in at
+# `module_access/transfer.rs` does not need `#[cfg]` branching. The
+# `landlock` feature is forwarded only on Linux where the crate has a real
+# dependency to enable. Default features stay off so we do not pull
+# io_uring / iocp into the daemon's runtime dependency graph.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+fast_io = { path = "../fast_io", default-features = false }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 sd-notify = { version = "0.5.0", optional = true }
+fast_io = { path = "../fast_io", default-features = false, features = ["landlock"] }
 
 [target.'cfg(windows)'.dependencies]
 checksums = { path = "../checksums", default-features = false }

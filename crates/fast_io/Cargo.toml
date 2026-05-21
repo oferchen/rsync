@@ -44,6 +44,12 @@ dashmap = { workspace = true }
 # Optional: io_uring support (Linux 5.6+)
 io-uring = { version = "0.7", optional = true }
 
+# Optional: Landlock LSM defense-in-depth allowlist (Linux 5.13+).
+# Used by the daemon receiver path after privilege drop to enforce a
+# kernel-level allowlist layered above the SEC-1 *at* helpers. Best-effort
+# downgrade picks the highest ABI the running kernel exposes.
+landlock = { version = "0.4", optional = true }
+
 [features]
 default = ["io_uring", "iocp"]
 
@@ -115,6 +121,15 @@ adaptive-basis-dispatch = []
 # pending kernel/workload benchmarks. See docs/design/iouring-send-zc.md
 # for the full design.
 iouring-send-zc = ["io_uring"]
+
+# landlock: Linux-only opt-in dispatch for the Landlock LSM allowlist used by
+# the daemon receiver path (SEC-1.p) as defense-in-depth above the SEC-1 *at*
+# helpers. When enabled, the helper requests `AccessFs::from_all(ABI::V3)`
+# with best-effort downgrade so older kernels (5.13/5.19) accept the v1/v2
+# subset. Default off pending the daemon wire-in opting into the feature.
+# See docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md for the
+# full design.
+landlock = ["dep:landlock"]
 
 # iouring-data-writes: opt-in dispatch that routes large file writes through
 # the production io_uring writer wrapper (`fast_io::write_file_with_io_uring`).
