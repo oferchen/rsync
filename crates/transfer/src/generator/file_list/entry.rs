@@ -287,16 +287,10 @@ impl GeneratorContext {
         metadata::load_fake_super(full_path).ok().flatten()
     }
 
-    /// Non-Unix stub: fake-super xattrs require POSIX semantics, so the
-    /// override is always absent.
-    #[cfg(not(unix))]
-    fn fake_super_override(
-        &self,
-        _full_path: &Path,
-        _metadata: &std::fs::Metadata,
-    ) -> Option<metadata::FakeSuperStat> {
-        None
-    }
+    // The non-Unix branch deliberately omits `fake_super_override`. The only
+    // caller is `#[cfg(unix)]`-gated in `build_file_entry`, so a Windows
+    // stub would be dead code (rejected by `-D dead-code`). Adding a Windows
+    // call site later should reintroduce a stub here.
 }
 
 /// Builds the wire `FileEntry` for a regular placeholder file whose
