@@ -50,6 +50,8 @@ impl ReceiverContext {
             &setup.dest_dir,
             &setup.metadata_opts,
             setup.acl_cache.as_deref(),
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
         )?;
         #[cfg(unix)]
         self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer);

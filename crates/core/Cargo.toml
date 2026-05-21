@@ -122,3 +122,7 @@ criterion = { workspace = true }
 [[bench]]
 name = "transfer_benchmark"
 harness = false
+
+[[bench]]
+name = "pip_6_end_to_end_parallel_vs_sequential"
+harness = false
