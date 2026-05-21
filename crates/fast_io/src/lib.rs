@@ -224,7 +224,9 @@ pub use platform_copy::{
 pub use traits::{FileReader, FileWriter};
 
 #[cfg(unix)]
-pub use dir_sandbox::DirSandbox;
+pub use dir_sandbox::{
+    AtMetadata, DirSandbox, LstatOutcome, fstatat_nofollow, lstat_via_sandbox_or_fallback,
+};
 pub use kernel_version::{
     IO_URING_MIN_KERNEL, KernelVersion, log_io_uring_probe_result, parse_kernel_version,
 };

@@ -30,7 +30,7 @@ fn create_hardlinks_links_follower_to_leader() {
 
     let mut ctx = receiver_with_hardlinks(entries);
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     let follower_file = dest.join("follower.txt");
     assert!(follower_file.exists(), "follower should be created");
@@ -59,7 +59,7 @@ fn create_hardlinks_shares_inode() {
 
     let mut ctx = receiver_with_hardlinks(entries);
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     let meta_a = std::fs::metadata(dest.join("a.txt")).unwrap();
     let meta_b = std::fs::metadata(dest.join("b.txt")).unwrap();
@@ -86,7 +86,7 @@ fn create_hardlinks_across_directories() {
 
     let mut ctx = receiver_with_hardlinks(entries);
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     let follower = dest.join("dir_b/file.txt");
     assert!(
@@ -113,7 +113,7 @@ fn create_hardlinks_multiple_groups() {
 
     let mut ctx = receiver_with_hardlinks(entries);
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     assert_eq!(
         std::fs::read_to_string(dest.join("g1_follower.txt")).unwrap(),
@@ -149,7 +149,7 @@ fn create_hardlinks_skips_already_linked() {
 
     let mut ctx = receiver_with_hardlinks(entries);
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     let meta = std::fs::metadata(&follower).unwrap();
     assert_eq!(meta.ino(), leader_ino);
@@ -172,7 +172,7 @@ fn create_hardlinks_replaces_existing_file() {
 
     let mut ctx = receiver_with_hardlinks(entries);
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     assert_eq!(std::fs::read_to_string(&follower).unwrap(), "correct");
 }
@@ -205,7 +205,7 @@ fn create_hardlinks_skipped_when_disabled() {
     ctx.file_list = entries;
 
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     assert!(
         !dest.join("follower.txt").exists(),
@@ -242,7 +242,7 @@ fn create_hardlinks_skipped_in_dry_run() {
     ctx.file_list = entries;
 
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     assert!(
         !dest.join("follower.txt").exists(),
@@ -259,7 +259,7 @@ fn create_hardlinks_follower_without_leader_is_skipped() {
 
     let mut ctx = receiver_with_hardlinks(entries);
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     assert!(
         !dest.join("orphan.txt").exists(),
@@ -330,7 +330,7 @@ fn create_hardlinks_populates_tracker() {
 
     let mut ctx = receiver_with_hardlinks(entries);
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     assert!(
         dest.join("a_link.txt").exists(),
@@ -372,7 +372,7 @@ fn create_hardlinks_tracker_preserves_state_across_calls() {
     let entries_1 = vec![make_hlink_leader("leader.txt", 10, 50)];
     let mut ctx = receiver_with_hardlinks(entries_1);
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     let tracker = ctx.hardlink_tracker.as_ref().unwrap();
     assert_eq!(tracker.leader_count(), 1);
@@ -381,7 +381,7 @@ fn create_hardlinks_tracker_preserves_state_across_calls() {
         make_hlink_leader("leader.txt", 10, 50),
         make_hlink_follower("follower.txt", 10, 50),
     ];
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     assert!(dest.join("follower.txt").exists());
     let leader_ino = std::fs::metadata(dest.join("leader.txt")).unwrap().ino();
@@ -412,7 +412,7 @@ fn create_hardlinks_multiple_followers_same_group() {
 
     let mut ctx = receiver_with_hardlinks(entries);
     let mut writer = TestDeletionWriter;
-    ctx.create_hardlinks(dest, &mut writer);
+    ctx.create_hardlinks(dest, None, &mut writer);
 
     let leader_ino = std::fs::metadata(dest.join("original.txt")).unwrap().ino();
     for name in &["copy1.txt", "copy2.txt", "copy3.txt"] {

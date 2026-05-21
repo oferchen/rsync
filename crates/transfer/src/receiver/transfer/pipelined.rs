@@ -47,6 +47,9 @@ impl ReceiverContext {
             &setup.metadata_opts,
             setup.acl_cache.as_deref(),
         )?;
+        #[cfg(unix)]
+        self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer);
+        #[cfg(not(unix))]
         self.create_symlinks(&setup.dest_dir, writer);
 
         let mut delete_stats = DeleteStats::new();
@@ -159,6 +162,9 @@ impl ReceiverContext {
             }
         }
 
+        #[cfg(unix)]
+        self.create_hardlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer);
+        #[cfg(not(unix))]
         self.create_hardlinks(&setup.dest_dir, writer);
 
         self.finalize_transfer(reader, writer)?;
