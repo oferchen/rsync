@@ -434,35 +434,30 @@ mod skip_compress {
     fn magic_byte_detection() {
         let decider = CompressionDecider::with_default_skip_list();
 
-        // JPEG
         let jpeg_header = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10];
         assert_eq!(
             decider.should_compress(Path::new("unknown"), Some(&jpeg_header)),
             CompressionDecision::Skip
         );
 
-        // PNG
         let png_header = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
         assert_eq!(
             decider.should_compress(Path::new("unknown"), Some(&png_header)),
             CompressionDecision::Skip
         );
 
-        // ZIP
         let zip_header = [b'P', b'K', 0x03, 0x04, 0x00, 0x00];
         assert_eq!(
             decider.should_compress(Path::new("unknown"), Some(&zip_header)),
             CompressionDecision::Skip
         );
 
-        // PDF
         let pdf_header = b"%PDF-1.5";
         assert_eq!(
             decider.should_compress(Path::new("unknown"), Some(pdf_header)),
             CompressionDecision::Skip
         );
 
-        // Plain text (compressible)
         let text = b"Hello, this is plain text content";
         assert_eq!(
             decider.should_compress(Path::new("unknown"), Some(text)),
@@ -505,7 +500,6 @@ mod skip_compress {
 
         assert!(decider.auto_detect_compressible(&[]).unwrap());
 
-        // High-entropy data
         let mut state: u64 = 0x853c49e6748fea9b;
         let random: Vec<u8> = (0..4096)
             .map(|_| {
@@ -656,7 +650,6 @@ mod compression_levels {
 
     #[test]
     fn compression_level_from_numeric() {
-        // Valid levels 1-9
         for level in 1..=9 {
             let result = CompressionLevel::from_numeric(level);
             assert!(result.is_ok(), "Level {level} should be valid");
@@ -668,13 +661,11 @@ mod compression_levels {
             }
         }
 
-        // Level 0 is valid (CompressionLevel::None)
         assert_eq!(
             CompressionLevel::from_numeric(0).unwrap(),
             CompressionLevel::None
         );
 
-        // Invalid levels
         assert!(CompressionLevel::from_numeric(10).is_err());
         assert!(CompressionLevel::from_numeric(100).is_err());
         assert!(CompressionLevel::from_numeric(u32::MAX).is_err());
@@ -746,7 +737,8 @@ mod error_handling {
         let data = b"Test data for corruption testing";
         let compressed = zlib_compress(data, CompressionLevel::Default).unwrap();
         let truncated = &compressed[..compressed.len() / 2];
-        // Truncated data may or may not fail depending on deflate stream state
+        // Either error or partial decode is acceptable; deflate may stop at
+        // the first incomplete block.
         let _ = zlib_decompress(truncated);
 
         let mut corrupted = compressed.clone();
@@ -754,15 +746,16 @@ mod error_handling {
             let mid = corrupted.len() / 2;
             corrupted[mid] ^= 0xFF;
         }
-        // May or may not fail depending on where corruption hits
+        // Outcome depends on whether corruption hits a length or symbol byte.
         let _ = zlib_decompress(&corrupted);
     }
 
     #[test]
     fn zlib_decompress_empty_input() {
-        // Empty deflate stream is actually valid - it produces empty output
+        // Empty deflate stream is a valid encoding for empty output, but some
+        // backends reject it; both outcomes are acceptable.
         let result = zlib_decompress(&[]);
-        assert!(result.is_ok() || result.is_err()); // Either is acceptable behavior
+        assert!(result.is_ok() || result.is_err());
     }
 
     #[cfg(feature = "lz4")]
@@ -994,7 +987,7 @@ mod algorithm {
     #[test]
     fn compression_algorithm_default() {
         let default = CompressionAlgorithm::default_algorithm();
-        // Upstream rsync 3.4.1 negotiation precedence: zstd > lz4 > zlib
+        // upstream: compat.c:valid_compressions_items[] - precedence zstd > lz4 > zlib.
         #[cfg(feature = "zstd")]
         assert_eq!(default, CompressionAlgorithm::Zstd);
         #[cfg(all(not(feature = "zstd"), feature = "lz4"))]

@@ -276,7 +276,6 @@ fn zlib_level_zero_produces_larger_output_for_compressible_data() {
     let level_9_compressed =
         zlib_compress(&data, CompressionLevel::from_numeric(9).unwrap()).expect("level 9 compress");
 
-    // Level 0 should produce larger output than compressed levels for compressible data
     assert!(
         level_0_compressed.len() > level_1_compressed.len(),
         "level 0 ({}) should produce larger output than level 1 ({}) for compressible data",
@@ -291,7 +290,6 @@ fn zlib_level_zero_produces_larger_output_for_compressible_data() {
         level_9_compressed.len()
     );
 
-    // Verify all round-trip correctly
     assert_eq!(
         zlib_decompress(&level_0_compressed).unwrap(),
         data,
@@ -311,7 +309,8 @@ fn zlib_level_zero_produces_larger_output_for_compressible_data() {
 
 #[test]
 fn zlib_level_zero_size_relationship_with_random_data() {
-    // Random data doesn't compress well, so level 0 might have similar size to compressed
+    // Random data: level 0 and level 9 may produce similar sizes; assert
+    // only that both round-trip correctly.
     let data = test_data::random_data(10_000, 54321);
 
     let level_0_compressed =
@@ -319,8 +318,6 @@ fn zlib_level_zero_size_relationship_with_random_data() {
     let level_9_compressed =
         zlib_compress(&data, CompressionLevel::from_numeric(9).unwrap()).expect("level 9 compress");
 
-    // For random data, level 0 may be larger or similar to level 9
-    // We just verify both work correctly
     assert_eq!(
         zlib_decompress(&level_0_compressed).unwrap(),
         data,
@@ -335,14 +332,13 @@ fn zlib_level_zero_size_relationship_with_random_data() {
 
 #[test]
 fn zlib_level_zero_may_inflate_small_data() {
-    // Small data is likely to inflate due to deflate framing overhead
+    // Level 0 still emits deflate framing (5-byte stored-block header), so
+    // sub-block inputs typically inflate. Assert correctness, not size.
     let data = b"tiny";
 
     let compressed =
         zlib_compress(data, CompressionLevel::None).expect("level 0 compression works");
 
-    // Level 0 adds deflate framing without compression, so small data typically inflates
-    // We verify it round-trips correctly regardless of size relationship
     let decompressed = zlib_decompress(&compressed).expect("level 0 decompression works");
     assert_eq!(
         decompressed.as_slice(),
@@ -473,8 +469,7 @@ fn lz4_level_zero_produces_larger_output_for_compressible_data() {
     let level_default_compressed =
         lz4_compress(&data, CompressionLevel::Default).expect("lz4 default compress");
 
-    // LZ4 level 0 may still apply some compression, so we just verify it works
-    // The actual compression ratio depends on the LZ4 implementation
+    // LZ4 level 0 still produces a valid frame; ratio depends on the backend.
     assert!(
         level_0_compressed.len() >= level_default_compressed.len(),
         "lz4 level 0 ({}) should produce equal or larger output than default ({}) for compressible data",
@@ -482,7 +477,6 @@ fn lz4_level_zero_produces_larger_output_for_compressible_data() {
         level_default_compressed.len()
     );
 
-    // Verify both round-trip correctly
     assert_eq!(
         lz4_decompress(&level_0_compressed).unwrap(),
         data,
@@ -618,8 +612,7 @@ fn zstd_level_zero_produces_larger_output_for_compressible_data() {
     let level_default_compressed =
         zstd_compress(&data, CompressionLevel::Default).expect("zstd default compress");
 
-    // Zstd level 0 may still apply some compression, so we just verify it works
-    // The actual compression ratio depends on the zstd implementation
+    // Zstd level 0 still produces a valid frame; ratio depends on the backend.
     assert!(
         level_0_compressed.len() >= level_default_compressed.len(),
         "zstd level 0 ({}) should produce equal or larger output than default ({}) for compressible data",
@@ -627,7 +620,6 @@ fn zstd_level_zero_produces_larger_output_for_compressible_data() {
         level_default_compressed.len()
     );
 
-    // Verify both round-trip correctly
     assert_eq!(
         zstd_decompress(&level_0_compressed).unwrap(),
         data,
@@ -660,12 +652,10 @@ fn zstd_level_zero_boundary_sizes() {
 fn all_algorithms_handle_level_zero_consistently() {
     let data = test_data::english_text(5000);
 
-    // Zlib
     let zlib_compressed = zlib_compress(&data, CompressionLevel::None).expect("zlib level 0");
     let zlib_decompressed = zlib_decompress(&zlib_compressed).expect("zlib decompress");
     assert_eq!(zlib_decompressed, data, "zlib level 0 failed");
 
-    // LZ4
     #[cfg(feature = "lz4")]
     {
         let lz4_compressed = lz4_compress(&data, CompressionLevel::None).expect("lz4 level 0");
@@ -673,7 +663,6 @@ fn all_algorithms_handle_level_zero_consistently() {
         assert_eq!(lz4_decompressed, data, "lz4 level 0 failed");
     }
 
-    // Zstd
     #[cfg(feature = "zstd")]
     {
         let zstd_compressed = zstd_compress(&data, CompressionLevel::None).expect("zstd level 0");
@@ -686,12 +675,10 @@ fn all_algorithms_handle_level_zero_consistently() {
 fn all_algorithms_level_zero_empty_data() {
     let data: &[u8] = &[];
 
-    // Zlib
     let zlib_compressed = zlib_compress(data, CompressionLevel::None).expect("zlib level 0 empty");
     let zlib_decompressed = zlib_decompress(&zlib_compressed).expect("zlib decompress empty");
     assert!(zlib_decompressed.is_empty(), "zlib level 0 empty failed");
 
-    // LZ4
     #[cfg(feature = "lz4")]
     {
         let lz4_compressed = lz4_compress(data, CompressionLevel::None).expect("lz4 level 0 empty");
@@ -699,7 +686,6 @@ fn all_algorithms_level_zero_empty_data() {
         assert!(lz4_decompressed.is_empty(), "lz4 level 0 empty failed");
     }
 
-    // Zstd
     #[cfg(feature = "zstd")]
     {
         let zstd_compressed =
@@ -713,12 +699,10 @@ fn all_algorithms_level_zero_empty_data() {
 fn all_algorithms_level_zero_single_byte() {
     let data: &[u8] = &[123];
 
-    // Zlib
     let zlib_compressed = zlib_compress(data, CompressionLevel::None).expect("zlib level 0 single");
     let zlib_decompressed = zlib_decompress(&zlib_compressed).expect("zlib decompress single");
     assert_eq!(zlib_decompressed, data, "zlib level 0 single failed");
 
-    // LZ4
     #[cfg(feature = "lz4")]
     {
         let lz4_compressed =
@@ -727,7 +711,6 @@ fn all_algorithms_level_zero_single_byte() {
         assert_eq!(lz4_decompressed, data, "lz4 level 0 single failed");
     }
 
-    // Zstd
     #[cfg(feature = "zstd")]
     {
         let zstd_compressed =
@@ -741,13 +724,11 @@ fn all_algorithms_level_zero_single_byte() {
 fn all_algorithms_level_zero_all_byte_values() {
     let data: Vec<u8> = (0..=255).collect();
 
-    // Zlib
     let zlib_compressed =
         zlib_compress(&data, CompressionLevel::None).expect("zlib level 0 all bytes");
     let zlib_decompressed = zlib_decompress(&zlib_compressed).expect("zlib decompress all bytes");
     assert_eq!(zlib_decompressed, data, "zlib level 0 all bytes failed");
 
-    // LZ4
     #[cfg(feature = "lz4")]
     {
         let lz4_compressed =
@@ -756,7 +737,6 @@ fn all_algorithms_level_zero_all_byte_values() {
         assert_eq!(lz4_decompressed, data, "lz4 level 0 all bytes failed");
     }
 
-    // Zstd
     #[cfg(feature = "zstd")]
     {
         let zstd_compressed =
@@ -769,7 +749,6 @@ fn all_algorithms_level_zero_all_byte_values() {
 
 #[test]
 fn zlib_level_zero_large_data() {
-    // Test with 1 MB of data
     let data = test_data::english_text(1_000_000);
     let compressed = zlib_compress(&data, CompressionLevel::None).expect("zlib level 0 large data");
     let decompressed = zlib_decompress(&compressed).expect("zlib decompress large data");
@@ -782,7 +761,6 @@ fn zlib_level_zero_large_data() {
 #[cfg(feature = "lz4")]
 #[test]
 fn lz4_level_zero_large_data() {
-    // Test with 1 MB of data
     let data = test_data::english_text(1_000_000);
     let compressed = lz4_compress(&data, CompressionLevel::None).expect("lz4 level 0 large data");
     let decompressed = lz4_decompress(&compressed).expect("lz4 decompress large data");
@@ -795,7 +773,6 @@ fn lz4_level_zero_large_data() {
 #[cfg(feature = "zstd")]
 #[test]
 fn zstd_level_zero_large_data() {
-    // Test with 1 MB of data
     let data = test_data::english_text(1_000_000);
     let compressed = zstd_compress(&data, CompressionLevel::None).expect("zstd level 0 large data");
     let decompressed = zstd_decompress(&compressed).expect("zstd decompress large data");

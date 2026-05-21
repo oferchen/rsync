@@ -38,7 +38,7 @@ fn generate_highly_compressible_data() -> Vec<u8> {
 }
 
 fn generate_incompressible_data() -> Vec<u8> {
-    // Pseudo-random data that won't compress well
+    // LCG-driven byte stream; high entropy resists compression.
     let mut data = Vec::new();
     let mut state = 0x12345678u32;
     for _ in 0..1024 {
@@ -49,7 +49,7 @@ fn generate_incompressible_data() -> Vec<u8> {
 }
 
 fn generate_already_compressed_data() -> Vec<u8> {
-    // Simulate already-compressed data (e.g., JPEG, PNG, ZIP)
+    // Pre-compress at level Best to mimic JPEG/PNG/ZIP body bytes.
     compress_to_vec(&generate_highly_compressible_data(), CompressionLevel::Best).unwrap()
 }
 
@@ -96,7 +96,6 @@ fn roundtrip_highly_compressible_data() {
     let decompressed = decompress_to_vec(&compressed).unwrap();
     assert_eq!(decompressed, data);
 
-    // Verify we achieved significant compression
     assert!(
         compressed.len() < data.len() / 10,
         "Highly compressible data should compress to < 10% of original size"
@@ -205,7 +204,6 @@ fn higher_levels_produce_smaller_output() {
     let compressed_15 = compress_to_vec(&data, level_15).unwrap();
     let compressed_19 = compress_to_vec(&data, level_19).unwrap();
 
-    // Verify compression improves with level for highly compressible data
     assert!(
         compressed_5.len() <= compressed_1.len(),
         "Level 5 should compress better than level 1"
@@ -223,7 +221,6 @@ fn higher_levels_produce_smaller_output() {
         "Level 19 should compress better than level 15"
     );
 
-    // Verify all decompress correctly
     assert_eq!(decompress_to_vec(&compressed_1).unwrap(), data);
     assert_eq!(decompress_to_vec(&compressed_5).unwrap(), data);
     assert_eq!(decompress_to_vec(&compressed_10).unwrap(), data);
@@ -239,7 +236,6 @@ fn compression_ratio_at_different_levels() {
     let default = compress_to_vec(&data, CompressionLevel::Default).unwrap();
     let best = compress_to_vec(&data, CompressionLevel::Best).unwrap();
 
-    // All should achieve significant compression
     assert!(fast.len() < data.len() / 5, "Fast should compress to < 20%");
     assert!(
         default.len() < data.len() / 5,
@@ -247,7 +243,6 @@ fn compression_ratio_at_different_levels() {
     );
     assert!(best.len() < data.len() / 5, "Best should compress to < 20%");
 
-    // Best should be smallest or equal
     assert!(best.len() <= default.len());
     assert!(best.len() <= fast.len());
 }
@@ -355,7 +350,6 @@ fn streaming_encoder_bytes_written_tracking() {
     encoder.write(&data[10..]).unwrap();
 
     let (_, bytes_written) = encoder.finish_into_inner().unwrap();
-    // After finish, we should have written compressed bytes
     assert!(bytes_written > 0);
     assert_eq!(bytes_written as usize, output.len());
 }
@@ -379,7 +373,6 @@ fn deterministic_compression() {
     let compressed1 = compress_to_vec(data, CompressionLevel::Default).unwrap();
     let compressed2 = compress_to_vec(data, CompressionLevel::Default).unwrap();
 
-    // Zstd compression should be deterministic
     assert_eq!(compressed1, compressed2);
 }
 
@@ -416,7 +409,6 @@ fn empty_data_multiple_levels() {
 
 #[test]
 fn single_byte_all_values() {
-    // Test all possible byte values
     for byte_value in 0u8..=255 {
         let data = [byte_value];
         let compressed = compress_to_vec(&data, CompressionLevel::Default).unwrap();
@@ -427,7 +419,7 @@ fn single_byte_all_values() {
 
 #[test]
 fn very_large_data() {
-    let size = 10_000_000; // 10 MB
+    let size = 10_000_000;
     let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
 
     let compressed = compress_to_vec(&data, CompressionLevel::Fast).unwrap();
@@ -444,7 +436,6 @@ fn repeated_single_byte() {
     let decompressed = decompress_to_vec(&compressed).unwrap();
 
     assert_eq!(decompressed, data);
-    // Should achieve excellent compression ratio
     assert!(
         compressed.len() < 1000,
         "Repeated byte should compress extremely well"
@@ -468,7 +459,6 @@ fn null_bytes() {
     let decompressed = decompress_to_vec(&compressed).unwrap();
 
     assert_eq!(decompressed, data);
-    // Null bytes should compress extremely well
     assert!(
         compressed.len() < 100,
         "Null bytes should compress to < 100 bytes"
@@ -500,13 +490,12 @@ fn mixed_text_and_binary() {
 
 #[test]
 fn nested_compression() {
-    // Compress data, then compress the compressed data again
     let original = MEDIUM_DATA;
 
     let compressed_once = compress_to_vec(original, CompressionLevel::Default).unwrap();
     let compressed_twice = compress_to_vec(&compressed_once, CompressionLevel::Default).unwrap();
 
-    // Decompress in reverse order
+    // Peel the outer frame first, then the inner frame.
     let decompressed_once = decompress_to_vec(&compressed_twice).unwrap();
     let decompressed_twice = decompress_to_vec(&decompressed_once).unwrap();
 
@@ -523,7 +512,6 @@ fn multiple_independent_compressions() {
     let compressed2 = compress_to_vec(data2, CompressionLevel::Default).unwrap();
     let compressed3 = compress_to_vec(data3, CompressionLevel::Default).unwrap();
 
-    // Decompress in different order
     assert_eq!(decompress_to_vec(&compressed3).unwrap(), data3);
     assert_eq!(decompress_to_vec(&compressed1).unwrap(), data1);
     assert_eq!(decompress_to_vec(&compressed2).unwrap(), data2);
@@ -541,7 +529,6 @@ fn decompress_truncated_data_returns_error() {
     let data = MEDIUM_DATA;
     let compressed = compress_to_vec(data, CompressionLevel::Default).unwrap();
 
-    // Truncate the compressed data
     let truncated = &compressed[..compressed.len() - 10];
     let result = decompress_to_vec(truncated);
     assert!(result.is_err());
@@ -552,7 +539,6 @@ fn decompress_corrupted_magic_bytes_returns_error() {
     let data = MEDIUM_DATA;
     let mut compressed = compress_to_vec(data, CompressionLevel::Default).unwrap();
 
-    // Corrupt the magic bytes
     compressed[0] = 0x00;
     let result = decompress_to_vec(&compressed);
     assert!(result.is_err());
@@ -562,12 +548,10 @@ fn decompress_corrupted_magic_bytes_returns_error() {
 fn fast_level_is_faster_than_best() {
     let data = generate_large_data();
 
-    // This test just verifies both levels work - actual performance testing
-    // would require benchmarks, but we can verify the compression succeeds
+    // Functional check only: timing comparisons belong in benchmarks.
     let fast = compress_to_vec(&data, CompressionLevel::Fast).unwrap();
     let best = compress_to_vec(&data, CompressionLevel::Best).unwrap();
 
-    // Both should produce valid output
     assert_eq!(decompress_to_vec(&fast).unwrap(), data);
     assert_eq!(decompress_to_vec(&best).unwrap(), data);
 }
@@ -577,8 +561,8 @@ fn compression_overhead_for_small_data() {
     let data = b"tiny";
     let compressed = compress_to_vec(data, CompressionLevel::Default).unwrap();
 
-    // Small data will expand due to compression overhead
-    // Zstd header and frame overhead is relatively small
+    // Sub-50-byte ceiling matches zstd's 14-byte frame header plus its
+    // minimum block overhead for tiny inputs.
     assert!(
         compressed.len() < 50,
         "Compression overhead should be reasonable"
@@ -587,7 +571,7 @@ fn compression_overhead_for_small_data() {
 
 #[test]
 fn rsync_protocol_36_default_level() {
-    // rsync protocol 36 uses zstd with default compression
+    // upstream: compat.c - protocol 36 negotiates zstd with do_compression_level default.
     let data = MEDIUM_DATA;
     let compressed = compress_to_vec(data, CompressionLevel::Default).unwrap();
     let decompressed = decompress_to_vec(&compressed).unwrap();
