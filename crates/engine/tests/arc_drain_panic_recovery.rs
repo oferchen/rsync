@@ -7,20 +7,26 @@
 //! strong-count, so operators could neither match on the variant nor
 //! see how many workers were still leaking the handle.
 //!
-//! Three drain sites are exercised:
+//! Two drain sites are exercised:
 //!
 //! 1. `DeleteContext::emit_one` / `into_emitter` -> the typed payload
 //!    of `DeleteError::PlanMapStillShared { strong_count }` is
 //!    preserved end-to-end through the `From<DeleteError> for
 //!    io::Error` boundary.
-//! 2. `ParallelDeltaApplier::finish_file` -> the typed payload of
-//!    `ParallelApplyError::ApplierStillReferenced { ndx, strong_count,
-//!    kind }` is preserved end-to-end through `From<ParallelApplyError>
-//!    for io::Error`.
-//! 3. `ReorderBuffer::insert` capacity overflow -> the producer's
+//! 2. `ReorderBuffer::insert` capacity overflow -> the producer's
 //!    panic does not collapse the consumer's drain into an opaque
 //!    error: the `CapacityExceeded` typed error continues to surface
 //!    with its descriptive `Display`.
+//!
+//! Note: a prior third test exercised
+//! `ParallelDeltaApplier::finish_file`'s `ApplierStillReferenced`
+//! variant by holding the per-file slot inside a blocking writer while
+//! the main thread raced the drain. FFB-2 (the `flush_workers` /
+//! `drain_inflight` barrier API) bakes the barrier into `finish_file`
+//! itself, so that scenario is now a deadlock by construction rather
+//! than an observable race. The variant remains in the public API as a
+//! post-barrier invariant assertion; the Display payload is exercised
+//! by the unit tests in `crates/engine/src/concurrent_delta/parallel_apply.rs`.
 //!
 //! Every test isolates the worker-side panic with
 //! [`std::panic::catch_unwind`] so the harness stays green even when
@@ -111,136 +117,7 @@ fn delete_context_drain_surfaces_typed_plan_map_still_shared() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: ParallelDeltaApplier::finish_file surfaces ApplierStillReferenced.
-// ---------------------------------------------------------------------------
-//
-// Only compiled when the `parallel-receive-delta` feature is enabled
-// (see `crates/engine/Cargo.toml`). CI runs the engine crate with
-// `--all-features`, so this test is exercised on every PR.
-
-#[cfg(feature = "parallel-receive-delta")]
-mod parallel_apply_drain {
-    use super::{Arc, AssertUnwindSafe, Duration, extract_strong_count, mpsc, panic, thread};
-    use std::io::{self, Write};
-
-    use engine::concurrent_delta::{DeltaChunk, ParallelDeltaApplier};
-
-    /// A [`Write`] adaptor that signals "I am inside the per-file slot
-    /// lock" via `started_tx`, then blocks on `release_rx` so the main
-    /// thread can race the drain against an outstanding worker. The
-    /// blocking semantics let the test deterministically catch the
-    /// applier mid-flight while the slot's inner `Arc<Mutex<FileSlot>>`
-    /// still has a live worker-side clone.
-    struct BlockingWriter {
-        started_tx: Option<mpsc::Sender<()>>,
-        release_rx: mpsc::Receiver<()>,
-    }
-
-    impl Write for BlockingWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            if let Some(tx) = self.started_tx.take() {
-                let _ = tx.send(());
-            }
-            // Block until the main thread has had a chance to attempt
-            // `finish_file`. Bounded so a regression cannot wedge the
-            // test indefinitely.
-            let _ = self.release_rx.recv_timeout(Duration::from_secs(10));
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    /// A panicking apply-side worker keeps the per-file slot's inner
-    /// `Arc<Mutex<FileSlot>>` live while the main thread races
-    /// `finish_file`. The drain must surface
-    /// `ParallelApplyError::ApplierStillReferenced { ndx, strong_count
-    /// >= 2, kind }` instead of an opaque `io::Error::Other`.
-    #[test]
-    fn parallel_applier_finish_file_surfaces_typed_applier_still_referenced() {
-        let applier = Arc::new(ParallelDeltaApplier::new(1));
-        let (started_tx, started_rx) = mpsc::channel::<()>();
-        let (release_tx, release_rx) = mpsc::channel::<()>();
-        let writer = BlockingWriter {
-            started_tx: Some(started_tx),
-            release_rx,
-        };
-        applier
-            .register_file(0u32, Box::new(writer))
-            .expect("register_file");
-
-        // Worker: applies a chunk; the writer blocks inside the
-        // per-file slot lock so the worker is still holding the inner
-        // `Arc<Mutex<FileSlot>>` clone at the moment the main thread
-        // tries the drain. Wrap the call in `catch_unwind` so any
-        // accidental panic from the worker side does not abort the
-        // harness.
-        let worker_applier = Arc::clone(&applier);
-        let worker = thread::spawn(move || {
-            let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                worker_applier
-                    .apply_one_chunk(DeltaChunk::literal(0u32, 0, vec![0u8; 16]))
-                    .expect("apply_one_chunk");
-            }));
-            // Bubble up the panic outcome so the join site can assert
-            // it stayed contained. The drain assertion already ran on
-            // the main thread.
-            result.is_err()
-        });
-
-        // Wait for the worker to enter `BlockingWriter::write` - by
-        // that point the slot's inner Arc has a live clone held inside
-        // `apply_one_chunk`, so `finish_file`'s `Arc::try_unwrap`
-        // will fail with the typed variant.
-        started_rx
-            .recv_timeout(Duration::from_secs(10))
-            .expect("worker entered writer");
-
-        let err = match applier.finish_file(0u32) {
-            Ok(_) => panic!("slot still referenced by mid-flight worker"),
-            Err(err) => err,
-        };
-
-        // Boundary: typed error survives the `From<ParallelApplyError>
-        // for io::Error` conversion. The `Display` payload carries
-        // `ndx`, `strong_count`, and the call-site tag - none of which
-        // were available in the pre-ATU-3 opaque `Other` form.
-        assert_eq!(err.kind(), io::ErrorKind::Other);
-        let msg = err.to_string();
-        assert!(
-            msg.contains("ParallelDeltaApplier::finish_file"),
-            "expected ParallelDeltaApplier::finish_file prefix, got: {msg}"
-        );
-        assert!(
-            msg.contains("file slot still referenced"),
-            "expected typed still-referenced variant, got: {msg}"
-        );
-        assert!(
-            msg.contains("ndx=0"),
-            "expected ndx=0 in typed message, got: {msg}"
-        );
-        let strong_count = extract_strong_count(&msg)
-            .unwrap_or_else(|| panic!("strong_count token missing in: {msg}"));
-        assert!(
-            strong_count >= 2,
-            "expected strong_count >= 2, got {strong_count} (msg: {msg})"
-        );
-
-        // Release the writer so the worker thread can finish cleanly.
-        let _ = release_tx.send(());
-        let _ = release_tx.send(());
-        let panicked = worker.join().expect("worker join");
-        assert!(
-            !panicked,
-            "worker should not have panicked once the writer was released"
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Test 3: ReorderBuffer drain returns typed CapacityExceeded, not Other.
+// Test 2: ReorderBuffer drain returns typed CapacityExceeded, not Other.
 // ---------------------------------------------------------------------------
 
 /// A panicking producer pushes items into a shared
