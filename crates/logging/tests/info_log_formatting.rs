@@ -75,7 +75,6 @@ fn info_log_flags_are_independent() {
     info_log!(Del, 1, "del message");
 
     let events = drain_events();
-    // Only copy should emit
     assert_eq!(events.len(), 1);
     match &events[0] {
         DiagnosticEvent::Info { flag, message, .. } => {
@@ -327,7 +326,6 @@ fn info_and_debug_mixed() {
     let events = drain_events();
     assert_eq!(events.len(), 3);
 
-    // Verify order and types
     assert!(matches!(&events[0], DiagnosticEvent::Info { .. }));
     assert!(matches!(&events[1], DiagnosticEvent::Debug { .. }));
     assert!(matches!(&events[2], DiagnosticEvent::Info { .. }));
