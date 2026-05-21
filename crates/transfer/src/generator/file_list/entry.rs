@@ -44,7 +44,10 @@ impl GeneratorContext {
         // ownership, permissions, and device numbers in the source file's
         // `user.rsync.%stat` xattr (the on-disk file is a placeholder).
         // Decoding it here lets the sender round-trip the original metadata
-        // instead of forwarding the placeholder uid/gid/mode/dev.
+        // instead of forwarding the placeholder uid/gid/mode/dev. The
+        // override carries POSIX-only fields (uid/gid/rdev), so the Windows
+        // path never consults it - we skip the lookup entirely there.
+        #[cfg(unix)]
         let fake_super_override = self.fake_super_override(full_path, metadata);
 
         let mut entry = if file_type.is_file() {
