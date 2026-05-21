@@ -516,7 +516,6 @@ mod tests {
             hasher.update(&input[split..]);
             let streaming_digest = hasher.finalize();
 
-            // Streaming should match xxhash-rust reference
             let expected = xxhash_rust::xxh3::xxh3_64_with_seed(input, seed).to_le_bytes();
             assert_eq!(
                 streaming_digest, expected,
@@ -537,8 +536,6 @@ mod tests {
         for (seed, input) in vectors {
             let one_shot = Xxh3::digest(seed, input);
 
-            // One-shot should match xxhash-rust reference (both implementations
-            // produce the same output, just potentially with different performance)
             let expected = xxhash_rust::xxh3::xxh3_64_with_seed(input, seed).to_le_bytes();
             assert_eq!(
                 one_shot, expected,
@@ -655,11 +652,10 @@ mod tests {
 
     #[test]
     fn large_input_oneshot_matches_streaming() {
-        // Test with a larger input to exercise SIMD paths
+        // 10 KB exceeds XXH3's single-block fast path, exercising the SIMD loop.
         let input: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
         let seed = 12345u64;
 
-        // XXH3-64
         let one_shot = Xxh3::digest(seed, &input);
         let mut streaming = Xxh3::new(seed);
         streaming.update(&input);
@@ -669,7 +665,6 @@ mod tests {
             "large input: one-shot should match streaming for XXH3-64"
         );
 
-        // XXH3-128
         let one_shot_128 = Xxh3_128::digest(seed, &input);
         let mut streaming_128 = Xxh3_128::new(seed);
         streaming_128.update(&input);

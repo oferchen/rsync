@@ -92,7 +92,6 @@ mod empty_input {
     #[test]
     fn empty_streaming_produces_same_digest() {
         let hasher = Md4::new();
-        // No update calls - immediately finalize
         let digest = hasher.finalize();
         assert_eq!(to_hex(&digest), "31d6cfe0d16ae931b73c59d7e0c089c0");
     }
@@ -123,56 +122,50 @@ mod various_sizes {
         (0..size).map(|i| (i % 256) as u8).collect()
     }
 
-    // 1 byte
     #[test]
     fn size_1_byte() {
         let data = generate_data(1);
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16);
-        // Verify streaming matches
         let mut hasher = Md4::new();
         hasher.update(&data);
         assert_eq!(hasher.finalize(), digest);
     }
 
-    // 55 bytes - maximum that fits in one block with padding
-    // (64 - 8 length bytes - 1 padding byte = 55)
+    /// 55 bytes is the maximum payload that fits in one MD4 block once the
+    /// 8-byte length suffix and 1-byte padding marker are reserved.
     #[test]
     fn size_55_bytes() {
         let data = generate_data(55);
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16);
-        // Verify streaming matches
         let mut hasher = Md4::new();
         hasher.update(&data);
         assert_eq!(hasher.finalize(), digest);
     }
 
-    // 56 bytes - exactly at padding boundary, requires extra block
+    /// 56 bytes lands exactly on the padding boundary and forces a second block.
     #[test]
     fn size_56_bytes() {
         let data = generate_data(56);
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16);
-        // Verify streaming matches
         let mut hasher = Md4::new();
         hasher.update(&data);
         assert_eq!(hasher.finalize(), digest);
     }
 
-    // 64 bytes - exactly one full MD4 block
+    /// One full 64-byte MD4 block.
     #[test]
     fn size_64_bytes() {
         let data = generate_data(64);
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16);
-        // Verify streaming matches
         let mut hasher = Md4::new();
         hasher.update(&data);
         assert_eq!(hasher.finalize(), digest);
     }
 
-    // Additional boundary cases
     #[test]
     fn size_63_bytes() {
         let data = generate_data(63);
@@ -194,9 +187,9 @@ mod various_sizes {
         assert_eq!(digest.len(), 16);
     }
 
+    /// Two full MD4 blocks.
     #[test]
     fn size_128_bytes() {
-        // Two full blocks
         let data = generate_data(128);
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16);
@@ -218,7 +211,7 @@ mod various_sizes {
 
     #[test]
     fn sizes_near_block_boundaries() {
-        // Test sizes around 64-byte block boundaries
+        // Sweep ±3 bytes around each 64-byte block boundary up to 16 blocks.
         for offset in [-3_i32, -2, -1, 0, 1, 2, 3] {
             for multiplier in [1, 2, 4, 8, 16] {
                 let base_size = 64 * multiplier;
@@ -238,7 +231,6 @@ mod various_sizes {
         }
     }
 
-    // Test critical padding boundaries
     #[test]
     fn padding_boundary_54_bytes() {
         let data = generate_data(54);
@@ -327,7 +319,6 @@ mod large_inputs {
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16);
 
-        // Verify streaming matches
         let mut hasher = Md4::new();
         hasher.update(&data);
         assert_eq!(hasher.finalize(), digest);
@@ -335,7 +326,6 @@ mod large_inputs {
 
     #[test]
     fn size_1mb_chunked() {
-        // Hash 1MB in 4KB chunks
         let data = generate_data(1024 * 1024);
         let mut hasher = Md4::new();
         for chunk in data.chunks(4096) {
@@ -406,7 +396,6 @@ mod incremental_hashing {
         let data: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
         let expected = Md4::digest(&data);
 
-        // Test with various chunk sizes
         for chunk_size in [1, 2, 3, 5, 7, 13, 17, 31, 63, 64, 65, 100, 256, 500] {
             let mut hasher = Md4::new();
             for chunk in data.chunks(chunk_size) {
@@ -424,7 +413,6 @@ mod incremental_hashing {
     fn streaming_random_chunk_sizes() {
         let data: Vec<u8> = (0..1000).map(|i| (i * 17 % 256) as u8).collect();
 
-        // Use varied chunk sizes
         let chunk_sizes = [1, 3, 7, 13, 31, 63, 127, 255];
         let mut hasher = Md4::new();
         let mut offset = 0;
@@ -478,7 +466,6 @@ mod incremental_hashing {
         let mut hasher = Md4::new();
         hasher.update(b"hello");
 
-        // Clone and continue with different data
         let cloned = hasher.clone();
 
         hasher.update(b" world");
@@ -514,7 +501,6 @@ mod incremental_hashing {
         assert_eq!(r_a, Md4::digest(b"prefix_path_a"));
         assert_eq!(r_b, Md4::digest(b"prefix_path_b"));
 
-        // All three should be different
         assert_ne!(r_orig, r_a);
         assert_ne!(r_orig, r_b);
         assert_ne!(r_a, r_b);
@@ -557,7 +543,6 @@ mod incremental_hashing {
         let data = b"The quick brown fox";
         let expected = Md4::digest(data);
 
-        // Split into 5 parts
         let mut hasher = Md4::new();
         hasher.update(b"The ");
         hasher.update(b"qui");
@@ -575,7 +560,6 @@ mod single_byte {
     fn single_byte_zero() {
         let digest = Md4::digest(&[0x00]);
         assert_eq!(digest.len(), 16);
-        // Should be deterministic
         assert_eq!(Md4::digest(&[0x00]), digest);
     }
 
@@ -583,7 +567,6 @@ mod single_byte {
     fn single_byte_one() {
         let digest = Md4::digest(&[0x01]);
         assert_eq!(digest.len(), 16);
-        // Different from zero
         assert_ne!(digest, Md4::digest(&[0x00]));
     }
 
@@ -595,7 +578,7 @@ mod single_byte {
 
     #[test]
     fn single_byte_a() {
-        // Same as RFC vector
+        // Matches the RFC 1320 single-character vector.
         let digest = Md4::digest(b"a");
         assert_eq!(to_hex(&digest), "bde52cb31de33e46245e05fbdbd6fb24");
     }
@@ -669,7 +652,7 @@ mod strong_digest_trait {
 
     #[test]
     fn with_seed_matches_new() {
-        // MD4 seed is (), so with_seed should behave like new
+        // MD4's `Seed` type is `()`, so `with_seed(())` must equal `new()`.
         let mut seeded: Md4 = StrongDigest::with_seed(());
         seeded.update(b"test");
         let seeded_result = seeded.finalize();
@@ -719,9 +702,9 @@ mod edge_cases {
     #[test]
     fn similar_inputs_different_outputs() {
         let d1 = Md4::digest(b"test");
-        let d2 = Md4::digest(b"Test"); // Different case
-        let d3 = Md4::digest(b"test "); // Trailing space
-        let d4 = Md4::digest(b" test"); // Leading space
+        let d2 = Md4::digest(b"Test");
+        let d3 = Md4::digest(b"test ");
+        let d4 = Md4::digest(b" test");
 
         assert_ne!(d1, d2);
         assert_ne!(d1, d3);
@@ -775,18 +758,15 @@ mod edge_cases {
         let d1 = Md4::digest(data_with_null);
         let d2 = Md4::digest(data_without_null);
 
-        // Null byte should affect the hash
         assert_ne!(d1, d2);
     }
 
     #[test]
     fn all_byte_values() {
-        // Test with data containing all possible byte values
         let data: Vec<u8> = (0..=255).collect();
         let digest = Md4::digest(&data);
         assert_eq!(digest.len(), 16);
 
-        // Verify streaming matches
         let mut hasher = Md4::new();
         hasher.update(&data);
         assert_eq!(hasher.finalize(), digest);
@@ -794,7 +774,6 @@ mod edge_cases {
 
     #[test]
     fn repeated_patterns() {
-        // Test with repeated patterns of various sizes
         let patterns: &[&[u8]] = &[&[0xAA; 1000], &[0x00; 1000], &[0xFF; 1000], &[0x55; 1000]];
 
         let mut digests = Vec::new();
@@ -804,7 +783,6 @@ mod edge_cases {
             digests.push(digest);
         }
 
-        // All patterns should produce unique digests
         for i in 0..digests.len() {
             for j in (i + 1)..digests.len() {
                 assert_ne!(digests[i], digests[j], "Patterns {i} and {j} should differ");

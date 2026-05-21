@@ -132,11 +132,10 @@ mod rfc1321_test_vectors {
 
     #[test]
     fn rfc1321_119_bytes_two_block_padding_boundary() {
-        // 119 bytes: 55 + 64, padding fits in one block after two full blocks
+        // 119 = 55 + 64; padding fits inside one block after two full blocks.
         let input: Vec<u8> = (0..119).map(|i| b'0' + (i % 10) as u8).collect();
         assert_eq!(input.len(), 119);
         let digest = Md5::digest(&input);
-        // Verify streaming matches
         let mut hasher = Md5::new();
         hasher.update(&input);
         assert_eq!(hasher.finalize(), digest);
@@ -144,11 +143,10 @@ mod rfc1321_test_vectors {
 
     #[test]
     fn rfc1321_120_bytes_two_block_padding_boundary() {
-        // 120 bytes: 56 + 64, padding requires extra block
+        // 120 = 56 + 64; padding spills into a third block.
         let input: Vec<u8> = (0..120).map(|i| b'0' + (i % 10) as u8).collect();
         assert_eq!(input.len(), 120);
         let digest = Md5::digest(&input);
-        // Verify streaming matches
         let mut hasher = Md5::new();
         hasher.update(&input);
         assert_eq!(hasher.finalize(), digest);
@@ -168,7 +166,6 @@ mod empty_input {
     #[test]
     fn empty_streaming_produces_same_digest() {
         let hasher = Md5::new();
-        // No update calls
         let digest = hasher.finalize();
         assert_eq!(to_hex(&digest), "d41d8cd98f00b204e9800998ecf8427e");
     }
@@ -185,12 +182,11 @@ mod empty_input {
 
     #[test]
     fn empty_with_seed_proper_order() {
+        // With no payload, proper ordering reduces to MD5 of the 4-byte seed alone.
         let seed = Md5Seed::proper(0x12345678);
         let hasher = Md5::with_seed(seed);
-        // No data updates
         let seeded = hasher.finalize();
 
-        // Should equal hash of just the seed bytes
         let mut manual = Md5::new();
         manual.update(&0x12345678_i32.to_le_bytes());
         assert_eq!(seeded, manual.finalize());
@@ -198,12 +194,11 @@ mod empty_input {
 
     #[test]
     fn empty_with_seed_legacy_order() {
+        // With no payload, legacy ordering also reduces to MD5 of the seed alone.
         let seed = Md5Seed::legacy(0x12345678);
         let hasher = Md5::with_seed(seed);
-        // No data updates
         let seeded = hasher.finalize();
 
-        // Should equal hash of just the seed bytes (added after data)
         let mut manual = Md5::new();
         manual.update(&0x12345678_i32.to_le_bytes());
         assert_eq!(seeded, manual.finalize());
@@ -234,7 +229,7 @@ mod single_byte {
 
     #[test]
     fn single_byte_a() {
-        // Same as RFC vector
+        // Matches the RFC 1321 single-character vector.
         let digest = Md5::digest(b"a");
         assert_eq!(to_hex(&digest), "0cc175b9c0f1b6a831c399e269772661");
     }
@@ -276,7 +271,6 @@ mod various_sizes {
         let data = generate_data(1);
         let digest = Md5::digest(&data);
         assert_eq!(digest.len(), 16);
-        // Verify streaming matches
         let mut hasher = Md5::new();
         hasher.update(&data);
         assert_eq!(hasher.finalize(), digest);
@@ -287,7 +281,6 @@ mod various_sizes {
         let data = generate_data(16);
         let digest = Md5::digest(&data);
         assert_eq!(digest.len(), 16);
-        // Verify streaming matches
         let mut hasher = Md5::new();
         hasher.update(&data);
         assert_eq!(hasher.finalize(), digest);
@@ -295,15 +288,14 @@ mod various_sizes {
 
     #[test]
     fn size_63_bytes() {
-        // Just under one block
         let data = generate_data(63);
         let digest = Md5::digest(&data);
         assert_eq!(digest.len(), 16);
     }
 
+    /// One full 64-byte MD5 block.
     #[test]
     fn size_64_bytes() {
-        // Exactly one block
         let data = generate_data(64);
         let digest = Md5::digest(&data);
         assert_eq!(digest.len(), 16);
@@ -311,7 +303,6 @@ mod various_sizes {
 
     #[test]
     fn size_65_bytes() {
-        // Just over one block
         let data = generate_data(65);
         let digest = Md5::digest(&data);
         assert_eq!(digest.len(), 16);
@@ -324,9 +315,9 @@ mod various_sizes {
         assert_eq!(digest.len(), 16);
     }
 
+    /// Two full MD5 blocks.
     #[test]
     fn size_128_bytes() {
-        // Two blocks
         let data = generate_data(128);
         let digest = Md5::digest(&data);
         assert_eq!(digest.len(), 16);
@@ -388,7 +379,6 @@ mod various_sizes {
 
     #[test]
     fn size_1mb_chunked() {
-        // Hash 1MB in 4KB chunks
         let data = generate_data(1024 * 1024);
         let mut hasher = Md5::new();
         for chunk in data.chunks(4096) {
@@ -402,7 +392,7 @@ mod various_sizes {
 
     #[test]
     fn sizes_near_block_boundaries() {
-        // Test sizes around 64-byte block boundaries
+        // Sweep ±3 bytes around each 64-byte block boundary up to 16 blocks.
         for offset in [-3_i32, -2, -1, 0, 1, 2, 3] {
             for multiplier in [1, 2, 4, 8, 16] {
                 let base_size = 64 * multiplier;
@@ -457,7 +447,6 @@ mod streaming_api {
     fn streaming_random_chunk_sizes() {
         let data: Vec<u8> = (0..1000).map(|i| (i * 17 % 256) as u8).collect();
 
-        // Use varied chunk sizes
         let chunk_sizes = [1, 3, 7, 13, 31, 63, 127, 255];
         let mut hasher = Md5::new();
         let mut offset = 0;
@@ -501,7 +490,6 @@ mod streaming_api {
         let mut hasher = Md5::new();
         hasher.update(b"hello");
 
-        // Clone and continue with different data
         let cloned = hasher.clone();
 
         hasher.update(b" world");
@@ -541,7 +529,6 @@ mod streaming_api {
         hasher.update(b"test");
         let streaming = hasher.finalize();
 
-        // Compare with single-shot seeded
         let mut single = Md5::with_seed(seed);
         single.update(data);
         let single_result = single.finalize();
@@ -560,7 +547,6 @@ mod streaming_api {
         hasher.update(b"test");
         let streaming = hasher.finalize();
 
-        // Compare with single-shot seeded
         let mut single = Md5::with_seed(seed);
         single.update(data);
         let single_result = single.finalize();
