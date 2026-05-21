@@ -177,12 +177,12 @@ pub fn utimensat(
     };
     let times = [
         libc::timespec {
-            tv_sec: atime.unix_seconds() as libc::time_t,
-            tv_nsec: atime.nanoseconds() as libc::c_long,
+            tv_sec: atime.unix_seconds() as _,
+            tv_nsec: atime.nanoseconds() as _,
         },
         libc::timespec {
-            tv_sec: mtime.unix_seconds() as libc::time_t,
-            tv_nsec: mtime.nanoseconds() as libc::c_long,
+            tv_sec: mtime.unix_seconds() as _,
+            tv_nsec: mtime.nanoseconds() as _,
         },
     ];
 
