@@ -647,7 +647,9 @@ NEON) are used where available, with automatic scalar fallbacks.
 ## Delta Transfer Options
 
 **-z**, **--compress**
-:   Compress file data during transfers.
+:   Compress file data during transfers. Do not combine with SSH stream
+    compression (**ssh -C** or **Compression yes** in **ssh_config**); see
+    *Avoiding double-compression over SSH* under **NOTES**.
 
 **--no-compress**
 :   Disable compression.
@@ -1077,6 +1079,31 @@ Patterns may contain wildcard characters:
 
 **[**...**]**
 :   Matches any character in the set.
+
+# NOTES
+
+## Avoiding double-compression over SSH
+
+SSH stream compression (**ssh -C**, or **Compression yes** in **~/.ssh/config**
+or **/etc/ssh/ssh_config**) compresses every byte the SSH session carries. The
+rsync wire protocol has its own compression layer, enabled with **-z** /
+**--compress** and tuned with **--compress-choice**, **--compress-level**, and
+**--compress-threads**. Running both at once feeds already-compressed bytes into
+a second compressor: the second pass burns CPU on both peers while shrinking
+the stream by almost nothing, and on CPU-bound hosts throughput typically drops
+by 20-40%.
+
+Pick one layer. For most workloads prefer rsync's own compression: **oc-rsync**
+negotiates zstd when both peers support it (falling back to zlib), which is
+usually faster and tighter than SSH's zlib stream, and individual file suffixes
+can be skipped via **--skip-compress**. If SSH compression must stay on for
+reasons outside your control, drop **-z** from the rsync invocation instead.
+
+**oc-rsync** emits a one-line warning when it detects **-C** or
+**-o Compression=yes** in the **--rsh** / **-e** argv it builds for the SSH
+child, but it does not parse **~/.ssh/config** or **/etc/ssh/ssh_config**, so a
+**Compression yes** directive set there is invisible to the warning. If
+throughput looks CPU-bound on an SSH transfer, check those files as well.
 
 # COMPATIBILITY
 
