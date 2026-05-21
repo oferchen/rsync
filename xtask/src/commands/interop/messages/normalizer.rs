@@ -70,7 +70,6 @@ fn normalize_text(text: &str) -> String {
 /// This function detects such doubled messages and returns just one copy.
 fn fix_doubled_message(text: &str) -> String {
     let len = text.len();
-    // Only check if length is even and >= 2
     if len < 2 || len % 2 != 0 {
         return text.to_owned();
     }
@@ -109,11 +108,10 @@ fn strip_version_from_role(text: &str) -> String {
 fn normalize_paths(text: &str) -> String {
     static ABS_PATH_RE: OnceLock<Regex> = OnceLock::new();
     let re = ABS_PATH_RE.get_or_init(|| {
-        // Match absolute paths like /tmp/... or /home/...
+        // Match absolute paths like /tmp/... or /home/... in error messages.
         Regex::new(r"/(?:tmp|home|var)/[^\s:]+").expect("valid regex")
     });
 
-    // Replace absolute paths with a generic placeholder
     re.replace_all(text, "<path>").to_string()
 }
 
@@ -141,15 +139,13 @@ pub fn find_differences(
 ) -> Vec<String> {
     let mut differences = Vec::new();
 
-    // Check for messages in actual but not in expected
     for msg in actual {
         if !expected.iter().any(|e| e.matches(msg)) {
             differences.push(format!("Unexpected message: {}", msg.text));
         }
     }
 
-    // Check for messages in expected but not in actual
-    // Skip optional messages - they may not appear due to race conditions
+    // Skip optional messages; they may not appear due to race conditions.
     for msg in expected {
         if msg.optional {
             continue;

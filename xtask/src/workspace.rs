@@ -7,16 +7,15 @@ use std::env;
 use std::path::{Path, PathBuf};
 use toml::Value;
 
-/// Minimal serde shape for the root package section.
+/// Serde shape for the root `[package]` section.
 #[derive(Deserialize)]
 struct PackageSection {
     #[serde(default)]
     name: Option<String>,
 }
 
-/// Minimal serde shape for extracting sections from a combined
-/// `[package]` + `[workspace]` Cargo.toml manifest without requiring
-/// the parser to validate every field.
+/// Serde shape for extracting `[package]` + `[workspace]` sections from a
+/// combined manifest without validating every field.
 #[derive(Deserialize)]
 struct ManifestShape {
     #[serde(default)]
@@ -139,7 +138,7 @@ pub fn parse_workspace_branding(manifest: &str) -> TaskResult<WorkspaceBranding>
     let workspace_value = shape
         .workspace
         .ok_or_else(|| metadata_error("missing [workspace] table"))?;
-    // Wrap in a root table for compatibility with parse_workspace_branding_from_value.
+    // Rewrap as a root table so parse_workspace_branding_from_value can navigate it.
     let mut root = toml::map::Map::new();
     root.insert("workspace".to_owned(), workspace_value);
     parse_workspace_branding_from_value(&Value::Table(root))

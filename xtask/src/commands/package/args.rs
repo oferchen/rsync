@@ -38,14 +38,14 @@ impl PackageOptions {
 
 impl From<PackageArgs> for PackageOptions {
     fn from(args: PackageArgs) -> Self {
-        // Determine which package types to build (default: all if none specified)
+        // Default to building all package types when no specific flag is set.
         let (build_deb, build_rpm, build_tarball) = if !args.deb && !args.rpm && !args.tarball {
             (true, true, true)
         } else {
             (args.deb, args.rpm, args.tarball)
         };
 
-        // Determine profile: explicit flags take precedence, default to dist
+        // Profile flags are mutually exclusive; absence of a flag implies --release (dist).
         let profile = if args.no_profile {
             None
         } else if args.debug {
@@ -53,7 +53,6 @@ impl From<PackageArgs> for PackageOptions {
         } else if let Some(name) = args.profile {
             Some(OsString::from(name))
         } else {
-            // --release is implicit default
             Some(OsString::from(DIST_PROFILE))
         };
 

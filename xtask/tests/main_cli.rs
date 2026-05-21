@@ -46,7 +46,6 @@ fn xtask_without_arguments_reports_usage() {
     );
 
     let stderr = str::from_utf8(&output.stderr).expect("stderr is UTF-8");
-    // clap shows help text when no subcommand is provided
     assert!(stderr.contains("Usage:"));
 }
 
@@ -73,6 +72,5 @@ fn xtask_unknown_command_reports_error() {
     );
 
     let stderr = str::from_utf8(&output.stderr).expect("stderr is UTF-8");
-    // clap reports unrecognized subcommands
     assert!(stderr.contains("unrecognized subcommand"));
 }

@@ -43,7 +43,6 @@ fn benchmark_result_calculates_stats() {
 
     assert_eq!(result.min, Duration::from_millis(90));
     assert_eq!(result.max, Duration::from_millis(110));
-    // Mean should be 100ms
     assert!((result.mean.as_millis() as i64 - 100).abs() <= 1);
     assert!(result.mean_throughput_mbps > 0.0);
 }
@@ -91,7 +90,6 @@ fn generate_loopback_data_creates_files() {
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).unwrap();
 
-    // Use small profile but verify structure
     let data_dir = generate_loopback_data(&tmp, DataProfile::Small).unwrap();
     assert!(data_dir.exists());
     assert!(data_dir.join(".profile").exists());
@@ -99,11 +97,10 @@ fn generate_loopback_data_creates_files() {
     let marker = fs::read_to_string(data_dir.join(".profile")).unwrap();
     assert_eq!(marker.trim(), "Small");
 
-    // Verify some files were created
     let total = walkdir_size(&data_dir);
     assert!(total > 0, "expected non-zero total size");
 
-    // Verify idempotency (second call reuses existing data)
+    // Second call should reuse existing data rather than regenerating.
     let data_dir2 = generate_loopback_data(&tmp, DataProfile::Small).unwrap();
     assert_eq!(data_dir, data_dir2);
 
@@ -119,14 +116,13 @@ fn walkdir_size_counts_files() {
     fs::write(tmp.join("sub/b.txt"), "world!").unwrap();
 
     let total = walkdir_size(&tmp);
-    assert_eq!(total, 11); // "hello" (5) + "world!" (6)
+    assert_eq!(total, 11);
 
     let _ = fs::remove_dir_all(&tmp);
 }
 
 #[test]
 fn port_available_finds_open_port() {
-    // Port 0 is never bindable in the normal sense, but high ports should be available
-    // Just verify the function doesn't panic
+    // High ports should generally be free; we only assert the call does not panic.
     let _ = port_available(59999);
 }

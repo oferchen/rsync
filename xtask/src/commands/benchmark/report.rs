@@ -68,7 +68,6 @@ pub(super) fn output_table_multi(result_sets: &[BenchmarkResultSet]) {
         println!();
     }
 
-    // Print summary comparison
     if result_sets.len() > 1 {
         print_summary_table(result_sets);
     }
@@ -78,7 +77,6 @@ pub(super) fn output_table_multi(result_sets: &[BenchmarkResultSet]) {
 fn print_summary_table(result_sets: &[BenchmarkResultSet]) {
     println!("=== Summary (Mean times in seconds) ===\n");
 
-    // Collect all unique versions
     let mut versions: Vec<String> = Vec::new();
     for result_set in result_sets {
         for result in &result_set.results {
@@ -88,7 +86,6 @@ fn print_summary_table(result_sets: &[BenchmarkResultSet]) {
         }
     }
 
-    // Print header
     print!("{:<12}", "URL");
     for version in &versions {
         print!(" {version:>12}");
@@ -96,7 +93,6 @@ fn print_summary_table(result_sets: &[BenchmarkResultSet]) {
     println!();
     println!("{}", "-".repeat(12 + 13 * versions.len()));
 
-    // Print rows
     for result_set in result_sets {
         print!("{:<12}", result_set.url_name);
         for version in &versions {

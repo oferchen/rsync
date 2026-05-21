@@ -5,7 +5,6 @@ use crate::error::{TaskError, TaskResult};
 use crate::workspace::load_workspace_branding;
 use std::path::Path;
 
-/// Re-export `read_file_with_context` under the legacy name used by submodules.
 pub(super) use crate::util::read_file_with_context as read_file;
 
 pub(super) fn validate_documents(workspace: &Path) -> TaskResult<()> {
@@ -45,15 +44,3 @@ pub(super) fn ensure_contains(
         ));
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::workspace;
-
-//     #[test]
-//     fn validate_documents_accepts_workspace_branding() {
-//         let workspace = workspace::workspace_root().expect("workspace root");
-//         validate_documents(&workspace).expect("documents validate");
-//     }
-// }

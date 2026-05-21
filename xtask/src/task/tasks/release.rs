@@ -30,34 +30,26 @@ impl Task for ReleaseTask {
     fn subtasks(&self) -> Vec<Box<dyn Task>> {
         let mut tasks: Vec<Box<dyn Task>> = Vec::new();
 
-        // Code quality checks
         tasks.push(Box::new(CargoFmtTask));
         tasks.push(Box::new(CargoClippyTask));
-
-        // Tests
         tasks.push(Box::new(CargoTestTask::default()));
 
-        // Documentation
         if !self.skip_docs {
             tasks.push(Box::new(CargoDocTask));
         }
 
-        // Placeholder scan
         if !self.skip_placeholder_scan {
             tasks.push(Box::new(NoPlaceholdersTask));
         }
 
-        // Binary scan
         if !self.skip_binary_scan {
             tasks.push(Box::new(NoBinariesTask));
         }
 
-        // Validation tasks
         tasks.push(Box::new(ValidateReadmeTask));
         tasks.push(Box::new(ValidateCiTask));
         tasks.push(Box::new(ValidateBrandingTask));
 
-        // Packaging
         if !self.skip_packages {
             tasks.push(Box::new(PackageTask {
                 build_deb: true,
@@ -67,7 +59,6 @@ impl Task for ReleaseTask {
             }));
         }
 
-        // Upload
         if !self.skip_upload && !self.skip_packages {
             tasks.push(Box::new(UploadReleaseTask));
         }

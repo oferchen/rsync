@@ -70,8 +70,8 @@ pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
     ensure_absolute(&branding.legacy_daemon_config, "legacy_daemon_config")?;
     ensure_absolute(&branding.legacy_daemon_secrets, "legacy_daemon_secrets")?;
 
-    // Validate version strings are non-empty (detailed format validation
-    // happens in the branding crate's build.rs)
+    // Detailed version-format validation lives in the branding crate build.rs;
+    // here we only assert the strings are non-empty.
     if branding.rust_version.trim().is_empty() {
         return Err(TaskError::Validation(String::from(
             "rust_version must not be empty",

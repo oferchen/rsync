@@ -134,9 +134,9 @@ mod tests {
                 assert!(output.exists(), "SBOM output file should be created");
             }
             Err(TaskError::Metadata(message)) if message.contains("cargo metadata") => {
-                // Skip test when cargo metadata fails due to environment issues
-                // (e.g., parallel test execution, missing lock file, or CI environment).
-                // The core SBOM logic is covered by tests in commands::sbom.
+                // Skip when cargo metadata fails due to environment issues such as
+                // parallel test execution, missing lock file, or CI environment.
+                // Core SBOM logic is covered by commands::sbom tests.
                 eprintln!("skipping: cargo metadata unavailable ({message})");
             }
             Err(error) => {

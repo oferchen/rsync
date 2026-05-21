@@ -337,7 +337,6 @@ pub fn cleanup_scenario(
             .status();
     }
 
-    // Remove the work directory
     let _ = fs::remove_dir_all(work_dir);
 
     Ok(())

@@ -74,13 +74,9 @@ pub struct BehaviorTestOptions {
 impl BehaviorHarness {
     /// Create a new behavior test harness.
     pub fn new(workspace: &Path, options: &BehaviorOptions) -> TaskResult<Self> {
-        // Detect oc-rsync binary
         let oc_rsync_binary = oc_rsync::detect_oc_rsync_binary(workspace)?;
-
-        // Detect upstream rsync binary
         let upstream_binaries = upstream::detect_upstream_binaries(workspace)?;
 
-        // Use specified version or latest available
         let upstream_binary = if let Some(ref version) = options.version {
             upstream_binaries
                 .iter()
@@ -231,7 +227,7 @@ impl BehaviorHarness {
         }
 
         if !self.options.verbose {
-            eprintln!(); // Newline after progress dots
+            eprintln!();
         }
 
         Ok(results)

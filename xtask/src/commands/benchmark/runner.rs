@@ -63,7 +63,6 @@ impl BenchmarkResult {
             / runs.len() as f64;
         let stddev = variance.sqrt();
 
-        // Calculate mean throughput: total bytes received / total elapsed
         let total_bytes: u64 = samples.iter().map(|s| s.bytes_received).sum();
         let total_secs: f64 = samples.iter().map(|s| s.elapsed.as_secs_f64()).sum();
         let mean_throughput_mbps = if total_secs > 0.0 {
@@ -139,7 +138,6 @@ read only = yes
 
     fs::write(&conf_path, config)?;
 
-    // Start daemon
     let status = Command::new("rsync")
         .args(["--daemon", "--config", conf_path.to_str().unwrap()])
         .current_dir(workspace)
@@ -152,7 +150,6 @@ read only = yes
         });
     }
 
-    // Wait for daemon to be ready
     std::thread::sleep(Duration::from_millis(500));
 
     Ok(())
@@ -163,7 +160,6 @@ fn download_kernel_source(bench_dir: &Path) -> TaskResult<()> {
     let tarball = bench_dir.join("linux-6.12.tar.xz");
     let kernel_dir = bench_dir.join("kernel-src");
 
-    // Download if not exists
     if !tarball.exists() {
         let status = Command::new("curl")
             .args([
@@ -182,7 +178,6 @@ fn download_kernel_source(bench_dir: &Path) -> TaskResult<()> {
         }
     }
 
-    // Extract
     fs::create_dir_all(&kernel_dir).ok();
     let status = Command::new("tar")
         .args([
@@ -215,7 +210,7 @@ pub(super) fn detect_versions(workspace: &Path) -> TaskResult<Vec<String>> {
     let tags: Vec<String> = BufReader::new(&output.stdout[..])
         .lines()
         .map_while(|l| l.ok())
-        .take(3) // Last 3 releases
+        .take(3)
         .collect();
 
     Ok(tags)
@@ -392,8 +387,9 @@ pub(super) fn parse_stats_output(output: &str, elapsed: Duration) -> RunSample {
 }
 
 /// Parses a numeric value from stats output, stripping commas and unit suffixes.
+///
+/// Input is typically "  1,234,567 bytes" or "  1,234,567".
 pub(super) fn parse_stat_value(s: &str) -> u64 {
-    // Format is typically "  1,234,567 bytes" or "  1,234,567"
     s.split_whitespace()
         .next()
         .unwrap_or("0")

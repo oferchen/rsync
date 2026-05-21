@@ -98,7 +98,6 @@ pub(super) fn generate_loopback_data(
         }
     }
 
-    // Simple seeded PRNG (xorshift64)
     let mut rng_state: u64 = 0xDEAD_BEEF_CAFE_BABE;
     let mut next_rand = move || -> u64 {
         rng_state ^= rng_state << 13;
@@ -239,7 +238,6 @@ read only = yes
     };
     fs::write(&conf_path, &config)?;
 
-    // Start daemon
     let mut cmd = Command::new(binary);
     cmd.args(["--daemon", "--no-detach", "--config"])
         .arg(&conf_path)
@@ -248,7 +246,7 @@ read only = yes
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
-    // Force native daemon mode for oc-rsync (no fallback to system rsync)
+    // Force native daemon mode (no fallback to system rsync).
     if is_oc_rsync {
         cmd.env("OC_RSYNC_DAEMON_FALLBACK", "0");
     }
@@ -259,7 +257,6 @@ read only = yes
 
     let guard = DaemonGuard::new(name.to_string(), child, pid_path, conf_path);
 
-    // Wait for daemon to be ready
     if !wait_for_port(port, Duration::from_secs(5)) {
         return Err(TaskError::Validation(format!(
             "{name} daemon failed to start on port {port} within 5 seconds"
@@ -305,10 +302,8 @@ pub(super) fn run_loopback_benchmarks(
     println!("Runs: {}", options.runs);
     println!("Base port: {base_port}\n");
 
-    // Step 1: Generate test data
     let data_dir = generate_loopback_data(&options.bench_dir, options.data_profile)?;
 
-    // Step 2: Determine versions and build binaries
     let versions = if options.versions.is_empty() {
         detect_versions(workspace)?
     } else {
@@ -318,12 +313,11 @@ pub(super) fn run_loopback_benchmarks(
 
     let mut binaries: HashMap<String, PathBuf> = HashMap::new();
 
-    // Upstream rsync (for client benchmarks only - may be openrsync)
+    // System rsync is used for client benchmarks only; on macOS it may be openrsync.
     if let Some(rsync_path) = find_upstream_rsync() {
         binaries.insert("upstream".to_string(), rsync_path);
     }
 
-    // Current dev build
     if !options.skip_build {
         println!("\nBuilding current development version...");
         build_release(workspace)?;
@@ -333,7 +327,6 @@ pub(super) fn run_loopback_benchmarks(
         binaries.insert("dev".to_string(), current_binary);
     }
 
-    // Tagged versions
     for version in &versions {
         if version == "dev" || version == "upstream" {
             continue;
@@ -357,7 +350,6 @@ pub(super) fn run_loopback_benchmarks(
         ));
     }
 
-    // We need a dev binary for the reference daemon
     let dev_binary = binaries.get("dev").cloned();
     if dev_binary.is_none() {
         return Err(TaskError::Validation(
@@ -366,7 +358,7 @@ pub(super) fn run_loopback_benchmarks(
     }
     let dev_binary = dev_binary.unwrap();
 
-    // Collect oc-rsync version names (non-upstream) for per-version daemons
+    // oc-rsync version names (excluding upstream) each get their own daemon.
     let mut oc_versions: Vec<String> = binaries
         .keys()
         .filter(|k| *k != "upstream")
@@ -374,8 +366,7 @@ pub(super) fn run_loopback_benchmarks(
         .collect();
     oc_versions.sort();
 
-    // Step 3: Verify ports are available and allocate
-    // Port layout: base_port = reference daemon (dev), then one per oc-rsync version
+    // Port layout: base_port = reference daemon (dev), then one per oc-rsync version.
     let reference_port = base_port;
     if !port_available(reference_port) {
         return Err(TaskError::Validation(format!(
@@ -394,11 +385,10 @@ pub(super) fn run_loopback_benchmarks(
         version_ports.insert(version.clone(), port);
     }
 
-    // Step 4: Start daemons
     println!("\nStarting daemons...");
     let mut guards: Vec<DaemonGuard> = Vec::new();
 
-    // Start reference daemon (dev) for client benchmarks
+    // Reference daemon (dev) handles all client benchmarks.
     let ref_guard = start_loopback_daemon(
         "ref-dev",
         &dev_binary,
@@ -409,7 +399,7 @@ pub(super) fn run_loopback_benchmarks(
     )?;
     guards.push(ref_guard);
 
-    // Start per-version daemons for server benchmarks
+    // Per-version daemons handle server benchmarks for each release under test.
     let mut daemon_started: HashMap<String, bool> = HashMap::new();
     for version in &oc_versions {
         let port = version_ports[version];
@@ -429,7 +419,6 @@ pub(super) fn run_loopback_benchmarks(
     let dest_dir = options.bench_dir.join("loopback-dest");
     let client_url = format!("rsync://127.0.0.1:{reference_port}/bench/");
 
-    // Step 5: Warmup
     println!("\nRunning warmup...");
     for (version, binary) in &binaries {
         let _ = fs::remove_dir_all(&dest_dir);
@@ -445,7 +434,6 @@ pub(super) fn run_loopback_benchmarks(
         }
     }
 
-    // Step 6: Client benchmarks (each version's client -> dev reference daemon)
     println!("\n=== Client Benchmarks (version as client -> dev reference daemon) ===");
     let mut client_results: Vec<BenchmarkResult> = Vec::new();
 
@@ -460,7 +448,6 @@ pub(super) fn run_loopback_benchmarks(
     }
     client_results.sort_by(|a, b| a.mean.cmp(&b.mean));
 
-    // Step 7: Server benchmarks (dev client -> each version's daemon)
     println!("\n=== Server Benchmarks (dev client -> version as daemon) ===");
     let mut server_results: Vec<BenchmarkResult> = Vec::new();
 
@@ -480,14 +467,12 @@ pub(super) fn run_loopback_benchmarks(
     }
     server_results.sort_by(|a, b| a.mean.cmp(&b.mean));
 
-    // Step 8: Output results
     if options.json {
         output_loopback_json(&client_results, &server_results)?;
     } else {
         output_loopback_table(&client_results, &server_results);
     }
 
-    // Guards are dropped here, killing all daemons
     println!("\nStopping daemons...");
     drop(guards);
     println!("Done.");
