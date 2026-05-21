@@ -192,10 +192,18 @@ fn concurrent_register_and_dispatch_on_overlapping_files() {
     let dropped = Arc::new(AtomicU64::new(0));
     let expected = Arc::new(AtomicU64::new(0));
 
+    // Counter the registrar bumps after each `register_file` returns.
+    // Workers wait on this to ensure at least one NDX is live before they
+    // start dispatching, eliminating the "all workers race to completion
+    // before the registrar registers anything, expected stays 0" pattern
+    // observed on Windows under load.
+    let registrations_done = Arc::new(AtomicU64::new(0));
+
     // Dedicated registrar: registers all NDX values up front (the
     // dispatchers may race with the registration of LATER ndx values).
     let registrar_applier = Arc::clone(&applier);
     let registered_arcs: Vec<Arc<AtomicU64>> = registered.iter().map(Arc::clone).collect();
+    let registrations_signal = Arc::clone(&registrations_done);
     let registrar = std::thread::spawn(move || {
         for ndx in 0..SMALL_NUM {
             let counter = Arc::clone(&registered_arcs[ndx as usize]);
@@ -203,6 +211,7 @@ fn concurrent_register_and_dispatch_on_overlapping_files() {
             registrar_applier
                 .register_file(ndx, Box::new(sink))
                 .expect("register_file");
+            registrations_signal.fetch_add(1, Ordering::Release);
             // Small yield so dispatchers can race with later registrations.
             std::thread::yield_now();
         }
@@ -211,6 +220,17 @@ fn concurrent_register_and_dispatch_on_overlapping_files() {
     let per_file_seq: Vec<Arc<AtomicU64>> = (0..SMALL_NUM)
         .map(|_| Arc::new(AtomicU64::new(0)))
         .collect();
+
+    // Wait for at least one register_file to complete before workers start
+    // dispatching. Without this barrier, the Windows scheduler can run
+    // every worker through its 4000 ops before the registrar's first call
+    // returns - all `apply_chunk_parallel` calls hit "unknown" and the
+    // sanity assertion at the end (`expected > 0`) fires. The test still
+    // exercises the race because dispatchers race against the registrar
+    // for ndx values >= 1.
+    while registrations_done.load(Ordering::Acquire) == 0 {
+        std::thread::yield_now();
+    }
 
     let ops_per_worker = (SMALL_OPS as usize).div_ceil(WORKERS);
     (0..WORKERS).into_par_iter().for_each(|worker| {
