@@ -82,6 +82,11 @@ fn bucket_size_is_capped_at_2_16() {
     let basis = distinct_basis(8);
     let index = build_index(&basis).expect("index for tiny basis");
     assert!(index.lookup_capacity() <= 1 << 16);
+
+    // `lookup_bytes` traverses `CompactLookup::bucket_bytes` so a regular
+    // (non-`--benches`) build sees the call chain and clippy stops marking
+    // `bucket_bytes` as dead code. The 256 KiB cap mirrors the bucket cap.
+    assert!(index.lookup_bytes() <= 256 * 1024);
 }
 
 /// Synthetic `(sum1, sum2)` pairs that share the upper-half bucket
