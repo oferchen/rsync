@@ -65,8 +65,13 @@ impl ReceiverContext {
         // First pass: create directories and symlinks from file list.
         // upstream: generator.c:1317-1326 - make_path() for relative_paths
         self.ensure_relative_parents(&dest_dir);
-        let mut metadata_errors =
-            self.create_directories(&dest_dir, &metadata_opts, acl_cache.as_deref())?;
+        let mut metadata_errors = self.create_directories(
+            &dest_dir,
+            &metadata_opts,
+            acl_cache.as_deref(),
+            #[cfg(unix)]
+            sandbox.as_deref(),
+        )?;
         #[cfg(unix)]
         self.create_symlinks(&dest_dir, sandbox.as_deref(), writer);
         #[cfg(not(unix))]

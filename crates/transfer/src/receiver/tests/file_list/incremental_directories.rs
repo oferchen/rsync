@@ -210,7 +210,15 @@ mod create_directory_incremental_tests {
         let config = test_config();
         let ctx = ReceiverContext::new(&handshake, config);
 
-        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed, None);
+        let result = ctx.create_directory_incremental(
+            dest,
+            &entry,
+            &opts,
+            &mut failed,
+            None,
+            #[cfg(unix)]
+            None,
+        );
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Some(true)); // Returns Some(true) for new dir
@@ -232,7 +240,15 @@ mod create_directory_incremental_tests {
         let config = test_config();
         let ctx = ReceiverContext::new(&handshake, config);
 
-        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed, None);
+        let result = ctx.create_directory_incremental(
+            dest,
+            &entry,
+            &opts,
+            &mut failed,
+            None,
+            #[cfg(unix)]
+            None,
+        );
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), None); // Returns None for skipped
@@ -303,7 +319,15 @@ mod incremental_mode_tests {
         let config = test_config();
         let ctx = ReceiverContext::new(&handshake, config);
 
-        let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed, None);
+        let result = ctx.create_directory_incremental(
+            dest,
+            &entry,
+            &opts,
+            &mut failed,
+            None,
+            #[cfg(unix)]
+            None,
+        );
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Some(true));
