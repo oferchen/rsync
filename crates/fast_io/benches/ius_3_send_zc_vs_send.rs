@@ -111,7 +111,7 @@ const LOOPBACK_BIND: &str = "127.0.0.1:0";
 /// every bench invocation so the size distribution is reproducible and
 /// the SEND vs SEND_ZC delta is not buried in seed jitter.
 #[cfg(target_os = "linux")]
-const MIXED_LCG_SEED: u64 = 0x_b1ef_2026_05_21_u64;
+const MIXED_LCG_SEED: u64 = 0xb1ef_2026_0521_u64;
 
 /// Workload spec: a label, the per-call payload size in bytes, and the
 /// call count per criterion iter. The four shapes match the matrix in
