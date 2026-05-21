@@ -298,6 +298,8 @@ impl ReceiverContext {
                     config: &request_config,
                     #[cfg(unix)]
                     sandbox: setup.sandbox.as_deref(),
+                    #[cfg(unix)]
+                    dest_dir: Some(setup.dest_dir.as_path()),
                 };
 
                 let xattr_list = self.resolve_xattr_list(file_entry);
