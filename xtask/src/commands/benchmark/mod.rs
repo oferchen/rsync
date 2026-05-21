@@ -35,14 +35,12 @@ use runner::{
 
 /// Executes the benchmark command.
 pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
-    // Handle --list-mirrors
     if options.list_mirrors {
         return list_mirrors();
     }
 
     println!("=== oc-rsync Performance Benchmark ===\n");
 
-    // Ensure benchmark directory exists
     fs::create_dir_all(&options.bench_dir).map_err(|e| {
         TaskError::Validation(format!(
             "failed to create benchmark directory {:?}: {}",
@@ -50,7 +48,7 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
         ))
     })?;
 
-    // Loopback mode has its own orchestration flow
+    // Loopback mode runs its own orchestration with per-version daemons.
     if options.mode == BenchmarkMode::Loopback {
         return run_loopback_benchmarks(workspace, &options);
     }
@@ -153,7 +151,6 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
         });
     }
 
-    // Output results
     if options.json {
         output_json_multi(&all_results)?;
     } else {

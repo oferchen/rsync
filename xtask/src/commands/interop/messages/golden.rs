@@ -277,7 +277,6 @@ pub fn load_golden(workspace: &Path, version: &str) -> TaskResult<GoldenMessages
 pub fn save_golden(workspace: &Path, golden: &GoldenMessages) -> TaskResult<()> {
     let path = golden_file_path(workspace, &golden.version);
 
-    // Ensure the directory exists
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -359,7 +358,6 @@ mod tests {
         assert!(toml_str.contains("message_groups"));
         assert!(toml_str.contains("require_at_least"));
 
-        // Verify it can be deserialized
         let parsed: GoldenMessages = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.version, "3.4.1");
         assert_eq!(parsed.message_groups.len(), 1);

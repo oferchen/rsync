@@ -75,7 +75,6 @@ pub fn load_golden(workspace: &Path, version: &str) -> TaskResult<GoldenData> {
 pub fn save_golden(workspace: &Path, golden: &GoldenData) -> TaskResult<()> {
     let path = golden_file_path(workspace, &golden.version);
 
-    // Ensure the directory exists
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

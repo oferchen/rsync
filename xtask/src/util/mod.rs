@@ -1,8 +1,4 @@
 //! Utility helpers shared across `xtask` subcommands.
-//!
-//! The previous monolithic module exceeded the repository's enforced line
-//! count.  This directory-based layout keeps related helpers grouped in small
-//! files so future additions remain manageable.
 
 mod cargo;
 mod commands;

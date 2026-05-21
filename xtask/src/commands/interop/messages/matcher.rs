@@ -256,7 +256,6 @@ pub fn validate_messages(
     let mut result = ValidationResult::default();
     let mut matched_actual = vec![false; actual.len()];
 
-    // Check each actual message against matchers
     for (i, (text, role)) in actual.iter().enumerate() {
         let mut found_match = false;
         for matcher in matchers {
@@ -268,7 +267,6 @@ pub fn validate_messages(
             }
         }
 
-        // Also check against group matchers
         if !found_match {
             for group in groups {
                 let match_result = group.matches(text, role.as_deref());
@@ -285,7 +283,6 @@ pub fn validate_messages(
         }
     }
 
-    // Check for missing required messages
     for matcher in matchers {
         if matcher.is_optional() {
             continue;
@@ -304,7 +301,6 @@ pub fn validate_messages(
         }
     }
 
-    // Check group requirements
     for group in groups {
         if !group.is_satisfied(actual) {
             result.unsatisfied_groups.push(format!(

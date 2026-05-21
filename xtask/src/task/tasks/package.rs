@@ -25,7 +25,7 @@ impl Task for PackageTask {
     fn subtasks(&self) -> Vec<Box<dyn Task>> {
         let mut tasks: Vec<Box<dyn Task>> = Vec::new();
 
-        // Always build binaries first if any package type is requested
+        // Build binaries first so subsequent package tasks have artifacts to wrap.
         if self.build_deb || self.build_rpm || self.build_tarball {
             tasks.push(Box::new(CargoBuildTask::default()));
         }
