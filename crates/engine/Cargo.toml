@@ -264,6 +264,11 @@ harness = false
 required-features = ["parallel-receive-delta"]
 
 [[bench]]
+name = "br_3j_f_dashmap_cores_vs_throughput"
+harness = false
+required-features = ["parallel-receive-delta"]
+
+[[bench]]
 name = "spill_policy_perf"
 harness = false
 required-features = ["spill-compression"]
