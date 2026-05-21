@@ -222,7 +222,6 @@ fn stats_tracking() {
         .with_preserve_devices(true)
         .with_preserve_specials(true);
 
-    // Write various entry types
     let file1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
     let file2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
     let dir = FileEntry::new_directory("mydir".into(), 0o755);
@@ -252,11 +251,9 @@ fn directory_content_dir_flag_round_trip() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol);
 
-    // Directory with content
     let mut dir_with_content = FileEntry::new_directory("with_content".into(), 0o755);
     dir_with_content.set_content_dir(true);
 
-    // Directory without content (implied directory)
     let mut dir_no_content = FileEntry::new_directory("no_content".into(), 0o755);
     dir_no_content.set_content_dir(false);
 
@@ -352,10 +349,8 @@ fn write_end_varint_with_large_error_encodes_correctly() {
     let mut buf = Vec::new();
     writer.write_end(&mut buf, Some(300)).unwrap();
 
-    // First byte must be varint(0) = 0x00
     assert_eq!(buf[0], 0x00, "first varint must encode zero flags");
 
-    // Remaining bytes must decode to 300
     let (error_code, _) = decode_varint(&buf[1..]).unwrap();
     assert_eq!(error_code, 300, "second varint must encode the error code");
 }
