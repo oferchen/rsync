@@ -144,6 +144,12 @@ oc-rsync -avz -e 'ssh -C' user@host:/src/ /dst/
 
 `oc-rsync` emits a one-line warning when it spots `-C` (or `-o Compression=yes`) in the `--rsh` / `-e` argv it builds for the SSH child, but it does **not** parse `~/.ssh/config` or `/etc/ssh/ssh_config`, so a `Compression yes` directive set there is invisible to the warning. If throughput looks CPU-bound on an SSH transfer, check those files as well.
 
+#### `--zero-copy` and io_uring `SEND_ZC`
+
+`--zero-copy` advertises io_uring `SEND_ZC` as one of the zero-copy primitives it may dispatch on Linux, alongside `sendfile`, `splice`, and `copy_file_range`. The `SEND_ZC` dispatch itself is gated behind the `iouring-send-zc` cargo feature, which is **not** in the default feature set; the gate is documented as "Disabled by default pending kernel/workload benchmarks" in `crates/fast_io/Cargo.toml`. Default distro builds therefore use plain io_uring `SEND` even when `--zero-copy` is set; the other zero-copy primitives still kick in where the kernel supports them.
+
+To get `SEND_ZC` dispatch, build with `cargo build --features iouring-send-zc` (requires Linux 5.16+). See [`docs/design/iouring-send-zc.md`](./docs/design/iouring-send-zc.md) for the full rationale and the path to flipping this default on.
+
 ### Known Limitations / Architectural Trade-offs
 
 oc-rsync is wire-compatible with upstream rsync 3.4.1, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:

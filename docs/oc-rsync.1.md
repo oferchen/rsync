@@ -866,6 +866,26 @@ exits with an error.
     even when the kernel supports io_uring. Overrides a previous
     **--io-uring** on the same command line.
 
+**--zero-copy**
+:   Allow I/O-level zero-copy primitives (**sendfile**(2), **splice**(2),
+    **copy_file_range**(2), and io_uring **SEND_ZC**) when supported by the
+    kernel. This is the default (policy *auto*/*enabled*).
+
+    **NOTE:** the io_uring **SEND_ZC** dispatch is gated behind the
+    `iouring-send-zc` cargo feature, which is **not** in the default feature
+    set; the gate is documented as "Disabled by default pending
+    kernel/workload benchmarks" in **crates/fast_io/Cargo.toml**. Default
+    distro builds therefore use plain io_uring **SEND** even when
+    **--zero-copy** is set; the other zero-copy primitives still apply where
+    the kernel supports them. To get **SEND_ZC** dispatch, build with
+    `cargo build --features iouring-send-zc` (requires Linux 5.16+). See
+    **docs/design/iouring-send-zc.md** for the full rationale.
+
+**--no-zero-copy**
+:   Disable I/O-level zero-copy and route data through portable userspace
+    read/write loops. Does not affect filesystem-level reflink / CoW cloning
+    (see **--cow** / **--no-cow**).
+
 The next two flags govern the receiver-side `SpillPolicy` that bounds the
 concurrent-delta `ReorderBuffer`'s memory footprint. Both are *planned* for
 STN-11 and will land in a future release; until then operators tune the same
