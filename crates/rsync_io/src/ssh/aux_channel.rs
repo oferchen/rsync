@@ -99,8 +99,7 @@ pub(super) const SOCKETPAIR_REJECTION_WARNING_MARKER: &str =
 
 /// Marker substring emitted with every site-2 warning. See
 /// [`SOCKETPAIR_REJECTION_WARNING_MARKER`] for the rationale.
-pub(super) const HALF_FALLBACK_WARNING_MARKER: &str =
-    "SSH stderr socketpair partially set up";
+pub(super) const HALF_FALLBACK_WARNING_MARKER: &str = "SSH stderr socketpair partially set up";
 
 /// Site 1 (SSF-2): the synchronous `configure_stderr_channel` Unix arm
 /// could not allocate a `socketpair(2)` and is degrading to
@@ -139,11 +138,7 @@ fn emit_socketpair_rejection_warning(
 /// Emits the site-2 warning to `out`. See
 /// [`emit_socketpair_rejection_warning`] for the helper rationale.
 #[cfg(unix)]
-fn emit_half_fallback_warning(
-    lock: &OnceLock<()>,
-    out: &mut dyn Write,
-    error: &io::Error,
-) -> bool {
+fn emit_half_fallback_warning(lock: &OnceLock<()>, out: &mut dyn Write, error: &io::Error) -> bool {
     warn_once(
         lock,
         out,
@@ -311,11 +306,7 @@ impl SocketpairStderrChannel {
         let parent_clone = match parent_end.try_clone() {
             Ok(clone) => Some(clone),
             Err(error) => {
-                emit_half_fallback_warning(
-                    &HALF_FALLBACK_WARNED,
-                    &mut io::stderr().lock(),
-                    &error,
-                );
+                emit_half_fallback_warning(&HALF_FALLBACK_WARNED, &mut io::stderr().lock(), &error);
                 None
             }
         };
@@ -831,8 +822,7 @@ mod tests {
         let synthetic_error = io::Error::from_raw_os_error(libc_emfile_equivalent());
 
         let mut sink = Vec::new();
-        let first =
-            emit_socketpair_rejection_warning(&local_lock, &mut sink, &synthetic_error);
+        let first = emit_socketpair_rejection_warning(&local_lock, &mut sink, &synthetic_error);
         assert!(first, "first invocation must emit the warning");
         let captured = String::from_utf8(sink).expect("emitted bytes are utf8");
         assert!(
@@ -847,7 +837,10 @@ mod tests {
         let mut sink_second = Vec::new();
         let second =
             emit_socketpair_rejection_warning(&local_lock, &mut sink_second, &synthetic_error);
-        assert!(!second, "second invocation must be suppressed by the OnceLock");
+        assert!(
+            !second,
+            "second invocation must be suppressed by the OnceLock"
+        );
         assert!(
             sink_second.is_empty(),
             "second invocation must not write to the output sink; got {sink_second:?}"
@@ -875,7 +868,10 @@ mod tests {
 
         let mut sink_second = Vec::new();
         let second = emit_half_fallback_warning(&local_lock, &mut sink_second, &synthetic_error);
-        assert!(!second, "second invocation must be suppressed by the OnceLock");
+        assert!(
+            !second,
+            "second invocation must be suppressed by the OnceLock"
+        );
         assert!(
             sink_second.is_empty(),
             "second invocation must not write to the output sink; got {sink_second:?}"
@@ -898,8 +894,10 @@ mod tests {
                     (emitted, sink)
                 }));
             }
-            let results: Vec<(bool, Vec<u8>)> =
-                handles.into_iter().map(|h| h.join().expect("join")).collect();
+            let results: Vec<(bool, Vec<u8>)> = handles
+                .into_iter()
+                .map(|h| h.join().expect("join"))
+                .collect();
             let emitted_count = results.iter().filter(|(emit, _)| *emit).count();
             let non_empty_sinks = results.iter().filter(|(_, s)| !s.is_empty()).count();
             assert_eq!(emitted_count, 1, "exactly one thread must report emission");

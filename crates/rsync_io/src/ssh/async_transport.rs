@@ -457,9 +457,9 @@ mod tests {
         use std::sync::{Arc, Mutex};
         use tracing::Level;
         use tracing::subscriber::with_default;
-        use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::Layer;
         use tracing_subscriber::Registry;
+        use tracing_subscriber::layer::SubscriberExt;
 
         // Custom layer that captures every `event!` payload as a string.
         struct CaptureLayer {
