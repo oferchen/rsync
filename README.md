@@ -126,6 +126,24 @@ Tested against upstream rsync **3.0.9**, **3.1.3**, **3.4.1**, and **3.4.2** in 
 
 Threaded architecture replaces upstream's fork-based pipeline while keeping full protocol compatibility, reducing syscall overhead and context switches. Adaptive I/O buffers scale from 8KB to 1MB based on file size. Optional io_uring on Linux 5.6+ with three policies: *auto* (default; probe kernel and fall back to standard I/O), `--io-uring` (require io_uring; error if unavailable), `--no-io-uring` (always use standard buffered I/O). The active backend is reported by `--version` and `-vv` output. See `oc-rsync(1)` for details.
 
+### Performance tuning
+
+#### Avoid SSH + rsync double-compression
+
+SSH stream compression (`-C` on the `ssh` command line, or `Compression yes` in `~/.ssh/config` or `/etc/ssh/ssh_config`) compresses every byte the SSH session carries. The rsync wire protocol has its own compression layer, enabled with `--compress` / `-z` (and tuned with `--compress-choice`, `--compress-level`, `--compress-threads`). Running both at once feeds already-compressed bytes back into a second compressor: the second pass adds CPU on both sides and frame overhead while shrinking the stream by almost nothing, and on CPU-bound hosts throughput typically drops by 20-40%.
+
+Pick one layer. For most workloads prefer rsync's own compression: `oc-rsync` negotiates zstd when both peers support it (falling back to zlib), which is usually faster and tighter than SSH's zlib stream, and it can be skipped per file via `--skip-compress`. If you have a reason to keep SSH compression on (for example, a shared SSH config you cannot edit), drop `-z` from the rsync invocation instead.
+
+```sh
+# Good: rsync compresses, SSH carries the bytes as-is.
+oc-rsync -avz user@host:/src/ /dst/
+
+# Bad: -C on ssh re-compresses what rsync already compressed.
+oc-rsync -avz -e 'ssh -C' user@host:/src/ /dst/
+```
+
+`oc-rsync` emits a one-line warning when it spots `-C` (or `-o Compression=yes`) in the `--rsh` / `-e` argv it builds for the SSH child, but it does **not** parse `~/.ssh/config` or `/etc/ssh/ssh_config`, so a `Compression yes` directive set there is invisible to the warning. If throughput looks CPU-bound on an SSH transfer, check those files as well.
+
 ### Known Limitations / Architectural Trade-offs
 
 oc-rsync is wire-compatible with upstream rsync 3.4.1, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
