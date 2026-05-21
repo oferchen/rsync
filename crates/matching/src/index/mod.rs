@@ -19,6 +19,8 @@ mod bithash_tests;
 #[cfg(test)]
 mod matched_blocks_tests;
 #[cfg(test)]
+mod prune_tests;
+#[cfg(test)]
 mod seq_match_tests;
 #[cfg(test)]
 mod sparse_match_tests;
@@ -26,6 +28,7 @@ mod sparse_match_tests;
 mod tests;
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use checksums::RollingDigest;
 
@@ -61,7 +64,7 @@ const NEXT_MATCH_NONE: u32 = u32::MAX;
 /// table indexed by `sum1` provides fast-path rejection before the hash probe,
 /// mirroring upstream rsync's `tag_table` in `match.c`. The block length is
 /// stored separately since all indexed blocks have the same canonical length.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct DeltaSignatureIndex {
     block_length: usize,
     strong_length: usize,
@@ -89,6 +92,21 @@ pub struct DeltaSignatureIndex {
     /// is in-memory only and is cleared by [`Self::rebuild`] so per-segment
     /// INC_RECURSE indexes never inherit stale links.
     next_match: Vec<u32>,
+    /// Consumed-block bitset for zsync-inspired hash-chain pruning (ZSO-3).
+    ///
+    /// One bit per basis block index, sized to `(blocks.len() + 63) / 64`
+    /// `AtomicU64` words. Probes consult [`Self::is_consumed`] before the
+    /// strong-checksum verify and skip already-emitted blocks; matchers
+    /// flip the bit through [`Self::mark_consumed`] after a successful
+    /// `Copy` token emission. Atomic load/store keeps the entire match
+    /// pipeline `&self`-compatible, so the same index may be shared
+    /// read-only across concurrent generators (per
+    /// `crates/engine/src/concurrent_delta/`) without per-session
+    /// `MatchedBlocks` clones.
+    ///
+    /// Reset to all-zero by [`Self::rebuild`] so per-segment
+    /// INC_RECURSE lifecycles (ZSO-7) start with no stale prune bits.
+    consumed: Vec<AtomicU64>,
     /// Role used for `--debug=HASH` `[<role>]` prefixes on the create,
     /// grow, and destroy lifecycle emissions. Mirrors upstream
     /// `who_am_i()` (`hashtable.c:51,61,101`).
@@ -101,6 +119,50 @@ pub struct DeltaSignatureIndex {
     /// skip the field entirely so the hot path carries zero overhead.
     #[cfg(any(test, feature = "bench-internal"))]
     seq_match_counters: std::sync::Arc<SeqMatchCounters>,
+}
+
+/// Number of bits stored per `consumed` word.
+pub(super) const CONSUMED_BITS_PER_WORD: usize = u64::BITS as usize;
+
+/// Allocates the consumed-block bitset sized for `block_count` basis
+/// blocks with every bit cleared.
+pub(super) fn build_consumed_words(block_count: usize) -> Vec<AtomicU64> {
+    let words = block_count.div_ceil(CONSUMED_BITS_PER_WORD);
+    let mut v = Vec::with_capacity(words);
+    for _ in 0..words {
+        v.push(AtomicU64::new(0));
+    }
+    v
+}
+
+impl Clone for DeltaSignatureIndex {
+    /// Clones every field, snapshotting the consumed-bitset with
+    /// `Relaxed` loads. Each clone owns an independent bitset so
+    /// `mark_consumed` on the clone never races the original; this
+    /// matches the per-segment ZSO-7 lifecycle and the
+    /// per-generator-session contract from the parent design.
+    fn clone(&self) -> Self {
+        let consumed = self
+            .consumed
+            .iter()
+            .map(|word| AtomicU64::new(word.load(Ordering::Relaxed)))
+            .collect();
+        Self {
+            block_length: self.block_length,
+            strong_length: self.strong_length,
+            algorithm: self.algorithm,
+            blocks: self.blocks.clone(),
+            lookup: self.lookup.clone(),
+            tag_table: self.tag_table.clone(),
+            bithash: self.bithash.clone(),
+            next_match: self.next_match.clone(),
+            consumed,
+            role: self.role,
+            last_traced_size: self.last_traced_size,
+            #[cfg(any(test, feature = "bench-internal"))]
+            seq_match_counters: std::sync::Arc::clone(&self.seq_match_counters),
+        }
+    }
 }
 
 /// Test-only seq-match probe counters.
@@ -340,6 +402,70 @@ impl DeltaSignatureIndex {
         std::sync::Arc::clone(&self.seq_match_counters)
     }
 
+    /// Returns `true` when the basis block at `idx` has been marked as
+    /// consumed by a prior `Copy`-token emission.
+    ///
+    /// Lookups in [`Self::find_match_bytes_filtered`] and
+    /// [`Self::find_match_slices_filtered`] consult this bit before the
+    /// strong-checksum verify, skipping already-emitted basis blocks.
+    /// Out-of-range indices return `false` so probe loops do not need to
+    /// guard the call site against malformed candidate vectors.
+    ///
+    /// The load is `Relaxed`: the consumed bitset is an optimization,
+    /// not a synchronization primitive. A stale-`false` read at worst
+    /// re-verifies a basis block that has since been claimed elsewhere;
+    /// the strong-checksum step still produces a correct token. A
+    /// stale-`true` read cannot occur because each bit only ever
+    /// transitions from `0` to `1` for the lifetime of the bitset.
+    #[inline]
+    #[must_use]
+    pub fn is_consumed(&self, idx: u32) -> bool {
+        let idx = idx as usize;
+        if idx >= self.blocks.len() {
+            return false;
+        }
+        let word = idx / CONSUMED_BITS_PER_WORD;
+        let bit = idx % CONSUMED_BITS_PER_WORD;
+        (self.consumed[word].load(Ordering::Relaxed) >> bit) & 1 == 1
+    }
+
+    /// Marks the basis block at `idx` as consumed.
+    ///
+    /// Called by the matcher after emitting a `Copy` token for block
+    /// `idx`. Subsequent probes through [`Self::is_consumed`] will skip
+    /// this basis index, mirroring zsync's `remove_block_from_hash`
+    /// (`librcksum/hash.c:111-128`).
+    ///
+    /// Uses `AtomicU64::fetch_or` under `Relaxed` ordering: setting a
+    /// bit is idempotent and the bitset is a probe-side optimization,
+    /// so no happens-before edge is required. Concurrent calls on
+    /// distinct bits never conflict, and concurrent calls on the same
+    /// bit converge to the same value.
+    ///
+    /// Out-of-range indices are silently ignored.
+    #[inline]
+    pub fn mark_consumed(&self, idx: u32) {
+        let idx = idx as usize;
+        if idx >= self.blocks.len() {
+            return;
+        }
+        let word = idx / CONSUMED_BITS_PER_WORD;
+        let bit = idx % CONSUMED_BITS_PER_WORD;
+        self.consumed[word].fetch_or(1u64 << bit, Ordering::Relaxed);
+    }
+
+    /// Resets every bit in the consumed-block bitset.
+    ///
+    /// Used by [`Self::rebuild`] so per-segment INC_RECURSE lifecycles
+    /// (ZSO-7) start with no stale prune bits. Also exposed publicly so
+    /// generator-session restarts (e.g., a basis retry after a phase-2
+    /// redo) can recycle the same index without re-allocating.
+    pub fn reset_consumed(&self) {
+        for word in &self.consumed {
+            word.store(0, Ordering::Relaxed);
+        }
+    }
+
     /// Attempts to locate a matching block for a contiguous byte slice.
     #[inline]
     pub fn find_match_bytes(&self, digest: RollingDigest, window: &[u8]) -> Option<usize> {
@@ -383,6 +509,13 @@ impl DeltaSignatureIndex {
         let strong = self.algorithm.compute_truncated(window, self.strong_length);
         for index in self.lookup.find_all(digest.sum1(), digest.sum2()) {
             if matches!(matched, Some(m) if m.is_matched(index)) {
+                continue;
+            }
+            // ZSO-3 hash-chain prune: skip basis blocks the matcher has
+            // already emitted as `Copy` tokens. Atomic load keeps the
+            // probe `&self`-compatible so the index can be shared
+            // read-only across concurrent generators.
+            if self.is_consumed(index as u32) {
                 continue;
             }
             let block = &self.blocks[index];
@@ -441,6 +574,12 @@ impl DeltaSignatureIndex {
             .compute_truncated_slices(first, second, self.strong_length);
         for index in self.lookup.find_all(digest.sum1(), digest.sum2()) {
             if matches!(matched, Some(m) if m.is_matched(index)) {
+                continue;
+            }
+            // ZSO-3 hash-chain prune: see [`Self::find_match_bytes_filtered`]
+            // for the duplicate-block correctness contract; the slice
+            // variant follows the same protocol.
+            if self.is_consumed(index as u32) {
                 continue;
             }
             let block = &self.blocks[index];
