@@ -150,8 +150,6 @@ mod tests {
         let _scratch = sink.scratch();
     }
 
-    /// Exercises the mutable accessor; there is nothing to assert beyond
-    /// the fact that the call type-checks and does not panic.
     #[test]
     fn scratch_mut_returns_mutable_reference() {
         let mut sink = make_sink();
