@@ -87,6 +87,12 @@ pub mod kernel_version;
 pub mod page_aligned;
 /// Parallel file I/O operations using rayon.
 pub mod parallel;
+/// Strict-resolution directory open for the SEC-1 dirfd sandbox.
+///
+/// Unix-only: Windows callers use NTFS handle-based APIs which sidestep
+/// path TOCTOU naturally (see the SEC-1.l audit).
+#[cfg(unix)]
+pub mod secure_dir;
 /// Cross-platform temporary file strategy abstraction.
 pub mod temp_file_strategy;
 /// Core traits for file I/O abstraction.
@@ -202,6 +208,8 @@ pub use kernel_version::{
     IO_URING_MIN_KERNEL, KernelVersion, log_io_uring_probe_result, parse_kernel_version,
 };
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
+#[cfg(unix)]
+pub use secure_dir::secure_open_dir;
 pub use sendfile::send_file_to_fd_with_policy;
 pub use socket_options::set_socket_int_option;
 #[cfg(target_os = "linux")]
