@@ -21,10 +21,15 @@
 //! the seam that lets us migrate the socketpair variant onto a poll() loop
 //! without touching call sites in `connection.rs`.
 
+#[cfg(unix)]
 use std::fmt;
-use std::io::{self, BufRead, BufReader, Read, Write};
+#[cfg(unix)]
+use std::io::Write;
+use std::io::{self, BufRead, BufReader, Read};
 use std::process::{ChildStderr, Command, ExitStatus, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(unix)]
+use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
