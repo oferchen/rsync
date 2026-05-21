@@ -9,9 +9,8 @@ fn write_hardlink_first_round_trip_protocol_30() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
 
-    // First file in hardlink group (leader)
     let mut entry = FileEntry::new_file("file1.txt".into(), 100, 0o644);
-    entry.set_hardlink_idx(u32::MAX); // u32::MAX indicates first/leader
+    entry.set_hardlink_idx(u32::MAX); // u32::MAX marks the leader of a hardlink group.
 
     writer.write_entry(&mut buf, &entry).unwrap();
     writer.write_end(&mut buf, None).unwrap();
@@ -33,7 +32,6 @@ fn write_hardlink_follower_round_trip_protocol_30() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
 
-    // Hardlink follower pointing to index 5
     let mut entry = FileEntry::new_file("file2.txt".into(), 100, 0o644);
     entry.set_hardlink_idx(5);
 
@@ -55,7 +53,7 @@ fn write_hardlink_without_preserve_hard_links_omits_idx() {
 
     let protocol = test_protocol();
     let mut buf = Vec::new();
-    let mut writer = FileListWriter::new(protocol); // preserve_hard_links = false
+    let mut writer = FileListWriter::new(protocol);
 
     let mut entry = FileEntry::new_file("file1.txt".into(), 100, 0o644);
     entry.set_hardlink_idx(5);
@@ -64,11 +62,10 @@ fn write_hardlink_without_preserve_hard_links_omits_idx() {
     writer.write_end(&mut buf, None).unwrap();
 
     let mut cursor = Cursor::new(&buf[..]);
-    let mut reader = FileListReader::new(protocol); // preserve_hard_links = false
+    let mut reader = FileListReader::new(protocol);
 
     let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
     assert_eq!(read_entry.name(), "file1.txt");
-    // hardlink_idx should NOT be present since preserve_hard_links was false
     assert!(read_entry.hardlink_idx().is_none());
 }
 
@@ -81,15 +78,12 @@ fn write_hardlink_group_round_trip_protocol_32() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
 
-    // First: leader (u32::MAX)
     let mut entry1 = FileEntry::new_file("original.txt".into(), 500, 0o644);
     entry1.set_hardlink_idx(u32::MAX);
 
-    // Second: follower pointing to index 0
     let mut entry2 = FileEntry::new_file("link1.txt".into(), 500, 0o644);
     entry2.set_hardlink_idx(0);
 
-    // Third: follower pointing to index 0
     let mut entry3 = FileEntry::new_file("link2.txt".into(), 500, 0o644);
     entry3.set_hardlink_idx(0);
 
@@ -124,12 +118,10 @@ fn write_hardlink_follower_skips_metadata() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
 
-    // First: leader (u32::MAX) - full metadata
     let mut entry1 = FileEntry::new_file("original.txt".into(), 500, 0o644);
     entry1.set_mtime(1700000000, 0);
     entry1.set_hardlink_idx(u32::MAX);
 
-    // Second: follower pointing to index 0 - metadata skipped
     let mut entry2 = FileEntry::new_file("link.txt".into(), 500, 0o644);
     entry2.set_mtime(1700000000, 0);
     entry2.set_hardlink_idx(0);
@@ -140,7 +132,6 @@ fn write_hardlink_follower_skips_metadata() {
     let second_len = buf.len() - first_len;
     writer.write_end(&mut buf, None).unwrap();
 
-    // Follower should be MUCH smaller (no size, mtime, mode)
     assert!(
         second_len < first_len / 2,
         "follower entry should be much smaller: {second_len} vs {first_len}"
@@ -152,16 +143,16 @@ fn write_hardlink_follower_skips_metadata() {
     let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
     let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
 
-    // Leader has full metadata
     assert_eq!(read1.name(), "original.txt");
     assert_eq!(read1.size(), 500);
     assert_eq!(read1.mtime(), 1700000000);
     assert_eq!(read1.hardlink_idx(), Some(u32::MAX));
 
-    // Follower has zeroed metadata (caller should copy from leader)
+    // Follower metadata is intentionally skipped on the wire; the caller copies
+    // it from the leader (upstream flist.c:recv_file_entry lines 793-822).
     assert_eq!(read2.name(), "link.txt");
-    assert_eq!(read2.size(), 0); // Metadata was skipped
-    assert_eq!(read2.mtime(), 0); // Metadata was skipped
+    assert_eq!(read2.size(), 0);
+    assert_eq!(read2.mtime(), 0);
     assert_eq!(read2.hardlink_idx(), Some(0));
 }
 
@@ -177,7 +168,6 @@ fn write_hardlink_follower_with_uid_gid_skips_all() {
         .with_preserve_uid(true)
         .with_preserve_gid(true);
 
-    // Leader with full metadata
     let mut entry1 = FileEntry::new_file("leader.txt".into(), 1000, 0o755);
     entry1.set_mtime(1700000000, 0);
     entry1.set_uid(1000);
@@ -186,7 +176,6 @@ fn write_hardlink_follower_with_uid_gid_skips_all() {
     entry1.set_group_name("testgroup".to_string());
     entry1.set_hardlink_idx(u32::MAX);
 
-    // Follower - all metadata should be skipped
     let mut entry2 = FileEntry::new_file("follower.txt".into(), 1000, 0o755);
     entry2.set_mtime(1700000000, 0);
     entry2.set_uid(1000);
@@ -199,7 +188,6 @@ fn write_hardlink_follower_with_uid_gid_skips_all() {
     let second_len = buf.len() - first_len;
     writer.write_end(&mut buf, None).unwrap();
 
-    // Follower should be significantly smaller
     assert!(
         second_len < first_len / 2,
         "follower should skip metadata: {second_len} vs {first_len}"
@@ -214,11 +202,9 @@ fn write_hardlink_follower_with_uid_gid_skips_all() {
     let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
     let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
 
-    // Leader has full metadata
     assert_eq!(read1.user_name(), Some("testuser"));
     assert_eq!(read1.group_name(), Some("testgroup"));
 
-    // Follower metadata was skipped
     assert_eq!(read2.size(), 0);
     assert_eq!(read2.mtime(), 0);
     assert_eq!(read2.mode(), 0);
@@ -236,10 +222,9 @@ fn write_hardlink_leader_has_full_metadata() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
 
-    // Leader should have full metadata even with hardlink flag
     let mut entry = FileEntry::new_file("leader.txt".into(), 500, 0o644);
     entry.set_mtime(1700000000, 0);
-    entry.set_hardlink_idx(u32::MAX); // Leader marker
+    entry.set_hardlink_idx(u32::MAX);
 
     writer.write_entry(&mut buf, &entry).unwrap();
     writer.write_end(&mut buf, None).unwrap();
@@ -249,7 +234,6 @@ fn write_hardlink_leader_has_full_metadata() {
 
     let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
 
-    // Leader has full metadata
     assert_eq!(read_entry.name(), "leader.txt");
     assert_eq!(read_entry.size(), 500);
     assert_eq!(read_entry.mtime(), 1700000000);
@@ -260,15 +244,14 @@ fn write_hardlink_leader_has_full_metadata() {
 fn is_hardlink_follower_helper() {
     let writer = FileListWriter::new(test_protocol()).with_preserve_hard_links(true);
 
-    // No hardlink flags
     let xflags_none: u32 = 0;
     assert!(!writer.is_hardlink_follower(xflags_none));
 
-    // Leader (HLINKED + HLINK_FIRST)
+    // HLINKED + HLINK_FIRST: leader, not a follower.
     let xflags_leader = ((XMIT_HLINKED as u32) << 8) | ((XMIT_HLINK_FIRST as u32) << 8);
     assert!(!writer.is_hardlink_follower(xflags_leader));
 
-    // Follower (HLINKED only)
+    // HLINKED only: follower.
     let xflags_follower = (XMIT_HLINKED as u32) << 8;
     assert!(writer.is_hardlink_follower(xflags_follower));
 }
@@ -335,7 +318,7 @@ fn hardlink_dev_compression_protocol_29() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
 
-    // Two entries with same dev should use XMIT_SAME_DEV_PRE30
+    // Sharing a dev across consecutive entries triggers XMIT_SAME_DEV_PRE30.
     let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
     entry1.set_mtime(1700000000, 0);
     entry1.set_hardlink_dev(12345);
@@ -352,7 +335,6 @@ fn hardlink_dev_compression_protocol_29() {
     let second_len = buf.len() - first_len;
     writer.write_end(&mut buf, None).unwrap();
 
-    // Second entry should be smaller due to dev compression
     assert!(
         second_len < first_len,
         "second entry should use dev compression"

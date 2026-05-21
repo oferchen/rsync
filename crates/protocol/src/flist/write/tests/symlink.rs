@@ -35,7 +35,7 @@ fn write_symlink_entry_without_preserve_links_omits_target() {
 
     let protocol = test_protocol();
     let mut buf = Vec::new();
-    let mut writer = FileListWriter::new(protocol); // preserve_links = false
+    let mut writer = FileListWriter::new(protocol);
 
     let entry = FileEntry::new_symlink("link".into(), "/target/path".into());
 
@@ -43,12 +43,11 @@ fn write_symlink_entry_without_preserve_links_omits_target() {
     writer.write_end(&mut buf, None).unwrap();
 
     let mut cursor = Cursor::new(&buf[..]);
-    let mut reader = FileListReader::new(protocol); // preserve_links = false
+    let mut reader = FileListReader::new(protocol);
 
     let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
     assert_eq!(read_entry.name(), "link");
     assert!(read_entry.is_symlink());
-    // Target should NOT be present since preserve_links was false
     assert!(read_entry.link_target().is_none());
 }
 
@@ -57,7 +56,7 @@ fn write_symlink_round_trip_protocol_30_varint() {
     use super::super::super::read::FileListReader;
     use std::io::Cursor;
 
-    // Protocol 30+ uses varint30
+    // Protocol 30+ encodes the symlink-target length as a varint30.
     let protocol = ProtocolVersion::try_from(30u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
@@ -86,7 +85,7 @@ fn write_symlink_round_trip_protocol_29_fixed_int() {
     use super::super::super::read::FileListReader;
     use std::io::Cursor;
 
-    // Protocol 29 uses fixed 4-byte int
+    // Protocol 29 encodes the symlink-target length as a fixed 4-byte int.
     let protocol = ProtocolVersion::try_from(29u8).unwrap();
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
