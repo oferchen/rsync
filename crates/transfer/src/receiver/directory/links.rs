@@ -128,7 +128,20 @@ impl ReceiverContext {
             }
 
             // upstream: generator.c:1591 - atomic_create() -> do_symlink()
-            if let Err(e) = std::os::unix::fs::symlink(target, &link_path) {
+            //
+            // SEC-1.h: when the sandbox is plumbed and the destination
+            // parent is the sandbox root, the create goes through
+            // `symlinkat(target, dirfd, leaf)` so a TOCTOU swap on a
+            // mid-path component cannot redirect the create to an
+            // attacker-chosen parent. Falls back to path-based
+            // `std::os::unix::fs::symlink` otherwise.
+            if let Err(e) = fast_io::symlinkat_via_sandbox_or_fallback(
+                sandbox,
+                dest_dir,
+                relative_path,
+                &link_path,
+                target,
+            ) {
                 debug_log!(
                     Recv,
                     1,
@@ -327,8 +340,30 @@ impl ReceiverContext {
                 }
 
                 // upstream: hlink.c:maybe_hard_link() -> atomic_create() -> do_link()
-                // Try io_uring LINKAT on Linux 5.15+, fall back to std::fs::hard_link.
-                if let Err(e) = fast_io::hard_link(&leader_path, &link_path) {
+                //
+                // SEC-1.h (Unix): when the sandbox is plumbed and the
+                // follower's destination parent is the sandbox root,
+                // route through `linkat(AT_FDCWD, leader, dirfd, leaf,
+                // 0)` so a mid-syscall symlink swap on the follower's
+                // parent cannot redirect the create to an
+                // attacker-chosen directory. Falls back to
+                // `fast_io::hard_link` (io_uring LINKAT on Linux 5.15+,
+                // else `std::fs::hard_link`) for the multi-component
+                // and no-sandbox cases, preserving the existing
+                // `EXDEV` / `EPERM` error semantics. Windows stays on
+                // the path-based fallback per the SEC-1.l NTFS-handle
+                // audit.
+                #[cfg(unix)]
+                let link_result = fast_io::linkat_via_sandbox_or_fallback(
+                    sandbox,
+                    &leader_path,
+                    dest_dir,
+                    relative_path,
+                    &link_path,
+                );
+                #[cfg(not(unix))]
+                let link_result = fast_io::hard_link(&leader_path, &link_path);
+                if let Err(e) = link_result {
                     debug_log!(
                         Recv,
                         1,
