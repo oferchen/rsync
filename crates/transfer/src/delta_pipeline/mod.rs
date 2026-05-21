@@ -31,6 +31,8 @@ use std::io;
 
 use engine::concurrent_delta::{DeltaResult, DeltaWork};
 
+#[cfg(feature = "parallel-receive-delta")]
+pub mod chunk_builder;
 mod parallel;
 mod sequential;
 mod threshold;
@@ -38,6 +40,8 @@ mod threshold;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "parallel-receive-delta")]
+pub use chunk_builder::{ChunkBuilder, ChunkBuilderError, TokenForBuild};
 pub use parallel::ParallelDeltaPipeline;
 pub use sequential::SequentialDeltaPipeline;
 pub use threshold::ThresholdDeltaPipeline;
