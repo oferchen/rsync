@@ -1153,21 +1153,26 @@ mod tests {
         let (sink, _) = VecSink::new();
         applier.register_file(0u32, Box::new(sink)).unwrap();
 
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel::<()>();
         let worker_applier = Arc::clone(&applier);
         let hold_duration = std::time::Duration::from_millis(50);
         let worker = std::thread::spawn(move || {
             let handle = worker_applier
                 .slot_for(FileNdx::new(0))
                 .expect("slot registered");
+            acquired_tx.send(()).expect("handshake send");
             std::thread::sleep(hold_duration);
             drop(handle);
         });
 
-        // Yield once so the worker has a chance to acquire its handle
-        // before we start the timer. The race is benign either way
-        // (flush_workers waits regardless), but the elapsed-time
-        // assertion below is only meaningful once the worker is in.
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        // Wait for the worker to acquire its handle deterministically.
+        // The sleep-based barrier raced on macOS nightly when the OS
+        // didn't schedule the worker before the main thread started the
+        // timer, causing flush_workers to return immediately (inflight=0)
+        // and the elapsed-time assertion to fire.
+        acquired_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("worker acquired handle");
 
         let start = std::time::Instant::now();
         applier.flush_workers(0u32).expect("flush_workers");
