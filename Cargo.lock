@@ -1274,6 +1274,7 @@ dependencies = [
  "metadata",
  "proptest",
  "protocol",
+ "rand 0.10.1",
  "rayon",
  "rustc-hash",
  "rustix",

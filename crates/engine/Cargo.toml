@@ -174,6 +174,7 @@ proptest = { workspace = true }
 xattr = { workspace = true }
 libc = { workspace = true }
 criterion = { workspace = true }
+rand = { workspace = true }
 zstd = "0.13"
 
 [[bench]]
@@ -254,6 +255,11 @@ harness = false
 
 [[bench]]
 name = "parallel_receive_delta_perf"
+harness = false
+required-features = ["parallel-receive-delta"]
+
+[[bench]]
+name = "parallel_verify_chunk"
 harness = false
 required-features = ["parallel-receive-delta"]
 
