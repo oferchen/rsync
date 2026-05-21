@@ -767,7 +767,7 @@ impl DeltaSignatureIndex {
 /// Behind the internal `bench-internal` feature flag so the surface never
 /// reaches release builds. See `docs/design/zsync-bithash.md` section 7
 /// for the rejection-rate methodology these accessors support.
-#[cfg(feature = "bench-internal")]
+#[cfg(any(test, feature = "bench-internal"))]
 impl DeltaSignatureIndex {
     /// Returns the fraction of bithash bits currently set, in `[0.0, 1.0]`.
     ///
@@ -815,12 +815,8 @@ impl DeltaSignatureIndex {
     ///
     /// Reports the hot table only; chain-entry storage is excluded so the
     /// figure tracks the cache-resident slot array a probe touches first.
-    /// Test- and bench-only: measurement helper used by the cache-footprint
-    /// bench harness. Gated behind `test` and `bench-internal` so the binary
-    /// build (which excludes both) does not flag the call chain as dead
-    /// code (`CompactLookup::bucket_bytes` is `pub(super)` and rustc cannot
-    /// trace pub-to-restricted-pub usage through a public forwarder).
-    #[cfg(any(test, feature = "bench-internal"))]
+    /// Test- and bench-only: the enclosing `impl` block is gated behind
+    /// `cfg(any(test, feature = "bench-internal"))`.
     #[must_use]
     pub fn lookup_bytes(&self) -> usize {
         self.lookup.bucket_bytes()
