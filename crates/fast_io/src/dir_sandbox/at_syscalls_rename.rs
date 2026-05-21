@@ -66,7 +66,7 @@ pub fn renameat(
     old_name: &OsStr,
     new_dirfd: BorrowedFd<'_>,
     new_name: &OsStr,
-    replace: bool,
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))] replace: bool,
 ) -> io::Result<()> {
     let c_old = CString::new(old_name.as_bytes())
         .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
