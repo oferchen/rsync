@@ -82,7 +82,19 @@ impl ReceiverContext {
                     info_log!(Name, 2, "{} is uptodate", relative_path.display());
                     continue;
                 }
-                let _ = std::fs::remove_file(&link_path);
+                // SEC-1.g: route the obstacle unlink through the sandbox
+                // dirfd when the destination parent is the sandbox root,
+                // so a TOCTOU swap on `link_path` between the readlink
+                // above and this unlink cannot redirect the syscall to
+                // an attacker-chosen parent. Falls back to path-based
+                // `remove_file` otherwise.
+                let _ = fast_io::unlink_via_sandbox_or_fallback(
+                    sandbox,
+                    dest_dir,
+                    relative_path,
+                    &link_path,
+                    fast_io::UnlinkFlags::File,
+                );
             } else if fast_io::lstat_via_sandbox_or_fallback(
                 sandbox,
                 dest_dir,
@@ -96,7 +108,17 @@ impl ReceiverContext {
                 // `fstatat(AT_SYMLINK_NOFOLLOW)` so a TOCTOU symlink swap on
                 // `link_path` cannot redirect the probe to a different
                 // inode. Falls back to `symlink_metadata` otherwise.
-                let _ = std::fs::remove_file(&link_path);
+                //
+                // SEC-1.g: matching unlink also goes through the sandbox
+                // dirfd via `unlinkat` so the obstacle-remove syscall is
+                // anchored on the same parent the stat just observed.
+                let _ = fast_io::unlink_via_sandbox_or_fallback(
+                    sandbox,
+                    dest_dir,
+                    relative_path,
+                    &link_path,
+                    fast_io::UnlinkFlags::File,
+                );
             }
 
             // Ensure parent directory exists for --relative paths.
@@ -279,6 +301,23 @@ impl ReceiverContext {
                         }
                     }
                     // Remove existing file so we can create the hard link.
+                    //
+                    // SEC-1.g: on Unix, route the unlink through the
+                    // sandbox dirfd when the destination parent is the
+                    // sandbox root so a TOCTOU swap between the stat
+                    // above and the unlink cannot redirect the syscall
+                    // to an attacker-chosen parent. Windows stays on
+                    // the path-based `remove_file` per the SEC-1.l
+                    // NTFS-handle audit.
+                    #[cfg(unix)]
+                    let _ = fast_io::unlink_via_sandbox_or_fallback(
+                        sandbox,
+                        dest_dir,
+                        relative_path,
+                        &link_path,
+                        fast_io::UnlinkFlags::File,
+                    );
+                    #[cfg(not(unix))]
                     let _ = fs::remove_file(&link_path);
                 }
 

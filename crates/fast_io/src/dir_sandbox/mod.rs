@@ -78,7 +78,10 @@ pub mod at_syscalls;
 #[cfg(test)]
 mod tests;
 
-pub use at_syscalls::{AtMetadata, LstatOutcome, fstatat_nofollow, lstat_via_sandbox_or_fallback};
+pub use at_syscalls::{
+    AtMetadata, LstatOutcome, UnlinkFlags, fstatat_nofollow, lstat_via_sandbox_or_fallback,
+    unlink_via_sandbox_or_fallback, unlinkat,
+};
 
 /// Parent-dirfd carrier threaded through the receiver pipeline.
 ///
@@ -293,6 +296,28 @@ impl DirSandbox {
     /// Propagates the underlying [`fstatat_nofollow`] error verbatim.
     pub fn lstat_at(&self, leaf: &OsStr) -> io::Result<AtMetadata> {
         fstatat_nofollow(self.current_dirfd(), leaf)
+    }
+
+    /// `unlinkat(dirfd, leaf, flags)` anchored on the current dirfd.
+    ///
+    /// SEC-1.g convenience accessor: resolves `leaf` relative to the
+    /// dirfd returned by [`current_dirfd`](Self::current_dirfd) and
+    /// removes the entry without re-walking the path through the
+    /// kernel. `unlinkat(2)` never follows a terminal symlink, so a
+    /// TOCTOU swap on `leaf` cannot redirect the unlink to an
+    /// attacker-chosen inode beneath a different parent.
+    ///
+    /// Callers that already hold a [`BorrowedFd`] from a different
+    /// anchor (for example [`root_dirfd`](Self::root_dirfd) or
+    /// [`secondary`](Self::secondary)) should call [`unlinkat`]
+    /// directly to make the anchoring explicit.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the underlying [`unlinkat`] error verbatim. See
+    /// [`unlinkat`] for the notable error cases.
+    pub fn unlinkat_at(&self, leaf: &OsStr, flags: UnlinkFlags) -> io::Result<()> {
+        unlinkat(self.current_dirfd(), leaf, flags)
     }
 }
 
