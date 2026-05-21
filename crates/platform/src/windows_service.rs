@@ -175,8 +175,6 @@ mod windows_impl {
         let _ = report_status_raw(status_handle, SERVICE_START_PENDING, 0, 3000);
         let _ = report_status_raw(status_handle, SERVICE_RUNNING, 0, 0);
 
-        // Extract the callback from OnceLock<Mutex<Option>> with a flat chain
-        // of and_then to avoid deep nesting.
         let callback = SERVICE_CALLBACK
             .get()
             .and_then(|mutex| mutex.lock().ok())
