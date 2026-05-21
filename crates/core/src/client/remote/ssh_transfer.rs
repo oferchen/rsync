@@ -293,9 +293,7 @@ fn build_ssh_connection(
 
     ssh.set_remote_command(invocation_args);
 
-    if config.compress() && ssh.has_ssh_compression() {
-        warn_double_compression_once();
-    }
+    warn_double_compression_once(config.compress(), ssh.has_ssh_compression());
 
     // upstream: pipe.c:85 - SSH spawn failures return IPC error code.
     let mut connection = ssh.spawn().map_err(|e| {
@@ -691,22 +689,41 @@ pub(super) fn build_server_config_for_generator(
     Ok(server_config)
 }
 
+/// Returns `true` when both rsync wire compression and SSH stream
+/// compression are enabled and a warning should be emitted.
+///
+/// Extracted so the predicate can be exercised independently of the
+/// process-global `OnceLock` that suppresses duplicate warnings.
+const fn should_warn_double_compression(rsync_compress: bool, ssh_compress: bool) -> bool {
+    rsync_compress && ssh_compress
+}
+
 /// Emits a one-time warning to stderr when SSH built-in compression and
 /// rsync `--compress` are both active.
 ///
-/// Compressing twice wastes CPU and may expand already-compressed data.
-/// Upstream rsync does not detect this case; this is an oc-rsync usability
-/// enhancement. Detection is conservative: it only inspects the SSH
-/// command-line arguments built up from `-e`/`--rsh` and friends and does
-/// not parse `~/.ssh/config`, since that file is merged at spawn time and
-/// we cannot reliably read it.
-fn warn_double_compression_once() {
-    static EMITTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+/// Compressing twice wastes CPU and may expand already-compressed data,
+/// since SSH cannot meaningfully recompress the rsync stream. Upstream
+/// rsync does not detect this case; this is an oc-rsync usability
+/// enhancement.
+///
+/// Detection is conservative: it only inspects the SSH command-line
+/// arguments built up from `-e` / `--rsh` and friends, and does not parse
+/// `~/.ssh/config`, since that file is merged at spawn time and we cannot
+/// reliably read it. SSC-3 (#2563) tracks future `ssh_config` parsing.
+///
+/// The warning is suppressed after the first emission via a process-wide
+/// `OnceLock<bool>`, so callers may invoke this once per SSH spawn without
+/// flooding stderr.
+fn warn_double_compression_once(rsync_compress: bool, ssh_compress: bool) {
+    static EMITTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !should_warn_double_compression(rsync_compress, ssh_compress) {
+        return;
+    }
     EMITTED.get_or_init(|| {
-        eprintln!(
-            "rsync warning: SSH compression (-C / -o Compression=yes) and rsync --compress \
-             both enabled; double compression wastes CPU. Disable one."
-        );
+        eprintln!("warning: both rsync wire compression (--compress) and SSH stream compression");
+        eprintln!("         (-C in your ssh command) are enabled. Compressed data will be");
+        eprintln!("         re-compressed by SSH, wasting CPU. Recommend dropping one of them.");
+        true
     });
 }
 
@@ -742,6 +759,36 @@ mod tests {
         assert_eq!(server_config.args.len(), 2);
         assert_eq!(server_config.args[0], "file1.txt");
         assert_eq!(server_config.args[1], "file2.txt");
+    }
+
+    #[test]
+    fn warns_on_double_compression() {
+        // Both rsync --compress and SSH -C engaged: the predicate fires.
+        assert!(should_warn_double_compression(true, true));
+        // The one-shot emitter is safe to call; the first eligible call wins
+        // process-wide and subsequent calls become no-ops. We only assert that
+        // it does not panic or hang.
+        warn_double_compression_once(true, true);
+        warn_double_compression_once(true, true);
+    }
+
+    #[test]
+    fn no_warning_when_only_rsync_compress() {
+        assert!(!should_warn_double_compression(true, false));
+        // Calling the emitter must be a no-op (no panic, no state change).
+        warn_double_compression_once(true, false);
+    }
+
+    #[test]
+    fn no_warning_when_only_ssh_compress() {
+        assert!(!should_warn_double_compression(false, true));
+        warn_double_compression_once(false, true);
+    }
+
+    #[test]
+    fn no_warning_when_neither_compresses() {
+        assert!(!should_warn_double_compression(false, false));
+        warn_double_compression_once(false, false);
     }
 
     #[test]
