@@ -293,7 +293,33 @@ impl ReceiverContext {
                         fs::create_dir_all(parent)?;
                     }
                 }
-                fs::rename(&file_path, &backup_path)?;
+                // SEC-1.j: route the backup rename through the sandbox dirfd
+                // when both endpoints sit beneath the destination root as
+                // single-component leaves, so a TOCTOU symlink swap on
+                // either leaf cannot redirect the commit to an
+                // attacker-chosen inode. Falls back to path-based
+                // `std::fs::rename` for multi-component / cross-tree cases.
+                #[cfg(unix)]
+                {
+                    let backup_rel = backup_path
+                        .strip_prefix(&dest_dir)
+                        .map(std::path::Path::to_path_buf)
+                        .unwrap_or_else(|_| backup_path.clone());
+                    fast_io::renameat_via_sandbox_or_fallback(
+                        sandbox.as_deref(),
+                        &dest_dir,
+                        relative_path,
+                        &file_path,
+                        &dest_dir,
+                        &backup_rel,
+                        &backup_path,
+                        true,
+                    )?;
+                }
+                #[cfg(not(unix))]
+                {
+                    fs::rename(&file_path, &backup_path)?;
+                }
                 // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on RENAME
                 // success branch of link_or_rename.
                 engine::trace_make_backup_rename(&file_path.display().to_string());
@@ -301,10 +327,39 @@ impl ReceiverContext {
 
             // upstream: Linux 5.11+ io_uring submits IORING_OP_RENAMEAT; we
             // fall back to std::fs::rename on other platforms or older kernels.
+            //
+            // SEC-1.j: when the sandbox is plumbed and both temp leaf +
+            // final leaf are single components beneath `dest_dir`, route
+            // through `renameat(dirfd, leaf, dirfd, leaf)` so a TOCTOU
+            // swap on either leaf cannot redirect the commit. The
+            // io_uring fast path is preserved by trying it first; the
+            // sandbox routing is the SEC-1.j hardening for the synchronous
+            // fallback.
             if let Some(result) = fast_io::try_rename_via_io_uring(temp_guard.path(), &file_path) {
                 result?;
             } else {
-                fs::rename(temp_guard.path(), &file_path)?;
+                #[cfg(unix)]
+                {
+                    let temp_path = temp_guard.path();
+                    let temp_rel = temp_path
+                        .strip_prefix(&dest_dir)
+                        .map(std::path::Path::to_path_buf)
+                        .unwrap_or_else(|_| temp_path.to_path_buf());
+                    fast_io::renameat_via_sandbox_or_fallback(
+                        sandbox.as_deref(),
+                        &dest_dir,
+                        &temp_rel,
+                        temp_path,
+                        &dest_dir,
+                        relative_path,
+                        &file_path,
+                        true,
+                    )?;
+                }
+                #[cfg(not(unix))]
+                {
+                    fs::rename(temp_guard.path(), &file_path)?;
+                }
             }
             temp_guard.keep();
 
