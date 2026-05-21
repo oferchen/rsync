@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn multiple_events_ordering() {
         init(VerbosityConfig::default());
-        drain_events(); // Clear any existing
+        drain_events();
 
         emit_info(InfoFlag::Copy, 1, "first".to_owned());
         emit_info(InfoFlag::Del, 2, "second".to_owned());
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn drain_events_clears_buffer() {
         init(VerbosityConfig::default());
-        drain_events(); // Clear existing
+        drain_events();
 
         emit_info(InfoFlag::Copy, 1, "test".to_owned());
         let first_drain = drain_events();

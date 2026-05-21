@@ -93,7 +93,6 @@ fn verbose_level_2_outputs_misc_details() {
     let events = drain_events();
     assert_eq!(events.len(), 3);
 
-    // Verify the messages were captured
     let messages: Vec<_> = events
         .iter()
         .filter_map(|e| match e {

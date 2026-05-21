@@ -139,7 +139,6 @@ fn message_with_null_bytes() {
     init(config);
     drain_events();
 
-    // Null bytes in the middle of a message
     debug_log!(Io, 1, "before\0after");
 
     let events = drain_events();
@@ -249,7 +248,6 @@ fn message_with_rtl_text() {
     init(config);
     drain_events();
 
-    // Arabic text
     info_log!(Name, 1, "document.txt");
 
     let events = drain_events();
@@ -363,17 +361,15 @@ fn flag_with_high_level() {
 fn flag_with_level_zero() {
     init(VerbosityConfig::default());
 
-    // Level 0 should set the flag to 0
     let result = apply_info_flag("copy0");
     assert!(result.is_ok());
 }
 
-/// Verifies flag token with leading zeros.
+/// Verifies flag token with leading zeros parses as copy level 7.
 #[test]
 fn flag_with_leading_zeros() {
     init(VerbosityConfig::default());
 
-    // "copy007" should parse as copy level 7
     let result = apply_info_flag("copy007");
     assert!(result.is_ok());
 }
@@ -382,7 +378,7 @@ fn flag_with_leading_zeros() {
 #[test]
 fn drain_empty_returns_empty() {
     init(VerbosityConfig::default());
-    drain_events(); // Clear any existing
+    drain_events();
 
     let events = drain_events();
     assert!(events.is_empty());
@@ -423,7 +419,6 @@ fn many_events() {
     let events = drain_events();
     assert_eq!(events.len(), 1000);
 
-    // Verify first and last
     match &events[0] {
         DiagnosticEvent::Info { message, .. } => {
             assert_eq!(message, "message 0");
@@ -532,7 +527,6 @@ fn diagnostic_event_debug_trait() {
 fn verbosity_config_default() {
     let config = VerbosityConfig::default();
 
-    // All levels should be 0
     assert_eq!(config.info.copy, 0);
     assert_eq!(config.info.name, 0);
     assert_eq!(config.debug.recv, 0);

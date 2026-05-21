@@ -62,7 +62,6 @@ fn verbose_1_emits_file_names() {
     init(config);
     drain_events();
 
-    // Simulate file transfer with name output
     info_log!(Name, 1, "file1.txt");
     info_log!(Name, 1, "file2.txt");
     info_log!(Name, 1, "dir/file3.txt");
@@ -252,10 +251,8 @@ fn verbose_1_includes_statistics() {
     init(config);
     drain_events();
 
-    // Stats flag is enabled at level 1
     assert!(info_gte(InfoFlag::Stats, 1));
 
-    // Simulate statistics output
     info_log!(Stats, 1, "Number of files: 3");
     info_log!(Stats, 1, "Number of created files: 3");
     info_log!(Stats, 1, "Total file size: 1,024 bytes");
@@ -279,7 +276,6 @@ fn verbose_1_with_progress() {
     init(config);
     drain_events();
 
-    // Both file names and progress should be enabled
     info_log!(Name, 1, "large_file.bin");
     info_log!(Progress, 1, "50%");
     info_log!(Name, 1, "another_file.txt");
@@ -314,10 +310,8 @@ fn verbose_1_shows_deletions() {
     init(config);
     drain_events();
 
-    // Del flag is enabled at level 1
     assert!(info_gte(InfoFlag::Del, 1));
 
-    // Simulate file deletion messages
     info_log!(Del, 1, "deleting old_file.txt");
     info_log!(Del, 1, "deleting obsolete.bin");
 
@@ -345,7 +339,6 @@ fn verbose_1_shows_skipped_files() {
     init(config);
     drain_events();
 
-    // Nonreg flag is enabled at level 1 for skipping non-regular files
     assert!(info_gte(InfoFlag::Nonreg, 1));
 
     info_log!(Nonreg, 1, "skipping non-regular file \"device.pipe\"");
@@ -380,7 +373,6 @@ fn verbose_1_shows_only_transferred_files() {
     info_log!(Skip, 2, "file is uptodate");
 
     let events = drain_events();
-    // Only the 2 Name level 1 events should appear
     assert_eq!(events.len(), 2);
 }
 
@@ -466,7 +458,6 @@ fn verbose_1_handles_long_filenames() {
     init(config);
     drain_events();
 
-    // Create a very long filename
     let long_name = "a".repeat(500) + ".txt";
     info_log!(Name, 1, "{}", long_name);
 
@@ -475,7 +466,7 @@ fn verbose_1_handles_long_filenames() {
 
     match &events[0] {
         DiagnosticEvent::Info { message, .. } => {
-            assert_eq!(message.len(), 504); // 500 a's + .txt
+            assert_eq!(message.len(), 504);
         }
         _ => panic!("expected Info event"),
     }
@@ -488,7 +479,6 @@ fn verbose_1_handles_control_characters() {
     init(config);
     drain_events();
 
-    // Filenames with tabs, newlines should be handled
     info_log!(Name, 1, "file\twith\ttabs.txt");
     info_log!(Name, 1, "file\\nwith\\nescaped\\nnewlines.txt");
 
@@ -532,11 +522,9 @@ fn verbose_1_distinct_from_level_0() {
     let config0 = VerbosityConfig::from_verbose_level(0);
     let config1 = VerbosityConfig::from_verbose_level(1);
 
-    // Level 0 should not have Name output
     init(config0);
     assert!(!info_gte(InfoFlag::Name, 1));
 
-    // Level 1 should have Name output
     init(config1);
     assert!(info_gte(InfoFlag::Name, 1));
 }
@@ -547,12 +535,11 @@ fn verbose_1_distinct_from_level_2() {
     let config1 = VerbosityConfig::from_verbose_level(1);
     let config2 = VerbosityConfig::from_verbose_level(2);
 
-    // Level 1 should have Name at level 1, but not 2
     init(config1);
     assert!(info_gte(InfoFlag::Name, 1));
     assert!(!info_gte(InfoFlag::Name, 2));
 
-    // Level 2 should have Name at level 2 (itemize-changes)
+    // Level 2 enables Name at level 2 (itemize-changes).
     init(config2);
     assert!(info_gte(InfoFlag::Name, 2));
 }
@@ -564,12 +551,10 @@ fn verbose_1_no_debug_unlike_level_2() {
     let config1 = VerbosityConfig::from_verbose_level(1);
     let config2 = VerbosityConfig::from_verbose_level(2);
 
-    // Level 1 should have no debug
     init(config1);
     assert!(!debug_gte(DebugFlag::Flist, 1));
     assert!(!debug_gte(DebugFlag::Recv, 1));
 
-    // Level 2 should have debug enabled
     init(config2);
     assert!(debug_gte(DebugFlag::Flist, 1));
     assert!(debug_gte(DebugFlag::Recv, 1));

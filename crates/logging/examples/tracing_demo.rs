@@ -6,17 +6,14 @@
 use logging::{VerbosityConfig, init_tracing};
 
 fn main() {
-    // Initialize with verbosity level 2 (-vv)
     let config = VerbosityConfig::from_verbose_level(2);
     init_tracing(config);
 
-    // Now use standard tracing macros
     tracing::info!(target: "rsync::copy", "Starting file transfer");
     tracing::debug!(target: "rsync::flist", "Building file list: {} entries", 42);
     tracing::debug!(target: "rsync::delta", "Computing delta for large_file.dat");
     tracing::trace!(target: "rsync::io", "Read 4096 bytes from fd 3");
 
-    // Or use convenience macros
     logging::trace_copy!("Transferred file.txt ({} bytes)", 1234);
     logging::trace_stats!("Total: {} files, {} bytes", 10, 12345);
     logging::trace_proto!("Negotiated protocol version {}", 31);
