@@ -8,7 +8,10 @@ use signature::{FileSignature, SignatureAlgorithm, SignatureBlock};
 
 use super::compact_lookup::CompactLookup;
 use super::trace::{HashtableRole, trace_created, trace_growing};
-use super::{BitHash, DeltaSignatureIndex, NEXT_MATCH_NONE, TAG_TABLE_SIZE};
+use super::{
+    BitHash, CONSUMED_BITS_PER_WORD, DeltaSignatureIndex, NEXT_MATCH_NONE, TAG_TABLE_SIZE,
+    build_consumed_words,
+};
 
 /// Shared helper that indexes full-length blocks into the tag table, bithash,
 /// compact lookup table, and sequential-match successor links.
@@ -105,6 +108,7 @@ impl DeltaSignatureIndex {
         }
 
         let size = lookup.capacity();
+        let consumed = build_consumed_words(blocks.len());
         let index = Self {
             block_length,
             strong_length,
@@ -114,6 +118,7 @@ impl DeltaSignatureIndex {
             tag_table,
             bithash,
             next_match,
+            consumed,
             role,
             last_traced_size: size,
             #[cfg(any(test, feature = "bench-internal"))]
@@ -152,6 +157,15 @@ impl DeltaSignatureIndex {
         // across the per-NDX `rebuild` boundary.
         self.next_match.clear();
         self.next_match.resize(self.blocks.len(), NEXT_MATCH_NONE);
+        // ZSO-7 per-segment lifecycle: reset prune state so a new
+        // segment starts with no stale consumed bits. Resize when the
+        // new signature's block count changes the required word count.
+        let words_needed = self.blocks.len().div_ceil(CONSUMED_BITS_PER_WORD);
+        if self.consumed.len() == words_needed {
+            self.reset_consumed();
+        } else {
+            self.consumed = build_consumed_words(self.blocks.len());
+        }
         #[cfg(any(test, feature = "bench-internal"))]
         self.seq_match_counters.reset();
 
