@@ -934,7 +934,7 @@ mod strategy_tests {
     fn below_both_thresholds_picks_sequential() {
         // 50 files at 1 MiB total - well under file_count > 100 and
         // total_size > 64 MiB.
-        let strategy = ReceiverContext::select_receiver_strategy(50, 1 * 1024 * 1024);
+        let strategy = ReceiverContext::select_receiver_strategy(50, 1024 * 1024);
         assert_eq!(strategy, ReceiverStrategy::Sequential);
     }
 
@@ -942,7 +942,7 @@ mod strategy_tests {
     fn above_file_count_threshold_picks_parallel() {
         // 200 files at 1 MiB total - file_count > 100 trips parallel even
         // though total_size is small.
-        let strategy = ReceiverContext::select_receiver_strategy(200, 1 * 1024 * 1024);
+        let strategy = ReceiverContext::select_receiver_strategy(200, 1024 * 1024);
         assert_eq!(strategy, ReceiverStrategy::Parallel);
     }
 
