@@ -386,7 +386,7 @@ mod tests {
         };
         assert_eq!(state.next_name(), Some(OsString::from("only")));
         assert!(state.next_name().is_none());
-        assert!(state.next_name().is_none()); // Repeated calls still return None
+        assert!(state.next_name().is_none());
     }
 
     #[test]
@@ -476,7 +476,7 @@ mod tests {
         let dir = temp.path().join("reverse");
         std::fs::create_dir(&dir).expect("create dir");
 
-        // Create files named z, y, x, ... a to encourage reverse-order readdir
+        // Names are written z..a so that readdir tends to return them reversed.
         for ch in ('a'..='z').rev() {
             std::fs::write(dir.join(format!("{ch}.txt")), b"").expect("write");
         }
