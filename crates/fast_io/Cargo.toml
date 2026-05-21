@@ -244,3 +244,18 @@ harness = false
 name = "nvme_data_path_production"
 harness = false
 required-features = ["iouring-data-writes", "iouring-data-reads"]
+
+# Linux-only bench: IORING_OP_SEND_ZC vs plain IORING_OP_SEND on a loopback
+# TCP pair across four workload shapes (16 KiB x 10000, 256 KiB x 1000,
+# 1 MiB x 100, mixed 4 KiB-1 MiB x 1000). The send_plain group needs only
+# the `io_uring` feature (default on); the send_zc group is cfg-compiled in
+# only when `iouring-send-zc` is also enabled and skips at runtime on
+# kernels < 6.0. Gated by OC_RSYNC_BENCH_IUS_3=1 because each iteration
+# rebuilds the ring + loopback pair and the full sweep runs for several
+# minutes. See docs/design/ius-3-send-zc-bench-design-2026-05-21.md for the
+# bench design + decision criteria; numbers capture on the kernel matrix
+# (5.15 / 5.19 / 6.0 / 6.6 / 6.12) is the followup PR.
+[[bench]]
+name = "ius_3_send_zc_vs_send"
+harness = false
+required-features = ["io_uring"]
