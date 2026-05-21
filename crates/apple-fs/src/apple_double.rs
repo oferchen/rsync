@@ -59,21 +59,34 @@ pub const ENTRY_DESCRIPTOR_SIZE: usize = 12;
 /// Standard AppleDouble entry identifiers (RFC 1740 section 5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u32)]
-#[allow(missing_docs)]
 pub enum EntryId {
+    /// Data fork payload.
     DataFork = 1,
+    /// Resource fork payload (`com.apple.ResourceFork`).
     ResourceFork = 2,
+    /// Original filename in its native encoding.
     RealName = 3,
+    /// Standard Macintosh comment.
     Comment = 4,
+    /// Standard Macintosh black-and-white icon.
     IconBw = 5,
+    /// Standard Macintosh colour icon.
     IconColor = 6,
+    /// File creation, modification, and backup timestamps.
     FileDatesInfo = 8,
+    /// 32-byte Finder info block (`com.apple.FinderInfo`).
     FinderInfo = 9,
+    /// Macintosh-specific file attribute bits.
     MacFileInfo = 10,
+    /// ProDOS-specific file attribute bits.
     ProDosFileInfo = 11,
+    /// MS-DOS-specific file attribute bits.
     MsDosFileInfo = 12,
+    /// AFP-truncated short filename.
     ShortName = 13,
+    /// AFP-specific file information.
     AfpFileInfo = 14,
+    /// AFP directory identifier.
     DirectoryId = 15,
 }
 
