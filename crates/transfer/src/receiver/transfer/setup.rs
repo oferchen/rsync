@@ -151,6 +151,17 @@ impl ReceiverContext {
             None
         };
 
+        // SEC-1.e: open the destination root as a sandboxed dirfd carrier.
+        // The carrier rides through every per-entry operation so the
+        // SEC-1.f-j cutover sites can replace path-based syscalls with
+        // their `*at` siblings without re-walking the path through the
+        // kernel. This PR only threads the carrier; no syscalls are
+        // migrated, so a failed open is non-fatal (a brand-new
+        // destination root may not exist yet, and the existing
+        // path-based fall-backs cover that case today).
+        #[cfg(unix)]
+        let sandbox = open_sandbox_for_dest(&dest_dir);
+
         Ok((
             reader,
             file_count,
@@ -160,8 +171,37 @@ impl ReceiverContext {
                 checksum_length,
                 checksum_algorithm,
                 acl_cache,
+                #[cfg(unix)]
+                sandbox,
             },
         ))
+    }
+}
+
+/// Open the destination root as a [`fast_io::DirSandbox`] carrier.
+///
+/// Returns `Some(Arc<DirSandbox>)` when the path exists and resolves to
+/// a non-symlink directory the receiver can open. Returns `None` for any
+/// other outcome (path does not exist yet, path is a symlink, EACCES,
+/// etc.) so the receiver can keep running on the existing path-based
+/// fall-backs while the SEC-1.f-j cutover lands site by site.
+///
+/// Failures are logged at `Debug` level only; they are expected on
+/// first-run transfers where the destination is created later in
+/// `ensure_relative_parents` / `create_directories`.
+#[cfg(unix)]
+fn open_sandbox_for_dest(dest_dir: &std::path::Path) -> Option<Arc<fast_io::DirSandbox>> {
+    match fast_io::DirSandbox::open_root(dest_dir) {
+        Ok(sandbox) => Some(Arc::new(sandbox)),
+        Err(err) => {
+            logging::debug_log!(
+                Recv,
+                2,
+                "DirSandbox::open_root({}) failed: {err}; falling back to path-based syscalls",
+                dest_dir.display()
+            );
+            None
+        }
     }
 }
 
