@@ -48,6 +48,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(unix)]
+use fast_io::DirSandbox;
+
 use protocol::DeleteStats;
 
 use super::cohort_index::CohortIndex;
@@ -106,6 +109,16 @@ pub struct DeleteEmitter<F: DeleteFs> {
     /// arrives. `None` while the cursor is fully drained or not yet
     /// blocked.
     pending: Option<PathBuf>,
+    /// Optional [`DirSandbox`] anchor for the SEC-1.q sandbox-anchored
+    /// dispatch. When `Some`, every entry is removed through the
+    /// dirfd-bearing `*_at` trait methods so the parent walk cannot be
+    /// redirected by a mid-syscall symlink swap. The dirfd for each
+    /// plan directory is opened against [`DirSandbox::root_dirfd`] just
+    /// before dispatch; on open failure the emitter falls back to the
+    /// path-based methods so the drain stays compatible with the
+    /// pre-SEC-1.q caller contract.
+    #[cfg(unix)]
+    sandbox: Option<Arc<DirSandbox>>,
 }
 
 impl<F: DeleteFs> DeleteEmitter<F> {
@@ -133,7 +146,34 @@ impl<F: DeleteFs> DeleteEmitter<F> {
             cohort_log: Vec::new(),
             io_error: 0,
             pending: None,
+            #[cfg(unix)]
+            sandbox: None,
         }
+    }
+
+    /// Attaches a [`DirSandbox`] to this emitter so every subsequent
+    /// dispatch routes through the SEC-1.q dirfd-anchored trait methods.
+    ///
+    /// The dirfd for each plan directory is opened against
+    /// [`DirSandbox::root_dirfd`] just before dispatch and dropped after
+    /// the plan drains. On open failure (the plan directory was already
+    /// removed by an earlier plan, for example) the dispatcher falls
+    /// back to the path-based methods so callers that mix planned and
+    /// recursive deletes still make forward progress.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn with_sandbox(mut self, sandbox: Arc<DirSandbox>) -> Self {
+        self.sandbox = Some(sandbox);
+        self
+    }
+
+    /// Returns the attached [`DirSandbox`], if any. Used by tests that
+    /// assert the emitter is consulting the sandbox carrier the caller
+    /// handed it.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn sandbox(&self) -> Option<&Arc<DirSandbox>> {
+        self.sandbox.as_ref()
     }
 
     /// Builds an emitter that consults a hardlink-cohort snapshot for
@@ -269,11 +309,41 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// iterates the dirlist and keeps going after each per-entry
     /// failure.
     fn drain_plan(&mut self, plan: &DeletePlan) -> io::Result<()> {
+        // SEC-1.q: open the plan directory once via the sandbox so every
+        // entry under it can dispatch through the `*_at` trait methods.
+        // A failure to open the dirfd leaves `parent_fd` as `None` and
+        // each entry transparently falls back to the path-based methods.
+        #[cfg(unix)]
+        let parent_handle = self.open_plan_dirfd(&plan.directory);
         for entry in &plan.extras {
             let full = plan.directory.join(&entry.name);
-            self.run_entry(entry.kind, &full, entry.hardlink_cohort)?;
+            #[cfg(unix)]
+            let parent_fd = parent_handle.as_ref().map(std::os::fd::AsFd::as_fd);
+            #[cfg(not(unix))]
+            let parent_fd = None::<()>;
+            self.run_entry(
+                entry.kind,
+                &full,
+                &entry.name,
+                parent_fd,
+                entry.hardlink_cohort,
+            )?;
         }
         Ok(())
+    }
+
+    /// Opens a dirfd for `plan_directory` against the attached
+    /// [`DirSandbox`]'s root for SEC-1.q dispatch.
+    ///
+    /// Returns `None` when no sandbox is attached, when the plan
+    /// directory cannot be opened (already-removed parent during an
+    /// in-flight recursive drain), or when the platform does not expose
+    /// the `*at` syscall family.
+    #[cfg(unix)]
+    fn open_plan_dirfd(&self, plan_directory: &Path) -> Option<std::os::fd::OwnedFd> {
+        let sandbox = self.sandbox.as_ref()?;
+        let relative = plan_directory_to_relative(plan_directory);
+        open_dir_at(sandbox.root_dirfd(), relative).ok()
     }
 
     /// Issues one [`DeleteFs`] call, updates stats on success, and
@@ -281,13 +351,29 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// returning `Err`; non-fatal failures under the default policy
     /// record `io_error` and return `Ok(())` so the caller's loop
     /// continues.
+    ///
+    /// `parent_fd` carries the SEC-1.q sandbox dirfd anchor for the
+    /// containing plan directory. When `Some`, the dispatcher routes
+    /// through the dirfd-anchored `*_at` trait methods; when `None`,
+    /// the dispatcher uses the path-based fallback. `leaf` is the
+    /// single-component leaf name (`entry.name`); `path` is the
+    /// absolute reconstruction used by the path-based fallback and by
+    /// the cohort log.
     fn run_entry(
         &mut self,
         kind: DeleteEntryKind,
         path: &Path,
+        #[cfg(unix)] leaf: &std::ffi::OsStr,
+        #[cfg(not(unix))] _leaf: &std::ffi::OsStr,
+        #[cfg(unix)] parent_fd: Option<std::os::fd::BorrowedFd<'_>>,
+        #[cfg(not(unix))] _parent_fd: Option<()>,
         cohort: Option<HardlinkCohortId>,
     ) -> io::Result<()> {
-        match self.dispatch(kind, path) {
+        #[cfg(unix)]
+        let outcome = self.dispatch(kind, path, parent_fd, leaf);
+        #[cfg(not(unix))]
+        let outcome = self.dispatch(kind, path);
+        match outcome {
             Ok(()) => {
                 Self::increment_stat(&mut self.stats, kind);
                 self.record_cohort_dispatch(path, kind, cohort);
@@ -335,6 +421,33 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// Dispatches one planned entry. Directories route through
     /// [`Self::dispatch_dir`] so the `ENOTEMPTY` fallback can recurse via
     /// a nested plan or [`DeleteFs::remove_dir_all`].
+    ///
+    /// On Unix, `parent_fd` and `leaf` together carry the SEC-1.q
+    /// sandbox anchor: when `parent_fd` is `Some`, the dispatcher
+    /// routes through the dirfd-anchored `*_at` trait methods,
+    /// otherwise it uses the path-based fallback.
+    #[cfg(unix)]
+    fn dispatch(
+        &mut self,
+        kind: DeleteEntryKind,
+        path: &Path,
+        parent_fd: Option<std::os::fd::BorrowedFd<'_>>,
+        leaf: &std::ffi::OsStr,
+    ) -> io::Result<()> {
+        match (kind, parent_fd) {
+            (DeleteEntryKind::File, Some(fd)) => self.fs.unlink_file_at(fd, leaf),
+            (DeleteEntryKind::Symlink, Some(fd)) => self.fs.unlink_symlink_at(fd, leaf),
+            (DeleteEntryKind::Device, Some(fd)) => self.fs.unlink_device_at(fd, leaf),
+            (DeleteEntryKind::Special, Some(fd)) => self.fs.unlink_special_at(fd, leaf),
+            (DeleteEntryKind::Dir, _) => self.dispatch_dir(path, parent_fd, leaf),
+            (DeleteEntryKind::File, None) => self.fs.unlink_file(path),
+            (DeleteEntryKind::Symlink, None) => self.fs.unlink_symlink(path),
+            (DeleteEntryKind::Device, None) => self.fs.unlink_device(path),
+            (DeleteEntryKind::Special, None) => self.fs.unlink_special(path),
+        }
+    }
+
+    #[cfg(not(unix))]
     fn dispatch(&mut self, kind: DeleteEntryKind, path: &Path) -> io::Result<()> {
         match kind {
             DeleteEntryKind::File => self.fs.unlink_file(path),
@@ -352,13 +465,45 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     /// [`DeleteFs::remove_dir_all`] when no plan was published (upstream
     /// `delete.c:48-122 delete_dir_contents`). The retried `rmdir` after
     /// a successful drain matches `delete_item`'s second pass.
+    #[cfg(unix)]
+    fn dispatch_dir(
+        &mut self,
+        path: &Path,
+        parent_fd: Option<std::os::fd::BorrowedFd<'_>>,
+        leaf: &std::ffi::OsStr,
+    ) -> io::Result<()> {
+        let rmdir_result = match parent_fd {
+            Some(fd) => self.fs.rmdir_at(fd, leaf),
+            None => self.fs.rmdir(path),
+        };
+        match rmdir_result {
+            Ok(()) => Ok(()),
+            Err(err) if is_not_empty(&err) => {
+                if let Some(plan) = self.plans.take(path) {
+                    self.drain_plan(&plan)?;
+                    // Retry the rmdir now that the contents are gone.
+                    match parent_fd {
+                        Some(fd) => self.fs.rmdir_at(fd, leaf),
+                        None => self.fs.rmdir(path),
+                    }
+                } else {
+                    match parent_fd {
+                        Some(fd) => self.fs.remove_dir_all_at(fd, leaf),
+                        None => self.fs.remove_dir_all(path),
+                    }
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    #[cfg(not(unix))]
     fn dispatch_dir(&mut self, path: &Path) -> io::Result<()> {
         match self.fs.rmdir(path) {
             Ok(()) => Ok(()),
             Err(err) if is_not_empty(&err) => {
                 if let Some(plan) = self.plans.take(path) {
                     self.drain_plan(&plan)?;
-                    // Retry the rmdir now that the contents are gone.
                     self.fs.rmdir(path)
                 } else {
                     self.fs.remove_dir_all(path)
@@ -417,4 +562,76 @@ fn is_not_empty(err: &io::Error) -> bool {
     // ENOTEMPTY is 39 on Linux, 66 on BSD/macOS. Keep the check raw so
     // it works on any platform without a libc dep.
     matches!(err.raw_os_error(), Some(39) | Some(66))
+}
+
+/// Strips any leading path separators from `plan_directory` so it can be
+/// passed to a sandbox-anchored `openat(2)`.
+///
+/// Plan directories are constructed as destination-relative paths in the
+/// receiver, but emitter unit tests build them as plain `PathBuf`s that
+/// may or may not include a leading separator. The sandbox `openat`
+/// helpers require a relative path; an absolute leaf bypasses the
+/// dirfd anchor and would defeat the security posture.
+#[cfg(unix)]
+fn plan_directory_to_relative(plan_directory: &Path) -> &Path {
+    use std::path::Component;
+    let stripped = plan_directory.components().skip_while(|c| {
+        matches!(
+            c,
+            Component::RootDir | Component::Prefix(_) | Component::CurDir
+        )
+    });
+    let original = stripped.as_path();
+    if original.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        original
+    }
+}
+
+/// Open `relative` as a directory off `parent_fd` using
+/// [`fast_io::openat`] with `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC`.
+///
+/// Multi-component `relative` paths walk component-by-component so each
+/// step refuses to follow a terminal symlink, matching the SEC-1.s
+/// recursive peel's descent policy. An empty or `.` relative re-opens
+/// `parent_fd` itself via `openat(parent_fd, ".", O_DIRECTORY)` so the
+/// caller always receives an `OwnedFd` it can borrow uniformly.
+#[cfg(unix)]
+fn open_dir_at(
+    parent_fd: std::os::fd::BorrowedFd<'_>,
+    relative: &Path,
+) -> io::Result<std::os::fd::OwnedFd> {
+    use std::ffi::OsStr;
+    use std::os::fd::{AsFd, OwnedFd};
+    use std::path::Component;
+
+    let flags = libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_RDONLY | libc::O_CLOEXEC;
+
+    let mut current: Option<OwnedFd> = None;
+    let mut walked = false;
+    for component in relative.components() {
+        match component {
+            Component::Normal(name) => {
+                walked = true;
+                let anchor = current.as_ref().map_or(parent_fd, |fd| fd.as_fd());
+                let file = fast_io::openat(anchor, name, flags, 0)?;
+                current = Some(file.into());
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(io::Error::from_raw_os_error(libc::EINVAL));
+            }
+        }
+    }
+
+    if !walked {
+        // No real descent: re-open `parent_fd` as "." so the caller's
+        // borrow signature is uniform whether or not descent happened.
+        let dot = OsStr::new(".");
+        let file = fast_io::openat(parent_fd, dot, flags, 0)?;
+        return Ok(file.into());
+    }
+
+    Ok(current.expect("walked descent always produces a dirfd"))
 }
