@@ -225,19 +225,34 @@ impl SshCommand {
     /// `--compress` is enabled: compressing twice wastes CPU and can
     /// expand already-compressed data.
     ///
-    /// Detection is conservative and inspects the explicit command-line
-    /// arguments only - it does not parse `~/.ssh/config`, since the SSH
-    /// client merges that file at spawn time and we cannot reliably read it.
-    /// `-C` and `-o Compression=...` cover the cases users set on the
-    /// rsync invocation itself (via `-e ssh -C` / `--rsh`).
+    /// Detection inspects the explicit command-line arguments first.
+    /// When the `ssh-config-parse` feature is enabled (on by default)
+    /// and the argv check is inconclusive, the lookup also consults the
+    /// user's `~/.ssh/config` (or the file supplied via `-F`) and
+    /// `/etc/ssh/ssh_config`. Only top-level directives and `Host *`
+    /// blocks are honoured - per-host `Host foo` and `Match` blocks
+    /// need runtime context the warning site does not have and are
+    /// intentionally skipped to avoid false positives.
     ///
     /// Truthy values for `Compression`: `yes`, `true`, `1`, case-insensitive.
     #[must_use]
     pub fn has_ssh_compression(&self) -> bool {
-        self.options
+        if self
+            .options
             .iter()
             .enumerate()
             .any(|(idx, opt)| arg_enables_ssh_compression(opt, self.options.get(idx + 1)))
+        {
+            return true;
+        }
+        #[cfg(feature = "ssh-config-parse")]
+        {
+            return super::config_lookup::ssh_config_enables_compression(&self.options);
+        }
+        #[cfg(not(feature = "ssh-config-parse"))]
+        {
+            false
+        }
     }
 
     /// Configures the comma-separated list of OpenSSH ProxyJump hosts.
