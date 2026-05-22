@@ -34,6 +34,31 @@ pub fn trace_default_perms_for_dir(perms: u32, dir: &str) {
     );
 }
 
+/// Traces a UID remap for a named ACL entry (level 2).
+///
+/// upstream: `uidlist.c:287-291` - `"uid %u(%s) maps to %u\n"`, emitted by
+/// `recv_add_id()` under `DEBUG_GTE(OWN, 2)` whenever an inbound ACL or file
+/// list entry's wire UID is resolved against the local NSS database. When
+/// `getpwnam_r` finds the wire name, `mapped` is the local UID; when it does
+/// not, upstream falls back to `id2 = id` at `uidlist.c:282`, so the
+/// emission still fires with `mapped == wire`. The receiver passes the
+/// resolved UID straight to `sys_acl_set_info()` (`acls.c:404`) without
+/// dropping the entry.
+#[inline]
+pub fn trace_acl_uid_remap(wire: u32, name: &str, mapped: u32) {
+    debug_log!(Own, 2, "uid {}({}) maps to {}", wire, name, mapped);
+}
+
+/// Traces a GID remap for a named ACL entry (level 2).
+///
+/// upstream: `uidlist.c:287-291` - `"gid %u(%s) maps to %u\n"`, emitted by
+/// `recv_add_id()` under `DEBUG_GTE(OWN, 2)` for inbound group entries.
+/// Mirrors the UID variant in [`trace_acl_uid_remap`].
+#[inline]
+pub fn trace_acl_gid_remap(wire: u32, name: &str, mapped: u32) {
+    debug_log!(Own, 2, "gid {}({}) maps to {}", wire, name, mapped);
+}
+
 #[cfg(test)]
 mod tests {
     //! Pinning tests for ACL emission shapes. Strings match upstream
@@ -61,6 +86,27 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    fn own_messages() -> Vec<String> {
+        drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Own,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn init_own_at(level: u8) {
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.own = level;
+        init(cfg);
+        let _ = drain_events();
     }
 
     #[test]
@@ -99,6 +145,47 @@ mod tests {
         assert_eq!(
             m[0],
             "got ACL-based default perms 750 for directory /var/spool"
+        );
+    }
+
+    #[test]
+    fn acl_uid_remap_wire_shape() {
+        // upstream: uidlist.c:287-291 - "uid %u(%s) maps to %u"
+        init_own_at(2);
+        trace_acl_uid_remap(1000, "alice", 1500);
+        trace_acl_uid_remap(99999, "ghost", 99999);
+        let m = own_messages();
+        assert!(
+            m.iter().any(|s| s == "uid 1000(alice) maps to 1500"),
+            "missing alice mapping: {m:?}"
+        );
+        assert!(
+            m.iter().any(|s| s == "uid 99999(ghost) maps to 99999"),
+            "missing ghost fallthrough mapping: {m:?}"
+        );
+    }
+
+    #[test]
+    fn acl_gid_remap_wire_shape() {
+        // upstream: uidlist.c:287-291 - "gid %u(%s) maps to %u"
+        init_own_at(2);
+        trace_acl_gid_remap(100, "users", 200);
+        let m = own_messages();
+        assert!(
+            m.iter().any(|s| s == "gid 100(users) maps to 200"),
+            "missing gid mapping: {m:?}"
+        );
+    }
+
+    #[test]
+    fn acl_id_remap_gated_below_level_two() {
+        // upstream: DEBUG_GTE(OWN, 2) - level 1 must suppress the emission.
+        init_own_at(1);
+        trace_acl_uid_remap(1000, "alice", 1500);
+        trace_acl_gid_remap(100, "users", 200);
+        assert!(
+            own_messages().is_empty(),
+            "level 1 must suppress OWN/2 emission"
         );
     }
 }
