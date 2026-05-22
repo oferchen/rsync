@@ -189,6 +189,22 @@ pub mod iocp;
 #[path = "iocp_stub/mod.rs"]
 pub mod iocp;
 
+/// Landlock LSM defense-in-depth allowlist for the daemon receiver path
+/// (SEC-1.p).
+///
+/// On Linux with the `landlock` feature, exposes `restrict_to_module_paths`
+/// which engages a kernel-enforced allowlist above the SEC-1 `*at` helpers.
+/// On every other target (or with the feature disabled) a stub module
+/// compiles with the same public surface: every call returns `Unavailable`
+/// so cross-platform callers share a single code path. See
+/// `docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md` for the
+/// kernel-version matrix and integration plan.
+#[cfg(all(target_os = "linux", feature = "landlock"))]
+pub mod landlock;
+#[cfg(not(all(target_os = "linux", feature = "landlock")))]
+#[path = "landlock_stub.rs"]
+pub mod landlock;
+
 /// macOS `kqueue`-based event loop primitive.
 ///
 /// Exposes a thin safe wrapper over `kqueue(2)` / `kevent(2)` used as

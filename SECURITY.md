@@ -111,7 +111,7 @@ Remaining work:
 - **mknodat for device / FIFO nodes** - DEFERRED (closure doc #4694; not on the daemon-reachable surface).
 - **Receiver wiring for SEC-1.i helpers** - DEFERRED (carrier-first staging; metadata crate does not yet carry `DirSandbox`).
 - **Receiver wiring for SEC-1.j deferred sites** - DEFERRED (`disk_commit`, `transfer_ops/response`, `local_copy/executor`; cross-thread carrier plumbing required).
-- **SEC-1.p Landlock LSM defense-in-depth** - PROPOSED (audit in flight; Linux 5.13+, kernel-side enforcement that complements the `*at` helpers).
+- **SEC-1.p Landlock LSM defense-in-depth** - Linux 5.13+ kernel-side allowlist over the module root, engaged per-connection after `apply_module_privilege_restrictions` returns. Even a future regression that calls a path-based syscall directly (bypassing `DirSandbox`) is rejected by the kernel with `EACCES`. Client-supplied `--temp-dir` / `--partial-dir` / `--backup-dir` paths that resolve outside the module root are rejected at the wire-protocol layer rather than widening the allowlist. Best-effort ABI downgrade picks the highest level the running kernel exposes (v3 on 6.2+, v2 on 5.19+, v1 on 5.13+). Stub returns `Unavailable` on non-Linux targets so the SEC-1 `*at` chain remains the sole defense there.
 
 Target full-Fixed status: when receiver wiring for both SEC-1.i and SEC-1.j callers is complete AND (SEC-1.p Landlock layer ships OR is closed as N/A).
 

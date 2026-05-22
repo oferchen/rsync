@@ -131,6 +131,9 @@ jobs:
           - name: copy_file_range
             args: "-p fast_io --features copy_file_range"
             apt: ""
+          - name: landlock
+            args: "-p fast_io --features landlock"
+            apt: ""
           - name: openssl
             args: "-p checksums --features openssl"
             apt: "libssl-dev pkg-config"

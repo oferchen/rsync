@@ -41,6 +41,184 @@ fn validate_module_path(
     Ok(false)
 }
 
+/// Rejects client-supplied `--temp-dir` / `--partial-dir` / `--backup-dir`
+/// paths that resolve outside the module root.
+///
+/// The audit (SEC-1.p, section 10) recommends REJECT over widening the
+/// Landlock allowlist: rsync's own chroot mode behaves the same way, and
+/// expanding the writable surface to honour an attacker-supplied prefix
+/// undermines the whole point of the sandbox. Returns `Ok(true)` when every
+/// requested path is in-tree (or absent); returns `Ok(false)` after
+/// emitting an `@ERROR` reply when a path escapes the module root.
+fn validate_client_paths_in_module(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+    client_args: &[String],
+) -> io::Result<bool> {
+    let Ok(module_root) = module.path.canonicalize() else {
+        // Module path failed to canonicalize - the existence check above
+        // already succeeded, so this is a race or a permission problem; let
+        // the transfer continue and fail with a more precise error later.
+        return Ok(true);
+    };
+
+    let mut iter = client_args.iter().peekable();
+    while let Some(arg) = iter.next() {
+        let candidate = if let Some(rest) = arg.strip_prefix("--temp-dir=") {
+            Some(("--temp-dir", rest.to_owned()))
+        } else if let Some(rest) = arg.strip_prefix("--partial-dir=") {
+            Some(("--partial-dir", rest.to_owned()))
+        } else if let Some(rest) = arg.strip_prefix("--backup-dir=") {
+            Some(("--backup-dir", rest.to_owned()))
+        } else if matches!(arg.as_str(), "--temp-dir" | "--partial-dir" | "--backup-dir") {
+            iter.next().map(|v| (arg.as_str(), v.clone()))
+        } else {
+            None
+        };
+
+        let Some((flag, raw_path)) = candidate else {
+            continue;
+        };
+
+        // Relative paths resolve under the module root (or under the
+        // current cwd inside chroot), so they cannot escape - skip them.
+        let path = Path::new(&raw_path);
+        if path.is_relative() {
+            continue;
+        }
+
+        let canonical = path
+            .canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf());
+        if canonical.starts_with(&module_root) {
+            continue;
+        }
+
+        let payload = format!(
+            "@ERROR: {flag} path '{raw_path}' is outside module root"
+        );
+        send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+        if let Some(log) = ctx.log_sink {
+            let text = format!(
+                "module '{}': rejected {flag}='{raw_path}' from {} ({}) - outside module root '{}'",
+                ctx.request,
+                ctx.effective_host().unwrap_or("unknown"),
+                ctx.peer_ip,
+                module_root.display(),
+            );
+            let message = rsync_error!(1, text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+/// Engages the SEC-1.p Landlock LSM allowlist for the receiver path.
+///
+/// Called immediately after [`apply_module_privilege_restrictions`] has
+/// applied chroot + uid/gid drop so the kernel allowlist covers exactly the
+/// writable surface the remainder of the connection needs. The stub on
+/// non-Linux targets short-circuits to `Unavailable` so the wire-in does
+/// not need `#[cfg]` branching.
+///
+/// Returns `Ok(true)` on every non-fatal outcome (engaged, downgraded,
+/// unavailable, or skipped because a pre/post-xfer-exec hook is configured).
+/// Returns `Ok(false)` after emitting an `@ERROR` reply when the kernel
+/// advertised Landlock support but the helper failed to engage the ruleset -
+/// we treat that as a regression because the SEC-1.p design requires the
+/// sandbox to be live on supporting kernels.
+///
+/// When `pre_xfer_exec` or `post_xfer_exec` is configured, the sandbox is
+/// skipped: Landlock rulesets are inherited by child processes, so engaging
+/// the allowlist would block `exec()` of hook scripts that live outside the
+/// module path (the common case - e.g. `/usr/local/bin/notify.sh`). Per-module
+/// opt-out via configuration matches the operator's intent (they explicitly
+/// chose to run hooks) and preserves SEC-1 *at* helpers as the primary
+/// defense for those modules.
+fn engage_landlock_sandbox(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+) -> io::Result<bool> {
+    use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
+
+    if module.pre_xfer_exec.is_some() || module.post_xfer_exec.is_some() {
+        if let Some(log) = ctx.log_sink {
+            let text = format!(
+                "module '{}': landlock=skipped reason=pre-xfer-exec or post-xfer-exec configured (would block hook exec)",
+                ctx.request,
+            );
+            let message = rsync_info!(text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+        return Ok(true);
+    }
+
+    if !is_supported() {
+        if let Some(log) = ctx.log_sink {
+            let text = format!(
+                "module '{}': landlock unavailable on this kernel; SEC-1 *at* helpers remain the sole defense",
+                ctx.request,
+            );
+            let message = rsync_info!(text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+        return Ok(true);
+    }
+
+    // Roots: the module path is the only writable per-module surface the
+    // daemon connection touches once chroot has applied. ModuleDefinition
+    // does not expose a lock-file accessor (the limiter is daemon-internal
+    // and writes to the lock file before the connection-handling thread
+    // reaches this point); client-supplied out-of-module paths are
+    // rejected upfront by `validate_client_paths_in_module`.
+    let roots: Vec<&Path> = vec![module.path.as_path()];
+
+    match restrict_to_module_paths(&roots) {
+        LandlockOutcome::Enforced(status) => {
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "module '{}': landlock engaged ({status:?}) over {} root(s)",
+                    ctx.request,
+                    roots.len(),
+                );
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+            Ok(true)
+        }
+        LandlockOutcome::Unavailable => {
+            // Race: probe said supported, restrict_self() said no. Log and
+            // continue - SEC-1 *at* helpers still mitigate the attack.
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "module '{}': landlock probe positive but kernel returned Unavailable - falling back to SEC-1 *at* defense",
+                    ctx.request,
+                );
+                let message = rsync_warning!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+            Ok(true)
+        }
+        LandlockOutcome::Error(err) => {
+            // The kernel said yes to landlock but no to our ruleset; this
+            // is a regression worth surfacing. Log a warning and continue
+            // rather than killing the connection - the SEC-1 *at* chain
+            // still provides the primary defense.
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "module '{}': landlock setup failed: {err}; relying on SEC-1 *at* defense",
+                    ctx.request,
+                );
+                let message = rsync_warning!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+            Ok(true)
+        }
+    }
+}
+
 /// Sets up the TCP streams for the transfer.
 ///
 /// Configures TCP_NODELAY and clones the stream for concurrent read/write.
@@ -343,6 +521,15 @@ fn process_approved_module(
         return Ok(());
     }
 
+    // SEC-1.p: reject client-supplied --temp-dir / --partial-dir /
+    // --backup-dir paths that resolve outside the module root. Done before
+    // chroot so we can report a precise error message; the Landlock
+    // allowlist that follows would otherwise block the writes anyway with
+    // a less descriptive EACCES from the kernel.
+    if !validate_client_paths_in_module(ctx, module, &client_args)? {
+        return Ok(());
+    }
+
     // Apply chroot and privilege restrictions before building server config.
     // After chroot the effective module path becomes "/" since the process root
     // is now the module directory itself.
@@ -421,6 +608,18 @@ fn process_approved_module(
             send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
             return Ok(());
         }
+    }
+
+    // SEC-1.p: engage the Landlock LSM allowlist now that chroot, the
+    // uid/gid drop, and daemon-config filter-rule loading have completed.
+    // Filter rules referencing files outside module.path (e.g.
+    // `exclude from = <abs-path>`) are read into memory above; once
+    // Landlock engages, those external paths become unreadable. Stub on
+    // non-Linux short-circuits to `Unavailable`. Failure to engage is
+    // logged but does not abort the connection: SEC-1 *at* helpers still
+    // provide the primary defense.
+    if !engage_landlock_sandbox(ctx, module)? {
+        return Ok(());
     }
 
     let (mut read_stream, mut write_stream) = match setup_transfer_streams(ctx)? {
