@@ -550,14 +550,6 @@ fn process_approved_module(
         }
     }
 
-    // SEC-1.p: engage the Landlock LSM allowlist now that chroot and the
-    // uid/gid drop have completed. Stub on non-Linux short-circuits to
-    // `Unavailable`. Failure to engage is logged but does not abort the
-    // connection: SEC-1 *at* helpers still provide the primary defense.
-    if !engage_landlock_sandbox(ctx, module)? {
-        return Ok(());
-    }
-
     // upstream: clientserver.c:962-969 - spawn name converter after privilege
     // reduction so it runs with reduced privileges inside the chroot.
     #[cfg(unix)]
@@ -616,6 +608,18 @@ fn process_approved_module(
             send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
             return Ok(());
         }
+    }
+
+    // SEC-1.p: engage the Landlock LSM allowlist now that chroot, the
+    // uid/gid drop, and daemon-config filter-rule loading have completed.
+    // Filter rules referencing files outside module.path (e.g.
+    // `exclude from = <abs-path>`) are read into memory above; once
+    // Landlock engages, those external paths become unreadable. Stub on
+    // non-Linux short-circuits to `Unavailable`. Failure to engage is
+    // logged but does not abort the connection: SEC-1 *at* helpers still
+    // provide the primary defense.
+    if !engage_landlock_sandbox(ctx, module)? {
+        return Ok(());
     }
 
     let (mut read_stream, mut write_stream) = match setup_transfer_streams(ctx)? {
