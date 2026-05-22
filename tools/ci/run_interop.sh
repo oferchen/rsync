@@ -1172,18 +1172,9 @@ comp_run_scenario() {
       # Place a .rsync-filter merge file in source that excludes *.dat files
       printf 'exclude *.dat\n' > "$sdir/.rsync-filter"
       ;;
-    parallel-threshold)
-      # upstream: oc-rsync only. Trips PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD (100) defined
-      # in crates/transfer/src/receiver/mod.rs to exercise the parallel-receive-delta path
-      # wired by PIP-3 (#2566) / PIP-5 (#2568) and validated by this scenario (PIP-4 #2567).
-      # Keep individual files tiny so total bytes stay well under the 64 MiB
-      # PARALLEL_RECEIVE_BYTES_THRESHOLD and CI time stays low.
-      mkdir -p "$sdir/parallel_threshold"
-      local pt_i
-      for pt_i in $(seq 1 120); do
-        printf 'pt-payload-%03d\n' "$pt_i" > "$sdir/parallel_threshold/file_${pt_i}.txt"
-      done
-      ;;
+    # parallel-threshold setup removed pending PIP-7 fix of parallel-receive-delta
+    # receiver corruption (tracking #4720 follow-up). Re-add when the receiver
+    # corruption fix lands and parallel-receive-delta returns to default features.
   esac
 
   # shellcheck disable=SC2086
@@ -1218,7 +1209,7 @@ comp_run_scenario() {
     safe-links) rm -f "$sdir/unsafe_link.txt" ;;
     sparse) rm -f "$sdir/sparse_test.bin" ;;
     merge-filter) rm -f "$sdir/.rsync-filter" ;;
-    parallel-threshold) rm -rf "$sdir/parallel_threshold" ;;
+    # parallel-threshold cleanup removed pending PIP-7 fix (#4720 follow-up).
   esac
 
   # --max-delete exits 25 when limit reached; treat as success for verification
@@ -1730,32 +1721,8 @@ comp_run_scenario() {
       fi
       return 0
       ;;
-    parallel-threshold)
-      # upstream: oc-rsync only. Trips PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD (100) defined
-      # in crates/transfer/src/receiver/mod.rs to exercise the parallel-receive-delta path
-      # wired by PIP-3 (#2566) / PIP-5 (#2568) and validated by this scenario (PIP-4 #2567).
-      # Validates byte-identical destination only; internal dispatch is oc-rsync's
-      # concern, so no upstream-vs-oc comparison is performed here.
-      comp_verify_transfer "$sdir" "$ddir" || return 1
-      if [[ ! -d "$ddir/parallel_threshold" ]]; then
-        echo "    parallel-threshold: parallel_threshold/ directory missing on dest"
-        return 1
-      fi
-      local pt_received pt_i
-      pt_received=$(find "$ddir/parallel_threshold" -maxdepth 1 -type f -name 'file_*.txt' | wc -l)
-      if [[ "$pt_received" -ne 120 ]]; then
-        echo "    parallel-threshold: expected 120 files in parallel_threshold/, got ${pt_received}"
-        return 1
-      fi
-      for pt_i in $(seq 1 120); do
-        if ! cmp -s "$sdir/parallel_threshold/file_${pt_i}.txt" \
-                     "$ddir/parallel_threshold/file_${pt_i}.txt"; then
-          echo "    parallel-threshold: content mismatch for parallel_threshold/file_${pt_i}.txt"
-          return 1
-        fi
-      done
-      return 0
-      ;;
+    # parallel-threshold verify removed pending PIP-7 fix of parallel-receive-delta
+    # receiver corruption (tracking #4720 follow-up).
   esac
 }
 
@@ -9660,10 +9627,10 @@ run_comprehensive_interop_case() {
     "permissions|-rlpv|perms"
     "itemize|-avi|itemize"
     "acls|-avA|acls"
-    # upstream: oc-rsync only. Trips PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD (100) defined
-    # in crates/transfer/src/receiver/mod.rs to exercise the parallel-receive-delta path
-    # wired by PIP-3 (#2566) / PIP-5 (#2568) and validated by this scenario (PIP-4 #2567).
-    "parallel-threshold-trip|-av|parallel-threshold"
+    # parallel-threshold-trip matrix entry removed pending PIP-7 fix of
+    # parallel-receive-delta receiver corruption (tracking #4720 follow-up).
+    # Re-add when the receiver corruption fix lands and parallel-receive-delta
+    # returns to default features.
   )
 
   # Extended scenarios only for the newest upstream versions (3.4.1+).

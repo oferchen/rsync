@@ -55,7 +55,8 @@ windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 libc = { workspace = true }
 
 [features]
-default = ["zstd", "lz4", "xattr", "lazy-metadata", "parallel-receive-delta"]
+# parallel-receive-delta deferred from default per PIP-4 #4720 finding: receiver corrupts file_1.txt when threshold (100 files) is crossed; re-enable after PIP-7 fix.
+default = ["zstd", "lz4", "xattr", "lazy-metadata"]
 
 # ============================================================================
 # Compression Features

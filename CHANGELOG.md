@@ -95,7 +95,7 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 - Cross-platform CI hazard preflight audit (#4427).
 - BR-6 beta-readiness sign-off check-in (#4692)
 - Close WPG-1 as deferred to post-beta Windows hardware capture (#4688)
-- Close PIP-4: interop suite exercises parallel-receive-delta path via PIP-5 default flip (#4689)
+- Close PIP-4: interop suite exercises parallel-receive-delta path via PIP-5 default flip (#4689) [DEFERRED pending PIP-7 fix: default flip reverted after receiver-corruption regression surfaced by the PIP-4 scenario]
 - Close FFB-3/FFB-4/PIP-2 as satisfied by FFB-1 design + PIP-3+5 wire-up (#4677)
 - Close RJN-4 as N/A after RJN-3 was rename-only (#4686)
 - Defer RJN-3 (fanout) and RJN-4 (bench) as N/A after RJN-2 rename (#4676)
