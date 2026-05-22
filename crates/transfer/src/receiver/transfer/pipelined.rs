@@ -57,7 +57,12 @@ impl ReceiverContext {
         let mut delete_stats = DeleteStats::new();
         let mut delete_limit_exceeded = false;
         if self.config.flags.delete {
-            let (ds, exceeded) = self.delete_extraneous_files(&setup.dest_dir, writer)?;
+            let (ds, exceeded) = self.delete_extraneous_files(
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_ref(),
+                writer,
+            )?;
             delete_stats = ds;
             delete_limit_exceeded = exceeded;
         }
