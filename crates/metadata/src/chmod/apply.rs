@@ -1,3 +1,9 @@
+//! Evaluator that applies parsed [`Clause`] modifiers to a mode value.
+//!
+//! Implements both numeric and symbolic chmod semantics matching GNU `chmod`,
+//! including conditional-exec (`X`), copy directives (e.g. `g=u`), and the
+//! upstream-defined target selectors (`F`, `D`).
+
 use super::spec::Clause;
 
 #[cfg(unix)]

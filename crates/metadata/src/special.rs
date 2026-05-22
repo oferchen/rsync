@@ -1,3 +1,10 @@
+//! FIFO, socket, and device-node creation helpers.
+//!
+//! Mirrors upstream rsync's `syscall.c:do_mknod()` for materialising special
+//! files before metadata is applied. Includes `--fake-super` placeholder
+//! substitution so unprivileged users can preserve privileged metadata via
+//! the `user.rsync.%stat` xattr instead of issuing `mknod(2)`.
+
 use crate::error::MetadataError;
 use std::fs;
 use std::io;

@@ -1,3 +1,9 @@
+//! Parser for `--chmod` specifications.
+//!
+//! Splits comma-separated clauses, recognises optional `D`/`F` target
+//! selectors, and dispatches each clause to the numeric or symbolic
+//! parser. Errors produce [`ChmodError`] with the offending clause text.
+
 use super::{
     ChmodError,
     spec::{

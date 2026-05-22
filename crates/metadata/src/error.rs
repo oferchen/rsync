@@ -1,3 +1,8 @@
+//! [`MetadataError`] type used by every fallible operation in the crate.
+//!
+//! Pairs a static context string, the affected path, and the underlying
+//! [`io::Error`] so higher layers can render upstream-compatible diagnostics.
+
 use std::io;
 use std::path::{Path, PathBuf};
 

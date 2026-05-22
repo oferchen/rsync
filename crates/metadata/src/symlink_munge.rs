@@ -1,3 +1,9 @@
+//! Symlink munging helpers for daemon-mode security.
+//!
+//! Mirrors upstream rsync's `clientserver.c:munge_symlink()` /
+//! `unmunge_symlink()` so symlink targets received over the wire cannot
+//! escape the module root when `use chroot = no`.
+
 /// Prefix prepended to symlink targets when munging is active.
 ///
 /// Upstream rsync uses this exact prefix in `clientserver.c` to prevent
