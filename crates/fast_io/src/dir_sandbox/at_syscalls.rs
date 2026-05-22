@@ -1534,7 +1534,24 @@ pub fn recursive_unlinkat_via_sandbox_or_fallback(
 /// pointing back at the leaf (Linux + `CAP_SYS_ADMIN` only) is
 /// short-circuited before any destructive syscall fires inside the
 /// cycle.
-fn recursive_unlinkat(parent_dirfd: BorrowedFd<'_>, leaf: &OsStr) -> io::Result<()> {
+///
+/// Direct-dirfd entry point for callers that already hold the parent
+/// dirfd and a single-component leaf (SEC-1.q `DeleteFs::remove_dir_all_at`
+/// is the first consumer). Callers that come in with absolute paths
+/// should prefer
+/// [`recursive_unlinkat_via_sandbox_or_fallback`] which selects between
+/// this dirfd-anchored path and the [`std::fs::remove_dir_all`]
+/// fallback based on whether the supplied sandbox can resolve the
+/// leaf as a single component.
+///
+/// # Errors
+///
+/// Surfaces the same error set as
+/// [`recursive_unlinkat_via_sandbox_or_fallback`]: `ENOENT` on the
+/// descent root is folded into `Ok(())`, `ELOOP` is returned for a
+/// symlink at the root or a hardlink cycle, and `ENOTEMPTY` is surfaced
+/// when an `EACCES` skip left residual entries behind.
+pub fn recursive_unlinkat(parent_dirfd: BorrowedFd<'_>, leaf: &OsStr) -> io::Result<()> {
     let mut visited: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::new();
     recursive_unlinkat_inner(parent_dirfd, leaf, &mut visited)
 }
