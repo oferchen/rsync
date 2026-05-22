@@ -9,6 +9,7 @@
 //! [`FileIo`]: https://github.com/RsyncProject/rsync/blob/master/errcode.h
 
 use std::io;
+use std::path::PathBuf;
 
 use super::super::reorder::CapacityExceeded;
 
@@ -25,6 +26,12 @@ use super::super::reorder::CapacityExceeded;
 /// build that has no codec available - the on-disk tag byte advertises the
 /// algorithm so we fail loudly rather than decode garbage.
 ///
+/// [`PriorSpillsLost`](Self::PriorSpillsLost) is surfaced when the spill
+/// directory vanishes mid-transfer after one or more records were already
+/// written to disk. Recovery is refused because those records cannot be
+/// reconstructed; the typed variant lets the receiver emit an actionable
+/// diagnostic for the operator instead of a generic `NotFound`.
+///
 /// [`FileIo`]: https://github.com/RsyncProject/rsync/blob/master/errcode.h
 #[derive(Debug)]
 pub enum SpillError {
@@ -35,6 +42,16 @@ pub enum SpillError {
     /// On-disk record advertises a compression algorithm this build cannot
     /// decode. Holds the unknown tag byte for diagnostics.
     UnsupportedCompression(u8),
+    /// Caller-supplied spill directory vanished mid-transfer after prior
+    /// records were already on disk. Carries the directory that vanished
+    /// and the count of records known to be unrecoverable.
+    PriorSpillsLost {
+        /// Directory that disappeared after prior spill writes had committed.
+        dir: PathBuf,
+        /// Number of records (sequences) that were spilled to disk and can
+        /// no longer be reloaded.
+        count: usize,
+    },
 }
 
 impl SpillError {
@@ -43,7 +60,9 @@ impl SpillError {
     pub fn io_error(&self) -> Option<&io::Error> {
         match self {
             SpillError::Io(e) => Some(e),
-            SpillError::Capacity(_) | SpillError::UnsupportedCompression(_) => None,
+            SpillError::Capacity(_)
+            | SpillError::UnsupportedCompression(_)
+            | SpillError::PriorSpillsLost { .. } => None,
         }
     }
 
@@ -64,6 +83,11 @@ impl std::fmt::Display for SpillError {
                 f,
                 "reorder spill record uses compression tag 0x{tag:02x} not supported by this build"
             ),
+            SpillError::PriorSpillsLost { dir, count } => write!(
+                f,
+                "prior spill directory {} vanished; {count} chunk(s) cannot be recovered",
+                dir.display()
+            ),
         }
     }
 }
@@ -71,7 +95,9 @@ impl std::fmt::Display for SpillError {
 impl std::error::Error for SpillError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            SpillError::Capacity(_) | SpillError::UnsupportedCompression(_) => None,
+            SpillError::Capacity(_)
+            | SpillError::UnsupportedCompression(_)
+            | SpillError::PriorSpillsLost { .. } => None,
             SpillError::Io(e) => Some(e),
         }
     }
