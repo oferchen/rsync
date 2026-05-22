@@ -451,22 +451,19 @@ mod tests {
     }
 
     #[test]
-    fn adapter_default_equals_new() {
-        // Trivial Default impl is exposed so the struct fits standard
-        // Rust trait conventions. Round-trip a chunk through each form.
+    fn adapter_unit_construction_matches_new() {
+        // The unit struct has a trivial `new()` constructor for call-site
+        // readability; the bare struct literal is the equivalent shorthand.
+        // Both spellings must produce the same chunk for the same input.
         let work = whole_file_work(0);
         let bytes = vec![1u8, 2, 3, 4];
         let via_new = DeltaChunkAdapter::new()
             .from_delta_work(&work, ChunkPayload::literal(0, bytes.clone()));
-        let via_default =
-            DeltaChunkAdapter.from_delta_work(&work, ChunkPayload::literal(0, bytes.clone()));
-        let via_default_trait =
-            DeltaChunkAdapter::default().from_delta_work(&work, ChunkPayload::literal(0, bytes));
+        let via_literal =
+            DeltaChunkAdapter.from_delta_work(&work, ChunkPayload::literal(0, bytes));
 
-        assert_eq!(via_new.data, via_default.data);
-        assert_eq!(via_new.data, via_default_trait.data);
-        assert_eq!(via_new.ndx, via_default.ndx);
-        assert_eq!(via_new.ndx, via_default_trait.ndx);
+        assert_eq!(via_new.data, via_literal.data);
+        assert_eq!(via_new.ndx, via_literal.ndx);
     }
 
     #[test]
