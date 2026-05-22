@@ -117,9 +117,15 @@ adaptive-basis-dispatch = []
 # socket-send path. Requires the `io_uring` feature. When enabled, the
 # transport send path routes payloads >= 4 KiB through `ZeroCopySender`,
 # which submits the zero-copy send opcode against a registered buffer pool
-# so the kernel can DMA pages directly without a userspace copy. Default off
-# pending kernel/workload benchmarks. See docs/design/iouring-send-zc.md
-# for the full design.
+# so the kernel can DMA pages directly without a userspace copy. Default
+# off; IUS-4 (docs/design/ius-4-decision-2026-05-22.md) kept this opt-in
+# under the data-missing branch of the framing rule because the IUS-3
+# multi-kernel bench numbers have not been captured. Promotion to the
+# default feature set requires >= 10% throughput on >= 2 of 4 IUS-3
+# workloads, no workload regressing by > 2%, and release-policy sign-off
+# to raise the io_uring socket-send floor from 5.6 to 6.0. See
+# docs/design/iouring-send-zc.md for the full design and
+# docs/design/ius-4-decision-2026-05-22.md for the keep-opt-in rationale.
 iouring-send-zc = ["io_uring"]
 
 # landlock: Linux-only opt-in dispatch for the Landlock LSM allowlist used by
